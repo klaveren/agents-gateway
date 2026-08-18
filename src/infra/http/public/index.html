@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agent Gateway UI</title>
+    <!-- Tailwind v4 via CDN -->
+    <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+    <style type="text/tailwindcss">
+      @theme {
+        --color-primary-500: #52525b;
+        --color-dark-800: #27272a;
+        --color-dark-900: #18181b;
+      }
+
+      body {
+        font-family: 'Inter', system-ui, sans-serif;
+        @apply bg-zinc-950 text-zinc-100;
+      }
+
+      /* Glassmorphism utility */
+      .glass {
+        background: rgba(24, 24, 27, 0.7);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+      }
+
+      .chat-bubble {
+        animation: fadeIn 0.3s ease-out forwards;
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+    </style>
+  </head>
+  <body class="bg-zinc-950 text-zinc-100 min-h-screen flex items-center justify-center p-4 antialiased">
+    <div id="app" class="w-full max-w-4xl h-[85vh] glass rounded-3xl overflow-hidden flex shadow-2xl flex-col md:flex-row border border-zinc-800/50">
+      
+      <!-- Sidebar -->
+      <aside class="w-full md:w-64 border-b md:border-b-0 md:border-r border-zinc-800/50 p-6 flex flex-col bg-zinc-900/50 backdrop-blur-md">
+        <h1 class="text-xl font-bold bg-gradient-to-r from-zinc-300 to-zinc-500 bg-clip-text text-transparent mb-8">
+          Agent Gateway
+        </h1>
+        
+        <div class="flex-1">
+          <h2 class="text-xs uppercase tracking-wider text-zinc-400 font-semibold mb-4">Select Agent</h2>
+          <div class="space-y-2" id="provider-selector">
+            <button data-provider="researcher-agent" class="w-full text-left px-4 py-3 rounded-xl transition-all duration-200 border border-transparent bg-zinc-800 text-zinc-200 border-zinc-600/50">
+              Researcher Agent (Google)
+            </button>
+            <button data-provider="sysops-agent" class="w-full text-left px-4 py-3 rounded-xl transition-all duration-200 border border-transparent hover:bg-zinc-800/50 text-zinc-400 hover:text-zinc-300">
+              SysOps Agent (Claude)
+            </button>
+            <button data-provider="analyst-agent" class="w-full text-left px-4 py-3 rounded-xl transition-all duration-200 border border-transparent hover:bg-zinc-800/50 text-zinc-400 hover:text-zinc-300">
+              Data Analyst (OpenAI)
+            </button>
+          </div>
+        </div>
+
+        <div class="mb-4">
+          <h2 class="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 px-2">Model</h2>
+          <div class="space-y-2 px-2">
+            <select id="model-selector" class="w-full bg-zinc-900 border border-zinc-800 text-zinc-300 rounded-xl px-4 py-2 outline-none focus:border-zinc-500 transition-colors text-sm">
+              <option value="">Select an agent first</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="mb-4">
+          <h2 class="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 px-2">Reasoning</h2>
+          <div class="space-y-2 px-2">
+            <select id="reasoning-selector" class="w-full bg-zinc-900 border border-zinc-800 text-zinc-300 rounded-xl px-4 py-2 outline-none focus:border-zinc-500 transition-colors text-sm">
+              <option value="">Select an agent first</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="mb-8">
+          <h2 class="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 px-2">Language</h2>
+          <div class="space-y-2 px-2">
+            <select id="language-selector" class="w-full bg-zinc-900 border border-zinc-800 text-zinc-300 rounded-xl px-4 py-2 outline-none focus:border-zinc-500 transition-colors text-sm">
+              <option value="English">English</option>
+              <option value="Portuguese">Portuguese</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="mt-auto border-t border-zinc-800/50 pt-6 pb-2 text-center">
+          <p class="text-xs text-zinc-500 flex flex-col items-center gap-1">
+            <span>Crafted with <span class="text-zinc-400">❤️</span> by</span>
+            <span class="font-medium text-zinc-300 tracking-wide">Henrique Van Klaveren</span>
+          </p>
+        </div>
+      </aside>
+
+      <!-- Main Chat Area -->
+      <main class="flex-1 flex flex-col relative bg-zinc-950/80">
+        <!-- Header -->
+        <header class="h-16 border-b border-zinc-800/50 flex items-center px-6 glass absolute top-0 w-full z-10">
+          <div class="flex items-center gap-3">
+            <div class="w-2 h-2 rounded-full bg-zinc-300 shadow-[0_0_10px_rgba(212,212,216,0.5)]"></div>
+            <span class="font-medium text-zinc-200" id="current-agent-name">Researcher Agent (Google)</span>
+          </div>
+        </header>
+
+        <!-- Messages Area -->
+        <div id="chat-messages" class="flex-1 overflow-y-auto p-6 pt-24 pb-32 space-y-6 scroll-smooth">
+          <!-- Welcome section with prompt suggestions -->
+          <div id="welcome-section" class="flex flex-col items-center justify-center h-full pt-8 space-y-8">
+            <div class="text-center space-y-2">
+              <h2 class="text-2xl md:text-3xl font-semibold bg-gradient-to-r from-zinc-200 to-zinc-500 bg-clip-text text-transparent">How can I help you?</h2>
+              <p class="text-zinc-400 text-sm md:text-base">Choose an option or type what you need below.</p>
+            </div>
+            
+            <div id="prompts-grid" class="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-2xl px-4">
+              <!-- Os cards serão injetados dinamicamente via main.js dependendo do Agente selecionado -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Input Area -->
+        <div class="absolute bottom-0 w-full p-6 glass border-t border-zinc-800/50 flex flex-col justify-end">
+          <div id="file-preview-container" class="flex gap-2 mb-3 overflow-x-auto hidden px-2"></div>
+          <form id="chat-form" class="relative flex items-center">
+            <button type="button" id="attach-btn" class="absolute left-2 p-2 text-zinc-400 hover:text-zinc-200 transition-colors flex items-center justify-center w-10 h-10 z-10" title="Attach file">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+            </button>
+            <input type="file" id="file-input" class="hidden" multiple />
+            <input 
+              type="text" 
+              id="message-input"
+              class="w-full bg-zinc-900/80 border border-zinc-700 rounded-full py-4 pl-12 pr-14 focus:outline-none focus:ring-2 focus:ring-zinc-600/50 focus:border-zinc-600/50 text-zinc-200 placeholder-zinc-500 transition-all shadow-inner relative"
+              placeholder="Message agent..."
+              autocomplete="off"
+            />
+            <button type="submit" class="absolute right-2 p-2 bg-zinc-700 hover:bg-zinc-600 text-zinc-100 rounded-full transition-colors flex items-center justify-center w-10 h-10 shadow-lg shadow-zinc-900/20 z-10">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+            </button>
+          </form>
+        </div>
+      </main>
+
+    </div>
+    <script src="/main.js"></script>
+  </body>
+</html>
