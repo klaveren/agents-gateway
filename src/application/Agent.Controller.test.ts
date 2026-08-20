@@ -4,14 +4,15 @@ import { AgentController } from './Agent.Controller'
 import { CreateSessionUseCase } from './CreateSession.Usecase'
 import { SendMessageUseCase } from './SendMessage.Usecase'
 import { CancelSessionUseCase } from './CancelSession.Usecase'
-import { IAgentProvider } from '@domain/ports/AgentProvider'
-import { EProvider } from '@domain/enums/EProvider'
+import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
+import { EMode } from '@domain/enums/EMode.Enum'
+import { EProvider } from '@domain/enums/EProvider.Enum'
 import { Request, Response } from 'express'
 
 describe('AgentController', () => {
   const getMockController = (overrides?: Partial<IAgentProvider>) => {
     const mockProvider: IAgentProvider = {
-      createSession: async () => ({ id: '123', provider: EProvider.OPENAI, createdAt: new Date() }),
+      createSession: async () => ({ id: '123', provider: EProvider.OPENAI, mode: EMode.CHAT, createdAt: new Date() }),
       sendMessage: async function* () {
         yield { type: 'message.started', sessionId: '1', timestamp: new Date() }
       },

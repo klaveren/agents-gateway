@@ -1,6 +1,6 @@
-import { IAgentEvent } from '@domain/models/AgentEvent'
-import { IAgentProvider } from '@domain/ports/AgentProvider'
-import { IMessageInput } from '@domain/models/MessageInput'
+import { IAgentEvent } from '@domain/models/AgentEvent.Model'
+import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
+import { IMessageInput } from '@domain/models/MessageInput.Model'
 
 export class SendMessageUseCase {
   constructor(private agentProvider: IAgentProvider) {}

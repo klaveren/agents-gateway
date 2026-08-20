@@ -1,7 +1,9 @@
 import { CancelSessionUseCase } from '@application/CancelSession.Usecase'
 import { CreateSessionUseCase } from '@application/CreateSession.Usecase'
 import { SendMessageUseCase } from '@application/SendMessage.Usecase'
-import { fail, ok } from '@infra/http/HttpResponse'
+import { AGENT_REGISTRY } from '@domain/Agent.Registry'
+import { IAgentEvent } from '@domain/models/AgentEvent.Model'
+import { fail, ok } from '@infra/http/Http.Response'
 import { Request, Response } from 'express'
 
 export class AgentController {
@@ -45,7 +47,8 @@ export class AgentController {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err)
       console.error('[AgentController.sendMessage] Error:', message)
-      res.write(`data: ${JSON.stringify({ type: 'error', payload: message })}\n\n`)
+      const event: IAgentEvent = { type: 'error', sessionId: id, timestamp: new Date(), payload: { message } }
+      res.write(`data: ${JSON.stringify(event)}\n\n`)
       res.end()
     }
   }
@@ -65,7 +68,6 @@ export class AgentController {
 
   async getAgents(req: Request, res: Response) {
     try {
-      const { AGENT_REGISTRY } = require('@domain/AgentRegistry')
       res.json(ok(AGENT_REGISTRY, 'Agents retrieved successfully'))
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err)

@@ -1,13 +1,13 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
 import { CancelSessionUseCase } from './CancelSession.Usecase'
-import { IAgentProvider } from '@domain/ports/AgentProvider'
+import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
 
 describe('CancelSessionUseCase', () => {
   it('should delegate cancel to AgentProvider', async () => {
     let callCount = 0
     const mockProvider: IAgentProvider = {
-      createSession: async () => ({}) as unknown as import('@domain/models/AgentSession').IAgentSession,
+      createSession: async () => ({}) as unknown as import('@domain/models/AgentSession.Model').IAgentSession,
       sendMessage: async function* () {},
       cancel: async (agentId: string, sessionId: string) => {
         callCount++

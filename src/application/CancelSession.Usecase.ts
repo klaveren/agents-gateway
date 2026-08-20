@@ -1,4 +1,4 @@
-import { IAgentProvider } from '@domain/ports/AgentProvider'
+import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
 
 export class CancelSessionUseCase {
   constructor(private agentProvider: IAgentProvider) {}

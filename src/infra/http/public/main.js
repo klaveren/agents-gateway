@@ -291,7 +291,7 @@ form.addEventListener('submit', async (e) => {
               }
               movePlaceholderToBottom();
             } else if (data.type === 'error') {
-               addMessage('system', `❌ Error: ${data.payload.error || data.payload}`);
+               addMessage('system', `❌ Error: ${data.payload?.message ?? 'unknown error'}`);
                movePlaceholderToBottom();
             }
           } catch (e) {

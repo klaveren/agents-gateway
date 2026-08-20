@@ -1,9 +1,10 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
 import { CreateSessionUseCase } from './CreateSession.Usecase'
-import { IAgentProvider } from '@domain/ports/AgentProvider'
-import { ICreateSessionInput } from '@domain/models/CreateSessionInput'
-import { EProvider } from '@domain/enums/EProvider'
+import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
+import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
+import { EMode } from '@domain/enums/EMode.Enum'
+import { EProvider } from '@domain/enums/EProvider.Enum'
 
 describe('CreateSessionUseCase', () => {
   it('should successfully create a session for an existing agent', async () => {
@@ -12,10 +13,11 @@ describe('CreateSessionUseCase', () => {
       createSession: async (_input: ICreateSessionInput) => ({
         id: 'mock-session-123',
         provider: EProvider.OPENAI,
+        mode: EMode.CHAT,
         createdAt: new Date(),
       }),
       sendMessage: async function* () {
-        yield {} as unknown as import('@domain/models/AgentEvent').IAgentEvent
+        yield {} as unknown as import('@domain/models/AgentEvent.Model').IAgentEvent
       },
       cancel: async () => {},
     }
