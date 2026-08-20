@@ -55,19 +55,20 @@ A chat is not a tool run. This gateway lets you feel that.
 
 ```
 YOU (Browser)                    GATEWAY                          PROVIDER
-[pick lane: chat] ------>  POST /sessions {mode:'chat'}
+[pick lane: chat] ------>  POST /v1/sessions {mode:'chat'}
                            ClaudeChat.Adapter  -------------->  messages.create(stream)
 [see tokens]      <------  SSE: text.delta / usage
 
-[pick lane: agent] ----->  POST /sessions {mode:'agent'}
+[pick lane: agent] ----->  POST /v1/sessions {mode:'agent'}
                            ClaudeAgent.Adapter -------------->  claude-agent-sdk query()
                                                                   └─ runs the tool loop
                            local tools + MCP  <---------------─┘
 [see tool badges] <------  SSE: tool.started / tool.result
 ```
 
-The session id carries the route — `claude-agent-<uuid>` — so `sendMessage` and `cancel`
-find the right adapter from the id alone.
+One shared session store knows which agent and which lane every session belongs to, so
+`/v1/sessions/:id/messages` needs nothing but the id. The id keeps a readable prefix —
+`claude-agent-<uuid>` — purely for human comfort in logs.
 
 ---
 
@@ -85,7 +86,7 @@ GOOGLE_GENAI_API_KEY=AIzaSy...  # lane agent (@google/adk) — see below
 pnpm dev
 ```
 
-The gateway listens on `http://localhost:3000` and works **with no MCP server running** —
+The gateway listens on `http://127.0.0.1:3000/v1` and works **with no MCP server running** —
 the built-in `search_web` and `run_bash` keep it useful on their own. Point it at one with
 `MCP_SERVER_URL` (default `http://localhost:8000/mcp`) and those tools join the catalog.
 `GET /tools` shows the merged view and whether MCP is connected.
@@ -106,6 +107,18 @@ These are not opinions — each one costs an afternoon if you meet it the hard w
   the first turn of a session.
 - **Node ≥ 22.12.** All three Agents SDKs load under `require()` only thanks to Node's
   `require(ESM)` support.
+
+### Perimeter
+
+The gateway executes `run_bash`, so it is closed by default: it binds to `127.0.0.1` and
+rejects every cross-origin request. The bundled UI is same-origin and unaffected.
+
+| Env | Default | What it does |
+| --- | --- | --- |
+| `HOST` | `127.0.0.1` | Interface to bind. Change it only if you know who else is on the network. |
+| `CORS_ORIGINS` | *(none)* | Comma-separated allowlist. Needed if you serve a frontend from another port. |
+| `GATEWAY_TOKEN` | *(none)* | When set, `/v1/*` requires `Authorization: Bearer`. The UI reads it from `localStorage.gatewayToken`. |
+| `JSON_LIMIT` | `25mb` | Request body cap. Base64 attachments inflate ~33%. |
 
 ### Tool safety
 
@@ -136,17 +149,34 @@ Files are named `<What>.<Kind>.ts` — `ClaudeChat.Adapter.ts`, `Agent.Provider.
 
 ### API
 
+Versioned under `/v1`. The full contract is served at `/v1/openapi.json`, and a test fails
+the build if it drifts from the routes the server actually registers.
+
 | Route | What it does |
 | --- | --- |
-| `GET /agents` | The registry, including which lanes each agent supports. |
-| `GET /tools` | The merged tool catalog and MCP status. Filter with `?agentId=`. |
-| `POST /sessions` | `{ agentId, mode, model, reasoning, language }` → a session. |
-| `POST /sessions/:agentId/:id/messages` | The turn, streamed as SSE. |
-| `POST /sessions/:agentId/:id/cancel` | Aborts the in-flight generation. |
+| `GET /v1/health` | Liveness, MCP status, live session count. |
+| `GET /v1/agents` | The registry, including which lanes each agent supports. |
+| `GET /v1/agents/:agentId/tools` | Tool catalog filtered by what that agent declares. |
+| `GET /v1/tools` | Full catalog: built-in tools merged with whatever MCP exposes. |
+| `POST /v1/sessions` | `{ agentId, mode, model, reasoning, language }` → a session. |
+| `GET /v1/sessions` | Live sessions, most recently active first. |
+| `GET /v1/sessions/:id` | Lane, model, turns and accumulated usage. |
+| `DELETE /v1/sessions/:id` | Ends the session, aborting anything in flight. |
+| `POST /v1/sessions/:id/messages` | The turn. |
+| `POST /v1/sessions/:id/cancel` | Aborts the generation, keeping the session. |
+
+`Accept` decides the shape of a turn: `text/event-stream` (the default) streams events;
+`application/json` returns the whole turn at once — final text, every tool call with its
+result, usage, warnings. That second form is what makes it practical to run both lanes over
+the same prompts and compare by number instead of by impression.
 
 SSE events: `message.started`, `text.delta`, `reasoning.delta`, `tool.started`,
 `tool.result`, `tool.error`, `usage`, `warning`, `message.aborted`, `message.completed`,
 `error`. Closing the tab cancels the turn at the provider.
+
+Failures carry a stable `code` — `validation_error`, `agent_not_found`, `session_not_found`,
+`mode_not_supported`, `unauthorized`, `internal_error` — so a client can branch without
+parsing prose.
 
 ---
 

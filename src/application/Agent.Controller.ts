@@ -1,43 +1,151 @@
 import { CancelSessionUseCase } from '@application/CancelSession.Usecase'
 import { CreateSessionUseCase } from '@application/CreateSession.Usecase'
+import { DeleteSessionUseCase } from '@application/DeleteSession.Usecase'
+import { GetSessionUseCase } from '@application/GetSession.Usecase'
+import { ListSessionsUseCase } from '@application/ListSessions.Usecase'
 import { SendMessageUseCase } from '@application/SendMessage.Usecase'
-import { AGENT_REGISTRY, getAgentById } from '@domain/Agent.Registry'
+import { aggregateTurn } from '@application/Turn.Aggregator'
 import { makeTools } from '@composition/factories/Tools.Factory'
+import { AGENT_REGISTRY, getAgentById } from '@domain/Agent.Registry'
+import { AgentNotFoundError } from '@domain/errors/Domain.Error'
+import { IAgentEvent } from '@domain/models/AgentEvent.Model'
+import { IMessageInput } from '@domain/models/MessageInput.Model'
+import { toHttpFailure } from '@infra/http/Http.Error'
 import { fail, ok } from '@infra/http/Http.Response'
+import { parseBody } from '@infra/http/Request.Parser'
+import { createSessionSchema, sendMessageSchema } from '@infra/http/Request.Schema'
+import { toSessionDto } from '@infra/http/Session.Dto'
 import { SseStream } from '@infra/http/Sse.Stream'
 import { Request, Response } from 'express'
 
 const ALL_LOCAL_TOOLS = [...new Set(AGENT_REGISTRY.flatMap((agent) => agent.allowedTools))]
+const STARTED_AT = Date.now()
+
+export interface IAgentControllerDeps {
+  createSession: CreateSessionUseCase
+  sendMessage: SendMessageUseCase
+  cancelSession: CancelSessionUseCase
+  deleteSession: DeleteSessionUseCase
+  getSession: GetSessionUseCase
+  listSessions: ListSessionsUseCase
+}
 
 export class AgentController {
-  constructor(
-    private createSessionUseCase: CreateSessionUseCase,
-    private sendMessageUseCase: SendMessageUseCase,
-    private cancelSessionUseCase: CancelSessionUseCase,
-  ) {
+  constructor(private readonly usecases: IAgentControllerDeps) {
+    this.health = this.health.bind(this)
+    this.getAgents = this.getAgents.bind(this)
+    this.getAgentTools = this.getAgentTools.bind(this)
+    this.getTools = this.getTools.bind(this)
     this.createSession = this.createSession.bind(this)
+    this.listSessions = this.listSessions.bind(this)
+    this.getSession = this.getSession.bind(this)
+    this.deleteSession = this.deleteSession.bind(this)
     this.sendMessage = this.sendMessage.bind(this)
     this.cancelSession = this.cancelSession.bind(this)
-    this.getAgents = this.getAgents.bind(this)
-    this.getTools = this.getTools.bind(this)
+  }
+
+  async health(_req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const { catalog } = makeTools()
+      return {
+        status: 'ok',
+        uptimeSeconds: Math.floor((Date.now() - STARTED_AT) / 1000),
+        mcp: { url: catalog.mcpUrl, connected: catalog.mcpConnected },
+        sessions: (await this.usecases.listSessions.execute()).length,
+      }
+    })
+  }
+
+  async getAgents(_req: Request, res: Response) {
+    await this.respond(res, async () => AGENT_REGISTRY)
+  }
+
+  async getAgentTools(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const agentId = req.params.agentId as string
+      const agent = getAgentById(agentId)
+      if (!agent) throw new AgentNotFoundError(agentId)
+
+      const { catalog } = makeTools()
+      return { mcp: this.mcpStatus(), tools: await catalog.list(agent.allowedTools) }
+    })
+  }
+
+  async getTools(_req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const { catalog } = makeTools()
+      return { mcp: this.mcpStatus(), tools: await catalog.list(ALL_LOCAL_TOOLS) }
+    })
   }
 
   async createSession(req: Request, res: Response) {
+    await this.respond(res, async () => this.usecases.createSession.execute(parseBody(createSessionSchema, req.body)), { status: 201, message: 'Session created successfully' })
+  }
+
+  async listSessions(_req: Request, res: Response) {
+    await this.respond(res, async () => (await this.usecases.listSessions.execute()).map(toSessionDto))
+  }
+
+  async getSession(req: Request, res: Response) {
+    await this.respond(res, async () => toSessionDto(await this.usecases.getSession.execute(req.params.id as string)))
+  }
+
+  async deleteSession(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        await this.usecases.deleteSession.execute(req.params.id as string)
+        return null
+      },
+      { message: 'Session deleted successfully' },
+    )
+  }
+
+  async cancelSession(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        await this.usecases.cancelSession.execute(req.params.id as string)
+        return null
+      },
+      { message: 'Session cancelled successfully' },
+    )
+  }
+
+  /**
+   * `Accept` decide o formato: `text/event-stream` (default) transmite evento a evento,
+   * `application/json` devolve o turno agregado de uma vez — que é o que torna a API
+   * utilizável de curl, de script e de teste automatizado.
+   */
+  async sendMessage(req: Request, res: Response) {
+    const sessionId = req.params.id as string
+
+    let body
     try {
-      const session = await this.createSessionUseCase.execute(req.body)
-      res.status(201).json(ok(session, 'Session created successfully'))
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err)
-      console.error('[AgentController.createSession] Error:', message)
-      res.status(500).json(fail(message))
+      body = parseBody(sendMessageSchema, req.body)
+    } catch (error: unknown) {
+      return this.sendFailure(res, error, '[AgentController.sendMessage]')
+    }
+
+    const input: IMessageInput = { text: body.message, files: body.files }
+    const wantsJson = req.accepts(['text/event-stream', 'application/json']) === 'application/json'
+
+    return wantsJson ? this.sendMessageAsJson(res, sessionId, input) : this.sendMessageAsStream(res, sessionId, input)
+  }
+
+  private async sendMessageAsJson(res: Response, sessionId: string, input: IMessageInput) {
+    try {
+      const events: IAgentEvent[] = []
+      for await (const event of this.usecases.sendMessage.execute(sessionId, input)) {
+        events.push(event)
+      }
+      res.json(ok(aggregateTurn(sessionId, events), 'Turn completed'))
+    } catch (error: unknown) {
+      this.sendFailure(res, error, '[AgentController.sendMessage]')
     }
   }
 
-  async sendMessage(req: Request, res: Response) {
-    const agentId = req.params.agentId as string
-    const id = req.params.id as string
-    const { message, files } = req.body
-
+  private async sendMessageAsStream(res: Response, sessionId: string, input: IMessageInput) {
     const stream = new SseStream(res)
     stream.open()
 
@@ -51,59 +159,42 @@ export class AgentController {
     res.on('close', () => {
       if (finished) return
       finished = true
-      void this.cancelSessionUseCase.execute(agentId, id).catch(() => undefined)
+      void this.usecases.cancelSession.execute(sessionId).catch(() => undefined)
     })
 
     try {
-      for await (const event of this.sendMessageUseCase.execute(agentId, id, { text: message, files })) {
+      for await (const event of this.usecases.sendMessage.execute(sessionId, input)) {
         if (finished) break
         stream.send(event)
       }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err)
-      console.error('[AgentController.sendMessage] Error:', message)
-      stream.send({ type: 'error', sessionId: id, timestamp: new Date(), payload: { message } })
+    } catch (error: unknown) {
+      const failure = toHttpFailure(error)
+      console.error('[AgentController.sendMessage] Error:', failure.message)
+      stream.send({ type: 'error', sessionId, timestamp: new Date(), payload: { message: failure.message } })
     } finally {
       finished = true
       stream.close()
     }
   }
 
-  async cancelSession(req: Request, res: Response) {
+  private mcpStatus() {
+    const { catalog } = makeTools()
+    return { url: catalog.mcpUrl, connected: catalog.mcpConnected }
+  }
+
+  /** Um lugar só para o envelope de sucesso e para a tradução de erro em status e código. */
+  private async respond<T>(res: Response, work: () => Promise<T>, options: { status?: number; message?: string } = {}) {
     try {
-      const agentId = req.params.agentId as string
-      const id = req.params.id as string
-      await this.cancelSessionUseCase.execute(agentId, id)
-      res.json(ok(null, 'Session cancelled successfully'))
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err)
-      console.error('[AgentController.cancelSession] Error:', message)
-      res.status(500).json(fail(message))
+      const result = await work()
+      res.status(options.status ?? 200).json(ok(result, options.message))
+    } catch (error: unknown) {
+      this.sendFailure(res, error, '[AgentController]')
     }
   }
 
-  /** Mostra o catálogo unido: as tools locais e as que vieram do MCP server. */
-  async getTools(req: Request, res: Response) {
-    try {
-      const { catalog } = makeTools()
-      const agentId = typeof req.query.agentId === 'string' ? req.query.agentId : undefined
-      const allowed = agentId ? (getAgentById(agentId)?.allowedTools ?? []) : ALL_LOCAL_TOOLS
-
-      res.json(ok({ mcp: { url: catalog.mcpUrl, connected: catalog.mcpConnected }, tools: await catalog.list(allowed) }, 'Tools retrieved successfully'))
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err)
-      console.error('[AgentController.getTools] Error:', message)
-      res.status(500).json(fail(message))
-    }
-  }
-
-  async getAgents(req: Request, res: Response) {
-    try {
-      res.json(ok(AGENT_REGISTRY, 'Agents retrieved successfully'))
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err)
-      console.error('[AgentController.getAgents] Error:', message)
-      res.status(500).json(fail(message))
-    }
+  private sendFailure(res: Response, error: unknown, scope: string) {
+    const failure = toHttpFailure(error)
+    if (failure.status >= 500) console.error(`${scope} Error:`, failure.message)
+    res.status(failure.status).json(fail(failure.message, failure.code, failure.details))
   }
 }

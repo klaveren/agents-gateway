@@ -9,7 +9,7 @@ import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { IFileAttachment, IMessageInput } from '@domain/models/MessageInput.Model'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { sessionPrefix } from '@infra/session/Session.Key'
-import { SessionStore } from '@infra/session/Session.Store'
+import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
 import { buildClaudeMcpServers, REMOTE_SERVER_NAME } from '@infra/tools/bridges/Claude.ToolBridge'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { composeSystemPrompt, maxToolTurns } from './support/Prompt.Helper'
@@ -33,7 +33,7 @@ interface IClaudeAgentNative {
 
 export interface IClaudeAgentAdapterDeps {
   query?: TQuery
-  store?: SessionStore<IClaudeAgentNative>
+  store?: SessionStore
   catalog?: ToolCatalog
 }
 
@@ -46,12 +46,12 @@ export interface IClaudeAgentAdapterDeps {
  */
 export class ClaudeAgentAdapter implements IAgentAdapter {
   private readonly query: TQuery
-  private readonly store: SessionStore<IClaudeAgentNative>
+  private readonly store: SessionStore
   private readonly catalog?: ToolCatalog
 
   constructor(deps: IClaudeAgentAdapterDeps = {}) {
     this.query = deps.query ?? query
-    this.store = deps.store ?? new SessionStore<IClaudeAgentNative>()
+    this.store = deps.store ?? new SessionStore()
     this.catalog = deps.catalog
   }
 
@@ -62,6 +62,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       mode: EMode.AGENT,
       model: input.model || DEFAULT_MODEL,
       reasoning: input.reasoning,
+      language: input.language,
       systemPrompt: composeSystemPrompt(agent, input),
       metadata: input.metadata,
       // O SDK exige um UUID limpo aqui; o id do gateway leva prefixo e não serve.
@@ -84,7 +85,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       return
     }
 
-    const native: IClaudeAgentNative = record.native ?? { sdkSessionId: randomUUID(), started: false }
+    const native = this.nativeOf(record)
     const abort = new AbortController()
     record.abort = abort
 
@@ -176,7 +177,6 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
 
         if (message.type === 'result') {
           native.started = true
-          record.native = native
 
           yield {
             type: 'usage',
@@ -201,11 +201,8 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
         }
       }
 
-      record.native = native
       yield { type: 'message.completed', sessionId, timestamp: new Date() }
     } catch (error: unknown) {
-      record.native = native
-
       if (abort.signal.aborted) {
         yield { type: 'message.aborted', sessionId, timestamp: new Date() }
         return
@@ -224,6 +221,15 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
    * Deixa passar o que o agente declarou e o que veio do MCP server — quem escolheu
    * subir aquele server foi o operador. Qualquer outra coisa é recusada com motivo.
    */
+  /**
+   * O store é compartilhado pelos seis adapters, então o slot nativo é `unknown`. Este é o
+   * único ponto do adapter que sabe o formato do que ele guardou lá.
+   */
+  private nativeOf(record: ISessionRecord): IClaudeAgentNative {
+    if (!record.native) record.native = { sdkSessionId: randomUUID(), started: false }
+    return record.native as IClaudeAgentNative
+  }
+
   private makeGate(allowed: string[]): CanUseTool {
     return async (toolName) => {
       const [, server, ...rest] = toolName.split('__')

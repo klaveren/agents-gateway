@@ -4,7 +4,7 @@ import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
 import { ISessionRecord } from '@infra/session/Session.Store'
-import { CancelSessionUseCase } from './CancelSession.Usecase'
+import { ListSessionsUseCase } from './ListSessions.Usecase'
 
 const stubProvider = (overrides: Partial<IAgentProvider> = {}): IAgentProvider => ({
   createSession: async () => ({ id: 's', provider: EProvider.OPENAI, mode: EMode.CHAT, createdAt: new Date() }),
@@ -16,13 +16,14 @@ const stubProvider = (overrides: Partial<IAgentProvider> = {}): IAgentProvider =
   ...overrides,
 })
 
-describe('CancelSessionUseCase', () => {
-  it('cancels by session id alone', async () => {
-    const seen: string[] = []
-    const usecase = new CancelSessionUseCase(stubProvider({ cancel: async (id) => void seen.push(id) }))
+describe('ListSessionsUseCase', () => {
+  it('returns what the provider lists', async () => {
+    const records = [{ id: 'a' }, { id: 'b' }] as ISessionRecord[]
+    const usecase = new ListSessionsUseCase(stubProvider({ list: () => records }))
 
-    await usecase.execute('sess-1')
-
-    assert.deepStrictEqual(seen, ['sess-1'])
+    assert.deepStrictEqual(
+      (await usecase.execute()).map((r) => r.id),
+      ['a', 'b'],
+    )
   })
 })

@@ -8,7 +8,7 @@ import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { sessionPrefix } from '@infra/session/Session.Key'
-import { SessionStore } from '@infra/session/Session.Store'
+import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
 import { buildOpenAIMcpServers, buildOpenAITools } from '@infra/tools/bridges/OpenAI.ToolBridge'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { composeSystemPrompt, maxOutputTokens, maxToolTurns } from './support/Prompt.Helper'
@@ -22,7 +22,7 @@ type TUserContent = Parameters<typeof user>[0]
 
 export interface IOpenAIAgentAdapterDeps {
   run?: TRun
-  store?: SessionStore<AgentInputItem[]>
+  store?: SessionStore
   catalog?: ToolCatalog
 }
 
@@ -34,14 +34,14 @@ export interface IOpenAIAgentAdapterDeps {
  */
 export class OpenAIAgentAdapter implements IAgentAdapter {
   private readonly run: TRun
-  private readonly store: SessionStore<AgentInputItem[]>
+  private readonly store: SessionStore
   private readonly catalog?: ToolCatalog
   /** Uma conexão MCP por adapter, compartilhada pelas sessões e aberta sob demanda. */
   private mcpServers?: Promise<MCPServer[]>
 
   constructor(deps: IOpenAIAgentAdapterDeps = {}) {
     this.run = deps.run ?? run
-    this.store = deps.store ?? new SessionStore<AgentInputItem[]>()
+    this.store = deps.store ?? new SessionStore()
     this.catalog = deps.catalog
   }
 
@@ -52,6 +52,7 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
       mode: EMode.AGENT,
       model: input.model || DEFAULT_MODEL,
       reasoning: input.reasoning,
+      language: input.language,
       systemPrompt: composeSystemPrompt(agent, input),
       metadata: input.metadata,
       native: [],
@@ -73,7 +74,7 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
       return
     }
 
-    const history: AgentInputItem[] = record.native ?? []
+    const history = this.historyOf(record)
     const abort = new AbortController()
     record.abort = abort
 
@@ -148,6 +149,15 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
 
   async cancel(sessionId: string): Promise<void> {
     this.store.get(sessionId)?.abort?.abort()
+  }
+
+  /**
+   * O store é compartilhado pelos seis adapters, então o slot nativo é `unknown`. Este é o
+   * único ponto do adapter que sabe o formato do que ele guardou lá.
+   */
+  private historyOf(record: ISessionRecord): AgentInputItem[] {
+    if (!record.native) record.native = [] as AgentInputItem[]
+    return record.native as AgentInputItem[]
   }
 
   /** O SDK não conecta os MCP servers sozinho: o ciclo de vida é de quem os passa. */

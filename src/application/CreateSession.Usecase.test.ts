@@ -1,52 +1,50 @@
-import { describe, it } from 'node:test'
 import assert from 'node:assert'
-import { CreateSessionUseCase } from './CreateSession.Usecase'
-import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
-import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
+import { describe, it } from 'node:test'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
+import { AgentNotFoundError } from '@domain/errors/Domain.Error'
+import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
+import { ISessionRecord } from '@infra/session/Session.Store'
+import { CreateSessionUseCase } from './CreateSession.Usecase'
+
+const stubProvider = (overrides: Partial<IAgentProvider> = {}): IAgentProvider => ({
+  createSession: async () => ({ id: 's', provider: EProvider.OPENAI, mode: EMode.CHAT, createdAt: new Date() }),
+  sendMessage: async function* () {},
+  cancel: async () => {},
+  dispose: async () => {},
+  describe: () => ({}) as ISessionRecord,
+  list: () => [],
+  ...overrides,
+})
 
 describe('CreateSessionUseCase', () => {
-  it('should successfully create a session for an existing agent', async () => {
-    // Mock the AgentProvider
-    const mockProvider: IAgentProvider = {
-      createSession: async (_input: ICreateSessionInput) => ({
-        id: 'mock-session-123',
-        provider: EProvider.OPENAI,
-        mode: EMode.CHAT,
-        createdAt: new Date(),
+  it('delegates to the provider and returns the session', async () => {
+    const usecase = new CreateSessionUseCase(
+      stubProvider({
+        createSession: async () => ({
+          id: 'mock-session-123',
+          provider: EProvider.OPENAI,
+          mode: EMode.CHAT,
+          createdAt: new Date(),
+        }),
       }),
-      sendMessage: async function* () {
-        yield {} as unknown as import('@domain/models/AgentEvent.Model').IAgentEvent
-      },
-      cancel: async () => {},
-    }
+    )
 
-    const usecase = new CreateSessionUseCase(mockProvider)
-    const input: ICreateSessionInput = { agentId: 'analyst-agent' }
+    const result = await usecase.execute({ agentId: 'analyst-agent' })
 
-    const result = await usecase.execute(input)
     assert.strictEqual(result.id, 'mock-session-123')
     assert.strictEqual(result.provider, EProvider.OPENAI)
   })
 
-  it('should throw an error if the agent does not exist', async () => {
-    const mockProvider: IAgentProvider = {
-      createSession: async () => {
-        throw new Error('Agent not found')
-      },
-      sendMessage: async function* () {},
-      cancel: async () => {},
-    }
-
-    const usecase = new CreateSessionUseCase(mockProvider)
-    const input: ICreateSessionInput = { agentId: 'non-existent-agent' }
-
-    await assert.rejects(
-      async () => {
-        await usecase.execute(input)
-      },
-      { message: 'Agent not found' },
+  it('lets a named domain failure through untouched', async () => {
+    const usecase = new CreateSessionUseCase(
+      stubProvider({
+        createSession: async () => {
+          throw new AgentNotFoundError('nope')
+        },
+      }),
     )
+
+    await assert.rejects(usecase.execute({ agentId: 'nope' }), AgentNotFoundError)
   })
 })

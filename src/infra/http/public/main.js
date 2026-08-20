@@ -1,4 +1,13 @@
-const API_BASE = window.location.origin;
+const API_BASE = window.location.origin + '/v1';
+
+/**
+ * O gateway só exige token quando GATEWAY_TOKEN está definido no servidor. Guardar em
+ * localStorage é suficiente para uso local; não é credencial de usuário.
+ */
+function authHeaders(extra = {}) {
+  const token = localStorage.getItem('gatewayToken');
+  return token ? { ...extra, Authorization: 'Bearer ' + token } : extra;
+}
 
 const MODE_HINTS = {
   chat: 'SDK normal do provider. Conversa, anexos e reasoning — sem tools.',
@@ -142,7 +151,7 @@ const BADGE_NOTE =
 
 async function loadAgents() {
   try {
-    const res = await fetch(API_BASE + '/agents');
+    const res = await fetch(API_BASE + '/agents', { headers: authHeaders() });
     const data = await res.json();
     if (data.ok) {
       agentsData = data.result;
@@ -188,6 +197,13 @@ function updateModeSelector() {
 }
 
 function resetConversation(note) {
+  // Sem isto a sessão anterior ficava viva no gateway até o TTL, segurando o history do
+  // provider e, na lane agent, o runtime da SDK.
+  if (currentSessionId) {
+    const orphan = currentSessionId;
+    fetch(API_BASE + '/sessions/' + orphan, { method: 'DELETE', headers: authHeaders() }).catch(() => undefined);
+  }
+
   currentSessionId = null;
   Array.from(messagesContainer.children).forEach((child) => {
     if (child.id !== 'welcome-section') child.remove();
@@ -298,7 +314,7 @@ async function ensureSession() {
 
   const res = await fetch(API_BASE + '/sessions', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({
       agentId: currentAgentId,
       mode: currentMode,
@@ -326,8 +342,9 @@ stopBtn?.addEventListener('click', async () => {
   if (!currentSessionId) return;
   // Aborta o fetch e avisa o gateway, que por sua vez aborta o stream no provider.
   inFlight?.abort();
-  await fetch(API_BASE + '/sessions/' + currentAgentId + '/' + currentSessionId + '/cancel', {
+  await fetch(API_BASE + '/sessions/' + currentSessionId + '/cancel', {
     method: 'POST',
+    headers: authHeaders(),
   }).catch(() => undefined);
 });
 
@@ -366,9 +383,10 @@ form.addEventListener('submit', async (e) => {
     const sessionId = await ensureSession();
     inFlight = new AbortController();
 
-    const res = await fetch(API_BASE + '/sessions/' + currentAgentId + '/' + sessionId + '/messages', {
+    const res = await fetch(API_BASE + '/sessions/' + sessionId + '/messages', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      // O gateway escolhe entre SSE e JSON pelo Accept; aqui queremos os eventos.
+      headers: authHeaders({ 'Content-Type': 'application/json', Accept: 'text/event-stream' }),
       body: JSON.stringify({ message: text, files: filesToSend }),
       signal: inFlight.signal,
     });

@@ -8,7 +8,7 @@ import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { sessionPrefix } from '@infra/session/Session.Key'
-import { SessionStore } from '@infra/session/Session.Store'
+import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
 import { composeSystemPrompt, maxOutputTokens } from './support/Prompt.Helper'
 
 const DEFAULT_MODEL = 'claude-sonnet-5'
@@ -24,7 +24,7 @@ type THistory = Anthropic.MessageParam[]
 
 export interface IClaudeChatAdapterDeps {
   client?: Anthropic
-  store?: SessionStore<THistory>
+  store?: SessionStore
 }
 
 /**
@@ -35,11 +35,11 @@ export interface IClaudeChatAdapterDeps {
  */
 export class ClaudeChatAdapter implements IAgentAdapter {
   private readonly client: Anthropic
-  private readonly store: SessionStore<THistory>
+  private readonly store: SessionStore
 
   constructor(deps: IClaudeChatAdapterDeps = {}) {
     this.client = deps.client ?? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || 'sk-ant-dummy' })
-    this.store = deps.store ?? new SessionStore<THistory>()
+    this.store = deps.store ?? new SessionStore()
   }
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
@@ -49,6 +49,7 @@ export class ClaudeChatAdapter implements IAgentAdapter {
       mode: EMode.CHAT,
       model: input.model || DEFAULT_MODEL,
       reasoning: input.reasoning,
+      language: input.language,
       systemPrompt: composeSystemPrompt(agent, input),
       metadata: input.metadata,
       native: [],
@@ -70,7 +71,7 @@ export class ClaudeChatAdapter implements IAgentAdapter {
       return
     }
 
-    const history: THistory = record.native ?? []
+    const history = this.historyOf(record)
     const { content, warnings } = this.buildUserContent(input)
     history.push({ role: 'user', content })
 
@@ -153,13 +154,21 @@ export class ClaudeChatAdapter implements IAgentAdapter {
    * do usuário é removido — a Messages API recusa dois `user` seguidos, e é isso
    * que um cancelamento no meio do stream deixaria para trás.
    */
-  private settle(record: { native?: THistory }, history: THistory, text: string): void {
+  /**
+   * O store é compartilhado pelos seis adapters, então o slot nativo é `unknown`. Este é o
+   * único ponto do adapter que sabe o formato do que ele guardou lá.
+   */
+  private historyOf(record: ISessionRecord): THistory {
+    if (!record.native) record.native = [] satisfies THistory
+    return record.native as THistory
+  }
+
+  private settle(record: ISessionRecord, history: THistory, text: string): void {
     if (text) {
       history.push({ role: 'assistant', content: [{ type: 'text', text }] })
     } else if (history[history.length - 1]?.role === 'user') {
       history.pop()
     }
-    record.native = history
   }
 
   private buildUserContent(input: IMessageInput): { content: Anthropic.ContentBlockParam[]; warnings: string[] } {

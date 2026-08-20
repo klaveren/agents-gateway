@@ -1,81 +1,118 @@
-import { describe, it } from 'node:test'
 import assert from 'node:assert'
-import { AgentController } from './Agent.Controller'
-import { CreateSessionUseCase } from './CreateSession.Usecase'
-import { SendMessageUseCase } from './SendMessage.Usecase'
-import { CancelSessionUseCase } from './CancelSession.Usecase'
-import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
+import { describe, it } from 'node:test'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
+import { AgentNotFoundError, SessionNotFoundError } from '@domain/errors/Domain.Error'
+import { IAgentEvent } from '@domain/models/AgentEvent.Model'
+import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
+import { ISessionRecord } from '@infra/session/Session.Store'
 import { Request, Response } from 'express'
+import { AgentController, IAgentControllerDeps } from './Agent.Controller'
+import { CancelSessionUseCase } from './CancelSession.Usecase'
+import { CreateSessionUseCase } from './CreateSession.Usecase'
+import { DeleteSessionUseCase } from './DeleteSession.Usecase'
+import { GetSessionUseCase } from './GetSession.Usecase'
+import { ListSessionsUseCase } from './ListSessions.Usecase'
+import { SendMessageUseCase } from './SendMessage.Usecase'
+
+interface IBody {
+  ok: boolean
+  message?: string
+  code?: string
+  details?: unknown
+  result?: unknown
+}
+
+const record = (overrides: Partial<ISessionRecord> = {}): ISessionRecord => ({
+  id: 'google-chat-1',
+  agentId: 'researcher-agent',
+  provider: EProvider.GOOGLE,
+  mode: EMode.CHAT,
+  model: 'gemini-3.7-flash',
+  systemPrompt: 'prompt',
+  createdAt: new Date(0),
+  lastActivityAt: 0,
+  status: 'idle',
+  turns: 2,
+  usage: { inputTokens: 5, outputTokens: 7 },
+  native: ['segredo interno'],
+  ...overrides,
+})
 
 describe('AgentController', () => {
-  const getMockController = (overrides?: Partial<IAgentProvider>) => {
-    const mockProvider: IAgentProvider = {
+  const controllerWith = (overrides: Partial<IAgentProvider> = {}) => {
+    const provider: IAgentProvider = {
       createSession: async () => ({ id: '123', provider: EProvider.OPENAI, mode: EMode.CHAT, createdAt: new Date() }),
       sendMessage: async function* () {
         yield { type: 'message.started', sessionId: '1', timestamp: new Date() }
       },
       cancel: async () => {},
+      dispose: async () => {},
+      describe: () => record(),
+      list: () => [record()],
       ...overrides,
     }
 
-    return new AgentController(new CreateSessionUseCase(mockProvider), new SendMessageUseCase(mockProvider), new CancelSessionUseCase(mockProvider))
+    const deps: IAgentControllerDeps = {
+      createSession: new CreateSessionUseCase(provider),
+      sendMessage: new SendMessageUseCase(provider),
+      cancelSession: new CancelSessionUseCase(provider),
+      deleteSession: new DeleteSessionUseCase(provider),
+      getSession: new GetSessionUseCase(provider),
+      listSessions: new ListSessionsUseCase(provider),
+    }
+
+    return new AgentController(deps)
   }
 
-  // Type-safe mock request builder. `on` guarda os listeners para o teste poder
-  // simular a aba fechando no meio do stream.
-  const createMockRequest = (overrides?: Partial<Request>) => {
-    const req = { body: {}, params: {}, query: {}, ...overrides } as unknown as Request
-    return { req }
-  }
-
-  // Type-safe mock response builder
-  const createMockResponse = () => {
-    const locals: {
-      statusCode?: number
-      jsonData?: { ok: boolean; result: unknown[] | Record<string, unknown> | null }
-      headers: Record<string, string | string[]>
-      written: string
-      ended: boolean
-      flushed: boolean
-    } = {
+  const mockRequest = (overrides: { params?: Record<string, string>; body?: unknown; accept?: string } = {}) =>
+    ({
+      params: overrides.params ?? {},
+      body: overrides.body ?? {},
+      query: {},
       headers: {},
+      // O controller usa `accepts` para escolher entre SSE e JSON.
+      accepts: (types: string[]) => types.find((type) => type === overrides.accept) ?? types[0],
+    }) as unknown as Request
+
+  const mockResponse = () => {
+    const locals = {
+      statusCode: 200,
+      body: undefined as IBody | undefined,
+      headers: {} as Record<string, string>,
       written: '',
       ended: false,
       flushed: false,
     }
-
     const listeners: Record<string, Array<() => void>> = {}
 
     const res: Partial<Response> = {
-      // O disconnect do cliente chega por `res`, não por `req`.
-      on: function (event: string, listener: () => void) {
-        ;(listeners[event] ??= []).push(listener)
-        return this as Response
-      },
-      status: function (code: number) {
+      status(code: number) {
         locals.statusCode = code
         return this as Response
       },
-      json: function (data: { ok: boolean; result: unknown[] | Record<string, unknown> | null }) {
-        locals.jsonData = data
+      json(data: IBody) {
+        locals.body = data
         return this as Response
       },
-      setHeader: function (name: string, value: string | string[]) {
+      setHeader(name: string, value: string) {
         locals.headers[name] = value
         return this as Response
       },
-      write: function (data: string) {
-        locals.written += data
+      write(chunk: string) {
+        locals.written += chunk
         return true
       },
-      end: function () {
+      end() {
         locals.ended = true
         return this as Response
       },
-      flushHeaders: function () {
+      flushHeaders() {
         locals.flushed = true
+      },
+      on(event: string, listener: () => void) {
+        ;(listeners[event] ??= []).push(listener)
+        return this as Response
       },
     }
 
@@ -86,164 +123,178 @@ describe('AgentController', () => {
     }
   }
 
-  it('should list agents', async () => {
-    const controller = getMockController()
-    const { req } = createMockRequest()
-    const { res, locals } = createMockResponse()
+  it('reports health with the MCP status and the live session count', async () => {
+    const { res, locals } = mockResponse()
+    await controllerWith().health(mockRequest(), res)
 
-    await controller.getAgents(req, res)
-    assert.ok(locals.jsonData)
-    assert.ok(locals.jsonData.ok)
-    assert.ok(Array.isArray(locals.jsonData.result))
+    const result = locals.body?.result as { status: string; sessions: number; mcp: { connected: boolean } }
+    assert.strictEqual(locals.body?.ok, true)
+    assert.strictEqual(result.status, 'ok')
+    assert.strictEqual(result.sessions, 1)
+    assert.strictEqual(typeof result.mcp.connected, 'boolean')
   })
 
-  it('should handle getAgents error', async () => {
-    const controller = getMockController()
-    const { req } = createMockRequest()
-    const { res, locals } = createMockResponse()
+  it('lists the agents with their lanes', async () => {
+    const { res, locals } = mockResponse()
+    await controllerWith().getAgents(mockRequest(), res)
 
-    let count = 0
-    res.json = (data: { ok: boolean; result: unknown[] | Record<string, unknown> | null }) => {
-      if (count === 0) {
-        count++
-        throw new Error('Simulated error')
-      }
-      locals.jsonData = data
-      return res as Response
-    }
-
-    await controller.getAgents(req, res)
-    assert.strictEqual(locals.statusCode, 500)
-    assert.strictEqual(locals.jsonData?.ok, false)
+    const agents = locals.body?.result as Array<{ modes: string[] }>
+    assert.ok(agents.length > 0)
+    assert.ok(agents.every((agent) => agent.modes.length > 0))
   })
 
-  it('should create a session successfully', async () => {
-    const controller = getMockController()
-    const { req } = createMockRequest({ body: { agentId: 'researcher-agent' } })
-    const { res, locals } = createMockResponse()
+  it('404s the tool catalog of an agent that does not exist', async () => {
+    const { res, locals } = mockResponse()
+    await controllerWith().getAgentTools(mockRequest({ params: { agentId: 'nope' } }), res)
 
-    await controller.createSession(req, res)
+    assert.strictEqual(locals.statusCode, 404)
+    assert.strictEqual(locals.body?.code, 'agent_not_found')
+  })
+
+  it('creates a session with 201', async () => {
+    const { res, locals } = mockResponse()
+    await controllerWith().createSession(mockRequest({ body: { agentId: 'researcher-agent' } }), res)
+
     assert.strictEqual(locals.statusCode, 201)
-    assert.ok(locals.jsonData)
-    assert.strictEqual((locals.jsonData.result as { id: string }).id, '123')
+    assert.strictEqual((locals.body?.result as { id: string }).id, '123')
   })
 
-  it('should handle createSession error', async () => {
-    const controller = getMockController({
+  it('rejects an invalid body with 422 and points at the field', async () => {
+    const { res, locals } = mockResponse()
+    await controllerWith().createSession(mockRequest({ body: {} }), res)
+
+    assert.strictEqual(locals.statusCode, 422)
+    assert.strictEqual(locals.body?.code, 'validation_error')
+    assert.deepStrictEqual(locals.body?.details, [{ field: 'agentId', message: 'agentId is required' }])
+  })
+
+  it('maps a domain failure to its own status and code', async () => {
+    const { res, locals } = mockResponse()
+    const controller = controllerWith({
       createSession: async () => {
-        throw new Error('Failed')
+        throw new AgentNotFoundError('ghost')
       },
     })
-    const { req } = createMockRequest({ body: {} })
-    const { res, locals } = createMockResponse()
 
-    await controller.createSession(req, res)
-    assert.strictEqual(locals.statusCode, 500)
-    assert.ok(locals.jsonData)
-    assert.strictEqual(locals.jsonData.ok, false)
+    await controller.createSession(mockRequest({ body: { agentId: 'ghost' } }), res)
+
+    assert.strictEqual(locals.statusCode, 404)
+    assert.strictEqual(locals.body?.code, 'agent_not_found')
   })
 
-  it('should send messages and stream response', async () => {
-    const controller = getMockController()
-    const { req } = createMockRequest({ params: { agentId: 'a', id: '1' }, body: { message: 'hello' } })
-    const { res, locals } = createMockResponse()
+  it('never leaks the adapter native state in a session response', async () => {
+    const { res, locals } = mockResponse()
+    await controllerWith().getSession(mockRequest({ params: { id: 'google-chat-1' } }), res)
 
-    await controller.sendMessage(req, res)
-    assert.strictEqual(locals.headers['Content-Type'], 'text/event-stream')
-    assert.ok(locals.written.includes('message.started'))
-    assert.strictEqual(locals.ended, true)
+    const session = locals.body?.result as Record<string, unknown>
+    assert.strictEqual(session.turns, 2)
+    assert.deepStrictEqual(session.usage, { inputTokens: 5, outputTokens: 7 })
+    assert.strictEqual('native' in session, false)
+    assert.strictEqual('abort' in session, false)
+    assert.strictEqual('systemPrompt' in session, false)
   })
 
-  it('should handle sendMessage error', async () => {
-    const controller = getMockController({
-      // eslint-disable-next-line require-yield
-      sendMessage: async function* () {
-        throw new Error('Stream failed')
+  it('404s a session that is gone', async () => {
+    const { res, locals } = mockResponse()
+    const controller = controllerWith({
+      describe: () => {
+        throw new SessionNotFoundError('gone')
       },
     })
-    const { req } = createMockRequest({ params: { agentId: 'a', id: '1' }, body: { message: 'hello' } })
-    const { res, locals } = createMockResponse()
 
-    await controller.sendMessage(req, res)
-    assert.ok(locals.written.includes('error'))
-    assert.ok(locals.written.includes('Stream failed'))
-    assert.strictEqual(locals.ended, true)
+    await controller.getSession(mockRequest({ params: { id: 'gone' } }), res)
+
+    assert.strictEqual(locals.statusCode, 404)
+    assert.strictEqual(locals.body?.code, 'session_not_found')
   })
 
-  it('should set the streaming headers a proxy will not buffer', async () => {
-    const controller = getMockController()
-    const { req } = createMockRequest({ params: { agentId: 'a', id: '1' }, body: { message: 'hello' } })
-    const { res, locals } = createMockResponse()
+  it('deletes a session', async () => {
+    const disposed: string[] = []
+    const { res, locals } = mockResponse()
+    const controller = controllerWith({ dispose: async (id) => void disposed.push(id) })
 
-    await controller.sendMessage(req, res)
+    await controller.deleteSession(mockRequest({ params: { id: 'google-chat-1' } }), res)
+
+    assert.deepStrictEqual(disposed, ['google-chat-1'])
+    assert.strictEqual(locals.body?.ok, true)
+  })
+
+  it('streams by default, with headers a proxy will not buffer', async () => {
+    const { res, locals } = mockResponse()
+    await controllerWith().sendMessage(mockRequest({ params: { id: 's1' }, body: { message: 'hi' } }), res)
 
     assert.strictEqual(locals.headers['Content-Type'], 'text/event-stream')
     assert.strictEqual(locals.headers['X-Accel-Buffering'], 'no')
-    assert.strictEqual(locals.headers['Cache-Control'], 'no-cache, no-transform')
     assert.strictEqual(locals.flushed, true)
-  })
-
-  it('should frame each event with an id and a name', async () => {
-    const controller = getMockController()
-    const { req } = createMockRequest({ params: { agentId: 'a', id: '1' }, body: { message: 'hello' } })
-    const { res, locals } = createMockResponse()
-
-    await controller.sendMessage(req, res)
-
     assert.match(locals.written, /^id: 1\nevent: message\.started\ndata: \{/)
     assert.strictEqual(locals.ended, true)
   })
 
-  it('should cancel the provider stream when the client disconnects', async () => {
+  it('aggregates the turn into JSON when the client asks for it', async () => {
+    const events: IAgentEvent[] = [
+      { type: 'text.delta', sessionId: 's1', timestamp: new Date(), payload: { text: 'ok' } },
+      { type: 'tool.started', sessionId: 's1', timestamp: new Date(), payload: { tool: 'run_bash', args: {} } },
+      { type: 'tool.result', sessionId: 's1', timestamp: new Date(), payload: { tool: 'run_bash', result: 'done' } },
+      { type: 'usage', sessionId: 's1', timestamp: new Date(), payload: { outputTokens: 9 } },
+    ]
+
+    const { res, locals } = mockResponse()
+    const controller = controllerWith({
+      sendMessage: async function* () {
+        for (const event of events) yield event
+      },
+    })
+
+    await controller.sendMessage(mockRequest({ params: { id: 's1' }, body: { message: 'hi' }, accept: 'application/json' }), res)
+
+    const turn = locals.body?.result as { text: string; toolCalls: Array<{ tool: string; result: unknown }> }
+    assert.strictEqual(locals.headers['Content-Type'], undefined, 'não deve abrir stream')
+    assert.strictEqual(turn.text, 'ok')
+    assert.deepStrictEqual(turn.toolCalls, [{ tool: 'run_bash', args: {}, result: 'done' }])
+  })
+
+  it('rejects a turn with neither text nor attachment', async () => {
+    const { res, locals } = mockResponse()
+    await controllerWith().sendMessage(mockRequest({ params: { id: 's1' }, body: { message: '  ' } }), res)
+
+    assert.strictEqual(locals.statusCode, 422)
+    assert.strictEqual(locals.body?.code, 'validation_error')
+    assert.strictEqual(locals.ended, false, 'não deve abrir stream para pedido inválido')
+  })
+
+  it('cancels the provider stream when the client disconnects', async () => {
     let cancelled = 0
     let disconnect: () => void = () => {}
 
-    const controller = getMockController({
+    const controller = controllerWith({
       cancel: async () => {
         cancelled += 1
       },
       sendMessage: async function* () {
-        yield { type: 'text.delta' as const, sessionId: '1', timestamp: new Date(), payload: { text: 'first' } }
-        // A aba fecha no meio do turno.
+        yield { type: 'text.delta' as const, sessionId: 's1', timestamp: new Date(), payload: { text: 'first' } }
         disconnect()
-        yield { type: 'text.delta' as const, sessionId: '1', timestamp: new Date(), payload: { text: 'second' } }
+        yield { type: 'text.delta' as const, sessionId: 's1', timestamp: new Date(), payload: { text: 'second' } }
       },
     })
 
-    const { req } = createMockRequest({ params: { agentId: 'a', id: '1' }, body: { message: 'hello' } })
-    const { res, locals, emit } = createMockResponse()
+    const { res, locals, emit } = mockResponse()
     disconnect = () => emit('close')
 
-    await controller.sendMessage(req, res)
+    await controller.sendMessage(mockRequest({ params: { id: 's1' }, body: { message: 'hi' } }), res)
 
     assert.strictEqual(cancelled, 1)
     assert.ok(locals.written.includes('first'))
     assert.ok(!locals.written.includes('second'), 'nada deve ser escrito depois do disconnect')
-    assert.strictEqual(locals.ended, true)
   })
 
-  it('should cancel a session successfully', async () => {
-    const controller = getMockController()
-    const { req } = createMockRequest({ params: { agentId: 'a', id: '1' } })
-    const { res, locals } = createMockResponse()
+  it('cancels a session by id alone', async () => {
+    const seen: string[] = []
+    const { res, locals } = mockResponse()
+    const controller = controllerWith({ cancel: async (id) => void seen.push(id) })
 
-    await controller.cancelSession(req, res)
-    assert.ok(locals.jsonData)
-    assert.strictEqual(locals.jsonData.ok, true)
-  })
+    await controller.cancelSession(mockRequest({ params: { id: 'sess-9' } }), res)
 
-  it('should handle cancelSession error', async () => {
-    const controller = getMockController({
-      cancel: async () => {
-        throw new Error('Cancel failed')
-      },
-    })
-    const { req } = createMockRequest({ params: {} })
-    const { res, locals } = createMockResponse()
-
-    await controller.cancelSession(req, res)
-    assert.strictEqual(locals.statusCode, 500)
-    assert.ok(locals.jsonData)
-    assert.strictEqual(locals.jsonData.ok, false)
+    assert.deepStrictEqual(seen, ['sess-9'])
+    assert.strictEqual(locals.body?.ok, true)
   })
 })

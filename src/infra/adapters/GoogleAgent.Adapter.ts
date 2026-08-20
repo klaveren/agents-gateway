@@ -9,7 +9,7 @@ import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { sessionPrefix } from '@infra/session/Session.Key'
-import { SessionStore } from '@infra/session/Session.Store'
+import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
 import { buildAdkMcpToolset, buildAdkTools } from '@infra/tools/bridges/Adk.ToolBridge'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { composeSystemPrompt } from './support/Prompt.Helper'
@@ -61,7 +61,7 @@ interface IGoogleAgentNative {
 
 export interface IGoogleAgentAdapterDeps {
   createRuntime?: TAdkRuntimeFactory
-  store?: SessionStore<IGoogleAgentNative>
+  store?: SessionStore
   catalog?: ToolCatalog
 }
 
@@ -103,12 +103,12 @@ function defaultRuntimeFactory(spec: IAdkRuntimeSpec): IAdkRuntime {
  */
 export class GoogleAgentAdapter implements IAgentAdapter {
   private readonly createRuntime: TAdkRuntimeFactory
-  private readonly store: SessionStore<IGoogleAgentNative>
+  private readonly store: SessionStore
   private readonly catalog?: ToolCatalog
 
   constructor(deps: IGoogleAgentAdapterDeps = {}) {
     this.createRuntime = deps.createRuntime ?? defaultRuntimeFactory
-    this.store = deps.store ?? new SessionStore<IGoogleAgentNative>()
+    this.store = deps.store ?? new SessionStore()
     this.catalog = deps.catalog
   }
 
@@ -119,6 +119,7 @@ export class GoogleAgentAdapter implements IAgentAdapter {
       mode: EMode.AGENT,
       model: input.model || DEFAULT_MODEL,
       reasoning: input.reasoning,
+      language: input.language,
       systemPrompt: composeSystemPrompt(agent, input),
       metadata: input.metadata,
     })
@@ -154,20 +155,7 @@ export class GoogleAgentAdapter implements IAgentAdapter {
     }
 
     try {
-      const native =
-        record.native ??
-        ({
-          runtime: this.createRuntime({
-            name: this.toAdkName(agent.id),
-            model: record.model,
-            instruction: record.systemPrompt,
-            tools: this.buildTools(agent),
-          }),
-          userId: `gateway-${sessionId}`,
-          adkSessionId: randomUUID(),
-        } satisfies IGoogleAgentNative)
-
-      record.native = native
+      const native = this.nativeOf(record, agent)
       await native.runtime.ensureSession(native.userId, native.adkSessionId)
 
       const stream = native.runtime.runAsync({
@@ -218,6 +206,29 @@ export class GoogleAgentAdapter implements IAgentAdapter {
 
   async cancel(sessionId: string): Promise<void> {
     this.store.get(sessionId)?.abort?.abort()
+  }
+
+  /**
+   * O store é compartilhado pelos seis adapters, então o slot nativo é `unknown`. Este é o
+   * único ponto do adapter que sabe o formato do que ele guardou lá.
+   *
+   * O runtime do ADK vive aqui porque é ele que carrega o histórico entre turnos: recriá-lo
+   * a cada turno apagaria a conversa.
+   */
+  private nativeOf(record: ISessionRecord, agent: IAgent): IGoogleAgentNative {
+    if (!record.native) {
+      record.native = {
+        runtime: this.createRuntime({
+          name: this.toAdkName(agent.id),
+          model: record.model,
+          instruction: record.systemPrompt,
+          tools: this.buildTools(agent),
+        }),
+        userId: `gateway-${record.id}`,
+        adkSessionId: randomUUID(),
+      } satisfies IGoogleAgentNative
+    }
+    return record.native as IGoogleAgentNative
   }
 
   private buildTools(agent: IAgent): Array<BaseTool | BaseToolset> {

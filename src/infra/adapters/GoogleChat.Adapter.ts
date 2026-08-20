@@ -8,7 +8,7 @@ import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { sessionPrefix } from '@infra/session/Session.Key'
-import { SessionStore } from '@infra/session/Session.Store'
+import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
 import { composeSystemPrompt, maxOutputTokens } from './support/Prompt.Helper'
 
 const DEFAULT_MODEL = 'gemini-3.7-flash'
@@ -17,7 +17,7 @@ type THistory = Content[]
 
 export interface IGoogleChatAdapterDeps {
   client?: GoogleGenerativeAI
-  store?: SessionStore<THistory>
+  store?: SessionStore
 }
 
 /**
@@ -30,11 +30,11 @@ export interface IGoogleChatAdapterDeps {
  */
 export class GoogleChatAdapter implements IAgentAdapter {
   private readonly client: GoogleGenerativeAI
-  private readonly store: SessionStore<THistory>
+  private readonly store: SessionStore
 
   constructor(deps: IGoogleChatAdapterDeps = {}) {
     this.client = deps.client ?? new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || 'AIzaSy-dummy')
-    this.store = deps.store ?? new SessionStore<THistory>()
+    this.store = deps.store ?? new SessionStore()
   }
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
@@ -44,6 +44,7 @@ export class GoogleChatAdapter implements IAgentAdapter {
       mode: EMode.CHAT,
       model: input.model || DEFAULT_MODEL,
       reasoning: input.reasoning,
+      language: input.language,
       systemPrompt: composeSystemPrompt(agent, input),
       metadata: input.metadata,
       native: [],
@@ -65,7 +66,7 @@ export class GoogleChatAdapter implements IAgentAdapter {
       return
     }
 
-    const history: THistory = record.native ?? []
+    const history = this.historyOf(record)
     history.push({ role: 'user', parts: this.buildParts(input) })
 
     const abort = new AbortController()
@@ -137,13 +138,21 @@ export class GoogleChatAdapter implements IAgentAdapter {
     this.store.get(sessionId)?.abort?.abort()
   }
 
-  private settle(record: { native?: THistory }, history: THistory, text: string): void {
+  /**
+   * O store é compartilhado pelos seis adapters, então o slot nativo é `unknown`. Este é o
+   * único ponto do adapter que sabe o formato do que ele guardou lá.
+   */
+  private historyOf(record: ISessionRecord): THistory {
+    if (!record.native) record.native = [] satisfies THistory
+    return record.native as THistory
+  }
+
+  private settle(record: ISessionRecord, history: THistory, text: string): void {
     if (text) {
       history.push({ role: 'model', parts: [{ text }] })
     } else if (history[history.length - 1]?.role === 'user') {
       history.pop()
     }
-    record.native = history
   }
 
   private buildParts(input: IMessageInput): Part[] {

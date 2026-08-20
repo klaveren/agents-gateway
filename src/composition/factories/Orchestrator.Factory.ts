@@ -9,7 +9,19 @@ import { GoogleChatAdapter } from '@infra/adapters/GoogleChat.Adapter'
 import { OpenAIAgentAdapter } from '@infra/adapters/OpenAIAgent.Adapter'
 import { OpenAIChatAdapter } from '@infra/adapters/OpenAIChat.Adapter'
 import { adapterKey, AgentProvider } from '@infra/providers/Agent.Provider'
+import { SessionStore } from '@infra/session/Session.Store'
 import { makeTools } from './Tools.Factory'
+
+let store: SessionStore | undefined
+
+/**
+ * Um store para todo o gateway. É ele que sabe de que agente e de que lane é cada sessão,
+ * e por isso `sendMessage` e `cancel` precisam só do id.
+ */
+export function makeSessionStore(): SessionStore {
+  store ??= new SessionStore()
+  return store
+}
 
 /**
  * Monta as duas lanes: `chat` sobre os SDKs normais, `agent` sobre os Agents SDKs.
@@ -24,15 +36,16 @@ export function makeOrchestrator(): AgentProvider {
   setTracingDisabled(true)
 
   const { catalog } = makeTools()
+  const sessions = makeSessionStore()
 
   const adapters = new Map<string, IAgentAdapter>([
-    [adapterKey(EProvider.CLAUDE, EMode.CHAT), new ClaudeChatAdapter()],
-    [adapterKey(EProvider.OPENAI, EMode.CHAT), new OpenAIChatAdapter()],
-    [adapterKey(EProvider.GOOGLE, EMode.CHAT), new GoogleChatAdapter()],
-    [adapterKey(EProvider.CLAUDE, EMode.AGENT), new ClaudeAgentAdapter({ catalog })],
-    [adapterKey(EProvider.OPENAI, EMode.AGENT), new OpenAIAgentAdapter({ catalog })],
-    [adapterKey(EProvider.GOOGLE, EMode.AGENT), new GoogleAgentAdapter({ catalog })],
+    [adapterKey(EProvider.CLAUDE, EMode.CHAT), new ClaudeChatAdapter({ store: sessions })],
+    [adapterKey(EProvider.OPENAI, EMode.CHAT), new OpenAIChatAdapter({ store: sessions })],
+    [adapterKey(EProvider.GOOGLE, EMode.CHAT), new GoogleChatAdapter({ store: sessions })],
+    [adapterKey(EProvider.CLAUDE, EMode.AGENT), new ClaudeAgentAdapter({ store: sessions, catalog })],
+    [adapterKey(EProvider.OPENAI, EMode.AGENT), new OpenAIAgentAdapter({ store: sessions, catalog })],
+    [adapterKey(EProvider.GOOGLE, EMode.AGENT), new GoogleAgentAdapter({ store: sessions, catalog })],
   ])
 
-  return new AgentProvider(adapters)
+  return new AgentProvider(adapters, sessions)
 }
