@@ -21,6 +21,8 @@ export interface ISessionRecord {
   model: string
   reasoning?: string
   language?: string
+  /** Só na lane chat: o loop de tools feito à mão está ligado. */
+  tools: boolean
   /** System prompt já composto com a instrução de idioma. Composto uma vez, na criação. */
   systemPrompt: string
   createdAt: Date

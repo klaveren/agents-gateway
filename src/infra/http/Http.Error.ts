@@ -1,6 +1,15 @@
-import { AdapterNotFoundError, AgentNotFoundError, ModeNotSupportedError, SessionNotFoundError } from '@domain/errors/Domain.Error'
+import { AdapterNotFoundError, AgentNotFoundError, ModeNotSupportedError, SessionNotFoundError, ToolsNotSupportedError } from '@domain/errors/Domain.Error'
 
-export type TErrorCode = 'validation_error' | 'agent_not_found' | 'session_not_found' | 'mode_not_supported' | 'adapter_not_found' | 'unauthorized' | 'not_found' | 'internal_error'
+export type TErrorCode =
+  | 'validation_error'
+  | 'agent_not_found'
+  | 'session_not_found'
+  | 'mode_not_supported'
+  | 'tools_not_supported'
+  | 'adapter_not_found'
+  | 'unauthorized'
+  | 'not_found'
+  | 'internal_error'
 
 export interface IHttpFailure {
   status: number
@@ -43,6 +52,10 @@ export function toHttpFailure(error: unknown): IHttpFailure {
 
   if (error instanceof ModeNotSupportedError) {
     return { status: 422, code: 'mode_not_supported', message: error.message }
+  }
+
+  if (error instanceof ToolsNotSupportedError) {
+    return { status: 422, code: 'tools_not_supported', message: error.message }
   }
 
   if (error instanceof AdapterNotFoundError) {

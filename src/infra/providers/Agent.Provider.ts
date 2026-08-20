@@ -1,7 +1,7 @@
 import { getAgentById } from '@domain/Agent.Registry'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { AdapterNotFoundError, AgentNotFoundError, ModeNotSupportedError, SessionNotFoundError } from '@domain/errors/Domain.Error'
+import { AdapterNotFoundError, AgentNotFoundError, ModeNotSupportedError, SessionNotFoundError, ToolsNotSupportedError } from '@domain/errors/Domain.Error'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
@@ -28,6 +28,12 @@ export class AgentProvider implements IAgentProvider {
 
     if (!agent.modes.includes(mode)) {
       throw new ModeNotSupportedError(agent.id, mode)
+    }
+
+    // Na lane agent quem conduz o loop é o SDK; ligar o nosso por cima seria pedir duas
+    // orquestrações para o mesmo turno.
+    if (input.tools && mode !== EMode.CHAT) {
+      throw new ToolsNotSupportedError(mode)
     }
 
     return this.getAdapter(agent.provider, mode).createSession(agent, { ...input, mode })

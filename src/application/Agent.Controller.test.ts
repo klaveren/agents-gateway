@@ -30,6 +30,7 @@ const record = (overrides: Partial<ISessionRecord> = {}): ISessionRecord => ({
   provider: EProvider.GOOGLE,
   mode: EMode.CHAT,
   model: 'gemini-3.7-flash',
+  tools: false,
   systemPrompt: 'prompt',
   createdAt: new Date(0),
   lastActivityAt: 0,

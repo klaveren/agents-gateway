@@ -102,7 +102,9 @@ describe('ClaudeAgentAdapter', () => {
     assert.ok(events.find((e) => e.type === 'text.delta' && e.payload.text === 'Listing'))
     assert.ok(events.find((e) => e.type === 'reasoning.delta' && e.payload.text === 'hmm'))
     assert.ok(events.find((e) => e.type === 'tool.started' && e.payload.tool === 'run_bash' && e.payload.args.command === 'ls'))
-    assert.ok(events.find((e) => e.type === 'tool.result'))
+    // O bloco de resultado só carrega o tool_use_id; o evento tem de sair com o nome,
+    // senão o agregador não consegue casar chamada e resultado.
+    assert.ok(events.find((e) => e.type === 'tool.result' && e.payload.tool === 'run_bash'))
     assert.ok(events.find((e) => e.type === 'usage' && e.payload.outputTokens === 34))
     assert.strictEqual(events[events.length - 1].type, 'message.completed')
   })

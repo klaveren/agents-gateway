@@ -41,3 +41,9 @@ export class AdapterNotFoundError extends DomainError {
     super(`Adapter not found for provider: ${provider} (mode: ${mode})`)
   }
 }
+
+export class ToolsNotSupportedError extends DomainError {
+  constructor(public readonly mode: string) {
+    super(`The manual tool loop is only available on the chat lane, not on "${mode}"`)
+  }
+}

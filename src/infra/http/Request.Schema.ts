@@ -8,6 +8,7 @@ const MAX_FILES = 8
 export const createSessionSchema = z.object({
   agentId: z.string({ error: 'agentId is required' }).min(1, 'agentId is required'),
   mode: z.enum(EMode).optional(),
+  tools: z.boolean().optional(),
   model: z.string().min(1).optional(),
   reasoning: z.string().min(1).optional(),
   language: z.string().min(1).optional(),

@@ -8,6 +8,7 @@ export interface ISessionDto {
   model: string
   reasoning?: string
   language?: string
+  tools: boolean
   status: string
   turns: number
   usage: ISessionRecord['usage']
@@ -31,6 +32,7 @@ export function toSessionDto(record: ISessionRecord): ISessionDto {
     model: record.model,
     reasoning: record.reasoning,
     language: record.language,
+    tools: record.tools,
     status: record.status,
     turns: record.turns,
     usage: record.usage,

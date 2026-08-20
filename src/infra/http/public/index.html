@@ -76,7 +76,7 @@
     <div id="app" class="w-full max-w-4xl h-[85vh] glass rounded-3xl overflow-hidden flex shadow-2xl flex-col md:flex-row border border-zinc-800/50">
       
       <!-- Sidebar -->
-      <aside class="w-full md:w-64 border-b md:border-b-0 md:border-r border-zinc-800/50 p-6 flex flex-col bg-zinc-900/50 backdrop-blur-md">
+      <aside class="w-full md:w-64 shrink-0 overflow-y-auto border-b md:border-b-0 md:border-r border-zinc-800/50 p-6 flex flex-col bg-zinc-900/50 backdrop-blur-md">
         <h1 class="text-xl font-bold bg-gradient-to-r from-zinc-300 to-zinc-500 bg-clip-text text-transparent mb-8">
           Agent Gateway
         </h1>
@@ -103,6 +103,10 @@
               <button type="button" data-mode="chat" class="mode-btn px-3 py-1.5 rounded-lg text-xs font-medium transition-colors">chat</button>
               <button type="button" data-mode="agent" class="mode-btn px-3 py-1.5 rounded-lg text-xs font-medium transition-colors">agent</button>
             </div>
+            <label id="tools-toggle" class="mt-2 flex items-start gap-2 cursor-pointer select-none">
+              <input type="checkbox" id="tools-checkbox" class="mt-0.5 accent-zinc-500" />
+              <span class="text-[11px] leading-snug text-zinc-400">manual tool loop</span>
+            </label>
             <p id="mode-hint" class="text-[11px] leading-snug text-zinc-500 mt-2"></p>
           </div>
         </div>

@@ -11,12 +11,14 @@ function authHeaders(extra = {}) {
 
 const MODE_HINTS = {
   chat: 'SDK normal do provider. Conversa, anexos e reasoning — sem tools.',
+  chatTools: 'SDK normal + o loop de tools escrito à mão. É o "antes" do estudo.',
   agent: 'Agents SDK oficial. O loop de tools é do SDK, não do gateway.',
 };
 
 // State
 let currentAgentId = 'researcher-agent';
 let currentMode = 'chat';
+let manualTools = false;
 let currentSessionId = null;
 let isGenerating = false;
 let inFlight = null;
@@ -31,6 +33,8 @@ const messagesContainer = document.getElementById('chat-messages');
 const providerButtons = document.querySelectorAll('#provider-selector button');
 const modeButtons = document.querySelectorAll('#mode-selector .mode-btn');
 const modeHint = document.getElementById('mode-hint');
+const toolsToggle = document.getElementById('tools-toggle');
+const toolsCheckbox = document.getElementById('tools-checkbox');
 const currentAgentName = document.getElementById('current-agent-name');
 const attachBtn = document.getElementById('attach-btn');
 const fileInput = document.getElementById('file-input');
@@ -105,7 +109,8 @@ function addMessage(role, content, id) {
 
   const label = document.createElement('span');
   label.className = role === 'user' ? 'text-xs text-zinc-500 mt-2 mr-1' : 'text-xs text-zinc-500 mt-2 ml-1';
-  label.textContent = role === 'user' ? 'You' : role === 'system' ? 'System' : 'Agent · ' + currentMode;
+  const lane = currentMode === 'chat' && manualTools ? 'chat+tools' : currentMode;
+  label.textContent = role === 'user' ? 'You' : role === 'system' ? 'System' : 'Agent · ' + lane;
 
   div.append(tools, box, label);
   messagesContainer.appendChild(div);
@@ -193,8 +198,27 @@ function updateModeSelector() {
     btn.classList.toggle('opacity-40', !supported.includes(mode));
   });
 
-  if (modeHint) modeHint.textContent = MODE_HINTS[currentMode] ?? '';
+  // O loop manual só existe na lane chat: na agent quem conduz é o SDK.
+  const chat = currentMode === 'chat';
+  if (toolsCheckbox) {
+    toolsCheckbox.checked = chat && manualTools;
+    toolsCheckbox.disabled = !chat;
+  }
+  if (toolsToggle) toolsToggle.classList.toggle('opacity-40', !chat);
+
+  const hint = chat && manualTools ? MODE_HINTS.chatTools : MODE_HINTS[currentMode];
+  if (modeHint) modeHint.textContent = hint ?? '';
 }
+
+toolsCheckbox?.addEventListener('change', () => {
+  manualTools = toolsCheckbox.checked;
+  updateModeSelector();
+  resetConversation(
+    manualTools
+      ? 'Manual tool loop ligado: o gateway conduz o loop sobre o SDK normal. New session started.'
+      : 'Manual tool loop desligado: conversa pura. New session started.',
+  );
+});
 
 function resetConversation(note) {
   // Sem isto a sessão anterior ficava viva no gateway até o TTL, segurando o history do
@@ -239,6 +263,7 @@ modeButtons.forEach((btn) => {
   btn.addEventListener('click', () => {
     if (btn.disabled || btn.dataset.mode === currentMode) return;
     currentMode = btn.dataset.mode;
+    if (currentMode !== 'chat') manualTools = false;
     updateModeSelector();
     // A sessão pertence a uma lane: trocar de lane começa outra.
     resetConversation('Lane "' + currentMode + '": ' + MODE_HINTS[currentMode] + ' New session started.');
@@ -318,6 +343,7 @@ async function ensureSession() {
     body: JSON.stringify({
       agentId: currentAgentId,
       mode: currentMode,
+      tools: currentMode === 'chat' && manualTools,
       model: document.getElementById('model-selector')?.value || undefined,
       reasoning: document.getElementById('reasoning-selector')?.value || undefined,
       language: document.getElementById('language-selector')?.value,

@@ -10,6 +10,7 @@ describe('SessionStore', () => {
     provider: EProvider.CLAUDE,
     mode: EMode.CHAT,
     model: 'claude-sonnet-5',
+    tools: false,
     reasoning: 'high',
     systemPrompt: 'You are a system operator.',
     ...overrides,

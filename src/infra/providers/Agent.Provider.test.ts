@@ -2,7 +2,7 @@ import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { AdapterNotFoundError, AgentNotFoundError, ModeNotSupportedError, SessionNotFoundError } from '@domain/errors/Domain.Error'
+import { AdapterNotFoundError, AgentNotFoundError, ModeNotSupportedError, SessionNotFoundError, ToolsNotSupportedError } from '@domain/errors/Domain.Error'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { SessionStore } from '@infra/session/Session.Store'
@@ -31,6 +31,7 @@ describe('AgentProvider', () => {
             provider,
             mode: input.mode ?? EMode.CHAT,
             model: input.model ?? 'model-x',
+            tools: input.tools === true,
             systemPrompt: agent.systemPrompt,
           })
           return { id: record.id, provider, mode: record.mode, createdAt: record.createdAt }
@@ -122,6 +123,17 @@ describe('AgentProvider', () => {
     const { provider } = setup()
 
     await assert.rejects(provider.createSession({ agentId: 'researcher-agent', mode: 'telepathy' as EMode }), ModeNotSupportedError)
+  })
+
+  it('refuses the manual tool loop outside the chat lane', async () => {
+    const { provider } = setup()
+
+    // Na lane agent quem conduz o loop é o SDK; ligar o nosso por cima seria pedir duas
+    // orquestrações para o mesmo turno.
+    await assert.rejects(provider.createSession({ agentId: 'researcher-agent', mode: EMode.AGENT, tools: true }), ToolsNotSupportedError)
+
+    const allowed = await provider.createSession({ agentId: 'researcher-agent', tools: true })
+    assert.strictEqual(allowed.mode, EMode.CHAT)
   })
 
   it('names the failure instead of throwing a generic error', async () => {

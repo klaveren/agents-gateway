@@ -120,6 +120,7 @@ export class GoogleAgentAdapter implements IAgentAdapter {
       model: input.model || DEFAULT_MODEL,
       reasoning: input.reasoning,
       language: input.language,
+      tools: false,
       systemPrompt: composeSystemPrompt(agent, input),
       metadata: input.metadata,
     })

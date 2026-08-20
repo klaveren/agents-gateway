@@ -28,6 +28,7 @@ const failureEnvelope = {
         'agent_not_found',
         'session_not_found',
         'mode_not_supported',
+        'tools_not_supported',
         'adapter_not_found',
         'unauthorized',
         'not_found',
@@ -49,6 +50,7 @@ const sessionSchema = {
     model: { type: 'string' },
     reasoning: { type: 'string' },
     language: { type: 'string' },
+    tools: { type: 'boolean' },
     status: { type: 'string', enum: ['idle', 'running'] },
     turns: { type: 'integer' },
     usage: {
@@ -145,6 +147,12 @@ export const OPENAPI_DOCUMENT = {
                 properties: {
                   agentId: { type: 'string' },
                   mode: { type: 'string', enum: ['chat', 'agent'], default: 'chat' },
+                  tools: {
+                    type: 'boolean',
+                    default: false,
+                    description:
+                      'Chat lane only: run the hand-rolled tool loop. On the agent lane the SDK owns the loop.',
+                  },
                   model: { type: 'string' },
                   reasoning: { type: 'string' },
                   language: { type: 'string' },

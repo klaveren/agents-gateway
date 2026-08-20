@@ -63,6 +63,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       model: input.model || DEFAULT_MODEL,
       reasoning: input.reasoning,
       language: input.language,
+      tools: false,
       systemPrompt: composeSystemPrompt(agent, input),
       metadata: input.metadata,
       // O SDK exige um UUID limpo aqui; o id do gateway leva prefixo e não serve.
@@ -123,6 +124,10 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
 
     const stream = this.query({ prompt: this.buildPrompt(input, blocks), options })
 
+    // O bloco `tool_result` só traz o `tool_use_id`. Sem guardar o nome da chamada, o
+    // evento de resultado sairia identificado por um id opaco.
+    const toolNames = new Map<string, string>()
+
     try {
       for await (const message of stream) {
         if (message.type === 'system' && message.subtype === 'init') {
@@ -148,6 +153,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
         if (message.type === 'assistant') {
           for (const block of message.message.content) {
             if (block.type === 'tool_use') {
+              toolNames.set(block.id, block.name)
               yield {
                 type: 'tool.started',
                 sessionId,
@@ -164,11 +170,12 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
           if (typeof content === 'string') continue
           for (const block of content) {
             if (block.type === 'tool_result') {
+              const tool = toolNames.get(block.tool_use_id) ?? block.tool_use_id
               yield {
                 type: 'tool.result',
                 sessionId,
                 timestamp: new Date(),
-                payload: { tool: block.tool_use_id, result: block.content },
+                payload: { tool, result: block.content },
               }
             }
           }

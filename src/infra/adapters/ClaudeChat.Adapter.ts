@@ -9,7 +9,10 @@ import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { sessionPrefix } from '@infra/session/Session.Key'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
-import { composeSystemPrompt, maxOutputTokens } from './support/Prompt.Helper'
+import { ToolCatalog } from '@infra/tools/Tool.Catalog'
+import { IToolDefinition } from '@infra/tools/Tool.Types'
+import { IManualLoopProvider, IManualToolCall, IManualToolResult, IManualTurnOutcome, runManualToolLoop } from './support/ManualTool.Loop'
+import { composeSystemPrompt, maxOutputTokens, maxToolTurns } from './support/Prompt.Helper'
 
 const DEFAULT_MODEL = 'claude-sonnet-5'
 
@@ -25,21 +28,25 @@ type THistory = Anthropic.MessageParam[]
 export interface IClaudeChatAdapterDeps {
   client?: Anthropic
   store?: SessionStore
+  catalog?: ToolCatalog
 }
 
 /**
- * Lane `chat` do Claude: conversa pura sobre o SDK normal.
+ * Lane `chat` do Claude, sobre o SDK normal.
  *
- * Sem tools por desenho — quem executa tool é a lane `agent`, e lá quem conduz o
- * loop é o Agents SDK, não nós.
+ * Por padrão é conversa pura. Com `tools: true` na sessão, o turno passa pelo loop escrito
+ * à mão em `support/ManualTool.Loop` — e é aí que dá para comparar, no código, o que a
+ * lane `agent` recebe pronto do Agents SDK.
  */
 export class ClaudeChatAdapter implements IAgentAdapter {
   private readonly client: Anthropic
   private readonly store: SessionStore
+  private readonly catalog?: ToolCatalog
 
   constructor(deps: IClaudeChatAdapterDeps = {}) {
     this.client = deps.client ?? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || 'sk-ant-dummy' })
     this.store = deps.store ?? new SessionStore()
+    this.catalog = deps.catalog
   }
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
@@ -50,6 +57,7 @@ export class ClaudeChatAdapter implements IAgentAdapter {
       model: input.model || DEFAULT_MODEL,
       reasoning: input.reasoning,
       language: input.language,
+      tools: input.tools === true,
       systemPrompt: composeSystemPrompt(agent, input),
       metadata: input.metadata,
       native: [],
@@ -64,7 +72,7 @@ export class ClaudeChatAdapter implements IAgentAdapter {
     }
   }
 
-  async *sendMessage(_agent: IAgent, sessionId: string, input: IMessageInput): AsyncIterable<IAgentEvent> {
+  async *sendMessage(agent: IAgent, sessionId: string, input: IMessageInput): AsyncIterable<IAgentEvent> {
     const record = this.store.get(sessionId)
     if (!record) {
       yield { type: 'error', sessionId, timestamp: new Date(), payload: { message: `Session not found: ${sessionId}` } }
@@ -72,6 +80,11 @@ export class ClaudeChatAdapter implements IAgentAdapter {
     }
 
     const history = this.historyOf(record)
+    // Um turno que morre no meio pode deixar um `tool_use` sem resposta, e a Messages API
+    // recusa a conversa inteira depois disso. Voltar ao ponto de partida é mais barato que
+    // remendar o transcript.
+    const checkpoint = history.length
+
     const { content, warnings } = this.buildUserContent(input)
     history.push({ role: 'user', content })
 
@@ -83,54 +96,28 @@ export class ClaudeChatAdapter implements IAgentAdapter {
       yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message } }
     }
 
-    let text = ''
-
     try {
-      const params: Anthropic.MessageCreateParamsStreaming = {
-        model: record.model,
-        system: record.systemPrompt,
-        max_tokens: maxOutputTokens(),
-        messages: [...history],
-        stream: true,
+      const tools = record.tools ? ((await this.catalog?.list(agent.allowedTools)) ?? []) : []
+
+      yield* runManualToolLoop<Anthropic.MessageParam>({
+        sessionId,
+        history,
+        tools,
+        catalog: this.catalog,
+        provider: this.loopProvider(record, sessionId),
+        signal: abort.signal,
+        maxTurns: maxToolTurns(),
+      })
+
+      if (abort.signal.aborted) {
+        history.length = checkpoint
+        yield { type: 'message.aborted', sessionId, timestamp: new Date() }
+        return
       }
 
-      const effort = this.toEffort(record.reasoning)
-      if (effort) params.output_config = { effort }
-
-      const stream = await this.client.messages.create(params, { signal: abort.signal })
-
-      for await (const chunk of stream) {
-        if (chunk.type === 'message_start') {
-          yield {
-            type: 'usage',
-            sessionId,
-            timestamp: new Date(),
-            payload: { inputTokens: chunk.message.usage.input_tokens },
-          }
-        } else if (chunk.type === 'content_block_delta') {
-          if (chunk.delta.type === 'text_delta') {
-            text += chunk.delta.text
-            yield { type: 'text.delta', sessionId, timestamp: new Date(), payload: { text: chunk.delta.text } }
-          } else if (chunk.delta.type === 'thinking_delta') {
-            yield { type: 'reasoning.delta', sessionId, timestamp: new Date(), payload: { text: chunk.delta.thinking } }
-          }
-        } else if (chunk.type === 'message_delta') {
-          yield {
-            type: 'usage',
-            sessionId,
-            timestamp: new Date(),
-            payload: {
-              outputTokens: chunk.usage.output_tokens,
-              reasoningTokens: chunk.usage.output_tokens_details?.thinking_tokens ?? undefined,
-            },
-          }
-        }
-      }
-
-      this.settle(record, history, text)
       yield { type: 'message.completed', sessionId, timestamp: new Date() }
     } catch (error: unknown) {
-      this.settle(record, history, text)
+      history.length = checkpoint
 
       if (abort.signal.aborted) {
         yield { type: 'message.aborted', sessionId, timestamp: new Date() }
@@ -150,25 +137,89 @@ export class ClaudeChatAdapter implements IAgentAdapter {
   }
 
   /**
-   * Fecha o turno no history. Se a geração morreu antes de produzir texto, o turno
-   * do usuário é removido — a Messages API recusa dois `user` seguidos, e é isso
-   * que um cancelamento no meio do stream deixaria para trás.
+   * A parte do loop que só o Claude sabe fazer: declarar as tools, achar o `tool_use` no
+   * meio do stream e escrever chamada e resultado no formato de history da Messages API.
    */
-  /**
-   * O store é compartilhado pelos seis adapters, então o slot nativo é `unknown`. Este é o
-   * único ponto do adapter que sabe o formato do que ele guardou lá.
-   */
+  private loopProvider(record: ISessionRecord, sessionId: string): IManualLoopProvider<Anthropic.MessageParam> {
+    const client = this.client
+    const effort = this.toEffort(record.reasoning)
+
+    return {
+      async *runTurn(history, tools, signal): AsyncGenerator<IAgentEvent, IManualTurnOutcome> {
+        const params: Anthropic.MessageCreateParamsStreaming = {
+          model: record.model,
+          system: record.systemPrompt,
+          max_tokens: maxOutputTokens(),
+          messages: [...history],
+          stream: true,
+        }
+
+        if (effort) params.output_config = { effort }
+        if (tools.length > 0) params.tools = tools.map(toAnthropicTool)
+
+        const stream = await client.messages.create(params, { signal })
+
+        let text = ''
+        // Os argumentos chegam em pedaços de JSON, indexados pelo bloco de conteúdo.
+        const pending = new Map<number, { id: string; name: string; json: string }>()
+
+        for await (const chunk of stream) {
+          if (chunk.type === 'message_start') {
+            yield {
+              type: 'usage',
+              sessionId,
+              timestamp: new Date(),
+              payload: { inputTokens: chunk.message.usage.input_tokens },
+            }
+          } else if (chunk.type === 'content_block_start' && chunk.content_block.type === 'tool_use') {
+            pending.set(chunk.index, { id: chunk.content_block.id, name: chunk.content_block.name, json: '' })
+          } else if (chunk.type === 'content_block_delta') {
+            if (chunk.delta.type === 'text_delta') {
+              text += chunk.delta.text
+              yield { type: 'text.delta', sessionId, timestamp: new Date(), payload: { text: chunk.delta.text } }
+            } else if (chunk.delta.type === 'thinking_delta') {
+              yield { type: 'reasoning.delta', sessionId, timestamp: new Date(), payload: { text: chunk.delta.thinking } }
+            } else if (chunk.delta.type === 'input_json_delta') {
+              const call = pending.get(chunk.index)
+              if (call) call.json += chunk.delta.partial_json
+            }
+          } else if (chunk.type === 'message_delta') {
+            yield {
+              type: 'usage',
+              sessionId,
+              timestamp: new Date(),
+              payload: {
+                outputTokens: chunk.usage.output_tokens,
+                reasoningTokens: chunk.usage.output_tokens_details?.thinking_tokens ?? undefined,
+              },
+            }
+          }
+        }
+
+        return { text, calls: [...pending.values()].map(toManualCall) }
+      },
+
+      appendAssistant(history, outcome) {
+        const content: Anthropic.ContentBlockParam[] = []
+        if (outcome.text) content.push({ type: 'text', text: outcome.text })
+        for (const call of outcome.calls) {
+          content.push({ type: 'tool_use', id: call.id, name: call.name, input: call.args })
+        }
+
+        // A Messages API recusa conteúdo vazio.
+        history.push({ role: 'assistant', content: content.length > 0 ? content : [{ type: 'text', text: '…' }] })
+      },
+
+      appendToolResults(history, results) {
+        // No Claude o resultado da tool volta como mensagem do usuário.
+        history.push({ role: 'user', content: results.map(toToolResultBlock) })
+      },
+    }
+  }
+
   private historyOf(record: ISessionRecord): THistory {
     if (!record.native) record.native = [] satisfies THistory
     return record.native as THistory
-  }
-
-  private settle(record: ISessionRecord, history: THistory, text: string): void {
-    if (text) {
-      history.push({ role: 'assistant', content: [{ type: 'text', text }] })
-    } else if (history[history.length - 1]?.role === 'user') {
-      history.pop()
-    }
   }
 
   private buildUserContent(input: IMessageInput): { content: Anthropic.ContentBlockParam[]; warnings: string[] } {
@@ -194,5 +245,35 @@ export class ClaudeChatAdapter implements IAgentAdapter {
 
   private toEffort(reasoning: string | undefined): TEffort | undefined {
     return (EFFORTS as readonly string[]).includes(reasoning ?? '') ? (reasoning as TEffort) : undefined
+  }
+}
+
+function toAnthropicTool(tool: IToolDefinition): Anthropic.Tool {
+  return {
+    name: tool.name,
+    description: tool.description,
+    input_schema: tool.inputSchema as unknown as Anthropic.Tool['input_schema'],
+  }
+}
+
+function toManualCall(pending: { id: string; name: string; json: string }): IManualToolCall {
+  let args: Record<string, unknown> = {}
+
+  try {
+    const parsed: unknown = JSON.parse(pending.json || '{}')
+    if (typeof parsed === 'object' && parsed !== null) args = parsed as Record<string, unknown>
+  } catch {
+    args = {}
+  }
+
+  return { id: pending.id, name: pending.name, args }
+}
+
+function toToolResultBlock(entry: IManualToolResult): Anthropic.ContentBlockParam {
+  return {
+    type: 'tool_result',
+    tool_use_id: entry.call.id,
+    content: entry.outcome.result,
+    is_error: entry.outcome.status === 'error',
   }
 }

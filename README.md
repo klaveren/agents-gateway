@@ -20,21 +20,23 @@ loop the vendor's own framework drives.
 
 There are two very different things people call "using an LLM":
 
-| | `chat` lane | `agent` lane |
-| --- | --- | --- |
-| SDK | `@anthropic-ai/sdk`, `openai`, `@google/generative-ai` | `@anthropic-ai/claude-agent-sdk`, `@openai/agents`, `@google/adk` |
-| Who runs the tool loop | nobody — there are no tools | the SDK |
-| What it is good at | conversation, attachments, reasoning control | multi-step work, tools, MCP |
-| Lines of orchestration we wrote | 0 | 0 |
+| | `chat` | `chat` + `tools` | `agent` |
+| --- | --- | --- | --- |
+| SDK | plain | plain | Agents SDK |
+| Who runs the tool loop | nobody | **we do, by hand** | the SDK |
+| Lines of orchestration we wrote | 0 | ~80 shared + ~90 per provider | 0 |
 
-That last row is the whole thesis. An earlier version of this project built a hand-rolled
-agentic state machine on top of the *plain* SDKs — a `while (shouldContinue)` loop that
-accumulated the stream, executed a tool, and fed the result back, written three times, once
-per provider, and already drifting apart. Every provider ships an official agentic SDK that
-does this better. So the loop is gone, and the two lanes exist to make the difference
-visible instead of arguing about it.
+The plain SDKs are `@anthropic-ai/sdk`, `openai` and `@google/generative-ai`; the agentic
+ones are `@anthropic-ai/claude-agent-sdk`, `@openai/agents` and `@google/adk`.
 
-A chat is not a tool run. This gateway lets you feel that.
+That last row is the whole thesis, and the middle column is what makes it checkable. Turn
+`tools` on in the chat lane and the gateway runs the loop itself:
+[`ManualTool.Loop.ts`](src/infra/adapters/support/ManualTool.Loop.ts) plus, in each chat
+adapter, the part nobody can share — declaring the tools in that provider's dialect, finding
+the call in the middle of the stream, and writing the call and its result back into that
+SDK's history format. Switch to the agent lane and every line of it goes away.
+
+The default is `tools: false`, so a chat is a chat until you ask for otherwise.
 
 ---
 
@@ -124,16 +126,33 @@ rejects every cross-origin request. The bundled UI is same-origin and unaffected
 | `GATEWAY_TOKEN` | *(none)* | When set, `/v1/*` requires `Authorization: Bearer`. The UI reads it from `localStorage.gatewayToken`. |
 | `JSON_LIMIT` | `25mb` | Request body cap. Base64 attachments inflate ~33%. |
 
-### Tool safety
+### Tool safety, and actual containment
 
 `run_bash` runs with a timeout, an output cap, a configurable `cwd`, and a deny-list for the
 catastrophic ones (`rm -rf`, `mkfs`, `dd` onto a device, fork bombs, `curl | sh`, `sudo`,
-`shutdown`). On top of that sits each SDK's own gate — `canUseTool` on Claude, `needsApproval`
-on OpenAI.
+`shutdown`). On top of that sits each SDK's own gate — `canUseTool` on Claude,
+`needsApproval` on OpenAI.
 
-This is **not a sandbox** and does not pretend to be. It is a guard against the catastrophic
-command typed by mistake or hallucinated by a model. Real containment means isolating the
-process: a container, an unprivileged user.
+**That deny-list is not containment.** It catches the catastrophic command typed by mistake
+or hallucinated by a model. It does nothing about a model that simply reads
+`~/.ssh/id_rsa`. Containment is the container:
+
+```bash
+cp .env.example .env   # preencha as chaves
+docker compose up -d   # http://127.0.0.1:3000/v1
+```
+
+| What the container buys you | What it does **not** |
+| --- | --- |
+| `run_bash` runs as an unprivileged user (uid 10001), never as you | the model still has a shell |
+| your `$HOME`, your keys and your files are not there at all | it still reads the container's own filesystem |
+| writes land in `/workspace`; the rest of the rootfs is read-only | `/workspace` is genuinely writable |
+| `cap_drop: ALL` + `no-new-privileges` — no route to root | — |
+| `pids_limit` and `mem_limit` cap a fork bomb at the container | — |
+| the port is published on `127.0.0.1` only | it still reaches the network |
+
+Verified by asking the agent lane to run `whoami` inside it: `gateway`, in `/workspace`,
+with no `/Users` in sight.
 
 ---
 

@@ -5,6 +5,9 @@ import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
+import type { McpServerClient } from '@infra/mcp/McpServer.Client'
+import { ToolCatalog } from '@infra/tools/Tool.Catalog'
+import { ILocalTool } from '@infra/tools/Tool.Types'
 import { ClaudeChatAdapter } from './ClaudeChat.Adapter'
 
 interface IRequestOptions {
@@ -36,6 +39,33 @@ describe('ClaudeChatAdapter', () => {
       .filter((e) => e.type === 'text.delta')
       .map((e) => e.payload.text)
       .join('')
+
+  const runBash: ILocalTool = {
+    origin: 'local',
+    name: 'run_bash',
+    description: 'Run bash',
+    inputSchema: {
+      type: 'object',
+      properties: { command: { type: 'string', description: 'cmd' } },
+      required: ['command'],
+      additionalProperties: false,
+    },
+    async execute() {
+      return { status: 'success', result: 'a.txt' }
+    },
+  }
+
+  const catalog = new ToolCatalog(
+    {
+      serverUrl: 'http://localhost:8000/mcp',
+      isConnected: () => false,
+      ensureConnected: async () => false,
+      connectionGeneration: 0,
+      listTools: async () => [],
+      callTool: async () => ({ status: 'success' as const, result: '' }),
+    } as unknown as McpServerClient,
+    [runBash],
+  )
 
   it('creates a chat session carrying model, reasoning and language', async () => {
     const adapter = new ClaudeChatAdapter({ client: clientWith(async () => []) })
@@ -174,6 +204,103 @@ describe('ClaudeChatAdapter', () => {
 
     assert.strictEqual(textOf(events), 'partial')
     assert.strictEqual(events[events.length - 1].type, 'message.aborted')
+  })
+
+  it('keeps the chat lane tool-free unless the session asks for it', async () => {
+    const sent: Anthropic.MessageCreateParamsStreaming[] = []
+    const adapter = new ClaudeChatAdapter({
+      catalog,
+      client: clientWith(async (params) => {
+        sent.push(params)
+        return (async function* () {
+          yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'oi' } }
+        })()
+      }),
+    })
+
+    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'oi' }))
+
+    assert.strictEqual(sent[0].tools, undefined)
+    assert.strictEqual(sent.length, 1, 'sem tools o loop dá exatamente uma volta')
+  })
+
+  it('runs the hand-rolled tool loop when the session opts in', async () => {
+    const sent: Anthropic.MessageCreateParamsStreaming[] = []
+    let round = 0
+
+    const adapter = new ClaudeChatAdapter({
+      catalog,
+      client: clientWith(async (params) => {
+        sent.push(params)
+        round += 1
+
+        if (round === 1) {
+          return (async function* () {
+            yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'vou olhar. ' } }
+            yield { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'tu_1', name: 'run_bash' } }
+            yield { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"command"' } }
+            yield { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: ':"ls"}' } }
+          })()
+        }
+
+        return (async function* () {
+          yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'achei a.txt' } }
+        })()
+      }),
+    })
+
+    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent', tools: true })
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'liste os arquivos' }))
+
+    // Duas idas ao modelo: uma pedindo a tool, outra com o resultado na mão.
+    assert.strictEqual(sent.length, 2)
+    assert.deepStrictEqual(
+      sent[0].tools?.map((t) => t.name),
+      ['run_bash'],
+    )
+    assert.strictEqual(textOf(events), 'vou olhar. achei a.txt')
+
+    const started = events.find((e) => e.type === 'tool.started')
+    assert.ok(started && started.type === 'tool.started')
+    assert.strictEqual(started.payload.args.command, 'ls')
+    assert.ok(events.find((e) => e.type === 'tool.result' && e.payload.result === 'a.txt'))
+
+    // O segundo pedido já leva a chamada e o resultado no transcript.
+    const roles = sent[1].messages.map((m) => m.role)
+    assert.deepStrictEqual(roles, ['user', 'assistant', 'user'])
+  })
+
+  it('rolls the transcript back when a tool turn dies halfway', async () => {
+    const adapter = new ClaudeChatAdapter({
+      catalog,
+      client: clientWith(async () => {
+        throw new Error('API down')
+      }),
+    })
+
+    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent', tools: true })
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'liste' }))
+
+    // Um `tool_use` sem resposta envenenaria todos os turnos seguintes.
+    const sentAfter: Anthropic.MessageCreateParamsStreaming[] = []
+    const healthy = new ClaudeChatAdapter({
+      catalog,
+      store: (adapter as unknown as { store: never }).store,
+      client: clientWith(async (params) => {
+        sentAfter.push(params)
+        return (async function* () {
+          yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'ok' } }
+        })()
+      }),
+    })
+
+    await drain(healthy.sendMessage(getAgent(), session.id, { text: 'de novo' }))
+
+    assert.deepStrictEqual(
+      sentAfter[0].messages.map((m) => m.role),
+      ['user'],
+    )
   })
 
   it('reports a missing session rather than throwing', async () => {
