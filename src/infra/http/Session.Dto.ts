@@ -1,4 +1,4 @@
-import { ISessionRecord } from '@infra/session/Session.Store'
+import { ISession } from '@domain/models/Session.Model'
 
 export interface ISessionDto {
   id: string
@@ -11,7 +11,7 @@ export interface ISessionDto {
   tools: boolean
   status: string
   turns: number
-  usage: ISessionRecord['usage']
+  usage: ISession['usage']
   createdAt: Date
   lastActivityAt: Date
   metadata?: Record<string, unknown>
@@ -20,10 +20,10 @@ export interface ISessionDto {
 /**
  * O que a API mostra de uma sessão.
  *
- * Deliberadamente sem `native` e sem `abort`: o primeiro é o estado interno da SDK (e pode
- * conter a conversa inteira), o segundo não é serializável.
+ * Parte de `ISession`, que já exclui o maquinário do adapter (`native`, `abort`, o prompt
+ * composto). Aqui só resta a forma de saída da API.
  */
-export function toSessionDto(record: ISessionRecord): ISessionDto {
+export function toSessionDto(record: ISession): ISessionDto {
   return {
     id: record.id,
     agentId: record.agentId,
@@ -37,7 +37,7 @@ export function toSessionDto(record: ISessionRecord): ISessionDto {
     turns: record.turns,
     usage: record.usage,
     createdAt: record.createdAt,
-    lastActivityAt: new Date(record.lastActivityAt),
+    lastActivityAt: record.lastActivityAt,
     metadata: record.metadata,
   }
 }

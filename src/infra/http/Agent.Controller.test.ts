@@ -5,16 +5,16 @@ import { EProvider } from '@domain/enums/EProvider.Enum'
 import { AgentNotFoundError, SessionNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
-import { ISessionRecord } from '@infra/session/Session.Store'
+import { ISession } from '@domain/models/Session.Model'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { Request, Response } from 'express'
 import { AgentController, IAgentControllerDeps } from './Agent.Controller'
-import { CancelSessionUseCase } from './CancelSession.Usecase'
-import { CreateSessionUseCase } from './CreateSession.Usecase'
-import { DeleteSessionUseCase } from './DeleteSession.Usecase'
-import { GetSessionUseCase } from './GetSession.Usecase'
-import { ListSessionsUseCase } from './ListSessions.Usecase'
-import { SendMessageUseCase } from './SendMessage.Usecase'
+import { CancelSessionUseCase } from '@application/CancelSession.Usecase'
+import { CreateSessionUseCase } from '@application/CreateSession.Usecase'
+import { DeleteSessionUseCase } from '@application/DeleteSession.Usecase'
+import { GetSessionUseCase } from '@application/GetSession.Usecase'
+import { ListSessionsUseCase } from '@application/ListSessions.Usecase'
+import { SendMessageUseCase } from '@application/SendMessage.Usecase'
 
 interface IBody {
   ok: boolean
@@ -24,20 +24,18 @@ interface IBody {
   result?: unknown
 }
 
-const record = (overrides: Partial<ISessionRecord> = {}): ISessionRecord => ({
+const record = (overrides: Partial<ISession> = {}): ISession => ({
   id: 'google-chat-1',
   agentId: 'researcher-agent',
   provider: EProvider.GOOGLE,
   mode: EMode.CHAT,
   model: 'gemini-3.7-flash',
   tools: false,
-  systemPrompt: 'prompt',
   createdAt: new Date(0),
-  lastActivityAt: 0,
+  lastActivityAt: new Date(0),
   status: 'idle',
   turns: 2,
   usage: { inputTokens: 5, outputTokens: 7 },
-  native: ['segredo interno'],
   ...overrides,
 })
 

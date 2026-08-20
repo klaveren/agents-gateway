@@ -1,5 +1,4 @@
-import { makeController } from '@composition/factories/Controller.Factory'
-import { AgentController } from '@application/Agent.Controller'
+import { AgentController } from './Agent.Controller'
 import express, { Express, NextFunction, Request, RequestHandler, Response } from 'express'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -23,7 +22,7 @@ export class HttpServer {
   public readonly app: Express
   private readonly routes: IRoute[]
 
-  constructor(controller: AgentController = makeController()) {
+  constructor(controller: AgentController) {
     this.app = express()
     this.app.disable('x-powered-by')
     this.app.use(corsMiddleware())

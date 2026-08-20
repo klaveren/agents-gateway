@@ -4,7 +4,7 @@ import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { AgentNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
-import { ISessionRecord } from '@infra/session/Session.Store'
+import { ISession } from '@domain/models/Session.Model'
 import { CreateSessionUseCase } from './CreateSession.Usecase'
 
 const stubProvider = (overrides: Partial<IAgentProvider> = {}): IAgentProvider => ({
@@ -12,7 +12,7 @@ const stubProvider = (overrides: Partial<IAgentProvider> = {}): IAgentProvider =
   sendMessage: async function* () {},
   cancel: async () => {},
   dispose: async () => {},
-  describe: () => ({}) as ISessionRecord,
+  describe: () => ({}) as ISession,
   list: () => [],
   ...overrides,
 })

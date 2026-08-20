@@ -1,4 +1,4 @@
-import { AgentController } from '@application/Agent.Controller'
+import { AgentController } from '@infra/http/Agent.Controller'
 import { makeTools } from './Tools.Factory'
 import { makeUsecases } from './Usecases.Factory'
 

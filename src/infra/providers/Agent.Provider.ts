@@ -7,6 +7,7 @@ import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
+import { ISession } from '@domain/models/Session.Model'
 import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
@@ -73,12 +74,12 @@ export class AgentProvider implements IAgentProvider {
     if (!this.sessions.delete(sessionId)) throw new SessionNotFoundError(sessionId)
   }
 
-  describe(sessionId: string): ISessionRecord {
-    return this.requireSession(sessionId)
+  describe(sessionId: string): ISession {
+    return toSession(this.requireSession(sessionId))
   }
 
-  list(): ISessionRecord[] {
-    return this.sessions.list()
+  list(): ISession[] {
+    return this.sessions.list().map(toSession)
   }
 
   private requireSession(sessionId: string): ISessionRecord {
@@ -97,5 +98,32 @@ export class AgentProvider implements IAgentProvider {
     const adapter = this.adapters.get(adapterKey(provider, mode))
     if (!adapter) throw new AdapterNotFoundError(provider, mode)
     return adapter
+  }
+}
+
+/**
+ * A tradução do registro de infra para a visão do domínio.
+ *
+ * É trabalho do adapter, e é por isso que ela mora aqui: o `ISessionRecord` carrega
+ * `abort`, `native` e o prompt já composto, que são maquinário e não pertencem ao contrato.
+ * Note que `lastActivityAt` deixa de ser epoch em milissegundo — aritmética de TTL é
+ * problema do store, não do domínio.
+ */
+function toSession(record: ISessionRecord): ISession {
+  return {
+    id: record.id,
+    agentId: record.agentId,
+    provider: record.provider,
+    mode: record.mode,
+    model: record.model,
+    reasoning: record.reasoning,
+    language: record.language,
+    tools: record.tools,
+    status: record.status,
+    turns: record.turns,
+    usage: record.usage,
+    createdAt: record.createdAt,
+    lastActivityAt: new Date(record.lastActivityAt),
+    metadata: record.metadata,
   }
 }

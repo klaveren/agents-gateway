@@ -2,8 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IUsage } from '@domain/models/AgentEvent.Model'
-
-export type TSessionStatus = 'idle' | 'running'
+import { TSessionStatus } from '@domain/models/Session.Model'
 
 /**
  * Tudo que uma sessão carrega, num lugar só.

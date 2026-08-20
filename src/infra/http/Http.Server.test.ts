@@ -1,5 +1,6 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
+import { makeController } from '@composition/factories/Controller.Factory'
 import { API_PREFIX, HttpServer } from './Http.Server'
 import { OPENAPI_DOCUMENT } from './Openapi.Schema'
 
@@ -9,7 +10,7 @@ function toOpenapiPath(path: string): string {
 }
 
 describe('HttpServer', () => {
-  const server = new HttpServer()
+  const server = new HttpServer(makeController())
 
   it('serves every route under the version prefix', () => {
     assert.strictEqual(API_PREFIX, '/v1')

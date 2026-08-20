@@ -1,10 +1,10 @@
 import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
-import { ISessionRecord } from '@infra/session/Session.Store'
+import { ISession } from '@domain/models/Session.Model'
 
 export class ListSessionsUseCase {
   constructor(private agentProvider: IAgentProvider) {}
 
-  async execute(): Promise<ISessionRecord[]> {
+  async execute(): Promise<ISession[]> {
     return this.agentProvider.list()
   }
 }
