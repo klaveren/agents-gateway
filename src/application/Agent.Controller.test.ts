@@ -23,13 +23,11 @@ describe('AgentController', () => {
     return new AgentController(new CreateSessionUseCase(mockProvider), new SendMessageUseCase(mockProvider), new CancelSessionUseCase(mockProvider))
   }
 
-  // Type-safe mock request builder
-  const createMockRequest = (overrides?: Partial<Request>): Request => {
-    return {
-      body: {},
-      params: {},
-      ...overrides,
-    } as Request
+  // Type-safe mock request builder. `on` guarda os listeners para o teste poder
+  // simular a aba fechando no meio do stream.
+  const createMockRequest = (overrides?: Partial<Request>) => {
+    const req = { body: {}, params: {}, query: {}, ...overrides } as unknown as Request
+    return { req }
   }
 
   // Type-safe mock response builder
@@ -40,13 +38,22 @@ describe('AgentController', () => {
       headers: Record<string, string | string[]>
       written: string
       ended: boolean
+      flushed: boolean
     } = {
       headers: {},
       written: '',
       ended: false,
+      flushed: false,
     }
 
+    const listeners: Record<string, Array<() => void>> = {}
+
     const res: Partial<Response> = {
+      // O disconnect do cliente chega por `res`, não por `req`.
+      on: function (event: string, listener: () => void) {
+        ;(listeners[event] ??= []).push(listener)
+        return this as Response
+      },
       status: function (code: number) {
         locals.statusCode = code
         return this as Response
@@ -67,14 +74,21 @@ describe('AgentController', () => {
         locals.ended = true
         return this as Response
       },
+      flushHeaders: function () {
+        locals.flushed = true
+      },
     }
 
-    return { res: res as Response, locals }
+    return {
+      res: res as Response,
+      locals,
+      emit: (event: string) => listeners[event]?.forEach((listener) => listener()),
+    }
   }
 
   it('should list agents', async () => {
     const controller = getMockController()
-    const req = createMockRequest()
+    const { req } = createMockRequest()
     const { res, locals } = createMockResponse()
 
     await controller.getAgents(req, res)
@@ -85,7 +99,7 @@ describe('AgentController', () => {
 
   it('should handle getAgents error', async () => {
     const controller = getMockController()
-    const req = createMockRequest()
+    const { req } = createMockRequest()
     const { res, locals } = createMockResponse()
 
     let count = 0
@@ -105,7 +119,7 @@ describe('AgentController', () => {
 
   it('should create a session successfully', async () => {
     const controller = getMockController()
-    const req = createMockRequest({ body: { agentId: 'researcher-agent' } })
+    const { req } = createMockRequest({ body: { agentId: 'researcher-agent' } })
     const { res, locals } = createMockResponse()
 
     await controller.createSession(req, res)
@@ -120,7 +134,7 @@ describe('AgentController', () => {
         throw new Error('Failed')
       },
     })
-    const req = createMockRequest({ body: {} })
+    const { req } = createMockRequest({ body: {} })
     const { res, locals } = createMockResponse()
 
     await controller.createSession(req, res)
@@ -131,7 +145,7 @@ describe('AgentController', () => {
 
   it('should send messages and stream response', async () => {
     const controller = getMockController()
-    const req = createMockRequest({ params: { agentId: 'a', id: '1' }, body: { message: 'hello' } })
+    const { req } = createMockRequest({ params: { agentId: 'a', id: '1' }, body: { message: 'hello' } })
     const { res, locals } = createMockResponse()
 
     await controller.sendMessage(req, res)
@@ -147,7 +161,7 @@ describe('AgentController', () => {
         throw new Error('Stream failed')
       },
     })
-    const req = createMockRequest({ params: { agentId: 'a', id: '1' }, body: { message: 'hello' } })
+    const { req } = createMockRequest({ params: { agentId: 'a', id: '1' }, body: { message: 'hello' } })
     const { res, locals } = createMockResponse()
 
     await controller.sendMessage(req, res)
@@ -156,9 +170,61 @@ describe('AgentController', () => {
     assert.strictEqual(locals.ended, true)
   })
 
+  it('should set the streaming headers a proxy will not buffer', async () => {
+    const controller = getMockController()
+    const { req } = createMockRequest({ params: { agentId: 'a', id: '1' }, body: { message: 'hello' } })
+    const { res, locals } = createMockResponse()
+
+    await controller.sendMessage(req, res)
+
+    assert.strictEqual(locals.headers['Content-Type'], 'text/event-stream')
+    assert.strictEqual(locals.headers['X-Accel-Buffering'], 'no')
+    assert.strictEqual(locals.headers['Cache-Control'], 'no-cache, no-transform')
+    assert.strictEqual(locals.flushed, true)
+  })
+
+  it('should frame each event with an id and a name', async () => {
+    const controller = getMockController()
+    const { req } = createMockRequest({ params: { agentId: 'a', id: '1' }, body: { message: 'hello' } })
+    const { res, locals } = createMockResponse()
+
+    await controller.sendMessage(req, res)
+
+    assert.match(locals.written, /^id: 1\nevent: message\.started\ndata: \{/)
+    assert.strictEqual(locals.ended, true)
+  })
+
+  it('should cancel the provider stream when the client disconnects', async () => {
+    let cancelled = 0
+    let disconnect: () => void = () => {}
+
+    const controller = getMockController({
+      cancel: async () => {
+        cancelled += 1
+      },
+      sendMessage: async function* () {
+        yield { type: 'text.delta' as const, sessionId: '1', timestamp: new Date(), payload: { text: 'first' } }
+        // A aba fecha no meio do turno.
+        disconnect()
+        yield { type: 'text.delta' as const, sessionId: '1', timestamp: new Date(), payload: { text: 'second' } }
+      },
+    })
+
+    const { req } = createMockRequest({ params: { agentId: 'a', id: '1' }, body: { message: 'hello' } })
+    const { res, locals, emit } = createMockResponse()
+    disconnect = () => emit('close')
+
+    await controller.sendMessage(req, res)
+
+    assert.strictEqual(cancelled, 1)
+    assert.ok(locals.written.includes('first'))
+    assert.ok(!locals.written.includes('second'), 'nada deve ser escrito depois do disconnect')
+    assert.strictEqual(locals.ended, true)
+  })
+
   it('should cancel a session successfully', async () => {
     const controller = getMockController()
-    const req = createMockRequest({ params: { agentId: 'a', id: '1' } })
+    const { req } = createMockRequest({ params: { agentId: 'a', id: '1' } })
     const { res, locals } = createMockResponse()
 
     await controller.cancelSession(req, res)
@@ -172,7 +238,7 @@ describe('AgentController', () => {
         throw new Error('Cancel failed')
       },
     })
-    const req = createMockRequest({ params: {} })
+    const { req } = createMockRequest({ params: {} })
     const { res, locals } = createMockResponse()
 
     await controller.cancelSession(req, res)

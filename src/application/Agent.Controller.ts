@@ -3,8 +3,8 @@ import { CreateSessionUseCase } from '@application/CreateSession.Usecase'
 import { SendMessageUseCase } from '@application/SendMessage.Usecase'
 import { AGENT_REGISTRY, getAgentById } from '@domain/Agent.Registry'
 import { makeTools } from '@composition/factories/Tools.Factory'
-import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { fail, ok } from '@infra/http/Http.Response'
+import { SseStream } from '@infra/http/Sse.Stream'
 import { Request, Response } from 'express'
 
 const ALL_LOCAL_TOOLS = [...new Set(AGENT_REGISTRY.flatMap((agent) => agent.allowedTools))]
@@ -38,22 +38,34 @@ export class AgentController {
     const id = req.params.id as string
     const { message, files } = req.body
 
-    res.setHeader('Content-Type', 'text/event-stream')
-    res.setHeader('Cache-Control', 'no-cache')
-    res.setHeader('Connection', 'keep-alive')
+    const stream = new SseStream(res)
+    stream.open()
+
+    let finished = false
+    // Fechar a aba tem de matar a geração no provider, senão o gateway segue queimando
+    // token para uma resposta que ninguém vai ler.
+    //
+    // O listener vai em `res`, não em `req`: o `close` do request dispara assim que o
+    // corpo do POST termina de ser lido, o que aqui é imediato — e cancelaria todo turno
+    // antes do primeiro evento sair.
+    res.on('close', () => {
+      if (finished) return
+      finished = true
+      void this.cancelSessionUseCase.execute(agentId, id).catch(() => undefined)
+    })
 
     try {
-      const events = this.sendMessageUseCase.execute(agentId, id, { text: message, files })
-      for await (const event of events) {
-        res.write(`data: ${JSON.stringify(event)}\n\n`)
+      for await (const event of this.sendMessageUseCase.execute(agentId, id, { text: message, files })) {
+        if (finished) break
+        stream.send(event)
       }
-      res.end()
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err)
       console.error('[AgentController.sendMessage] Error:', message)
-      const event: IAgentEvent = { type: 'error', sessionId: id, timestamp: new Date(), payload: { message } }
-      res.write(`data: ${JSON.stringify(event)}\n\n`)
-      res.end()
+      stream.send({ type: 'error', sessionId: id, timestamp: new Date(), payload: { message } })
+    } finally {
+      finished = true
+      stream.close()
     }
   }
 

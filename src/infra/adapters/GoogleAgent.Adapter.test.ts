@@ -17,8 +17,8 @@ interface IRuntimeLog {
 }
 
 /** Eventos no formato que o `toStructuredEvents` do ADK realmente sabe interpretar. */
-function adkEvent(parts: unknown[]): Event {
-  return { actions: {}, content: { parts } } as unknown as Event
+function adkEvent(parts: unknown[], partial = false): Event {
+  return { actions: {}, content: { parts }, partial } as unknown as Event
 }
 
 describe('GoogleAgentAdapter', () => {
@@ -158,6 +158,43 @@ describe('GoogleAgentAdapter', () => {
     assert.strictEqual(log.specs[0].tools.length, 1)
     const [tool] = log.specs[0].tools
     assert.ok('name' in tool && tool.name === 'search_web')
+  })
+
+  it('does not repeat the answer when the ADK follows partials with an aggregate', async () => {
+    const log = emptyLog()
+    const adapter = new GoogleAgentAdapter({
+      createRuntime: runtimeWith(
+        () => [
+          adkEvent([{ text: 'Hello' }], true),
+          adkEvent([{ text: ' world' }], true),
+          // O agregado final repete tudo que já saiu nos parciais.
+          adkEvent([{ text: 'Hello world' }]),
+        ],
+        log,
+      ),
+    })
+
+    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+
+    const text = events
+      .filter((e) => e.type === 'text.delta')
+      .map((e) => e.payload.text)
+      .join('')
+
+    assert.strictEqual(text, 'Hello world')
+  })
+
+  it('still emits the text when the ADK sends only an aggregate', async () => {
+    const log = emptyLog()
+    const adapter = new GoogleAgentAdapter({
+      createRuntime: runtimeWith(() => [adkEvent([{ text: 'Only once' }])], log),
+    })
+
+    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+
+    assert.ok(events.find((e) => e.type === 'text.delta' && e.payload.text === 'Only once'))
   })
 
   it('warns that the ADK has no reasoning-effort knob', async () => {

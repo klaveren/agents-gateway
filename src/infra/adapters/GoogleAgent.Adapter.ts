@@ -177,11 +177,23 @@ export class GoogleAgentAdapter implements IAgentAdapter {
         abortSignal: abort.signal,
       })
 
+      // Em StreamingMode.SSE o ADK manda os pedaços com `partial: true` e depois um
+      // evento agregado com o texto inteiro. Repassar os dois duplicaria a resposta.
+      let sawPartialText = false
+
       for await (const event of stream) {
+        const isPartial = event.partial === true
+
         for (const structured of toStructuredEvents(event)) {
+          const carriesText = structured.type === EventType.CONTENT || structured.type === EventType.THOUGHT
+          if (carriesText && !isPartial && sawPartialText) continue
+
           const mapped = this.toAgentEvent(structured, sessionId)
           if (mapped) yield mapped
         }
+
+        if (isPartial) sawPartialText = true
+        else sawPartialText = false
       }
 
       if (abort.signal.aborted) {

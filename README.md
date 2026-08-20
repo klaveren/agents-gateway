@@ -2,90 +2,121 @@
 
 > **⚠️ Alpha Version**: This project is currently in early alpha. Features and APIs may change.
 
-### Run multiple AI providers against your local machine. From a single glass UI.
+### Run the same agent two ways — plain SDK, or the official Agents SDK. Side by side, from a single glass UI.
 
-> A lightweight proxy that connects the latest models from **Google, Anthropic, and OpenAI** directly
-> to your local Model Context Protocol (MCP) server.
-> **Full multimodal support. Dynamic reasoning injection. Pure TypeScript.**
+> A lightweight gateway that puts **Google, Anthropic and OpenAI** behind one API, and runs
+> each of them in **two lanes**: a `chat` lane on the provider's plain SDK, and an `agent`
+> lane on the provider's own Agents SDK.
+> **Full multimodal support. Real cancellation. MCP. Pure TypeScript.**
 
-You probably have an MCP server exposing your local filesystem or bash shell. You probably also have API keys for Gemini, Claude, and GPT. This gateway bridges them. It serves a sleek, glassmorphism web UI where you can switch between agents on the fly, upload files, dial up their reasoning effort, and watch them execute local tools in real-time.
+You have API keys for Gemini, Claude and GPT. You probably also have an MCP server exposing
+your filesystem or shell. This gateway bridges them — and, more to the point, it lets you
+watch the same agent solve the same task twice: once as a conversation you drive, once as a
+loop the vendor's own framework drives.
+
+---
+
+## The point of the experiment
+
+There are two very different things people call "using an LLM":
+
+| | `chat` lane | `agent` lane |
+| --- | --- | --- |
+| SDK | `@anthropic-ai/sdk`, `openai`, `@google/generative-ai` | `@anthropic-ai/claude-agent-sdk`, `@openai/agents`, `@google/adk` |
+| Who runs the tool loop | nobody — there are no tools | the SDK |
+| What it is good at | conversation, attachments, reasoning control | multi-step work, tools, MCP |
+| Lines of orchestration we wrote | 0 | 0 |
+
+That last row is the whole thesis. An earlier version of this project built a hand-rolled
+agentic state machine on top of the *plain* SDKs — a `while (shouldContinue)` loop that
+accumulated the stream, executed a tool, and fed the result back, written three times, once
+per provider, and already drifting apart. Every provider ships an official agentic SDK that
+does this better. So the loop is gone, and the two lanes exist to make the difference
+visible instead of arguing about it.
+
+A chat is not a tool run. This gateway lets you feel that.
 
 ---
 
 ## Is this your problem?
 
-You are in the right place if any of this sounds familiar:
-
-- You want to test how different LLMs (Gemini 3.7, Claude 5, GPT-5.6) perform with local tools, but writing a new test harness for each SDK is exhausting.
-- You need a simple UI to chat with your local agents instead of staring at terminal logs.
-- You want to **upload an image or a PDF** and have a local agent run a script based on what it sees.
-- You are tired of manually handling the nuanced differences between Anthropic's `output_config.effort`, OpenAI's `reasoning_effort`, and Gemini's dynamic thinking.
-
-> **The short version:** Agent Gateway abstracts away the SDK quirks. It presents a unified `/sessions` API and a beautiful frontend to interact with pre-configured agents (Researcher, SysOps, Data Analyst), translating your intent into the exact parameters and tool calls each provider demands.
+- You want to compare how Gemini, Claude and GPT behave with local tools, without writing a
+  harness per SDK.
+- You want to know what an **Agents SDK** actually buys you over calling the plain API in a
+  loop — measured, not asserted.
+- You need a UI to drive local agents instead of reading terminal logs.
+- You want to **upload an image or a PDF** and have an agent act on it.
+- You are tired of the nuances between Anthropic's `output_config.effort`, OpenAI's
+  `reasoning_effort` and Gemini's thinking config.
 
 ---
 
 ## TL;DR
 
-Agent Gateway is an Express server + Vanilla JS frontend that manages AI sessions, normalizes multimodal attachments, maps MCP tools to native function declarations, and streams Server-Sent Events (SSE) back to the browser.
-
 ```
-YOU (Browser)                   GATEWAY                        MCP SERVER
-[Attach image]  ------->  POST /messages (Base64)
-[Set Reasoning] ------->  Injects `reasoning_effort`
-                          Translates to Gemini/Claude/GPT ---> Executes local tool
-                          <----------------------------------- Returns tool result
-[See UI Badge]  <-------  SSE: tool.started / tool.result
+YOU (Browser)                    GATEWAY                          PROVIDER
+[pick lane: chat] ------>  POST /sessions {mode:'chat'}
+                           ClaudeChat.Adapter  -------------->  messages.create(stream)
+[see tokens]      <------  SSE: text.delta / usage
+
+[pick lane: agent] ----->  POST /sessions {mode:'agent'}
+                           ClaudeAgent.Adapter -------------->  claude-agent-sdk query()
+                                                                  └─ runs the tool loop
+                           local tools + MCP  <---------------─┘
+[see tool badges] <------  SSE: tool.started / tool.result
 ```
 
----
-
-## The Problem
-
-Every AI provider implements tool calling and reasoning differently.
-- OpenAI requires `reasoning_effort: 'low'` and strict function schemas.
-- Anthropic uses `output_config: { effort: 'high' }` and distinguishes between `image` and `document` blocks.
-- Google Gemini relies on `inlineData` for files and uses a completely different function declaration signature.
-
-Building a multi-agent system means you end up maintaining three different state machines, three different message history parsers, and three different streaming implementations.
-
-## The Solution
-
-A modular adapter pattern. The Gateway core (`AgentController` and `SendMessageUseCase`) only speaks one language: the `IMessageInput` domain model. 
-
-When you send a message with an attached PDF and ask the SysOps agent to "summarize this and save it to my desktop", the gateway:
-1. Converts the file to Base64 in the browser.
-2. Routes the request to `ClaudeAdapter.ts`.
-3. Maps the MCP tools to Anthropic's `tools` array.
-4. Appends the PDF as a `document` source block.
-5. Streams the thought process and intercepts the `tool_use` to execute the bash command locally via the `McpServerClient`.
-
-### Features at a glance:
-- **Multimodal File Uploads:** Drag, drop, and send images and PDFs directly to the models.
-- **Reasoning Controls:** UI dropdowns to adjust the compute budget (`none`, `low`, `medium`, `high`, `xhigh`) mapped correctly to each API.
-- **Language Localization:** Switch between English and Portuguese. The UI dynamically swaps Quick Prompts, and the Gateway strictly instructs the agent to reply in your chosen language.
-- **Glassmorphism UI:** Built with Tailwind v4, featuring a responsive, animated, and modern aesthetic.
+The session id carries the route — `claude-agent-<uuid>` — so `sendMessage` and `cancel`
+find the right adapter from the id alone.
 
 ---
 
 ## Configuration
 
-The gateway relies on standard environment variables. You only need the keys for the agents you intend to use.
-
 ```bash
 # .env
 OPENAI_API_KEY=sk-proj-...
 ANTHROPIC_API_KEY=sk-ant-...
-GOOGLE_API_KEY=AIzaSy...
+GOOGLE_API_KEY=AIzaSy...        # lane chat (@google/generative-ai)
+GOOGLE_GENAI_API_KEY=AIzaSy...  # lane agent (@google/adk) — see below
 ```
-
-Run the development server:
 
 ```bash
 pnpm dev
 ```
 
-The gateway listens on `http://localhost:3000`. It expects an MCP server to be running on `http://localhost:8000/mcp`.
+The gateway listens on `http://localhost:3000` and works **with no MCP server running** —
+the built-in `search_web` and `run_bash` keep it useful on their own. Point it at one with
+`MCP_SERVER_URL` (default `http://localhost:8000/mcp`) and those tools join the catalog.
+`GET /tools` shows the merged view and whether MCP is connected.
+
+### Gotchas worth knowing before you run it
+
+These are not opinions — each one costs an afternoon if you meet it the hard way.
+
+- **`@google/adk` does not read `GOOGLE_API_KEY`.** It wants `GOOGLE_GENAI_API_KEY` or
+  `GEMINI_API_KEY`. The gateway bridges the value at boot and tells you it did, but set the
+  real variable if you can.
+- **`@openai/agents` enables tracing the moment you import it**, and ships prompts, tool
+  inputs and tool outputs to `api.openai.com/v1/traces/ingest` using your `OPENAI_API_KEY`.
+  `src/main.ts` calls `setTracingDisabled(true)` before anything else. Keep it there.
+- **`@anthropic-ai/claude-agent-sdk` runs a bundled `claude` binary (~310 MB)**, delivered as
+  a per-platform optionalDependency. It needs only `ANTHROPIC_API_KEY` — no separate Claude
+  Code install — but `npm install --omit=optional` breaks it, and it is a real cold start on
+  the first turn of a session.
+- **Node ≥ 22.12.** All three Agents SDKs load under `require()` only thanks to Node's
+  `require(ESM)` support.
+
+### Tool safety
+
+`run_bash` runs with a timeout, an output cap, a configurable `cwd`, and a deny-list for the
+catastrophic ones (`rm -rf`, `mkfs`, `dd` onto a device, fork bombs, `curl | sh`, `sudo`,
+`shutdown`). On top of that sits each SDK's own gate — `canUseTool` on Claude, `needsApproval`
+on OpenAI.
+
+This is **not a sandbox** and does not pretend to be. It is a guard against the catastrophic
+command typed by mistake or hallucinated by a model. Real containment means isolating the
+process: a container, an unprivileged user.
 
 ---
 
@@ -93,10 +124,29 @@ The gateway listens on `http://localhost:3000`. It expects an MCP server to be r
 
 | Layer | Responsibility |
 | --- | --- |
-| **Domain** | `AgentRegistry` definitions, standard `IMessageInput` and `IAgentEvent` models. |
-| **Application** | `SendMessage.Usecase` coordinating the flow between Adapters and the MCP client. |
-| **Infra (Adapters)** | `ClaudeAdapter`, `GoogleAdapter`, `OpenAIAdapter`. Where the SDK-specific magic happens. |
-| **Infra (HTTP)** | Express server, SSE streaming, and the static Vanilla JS frontend. |
+| **Domain** | `Agent.Registry`, `EMode`, and the `IAgentEvent` union every lane speaks. |
+| **Application** | Three thin use cases and the controller that turns events into SSE. |
+| **Infra (adapters)** | `*Chat.Adapter` on the plain SDKs, `*Agent.Adapter` on the Agents SDKs. |
+| **Infra (tools)** | `ToolCatalog` merging MCP discovery with the built-in toolset, plus one bridge per SDK. |
+| **Infra (session)** | `SessionStore` with TTL, and the session id that carries the route. |
+| **Composition** | Factories wiring six adapters — three providers × two lanes. |
+
+Files are named `<What>.<Kind>.ts` — `ClaudeChat.Adapter.ts`, `Agent.Provider.ts`,
+`AgentEvent.Model.ts`, `EMode.Enum.ts`.
+
+### API
+
+| Route | What it does |
+| --- | --- |
+| `GET /agents` | The registry, including which lanes each agent supports. |
+| `GET /tools` | The merged tool catalog and MCP status. Filter with `?agentId=`. |
+| `POST /sessions` | `{ agentId, mode, model, reasoning, language }` → a session. |
+| `POST /sessions/:agentId/:id/messages` | The turn, streamed as SSE. |
+| `POST /sessions/:agentId/:id/cancel` | Aborts the in-flight generation. |
+
+SSE events: `message.started`, `text.delta`, `reasoning.delta`, `tool.started`,
+`tool.result`, `tool.error`, `usage`, `warning`, `message.aborted`, `message.completed`,
+`error`. Closing the tab cancels the turn at the provider.
 
 ---
 
