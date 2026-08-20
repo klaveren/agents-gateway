@@ -155,7 +155,7 @@ export class GoogleAgentAdapter implements IAgentAdapter {
     }
 
     try {
-      const native = this.nativeOf(record, agent)
+      const native = this.nativeOf(record, agent, await this.catalog?.mcpEndpoint())
       await native.runtime.ensureSession(native.userId, native.adkSessionId)
 
       const stream = native.runtime.runAsync({
@@ -215,14 +215,14 @@ export class GoogleAgentAdapter implements IAgentAdapter {
    * O runtime do ADK vive aqui porque é ele que carrega o histórico entre turnos: recriá-lo
    * a cada turno apagaria a conversa.
    */
-  private nativeOf(record: ISessionRecord, agent: IAgent): IGoogleAgentNative {
+  private nativeOf(record: ISessionRecord, agent: IAgent, remoteUrl?: string): IGoogleAgentNative {
     if (!record.native) {
       record.native = {
         runtime: this.createRuntime({
           name: this.toAdkName(agent.id),
           model: record.model,
           instruction: record.systemPrompt,
-          tools: this.buildTools(agent),
+          tools: this.buildTools(agent, remoteUrl),
         }),
         userId: `gateway-${record.id}`,
         adkSessionId: randomUUID(),
@@ -231,9 +231,14 @@ export class GoogleAgentAdapter implements IAgentAdapter {
     return record.native as IGoogleAgentNative
   }
 
-  private buildTools(agent: IAgent): Array<BaseTool | BaseToolset> {
+  /**
+   * O runtime do ADK é criado uma vez por sessão e carrega o histórico, então o toolset é
+   * decidido ali. Uma sessão aberta com o MCP fora do ar segue sem ele até ser recriada;
+   * sessões novas pegam a reconexão.
+   */
+  private buildTools(agent: IAgent, remoteUrl?: string): Array<BaseTool | BaseToolset> {
     const tools: Array<BaseTool | BaseToolset> = buildAdkTools(this.catalog?.localFor(agent.allowedTools) ?? [])
-    const remote = this.catalog?.mcpConnected ? buildAdkMcpToolset(this.catalog.mcpUrl) : undefined
+    const remote = buildAdkMcpToolset(remoteUrl)
     if (remote) tools.push(remote)
     return tools
   }

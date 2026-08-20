@@ -28,7 +28,8 @@ function bridgeGoogleApiKey(): void {
 async function bootstrap() {
   bridgeGoogleApiKey()
 
-  // `connect()` nunca lança: sem MCP server no ar o gateway segue com o toolset local.
+  // `connect()` nunca lança: sem MCP server no ar o gateway segue com o toolset local, e
+  // tenta de novo sozinho (com backoff) na primeira vez que alguma tool precisar dele.
   await makeTools().mcp.connect()
 
   const server = new HttpServer()

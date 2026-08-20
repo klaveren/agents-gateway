@@ -66,6 +66,8 @@ describe('GoogleAgentAdapter', () => {
     {
       serverUrl: 'http://localhost:8000/mcp',
       isConnected: () => false,
+      ensureConnected: async () => false,
+      connectionGeneration: 0,
       listTools: async () => [],
       callTool: async () => ({ status: 'success' as const, result: '' }),
     } as unknown as McpServerClient,

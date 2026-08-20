@@ -25,10 +25,15 @@ function mcpTool(name: string): IToolDefinition {
   }
 }
 
-function fakeMcp(options: { connected: boolean; tools?: IToolDefinition[]; onCall?: (name: string) => void }): McpServerClient {
+function fakeMcp(options: { connected: boolean; tools?: IToolDefinition[]; onCall?: (name: string) => void; onEnsure?: () => void }): McpServerClient {
   return {
     serverUrl: 'http://localhost:8000/mcp',
     isConnected: () => options.connected,
+    ensureConnected: async () => {
+      options.onEnsure?.()
+      return options.connected
+    },
+    connectionGeneration: options.connected ? 1 : 0,
     listTools: async () => (options.connected ? (options.tools ?? []) : []),
     callTool: async (name: string) => {
       options.onCall?.(name)
@@ -76,6 +81,25 @@ describe('ToolCatalog', () => {
 
     assert.strictEqual(listed.length, 1)
     assert.strictEqual(listed[0].origin, 'local')
+  })
+
+  it('offers the MCP endpoint only when it is actually usable, retrying if needed', async () => {
+    let ensured = 0
+    const up = new ToolCatalog(fakeMcp({ connected: true, onEnsure: () => (ensured += 1) }), local)
+    const down = new ToolCatalog(fakeMcp({ connected: false }), local)
+
+    assert.strictEqual(await up.mcpEndpoint(), 'http://localhost:8000/mcp')
+    assert.strictEqual(await down.mcpEndpoint(), undefined)
+
+    // Perguntar de novo tenta de novo: é isso que permite um server que subiu depois do
+    // gateway entrar em uso sem reiniciar o processo.
+    await up.mcpEndpoint()
+    assert.strictEqual(ensured, 2)
+  })
+
+  it('exposes the connection generation so cached resources can expire', () => {
+    assert.strictEqual(new ToolCatalog(fakeMcp({ connected: true }), local).mcpGeneration, 1)
+    assert.strictEqual(new ToolCatalog(fakeMcp({ connected: false }), local).mcpGeneration, 0)
   })
 
   it('runs local tools in process and forwards the rest to MCP', async () => {

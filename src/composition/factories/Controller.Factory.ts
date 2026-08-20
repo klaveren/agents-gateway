@@ -1,10 +1,12 @@
 import { AgentController } from '@application/Agent.Controller'
+import { makeTools } from './Tools.Factory'
 import { makeUsecases } from './Usecases.Factory'
 
 export function makeController(): AgentController {
   const usecases = makeUsecases()
 
   return new AgentController({
+    catalog: makeTools().catalog,
     createSession: usecases.createSessionUseCase,
     sendMessage: usecases.sendMessageUseCase,
     cancelSession: usecases.cancelSessionUseCase,

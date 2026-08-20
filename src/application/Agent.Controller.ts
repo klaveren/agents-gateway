@@ -5,7 +5,6 @@ import { GetSessionUseCase } from '@application/GetSession.Usecase'
 import { ListSessionsUseCase } from '@application/ListSessions.Usecase'
 import { SendMessageUseCase } from '@application/SendMessage.Usecase'
 import { aggregateTurn } from '@application/Turn.Aggregator'
-import { makeTools } from '@composition/factories/Tools.Factory'
 import { AGENT_REGISTRY, getAgentById } from '@domain/Agent.Registry'
 import { AgentNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
@@ -15,6 +14,7 @@ import { fail, ok } from '@infra/http/Http.Response'
 import { parseBody } from '@infra/http/Request.Parser'
 import { createSessionSchema, sendMessageSchema } from '@infra/http/Request.Schema'
 import { toSessionDto } from '@infra/http/Session.Dto'
+import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { SseStream } from '@infra/http/Sse.Stream'
 import { Request, Response } from 'express'
 
@@ -22,6 +22,8 @@ const ALL_LOCAL_TOOLS = [...new Set(AGENT_REGISTRY.flatMap((agent) => agent.allo
 const STARTED_AT = Date.now()
 
 export interface IAgentControllerDeps {
+  /** Injetado, e não buscado no singleton da composição: é o que torna o controller testável sem rede. */
+  catalog: ToolCatalog
   createSession: CreateSessionUseCase
   sendMessage: SendMessageUseCase
   cancelSession: CancelSessionUseCase
@@ -46,11 +48,14 @@ export class AgentController {
 
   async health(_req: Request, res: Response) {
     await this.respond(res, async () => {
-      const { catalog } = makeTools()
+      // Health é o lugar natural para tentar reconectar: quem monitora chama de tempos em
+      // tempos, e com isso o MCP se recupera mesmo sem nenhum tráfego de tool.
+      const connected = (await this.usecases.catalog.mcpEndpoint()) !== undefined
+
       return {
         status: 'ok',
         uptimeSeconds: Math.floor((Date.now() - STARTED_AT) / 1000),
-        mcp: { url: catalog.mcpUrl, connected: catalog.mcpConnected },
+        mcp: { url: this.usecases.catalog.mcpUrl, connected },
         sessions: (await this.usecases.listSessions.execute()).length,
       }
     })
@@ -66,16 +71,12 @@ export class AgentController {
       const agent = getAgentById(agentId)
       if (!agent) throw new AgentNotFoundError(agentId)
 
-      const { catalog } = makeTools()
-      return { mcp: this.mcpStatus(), tools: await catalog.list(agent.allowedTools) }
+      return this.catalogFor(agent.allowedTools)
     })
   }
 
   async getTools(_req: Request, res: Response) {
-    await this.respond(res, async () => {
-      const { catalog } = makeTools()
-      return { mcp: this.mcpStatus(), tools: await catalog.list(ALL_LOCAL_TOOLS) }
-    })
+    await this.respond(res, async () => this.catalogFor(ALL_LOCAL_TOOLS))
   }
 
   async createSession(req: Request, res: Response) {
@@ -177,9 +178,15 @@ export class AgentController {
     }
   }
 
-  private mcpStatus() {
-    const { catalog } = makeTools()
-    return { url: catalog.mcpUrl, connected: catalog.mcpConnected }
+  /**
+   * A listagem vem primeiro de propósito: é ela que pode reconectar, e ler o status antes
+   * devolvia um `connected` sempre um passo atrás das tools que a própria resposta trazia.
+   */
+  private async catalogFor(allowed: string[]) {
+    const { catalog } = this.usecases
+    const tools = await catalog.list(allowed)
+
+    return { mcp: { url: catalog.mcpUrl, connected: catalog.mcpConnected }, tools }
   }
 
   /** Um lugar só para o envelope de sucesso e para a tradução de erro em status e código. */

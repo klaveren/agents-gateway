@@ -89,7 +89,11 @@ pnpm dev
 The gateway listens on `http://127.0.0.1:3000/v1` and works **with no MCP server running** —
 the built-in `search_web` and `run_bash` keep it useful on their own. Point it at one with
 `MCP_SERVER_URL` (default `http://localhost:8000/mcp`) and those tools join the catalog.
-`GET /tools` shows the merged view and whether MCP is connected.
+`GET /v1/tools` shows the merged view and whether MCP is connected.
+
+The connection heals itself. A server that comes up *after* the gateway is picked up on the
+next tool listing or health check; one that dies mid-run drops the gateway back to local
+tools and is retried with exponential backoff (1s up to 60s). No restart either way.
 
 ### Gotchas worth knowing before you run it
 

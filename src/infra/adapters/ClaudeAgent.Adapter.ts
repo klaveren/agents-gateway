@@ -97,7 +97,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     }
 
     const local = this.catalog?.localFor(agent.allowedTools) ?? []
-    const remoteUrl = this.catalog?.mcpConnected ? this.catalog.mcpUrl : undefined
+    const remoteUrl = await this.catalog?.mcpEndpoint()
 
     const options: Options = {
       model: record.model,

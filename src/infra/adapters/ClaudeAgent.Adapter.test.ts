@@ -78,6 +78,8 @@ describe('ClaudeAgentAdapter', () => {
       {
         serverUrl: 'http://localhost:8000/mcp',
         isConnected: () => connected,
+        ensureConnected: async () => connected,
+        connectionGeneration: connected ? 1 : 0,
         listTools: async () => [],
         callTool: async () => ({ status: 'success' as const, result: '' }),
       } as unknown as McpServerClient,

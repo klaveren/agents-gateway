@@ -19,8 +19,25 @@ export class ToolCatalog {
     return this.mcp.serverUrl
   }
 
+  /** Status síncrono, para health e relatório. Não tenta reconectar. */
   get mcpConnected(): boolean {
     return this.mcp.isConnected()
+  }
+
+  /** Muda a cada reconexão; quem cacheia recurso derivado compara para saber que expirou. */
+  get mcpGeneration(): number {
+    return this.mcp.connectionGeneration
+  }
+
+  /**
+   * A URL do MCP se ele estiver utilizável — reconectando se necessário e se a janela de
+   * backoff já passou.
+   *
+   * É isto que os adapters usam para decidir se ligam o MCP nativo do SDK. Usar o getter
+   * síncrono aqui congelava a decisão do boot: server que subisse depois nunca aparecia.
+   */
+  async mcpEndpoint(): Promise<string | undefined> {
+    return (await this.mcp.ensureConnected()) ? this.mcp.serverUrl : undefined
   }
 
   localFor(allowed: string[]): ILocalTool[] {

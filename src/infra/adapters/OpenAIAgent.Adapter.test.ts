@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import type { Agent, AgentInputItem, run } from '@openai/agents'
+import type { Agent, AgentInputItem, MCPServer, run } from '@openai/agents'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
@@ -70,6 +70,8 @@ describe('OpenAIAgentAdapter', () => {
     {
       serverUrl: 'http://localhost:8000/mcp',
       isConnected: () => false,
+      ensureConnected: async () => false,
+      connectionGeneration: 0,
       listTools: async () => [],
       callTool: async () => ({ status: 'success' as const, result: '' }),
     } as unknown as McpServerClient,
@@ -170,6 +172,59 @@ describe('OpenAIAgentAdapter', () => {
     )
     // MCP fora do ar: o agente segue de pé só com as tools locais.
     assert.deepStrictEqual(calls[0].agent.mcpServers, [])
+  })
+
+  it('rebuilds the MCP servers when the connection generation changes', async () => {
+    let generation = 0
+    let connected = false
+    const closed: string[] = []
+
+    const catalogWithClock = new ToolCatalog(
+      {
+        serverUrl: 'http://localhost:8000/mcp',
+        isConnected: () => connected,
+        ensureConnected: async () => connected,
+        get connectionGeneration() {
+          return generation
+        },
+        listTools: async () => [],
+        callTool: async () => ({ status: 'success' as const, result: '' }),
+      } as unknown as McpServerClient,
+      [],
+    )
+
+    const fakeServer = (name: string) =>
+      ({
+        name,
+        async connect() {},
+        async close() {
+          closed.push(name)
+        },
+      }) as unknown as MCPServer
+
+    const calls: ICall[] = []
+    const adapter = new OpenAIAgentAdapter({
+      run: runWith(turn, calls),
+      catalog: catalogWithClock,
+      buildMcpServers: () => [fakeServer('gen-' + generation)],
+    })
+    const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+
+    // Turno 1: MCP fora do ar, o agente roda só com o que é local.
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'um' }))
+    assert.deepStrictEqual(calls[0].agent.mcpServers, [])
+
+    // O server sobe: a geração muda e o turno seguinte passa a enxergá-lo, sem reiniciar.
+    connected = true
+    generation = 1
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'dois' }))
+    assert.strictEqual(calls[1].agent.mcpServers.length, 1)
+
+    // Reconectar de novo troca a geração: os servers antigos são fechados, não vazados.
+    generation = 2
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'tres' }))
+    assert.deepStrictEqual(closed, ['gen-1'])
+    assert.strictEqual(calls[2].agent.mcpServers.length, 1)
   })
 
   it('surfaces run failures as a normalized error event', async () => {

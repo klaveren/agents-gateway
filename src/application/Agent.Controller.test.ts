@@ -6,6 +6,7 @@ import { AgentNotFoundError, SessionNotFoundError } from '@domain/errors/Domain.
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
 import { ISessionRecord } from '@infra/session/Session.Store'
+import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { Request, Response } from 'express'
 import { AgentController, IAgentControllerDeps } from './Agent.Controller'
 import { CancelSessionUseCase } from './CancelSession.Usecase'
@@ -40,7 +41,19 @@ const record = (overrides: Partial<ISessionRecord> = {}): ISessionRecord => ({
 })
 
 describe('AgentController', () => {
-  const controllerWith = (overrides: Partial<IAgentProvider> = {}) => {
+  /** Catálogo falso: nenhum teste aqui abre socket. */
+  const fakeCatalog = (connected = false) =>
+    ({
+      mcpUrl: 'http://localhost:8000/mcp',
+      mcpConnected: connected,
+      mcpGeneration: connected ? 1 : 0,
+      mcpEndpoint: async () => (connected ? 'http://localhost:8000/mcp' : undefined),
+      localFor: () => [],
+      list: async () => [{ origin: 'local' as const, name: 'run_bash', description: '', inputSchema: {} }],
+      invoke: async () => ({ status: 'success' as const, result: '' }),
+    }) as unknown as ToolCatalog
+
+  const controllerWith = (overrides: Partial<IAgentProvider> = {}, catalog = fakeCatalog()) => {
     const provider: IAgentProvider = {
       createSession: async () => ({ id: '123', provider: EProvider.OPENAI, mode: EMode.CHAT, createdAt: new Date() }),
       sendMessage: async function* () {
@@ -54,6 +67,7 @@ describe('AgentController', () => {
     }
 
     const deps: IAgentControllerDeps = {
+      catalog,
       createSession: new CreateSessionUseCase(provider),
       sendMessage: new SendMessageUseCase(provider),
       cancelSession: new CancelSessionUseCase(provider),
@@ -125,13 +139,35 @@ describe('AgentController', () => {
 
   it('reports health with the MCP status and the live session count', async () => {
     const { res, locals } = mockResponse()
-    await controllerWith().health(mockRequest(), res)
+    await controllerWith({}, fakeCatalog(true)).health(mockRequest(), res)
 
     const result = locals.body?.result as { status: string; sessions: number; mcp: { connected: boolean } }
     assert.strictEqual(locals.body?.ok, true)
     assert.strictEqual(result.status, 'ok')
     assert.strictEqual(result.sessions, 1)
-    assert.strictEqual(typeof result.mcp.connected, 'boolean')
+    assert.strictEqual(result.mcp.connected, true)
+  })
+
+  it('lets health retry the MCP connection, so it heals without any tool traffic', async () => {
+    let attempts = 0
+    const catalog = {
+      mcpUrl: 'http://localhost:8000/mcp',
+      mcpConnected: false,
+      mcpEndpoint: async () => {
+        attempts += 1
+        return attempts > 1 ? 'http://localhost:8000/mcp' : undefined
+      },
+    } as unknown as ToolCatalog
+
+    const controller = controllerWith({}, catalog)
+
+    const first = mockResponse()
+    await controller.health(mockRequest(), first.res)
+    assert.strictEqual((first.locals.body?.result as { mcp: { connected: boolean } }).mcp.connected, false)
+
+    const second = mockResponse()
+    await controller.health(mockRequest(), second.res)
+    assert.strictEqual((second.locals.body?.result as { mcp: { connected: boolean } }).mcp.connected, true)
   })
 
   it('lists the agents with their lanes', async () => {

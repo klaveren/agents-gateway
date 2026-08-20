@@ -20,10 +20,14 @@ type TEffort = NonNullable<NonNullable<ModelSettings['reasoning']>['effort']>
 type TRun = typeof run
 type TUserContent = Parameters<typeof user>[0]
 
+export type TBuildMcpServers = (url: string) => MCPServer[]
+
 export interface IOpenAIAgentAdapterDeps {
   run?: TRun
   store?: SessionStore
   catalog?: ToolCatalog
+  /** Injetável para o teste não precisar de um MCP server no ar. */
+  buildMcpServers?: TBuildMcpServers
 }
 
 /**
@@ -36,13 +40,18 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
   private readonly run: TRun
   private readonly store: SessionStore
   private readonly catalog?: ToolCatalog
-  /** Uma conexão MCP por adapter, compartilhada pelas sessões e aberta sob demanda. */
-  private mcpServers?: Promise<MCPServer[]>
+  private readonly buildMcpServers: TBuildMcpServers
+  /**
+   * Uma conexão MCP por adapter, compartilhada pelas sessões e aberta sob demanda. A
+   * geração vem do cliente MCP: quando ele reconecta, estes servers ficaram velhos.
+   */
+  private mcp?: { generation: number; servers: Promise<MCPServer[]> }
 
   constructor(deps: IOpenAIAgentAdapterDeps = {}) {
     this.run = deps.run ?? run
     this.store = deps.store ?? new SessionStore()
     this.catalog = deps.catalog
+    this.buildMcpServers = deps.buildMcpServers ?? buildOpenAIMcpServers
   }
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
@@ -160,21 +169,47 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
     return record.native as AgentInputItem[]
   }
 
-  /** O SDK não conecta os MCP servers sozinho: o ciclo de vida é de quem os passa. */
+  /**
+   * O SDK não conecta os MCP servers sozinho: o ciclo de vida é de quem os passa.
+   *
+   * Perguntar ao catálogo a cada turno é o que faz um MCP server que subiu depois do
+   * gateway entrar em uso sem reiniciar o processo.
+   */
   private async connectMcpServers(): Promise<MCPServer[]> {
-    if (!this.catalog?.mcpConnected) return []
+    const url = await this.catalog?.mcpEndpoint()
 
-    this.mcpServers ??= (async () => {
-      const servers = buildOpenAIMcpServers(this.catalog?.mcpUrl)
-      await Promise.all(servers.map((server) => server.connect()))
-      return servers
-    })().catch((error: unknown) => {
-      console.warn('[OpenAIAgent] MCP indisponível, seguindo só com as tools locais:', error)
-      this.mcpServers = undefined
+    if (!url || !this.catalog) {
+      await this.closeMcpServers()
       return []
-    })
+    }
 
-    return this.mcpServers
+    const generation = this.catalog.mcpGeneration
+    if (this.mcp?.generation !== generation) {
+      await this.closeMcpServers()
+      this.mcp = {
+        generation,
+        servers: (async () => {
+          const servers = this.buildMcpServers(url)
+          await Promise.all(servers.map((server) => server.connect()))
+          return servers
+        })().catch((error: unknown) => {
+          console.warn('[OpenAIAgent] MCP indisponível, seguindo só com as tools locais:', error)
+          this.mcp = undefined
+          return []
+        }),
+      }
+    }
+
+    return this.mcp.servers
+  }
+
+  private async closeMcpServers(): Promise<void> {
+    const stale = this.mcp
+    this.mcp = undefined
+    if (!stale) return
+
+    const servers = await stale.servers.catch(() => [])
+    await Promise.all(servers.map((server) => server.close().catch(() => undefined)))
   }
 
   private buildUserContent(input: IMessageInput): TUserContent {
