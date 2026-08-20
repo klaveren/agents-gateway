@@ -2,8 +2,8 @@ import dotenv from 'dotenv'
 dotenv.config({ override: true })
 
 import { setTracingDisabled } from '@openai/agents'
+import { makeTools } from '@composition/factories/Tools.Factory'
 import { HttpServer } from '@infra/http/Http.Server'
-import { McpServerClient } from '@infra/mcp/McpServer.Client'
 
 /**
  * Precisa acontecer antes de qualquer agente ser construído: só de importar o
@@ -28,13 +28,8 @@ function bridgeGoogleApiKey(): void {
 async function bootstrap() {
   bridgeGoogleApiKey()
 
-  const mcpClient = new McpServerClient(process.env.MCP_SERVER_URL || 'http://localhost:8000/mcp')
-  try {
-    await mcpClient.connect()
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error)
-    console.warn(`[Aviso] Falha ao conectar no MCP Server: ${message}. Continuando sem ele...`)
-  }
+  // `connect()` nunca lança: sem MCP server no ar o gateway segue com o toolset local.
+  await makeTools().mcp.connect()
 
   const server = new HttpServer()
   server.start(Number.parseInt(process.env.PORT || '3000', 10))

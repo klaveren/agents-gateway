@@ -1,10 +1,13 @@
 import { CancelSessionUseCase } from '@application/CancelSession.Usecase'
 import { CreateSessionUseCase } from '@application/CreateSession.Usecase'
 import { SendMessageUseCase } from '@application/SendMessage.Usecase'
-import { AGENT_REGISTRY } from '@domain/Agent.Registry'
+import { AGENT_REGISTRY, getAgentById } from '@domain/Agent.Registry'
+import { makeTools } from '@composition/factories/Tools.Factory'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { fail, ok } from '@infra/http/Http.Response'
 import { Request, Response } from 'express'
+
+const ALL_LOCAL_TOOLS = [...new Set(AGENT_REGISTRY.flatMap((agent) => agent.allowedTools))]
 
 export class AgentController {
   constructor(
@@ -16,6 +19,7 @@ export class AgentController {
     this.sendMessage = this.sendMessage.bind(this)
     this.cancelSession = this.cancelSession.bind(this)
     this.getAgents = this.getAgents.bind(this)
+    this.getTools = this.getTools.bind(this)
   }
 
   async createSession(req: Request, res: Response) {
@@ -62,6 +66,21 @@ export class AgentController {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err)
       console.error('[AgentController.cancelSession] Error:', message)
+      res.status(500).json(fail(message))
+    }
+  }
+
+  /** Mostra o catálogo unido: as tools locais e as que vieram do MCP server. */
+  async getTools(req: Request, res: Response) {
+    try {
+      const { catalog } = makeTools()
+      const agentId = typeof req.query.agentId === 'string' ? req.query.agentId : undefined
+      const allowed = agentId ? (getAgentById(agentId)?.allowedTools ?? []) : ALL_LOCAL_TOOLS
+
+      res.json(ok({ mcp: { url: catalog.mcpUrl, connected: catalog.mcpConnected }, tools: await catalog.list(allowed) }, 'Tools retrieved successfully'))
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error('[AgentController.getTools] Error:', message)
       res.status(500).json(fail(message))
     }
   }

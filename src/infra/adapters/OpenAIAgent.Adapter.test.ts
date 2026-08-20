@@ -5,6 +5,9 @@ import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
+import type { McpServerClient } from '@infra/mcp/McpServer.Client'
+import { ToolCatalog } from '@infra/tools/Tool.Catalog'
+import { ILocalTool } from '@infra/tools/Tool.Types'
 import { OpenAIAgentAdapter } from './OpenAIAgent.Adapter'
 
 type TRun = typeof run
@@ -62,6 +65,31 @@ describe('OpenAIAgentAdapter', () => {
     for await (const event of stream) collected.push(event)
     return collected
   }
+
+  const catalog = new ToolCatalog(
+    {
+      serverUrl: 'http://localhost:8000/mcp',
+      isConnected: () => false,
+      listTools: async () => [],
+      callTool: async () => ({ status: 'success' as const, result: '' }),
+    } as unknown as McpServerClient,
+    [
+      {
+        origin: 'local',
+        name: 'search_web',
+        description: 'local search',
+        inputSchema: {
+          type: 'object',
+          properties: { query: { type: 'string', description: 'q' } },
+          required: ['query'],
+          additionalProperties: false,
+        },
+        async execute() {
+          return { status: 'success', result: 'ok' }
+        },
+      } satisfies ILocalTool,
+    ],
+  )
 
   it('creates a session on the agent lane', async () => {
     const adapter = new OpenAIAgentAdapter({ run: runWith(() => []) })
@@ -128,6 +156,20 @@ describe('OpenAIAgentAdapter', () => {
       message.content.map((part) => part.type),
       ['input_text', 'input_image', 'input_file'],
     )
+  })
+
+  it('registers the local toolset on the SDK agent', async () => {
+    const calls: ICall[] = []
+    const adapter = new OpenAIAgentAdapter({ run: runWith(turn, calls), catalog })
+    const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+
+    assert.deepStrictEqual(
+      calls[0].agent.tools.map((tool) => tool.name),
+      ['search_web'],
+    )
+    // MCP fora do ar: o agente segue de pé só com as tools locais.
+    assert.deepStrictEqual(calls[0].agent.mcpServers, [])
   })
 
   it('surfaces run failures as a normalized error event', async () => {

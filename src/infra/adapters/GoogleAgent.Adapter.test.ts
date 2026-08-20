@@ -5,6 +5,9 @@ import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
+import type { McpServerClient } from '@infra/mcp/McpServer.Client'
+import { ToolCatalog } from '@infra/tools/Tool.Catalog'
+import { ILocalTool } from '@infra/tools/Tool.Types'
 import { GoogleAgentAdapter, type IAdkRunParams, type IAdkRuntime, type IAdkRuntimeSpec } from './GoogleAgent.Adapter'
 
 interface IRuntimeLog {
@@ -58,6 +61,31 @@ describe('GoogleAgentAdapter', () => {
     for await (const event of stream) collected.push(event)
     return collected
   }
+
+  const catalog = new ToolCatalog(
+    {
+      serverUrl: 'http://localhost:8000/mcp',
+      isConnected: () => false,
+      listTools: async () => [],
+      callTool: async () => ({ status: 'success' as const, result: '' }),
+    } as unknown as McpServerClient,
+    [
+      {
+        origin: 'local',
+        name: 'search_web',
+        description: 'local search',
+        inputSchema: {
+          type: 'object',
+          properties: { query: { type: 'string', description: 'q' } },
+          required: ['query'],
+          additionalProperties: false,
+        },
+        async execute() {
+          return { status: 'success', result: 'ok' }
+        },
+      } satisfies ILocalTool,
+    ],
+  )
 
   it('creates a session on the agent lane', async () => {
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(() => [], emptyLog()) })
@@ -119,6 +147,17 @@ describe('GoogleAgentAdapter', () => {
     )
 
     assert.deepStrictEqual(log.runs[0].newMessage.parts, [{ text: 'look' }, { inlineData: { data: 'aaa', mimeType: 'image/png' } }])
+  })
+
+  it('hands the local toolset to the ADK agent', async () => {
+    const log = emptyLog()
+    const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(turn, log), catalog })
+    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+
+    assert.strictEqual(log.specs[0].tools.length, 1)
+    const [tool] = log.specs[0].tools
+    assert.ok('name' in tool && tool.name === 'search_web')
   })
 
   it('warns that the ADK has no reasoning-effort knob', async () => {

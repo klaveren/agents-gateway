@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { query, type EffortLevel, type Options, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import { query, type CanUseTool, type EffortLevel, type Options, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
@@ -10,6 +10,8 @@ import { IFileAttachment, IMessageInput } from '@domain/models/MessageInput.Mode
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { sessionPrefix } from '@infra/session/Session.Key'
 import { SessionStore } from '@infra/session/Session.Store'
+import { buildClaudeMcpServers, REMOTE_SERVER_NAME } from '@infra/tools/bridges/Claude.ToolBridge'
+import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { composeSystemPrompt, maxToolTurns } from './support/Prompt.Helper'
 
 const DEFAULT_MODEL = 'claude-sonnet-5'
@@ -32,6 +34,7 @@ interface IClaudeAgentNative {
 export interface IClaudeAgentAdapterDeps {
   query?: TQuery
   store?: SessionStore<IClaudeAgentNative>
+  catalog?: ToolCatalog
 }
 
 /**
@@ -44,10 +47,12 @@ export interface IClaudeAgentAdapterDeps {
 export class ClaudeAgentAdapter implements IAgentAdapter {
   private readonly query: TQuery
   private readonly store: SessionStore<IClaudeAgentNative>
+  private readonly catalog?: ToolCatalog
 
   constructor(deps: IClaudeAgentAdapterDeps = {}) {
     this.query = deps.query ?? query
     this.store = deps.store ?? new SessionStore<IClaudeAgentNative>()
+    this.catalog = deps.catalog
   }
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
@@ -72,7 +77,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     }
   }
 
-  async *sendMessage(_agent: IAgent, sessionId: string, input: IMessageInput): AsyncIterable<IAgentEvent> {
+  async *sendMessage(agent: IAgent, sessionId: string, input: IMessageInput): AsyncIterable<IAgentEvent> {
     const record = this.store.get(sessionId)
     if (!record) {
       yield { type: 'error', sessionId, timestamp: new Date(), payload: { message: `Session not found: ${sessionId}` } }
@@ -90,11 +95,20 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message } }
     }
 
+    const local = this.catalog?.localFor(agent.allowedTools) ?? []
+    const remoteUrl = this.catalog?.mcpConnected ? this.catalog.mcpUrl : undefined
+
     const options: Options = {
       model: record.model,
       systemPrompt: record.systemPrompt,
-      // Fase 2 liga as tools. Sem isto o SDK traz o toolset inteiro do Claude Code.
+      // `tools` é só o conjunto de built-ins do Claude Code: vazio significa que o
+      // agente não ganha Bash/Read/Edit sobre a máquina do host. As tools que ele de
+      // fato tem chegam por `mcpServers`.
       tools: [],
+      mcpServers: buildClaudeMcpServers(local, remoteUrl),
+      // Nomes soltos em `allowedTools` aprovam antes de o callback rodar e o SDK
+      // avisa que o `canUseTool` foi sombreado; por isso o gate fica só aqui.
+      canUseTool: this.makeGate(agent.allowedTools),
       // Isolamento: sem isto o subprocesso lê o ~/.claude e o CLAUDE.md da máquina.
       settingSources: [],
       includePartialMessages: true,
@@ -203,6 +217,23 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     } finally {
       record.abort = undefined
       stream.return(undefined).catch(() => undefined)
+    }
+  }
+
+  /**
+   * Deixa passar o que o agente declarou e o que veio do MCP server — quem escolheu
+   * subir aquele server foi o operador. Qualquer outra coisa é recusada com motivo.
+   */
+  private makeGate(allowed: string[]): CanUseTool {
+    return async (toolName) => {
+      const [, server, ...rest] = toolName.split('__')
+      const isMcp = toolName.startsWith('mcp__')
+      const bare = isMcp ? rest.join('__') : toolName
+
+      if (isMcp && server === REMOTE_SERVER_NAME) return { behavior: 'allow' }
+      if (allowed.includes(bare)) return { behavior: 'allow' }
+
+      return { behavior: 'deny', message: `Tool "${bare}" is not enabled for this agent.` }
     }
   }
 

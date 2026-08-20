@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { EventType, InMemorySessionService, LlmAgent, Runner, StreamingMode, toStructuredEvents, type Event } from '@google/adk'
+import { EventType, InMemorySessionService, LlmAgent, Runner, StreamingMode, toStructuredEvents, type BaseTool, type BaseToolset, type Event } from '@google/adk'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
@@ -10,6 +10,8 @@ import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { sessionPrefix } from '@infra/session/Session.Key'
 import { SessionStore } from '@infra/session/Session.Store'
+import { buildAdkMcpToolset, buildAdkTools } from '@infra/tools/bridges/Adk.ToolBridge'
+import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { composeSystemPrompt } from './support/Prompt.Helper'
 
 const DEFAULT_MODEL = 'gemini-3.7-flash'
@@ -45,6 +47,7 @@ export interface IAdkRuntimeSpec {
   name: string
   model: string
   instruction: string
+  tools: Array<BaseTool | BaseToolset>
 }
 
 export type TAdkRuntimeFactory = (spec: IAdkRuntimeSpec) => IAdkRuntime
@@ -59,6 +62,7 @@ interface IGoogleAgentNative {
 export interface IGoogleAgentAdapterDeps {
   createRuntime?: TAdkRuntimeFactory
   store?: SessionStore<IGoogleAgentNative>
+  catalog?: ToolCatalog
 }
 
 function defaultRuntimeFactory(spec: IAdkRuntimeSpec): IAdkRuntime {
@@ -68,6 +72,7 @@ function defaultRuntimeFactory(spec: IAdkRuntimeSpec): IAdkRuntime {
     model: spec.model,
     // O ADK 1.6 usa `instruction` (singular) e `model`; não existem `instructions` nem `llm`.
     instruction: spec.instruction,
+    tools: spec.tools,
   })
   const runner = new Runner({ appName: APP_NAME, agent, sessionService })
 
@@ -99,10 +104,12 @@ function defaultRuntimeFactory(spec: IAdkRuntimeSpec): IAdkRuntime {
 export class GoogleAgentAdapter implements IAgentAdapter {
   private readonly createRuntime: TAdkRuntimeFactory
   private readonly store: SessionStore<IGoogleAgentNative>
+  private readonly catalog?: ToolCatalog
 
   constructor(deps: IGoogleAgentAdapterDeps = {}) {
     this.createRuntime = deps.createRuntime ?? defaultRuntimeFactory
     this.store = deps.store ?? new SessionStore<IGoogleAgentNative>()
+    this.catalog = deps.catalog
   }
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
@@ -154,6 +161,7 @@ export class GoogleAgentAdapter implements IAgentAdapter {
             name: this.toAdkName(agent.id),
             model: record.model,
             instruction: record.systemPrompt,
+            tools: this.buildTools(agent),
           }),
           userId: `gateway-${sessionId}`,
           adkSessionId: randomUUID(),
@@ -198,6 +206,13 @@ export class GoogleAgentAdapter implements IAgentAdapter {
 
   async cancel(sessionId: string): Promise<void> {
     this.store.get(sessionId)?.abort?.abort()
+  }
+
+  private buildTools(agent: IAgent): Array<BaseTool | BaseToolset> {
+    const tools: Array<BaseTool | BaseToolset> = buildAdkTools(this.catalog?.localFor(agent.allowedTools) ?? [])
+    const remote = this.catalog?.mcpConnected ? buildAdkMcpToolset(this.catalog.mcpUrl) : undefined
+    if (remote) tools.push(remote)
+    return tools
   }
 
   private toAgentEvent(event: ReturnType<typeof toStructuredEvents>[number], sessionId: string): IAgentEvent | undefined {

@@ -1,107 +1,121 @@
-export interface IMcpTool {
-  name: string
-  description: string
-  inputSchema: Record<string, unknown>
-}
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { IToolDefinition, IToolResult, IToolSchema } from '@infra/tools/Tool.Types'
 
-export interface IMcpToolResult {
-  status: 'success' | 'error'
-  result: string
-}
+const CLIENT_INFO = { name: 'agents-gateway', version: '1.0.0-alpha' }
 
-const MAX_OUTPUT_CHARS = 4000
-
-function toMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+export interface IMcpClientDeps {
+  createClient?: () => Client
 }
 
 /**
- * Stub: fala com um catálogo fixo e executa as tools localmente.
+ * Cliente MCP de verdade, sobre o `@modelcontextprotocol/sdk`.
  *
- * A fase 2 troca isto por um cliente MCP de verdade, mantendo as tools locais como
- * fallback para o gateway continuar útil sem nenhum MCP server no ar.
+ * Duas regras de convivência: `connect()` nunca lança — devolve `false` e o gateway
+ * segue com o toolset local; e a descoberta de tools devolve lista vazia quando o
+ * server está fora, em vez de derrubar a sessão.
  */
 export class McpServerClient {
-  constructor(private serverUrl: string) {}
+  private client?: Client
+  private connected = false
+  private readonly createClient: () => Client
 
-  async connect(): Promise<void> {
-    console.log(`Connecting to MCP Server at ${this.serverUrl}`)
+  constructor(
+    public readonly serverUrl: string,
+    deps: IMcpClientDeps = {},
+  ) {
+    this.createClient = deps.createClient ?? (() => new Client(CLIENT_INFO))
   }
 
-  async getTools(): Promise<IMcpTool[]> {
-    return [
-      {
-        name: 'search_web',
-        description: 'Searches the internet for up-to-date information.',
-        inputSchema: {
-          type: 'object',
-          properties: { query: { type: 'string', description: 'The search query' } },
-          required: ['query'],
-        },
-      },
-      {
-        name: 'run_bash',
-        description: 'Executes a bash command on the host system.',
-        inputSchema: {
-          type: 'object',
-          properties: { command: { type: 'string', description: 'The bash command to run' } },
-          required: ['command'],
-        },
-      },
-    ]
+  isConnected(): boolean {
+    return this.connected
   }
 
-  async invokeTool(toolName: string, params: Record<string, unknown>): Promise<IMcpToolResult> {
-    console.log(`Invoking tool ${toolName} with params:`, params)
+  /**
+   * Tenta StreamableHTTP, que é o transporte atual, e cai para SSE, que muitos
+   * servers ainda expõem. Devolve `false` em vez de lançar.
+   */
+  async connect(): Promise<boolean> {
+    const url = new URL(this.serverUrl)
 
-    if (toolName === 'search_web') return this.searchWeb(String(params.query ?? ''))
-    if (toolName === 'run_bash') return this.runBash(String(params.command ?? ''))
-
-    return { status: 'error', result: `Tool ${toolName} not found.` }
-  }
-
-  private async searchWeb(query: string): Promise<IMcpToolResult> {
-    try {
-      const axios = require('axios')
-      const cheerio = require('cheerio')
-
-      const response = await axios.get('https://html.duckduckgo.com/html/', {
-        params: { q: query },
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-      })
-
-      const $ = cheerio.load(response.data)
-      const results: string[] = []
-
-      $('.result__body').each((index: number, element: unknown) => {
-        if (index >= 5) return
-        const title = $(element).find('.result__title').text().trim()
-        const snippet = $(element).find('.result__snippet').text().trim()
-        if (title && snippet) results.push(`Title: ${title}\nSnippet: ${snippet}`)
-      })
-
-      return { status: 'success', result: results.join('\n\n') || 'No results found.' }
-    } catch (err: unknown) {
-      return { status: 'error', result: `Search failed: ${toMessage(err)}` }
-    }
-  }
-
-  private async runBash(command: string): Promise<IMcpToolResult> {
-    try {
-      const { exec } = require('child_process')
-      const { promisify } = require('util')
-      const execPromise = promisify(exec)
-
-      const { stdout, stderr } = await execPromise(command)
-      let output: string = stdout || stderr || 'Command executed successfully with no output.'
-
-      if (output.length > MAX_OUTPUT_CHARS) {
-        output = `${output.substring(0, MAX_OUTPUT_CHARS)}\n...[Truncated]`
+    for (const makeTransport of [() => new StreamableHTTPClientTransport(url), () => new SSEClientTransport(url)]) {
+      try {
+        const client = this.createClient()
+        await client.connect(makeTransport())
+        this.client = client
+        this.connected = true
+        console.log(`[mcp] Conectado em ${this.serverUrl}`)
+        return true
+      } catch {
+        continue
       }
+    }
 
-      return { status: 'success', result: output }
-    } catch (err: unknown) {
-      return { status: 'error', result: `Execution failed: ${toMessage(err)}` }
+    this.connected = false
+    console.warn(`[mcp] Nenhum MCP server em ${this.serverUrl}; seguindo só com as tools locais.`)
+    return false
+  }
+
+  async listTools(): Promise<IToolDefinition[]> {
+    if (!this.client || !this.connected) return []
+
+    try {
+      const response = await this.client.listTools()
+      return response.tools.map((tool) => ({
+        origin: 'mcp' as const,
+        name: tool.name,
+        description: tool.description ?? '',
+        inputSchema: toSchema(tool.inputSchema),
+      }))
+    } catch (error: unknown) {
+      console.warn(`[mcp] Falha ao listar tools: ${toMessage(error)}`)
+      this.connected = false
+      return []
     }
   }
+
+  async callTool(name: string, args: Record<string, unknown>): Promise<IToolResult> {
+    if (!this.client || !this.connected) {
+      return { status: 'error', result: `MCP server unavailable; cannot run "${name}".` }
+    }
+
+    try {
+      const response = await this.client.callTool({ name, arguments: args })
+      const text = readText(response.content)
+      return response.isError ? { status: 'error', result: text || 'Unknown MCP error' } : { status: 'success', result: text }
+    } catch (error: unknown) {
+      return { status: 'error', result: `MCP call failed: ${toMessage(error)}` }
+    }
+  }
+
+  async close(): Promise<void> {
+    this.connected = false
+    await this.client?.close().catch(() => undefined)
+    this.client = undefined
+  }
+}
+
+function toSchema(inputSchema: unknown): IToolSchema {
+  const schema = (inputSchema ?? {}) as Partial<IToolSchema>
+  return {
+    type: 'object',
+    properties: schema.properties ?? {},
+    required: schema.required ?? [],
+    additionalProperties: false,
+  }
+}
+
+function readText(content: unknown): string {
+  if (!Array.isArray(content)) return ''
+  return content
+    .filter((block): block is { type: 'text'; text: string } => {
+      return typeof block === 'object' && block !== null && (block as { type?: unknown }).type === 'text'
+    })
+    .map((block) => block.text)
+    .join('\n')
+}
+
+function toMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }

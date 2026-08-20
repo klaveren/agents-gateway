@@ -1,4 +1,4 @@
-import { Agent, run, user, type AgentInputItem, type ModelSettings } from '@openai/agents'
+import { Agent, run, user, type AgentInputItem, type MCPServer, type ModelSettings } from '@openai/agents'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
@@ -9,6 +9,8 @@ import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { sessionPrefix } from '@infra/session/Session.Key'
 import { SessionStore } from '@infra/session/Session.Store'
+import { buildOpenAIMcpServers, buildOpenAITools } from '@infra/tools/bridges/OpenAI.ToolBridge'
+import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { composeSystemPrompt, maxOutputTokens, maxToolTurns } from './support/Prompt.Helper'
 
 const DEFAULT_MODEL = 'gpt-5.6-sol'
@@ -21,6 +23,7 @@ type TUserContent = Parameters<typeof user>[0]
 export interface IOpenAIAgentAdapterDeps {
   run?: TRun
   store?: SessionStore<AgentInputItem[]>
+  catalog?: ToolCatalog
 }
 
 /**
@@ -32,10 +35,14 @@ export interface IOpenAIAgentAdapterDeps {
 export class OpenAIAgentAdapter implements IAgentAdapter {
   private readonly run: TRun
   private readonly store: SessionStore<AgentInputItem[]>
+  private readonly catalog?: ToolCatalog
+  /** Uma conexão MCP por adapter, compartilhada pelas sessões e aberta sob demanda. */
+  private mcpServers?: Promise<MCPServer[]>
 
   constructor(deps: IOpenAIAgentAdapterDeps = {}) {
     this.run = deps.run ?? run
     this.store = deps.store ?? new SessionStore<AgentInputItem[]>()
+    this.catalog = deps.catalog
   }
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
@@ -81,6 +88,8 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
       instructions: record.systemPrompt,
       model: record.model,
       modelSettings,
+      tools: buildOpenAITools(this.catalog?.localFor(agent.allowedTools) ?? []),
+      mcpServers: await this.connectMcpServers(),
     })
 
     const items: AgentInputItem[] = [...history, user(this.buildUserContent(input))]
@@ -139,6 +148,23 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
 
   async cancel(sessionId: string): Promise<void> {
     this.store.get(sessionId)?.abort?.abort()
+  }
+
+  /** O SDK não conecta os MCP servers sozinho: o ciclo de vida é de quem os passa. */
+  private async connectMcpServers(): Promise<MCPServer[]> {
+    if (!this.catalog?.mcpConnected) return []
+
+    this.mcpServers ??= (async () => {
+      const servers = buildOpenAIMcpServers(this.catalog?.mcpUrl)
+      await Promise.all(servers.map((server) => server.connect()))
+      return servers
+    })().catch((error: unknown) => {
+      console.warn('[OpenAIAgent] MCP indisponível, seguindo só com as tools locais:', error)
+      this.mcpServers = undefined
+      return []
+    })
+
+    return this.mcpServers
   }
 
   private buildUserContent(input: IMessageInput): TUserContent {

@@ -23,6 +23,7 @@ export class HttpServer {
     const controller = makeController()
 
     this.app.get('/agents', controller.getAgents)
+    this.app.get('/tools', controller.getTools)
     this.app.post('/sessions', controller.createSession)
     this.app.post('/sessions/:agentId/:id/messages', controller.sendMessage)
     this.app.post('/sessions/:agentId/:id/cancel', controller.cancelSession)

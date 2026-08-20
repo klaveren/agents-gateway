@@ -9,6 +9,7 @@ import { GoogleChatAdapter } from '@infra/adapters/GoogleChat.Adapter'
 import { OpenAIAgentAdapter } from '@infra/adapters/OpenAIAgent.Adapter'
 import { OpenAIChatAdapter } from '@infra/adapters/OpenAIChat.Adapter'
 import { adapterKey, AgentProvider } from '@infra/providers/Agent.Provider'
+import { makeTools } from './Tools.Factory'
 
 /**
  * Monta as duas lanes: `chat` sobre os SDKs normais, `agent` sobre os Agents SDKs.
@@ -22,13 +23,15 @@ export function makeOrchestrator(): AgentProvider {
   // local isso é vazamento, não telemetria.
   setTracingDisabled(true)
 
+  const { catalog } = makeTools()
+
   const adapters = new Map<string, IAgentAdapter>([
     [adapterKey(EProvider.CLAUDE, EMode.CHAT), new ClaudeChatAdapter()],
     [adapterKey(EProvider.OPENAI, EMode.CHAT), new OpenAIChatAdapter()],
     [adapterKey(EProvider.GOOGLE, EMode.CHAT), new GoogleChatAdapter()],
-    [adapterKey(EProvider.CLAUDE, EMode.AGENT), new ClaudeAgentAdapter()],
-    [adapterKey(EProvider.OPENAI, EMode.AGENT), new OpenAIAgentAdapter()],
-    [adapterKey(EProvider.GOOGLE, EMode.AGENT), new GoogleAgentAdapter()],
+    [adapterKey(EProvider.CLAUDE, EMode.AGENT), new ClaudeAgentAdapter({ catalog })],
+    [adapterKey(EProvider.OPENAI, EMode.AGENT), new OpenAIAgentAdapter({ catalog })],
+    [adapterKey(EProvider.GOOGLE, EMode.AGENT), new GoogleAgentAdapter({ catalog })],
   ])
 
   return new AgentProvider(adapters)

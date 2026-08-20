@@ -1,64 +1,168 @@
-import { describe, it } from 'node:test'
 import assert from 'node:assert'
+import { describe, it } from 'node:test'
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { McpServerClient } from './McpServer.Client'
 
-// Actually, run_bash does require('child_process').
-// search_web does require('axios') which might fail if not installed in gateway.
-// Let's see how to mock requires inside the function.
+interface IFakeClientLog {
+  connects: number
+  closed: boolean
+}
+
+/**
+ * O cliente real é substituído por inteiro: nenhum teste aqui abre socket, e por isso a
+ * suíte não depende de haver um MCP server no ar.
+ */
+function fakeClient(behaviour: Partial<Client>, log: IFakeClientLog): Client {
+  return {
+    async connect() {
+      log.connects += 1
+    },
+    async close() {
+      log.closed = true
+    },
+    ...behaviour,
+  } as unknown as Client
+}
 
 describe('McpServerClient', () => {
-  it('should get tools', async () => {
-    const client = new McpServerClient('http://test')
-    await client.connect() // just hits console.log
-    const tools = await client.getTools()
-    assert.strictEqual(tools.length, 2)
-    assert.strictEqual(tools[0].name, 'search_web')
-    assert.strictEqual(tools[1].name, 'run_bash')
+  const emptyLog = (): IFakeClientLog => ({ connects: 0, closed: false })
+
+  it('starts disconnected and lists nothing', async () => {
+    const client = new McpServerClient('http://localhost:8000/mcp')
+
+    assert.strictEqual(client.isConnected(), false)
+    assert.deepStrictEqual(await client.listTools(), [])
   })
 
-  it('should simulate run_bash successfully', async () => {
-    const client = new McpServerClient('http://test')
-    // will actually run echo hi
-    const result = await client.invokeTool('run_bash', { command: 'echo hi' })
-    assert.strictEqual(result.status, 'success')
-    assert.ok(result.result.includes('hi'))
+  it('connects and maps the server tools into the gateway shape', async () => {
+    const log = emptyLog()
+    const client = new McpServerClient('http://localhost:8000/mcp', {
+      createClient: () =>
+        fakeClient(
+          {
+            listTools: async () => ({
+              tools: [
+                {
+                  name: 'read_file',
+                  description: 'Reads a file',
+                  inputSchema: { type: 'object' as const, properties: { path: { type: 'string', description: 'p' } }, required: ['path'] },
+                },
+              ],
+            }),
+          },
+          log,
+        ),
+    })
+
+    assert.strictEqual(await client.connect(), true)
+    assert.strictEqual(client.isConnected(), true)
+
+    const tools = await client.listTools()
+    assert.strictEqual(tools.length, 1)
+    assert.strictEqual(tools[0].name, 'read_file')
+    assert.strictEqual(tools[0].origin, 'mcp')
+    assert.deepStrictEqual(tools[0].inputSchema.required, ['path'])
   })
 
-  it('should truncate long output in run_bash', async () => {
-    const client = new McpServerClient('http://test')
-    // will generate a lot of text
-    const result = await client.invokeTool('run_bash', { command: 'node -e "console.log(\'A\'.repeat(5000))"' })
-    assert.strictEqual(result.status, 'success')
-    assert.ok(result.result.includes('...[Truncated]'))
-    assert.ok(result.result.length < 4500)
+  it('reports failure instead of throwing when nothing answers', async () => {
+    const client = new McpServerClient('http://localhost:8000/mcp', {
+      createClient: () =>
+        ({
+          async connect() {
+            throw new Error('ECONNREFUSED')
+          },
+        }) as unknown as Client,
+    })
+
+    assert.strictEqual(await client.connect(), false)
+    assert.strictEqual(client.isConnected(), false)
   })
 
-  it('should handle run_bash failure', async () => {
-    const client = new McpServerClient('http://test')
-    const result = await client.invokeTool('run_bash', { command: 'command_that_does_not_exist_123' })
-    assert.strictEqual(result.status, 'error')
-    assert.ok(result.result.includes('Execution failed'))
+  it('falls back to the SSE transport when streamable HTTP is refused', async () => {
+    const log = emptyLog()
+    let attempt = 0
+
+    const client = new McpServerClient('http://localhost:8000/mcp', {
+      createClient: () => {
+        attempt += 1
+        if (attempt === 1) {
+          return {
+            async connect() {
+              throw new Error('405 Method Not Allowed')
+            },
+          } as unknown as Client
+        }
+        return fakeClient({ listTools: async () => ({ tools: [] }) }, log)
+      },
+    })
+
+    assert.strictEqual(await client.connect(), true)
+    assert.strictEqual(attempt, 2)
   })
 
-  it('should handle search_web success', async () => {
-    const client = new McpServerClient('http://test')
+  it('returns tool text and flags server-side errors', async () => {
+    const log = emptyLog()
+    const client = new McpServerClient('http://localhost:8000/mcp', {
+      createClient: () =>
+        fakeClient(
+          {
+            callTool: async ({ name }) =>
+              name === 'boom'
+                ? { content: [{ type: 'text', text: 'it blew up' }], isError: true }
+                : {
+                    content: [
+                      { type: 'text', text: 'hello' },
+                      { type: 'image', data: 'x', mimeType: 'image/png' },
+                    ],
+                  },
+          },
+          log,
+        ),
+    })
 
-    // We can't mock require inside easily without test runner support.
-    // Let's temporarily inject into require.cache if axios/cheerio exists, or just let it run if they are installed.
-    // If not installed, it falls back to the catch block!
-    // Let's see if we can trigger both.
+    await client.connect()
 
-    // First let's just run it, maybe axios is installed in gateway
-    const result = await client.invokeTool('search_web', { query: 'test' })
-    // If it fails because of missing module, it returns status: 'error'.
-    // In that case we are covering lines anyway!
-    assert.ok(result.status === 'success' || result.status === 'error')
+    assert.deepStrictEqual(await client.callTool('greet', {}), { status: 'success', result: 'hello' })
+    assert.deepStrictEqual(await client.callTool('boom', {}), { status: 'error', result: 'it blew up' })
   })
 
-  it('should handle tool not found', async () => {
-    const client = new McpServerClient('http://test')
-    const result = await client.invokeTool('unknown', {})
-    assert.strictEqual(result.status, 'error')
-    assert.ok(result.result.includes('not found'))
+  it('refuses to call a tool while disconnected', async () => {
+    const client = new McpServerClient('http://localhost:8000/mcp')
+    const outcome = await client.callTool('read_file', {})
+
+    assert.strictEqual(outcome.status, 'error')
+    assert.match(outcome.result, /MCP server unavailable/)
+  })
+
+  it('drops the connection when listing fails mid-flight', async () => {
+    const log = emptyLog()
+    const client = new McpServerClient('http://localhost:8000/mcp', {
+      createClient: () =>
+        fakeClient(
+          {
+            listTools: async () => {
+              throw new Error('socket hang up')
+            },
+          },
+          log,
+        ),
+    })
+
+    await client.connect()
+    assert.deepStrictEqual(await client.listTools(), [])
+    assert.strictEqual(client.isConnected(), false)
+  })
+
+  it('closes the underlying client', async () => {
+    const log = emptyLog()
+    const client = new McpServerClient('http://localhost:8000/mcp', {
+      createClient: () => fakeClient({ listTools: async () => ({ tools: [] }) }, log),
+    })
+
+    await client.connect()
+    await client.close()
+
+    assert.strictEqual(log.closed, true)
+    assert.strictEqual(client.isConnected(), false)
   })
 })

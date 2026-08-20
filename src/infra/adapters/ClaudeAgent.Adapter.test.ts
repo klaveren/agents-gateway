@@ -5,6 +5,9 @@ import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
+import type { McpServerClient } from '@infra/mcp/McpServer.Client'
+import { ToolCatalog } from '@infra/tools/Tool.Catalog'
+import { ILocalTool } from '@infra/tools/Tool.Types'
 import { ClaudeAgentAdapter } from './ClaudeAgent.Adapter'
 
 type TQuery = typeof query
@@ -54,6 +57,32 @@ describe('ClaudeAgentAdapter', () => {
     for await (const event of events) collected.push(event)
     return collected
   }
+
+  const localTool = (name: string): ILocalTool => ({
+    origin: 'local',
+    name,
+    description: `local ${name}`,
+    inputSchema: {
+      type: 'object',
+      properties: { command: { type: 'string', description: 'cmd' } },
+      required: ['command'],
+      additionalProperties: false,
+    },
+    async execute() {
+      return { status: 'success', result: 'ok' }
+    },
+  })
+
+  const catalogWith = (connected: boolean) =>
+    new ToolCatalog(
+      {
+        serverUrl: 'http://localhost:8000/mcp',
+        isConnected: () => connected,
+        listTools: async () => [],
+        callTool: async () => ({ status: 'success' as const, result: '' }),
+      } as unknown as McpServerClient,
+      [localTool('run_bash')],
+    )
 
   it('creates a session on the agent lane', async () => {
     const adapter = new ClaudeAgentAdapter({ query: queryWith(() => []) })
@@ -121,6 +150,45 @@ describe('ClaudeAgentAdapter', () => {
 
     assert.strictEqual(typeof seen[0].prompt, 'string')
     assert.strictEqual(typeof seen[1].prompt, 'object')
+  })
+
+  it('hands tools to the SDK as MCP servers, local and remote', async () => {
+    const seen: TQueryParams[] = []
+    const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog: catalogWith(true) })
+    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+
+    const servers = seen[0].options?.mcpServers ?? {}
+    assert.deepStrictEqual(Object.keys(servers).sort(), ['gateway', 'mcp'])
+    // Built-ins seguem desligados: o agente não ganha Bash/Read sobre a máquina do host.
+    assert.deepStrictEqual(seen[0].options?.tools, [])
+  })
+
+  it('omits the remote server when no MCP is connected', async () => {
+    const seen: TQueryParams[] = []
+    const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog: catalogWith(false) })
+    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+
+    assert.deepStrictEqual(Object.keys(seen[0].options?.mcpServers ?? {}), ['gateway'])
+  })
+
+  it('gates tool use through canUseTool instead of allowedTools', async () => {
+    const seen: TQueryParams[] = []
+    const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog: catalogWith(true) })
+    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+
+    const gate = seen[0].options?.canUseTool
+    assert.ok(gate)
+    // `allowedTools` com nome solto sombrearia o callback, então tem de ficar ausente.
+    assert.strictEqual(seen[0].options?.allowedTools, undefined)
+
+    const options = { signal: new AbortController().signal, toolUseID: 't1', requestId: 'r1' }
+    assert.strictEqual((await gate('mcp__gateway__run_bash', {}, options))?.behavior, 'allow')
+    assert.strictEqual((await gate('mcp__mcp__read_file', {}, options))?.behavior, 'allow')
+    assert.strictEqual((await gate('Bash', {}, options))?.behavior, 'deny')
+    assert.strictEqual((await gate('mcp__gateway__search_web', {}, options))?.behavior, 'deny')
   })
 
   it('reports an error result from the SDK', async () => {
