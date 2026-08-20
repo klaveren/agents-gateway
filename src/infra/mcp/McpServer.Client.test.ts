@@ -325,3 +325,17 @@ describe('McpServerClient reconnection', () => {
     assert.strictEqual(attempts, 1)
   })
 })
+
+describe('McpServerClient resource hygiene', () => {
+  it('does not leak a handle for every failed attempt', async () => {
+    // O backoff tenta para sempre. Transporte que falhou e não é fechado segura timer de
+    // reconexão, então cada tentativa acumulava um handle no processo.
+    const client = new McpServerClient('http://127.0.0.1:1/mcp')
+
+    const before = process.getActiveResourcesInfo().length
+    for (let attempt = 0; attempt < 3; attempt += 1) await client.connect()
+    const after = process.getActiveResourcesInfo().length
+
+    assert.strictEqual(after, before, 'tentativa falha deixou handle vivo')
+  })
+})

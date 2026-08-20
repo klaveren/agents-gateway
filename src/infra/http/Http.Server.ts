@@ -1,5 +1,6 @@
 import { AgentController } from './Agent.Controller'
 import express, { Express, NextFunction, Request, RequestHandler, Response } from 'express'
+import { Server } from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
 import { toHttpFailure } from './Http.Error'
@@ -57,8 +58,9 @@ export class HttpServer {
     })
   }
 
-  start(port: number) {
-    this.app.listen(port, host(), () => {
+  /** Devolve o servidor para quem sobe poder derrubar — é o que torna o teste de integração possível. */
+  start(port: number): Server {
+    return this.app.listen(port, host(), () => {
       console.log(`Gateway API listening on http://${host()}:${port}${API_PREFIX}`)
     })
   }

@@ -131,9 +131,11 @@ export class McpServerClient {
     const url = new URL(this.serverUrl)
 
     for (const makeTransport of [() => new StreamableHTTPClientTransport(url), () => new SSEClientTransport(url)]) {
+      const transport = makeTransport()
+
       try {
         const client = this.createClient()
-        await client.connect(makeTransport())
+        await client.connect(transport)
 
         await this.disposeClient()
         this.client = client
@@ -145,6 +147,9 @@ export class McpServerClient {
         console.log(`[mcp] Conectado em ${this.serverUrl}`)
         return true
       } catch {
+        // Transporte que falhou continua segurando timer de reconexão e socket. Sem fechar,
+        // cada tentativa do backoff vaza um handle — e o backoff tenta para sempre.
+        await transport.close().catch(() => undefined)
         continue
       }
     }
