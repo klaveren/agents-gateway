@@ -1,23 +1,28 @@
-import { describe, it } from 'node:test'
 import assert from 'node:assert'
+import { describe, it } from 'node:test'
+import { EMode } from '@domain/enums/EMode.Enum'
+import { EProvider } from '@domain/enums/EProvider.Enum'
+import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
+import { ISession } from '@domain/models/Session.Model'
 import { CancelSessionUseCase } from './CancelSession.Usecase'
-import { IAgentProvider } from '@domain/ports/AgentProvider'
+
+const stubProvider = (overrides: Partial<IAgentProvider> = {}): IAgentProvider => ({
+  createSession: async () => ({ id: 's', provider: EProvider.OPENAI, mode: EMode.CHAT, createdAt: new Date() }),
+  sendMessage: async function* () {},
+  cancel: async () => {},
+  dispose: async () => {},
+  describe: () => ({}) as ISession,
+  list: () => [],
+  ...overrides,
+})
 
 describe('CancelSessionUseCase', () => {
-  it('should delegate cancel to AgentProvider', async () => {
-    let callCount = 0
-    const mockProvider: IAgentProvider = {
-      createSession: async () => ({}) as unknown as import('@domain/models/AgentSession').IAgentSession,
-      sendMessage: async function* () {},
-      cancel: async (agentId: string, sessionId: string) => {
-        callCount++
-        assert.strictEqual(agentId, 'agent-1')
-        assert.strictEqual(sessionId, 'sess-1')
-      },
-    }
+  it('cancels by session id alone', async () => {
+    const seen: string[] = []
+    const usecase = new CancelSessionUseCase(stubProvider({ cancel: async (id) => void seen.push(id) }))
 
-    const usecase = new CancelSessionUseCase(mockProvider)
-    await usecase.execute('agent-1', 'sess-1')
-    assert.strictEqual(callCount, 1)
+    await usecase.execute('sess-1')
+
+    assert.deepStrictEqual(seen, ['sess-1'])
   })
 })

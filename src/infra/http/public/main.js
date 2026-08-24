@@ -1,134 +1,280 @@
-const API_BASE = window.location.origin;
+const API_BASE = window.location.origin + '/v1';
+
+/**
+ * O gateway só exige token quando GATEWAY_TOKEN está definido no servidor. Guardar em
+ * localStorage é suficiente para uso local; não é credencial de usuário.
+ */
+function authHeaders(extra = {}) {
+  const token = localStorage.getItem('gatewayToken');
+  return token ? { ...extra, Authorization: 'Bearer ' + token } : extra;
+}
+
+const MODE_HINTS = {
+  chat: 'SDK normal do provider. Conversa, anexos e reasoning — sem tools.',
+  chatTools: 'SDK normal + o loop de tools escrito à mão. É o "antes" do estudo.',
+  agent: 'Agents SDK oficial. O loop de tools é do SDK, não do gateway.',
+};
 
 // State
 let currentAgentId = 'researcher-agent';
+let currentMode = 'chat';
+let manualTools = false;
 let currentSessionId = null;
 let isGenerating = false;
-
-// DOM Elements
-const form = document.getElementById('chat-form');
-const input = document.getElementById('message-input');
-const messagesContainer = document.getElementById('chat-messages');
-const providerButtons = document.querySelectorAll('#provider-selector button');
-const currentAgentName = document.getElementById('current-agent-name');
+let inFlight = null;
 
 let agentsData = [];
 let pendingFiles = [];
 
-// DOM Elements - Attachments
+// DOM
+const form = document.getElementById('chat-form');
+const input = document.getElementById('message-input');
+const messagesContainer = document.getElementById('chat-messages');
+const providerButtons = document.querySelectorAll('#provider-selector button');
+const modeButtons = document.querySelectorAll('#mode-selector .mode-btn');
+const modeHint = document.getElementById('mode-hint');
+const toolsToggle = document.getElementById('tools-toggle');
+const toolsCheckbox = document.getElementById('tools-checkbox');
+const currentAgentName = document.getElementById('current-agent-name');
 const attachBtn = document.getElementById('attach-btn');
 const fileInput = document.getElementById('file-input');
 const filePreviewContainer = document.getElementById('file-preview-container');
+const stopBtn = document.getElementById('stop-btn');
+const submitBtn = form.querySelector('button[type="submit"]');
 
-// Fetch agents on load
+// --- Rendering -------------------------------------------------------------
+
+// Tudo que vem do servidor passa por aqui antes de virar HTML. O escape acontece
+// primeiro e só depois a marcação é aplicada, então nenhum texto do modelo ou nome de
+// tool consegue injetar markup.
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderMarkdown(text) {
+  const fences = [];
+  let html = escapeHtml(text);
+
+  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_match, lang, code) => {
+    fences.push('<pre><code data-lang="' + lang + '">' + code.replace(/\n$/, '') + '</code></pre>');
+    // Marcador improvável no texto original: um número solto colidiria com "tenho 3 itens".
+    return '[[fence:' + (fences.length - 1) + ']]';
+  });
+
+  html = html
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+    .replace(/^\s*[-*]\s+(.+)$/gm, '<li>$1</li>');
+
+  html = html.replace(/(<li>[\s\S]*?<\/li>)(?!\s*<li>)/g, '<ul>$1</ul>');
+  html = html.replace(/\n/g, '<br>');
+  html = html.replace(/<\/li><br>/g, '</li>');
+  html = html.replace(/\[\[fence:(\d+)\]\]/g, (_match, index) => fences[Number(index)]);
+
+  return html;
+}
+
+function addMessage(role, content, id) {
+  const div = document.createElement('div');
+  div.className = 'flex flex-col max-w-[85%] chat-bubble ' + (role === 'user' ? 'ml-auto items-end' : '');
+  if (id) div.id = id;
+
+  const innerClass =
+    role === 'user'
+      ? 'bg-zinc-700 text-zinc-50 p-4 rounded-2xl rounded-tr-sm shadow-md'
+      : role === 'system'
+        ? 'bg-zinc-900/80 text-zinc-400 p-4 rounded-2xl border border-zinc-800/60 text-sm italic'
+        : 'bg-zinc-900 border border-zinc-800 p-4 rounded-2xl rounded-tl-sm text-zinc-200 shadow-sm backdrop-blur-sm md';
+
+  const tools = document.createElement('div');
+  tools.className = 'tools-container flex flex-col gap-1 mb-1 empty:hidden';
+
+  const box = document.createElement('div');
+  box.className = innerClass + ' content-box';
+  box.style.whiteSpace = 'pre-wrap';
+  if (role === 'agent' && content instanceof Node) {
+    box.appendChild(content);
+  } else if (role === 'agent') {
+    box.innerHTML = renderMarkdown(content);
+  } else {
+    box.textContent = content;
+  }
+
+  const label = document.createElement('span');
+  label.className = role === 'user' ? 'text-xs text-zinc-500 mt-2 mr-1' : 'text-xs text-zinc-500 mt-2 ml-1';
+  const lane = currentMode === 'chat' && manualTools ? 'chat+tools' : currentMode;
+  label.textContent = role === 'user' ? 'You' : role === 'system' ? 'System' : 'Agent · ' + lane;
+
+  div.append(tools, box, label);
+  messagesContainer.appendChild(div);
+  scrollToBottom();
+  return div;
+}
+
+function scrollToBottom() {
+  messagesContainer.scrollTop = messagesContainer.scrollHeight;
+}
+
+function badge(el, className, iconSvg, textNodes) {
+  el.className = className;
+  el.innerHTML = iconSvg;
+  const span = document.createElement('span');
+  textNodes.forEach((node) => span.appendChild(node));
+  el.appendChild(span);
+}
+
+function strongText(value) {
+  const b = document.createElement('b');
+  b.textContent = value;
+  return b;
+}
+
+const SPINNER =
+  '<svg class="animate-spin h-3 w-3 text-zinc-300" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>';
+const CHECK =
+  '<svg class="h-3 w-3 text-emerald-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+const CROSS =
+  '<svg class="h-3 w-3 text-red-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+
+const BADGE_RUNNING =
+  'text-xs text-zinc-400 bg-zinc-900/80 px-3 py-1.5 rounded-lg inline-flex items-center gap-2 border border-zinc-800/60 w-fit';
+const BADGE_DONE =
+  'text-xs text-zinc-500 bg-zinc-900/40 px-3 py-1.5 rounded-lg inline-flex items-center gap-2 border border-zinc-800/40 w-fit';
+const BADGE_ERROR =
+  'text-xs text-red-300 bg-red-950/40 px-3 py-1.5 rounded-lg inline-flex items-center gap-2 border border-red-900/40 w-fit';
+const BADGE_NOTE =
+  'text-xs text-amber-300/80 bg-amber-950/20 px-3 py-1.5 rounded-lg inline-flex items-center gap-2 border border-amber-900/30 w-fit';
+
+// --- Agents & lanes --------------------------------------------------------
+
 async function loadAgents() {
   try {
-    const res = await fetch(`${API_BASE}/agents`);
+    const res = await fetch(API_BASE + '/agents', { headers: authHeaders() });
     const data = await res.json();
     if (data.ok) {
       agentsData = data.result;
       updateModelSelector();
+      updateModeSelector();
     }
   } catch (err) {
     console.error('Failed to load agents', err);
   }
 }
 
+function currentAgent() {
+  return agentsData.find((a) => a.id === currentAgentId);
+}
+
 function updateModelSelector() {
   const modelSelect = document.getElementById('model-selector');
   const reasoningSelect = document.getElementById('reasoning-selector');
-  if (!modelSelect || !reasoningSelect) return;
-  
-  const agent = agentsData.find(a => a.id === currentAgentId);
-  if (!agent) return;
+  const agent = currentAgent();
+  if (!modelSelect || !reasoningSelect || !agent) return;
 
-  // Populate Models
-  if (!agent.models || agent.models.length === 0) {
-    modelSelect.innerHTML = '<option value="">Nenhum modelo disponível</option>';
-  } else {
-    modelSelect.innerHTML = agent.models.map(m => `<option value="${m}">${m}</option>`).join('');
-  }
+  const options = (values, empty) =>
+    !values || values.length === 0
+      ? '<option value="">' + empty + '</option>'
+      : values.map((v) => '<option value="' + escapeHtml(v) + '">' + escapeHtml(v) + '</option>').join('');
 
-  // Populate Reasoning
-  if (!agent.reasoningEfforts || agent.reasoningEfforts.length === 0) {
-    reasoningSelect.innerHTML = '<option value="">Nenhum</option>';
-  } else {
-    reasoningSelect.innerHTML = agent.reasoningEfforts.map(r => `<option value="${r}">${r}</option>`).join('');
-  }
+  modelSelect.innerHTML = options(agent.models, 'Nenhum modelo disponível');
+  reasoningSelect.innerHTML = options(agent.reasoningEfforts, 'Nenhum');
 }
 
-// Switch Agent
-providerButtons.forEach(btn => {
+function updateModeSelector() {
+  const supported = currentAgent()?.modes ?? ['chat', 'agent'];
+  if (!supported.includes(currentMode)) currentMode = supported[0];
+
+  modeButtons.forEach((btn) => {
+    const mode = btn.dataset.mode;
+    btn.classList.toggle('is-active', mode === currentMode);
+    btn.disabled = !supported.includes(mode);
+    btn.classList.toggle('opacity-40', !supported.includes(mode));
+  });
+
+  // O loop manual só existe na lane chat: na agent quem conduz é o SDK.
+  const chat = currentMode === 'chat';
+  if (toolsCheckbox) {
+    toolsCheckbox.checked = chat && manualTools;
+    toolsCheckbox.disabled = !chat;
+  }
+  if (toolsToggle) toolsToggle.classList.toggle('opacity-40', !chat);
+
+  const hint = chat && manualTools ? MODE_HINTS.chatTools : MODE_HINTS[currentMode];
+  if (modeHint) modeHint.textContent = hint ?? '';
+}
+
+toolsCheckbox?.addEventListener('change', () => {
+  manualTools = toolsCheckbox.checked;
+  updateModeSelector();
+  resetConversation(
+    manualTools
+      ? 'Manual tool loop ligado: o gateway conduz o loop sobre o SDK normal. New session started.'
+      : 'Manual tool loop desligado: conversa pura. New session started.',
+  );
+});
+
+function resetConversation(note) {
+  // Sem isto a sessão anterior ficava viva no gateway até o TTL, segurando o history do
+  // provider e, na lane agent, o runtime da SDK.
+  if (currentSessionId) {
+    const orphan = currentSessionId;
+    fetch(API_BASE + '/sessions/' + orphan, { method: 'DELETE', headers: authHeaders() }).catch(() => undefined);
+  }
+
+  currentSessionId = null;
+  Array.from(messagesContainer.children).forEach((child) => {
+    if (child.id !== 'welcome-section') child.remove();
+  });
+
+  const welcome = document.getElementById('welcome-section');
+  if (welcome) welcome.style.display = 'flex';
+
+  renderPrompts();
+  if (note) addMessage('system', note);
+}
+
+providerButtons.forEach((btn) => {
   btn.addEventListener('click', (e) => {
     const target = e.currentTarget;
     currentAgentId = target.dataset.provider;
-    
-    // Update active state
-    providerButtons.forEach(b => {
-      b.className = 'w-full text-left px-4 py-3 rounded-xl transition-all duration-200 border border-transparent hover:bg-slate-800 text-slate-300';
-    });
-    target.className = 'w-full text-left px-4 py-3 rounded-xl transition-all duration-200 border border-transparent bg-blue-500/10 text-blue-400 border-blue-500/30';
-    
-    currentAgentName.textContent = target.textContent.trim() || currentAgentId;
-    currentSessionId = null; // Reset session when switching
-    
-    // Clear chat messages (except welcome section)
-    Array.from(messagesContainer.children).forEach(child => {
-      if (child.id !== 'welcome-section') {
-        child.remove();
-      }
-    });
 
-    const welcomeSection = document.getElementById('welcome-section');
-    if (welcomeSection) welcomeSection.style.display = 'flex';
-    
-    renderPrompts();
+    providerButtons.forEach((b) => {
+      b.className =
+        'w-full text-left px-4 py-3 rounded-xl transition-all duration-200 border border-transparent hover:bg-zinc-800/50 text-zinc-400 hover:text-zinc-300';
+    });
+    target.className =
+      'w-full text-left px-4 py-3 rounded-xl transition-all duration-200 border bg-zinc-800 text-zinc-200 border-zinc-600/50';
+
+    currentAgentName.textContent = target.textContent.trim() || currentAgentId;
     updateModelSelector();
-    addMessage('system', `Switched to ${target.textContent.trim()}. New session started.`);
+    updateModeSelector();
+    resetConversation('Switched to ' + target.textContent.trim() + ' on the "' + currentMode + '" lane. New session started.');
   });
 });
 
-loadAgents();
+modeButtons.forEach((btn) => {
+  btn.addEventListener('click', () => {
+    if (btn.disabled || btn.dataset.mode === currentMode) return;
+    currentMode = btn.dataset.mode;
+    if (currentMode !== 'chat') manualTools = false;
+    updateModeSelector();
+    // A sessão pertence a uma lane: trocar de lane começa outra.
+    resetConversation('Lane "' + currentMode + '": ' + MODE_HINTS[currentMode] + ' New session started.');
+  });
+});
 
-// UI Helpers
-function addMessage(role, content, id) {
-  const div = document.createElement('div');
-  div.className = `flex flex-col max-w-[85%] chat-bubble ${role === 'user' ? 'ml-auto items-end' : ''}`;
-  if (id) div.id = id;
+// --- Attachments -----------------------------------------------------------
 
-  const innerClass = role === 'user' 
-    ? 'bg-blue-600 text-white p-4 rounded-2xl rounded-tr-sm shadow-md'
-    : role === 'system'
-      ? 'bg-slate-800/80 text-slate-400 p-4 rounded-2xl border border-slate-700/50 text-sm italic'
-      : 'bg-slate-800 border border-slate-700 p-4 rounded-2xl rounded-tl-sm text-slate-200 shadow-sm backdrop-blur-sm';
-
-  const labelClass = role === 'user'
-    ? 'text-xs text-slate-500 mt-2 mr-1'
-    : 'text-xs text-slate-500 mt-2 ml-1';
-
-  div.innerHTML = `
-    <div class="tools-container flex flex-col gap-1 mb-1 empty:hidden"></div>
-    <div class="${innerClass} content-box" style="white-space: pre-wrap;">${content}</div>
-    <span class="${labelClass}">${role === 'user' ? 'You' : role === 'system' ? 'System' : 'Agent'}</span>
-  `;
-
-  messagesContainer.appendChild(div);
-  messagesContainer.scrollTop = messagesContainer.scrollHeight;
-}
-
-function updateMessage(id, content) {
-  const el = document.getElementById(id);
-  if (el) {
-    const contentBox = el.querySelector('.content-box');
-    if (contentBox) contentBox.textContent = content;
-    messagesContainer.scrollTop = messagesContainer.scrollHeight;
-  }
-}
-
-// File Handling
 attachBtn?.addEventListener('click', () => fileInput.click());
 
-fileInput?.addEventListener('change', async (e) => {
+fileInput?.addEventListener('change', (e) => {
   const files = e.target.files;
   if (!files || files.length === 0) return;
 
@@ -136,176 +282,279 @@ fileInput?.addEventListener('change', async (e) => {
     const reader = new FileReader();
     reader.onload = (ev) => {
       const result = ev.target.result;
-      const base64Data = result.split(',')[1];
-      pendingFiles.push({
-        name: file.name,
-        mimeType: file.type,
-        data: base64Data,
-        previewUrl: result // keeping full url just for preview
-      });
+      pendingFiles.push({ name: file.name, mimeType: file.type, data: result.split(',')[1], previewUrl: result });
       renderFilePreviews();
     };
     reader.readAsDataURL(file);
   }
-  fileInput.value = ''; // reset
+  fileInput.value = '';
 });
 
 function renderFilePreviews() {
   if (pendingFiles.length === 0) {
     filePreviewContainer.classList.add('hidden');
-    filePreviewContainer.innerHTML = '';
+    filePreviewContainer.replaceChildren();
     return;
   }
-  
+
   filePreviewContainer.classList.remove('hidden');
-  filePreviewContainer.innerHTML = pendingFiles.map((f, i) => `
-    <div class="relative bg-slate-800 rounded flex items-center p-1 px-2 gap-2 text-xs border border-slate-700 w-max shrink-0">
-      ${f.mimeType.startsWith('image/') ? `<img src="${f.previewUrl}" class="h-6 w-6 object-cover rounded-sm">` : '📄'}
-      <span class="truncate max-w-[100px]">${f.name}</span>
-      <button type="button" class="text-slate-400 hover:text-red-400 ml-1" onclick="removePendingFile(${i})">
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-      </button>
-    </div>
-  `).join('');
+  filePreviewContainer.replaceChildren(
+    ...pendingFiles.map((f, i) => {
+      const chip = document.createElement('div');
+      chip.className =
+        'relative bg-zinc-900 rounded flex items-center p-1 px-2 gap-2 text-xs border border-zinc-800 w-max shrink-0';
+
+      if (f.mimeType.startsWith('image/')) {
+        const img = document.createElement('img');
+        img.src = f.previewUrl;
+        img.className = 'h-6 w-6 object-cover rounded-sm';
+        chip.appendChild(img);
+      } else {
+        chip.appendChild(document.createTextNode('PDF'));
+      }
+
+      const name = document.createElement('span');
+      name.className = 'truncate max-w-[100px]';
+      name.textContent = f.name;
+
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'text-zinc-400 hover:text-red-400 ml-1';
+      remove.textContent = 'x';
+      remove.addEventListener('click', () => {
+        pendingFiles.splice(i, 1);
+        renderFilePreviews();
+      });
+
+      chip.append(name, remove);
+      return chip;
+    }),
+  );
 }
 
-window.removePendingFile = function(index) {
-  pendingFiles.splice(index, 1);
-  renderFilePreviews();
-};
+// --- Session ---------------------------------------------------------------
 
-// API Calls
 async function ensureSession() {
   if (currentSessionId) return currentSessionId;
-  
-  const selectedModel = document.getElementById('model-selector')?.value;
-  const selectedReasoning = document.getElementById('reasoning-selector')?.value;
-  const selectedLanguage = document.getElementById('language-selector')?.value;
-  
-  const res = await fetch(`${API_BASE}/sessions`, {
+
+  const res = await fetch(API_BASE + '/sessions', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ 
-      agentId: currentAgentId, 
-      model: selectedModel,
-      reasoning: selectedReasoning,
-      language: selectedLanguage
-    })
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({
+      agentId: currentAgentId,
+      mode: currentMode,
+      tools: currentMode === 'chat' && manualTools,
+      model: document.getElementById('model-selector')?.value || undefined,
+      reasoning: document.getElementById('reasoning-selector')?.value || undefined,
+      language: document.getElementById('language-selector')?.value,
+    }),
   });
-  
-  if (!res.ok) throw new Error('Failed to create session');
-  const data = await res.json();
+
+  const data = await res.json().catch(() => ({ ok: false, message: 'HTTP ' + res.status }));
   if (!data.ok) throw new Error(data.message || 'Failed to create session');
+
   currentSessionId = data.result.id;
   return currentSessionId;
 }
 
-// Submit handler
+function setGenerating(value) {
+  isGenerating = value;
+  stopBtn?.classList.toggle('hidden', !value);
+  stopBtn?.classList.toggle('flex', value);
+  submitBtn?.classList.toggle('hidden', value);
+}
+
+stopBtn?.addEventListener('click', async () => {
+  if (!currentSessionId) return;
+  // Aborta o fetch e avisa o gateway, que por sua vez aborta o stream no provider.
+  inFlight?.abort();
+  await fetch(API_BASE + '/sessions/' + currentSessionId + '/cancel', {
+    method: 'POST',
+    headers: authHeaders(),
+  }).catch(() => undefined);
+});
+
+// --- Turn ------------------------------------------------------------------
+
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const text = input.value.trim();
-  if (!text && pendingFiles.length === 0 || isGenerating) return;
+  if ((!text && pendingFiles.length === 0) || isGenerating) return;
 
-  const welcomeSection = document.getElementById('welcome-section');
-  if (welcomeSection) welcomeSection.style.display = 'none';
+  const welcome = document.getElementById('welcome-section');
+  if (welcome) welcome.style.display = 'none';
 
   input.value = '';
-  
-  // Clone files to send and clear state
-  const filesToSend = [...pendingFiles].map(({ name, mimeType, data }) => ({ name, mimeType, data }));
+  const filesToSend = pendingFiles.map(({ name, mimeType, data }) => ({ name, mimeType, data }));
   pendingFiles = [];
   renderFilePreviews();
 
-  addMessage('user', text + (filesToSend.length > 0 ? `\n[${filesToSend.length} anexo(s)]` : ''));
-  isGenerating = true;
+  addMessage('user', text + (filesToSend.length > 0 ? '\n[' + filesToSend.length + ' anexo(s)]' : ''));
+  setGenerating(true);
+
+  const loading = document.createElement('div');
+  loading.className = 'flex space-x-1.5 h-6 items-center px-1 opacity-70';
+  loading.innerHTML =
+    '<div class="w-2 h-2 bg-zinc-300 rounded-full animate-bounce" style="animation-delay:-0.3s"></div><div class="w-2 h-2 bg-zinc-300 rounded-full animate-bounce" style="animation-delay:-0.15s"></div><div class="w-2 h-2 bg-zinc-300 rounded-full animate-bounce"></div>';
+
+  const bubble = addMessage('agent', loading);
+  const box = bubble.querySelector('.content-box');
+  const tools = bubble.querySelector('.tools-container');
+
+  let answer = '';
+  let reasoning = '';
+  let activeTool = null;
 
   try {
     const sessionId = await ensureSession();
-    
-    // Create placeholder for agent response
-    const msgId = `msg-${Date.now()}`;
-    const loadingHtml = `<div class="flex space-x-1.5 h-6 items-center px-1 opacity-70">
-      <div class="w-2 h-2 bg-slate-300 rounded-full animate-bounce" style="animation-delay: -0.3s"></div>
-      <div class="w-2 h-2 bg-slate-300 rounded-full animate-bounce" style="animation-delay: -0.15s"></div>
-      <div class="w-2 h-2 bg-slate-300 rounded-full animate-bounce"></div>
-    </div>`;
-    
-    addMessage('agent', loadingHtml, msgId);
-    let fullText = '';
+    inFlight = new AbortController();
 
-    const res = await fetch(`${API_BASE}/sessions/${currentAgentId}/${sessionId}/messages`, {
+    const res = await fetch(API_BASE + '/sessions/' + sessionId + '/messages', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, files: filesToSend })
+      // O gateway escolhe entre SSE e JSON pelo Accept; aqui queremos os eventos.
+      headers: authHeaders({ 'Content-Type': 'application/json', Accept: 'text/event-stream' }),
+      body: JSON.stringify({ message: text, files: filesToSend }),
+      signal: inFlight.signal,
     });
 
     if (!res.body) throw new Error('No response body');
-    
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
 
-    const movePlaceholderToBottom = () => {
-      const el = document.getElementById(msgId);
-      if (el) {
-        messagesContainer.appendChild(el);
-        messagesContainer.scrollTop = messagesContainer.scrollHeight;
-      }
-    };
-    
-    let activeToolId = null;
+    for await (const event of readSse(res.body)) {
+      switch (event.type) {
+        case 'text.delta':
+          answer += event.payload.text;
+          box.innerHTML = renderMarkdown(answer);
+          scrollToBottom();
+          break;
 
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      
-      const chunk = decoder.decode(value, { stream: true });
-      const lines = chunk.split('\n');
-      
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          try {
-            const data = JSON.parse(line.slice(6));
-            if (data.type === 'text.delta' && data.payload?.text) {
-              fullText += data.payload.text;
-              updateMessage(msgId, fullText);
-              movePlaceholderToBottom();
-            } else if (data.type === 'tool.started') {
-              activeToolId = `tool-${Date.now()}`;
-              const el = document.getElementById(msgId);
-              if (el) {
-                const toolsContainer = el.querySelector('.tools-container');
-                const badge = document.createElement('div');
-                badge.id = activeToolId;
-                badge.className = 'text-xs text-slate-400 bg-slate-800/80 px-3 py-1.5 rounded-lg inline-flex items-center gap-2 border border-slate-700/50 w-fit';
-                badge.innerHTML = `<svg class="animate-spin h-3 w-3 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> <span>Using <b>${data.payload.tool}</b>...</span>`;
-                toolsContainer.appendChild(badge);
-              }
-              movePlaceholderToBottom();
-            } else if (data.type === 'tool.result') {
-              if (activeToolId) {
-                const badge = document.getElementById(activeToolId);
-                if (badge) {
-                  badge.className = 'text-xs text-slate-500 bg-slate-800/40 px-3 py-1.5 rounded-lg inline-flex items-center gap-2 border border-slate-700/30 w-fit';
-                  badge.innerHTML = `<svg class="h-3 w-3 text-emerald-500" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> <span><b>${data.payload.tool}</b> completed</span>`;
-                }
-              }
-              movePlaceholderToBottom();
-            } else if (data.type === 'error') {
-               addMessage('system', `❌ Error: ${data.payload.error || data.payload}`);
-               movePlaceholderToBottom();
-            }
-          } catch (e) {
-            console.error('SSE Parse error', e);
+        case 'reasoning.delta':
+          reasoning += event.payload.text;
+          renderReasoning(tools, reasoning);
+          break;
+
+        case 'tool.started':
+          activeTool = document.createElement('div');
+          badge(activeTool, BADGE_RUNNING, SPINNER, [
+            document.createTextNode('Using '),
+            strongText(event.payload.tool),
+            document.createTextNode('...'),
+          ]);
+          tools.appendChild(activeTool);
+          scrollToBottom();
+          break;
+
+        case 'tool.result':
+          if (activeTool) {
+            badge(activeTool, BADGE_DONE, CHECK, [
+              strongText(event.payload.tool),
+              document.createTextNode(' completed'),
+            ]);
           }
+          break;
+
+        case 'tool.error':
+          if (activeTool) {
+            badge(activeTool, BADGE_ERROR, CROSS, [
+              strongText(event.payload.tool),
+              document.createTextNode(': ' + event.payload.message),
+            ]);
+          }
+          break;
+
+        case 'usage':
+          renderUsage(bubble, event.payload);
+          break;
+
+        case 'warning':
+          appendNote(tools, 'Aviso: ' + event.payload.message);
+          break;
+
+        case 'message.aborted':
+          appendNote(tools, 'Stopped.');
+          break;
+
+        case 'error':
+          addMessage('system', 'Error: ' + (event.payload?.message ?? 'unknown error'));
+          break;
+      }
+    }
+
+    if (!answer && box.firstChild === loading) box.textContent = '';
+  } catch (err) {
+    if (err.name !== 'AbortError') addMessage('system', 'Error: ' + err.message);
+  } finally {
+    inFlight = null;
+    setGenerating(false);
+  }
+});
+
+/** Reconstrói os frames SSE a partir do buffer: um chunk pode cortar uma linha ao meio. */
+async function* readSse(body) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split('\n\n');
+    buffer = frames.pop() ?? '';
+
+    for (const frame of frames) {
+      for (const line of frame.split('\n')) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          yield JSON.parse(line.slice(6));
+        } catch (err) {
+          console.error('SSE parse error', err, line);
         }
       }
     }
-  } catch (err) {
-    addMessage('system', `Error: ${err.message}`);
-  } finally {
-    isGenerating = false;
   }
-});
+}
+
+function renderReasoning(tools, text) {
+  let block = tools.querySelector('.reasoning-block');
+  if (!block) {
+    block = document.createElement('details');
+    block.className =
+      'reasoning-block text-xs text-zinc-500 bg-zinc-900/40 px-3 py-1.5 rounded-lg border border-zinc-800/40 w-fit max-w-full';
+    const summary = document.createElement('summary');
+    summary.className = 'cursor-pointer select-none';
+    summary.textContent = 'Reasoning';
+    const body = document.createElement('div');
+    body.className = 'reasoning-body mt-1 whitespace-pre-wrap text-zinc-400';
+    block.append(summary, body);
+    tools.prepend(block);
+  }
+  block.querySelector('.reasoning-body').textContent = text;
+}
+
+function renderUsage(bubble, usage) {
+  const parts = [];
+  if (usage.inputTokens != null) parts.push('in ' + usage.inputTokens);
+  if (usage.outputTokens != null) parts.push('out ' + usage.outputTokens);
+  if (usage.reasoningTokens != null) parts.push('reasoning ' + usage.reasoningTokens);
+  if (parts.length === 0) return;
+
+  let el = bubble.querySelector('.usage-line');
+  if (!el) {
+    el = document.createElement('span');
+    el.className = 'usage-line text-[11px] text-zinc-600 mt-1 ml-1';
+    bubble.appendChild(el);
+  }
+  el.textContent = 'tokens - ' + parts.join(' - ');
+}
+
+function appendNote(tools, message) {
+  const note = document.createElement('div');
+  note.className = BADGE_NOTE;
+  note.textContent = message;
+  tools.appendChild(note);
+  scrollToBottom();
+}
 
 // Dynamic Prompts Config
 function getPromptsConfig(lang) {
@@ -357,32 +606,40 @@ function getPromptsConfig(lang) {
 function renderPrompts() {
   const container = document.getElementById('prompts-grid');
   if (!container) return;
-  
+
   const lang = document.getElementById('language-selector')?.value || 'English';
   const config = getPromptsConfig(lang);
   const prompts = config[currentAgentId] || config['researcher-agent'];
 
-  container.innerHTML = prompts.map(p => `
-    <button class="prompt-btn text-left p-4 rounded-2xl bg-slate-800/50 border border-slate-700 hover:bg-slate-800 hover:border-slate-600 hover:shadow-lg transition-all group" data-prompt="${p.prompt}">
-      <div class="text-sm font-medium text-slate-200 group-hover:text-blue-400 mb-1 flex items-center gap-2">
-        <span>${p.icon}</span> ${p.title}
-      </div>
-      <div class="text-xs text-slate-400">${p.desc}</div>
-    </button>
-  `).join('');
-  
-  document.querySelectorAll('.prompt-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      input.value = e.currentTarget.dataset.prompt;
-      form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
-    });
-  });
+  container.replaceChildren(
+    ...prompts.map((p) => {
+      const btn = document.createElement('button');
+      btn.className =
+        'prompt-btn text-left p-4 rounded-2xl bg-zinc-900/50 border border-zinc-800 hover:bg-zinc-900 hover:border-zinc-700 hover:shadow-lg transition-all group';
+
+      const title = document.createElement('div');
+      title.className = 'text-sm font-medium text-zinc-200 group-hover:text-zinc-50 mb-1 flex items-center gap-2';
+      const icon = document.createElement('span');
+      icon.textContent = p.icon;
+      title.append(icon, document.createTextNode(p.title));
+
+      const desc = document.createElement('div');
+      desc.className = 'text-xs text-zinc-400';
+      desc.textContent = p.desc;
+
+      btn.append(title, desc);
+      btn.addEventListener('click', () => {
+        input.value = p.prompt;
+        form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+      });
+
+      return btn;
+    }),
+  );
 }
 
-// Re-render when language changes
-document.getElementById('language-selector')?.addEventListener('change', () => {
-  renderPrompts();
-});
+document.getElementById('language-selector')?.addEventListener('change', () => renderPrompts());
 
-// Initial render
+loadAgents();
+updateModeSelector();
 renderPrompts();

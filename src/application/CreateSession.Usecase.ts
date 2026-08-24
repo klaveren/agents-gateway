@@ -1,6 +1,6 @@
-import { ICreateSessionInput } from '@domain/models/CreateSessionInput'
-import { IAgentSession } from '@domain/models/AgentSession'
-import { IAgentProvider } from '@domain/ports/AgentProvider'
+import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
+import { IAgentSession } from '@domain/models/AgentSession.Model'
+import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
 
 export class CreateSessionUseCase {
   constructor(private agentProvider: IAgentProvider) {}

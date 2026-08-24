@@ -1,9 +1,9 @@
-import { IAgentProvider } from '@domain/ports/AgentProvider'
+import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
 
 export class CancelSessionUseCase {
   constructor(private agentProvider: IAgentProvider) {}
 
-  async execute(agentId: string, sessionId: string): Promise<void> {
-    return this.agentProvider.cancel(agentId, sessionId)
+  async execute(sessionId: string): Promise<void> {
+    return this.agentProvider.cancel(sessionId)
   }
 }

@@ -1,0 +1,120 @@
+import { getAgentById } from '@domain/Agent.Registry'
+import { resolveSessionMode } from '@domain/Session.Policy'
+import { EMode } from '@domain/enums/EMode.Enum'
+import { EProvider } from '@domain/enums/EProvider.Enum'
+import { AdapterNotFoundError, AgentNotFoundError, SessionNotFoundError } from '@domain/errors/Domain.Error'
+import { IAgent } from '@domain/models/Agent.Model'
+import { IAgentEvent } from '@domain/models/AgentEvent.Model'
+import { IAgentSession } from '@domain/models/AgentSession.Model'
+import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
+import { IMessageInput } from '@domain/models/MessageInput.Model'
+import { ISession } from '@domain/models/Session.Model'
+import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
+import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
+import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
+
+/** Chave do mapa de adapters: cada provider tem uma implementação por lane. */
+export function adapterKey(provider: EProvider, mode: EMode): string {
+  return `${provider}:${mode}`
+}
+
+export class AgentProvider implements IAgentProvider {
+  constructor(
+    private readonly adapters: Map<string, IAgentAdapter>,
+    private readonly sessions: SessionStore,
+  ) {}
+
+  async createSession(input: ICreateSessionInput): Promise<IAgentSession> {
+    const agent = this.getAgent(input.agentId)
+    const mode = resolveSessionMode(agent, input)
+
+    return this.getAdapter(agent.provider, mode).createSession(agent, { ...input, mode })
+  }
+
+  /**
+   * O store sabe de que agente e de que lane é a sessão, então o chamador só precisa do id.
+   * Antes o `agentId` viajava no path da requisição e nada garantia que ele batia com a
+   * sessão — dava para pedir o agente errado e receber um "Session not found" sem sentido.
+   */
+  async *sendMessage(sessionId: string, input: IMessageInput): AsyncIterable<IAgentEvent> {
+    const record = this.requireSession(sessionId)
+    const agent = this.getAgent(record.agentId)
+    const adapter = this.getAdapter(record.provider, record.mode)
+
+    record.status = 'running'
+    record.turns += 1
+
+    try {
+      for await (const event of adapter.sendMessage(agent, sessionId, input)) {
+        // Somar o usage aqui vale para as seis implementações de uma vez.
+        if (event.type === 'usage') this.sessions.addUsage(record, event.payload)
+        yield event
+      }
+    } finally {
+      record.status = 'idle'
+    }
+  }
+
+  async cancel(sessionId: string): Promise<void> {
+    const record = this.requireSession(sessionId)
+    return this.getAdapter(record.provider, record.mode).cancel(sessionId)
+  }
+
+  /** Encerrar inclui abortar o que estiver em curso: quem faz as duas coisas é o store. */
+  async dispose(sessionId: string): Promise<void> {
+    if (!this.sessions.delete(sessionId)) throw new SessionNotFoundError(sessionId)
+  }
+
+  describe(sessionId: string): ISession {
+    return toSession(this.requireSession(sessionId))
+  }
+
+  list(): ISession[] {
+    return this.sessions.list().map(toSession)
+  }
+
+  private requireSession(sessionId: string): ISessionRecord {
+    const record = this.sessions.get(sessionId)
+    if (!record) throw new SessionNotFoundError(sessionId)
+    return record
+  }
+
+  private getAgent(agentId: string): IAgent {
+    const agent = getAgentById(agentId)
+    if (!agent) throw new AgentNotFoundError(agentId)
+    return agent
+  }
+
+  private getAdapter(provider: EProvider, mode: EMode): IAgentAdapter {
+    const adapter = this.adapters.get(adapterKey(provider, mode))
+    if (!adapter) throw new AdapterNotFoundError(provider, mode)
+    return adapter
+  }
+}
+
+/**
+ * A tradução do registro de infra para a visão do domínio.
+ *
+ * É trabalho do adapter, e é por isso que ela mora aqui: o `ISessionRecord` carrega
+ * `abort`, `native` e o prompt já composto, que são maquinário e não pertencem ao contrato.
+ * Note que `lastActivityAt` deixa de ser epoch em milissegundo — aritmética de TTL é
+ * problema do store, não do domínio.
+ */
+function toSession(record: ISessionRecord): ISession {
+  return {
+    id: record.id,
+    agentId: record.agentId,
+    provider: record.provider,
+    mode: record.mode,
+    model: record.model,
+    reasoning: record.reasoning,
+    language: record.language,
+    tools: record.tools,
+    status: record.status,
+    turns: record.turns,
+    usage: record.usage,
+    createdAt: record.createdAt,
+    lastActivityAt: new Date(record.lastActivityAt),
+    metadata: record.metadata,
+  }
+}

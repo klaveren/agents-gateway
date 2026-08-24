@@ -1,0 +1,38 @@
+services:
+  gateway:
+    build: .
+    image: agents-gateway:alpha
+    # As chaves entram por aqui, nunca na imagem.
+    env_file:
+      - .env
+    environment:
+      # Dentro do container pode escutar em tudo: quem limita é a publicação da porta.
+      HOST: 0.0.0.0
+      PORT: 3000
+      BASH_CWD: /workspace
+    ports:
+      # Só loopback do host. Nem a sua LAN nem o resto da rede alcançam.
+      - '127.0.0.1:3000:3000'
+
+    # --- Contenção ---
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      # O SDK do Claude persiste sessão sob $HOME; sem isto o `resume` quebra no rootfs
+      # somente-leitura.
+      - gateway-home:/home/gateway
+      # Único lugar onde o run_bash escreve.
+      - gateway-workspace:/workspace
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Fork bomb e processo desgovernado batem no teto do container, não na sua máquina.
+    pids_limit: 256
+    mem_limit: 2g
+    restart: unless-stopped
+
+volumes:
+  gateway-home:
+  gateway-workspace:

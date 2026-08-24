@@ -1,8 +1,12 @@
 {
   "name": "agents-gateway",
   "version": "1.0.0-alpha",
-  "description": "",
+  "description": "Gateway that runs Claude, GPT and Gemini in two lanes: chat (plain SDK) and agent (official Agents SDK).",
   "main": "dist/main.js",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "packageManager": "pnpm@10.33.2",
   "scripts": {
     "start": "node dist/main.js",
     "dev": "tsx watch src/main.ts",
@@ -32,14 +36,19 @@
     "typescript-eslint": "^8.67.0"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.234",
     "@anthropic-ai/sdk": "^0.117.1",
+    "@google/adk": "^1.6.0",
     "@google/generative-ai": "^0.24.1",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@openai/agents": "^0.16.1",
     "@types/express": "^5.0.6",
     "axios": "^1.19.0",
     "cheerio": "^1.2.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "openai": "^7.4.0"
+    "openai": "^7.4.0",
+    "zod": "^4.4.3"
   }
 }
