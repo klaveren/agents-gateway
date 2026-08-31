@@ -269,4 +269,23 @@ describe('OpenAIAgentAdapter', () => {
 
     assert.strictEqual(events[events.length - 1].type, 'message.aborted')
   })
+
+  it('extracts the reasoning tokens without adding them to the output again', async () => {
+    // ⚠️ Aqui o raciocínio JÁ ESTÁ dentro de `outputTokens` — ao contrário do Gemini, que devolve
+    // os dois separados. Somar de novo daria 40 de saída num turno que custou 30.
+    const adapter = new OpenAIAgentAdapter({
+      run: runWith(() => [
+        {
+          type: 'raw_model_stream_event',
+          data: { type: 'response_done', response: { usage: { inputTokens: 8, outputTokens: 30, outputTokensDetails: { reasoningTokens: 10 } } } },
+        },
+      ]),
+    })
+    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
+    const usage = events.find((event) => event.type === 'usage')
+
+    assert.deepStrictEqual(usage?.payload, { inputTokens: 8, outputTokens: 30, reasoningTokens: 10 })
+  })
 })

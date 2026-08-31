@@ -3,7 +3,7 @@ import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IAgent } from '@domain/models/Agent.Model'
-import { IAgentEvent } from '@domain/models/AgentEvent.Model'
+import { IAgentEvent, IUsage } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
@@ -260,7 +260,7 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
     }
   }
 
-  private readUsage(data: unknown): { inputTokens?: number; outputTokens?: number } | undefined {
+  private readUsage(data: unknown): IUsage | undefined {
     if (typeof data !== 'object' || data === null) return undefined
 
     const response = (data as { response?: unknown }).response
@@ -269,10 +269,23 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
     const usage = (response as { usage?: unknown }).usage
     if (typeof usage !== 'object' || usage === null) return undefined
 
-    const { inputTokens, outputTokens } = usage as { inputTokens?: unknown; outputTokens?: unknown }
+    const { inputTokens, outputTokens, outputTokensDetails } = usage as { inputTokens?: unknown; outputTokens?: unknown; outputTokensDetails?: unknown }
+
+    /**
+     * ⚠️ O RACIOCÍNIO VEM NUM SUB-OBJETO, e já está DENTRO de `outputTokens`.
+     *
+     * Diferente do Gemini, que devolve os dois separados e exige SOMAR. Aqui somar de novo contaria
+     * o raciocínio duas vezes — por isso ele é só EXTRAÍDO, para quem lê o consumo poder mostrar
+     * quanto da saída foi o modelo pensando. Mesmo nome de campo, contrato oposto: é o tipo de
+     * detalhe que passa despercebido e infla o custo relatado sem nada denunciar.
+     */
+    const details = (typeof outputTokensDetails === 'object' && outputTokensDetails !== null ? outputTokensDetails : {}) as { reasoningTokens?: unknown }
+    const reasoning = typeof details.reasoningTokens === 'number' ? details.reasoningTokens : 0
+
     return {
       inputTokens: typeof inputTokens === 'number' ? inputTokens : undefined,
       outputTokens: typeof outputTokens === 'number' ? outputTokens : undefined,
+      reasoningTokens: reasoning || undefined,
     }
   }
 
