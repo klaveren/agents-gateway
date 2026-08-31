@@ -15,6 +15,7 @@ import { DeleteSessionUseCase } from '@application/DeleteSession.Usecase'
 import { GetSessionUseCase } from '@application/GetSession.Usecase'
 import { ListSessionsUseCase } from '@application/ListSessions.Usecase'
 import { SendMessageUseCase } from '@application/SendMessage.Usecase'
+import { NullConversationRepository } from '@infra/persistence/Null.ConversationRepository'
 
 interface IBody {
   ok: boolean
@@ -68,7 +69,7 @@ describe('AgentController', () => {
     const deps: IAgentControllerDeps = {
       catalog,
       createSession: new CreateSessionUseCase(provider),
-      sendMessage: new SendMessageUseCase(provider),
+      sendMessage: new SendMessageUseCase(provider, new NullConversationRepository()),
       cancelSession: new CancelSessionUseCase(provider),
       deleteSession: new DeleteSessionUseCase(provider),
       getSession: new GetSessionUseCase(provider),
