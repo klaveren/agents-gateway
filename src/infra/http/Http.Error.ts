@@ -1,4 +1,4 @@
-import { AdapterNotFoundError, AgentNotFoundError, ModeNotSupportedError, SessionNotFoundError, ToolsNotSupportedError } from '@domain/errors/Domain.Error'
+import { AdapterNotFoundError, AgentNotFoundError, AgentUnavailableError, ModeNotSupportedError, SessionNotFoundError, ToolsNotSupportedError } from '@domain/errors/Domain.Error'
 
 export type TErrorCode =
   | 'validation_error'
@@ -7,6 +7,7 @@ export type TErrorCode =
   | 'mode_not_supported'
   | 'tools_not_supported'
   | 'adapter_not_found'
+  | 'agent_unavailable'
   | 'unauthorized'
   | 'not_found'
   | 'internal_error'
@@ -48,6 +49,21 @@ export function toHttpFailure(error: unknown): IHttpFailure {
 
   if (error instanceof SessionNotFoundError) {
     return { status: 404, code: 'session_not_found', message: error.message }
+  }
+
+  if (error instanceof AgentUnavailableError) {
+    /**
+     * 403, e um código PRÓPRIO.
+     *
+     * ⚖️ Não é 404: o agente existe. Não é 500: ninguém quebrou — isto é uma decisão de operação, e
+     * mandar quem lê procurar defeito é o erro que este código existe para não cometer. E não é 503,
+     * que acenderia monitoramento de queda por um desligamento deliberado.
+     *
+     * ⚠️ O CÓDIGO NÃO É `unauthorized`. Ele mandaria a pessoa pedir acesso a alguém, quando o que
+     * ela precisa é que alguém religue o agente. O status é o mesmo; o código é o que diz o que
+     * fazer a seguir.
+     */
+    return { status: 403, code: 'agent_unavailable', message: error.message }
   }
 
   if (error instanceof ModeNotSupportedError) {
