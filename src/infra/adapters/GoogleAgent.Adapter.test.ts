@@ -21,6 +21,14 @@ function adkEvent(parts: unknown[], partial = false): Event {
   return { actions: {}, content: { parts }, partial } as unknown as Event
 }
 
+/**
+ * O `Event` do ADK estende `LlmResponse`, e é ali que mora o `usageMetadata`. Um turno agêntico
+ * passa pelo modelo uma vez por rodada de ferramenta, e cada passagem traz o seu.
+ */
+function adkEventWithUsage(parts: unknown[], usage: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number }, partial = false): Event {
+  return { actions: {}, content: { parts }, partial, usageMetadata: usage } as unknown as Event
+}
+
 describe('GoogleAgentAdapter', () => {
   const getAgent = (): IAgent => ({
     id: 'researcher-agent',
@@ -246,5 +254,68 @@ describe('GoogleAgentAdapter', () => {
     }
 
     assert.strictEqual(events[events.length - 1].type, 'message.aborted')
+  })
+
+  it('reports the token usage the ADK puts on the event', async () => {
+    const log = emptyLog()
+    const adapter = new GoogleAgentAdapter({
+      createRuntime: runtimeWith(() => [adkEventWithUsage([{ text: 'done' }], { promptTokenCount: 120, candidatesTokenCount: 30, thoughtsTokenCount: 8 })], log),
+    })
+    const record = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+
+    const events = await drain(adapter.sendMessage(getAgent(), record.id, { text: 'hi' }))
+    const usage = events.filter((event) => event.type === 'usage')
+
+    assert.deepStrictEqual(
+      usage.map((event) => event.payload),
+      [{ inputTokens: 120, outputTokens: 30, reasoningTokens: 8 }],
+    )
+  })
+
+  it('emits one usage event per model call, so the turn is their sum', async () => {
+    const log = emptyLog()
+    const adapter = new GoogleAgentAdapter({
+      createRuntime: runtimeWith(
+        () => [
+          adkEventWithUsage([{ functionCall: { name: 'search_web', args: {} } }], { promptTokenCount: 100, candidatesTokenCount: 10 }),
+          adkEventWithUsage([{ functionResponse: { name: 'search_web', response: {} } }], {}),
+          adkEventWithUsage([{ text: 'answer' }], { promptTokenCount: 180, candidatesTokenCount: 25 }),
+        ],
+        log,
+      ),
+    })
+    const record = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+
+    const events = await drain(adapter.sendMessage(getAgent(), record.id, { text: 'hi' }))
+    const usage = events.filter((event) => event.type === 'usage')
+
+    // Ficar com o último evento — o erro fácil aqui — faria este turno custar 180 em vez de 280.
+    assert.strictEqual(usage.length, 2)
+    assert.strictEqual(
+      usage.reduce((total, event) => total + ((event.payload as { inputTokens?: number }).inputTokens ?? 0), 0),
+      280,
+    )
+  })
+
+  it('ignores usage on partial events, which repeat the running total of the same step', async () => {
+    const log = emptyLog()
+    const adapter = new GoogleAgentAdapter({
+      createRuntime: runtimeWith(
+        () => [
+          adkEventWithUsage([{ text: 'par' }], { promptTokenCount: 50, candidatesTokenCount: 1 }, true),
+          adkEventWithUsage([{ text: 'partial' }], { promptTokenCount: 50, candidatesTokenCount: 4 }),
+        ],
+        log,
+      ),
+    })
+    const record = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+
+    const events = await drain(adapter.sendMessage(getAgent(), record.id, { text: 'hi' }))
+    const usage = events.filter((event) => event.type === 'usage')
+
+    assert.deepStrictEqual(
+      usage.map((event) => event.payload),
+      [{ inputTokens: 50, outputTokens: 4, reasoningTokens: 0 }],
+    )
   })
 })

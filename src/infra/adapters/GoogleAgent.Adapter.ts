@@ -3,7 +3,7 @@ import { EventType, InMemorySessionService, LlmAgent, Runner, StreamingMode, toS
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
-import { IAgentEvent } from '@domain/models/AgentEvent.Model'
+import { IAgentEvent, IUsage } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
@@ -181,6 +181,23 @@ export class GoogleAgentAdapter implements IAgentAdapter {
           if (mapped) yield mapped
         }
 
+        /**
+         * O uso vem NO EVENTO, e um turno agêntico produz vários.
+         *
+         * ⚠️ O `Event` do ADK estende `LlmResponse`, e é ali que mora o `usageMetadata` — o adapter
+         * simplesmente não o lia, e o resultado era turno registrado com `usage` zerado: nenhuma
+         * visibilidade de custo, e nenhum erro para denunciar.
+         *
+         * ⚠️ CADA CHAMADA AO MODELO TRAZ O SEU. Uma pergunta que usa três ferramentas passa quatro
+         * vezes pelo modelo, e o consumo do turno é a SOMA — não o do último evento, que é o erro
+         * fácil de cometer aqui e faria o custo parecer uma fração do que foi.
+         *
+         * Eventos parciais repetem o acumulado do mesmo passo; contá-los somaria o mesmo consumo
+         * várias vezes.
+         */
+        const usage = !isPartial ? this.toUsage(event) : undefined
+        if (usage) yield { type: 'usage', sessionId, timestamp: new Date(), payload: usage }
+
         if (isPartial) sawPartialText = true
         else sawPartialText = false
       }
@@ -262,6 +279,25 @@ export class GoogleAgentAdapter implements IAgentAdapter {
       all.filter((tool) => !local.has(tool.name)),
       (name, args) => this.catalog!.invoke(name, args),
     )
+  }
+
+  /**
+   * Traduz o `usageMetadata` do ADK. `undefined` quando o evento não carrega consumo — a maioria
+   * não carrega, e emitir zero poluiria o stream e o acumulado.
+   */
+  private toUsage(event: { usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number } }): IUsage | undefined {
+    const raw = event.usageMetadata
+    if (!raw) return undefined
+
+    const inputTokens = raw.promptTokenCount ?? 0
+    const outputTokens = raw.candidatesTokenCount ?? 0
+    // O raciocínio é cobrado como saída e não aparece em `candidatesTokenCount`. Ignorá-lo
+    // subestimaria o custo justamente nos modelos que mais pensam.
+    const reasoningTokens = raw.thoughtsTokenCount ?? 0
+
+    if (!inputTokens && !outputTokens && !reasoningTokens) return undefined
+
+    return { inputTokens, outputTokens, reasoningTokens }
   }
 
   private toAgentEvent(event: ReturnType<typeof toStructuredEvents>[number], sessionId: string): IAgentEvent | undefined {
