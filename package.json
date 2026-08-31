@@ -4,14 +4,14 @@
   "description": "Gateway that runs Claude, GPT and Gemini in two lanes: chat (plain SDK) and agent (official Agents SDK).",
   "main": "dist/main.js",
   "engines": {
-    "node": ">=22.12"
+    "node": ">=22.13"
   },
   "packageManager": "pnpm@10.33.2",
   "scripts": {
     "start": "node dist/main.js",
     "dev": "tsx watch src/main.ts",
     "build": "tsc && tsc-alias",
-    "test": "node --test --import tsx 'src/**/*.test.ts'",
+    "test": "CONVERSATIONS_DB=:memory: node --test --import tsx 'src/**/*.test.ts'",
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint src/**/*.ts --fix",
     "format": "prettier --write \"src/**/*.ts\""
