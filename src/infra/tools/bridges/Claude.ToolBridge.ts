@@ -35,8 +35,13 @@ export function buildClaudeMcpServers(local: ILocalTool[], remoteUrl?: string): 
 /** O helper `tool()` do SDK só aceita raw shape do zod, não JSON Schema. */
 function toZodShape(item: ILocalTool): ZodRawShape {
   const entries = Object.entries(item.inputSchema.properties).map(([key, property]) => {
-    const base = property.type === 'number' ? z.number() : property.type === 'boolean' ? z.boolean() : z.string()
-    const described = base.describe(property.description)
+    // Lido com cuidado porque `properties` é JSON Schema aberto: uma tool pode declarar propriedade
+    // sem `description`, ou com `type` composto. Cair para string é o que o SDK já fazia na prática.
+    const type = typeof property.type === 'string' ? property.type : 'string'
+    const description = typeof property.description === 'string' ? property.description : ''
+
+    const base = type === 'number' ? z.number() : type === 'boolean' ? z.boolean() : z.string()
+    const described = description ? base.describe(description) : base
     return [key, item.inputSchema.required.includes(key) ? described : described.optional()] as const
   })
 

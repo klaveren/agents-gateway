@@ -10,7 +10,7 @@ import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { sessionPrefix } from '@infra/session/Session.Key'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
-import { buildAdkMcpToolset, buildAdkTools } from '@infra/tools/bridges/Adk.ToolBridge'
+import { buildAdkRemoteTools, buildAdkTools } from '@infra/tools/bridges/Adk.ToolBridge'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { composeSystemPrompt } from './support/Prompt.Helper'
 
@@ -156,7 +156,7 @@ export class GoogleAgentAdapter implements IAgentAdapter {
     }
 
     try {
-      const native = this.nativeOf(record, agent, await this.catalog?.mcpEndpoint())
+      const native = this.nativeOf(record, agent, await this.remoteTools(agent))
       await native.runtime.ensureSession(native.userId, native.adkSessionId)
 
       const stream = native.runtime.runAsync({
@@ -216,14 +216,14 @@ export class GoogleAgentAdapter implements IAgentAdapter {
    * O runtime do ADK vive aqui porque é ele que carrega o histórico entre turnos: recriá-lo
    * a cada turno apagaria a conversa.
    */
-  private nativeOf(record: ISessionRecord, agent: IAgent, remoteUrl?: string): IGoogleAgentNative {
+  private nativeOf(record: ISessionRecord, agent: IAgent, remote: BaseTool[]): IGoogleAgentNative {
     if (!record.native) {
       record.native = {
         runtime: this.createRuntime({
           name: this.toAdkName(agent.id),
           model: record.model,
           instruction: record.systemPrompt,
-          tools: this.buildTools(agent, remoteUrl),
+          tools: this.buildTools(agent, remote),
         }),
         userId: `gateway-${record.id}`,
         adkSessionId: randomUUID(),
@@ -237,11 +237,31 @@ export class GoogleAgentAdapter implements IAgentAdapter {
    * decidido ali. Uma sessão aberta com o MCP fora do ar segue sem ele até ser recriada;
    * sessões novas pegam a reconexão.
    */
-  private buildTools(agent: IAgent, remoteUrl?: string): Array<BaseTool | BaseToolset> {
-    const tools: Array<BaseTool | BaseToolset> = buildAdkTools(this.catalog?.localFor(agent.allowedTools) ?? [])
-    const remote = buildAdkMcpToolset(remoteUrl)
-    if (remote) tools.push(remote)
-    return tools
+  private buildTools(agent: IAgent, remote: BaseTool[]): Array<BaseTool | BaseToolset> {
+    return [...buildAdkTools(this.catalog?.localFor(agent.allowedTools) ?? []), ...remote]
+  }
+
+  /**
+   * As tools do MCP, declaradas por nós em vez de pelo `MCPToolset` do ADK.
+   *
+   * ⚖️ O `MCPToolset` conecta ao MCP sozinho e repassa o JSON Schema como veio; a API do Gemini
+   * recusa `$schema`, `additionalProperties` e `exclusiveMinimum` com HTTP 400, e o ADK entrega
+   * isso ao chamador como `MALFORMED_FUNCTION_CALL` — apontando para o modelo em vez do schema.
+   * Montando aqui, a declaração passa pela sanitização e a execução segue pelo `ToolCatalog`,
+   * como em qualquer outro caminho.
+   *
+   * Sem MCP conectado devolve lista vazia: o agente fica só com as tools locais, sem quebrar.
+   */
+  private async remoteTools(agent: IAgent): Promise<BaseTool[]> {
+    if (!this.catalog) return []
+
+    const local = new Set(this.catalog.localFor(agent.allowedTools).map((tool) => tool.name))
+    const all = await this.catalog.list(agent.allowedTools)
+
+    return buildAdkRemoteTools(
+      all.filter((tool) => !local.has(tool.name)),
+      (name, args) => this.catalog!.invoke(name, args),
+    )
   }
 
   private toAgentEvent(event: ReturnType<typeof toStructuredEvents>[number], sessionId: string): IAgentEvent | undefined {
