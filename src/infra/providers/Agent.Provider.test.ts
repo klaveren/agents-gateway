@@ -2,10 +2,11 @@ import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { AdapterNotFoundError, AgentNotFoundError, ModeNotSupportedError, SessionNotFoundError, ToolsNotSupportedError } from '@domain/errors/Domain.Error'
+import { AdapterNotFoundError, AgentNotFoundError, AgentUnavailableError, ModeNotSupportedError, SessionNotFoundError, ToolsNotSupportedError } from '@domain/errors/Domain.Error'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { withCaller } from '@infra/mcp/Caller.Identity'
+import { NullSettingsRepository } from '@infra/persistence/Null.SettingsRepository'
 import { SessionStore } from '@infra/session/Session.Store'
 import { adapterKey, AgentProvider } from './Agent.Provider'
 
@@ -67,6 +68,24 @@ describe('AgentProvider', () => {
     )
 
     return { provider, store, chat, agent }
+  }
+
+  /** O mesmo `setup`, com um repositório de configuração plugado. */
+  function setupWithSettings(settings: NullSettingsRepository) {
+    const store = new SessionStore()
+    const chat = spyAdapter(store, EProvider.GOOGLE, EMode.CHAT, [])
+    const agent = spyAdapter(store, EProvider.GOOGLE, EMode.AGENT, [])
+
+    const provider = new AgentProvider(
+      new Map([
+        [adapterKey(EProvider.GOOGLE, EMode.CHAT), chat.adapter],
+        [adapterKey(EProvider.GOOGLE, EMode.AGENT), agent.adapter],
+      ]),
+      store,
+      settings,
+    )
+
+    return { provider, chat, agent }
   }
 
   const drain = async (stream: AsyncIterable<IAgentEvent>) => {
@@ -174,5 +193,35 @@ describe('AgentProvider', () => {
     await drain(provider.sendMessage(session.id, { text: 'hi' }))
 
     assert.strictEqual(chat.seenToken, undefined)
+  })
+
+  it('refuses a new session while disabled, and says it is unavailable — not missing', async () => {
+    const { provider } = setupWithSettings(new NullSettingsRepository({ enabled: false }))
+
+    await assert.rejects(() => provider.createSession({ agentId: 'researcher-agent' }), AgentUnavailableError)
+  })
+
+  it('lets a conversation already open finish its turn after being disabled', async () => {
+    // ⛔ Fechar impede sessão NOVA. Matar o turno em curso deixaria meia resposta na tela e
+    // registraria um erro que não foi erro.
+    const settings = new NullSettingsRepository({ enabled: true })
+    const { provider } = setupWithSettings(settings)
+    const session = await provider.createSession({ agentId: 'researcher-agent' })
+
+    await settings.save({ enabled: false })
+
+    await assert.doesNotReject(() => drain(provider.sendMessage(session.id, { text: 'hi' })))
+  })
+
+  it('picks up a settings change without a restart', async () => {
+    // ⚖️ É o `subscribe` fazendo efeito: sem ele, a alteração só valeria depois de um cache expirar.
+    const settings = new NullSettingsRepository({ enabled: true })
+    const { provider } = setupWithSettings(settings)
+
+    await assert.doesNotReject(() => provider.createSession({ agentId: 'researcher-agent' }))
+
+    await settings.save({ enabled: false })
+
+    await assert.rejects(() => provider.createSession({ agentId: 'researcher-agent' }), AgentUnavailableError)
   })
 })

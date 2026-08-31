@@ -9,6 +9,7 @@ import { GoogleChatAdapter } from '@infra/adapters/GoogleChat.Adapter'
 import { OpenAIAgentAdapter } from '@infra/adapters/OpenAIAgent.Adapter'
 import { OpenAIChatAdapter } from '@infra/adapters/OpenAIChat.Adapter'
 import { adapterKey, AgentProvider } from '@infra/providers/Agent.Provider'
+import { NullSettingsRepository } from '@infra/persistence/Null.SettingsRepository'
 import { SessionStore } from '@infra/session/Session.Store'
 import { makeTools } from './Tools.Factory'
 
@@ -47,5 +48,9 @@ export function makeOrchestrator(): AgentProvider {
     [adapterKey(EProvider.GOOGLE, EMode.AGENT), new GoogleAgentAdapter({ store: sessions, catalog })],
   ])
 
-  return new AgentProvider(adapters, sessions)
+  /**
+   * Sem banco plugado, as configurações vivem em memória (ver `NullSettingsRepository`). Trocar por
+   * um repositório de verdade é trocar esta linha — nada acima daqui sabe qual é.
+   */
+  return new AgentProvider(adapters, sessions, new NullSettingsRepository())
 }

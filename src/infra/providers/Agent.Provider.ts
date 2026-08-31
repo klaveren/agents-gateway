@@ -2,7 +2,9 @@ import { getAgentById } from '@domain/Agent.Registry'
 import { resolveSessionMode } from '@domain/Session.Policy'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { AdapterNotFoundError, AgentNotFoundError, SessionNotFoundError } from '@domain/errors/Domain.Error'
+import { AdapterNotFoundError, AgentNotFoundError, AgentUnavailableError, SessionNotFoundError } from '@domain/errors/Domain.Error'
+import { DEFAULT_SETTINGS, IAgentSettings } from '@domain/models/Settings.Model'
+import { ISettingsRepository } from '@domain/ports/SettingsRepository.Port'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
@@ -24,10 +26,51 @@ export class AgentProvider implements IAgentProvider {
   constructor(
     private readonly adapters: Map<string, IAgentAdapter>,
     private readonly sessions: SessionStore,
-  ) {}
+
+    /**
+     * As configurações de operação vivem AQUI, na camada agnóstica.
+     *
+     * ⚖️ Nem no adapter, nem no controller. O adapter não pode ter opinião sobre quem atende ou com
+     * qual modelo — se tivesse, cada um teria a sua, que foi exatamente o que aconteceu com a
+     * credencial. O controller é transporte: colocar regra ali a tornaria invisível para quem chama
+     * o provider por outro caminho.
+     *
+     * Opcional para o teste montar o provider sem infraestrutura; ausente, valem os padrões.
+     */
+    private readonly settings?: ISettingsRepository,
+  ) {
+    /**
+     * Uma leitura no boot, e depois só quando muda.
+     *
+     * ⚖️ A ALTERNATIVA ERA LER A CADA SESSÃO. Com cache curto isso funciona, mas põe um `await` de
+     * rede no caminho de toda conversa para responder uma pergunta que quase nunca muda — e ainda
+     * faz a alteração demorar até o cache expirar. Aqui ela vale no instante em que é salva.
+     *
+     * `void`: o boot não espera pelo banco. Até a primeira leitura chegar valem os padrões, que é o
+     * comportamento certo de um serviço que não pode deixar de subir por causa disso.
+     */
+    void this.settings?.read().then((stored) => {
+      this.current = stored
+    })
+    this.settings?.subscribe((stored) => {
+      this.current = stored
+    })
+  }
+
+  /** A cópia viva das configurações. Vazia até a primeira leitura — e aí valem os padrões. */
+  private current?: IAgentSettings
 
   async createSession(input: ICreateSessionInput): Promise<IAgentSession> {
-    const agent = this.getAgent(input.agentId)
+    /**
+     * A cópia viva quando existe; senão, uma leitura; senão, o default.
+     *
+     * ⛔ Fechar impede SESSÃO NOVA, e só. Conversa em andamento termina o turno: matá-la no meio
+     * deixaria a pessoa com meia resposta e registraria um erro que não foi erro.
+     */
+    const settings = this.current ?? (await this.settings?.read()) ?? DEFAULT_SETTINGS
+    if (!settings.enabled) throw new AgentUnavailableError()
+
+    const agent = this.getAgent(input.agentId ?? settings.agentId)
     const mode = resolveSessionMode(agent, input)
 
     return this.getAdapter(agent.provider, mode).createSession(agent, { ...input, mode })
