@@ -197,11 +197,11 @@ describe('AgentController', () => {
 
   it('rejects an invalid body with 422 and points at the field', async () => {
     const { res, locals } = mockResponse()
-    await controllerWith().createSession(mockRequest({ body: {} }), res)
+    await controllerWith().createSession(mockRequest({ body: { mode: 'nope' } }), res)
 
     assert.strictEqual(locals.statusCode, 422)
     assert.strictEqual(locals.body?.code, 'validation_error')
-    assert.deepStrictEqual(locals.body?.details, [{ field: 'agentId', message: 'agentId is required' }])
+    assert.deepStrictEqual(locals.body?.details, [{ field: 'mode', message: 'Invalid option: expected one of "chat"|"agent"' }])
   })
 
   it('maps a domain failure to its own status and code', async () => {

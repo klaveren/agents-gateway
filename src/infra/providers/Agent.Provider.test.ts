@@ -76,16 +76,21 @@ describe('AgentProvider', () => {
     const chat = spyAdapter(store, EProvider.GOOGLE, EMode.CHAT, [])
     const agent = spyAdapter(store, EProvider.GOOGLE, EMode.AGENT, [])
 
+    // O agente do Claude entra para haver DOIS agentes de verdade — sem isso não dá para provar que
+    // a escolha de quem chama vence a da configuração.
+    const claude = spyAdapter(store, EProvider.CLAUDE, EMode.CHAT, [])
+
     const provider = new AgentProvider(
       new Map([
         [adapterKey(EProvider.GOOGLE, EMode.CHAT), chat.adapter],
         [adapterKey(EProvider.GOOGLE, EMode.AGENT), agent.adapter],
+        [adapterKey(EProvider.CLAUDE, EMode.CHAT), claude.adapter],
       ]),
       store,
       settings,
     )
 
-    return { provider, chat, agent }
+    return { provider, chat, agent, claude }
   }
 
   const drain = async (stream: AsyncIterable<IAgentEvent>) => {
@@ -223,5 +228,26 @@ describe('AgentProvider', () => {
     await settings.save({ enabled: false })
 
     await assert.rejects(() => provider.createSession({ agentId: 'researcher-agent' }), AgentUnavailableError)
+  })
+
+  it('lets the configured agent answer when the caller did not pick one', async () => {
+    // ⚠️ A REGRESSÃO: enquanto `agentId` era obrigatório no transporte, este caminho era inalcançável
+    // — trocava-se o agente na configuração e a conversa continuava no mesmo, sem nada avisar. E o
+    // tipo não denunciava: `input.agentId ?? settings.agentId` compila quando o primeiro nunca falta.
+    const { provider } = setupWithSettings(new NullSettingsRepository({ enabled: true, agentId: 'researcher-agent' }))
+
+    const session = await provider.createSession({})
+
+    assert.strictEqual(provider.describe(session.id).agentId, 'researcher-agent')
+  })
+
+  it('lets the caller override the configured agent', async () => {
+    // Quem chama a API direto para comparar dois providers continua mandando no que quer.
+    const { provider } = setupWithSettings(new NullSettingsRepository({ enabled: true, agentId: 'researcher-agent' }))
+
+    const session = await provider.createSession({ agentId: 'sysops-agent' })
+
+    assert.strictEqual(provider.describe(session.id).agentId, 'sysops-agent')
+    assert.strictEqual(provider.describe(session.id).provider, EProvider.CLAUDE)
   })
 })

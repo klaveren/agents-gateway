@@ -1,4 +1,4 @@
-import { getAgentById } from '@domain/Agent.Registry'
+import { AGENT_REGISTRY, getAgentById } from '@domain/Agent.Registry'
 import { resolveSessionMode } from '@domain/Session.Policy'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -134,9 +134,12 @@ export class AgentProvider implements IAgentProvider {
     return record
   }
 
-  private getAgent(agentId: string): IAgent {
-    const agent = getAgentById(agentId)
-    if (!agent) throw new AgentNotFoundError(agentId)
+  /** Sem `agentId` em lugar nenhum, vale o primeiro do registry — o padrão declarado em código. */
+  private getAgent(agentId?: string): IAgent {
+    const id = agentId || AGENT_REGISTRY[0]?.id || ''
+    const agent = getAgentById(id)
+    if (!agent) throw new AgentNotFoundError(id)
+
     return agent
   }
 

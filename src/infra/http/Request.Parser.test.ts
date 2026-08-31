@@ -38,8 +38,8 @@ describe('request validation', () => {
   })
 
   it('names the missing field', () => {
-    const error = reject(createSessionSchema, {})
-    assert.deepStrictEqual(error.details, [{ field: 'agentId', message: 'agentId is required' }])
+    const error = reject(createSessionSchema, { mode: 'nope' })
+    assert.deepStrictEqual(error.details, [{ field: 'mode', message: 'Invalid option: expected one of "chat"|"agent"' }])
   })
 
   it('refuses a lane that is not a lane', () => {

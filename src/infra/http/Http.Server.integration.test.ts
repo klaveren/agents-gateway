@@ -58,13 +58,13 @@ describe('HttpServer (integração)', () => {
     const res = await fetch(`${base}/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ mode: 'nope' }),
     })
     const body = await res.json()
 
     assert.strictEqual(res.status, 422)
     assert.strictEqual(body.code, 'validation_error')
-    assert.deepStrictEqual(body.details, [{ field: 'agentId', message: 'agentId is required' }])
+    assert.deepStrictEqual(body.details, [{ field: 'mode', message: 'Invalid option: expected one of "chat"|"agent"' }])
   })
 
   it('404 com código quando o agente não existe', async () => {

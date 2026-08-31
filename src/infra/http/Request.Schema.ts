@@ -6,7 +6,16 @@ const MAX_FILE_CHARS = 8 * 1024 * 1024
 const MAX_FILES = 8
 
 export const createSessionSchema = z.object({
-  agentId: z.string({ error: 'agentId is required' }).min(1, 'agentId is required'),
+  /**
+   * ⚠️ OPCIONAL, e isto NÃO é frouxidão de validação — é o que faz a configuração existir.
+   *
+   * Enquanto era obrigatório, todo cliente mandava um `agentId` fixo e o `agentId` das configurações
+   * nunca era alcançado: trocava-se o agente na configuração e a conversa continuava no mesmo, sem
+   * nada avisar. Campo obrigatório no transporte apagando uma decisão de operação — e o tipo não
+   * denuncia, porque `input.agentId ?? settings.agentId` compila perfeitamente quando o primeiro
+   * nunca é `undefined`.
+   */
+  agentId: z.string().min(1).optional(),
   mode: z.enum(EMode).optional(),
   tools: z.boolean().optional(),
   model: z.string().min(1).optional(),

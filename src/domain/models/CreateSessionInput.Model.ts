@@ -1,7 +1,11 @@
 import { EMode } from '../enums/EMode.Enum'
 
 export interface ICreateSessionInput {
-  agentId: string
+  /**
+   * ⚖️ OPCIONAL. Qual agente atende é decisão de OPERAÇÃO — vem da configuração. Quem chama a API
+   * direto para comparar dois providers continua podendo escolher, e aí a escolha dele ganha.
+   */
+  agentId?: string
   model?: string
   systemPrompt?: string
   reasoning?: string
