@@ -6,6 +6,7 @@ import path from 'node:path'
 import { toHttpFailure } from './Http.Error'
 import { fail } from './Http.Response'
 import { OPENAPI_DOCUMENT } from './Openapi.Schema'
+import { tokenFromHeader, withCaller } from '@infra/mcp/Caller.Identity'
 import { corsMiddleware, host, jsonLimit, requireToken } from './Security.Middleware'
 
 export const API_PREFIX = '/v1'
@@ -44,9 +45,30 @@ export class HttpServer {
       res.json(OPENAPI_DOCUMENT)
     })
 
+    /**
+     * Abre o escopo da credencial de quem chamou, e o mantém pelo turno inteiro.
+     *
+     * ⚠️ ENVOLVE O HANDLER, não só o começo dele. Um turno agêntico é um stream que vive minutos: o
+     * SDK do provider chama a tool, a tool chama o MCP, e é ali no fundo que a credencial é usada.
+     * Encerrar o escopo antes disso faria a chamada cair no que estiver configurado no ambiente do
+     * MCP — que pode ser a conta de outra pessoa.
+     *
+     * ⚖️ HEADER SEPARADO do `Authorization`, de propósito. O `Authorization` é o portão do próprio
+     * gateway (`GATEWAY_TOKEN`); este é a credencial que o gateway REPASSA às ferramentas. Misturar
+     * os dois faria o portão do serviço virar a identidade do usuário, ou o contrário.
+     *
+     * ⛔ E é a ÚNICA fonte de identidade. Nada que venha no corpo ou na query pode dizer quem o
+     * chamador é: seria pedir para a pessoa declarar a própria conta.
+     */
+    const callerScope = (req: Request, _res: Response, next: NextFunction) => {
+      const token = tokenFromHeader(req.headers['x-tool-authorization'])
+
+      return withCaller(token ? { token } : {}, () => next())
+    }
+
     const guard = requireToken()
     for (const { method, path: routePath, handler } of this.routes) {
-      this.app[method](`${API_PREFIX}${routePath}`, guard, handler)
+      this.app[method](`${API_PREFIX}${routePath}`, guard, callerScope, handler)
     }
 
     // Último recurso: erro que escapou de um middleware (token, corpo malformado) ainda

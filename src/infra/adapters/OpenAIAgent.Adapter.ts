@@ -1,6 +1,7 @@
 import { Agent, run, user, type AgentInputItem, type MCPServer, type ModelSettings } from '@openai/agents'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
+import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
@@ -20,7 +21,7 @@ type TEffort = NonNullable<NonNullable<ModelSettings['reasoning']>['effort']>
 type TRun = typeof run
 type TUserContent = Parameters<typeof user>[0]
 
-export type TBuildMcpServers = (url: string) => MCPServer[]
+export type TBuildMcpServers = (url: string, token?: string) => MCPServer[]
 
 export interface IOpenAIAgentAdapterDeps {
   run?: TRun
@@ -45,7 +46,8 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
    * Uma conexão MCP por adapter, compartilhada pelas sessões e aberta sob demanda. A
    * geração vem do cliente MCP: quando ele reconecta, estes servers ficaram velhos.
    */
-  private mcp?: { generation: number; servers: Promise<MCPServer[]> }
+  /** `generation` é chave composta: conexão do MCP + credencial. Ver `connectMcpServers`. */
+  private mcp?: { generation: string; servers: Promise<MCPServer[]> }
 
   constructor(deps: IOpenAIAgentAdapterDeps = {}) {
     this.run = deps.run ?? run
@@ -77,7 +79,7 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
     }
   }
 
-  async *sendMessage(agent: IAgent, sessionId: string, input: IMessageInput): AsyncIterable<IAgentEvent> {
+  async *sendMessage(agent: IAgent, sessionId: string, input: IMessageInput, context: IExecutionContext): AsyncIterable<IAgentEvent> {
     const record = this.store.get(sessionId)
     if (!record) {
       yield { type: 'error', sessionId, timestamp: new Date(), payload: { message: `Session not found: ${sessionId}` } }
@@ -100,7 +102,7 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
       model: record.model,
       modelSettings,
       tools: buildOpenAITools(this.catalog?.localFor(agent.allowedTools) ?? []),
-      mcpServers: await this.connectMcpServers(),
+      mcpServers: await this.connectMcpServers(context),
     })
 
     const items: AgentInputItem[] = [...history, user(this.buildUserContent(input))]
@@ -176,7 +178,17 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
    * Perguntar ao catálogo a cada turno é o que faz um MCP server que subiu depois do
    * gateway entrar em uso sem reiniciar o processo.
    */
-  private async connectMcpServers(): Promise<MCPServer[]> {
+  /**
+   * ⚠️ O CACHE PASSA A CONSIDERAR A CREDENCIAL, não só a geração da conexão.
+   *
+   * Os headers pertencem ao servidor MCP, fixados na conexão. Reaproveitar a conexão entre usuários
+   * diferentes serviria a credencial de um para o outro — que é exatamente o vazamento que este
+   * desenho existe para impedir.
+   *
+   * O custo é reconectar ao alternar de usuário. A alternativa — uma conexão por processo, servindo
+   * todo mundo — é justamente a que não pode existir.
+   */
+  private async connectMcpServers(context: IExecutionContext): Promise<MCPServer[]> {
     const url = await this.catalog?.mcpEndpoint()
 
     if (!url || !this.catalog) {
@@ -184,13 +196,13 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
       return []
     }
 
-    const generation = this.catalog.mcpGeneration
+    const generation = `${this.catalog.mcpGeneration}:${context.token ?? ''}`
     if (this.mcp?.generation !== generation) {
       await this.closeMcpServers()
       this.mcp = {
         generation,
         servers: (async () => {
-          const servers = this.buildMcpServers(url)
+          const servers = this.buildMcpServers(url, context.token)
           await Promise.all(servers.map((server) => server.connect()))
           return servers
         })().catch((error: unknown) => {

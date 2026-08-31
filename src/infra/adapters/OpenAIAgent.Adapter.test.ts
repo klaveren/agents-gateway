@@ -104,7 +104,7 @@ describe('OpenAIAgentAdapter', () => {
   it('translates the run stream into gateway events', async () => {
     const adapter = new OpenAIAgentAdapter({ run: runWith(turn) })
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'qual a selic?' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'qual a selic?' }, {}))
 
     assert.ok(events.find((e) => e.type === 'text.delta' && e.payload.text === 'Searching'))
     assert.ok(events.find((e) => e.type === 'tool.started' && e.payload.tool === 'search_web' && e.payload.args.query === 'selic'))
@@ -117,7 +117,7 @@ describe('OpenAIAgentAdapter', () => {
     const calls: ICall[] = []
     const adapter = new OpenAIAgentAdapter({ run: runWith(turn, calls) })
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent', reasoning: 'medium' })
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.ok((calls[0].maxTurns ?? 0) > 0)
     assert.ok(calls[0].signal instanceof AbortSignal)
@@ -130,8 +130,8 @@ describe('OpenAIAgentAdapter', () => {
     const adapter = new OpenAIAgentAdapter({ run: runWith(turn, calls) })
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
 
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'first' }))
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'second' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'first' }, {}))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'second' }, {}))
 
     assert.strictEqual(calls[0].input.length, 1)
     assert.strictEqual(calls[1].input.length, 2)
@@ -143,13 +143,18 @@ describe('OpenAIAgentAdapter', () => {
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
 
     await drain(
-      adapter.sendMessage(getAgent(), session.id, {
-        text: 'look',
-        files: [
-          { name: 'a.png', mimeType: 'image/png', data: 'aaa' },
-          { name: 'b.pdf', mimeType: 'application/pdf', data: 'bbb' },
-        ],
-      }),
+      adapter.sendMessage(
+        getAgent(),
+        session.id,
+        {
+          text: 'look',
+          files: [
+            { name: 'a.png', mimeType: 'image/png', data: 'aaa' },
+            { name: 'b.pdf', mimeType: 'application/pdf', data: 'bbb' },
+          ],
+        },
+        {},
+      ),
     )
 
     const message = calls[0].input[0]
@@ -164,7 +169,7 @@ describe('OpenAIAgentAdapter', () => {
     const calls: ICall[] = []
     const adapter = new OpenAIAgentAdapter({ run: runWith(turn, calls), catalog })
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.deepStrictEqual(
       calls[0].agent.tools.map((tool) => tool.name),
@@ -211,18 +216,18 @@ describe('OpenAIAgentAdapter', () => {
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
 
     // Turno 1: MCP fora do ar, o agente roda só com o que é local.
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'um' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'um' }, {}))
     assert.deepStrictEqual(calls[0].agent.mcpServers, [])
 
     // O server sobe: a geração muda e o turno seguinte passa a enxergá-lo, sem reiniciar.
     connected = true
     generation = 1
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'dois' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'dois' }, {}))
     assert.strictEqual(calls[1].agent.mcpServers.length, 1)
 
     // Reconectar de novo troca a geração: os servers antigos são fechados, não vazados.
     generation = 2
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'tres' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'tres' }, {}))
     assert.deepStrictEqual(closed, ['gen-1'])
     assert.strictEqual(calls[2].agent.mcpServers.length, 1)
   })
@@ -235,7 +240,7 @@ describe('OpenAIAgentAdapter', () => {
     })
 
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
     const error = events.find((e) => e.type === 'error')
 
     assert.ok(error && error.type === 'error')
@@ -257,7 +262,7 @@ describe('OpenAIAgentAdapter', () => {
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
     const events: IAgentEvent[] = []
 
-    for await (const event of adapter.sendMessage(getAgent(), session.id, { text: 'hi' })) {
+    for await (const event of adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {})) {
       events.push(event)
       if (event.type === 'text.delta') await adapter.cancel(session.id)
     }

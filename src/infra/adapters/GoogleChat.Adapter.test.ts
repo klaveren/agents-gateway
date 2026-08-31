@@ -68,7 +68,7 @@ describe('GoogleChatAdapter', () => {
     })
 
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
 
     const text = events
       .filter((e) => e.type === 'text.delta')
@@ -103,7 +103,7 @@ describe('GoogleChatAdapter', () => {
     })
 
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
 
     // O adapter anterior mandava o prompt duas vezes: aqui ele só aparece em systemInstruction.
     assert.strictEqual(modelParams?.systemInstruction, 'You are the Researcher Agent.')
@@ -122,7 +122,7 @@ describe('GoogleChatAdapter', () => {
     })
 
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent', reasoning: 'high' })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
 
     assert.ok(events.find((e) => e.type === 'warning' && e.payload.message.includes('thinking control')))
   })
@@ -147,7 +147,7 @@ describe('GoogleChatAdapter', () => {
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
     const events: IAgentEvent[] = []
 
-    for await (const event of adapter.sendMessage(getAgent(), session.id, { text: 'Hi' })) {
+    for await (const event of adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {})) {
       events.push(event)
       if (event.type === 'text.delta') await adapter.cancel(session.id)
     }
@@ -164,7 +164,7 @@ describe('GoogleChatAdapter', () => {
     })
 
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
     const error = events.find((e) => e.type === 'error')
 
     assert.ok(error && error.type === 'error')

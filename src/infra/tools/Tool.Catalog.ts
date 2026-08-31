@@ -1,3 +1,4 @@
+import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { McpServerClient } from '@infra/mcp/McpServer.Client'
 import { ILocalTool, IToolDefinition, IToolResult } from './Tool.Types'
 
@@ -57,10 +58,15 @@ export class ToolCatalog {
    * Caminho de execução do gateway. Na lane `agent` quem executa é o próprio Agents SDK;
    * isto serve para diagnóstico e para qualquer chamador que não seja um SDK agêntico.
    */
-  async invoke(name: string, args: Record<string, unknown>): Promise<IToolResult> {
+  /**
+   * ⚖️ `context` VEM DE FORA. O catálogo não busca credencial: recebe a que vale para esta
+   * chamada, do provider. Buscá-la aqui espalharia a decisão por mais um lugar — e foi assim que
+   * adapters acabaram chamando o MCP sem token.
+   */
+  async invoke(name: string, args: Record<string, unknown>, context?: IExecutionContext): Promise<IToolResult> {
     const tool = this.local.find((candidate) => candidate.name === name)
     if (tool) return tool.execute(args)
 
-    return this.mcp.callTool(name, args)
+    return this.mcp.callTool(name, args, context)
   }
 }

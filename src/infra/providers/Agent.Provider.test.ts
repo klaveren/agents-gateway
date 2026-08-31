@@ -5,6 +5,7 @@ import { EProvider } from '@domain/enums/EProvider.Enum'
 import { AdapterNotFoundError, AgentNotFoundError, ModeNotSupportedError, SessionNotFoundError, ToolsNotSupportedError } from '@domain/errors/Domain.Error'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
+import { withCaller } from '@infra/mcp/Caller.Identity'
 import { SessionStore } from '@infra/session/Session.Store'
 import { adapterKey, AgentProvider } from './Agent.Provider'
 
@@ -12,6 +13,7 @@ interface ISpy {
   adapter: IAgentAdapter
   calls: string[]
   seenSessionId?: string
+  seenToken?: string
 }
 
 describe('AgentProvider', () => {
@@ -36,9 +38,10 @@ describe('AgentProvider', () => {
           })
           return { id: record.id, provider, mode: record.mode, createdAt: record.createdAt }
         },
-        async *sendMessage(_agent, sessionId) {
+        async *sendMessage(_agent, sessionId, _input, context) {
           calls.push('sendMessage')
           spy.seenSessionId = sessionId
+          spy.seenToken = context?.token
           for (const event of events) yield event
         },
         async cancel(sessionId) {
@@ -151,5 +154,25 @@ describe('AgentProvider', () => {
     const provider = new AgentProvider(new Map(), store)
 
     await assert.rejects(provider.createSession({ agentId: 'researcher-agent' }), AdapterNotFoundError)
+  })
+
+  it('resolves the caller credential once, in the provider, and hands it to the adapter', async () => {
+    const { provider, chat } = setup()
+    const session = await provider.createSession({ agentId: 'researcher-agent' })
+
+    await withCaller({ token: 'do-usuario' }, () => drain(provider.sendMessage(session.id, { text: 'hi' })))
+
+    assert.strictEqual(chat.seenToken, 'do-usuario')
+  })
+
+  it('hands the adapter no credential when the request carried none', async () => {
+    // ⛔ Falha aberta é o risco aqui: sem credencial a chamada segue, e é o MCP que decide. O que
+    // não pode é ela aparecer com a credencial de outra pessoa.
+    const { provider, chat } = setup()
+    const session = await provider.createSession({ agentId: 'researcher-agent' })
+
+    await drain(provider.sendMessage(session.id, { text: 'hi' }))
+
+    assert.strictEqual(chat.seenToken, undefined)
   })
 })

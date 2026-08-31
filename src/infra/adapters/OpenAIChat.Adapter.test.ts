@@ -54,7 +54,7 @@ describe('OpenAIChatAdapter', () => {
     })
 
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent', reasoning: 'low' })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
 
     const text = events
       .filter((e) => e.type === 'text.delta')
@@ -84,13 +84,18 @@ describe('OpenAIChatAdapter', () => {
 
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
     await drain(
-      adapter.sendMessage(getAgent(), session.id, {
-        text: 'Read it',
-        files: [
-          { name: 'a.png', mimeType: 'image/png', data: 'aaa' },
-          { name: 'report.pdf', mimeType: 'application/pdf', data: 'bbb' },
-        ],
-      }),
+      adapter.sendMessage(
+        getAgent(),
+        session.id,
+        {
+          text: 'Read it',
+          files: [
+            { name: 'a.png', mimeType: 'image/png', data: 'aaa' },
+            { name: 'report.pdf', mimeType: 'application/pdf', data: 'bbb' },
+          ],
+        },
+        {},
+      ),
     )
 
     const content = sent?.messages[1].content
@@ -109,7 +114,7 @@ describe('OpenAIChatAdapter', () => {
     })
 
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
     const error = events.find((e) => e.type === 'error')
 
     assert.ok(error && error.type === 'error')
@@ -130,7 +135,7 @@ describe('OpenAIChatAdapter', () => {
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
     const events: IAgentEvent[] = []
 
-    for await (const event of adapter.sendMessage(getAgent(), session.id, { text: 'Hi' })) {
+    for await (const event of adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {})) {
       events.push(event)
       if (event.type === 'text.delta') await adapter.cancel(session.id)
     }

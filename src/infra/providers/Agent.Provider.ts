@@ -7,6 +7,8 @@ import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
+import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
+import { caller } from '@infra/mcp/Caller.Identity'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { ISession } from '@domain/models/Session.Model'
 import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
@@ -45,7 +47,17 @@ export class AgentProvider implements IAgentProvider {
     record.turns += 1
 
     try {
-      for await (const event of adapter.sendMessage(agent, sessionId, input)) {
+      /**
+       * A credencial de quem chamou, resolvida AQUI e em nenhum outro lugar.
+       *
+       * ⚖️ O provider é a camada agnóstica: é dele a decisão do que vale para esta chamada, e os
+       * adapters só recebem. Enquanto cada adapter resolvia por conta própria, uns resolviam e
+       * outros não — e os que não resolviam falavam com o MCP sem identidade, o que aparece como
+       * "não consegui consultar" e parece problema do provider.
+       */
+      const context: IExecutionContext = { token: caller()?.token }
+
+      for await (const event of adapter.sendMessage(agent, sessionId, input, context)) {
         // Somar o usage aqui vale para as seis implementações de uma vez.
         if (event.type === 'usage') this.sessions.addUsage(record, event.payload)
         yield event

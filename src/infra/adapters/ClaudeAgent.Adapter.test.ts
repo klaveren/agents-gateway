@@ -97,7 +97,7 @@ describe('ClaudeAgentAdapter', () => {
   it('translates the SDK message stream into gateway events', async () => {
     const adapter = new ClaudeAgentAdapter({ query: queryWith(turn) })
     const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'list files' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'list files' }, {}))
 
     assert.ok(events.find((e) => e.type === 'text.delta' && e.payload.text === 'Listing'))
     assert.ok(events.find((e) => e.type === 'reasoning.delta' && e.payload.text === 'hmm'))
@@ -113,7 +113,7 @@ describe('ClaudeAgentAdapter', () => {
     const seen: TQueryParams[] = []
     const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen) })
     const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent', reasoning: 'high' })
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.deepStrictEqual(seen[0].options?.tools, [])
     assert.deepStrictEqual(seen[0].options?.settingSources, [])
@@ -126,8 +126,8 @@ describe('ClaudeAgentAdapter', () => {
     const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen) })
     const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
 
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'first' }))
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'second' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'first' }, {}))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'second' }, {}))
 
     // Turno 1: id nosso, em UUID limpo — o SDK recusa qualquer outro formato.
     const planted = seen[0].options?.sessionId
@@ -144,12 +144,17 @@ describe('ClaudeAgentAdapter', () => {
     const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen) })
     const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
 
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'plain' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'plain' }, {}))
     await drain(
-      adapter.sendMessage(getAgent(), session.id, {
-        text: 'look',
-        files: [{ name: 'a.png', mimeType: 'image/png', data: 'aaa' }],
-      }),
+      adapter.sendMessage(
+        getAgent(),
+        session.id,
+        {
+          text: 'look',
+          files: [{ name: 'a.png', mimeType: 'image/png', data: 'aaa' }],
+        },
+        {},
+      ),
     )
 
     assert.strictEqual(typeof seen[0].prompt, 'string')
@@ -160,7 +165,7 @@ describe('ClaudeAgentAdapter', () => {
     const seen: TQueryParams[] = []
     const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog: catalogWith(true) })
     const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     const servers = seen[0].options?.mcpServers ?? {}
     assert.deepStrictEqual(Object.keys(servers).sort(), ['gateway', 'mcp'])
@@ -172,7 +177,7 @@ describe('ClaudeAgentAdapter', () => {
     const seen: TQueryParams[] = []
     const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog: catalogWith(false) })
     const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.deepStrictEqual(Object.keys(seen[0].options?.mcpServers ?? {}), ['gateway'])
   })
@@ -181,7 +186,7 @@ describe('ClaudeAgentAdapter', () => {
     const seen: TQueryParams[] = []
     const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog: catalogWith(true) })
     const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     const gate = seen[0].options?.canUseTool
     assert.ok(gate)
@@ -201,7 +206,7 @@ describe('ClaudeAgentAdapter', () => {
     })
 
     const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
     const error = events.find((e) => e.type === 'error')
 
     assert.ok(error && error.type === 'error')
@@ -221,7 +226,7 @@ describe('ClaudeAgentAdapter', () => {
     const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
     const events: IAgentEvent[] = []
 
-    for await (const event of adapter.sendMessage(getAgent(), session.id, { text: 'hi' })) {
+    for await (const event of adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {})) {
       events.push(event)
       if (event.type === 'text.delta') await adapter.cancel(session.id)
     }

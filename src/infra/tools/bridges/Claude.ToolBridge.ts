@@ -9,7 +9,7 @@ export const REMOTE_SERVER_NAME = 'mcp'
  * O Claude Agent SDK quer tools como um MCP server. Para as locais ele oferece um
  * servidor in-process (`createSdkMcpServer`), o que evita subir qualquer processo extra.
  */
-export function buildClaudeMcpServers(local: ILocalTool[], remoteUrl?: string): Record<string, McpServerConfig> {
+export function buildClaudeMcpServers(local: ILocalTool[], remoteUrl?: string, token?: string): Record<string, McpServerConfig> {
   const servers: Record<string, McpServerConfig> = {}
 
   if (local.length > 0) {
@@ -26,7 +26,17 @@ export function buildClaudeMcpServers(local: ILocalTool[], remoteUrl?: string): 
   }
 
   if (remoteUrl) {
-    servers[REMOTE_SERVER_NAME] = { type: 'http', url: remoteUrl }
+    /**
+     * A credencial de quem chamou vai NO HEADER do servidor MCP.
+     *
+     * ⚠️ Este SDK conecta ao MCP por conta própria — não passa pelo `McpServerClient` do gateway, e
+     * portanto não herda o `fetch` que injeta a credencial lá. Sem isto, o agente do Claude fala com
+     * o MCP sem token: toda tool responde "chamada sem credencial" e a conversa termina com ele
+     * dizendo que não conseguiu acessar os dados.
+     *
+     * O token vem do PROVIDER, por parâmetro — o bridge não o busca.
+     */
+    servers[REMOTE_SERVER_NAME] = { type: 'http', url: remoteUrl, ...(token ? { headers: { authorization: `Bearer ${token}` } } : {}) }
   }
 
   return servers

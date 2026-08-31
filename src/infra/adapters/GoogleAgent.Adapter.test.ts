@@ -109,7 +109,7 @@ describe('GoogleAgentAdapter', () => {
     const log = emptyLog()
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(turn, log) })
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'qual a selic?' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'qual a selic?' }, {}))
 
     assert.ok(events.find((e) => e.type === 'reasoning.delta' && e.payload.text === 'thinking about it'))
     assert.ok(events.find((e) => e.type === 'text.delta' && e.payload.text === 'Searching'))
@@ -122,7 +122,7 @@ describe('GoogleAgentAdapter', () => {
     const log = emptyLog()
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(turn, log) })
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent', model: 'gemini-3.6-flash' })
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.strictEqual(log.specs[0].instruction, 'You are the Researcher Agent.')
     assert.strictEqual(log.specs[0].model, 'gemini-3.6-flash')
@@ -137,8 +137,8 @@ describe('GoogleAgentAdapter', () => {
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(turn, log) })
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
 
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'first' }))
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'second' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'first' }, {}))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'second' }, {}))
 
     assert.strictEqual(log.specs.length, 1)
     assert.strictEqual(log.runs[0].sessionId, log.runs[1].sessionId)
@@ -150,10 +150,15 @@ describe('GoogleAgentAdapter', () => {
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
 
     await drain(
-      adapter.sendMessage(getAgent(), session.id, {
-        text: 'look',
-        files: [{ name: 'a.png', mimeType: 'image/png', data: 'aaa' }],
-      }),
+      adapter.sendMessage(
+        getAgent(),
+        session.id,
+        {
+          text: 'look',
+          files: [{ name: 'a.png', mimeType: 'image/png', data: 'aaa' }],
+        },
+        {},
+      ),
     )
 
     assert.deepStrictEqual(log.runs[0].newMessage.parts, [{ text: 'look' }, { inlineData: { data: 'aaa', mimeType: 'image/png' } }])
@@ -163,7 +168,7 @@ describe('GoogleAgentAdapter', () => {
     const log = emptyLog()
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(turn, log), catalog })
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.strictEqual(log.specs[0].tools.length, 1)
     const [tool] = log.specs[0].tools
@@ -185,7 +190,7 @@ describe('GoogleAgentAdapter', () => {
     })
 
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     const text = events
       .filter((e) => e.type === 'text.delta')
@@ -202,7 +207,7 @@ describe('GoogleAgentAdapter', () => {
     })
 
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.ok(events.find((e) => e.type === 'text.delta' && e.payload.text === 'Only once'))
   })
@@ -210,7 +215,7 @@ describe('GoogleAgentAdapter', () => {
   it('warns that the ADK has no reasoning-effort knob', async () => {
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(() => [], emptyLog()) })
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent', reasoning: 'high' })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.ok(events.find((e) => e.type === 'warning' && e.payload.message.includes('reasoning-effort')))
   })
@@ -227,7 +232,7 @@ describe('GoogleAgentAdapter', () => {
     })
 
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
     const error = events.find((e) => e.type === 'error')
 
     assert.ok(error && error.type === 'error')
@@ -248,7 +253,7 @@ describe('GoogleAgentAdapter', () => {
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
     const events: IAgentEvent[] = []
 
-    for await (const event of adapter.sendMessage(getAgent(), session.id, { text: 'hi' })) {
+    for await (const event of adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {})) {
       events.push(event)
       if (event.type === 'text.delta') await adapter.cancel(session.id)
     }
@@ -263,7 +268,7 @@ describe('GoogleAgentAdapter', () => {
     })
     const record = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
 
-    const events = await drain(adapter.sendMessage(getAgent(), record.id, { text: 'hi' }))
+    const events = await drain(adapter.sendMessage(getAgent(), record.id, { text: 'hi' }, {}))
     const usage = events.filter((event) => event.type === 'usage')
 
     assert.deepStrictEqual(
@@ -286,7 +291,7 @@ describe('GoogleAgentAdapter', () => {
     })
     const record = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
 
-    const events = await drain(adapter.sendMessage(getAgent(), record.id, { text: 'hi' }))
+    const events = await drain(adapter.sendMessage(getAgent(), record.id, { text: 'hi' }, {}))
     const usage = events.filter((event) => event.type === 'usage')
 
     // Ficar com o último evento — o erro fácil aqui — faria este turno custar 180 em vez de 280.
@@ -310,7 +315,7 @@ describe('GoogleAgentAdapter', () => {
     })
     const record = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
 
-    const events = await drain(adapter.sendMessage(getAgent(), record.id, { text: 'hi' }))
+    const events = await drain(adapter.sendMessage(getAgent(), record.id, { text: 'hi' }, {}))
     const usage = events.filter((event) => event.type === 'usage')
 
     assert.deepStrictEqual(

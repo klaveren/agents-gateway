@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { EventType, InMemorySessionService, LlmAgent, Runner, StreamingMode, toStructuredEvents, type BaseTool, type BaseToolset, type Event } from '@google/adk'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
+import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent, IUsage } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
@@ -166,7 +167,7 @@ export class GoogleAgentAdapter implements IAgentAdapter {
     }
   }
 
-  async *sendMessage(agent: IAgent, sessionId: string, input: IMessageInput): AsyncIterable<IAgentEvent> {
+  async *sendMessage(agent: IAgent, sessionId: string, input: IMessageInput, context: IExecutionContext): AsyncIterable<IAgentEvent> {
     const record = this.store.get(sessionId)
     if (!record) {
       yield { type: 'error', sessionId, timestamp: new Date(), payload: { message: `Session not found: ${sessionId}` } }
@@ -188,7 +189,7 @@ export class GoogleAgentAdapter implements IAgentAdapter {
     }
 
     try {
-      const native = this.nativeOf(record, agent, await this.remoteTools(agent))
+      const native = this.nativeOf(record, agent, await this.remoteTools(agent, context))
       await native.runtime.ensureSession(native.userId, native.adkSessionId)
 
       const stream = native.runtime.runAsync({
@@ -301,7 +302,7 @@ export class GoogleAgentAdapter implements IAgentAdapter {
    *
    * Sem MCP conectado devolve lista vazia: o agente fica só com as tools locais, sem quebrar.
    */
-  private async remoteTools(agent: IAgent): Promise<BaseTool[]> {
+  private async remoteTools(agent: IAgent, context: IExecutionContext): Promise<BaseTool[]> {
     if (!this.catalog) return []
 
     const local = new Set(this.catalog.localFor(agent.allowedTools).map((tool) => tool.name))
@@ -309,7 +310,8 @@ export class GoogleAgentAdapter implements IAgentAdapter {
 
     return buildAdkRemoteTools(
       all.filter((tool) => !local.has(tool.name)),
-      (name, args) => this.catalog!.invoke(name, args),
+      // A credencial vem do provider e viaja até a execução — o adapter não a busca em lugar nenhum.
+      (name, args) => this.catalog!.invoke(name, args, context),
     )
   }
 

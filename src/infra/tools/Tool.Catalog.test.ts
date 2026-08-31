@@ -25,7 +25,13 @@ function mcpTool(name: string): IToolDefinition {
   }
 }
 
-function fakeMcp(options: { connected: boolean; tools?: IToolDefinition[]; onCall?: (name: string) => void; onEnsure?: () => void }): McpServerClient {
+function fakeMcp(options: {
+  connected: boolean
+  tools?: IToolDefinition[]
+  onCall?: (name: string) => void
+  onEnsure?: () => void
+  onContext?: (token?: string) => void
+}): McpServerClient {
   return {
     serverUrl: 'http://localhost:8000/mcp',
     isConnected: () => options.connected,
@@ -35,8 +41,9 @@ function fakeMcp(options: { connected: boolean; tools?: IToolDefinition[]; onCal
     },
     connectionGeneration: options.connected ? 1 : 0,
     listTools: async () => (options.connected ? (options.tools ?? []) : []),
-    callTool: async (name: string) => {
+    callTool: async (name: string, _args: Record<string, unknown>, context?: { token?: string }) => {
       options.onCall?.(name)
+      options.onContext?.(context?.token)
       return { status: 'success' as const, result: `mcp:${name}` }
     },
   } as unknown as McpServerClient
@@ -111,5 +118,25 @@ describe('ToolCatalog', () => {
 
     assert.deepStrictEqual(await catalog.invoke('read_file', {}), { status: 'success', result: 'mcp:read_file' })
     assert.deepStrictEqual(calls, ['read_file'])
+  })
+
+  it('carries the caller credential down to the MCP client', async () => {
+    const seen: Array<string | undefined> = []
+    const catalog = new ToolCatalog(fakeMcp({ connected: true, tools: [mcpTool('remote_thing')], onContext: (token) => seen.push(token) }), local)
+
+    await catalog.invoke('remote_thing', {}, { token: 'do-usuario' })
+
+    assert.deepStrictEqual(seen, ['do-usuario'])
+  })
+
+  it('does not carry a credential when the call has none', async () => {
+    // ⛔ A regressão que importa: uma chamada sem credencial NÃO pode herdar a da anterior.
+    const seen: Array<string | undefined> = []
+    const catalog = new ToolCatalog(fakeMcp({ connected: true, tools: [mcpTool('remote_thing')], onContext: (token) => seen.push(token) }), local)
+
+    await catalog.invoke('remote_thing', {}, { token: 'do-usuario' })
+    await catalog.invoke('remote_thing', {})
+
+    assert.deepStrictEqual(seen, ['do-usuario', undefined])
   })
 })

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { query, type CanUseTool, type EffortLevel, type Options, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
+import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
@@ -79,7 +80,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     }
   }
 
-  async *sendMessage(agent: IAgent, sessionId: string, input: IMessageInput): AsyncIterable<IAgentEvent> {
+  async *sendMessage(agent: IAgent, sessionId: string, input: IMessageInput, context: IExecutionContext): AsyncIterable<IAgentEvent> {
     const record = this.store.get(sessionId)
     if (!record) {
       yield { type: 'error', sessionId, timestamp: new Date(), payload: { message: `Session not found: ${sessionId}` } }
@@ -107,7 +108,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       // agente não ganha Bash/Read/Edit sobre a máquina do host. As tools que ele de
       // fato tem chegam por `mcpServers`.
       tools: [],
-      mcpServers: buildClaudeMcpServers(local, remoteUrl),
+      mcpServers: buildClaudeMcpServers(local, remoteUrl, context.token),
       // Nomes soltos em `allowedTools` aprovam antes de o callback rodar e o SDK
       // avisa que o `canUseTool` foi sombreado; por isso o gate fica só aqui.
       canUseTool: this.makeGate(agent.allowedTools),

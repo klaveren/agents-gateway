@@ -100,8 +100,7 @@ export const OPENAPI_DOCUMENT = {
   info: {
     title: 'agents-gateway',
     version: '1.0.0-alpha',
-    description:
-      'Runs Claude, GPT and Gemini in two lanes: `chat` on the plain SDK, `agent` on the official Agents SDK.',
+    description: 'Runs Claude, GPT and Gemini in two lanes: `chat` on the plain SDK, `agent` on the official Agents SDK.',
   },
   servers: [{ url: '/v1' }],
   components: {
@@ -150,8 +149,7 @@ export const OPENAPI_DOCUMENT = {
                   tools: {
                     type: 'boolean',
                     default: false,
-                    description:
-                      'Chat lane only: run the hand-rolled tool loop. On the agent lane the SDK owns the loop.',
+                    description: 'Chat lane only: run the hand-rolled tool loop. On the agent lane the SDK owns the loop.',
                   },
                   model: { type: 'string' },
                   reasoning: { type: 'string' },
