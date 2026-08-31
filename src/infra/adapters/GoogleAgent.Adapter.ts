@@ -101,6 +101,38 @@ function defaultRuntimeFactory(spec: IAdkRuntimeSpec): IAdkRuntime {
  * `@google/generative-ai` v0.24 — dois clientes Gemini no mesmo processo, e é
  * exatamente o contraste que o estudo quer mostrar.
  */
+/**
+ * Detecta `{identificador}` solto em `instruction` ANTES de entregar ao ADK — e falha com o texto
+ * certo, em vez de deixar o erro do ADK aparecer no meio de um turno.
+ *
+ * ⚖️ POR QUE ISTO É DETECÇÃO, E NÃO ESCAPE. O `@google/adk` interpola `{var}` dentro de
+ * `instruction` como variável de ESTADO da sessão (padrão Jinja), e não existe forma de marcar a
+ * chave como literal: `{{id}}` NÃO escapa nada — o regex do ADK (`/\{+[^{}]*}+/g`) engole `{`,
+ * `{{` ou `{{{` igual, então `{{id}}` é interpretado exatamente como `{id}`. Confirmado lendo o
+ * source do pacote (`@google/adk/dist/cjs/agents/instructions.js`) depois que a "correção" com
+ * chave dupla não teve efeito nenhum e o mesmo `Context variable not found: \`id\`.` continuou
+ * aparecendo.
+ *
+ * Por isso a correção de verdade é no CONTEÚDO do `systemPrompt` — trocar `{id}` por `<id>` na
+ * fonte do prompt. Esta função é a rede de segurança: falha no boot da sessão, apontando o padrão
+ * exato, em vez de estourar em runtime sem dizer de onde veio.
+ *
+ * ⚠️ O detector é mais ESTREITO que o do ADK de propósito. O ADK casa `{qualquer coisa}`, o que
+ * inclui um exemplo de JSON dentro do prompt; aqui só casa o que parece identificador. Um prompt
+ * com `{"chave": 1}` ainda quebra no ADK e passa por aqui — o preço de não recusar no boot um
+ * prompt que só tem um exemplo de JSON no meio.
+ */
+export function assertNoAdkTemplateCollision(prompt: string): string {
+  const matches = prompt.match(/\{+[a-zA-Z_][a-zA-Z0-9_]*\??}+/g)
+  if (matches?.length) {
+    throw new Error(
+      `systemPrompt contém ${matches.length} padrão(ões) que o @google/adk vai tentar resolver como variável de sessão e vai falhar: ${matches.slice(0, 5).join(', ')}. ` +
+        `O ADK não tem escape para chave literal — troque por outra notação (ex.: <id> em vez de {id}) na fonte do prompt.`,
+    )
+  }
+  return prompt
+}
+
 export class GoogleAgentAdapter implements IAgentAdapter {
   private readonly createRuntime: TAdkRuntimeFactory
   private readonly store: SessionStore
@@ -239,7 +271,7 @@ export class GoogleAgentAdapter implements IAgentAdapter {
         runtime: this.createRuntime({
           name: this.toAdkName(agent.id),
           model: record.model,
-          instruction: record.systemPrompt,
+          instruction: assertNoAdkTemplateCollision(record.systemPrompt),
           tools: this.buildTools(agent, remote),
         }),
         userId: `gateway-${record.id}`,

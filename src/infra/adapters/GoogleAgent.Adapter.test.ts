@@ -8,7 +8,7 @@ import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import type { McpServerClient } from '@infra/mcp/McpServer.Client'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { ILocalTool } from '@infra/tools/Tool.Types'
-import { GoogleAgentAdapter, type IAdkRunParams, type IAdkRuntime, type IAdkRuntimeSpec } from './GoogleAgent.Adapter'
+import { GoogleAgentAdapter, assertNoAdkTemplateCollision, type IAdkRunParams, type IAdkRuntime, type IAdkRuntimeSpec } from './GoogleAgent.Adapter'
 
 interface IRuntimeLog {
   specs: IAdkRuntimeSpec[]
@@ -317,5 +317,24 @@ describe('GoogleAgentAdapter', () => {
       usage.map((event) => event.payload),
       [{ inputTokens: 50, outputTokens: 4, reasoningTokens: 0 }],
     )
+  })
+})
+
+describe('assertNoAdkTemplateCollision', () => {
+  it('lets a prompt with no braces through untouched', () => {
+    assert.strictEqual(assertNoAdkTemplateCollision('Use <id> when referring to the record.'), 'Use <id> when referring to the record.')
+  })
+
+  it('rejects a single brace, which the ADK reads as session state', () => {
+    assert.throws(() => assertNoAdkTemplateCollision('Pass {id} to the tool.'), /\{id}/)
+  })
+
+  it('rejects a double brace too — the ADK has no escape, so `{{id}}` is not literal', () => {
+    // Foi exatamente isto que fez a primeira "correção" não ter efeito nenhum.
+    assert.throws(() => assertNoAdkTemplateCollision('Pass {{id}} to the tool.'), /\{\{id}}/)
+  })
+
+  it('names the patterns it found, so the fix does not need a hunt', () => {
+    assert.throws(() => assertNoAdkTemplateCollision('{alias} and {sellerId}'), /\{alias}, \{sellerId}/)
   })
 })
