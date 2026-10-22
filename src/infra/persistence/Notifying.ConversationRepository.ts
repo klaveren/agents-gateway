@@ -1,5 +1,6 @@
 import { TClassification } from '@domain/models/Classification.Model'
 import { IConversationPage, IConversationPageQuery, IConversationSession, IConversationStats, IConversationTurn, IOwnerFilter } from '@domain/models/Conversation.Model'
+import { IUsageQuery, IUsageRow } from '@domain/models/Usage.Model'
 import { IConversationEvents } from '@domain/ports/ConversationEvents.Port'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 
@@ -53,6 +54,10 @@ export class NotifyingConversationRepository implements IConversationRepository 
 
   stats(): Promise<IConversationStats> {
     return this.inner.stats()
+  }
+
+  usage(query: IUsageQuery): Promise<IUsageRow[]> {
+    return this.inner.usage(query)
   }
 
   listSessions(options?: { limit?: number; filter?: Record<string, unknown>; owner?: IOwnerFilter | null }): Promise<IConversationSession[]> {

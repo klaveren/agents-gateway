@@ -146,6 +146,11 @@ export class AgentController {
 
   private readonly agents: AgentCatalog
 
+  /** O repositório das conversas — o mesmo do `SendMessageUseCase`; o uso (`UsageController`) lê dele. */
+  get conversations(): IConversationRepository {
+    return this.usecases.conversations
+  }
+
   async health(_req: Request, res: Response) {
     await this.respond(res, async () => {
       // Health é o lugar natural para tentar reconectar: quem monitora chama de tempos em

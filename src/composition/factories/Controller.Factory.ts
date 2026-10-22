@@ -1,6 +1,7 @@
 import { AgentController } from '@infra/http/Agent.Controller'
 import { AuthController } from '@infra/http/Auth.Controller'
 import { ProvidersController } from '@infra/http/Providers.Controller'
+import { UsageController } from '@infra/http/Usage.Controller'
 import { makeCredentials } from './Credentials.Factory'
 import { makeProviders } from './Providers.Factory'
 import { makeModelCatalog } from './Catalog.Factory'
@@ -43,4 +44,8 @@ export function makeAuthController(): AuthController {
 
 export function makeProvidersController(): ProvidersController {
   return new ProvidersController({ providers: makeProviders(), credentials: makeCredentials(), agents: makeAgents(), models: makeModelCatalog(), proof: makeAuth().proof })
+}
+
+export function makeUsageController(conversations: AgentController['conversations']): UsageController {
+  return new UsageController({ conversations, proof: makeAuth().proof, models: makeModelCatalog(), accounts: makeAuth().accounts })
 }

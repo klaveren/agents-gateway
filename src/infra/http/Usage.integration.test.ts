@@ -1,0 +1,101 @@
+import assert from 'node:assert'
+import { AddressInfo } from 'node:net'
+import { after, before, describe, it } from 'node:test'
+import { makeAuthController, makeController, makeProvidersController, makeUsageController } from '@composition/factories/Controller.Factory'
+import { HttpServer } from './Http.Server'
+
+const PASSWORD = 'frase longa o bastante'
+
+describe('uso (integração)', () => {
+  let base: string
+  let stop: () => void
+  let admin = ''
+  let member = ''
+  let memberId = ''
+
+  const call = async (path: string, init: { method?: string; body?: unknown; token?: string } = {}) => {
+    const res = await fetch(`${base}${path}`, {
+      method: init.method ?? 'GET',
+      headers: { ...(init.body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(init.token ? { 'X-Tool-Authorization': `Bearer ${init.token}` } : {}) },
+      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+    })
+    const text = await res.text()
+    return { status: res.status, text, body: JSON.parse(text) as { ok: boolean; result?: any } } // eslint-disable-line @typescript-eslint/no-explicit-any
+  }
+
+  before(async () => {
+    process.env.MCP_SERVER_URL = 'http://127.0.0.1:1/mcp'
+    const controller = makeController()
+    const server = new HttpServer(controller, makeAuthController(), makeProvidersController(), makeUsageController(controller.conversations)).start(0)
+    await new Promise((resolve) => server.once('listening', resolve))
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`
+    server.unref()
+    stop = () => {
+      server.closeAllConnections()
+      server.close()
+    }
+
+    admin = (await call('/auth/setup', { method: 'POST', body: { email: 'root@x.test', name: 'Root', password: PASSWORD } })).body.result.token
+    memberId = (await call('/users', { method: 'POST', token: admin, body: { email: 'ana@x.test', name: 'Ana', password: PASSWORD } })).body.result.id
+    member = (await call('/auth/login', { method: 'POST', body: { email: 'ana@x.test', password: PASSWORD } })).body.result.token
+
+    // Uma conversa da Ana e uma de outra pessoa, gravadas direto no repositório. Sonnet 5 de fábrica: $2/$10 por 1M → $3 cada.
+    const now = new Date()
+    for (const [id, owner] of [
+      ['da-ana', { id: memberId, email: 'ana@x.test' }],
+      ['de-outro', { id: 'outro', email: 'outro@x.test' }],
+    ] as const) {
+      await controller.conversations.saveSession({
+        id,
+        agentId: 'sysops-agent',
+        provider: 'claude',
+        mode: 'agent',
+        model: 'claude-sonnet-5',
+        createdAt: now,
+        updatedAt: now,
+        turns: 1,
+        usage: {},
+        metadata: { owner },
+      })
+      await controller.conversations.appendTurn({
+        sessionId: id,
+        index: 0,
+        at: now,
+        request: 'oi',
+        text: 'olá',
+        toolCalls: [],
+        usage: { inputTokens: 1_000_000, outputTokens: 100_000, totalTokens: 1_100_000 },
+      })
+    }
+  })
+
+  after(() => stop())
+
+  it('sem login, 401', async () => {
+    assert.strictEqual((await call('/usage/me')).status, 401)
+  })
+
+  it('⛔ o membro vê só o próprio uso, e NADA de custo na resposta', async () => {
+    const mine = await call('/usage/me?days=7&tz=-180', { token: member })
+
+    assert.strictEqual(mine.status, 200)
+    assert.deepStrictEqual([mine.body.result.totals.conversations, mine.body.result.totals.usage.totalTokens], [1, 1_100_000])
+    assert.strictEqual(mine.body.result.daily.length, 7)
+    assert.ok(!/cost/i.test(mine.text))
+  })
+
+  it('⛔ uso por usuário: 404 para membro; para o admin, cada um com custo', async () => {
+    assert.strictEqual((await call('/usage/users', { token: member })).status, 404)
+
+    const users = await call('/usage/users?days=30', { token: admin })
+    const ana = users.body.result.users.find((user: { ownerId?: string }) => user.ownerId === memberId)
+    assert.deepStrictEqual([ana.name, ana.costUsd], ['Ana', 3])
+    assert.strictEqual(users.body.result.totals.costUsd, 6)
+  })
+
+  it('o detalhe de um usuário, para o admin, vem com custo; para o membro, 404', async () => {
+    const detail = await call(`/usage/users/${memberId}`, { token: admin })
+    assert.deepStrictEqual([detail.body.result.name, detail.body.result.totals.costUsd, detail.body.result.byModel[0].model], ['Ana', 3, 'claude-sonnet-5'])
+    assert.strictEqual((await call(`/usage/users/${memberId}`, { token: member })).status, 404)
+  })
+})

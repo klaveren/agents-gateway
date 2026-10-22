@@ -4,6 +4,7 @@ import InboxView from './views/InboxView.vue'
 import AuthView from './views/AuthView.vue'
 import ProvidersView from './views/ProvidersView.vue'
 import SettingsView from './views/SettingsView.vue'
+import UsageView from './views/UsageView.vue'
 import UsersView from './views/UsersView.vue'
 
 /**
@@ -21,6 +22,7 @@ export const router = createRouter({
     { path: '/agents/:id', name: 'agent', component: AgentsView, props: true },
     { path: '/settings', name: 'settings', component: SettingsView },
     { path: '/users', name: 'users', component: UsersView },
+    { path: '/usage', name: 'usage', component: UsageView },
     { path: '/providers', name: 'providers', component: ProvidersView },
     { path: '/login', name: 'login', component: AuthView },
     { path: '/setup', name: 'setup', component: AuthView },

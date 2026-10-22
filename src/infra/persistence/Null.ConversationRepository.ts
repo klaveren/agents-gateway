@@ -1,3 +1,4 @@
+import { IUsageRow } from '@domain/models/Usage.Model'
 import { TClassification } from '@domain/models/Classification.Model'
 import { IConversationPage, IConversationSession, IConversationStats, IConversationTurn } from '@domain/models/Conversation.Model'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
@@ -36,6 +37,10 @@ export class NullConversationRepository implements IConversationRepository {
     return undefined
   }
   async deleteSession(_sessionId: string): Promise<void> {}
+  async usage(): Promise<IUsageRow[]> {
+    return []
+  }
+
   async stats(): Promise<IConversationStats> {
     return { conversations: 0, turns: 0, users: 0, accounts: 0, usage: {}, byModel: [], byClassification: {} }
   }

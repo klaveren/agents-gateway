@@ -1,4 +1,5 @@
 import { TClassification } from '@domain/models/Classification.Model'
+import { IUsageQuery, IUsageRow } from '@domain/models/Usage.Model'
 import { IConversationPage, IConversationPageQuery, IConversationSession, IConversationStats, IConversationTurn, IOwnerFilter } from '@domain/models/Conversation.Model'
 
 /**
@@ -24,6 +25,13 @@ export interface IConversationRepository {
 
   /** O retrato agregado de TODAS as conversas — somado no banco, não sobre a página listada. */
   stats(): Promise<IConversationStats>
+
+  /**
+   * O uso de um período, linha por dia de conversa (`IUsageRow`) — quem monta totais e gráficos é
+   * `Usage.Service`. ⛔ O recorte por dono (`query.owner`) é o mesmo da listagem: é ele que impede o
+   * "meu uso" de uma pessoa de somar as conversas de outra.
+   */
+  usage(query: IUsageQuery): Promise<IUsageRow[]>
 
   /**
    * Rotula um turno já gravado e recalcula o rótulo da conversa: o PIOR entre os turnos (`worstOf`).

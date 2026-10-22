@@ -12,6 +12,7 @@ import {
   IStoredUsage,
   PREVIEW_MAX,
 } from '@domain/models/Conversation.Model'
+import { IUsageQuery, IUsageRow } from '@domain/models/Usage.Model'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 
 /**
@@ -121,6 +122,8 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
 const ADDED_INDEXES = [
   'CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_share ON conversations (share_id)',
   'CREATE INDEX IF NOT EXISTS idx_conversations_classification ON conversations (classification)',
+  // O uso recorta os turnos por período: sem índice em `at`, cada consulta leria a tabela inteira.
+  'CREATE INDEX IF NOT EXISTS idx_turns_at ON conversation_turns (at)',
   // Substituído por `idx_conversations_recent`, que cobre o desempate por `id`.
   'DROP INDEX IF EXISTS idx_conversations_updated',
 ]
@@ -530,6 +533,56 @@ export class SqliteConversationRepository implements IConversationRepository {
    * que parece total e não é, e que muda de valor conforme a paginação — erro que não se denuncia,
    * porque o painel continua bonito com o número errado.
    */
+  /**
+   * O uso por dia de conversa, no fuso de quem pergunta.
+   *
+   * ⚠️ O DIA SAI DO `at` DO TURNO, não do `updated_at` da conversa: uma conversa de três dias soma em
+   * cada dia o que gastou nele. O fuso vai como modificador do `datetime` do SQLite (`'-180 minutes'`),
+   * sempre parâmetro.
+   */
+  async usage(query: IUsageQuery): Promise<IUsageRow[]> {
+    return (
+      this.guard('usage', () => {
+        const where = ['t.at >= ?']
+        const params: Array<string | number> = [`${Math.trunc(query.tzOffsetMinutes)} minutes`, query.since.toISOString()]
+
+        if (query.owner !== undefined) {
+          // O recorte de dono é escrito sobre `metadata` sem prefixo: aqui ela é a da conversa (`c`).
+          const owner = ownerClause(query.owner)
+          where.push(owner.sql.replaceAll('json_extract(metadata', 'json_extract(c.metadata'))
+          params.push(...owner.params)
+        }
+
+        const rows = this.db
+          .prepare(
+            `SELECT date(datetime(t.at, ?)) AS day, t.conversation_id AS conversation_id, c.title AS title,
+                    json_extract(c.metadata, '$.owner.id') AS owner_id, json_extract(c.metadata, '$.owner.email') AS owner_email,
+                    c.agent_id AS agent_id, c.provider AS provider, c.model AS model, COUNT(*) AS turns,
+                    SUM(t.input_tokens) AS input_tokens, SUM(t.output_tokens) AS output_tokens, SUM(t.reasoning_tokens) AS reasoning_tokens,
+                    SUM(t.total_tokens) AS total_tokens, SUM(t.cache_read_tokens) AS cache_read_tokens, SUM(t.cache_write_tokens) AS cache_write_tokens
+             FROM conversation_turns t JOIN conversations c ON c.id = t.conversation_id
+             WHERE ${where.join(' AND ')}
+             GROUP BY day, t.conversation_id
+             ORDER BY day ASC`,
+          )
+          .all(...params) as TRow[]
+
+        return rows.map((row) => ({
+          day: text(row.day),
+          conversationId: text(row.conversation_id),
+          title: typeof row.title === 'string' ? row.title : undefined,
+          ownerId: typeof row.owner_id === 'string' ? row.owner_id : undefined,
+          ownerEmail: typeof row.owner_email === 'string' ? row.owner_email : undefined,
+          agentId: text(row.agent_id),
+          provider: text(row.provider),
+          model: text(row.model),
+          turns: count(row.turns),
+          usage: usageOf(row),
+        }))
+      }) ?? []
+    )
+  }
+
   async stats(): Promise<IConversationStats> {
     const empty: IConversationStats = { conversations: 0, turns: 0, users: 0, accounts: 0, usage: {}, byModel: [], byClassification: {} }
 

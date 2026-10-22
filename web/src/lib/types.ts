@@ -211,3 +211,36 @@ export interface INativeTool {
   allowed: boolean
   reason?: string
 }
+
+export interface IUsageTokens {
+  inputTokens: number
+  outputTokens: number
+  reasoningTokens: number
+  totalTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+}
+
+export interface IUsageFigure {
+  conversations: number
+  turns: number
+  usage: IUsageTokens
+  /** Só na visão do admin. */
+  costUsd?: number
+  costIsFloor?: boolean
+}
+
+export interface IUsageSummary {
+  period: { days: number; since: string; tzOffsetMinutes: number }
+  totals: IUsageFigure
+  daily: Array<IUsageFigure & { date: string }>
+  byAgent: Array<IUsageFigure & { agentId: string }>
+  byModel: Array<IUsageFigure & { provider: string; model: string }>
+  top: Array<IUsageFigure & { id: string; title?: string; agentId: string; provider: string; model: string }>
+}
+
+export interface IUserUsage extends IUsageFigure {
+  ownerId?: string
+  email?: string
+  name?: string
+}
