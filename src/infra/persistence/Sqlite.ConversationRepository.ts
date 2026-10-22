@@ -275,15 +275,25 @@ export class SqliteConversationRepository implements IConversationRepository {
 
   async appendTurn(turn: IConversationTurn): Promise<void> {
     this.guard('appendTurn', () => {
-      // `INSERT OR REPLACE`: um turno reenviado com o mesmo índice corrige o anterior em vez de
-      // estourar por chave duplicada e derrubar o registro inteiro.
+      /**
+       * ⛔ NUNCA SOBRESCREVE. O índice pedido vale se estiver livre; se já existir turno ali, este vai
+       * para o próximo índice livre. Antes era `INSERT OR REPLACE`: um índice repetido (turnos
+       * concorrentes, sessão que saiu do store) apagava o turno anterior — e a classificação dele.
+       * Uma instrução só: com o driver síncrono, a escolha do índice e a escrita não se separam.
+       */
       this.db
         .prepare(
-          `INSERT OR REPLACE INTO conversation_turns
+          `INSERT INTO conversation_turns
              (conversation_id, idx, at, request, files, response, reasoning, tool_calls, warnings, input_tokens, output_tokens, reasoning_tokens, total_tokens, cache_read_tokens, cache_write_tokens, duration_ms, first_text_ms, aborted, error, classification)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, CASE WHEN EXISTS (SELECT 1 FROM conversation_turns WHERE conversation_id = ? AND idx = ?)
+                        THEN (SELECT MAX(idx) + 1 FROM conversation_turns WHERE conversation_id = ?)
+                        ELSE ? END,
+                   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
+          turn.sessionId,
+          turn.sessionId,
+          turn.index,
           turn.sessionId,
           turn.index,
           turn.at.toISOString(),

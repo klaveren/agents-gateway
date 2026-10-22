@@ -48,6 +48,26 @@ describe('SqliteConversationRepository', () => {
     assert.strictEqual(found?.createdAt.toISOString(), '2026-08-30T10:00:00.000Z')
   })
 
+  it('never overwrites a turn: a repeated index goes to the next free one', async () => {
+    const repo = repository()
+    await repo.saveSession(session())
+    await repo.appendTurn(turn({ index: 0, request: 'primeira' }))
+    await repo.classifyTurn('s1', 0, 'green')
+
+    // Índice repetido (turnos concorrentes, sessão perdida): antes o INSERT OR REPLACE apagava o
+    // turno 0 — e a classificação dele.
+    await repo.appendTurn(turn({ index: 0, request: 'segunda' }))
+
+    const turns = await repo.listTurns('s1')
+    assert.deepStrictEqual(
+      turns.map((item) => [item.index, item.request, item.classification]),
+      [
+        [0, 'primeira', 'green'],
+        [1, 'segunda', undefined],
+      ],
+    )
+  })
+
   it('keeps the three token fields apart across a round trip', async () => {
     // ⚠️ É a razão de os campos existirem separados: guardar o raciocínio dentro da saída daria o
     // total certo e apagaria quanto do gasto foi o modelo pensando.

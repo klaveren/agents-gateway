@@ -97,6 +97,13 @@ export class SendMessageUseCase {
     delete recorded.context
     const sent = this.withContext(sessionId, input)
 
+    /**
+     * O índice deste turno é o número de turnos ANTES dele, lido agora — antes de o provider
+     * aceitar o turno. Lido depois, no `record()` assíncrono, ele dependia de a sessão ainda estar no
+     * store (cancelada ou perdida virava 0) e de nenhum turno concorrente ter andado o contador.
+     */
+    const index = this.describeQuietly(sessionId)?.turns
+
     try {
       for await (const event of this.agentProvider.sendMessage(sessionId, sent)) {
         events.push(event)
@@ -105,7 +112,7 @@ export class SendMessageUseCase {
     } finally {
       // `void`: gravação não segura a resposta de quem está lendo o stream, e o repositório já
       // engole o próprio erro — banco fora do ar não pode derrubar a conversa.
-      void this.record(sessionId, recorded, events, startedAt)
+      if (index !== undefined) void this.record(sessionId, index, recorded, events, startedAt).catch(() => undefined)
     }
   }
 
@@ -126,20 +133,11 @@ export class SendMessageUseCase {
     return { ...rest, text: rest.text.trim() ? `${context}\n\n${rest.text}` : context }
   }
 
-  private async record(sessionId: string, input: IMessageInput, events: IAgentEvent[], startedAt: number): Promise<void> {
+  private async record(sessionId: string, index: number, input: IMessageInput, events: IAgentEvent[], startedAt: number): Promise<void> {
     if (!events.length) return
 
     const turn = aggregateTurn(sessionId, events)
     const session = this.describeQuietly(sessionId)
-
-    /**
-     * O índice vem do contador do PROVIDER, não de um `listTurns` no banco.
-     *
-     * Contar no banco custaria uma leitura por turno e, com o repositório nulo, sempre devolveria
-     * zero — todo turno sobrescreveria o primeiro, e o histórico teria uma linha só. O provider
-     * incrementa `turns` ao aceitar o turno, então o índice deste é o anterior.
-     */
-    const index = Math.max((session?.turns ?? 1) - 1, 0)
 
     // Cabeçalho gravado a cada turno: é o que mantém `updatedAt` e o acumulado em dia, e cria a
     // conversa no banco mesmo quando ela nasceu antes de o banco estar de pé.

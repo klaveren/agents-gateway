@@ -223,17 +223,43 @@ describe('SendMessageUseCase', () => {
       )
 
     let done = repository.recorded()
-    for await (const _event of build(1).execute('s', { text: 'primeira pergunta' })) void _event
+    for await (const _event of build(0).execute('s', { text: 'primeira pergunta' })) void _event
     await done
 
     done = repository.recorded()
-    for await (const _event of build(2).execute('s', { text: 'segunda pergunta' })) void _event
+    for await (const _event of build(1).execute('s', { text: 'segunda pergunta' })) void _event
     await done
 
     assert.deepStrictEqual(
       repository.sessions.map((item) => item.title),
       ['primeira pergunta', undefined],
     )
+  })
+
+  it('takes the turn index before the provider accepts the turn, so a lost session cannot rewind it', async () => {
+    const repository = new RecordingRepository()
+    let describable = true
+    const usecase = new SendMessageUseCase(
+      stubProvider({
+        describe: () => {
+          if (!describable) throw new Error('Session not found')
+          return session({ turns: 3 })
+        },
+        sendMessage: async function* () {
+          // A sessão sai do store no meio do turno (cancelada, ou o processo a perdeu).
+          describable = false
+          yield { type: 'text.delta' as const, sessionId: 's', timestamp: new Date(), payload: { text: 'ok' } }
+        },
+      }),
+      repository,
+    )
+
+    const done = repository.recorded()
+    for await (const _event of usecase.execute('s', { text: 'quarta' })) void _event
+    await done
+
+    // Antes, sem sessão para descrever, o índice virava 0 e o turno apagava o primeiro.
+    assert.strictEqual(repository.turns[0].index, 3)
   })
 
   describe('contexto da primeira mensagem', () => {
