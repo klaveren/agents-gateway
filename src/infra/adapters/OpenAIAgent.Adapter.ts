@@ -1,4 +1,18 @@
-import { Agent, OpenAIProvider, run, user, type AgentInputItem, type MCPServer, type Model, type ModelSettings } from '@openai/agents'
+import {
+  Agent,
+  codeInterpreterTool,
+  imageGenerationTool,
+  OpenAIProvider,
+  run,
+  user,
+  webSearchTool,
+  type AgentInputItem,
+  type MCPServer,
+  type Model,
+  type ModelSettings,
+  type Tool,
+} from '@openai/agents'
+import { nativeToolsOf } from '@domain/Native.Tools'
 import { IConnectionSource, requireConnection } from './support/Keyed.Client'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -107,6 +121,18 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
       return
     }
 
+    // Nativas (hospedadas) exigem a Responses API: só com o provider oficial. Num compatível, ficam de fora — e o turno diz isso.
+    const natives = nativeToolsOf(agent.allowedTools, EProvider.OPENAI)
+    const compatible = natives.length > 0 && !!this.connections?.connection(record.provider)?.baseUrl
+    if (compatible)
+      yield {
+        type: 'warning',
+        sessionId,
+        timestamp: new Date(),
+        payload: { message: `Ferramentas hospedadas da OpenAI não funcionam em provider compatível e foram ignoradas: ${natives.map((tool) => tool.label).join(', ')}.` },
+      }
+    const hosted = compatible ? [] : natives.map((tool) => hostedTool(tool.sdkName)).filter((tool): tool is Tool => !!tool)
+
     const modelSettings: ModelSettings = { maxTokens: maxOutputTokens() }
     const effort = this.toEffort(record.reasoning)
     if (effort) modelSettings.reasoning = { effort }
@@ -120,7 +146,7 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
       instructions: record.systemPrompt,
       model,
       modelSettings,
-      tools: buildOpenAITools(this.catalog?.localFor(agent.allowedTools) ?? []),
+      tools: [...buildOpenAITools(this.catalog?.localFor(agent.allowedTools) ?? []), ...hosted],
       mcpServers,
     })
 
@@ -313,4 +339,12 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
   private toEffort(reasoning: string | undefined): TEffort | undefined {
     return (EFFORTS as readonly string[]).includes(reasoning ?? '') ? (reasoning as TEffort) : undefined
   }
+}
+
+/** A ferramenta hospedada do SDK pelo nome do catálogo (`Native.Tools`). */
+function hostedTool(name: string): Tool | undefined {
+  if (name === 'web_search') return webSearchTool()
+  if (name === 'code_interpreter') return codeInterpreterTool()
+  if (name === 'image_generation') return imageGenerationTool()
+  return undefined
 }

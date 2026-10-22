@@ -195,3 +195,19 @@ export interface IProbeResult {
   status?: number
   message?: string
 }
+
+export type TNativeRisk = 'hosted' | 'session' | 'server-network' | 'server-read' | 'server-exec'
+
+/** Ferramenta nativa de um SDK (só na lane Agents SDK). O `id` é o que vai em `allowedTools`. */
+export interface INativeTool {
+  id: string
+  protocol: TProvider
+  sdkName: string
+  label: string
+  description: string
+  risk: TNativeRisk
+  officialOnly: boolean
+  /** Dentro do perímetro do deploy (`NATIVE_TOOLS_ENABLED`). */
+  allowed: boolean
+  reason?: string
+}

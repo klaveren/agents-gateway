@@ -10,6 +10,7 @@ import { AgentCatalog } from '@application/Agent.Catalog'
 import { ModelCatalogService } from '@application/ModelCatalog.Service'
 import { AGENT_REGISTRY } from '@domain/Agent.Registry'
 import { IAgentRules } from '@domain/Agent.Policy'
+import { NATIVE_TOOLS, nativeToolAllowed } from '@domain/Native.Tools'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
 import { AgentUnavailableError } from '@domain/errors/Domain.Error'
@@ -295,7 +296,9 @@ export class AgentController {
   async getTools(_req: Request, res: Response) {
     await this.respond(res, async () => {
       await this.requireCaller()
-      return this.catalogFor(this.localTools)
+      // As nativas vão junto, com o veredito do perímetro: a tela mostra as bloqueadas desabilitadas, com o porquê.
+      const native = NATIVE_TOOLS.map((tool) => ({ ...tool, allowed: nativeToolAllowed(tool), reason: nativeToolAllowed(tool) ? undefined : 'blocked by NATIVE_TOOLS_ENABLED' }))
+      return { ...(await this.catalogFor(this.localTools)), native }
     })
   }
 

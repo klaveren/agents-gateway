@@ -164,6 +164,16 @@ describe('GoogleAgentAdapter', () => {
     assert.deepStrictEqual(log.runs[0].newMessage.parts, [{ text: 'look' }, { inlineData: { data: 'aaa', mimeType: 'image/png' } }])
   })
 
+  it('passa ao runtime as nativas do Gemini ligadas no agente, e só elas', async () => {
+    const log = emptyLog()
+    const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(turn, log), catalog })
+    const agent = { ...getAgent(), allowedTools: ['search_web', 'sdk:google:google_search', 'sdk:google:code_execution', 'sdk:WebSearch'] }
+    const session = await adapter.createSession(agent, { agentId: 'researcher-agent' })
+    await drain(adapter.sendMessage(agent, session.id, { text: 'hi' }, {}))
+
+    assert.deepStrictEqual(log.specs[0].natives, ['google_search', 'code_execution'])
+  })
+
   it('hands the local toolset to the ADK agent', async () => {
     const log = emptyLog()
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(turn, log), catalog })

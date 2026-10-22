@@ -1,6 +1,7 @@
 import { EMode } from './enums/EMode.Enum'
 import { EProvider } from './enums/EProvider.Enum'
 import { IAgent } from './models/Agent.Model'
+import { INativeTool, isNativeTool, nativeTool, nativeToolAllowed } from './Native.Tools'
 
 /** Minúsculas, dígitos e hífen; começa por letra ou dígito. Vira parte de URL e de nome no ADK. */
 export const AGENT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,47}$/
@@ -41,6 +42,8 @@ export interface IAgentRules {
    * prefixo do id deixa de valer): agente só oferece modelo que alguém ativou em Providers.
    */
   modelEnabled?(providerId: string, modelId: string): boolean
+  /** O perímetro das nativas. Ausente = `nativeToolAllowed` com o ambiente do processo. */
+  nativeAllowed?(tool: INativeTool): boolean
   /** Problema do prompt para aquele provider (ex.: chaves que o ADK lê como variável). */
   promptIssue?(agent: IAgent): string | undefined
 }
@@ -81,7 +84,19 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
   if (!agent.modes.length) issue('modes', 'at least one lane')
   for (const mode of agent.modes) if (!Object.values(EMode).includes(mode)) issue('modes', `unknown lane: ${String(mode)}`)
 
-  for (const tool of agent.allowedTools) if (!rules.knownTools.includes(tool)) issue('allowedTools', `not available: ${tool}`)
+  for (const tool of agent.allowedTools) {
+    if (!isNativeTool(tool)) {
+      if (!rules.knownTools.includes(tool)) issue('allowedTools', `not available: ${tool}`)
+      continue
+    }
+
+    // ⛔ Nativa: tem de ser do SDK deste provider, estar no perímetro do deploy e, se exigir, o provider ser o oficial.
+    const native = nativeTool(tool)
+    if (!native) issue('allowedTools', `unknown SDK tool: ${tool}`)
+    else if (native.protocol !== protocol) issue('allowedTools', `${native.label} is a ${native.protocol} SDK tool`)
+    else if (!(rules.nativeAllowed ?? nativeToolAllowed)(native)) issue('allowedTools', `blocked by NATIVE_TOOLS_ENABLED: ${tool}`)
+    else if (native.officialOnly && !official) issue('allowedTools', `${native.label} works only with the official provider`)
+  }
 
   if (!agent.systemPrompt.trim()) issue('systemPrompt', 'required')
   else if (agent.systemPrompt.length > AGENT_PROMPT_MAX) issue('systemPrompt', `at most ${AGENT_PROMPT_MAX} characters`)
