@@ -54,6 +54,20 @@ export function url(path: string, query?: IRequest['query']): string {
   return `/v1${path}${search ? `?${search}` : ''}`
 }
 
+let onUnauthorized: (() => void) | undefined
+
+/**
+ * Quem cuida da sessão quando o gateway recusa a credencial (401): a sessão venceu, a conta foi
+ * desativada ou o papel mudou. A tela limpa o token e volta ao login, em vez de mostrar listas vazias.
+ */
+export function setUnauthorizedHandler(handler: () => void): void {
+  onUnauthorized = handler
+}
+
+function checkUnauthorized(status: number): void {
+  if (status === 401 && readLocal(CALLER_TOKEN_KEY)) onUnauthorized?.()
+}
+
 /** Uma chamada à API: abre o envelope `{ ok, result }` ou lança `ApiError`. */
 export async function api<T>(path: string, request: IRequest = {}): Promise<T> {
   const response = await fetch(url(path, request.query), {
@@ -64,7 +78,10 @@ export async function api<T>(path: string, request: IRequest = {}): Promise<T> {
   })
 
   const envelope = (await response.json().catch(() => undefined)) as { ok?: boolean; result?: T; message?: string; code?: string; details?: unknown } | undefined
-  if (!response.ok || !envelope?.ok) throw new ApiError(response.status, envelope?.code, envelope?.message ?? `HTTP ${response.status}`, envelope?.details)
+  if (!response.ok || !envelope?.ok) {
+    checkUnauthorized(response.status)
+    throw new ApiError(response.status, envelope?.code, envelope?.message ?? `HTTP ${response.status}`, envelope?.details)
+  }
 
   return envelope.result as T
 }
@@ -80,6 +97,7 @@ export async function openStream(path: string, request: IRequest = {}): Promise<
 
   if (!response.ok || !response.body) {
     const envelope = (await response.json().catch(() => undefined)) as { message?: string; code?: string } | undefined
+    checkUnauthorized(response.status)
     throw new ApiError(response.status, envelope?.code, envelope?.message ?? `HTTP ${response.status}`)
   }
 

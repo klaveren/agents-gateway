@@ -87,6 +87,18 @@ export const agentBodySchema = z.object({
   allowedTools: z.array(z.string().trim().min(1)).max(100).default([]),
 })
 
+/**
+ * Contas. ⚠️ A senha só tem teto aqui (o hash custa CPU por caractere); o mínimo é regra do domínio
+ * (`passwordIssue`), que devolve o problema campo a campo junto dos outros.
+ */
+const password = z.string().max(500)
+export const setupSchema = z.object({ email: z.string().max(200), name: z.string().max(200), password })
+export const loginSchema = z.object({ email: z.string().max(200), password })
+export const createUserSchema = z.object({ email: z.string().max(200), name: z.string().max(200), password, role: z.enum(['admin', 'member']).default('member') })
+export const updateUserSchema = z.object({ name: z.string().max(200).optional(), role: z.enum(['admin', 'member']).optional(), disabled: z.boolean().optional() })
+export const resetPasswordSchema = z.object({ password })
+export const changePasswordSchema = z.object({ current: password, password })
+
 /** Abrir ou fechar a conversa por link. Booleano estrito: `"false"` (texto) não pode abrir. */
 export const shareConversationSchema = z.object({ shared: z.boolean() })
 

@@ -1,7 +1,9 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import AgentsView from './views/AgentsView.vue'
 import InboxView from './views/InboxView.vue'
+import AuthView from './views/AuthView.vue'
 import SettingsView from './views/SettingsView.vue'
+import UsersView from './views/UsersView.vue'
 
 /**
  * ⚠️ HISTÓRICO DE VERDADE (`/c/:id`), não `#`: o link de uma conversa é colável. O gateway devolve o
@@ -17,6 +19,9 @@ export const router = createRouter({
     { path: '/agents/new', name: 'agent-new', component: AgentsView },
     { path: '/agents/:id', name: 'agent', component: AgentsView, props: true },
     { path: '/settings', name: 'settings', component: SettingsView },
+    { path: '/users', name: 'users', component: UsersView },
+    { path: '/login', name: 'login', component: AuthView },
+    { path: '/setup', name: 'setup', component: AuthView },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })

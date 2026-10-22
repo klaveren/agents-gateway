@@ -45,6 +45,7 @@ export function requireProvenOwner(): boolean {
 export async function provenCaller(proof: ICallerProof | undefined): Promise<TCallerIdentity | undefined> {
   const identity = caller()
   if (!proof || !identity?.token || !identity.id) return undefined
+  if (proof.covers && !proof.covers(identity.token)) return undefined
 
   return (await proof.prove(identity.token)) ? identity : undefined
 }
@@ -65,7 +66,8 @@ export async function resolveCaller(proof: ICallerProof | undefined): Promise<IR
   if (!identity?.token) return { proven: false }
   if (!identity.id) return undefined
 
-  if (proof) return (await provenCaller(proof)) ? { identity, proven: true } : undefined
+  // Prova que não responde por este token = sem prova para ele (ver `ICallerProof.covers`).
+  if (proof && (!proof.covers || proof.covers(identity.token))) return (await provenCaller(proof)) ? { identity, proven: true } : undefined
 
   return requireProvenOwner() ? undefined : { identity, proven: false }
 }

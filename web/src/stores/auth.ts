@@ -1,43 +1,92 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
-import { api, ApiError, CALLER_TOKEN_KEY, GATEWAY_TOKEN_KEY } from '@/lib/api'
+import { computed, ref } from 'vue'
+import { api, ApiError, CALLER_TOKEN_KEY, GATEWAY_TOKEN_KEY, setUnauthorizedHandler } from '@/lib/api'
 import { readLocal, writeLocal } from '@/lib/storage'
+import type { ISession, IUser } from '@/lib/types'
 
 /**
- * Quem está usando a tela, do ponto de vista do gateway.
+ * A sessão: quem está logado, e se é admin.
  *
- * ⚖️ ADMIN É PERGUNTADO, não deduzido do token: o gateway só considera admin quem tem a identidade
- * PROVADA (`CALLER_PROOF_TOOL`), e um papel no token não basta. `GET /settings` responde 200 só para
- * admin (404 para o resto) — é a mesma porta das telas de Agentes e Configuração.
+ * ⚖️ ADMIN É PERGUNTADO AO GATEWAY (`GET /settings` responde 200 só para admin), e não deduzido do
+ * papel guardado aqui: é a mesma porta das telas de operação, e vale também para quem entra por uma
+ * prova externa em vez de conta local.
+ *
+ * O token vai no `X-Tool-Authorization` (a chave `callerToken`), o cabeçalho que o gateway já lia.
  */
 export const useAuthStore = defineStore('auth', () => {
   const gatewayToken = ref(readLocal(GATEWAY_TOKEN_KEY) ?? '')
-  const callerToken = ref(readLocal(CALLER_TOKEN_KEY) ?? '')
+  const user = ref<IUser>()
   const isAdmin = ref(false)
   const checked = ref(false)
-  /** O gateway recusou a credencial (401): a tela pede os tokens em vez de mostrar listas vazias. */
   const unauthorized = ref(false)
+  const localAccounts = ref(false)
+  const setupRequired = ref(false)
+
+  const signedIn = computed(() => !!user.value)
 
   async function probe(): Promise<void> {
     try {
-      await api('/settings')
-      isAdmin.value = true
-      unauthorized.value = false
-    } catch (error) {
-      isAdmin.value = false
-      unauthorized.value = error instanceof ApiError && error.status === 401
+      const status = await api<{ localAccounts: boolean; setupRequired: boolean }>('/auth/status').catch(() => ({ localAccounts: false, setupRequired: false }))
+      localAccounts.value = status.localAccounts
+      setupRequired.value = status.setupRequired
+
+      user.value = readLocal(CALLER_TOKEN_KEY) ? await api<IUser>('/auth/me').catch(() => undefined) : undefined
+
+      try {
+        await api('/settings')
+        isAdmin.value = true
+        unauthorized.value = false
+      } catch (error) {
+        isAdmin.value = false
+        unauthorized.value = error instanceof ApiError && error.status === 401
+      }
     } finally {
       checked.value = true
     }
   }
 
-  function saveTokens(gateway: string, caller: string): Promise<void> {
-    gatewayToken.value = gateway.trim()
-    callerToken.value = caller.trim()
-    writeLocal(GATEWAY_TOKEN_KEY, gatewayToken.value || null)
-    writeLocal(CALLER_TOKEN_KEY, callerToken.value || null)
+  async function start(session: ISession): Promise<void> {
+    writeLocal(CALLER_TOKEN_KEY, session.token)
+    user.value = session.user
+    await probe()
+  }
+
+  async function login(email: string, password: string): Promise<void> {
+    await start(await api<ISession>('/auth/login', { method: 'POST', body: { email, password } }))
+  }
+
+  async function setup(input: { email: string; name: string; password: string }): Promise<void> {
+    await start(await api<ISession>('/auth/setup', { method: 'POST', body: input }))
+  }
+
+  /** Sai NO SERVIDOR (todas as sessões da conta) e depois aqui. Se o servidor não responder, sai daqui mesmo assim. */
+  async function logout(): Promise<void> {
+    await api('/auth/logout', { method: 'POST' }).catch(() => undefined)
+    writeLocal(CALLER_TOKEN_KEY, null)
+    user.value = undefined
+    isAdmin.value = false
     return probe()
   }
 
-  return { gatewayToken, callerToken, isAdmin, checked, unauthorized, probe, saveTokens }
+  /** As outras sessões caem; esta continua com o token novo que o gateway devolve. */
+  async function changePassword(current: string, password: string): Promise<void> {
+    const session = await api<ISession>('/auth/password', { method: 'PUT', body: { current, password } })
+    writeLocal(CALLER_TOKEN_KEY, session.token)
+    user.value = session.user
+  }
+
+  function saveGatewayToken(value: string): Promise<void> {
+    gatewayToken.value = value.trim()
+    writeLocal(GATEWAY_TOKEN_KEY, gatewayToken.value || null)
+    return probe()
+  }
+
+  // Sessão recusada pelo gateway (venceu, conta desativada, papel trocado): sai e a tela pede login.
+  setUnauthorizedHandler(() => {
+    writeLocal(CALLER_TOKEN_KEY, null)
+    user.value = undefined
+    isAdmin.value = false
+  })
+
+  return { gatewayToken, user, isAdmin, checked, unauthorized, localAccounts, setupRequired, signedIn, probe, login, setup, logout, changePassword, saveGatewayToken }
 })

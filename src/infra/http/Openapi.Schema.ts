@@ -307,6 +307,32 @@ const failures = {
 
 const json = (schema: object) => ({ content: { 'application/json': { schema } } })
 
+const userSchema = {
+  type: 'object',
+  description: 'A gateway account. The password hash never leaves the server.',
+  properties: {
+    id: { type: 'string' },
+    email: { type: 'string' },
+    name: { type: 'string' },
+    role: { type: 'string', enum: ['admin', 'member'] },
+    disabled: { type: 'boolean' },
+    createdAt: { type: 'string', format: 'date-time' },
+    updatedAt: { type: 'string', format: 'date-time' },
+    updatedBy: { type: 'string' },
+    lastLoginAt: { type: 'string', format: 'date-time' },
+  },
+}
+
+const authSessionSchema = {
+  type: 'object',
+  description: 'Send `token` as `X-Tool-Authorization: Bearer <token>`. It stops working at once if the account is disabled or its role changes.',
+  properties: { token: { type: 'string' }, expiresAt: { type: 'string', format: 'date-time' }, user: userSchema },
+}
+
+const passwordField = { type: 'string', minLength: 10, maxLength: 200 }
+const userIdParam = [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }]
+const lastAdmin = { description: 'Invalid change, e.g. removing the last active administrator or disabling your own account. `details` lists `{ field, message }`', ...json(failureEnvelope) }
+
 export const OPENAPI_DOCUMENT = {
   openapi: '3.1.0',
   info: {
@@ -333,6 +359,89 @@ export const OPENAPI_DOCUMENT = {
         summary: 'Liveness, MCP status and live session count',
         security: [],
         responses: { '200': { description: 'OK', ...json(envelope({ type: 'object' })) } },
+      },
+    },
+    '/auth/status': {
+      get: {
+        summary: 'Whether local accounts exist and whether the first administrator still has to be created. Public',
+        security: [],
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { localAccounts: { type: 'boolean' }, setupRequired: { type: 'boolean' } } })) } },
+      },
+    },
+    '/auth/setup': {
+      post: {
+        summary: 'Create the first administrator. Only with zero accounts, and only from this machine (loopback, no proxy). Public',
+        security: [],
+        requestBody: { required: true, ...json({ type: 'object', properties: { email: { type: 'string' }, name: { type: 'string' }, password: passwordField }, required: ['email', 'name', 'password'] }) },
+        responses: { '201': { description: 'Created and signed in', ...json(envelope(authSessionSchema)) }, '404': { description: 'Setup not available', ...json(failureEnvelope) }, '422': failures['422'] },
+      },
+    },
+    '/auth/login': {
+      post: {
+        summary: 'Sign in with e-mail and password. One message for every failure; five failures lock the e-mail for 15 minutes. Public',
+        security: [],
+        requestBody: { required: true, ...json({ type: 'object', properties: { email: { type: 'string' }, password: { type: 'string' } }, required: ['email', 'password'] }) },
+        responses: {
+          '200': { description: 'Signed in', ...json(envelope(authSessionSchema)) },
+          '401': { description: '`invalid_credentials`', ...json(failureEnvelope) },
+          '429': { description: '`login_locked`, with `details.retryAfterSeconds`', ...json(failureEnvelope) },
+        },
+      },
+    },
+    '/auth/logout': {
+      post: {
+        summary: 'Sign out of EVERY session of the account: tokens issued before stop working, on any device',
+        responses: { '200': { description: 'Signed out', ...json(envelope({ type: 'null' })) }, '401': failures['401'] },
+      },
+    },
+    '/auth/me': {
+      get: {
+        summary: 'The account behind the current session',
+        responses: { '200': { description: 'OK', ...json(envelope(userSchema)) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/auth/password': {
+      put: {
+        summary: 'Change your own password; the current one is required',
+        requestBody: { required: true, ...json({ type: 'object', properties: { current: { type: 'string' }, password: passwordField }, required: ['current', 'password'] }) },
+        responses: { '200': { description: 'Changed. Every other session ends; this one continues with the session returned', ...json(envelope(authSessionSchema)) }, '401': failures['401'], '422': failures['422'] },
+      },
+    },
+    '/users': {
+      get: {
+        summary: 'Every account. Administrators only; anyone else gets 404',
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: userSchema })) }, '401': failures['401'], '404': failures['404'] },
+      },
+      post: {
+        summary: 'Create an account with an initial password. Administrators only',
+        requestBody: {
+          required: true,
+          ...json({ type: 'object', properties: { email: { type: 'string' }, name: { type: 'string' }, password: passwordField, role: { type: 'string', enum: ['admin', 'member'], default: 'member' } }, required: ['email', 'name', 'password'] }),
+        },
+        responses: { '201': { description: 'Created', ...json(envelope(userSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/users/{id}': {
+      put: {
+        summary: 'Rename, grant or revoke administrator, enable or disable. Accounts are never deleted: their conversations keep an owner. Administrators only',
+        parameters: userIdParam,
+        requestBody: { required: true, ...json({ type: 'object', properties: { name: { type: 'string' }, role: { type: 'string', enum: ['admin', 'member'] }, disabled: { type: 'boolean' } } }) },
+        responses: { '200': { description: 'Updated', ...json(envelope(userSchema)) }, '401': failures['401'], '404': failures['404'], '422': lastAdmin },
+      },
+    },
+    '/users/{id}/sessions': {
+      delete: {
+        summary: 'End every session of an account (a lost device, access that should have ended). Administrators only',
+        parameters: userIdParam,
+        responses: { '200': { description: 'Ended', ...json(envelope({ type: 'null' })) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/users/{id}/password': {
+      post: {
+        summary: "Set another account's password; that account's sessions end. Administrators only",
+        parameters: userIdParam,
+        requestBody: { required: true, ...json({ type: 'object', properties: { password: passwordField }, required: ['password'] }) },
+        responses: { '200': { description: 'Set', ...json(envelope({ type: 'null' })) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
     },
     '/agents': {

@@ -56,7 +56,7 @@ watch(creating, (value) => {
   <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
     <div>
       <p class="font-medium text-zinc-200">Só quem administra cria e edita agentes.</p>
-      <p class="mt-1 text-sm">O gateway reconhece administrador pela identidade provada (<code>CALLER_PROOF_TOOL</code>) e por <code>ADMIN_ROLES</code> / <code>ADMIN_USERS</code>.</p>
+      <RouterLink v-if="!auth.signedIn && auth.localAccounts" :to="{ path: '/login', query: { next: '/agents' } }" class="mt-3 inline-block rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950">Entrar</RouterLink>
     </div>
   </div>
 

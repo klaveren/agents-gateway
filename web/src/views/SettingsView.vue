@@ -13,8 +13,12 @@ const settings = useSettingsStore()
 const conversations = useConversationsStore()
 
 const gatewayToken = ref(auth.gatewayToken)
-const callerToken = ref(auth.callerToken)
 const tokenNote = ref<string>()
+
+const currentPassword = ref('')
+const nextPassword = ref('')
+const passwordNote = ref<string>()
+const passwordError = ref<string>()
 
 const audience = ref<TAudience>('all')
 const agentId = ref('')
@@ -49,14 +53,26 @@ watch(
   { immediate: true },
 )
 
-async function saveTokens() {
-  await auth.saveTokens(gatewayToken.value, callerToken.value)
-  // Outra credencial é outra pessoa: lista, agentes e assinatura ao vivo recomeçam com ela.
+async function saveGatewayToken() {
+  await auth.saveGatewayToken(gatewayToken.value)
   conversations.subscribe(auth.isAdmin)
   void conversations.load(auth.isAdmin)
   void agents.load().catch(() => undefined)
-  if (auth.isAdmin) void settings.load().catch(() => undefined)
-  tokenNote.value = auth.unauthorized ? 'O gateway recusou essas credenciais.' : auth.isAdmin ? 'Salvo. Você é administrador.' : 'Salvo.'
+  tokenNote.value = auth.unauthorized ? 'O gateway recusou o token.' : 'Salvo.'
+}
+
+async function changePassword() {
+  passwordNote.value = undefined
+  passwordError.value = undefined
+  try {
+    await auth.changePassword(currentPassword.value, nextPassword.value)
+    currentPassword.value = ''
+    nextPassword.value = ''
+    passwordNote.value = 'Senha trocada. As outras sessões desta conta foram encerradas.'
+  } catch (error) {
+    const issues = error instanceof ApiError ? error.fieldIssues : {}
+    passwordError.value = issues.current ? 'A senha atual não confere.' : issues.password ? 'A nova senha precisa ter pelo menos 10 caracteres.' : String(error)
+  }
 }
 
 async function saveSettings() {
@@ -124,22 +140,39 @@ async function saveSettings() {
       </section>
 
       <p v-else-if="!auth.isAdmin" class="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5 text-sm text-zinc-400">
-        As configurações de operação são só de quem administra. O gateway reconhece administrador pela identidade provada (<code>CALLER_PROOF_TOOL</code>) com papel em <code>ADMIN_ROLES</code> ou nome em <code>ADMIN_USERS</code>.
+        As configurações de operação são só de quem administra.
+        <RouterLink v-if="!auth.signedIn && auth.localAccounts" :to="{ path: '/login', query: { next: '/settings' } }" class="text-emerald-300 underline">Entrar</RouterLink>
       </p>
 
+      <section v-if="auth.user" class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
+        <h2 class="font-medium">Minha conta</h2>
+        <p class="text-sm text-zinc-400">{{ auth.user.name }} · {{ auth.user.email }} · {{ auth.user.role === 'admin' ? 'administrador' : 'membro' }}</p>
+        <form class="grid gap-3 sm:grid-cols-2" @submit.prevent="changePassword">
+          <label class="flex flex-col gap-1 text-sm text-zinc-300">
+            Senha atual
+            <input v-model="currentPassword" type="password" required autocomplete="current-password" class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm" />
+          </label>
+          <label class="flex flex-col gap-1 text-sm text-zinc-300">
+            Nova senha
+            <input v-model="nextPassword" type="password" required autocomplete="new-password" class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm" />
+          </label>
+          <div class="flex items-center gap-3 sm:col-span-2">
+            <button type="submit" class="rounded-full bg-zinc-800 px-4 py-2 text-sm hover:bg-zinc-700">Trocar senha</button>
+            <span v-if="passwordNote" class="text-sm text-emerald-300">{{ passwordNote }}</span>
+            <span v-if="passwordError" class="text-sm text-rose-300">{{ passwordError }}</span>
+          </div>
+        </form>
+      </section>
+
       <section class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
-        <h2 class="font-medium">Credenciais deste navegador</h2>
-        <p class="text-xs text-zinc-400">Ficam só aqui (localStorage). O token do gateway é o portão do serviço (<code>GATEWAY_TOKEN</code>); o do chamador identifica você e é repassado às ferramentas.</p>
+        <h2 class="font-medium">Portão do gateway</h2>
+        <p class="text-xs text-zinc-400">Só quando o servidor define <code>GATEWAY_TOKEN</code>. Fica neste navegador (localStorage). Quem você é vem do login, não daqui.</p>
         <label class="flex flex-col gap-1 text-sm text-zinc-300">
           Token do gateway
           <input v-model="gatewayToken" type="password" autocomplete="off" class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 font-mono text-sm" />
         </label>
-        <label class="flex flex-col gap-1 text-sm text-zinc-300">
-          Credencial do chamador
-          <input v-model="callerToken" type="password" autocomplete="off" class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 font-mono text-sm" />
-        </label>
         <div class="flex items-center gap-3">
-          <button class="rounded-full bg-zinc-800 px-4 py-2 text-sm hover:bg-zinc-700" @click="saveTokens">Salvar credenciais</button>
+          <button class="rounded-full bg-zinc-800 px-4 py-2 text-sm hover:bg-zinc-700" @click="saveGatewayToken">Salvar token</button>
           <span v-if="tokenNote" class="text-sm text-zinc-300">{{ tokenNote }}</span>
         </div>
       </section>

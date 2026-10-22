@@ -1,4 +1,5 @@
 import { AgentController } from './Agent.Controller'
+import { AuthController } from './Auth.Controller'
 import express, { Express, NextFunction, Request, RequestHandler, Response } from 'express'
 import { Server } from 'node:http'
 import fs from 'node:fs'
@@ -21,9 +22,12 @@ export const API_PREFIX = '/v1'
  * (o segredo do link), a resposta é só leitura e só a projeção pública, e fechar o compartilhamento a
  * revoga.
  *
+ * · `/auth/status`, `/auth/setup` e `/auth/login` são a porta de entrada: sem credencial ainda, por
+ * definição. O setup só funciona com zero contas e pedido desta máquina; o login tem trava de força bruta.
+ *
  * Rota pública nova entra aqui — e só aqui, de propósito.
  */
-export const PUBLIC_PATHS: readonly string[] = ['/health', '/shared/:id']
+export const PUBLIC_PATHS: readonly string[] = ['/health', '/shared/:id', '/auth/status', '/auth/setup', '/auth/login']
 
 export type TRouteMethod = 'get' | 'post' | 'put' | 'delete'
 
@@ -38,13 +42,16 @@ export class HttpServer {
   public readonly app: Express
   private readonly routes: IRoute[]
 
-  constructor(private readonly controller: AgentController) {
+  constructor(
+    private readonly controller: AgentController,
+    auth: AuthController = new AuthController({}),
+  ) {
     this.app = express()
     this.app.disable('x-powered-by')
     this.app.use(corsMiddleware())
     this.app.use(express.json({ limit: jsonLimit() }))
 
-    this.routes = buildRoutes(controller)
+    this.routes = buildRoutes(controller, auth)
     this.setupRoutes()
     this.setupFrontend()
   }
@@ -135,9 +142,20 @@ export class HttpServer {
   }
 }
 
-function buildRoutes(controller: AgentController): IRoute[] {
+function buildRoutes(controller: AgentController, auth: AuthController): IRoute[] {
   return [
     { method: 'get', path: '/health', handler: controller.health },
+    { method: 'get', path: '/auth/status', handler: auth.status },
+    { method: 'post', path: '/auth/setup', handler: auth.setup },
+    { method: 'post', path: '/auth/login', handler: auth.login },
+    { method: 'post', path: '/auth/logout', handler: auth.logout },
+    { method: 'get', path: '/auth/me', handler: auth.me },
+    { method: 'put', path: '/auth/password', handler: auth.changePassword },
+    { method: 'get', path: '/users', handler: auth.listUsers },
+    { method: 'post', path: '/users', handler: auth.createUser },
+    { method: 'put', path: '/users/:id', handler: auth.updateUser },
+    { method: 'post', path: '/users/:id/password', handler: auth.resetPassword },
+    { method: 'delete', path: '/users/:id/sessions', handler: auth.revokeSessions },
     { method: 'get', path: '/agents', handler: controller.getAgents },
     { method: 'post', path: '/agents', handler: controller.createAgent },
     { method: 'get', path: '/agents/:agentId', handler: controller.getAgent },

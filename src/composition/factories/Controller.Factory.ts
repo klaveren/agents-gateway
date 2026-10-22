@@ -1,9 +1,10 @@
 import { AgentController } from '@infra/http/Agent.Controller'
+import { AuthController } from '@infra/http/Auth.Controller'
 import { makeTools } from './Tools.Factory'
 import { loadPricing } from '@infra/pricing/Pricing.File'
-import { proofFromEnv } from '@infra/http/Caller.Proof'
 import { sessionContextFromEnv } from '@infra/session/Template.SessionContext'
 import { makeAgents } from './Agents.Factory'
+import { makeAuth } from './Auth.Factory'
 import { makeSettings } from './Settings.Factory'
 import { makeUsecases } from './Usecases.Factory'
 
@@ -13,7 +14,7 @@ export function makeController(): AgentController {
 
   return new AgentController({
     catalog,
-    proof: proofFromEnv(catalog),
+    proof: makeAuth().proof,
     settings: makeSettings(),
     agents: makeAgents(),
     sessionContext: sessionContextFromEnv(),
@@ -27,4 +28,9 @@ export function makeController(): AgentController {
     getSession: usecases.getSessionUseCase,
     listSessions: usecases.listSessionsUseCase,
   })
+}
+
+export function makeAuthController(): AuthController {
+  const { accounts, proof } = makeAuth()
+  return new AuthController({ accounts, proof })
 }
