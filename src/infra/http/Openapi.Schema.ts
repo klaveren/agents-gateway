@@ -218,7 +218,38 @@ const agentSchema = {
     reasoningEfforts: { type: 'array', items: { type: 'string' } },
     modes: { type: 'array', items: { type: 'string', enum: ['chat', 'agent'] } },
     allowedTools: { type: 'array', items: { type: 'string' } },
+    builtIn: { type: 'boolean', description: 'Declared in code (read-only) or created through the API.' },
   },
+}
+
+const agentDetailSchema = {
+  allOf: [
+    agentSchema,
+    {
+      type: 'object',
+      description: 'ADMIN only. The full agent, system prompt included.',
+      properties: { systemPrompt: { type: 'string' }, updatedAt: { type: 'string', format: 'date-time' }, updatedBy: { type: 'string' } },
+    },
+  ],
+}
+
+const agentBody = {
+  type: 'object',
+  properties: {
+    id: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{1,47}$', description: 'Creation only; on update the id comes from the path.' },
+    name: { type: 'string' },
+    provider: { type: 'string', enum: ['claude', 'openai', 'google'] },
+    systemPrompt: { type: 'string' },
+    models: { type: 'array', items: { type: 'string' }, description: 'Every model must belong to `provider`.' },
+    reasoningEfforts: { type: 'array', items: { type: 'string' } },
+    modes: { type: 'array', items: { type: 'string', enum: ['chat', 'agent'] } },
+    allowedTools: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'MCP tools, plus the built-in tools some ENABLED built-in agent already has (the `AGENTS_ENABLED` perimeter).',
+    },
+  },
+  required: ['name', 'provider', 'systemPrompt', 'models', 'modes'],
 }
 
 const settingsSchema = {
@@ -305,9 +336,48 @@ export const OPENAPI_DOCUMENT = {
       },
     },
     '/agents': {
+      post: {
+        summary: 'Create an agent. Administrators only',
+        requestBody: { required: true, ...json({ ...agentBody, required: [...agentBody.required, 'id'] }) },
+        responses: {
+          '201': { description: 'Created', ...json(envelope(agentDetailSchema)) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': { description: 'Invalid agent. `details` lists every problem as `{ field, message }`', ...json(failureEnvelope) },
+        },
+      },
       get: {
         summary: 'The agent registry, including the lanes each agent supports. Requires a proven caller; never exposes the system prompt',
         responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: agentSchema })) }, '401': failures['401'] },
+      },
+    },
+    '/agents/{agentId}': {
+      get: {
+        summary: 'One agent in full, system prompt included. Administrators only; anyone else gets 404',
+        parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'OK', ...json(envelope(agentDetailSchema)) }, '401': failures['401'], '404': failures['404'] },
+      },
+      put: {
+        summary: 'Replace a created agent. Built-in agents answer 409 `agent_read_only`. Administrators only. Live sessions keep the agent they started with',
+        parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json(agentBody) },
+        responses: {
+          '200': { description: 'The stored agent', ...json(envelope(agentDetailSchema)) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '409': { description: 'Built-in agent: read-only', ...json(failureEnvelope) },
+          '422': { description: 'Invalid agent. `details` lists every problem as `{ field, message }`', ...json(failureEnvelope) },
+        },
+      },
+      delete: {
+        summary: 'Delete a created agent. Its recorded conversations stay. Administrators only',
+        parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'Deleted', ...json(envelope({ type: 'null' })) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '409': { description: 'Built-in agent: read-only', ...json(failureEnvelope) },
+        },
       },
     },
     '/agents/{agentId}/tools': {

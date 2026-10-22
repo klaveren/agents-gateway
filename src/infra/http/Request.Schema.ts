@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { EMode } from '@domain/enums/EMode.Enum'
+import { EProvider } from '@domain/enums/EProvider.Enum'
 import { AUDIENCES } from '@domain/models/Settings.Model'
 
 /** Base64 infla ~33%, então o teto em caracteres é maior que o tamanho real do arquivo. */
@@ -68,10 +69,29 @@ export const updateSettingsSchema = z.object({
   classifyTurns: z.boolean().nullable().optional(),
 })
 
+/**
+ * Um agente criado pela tela — a FORMA. O que faz sentido (modelo do provider, tool disponível, id
+ * livre) é regra do domínio (`agentIssues`), que devolve todos os problemas de uma vez.
+ *
+ * ⚖️ `id` vem do corpo na criação e do caminho na atualização: renomear o id seria outro agente, e
+ * as conversas gravadas apontam para o antigo.
+ */
+export const agentBodySchema = z.object({
+  id: z.string().trim().min(1).max(64).optional(),
+  name: z.string().trim().min(1).max(200),
+  provider: z.enum(EProvider),
+  systemPrompt: z.string().min(1),
+  models: z.array(z.string().trim().min(1)).min(1).max(20),
+  reasoningEfforts: z.array(z.string().trim().min(1)).max(10).optional(),
+  modes: z.array(z.enum(EMode)).min(1),
+  allowedTools: z.array(z.string().trim().min(1)).max(100).default([]),
+})
+
 /** Abrir ou fechar a conversa por link. Booleano estrito: `"false"` (texto) não pode abrir. */
 export const shareConversationSchema = z.object({ shared: z.boolean() })
 
 export type TCreateSessionBody = z.infer<typeof createSessionSchema>
 export type TSendMessageBody = z.infer<typeof sendMessageSchema>
 export type TUpdateSettingsBody = z.infer<typeof updateSettingsSchema>
+export type TAgentBody = z.infer<typeof agentBodySchema>
 export type TShareConversationBody = z.infer<typeof shareConversationSchema>

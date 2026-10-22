@@ -3,6 +3,7 @@ import { makeTools } from './Tools.Factory'
 import { loadPricing } from '@infra/pricing/Pricing.File'
 import { proofFromEnv } from '@infra/http/Caller.Proof'
 import { sessionContextFromEnv } from '@infra/session/Template.SessionContext'
+import { makeAgents } from './Agents.Factory'
 import { makeSettings } from './Settings.Factory'
 import { makeUsecases } from './Usecases.Factory'
 
@@ -14,6 +15,7 @@ export function makeController(): AgentController {
     catalog,
     proof: proofFromEnv(catalog),
     settings: makeSettings(),
+    agents: makeAgents(),
     sessionContext: sessionContextFromEnv(),
     conversations: usecases.conversations,
     events: usecases.events,

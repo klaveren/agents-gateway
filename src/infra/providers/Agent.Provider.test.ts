@@ -100,6 +100,22 @@ describe('AgentProvider', () => {
     return collected
   }
 
+  it('opens a session on an agent created through the API, looked up in the directory', async () => {
+    const store = new SessionStore()
+    const chat = spyAdapter(store, EProvider.GOOGLE, EMode.CHAT, [])
+    const created = { id: 'juridico', name: 'Jurídico', provider: EProvider.GOOGLE, systemPrompt: 'p', models: ['gemini-3.7-flash'], modes: [EMode.CHAT], allowedTools: [] }
+    const provider = new AgentProvider(new Map([[adapterKey(EProvider.GOOGLE, EMode.CHAT), chat.adapter]]), store, undefined, {
+      list: () => [created],
+      get: (id) => (id === created.id ? created : undefined),
+    })
+
+    const session = await provider.createSession({ agentId: 'juridico' })
+
+    assert.strictEqual(session.mode, EMode.CHAT)
+    assert.deepStrictEqual(chat.calls, ['createSession'])
+    await assert.rejects(provider.createSession({ agentId: 'researcher-agent' }), /researcher-agent/)
+  })
+
   it('defaults to the chat lane when no mode is given', async () => {
     const { provider, chat, agent } = setup()
     const session = await provider.createSession({ agentId: 'researcher-agent' })

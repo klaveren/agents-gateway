@@ -6,7 +6,11 @@ import { ListSessionsUseCase } from '@application/ListSessions.Usecase'
 import { SendMessageUseCase } from '@application/SendMessage.Usecase'
 import { aggregateTurn } from '@application/Turn.Aggregator'
 import { randomBytes } from 'node:crypto'
-import { AGENT_REGISTRY, getAgentById } from '@domain/Agent.Registry'
+import { AgentCatalog } from '@application/Agent.Catalog'
+import { AGENT_REGISTRY } from '@domain/Agent.Registry'
+import { IAgentRules } from '@domain/Agent.Policy'
+import { EProvider } from '@domain/enums/EProvider.Enum'
+import { IAgent } from '@domain/models/Agent.Model'
 import { AgentUnavailableError } from '@domain/errors/Domain.Error'
 import { AgentNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
@@ -19,7 +23,10 @@ import { IConversationRepository } from '@domain/ports/ConversationRepository.Po
 import { ISettingsRepository } from '@domain/ports/SettingsRepository.Port'
 import { ISessionContextProvider } from '@domain/ports/SessionContextProvider.Port'
 import { SessionNotFoundError } from '@domain/errors/Domain.Error'
-import { toAgentDto } from './Agent.Dto'
+import { toAgentDetailDto, toAgentDto } from './Agent.Dto'
+import { assertNoAdkTemplateCollision } from '@infra/adapters/GoogleAgent.Adapter'
+import { providerOfModel } from '@infra/classifier/Classifier.Completion'
+import { NullAgentRepository } from '@infra/persistence/Null.AgentRepository'
 import { IConversationView, toConversationDto, toStatsDto, toTurnDto } from './Conversation.Dto'
 import { metadataFilter, parsePageQuery } from './Monitor.Query'
 import { IResolvedCaller, ownerOf, ownsSession, resolveCaller } from './Caller.Access'
@@ -29,12 +36,18 @@ import { audienceRules } from './Caller.Roles'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
 import { parseBody } from './Request.Parser'
-import { createSessionSchema, sendMessageSchema, shareConversationSchema, updateSettingsSchema } from './Request.Schema'
+import { agentBodySchema, createSessionSchema, sendMessageSchema, shareConversationSchema, TAgentBody, updateSettingsSchema } from './Request.Schema'
 import { toSessionDto } from './Session.Dto'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { SseStream } from './Sse.Stream'
 import { NextFunction, Request, Response } from 'express'
 
+/**
+ * As tools LOCAIS que existem neste processo: as dos agentes EMBUTIDOS habilitados.
+ *
+ * ⛔ SÓ OS EMBUTIDOS, de propósito: é o perímetro de `AGENTS_ENABLED` (ver `IAgentRules.knownTools`).
+ * Somar as dos agentes criados deixaria um agente criado ampliar o que outro pode receber.
+ */
 const ALL_LOCAL_TOOLS = [...new Set(AGENT_REGISTRY.flatMap((agent) => agent.allowedTools))]
 const STARTED_AT = Date.now()
 
@@ -68,6 +81,11 @@ export interface IAgentControllerDeps {
   pricing?: TModelPricing
   /** Por onde chegam as mudanças nas conversas gravadas. Ausente = `/conversations/events` só mantém a conexão. */
   events?: IConversationEvents
+  /**
+   * Os agentes: embutidos e criados. O MESMO catálogo do provider (ver `makeAgents`). Ausente, só os
+   * embutidos, com os criados em memória.
+   */
+  agents?: AgentCatalog
 }
 
 /**
@@ -103,7 +121,14 @@ export class AgentController {
     this.deleteConversation = this.deleteConversation.bind(this)
     this.getSharedConversation = this.getSharedConversation.bind(this)
     this.conversationEvents = this.conversationEvents.bind(this)
+    this.getAgent = this.getAgent.bind(this)
+    this.createAgent = this.createAgent.bind(this)
+    this.updateAgent = this.updateAgent.bind(this)
+    this.deleteAgent = this.deleteAgent.bind(this)
+    this.agents = usecases.agents ?? new AgentCatalog(AGENT_REGISTRY, new NullAgentRepository())
   }
+
+  private readonly agents: AgentCatalog
 
   async health(_req: Request, res: Response) {
     await this.respond(res, async () => {
@@ -136,15 +161,113 @@ export class AgentController {
   async getAgents(_req: Request, res: Response) {
     await this.respond(res, async () => {
       await this.requireCaller()
-      return AGENT_REGISTRY.map((agent) => toAgentDto(agent, this.pricing))
+      return this.agents.entries().map((entry) => toAgentDto(entry.agent, this.pricing, entry.builtIn))
     })
+  }
+
+  /**
+   * O agente inteiro, com o prompt — a tela de edição.
+   *
+   * ⛔ SÓ ADMINISTRADOR, e 404 para os demais (como `/settings`): o prompt é o produto, e a listagem
+   * pública existe justamente para não entregá-lo.
+   */
+  async getAgent(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      await this.requireAdmin('getAgent')
+      const entry = this.agents.entry(req.params.agentId as string)
+      if (!entry) throw new AgentNotFoundError(req.params.agentId as string)
+
+      return toAgentDetailDto(entry, this.pricing)
+    })
+  }
+
+  /**
+   * Cria um agente. ⛔ Só administrador: dar uma tool a um agente é dar a tool a quem conversa com ele.
+   * O que vale como tool, modelo e id é regra do domínio (`agentIssues`) — todos os problemas voltam
+   * juntos, em `details`, campo a campo.
+   */
+  async createAgent(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        const admin = await this.requireAdmin('createAgent')
+        const body = parseBody(agentBodySchema, req.body)
+
+        const saved = this.agents.save(toAgentInput(body.id ?? '', body), { rules: await this.agentRules(), by: admin.email ?? admin.id ?? 'admin', creating: true })
+
+        return toAgentDetailDto({ agent: saved, builtIn: false, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy }, this.pricing)
+      },
+      { status: 201, message: 'Agent created' },
+    )
+  }
+
+  /** Substitui um agente criado. Embutido responde 409 (`agent_read_only`): duplica-se para editar. */
+  async updateAgent(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        const admin = await this.requireAdmin('updateAgent')
+        const body = parseBody(agentBodySchema, req.body)
+
+        const saved = this.agents.save(toAgentInput(req.params.agentId as string, body), {
+          rules: await this.agentRules(),
+          by: admin.email ?? admin.id ?? 'admin',
+          creating: false,
+        })
+
+        return toAgentDetailDto({ agent: saved, builtIn: false, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy }, this.pricing)
+      },
+      { message: 'Agent updated' },
+    )
+  }
+
+  /**
+   * Apaga um agente criado. ⚠️ As conversas gravadas com ele ficam (o histórico é de quem conversou),
+   * e uma sessão viva termina com o agente com que nasceu; só não nasce sessão nova.
+   */
+  async deleteAgent(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        await this.requireAdmin('deleteAgent')
+        this.agents.remove(req.params.agentId as string)
+
+        return null
+      },
+      { message: 'Agent deleted' },
+    )
+  }
+
+  /**
+   * Os fatos que a regra do agente precisa, lidos AGORA: as tools do catálogo neste instante (o MCP
+   * pode ter subido ou caído) e o que cada provider recusa no prompt.
+   *
+   * ⚠️ O provider do modelo sai SÓ do prefixo do id (`providerOfModel(model, [])`): se viesse também
+   * dos agentes declarados, um agente criado com um modelo trocado ensinaria a regra a aceitar o erro.
+   */
+  private async agentRules(): Promise<Omit<IAgentRules, 'takenIds'>> {
+    const tools = await this.usecases.catalog.list(ALL_LOCAL_TOOLS)
+
+    return {
+      knownTools: tools.map((tool) => tool.name),
+      providerOf: (model) => providerOfModel(model, []),
+      promptIssue: (agent) => {
+        if (agent.provider !== EProvider.GOOGLE) return undefined
+        try {
+          assertNoAdkTemplateCollision(agent.systemPrompt)
+          return undefined
+        } catch (error: unknown) {
+          return error instanceof Error ? error.message : String(error)
+        }
+      },
+    }
   }
 
   async getAgentTools(req: Request, res: Response) {
     await this.respond(res, async () => {
       await this.requireCaller()
       const agentId = req.params.agentId as string
-      const agent = getAgentById(agentId)
+      const agent = this.agents.get(agentId)
       if (!agent) throw new AgentNotFoundError(agentId)
 
       return this.catalogFor(agent.allowedTools)
@@ -216,7 +339,7 @@ export class AgentController {
        * ⚖️ Sem isso a tela mostra selects em branco e não há como saber o que está rodando — "não
        * configurado" e "não sei" ficam iguais, e a pessoa configura no escuro.
        */
-      const fallback = AGENT_REGISTRY[0]
+      const fallback = this.agents.fallback()
 
       return { ...(await this.usecases.settings.read()), defaults: { agentId: fallback?.id, model: fallback?.models[0] } }
     })
@@ -232,7 +355,7 @@ export class AgentController {
 
         // ⚠️ Agente que não existe aqui faria TODA sessão nova falhar com `agent_not_found` — e a
         // tela teria dito "salvo". Recusa na gravação, onde a causa ainda está à vista.
-        if (typeof body.agentId === 'string' && body.agentId && !getAgentById(body.agentId)) {
+        if (typeof body.agentId === 'string' && body.agentId && !this.agents.get(body.agentId)) {
           throw new HttpError(422, 'validation_error', 'Request body is invalid', [{ field: 'agentId', message: `unknown agent: ${body.agentId}` }])
         }
 
@@ -689,6 +812,20 @@ export class AgentController {
     const failure = toHttpFailure(error)
     if (failure.status >= 500) console.error(`${scope} Error:`, failure.message)
     res.status(failure.status).json(fail(failure.message, failure.code, failure.details))
+  }
+}
+
+/** O corpo validado vira o agente. O `id` vem de fora: do corpo na criação, do caminho na atualização. */
+function toAgentInput(id: string, body: TAgentBody): IAgent {
+  return {
+    id,
+    name: body.name,
+    provider: body.provider,
+    systemPrompt: body.systemPrompt,
+    models: [...new Set(body.models)],
+    reasoningEfforts: body.reasoningEfforts?.length ? [...new Set(body.reasoningEfforts)] : undefined,
+    modes: [...new Set(body.modes)],
+    allowedTools: [...new Set(body.allowedTools)],
   }
 }
 

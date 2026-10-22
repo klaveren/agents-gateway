@@ -4,6 +4,7 @@ import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { AdapterNotFoundError, AgentNotFoundError, AgentUnavailableError, SessionNotFoundError } from '@domain/errors/Domain.Error'
 import { DEFAULT_SETTINGS, IAgentSettings } from '@domain/models/Settings.Model'
+import { IAgentDirectory } from '@domain/ports/AgentRepository.Port'
 import { ISettingsRepository } from '@domain/ports/SettingsRepository.Port'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
@@ -38,6 +39,12 @@ export class AgentProvider implements IAgentProvider {
      * Opcional para o teste montar o provider sem infraestrutura; ausente, valem os padrões.
      */
     private readonly settings?: ISettingsRepository,
+
+    /**
+     * De onde vêm os agentes: embutidos e criados pela tela (ver `makeAgents`). Ausente, só os
+     * embutidos — o teste monta o provider sem banco.
+     */
+    private readonly agents: IAgentDirectory = { list: () => AGENT_REGISTRY, get: getAgentById },
   ) {
     /**
      * Uma leitura no boot, e depois só quando muda.
@@ -152,10 +159,10 @@ export class AgentProvider implements IAgentProvider {
     return record
   }
 
-  /** Sem `agentId` em lugar nenhum, vale o primeiro do registry — o padrão declarado em código. */
+  /** Sem `agentId` em lugar nenhum, vale o primeiro da lista — o primeiro embutido. */
   private getAgent(agentId?: string): IAgent {
-    const id = agentId || AGENT_REGISTRY[0]?.id || ''
-    const agent = getAgentById(id)
+    const id = agentId || this.agents.list()[0]?.id || ''
+    const agent = this.agents.get(id)
     if (!agent) throw new AgentNotFoundError(id)
 
     return agent
