@@ -168,6 +168,20 @@ export interface IProviderStatus {
   }
   models: string[]
   agents: Array<{ id: string; name: string }>
+  catalog?: { total: number; enabled: number }
+}
+
+export interface ICatalogModel {
+  modelId: string
+  label?: string
+  enabled: boolean
+  available: boolean
+  contextLength?: number
+  price?: IModelPrice
+  priceSource?: 'manual' | 'catalog' | 'default'
+  syncedAt?: string
+  updatedAt: string
+  updatedBy?: string
 }
 
 export interface IProbeResult {

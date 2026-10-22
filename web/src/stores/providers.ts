@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api } from '@/lib/api'
-import type { IProbeResult, IProviderStatus, TProvider } from '@/lib/types'
+import type { ICatalogModel, IModelPrice, IProbeResult, IProviderStatus, TProvider } from '@/lib/types'
 
 export interface INewProvider {
   id: string
@@ -49,5 +49,22 @@ export const useProvidersStore = defineStore('providers', () => {
     return api<IProbeResult>(`/providers/${encodeURIComponent(id)}/test`, { method: 'POST', body: key ? { key } : {} })
   }
 
-  return { list, names, load, create, update, remove, save, clear, test }
+  function models(id: string): Promise<ICatalogModel[]> {
+    return api<ICatalogModel[]>(`/providers/${encodeURIComponent(id)}/models`)
+  }
+
+  async function syncModels(id: string): Promise<{ added: number; updated: number; missing: number; total: number; models: ICatalogModel[] }> {
+    const result = await api<{ added: number; updated: number; missing: number; total: number; models: ICatalogModel[] }>(`/providers/${encodeURIComponent(id)}/models/sync`, { method: 'POST' })
+    await load()
+    return result
+  }
+
+  /** Liga/desliga e/ou define o preço manual (`price: null` volta ao sugerido). */
+  async function updateModel(id: string, change: { modelId: string; enabled?: boolean; price?: IModelPrice | null }): Promise<ICatalogModel> {
+    const model = await api<ICatalogModel>(`/providers/${encodeURIComponent(id)}/models`, { method: 'PUT', body: change })
+    if (change.enabled !== undefined) await load()
+    return model
+  }
+
+  return { list, names, load, create, update, remove, save, clear, test, models, syncModels, updateModel }
 })

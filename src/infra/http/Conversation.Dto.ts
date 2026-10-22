@@ -8,7 +8,11 @@ import { costOf, TModelPricing } from '@domain/models/Model.Pricing'
  */
 export interface IConversationView {
   admin: boolean
-  pricing: TModelPricing
+  /**
+   * Os preços de um PROVIDER: o mesmo id de modelo pode custar outra coisa num compatível. Vem do
+   * catálogo (manual, da listagem, de fábrica nos oficiais).
+   */
+  pricingOf(provider: string): TModelPricing
 }
 
 export interface IConversationDto {
@@ -58,7 +62,7 @@ export function toConversationDto(session: IConversationSession, view: IConversa
 
   if (!view.admin) return dto
 
-  const costUsd = costOf(session.model, session.usage, view.pricing)
+  const costUsd = costOf(session.model, session.usage, view.pricingOf(session.provider))
 
   return { ...dto, classification: session.classification, ...(costUsd === undefined ? {} : { costUsd }) }
 }
@@ -70,11 +74,11 @@ export interface ITurnDto extends Omit<IConversationTurn, 'classification'> {
   costUsd?: number
 }
 
-export function toTurnDto(turn: IConversationTurn, model: string | undefined, view: IConversationView): ITurnDto {
+export function toTurnDto(turn: IConversationTurn, conversation: { provider: string; model?: string }, view: IConversationView): ITurnDto {
   const { classification, ...rest } = turn
   if (!view.admin) return rest
 
-  const costUsd = model && turn.usage ? costOf(model, turn.usage, view.pricing) : undefined
+  const costUsd = conversation.model && turn.usage ? costOf(conversation.model, turn.usage, view.pricingOf(conversation.provider)) : undefined
 
   return { ...rest, classification, ...(costUsd === undefined ? {} : { costUsd }) }
 }
@@ -91,9 +95,9 @@ export interface IStatsDto extends IConversationStats {
  * soma em vez de entrar como zero. O total é portanto um piso, não um valor exato, quando há modelo
  * sem preço — o que se vê em `byModel[].costUsd` ausente.
  */
-export function toStatsDto(stats: IConversationStats, pricing: TModelPricing): IStatsDto {
+export function toStatsDto(stats: IConversationStats, pricingOf: (provider: string) => TModelPricing): IStatsDto {
   const byModel: IStatsDto['byModel'] = stats.byModel.map((item) => {
-    const costUsd = costOf(item.model, item.usage, pricing)
+    const costUsd = costOf(item.model, item.usage, pricingOf(item.provider))
 
     return costUsd === undefined ? item : { ...item, costUsd }
   })

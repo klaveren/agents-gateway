@@ -154,3 +154,18 @@ export class ProviderUnavailableError extends DomainError {
     super(`Provider ${providerId} is not available (missing or disabled). Check it in Providers.`)
   }
 }
+
+export class ModelNotFoundError extends DomainError {
+  constructor(
+    public readonly providerId: string,
+    public readonly modelId: string,
+  ) {
+    super(`Model not found in the catalog of ${providerId}: ${modelId}`)
+  }
+}
+
+export class InvalidModelError extends DomainError {
+  constructor(public readonly issues: Array<{ field: string; message: string }>) {
+    super(`Model change is invalid: ${issues.map((issue) => `${issue.field} (${issue.message})`).join('; ')}`)
+  }
+}

@@ -3,6 +3,8 @@ import {
   AgentNotFoundError,
   AgentUnavailableError,
   InvalidAgentError,
+  InvalidModelError,
+  ModelNotFoundError,
   InvalidProviderError,
   ProviderInUseError,
   ProviderNotFoundError,
@@ -25,6 +27,7 @@ export type TErrorCode =
   | 'agent_read_only'
   | 'provider_in_use'
   | 'provider_unavailable'
+  | 'upstream_error'
   | 'invalid_credentials'
   | 'login_locked'
   | 'session_not_found'
@@ -88,6 +91,14 @@ export function toHttpFailure(error: unknown): IHttpFailure {
      * fazer a seguir.
      */
     return { status: 403, code: 'agent_unavailable', message: error.message }
+  }
+
+  if (error instanceof InvalidModelError) {
+    return { status: 422, code: 'validation_error', message: 'Model change is invalid', details: error.issues }
+  }
+
+  if (error instanceof ModelNotFoundError) {
+    return { status: 404, code: 'not_found', message: error.message }
   }
 
   if (error instanceof InvalidProviderError) {
