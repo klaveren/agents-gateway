@@ -81,7 +81,15 @@ describe('Providers (integração)', () => {
   })
 
   it('um agente aponta para o compatível, com ids de modelo do provider; com agente usando, o provider não se apaga (409)', async () => {
-    const agent = { id: 'roteado', name: 'Roteado', provider: 'openrouter', systemPrompt: 'Responda curto.', models: ['meta-llama/llama-4-maverick'], modes: ['chat'], allowedTools: [] }
+    const agent = {
+      id: 'roteado',
+      name: 'Roteado',
+      provider: 'openrouter',
+      systemPrompt: 'Responda curto.',
+      models: ['meta-llama/llama-4-maverick'],
+      modes: ['chat'],
+      allowedTools: [],
+    }
     assert.strictEqual((await call('/agents', { method: 'POST', token: admin, body: agent })).status, 201)
     assert.strictEqual((await call('/agents', { method: 'POST', token: admin, body: { ...agent, id: 'fantasma', provider: 'nao-existe' } })).status, 422)
 
@@ -133,19 +141,32 @@ describe('probeKey', () => {
     assert.ok(failed.message?.includes('…7777'))
   })
 
-  it('⚠️ OpenRouter: a listagem é pública, então a chave é conferida no /key', async () => {
-    const urls: string[] = []
-    const fetcher = (async (url: string) => {
-      urls.push(url)
-      return url.endsWith('/key')
-        ? new Response(JSON.stringify({ error: { message: 'No auth credentials found' } }), { status: 401 })
-        : new Response(JSON.stringify({ data: [{}] }), { status: 200 })
+  it('⚠️ compatível com listagem pública: responde sem chave também, então o resultado diz que a chave não foi provada', async () => {
+    const calls: Array<{ url: string; auth?: string }> = []
+    const fetcher = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, auth: (init?.headers as Record<string, string> | undefined)?.Authorization })
+      return new Response(JSON.stringify({ data: [{}, {}] }), { status: 200 })
     }) as unknown as typeof fetch
 
-    const result = await probeKey({ protocol: EProvider.OPENAI, baseUrl: 'https://openrouter.ai/api/v1' }, 'sk-or-inventada', fetcher)
+    const result = await probeKey({ protocol: EProvider.OPENAI, baseUrl: 'https://api.compativel.example/v1' }, 'sk-inventada-123', fetcher)
 
-    assert.deepStrictEqual(urls, ['https://openrouter.ai/api/v1/models', 'https://openrouter.ai/api/v1/key'])
-    assert.deepStrictEqual([result.ok, result.status], [false, 401])
+    assert.deepStrictEqual(result, { ok: true, models: 2, unverified: true, message: result.message })
+    assert.deepStrictEqual(
+      calls.map((call) => [call.url, !!call.auth]),
+      [
+        ['https://api.compativel.example/v1/models', true],
+        ['https://api.compativel.example/v1/models', false],
+      ],
+    )
+  })
+
+  it('compatível que exige chave na listagem: o 200 com chave vale como prova', async () => {
+    const fetcher = (async (_url: string, init?: RequestInit) =>
+      (init?.headers as Record<string, string> | undefined)?.Authorization
+        ? new Response(JSON.stringify({ data: [{}] }), { status: 200 })
+        : new Response('{}', { status: 401 })) as unknown as typeof fetch
+
+    assert.deepStrictEqual(await probeKey({ protocol: EProvider.OPENAI, baseUrl: 'https://api.compativel.example/v1' }, 'sk-boa-123', fetcher), { ok: true, models: 1 })
   })
 
   it('a chave vai em cabeçalho, nunca na URL', async () => {

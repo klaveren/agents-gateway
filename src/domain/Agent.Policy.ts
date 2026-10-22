@@ -61,8 +61,8 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
   if (!protocol) issue('provider', `unknown provider: ${String(agent.provider)}`)
 
   if (!agent.models.length) issue('models', 'at least one model')
-  // ⚖️ Só nos OFICIAIS o id do modelo diz de quem ele é. Num compatível (OpenRouter: `anthropic/…`,
-  // `meta-llama/…`) qualquer id é plausível — quem confere é o catálogo de modelos do provider.
+  // ⚖️ Só nos OFICIAIS o id do modelo diz de quem ele é. Num compatível (que pode servir modelos de
+  // vários fabricantes, com ids próprios) qualquer id é plausível — quem confere é o catálogo de modelos do provider.
   const official = protocol !== undefined && protocol === agent.provider
   if (official) {
     for (const model of agent.models) {

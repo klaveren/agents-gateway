@@ -148,7 +148,7 @@ async function remove() {
         <div class="flex flex-wrap gap-1">
           <button v-for="model in suggestions[form.provider]" :key="model" type="button" class="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300 hover:bg-zinc-700" @click="addModel(model)">+ {{ model }}</button>
         </div>
-        <small v-if="compatible" class="hint">Provider compatível: use os ids dele (no OpenRouter, <code>anthropic/claude-sonnet-4.5</code>, <code>meta-llama/…</code>). Tool use e raciocínio variam por modelo.</small>
+        <small v-if="compatible" class="hint">Provider compatível: use os ids de modelo dele, como ele os lista. Tool use e raciocínio variam por modelo.</small>
         <small v-for="message in issues.models" :key="message" class="error">{{ message }}</small>
       </label>
 

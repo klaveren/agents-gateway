@@ -2,6 +2,8 @@ import { EProvider } from '@domain/enums/EProvider.Enum'
 
 export interface IProbeResult {
   ok: boolean
+  /** Respondeu, mas sem provar a chave (a listagem do provider é pública). */
+  unverified?: boolean
   /** Quantos modelos a chave enxerga — a prova de que ela autentica. */
   models?: number
   status?: number
@@ -26,8 +28,8 @@ const OFFICIAL_BASE: Record<EProvider, string> = {
 /**
  * A listagem de modelos de cada PROTOCOLO, na URL do provider (a oficial, ou a do compatível).
  *
- * ⚖️ O caminho segue o que cada SDK monta sobre a `baseURL`: o da Anthropic acrescenta `/v1/…` (por isso
- * o OpenRouter-Anthropic é `…/api`), o da OpenAI acrescenta `/…` (o OpenRouter-OpenAI é `…/api/v1`).
+ * ⚖️ O caminho segue o que cada SDK monta sobre a `baseURL`: o da Anthropic acrescenta `/v1/…` (a URL de
+ * um compatível Anthropic vem SEM o `/v1`), o da OpenAI acrescenta só `/…` (a de um compatível OpenAI vem COM).
  */
 function requestFor(protocol: EProvider, key: string, baseUrl?: string): { url: string; headers: Record<string, string> } {
   const base = baseUrl ?? OFFICIAL_BASE[protocol]
@@ -50,31 +52,27 @@ export async function probeKey(connection: { protocol: EProvider; baseUrl?: stri
 
     if (!response.ok) return { ok: false, status: response.status, message: maskKey(body?.error?.message ?? `HTTP ${response.status}`, key) }
 
-    // ⚠️ No OpenRouter a listagem de modelos é PÚBLICA: responde 200 com qualquer chave. Quem confere a
-    // chave é o `/key` — sem isso, "a chave funciona" seria verdade para uma chave inventada.
-    const keyCheck = openRouterKeyUrl(connection.baseUrl)
-    if (keyCheck) {
-      const checked = await fetcher(keyCheck, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(TIMEOUT_MS) })
-      if (!checked.ok) {
-        const detail = (await checked.json().catch(() => undefined)) as { error?: { message?: string } } | undefined
-        return { ok: false, status: checked.status, message: maskKey(detail?.error?.message ?? `HTTP ${checked.status}`, key) }
-      }
+    const models = (body?.data ?? body?.models ?? []).length
+
+    // ⚠️ Há provider compatível em que a listagem de modelos é PÚBLICA: responde 200 com qualquer chave.
+    // Pedir de novo SEM chave separa os dois casos — se também responde, a listagem não prova nada, e a
+    // tela diz isso em vez de "a chave funciona" para uma chave inventada.
+    if (connection.baseUrl && (await answersWithoutKey(url, fetcher))) {
+      return { ok: true, models, unverified: true, message: 'A listagem de modelos deste provider é pública: a chave só se confirma na primeira conversa.' }
     }
 
-    return { ok: true, models: (body?.data ?? body?.models ?? []).length }
+    return { ok: true, models }
   } catch (error: unknown) {
     const message = error instanceof Error && error.name === 'TimeoutError' ? 'o fornecedor não respondeu a tempo' : error instanceof Error ? error.message : String(error)
     return { ok: false, message: maskKey(message, key) }
   }
 }
 
-/** A rota que confere a chave no OpenRouter, nas duas URLs que ele oferece (`/api` e `/api/v1`). */
-function openRouterKeyUrl(baseUrl?: string): string | undefined {
-  if (!baseUrl) return undefined
+/** A mesma URL, sem credencial nenhuma: responde 200? */
+async function answersWithoutKey(url: string, fetcher: typeof fetch): Promise<boolean> {
   try {
-    if (new URL(baseUrl).hostname !== 'openrouter.ai') return undefined
+    return (await fetcher(url, { signal: AbortSignal.timeout(TIMEOUT_MS) })).ok
   } catch {
-    return undefined
+    return false
   }
-  return `${baseUrl.replace(/\/v1$/, '')}/v1/key`
 }

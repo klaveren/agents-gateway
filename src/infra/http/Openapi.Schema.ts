@@ -337,7 +337,7 @@ const providerStatusSchema = {
 
 const probeSchema = {
   type: 'object',
-  properties: { ok: { type: 'boolean' }, models: { type: 'integer' }, status: { type: 'integer' }, message: { type: 'string', description: 'The provider error, with the key masked.' } },
+  properties: { ok: { type: 'boolean' }, unverified: { type: 'boolean', description: 'Answered, but the listing is public: the key is not proven yet.' }, models: { type: 'integer' }, status: { type: 'integer' }, message: { type: 'string', description: 'The provider error, with the key masked.' } },
 }
 
 const userSchema = {
@@ -483,7 +483,7 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: providerStatusSchema })) }, '401': failures['401'], '404': failures['404'] },
       },
       post: {
-        summary: 'Add a compatible provider (OpenRouter, vLLM, LiteLLM…): protocol `openai` or `claude`, an https base URL (http only for localhost), and optionally its key. Administrators only',
+        summary: 'Add any OpenAI- or Anthropic-compatible provider: protocol `openai` or `claude`, an https base URL (http only for localhost), and optionally its key. Administrators only',
         requestBody: {
           required: true,
           ...json({

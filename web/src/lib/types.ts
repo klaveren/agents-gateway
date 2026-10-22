@@ -16,7 +16,7 @@ export interface IUsage {
 export interface IConversation {
   id: string
   agentId: string
-  /** O id do provider configurado (`claude`, `openrouter`…). */
+  /** O id do provider configurado (`claude`, `openai`, `google` ou o id de um compatível). */
   provider: string
   mode: TMode
   model: string
@@ -77,7 +77,7 @@ export interface IModelPrice {
 export interface IAgent {
   id: string
   name: string
-  /** O id do provider configurado (`claude`, `openrouter`…). */
+  /** O id do provider configurado (`claude`, `openai`, `google` ou o id de um compatível). */
   provider: string
   models: string[]
   pricing: Record<string, IModelPrice>
@@ -172,6 +172,8 @@ export interface IProviderStatus {
 
 export interface IProbeResult {
   ok: boolean
+  /** Respondeu, mas a listagem do provider é pública: a chave não foi provada. */
+  unverified?: boolean
   models?: number
   status?: number
   message?: string

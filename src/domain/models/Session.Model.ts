@@ -14,7 +14,7 @@ export type TSessionStatus = 'idle' | 'running'
 export interface ISession {
   id: string
   agentId: string
-  /** O provider configurado (`claude`, `openrouter`…). */
+  /** O provider configurado (`claude`, `openai`, `google` ou o id de um compatível). */
   provider: string
   mode: EMode
   model: string

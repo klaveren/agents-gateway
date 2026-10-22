@@ -15,7 +15,7 @@ import { TSessionStatus } from '@domain/models/Session.Model'
 export interface ISessionRecord {
   id: string
   agentId: string
-  /** O provider configurado (`claude`, `openrouter`…) — é o que vai para a conversa gravada. */
+  /** O provider configurado (`claude`, `openai`, `google` ou o id de um compatível) — é o que vai para a conversa gravada. */
   provider: string
   /** O protocolo, isto é, qual adapter atende a sessão. */
   protocol: EProvider

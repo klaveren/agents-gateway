@@ -19,11 +19,10 @@ const CONSOLE: Record<string, string> = {
 }
 const PROTOCOL_LABEL: Record<TProvider, string> = { claude: 'Anthropic', openai: 'OpenAI', google: 'Gemini' }
 
-/** Os atalhos: a URL certa de cada protocolo, que é o que mais erra quem configura à mão. */
-const PRESETS: Array<{ label: string; input: Omit<INewProvider, 'key'> }> = [
-  { label: 'OpenRouter (OpenAI)', input: { id: 'openrouter', name: 'OpenRouter', protocol: 'openai', baseUrl: 'https://openrouter.ai/api/v1' } },
-  { label: 'OpenRouter (Anthropic)', input: { id: 'openrouter-anthropic', name: 'OpenRouter (Anthropic)', protocol: 'claude', baseUrl: 'https://openrouter.ai/api' } },
-  { label: 'Local (vLLM, LM Studio)', input: { id: 'local', name: 'Local', protocol: 'openai', baseUrl: 'http://localhost:8000/v1' } },
+/** Os dois modelos de compatível: o protocolo decide o formato da URL base (com ou sem `/v1`). */
+const PRESETS: Array<{ label: string; protocol: TProvider }> = [
+  { label: 'Compatível com OpenAI', protocol: 'openai' },
+  { label: 'Compatível com Anthropic', protocol: 'claude' },
 ]
 
 const drafts = ref<Record<string, string>>({})
@@ -100,8 +99,8 @@ async function confirmRemoveProvider() {
   removingProvider.value = undefined
 }
 
-function preset(input: Omit<INewProvider, 'key'>) {
-  form.value = { ...input, key: form.value.key }
+function preset(protocol: TProvider) {
+  form.value = { ...form.value, protocol }
   adding.value = true
 }
 
@@ -139,30 +138,31 @@ function sourceLabel(provider: IProviderStatus): string {
       <header class="flex flex-wrap items-start gap-3">
         <div class="min-w-0 flex-1">
           <h1 class="text-xl font-semibold">Providers</h1>
-          <p class="mt-1 text-sm text-zinc-400">Os oficiais e os compatíveis (OpenRouter, vLLM, LiteLLM…). As chaves ficam criptografadas, valem na próxima chamada e nunca voltam para a tela.</p>
+          <p class="mt-1 text-sm text-zinc-400">Os oficiais e qualquer API compatível com OpenAI ou Anthropic. As chaves ficam criptografadas, valem na próxima chamada e nunca voltam para a tela.</p>
         </div>
-        <button class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400" @click="adding = !adding">Adicionar provider</button>
+        <div class="flex gap-2">
+          <button v-for="item in PRESETS" :key="item.protocol" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400" @click="preset(item.protocol)">+ {{ item.label }}</button>
+        </div>
       </header>
       <p v-if="loadError" class="text-sm text-rose-300">{{ loadError }}</p>
 
       <form v-if="adding" class="flex flex-col gap-3 rounded-2xl border border-emerald-500/30 bg-zinc-900/60 p-5" @submit.prevent="create">
         <div class="flex flex-wrap gap-1.5">
-          <span class="text-xs text-zinc-400">Atalhos:</span>
-          <button v-for="item in PRESETS" :key="item.label" type="button" class="rounded-full border border-zinc-700 px-2.5 py-0.5 text-xs hover:bg-zinc-800" @click="preset(item.input)">{{ item.label }}</button>
+          <span class="text-xs text-zinc-400">Qualquer API que imite a da OpenAI ou a da Anthropic — um agregador, um servidor local, um gateway da empresa.</span>
         </div>
         <div class="grid gap-3 sm:grid-cols-2">
           <label class="field">Nome<input v-model="form.name" required class="input" /><small v-for="m in formIssues.name" :key="m" class="error">{{ m }}</small></label>
-          <label class="field">Id<input v-model="form.id" required pattern="[a-z0-9][a-z0-9-]{1,31}" class="input font-mono" placeholder="openrouter" /><small v-for="m in formIssues.id" :key="m" class="error">{{ m }}</small></label>
+          <label class="field">Id<input v-model="form.id" required pattern="[a-z0-9][a-z0-9-]{1,31}" class="input font-mono" placeholder="meu-provider" /><small v-for="m in formIssues.id" :key="m" class="error">{{ m }}</small></label>
           <div class="field">
             Protocolo
             <div class="flex gap-1.5">
               <button v-for="protocol in (['openai', 'claude'] as TProvider[])" :key="protocol" type="button" class="chip" :class="{ on: form.protocol === protocol }" @click="form.protocol = protocol">{{ PROTOCOL_LABEL[protocol] }}</button>
             </div>
-            <small class="hint">Qual API o provider imita. O OpenRouter fala as duas.</small>
+            <small class="hint">Qual API o provider imita. Alguns falam as duas: cadastre um de cada, se quiser usar as duas lanes de SDK.</small>
           </div>
           <label class="field">
             URL base
-            <input v-model="form.baseUrl" required class="input font-mono" :placeholder="form.protocol === 'claude' ? 'https://openrouter.ai/api' : 'https://openrouter.ai/api/v1'" />
+            <input v-model="form.baseUrl" required class="input font-mono" :placeholder="form.protocol === 'claude' ? 'https://api.exemplo.com' : 'https://api.exemplo.com/v1'" />
             <small class="hint">{{ form.protocol === 'claude' ? 'Sem o /v1: o SDK da Anthropic acrescenta.' : 'Com o /v1: o SDK da OpenAI acrescenta só /chat/completions.' }}</small>
             <small v-for="m in formIssues.baseUrl" :key="m" class="error">{{ m }}</small>
           </label>
@@ -212,7 +212,8 @@ function sourceLabel(provider: IProviderStatus): string {
 
         <p v-if="results[provider.id]" class="text-sm" :class="results[provider.id].ok ? 'text-emerald-300' : 'text-rose-300'">
           <template v-if="results[provider.id].saved">Salva. </template>
-          <template v-if="results[provider.id].ok && results[provider.id].models !== undefined">✓ A chave funciona — {{ results[provider.id].models }} modelos disponíveis.</template>
+          <template v-if="results[provider.id].ok && results[provider.id].unverified">⚠ {{ results[provider.id].message }} ({{ results[provider.id].models }} modelos listados)</template>
+          <template v-else-if="results[provider.id].ok && results[provider.id].models !== undefined">✓ A chave funciona — {{ results[provider.id].models }} modelos disponíveis.</template>
           <template v-else-if="results[provider.id].ok">{{ results[provider.id].message }}</template>
           <template v-else>✕ {{ results[provider.id].status ? `HTTP ${results[provider.id].status}: ` : '' }}{{ results[provider.id].message }}</template>
         </p>

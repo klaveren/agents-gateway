@@ -10,7 +10,7 @@ export interface IProviderIssue {
 /**
  * O que está errado num provider compatível.
  *
- * ⚖️ SÓ OPENAI E ANTHROPIC são protocolos de compatível: são os dois que o mercado copia (OpenRouter,
+ * ⚖️ SÓ OPENAI E ANTHROPIC são protocolos de compatível: são os dois que o mercado copia (agregadores,
  * vLLM, LiteLLM, Together…). O do Gemini fica só para o oficial.
  *
  * ⛔ A URL é conferida: HTTPS, ou HTTP só para esta máquina (um vLLM local); sem usuário e senha

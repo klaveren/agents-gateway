@@ -5,7 +5,7 @@ import { EProvider } from '../enums/EProvider.Enum'
  *
  * ⚖️ O ID E O PROTOCOLO SÃO COISAS DISTINTAS. `EProvider` passa a ser o protocolo — é ele que escolhe o
  * adapter (o SDK da Anthropic, da OpenAI ou do Gemini). O `id` é o provider em si: o oficial `claude`
- * fala `claude`, e um `openrouter` também pode falar `claude` (Anthropic-compatível) ou `openai`.
+ * fala `claude`, e um compatível qualquer (`meu-gateway`) também pode falar `claude` (Anthropic-compatível) ou `openai`.
  * Os três oficiais têm id igual ao protocolo, e é isso que mantém válidos os agentes e as conversas
  * gravados antes de os providers virarem dado.
  */

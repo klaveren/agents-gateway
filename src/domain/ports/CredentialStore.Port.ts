@@ -3,7 +3,7 @@ export type TCredentialSource = 'stored' | 'env' | 'none'
 
 /** O que a tela pode saber de uma chave — ⛔ nunca a chave. */
 export interface ICredentialStatus {
-  /** O id do provider configurado (`claude`, `openai`, `google`, `openrouter`…). */
+  /** O id do provider configurado (`claude`, `openai`, `google` ou o id de um compatível). */
   provider: string
   configured: boolean
   source: TCredentialSource
