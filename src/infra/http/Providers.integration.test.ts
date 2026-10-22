@@ -175,3 +175,77 @@ describe('probeKey', () => {
     assert.ok(!urls[0].includes(SECRET))
   })
 })
+
+describe('catálogo de modelos (integração)', () => {
+  let base: string
+  let stop: () => void
+  let admin = ''
+
+  const call = async (path: string, init: { method?: string; body?: unknown; token?: string } = {}) => {
+    const res = await fetch(`${base}${path}`, {
+      method: init.method ?? 'GET',
+      headers: { ...(init.body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(init.token ? { 'X-Tool-Authorization': `Bearer ${init.token}` } : {}) },
+      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+    })
+    return { status: res.status, body: (await res.json()) as { ok: boolean; result?: any } } // eslint-disable-line @typescript-eslint/no-explicit-any
+  }
+
+  before(async () => {
+    const { makeAgents } = await import('@composition/factories/Agents.Factory')
+    const { makeCredentials } = await import('@composition/factories/Credentials.Factory')
+    const { makeModelCatalog } = await import('@composition/factories/Catalog.Factory')
+    const { makeProviders } = await import('@composition/factories/Providers.Factory')
+    const { makeAuth } = await import('@composition/factories/Auth.Factory')
+    const { ProvidersController } = await import('./Providers.Controller')
+
+    const providers = new ProvidersController({
+      providers: makeProviders(),
+      credentials: makeCredentials(),
+      agents: makeAgents(),
+      models: makeModelCatalog(),
+      proof: makeAuth().proof,
+      list: async () => [{ id: 'vendor/a', price: { input: 1, output: 2 } }, { id: 'vendor/b' }],
+    })
+    const server = new HttpServer(makeController(), makeAuthController(), providers).start(0)
+    await new Promise((resolve) => server.once('listening', resolve))
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`
+    server.unref()
+    stop = () => {
+      server.closeAllConnections()
+      server.close()
+    }
+
+    // As contas são da instância: o setup já foi feito na suíte de cima, então entra com login.
+    const login = await call('/auth/login', { method: 'POST', body: { email: 'root@x.test', password: PASSWORD } })
+    admin = login.body.result.token
+    await call('/providers', {
+      method: 'POST',
+      token: admin,
+      body: { id: 'agregador', name: 'Agregador', protocol: 'openai', baseUrl: 'https://api.agregador.example/v1', key: 'sk-agregador-1234' },
+    })
+  })
+
+  after(() => stop())
+
+  it('os modelos que os agentes embutidos usam já nascem no catálogo, ativados', async () => {
+    const claude = (await call('/providers/claude/models', { token: admin })).body.result as Array<{ modelId: string; enabled: boolean }>
+    assert.ok(claude.find((model) => model.modelId === 'claude-sonnet-5')?.enabled)
+  })
+
+  it('sincronizar → os novos entram desligados; ligar e dar preço manual por corpo (id com barra)', async () => {
+    const synced = await call('/providers/agregador/models/sync', { method: 'POST', token: admin })
+    assert.deepStrictEqual([synced.status, synced.body.result.added], [200, 2])
+
+    const on = await call('/providers/agregador/models', { method: 'PUT', token: admin, body: { modelId: 'vendor/a', enabled: true, price: { input: 5, output: 6 } } })
+    assert.deepStrictEqual([on.status, on.body.result.enabled, on.body.result.priceSource], [200, true, 'manual'])
+
+    const listed = await call('/providers', { token: admin })
+    const agregador = listed.body.result.find((item: { id: string }) => item.id === 'agregador')
+    assert.deepStrictEqual(agregador.catalog, { total: 2, enabled: 1 })
+  })
+
+  it('sem chave salva, sincronizar é 422', async () => {
+    await call('/providers', { method: 'POST', token: admin, body: { id: 'sem-chave', name: 'Sem chave', protocol: 'openai', baseUrl: 'https://api.semchave.example/v1' } })
+    assert.strictEqual((await call('/providers/sem-chave/models/sync', { method: 'POST', token: admin })).status, 422)
+  })
+})

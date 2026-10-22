@@ -1,8 +1,11 @@
+import { ModelCatalogService } from '@application/ModelCatalog.Service'
 import { ProvidersService } from '@application/Providers.Service'
+import { ICatalogModel } from '@domain/models/ModelCatalog.Model'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IProviderConfig } from '@domain/models/Provider.Model'
 import { IAgentDirectory } from '@domain/ports/AgentRepository.Port'
 import { ICredentialStore } from '@domain/ports/CredentialStore.Port'
+import { listModels } from '@infra/providers/Model.Listing'
 import { probeKey } from '@infra/providers/Provider.Probe'
 import { Request, Response } from 'express'
 import { z } from 'zod'
@@ -17,8 +20,11 @@ export interface IProvidersControllerDeps {
   credentials: ICredentialStore
   agents: IAgentDirectory
   proof?: ICallerProof
-  /** Injetável para o teste não sair para a rede. */
+  /** O catálogo de modelos de cada provider. Ausente = as rotas de modelos respondem 404. */
+  models?: ModelCatalogService
+  /** Injetáveis para o teste não sair para a rede. */
   probe?: typeof probeKey
+  list?: typeof listModels
 }
 
 /** Uma chave de API: texto sem espaço, com teto — ninguém cola um arquivo inteiro aqui. */
@@ -32,6 +38,13 @@ const createSchema = z.object({
   baseUrl: z.string().trim().max(500),
   key: key.optional(),
 })
+const price = z.number().min(0).max(10_000)
+const modelChangeSchema = z.object({
+  modelId: z.string().trim().min(1).max(200),
+  enabled: z.boolean().optional(),
+  /** `null` apaga o preço manual e volta ao do catálogo ou de fábrica. */
+  price: z.object({ input: price, output: price, cacheRead: price.optional(), cacheWrite: price.optional() }).nullable().optional(),
+})
 const updateSchema = z.object({ name: z.string().max(200).optional(), baseUrl: z.string().trim().max(500).optional(), enabled: z.boolean().optional() })
 
 /**
@@ -42,7 +55,7 @@ const updateSchema = z.object({ name: z.string().max(200).optional(), baseUrl: z
  */
 export class ProvidersController {
   constructor(private readonly deps: IProvidersControllerDeps) {
-    for (const name of ['list', 'create', 'update', 'remove', 'saveKey', 'clearKey', 'test'] as const) this[name] = this[name].bind(this)
+    for (const name of ['list', 'create', 'update', 'remove', 'saveKey', 'clearKey', 'test', 'listModels', 'syncModels', 'updateModel'] as const) this[name] = this[name].bind(this)
   }
 
   async list(_req: Request, res: Response) {
@@ -93,6 +106,7 @@ export class ProvidersController {
             .filter((agent) => agent.provider === providerId)
             .map((agent) => agent.name),
         )
+        this.deps.models?.clear(id)
         return null
       },
       { message: 'Provider removed' },
@@ -140,6 +154,66 @@ export class ProvidersController {
     })
   }
 
+  /** O catálogo de um provider: tudo o que ele lista, ativado ou não, com o preço e de onde ele veio. */
+  async listModels(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      await this.requireAdmin('listModels')
+      return this.catalog.list(this.idOf(req)).map(toModelDto)
+    })
+  }
+
+  /**
+   * Busca a listagem do provider e mescla no catálogo (ver `ModelCatalogService.sync`): novos entram
+   * desligados, ativação e preço manual ficam, o que sumiu é marcado.
+   */
+  async syncModels(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        const admin = await this.requireAdmin('syncModels')
+        const provider = this.deps.providers.get(this.idOf(req)) as IProviderConfig
+        const key = this.deps.credentials.get(provider.id)
+        if (!key) throw new HttpError(422, 'validation_error', 'Salve uma chave antes de atualizar a lista de modelos.')
+
+        let listed
+        try {
+          listed = await (this.deps.list ?? listModels)(provider, key)
+        } catch (error: unknown) {
+          throw new HttpError(502, 'upstream_error', error instanceof Error ? error.message : String(error))
+        }
+
+        const result = this.catalog.sync(provider.id, listed, admin)
+        return { ...result, models: this.catalog.list(provider.id).map(toModelDto) }
+      },
+      { message: 'Models synced' },
+    )
+  }
+
+  /** Liga/desliga um modelo e/ou define o preço manual. O id vai no corpo: id de modelo pode ter `/`. */
+  async updateModel(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        const admin = await this.requireAdmin('updateModel')
+        const id = this.idOf(req)
+        const body = parseBody(modelChangeSchema, req.body)
+
+        let model: ICatalogModel | undefined
+        if (body.enabled !== undefined) model = this.catalog.setEnabled(id, body.modelId, body.enabled, admin)
+        if (body.price !== undefined) model = this.catalog.setPrice(id, body.modelId, body.price, admin)
+        if (!model) throw new HttpError(422, 'validation_error', 'Nothing to change: send enabled and/or price.')
+
+        return toModelDto(model)
+      },
+      { message: 'Model updated' },
+    )
+  }
+
+  private get catalog(): ModelCatalogService {
+    if (!this.deps.models) throw new HttpError(404, 'not_found', 'Not found')
+    return this.deps.models
+  }
+
   /** O provider como a tela o vê: sem chave nenhuma, com o que ela libera. */
   private view(provider: IProviderConfig) {
     const agents = this.deps.agents.list().filter((agent) => agent.provider === provider.id)
@@ -156,6 +230,7 @@ export class ProvidersController {
       updatedBy: provider.updatedBy,
       credential,
       models: [...new Set(agents.flatMap((agent) => agent.models))],
+      catalog: this.deps.models ? { total: this.deps.models.list(provider.id).length, enabled: this.deps.models.enabledIds(provider.id).length } : undefined,
       agents: agents.map((agent) => ({ id: agent.id, name: agent.name })),
     }
   }
@@ -183,5 +258,20 @@ export class ProvidersController {
       if (failure.status >= 500) console.error('[ProvidersController] Error:', failure.message)
       res.status(failure.status).json(fail(failure.message, failure.code, failure.details))
     }
+  }
+}
+
+function toModelDto(model: ICatalogModel) {
+  return {
+    modelId: model.modelId,
+    label: model.label,
+    enabled: model.enabled,
+    available: model.available,
+    contextLength: model.contextLength,
+    price: model.price,
+    priceSource: model.priceSource,
+    syncedAt: model.syncedAt,
+    updatedAt: model.updatedAt,
+    updatedBy: model.updatedBy,
   }
 }

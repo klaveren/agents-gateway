@@ -7,6 +7,7 @@ import { SendMessageUseCase } from '@application/SendMessage.Usecase'
 import { aggregateTurn } from '@application/Turn.Aggregator'
 import { randomBytes } from 'node:crypto'
 import { AgentCatalog } from '@application/Agent.Catalog'
+import { ModelCatalogService } from '@application/ModelCatalog.Service'
 import { AGENT_REGISTRY } from '@domain/Agent.Registry'
 import { IAgentRules } from '@domain/Agent.Policy'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -84,6 +85,8 @@ export interface IAgentControllerDeps {
   events?: IConversationEvents
   /** Os providers configurados — para o agente apontar para um que existe. Ausente = só os oficiais. */
   providers?: IProviderDirectory
+  /** O catálogo de modelos: preços por provider, e os modelos que um agente pode oferecer. */
+  models?: ModelCatalogService
   /**
    * Os agentes: embutidos e criados. O MESMO catálogo do provider (ver `makeAgents`). Ausente, só os
    * embutidos, com os criados em memória.
@@ -164,7 +167,7 @@ export class AgentController {
   async getAgents(_req: Request, res: Response) {
     await this.respond(res, async () => {
       await this.requireCaller()
-      return this.agents.entries().map((entry) => toAgentDto(entry.agent, this.pricing, entry.builtIn))
+      return this.agents.entries().map((entry) => toAgentDto(entry.agent, this.pricingOf(entry.agent.provider), entry.builtIn))
     })
   }
 
@@ -180,7 +183,7 @@ export class AgentController {
       const entry = this.agents.entry(req.params.agentId as string)
       if (!entry) throw new AgentNotFoundError(req.params.agentId as string)
 
-      return toAgentDetailDto(entry, this.pricing)
+      return toAgentDetailDto(entry, this.pricingOf(entry.agent.provider))
     })
   }
 
@@ -198,7 +201,8 @@ export class AgentController {
 
         const saved = this.agents.save(toAgentInput(body.id ?? '', body), { rules: await this.agentRules(), by: admin.email ?? admin.id ?? 'admin', creating: true })
 
-        return toAgentDetailDto({ agent: saved, builtIn: false, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy }, this.pricing)
+        this.catalogModels(saved)
+        return toAgentDetailDto({ agent: saved, builtIn: false, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy }, this.pricingOf(saved.provider))
       },
       { status: 201, message: 'Agent created' },
     )
@@ -218,7 +222,8 @@ export class AgentController {
           creating: false,
         })
 
-        return toAgentDetailDto({ agent: saved, builtIn: false, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy }, this.pricing)
+        this.catalogModels(saved)
+        return toAgentDetailDto({ agent: saved, builtIn: false, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy }, this.pricingOf(saved.provider))
       },
       { message: 'Agent updated' },
     )
@@ -492,7 +497,7 @@ export class AgentController {
       async () => {
         await this.requireAdmin('conversationStats')
 
-        return toStatsDto(await this.usecases.conversations.stats(), this.pricing)
+        return toStatsDto(await this.usecases.conversations.stats(), (provider) => this.pricingOf(provider))
       },
       { message: 'Stats computed' },
     )
@@ -509,7 +514,7 @@ export class AgentController {
 
         const turns = await this.usecases.conversations.listTurns(id)
 
-        return { sessionId: id, turns: turns.map((turn) => toTurnDto(turn, conversation.model, view)) }
+        return { sessionId: id, turns: turns.map((turn) => toTurnDto(turn, conversation, view)) }
       },
       { message: 'Turns listed' },
     )
@@ -744,8 +749,21 @@ export class AgentController {
     return this.usecases.pricing ?? MODEL_PRICING
   }
 
+  /**
+   * Os modelos de um agente salvo entram no catálogo, ativados, se ainda não estão. Transição: enquanto o
+   * formulário aceita digitar o id, um agente não pode nascer com modelo que o catálogo não conhece.
+   */
+  private catalogModels(agent: IAgent): void {
+    for (const model of agent.models) this.usecases.models?.ensureEnabled(agent.provider, model, 'agent')
+  }
+
+  /** Os preços de um provider: os do catálogo, ou a tabela de fábrica quando não há catálogo injetado. */
+  private pricingOf(provider: string): TModelPricing {
+    return this.usecases.models?.pricing(provider) ?? this.pricing
+  }
+
   private viewFor(admin: boolean): IConversationView {
-    return { admin, pricing: this.pricing }
+    return { admin, pricingOf: (provider) => this.pricingOf(provider) }
   }
 
   /**

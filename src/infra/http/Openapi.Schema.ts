@@ -335,6 +335,22 @@ const providerStatusSchema = {
   },
 }
 
+const catalogModelSchema = {
+  type: 'object',
+  properties: {
+    modelId: { type: 'string' },
+    label: { type: 'string' },
+    enabled: { type: 'boolean', description: 'Can be offered by an agent. New models start disabled.' },
+    available: { type: 'boolean', description: 'Seen in the last listing. False = it disappeared from the provider; kept, never deleted.' },
+    contextLength: { type: 'integer' },
+    price: { type: 'object', properties: { input: { type: 'number' }, output: { type: 'number' }, cacheRead: { type: 'number' }, cacheWrite: { type: 'number' } }, description: 'USD per 1M tokens.' },
+    priceSource: { type: 'string', enum: ['manual', 'catalog', 'default'], description: '`manual` wins and survives syncs; `catalog` came with the listing; `default` is the factory table (official providers only).' },
+    syncedAt: { type: 'string', format: 'date-time' },
+    updatedAt: { type: 'string', format: 'date-time' },
+    updatedBy: { type: 'string' },
+  },
+}
+
 const probeSchema = {
   type: 'object',
   properties: { ok: { type: 'boolean' }, unverified: { type: 'boolean', description: 'Answered, but the listing is public: the key is not proven yet.' }, models: { type: 'integer' }, status: { type: 'integer' }, message: { type: 'string', description: 'The provider error, with the key masked.' } },
@@ -511,6 +527,39 @@ export const OPENAPI_DOCUMENT = {
           '404': failures['404'],
           '409': { description: '`provider_in_use`, with `details.agents`', ...json(failureEnvelope) },
           '422': failures['422'],
+        },
+      },
+    },
+    '/providers/{id}/models': {
+      get: {
+        summary: "The provider's model catalog: everything it lists, enabled or not, with prices. Administrators only",
+        parameters: providerParam,
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: catalogModelSchema })) }, '401': failures['401'], '404': failures['404'] },
+      },
+      put: {
+        summary: 'Enable/disable one model and/or set its manual price (`price: null` reverts to the listing or factory price). The model id goes in the body because ids may contain `/`. Administrators only',
+        parameters: providerParam,
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            properties: { modelId: { type: 'string' }, enabled: { type: 'boolean' }, price: { type: ['object', 'null'], properties: { input: { type: 'number' }, output: { type: 'number' }, cacheRead: { type: 'number' }, cacheWrite: { type: 'number' } } } },
+            required: ['modelId'],
+          }),
+        },
+        responses: { '200': { description: 'Updated', ...json(envelope(catalogModelSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/providers/{id}/models/sync': {
+      post: {
+        summary: "Fetch the provider's model listing and merge it: new models start disabled, enabling and manual prices are kept, missing ones are marked unavailable. Administrators only",
+        parameters: providerParam,
+        responses: {
+          '200': { description: 'Synced', ...json(envelope({ type: 'object', properties: { added: { type: 'integer' }, updated: { type: 'integer' }, missing: { type: 'integer' }, total: { type: 'integer' }, models: { type: 'array', items: catalogModelSchema } } })) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': { description: 'No key saved for this provider', ...json(failureEnvelope) },
+          '502': { description: '`upstream_error`: the provider listing failed (key masked)', ...json(failureEnvelope) },
         },
       },
     },

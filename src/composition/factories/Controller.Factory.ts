@@ -3,6 +3,7 @@ import { AuthController } from '@infra/http/Auth.Controller'
 import { ProvidersController } from '@infra/http/Providers.Controller'
 import { makeCredentials } from './Credentials.Factory'
 import { makeProviders } from './Providers.Factory'
+import { makeModelCatalog } from './Catalog.Factory'
 import { makeTools } from './Tools.Factory'
 import { loadPricing } from '@infra/pricing/Pricing.File'
 import { sessionContextFromEnv } from '@infra/session/Template.SessionContext'
@@ -21,6 +22,7 @@ export function makeController(): AgentController {
     settings: makeSettings(),
     agents: makeAgents(),
     providers: makeProviders(),
+    models: makeModelCatalog(),
     sessionContext: sessionContextFromEnv(),
     conversations: usecases.conversations,
     events: usecases.events,
@@ -40,5 +42,5 @@ export function makeAuthController(): AuthController {
 }
 
 export function makeProvidersController(): ProvidersController {
-  return new ProvidersController({ providers: makeProviders(), credentials: makeCredentials(), agents: makeAgents(), proof: makeAuth().proof })
+  return new ProvidersController({ providers: makeProviders(), credentials: makeCredentials(), agents: makeAgents(), models: makeModelCatalog(), proof: makeAuth().proof })
 }

@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import AgentAvatar from '@/components/AgentAvatar.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import ProviderModels from '@/components/ProviderModels.vue'
 import { ApiError } from '@/lib/api'
 import { fullTime } from '@/lib/format'
 import type { IProbeResult, IProviderStatus, TProvider } from '@/lib/types'
@@ -25,6 +26,8 @@ const busy = ref<Record<string, boolean>>({})
 const loadError = ref<string>()
 const removingKey = ref<IProviderStatus>()
 const removingProvider = ref<IProviderStatus>()
+/** Os cartões com o painel de modelos aberto. */
+const openModels = ref<Record<string, boolean>>({})
 
 const adding = ref(false)
 const form = ref<INewProvider>({ id: '', name: '', protocol: 'openai', baseUrl: '', key: '' })
@@ -204,6 +207,12 @@ function sourceLabel(provider: IProviderStatus): string {
           <template v-else-if="results[provider.id].ok">{{ results[provider.id].message }}</template>
           <template v-else>✕ {{ results[provider.id].status ? `HTTP ${results[provider.id].status}: ` : '' }}{{ results[provider.id].message }}</template>
         </p>
+
+        <button type="button" class="flex items-center gap-2 self-start text-sm text-zinc-300 hover:text-white" @click="openModels = { ...openModels, [provider.id]: !openModels[provider.id] }">
+          <span>{{ openModels[provider.id] ? '▾' : '▸' }} Modelos</span>
+          <span v-if="provider.catalog" class="text-xs text-zinc-500">{{ provider.catalog.enabled }} ativados de {{ provider.catalog.total }}</span>
+        </button>
+        <ProviderModels v-if="openModels[provider.id]" :provider="provider" />
 
         <div class="flex flex-wrap items-center gap-1.5 text-xs text-zinc-500">
           <span>Agentes:</span>
