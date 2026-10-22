@@ -639,6 +639,16 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'The probe result', ...json(envelope(probeSchema)) }, '401': failures['401'], '404': failures['404'] },
       },
     },
+    '/mcp': {
+      post: {
+        summary:
+          'The gateway as an MCP server (Streamable HTTP, stateless, JSON responses): list_agents, start_conversation, send_message, switch_model, list_conversations, get_conversation, my_usage — plus, for administrators, usage_by_key, list_providers, list_models, get_agent and (with SELF_MCP_WRITE=1) set_model_enabled and save_agent. Same credentials and rules as this API',
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', description: 'A JSON-RPC 2.0 message' } } } },
+        responses: { '200': { description: 'JSON-RPC response', content: { 'application/json': { schema: { type: 'object' } } } }, '401': failures['401'] },
+      },
+      get: { summary: 'Not available: the MCP server is stateless (405)', responses: { '405': { description: 'Method not allowed' } } },
+      delete: { summary: 'Not available: the MCP server is stateless (405)', responses: { '405': { description: 'Method not allowed' } } },
+    },
     '/usage/me': {
       get: {
         summary: "The signed-in caller's own usage: tokens per day, agent and model, and the heaviest conversations. Never carries cost",

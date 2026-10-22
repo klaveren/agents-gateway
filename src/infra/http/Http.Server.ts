@@ -15,6 +15,7 @@ import { toHttpFailure } from './Http.Error'
 import { fail } from './Http.Response'
 import { OPENAPI_DOCUMENT } from './Openapi.Schema'
 import { identityFromToken, tokenFromHeader, withCaller } from '@infra/mcp/Caller.Identity'
+import { handleSelfMcp, rejectSelfMcp } from './SelfMcp.Controller'
 import { CALLER_HEADER, corsMiddleware, host, jsonLimit, requireCaller, requireToken } from './Security.Middleware'
 
 export const API_PREFIX = '/v1'
@@ -153,6 +154,10 @@ export class HttpServer {
 
 function buildRoutes(controller: AgentController, auth: AuthController, providers: ProvidersController, usage: UsageController): IRoute[] {
   return [
+    // O gateway como servidor MCP (ver `SelfMcp.Controller`): só POST; sem estado, GET e DELETE são 405.
+    { method: 'post', path: '/mcp', handler: handleSelfMcp },
+    { method: 'get', path: '/mcp', handler: rejectSelfMcp },
+    { method: 'delete', path: '/mcp', handler: rejectSelfMcp },
     { method: 'get', path: '/usage/me', handler: usage.mine },
     { method: 'get', path: '/usage/users', handler: usage.users },
     { method: 'get', path: '/usage/users/:ownerId', handler: usage.user },
