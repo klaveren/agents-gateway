@@ -93,9 +93,6 @@ async function confirmRemoveProvider() {
   removingProvider.value = undefined
 }
 
-  adding.value = true
-}
-
 async function create() {
   formIssues.value = {}
   formError.value = undefined
