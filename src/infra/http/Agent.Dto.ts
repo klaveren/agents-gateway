@@ -1,5 +1,14 @@
 import { IAgent } from '@domain/models/Agent.Model'
 import { IModelPrice, MODEL_PRICING, TModelPricing } from '@domain/models/Model.Pricing'
+import { EProvider } from '@domain/enums/EProvider.Enum'
+import { IModelReasoning, modelReasoningLevels } from '@domain/models/ModelCatalog.Model'
+import { protocolLevels } from '@domain/Reasoning.Levels'
+
+/** O que o DTO precisa para dizer que raciocínio vale: o protocolo do provider e o que o catálogo sabe de cada modelo. */
+export interface IAgentReasoningFacts {
+  protocol?: EProvider
+  reasoningOf?(model: string): IModelReasoning | undefined
+}
 
 export interface IAgentDto {
   id: string
@@ -15,7 +24,13 @@ export interface IAgentDto {
    * ordena do mais barato usa `outputPriceOf`, que o manda para o fim.
    */
   pricing: Record<string, IModelPrice>
+  /** Os níveis do agente que o protocolo aceita, na ordem dele. */
   reasoningEfforts?: string[]
+  /**
+   * Por modelo: os níveis do agente que AQUELE modelo aceita. `null` = o catálogo não sabe (valem os
+   * do agente); `[]` = o modelo não raciocina — a tela esconde o seletor.
+   */
+  modelReasoning: Record<string, string[] | null>
   modes: string[]
   allowedTools: string[]
   /** Do código (só leitura) ou criado pela tela. */
@@ -49,14 +64,17 @@ export interface IAgentDetailDto extends IAgentDto {
  * Lista explícita de campos, e não `{ ...agent, systemPrompt: undefined }`: campo novo no registry
  * nasce PRIVADO e só sai quando alguém o escreve aqui. Com spread, nasceria público.
  */
-export function toAgentDto(agent: IAgent, pricing: TModelPricing = MODEL_PRICING, builtIn = true): IAgentDto {
+export function toAgentDto(agent: IAgent, pricing: TModelPricing = MODEL_PRICING, builtIn = true, reasoning: IAgentReasoningFacts = {}): IAgentDto {
+  const efforts = reasoning.protocol ? protocolLevels(reasoning.protocol, agent.reasoningEfforts ?? []) : (agent.reasoningEfforts ?? [])
+
   return {
     id: agent.id,
     name: agent.name,
     provider: String(agent.provider),
     models: agent.models,
     pricing: Object.fromEntries(agent.models.filter((model) => Object.hasOwn(pricing, model)).map((model) => [model, pricing[model]])),
-    reasoningEfforts: agent.reasoningEfforts,
+    reasoningEfforts: efforts.length ? efforts : undefined,
+    modelReasoning: Object.fromEntries(agent.models.map((model) => [model, efforts.length ? modelReasoningLevels(efforts, reasoning.reasoningOf?.(model)) : []])),
     modes: agent.modes.map(String),
     allowedTools: agent.allowedTools,
     builtIn,
@@ -67,6 +85,13 @@ export function toAgentDetailDto(
   entry: { agent: IAgent; builtIn: boolean; updatedAt?: Date; updatedBy?: string },
   pricing: TModelPricing = MODEL_PRICING,
   disabledModels: string[] = [],
+  reasoning: IAgentReasoningFacts = {},
 ): IAgentDetailDto {
-  return { ...toAgentDto(entry.agent, pricing, entry.builtIn), systemPrompt: entry.agent.systemPrompt, updatedAt: entry.updatedAt, updatedBy: entry.updatedBy, disabledModels }
+  return {
+    ...toAgentDto(entry.agent, pricing, entry.builtIn, reasoning),
+    systemPrompt: entry.agent.systemPrompt,
+    updatedAt: entry.updatedAt,
+    updatedBy: entry.updatedBy,
+    disabledModels,
+  }
 }

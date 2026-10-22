@@ -1,5 +1,5 @@
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { IListedModel } from '@domain/models/ModelCatalog.Model'
+import { IListedModel, IModelReasoning } from '@domain/models/ModelCatalog.Model'
 import { IModelPrice } from '@domain/models/Model.Pricing'
 import { maskKey } from './Provider.Probe'
 
@@ -17,6 +17,12 @@ const OFFICIAL_BASE: Record<EProvider, string> = {
  * lista não começar com 80 itens que nenhum agente usaria. Só no oficial — um compatível lista o que é dele.
  */
 const OPENAI_NOT_CHAT = /(embedding|whisper|tts|dall-e|moderation|transcribe|image|audio|realtime|search|davinci|babbage)/i
+
+/**
+ * A OpenAI oficial não diz na listagem quem raciocina: o palpite vem do id (série `o*` e `gpt-5*`).
+ * ⚠️ Marcado `heuristic` — a tela mostra "estimado".
+ */
+const OPENAI_REASONING = /^(o\d|gpt-5)/i
 
 type TPage = { items: IListedModel[]; next?: string }
 
@@ -41,7 +47,10 @@ export async function listModels(connection: { protocol: EProvider; baseUrl?: st
   }
 
   const official = !connection.baseUrl
-  return connection.protocol === EProvider.OPENAI && official ? all.filter((model) => !OPENAI_NOT_CHAT.test(model.id)) : all
+  if (connection.protocol !== EProvider.OPENAI || !official) return all
+  return all
+    .filter((model) => !OPENAI_NOT_CHAT.test(model.id))
+    .map((model) => ({ ...model, reasoning: model.reasoning ?? { supported: OPENAI_REASONING.test(model.id), source: 'heuristic' as const } }))
 }
 
 async function fetchPage(protocol: EProvider, base: string, key: string, cursor: string | undefined, fetcher: typeof fetch): Promise<TPage> {
@@ -59,18 +68,27 @@ async function fetchPage(protocol: EProvider, base: string, key: string, cursor:
     return {
       items: models
         .filter((model) => (model.supportedGenerationMethods as string[] | undefined)?.includes('generateContent') ?? true)
-        .map((model) => ({ id: String(model.name).replace(/^models\//, ''), label: text(model.displayName), contextLength: number(model.inputTokenLimit) })),
+        .map((model) => ({
+          id: String(model.name).replace(/^models\//, ''),
+          label: text(model.displayName),
+          contextLength: number(model.inputTokenLimit),
+          ...(typeof model.thinking === 'boolean' ? { reasoning: { supported: model.thinking, source: 'provider' as const } } : {}),
+        })),
       next: text(body?.nextPageToken),
     }
   }
 
   const data = (body?.data as Array<Record<string, unknown>> | undefined) ?? []
-  const items = data.map((model) => ({
-    id: String(model.id),
-    label: text(model.display_name) ?? text(model.name),
-    contextLength: number(model.context_length),
-    price: priceOf(model.pricing),
-  }))
+  const items = data.map((model) => {
+    const reasoning = protocol === EProvider.CLAUDE ? anthropicReasoning(model.capabilities) : parametersReasoning(model.supported_parameters)
+    return {
+      id: String(model.id),
+      label: text(model.display_name) ?? text(model.name),
+      contextLength: number(model.context_length),
+      price: priceOf(model.pricing),
+      ...(reasoning ? { reasoning } : {}),
+    }
+  })
 
   if (protocol === EProvider.CLAUDE) return { items, next: body?.has_more === true ? text(body?.last_id) : undefined }
   return { items }
@@ -106,6 +124,27 @@ export function priceOf(raw: unknown): IModelPrice | undefined {
   const cacheRead = perMillion(pricing.input_cache_read)
   const cacheWrite = perMillion(pricing.input_cache_write)
   return { input, output, ...(cacheRead !== undefined ? { cacheRead } : {}), ...(cacheWrite !== undefined ? { cacheWrite } : {}) }
+}
+
+/**
+ * Anthropic: `capabilities.thinking`/`capabilities.effort`, e os níveis que o `effort` marca como
+ * suportados. Sem `capabilities` (um compatível que não as manda), desconhecido.
+ */
+export function anthropicReasoning(raw: unknown): IModelReasoning | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const capabilities = raw as Record<string, unknown>
+  const supported = (value: unknown) => !!value && typeof value === 'object' && (value as { supported?: unknown }).supported === true
+  if (!('thinking' in capabilities) && !('effort' in capabilities)) return undefined
+
+  const effort = capabilities.effort as Record<string, unknown> | undefined
+  const levels = supported(effort) ? Object.keys(effort!).filter((key) => key !== 'supported' && supported(effort![key])) : undefined
+  return { supported: supported(capabilities.thinking) || supported(effort), ...(levels?.length ? { levels } : {}), source: 'provider' }
+}
+
+/** Agregadores (OpenRouter e afins): `supported_parameters` com `reasoning`. Sem a lista, desconhecido. */
+export function parametersReasoning(raw: unknown): IModelReasoning | undefined {
+  if (!Array.isArray(raw)) return undefined
+  return { supported: raw.some((parameter) => parameter === 'reasoning' || parameter === 'reasoning_effort' || parameter === 'include_reasoning'), source: 'provider' }
 }
 
 function text(value: unknown): string | undefined {

@@ -2,6 +2,7 @@ import OpenAI from 'openai'
 import { IConnectionSource, KeyedClient } from './support/Keyed.Client'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
+import { reasoningLevel } from '@domain/Reasoning.Levels'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
@@ -17,8 +18,7 @@ import { IManualLoopProvider, IManualToolCall, IManualTurnOutcome, runManualTool
 import { cacheTokensOf } from './support/Usage.Helper'
 import { composeSystemPrompt, maxOutputTokens, maxToolTurns } from './support/Prompt.Helper'
 
-const EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
-type TEffort = (typeof EFFORTS)[number]
+type TEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 /** Só o diálogo. O system prompt fica na sessão e é prefixado a cada requisição. */
 type THistory = OpenAI.Chat.ChatCompletionMessageParam[]
@@ -264,7 +264,7 @@ export class OpenAIChatAdapter implements IAgentAdapter {
   }
 
   private toEffort(reasoning: string | undefined): TEffort | undefined {
-    return (EFFORTS as readonly string[]).includes(reasoning ?? '') ? (reasoning as TEffort) : undefined
+    return reasoningLevel(EProvider.OPENAI, reasoning) as TEffort | undefined
   }
 }
 

@@ -35,6 +35,16 @@ describe('agentIssues', () => {
     assert.deepStrictEqual(fields(issues), ['id', 'name', 'models', 'modes', 'systemPrompt'])
   })
 
+  it('⚠️ nível de raciocínio tem de ser do protocolo; o Google não tem nenhum', () => {
+    const claude = agent({ provider: EProvider.CLAUDE, models: ['claude-x'], allowedTools: [], reasoningEfforts: ['low', 'minimal'] })
+    assert.deepStrictEqual(
+      agentIssues(claude, { ...rules, modelEnabled: () => true }).map((issue) => [issue.field, issue.message]),
+      [['reasoningEfforts', 'minimal is not a claude reasoning level']],
+    )
+    assert.deepStrictEqual(fields(agentIssues(agent({ reasoningEfforts: ['low'] }), rules)), ['reasoningEfforts'])
+    assert.deepStrictEqual(agentIssues(agent({ provider: EProvider.OPENAI, models: ['gpt-5'], reasoningEfforts: ['none', 'xhigh'] }), rules), [])
+  })
+
   it('recusa id que já existe', () => {
     assert.deepStrictEqual(fields(agentIssues(agent({ id: 'sysops-agent' }), rules)), ['id'])
   })

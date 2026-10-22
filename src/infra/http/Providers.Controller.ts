@@ -270,6 +270,7 @@ function toModelDto(model: ICatalogModel) {
     contextLength: model.contextLength,
     price: model.price,
     priceSource: model.priceSource,
+    reasoning: model.reasoning,
     syncedAt: model.syncedAt,
     updatedAt: model.updatedAt,
     updatedBy: model.updatedBy,

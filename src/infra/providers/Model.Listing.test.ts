@@ -1,7 +1,7 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { listModels, priceOf } from './Model.Listing'
+import { anthropicReasoning, listModels, parametersReasoning, priceOf } from './Model.Listing'
 
 const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
 
@@ -66,6 +66,54 @@ describe('listModels', () => {
       listModels({ protocol: EProvider.OPENAI }, 'sk-segredo-9999', fetcher),
       (error: Error) => !error.message.includes('sk-segredo') && error.message.includes('…9999'),
     )
+  })
+
+  describe('raciocínio', () => {
+    it('Anthropic: os níveis que o `effort` marca como suportados (formato real da listagem)', () => {
+      const capabilities = {
+        effort: { supported: true, low: { supported: true }, medium: { supported: true }, high: { supported: true }, xhigh: { supported: false }, max: { supported: true } },
+        thinking: { supported: true, types: { adaptive: { supported: true } } },
+      }
+      assert.deepStrictEqual(anthropicReasoning(capabilities), { supported: true, levels: ['low', 'medium', 'high', 'max'], source: 'provider' })
+      assert.deepStrictEqual(anthropicReasoning({ thinking: { supported: false }, effort: { supported: false } }), { supported: false, source: 'provider' })
+      assert.strictEqual(anthropicReasoning({ citations: { supported: true } }), undefined)
+      assert.strictEqual(anthropicReasoning(undefined), undefined)
+    })
+
+    it('agregador: `supported_parameters` com reasoning; sem a lista, desconhecido', () => {
+      assert.deepStrictEqual(parametersReasoning(['tools', 'reasoning', 'include_reasoning']), { supported: true, source: 'provider' })
+      assert.deepStrictEqual(parametersReasoning(['tools', 'temperature']), { supported: false, source: 'provider' })
+      assert.strictEqual(parametersReasoning(undefined), undefined)
+    })
+
+    it('Gemini: o campo `thinking`', async () => {
+      const fetcher = (async () =>
+        reply({
+          models: [
+            { name: 'models/gemini-3.7-flash', thinking: true, supportedGenerationMethods: ['generateContent'] },
+            { name: 'models/gemma', thinking: false },
+          ],
+        })) as unknown as typeof fetch
+
+      assert.deepStrictEqual(
+        (await listModels({ protocol: EProvider.GOOGLE }, 'k', fetcher)).map((model) => model.reasoning?.supported),
+        [true, false],
+      )
+    })
+
+    it('OpenAI oficial: palpite pelo id, marcado heurístico; compatível sem lista fica desconhecido', async () => {
+      const fetcher = (async () => reply({ data: [{ id: 'gpt-5.6-sol' }, { id: 'o4-mini' }, { id: 'gpt-4.1' }] })) as unknown as typeof fetch
+
+      assert.deepStrictEqual(
+        (await listModels({ protocol: EProvider.OPENAI }, 'k', fetcher)).map((model) => [model.id, model.reasoning]),
+        [
+          ['gpt-5.6-sol', { supported: true, source: 'heuristic' }],
+          ['o4-mini', { supported: true, source: 'heuristic' }],
+          ['gpt-4.1', { supported: false, source: 'heuristic' }],
+        ],
+      )
+      assert.strictEqual((await listModels({ protocol: EProvider.OPENAI, baseUrl: 'https://x.example/v1' }, 'k', fetcher))[0].reasoning, undefined)
+    })
   })
 
   it('preço pela metade (sem entrada ou sem saída) não vira preço', () => {

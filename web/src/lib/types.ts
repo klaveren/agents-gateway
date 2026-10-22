@@ -82,6 +82,8 @@ export interface IAgent {
   models: string[]
   pricing: Record<string, IModelPrice>
   reasoningEfforts?: string[]
+  /** Por modelo: os níveis que ele aceita. `null` = desconhecido (valem os do agente); `[]` = não raciocina. */
+  modelReasoning?: Record<string, string[] | null>
   modes: TMode[]
   allowedTools: string[]
   builtIn: boolean
@@ -182,6 +184,8 @@ export interface ICatalogModel {
   contextLength?: number
   price?: IModelPrice
   priceSource?: 'manual' | 'catalog' | 'default'
+  /** Ausente = a listagem não diz. `heuristic` = palpite pelo id. */
+  reasoning?: { supported: boolean; levels?: string[]; source: 'provider' | 'heuristic' }
   syncedAt?: string
   updatedAt: string
   updatedBy?: string

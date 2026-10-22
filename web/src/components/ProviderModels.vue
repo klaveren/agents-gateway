@@ -132,6 +132,12 @@ function context(tokens?: number): string {
           <div class="truncate text-xs text-zinc-500">
             {{ model.label && model.label !== model.modelId ? model.label : '' }}
             <template v-if="model.contextLength"> · {{ context(model.contextLength) }} de contexto</template>
+            <span
+              v-if="model.reasoning?.supported"
+              class="ml-1 rounded-full bg-violet-500/15 px-1.5 text-[10px] text-violet-300"
+              :title="model.reasoning.levels ? `Níveis: ${model.reasoning.levels.join(', ')}` : model.reasoning.source === 'heuristic' ? 'Estimado pelo id: a listagem deste provider não diz' : 'Segundo a listagem do provider'"
+              >raciocina{{ model.reasoning.source === 'heuristic' ? ' (estimado)' : '' }}</span
+            >
             <span v-if="!model.available" class="ml-1 rounded-full bg-zinc-800 px-1.5 text-[10px] text-zinc-400">sumiu da listagem</span>
           </div>
         </div>

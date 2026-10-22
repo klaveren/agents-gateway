@@ -24,6 +24,18 @@ const MODE_HINT: Record<string, string> = {
 const draft = computed(() => thread.draft)
 const agent = computed(() => agents.byId.get(draft.value?.agentId ?? ''))
 
+/** Os níveis que valem para o modelo escolhido: os dele no catálogo, ou os do agente quando o catálogo não sabe. */
+const reasoningLevels = computed(() => {
+  const current = agent.value
+  if (!current || !draft.value?.model) return []
+  return current.modelReasoning?.[draft.value.model] ?? current.reasoningEfforts ?? []
+})
+
+// Trocar para um modelo que não aceita o nível escolhido volta ao padrão, em vez de mandar um nível que seria ignorado.
+watch(reasoningLevels, (levels) => {
+  if (draft.value?.reasoning && !levels.includes(draft.value.reasoning)) draft.value.reasoning = undefined
+})
+
 /**
  * Rascunho novo ao entrar — a não ser que já exista um SEM sessão (o "nova conversa com o mesmo
  * agente" de uma conversa encerrada, que chega aqui com agente e modelo já escolhidos).
@@ -101,11 +113,11 @@ async function send(text: string, files: IOutgoingFile[]) {
                 <option v-for="model in agent.models" :key="model" :value="model">{{ model }}{{ agent.pricing[model] ? ` — $${agent.pricing[model].output}/1M saída` : '' }}</option>
               </select>
             </label>
-            <label v-if="agent.reasoningEfforts?.length" class="text-xs font-medium text-zinc-400">
+            <label v-if="reasoningLevels.length" class="text-xs font-medium text-zinc-400">
               Raciocínio
               <select v-model="draft.reasoning" class="mt-1 w-full rounded-lg bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100">
                 <option :value="undefined">padrão</option>
-                <option v-for="effort in agent.reasoningEfforts" :key="effort" :value="effort">{{ effort }}</option>
+                <option v-for="effort in reasoningLevels" :key="effort" :value="effort">{{ effort }}</option>
               </select>
             </label>
           </div>

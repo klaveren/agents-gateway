@@ -1,5 +1,5 @@
 import { InvalidModelError, ModelNotFoundError } from '@domain/errors/Domain.Error'
-import { ICatalogModel, IListedModel } from '@domain/models/ModelCatalog.Model'
+import { ICatalogModel, IListedModel, IModelReasoning } from '@domain/models/ModelCatalog.Model'
 import { IModelPrice, TModelPricing } from '@domain/models/Model.Pricing'
 import { IModelCatalogRepository } from '@domain/ports/ModelCatalogRepository.Port'
 
@@ -38,6 +38,11 @@ export class ModelCatalogService {
       .map((model) => model.modelId)
   }
 
+  /** O que o catálogo sabe do raciocínio do modelo; `undefined` = não sabe. */
+  reasoningOf(providerId: string, modelId: string): IModelReasoning | undefined {
+    return this.catalog.get(providerId, modelId)?.reasoning
+  }
+
   isEnabled(providerId: string, modelId: string): boolean {
     return this.catalog.get(providerId, modelId)?.enabled === true
   }
@@ -64,6 +69,7 @@ export class ModelCatalogService {
           available: true,
           contextLength: item.contextLength,
           ...suggested,
+          reasoning: item.reasoning,
           syncedAt: now,
           updatedAt: now,
           updatedBy: by,
@@ -78,6 +84,7 @@ export class ModelCatalogService {
         label: item.label ?? current.label,
         available: true,
         contextLength: item.contextLength ?? current.contextLength,
+        reasoning: item.reasoning ?? current.reasoning,
         ...price,
         syncedAt: now,
       })

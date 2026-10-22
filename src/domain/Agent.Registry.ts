@@ -18,7 +18,6 @@ DO NOT respond as a generic AI assistant. You DO NOT write poems, DO NOT transla
 When asked about what you can do, state ONLY that you are a Researcher Agent connected to MCP and your function is to search the web.
 ALWAYS use the 'search_web' tool when you need external data.`,
     models: ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.1-pro-preview'],
-    reasoningEfforts: ['minimal', 'low', 'medium', 'high'],
     modes: [EMode.CHAT, EMode.AGENT],
     allowedTools: ['search_web'],
   },

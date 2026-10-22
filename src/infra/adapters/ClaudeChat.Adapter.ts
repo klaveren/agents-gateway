@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { IConnectionSource, KeyedClient } from './support/Keyed.Client'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
+import { reasoningLevel } from '@domain/Reasoning.Levels'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
@@ -16,9 +17,8 @@ import { IToolDefinition } from '@infra/tools/Tool.Types'
 import { IManualLoopProvider, IManualToolCall, IManualToolResult, IManualTurnOutcome, runManualToolLoop } from './support/ManualTool.Loop'
 import { composeSystemPrompt, maxOutputTokens, maxToolTurns } from './support/Prompt.Helper'
 
-/** `output_config.effort` da Messages API. Anything else is dropped. */
-const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
-type TEffort = (typeof EFFORTS)[number]
+/** `output_config.effort` da Messages API; os níveis aceitos vêm de `REASONING_LEVELS`. Anything else is dropped. */
+type TEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const
 type TImageType = (typeof IMAGE_TYPES)[number]
@@ -260,7 +260,7 @@ export class ClaudeChatAdapter implements IAgentAdapter {
   }
 
   private toEffort(reasoning: string | undefined): TEffort | undefined {
-    return (EFFORTS as readonly string[]).includes(reasoning ?? '') ? (reasoning as TEffort) : undefined
+    return reasoningLevel(EProvider.CLAUDE, reasoning) as TEffort | undefined
   }
 }
 
