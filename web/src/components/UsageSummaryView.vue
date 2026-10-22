@@ -4,6 +4,7 @@ import { providerLabel, tokens, usd } from '@/lib/format'
 import type { IUsageFigure, IUsageSummary } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import UsageDailyChart from './UsageDailyChart.vue'
+import UsageTiles from './UsageTiles.vue'
 
 /** O resumo de uso — o meu, ou o de um usuário (admin, com custo). */
 const props = defineProps<{ summary: IUsageSummary; showCost: boolean }>()
@@ -24,20 +25,7 @@ const agentName = (id: string) => agents.byId.get(id)?.name ?? id
     <p v-if="!t.turns" class="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6 text-center text-sm text-zinc-400">Nenhum uso neste período.</p>
 
     <template v-else>
-      <div class="flex flex-wrap gap-2">
-        <div class="tile"><span class="tile-label">Tokens</span><span class="tile-value">{{ tokens(t.usage.totalTokens) }}</span></div>
-        <div class="tile"><span class="tile-label">Conversas</span><span class="tile-value">{{ t.conversations }}</span></div>
-        <div class="tile"><span class="tile-label">Turnos</span><span class="tile-value">{{ t.turns }}</span></div>
-        <div v-if="showCost" class="tile"><span class="tile-label">Custo estimado</span><span class="tile-value">{{ cost(t) }}</span></div>
-        <div class="tile"><span class="tile-label">Entrada</span><span class="tile-value">{{ tokens(t.usage.inputTokens) }}</span></div>
-        <div class="tile"><span class="tile-label">Saída</span><span class="tile-value">{{ tokens(t.usage.outputTokens) }}</span></div>
-        <div class="tile"><span class="tile-label">Cache lido</span><span class="tile-value">{{ tokens(t.usage.cacheReadTokens) }}</span></div>
-        <div class="tile"><span class="tile-label">Cache gravado</span><span class="tile-value">{{ tokens(t.usage.cacheWriteTokens) }}</span></div>
-      </div>
-      <p class="-mt-1 text-xs text-zinc-500">
-        Raciocínio {{ tokens(t.usage.reasoningTokens) }} (cobrado como saída)
-        <template v-if="showCost && t.costIsFloor"> · ≥ = há modelo sem preço; o custo é um piso</template>
-      </p>
+      <UsageTiles :figure="t" :show-cost="showCost" />
 
       <section class="card">
         <h2 class="card-title">Por dia</h2>
@@ -89,15 +77,6 @@ const agentName = (id: string) => agents.byId.get(id)?.name ?? id
 <style scoped>
 @reference '../style.css';
 
-.tile {
-  @apply flex min-w-28 flex-1 basis-28 flex-col gap-0.5 rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-2.5;
-}
-.tile-label {
-  @apply truncate text-[11px] text-zinc-500;
-}
-.tile-value {
-  @apply truncate text-lg font-semibold text-zinc-100 tabular-nums;
-}
 .card {
   @apply rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4;
 }

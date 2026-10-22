@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import UsageSummaryView from '@/components/UsageSummaryView.vue'
+import UsageTiles from '@/components/UsageTiles.vue'
 import { tokens, usd } from '@/lib/format'
 import type { IGroupUsage, IUsageFigure, IUsageSummary, IUserUsage } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
@@ -88,7 +89,7 @@ const go = (query: Record<string, string | undefined>) => router.replace({ query
   </div>
 
   <div v-else class="scroll-thin h-full overflow-y-auto px-4 py-6">
-    <div class="mx-auto flex max-w-4xl flex-col gap-4">
+    <div class="mx-auto flex max-w-5xl flex-col gap-4">
       <header class="flex flex-wrap items-center gap-3">
         <h1 class="text-xl font-semibold">Uso</h1>
         <div v-if="auth.isAdmin" class="flex gap-1 rounded-full bg-zinc-900 p-1 text-sm">
@@ -122,11 +123,9 @@ const go = (query: Record<string, string | undefined>) => router.replace({ query
           <button class="rounded-full bg-zinc-800 px-3 py-1 text-zinc-100 hover:bg-zinc-700">Agrupar</button>
         </form>
         <template v-if="groups">
-          <div class="grid grid-cols-3 gap-3">
-            <div class="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4"><span class="block text-xs text-zinc-500">Custo estimado</span><span class="text-2xl font-semibold tabular-nums">{{ cost(groups.totals) }}</span></div>
-            <div class="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4"><span class="block text-xs text-zinc-500">Tokens</span><span class="text-2xl font-semibold tabular-nums">{{ tokens(groups.totals.usage.totalTokens) }}</span></div>
-            <div class="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4"><span class="block text-xs text-zinc-500">Valores de {{ groups.key }}</span><span class="text-2xl font-semibold tabular-nums">{{ groups.groups.filter((group) => group.value !== undefined).length }}</span></div>
-          </div>
+          <UsageTiles :figure="groups.totals" :show-cost="true">
+            <div class="tile"><span class="tile-label">Valores</span><span class="tile-value">{{ groups.groups.filter((group) => group.value !== undefined).length }}</span></div>
+          </UsageTiles>
           <p v-if="!groups.groups.length" class="text-sm text-zinc-500">Nenhum uso neste período.</p>
           <table v-else class="w-full overflow-hidden rounded-2xl border border-zinc-800 text-left text-sm">
             <thead class="bg-zinc-900 text-xs text-zinc-500">
@@ -156,11 +155,9 @@ const go = (query: Record<string, string | undefined>) => router.replace({ query
       </template>
 
       <template v-else-if="tab === 'users' && users">
-        <div class="grid grid-cols-3 gap-3">
-          <div class="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4"><span class="block text-xs text-zinc-500">Custo estimado</span><span class="text-2xl font-semibold tabular-nums">{{ cost(users.totals) }}</span></div>
-          <div class="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4"><span class="block text-xs text-zinc-500">Tokens</span><span class="text-2xl font-semibold tabular-nums">{{ tokens(users.totals.usage.totalTokens) }}</span></div>
-          <div class="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4"><span class="block text-xs text-zinc-500">Usuários</span><span class="text-2xl font-semibold tabular-nums">{{ users.users.length }}</span></div>
-        </div>
+        <UsageTiles :figure="users.totals" :show-cost="true">
+          <div class="tile"><span class="tile-label">Usuários</span><span class="tile-value">{{ users.users.length }}</span></div>
+        </UsageTiles>
         <p v-if="!users.users.length" class="text-sm text-zinc-500">Nenhum uso neste período.</p>
         <table v-else class="w-full overflow-hidden rounded-2xl border border-zinc-800 text-left text-sm">
           <thead class="bg-zinc-900 text-xs text-zinc-500">
