@@ -326,6 +326,32 @@ const failures = {
 
 const json = (schema: object) => ({ content: { 'application/json': { schema } } })
 
+const usageTokens = { type: 'object', properties: { inputTokens: { type: 'integer' }, outputTokens: { type: 'integer' }, reasoningTokens: { type: 'integer' }, totalTokens: { type: 'integer' }, cacheReadTokens: { type: 'integer' }, cacheWriteTokens: { type: 'integer' } } }
+const usageFigure = (withCost: boolean) => ({
+  type: 'object',
+  properties: {
+    conversations: { type: 'integer' },
+    turns: { type: 'integer' },
+    usage: usageTokens,
+    ...(withCost ? { costUsd: { type: 'number' }, costIsFloor: { type: 'boolean', description: 'Some model has no known price: the cost is a floor.' } } : {}),
+  },
+})
+const usageSummary = (withCost: boolean) => ({
+  type: 'object',
+  properties: {
+    period: { type: 'object', properties: { days: { type: 'integer' }, since: { type: 'string', format: 'date-time' }, tzOffsetMinutes: { type: 'integer' } } },
+    totals: usageFigure(withCost),
+    daily: { type: 'array', items: { allOf: [usageFigure(withCost), { type: 'object', properties: { date: { type: 'string', description: 'YYYY-MM-DD in the caller time zone.' } } }] } },
+    byAgent: { type: 'array', items: { allOf: [usageFigure(withCost), { type: 'object', properties: { agentId: { type: 'string' } } }] } },
+    byModel: { type: 'array', items: { allOf: [usageFigure(withCost), { type: 'object', properties: { provider: { type: 'string' }, model: { type: 'string' } } }] } },
+    top: { type: 'array', items: { allOf: [usageFigure(withCost), { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' }, agentId: { type: 'string' } } }] } },
+  },
+})
+const usageParams = [
+  { name: 'days', in: 'query', schema: { type: 'integer', enum: [7, 30, 90], default: 30 }, description: 'Period, counting today.' },
+  { name: 'tz', in: 'query', schema: { type: 'integer' }, description: 'Minutes to add to UTC for local time (São Paulo: -180). Days are cut in this time zone.' },
+]
+
 const providerParam = [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }]
 
 const providerStatusSchema = {
@@ -601,6 +627,42 @@ export const OPENAPI_DOCUMENT = {
         parameters: providerParam,
         requestBody: { required: false, ...json({ type: 'object', properties: { key: { type: 'string' } } }) },
         responses: { '200': { description: 'The probe result', ...json(envelope(probeSchema)) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/usage/me': {
+      get: {
+        summary: "The signed-in caller's own usage: tokens per day, agent and model, and the heaviest conversations. Never carries cost",
+        parameters: usageParams,
+        responses: { '200': { description: 'OK', ...json(envelope(usageSummary(false))) }, '401': failures['401'] },
+      },
+    },
+    '/usage/users': {
+      get: {
+        summary: 'Usage per user with estimated cost, most expensive first. Conversations without an owner come as one row with no `ownerId`. Administrators only',
+        parameters: usageParams,
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  totals: usageFigure(true),
+                  users: { type: 'array', items: { allOf: [usageFigure(true), { type: 'object', properties: { ownerId: { type: 'string' }, email: { type: 'string' }, name: { type: 'string' } } }] } },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+    },
+    '/usage/users/{ownerId}': {
+      get: {
+        summary: 'One user in detail, with cost (`anonymous` = conversations without an owner). Administrators only',
+        parameters: [{ name: 'ownerId', in: 'path', required: true, schema: { type: 'string' } }, ...usageParams],
+        responses: { '200': { description: 'OK', ...json(envelope(usageSummary(true))) }, '401': failures['401'], '404': failures['404'] },
       },
     },
     '/agents': {

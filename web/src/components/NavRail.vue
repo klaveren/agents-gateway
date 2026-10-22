@@ -21,11 +21,12 @@ async function logout() {
 const section = computed(() => {
   const name = String(route.name ?? '')
   if (name.startsWith('agent')) return 'agents'
-  return ['settings', 'users', 'providers'].includes(name) ? name : 'inbox'
+  return ['settings', 'users', 'providers', 'usage'].includes(name) ? name : 'inbox'
 })
 
 const links = computed(() => [
   { to: '/', key: 'inbox', label: 'Conversas', icon: 'inbox' as const, badge: conversations.unread.size },
+  ...(auth.signedIn ? [{ to: '/usage', key: 'usage', label: 'Uso', icon: 'chart' as const, badge: 0 }] : []),
   ...(auth.isAdmin
     ? [
         { to: '/agents', key: 'agents', label: 'Agentes', icon: 'agents' as const, badge: 0 },

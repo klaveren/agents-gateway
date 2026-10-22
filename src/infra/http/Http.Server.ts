@@ -1,6 +1,7 @@
 import { AgentController } from './Agent.Controller'
 import { AuthController } from './Auth.Controller'
 import { ProvidersController } from './Providers.Controller'
+import { UsageController } from './Usage.Controller'
 import { randomBytes } from 'node:crypto'
 import { ProvidersService } from '@application/Providers.Service'
 import { SqliteCredentialStore } from '@infra/persistence/Sqlite.CredentialStore'
@@ -52,13 +53,14 @@ export class HttpServer {
     private readonly controller: AgentController,
     auth: AuthController = new AuthController({}),
     providers: ProvidersController = defaultProvidersController(),
+    usage?: UsageController,
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
     this.app.use(corsMiddleware())
     this.app.use(express.json({ limit: jsonLimit() }))
 
-    this.routes = buildRoutes(controller, auth, providers)
+    this.routes = buildRoutes(controller, auth, providers, usage ?? new UsageController({ conversations: controller.conversations }))
     this.setupRoutes()
     this.setupFrontend()
   }
@@ -149,8 +151,11 @@ export class HttpServer {
   }
 }
 
-function buildRoutes(controller: AgentController, auth: AuthController, providers: ProvidersController): IRoute[] {
+function buildRoutes(controller: AgentController, auth: AuthController, providers: ProvidersController, usage: UsageController): IRoute[] {
   return [
+    { method: 'get', path: '/usage/me', handler: usage.mine },
+    { method: 'get', path: '/usage/users', handler: usage.users },
+    { method: 'get', path: '/usage/users/:ownerId', handler: usage.user },
     { method: 'get', path: '/providers', handler: providers.list },
     { method: 'post', path: '/providers', handler: providers.create },
     { method: 'put', path: '/providers/:id', handler: providers.update },

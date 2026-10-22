@@ -662,4 +662,24 @@ describe('SqliteConversationRepository — monitor, rótulos e compartilhamento'
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  describe('usage', () => {
+    it('⛔ o recorte por dono isola: o uso de A não soma as conversas de B; o dia sai do turno, no fuso pedido', async () => {
+      const repo = repository()
+      await repo.saveSession(session({ id: 'da-ana', metadata: { owner: { id: 'ana' } } }))
+      await repo.saveSession(session({ id: 'da-bia', metadata: { owner: { id: 'bia' } } }))
+      await repo.appendTurn(turn({ sessionId: 'da-ana', index: 0, at: new Date('2026-10-22T01:30:00Z') }))
+      await repo.appendTurn(turn({ sessionId: 'da-bia', index: 0, at: new Date('2026-10-22T12:00:00Z') }))
+
+      const mine = await repo.usage({ since: new Date('2026-10-01T00:00:00Z'), tzOffsetMinutes: -180, owner: { id: 'ana' } })
+      assert.deepStrictEqual(
+        mine.map((item) => [item.conversationId, item.day]),
+        [['da-ana', '2026-10-21']],
+      )
+
+      const all = await repo.usage({ since: new Date('2026-10-01T00:00:00Z'), tzOffsetMinutes: 0 })
+      assert.deepStrictEqual(all.map((item) => item.ownerId).sort(), ['ana', 'bia'])
+      assert.deepStrictEqual(await repo.usage({ since: new Date('2026-10-23T00:00:00Z'), tzOffsetMinutes: 0 }), [])
+    })
+  })
 })

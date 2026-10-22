@@ -3,7 +3,7 @@ dotenv.config({ override: true })
 
 import { setTracingDisabled } from '@openai/agents'
 import { makeAuth } from '@composition/factories/Auth.Factory'
-import { makeAuthController, makeController, makeProvidersController } from '@composition/factories/Controller.Factory'
+import { makeAuthController, makeController, makeProvidersController, makeUsageController } from '@composition/factories/Controller.Factory'
 import { makeTools } from '@composition/factories/Tools.Factory'
 import { warnIfProofDisabled } from '@infra/http/Caller.Proof'
 import { HttpServer } from '@infra/http/Http.Server'
@@ -38,7 +38,8 @@ async function bootstrap() {
   // Com contas locais há prova (a do token deste gateway); o aviso fica para quem roda sem banco.
   warnIfProofDisabled(makeAuth().proof)
 
-  const server = new HttpServer(makeController(), makeAuthController(), makeProvidersController())
+  const controller = makeController()
+  const server = new HttpServer(controller, makeAuthController(), makeProvidersController(), makeUsageController(controller.conversations))
   server.start(Number.parseInt(process.env.PORT || '3000', 10))
 }
 
