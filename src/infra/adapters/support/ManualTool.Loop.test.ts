@@ -52,6 +52,7 @@ const drain = async (stream: AsyncGenerator<IAgentEvent, string>) => {
 describe('runManualToolLoop', () => {
   const base = {
     sessionId: 's1',
+    context: {},
     signal: new AbortController().signal,
     maxTurns: 5,
   }
@@ -166,6 +167,24 @@ describe('runManualToolLoop', () => {
 
     assert.strictEqual(answer, 'primeiro')
     assert.ok(!history.includes('assistant:nunca|'))
+  })
+
+  it('hands the caller credential to every tool call', async () => {
+    const seen: Array<string | undefined> = []
+    const catalog = {
+      invoke: async (_name: string, _args: unknown, context?: { token?: string }) => {
+        seen.push(context?.token)
+        return { status: 'success' as const, result: 'ok' }
+      },
+    } as unknown as ToolCatalog
+    const { provider } = fakeProvider([{ text: '', calls: [call('read_note')] }, { text: 'ok', calls: [] }])
+
+    await drain(
+      runManualToolLoop<TMessage>({ ...base, context: { token: 'tok-a' }, history: [], tools: [tool('read_note')], catalog, provider }),
+    )
+
+    // Sem isso a tool MCP sai sem Authorization e o MCP responde com a identidade do ambiente.
+    assert.deepStrictEqual(seen, ['tok-a'])
   })
 
   it('says plainly when there is no catalog wired', async () => {
