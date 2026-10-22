@@ -162,6 +162,30 @@ describe('ClaudeAgentAdapter', () => {
     assert.ok(events.find((event) => event.type === 'error' && String(event.payload.message).includes('Providers')))
   })
 
+  it('liga só as nativas do agente no CLI, o gate as aprova, e avisa quando o init não traz uma delas', async () => {
+    const seen: TQueryParams[] = []
+    const init = { type: 'system', subtype: 'init', session_id: 'cli-1', tools: ['WebSearch'] }
+    const adapter = new ClaudeAgentAdapter({ query: queryWith(() => [init, ...turn()], seen) })
+    const agent = { ...getAgent(), allowedTools: ['sdk:WebSearch', 'sdk:TodoWrite'] }
+    const session = await adapter.createSession(agent, { agentId: 'sysops-agent' })
+    const events = await drain(adapter.sendMessage(agent, session.id, { text: 'hi' }, {}))
+
+    assert.deepStrictEqual(seen[0].options?.tools, ['WebSearch', 'TodoWrite'])
+    const gate = seen[0].options?.canUseTool as (name: string, input: Record<string, unknown>, options: unknown) => Promise<{ behavior: string }>
+    assert.strictEqual((await gate('WebSearch', {}, {})).behavior, 'allow')
+    assert.strictEqual((await gate('Bash', {}, {})).behavior, 'deny')
+    assert.ok(events.find((event) => event.type === 'warning' && String(event.payload.message).includes('TodoWrite')))
+  })
+
+  it('sem nativas, nenhum built-in: tools continua vazio', async () => {
+    const seen: TQueryParams[] = []
+    const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen) })
+    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
+
+    assert.deepStrictEqual(seen[0].options?.tools, [])
+  })
+
   it('plants a uuid on the first turn and resumes the CLI session afterwards', async () => {
     const seen: TQueryParams[] = []
     const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen) })

@@ -165,6 +165,33 @@ describe('OpenAIAgentAdapter', () => {
     )
   })
 
+  it('acrescenta as hospedadas no oficial; num compatível, ignora com aviso', async () => {
+    const agent = { ...getAgent(), allowedTools: ['search_web', 'sdk:openai:web_search', 'sdk:openai:code_interpreter'] }
+
+    const official: ICall[] = []
+    const adapter = new OpenAIAgentAdapter({ run: runWith(turn, official), catalog })
+    const session = await adapter.createSession(agent, { agentId: 'analyst-agent' })
+    await drain(adapter.sendMessage(agent, session.id, { text: 'hi' }, {}))
+    assert.deepStrictEqual(
+      official[0].agent.tools.map((tool) => tool.name),
+      ['search_web', 'web_search', 'code_interpreter'],
+    )
+
+    const viaCompatible: ICall[] = []
+    const compatible = new OpenAIAgentAdapter({
+      run: runWith(turn, viaCompatible),
+      catalog,
+      connections: { connection: (id) => ({ providerId: id, name: 'Compatível', protocol: EProvider.OPENAI, baseUrl: 'https://api.compativel.example/v1', key: 'k' }) },
+    })
+    const other = await compatible.createSession({ ...agent, provider: 'compat' }, { agentId: 'analyst-agent' })
+    const events = await drain(compatible.sendMessage(agent, other.id, { text: 'hi' }, {}))
+    assert.deepStrictEqual(
+      viaCompatible[0].agent.tools.map((tool) => tool.name),
+      ['search_web'],
+    )
+    assert.ok(events.find((event) => event.type === 'warning' && String(event.payload.message).includes('compatível')))
+  })
+
   it('registers the local toolset on the SDK agent', async () => {
     const calls: ICall[] = []
     const adapter = new OpenAIAgentAdapter({ run: runWith(turn, calls), catalog })

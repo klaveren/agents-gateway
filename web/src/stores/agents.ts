@@ -1,11 +1,12 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api } from '@/lib/api'
-import type { IAgent, IAgentDetail, IAgentInput, ITool } from '@/lib/types'
+import type { IAgent, IAgentDetail, IAgentInput, INativeTool, ITool } from '@/lib/types'
 
 export const useAgentsStore = defineStore('agents', () => {
   const list = ref<IAgent[]>([])
   const tools = ref<ITool[]>([])
+  const nativeTools = ref<INativeTool[]>([])
   const mcpConnected = ref(false)
   const loaded = ref(false)
 
@@ -17,8 +18,9 @@ export const useAgentsStore = defineStore('agents', () => {
   }
 
   async function loadTools(): Promise<void> {
-    const result = await api<{ mcp: { connected: boolean }; tools: ITool[] }>('/tools')
+    const result = await api<{ mcp: { connected: boolean }; tools: ITool[]; native?: INativeTool[] }>('/tools')
     tools.value = result.tools
+    nativeTools.value = result.native ?? []
     mcpConnected.value = result.mcp.connected
   }
 
@@ -39,5 +41,5 @@ export const useAgentsStore = defineStore('agents', () => {
     await load()
   }
 
-  return { list, tools, mcpConnected, loaded, byId, load, loadTools, detail, save, remove }
+  return { list, tools, nativeTools, mcpConnected, loaded, byId, load, loadTools, detail, save, remove }
 })

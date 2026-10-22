@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { nativeToolsOf } from '@domain/Native.Tools'
 import { IConnectionSource, requireConnection } from './support/Keyed.Client'
 import { query, type CanUseTool, type EffortLevel, type Options, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { EMode } from '@domain/enums/EMode.Enum'
@@ -119,19 +120,20 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     }
 
     const local = this.catalog?.localFor(agent.allowedTools) ?? []
+    const natives = nativeToolsOf(agent.allowedTools, EProvider.CLAUDE).map((tool) => tool.sdkName)
     const remoteUrl = await this.catalog?.mcpEndpoint()
 
     const options: Options = {
       model: record.model,
       systemPrompt: record.systemPrompt,
-      // `tools` é só o conjunto de built-ins do Claude Code: vazio significa que o
-      // agente não ganha Bash/Read/Edit sobre a máquina do host. As tools que ele de
-      // fato tem chegam por `mcpServers`.
-      tools: [],
+      // Os built-ins do Claude Code que ESTE agente tem ligados (ferramentas nativas, `sdk:*`) — e só
+      // eles. Vazio = nenhum: sem isto o agente ganharia Bash/Read/Edit sobre a máquina do host. As
+      // tools nossas (locais e do MCP) chegam por `mcpServers`.
+      tools: natives,
       mcpServers: buildClaudeMcpServers(local, remoteUrl, context.token),
       // Nomes soltos em `allowedTools` aprovam antes de o callback rodar e o SDK
       // avisa que o `canUseTool` foi sombreado; por isso o gate fica só aqui.
-      canUseTool: this.makeGate(agent.allowedTools),
+      canUseTool: this.makeGate([...agent.allowedTools, ...natives]),
       // Isolamento: sem isto o subprocesso lê o ~/.claude e o CLAUDE.md da máquina.
       settingSources: [],
       includePartialMessages: true,
@@ -156,6 +158,12 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
           // O CLI é a autoridade sobre o id da sessão; adotamos o que ele devolve.
           native.sdkSessionId = message.session_id
           native.started = true
+
+          // O `init` diz o que o CLI de fato ligou. Nativa pedida e ausente (um compatível que não a
+          // suporta, uma versão do CLI que a renomeou) vira aviso — em vez de um agente que só não usa.
+          const enabled = new Set((message as { tools?: string[] }).tools ?? [])
+          const missing = natives.filter((name) => !enabled.has(name))
+          if (missing.length) yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: `O SDK do Claude não ligou: ${missing.join(', ')}.` } }
           continue
         }
 

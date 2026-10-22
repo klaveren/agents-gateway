@@ -188,6 +188,24 @@ const toolsResult = {
       properties: { url: { type: 'string' }, connected: { type: 'boolean' } },
     },
     tools: { type: 'array', items: toolSchema },
+    native: {
+      type: 'array',
+      description: 'SDK-native tools (Agents SDK lane only), by protocol. Store `id` in `allowedTools`. `server-*` risks run ON the gateway host and are blocked unless listed in `NATIVE_TOOLS_ENABLED`.',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          protocol: { type: 'string', enum: ['claude', 'openai', 'google'] },
+          sdkName: { type: 'string' },
+          label: { type: 'string' },
+          description: { type: 'string' },
+          risk: { type: 'string', enum: ['hosted', 'session', 'server-network', 'server-read', 'server-exec'] },
+          officialOnly: { type: 'boolean' },
+          allowed: { type: 'boolean' },
+          reason: { type: 'string' },
+        },
+      },
+    },
   },
 }
 

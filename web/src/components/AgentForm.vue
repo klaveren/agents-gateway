@@ -18,6 +18,31 @@ const providerOptions = computed(() => providers.list.filter((provider) => provi
 const protocol = computed(() => providers.list.find((provider) => provider.id === form.value.provider)?.protocol ?? form.value.provider)
 const compatible = computed(() => !!providers.list.find((provider) => provider.id === form.value.provider)?.baseUrl)
 
+/** As ferramentas nativas do SDK deste provider (pelo protocolo), na ordem do risco. */
+const RISK_ORDER = ['hosted', 'session', 'server-network', 'server-read', 'server-exec']
+const natives = computed(() => agents.nativeTools.filter((tool) => tool.protocol === protocol.value).sort((a, b) => RISK_ORDER.indexOf(a.risk) - RISK_ORDER.indexOf(b.risk)))
+const RISK_LABEL: Record<string, string> = {
+  hosted: 'no fornecedor',
+  session: 'só a conversa',
+  'server-network': 'rede deste servidor',
+  'server-read': 'lê este servidor',
+  'server-exec': 'escreve e executa neste servidor',
+}
+const RISK_CLASS: Record<string, string> = {
+  hosted: 'bg-zinc-800 text-zinc-300',
+  session: 'bg-zinc-800 text-zinc-300',
+  'server-network': 'bg-amber-500/15 text-amber-300',
+  'server-read': 'bg-amber-500/15 text-amber-300',
+  'server-exec': 'bg-rose-500/15 text-rose-300',
+}
+
+/** Por que uma nativa não pode ser ligada aqui — ou nada, se pode. */
+function nativeBlock(tool: { allowed: boolean; officialOnly: boolean }): string | undefined {
+  if (!tool.allowed) return 'bloqueada no deploy — liberar em NATIVE_TOOLS_ENABLED'
+  if (tool.officialOnly && compatible.value) return 'só no provider oficial'
+  return undefined
+}
+
 /**
  * Os modelos que o agente PODE oferecer: os ativados no catálogo do provider escolhido. Sem nenhum
  * ativado, o formulário manda para Providers → Modelos.
@@ -230,6 +255,23 @@ async function remove() {
         </div>
         <small v-if="form.allowedTools.some((tool) => DANGEROUS.has(tool))" class="text-amber-300">⚠ run_bash executa comandos no servidor do gateway. Quem conversa com este agente ganha esse poder.</small>
         <small v-for="message in issues.allowedTools" :key="message" class="error">{{ message }}</small>
+      </div>
+
+      <div v-if="natives.length" class="field sm:col-span-2">
+        <span>Ferramentas do SDK <em class="font-normal text-zinc-500">— só na lane Agents SDK</em></span>
+        <p v-if="!form.modes.includes('agent')" class="text-xs font-normal text-amber-300">Este agente não tem a lane Agents SDK ligada: as ferramentas do SDK não serão usadas.</p>
+        <ul class="divide-y divide-zinc-800/70 rounded-lg border border-zinc-800">
+          <li v-for="tool in natives" :key="tool.id" class="flex items-center gap-3 px-3 py-2 font-normal" :class="{ 'opacity-50': nativeBlock(tool) && !form.allowedTools.includes(tool.id) }">
+            <input type="checkbox" class="accent-emerald-500" :checked="form.allowedTools.includes(tool.id)" :disabled="!!nativeBlock(tool) && !form.allowedTools.includes(tool.id)" @change="toggle(form.allowedTools, tool.id)" />
+            <span class="min-w-0 flex-1">
+              <span class="block text-sm">{{ tool.label }} <code class="text-[11px] text-zinc-500">{{ tool.sdkName }}</code></span>
+              <span class="block text-xs text-zinc-500">{{ tool.description }}</span>
+              <span v-if="nativeBlock(tool)" class="block text-xs text-zinc-500">{{ nativeBlock(tool) }}</span>
+            </span>
+            <span class="shrink-0 rounded-full px-2 py-0.5 text-[10px]" :class="RISK_CLASS[tool.risk]">{{ RISK_LABEL[tool.risk] }}</span>
+          </li>
+        </ul>
+        <small v-if="form.allowedTools.some((id) => natives.find((tool) => tool.id === id && tool.risk.startsWith('server')))" class="text-amber-300">⚠ Ferramentas que tocam este servidor dão ao agente acesso ao disco, à rede ou a comandos daqui — sem as travas do run_bash.</small>
       </div>
 
       <label class="field sm:col-span-2">

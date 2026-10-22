@@ -1,6 +1,21 @@
 import { randomUUID } from 'node:crypto'
+import { nativeToolsOf } from '@domain/Native.Tools'
 import { IConnectionSource, requireConnection } from './support/Keyed.Client'
-import { EventType, Gemini, InMemorySessionService, LlmAgent, Runner, StreamingMode, toStructuredEvents, type BaseTool, type BaseToolset, type Event } from '@google/adk'
+import {
+  BuiltInCodeExecutor,
+  EventType,
+  Gemini,
+  GOOGLE_SEARCH,
+  InMemorySessionService,
+  LlmAgent,
+  Runner,
+  URL_CONTEXT,
+  StreamingMode,
+  toStructuredEvents,
+  type BaseTool,
+  type BaseToolset,
+  type Event,
+} from '@google/adk'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
@@ -64,6 +79,8 @@ export interface IAdkRuntimeSpec {
   model: string
   /** A chave da sessão. Ausente = o ADK lê `GOOGLE_GENAI_API_KEY`/`GEMINI_API_KEY` do ambiente. */
   apiKey?: string
+  /** As ferramentas nativas do Gemini ligadas (`Native.Tools`): buscas vão em `tools`; código, em `codeExecutor`. */
+  natives?: string[]
   instruction: string
   tools: Array<BaseTool | BaseToolset>
   /**
@@ -101,14 +118,26 @@ export interface IGoogleAgentAdapterDeps {
   catalog?: ToolCatalog
 }
 
+/** As buscas nativas do Gemini, que entram em `tools` (a execução de código vai em `codeExecutor`). */
+function nativeAdkTools(natives: readonly string[]): BaseTool[] {
+  const tools: BaseTool[] = []
+  if (natives.includes('google_search')) tools.push(GOOGLE_SEARCH)
+  if (natives.includes('url_context')) tools.push(URL_CONTEXT)
+  return tools
+}
+
 function defaultRuntimeFactory(spec: IAdkRuntimeSpec): IAdkRuntime {
   const sessionService = new InMemorySessionService()
   const agent = new LlmAgent({
     name: spec.name,
     model: spec.apiKey ? new Gemini({ model: spec.model, apiKey: spec.apiKey }) : spec.model,
+    ...(spec.natives?.includes('code_execution') ? { codeExecutor: new BuiltInCodeExecutor() } : {}),
+    // ⚠️ A API do Gemini RECUSA (400) ferramenta nativa junto de function tools sem esta flag — e com ela
+    // devolve também as chamadas que o servidor fez, que é o que deixa a busca aparecer no stream.
+    ...(spec.natives?.length ? { generateContentConfig: { toolConfig: { includeServerSideToolInvocations: true } } } : {}),
     // O ADK 1.6 usa `instruction` (singular) e `model`; não existem `instructions` nem `llm`.
     instruction: spec.instruction,
-    tools: spec.tools,
+    tools: [...spec.tools, ...nativeAdkTools(spec.natives ?? [])],
     // Só observa: devolver `undefined` mantém a resposta do modelo como veio.
     afterModelCallback: ({ response }) => {
       spec.onModelResponse?.(response as IAdkModelResponse)
@@ -308,6 +337,7 @@ export class GoogleAgentAdapter implements IAgentAdapter {
       const remote = await this.remoteTools(agent, caller)
       record.native = {
         runtime: this.createRuntime({
+          natives: nativeToolsOf(agent.allowedTools, EProvider.GOOGLE).map((tool) => tool.sdkName),
           apiKey: this.connections ? requireConnection(record.provider, EProvider.GOOGLE, this.connections).key : undefined,
           name: this.toAdkName(agent.id),
           model: record.model,
