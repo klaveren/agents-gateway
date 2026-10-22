@@ -77,6 +77,11 @@ export interface IAdkModelResponse {
 export interface IAdkRuntimeSpec {
   name: string
   model: string
+  /**
+   * O modelo EM VIGOR, lido a cada chamada. ⚖️ O runtime nasce uma vez por sessão (é ele que guarda o
+   * histórico) com `model`; a troca no meio da conversa (`AgentProvider.reconfigure`) chega por aqui.
+   */
+  modelOf?: () => string
   /** A chave da sessão. Ausente = o ADK lê `GOOGLE_GENAI_API_KEY`/`GEMINI_API_KEY` do ambiente. */
   apiKey?: string
   /** As ferramentas nativas do Gemini ligadas (`Native.Tools`): buscas vão em `tools`; código, em `codeExecutor`. */
@@ -138,6 +143,12 @@ function defaultRuntimeFactory(spec: IAdkRuntimeSpec): IAdkRuntime {
     // O ADK 1.6 usa `instruction` (singular) e `model`; não existem `instructions` nem `llm`.
     instruction: spec.instruction,
     tools: [...spec.tools, ...nativeAdkTools(spec.natives ?? [])],
+    // O modelo em vigor sobrepõe o do agente na requisição; `undefined` = a chamada segue.
+    beforeModelCallback: ({ request }) => {
+      const model = spec.modelOf?.()
+      if (model) request.model = model
+      return undefined
+    },
     // Só observa: devolver `undefined` mantém a resposta do modelo como veio.
     afterModelCallback: ({ response }) => {
       spec.onModelResponse?.(response as IAdkModelResponse)
@@ -341,6 +352,7 @@ export class GoogleAgentAdapter implements IAgentAdapter {
           apiKey: this.connections ? requireConnection(record.provider, EProvider.GOOGLE, this.connections).key : undefined,
           name: this.toAdkName(agent.id),
           model: record.model,
+          modelOf: () => record.model,
           instruction: assertNoAdkTemplateCollision(record.systemPrompt),
           tools: this.buildTools(agent, remote),
           onModelResponse: (response) => {

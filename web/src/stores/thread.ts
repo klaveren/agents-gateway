@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { api, openStream } from '@/lib/api'
 import { readSse } from '@/lib/sse'
-import type { IAgentEvent, IConversation, ITurn, IUsage, TMode } from '@/lib/types'
+import type { IAgentEvent, IConversation, ISessionState, ITurn, IUsage, TMode } from '@/lib/types'
 
 export interface IDraft {
   agentId: string
@@ -52,6 +52,8 @@ export const useThreadStore = defineStore('thread', () => {
   const error = ref<string>()
   /** `undefined` enquanto pergunta ao gateway. */
   const liveSession = ref<boolean>()
+  /** O modelo e o raciocínio em vigor na sessão viva (ver `reconfigure`). */
+  const session = ref<ISessionState>()
   const draft = ref<IDraft>()
   const pending = ref<IPendingTurn>()
   const sending = ref(false)
@@ -67,20 +69,19 @@ export const useThreadStore = defineStore('thread', () => {
     pending.value = undefined
     turns.value = []
     liveSession.value = undefined
+    session.value = undefined
     error.value = undefined
     loading.value = true
 
     try {
       const [history, live] = await Promise.all([
         api<{ turns: ITurn[] }>(`/conversations/${encodeURIComponent(id)}/turns`).catch(() => ({ turns: [] as ITurn[] })),
-        api(`/sessions/${encodeURIComponent(id)}`).then(
-          () => true,
-          () => false,
-        ),
+        api<ISessionState>(`/sessions/${encodeURIComponent(id)}`).catch(() => undefined),
       ])
       if (current !== generation) return
       turns.value = history.turns
-      liveSession.value = live
+      liveSession.value = !!live
+      session.value = live ? { model: live.model, reasoning: live.reasoning } : undefined
     } catch (failure) {
       if (current === generation) error.value = failure instanceof Error ? failure.message : String(failure)
     } finally {
@@ -97,6 +98,7 @@ export const useThreadStore = defineStore('thread', () => {
     pending.value = undefined
     error.value = undefined
     liveSession.value = true
+    session.value = undefined
     draft.value = next
   }
 
@@ -123,10 +125,9 @@ export const useThreadStore = defineStore('thread', () => {
       if (!sessionId.value) {
         if (!draft.value) throw new Error('Escolha um agente para começar.')
         const { agentId, mode, tools, model, reasoning } = draft.value
-        const session = await api<{ id: string }>('/sessions', { method: 'POST', body: { agentId, mode, tools: mode === 'chat' && tools, model, reasoning } })
-        sessionId.value = session.id
-        created = session.id
+        sessionId.value = created = (await api<{ id: string }>('/sessions', { method: 'POST', body: { agentId, mode, tools: mode === 'chat' && tools, model, reasoning } })).id
         liveSession.value = true
+        if (model) session.value = { model, reasoning }
       }
 
       const id = sessionId.value
@@ -137,13 +138,13 @@ export const useThreadStore = defineStore('thread', () => {
       const body = await openStream(`/sessions/${encodeURIComponent(id)}/messages`, { method: 'POST', body: { message: text, files }, signal: inFlight.signal })
       for await (const frame of readSse(body)) applyEvent(turn, frame.data as IAgentEvent)
 
-      turns.value = [...turns.value, settled(id, turn, turns.value.length)]
+      turns.value = [...turns.value, settled(id, turn, turns.value.length, session.value)]
       pending.value = undefined
       setTimeout(() => void refresh(), 600)
     } catch (failure) {
       const aborted = failure instanceof DOMException && failure.name === 'AbortError'
       if (pending.value) {
-        turns.value = [...turns.value, settled(sessionId.value ?? '', { ...pending.value, aborted: aborted || pending.value.aborted }, turns.value.length)]
+        turns.value = [...turns.value, settled(sessionId.value ?? '', { ...pending.value, aborted: aborted || pending.value.aborted }, turns.value.length, session.value)]
         pending.value = undefined
       }
       if (!aborted) error.value = failure instanceof Error ? failure.message : String(failure)
@@ -153,6 +154,17 @@ export const useThreadStore = defineStore('thread', () => {
     }
 
     return created
+  }
+
+  /**
+   * Troca o modelo e/ou o raciocínio da sessão viva — vale a partir da próxima mensagem. `reasoning: null`
+   * volta ao padrão do provider. Lança o erro da API (ex.: 409 com um turno em andamento).
+   */
+  async function reconfigure(change: { model?: string; reasoning?: string | null }): Promise<void> {
+    const id = sessionId.value
+    if (!id || sending.value) return
+    const updated = await api<ISessionState>(`/sessions/${encodeURIComponent(id)}`, { method: 'PATCH', body: change })
+    if (id === sessionId.value) session.value = { model: updated.model, reasoning: updated.reasoning }
   }
 
   async function stop(): Promise<void> {
@@ -199,11 +211,11 @@ export const useThreadStore = defineStore('thread', () => {
     pending.value = { ...turn, tools: [...turn.tools] }
   }
 
-  return { sessionId, header, turns, loading, error, liveSession, draft, pending, sending, open, startDraft, setHeader, refresh, send, stop }
+  return { sessionId, header, turns, loading, error, liveSession, session, draft, pending, sending, open, startDraft, setHeader, refresh, send, reconfigure, stop }
 })
 
 /** O turno do stream no formato do gravado, até a releitura trazer o de verdade. */
-function settled(sessionId: string, turn: IPendingTurn, index: number): ITurn {
+function settled(sessionId: string, turn: IPendingTurn, index: number, state?: ISessionState): ITurn {
   return {
     sessionId,
     index,
@@ -211,6 +223,8 @@ function settled(sessionId: string, turn: IPendingTurn, index: number): ITurn {
     request: turn.request,
     text: turn.text,
     reasoning: turn.reasoning || undefined,
+    model: state?.model,
+    effort: state?.reasoning,
     toolCalls: turn.tools.map((tool) => ({ tool: tool.tool, error: tool.status === 'error' ? tool.message : undefined })),
     usage: turn.usage,
     warnings: turn.warnings.length ? turn.warnings : undefined,

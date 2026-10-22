@@ -13,6 +13,9 @@ const stubProvider = (overrides: Partial<IAgentProvider> = {}): IAgentProvider =
   cancel: async () => {},
   dispose: async () => {},
   describe: () => ({}) as ISession,
+  reconfigure: () => {
+    throw new Error('not used')
+  },
   list: () => [],
   ...overrides,
 })

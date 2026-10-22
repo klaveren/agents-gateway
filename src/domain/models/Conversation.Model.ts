@@ -58,6 +58,11 @@ export interface IConversationSession {
    */
   classification?: TClassification
   usage: IStoredUsage
+  /**
+   * O consumo por modelo, quando a conversa trocou de modelo no meio (ou foi gravada depois disto).
+   * ⚖️ Ausente nas conversas antigas: aí vale `model` + `usage`, como sempre.
+   */
+  usageByModel?: Record<string, IStoredUsage>
   /** Espaço para quem chama identificar o dono da conversa. O gateway não interpreta o conteúdo. */
   metadata?: Record<string, unknown>
   /**
@@ -105,6 +110,10 @@ export interface IConversationTurn {
   files?: Array<{ name: string; mimeType: string; size: number }>
   text: string
   reasoning?: string
+  /** O modelo que respondeu ESTE turno. Ausente nos antigos: vale o da conversa. */
+  model?: string
+  /** O nível de raciocínio pedido neste turno (o `reasoning` acima é o TEXTO do raciocínio). */
+  effort?: string
   toolCalls: Array<{ tool: string; args?: unknown; result?: unknown; error?: string }>
   usage?: IStoredUsage
   /** Do envio da pergunta ao último evento do turno, em ms — o tempo que a pessoa esperou. */

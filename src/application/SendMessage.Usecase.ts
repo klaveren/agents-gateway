@@ -162,6 +162,7 @@ export class SendMessageUseCase {
         // Zero em vez de ausente: campo que chega `undefined` vira `null` no banco, e `null` em
         // contador é o que quebra qualquer conta feita em cima dele depois.
         usage: usageOf(session.usage),
+        usageByModel: session.usageByModel ? Object.fromEntries(Object.entries(session.usageByModel).map(([model, usage]) => [model, usageOf(usage)])) : undefined,
         metadata: session.metadata,
       })
     }
@@ -174,6 +175,9 @@ export class SendMessageUseCase {
       files: filesOf(input),
       text: turn.text,
       reasoning: turn.reasoning || undefined,
+      // O modelo e o nível em vigor NESTE turno: a sessão pode trocar entre um turno e outro.
+      model: session?.model,
+      effort: session?.reasoning,
       toolCalls: turn.toolCalls,
       usage: usageOf(turn.usage),
       ...timingOf(startedAt, events),

@@ -31,6 +31,15 @@ export interface IConversation {
   preview?: { at: string; request: string; text: string }
   classification?: TClassification
   costUsd?: number
+  /** O custo passou por modelo sem preço: é um piso. */
+  costIsFloor?: boolean
+}
+
+/** O que a sessão viva usa AGORA — pode trocar no meio da conversa. */
+export interface ISessionState {
+  model: string
+  reasoning?: string
+  status?: string
 }
 
 export interface IToolCall {
@@ -48,6 +57,10 @@ export interface ITurn {
   files?: Array<{ name: string; mimeType: string; size: number }>
   text: string
   reasoning?: string
+  /** O modelo que respondeu este turno. Ausente nos antigos: vale o da conversa. */
+  model?: string
+  /** O nível de raciocínio pedido neste turno. */
+  effort?: string
   toolCalls: IToolCall[]
   usage?: IUsage
   durationMs?: number

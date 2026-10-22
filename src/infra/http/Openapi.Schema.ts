@@ -931,6 +931,31 @@ export const OPENAPI_DOCUMENT = {
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: { '200': { description: 'OK', ...json(envelope(sessionSchema)) }, '401': failures['401'], '404': failures['404'] },
       },
+      patch: {
+        summary: 'Switch the model and/or the reasoning level of a live session, from the next turn on',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  model: { type: 'string', description: 'One of the models the agent offers now (same provider).' },
+                  reasoning: { type: 'string', nullable: true, description: 'A level of the provider protocol; null = provider default.' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'OK', ...json(envelope(sessionSchema)) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '409': { description: 'The session is answering a turn (`session_busy`)', ...json(failureEnvelope) },
+          '422': failures['422'],
+        },
+      },
       delete: {
         summary: 'End the session and release it, aborting anything in flight',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],

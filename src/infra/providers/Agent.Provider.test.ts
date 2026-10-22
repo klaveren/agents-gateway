@@ -2,7 +2,16 @@ import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { AdapterNotFoundError, AgentNotFoundError, AgentUnavailableError, ModeNotSupportedError, SessionNotFoundError, ToolsNotSupportedError } from '@domain/errors/Domain.Error'
+import {
+  AdapterNotFoundError,
+  AgentNotFoundError,
+  AgentUnavailableError,
+  InvalidSessionChangeError,
+  ModeNotSupportedError,
+  SessionBusyError,
+  SessionNotFoundError,
+  ToolsNotSupportedError,
+} from '@domain/errors/Domain.Error'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { withCaller } from '@infra/mcp/Caller.Identity'
@@ -189,6 +198,66 @@ describe('AgentProvider', () => {
     // Campo que o provider não informa fica de fora, em vez de virar `undefined` ou zero.
     assert.deepStrictEqual(record.usage, { inputTokens: 8, outputTokens: 12 })
     assert.strictEqual(record.status, 'idle')
+  })
+
+  describe('reconfigure — trocar modelo e raciocínio no meio da conversa', () => {
+    function claudeSetup(usage: IAgentEvent[] = []) {
+      const store = new SessionStore()
+      const chat = spyAdapter(store, EProvider.CLAUDE, EMode.CHAT, usage)
+      const agent = {
+        id: 'escritor',
+        name: 'Escritor',
+        provider: EProvider.CLAUDE,
+        systemPrompt: 'p',
+        models: ['claude-sonnet-5', 'claude-opus-5'],
+        modes: [EMode.CHAT],
+        allowedTools: [],
+      }
+      const provider = new AgentProvider(new Map([[adapterKey(EProvider.CLAUDE, EMode.CHAT), chat.adapter]]), store, undefined, {
+        list: () => [agent],
+        get: (id) => (id === agent.id ? agent : undefined),
+      })
+      return { provider, store }
+    }
+
+    it('troca o modelo e o nível; o próximo turno soma o consumo no modelo novo', async () => {
+      const usage: IAgentEvent[] = [{ type: 'usage', sessionId: 'x', timestamp: new Date(), payload: { inputTokens: 10, outputTokens: 1 } }]
+      const { provider } = claudeSetup(usage)
+      const session = await provider.createSession({ agentId: 'escritor', model: 'claude-sonnet-5' })
+      await drain(provider.sendMessage(session.id, { text: 'um' }))
+
+      const changed = provider.reconfigure(session.id, { model: 'claude-opus-5', reasoning: 'high' })
+      await drain(provider.sendMessage(session.id, { text: 'dois' }))
+
+      assert.deepStrictEqual([changed.model, changed.reasoning], ['claude-opus-5', 'high'])
+      assert.deepStrictEqual(provider.describe(session.id).usageByModel, {
+        'claude-sonnet-5': { inputTokens: 10, outputTokens: 1 },
+        'claude-opus-5': { inputTokens: 10, outputTokens: 1 },
+      })
+      assert.strictEqual(provider.reconfigure(session.id, { reasoning: null }).reasoning, undefined)
+    })
+
+    it('⛔ recusa modelo fora do agente e nível fora do protocolo, sem mudar nada', async () => {
+      const { provider } = claudeSetup()
+      const session = await provider.createSession({ agentId: 'escritor' })
+
+      assert.throws(
+        () => provider.reconfigure(session.id, { model: 'gpt-6', reasoning: 'minimal' }),
+        (error: InvalidSessionChangeError) => error instanceof InvalidSessionChangeError && error.issues.map((issue) => issue.field).join() === 'model,reasoning',
+      )
+      assert.strictEqual(provider.describe(session.id).model, 'claude-sonnet-5')
+    })
+
+    it('⛔ no Google não há nível; e no meio de um turno não se troca nada', async () => {
+      const { provider, store } = setup()
+      const session = await provider.createSession({ agentId: 'researcher-agent' })
+
+      assert.throws(() => provider.reconfigure(session.id, { reasoning: 'low' }), InvalidSessionChangeError)
+      assert.strictEqual(provider.reconfigure(session.id, { model: 'gemini-3.6-flash' }).model, 'gemini-3.6-flash')
+
+      store.get(session.id)!.status = 'running'
+      assert.throws(() => provider.reconfigure(session.id, { model: 'gemini-3.7-flash' }), SessionBusyError)
+    })
   })
 
   it('lists and disposes sessions', async () => {

@@ -10,6 +10,7 @@ import AgentAvatar from './AgentAvatar.vue'
 import Composer from './Composer.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import Icon from './Icon.vue'
+import SessionTuner from './SessionTuner.vue'
 import TurnBubbles from './TurnBubbles.vue'
 
 const router = useRouter()
@@ -29,6 +30,20 @@ const agent = computed(() => agents.byId.get(header.value?.agentId ?? thread.dra
 const owner = computed(() => header.value?.metadata?.owner)
 const shareUrl = computed(() => (header.value?.shared && header.value.shareId ? `${location.origin}/v1/shared/${header.value.shareId}` : ''))
 const readOnly = computed(() => thread.liveSession === false)
+/** O modelo em vigor: o da sessão viva (pode ter trocado), senão o da conversa. */
+const currentModel = computed(() => thread.session?.model ?? header.value?.model)
+
+/**
+ * O aviso antes do turno que mudou de modelo ou de nível em relação ao anterior. Só compara turnos que
+ * registram o modelo (os antigos não registram).
+ */
+function switchBefore(index: number): string | undefined {
+  const turn = thread.turns[index]
+  const previous = thread.turns[index - 1]
+  if (!turn?.model || !previous?.model) return undefined
+  if (turn.model === previous.model && (turn.effort ?? '') === (previous.effort ?? '')) return undefined
+  return `trocou para ${turn.model}${turn.effort ? ` · ${turn.effort}` : ''}`
+}
 
 watch(
   () => [thread.turns.length, thread.pending?.text.length, thread.pending?.tools.length],
@@ -83,13 +98,13 @@ async function continueFresh() {
       <div class="min-w-0">
         <div class="truncate font-medium">{{ header?.title || agent?.name || 'Conversa' }}</div>
         <div class="truncate text-xs text-zinc-400">
-          {{ agent?.name ?? header?.agentId }} · {{ providerLabel(header?.provider ?? agent?.provider ?? '') }} {{ header?.model }} ·
+          {{ agent?.name ?? header?.agentId }} · {{ providerLabel(header?.provider ?? agent?.provider ?? '') }} {{ currentModel }}<template v-if="thread.session?.reasoning"> ({{ thread.session.reasoning }})</template> ·
           {{ header?.mode === 'agent' ? 'Agents SDK' : 'chat' }}
           <template v-if="auth.isAdmin && owner"> · {{ owner.email ?? owner.id }}</template>
         </div>
       </div>
       <div v-if="header" class="ml-auto flex items-center gap-1">
-        <span v-if="auth.isAdmin && header.costUsd !== undefined" class="mr-2 hidden text-xs text-zinc-400 sm:inline">{{ tokens(header.usage.totalTokens) }} tokens · {{ usd(header.costUsd) }}</span>
+        <span v-if="auth.isAdmin && header.costUsd !== undefined" class="mr-2 hidden text-xs text-zinc-400 sm:inline">{{ tokens(header.usage.totalTokens) }} tokens · {{ header.costIsFloor ? '≥ ' : '' }}{{ usd(header.costUsd) }}</span>
         <button class="grid h-9 w-9 place-items-center rounded-full hover:bg-zinc-800" :class="header.shared ? 'text-emerald-400' : 'text-zinc-400'" :title="header.shared ? 'Parar de compartilhar' : 'Compartilhar por link'" @click="toggleShare">
           <Icon name="share" class="h-5 w-5" />
         </button>
@@ -109,7 +124,10 @@ async function continueFresh() {
       <div class="mx-auto flex max-w-3xl flex-col gap-5">
         <p v-if="thread.loading" class="text-center text-sm text-zinc-500">Carregando conversa…</p>
         <p v-if="header" class="mx-auto rounded-full bg-zinc-900/80 px-3 py-1 text-xs text-zinc-400">Começou em {{ fullTime(header.createdAt) }}</p>
-        <TurnBubbles v-for="turn in thread.turns" :key="`${turn.sessionId}-${turn.index}`" :turn="turn" :show-cost="auth.isAdmin" />
+        <template v-for="(turn, index) in thread.turns" :key="`${turn.sessionId}-${turn.index}`">
+          <p v-if="switchBefore(index)" class="mx-auto rounded-full border border-zinc-800 px-3 py-0.5 font-mono text-[11px] text-zinc-500">{{ switchBefore(index) }}</p>
+          <TurnBubbles :turn="turn" :show-cost="auth.isAdmin" />
+        </template>
         <TurnBubbles v-if="thread.pending" :pending="thread.pending" :show-cost="auth.isAdmin" />
         <p v-if="thread.error" class="mx-auto text-sm text-rose-300">{{ thread.error }}</p>
       </div>
@@ -129,6 +147,7 @@ async function continueFresh() {
         <Icon name="refresh" class="h-4 w-4" /> Nova conversa com {{ agent?.name ?? 'o mesmo agente' }}
       </button>
     </div>
-    <Composer v-else :sending="thread.sending" :disabled="thread.liveSession === undefined" @send="send" @stop="thread.stop" />
+    <SessionTuner v-if="!readOnly && thread.liveSession && agent" :agent="agent" :fallback-model="header?.model" />
+    <Composer v-if="!readOnly" :sending="thread.sending" :disabled="thread.liveSession === undefined" @send="send" @stop="thread.stop" />
   </section>
 </template>

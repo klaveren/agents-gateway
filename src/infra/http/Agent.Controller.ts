@@ -1,4 +1,5 @@
 import { CancelSessionUseCase } from '@application/CancelSession.Usecase'
+import { ReconfigureSessionUseCase } from '@application/ReconfigureSession.Usecase'
 import { CreateSessionUseCase } from '@application/CreateSession.Usecase'
 import { DeleteSessionUseCase } from '@application/DeleteSession.Usecase'
 import { GetSessionUseCase } from '@application/GetSession.Usecase'
@@ -39,7 +40,7 @@ import { audienceRules } from './Caller.Roles'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
 import { parseBody } from './Request.Parser'
-import { agentBodySchema, createSessionSchema, sendMessageSchema, shareConversationSchema, TAgentBody, updateSettingsSchema } from './Request.Schema'
+import { agentBodySchema, createSessionSchema, sendMessageSchema, shareConversationSchema, TAgentBody, updateSettingsSchema, reconfigureSessionSchema } from './Request.Schema'
 import { toSessionDto } from './Session.Dto'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { SseStream } from './Sse.Stream'
@@ -69,6 +70,7 @@ export interface IAgentControllerDeps {
   createSession: CreateSessionUseCase
   sendMessage: SendMessageUseCase
   cancelSession: CancelSessionUseCase
+  reconfigureSession: ReconfigureSessionUseCase
   deleteSession: DeleteSessionUseCase
   getSession: GetSessionUseCase
   listSessions: ListSessionsUseCase
@@ -126,6 +128,7 @@ export class AgentController {
     this.deleteSession = this.deleteSession.bind(this)
     this.sendMessage = this.sendMessage.bind(this)
     this.cancelSession = this.cancelSession.bind(this)
+    this.reconfigureSession = this.reconfigureSession.bind(this)
     this.guardCaller = this.guardCaller.bind(this)
     this.availability = this.availability.bind(this)
     this.getSettings = this.getSettings.bind(this)
@@ -646,6 +649,24 @@ export class AgentController {
         return null
       },
       { message: 'Session deleted successfully' },
+    )
+  }
+
+  /**
+   * Troca o modelo e/ou o raciocínio de uma sessão viva, a partir do próximo turno. Mesma regra de
+   * dono das outras rotas da sessão: de outra pessoa é 404.
+   */
+  async reconfigureSession(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        const id = req.params.id as string
+        await this.requireOwnedSession(id)
+        const body = parseBody(reconfigureSessionSchema, req.body)
+
+        return toSessionDto(this.usecases.reconfigureSession.execute(id, body))
+      },
+      { message: 'Session updated' },
     )
   }
 

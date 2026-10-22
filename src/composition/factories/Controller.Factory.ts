@@ -31,6 +31,7 @@ export function makeController(): AgentController {
     createSession: usecases.createSessionUseCase,
     sendMessage: usecases.sendMessageUseCase,
     cancelSession: usecases.cancelSessionUseCase,
+    reconfigureSession: usecases.reconfigureSessionUseCase,
     deleteSession: usecases.deleteSessionUseCase,
     getSession: usecases.getSessionUseCase,
     listSessions: usecases.listSessionsUseCase,

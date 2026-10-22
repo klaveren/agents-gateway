@@ -41,7 +41,7 @@ export function authHeaders(extra: Record<string, string> = {}): Record<string, 
 }
 
 interface IRequest {
-  method?: 'GET' | 'POST' | 'PUT' | 'DELETE'
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   body?: unknown
   query?: Record<string, string | number | undefined>
   signal?: AbortSignal

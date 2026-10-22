@@ -35,6 +35,8 @@ export interface IConversationDto {
   classification?: TClassification
   /** Só para administrador. Ausente quando o modelo não tem preço — nunca zero. */
   costUsd?: number
+  /** Só para administrador. A conversa passou por algum modelo sem preço: `costUsd` é um PISO. */
+  costIsFloor?: boolean
 }
 
 /**
@@ -62,15 +64,30 @@ export function toConversationDto(session: IConversationSession, view: IConversa
 
   if (!view.admin) return dto
 
-  const costUsd = costOf(session.model, session.usage, view.pricingOf(session.provider))
+  const { costUsd, costIsFloor } = conversationCost(session, view.pricingOf(session.provider))
 
-  return { ...dto, classification: session.classification, ...(costUsd === undefined ? {} : { costUsd }) }
+  return { ...dto, classification: session.classification, ...(costUsd === undefined ? {} : { costUsd }), ...(costIsFloor ? { costIsFloor } : {}) }
+}
+
+/**
+ * O custo da conversa: modelo a modelo quando ela registra o consumo por modelo (trocou de modelo, ou
+ * é recente), senão o modelo da conversa com o consumo inteiro — o cálculo de sempre.
+ *
+ * ⚠️ Modelo sem preço não vira zero: fica de fora e marca o total como piso.
+ */
+export function conversationCost(session: Pick<IConversationSession, 'model' | 'usage' | 'usageByModel'>, pricing: TModelPricing): { costUsd?: number; costIsFloor?: boolean } {
+  const entries = session.usageByModel && Object.keys(session.usageByModel).length ? Object.entries(session.usageByModel) : [[session.model, session.usage] as const]
+  const costs = entries.map(([model, usage]) => costOf(model, usage, pricing))
+  const priced = costs.filter((cost): cost is number => cost !== undefined)
+  if (!priced.length) return {}
+
+  return { costUsd: priced.reduce((total, cost) => total + cost, 0), costIsFloor: priced.length < costs.length || undefined }
 }
 
 export interface ITurnDto extends Omit<IConversationTurn, 'classification'> {
   /** Só para administrador. */
   classification?: TClassification
-  /** Só para administrador. O modelo vem da conversa; sem preço, ausente. */
+  /** Só para administrador. O modelo é o do turno (ou o da conversa, nos antigos); sem preço, ausente. */
   costUsd?: number
 }
 
@@ -78,7 +95,8 @@ export function toTurnDto(turn: IConversationTurn, conversation: { provider: str
   const { classification, ...rest } = turn
   if (!view.admin) return rest
 
-  const costUsd = conversation.model && turn.usage ? costOf(conversation.model, turn.usage, view.pricingOf(conversation.provider)) : undefined
+  const model = turn.model ?? conversation.model
+  const costUsd = model && turn.usage ? costOf(model, turn.usage, view.pricingOf(conversation.provider)) : undefined
 
   return { ...rest, classification, ...(costUsd === undefined ? {} : { costUsd }) }
 }
