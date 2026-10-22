@@ -36,6 +36,11 @@ export interface IAgentRules {
    * oficiais existem (id igual ao protocolo).
    */
   protocolOf?(providerId: string): EProvider | undefined
+  /**
+   * O modelo está ATIVADO no catálogo do provider? Presente, é a regra dos modelos (e o palpite pelo
+   * prefixo do id deixa de valer): agente só oferece modelo que alguém ativou em Providers.
+   */
+  modelEnabled?(providerId: string, modelId: string): boolean
   /** Problema do prompt para aquele provider (ex.: chaves que o ADK lê como variável). */
   promptIssue?(agent: IAgent): string | undefined
 }
@@ -64,7 +69,9 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
   // ⚖️ Só nos OFICIAIS o id do modelo diz de quem ele é. Num compatível (que pode servir modelos de
   // vários fabricantes, com ids próprios) qualquer id é plausível — quem confere é o catálogo de modelos do provider.
   const official = protocol !== undefined && protocol === agent.provider
-  if (official) {
+  if (protocol && rules.modelEnabled) {
+    for (const model of agent.models) if (!rules.modelEnabled(agent.provider, model)) issue('models', `not enabled in Providers → Models: ${model}`)
+  } else if (official) {
     for (const model of agent.models) {
       const provider = rules.providerOf(model)
       if (provider !== protocol) issue('models', provider ? `${model} is a ${provider} model` : `unknown model: ${model}`)

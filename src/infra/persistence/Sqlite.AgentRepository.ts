@@ -19,6 +19,11 @@ const SCHEMA = `
     updated_at  TEXT NOT NULL,
     updated_by  TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS agent_meta (
+    key    TEXT NOT NULL PRIMARY KEY,
+    value  TEXT NOT NULL
+  );
 `
 
 type TRow = Record<string, unknown>
@@ -63,6 +68,19 @@ export class SqliteAgentRepository implements IAgentRepository {
 
     const row = this.db.prepare('SELECT * FROM agents WHERE id = ?').get(agent.id) as TRow
     return this.toAgent(row) as IStoredAgent
+  }
+
+  /**
+   * Grava a semente UMA VEZ por banco. ⚖️ A marca (`agent_meta.seeded`) é o que impede um agente apagado
+   * de voltar no boot seguinte; id que já existe não é sobrescrito.
+   */
+  seedOnce(agents: readonly IAgent[], by: string): void {
+    if (this.db.prepare("SELECT 1 FROM agent_meta WHERE key = 'seeded'").get()) return
+
+    const now = new Date().toISOString()
+    const insert = this.db.prepare('INSERT OR IGNORE INTO agents (id, document, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?)')
+    for (const agent of agents) insert.run(agent.id, JSON.stringify(agent), now, now, by)
+    this.db.prepare("INSERT INTO agent_meta (key, value) VALUES ('seeded', ?)").run(now)
   }
 
   delete(id: string): boolean {

@@ -89,6 +89,8 @@ export interface IAgent {
 
 export interface IAgentDetail extends IAgent {
   systemPrompt: string
+  /** Declarados pelo agente, mas desligados no catálogo do provider. */
+  disabledModels?: string[]
   updatedAt?: string
   updatedBy?: string
 }
@@ -117,6 +119,7 @@ export interface ISettings {
   agentId?: string
   model?: string
   classifierModel?: string
+  classifierProvider?: string
   classifyTurns?: boolean
   updatedAt?: string
   updatedBy?: string

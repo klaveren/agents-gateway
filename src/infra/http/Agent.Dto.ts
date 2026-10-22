@@ -30,6 +30,8 @@ export interface IAgentDto {
  */
 export interface IAgentDetailDto extends IAgentDto {
   systemPrompt: string
+  /** Modelos que o agente declara e que estão DESLIGADOS no catálogo: não são oferecidos até religar. */
+  disabledModels?: string[]
   updatedAt?: Date
   updatedBy?: string
 }
@@ -61,6 +63,10 @@ export function toAgentDto(agent: IAgent, pricing: TModelPricing = MODEL_PRICING
   }
 }
 
-export function toAgentDetailDto(entry: { agent: IAgent; builtIn: boolean; updatedAt?: Date; updatedBy?: string }, pricing: TModelPricing = MODEL_PRICING): IAgentDetailDto {
-  return { ...toAgentDto(entry.agent, pricing, entry.builtIn), systemPrompt: entry.agent.systemPrompt, updatedAt: entry.updatedAt, updatedBy: entry.updatedBy }
+export function toAgentDetailDto(
+  entry: { agent: IAgent; builtIn: boolean; updatedAt?: Date; updatedBy?: string },
+  pricing: TModelPricing = MODEL_PRICING,
+  disabledModels: string[] = [],
+): IAgentDetailDto {
+  return { ...toAgentDto(entry.agent, pricing, entry.builtIn), systemPrompt: entry.agent.systemPrompt, updatedAt: entry.updatedAt, updatedBy: entry.updatedBy, disabledModels }
 }

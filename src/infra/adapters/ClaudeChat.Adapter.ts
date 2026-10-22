@@ -16,8 +16,6 @@ import { IToolDefinition } from '@infra/tools/Tool.Types'
 import { IManualLoopProvider, IManualToolCall, IManualToolResult, IManualTurnOutcome, runManualToolLoop } from './support/ManualTool.Loop'
 import { composeSystemPrompt, maxOutputTokens, maxToolTurns } from './support/Prompt.Helper'
 
-const DEFAULT_MODEL = 'claude-sonnet-5'
-
 /** `output_config.effort` da Messages API. Anything else is dropped. */
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 type TEffort = (typeof EFFORTS)[number]
@@ -60,7 +58,8 @@ export class ClaudeChatAdapter implements IAgentAdapter {
       provider: agent.provider,
       protocol: EProvider.CLAUDE,
       mode: EMode.CHAT,
-      model: input.model || DEFAULT_MODEL,
+      // O modelo vem resolvido pelo provider de sessões (o pedido, ou o padrão do agente).
+      model: input.model || agent.models[0] || '',
       reasoning: input.reasoning,
       language: input.language,
       tools: input.tools === true,

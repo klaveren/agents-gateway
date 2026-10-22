@@ -2,6 +2,7 @@ import {
   AdapterNotFoundError,
   AgentNotFoundError,
   AgentUnavailableError,
+  AgentWithoutModelError,
   InvalidAgentError,
   InvalidModelError,
   ModelNotFoundError,
@@ -28,6 +29,7 @@ export type TErrorCode =
   | 'provider_in_use'
   | 'provider_unavailable'
   | 'upstream_error'
+  | 'agent_without_model'
   | 'invalid_credentials'
   | 'login_locked'
   | 'session_not_found'
@@ -91,6 +93,10 @@ export function toHttpFailure(error: unknown): IHttpFailure {
      * fazer a seguir.
      */
     return { status: 403, code: 'agent_unavailable', message: error.message }
+  }
+
+  if (error instanceof AgentWithoutModelError) {
+    return { status: 422, code: 'agent_without_model', message: error.message }
   }
 
   if (error instanceof InvalidModelError) {

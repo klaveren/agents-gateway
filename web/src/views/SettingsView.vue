@@ -5,11 +5,14 @@ import type { TAudience } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import { useAuthStore } from '@/stores/auth'
 import { useConversationsStore } from '@/stores/conversations'
+import { useProvidersStore } from '@/stores/providers'
 import { useSettingsStore } from '@/stores/settings'
+import { providerLabel } from '@/lib/format'
 
 const auth = useAuthStore()
 const agents = useAgentsStore()
 const settings = useSettingsStore()
+const providers = useProvidersStore()
 const conversations = useConversationsStore()
 
 const gatewayToken = ref(auth.gatewayToken)
@@ -23,7 +26,9 @@ const passwordError = ref<string>()
 const audience = ref<TAudience>('all')
 const agentId = ref('')
 const model = ref('')
-const classifierModel = ref('')
+/** `provider::modelo` — o classificador é um modelo ATIVADO de um provider, escolhido numa lista. */
+const classifier = ref('')
+const classifierOptions = ref<Array<{ value: string; provider: string; model: string }>>([])
 const classifyTurns = ref(false)
 const saved = ref<string>()
 const failure = ref<string>()
@@ -37,8 +42,21 @@ const AUDIENCE: Array<{ value: TAudience; label: string; hint: string }> = [
 const agent = computed(() => agents.byId.get(agentId.value || settings.current?.defaults?.agentId || ''))
 
 onMounted(async () => {
-  if (auth.isAdmin) await settings.load().catch((error) => (failure.value = String(error)))
+  if (!auth.isAdmin) return
+  await settings.load().catch((error) => (failure.value = String(error)))
+  await loadClassifierOptions()
 })
+
+/** Os modelos ativados de cada provider ligado — a lista do classificador. */
+async function loadClassifierOptions() {
+  await providers.load().catch(() => undefined)
+  const lists = await Promise.all(
+    providers.list
+      .filter((provider) => provider.enabled)
+      .map(async (provider) => (await providers.models(provider.id).catch(() => [])).filter((model) => model.enabled).map((model) => ({ value: `${provider.id}::${model.modelId}`, provider: provider.id, model: model.modelId }))),
+  )
+  classifierOptions.value = lists.flat()
+}
 
 watch(
   () => settings.current,
@@ -47,7 +65,7 @@ watch(
     audience.value = current.audience
     agentId.value = current.agentId ?? ''
     model.value = current.model ?? ''
-    classifierModel.value = current.classifierModel ?? ''
+    classifier.value = current.classifierModel ? `${current.classifierProvider ?? ''}::${current.classifierModel}` : ''
     classifyTurns.value = current.classifyTurns ?? false
   },
   { immediate: true },
@@ -80,7 +98,15 @@ async function saveSettings() {
   failure.value = undefined
   try {
     // Vazio vira `null`: volta ao padrão em vez de gravar texto em branco.
-    await settings.save({ audience: audience.value, agentId: agentId.value || null, model: model.value || null, classifierModel: classifierModel.value || null, classifyTurns: classifyTurns.value })
+    const [classifierProvider, classifierModel] = classifier.value ? classifier.value.split('::') : ['', '']
+    await settings.save({
+      audience: audience.value,
+      agentId: agentId.value || null,
+      model: model.value || null,
+      classifierModel: classifierModel || null,
+      classifierProvider: classifierProvider || null,
+      classifyTurns: classifyTurns.value,
+    })
     saved.value = 'Configuração salva — vale para a próxima sessão.'
   } catch (error) {
     failure.value = error instanceof ApiError && error.details ? Object.values(error.fieldIssues).flat().join('; ') : String(error)
@@ -124,7 +150,12 @@ async function saveSettings() {
           </label>
           <label class="flex flex-col gap-1 text-sm text-zinc-300">
             Modelo do classificador
-            <input v-model="classifierModel" class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 font-mono text-sm" placeholder="ex.: claude-haiku-5" />
+            <select v-model="classifier" class="rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2 text-sm">
+              <option value="">Nenhum (CLASSIFIER_MODEL, se houver)</option>
+              <option v-if="classifier && !classifierOptions.some((option) => option.value === classifier)" :value="classifier">{{ classifier.replace('::', ' · ') }} (não ativado)</option>
+              <option v-for="option in classifierOptions" :key="option.value" :value="option.value">{{ providerLabel(option.provider, providers.names) }} · {{ option.model }}</option>
+            </select>
+            <small class="text-xs text-zinc-500">Os modelos ativados em Providers. Prefira um pequeno: ele roda a cada turno.</small>
           </label>
           <label class="flex items-center gap-2 self-end pb-2 text-sm text-zinc-300">
             <input v-model="classifyTurns" type="checkbox" class="accent-emerald-500" /> Classificar cada turno

@@ -2,6 +2,7 @@ import { ITurnClassifier } from '@domain/ports/TurnClassifier.Port'
 import { loadClassifierPrompt } from '@infra/classifier/Classifier.Prompt'
 import { ConfiguredTurnClassifier } from '@infra/classifier/Configured.TurnClassifier'
 import { makeCredentials } from './Credentials.Factory'
+import { makeProviders } from './Providers.Factory'
 import { makeSettings } from './Settings.Factory'
 
 let instance: ITurnClassifier | undefined
@@ -23,6 +24,7 @@ export function makeClassifier(): ITurnClassifier {
     prompt: loadClassifierPrompt(),
     envModel: process.env.CLASSIFIER_MODEL,
     credentials: makeCredentials(),
+    connections: makeProviders(),
   })
 
   // `void`: o boot não espera pelo banco, e `status` nunca lança.

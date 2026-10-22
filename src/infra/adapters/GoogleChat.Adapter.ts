@@ -16,8 +16,6 @@ import { IToolDefinition } from '@infra/tools/Tool.Types'
 import { IManualLoopProvider, IManualToolCall, IManualTurnOutcome, runManualToolLoop } from './support/ManualTool.Loop'
 import { composeSystemPrompt, maxOutputTokens, maxToolTurns } from './support/Prompt.Helper'
 
-const DEFAULT_MODEL = 'gemini-3.7-flash'
-
 type THistory = Content[]
 
 export interface IGoogleChatAdapterDeps {
@@ -54,7 +52,8 @@ export class GoogleChatAdapter implements IAgentAdapter {
       provider: agent.provider,
       protocol: EProvider.GOOGLE,
       mode: EMode.CHAT,
-      model: input.model || DEFAULT_MODEL,
+      // O modelo vem resolvido pelo provider de sessões (o pedido, ou o padrão do agente).
+      model: input.model || agent.models[0] || '',
       reasoning: input.reasoning,
       language: input.language,
       tools: input.tools === true,

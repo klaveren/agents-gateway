@@ -2,7 +2,14 @@ import { AGENT_REGISTRY, getAgentById, modelFor } from '@domain/Agent.Registry'
 import { resolveSessionMode } from '@domain/Session.Policy'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { AdapterNotFoundError, AgentNotFoundError, AgentUnavailableError, ProviderUnavailableError, SessionNotFoundError } from '@domain/errors/Domain.Error'
+import {
+  AdapterNotFoundError,
+  AgentNotFoundError,
+  AgentUnavailableError,
+  AgentWithoutModelError,
+  ProviderUnavailableError,
+  SessionNotFoundError,
+} from '@domain/errors/Domain.Error'
 import { DEFAULT_SETTINGS, IAgentSettings } from '@domain/models/Settings.Model'
 import { IAgentDirectory } from '@domain/ports/AgentRepository.Port'
 import { IProviderDirectory } from '@domain/ports/ProviderRepository.Port'
@@ -98,6 +105,8 @@ export class AgentProvider implements IAgentProvider {
 
     // Corpo → configuração → padrão do registry. O corpo só vence quando alguém escolheu de propósito.
     const agent = this.getAgent(input.agentId || settings.agentId)
+    // Os modelos do agente já vêm filtrados pelo catálogo: sem nenhum ativado, não há com o que conversar.
+    if (!agent.models.length) throw new AgentWithoutModelError(agent.id)
     const mode = resolveSessionMode(agent, input)
 
     return this.getAdapter(this.protocolOf(agent.provider), mode).createSession(agent, {

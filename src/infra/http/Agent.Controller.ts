@@ -45,12 +45,21 @@ import { SseStream } from './Sse.Stream'
 import { NextFunction, Request, Response } from 'express'
 
 /**
- * As tools LOCAIS que existem neste processo: as dos agentes EMBUTIDOS habilitados.
+ * As tools LOCAIS que um agente PODE receber — o perímetro, decidido no deploy.
  *
- * ⛔ SÓ OS EMBUTIDOS, de propósito: é o perímetro de `AGENTS_ENABLED` (ver `IAgentRules.knownTools`).
- * Somar as dos agentes criados deixaria um agente criado ampliar o que outro pode receber.
+ * ⛔ `LOCAL_TOOLS_ENABLED` (lista separada por vírgula) é o perímetro, e a tela não o amplia: tirar o
+ * `run_bash` dali tira o `run_bash` do gateway, para qualquer agente criado ou editado. Sem a variável:
+ * com `AGENTS_ENABLED` declarado, valem as tools dos agentes-semente habilitados (o comportamento de
+ * antes de os agentes irem para o banco); sem nenhuma das duas, todas as locais.
  */
-const ALL_LOCAL_TOOLS = [...new Set(AGENT_REGISTRY.flatMap((agent) => agent.allowedTools))]
+export function localToolPerimeter(all: readonly string[], env: NodeJS.ProcessEnv = process.env): string[] {
+  const declared = env.LOCAL_TOOLS_ENABLED?.split(',')
+    .map((name) => name.trim())
+    .filter(Boolean)
+  if (declared?.length) return all.filter((name) => declared.includes(name))
+  if (env.AGENTS_ENABLED?.trim()) return [...new Set(AGENT_REGISTRY.flatMap((agent) => agent.allowedTools))].filter((name) => all.includes(name))
+  return [...all]
+}
 const STARTED_AT = Date.now()
 
 export interface IAgentControllerDeps {
@@ -183,7 +192,7 @@ export class AgentController {
       const entry = this.agents.entry(req.params.agentId as string)
       if (!entry) throw new AgentNotFoundError(req.params.agentId as string)
 
-      return toAgentDetailDto(entry, this.pricingOf(entry.agent.provider))
+      return toAgentDetailDto(entry, this.pricingOf(entry.agent.provider), this.agents.unusableModels(entry.agent))
     })
   }
 
@@ -201,7 +210,6 @@ export class AgentController {
 
         const saved = this.agents.save(toAgentInput(body.id ?? '', body), { rules: await this.agentRules(), by: admin.email ?? admin.id ?? 'admin', creating: true })
 
-        this.catalogModels(saved)
         return toAgentDetailDto({ agent: saved, builtIn: false, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy }, this.pricingOf(saved.provider))
       },
       { status: 201, message: 'Agent created' },
@@ -222,7 +230,6 @@ export class AgentController {
           creating: false,
         })
 
-        this.catalogModels(saved)
         return toAgentDetailDto({ agent: saved, builtIn: false, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy }, this.pricingOf(saved.provider))
       },
       { message: 'Agent updated' },
@@ -254,11 +261,12 @@ export class AgentController {
    * dos agentes declarados, um agente criado com um modelo trocado ensinaria a regra a aceitar o erro.
    */
   private async agentRules(): Promise<Omit<IAgentRules, 'takenIds'>> {
-    const tools = await this.usecases.catalog.list(ALL_LOCAL_TOOLS)
+    const tools = await this.usecases.catalog.list(this.localTools)
 
     return {
       knownTools: tools.map((tool) => tool.name),
       providerOf: (model) => providerOfModel(model, []),
+      modelEnabled: this.usecases.models ? (provider, model) => this.usecases.models!.isEnabled(provider, model) : undefined,
       protocolOf: (id) => this.usecases.providers?.get(id)?.protocol ?? Object.values(EProvider).find((value) => value === id),
       promptIssue: (agent) => {
         const protocol = this.usecases.providers?.get(agent.provider)?.protocol ?? agent.provider
@@ -287,7 +295,7 @@ export class AgentController {
   async getTools(_req: Request, res: Response) {
     await this.respond(res, async () => {
       await this.requireCaller()
-      return this.catalogFor(ALL_LOCAL_TOOLS)
+      return this.catalogFor(this.localTools)
     })
   }
 
@@ -749,12 +757,8 @@ export class AgentController {
     return this.usecases.pricing ?? MODEL_PRICING
   }
 
-  /**
-   * Os modelos de um agente salvo entram no catálogo, ativados, se ainda não estão. Transição: enquanto o
-   * formulário aceita digitar o id, um agente não pode nascer com modelo que o catálogo não conhece.
-   */
-  private catalogModels(agent: IAgent): void {
-    for (const model of agent.models) this.usecases.models?.ensureEnabled(agent.provider, model, 'agent')
+  private get localTools(): string[] {
+    return localToolPerimeter(this.usecases.catalog.localNames?.() ?? [])
   }
 
   /** Os preços de um provider: os do catálogo, ou a tabela de fábrica quando não há catálogo injetado. */

@@ -145,6 +145,16 @@ describe('AgentProvider', () => {
     await assert.rejects(provider.createSession({ agentId: 'roteado' }), /openrouter/)
   })
 
+  it('refuses a session on an agent with no enabled model, saying where to fix it', async () => {
+    const store = new SessionStore()
+    const chat = spyAdapter(store, EProvider.GOOGLE, EMode.CHAT, [])
+    const empty = { id: 'vazio', name: 'Vazio', provider: 'google', systemPrompt: 'p', models: [], modes: [EMode.CHAT], allowedTools: [] }
+    const provider = new AgentProvider(new Map([[adapterKey(EProvider.GOOGLE, EMode.CHAT), chat.adapter]]), store, undefined, { list: () => [empty], get: () => empty })
+
+    await assert.rejects(provider.createSession({ agentId: 'vazio' }), /Providers → Models/)
+    assert.deepStrictEqual(chat.calls, [])
+  })
+
   it('defaults to the chat lane when no mode is given', async () => {
     const { provider, chat, agent } = setup()
     const session = await provider.createSession({ agentId: 'researcher-agent' })
@@ -310,14 +320,14 @@ describe('AgentProvider', () => {
     await assert.doesNotReject(() => provider.createSession({ agentId: 'researcher-agent' }))
   })
 
-  it('resolves the model: body, then settings, then left to the adapter', async () => {
+  it("resolves the model: body, then settings, then the agent's default", async () => {
     const { provider } = setupWithSettings(new NullSettingsRepository({ audience: 'all', agentId: 'researcher-agent', model: 'gemini-3.6-flash' }))
 
     assert.strictEqual(provider.describe((await provider.createSession({})).id).model, 'gemini-3.6-flash')
     assert.strictEqual(provider.describe((await provider.createSession({ model: 'gemini-3.1-pro-preview' })).id).model, 'gemini-3.1-pro-preview')
 
     const bare = setupWithSettings(new NullSettingsRepository({ audience: 'all', agentId: 'researcher-agent' }))
-    assert.strictEqual(bare.provider.describe((await bare.provider.createSession({})).id).model, 'model-x')
+    assert.strictEqual(bare.provider.describe((await bare.provider.createSession({})).id).model, 'gemini-3.7-flash')
   })
 
   it('does not ship the configured model of one provider to another agent', async () => {

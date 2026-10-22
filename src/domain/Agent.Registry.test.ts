@@ -65,9 +65,10 @@ describe('AgentRegistry', () => {
       assert.strictEqual(modelFor(agent, 'um-modelo-de-outro-provider'), agent.models[0])
     })
 
-    it('sem modelo pedido não escolhe nenhum: o adapter usa o padrão dele', () => {
-      assert.strictEqual(modelFor(agent, undefined), undefined)
-      assert.strictEqual(modelFor(agent, ''), undefined)
+    it('sem modelo pedido vale o padrão do agente (o primeiro): não há mais padrão no adapter', () => {
+      assert.strictEqual(modelFor(agent, undefined), agent.models[0])
+      assert.strictEqual(modelFor(agent, ''), agent.models[0])
+      assert.strictEqual(modelFor({ ...agent, models: [] }, undefined), undefined)
     })
   })
 })

@@ -169,3 +169,10 @@ export class InvalidModelError extends DomainError {
     super(`Model change is invalid: ${issues.map((issue) => `${issue.field} (${issue.message})`).join('; ')}`)
   }
 }
+
+/** O agente não tem nenhum modelo ativado no catálogo do provider: nenhuma sessão nasce nele. */
+export class AgentWithoutModelError extends DomainError {
+  constructor(public readonly agentId: string) {
+    super(`Agent ${agentId} has no enabled model. Enable one in Providers → Models, then pick it in the agent.`)
+  }
+}

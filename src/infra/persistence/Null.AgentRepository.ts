@@ -20,6 +20,14 @@ export class NullAgentRepository implements IAgentRepository {
     return stored
   }
 
+  private seeded = false
+
+  seedOnce(agents: readonly IAgent[], by: string): void {
+    if (this.seeded) return
+    this.seeded = true
+    for (const agent of agents) if (!this.agents.has(agent.id)) this.save(agent, by)
+  }
+
   delete(id: string): boolean {
     return this.agents.delete(id)
   }

@@ -21,8 +21,10 @@ export function makeModelCatalog(): ModelCatalogService {
   const repository = new SqliteModelCatalogRepository(configured === 'off' ? ':memory:' : configured || DEFAULT_DB_PATH)
   const providers = makeProviders()
 
-  instance = new ModelCatalogService(repository, loadPricing(), (id) => providers.get(id)?.official ?? false)
-  for (const agent of makeAgents().list()) for (const model of agent.models) instance.ensureEnabled(agent.provider, model, 'seed')
+  const catalog = new ModelCatalogService(repository, loadPricing(), (id) => providers.get(id)?.official ?? false)
+  instance = catalog
+  // `rawEntries()`: a lista normal já passa pelo filtro do catálogo, que é este que está nascendo.
+  for (const { agent } of makeAgents().rawEntries()) for (const model of agent.models) catalog.ensureEnabled(agent.provider, model, 'seed')
 
-  return instance
+  return catalog
 }

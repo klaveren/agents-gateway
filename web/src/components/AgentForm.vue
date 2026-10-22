@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { ApiError } from '@/lib/api'
 import { providerLabel } from '@/lib/format'
 import { useProvidersStore } from '@/stores/providers'
-import type { IAgentDetail, IAgentInput, TMode } from '@/lib/types'
+import type { IAgentDetail, IAgentInput, ICatalogModel, TMode } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import ConfirmDialog from './ConfirmDialog.vue'
 
@@ -18,19 +18,37 @@ const providerOptions = computed(() => providers.list.filter((provider) => provi
 const protocol = computed(() => providers.list.find((provider) => provider.id === form.value.provider)?.protocol ?? form.value.provider)
 const compatible = computed(() => !!providers.list.find((provider) => provider.id === form.value.provider)?.baseUrl)
 
-/** Sugestões por provider — os modelos que os embutidos já declaram. Digitar outro também vale. */
-const suggestions = computed(() => {
-  const byProvider: Record<string, Set<string>> = {}
-  for (const agent of agents.list) for (const model of agent.models) (byProvider[agent.provider] ??= new Set()).add(model)
-  return byProvider
+/**
+ * Os modelos que o agente PODE oferecer: os ativados no catálogo do provider escolhido. Sem nenhum
+ * ativado, o formulário manda para Providers → Modelos.
+ */
+const enabledModels = ref<ICatalogModel[]>([])
+const loadingModels = ref(false)
+const modelSearch = ref('')
+const visibleModels = computed(() => {
+  const term = modelSearch.value.trim().toLowerCase()
+  return enabledModels.value.filter((model) => !term || model.modelId.toLowerCase().includes(term) || model.label?.toLowerCase().includes(term))
 })
+
+
+/** Marca/desmarca; o primeiro marcado é o padrão (e "tornar padrão" o leva para o topo). */
+function toggleModel(modelId: string) {
+  const at = form.value.models.indexOf(modelId)
+  if (at === -1) form.value.models.push(modelId)
+  else form.value.models.splice(at, 1)
+}
+
+function makeDefault(modelId: string) {
+  form.value.models = [modelId, ...form.value.models.filter((model) => model !== modelId)]
+}
 
 /** Ferramentas que mudam algo fora da conversa: o formulário avisa antes de dar ao agente. */
 const DANGEROUS = new Set(['run_bash'])
 
 const blank = (): IAgentInput => ({ id: '', name: '', provider: 'claude', systemPrompt: '', models: [], reasoningEfforts: [], modes: ['chat', 'agent'], allowedTools: [] })
 const form = ref<IAgentInput>(blank())
-const modelsText = ref('')
+/** Modelos que o agente declarava e que estão desligados no catálogo: saem ao salvar. */
+const droppedModels = ref<string[]>([])
 const effortsText = ref('')
 const issues = ref<Record<string, string[]>>({})
 const failure = ref<string>()
@@ -38,13 +56,31 @@ const saving = ref(false)
 const confirming = ref(false)
 const deleting = ref(false)
 
+watch(
+  () => form.value.provider,
+  async (provider) => {
+    if (!provider) return
+    loadingModels.value = true
+    try {
+      enabledModels.value = (await providers.models(provider)).filter((model) => model.enabled)
+    } catch {
+      enabledModels.value = []
+    } finally {
+      loadingModels.value = false
+    }
+  },
+  { immediate: true },
+)
+
 const readOnly = computed(() => !!props.agent?.builtIn && !props.creating)
 
 watch(
   () => [props.agent, props.creating] as const,
   ([agent]) => {
     form.value = agent ? { id: agent.id, name: agent.name, provider: agent.provider, systemPrompt: agent.systemPrompt, models: [...agent.models], reasoningEfforts: [...(agent.reasoningEfforts ?? [])], modes: [...agent.modes], allowedTools: [...agent.allowedTools] } : blank()
-    modelsText.value = form.value.models.join(', ')
+    // Os desligados no catálogo não entram no formulário: salvar com eles seria recusado.
+    droppedModels.value = agent?.disabledModels ?? []
+    form.value.models = form.value.models.filter((model) => !droppedModels.value.includes(model))
     effortsText.value = (form.value.reasoningEfforts ?? []).join(', ')
     issues.value = {}
     failure.value = undefined
@@ -64,11 +100,6 @@ function toggle<T>(values: T[], value: T) {
   else values.splice(at, 1)
 }
 
-function addModel(model: string) {
-  const models = list(modelsText.value)
-  if (!models.includes(model)) modelsText.value = [...models, model].join(', ')
-}
-
 function slugify() {
   if (!props.creating || form.value.id) return
   form.value.id = form.value.name
@@ -85,7 +116,7 @@ async function save() {
   issues.value = {}
   failure.value = undefined
   try {
-    const input: IAgentInput = { ...form.value, models: list(modelsText.value), reasoningEfforts: list(effortsText.value) }
+    const input: IAgentInput = { ...form.value, reasoningEfforts: list(effortsText.value) }
     const saved = await agents.save(input, props.creating)
     emit('saved', saved.id)
   } catch (error) {
@@ -142,15 +173,32 @@ async function remove() {
         </div>
       </div>
 
-      <label class="field sm:col-span-2">
-        <span>Modelos <em class="font-normal text-zinc-500">(o primeiro é o padrão)</em></span>
-        <input v-model="modelsText" class="input font-mono" placeholder="claude-sonnet-5, claude-opus-5" />
-        <div class="flex flex-wrap gap-1">
-          <button v-for="model in suggestions[form.provider]" :key="model" type="button" class="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300 hover:bg-zinc-700" @click="addModel(model)">+ {{ model }}</button>
-        </div>
-        <small v-if="compatible" class="hint">Provider compatível: use os ids de modelo dele, como ele os lista. Tool use e raciocínio variam por modelo.</small>
+      <div class="field sm:col-span-2">
+        <span>Modelos <em class="font-normal text-zinc-500">— os ativados em Providers; o padrão é o que a conversa usa quando ninguém escolhe</em></span>
+        <p v-if="droppedModels.length" class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-normal text-amber-200">
+          Desligados no catálogo, saem ao salvar: <code>{{ droppedModels.join(', ') }}</code>. Para manter, ative em Providers → Modelos.
+        </p>
+        <p v-if="loadingModels" class="text-xs font-normal text-zinc-500">Carregando modelos…</p>
+        <p v-else-if="!enabledModels.length" class="text-sm font-normal text-amber-300">
+          Nenhum modelo ativado neste provider. <RouterLink to="/providers" class="underline">Ative em Providers → Modelos</RouterLink>.
+        </p>
+        <template v-else>
+          <input v-if="enabledModels.length > 8" v-model="modelSearch" type="search" placeholder="Buscar modelo…" class="input text-sm" />
+          <ul class="scroll-thin max-h-64 divide-y divide-zinc-800/70 overflow-y-auto rounded-lg border border-zinc-800">
+            <li v-for="model in visibleModels" :key="model.modelId" class="flex items-center gap-3 px-3 py-2 font-normal">
+              <input type="checkbox" class="accent-emerald-500" :checked="form.models.includes(model.modelId)" @change="toggleModel(model.modelId)" />
+              <span class="min-w-0 flex-1">
+                <span class="block truncate font-mono text-[13px]">{{ model.modelId }}</span>
+                <span v-if="model.price" class="text-xs text-zinc-500">${{ model.price.input }} / ${{ model.price.output }} por 1M</span>
+              </span>
+              <span v-if="form.models[0] === model.modelId" class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-300">padrão</span>
+              <button v-else-if="form.models.includes(model.modelId)" type="button" class="text-xs text-zinc-400 hover:text-zinc-100" @click="makeDefault(model.modelId)">tornar padrão</button>
+            </li>
+          </ul>
+        </template>
+        <small v-if="compatible" class="hint">Provider compatível: tool use e raciocínio variam por modelo.</small>
         <small v-for="message in issues.models" :key="message" class="error">{{ message }}</small>
-      </label>
+      </div>
 
       <div class="field">
         <span>Lanes</span>
