@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { ICredentialSource } from '@domain/ports/CredentialStore.Port'
+import { requireKey } from './support/Keyed.Client'
 import { query, type CanUseTool, type EffortLevel, type Options, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -34,6 +36,13 @@ interface IClaudeAgentNative {
 
 export interface IClaudeAgentAdapterDeps {
   query?: TQuery
+  /**
+   * De onde vem a chave em cada turno. Ausente = o subprocesso herda o ambiente, como antes.
+   *
+   * ⚠️ O CLI do Claude é um SUBPROCESSO: ele não vê a store, só o `env` que recebe. A chave vai em
+   * `options.env` a cada turno — é o que faz a troca pela tela valer sem reiniciar.
+   */
+  credentials?: ICredentialSource
   store?: SessionStore
   catalog?: ToolCatalog
 }
@@ -50,8 +59,11 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
   private readonly store: SessionStore
   private readonly catalog?: ToolCatalog
 
+  private readonly credentials?: ICredentialSource
+
   constructor(deps: IClaudeAgentAdapterDeps = {}) {
     this.query = deps.query ?? query
+    this.credentials = deps.credentials
     this.store = deps.store ?? new SessionStore()
     this.catalog = deps.catalog
   }
@@ -98,6 +110,14 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message } }
     }
 
+    let apiKey: string | undefined
+    try {
+      apiKey = this.credentials ? requireKey(EProvider.CLAUDE, this.credentials) : undefined
+    } catch (error: unknown) {
+      yield { type: 'error', sessionId, timestamp: new Date(), payload: { message: error instanceof Error ? error.message : String(error) } }
+      return
+    }
+
     const local = this.catalog?.localFor(agent.allowedTools) ?? []
     const remoteUrl = await this.catalog?.mcpEndpoint()
 
@@ -118,6 +138,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       maxTurns: maxToolTurns(),
       abortController: abort,
       ...(native.started ? { resume: native.sdkSessionId } : { sessionId: native.sdkSessionId }),
+      ...(apiKey ? { env: { ...process.env, ANTHROPIC_API_KEY: apiKey } } : {}),
     }
 
     const effort = this.toEffort(record.reasoning)

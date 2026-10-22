@@ -307,6 +307,29 @@ const failures = {
 
 const json = (schema: object) => ({ content: { 'application/json': { schema } } })
 
+const providerParam = [{ name: 'id', in: 'path', required: true, schema: { type: 'string', enum: ['claude', 'openai', 'google'] } }]
+
+const providerStatusSchema = {
+  type: 'object',
+  description: 'NEVER the key itself: where it comes from and its last four characters.',
+  properties: {
+    provider: { type: 'string', enum: ['claude', 'openai', 'google'] },
+    configured: { type: 'boolean' },
+    source: { type: 'string', enum: ['stored', 'env', 'none'], description: '`stored` (saved through the API, wins over the environment), `env`, or `none`.' },
+    last4: { type: 'string' },
+    updatedAt: { type: 'string', format: 'date-time' },
+    updatedBy: { type: 'string' },
+    unreadable: { type: 'boolean', description: 'A stored key that no longer decrypts (the master key changed): save it again.' },
+    models: { type: 'array', items: { type: 'string' } },
+    agents: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' } } } },
+  },
+}
+
+const probeSchema = {
+  type: 'object',
+  properties: { ok: { type: 'boolean' }, models: { type: 'integer' }, status: { type: 'integer' }, message: { type: 'string', description: 'The provider error, with the key masked.' } },
+}
+
 const userSchema = {
   type: 'object',
   description: 'A gateway account. The password hash never leaves the server.',
@@ -442,6 +465,33 @@ export const OPENAPI_DOCUMENT = {
         parameters: userIdParam,
         requestBody: { required: true, ...json({ type: 'object', properties: { password: passwordField }, required: ['password'] }) },
         responses: { '200': { description: 'Set', ...json(envelope({ type: 'null' })) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/providers': {
+      get: {
+        summary: 'Each provider: whether a key is configured, where it comes from and what it unlocks. Administrators only; anyone else gets 404',
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: providerStatusSchema })) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/providers/{id}/key': {
+      put: {
+        summary: 'Save the API key, encrypted at rest. It takes effect on the next call, with no restart, and is never returned. Administrators only',
+        parameters: providerParam,
+        requestBody: { required: true, ...json({ type: 'object', properties: { key: { type: 'string', minLength: 8, maxLength: 500 } }, required: ['key'] }) },
+        responses: { '200': { description: 'Saved', ...json(envelope(providerStatusSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+      delete: {
+        summary: 'Remove the saved key; the environment key, if any, applies again. Administrators only',
+        parameters: providerParam,
+        responses: { '200': { description: 'Removed', ...json(envelope(providerStatusSchema)) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/providers/{id}/test': {
+      post: {
+        summary: 'Check a key with the cheapest authenticated call (list models): the one in the body, or the one in effect. Administrators only',
+        parameters: providerParam,
+        requestBody: { required: false, ...json({ type: 'object', properties: { key: { type: 'string' } } }) },
+        responses: { '200': { description: 'The probe result', ...json(envelope(probeSchema)) }, '401': failures['401'], '404': failures['404'] },
       },
     },
     '/agents': {

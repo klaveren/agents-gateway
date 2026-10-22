@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import { EventType, InMemorySessionService, LlmAgent, Runner, StreamingMode, toStructuredEvents, type BaseTool, type BaseToolset, type Event } from '@google/adk'
+import { ICredentialSource } from '@domain/ports/CredentialStore.Port'
+import { requireKey } from './support/Keyed.Client'
+import { EventType, Gemini, InMemorySessionService, LlmAgent, Runner, StreamingMode, toStructuredEvents, type BaseTool, type BaseToolset, type Event } from '@google/adk'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
@@ -62,6 +64,8 @@ export interface IAdkModelResponse {
 export interface IAdkRuntimeSpec {
   name: string
   model: string
+  /** A chave da sessão. Ausente = o ADK lê `GOOGLE_GENAI_API_KEY`/`GEMINI_API_KEY` do ambiente. */
+  apiKey?: string
   instruction: string
   tools: Array<BaseTool | BaseToolset>
   /**
@@ -89,6 +93,11 @@ interface IGoogleAgentNative {
 }
 
 export interface IGoogleAgentAdapterDeps {
+  /**
+   * De onde vem a chave. ⚠️ Vale ao NASCER a sessão: o runtime do ADK é da sessão inteira (carrega o
+   * histórico), então trocar a chave pela tela vale para as conversas que começam depois.
+   */
+  credentials?: ICredentialSource
   createRuntime?: TAdkRuntimeFactory
   store?: SessionStore
   catalog?: ToolCatalog
@@ -98,7 +107,7 @@ function defaultRuntimeFactory(spec: IAdkRuntimeSpec): IAdkRuntime {
   const sessionService = new InMemorySessionService()
   const agent = new LlmAgent({
     name: spec.name,
-    model: spec.model,
+    model: spec.apiKey ? new Gemini({ model: spec.model, apiKey: spec.apiKey }) : spec.model,
     // O ADK 1.6 usa `instruction` (singular) e `model`; não existem `instructions` nem `llm`.
     instruction: spec.instruction,
     tools: spec.tools,
@@ -171,11 +180,13 @@ export class GoogleAgentAdapter implements IAgentAdapter {
   private readonly createRuntime: TAdkRuntimeFactory
   private readonly store: SessionStore
   private readonly catalog?: ToolCatalog
+  private readonly credentials?: ICredentialSource
 
   constructor(deps: IGoogleAgentAdapterDeps = {}) {
     this.createRuntime = deps.createRuntime ?? defaultRuntimeFactory
     this.store = deps.store ?? new SessionStore()
     this.catalog = deps.catalog
+    this.credentials = deps.credentials
   }
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
@@ -297,6 +308,7 @@ export class GoogleAgentAdapter implements IAgentAdapter {
       const remote = await this.remoteTools(agent, caller)
       record.native = {
         runtime: this.createRuntime({
+          apiKey: this.credentials ? requireKey(EProvider.GOOGLE, this.credentials) : undefined,
           name: this.toAdkName(agent.id),
           model: record.model,
           instruction: assertNoAdkTemplateCollision(record.systemPrompt),

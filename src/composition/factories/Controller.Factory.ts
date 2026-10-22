@@ -1,5 +1,7 @@
 import { AgentController } from '@infra/http/Agent.Controller'
 import { AuthController } from '@infra/http/Auth.Controller'
+import { ProvidersController } from '@infra/http/Providers.Controller'
+import { makeCredentials } from './Credentials.Factory'
 import { makeTools } from './Tools.Factory'
 import { loadPricing } from '@infra/pricing/Pricing.File'
 import { sessionContextFromEnv } from '@infra/session/Template.SessionContext'
@@ -33,4 +35,8 @@ export function makeController(): AgentController {
 export function makeAuthController(): AuthController {
   const { accounts, proof } = makeAuth()
   return new AuthController({ accounts, proof })
+}
+
+export function makeProvidersController(): ProvidersController {
+  return new ProvidersController({ credentials: makeCredentials(), agents: makeAgents(), proof: makeAuth().proof })
 }

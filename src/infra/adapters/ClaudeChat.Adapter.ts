@@ -1,4 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { ICredentialSource } from '@domain/ports/CredentialStore.Port'
+import { KeyedClient } from './support/Keyed.Client'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
@@ -28,6 +30,8 @@ type THistory = Anthropic.MessageParam[]
 
 export interface IClaudeChatAdapterDeps {
   client?: Anthropic
+  /** De onde vem a chave em cada chamada. Ausente = a do ambiente. */
+  credentials?: ICredentialSource
   store?: SessionStore
   catalog?: ToolCatalog
 }
@@ -40,12 +44,12 @@ export interface IClaudeChatAdapterDeps {
  * lane `agent` recebe pronto do Agents SDK.
  */
 export class ClaudeChatAdapter implements IAgentAdapter {
-  private readonly client: Anthropic
+  private readonly clients: KeyedClient<Anthropic>
   private readonly store: SessionStore
   private readonly catalog?: ToolCatalog
 
   constructor(deps: IClaudeChatAdapterDeps = {}) {
-    this.client = deps.client ?? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || 'sk-ant-dummy' })
+    this.clients = new KeyedClient(EProvider.CLAUDE, (key) => new Anthropic({ apiKey: key }), deps.credentials, deps.client)
     this.store = deps.store ?? new SessionStore()
     this.catalog = deps.catalog
   }
@@ -143,7 +147,8 @@ export class ClaudeChatAdapter implements IAgentAdapter {
    * meio do stream e escrever chamada e resultado no formato de history da Messages API.
    */
   private loopProvider(record: ISessionRecord, sessionId: string): IManualLoopProvider<Anthropic.MessageParam> {
-    const client = this.client
+    // Pedido aqui, dentro do turno: a chave em vigor AGORA, e a falta dela vira evento de erro do turno.
+    const client = this.clients.get()
     const effort = this.toEffort(record.reasoning)
 
     return {

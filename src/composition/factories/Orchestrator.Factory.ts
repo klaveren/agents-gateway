@@ -11,6 +11,7 @@ import { OpenAIChatAdapter } from '@infra/adapters/OpenAIChat.Adapter'
 import { adapterKey, AgentProvider } from '@infra/providers/Agent.Provider'
 import { SessionStore } from '@infra/session/Session.Store'
 import { makeAgents } from './Agents.Factory'
+import { makeCredentials } from './Credentials.Factory'
 import { makeSettings } from './Settings.Factory'
 import { makeTools } from './Tools.Factory'
 
@@ -39,14 +40,16 @@ export function makeOrchestrator(): AgentProvider {
 
   const { catalog } = makeTools()
   const sessions = makeSessionStore()
+  // A MESMA store da tela de Providers: a chave salva lá vale na próxima chamada de qualquer lane.
+  const credentials = makeCredentials()
 
   const adapters = new Map<string, IAgentAdapter>([
-    [adapterKey(EProvider.CLAUDE, EMode.CHAT), new ClaudeChatAdapter({ store: sessions, catalog })],
-    [adapterKey(EProvider.OPENAI, EMode.CHAT), new OpenAIChatAdapter({ store: sessions, catalog })],
-    [adapterKey(EProvider.GOOGLE, EMode.CHAT), new GoogleChatAdapter({ store: sessions, catalog })],
-    [adapterKey(EProvider.CLAUDE, EMode.AGENT), new ClaudeAgentAdapter({ store: sessions, catalog })],
-    [adapterKey(EProvider.OPENAI, EMode.AGENT), new OpenAIAgentAdapter({ store: sessions, catalog })],
-    [adapterKey(EProvider.GOOGLE, EMode.AGENT), new GoogleAgentAdapter({ store: sessions, catalog })],
+    [adapterKey(EProvider.CLAUDE, EMode.CHAT), new ClaudeChatAdapter({ store: sessions, catalog, credentials })],
+    [adapterKey(EProvider.OPENAI, EMode.CHAT), new OpenAIChatAdapter({ store: sessions, catalog, credentials })],
+    [adapterKey(EProvider.GOOGLE, EMode.CHAT), new GoogleChatAdapter({ store: sessions, catalog, credentials })],
+    [adapterKey(EProvider.CLAUDE, EMode.AGENT), new ClaudeAgentAdapter({ store: sessions, catalog, credentials })],
+    [adapterKey(EProvider.OPENAI, EMode.AGENT), new OpenAIAgentAdapter({ store: sessions, catalog, credentials })],
+    [adapterKey(EProvider.GOOGLE, EMode.AGENT), new GoogleAgentAdapter({ store: sessions, catalog, credentials })],
   ])
 
   /**

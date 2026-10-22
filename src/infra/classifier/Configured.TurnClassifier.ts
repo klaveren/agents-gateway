@@ -1,6 +1,7 @@
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgentSettings } from '@domain/models/Settings.Model'
 import { TClassification } from '@domain/models/Classification.Model'
+import { ICredentialSource } from '@domain/ports/CredentialStore.Port'
 import { ISettingsRepository } from '@domain/ports/SettingsRepository.Port'
 import { IClassifierInput, ITurnClassifier } from '@domain/ports/TurnClassifier.Port'
 import { apiKeyOf, makeComplete, providerOfModel } from './Classifier.Completion'
@@ -25,14 +26,18 @@ export interface IConfiguredClassifierDeps {
   /** Monta o `complete` de um modelo, ou `undefined` se não dá (provider desconhecido, sem chave). */
   build?: (model: string) => TComplete | undefined
   warn?: (message: string) => void
+  /** De onde vem a chave (a da tela, senão a do ambiente). Ausente = só o ambiente. */
+  credentials?: ICredentialSource
 }
 
-/** O padrão: provider pelo registry, chave pelo ambiente, SDK plano. */
-function buildFromEnvironment(model: string): TComplete | undefined {
-  const provider = providerOfModel(model)
-  const apiKey = provider ? apiKeyOf(provider) : undefined
+/** O padrão: provider pelo registry, chave pela store (ou pelo ambiente), SDK plano. */
+function buildWith(credentials?: ICredentialSource): (model: string) => TComplete | undefined {
+  return (model) => {
+    const provider = providerOfModel(model)
+    const apiKey = provider ? (credentials ? credentials.get(provider) : apiKeyOf(provider)) : undefined
 
-  return provider && apiKey ? makeComplete(provider, model, apiKey) : undefined
+    return provider && apiKey ? makeComplete(provider, model, apiKey) : undefined
+  }
 }
 
 /** Por que o `complete` de um modelo não pôde ser montado — para o log. */
@@ -63,7 +68,7 @@ export class ConfiguredTurnClassifier implements ITurnClassifier {
   private readonly warn: (message: string) => void
 
   constructor(private readonly deps: IConfiguredClassifierDeps) {
-    this.build = deps.build ?? buildFromEnvironment
+    this.build = deps.build ?? buildWith(deps.credentials)
     this.warn = deps.warn ?? ((message) => console.warn(message))
   }
 
@@ -98,12 +103,17 @@ export class ConfiguredTurnClassifier implements ITurnClassifier {
     return `[classifier] ligado com o modelo ${model}.`
   }
 
-  /** Cacheado por modelo: o cliente do SDK não precisa ser recriado a cada turno. */
+  /**
+   * Cacheado por modelo E pela chave em vigor: o cliente do SDK não é recriado a cada turno, mas
+   * trocar a chave pela tela troca o cliente no turno seguinte (e "sem chave" deixa de ser lembrado).
+   */
   private completeFor(model: string): TComplete | undefined {
-    if (this.completions.has(model)) return this.completions.get(model)
+    const provider = providerOfModel(model)
+    const cacheKey = `${model}\u0000${provider ? (this.deps.credentials?.get(provider) ?? '') : ''}`
+    if (this.completions.has(cacheKey)) return this.completions.get(cacheKey)
 
     const complete = this.build(model)
-    this.completions.set(model, complete)
+    this.completions.set(cacheKey, complete)
 
     if (!complete && !this.warned.has(model)) {
       this.warned.add(model)

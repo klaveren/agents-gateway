@@ -1,4 +1,6 @@
-import { Agent, run, user, type AgentInputItem, type MCPServer, type ModelSettings } from '@openai/agents'
+import { Agent, OpenAIProvider, run, user, type AgentInputItem, type MCPServer, type Model, type ModelSettings } from '@openai/agents'
+import { ICredentialSource } from '@domain/ports/CredentialStore.Port'
+import { requireKey } from './support/Keyed.Client'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
@@ -30,6 +32,8 @@ export interface IOpenAIAgentAdapterDeps {
   catalog?: ToolCatalog
   /** Injetável para o teste não precisar de um MCP server no ar. */
   buildMcpServers?: TBuildMcpServers
+  /** De onde vem a chave em cada turno. Ausente = o provider padrão do SDK, que lê o ambiente. */
+  credentials?: ICredentialSource
 }
 
 /**
@@ -43,9 +47,16 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
   private readonly store: SessionStore
   private readonly catalog?: ToolCatalog
   private readonly buildMcpServers: TBuildMcpServers
+  private readonly credentials?: ICredentialSource
+  /**
+   * O provider do SDK por chave. ⚠️ Não é o provider PADRÃO do `@openai/agents`: aquele guarda o
+   * cliente criado na primeira chamada, e trocar a chave depois não mudaria nada.
+   */
+  private provider?: { key: string; provider: OpenAIProvider }
 
   constructor(deps: IOpenAIAgentAdapterDeps = {}) {
     this.run = deps.run ?? run
+    this.credentials = deps.credentials
     this.store = deps.store ?? new SessionStore()
     this.catalog = deps.catalog
     this.buildMcpServers = deps.buildMcpServers ?? buildOpenAIMcpServers
@@ -87,6 +98,15 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
 
     yield { type: 'message.started', sessionId, timestamp: new Date() }
 
+    let model: string | Model
+    try {
+      model = await this.modelFor(record.model)
+    } catch (error: unknown) {
+      record.abort = undefined
+      yield { type: 'error', sessionId, timestamp: new Date(), payload: { message: error instanceof Error ? error.message : String(error) } }
+      return
+    }
+
     const modelSettings: ModelSettings = { maxTokens: maxOutputTokens() }
     const effort = this.toEffort(record.reasoning)
     if (effort) modelSettings.reasoning = { effort }
@@ -98,7 +118,7 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
     const oaiAgent = new Agent({
       name: agent.name,
       instructions: record.systemPrompt,
-      model: record.model,
+      model,
       modelSettings,
       tools: buildOpenAITools(this.catalog?.localFor(agent.allowedTools) ?? []),
       mcpServers,
@@ -179,6 +199,15 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
    * turno: aberta aqui, fechada no `finally` do mesmo turno. Nada é compartilhado entre usuários, e
    * perguntar ao catálogo a cada turno é o que pega um MCP que subiu depois do gateway.
    */
+  /** O modelo pela chave em vigor AGORA; sem store, o nome — e o SDK resolve com o padrão dele. */
+  private async modelFor(name: string): Promise<string | Model> {
+    if (!this.credentials) return name
+
+    const key = requireKey(EProvider.OPENAI, this.credentials)
+    if (this.provider?.key !== key) this.provider = { key, provider: new OpenAIProvider({ apiKey: key }) }
+    return this.provider.provider.getModel(name)
+  }
+
   private async openMcpServers(context: IExecutionContext): Promise<MCPServer[]> {
     const url = await this.catalog?.mcpEndpoint()
     if (!url) return []

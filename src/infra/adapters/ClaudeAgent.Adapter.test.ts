@@ -121,6 +121,30 @@ describe('ClaudeAgentAdapter', () => {
     assert.ok(seen[0].options?.abortController instanceof AbortController)
   })
 
+  it('hands the key in effect to the CLI subprocess, read on every turn', async () => {
+    const seen: TQueryParams[] = []
+    let key = 'sk-ant-primeira'
+    const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), credentials: { get: () => key } })
+    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
+    key = 'sk-ant-segunda'
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
+
+    assert.strictEqual(seen[0].options?.env?.ANTHROPIC_API_KEY, 'sk-ant-primeira')
+    assert.strictEqual(seen[1].options?.env?.ANTHROPIC_API_KEY, 'sk-ant-segunda')
+  })
+
+  it('without any key, the turn ends with an error that says where to fix it — and the CLI never starts', async () => {
+    const seen: TQueryParams[] = []
+    const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), credentials: { get: () => undefined } })
+    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
+
+    assert.strictEqual(seen.length, 0)
+    assert.ok(events.find((event) => event.type === 'error' && String(event.payload.message).includes('Providers')))
+  })
+
   it('plants a uuid on the first turn and resumes the CLI session afterwards', async () => {
     const seen: TQueryParams[] = []
     const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen) })
