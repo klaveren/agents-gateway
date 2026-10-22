@@ -9,6 +9,7 @@ import { useConversationsStore } from '@/stores/conversations'
 import { useThreadStore, type IOutgoingFile } from '@/stores/thread'
 import AgentAvatar from './AgentAvatar.vue'
 import Composer from './Composer.vue'
+import ConfirmDialog from './ConfirmDialog.vue'
 import Icon from './Icon.vue'
 import TurnBubbles from './TurnBubbles.vue'
 
@@ -20,6 +21,9 @@ const thread = useThreadStore()
 
 const scroller = ref<HTMLElement>()
 const copied = ref(false)
+const confirming = ref(false)
+const deleting = ref(false)
+const deleteError = ref<string>()
 
 const header = computed(() => thread.header)
 const agent = computed(() => agents.byId.get(header.value?.agentId ?? thread.draft?.agentId ?? ''))
@@ -49,9 +53,18 @@ async function copyShare() {
 }
 
 async function remove() {
-  if (!header.value || !confirm('Apagar o histórico desta conversa? Não dá para desfazer.')) return
-  await conversations.remove(header.value.id)
-  await router.push('/')
+  if (!header.value) return
+  deleting.value = true
+  deleteError.value = undefined
+  try {
+    await conversations.remove(header.value.id)
+    confirming.value = false
+    await router.push('/')
+  } catch (error) {
+    deleteError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    deleting.value = false
+  }
 }
 
 /** Sessão nova com o mesmo agente, modelo e lane — o histórico anterior NÃO vai junto. */
@@ -81,7 +94,7 @@ async function continueFresh() {
         <button class="grid h-9 w-9 place-items-center rounded-full hover:bg-zinc-800" :class="header.shared ? 'text-emerald-400' : 'text-zinc-400'" :title="header.shared ? 'Parar de compartilhar' : 'Compartilhar por link'" @click="toggleShare">
           <Icon name="share" class="h-5 w-5" />
         </button>
-        <button class="grid h-9 w-9 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 hover:text-rose-300" title="Apagar histórico" @click="remove">
+        <button class="grid h-9 w-9 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 hover:text-rose-300" title="Apagar histórico" @click="confirming = true">
           <Icon name="trash" class="h-5 w-5" />
         </button>
       </div>
@@ -103,6 +116,14 @@ async function continueFresh() {
       </div>
     </div>
 
+    <ConfirmDialog
+      :open="confirming"
+      title="Apagar o histórico desta conversa?"
+      :message="deleteError ?? 'Some da lista para todo mundo e não dá para desfazer. Uma sessão ainda viva no gateway não é encerrada.'"
+      :busy="deleting"
+      @confirm="remove"
+      @cancel="confirming = false"
+    />
     <div v-if="readOnly" class="flex flex-wrap items-center gap-3 border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-3 text-sm text-zinc-400">
       <span>Esta sessão não está mais ativa no gateway (reinício ou expiração). O histórico fica, mas o agente já não tem o contexto.</span>
       <button class="ml-auto flex items-center gap-1.5 rounded-full bg-zinc-800 px-3 py-1.5 text-zinc-100 hover:bg-zinc-700" @click="continueFresh">

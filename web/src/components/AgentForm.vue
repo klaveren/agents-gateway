@@ -4,6 +4,7 @@ import { ApiError } from '@/lib/api'
 import { PROVIDER_LABEL } from '@/lib/format'
 import type { IAgentDetail, IAgentInput, TMode, TProvider } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
+import ConfirmDialog from './ConfirmDialog.vue'
 
 const props = defineProps<{ agent?: IAgentDetail; creating: boolean }>()
 const emit = defineEmits<{ saved: [id: string]; duplicate: [agent: IAgentDetail]; removed: [] }>()
@@ -27,6 +28,8 @@ const effortsText = ref('')
 const issues = ref<Record<string, string[]>>({})
 const failure = ref<string>()
 const saving = ref(false)
+const confirming = ref(false)
+const deleting = ref(false)
 
 const readOnly = computed(() => !!props.agent?.builtIn && !props.creating)
 
@@ -87,9 +90,18 @@ async function save() {
 }
 
 async function remove() {
-  if (!props.agent || !confirm(`Apagar o agente "${props.agent.name}"? As conversas gravadas com ele continuam.`)) return
-  await agents.remove(props.agent.id)
-  emit('removed')
+  if (!props.agent) return
+  deleting.value = true
+  try {
+    await agents.remove(props.agent.id)
+    confirming.value = false
+    emit('removed')
+  } catch (error) {
+    failure.value = error instanceof Error ? error.message : String(error)
+    confirming.value = false
+  } finally {
+    deleting.value = false
+  }
 }
 </script>
 
@@ -175,8 +187,16 @@ async function remove() {
     <div v-if="!readOnly" class="flex gap-2">
       <button type="submit" :disabled="saving" class="rounded-full bg-emerald-500 px-5 py-2 font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50">{{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar' }}</button>
       <button v-if="!creating && agent" type="button" class="rounded-full bg-zinc-800 px-4 py-2 hover:bg-zinc-700" @click="emit('duplicate', agent)">Duplicar</button>
-      <button v-if="!creating && agent" type="button" class="ml-auto rounded-full px-4 py-2 text-rose-300 hover:bg-rose-500/10" @click="remove">Apagar</button>
+      <button v-if="!creating && agent" type="button" class="ml-auto rounded-full px-4 py-2 text-rose-300 hover:bg-rose-500/10" @click="confirming = true">Apagar</button>
     </div>
+    <ConfirmDialog
+      :open="confirming"
+      :title="`Apagar o agente ${agent?.name ?? ''}?`"
+      message="Some da lista e nenhuma sessão nova nasce dele. As conversas gravadas continuam, e sessões abertas terminam com o agente com que nasceram."
+      :busy="deleting"
+      @confirm="remove"
+      @cancel="confirming = false"
+    />
   </form>
 </template>
 
