@@ -59,15 +59,20 @@ export const useAuthStore = defineStore('auth', () => {
     await start(await api<ISession>('/auth/setup', { method: 'POST', body: input }))
   }
 
-  function logout(): Promise<void> {
+  /** Sai NO SERVIDOR (todas as sessões da conta) e depois aqui. Se o servidor não responder, sai daqui mesmo assim. */
+  async function logout(): Promise<void> {
+    await api('/auth/logout', { method: 'POST' }).catch(() => undefined)
     writeLocal(CALLER_TOKEN_KEY, null)
     user.value = undefined
     isAdmin.value = false
     return probe()
   }
 
-  function changePassword(current: string, password: string): Promise<unknown> {
-    return api('/auth/password', { method: 'PUT', body: { current, password } })
+  /** As outras sessões caem; esta continua com o token novo que o gateway devolve. */
+  async function changePassword(current: string, password: string): Promise<void> {
+    const session = await api<ISession>('/auth/password', { method: 'PUT', body: { current, password } })
+    writeLocal(CALLER_TOKEN_KEY, session.token)
+    user.value = session.user
   }
 
   function saveGatewayToken(value: string): Promise<void> {

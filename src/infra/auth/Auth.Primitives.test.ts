@@ -25,7 +25,7 @@ describe('ScryptPasswordHasher', () => {
 })
 
 describe('HmacTokenIssuer', () => {
-  const claims = { sub: 'u_1', email: 'ana@x.test', role: 'admin' as const }
+  const claims = { sub: 'u_1', email: 'ana@x.test', role: 'admin' as const, ver: 0 }
 
   it('o token emitido confere e traz as claims', () => {
     const issuer = new HmacTokenIssuer('segredo')
@@ -39,7 +39,7 @@ describe('HmacTokenIssuer', () => {
     const issuer = new HmacTokenIssuer('segredo')
     const { token } = issuer.issue({ ...claims, role: 'member' })
     const [header, , signature] = token.split('.')
-    const forged = Buffer.from(JSON.stringify({ iss: 'agents-gateway', sub: 'u_1', email: 'ana@x.test', role: 'admin', exp: 9e9 })).toString('base64url')
+    const forged = Buffer.from(JSON.stringify({ iss: 'agents-gateway', sub: 'u_1', email: 'ana@x.test', role: 'admin', ver: 0, exp: 9e9 })).toString('base64url')
     const none = Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url')
 
     assert.strictEqual(new HmacTokenIssuer('outro').verify(token), undefined)
@@ -59,24 +59,33 @@ describe('LocalCallerProof', () => {
     const users = new SqliteUserRepository(':memory:')
     const tokens = new HmacTokenIssuer(users.signingSecret())
     const now = new Date()
-    users.insert({ id: 'u_1', email: 'ana@x.test', name: 'Ana', role: 'admin', disabled: false, createdAt: now, updatedAt: now, passwordHash: 'x' })
+    users.insert({ id: 'u_1', email: 'ana@x.test', name: 'Ana', role: 'admin', disabled: false, createdAt: now, updatedAt: now, passwordHash: 'x', sessionVersion: 0 })
     return { users, tokens, proof: new LocalCallerProof(tokens, users) }
   }
 
   it('vale enquanto a conta bate com o token', async () => {
     const { tokens, proof } = setup()
-    assert.strictEqual(await proof.prove(tokens.issue({ sub: 'u_1', email: 'ana@x.test', role: 'admin' }).token), true)
+    assert.strictEqual(await proof.prove(tokens.issue({ sub: 'u_1', email: 'ana@x.test', role: 'admin', ver: 0 }).token), true)
   })
 
   it('⛔ cai NA HORA quando a conta é rebaixada ou desativada', async () => {
     const { users, tokens, proof } = setup()
-    const { token } = tokens.issue({ sub: 'u_1', email: 'ana@x.test', role: 'admin' })
+    const { token } = tokens.issue({ sub: 'u_1', email: 'ana@x.test', role: 'admin', ver: 0 })
 
     users.update('u_1', { role: 'member' })
     assert.strictEqual(await proof.prove(token), false)
 
     users.update('u_1', { role: 'admin', disabled: true })
     assert.strictEqual(await proof.prove(token), false)
+  })
+
+  it('⛔ cai quando a geração da sessão avança (sair, trocar senha, admin encerrar)', async () => {
+    const { users, tokens, proof } = setup()
+    const { token } = tokens.issue({ sub: 'u_1', email: 'ana@x.test', role: 'admin', ver: 0 })
+
+    users.update('u_1', { sessionVersion: 1 })
+    assert.strictEqual(await proof.prove(token), false)
+    assert.strictEqual(await proof.prove(tokens.issue({ sub: 'u_1', email: 'ana@x.test', role: 'admin', ver: 1 }).token), true)
   })
 
   it('o segredo gerado fica no banco: o mesmo a cada leitura', () => {
@@ -90,6 +99,6 @@ describe('LocalCallerProof', () => {
 
     assert.strictEqual(await new CompositeCallerProof(proof, external).prove('bom'), true)
     assert.strictEqual(new CompositeCallerProof(proof).covers('de-fora'), false)
-    assert.strictEqual(new CompositeCallerProof(proof).covers(tokens.issue({ sub: 'u_1', email: 'ana@x.test', role: 'admin' }).token), true)
+    assert.strictEqual(new CompositeCallerProof(proof).covers(tokens.issue({ sub: 'u_1', email: 'ana@x.test', role: 'admin', ver: 0 }).token), true)
   })
 })

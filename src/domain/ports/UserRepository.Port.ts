@@ -1,6 +1,6 @@
 import { IStoredUser } from '@domain/models/User.Model'
 
-export type TUserPatch = Partial<Pick<IStoredUser, 'name' | 'role' | 'disabled' | 'passwordHash' | 'lastLoginAt' | 'updatedAt' | 'updatedBy'>>
+export type TUserPatch = Partial<Pick<IStoredUser, 'name' | 'role' | 'disabled' | 'passwordHash' | 'lastLoginAt' | 'updatedAt' | 'updatedBy' | 'sessionVersion'>>
 
 /**
  * Onde ficam as contas.

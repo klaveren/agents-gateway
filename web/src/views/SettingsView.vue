@@ -68,7 +68,7 @@ async function changePassword() {
     await auth.changePassword(currentPassword.value, nextPassword.value)
     currentPassword.value = ''
     nextPassword.value = ''
-    passwordNote.value = 'Senha trocada.'
+    passwordNote.value = 'Senha trocada. As outras sessões desta conta foram encerradas.'
   } catch (error) {
     const issues = error instanceof ApiError ? error.fieldIssues : {}
     passwordError.value = issues.current ? 'A senha atual não confere.' : issues.password ? 'A nova senha precisa ter pelo menos 10 caracteres.' : String(error)

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** Ícones de traço (24×24), desenhados inline: nenhuma dependência para meia dúzia de símbolos. */
-defineProps<{ name: 'inbox' | 'agents' | 'settings' | 'plus' | 'search' | 'send' | 'stop' | 'clip' | 'back' | 'share' | 'trash' | 'copy' | 'bolt' | 'check' | 'x' | 'refresh' | 'users' }>()
+defineProps<{ name: 'inbox' | 'agents' | 'settings' | 'plus' | 'search' | 'send' | 'stop' | 'clip' | 'back' | 'share' | 'trash' | 'copy' | 'bolt' | 'check' | 'x' | 'refresh' | 'users' | 'logout' }>()
 </script>
 
 <template>
@@ -21,6 +21,7 @@ defineProps<{ name: 'inbox' | 'agents' | 'settings' | 'plus' | 'search' | 'send'
     <template v-else-if="name === 'check'"><path d="m5 12.5 4.5 4.5L19 7.5" /></template>
     <template v-else-if="name === 'x'"><path d="M6 6l12 12M18 6 6 18" /></template>
     <template v-else-if="name === 'users'"><circle cx="12" cy="8" r="3.5" /><path d="M5 20a7 7 0 0 1 14 0" /><path d="m17.5 4.5 1 1 2-2" /></template>
+    <template v-else-if="name === 'logout'"><path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4" /><path d="M15 16l4-4-4-4M19 12H9" /></template>
     <template v-else-if="name === 'refresh'"><path d="M20 11a8 8 0 0 0-14.6-4.5L4 8M4 4v4h4M4 13a8 8 0 0 0 14.6 4.5L20 16M20 20v-4h-4" /></template>
   </svg>
 </template>

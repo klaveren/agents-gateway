@@ -6,7 +6,8 @@ import { ICallerProof } from '@infra/http/Caller.Proof'
  * A prova do token emitido pelo próprio gateway.
  *
  * ⛔ A CONTA É RELIDA A CADA REQUISIÇÃO, e o token só vale se ainda bater com ela: conta ativa, mesmo
- * e-mail, MESMO PAPEL. Rebaixar um admin ou desativar uma conta derruba o token na hora — sem isso
+ * e-mail, MESMO PAPEL e MESMA GERAÇÃO de sessão (sair, trocar a senha e o admin encerrar as sessões
+ * a avançam). Rebaixar um admin ou desativar uma conta derruba o token na hora — sem isso
  * ele continuaria abrindo as telas de operação até expirar. Sem cache de propósito: é uma leitura
  * por chave num arquivo local.
  */
@@ -25,7 +26,7 @@ export class LocalCallerProof implements ICallerProof {
     if (!claims) return false
 
     const user = this.users.findById(claims.sub)
-    return !!user && !user.disabled && user.email === claims.email && user.role === claims.role
+    return !!user && !user.disabled && user.email === claims.email && user.role === claims.role && user.sessionVersion === claims.ver
   }
 }
 

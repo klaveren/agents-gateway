@@ -121,4 +121,34 @@ describe('contas locais (integração)', () => {
     assert.strictEqual((await call('/settings', { token: forged })).status, 404)
     assert.strictEqual((await call('/auth/me', { token: forged })).status, 401)
   })
+  it('⛔ sair encerra a sessão NO SERVIDOR: uma cópia do token deixa de valer', async () => {
+    await call('/users', { method: 'POST', token: rootToken, body: { email: 'caio@x.test', name: 'Caio', password: PASSWORD } })
+    const login = async () => (await call('/auth/login', { method: 'POST', body: { email: 'caio@x.test', password: PASSWORD } })).body.result.token as string
+    const first = await login()
+    const copy = await login()
+
+    assert.strictEqual((await call('/auth/logout', { method: 'POST', token: first })).status, 200)
+    assert.strictEqual((await call('/auth/me', { token: first })).status, 401)
+    assert.strictEqual((await call('/auth/me', { token: copy })).status, 401)
+  })
+
+  it('⛔ o admin encerra as sessões de outra conta', async () => {
+    const token = (await call('/auth/login', { method: 'POST', body: { email: 'caio@x.test', password: PASSWORD } })).body.result.token
+    const caio = (await call('/auth/me', { token })).body.result
+
+    assert.strictEqual((await call(`/users/${caio.id}/sessions`, { method: 'DELETE', token: rootToken })).status, 200)
+    assert.strictEqual((await call('/auth/me', { token })).status, 401)
+  })
+
+  it('trocar a senha: esta sessão continua com o token novo, as outras caem', async () => {
+    const here = (await call('/auth/login', { method: 'POST', body: { email: 'caio@x.test', password: PASSWORD } })).body.result.token
+    const elsewhere = (await call('/auth/login', { method: 'POST', body: { email: 'caio@x.test', password: PASSWORD } })).body.result.token
+
+    const changed = await call('/auth/password', { method: 'PUT', token: here, body: { current: PASSWORD, password: 'outra frase longa' } })
+    assert.strictEqual(changed.status, 200)
+
+    assert.strictEqual((await call('/auth/me', { token: changed.body.result.token })).status, 200)
+    assert.strictEqual((await call('/auth/me', { token: here })).status, 401)
+    assert.strictEqual((await call('/auth/me', { token: elsewhere })).status, 401)
+  })
 })

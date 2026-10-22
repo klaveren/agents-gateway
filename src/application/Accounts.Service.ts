@@ -109,23 +109,48 @@ export class AccountsService {
     return toUser(updated as NonNullable<typeof updated>)
   }
 
-  /** O admin define a senha de outra conta (esquecida, ou a inicial). */
+  /** O admin define a senha de outra conta (esquecida, ou a inicial). As sessões dela caem. */
   resetPassword(id: string, password: string, by: string): void {
     if (!this.users.findById(id)) throw new UserNotFoundError(id)
     this.setPassword(id, password, by)
   }
 
-  /** A própria senha: exige a atual, para quem achar a sessão aberta não trancar o dono fora. */
-  changeOwnPassword(id: string, current: string, next: string): void {
+  /**
+   * A própria senha: exige a atual, para quem achar a sessão aberta não trancar o dono fora.
+   *
+   * ⚖️ As OUTRAS sessões caem (quem troca a senha por desconfiar de alguém quer exatamente isso), e
+   * esta continua: volta uma sessão nova, já na geração nova.
+   */
+  changeOwnPassword(id: string, current: string, next: string): ISession {
     const user = this.users.findById(id)
     if (!user || !this.hasher.verify(current, user.passwordHash)) throw new InvalidUserError([{ field: 'current', message: 'current password does not match' }])
     this.setPassword(id, next, user.email)
+    return this.sessionFor(id)
+  }
+
+  /** Sair: encerra TODAS as sessões da conta, não só a deste navegador — uma cópia do token não sobra. */
+  logout(id: string): void {
+    this.revoke(id)
+  }
+
+  /** O admin encerra as sessões de uma conta (aparelho perdido, acesso que deveria ter acabado). */
+  revokeSessions(id: string, by: string): void {
+    if (!this.users.findById(id)) throw new UserNotFoundError(id)
+    this.revoke(id, by)
+  }
+
+  private revoke(id: string, by?: string): void {
+    const user = this.users.findById(id)
+    if (!user) return
+    this.users.update(id, { sessionVersion: user.sessionVersion + 1, ...(by ? { updatedAt: new Date(this.now()), updatedBy: by } : {}) })
   }
 
   private setPassword(id: string, password: string, by: string): void {
     const issue = passwordIssue(password)
     if (issue) throw new InvalidUserError([{ field: 'password', message: issue }])
-    this.users.update(id, { passwordHash: this.hasher.hash(password), updatedAt: new Date(this.now()), updatedBy: by })
+
+    const user = this.users.findById(id)
+    this.users.update(id, { passwordHash: this.hasher.hash(password), sessionVersion: (user?.sessionVersion ?? 0) + 1, updatedAt: new Date(this.now()), updatedBy: by })
   }
 
   private insert(input: INewUser, by: string): IUser {
@@ -143,6 +168,7 @@ export class AccountsService {
       updatedAt: now,
       updatedBy: by,
       passwordHash: this.hasher.hash(input.password),
+      sessionVersion: 0,
     }
     this.users.insert(stored)
 
@@ -151,7 +177,8 @@ export class AccountsService {
 
   private sessionFor(id: string): ISession {
     const user = this.me(id)
-    const { token, expiresAt } = this.tokens.issue({ sub: user.id, email: user.email, role: user.role })
+    const ver = this.users.findById(id)?.sessionVersion ?? 0
+    const { token, expiresAt } = this.tokens.issue({ sub: user.id, email: user.email, role: user.role, ver })
 
     return { token, expiresAt, user }
   }

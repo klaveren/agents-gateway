@@ -33,7 +33,7 @@ export class HmacTokenIssuer implements ITokenIssuer {
   issue(claims: ISessionClaims): { token: string; expiresAt: Date } {
     const iat = Math.floor(this.now() / 1000)
     const exp = iat + Math.floor(this.ttlMs / 1000)
-    const body = `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({ iss: LOCAL_ISSUER, sub: claims.sub, email: claims.email, role: claims.role, iat, exp })}`
+    const body = `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({ iss: LOCAL_ISSUER, sub: claims.sub, email: claims.email, role: claims.role, ver: claims.ver, iat, exp })}`
 
     return { token: `${body}.${this.sign(body)}`, expiresAt: new Date(exp * 1000) }
   }
@@ -52,7 +52,9 @@ export class HmacTokenIssuer implements ITokenIssuer {
     if (typeof claims.exp !== 'number' || claims.exp * 1000 <= this.now()) return undefined
     if (typeof claims.sub !== 'string' || typeof claims.email !== 'string' || !USER_ROLES.includes(claims.role as TUserRole)) return undefined
 
-    return { sub: claims.sub, email: claims.email, role: claims.role as TUserRole, exp: claims.exp }
+    if (typeof claims.ver !== 'number') return undefined
+
+    return { sub: claims.sub, email: claims.email, role: claims.role as TUserRole, ver: claims.ver, exp: claims.exp }
   }
 
   owns(token: string): boolean {

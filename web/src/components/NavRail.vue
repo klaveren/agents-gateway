@@ -57,7 +57,10 @@ const links = computed(() => [
         <RouterLink to="/settings" class="grid h-9 w-9 place-items-center rounded-full text-xs font-semibold" :class="auth.isAdmin ? 'bg-emerald-500/20 text-emerald-300' : 'bg-zinc-800 text-zinc-300'" :title="`${auth.user.name} (${auth.user.email})`">
           {{ initials(auth.user.name) }}
         </RouterLink>
-        <button class="hover:text-zinc-200" title="Sair" @click="logout">Sair</button>
+        <button class="flex w-14 flex-col items-center gap-1 rounded-xl py-1.5 text-[10px] font-medium text-zinc-400 hover:bg-zinc-800/60 hover:text-rose-300" title="Sair de todas as sessões desta conta" @click="logout">
+          <Icon name="logout" class="h-5 w-5" />
+          Sair
+        </button>
       </template>
       <RouterLink v-else-if="auth.localAccounts" to="/login" class="rounded-lg px-2 py-1 text-zinc-300 hover:bg-zinc-800">Entrar</RouterLink>
     </div>

@@ -4,6 +4,8 @@ export interface ISessionClaims {
   sub: string
   email: string
   role: TUserRole
+  /** A geração da sessão (`IStoredUser.sessionVersion`) em que o token nasceu. */
+  ver: number
 }
 
 /** Emite e confere o token da sessão. Conferir é só a assinatura e o prazo — a conta é com a prova. */

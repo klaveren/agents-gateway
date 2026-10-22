@@ -24,6 +24,14 @@ export interface IUser {
 /** O registro gravado. ⛔ O hash nunca sai do servidor: a API devolve `IUser`. */
 export interface IStoredUser extends IUser {
   passwordHash: string
+  /**
+   * A geração das sessões da conta: vai dentro de cada token, e o token só vale se ainda for a atual.
+   *
+   * ⚖️ É o que faz "sair" valer no servidor sem guardar lista de tokens: sair, trocar a senha ou o
+   * admin encerrar as sessões soma um, e todo token emitido antes deixa de valer — inclusive uma
+   * cópia esquecida em outro aparelho.
+   */
+  sessionVersion: number
 }
 
 export function toUser(stored: IStoredUser): IUser {

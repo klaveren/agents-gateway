@@ -21,7 +21,8 @@ const SCHEMA = `
     created_at     TEXT    NOT NULL,
     updated_at     TEXT    NOT NULL,
     updated_by     TEXT,
-    last_login_at  TEXT
+    last_login_at  TEXT,
+    session_version INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS auth_secret (
@@ -40,6 +41,7 @@ const COLUMNS: Record<keyof TUserPatch, string> = {
   lastLoginAt: 'last_login_at',
   updatedAt: 'updated_at',
   updatedBy: 'updated_by',
+  sessionVersion: 'session_version',
 }
 
 export class SqliteUserRepository implements IUserRepository {
@@ -74,8 +76,8 @@ export class SqliteUserRepository implements IUserRepository {
   insert(user: IStoredUser): void {
     this.db
       .prepare(
-        `INSERT INTO users (id, email, name, role, disabled, password_hash, created_at, updated_at, updated_by, last_login_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO users (id, email, name, role, disabled, password_hash, created_at, updated_at, updated_by, last_login_at, session_version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         user.id,
@@ -88,6 +90,7 @@ export class SqliteUserRepository implements IUserRepository {
         user.updatedAt.toISOString(),
         user.updatedBy ?? null,
         user.lastLoginAt?.toISOString() ?? null,
+        user.sessionVersion,
       )
   }
 
@@ -96,7 +99,7 @@ export class SqliteUserRepository implements IUserRepository {
     const entries = Object.entries(patch).filter(([key, value]) => value !== undefined && key in COLUMNS) as Array<[keyof TUserPatch, unknown]>
     if (entries.length) {
       const sql = entries.map(([key]) => `${COLUMNS[key]} = ?`).join(', ')
-      const values = entries.map(([, value]) => (value instanceof Date ? value.toISOString() : typeof value === 'boolean' ? (value ? 1 : 0) : (value as string)))
+      const values = entries.map(([, value]) => (value instanceof Date ? value.toISOString() : typeof value === 'boolean' ? (value ? 1 : 0) : (value as string | number)))
       this.db.prepare(`UPDATE users SET ${sql} WHERE id = ?`).run(...values, id)
     }
     return this.findById(id)
@@ -129,5 +132,6 @@ function toUser(row: TRow): IStoredUser {
     updatedAt: new Date(String(row.updated_at)),
     updatedBy: typeof row.updated_by === 'string' ? row.updated_by : undefined,
     lastLoginAt: typeof row.last_login_at === 'string' ? new Date(row.last_login_at) : undefined,
+    sessionVersion: Number(row.session_version ?? 0),
   }
 }

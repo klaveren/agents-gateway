@@ -35,6 +35,24 @@ const resetPassword = ref('')
 const resetError = ref<string>()
 const resetDone = ref<string>()
 
+const ending = ref<IUser>()
+const endingBusy = ref(false)
+
+async function endSessions() {
+  const target = ending.value
+  if (!target) return
+  endingBusy.value = true
+  try {
+    await users.revokeSessions(target.id)
+    resetDone.value = `Sessões de ${target.name} encerradas. Ela precisa entrar de novo em todos os aparelhos.`
+    ending.value = undefined
+    // A própria conta: a sessão deste navegador também caiu.
+    if (target.id === auth.user?.id) await auth.probe()
+  } finally {
+    endingBusy.value = false
+  }
+}
+
 const activeAdmins = computed(() => users.list.filter((user) => user.role === 'admin' && !user.disabled).length)
 
 onMounted(async () => {
@@ -111,7 +129,7 @@ async function doReset() {
   resetError.value = undefined
   try {
     await users.resetPassword(resetting.value.id, resetPassword.value)
-    resetDone.value = `Senha de ${resetting.value.name} redefinida. Passe a nova senha a ela por um canal seguro.`
+    resetDone.value = `Senha de ${resetting.value.name} redefinida e sessões dela encerradas. Passe a nova senha por um canal seguro.`
     resetting.value = undefined
     resetPassword.value = ''
   } catch (error) {
@@ -186,10 +204,20 @@ async function doReset() {
             <button type="button" role="switch" :aria-checked="!user.disabled" :disabled="user.id === auth.user?.id" class="switch disabled:cursor-not-allowed disabled:opacity-40" :class="{ on: !user.disabled }" @click="askDisabled(user)"><span /></button>
           </label>
           <button type="button" class="rounded-full px-3 py-1 text-xs text-zinc-300 hover:bg-zinc-800" @click="(resetting = user), (resetPassword = ''), (resetError = undefined), (resetDone = undefined)">Redefinir senha</button>
+          <button type="button" class="rounded-full px-3 py-1 text-xs text-zinc-300 hover:bg-zinc-800" @click="(ending = user), (resetDone = undefined)">Encerrar sessões</button>
         </li>
       </ul>
     </div>
 
+    <ConfirmDialog
+      :open="!!ending"
+      :title="`Encerrar as sessões de ${ending?.name ?? ''}?`"
+      :message="ending?.id === auth.user?.id ? 'Inclui a sua sessão neste navegador: você vai precisar entrar de novo.' : 'Todo aparelho em que a conta está logada sai na hora. A senha continua a mesma.'"
+      action="Encerrar"
+      :busy="endingBusy"
+      @confirm="endSessions"
+      @cancel="ending = undefined"
+    />
     <ConfirmDialog :open="!!pending" :title="pending?.title ?? ''" :message="pending?.message" :action="pending?.action" :busy="applying" @confirm="apply" @cancel="pending = undefined" />
 
     <Teleport to="body">

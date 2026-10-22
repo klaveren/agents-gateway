@@ -31,7 +31,7 @@ export function isLoopback(req: Request): boolean {
 /** Login, sessão e a tela de Usuários. Separado do `AgentController`: é outro assunto, com outra porta. */
 export class AuthController {
   constructor(private readonly deps: IAuthControllerDeps) {
-    for (const name of ['status', 'setup', 'login', 'me', 'changePassword', 'listUsers', 'createUser', 'updateUser', 'resetPassword'] as const) {
+    for (const name of ['status', 'setup', 'login', 'logout', 'me', 'changePassword', 'listUsers', 'createUser', 'updateUser', 'resetPassword', 'revokeSessions'] as const) {
       this[name] = this[name].bind(this)
     }
   }
@@ -59,6 +59,18 @@ export class AuthController {
     })
   }
 
+  /** Sai de todas as sessões da conta. Depois disto, nenhum token emitido antes vale. */
+  async logout(_req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        this.accounts.logout(await this.requireSelf())
+        return null
+      },
+      { message: 'Signed out' },
+    )
+  }
+
   /** A conta da sessão. Token de fora (prova externa) não tem conta aqui: 404. */
   async me(_req: Request, res: Response) {
     await this.respond(res, async () => toUserDto(this.accounts.me(await this.requireSelf())))
@@ -70,8 +82,8 @@ export class AuthController {
       async () => {
         const id = await this.requireSelf()
         const body = parseBody(changePasswordSchema, req.body)
-        this.accounts.changeOwnPassword(id, body.current, body.password)
-        return null
+        // Volta a sessão nova: esta continua, as outras caem.
+        return toSessionDto(this.accounts.changeOwnPassword(id, body.current, body.password))
       },
       { message: 'Password changed' },
     )
@@ -118,6 +130,18 @@ export class AuthController {
         return null
       },
       { message: 'Password reset' },
+    )
+  }
+
+  async revokeSessions(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        const admin = await this.requireAdmin('revokeSessions')
+        this.accounts.revokeSessions(req.params.id as string, admin.by)
+        return null
+      },
+      { message: 'Sessions ended' },
     )
   }
 

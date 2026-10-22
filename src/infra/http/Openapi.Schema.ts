@@ -388,6 +388,12 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/auth/logout': {
+      post: {
+        summary: 'Sign out of EVERY session of the account: tokens issued before stop working, on any device',
+        responses: { '200': { description: 'Signed out', ...json(envelope({ type: 'null' })) }, '401': failures['401'] },
+      },
+    },
     '/auth/me': {
       get: {
         summary: 'The account behind the current session',
@@ -398,7 +404,7 @@ export const OPENAPI_DOCUMENT = {
       put: {
         summary: 'Change your own password; the current one is required',
         requestBody: { required: true, ...json({ type: 'object', properties: { current: { type: 'string' }, password: passwordField }, required: ['current', 'password'] }) },
-        responses: { '200': { description: 'Changed', ...json(envelope({ type: 'null' })) }, '401': failures['401'], '422': failures['422'] },
+        responses: { '200': { description: 'Changed. Every other session ends; this one continues with the session returned', ...json(envelope(authSessionSchema)) }, '401': failures['401'], '422': failures['422'] },
       },
     },
     '/users': {
@@ -423,9 +429,16 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'Updated', ...json(envelope(userSchema)) }, '401': failures['401'], '404': failures['404'], '422': lastAdmin },
       },
     },
+    '/users/{id}/sessions': {
+      delete: {
+        summary: 'End every session of an account (a lost device, access that should have ended). Administrators only',
+        parameters: userIdParam,
+        responses: { '200': { description: 'Ended', ...json(envelope({ type: 'null' })) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
     '/users/{id}/password': {
       post: {
-        summary: "Set another account's password. Administrators only",
+        summary: "Set another account's password; that account's sessions end. Administrators only",
         parameters: userIdParam,
         requestBody: { required: true, ...json({ type: 'object', properties: { password: passwordField }, required: ['password'] }) },
         responses: { '200': { description: 'Set', ...json(envelope({ type: 'null' })) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },

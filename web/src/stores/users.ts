@@ -24,5 +24,9 @@ export const useUsersStore = defineStore('users', () => {
     return api(`/users/${encodeURIComponent(id)}/password`, { method: 'POST', body: { password } })
   }
 
-  return { list, load, create, update, resetPassword }
+  function revokeSessions(id: string): Promise<unknown> {
+    return api(`/users/${encodeURIComponent(id)}/sessions`, { method: 'DELETE' })
+  }
+
+  return { list, load, create, update, resetPassword, revokeSessions }
 })
