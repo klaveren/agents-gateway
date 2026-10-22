@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { api } from '@/lib/api'
-import type { IUsageFigure, IUsageSummary, IUserUsage } from '@/lib/types'
+import type { IGroupUsage, IUsageFigure, IUsageSummary, IUserUsage } from '@/lib/types'
 
 /** O fuso do navegador, como o gateway espera: minutos a SOMAR ao UTC (São Paulo: -180). */
 const tz = () => -new Date().getTimezoneOffset()
@@ -18,5 +18,15 @@ export const useUsageStore = defineStore('usage', () => {
     return api(`/usage/users/${encodeURIComponent(ownerId)}`, { query: { days, tz: tz() } })
   }
 
-  return { mine, users, user }
+  /** Os valores de uma chave do `metadata`, com custo. Só admin. */
+  function byKey(key: string, days: number): Promise<{ key: string; totals: IUsageFigure; groups: IGroupUsage[] }> {
+    return api(`/usage/by/${encodeURIComponent(key)}`, { query: { days, tz: tz() } })
+  }
+
+  /** O detalhe de um valor; `~none` = as conversas sem a chave. */
+  function byKeyValue(key: string, value: string, days: number): Promise<IUsageSummary & { key: string; value?: string }> {
+    return api(`/usage/by/${encodeURIComponent(key)}/${encodeURIComponent(value)}`, { query: { days, tz: tz() } })
+  }
+
+  return { mine, users, user, byKey, byKeyValue }
 })

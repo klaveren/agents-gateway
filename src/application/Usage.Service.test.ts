@@ -79,4 +79,23 @@ describe('UsageService', () => {
     const now = new Date('2026-10-22T01:00:00Z') // 22h do dia 21 em São Paulo
     assert.deepStrictEqual(usageDays(new Date('2026-10-20T03:00:00Z'), now, -180), ['2026-10-20', '2026-10-21'])
   })
+
+  it('por chave do metadata: soma por valor, junta os sem valor numa linha e marca piso quando falta preço', () => {
+    const rows = [
+      row({ group: 'acme' }),
+      row({ conversationId: 'c2', group: 'acme' }),
+      row({ conversationId: 'c3' }),
+      row({ conversationId: 'c4', group: 'beta', model: 'sem-preco' }),
+    ]
+    const groups = service.byGroup(rows, () => PRICING)
+
+    assert.deepStrictEqual(
+      groups.map((group) => [group.value, group.conversations, group.costUsd, group.costIsFloor]),
+      [
+        ['acme', 2, 9, undefined],
+        [undefined, 1, 4.5, undefined],
+        ['beta', 1, 0, true],
+      ],
+    )
+  })
 })

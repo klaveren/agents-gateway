@@ -27,6 +27,11 @@ export interface IUserUsage extends IUsageFigure {
   email?: string
 }
 
+export interface IGroupUsage extends IUsageFigure {
+  /** O valor da chave. Ausente = conversas sem a chave. */
+  value?: string
+}
+
 const TOP = 10
 
 /**
@@ -68,6 +73,24 @@ export class UsageService {
         .slice(0, TOP)
         .map(({ row, figure }) => ({ id: row.conversationId, title: row.title, agentId: row.agentId, provider: row.provider, model: row.model, ...figure.view() })),
     }
+  }
+
+  /**
+   * Uma linha por valor da chave de `metadata` (ver `IUsageQuery.groupBy`), do que mais custou ao que
+   * menos. As conversas sem a chave ficam juntas, numa linha sem `value`.
+   */
+  byGroup(rows: readonly IUsageRow[], pricingOf: (provider: string) => TModelPricing): IGroupUsage[] {
+    const groups = new Map<string, { value?: string; figure: Figure }>()
+
+    for (const row of rows) {
+      const key = row.group ?? '\u0000none'
+      const entry = groups.get(key) ?? groups.set(key, { value: row.group, figure: new Figure() }).get(key)!
+      entry.figure.add(row, costOf(row.model, row.usage, pricingOf(row.provider)), true)
+    }
+
+    return [...groups.values()]
+      .map(({ value, figure }) => ({ ...(value === undefined ? {} : { value }), ...figure.view() }))
+      .sort((a, b) => (b.costUsd ?? 0) - (a.costUsd ?? 0) || b.usage.totalTokens - a.usage.totalTokens)
   }
 
   /** Uma linha por dono, do que mais custou ao que menos (desempate pelos tokens). */

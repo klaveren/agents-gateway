@@ -41,9 +41,10 @@ describe('uso (integração)', () => {
 
     // Uma conversa da Ana e uma de outra pessoa, gravadas direto no repositório. Sonnet 5 de fábrica: $2/$10 por 1M → $3 cada.
     const now = new Date()
-    for (const [id, owner] of [
-      ['da-ana', { id: memberId, email: 'ana@x.test' }],
-      ['de-outro', { id: 'outro', email: 'outro@x.test' }],
+    // O `metadata` de cobrança: a conta da Ana é texto; a do outro, número (vira texto no agrupamento).
+    for (const [id, owner, billing] of [
+      ['da-ana', { id: memberId, email: 'ana@x.test' }, { accountId: 'acme', userId: 'u1' }],
+      ['de-outro', { id: 'outro', email: 'outro@x.test' }, { accountId: 42, userId: 'u2' }],
     ] as const) {
       await controller.conversations.saveSession({
         id,
@@ -55,7 +56,7 @@ describe('uso (integração)', () => {
         updatedAt: now,
         turns: 1,
         usage: {},
-        metadata: { owner },
+        metadata: { owner, ...billing },
       })
       await controller.conversations.appendTurn({
         sessionId: id,
@@ -97,5 +98,34 @@ describe('uso (integração)', () => {
     const detail = await call(`/usage/users/${memberId}`, { token: admin })
     assert.deepStrictEqual([detail.body.result.name, detail.body.result.totals.costUsd, detail.body.result.byModel[0].model], ['Ana', 3, 'claude-sonnet-5'])
     assert.strictEqual((await call(`/usage/users/${memberId}`, { token: member })).status, 404)
+  })
+
+  it('⛔ uso por chave do metadata: 404 para membro; para o admin, cada valor com custo, e o filtro recorta', async () => {
+    assert.strictEqual((await call('/usage/by/accountId', { token: member })).status, 404)
+
+    const byAccount = await call('/usage/by/accountId?days=30', { token: admin })
+    assert.strictEqual(byAccount.status, 200)
+    assert.deepStrictEqual(
+      byAccount.body.result.groups.map((group: { value: string; conversations: number; costUsd: number }) => [group.value, group.conversations, group.costUsd]).sort(),
+      [
+        ['42', 1, 3],
+        ['acme', 1, 3],
+      ],
+    )
+
+    const usersOfAcme = await call('/usage/by/userId?accountId=acme', { token: admin })
+    assert.deepStrictEqual(
+      usersOfAcme.body.result.groups.map((group: { value: string }) => group.value),
+      ['u1'],
+    )
+  })
+
+  it('o detalhe de um valor bate com o grupo; chave inválida ou `owner` é 422', async () => {
+    const detail = await call('/usage/by/accountId/42?days=30', { token: admin })
+    assert.deepStrictEqual([detail.status, detail.body.result.totals.conversations, detail.body.result.totals.costUsd, detail.body.result.top[0].id], [200, 1, 3, 'de-outro'])
+
+    assert.strictEqual((await call('/usage/by/owner', { token: admin })).status, 422)
+    assert.strictEqual((await call("/usage/by/a'b", { token: admin })).status, 422)
+    assert.strictEqual((await call('/usage/by/accountId?x%27%29--=1', { token: admin })).status, 422)
   })
 })
