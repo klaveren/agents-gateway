@@ -6,10 +6,19 @@ import path from 'node:path'
 import { toHttpFailure } from './Http.Error'
 import { fail } from './Http.Response'
 import { OPENAPI_DOCUMENT } from './Openapi.Schema'
-import { tokenFromHeader, withCaller } from '@infra/mcp/Caller.Identity'
-import { corsMiddleware, host, jsonLimit, requireToken } from './Security.Middleware'
+import { identityFromToken, tokenFromHeader, withCaller } from '@infra/mcp/Caller.Identity'
+import { CALLER_HEADER, corsMiddleware, host, jsonLimit, requireCaller, requireToken } from './Security.Middleware'
 
 export const API_PREFIX = '/v1'
+
+/**
+ * As ÚNICAS rotas que respondem sem credencial de quem chama (com o portão do serviço, se houver).
+ *
+ * ⚖️ CURTA PARA CABER NUM OLHAR: ninguém abre uma rota por distração. `/health` é o que o
+ * orquestrador e o monitor chamam, e não tem credencial de usuário nenhuma. Uma rota pública futura
+ * (um `/shared/:id`, para quem não tem conta) entra aqui — e só aqui, de propósito.
+ */
+export const PUBLIC_PATHS: readonly string[] = ['/health']
 
 export type TRouteMethod = 'get' | 'post' | 'delete'
 
@@ -24,7 +33,7 @@ export class HttpServer {
   public readonly app: Express
   private readonly routes: IRoute[]
 
-  constructor(controller: AgentController) {
+  constructor(private readonly controller: AgentController) {
     this.app = express()
     this.app.disable('x-powered-by')
     this.app.use(corsMiddleware())
@@ -41,10 +50,6 @@ export class HttpServer {
   }
 
   private setupRoutes() {
-    this.app.get(`${API_PREFIX}/openapi.json`, (_req, res) => {
-      res.json(OPENAPI_DOCUMENT)
-    })
-
     /**
      * Abre o escopo da credencial de quem chamou, e o mantém pelo turno inteiro.
      *
@@ -61,14 +66,25 @@ export class HttpServer {
      * chamador é: seria pedir para a pessoa declarar a própria conta.
      */
     const callerScope = (req: Request, _res: Response, next: NextFunction) => {
-      const token = tokenFromHeader(req.headers['x-tool-authorization'])
+      const token = tokenFromHeader(req.headers[CALLER_HEADER])
 
-      return withCaller(token ? { token } : {}, () => next())
+      // ⚠️ A identidade lida aqui é só RÓTULO (o token não é verificado). Quem decide acesso passa por
+      // `resolveCaller`, que exige a prova.
+      return withCaller(token ? { token, ...identityFromToken(token) } : {}, () => next())
     }
 
     const guard = requireToken()
+    const identity = requireCaller()
+
+    // O contrato também é fechado: entrega o mapa de todas as rotas, e presença de header não é
+    // identidade — então passa pelo mesmo portão e pela mesma resolução do chamador.
+    this.app.get(`${API_PREFIX}/openapi.json`, guard, identity, callerScope, this.controller.guardCaller, (_req, res) => {
+      res.json(OPENAPI_DOCUMENT)
+    })
+
     for (const { method, path: routePath, handler } of this.routes) {
-      this.app[method](`${API_PREFIX}${routePath}`, guard, callerScope, handler)
+      const chain = PUBLIC_PATHS.includes(routePath) ? [guard, callerScope, handler] : [guard, identity, callerScope, handler]
+      this.app[method](`${API_PREFIX}${routePath}`, ...chain)
     }
 
     // Último recurso: erro que escapou de um middleware (token, corpo malformado) ainda

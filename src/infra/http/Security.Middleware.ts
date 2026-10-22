@@ -1,5 +1,6 @@
 import cors, { CorsOptions } from 'cors'
 import { NextFunction, Request, RequestHandler, Response } from 'express'
+import { tokenFromHeader } from '@infra/mcp/Caller.Identity'
 import { HttpError } from './Http.Error'
 
 export const DEFAULT_HOST = '127.0.0.1'
@@ -53,5 +54,42 @@ export function requireToken(token = process.env.GATEWAY_TOKEN): RequestHandler 
     }
 
     return next()
+  }
+}
+
+/** O header com a credencial do PRÓPRIO chamador — a que o gateway repassa às tools. */
+export const CALLER_HEADER = 'x-tool-authorization'
+
+/**
+ * ⛔ EXIGE A CREDENCIAL DE QUEM CHAMA — fechado por padrão, com escape explícito.
+ *
+ * O `GATEWAY_TOKEN` é a chave do SERVIÇO, e quem fica na frente do gateway (um proxy que injeta o
+ * token para não deixá-lo no bundle do navegador) a satisfaz em nome de TODO MUNDO. O efeito, que é
+ * fácil de não medir: qualquer pessoa que alcance o proxy ganha um cano autenticado até aqui — e
+ * um `curl` anônimo criaria sessão e faria o agente rodar, gastando de verdade.
+ *
+ * ⚠️ CORS NÃO RESOLVE ISTO, e é a conclusão errada mais fácil de tirar: ele impede o NAVEGADOR de
+ * ler resposta de outra origem; `curl` não tem navegador e ignora tudo.
+ *
+ * ⚖️ CONFERE PRESENÇA, não validade. Provar custa uma chamada real, e as rotas que dependem de
+ * identidade já resolvem o chamador (`resolveCaller`). Aqui basta fechar a porta para quem não
+ * apresenta nada — é de graça, e é o caso que ficava aberto.
+ *
+ * ⚖️ FECHADO POR PADRÃO. Uma trava opt-in vale em lugar nenhum: o deploy nasce aberto porque
+ * ninguém ligou uma variável. `ALLOW_ANONYMOUS=1` reabre, de propósito, para o `curl` local e a UI
+ * de demonstração.
+ *
+ * ⚠️ QUEM É PÚBLICO NÃO PASSA POR AQUI: este middleware simplesmente não é anexado àquelas rotas
+ * (ver `PUBLIC_PATHS` em `Http.Server`). Casar caminho aqui dentro dependeria de `req.route.path`,
+ * que traz o prefixo de versão — e um dia alguém mexe no prefixo e abre a API sem perceber.
+ */
+export function requireCaller(): RequestHandler {
+  return (req: Request, _res: Response, next: NextFunction) => {
+    // Lido a cada chamada, não uma vez no boot: o teste liga e desliga entre casos.
+    if (process.env.ALLOW_ANONYMOUS === '1') return next()
+    if (tokenFromHeader(req.headers[CALLER_HEADER])) return next()
+
+    // 401, e não 404: aqui a ausência de credencial é a resposta honesta — não há id nenhum a proteger.
+    return next(new HttpError(401, 'unauthorized', 'Missing caller credential'))
   }
 }

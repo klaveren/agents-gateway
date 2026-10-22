@@ -30,6 +30,7 @@ const failureEnvelope = {
         'mode_not_supported',
         'tools_not_supported',
         'adapter_not_found',
+        'agent_unavailable',
         'unauthorized',
         'not_found',
         'internal_error',
@@ -65,6 +66,7 @@ const sessionSchema = {
     },
     createdAt: { type: 'string', format: 'date-time' },
     lastActivityAt: { type: 'string', format: 'date-time' },
+    metadata: { type: 'object', description: '`owner` holds `id`, and `email` / `account` when the credential carries them.' },
   },
 }
 
@@ -89,9 +91,30 @@ const toolsResult = {
   },
 }
 
+const agentSchema = {
+  type: 'object',
+  description: 'Never carries the system prompt: the registry entry is projected, not passed through.',
+  properties: {
+    id: { type: 'string' },
+    name: { type: 'string' },
+    provider: { type: 'string', enum: ['claude', 'openai', 'google'] },
+    models: { type: 'array', items: { type: 'string' } },
+    reasoningEfforts: { type: 'array', items: { type: 'string' } },
+    modes: { type: 'array', items: { type: 'string', enum: ['chat', 'agent'] } },
+    allowedTools: { type: 'array', items: { type: 'string' } },
+  },
+}
+
 const failures = {
-  '401': { description: 'Missing or invalid bearer token', content: { 'application/json': { schema: failureEnvelope } } },
-  '404': { description: 'Agent or session not found', content: { 'application/json': { schema: failureEnvelope } } },
+  '401': {
+    description:
+      'Missing or invalid gateway bearer token; or no caller credential (`X-Tool-Authorization`) on any route but `/health`; or a credential that could not be proven (see `CALLER_PROOF_TOOL`, `REQUIRE_PROVEN_OWNER`). `ALLOW_ANONYMOUS=1` waives the missing-credential case.',
+    content: { 'application/json': { schema: failureEnvelope } },
+  },
+  '404': {
+    description: 'Agent not found, or session not found. A session that belongs to someone else answers exactly like one that does not exist.',
+    content: { 'application/json': { schema: failureEnvelope } },
+  },
   '422': { description: 'Validation failed', content: { 'application/json': { schema: failureEnvelope } } },
 }
 
@@ -107,33 +130,41 @@ export const OPENAPI_DOCUMENT = {
   servers: [{ url: '/v1' }],
   components: {
     securitySchemes: {
-      bearerAuth: { type: 'http', scheme: 'bearer' },
+      bearerAuth: { type: 'http', scheme: 'bearer', description: "The gateway's own gate, enforced only when `GATEWAY_TOKEN` is set." },
+      callerAuth: {
+        type: 'apiKey',
+        in: 'header',
+        name: 'X-Tool-Authorization',
+        description: "The caller's own credential, forwarded to the tools. Required on every route except `/health`; identifies the owner of a session.",
+      },
     },
   },
+  security: [{ callerAuth: [] }],
   paths: {
     '/health': {
       get: {
         summary: 'Liveness, MCP status and live session count',
+        security: [],
         responses: { '200': { description: 'OK', ...json(envelope({ type: 'object' })) } },
       },
     },
     '/agents': {
       get: {
-        summary: 'The agent registry, including the lanes each agent supports',
-        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: { type: 'object' } })) } },
+        summary: 'The agent registry, including the lanes each agent supports. Requires a proven caller; never exposes the system prompt',
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: agentSchema })) }, '401': failures['401'] },
       },
     },
     '/agents/{agentId}/tools': {
       get: {
         summary: 'Tool catalog filtered by what the agent declares',
         parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
-        responses: { '200': { description: 'OK', ...json(envelope(toolsResult)) }, '404': failures['404'] },
+        responses: { '200': { description: 'OK', ...json(envelope(toolsResult)) }, '401': failures['401'], '404': failures['404'] },
       },
     },
     '/tools': {
       get: {
         summary: 'Full tool catalog: built-in tools merged with whatever MCP exposes',
-        responses: { '200': { description: 'OK', ...json(envelope(toolsResult)) } },
+        responses: { '200': { description: 'OK', ...json(envelope(toolsResult)) }, '401': failures['401'] },
       },
     },
     '/sessions': {
@@ -157,7 +188,10 @@ export const OPENAPI_DOCUMENT = {
                   reasoning: { type: 'string' },
                   language: { type: 'string' },
                   systemPrompt: { type: 'string' },
-                  metadata: { type: 'object' },
+                  metadata: {
+                    type: 'object',
+                    description: 'Free-form. The `owner` key is reserved: it is stamped from the caller credential and any `owner` sent here is discarded.',
+                  },
                 },
                 required: ['agentId'],
               },
@@ -165,26 +199,27 @@ export const OPENAPI_DOCUMENT = {
           },
         },
         responses: {
-          '201': { description: 'Created', ...json(envelope(sessionSchema)) },
+          '201': { description: 'Created. The session is owned by the caller (`metadata.owner`).', ...json(envelope(sessionSchema)) },
+          '401': failures['401'],
           '404': failures['404'],
           '422': failures['422'],
         },
       },
       get: {
-        summary: 'List live sessions, most recently active first',
-        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: sessionSchema })) } },
+        summary: "List the caller's own live sessions, most recently active first",
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: sessionSchema })) }, '401': failures['401'] },
       },
     },
     '/sessions/{id}': {
       get: {
         summary: 'Session state: lane, model, turns and accumulated usage',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-        responses: { '200': { description: 'OK', ...json(envelope(sessionSchema)) }, '404': failures['404'] },
+        responses: { '200': { description: 'OK', ...json(envelope(sessionSchema)) }, '401': failures['401'], '404': failures['404'] },
       },
       delete: {
         summary: 'End the session and release it, aborting anything in flight',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-        responses: { '200': { description: 'OK', ...json(envelope({ type: 'null' })) }, '404': failures['404'] },
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'null' })) }, '401': failures['401'], '404': failures['404'] },
       },
     },
     '/sessions/{id}/messages': {
@@ -231,6 +266,7 @@ export const OPENAPI_DOCUMENT = {
               'application/json': { schema: envelope({ type: 'object' }) },
             },
           },
+          '401': failures['401'],
           '404': failures['404'],
           '422': failures['422'],
         },
@@ -240,7 +276,7 @@ export const OPENAPI_DOCUMENT = {
       post: {
         summary: 'Abort the generation in flight, keeping the session',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-        responses: { '200': { description: 'OK', ...json(envelope({ type: 'null' })) }, '404': failures['404'] },
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'null' })) }, '401': failures['401'], '404': failures['404'] },
       },
     },
   },

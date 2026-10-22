@@ -206,7 +206,58 @@ rejects every cross-origin request. The bundled UI is same-origin and unaffected
 | `HOST` | `127.0.0.1` | Interface to bind. Change it only if you know who else is on the network. |
 | `CORS_ORIGINS` | *(none)* | Comma-separated allowlist. Needed if you serve a frontend from another port. |
 | `GATEWAY_TOKEN` | *(none)* | When set, `/v1/*` requires `Authorization: Bearer`. The UI reads it from `localStorage.gatewayToken`. |
+| `ALLOW_ANONYMOUS` | *(off)* | Needed to use the bundled UI and plain `curl`, which send no caller credential. See [Caller identity](#caller-identity). |
 | `JSON_LIMIT` | `25mb` | Request body cap. Base64 attachments inflate ~33%. |
+
+### Caller identity
+
+The perimeter above is the *service's* gate. This section is about *who is calling*: the
+gateway forwards the caller's own credential to the MCP tools (header `X-Tool-Authorization`,
+kept apart from `Authorization` on purpose) and uses it to keep one caller's sessions away from
+another's.
+
+**Closed by default.** Every route except `/health` answers `401` when `X-Tool-Authorization` is
+missing. This matters when something in front of the gateway injects `GATEWAY_TOKEN` for
+everyone (a same-origin proxy, say): the bearer gate then proves nothing about the caller, and
+every anonymous request would otherwise get an authenticated pipe. For local `curl` and the
+bundled demo UI, open it explicitly with `ALLOW_ANONYMOUS=1` (anonymous callers share one
+"no owner" scope and cannot see sessions that have an owner).
+
+The token payload is read **without verifying the signature**, only to *label* who is calling.
+A forged token claims anything, so identity that decides access has to be **proven**: the
+gateway spends the token on a probe MCP tool and believes the payload only if the tool confirms
+it. Proofs (and denials) are cached for 60 s by `sha256(token)`, up to 500 entries. The
+strategy sits behind a small port (`ICallerProof` in `src/infra/http/Caller.Proof.ts`), so
+another one — verifying against a JWKS, for example — can be plugged in without touching a
+route.
+
+| Env | Default | What it does |
+| --- | --- | --- |
+| `ALLOW_ANONYMOUS` | *(off)* | `1` lets requests without `X-Tool-Authorization` through. |
+| `CALLER_ID_CLAIM` | `sub` | Where the caller's id lives in the token payload. Dot paths work (`user.id`). |
+| `CALLER_EMAIL_CLAIM` | `email` | Same, for the e-mail label. |
+| `CALLER_ROLE_CLAIM` | `role` | Same, for the role label. |
+| `CALLER_ACCOUNT_CLAIM` | *(none)* | Same, for an account/tenant (`account.alias`). Optional; when set, a session is also bound to the account. |
+| `CALLER_PROOF_TOOL` | *(none)* | MCP tool the token is spent on. **Unset disables proof.** |
+| `CALLER_PROOF_FIELD` | `authenticated` | Field of the tool's JSON result that must be exactly `true`. Dot paths work. |
+| `REQUIRE_PROVEN_OWNER` | **on** | Only a proven identity counts as owner. `0`/`false`/`off`/`no` accepts the *claimed* identity when proof is disabled. |
+
+Sessions are stamped with `metadata.owner` (`id`, `email`, `account`) from the proven caller;
+an `owner` sent in the request body is discarded. `GET /sessions` lists only your own, and
+`GET`, `DELETE`, `cancel` and `messages` on `/sessions/:id` answer `404` unless you own it,
+exactly like a session that does not exist. `GET /agents`, `/agents/:id/tools`, `/tools` and
+`/openapi.json` also need a proven caller, and `/agents` never includes the system prompt.
+
+**Why `REQUIRE_PROVEN_OWNER` is on by default.** With no `CALLER_PROOF_TOOL`, the identity is
+only what the token *says*, and anyone who knows another user's id can forge a token with it and
+list, read and drive that user's sessions — spending model budget on their behalf. So by default
+a credential that cannot be proven is **refused** (`401`) on the identity routes, and the boot
+log warns once. The cost is that a fresh install with real tokens needs either
+`CALLER_PROOF_TOOL` or an explicit `REQUIRE_PROVEN_OWNER=0`. Choose the latter only when every
+caller is already trusted (a private network, or your own proxy verifies the token first) and
+the owner merely separates conversations instead of protecting them from each other.
+
+A token that carries no readable id is never treated as anonymous.
 
 ### Tool safety, and actual containment
 
@@ -254,17 +305,17 @@ Files are named `<What>.<Kind>.ts` — `ClaudeChat.Adapter.ts`, `Agent.Provider.
 
 ### API
 
-Versioned under `/v1`. The full contract is served at `/v1/openapi.json`, and a test fails
+Versioned under `/v1`. Everything but `/health` needs the caller's credential — see [Caller identity](#caller-identity). The full contract is served at `/v1/openapi.json`, and a test fails
 the build if it drifts from the routes the server actually registers.
 
 | Route | What it does |
 | --- | --- |
-| `GET /v1/health` | Liveness, MCP status, live session count. |
-| `GET /v1/agents` | The registry, including which lanes each agent supports. |
+| `GET /v1/health` | Liveness, MCP status, live session count. Public. |
+| `GET /v1/agents` | The registry (never the system prompt), including which lanes each agent supports. |
 | `GET /v1/agents/:agentId/tools` | Tool catalog filtered by what that agent declares. |
 | `GET /v1/tools` | Full catalog: built-in tools merged with whatever MCP exposes. |
 | `POST /v1/sessions` | `{ agentId, mode, model, reasoning, language }` → a session. |
-| `GET /v1/sessions` | Live sessions, most recently active first. |
+| `GET /v1/sessions` | Your live sessions, most recently active first. |
 | `GET /v1/sessions/:id` | Lane, model, turns and accumulated usage. |
 | `DELETE /v1/sessions/:id` | Ends the session, aborting anything in flight. |
 | `POST /v1/sessions/:id/messages` | The turn. |
@@ -280,7 +331,7 @@ SSE events: `message.started`, `text.delta`, `reasoning.delta`, `tool.started`,
 `error`. Closing the tab cancels the turn at the provider.
 
 Failures carry a stable `code` — `validation_error`, `agent_not_found`, `session_not_found`,
-`mode_not_supported`, `unauthorized`, `internal_error` — so a client can branch without
+`mode_not_supported`, `unauthorized` (401, also for a missing or unproven caller credential), `internal_error` — so a client can branch without
 parsing prose.
 
 ---

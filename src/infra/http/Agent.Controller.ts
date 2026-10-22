@@ -9,14 +9,18 @@ import { AGENT_REGISTRY, getAgentById } from '@domain/Agent.Registry'
 import { AgentNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
-import { toHttpFailure } from './Http.Error'
+import { SessionNotFoundError } from '@domain/errors/Domain.Error'
+import { toAgentDto } from './Agent.Dto'
+import { IResolvedCaller, ownerOf, ownsSession, resolveCaller } from './Caller.Access'
+import { ICallerProof } from './Caller.Proof'
+import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
 import { parseBody } from './Request.Parser'
 import { createSessionSchema, sendMessageSchema } from './Request.Schema'
 import { toSessionDto } from './Session.Dto'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { SseStream } from './Sse.Stream'
-import { Request, Response } from 'express'
+import { NextFunction, Request, Response } from 'express'
 
 const ALL_LOCAL_TOOLS = [...new Set(AGENT_REGISTRY.flatMap((agent) => agent.allowedTools))]
 const STARTED_AT = Date.now()
@@ -30,6 +34,11 @@ export interface IAgentControllerDeps {
   deleteSession: DeleteSessionUseCase
   getSession: GetSessionUseCase
   listSessions: ListSessionsUseCase
+  /**
+   * A estratégia que prova a credencial. Ausente = prova desligada: a identidade é só afirmada, e
+   * o que exige identidade PROVADA recusa (ver `resolveCaller`).
+   */
+  proof?: ICallerProof
 }
 
 export class AgentController {
@@ -44,6 +53,7 @@ export class AgentController {
     this.deleteSession = this.deleteSession.bind(this)
     this.sendMessage = this.sendMessage.bind(this)
     this.cancelSession = this.cancelSession.bind(this)
+    this.guardCaller = this.guardCaller.bind(this)
   }
 
   async health(_req: Request, res: Response) {
@@ -61,12 +71,29 @@ export class AgentController {
     })
   }
 
+  /**
+   * Portão das rotas que não são do controller (o `openapi.json`): mesma regra de identidade, como
+   * middleware. Recusa com 401 pelo handler de erro do servidor.
+   */
+  async guardCaller(_req: Request, _res: Response, next: NextFunction) {
+    try {
+      if (!(await resolveCaller(this.usecases.proof))) throw unauthorized()
+      next()
+    } catch (error: unknown) {
+      next(error)
+    }
+  }
+
   async getAgents(_req: Request, res: Response) {
-    await this.respond(res, async () => AGENT_REGISTRY)
+    await this.respond(res, async () => {
+      await this.requireCaller()
+      return AGENT_REGISTRY.map(toAgentDto)
+    })
   }
 
   async getAgentTools(req: Request, res: Response) {
     await this.respond(res, async () => {
+      await this.requireCaller()
       const agentId = req.params.agentId as string
       const agent = getAgentById(agentId)
       if (!agent) throw new AgentNotFoundError(agentId)
@@ -76,26 +103,57 @@ export class AgentController {
   }
 
   async getTools(_req: Request, res: Response) {
-    await this.respond(res, async () => this.catalogFor(ALL_LOCAL_TOOLS))
+    await this.respond(res, async () => {
+      await this.requireCaller()
+      return this.catalogFor(ALL_LOCAL_TOOLS)
+    })
   }
 
   async createSession(req: Request, res: Response) {
-    await this.respond(res, async () => this.usecases.createSession.execute(parseBody(createSessionSchema, req.body)), { status: 201, message: 'Session created successfully' })
+    await this.respond(
+      res,
+      async () => {
+        const resolved = await this.requireCaller()
+        const body = parseBody(createSessionSchema, req.body)
+
+        // ⛔ O `owner` do corpo é descartado SEMPRE. Dono só sai da credencial: aceitar o do corpo
+        // seria deixar a pessoa declarar de quem é a sessão — e criar uma na conta de outra.
+        const { owner: _declared, ...metadata } = body.metadata ?? {}
+        const owner = ownerOf(resolved)
+
+        return this.usecases.createSession.execute({ ...body, metadata: owner ? { ...metadata, owner } : metadata })
+      },
+      { status: 201, message: 'Session created successfully' },
+    )
   }
 
   async listSessions(_req: Request, res: Response) {
-    await this.respond(res, async () => (await this.usecases.listSessions.execute()).map(toSessionDto))
+    // ⛔ SÓ AS DO PRÓPRIO CHAMADOR. Listar tudo entregaria os ids vivos de todo mundo, e o id é a
+    // única coisa que separa uma pessoa de dirigir a sessão de outra.
+    await this.respond(res, async () => {
+      const resolved = await this.requireCaller()
+
+      return (await this.usecases.listSessions.execute()).filter((session) => ownsSession(resolved, session.metadata)).map(toSessionDto)
+    })
   }
 
   async getSession(req: Request, res: Response) {
-    await this.respond(res, async () => toSessionDto(await this.usecases.getSession.execute(req.params.id as string)))
+    await this.respond(res, async () => {
+      const id = req.params.id as string
+      await this.requireOwnedSession(id)
+
+      return toSessionDto(await this.usecases.getSession.execute(id))
+    })
   }
 
   async deleteSession(req: Request, res: Response) {
     await this.respond(
       res,
       async () => {
-        await this.usecases.deleteSession.execute(req.params.id as string)
+        const id = req.params.id as string
+        await this.requireOwnedSession(id)
+
+        await this.usecases.deleteSession.execute(id)
         return null
       },
       { message: 'Session deleted successfully' },
@@ -106,7 +164,12 @@ export class AgentController {
     await this.respond(
       res,
       async () => {
-        await this.usecases.cancelSession.execute(req.params.id as string)
+        const id = req.params.id as string
+        // O cancelamento por aba fechada (`res.on('close')`, abaixo) vai direto ao use case, sem
+        // passar por aqui: fechar a própria aba continua funcionando.
+        await this.requireOwnedSession(id)
+
+        await this.usecases.cancelSession.execute(id)
         return null
       },
       { message: 'Session cancelled successfully' },
@@ -120,6 +183,14 @@ export class AgentController {
    */
   async sendMessage(req: Request, res: Response) {
     const sessionId = req.params.id as string
+
+    // ⛔ ANTES de qualquer corpo ou modelo: mandar mensagem GASTA modelo, e numa sessão alheia gasta no
+    // nome de outra pessoa. O dono é conferido primeiro, e a resposta é a mesma de sessão inexistente.
+    try {
+      await this.requireOwnedSession(sessionId)
+    } catch (error: unknown) {
+      return this.sendFailure(res, error, '[AgentController.sendMessage]')
+    }
 
     let body
     try {
@@ -178,6 +249,33 @@ export class AgentController {
     }
   }
 
+  /** Quem chamou, ou 401. Ver `resolveCaller` para o que passa. */
+  private async requireCaller(): Promise<IResolvedCaller> {
+    const resolved = await resolveCaller(this.usecases.proof)
+    if (!resolved) throw unauthorized()
+
+    return resolved
+  }
+
+  /**
+   * A sessão existe E é do chamador — senão, a MESMA resposta para os dois casos.
+   *
+   * ⚠️ 404 igual para "não existe" e "não é sua": distinguir contaria a quem sondasse quais ids
+   * existem. O 401 de quem não tem identidade aceita não distingue nada — vale para qualquer id.
+   */
+  private async requireOwnedSession(sessionId: string): Promise<void> {
+    const resolved = await this.requireCaller()
+
+    let metadata: Record<string, unknown> | undefined
+    try {
+      metadata = (await this.usecases.getSession.execute(sessionId)).metadata
+    } catch {
+      throw new SessionNotFoundError(sessionId)
+    }
+
+    if (!ownsSession(resolved, metadata)) throw new SessionNotFoundError(sessionId)
+  }
+
   /**
    * A listagem vem primeiro de propósito: é ela que pode reconectar, e ler o status antes
    * devolvia um `connected` sempre um passo atrás das tools que a própria resposta trazia.
@@ -204,4 +302,8 @@ export class AgentController {
     if (failure.status >= 500) console.error(`${scope} Error:`, failure.message)
     res.status(failure.status).json(fail(failure.message, failure.code, failure.details))
   }
+}
+
+function unauthorized(): HttpError {
+  return new HttpError(401, 'unauthorized', 'Missing or unverifiable caller credential')
 }
