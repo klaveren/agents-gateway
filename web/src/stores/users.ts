@@ -10,9 +10,10 @@ export const useUsersStore = defineStore('users', () => {
     list.value = await api<IUser[]>('/users')
   }
 
-  async function create(input: { email: string; name: string; password: string; role: TUserRole }): Promise<void> {
-    await api('/users', { method: 'POST', body: input })
+  async function create(input: { email: string; name: string; password: string; role: TUserRole }): Promise<IUser> {
+    const created = await api<IUser>('/users', { method: 'POST', body: input })
     await load()
+    return created
   }
 
   async function update(id: string, change: { name?: string; role?: TUserRole; disabled?: boolean }): Promise<void> {

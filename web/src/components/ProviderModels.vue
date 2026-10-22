@@ -127,8 +127,8 @@ function context(tokens?: number): string {
     <ul v-if="visible.length" class="scroll-thin max-h-96 divide-y divide-zinc-800/70 overflow-y-auto">
       <li v-for="model in visible" :key="model.modelId" class="flex flex-wrap items-center gap-x-3 gap-y-1 py-2" :class="{ 'opacity-50': !model.available }">
         <button type="button" role="switch" :aria-checked="model.enabled" :aria-label="`Ativar ${model.modelId}`" class="switch shrink-0" :class="{ on: model.enabled }" @click="toggle(model)"><span /></button>
-        <div class="min-w-0 flex-1">
-          <div class="truncate font-mono text-[13px]">{{ model.modelId }}</div>
+        <div class="min-w-0 flex-1 basis-44">
+          <div class="truncate font-mono text-[13px]" :title="model.modelId">{{ model.modelId }}</div>
           <div class="truncate text-xs text-zinc-500">
             {{ model.label && model.label !== model.modelId ? model.label : '' }}
             <template v-if="model.contextLength"> · {{ context(model.contextLength) }} de contexto</template>
@@ -142,7 +142,7 @@ function context(tokens?: number): string {
           </div>
         </div>
 
-        <div v-if="editing !== model.modelId" class="flex items-center gap-2 text-xs">
+        <div v-if="editing !== model.modelId" class="ml-auto flex items-center gap-2 text-xs">
           <span v-if="model.price" class="text-zinc-300">${{ model.price.input }} / ${{ model.price.output }} <span class="text-zinc-500">por 1M</span></span>
           <span v-else class="text-zinc-500">sem preço</span>
           <span v-if="model.priceSource" class="rounded-full px-1.5 text-[10px]" :class="model.priceSource === 'manual' ? 'bg-sky-500/15 text-sky-300' : 'bg-zinc-800 text-zinc-400'">{{ SOURCE[model.priceSource] }}</span>

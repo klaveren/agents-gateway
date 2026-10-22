@@ -41,7 +41,8 @@ onMounted(async () => {
 <template>
   <div class="flex h-full overflow-hidden">
     <NavRail />
-    <main class="min-w-0 flex-1">
+    <!-- No celular a navegação é uma barra fixa embaixo: o conteúdo para antes dela. -->
+    <main class="min-h-0 min-w-0 flex-1 pb-[calc(3.25rem+env(safe-area-inset-bottom))] md:pb-0">
       <RouterView v-if="auth.checked" />
     </main>
   </div>

@@ -186,7 +186,7 @@ async function remove() {
 
       <div class="field sm:col-span-2">
         <span>Provider</span>
-        <div class="flex gap-1.5">
+        <div class="flex flex-wrap gap-1.5">
           <button v-for="provider in providerOptions" :key="provider.id" type="button" class="chip" :class="{ on: form.provider === provider.id }" @click="form.provider = provider.id">
             {{ provider.name }}<span v-if="!provider.enabled" class="text-[10px] text-zinc-500"> desligado</span>
           </button>
@@ -223,7 +223,7 @@ async function remove() {
 
       <div class="field">
         <span>Lanes</span>
-        <div class="flex gap-1.5">
+        <div class="flex flex-wrap gap-1.5">
           <button v-for="mode in (['chat', 'agent'] as TMode[])" :key="mode" type="button" class="chip" :class="{ on: form.modes.includes(mode) }" @click="toggle(form.modes, mode)">{{ mode === 'chat' ? 'Chat' : 'Agents SDK' }}</button>
         </div>
         <small v-for="message in issues.modes" :key="message" class="error">{{ message }}</small>

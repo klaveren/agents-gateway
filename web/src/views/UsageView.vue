@@ -90,14 +90,14 @@ const go = (query: Record<string, string | undefined>) => router.replace({ query
 
   <div v-else class="scroll-thin h-full overflow-y-auto px-4 py-6">
     <div class="mx-auto flex max-w-5xl flex-col gap-4">
-      <header class="flex flex-wrap items-center gap-3">
+      <header class="flex flex-wrap items-center gap-x-3 gap-y-2">
         <h1 class="text-xl font-semibold">Uso</h1>
-        <div v-if="auth.isAdmin" class="flex gap-1 rounded-full bg-zinc-900 p-1 text-sm">
+        <div v-if="auth.isAdmin" class="scroll-thin order-3 flex max-w-full gap-1 overflow-x-auto rounded-full bg-zinc-900 p-1 text-sm whitespace-nowrap sm:order-none">
           <button class="rounded-full px-3 py-1" :class="tab === 'mine' ? 'bg-zinc-700 text-white' : 'text-zinc-400'" @click="go({ tab: undefined, user: undefined })">Meu uso</button>
           <button class="rounded-full px-3 py-1" :class="tab === 'users' ? 'bg-zinc-700 text-white' : 'text-zinc-400'" @click="go({ tab: 'users', user: undefined })">Por usuário</button>
           <button class="rounded-full px-3 py-1" :class="tab === 'keys' ? 'bg-zinc-700 text-white' : 'text-zinc-400'" @click="go({ tab: 'keys', user: undefined, value: undefined })">Por chave</button>
         </div>
-        <div class="ml-auto flex gap-1 rounded-full bg-zinc-900 p-1 text-sm" role="group" aria-label="Período">
+        <div class="ml-auto flex shrink-0 gap-1 rounded-full bg-zinc-900 p-1 text-sm whitespace-nowrap" role="group" aria-label="Período">
           <button v-for="period in PERIODS" :key="period" class="rounded-full px-3 py-1" :class="days === period ? 'bg-zinc-700 text-white' : 'text-zinc-400'" @click="days = period">{{ period }} dias</button>
         </div>
       </header>

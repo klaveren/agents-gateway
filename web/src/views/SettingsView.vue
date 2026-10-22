@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ApiError } from '@/lib/api'
 import type { TAudience } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
@@ -14,6 +15,15 @@ const agents = useAgentsStore()
 const settings = useSettingsStore()
 const providers = useProvidersStore()
 const conversations = useConversationsStore()
+const router = useRouter()
+
+/** No celular o "Sair" mora aqui (a barra inferior não tem espaço para ele). */
+async function logout() {
+  await auth.logout()
+  conversations.subscribe(auth.isAdmin)
+  void conversations.load(auth.isAdmin)
+  await router.push('/login')
+}
 
 const gatewayToken = ref(auth.gatewayToken)
 const tokenNote = ref<string>()
@@ -117,7 +127,10 @@ async function saveSettings() {
 <template>
   <div class="scroll-thin h-full overflow-y-auto px-4 py-6">
     <div class="mx-auto flex max-w-2xl flex-col gap-6">
-      <h1 class="text-xl font-semibold">Configuração</h1>
+      <div class="flex items-center gap-3">
+        <h1 class="text-xl font-semibold">Configuração</h1>
+        <button v-if="auth.user" class="ml-auto rounded-full bg-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:text-rose-300 md:hidden" @click="logout">Sair</button>
+      </div>
 
       <section v-if="auth.isAdmin && settings.current" class="flex flex-col gap-4 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
         <h2 class="font-medium">Operação do gateway</h2>
@@ -134,23 +147,23 @@ async function saveSettings() {
         </div>
 
         <div class="grid gap-3 sm:grid-cols-2">
-          <label class="flex flex-col gap-1 text-sm text-zinc-300">
+          <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
             Agente padrão
-            <select v-model="agentId" class="rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2">
+            <select v-model="agentId" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2">
               <option value="">Padrão ({{ settings.current.defaults?.agentId }})</option>
               <option v-for="option in agents.list" :key="option.id" :value="option.id">{{ option.name }}</option>
             </select>
           </label>
-          <label class="flex flex-col gap-1 text-sm text-zinc-300">
+          <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
             Modelo padrão
-            <select v-model="model" class="rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2">
+            <select v-model="model" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2">
               <option value="">Padrão do agente</option>
               <option v-for="option in agent?.models ?? []" :key="option" :value="option">{{ option }}</option>
             </select>
           </label>
-          <label class="flex flex-col gap-1 text-sm text-zinc-300">
+          <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
             Modelo do classificador
-            <select v-model="classifier" class="rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2 text-sm">
+            <select v-model="classifier" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2 text-sm">
               <option value="">Nenhum (CLASSIFIER_MODEL, se houver)</option>
               <option v-if="classifier && !classifierOptions.some((option) => option.value === classifier)" :value="classifier">{{ classifier.replace('::', ' · ') }} (não ativado)</option>
               <option v-for="option in classifierOptions" :key="option.value" :value="option.value">{{ providerLabel(option.provider, providers.names) }} · {{ option.model }}</option>
@@ -179,11 +192,11 @@ async function saveSettings() {
         <h2 class="font-medium">Minha conta</h2>
         <p class="text-sm text-zinc-400">{{ auth.user.name }} · {{ auth.user.email }} · {{ auth.user.role === 'admin' ? 'administrador' : 'membro' }}</p>
         <form class="grid gap-3 sm:grid-cols-2" @submit.prevent="changePassword">
-          <label class="flex flex-col gap-1 text-sm text-zinc-300">
+          <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
             Senha atual
             <input v-model="currentPassword" type="password" required autocomplete="current-password" class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm" />
           </label>
-          <label class="flex flex-col gap-1 text-sm text-zinc-300">
+          <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
             Nova senha
             <input v-model="nextPassword" type="password" required autocomplete="new-password" class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm" />
           </label>
@@ -198,7 +211,7 @@ async function saveSettings() {
       <section class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
         <h2 class="font-medium">Portão do gateway</h2>
         <p class="text-xs text-zinc-400">Só quando o servidor define <code>GATEWAY_TOKEN</code>. Fica neste navegador (localStorage). Quem você é vem do login, não daqui.</p>
-        <label class="flex flex-col gap-1 text-sm text-zinc-300">
+        <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
           Token do gateway
           <input v-model="gatewayToken" type="password" autocomplete="off" class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 font-mono text-sm" />
         </label>

@@ -21,10 +21,16 @@ async function logout() {
 const section = computed(() => {
   const name = String(route.name ?? '')
   if (name.startsWith('agent')) return 'agents'
-  return ['settings', 'users', 'providers', 'usage'].includes(name) ? name : 'inbox'
+  if (name.startsWith('provider')) return 'providers'
+  if (name === 'user' || name.startsWith('user-')) return 'users'
+  return ['settings', 'users', 'usage'].includes(name) ? name : 'inbox'
 })
 
-const links = computed(() => [
+/**
+ * ⚖️ Abaixo de `md` o trilho vira uma BARRA INFERIOR: no celular, 68px de coluna fixa eram quase um
+ * quinto da tela. Os mesmos links; o "Sair" passa para o topo da Configuração.
+ */
+const links = computed<Array<{ to: string; key: string; label: string; short?: string; icon: 'inbox' | 'chart' | 'agents' | 'key' | 'users' | 'settings'; badge: number }>>(() => [
   { to: '/', key: 'inbox', label: 'Conversas', icon: 'inbox' as const, badge: conversations.unread.size },
   ...(auth.signedIn ? [{ to: '/usage', key: 'usage', label: 'Uso', icon: 'chart' as const, badge: 0 }] : []),
   ...(auth.isAdmin
@@ -34,26 +40,29 @@ const links = computed(() => [
         { to: '/users', key: 'users', label: 'Usuários', icon: 'users' as const, badge: 0 },
       ]
     : []),
-  { to: '/settings', key: 'settings', label: 'Configuração', icon: 'settings' as const, badge: 0 },
+  { to: '/settings', key: 'settings', label: 'Configuração', short: 'Ajustes', icon: 'settings' as const, badge: 0 },
 ])
 </script>
 
 <template>
-  <nav class="flex w-[68px] shrink-0 flex-col items-center gap-1 border-r border-zinc-800/80 bg-zinc-900/60 py-3">
-    <div class="mb-3 grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-emerald-400 to-teal-600 text-sm font-bold text-zinc-950" title="Agents Gateway">AG</div>
+  <nav
+    class="fixed inset-x-0 bottom-0 z-30 flex shrink-0 items-stretch border-t border-zinc-800/80 bg-zinc-900/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:static md:w-[68px] md:flex-col md:items-center md:gap-1 md:border-t-0 md:border-r md:bg-zinc-900/60 md:py-3 md:pb-3 md:backdrop-blur-none"
+  >
+    <div class="mb-3 hidden h-10 w-10 place-items-center rounded-xl md:grid bg-gradient-to-br from-emerald-400 to-teal-600 text-sm font-bold text-zinc-950" title="Agents Gateway">AG</div>
     <RouterLink
       v-for="link in links"
       :key="link.key"
       :to="link.to"
       :title="link.label"
-      class="relative flex w-14 flex-col items-center gap-1 rounded-xl py-2 text-[10px] font-medium transition-colors"
+      class="relative flex min-w-0 flex-1 flex-col items-center gap-0.5 py-1.5 text-[10px] font-medium transition-colors md:w-14 md:flex-none md:gap-1 md:rounded-xl md:py-2"
       :class="section === link.key ? 'bg-zinc-800 text-emerald-300' : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'"
     >
       <Icon :name="link.icon" class="h-[22px] w-[22px]" />
-      {{ link.label }}
-      <span v-if="link.badge" class="absolute top-1 right-2 min-w-[18px] rounded-full bg-emerald-500 px-1 text-center text-[10px] leading-[18px] font-semibold text-zinc-950">{{ link.badge > 99 ? '99+' : link.badge }}</span>
+      <span class="max-w-full truncate px-0.5 md:hidden">{{ link.short ?? link.label }}</span>
+      <span class="hidden md:inline">{{ link.label }}</span>
+      <span v-if="link.badge" class="absolute top-0.5 right-[calc(50%-20px)] md:top-1 md:right-2 min-w-[18px] rounded-full bg-emerald-500 px-1 text-center text-[10px] leading-[18px] font-semibold text-zinc-950">{{ link.badge > 99 ? '99+' : link.badge }}</span>
     </RouterLink>
-    <div class="mt-auto flex flex-col items-center gap-2 pb-1 text-[10px] text-zinc-500">
+    <div class="mt-auto hidden flex-col items-center gap-2 pb-1 text-[10px] text-zinc-500 md:flex">
       <span class="h-2 w-2 rounded-full" :class="conversations.live ? 'bg-emerald-400' : 'bg-zinc-600'" :title="conversations.live ? 'Ao vivo' : 'Sem conexão ao vivo'" />
       <template v-if="auth.user">
         <RouterLink to="/settings" class="grid h-9 w-9 place-items-center rounded-full text-xs font-semibold" :class="auth.isAdmin ? 'bg-emerald-500/20 text-emerald-300' : 'bg-zinc-800 text-zinc-300'" :title="`${auth.user.name} (${auth.user.email})`">
