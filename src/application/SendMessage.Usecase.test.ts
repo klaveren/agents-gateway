@@ -27,9 +27,10 @@ class RecordingRepository extends NullConversationRepository {
     this.sessions.push(session)
   }
 
-  async appendTurn(turn: IConversationTurn): Promise<void> {
+  async appendTurn(turn: IConversationTurn): Promise<number | undefined> {
     this.turns.push(turn)
     this.resolve?.()
+    return turn.index
   }
 }
 
@@ -355,8 +356,9 @@ describe('SendMessageUseCase', () => {
       const order: string[] = []
       const appended = repository.appendTurn.bind(repository)
       repository.appendTurn = async (turn) => {
-        await appended(turn)
+        const stored = await appended(turn)
         order.push('saved')
+        return stored
       }
       let seen: unknown
       const classifier: ITurnClassifier = {
@@ -373,7 +375,7 @@ describe('SendMessageUseCase', () => {
 
       assert.deepStrictEqual(order, ['saved', 'classified'])
       assert.deepStrictEqual(seen, { request: 'minha pergunta', answer: 'resposta', tools: ['orders_search'] })
-      assert.deepStrictEqual(repository.labels, [{ sessionId: 's', index: 2, classification: 'blue' }])
+      assert.deepStrictEqual(repository.labels, [{ sessionId: 's', index: 3, classification: 'blue' }])
     })
 
     it('does not hold the stream: the reader finishes while the classifier is still thinking', async () => {
@@ -399,7 +401,7 @@ describe('SendMessageUseCase', () => {
       const labeled = repository.whenLabeled()
       gate.release?.()
       await labeled
-      assert.deepStrictEqual(JSON.stringify(repository.labels.slice()), JSON.stringify([{ sessionId: 's', index: 2, classification: 'green' }]))
+      assert.deepStrictEqual(JSON.stringify(repository.labels.slice()), JSON.stringify([{ sessionId: 's', index: 3, classification: 'green' }]))
     })
 
     it('a classifier that throws: the turn is saved and has no label', async () => {

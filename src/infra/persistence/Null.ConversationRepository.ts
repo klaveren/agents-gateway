@@ -15,7 +15,9 @@ import { IConversationRepository } from '@domain/ports/ConversationRepository.Po
  */
 export class NullConversationRepository implements IConversationRepository {
   async saveSession(_session: IConversationSession): Promise<void> {}
-  async appendTurn(_turn: IConversationTurn): Promise<void> {}
+  async appendTurn(_turn: IConversationTurn): Promise<number | undefined> {
+    return undefined
+  }
   async classifyTurn(_sessionId: string, _index: number, _classification: TClassification): Promise<void> {}
   async listSessions(): Promise<IConversationSession[]> {
     return []

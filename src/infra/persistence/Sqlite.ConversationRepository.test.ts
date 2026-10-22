@@ -51,12 +51,12 @@ describe('SqliteConversationRepository', () => {
   it('never overwrites a turn: a repeated index goes to the next free one', async () => {
     const repo = repository()
     await repo.saveSession(session())
-    await repo.appendTurn(turn({ index: 0, request: 'primeira' }))
+    assert.strictEqual(await repo.appendTurn(turn({ index: 0, request: 'primeira' })), 0)
     await repo.classifyTurn('s1', 0, 'green')
 
     // Índice repetido (turnos concorrentes, sessão perdida): antes o INSERT OR REPLACE apagava o
-    // turno 0 — e a classificação dele.
-    await repo.appendTurn(turn({ index: 0, request: 'segunda' }))
+    // turno 0 — e a classificação dele. E devolve onde ficou, para o rótulo não cair no turno 0.
+    assert.strictEqual(await repo.appendTurn(turn({ index: 0, request: 'segunda' })), 1)
 
     const turns = await repo.listTurns('s1')
     assert.deepStrictEqual(

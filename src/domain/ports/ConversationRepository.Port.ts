@@ -14,8 +14,13 @@ export interface IConversationRepository {
   /** Cria ou atualiza o cabeçalho da conversa. */
   saveSession(session: IConversationSession): Promise<void>
 
-  /** Acrescenta um turno e atualiza os contadores do cabeçalho. */
-  appendTurn(turn: IConversationTurn): Promise<void>
+  /**
+   * Acrescenta um turno e atualiza os contadores do cabeçalho.
+   *
+   * Devolve o índice EM QUE O TURNO FICOU — pode não ser o pedido, se ele já estava ocupado — ou
+   * `undefined` se não gravou. Quem rotula o turno depois usa este, não o que pediu.
+   */
+  appendTurn(turn: IConversationTurn): Promise<number | undefined>
 
   /** O retrato agregado de TODAS as conversas — somado no banco, não sobre a página listada. */
   stats(): Promise<IConversationStats>

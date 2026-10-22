@@ -166,7 +166,7 @@ export class SendMessageUseCase {
       })
     }
 
-    await this.conversations.appendTurn({
+    const stored = await this.conversations.appendTurn({
       sessionId,
       index,
       at: new Date(),
@@ -182,7 +182,8 @@ export class SendMessageUseCase {
       error: turn.error,
     })
 
-    await this.classify(sessionId, index, input, turn)
+    // O rótulo vai para onde o turno FICOU: com o índice pedido ocupado, o banco o pôs no próximo.
+    if (stored !== undefined) await this.classify(sessionId, stored, input, turn)
   }
 
   /**
