@@ -80,17 +80,17 @@ async function send(text: string, files: IOutgoingFile[]) {
     <div class="scroll-thin min-h-0 flex-1 overflow-y-auto px-4 py-5">
       <div class="mx-auto flex max-w-3xl flex-col gap-5">
         <template v-if="!thread.turns.length && !thread.pending">
-          <div class="grid gap-2 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <button
               v-for="option in agents.list"
               :key="option.id"
-              class="flex items-center gap-3 rounded-2xl border p-3 text-left transition-colors"
+              class="flex min-w-0 items-center gap-3 rounded-xl border px-3 py-2 text-left transition-colors"
               :class="option.id === draft?.agentId ? 'border-emerald-500/60 bg-emerald-500/10' : 'border-zinc-800 hover:bg-zinc-900'"
               @click="pick(option.id)"
             >
-              <AgentAvatar :name="option.name" :provider="option.provider" />
-              <span class="min-w-0">
-                <span class="block truncate font-medium">{{ option.name }}</span>
+              <AgentAvatar :name="option.name" :provider="option.provider" size="sm" />
+              <span class="min-w-0 flex-1">
+                <span class="block truncate text-sm font-medium">{{ option.name }}</span>
                 <span class="block truncate text-xs text-zinc-400">{{ providerLabel(option.provider) }} · {{ option.allowedTools.join(', ') || 'sem tools' }}</span>
               </span>
               <span v-if="!option.builtIn" class="ml-auto rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-400">criado</span>

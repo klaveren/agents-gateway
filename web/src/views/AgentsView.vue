@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import AgentAvatar from '@/components/AgentAvatar.vue'
 import AgentForm from '@/components/AgentForm.vue'
 import Icon from '@/components/Icon.vue'
+import MasterDetail from '@/components/MasterDetail.vue'
 import { providerLabel } from '@/lib/format'
 import type { IAgentDetail } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
@@ -66,8 +67,8 @@ watch(creating, (value) => {
     </div>
   </div>
 
-  <div v-else class="flex h-full">
-    <aside class="scroll-thin h-full w-full shrink-0 overflow-y-auto border-r border-zinc-800/80 lg:w-[320px]" :class="id || creating ? 'hidden lg:block' : 'block'">
+  <MasterDetail v-else :open="!!id || creating" back-to="/agents" back-label="Agentes" :title="creating ? (template ? 'Duplicar agente' : 'Novo agente') : detail?.name">
+    <template #list>
       <header class="flex items-center gap-2 px-4 pt-4 pb-3">
         <h1 class="text-xl font-semibold">Agentes</h1>
         <RouterLink to="/agents/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Novo agente" @click="template = undefined"><Icon name="plus" class="h-5 w-5" /></RouterLink>
@@ -78,21 +79,20 @@ watch(creating, (value) => {
           v-for="agent in group.items"
           :key="agent.id"
           :to="`/agents/${agent.id}`"
-          class="mx-2 flex items-center gap-3 rounded-xl px-3 py-2.5"
+          class="mx-2 flex items-center gap-3 rounded-xl px-3 py-2"
           :class="agent.id === id ? 'bg-emerald-500/15' : 'hover:bg-zinc-800/60'"
         >
           <AgentAvatar :name="agent.name" :provider="agent.provider" size="sm" />
-          <span class="min-w-0">
+          <span class="min-w-0 flex-1">
             <span class="block truncate text-sm font-medium">{{ agent.name }}</span>
             <span class="block truncate text-xs text-zinc-500">{{ providerLabel(agent.provider) }} · {{ agent.models[0] }}</span>
           </span>
         </RouterLink>
       </template>
       <p v-if="!created.length" class="px-4 py-2 text-sm text-zinc-500">Nenhum agente criado ainda.</p>
-    </aside>
+    </template>
 
-    <section class="scroll-thin h-full min-w-0 flex-1 overflow-y-auto px-4 py-5" :class="id || creating ? 'block' : 'hidden lg:block'">
-      <RouterLink to="/agents" class="mb-3 inline-flex items-center gap-1 text-sm text-zinc-400 lg:hidden"><Icon name="back" class="h-4 w-4" /> Agentes</RouterLink>
+    <template #detail>
       <template v-if="creating">
         <h2 class="mx-auto mb-4 max-w-3xl text-lg font-semibold">{{ template ? 'Duplicar agente' : 'Novo agente' }}</h2>
         <AgentForm :agent="template" creating @saved="(saved) => router.push(`/agents/${saved}`)" />
@@ -100,16 +100,16 @@ watch(creating, (value) => {
       <template v-else-if="detail">
         <div class="mx-auto mb-4 flex max-w-3xl items-center gap-3">
           <AgentAvatar :name="detail.name" :provider="detail.provider" size="lg" />
-          <div>
-            <h2 class="text-lg font-semibold">{{ detail.name }}</h2>
-            <p class="font-mono text-xs text-zinc-500">{{ detail.id }}</p>
+          <div class="min-w-0">
+            <h2 class="truncate text-lg font-semibold">{{ detail.name }}</h2>
+            <p class="truncate font-mono text-xs text-zinc-500">{{ detail.id }}</p>
           </div>
-          <RouterLink :to="{ path: '/new', query: { agent: detail.id } }" class="ml-auto rounded-full bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700">Conversar</RouterLink>
+          <RouterLink :to="{ path: '/new', query: { agent: detail.id } }" class="ml-auto shrink-0 rounded-full bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700">Conversar</RouterLink>
         </div>
         <AgentForm :agent="detail" :creating="false" @saved="(saved) => agents.detail(saved).then((fresh) => (detail = fresh))" @duplicate="duplicate" @removed="router.push('/agents')" />
       </template>
       <p v-else-if="error" class="text-sm text-rose-300">{{ error }}</p>
       <div v-else class="grid h-full place-items-center text-zinc-500">Escolha um agente ou crie um novo.</div>
-    </section>
-  </div>
+    </template>
+  </MasterDetail>
 </template>
