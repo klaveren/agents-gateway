@@ -1,0 +1,40 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --color-claude: #d97757;
+  --color-openai: #10a37f;
+  --color-google: #4285f4;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  @apply bg-zinc-950 text-zinc-100 antialiased;
+}
+
+/* A resposta do agente vem de `renderMarkdown` (escapada antes de marcar). */
+.prose-agent :where(pre) {
+  @apply my-2 overflow-x-auto rounded-lg bg-black/40 p-3 text-[13px] leading-relaxed;
+}
+.prose-agent :where(code) {
+  @apply rounded bg-black/30 px-1 py-0.5 text-[13px];
+}
+.prose-agent :where(pre code) {
+  @apply bg-transparent p-0;
+}
+.prose-agent :where(ul) {
+  @apply my-1 list-disc pl-5;
+}
+.prose-agent :where(a) {
+  @apply text-emerald-400 underline underline-offset-2;
+}
+
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(63 63 70) transparent;
+}

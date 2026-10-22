@@ -12,6 +12,15 @@ COPY tsconfig.json ./
 COPY src ./src
 RUN pnpm build
 
+# A tela (Vue) compila à parte: o gateway serve `web/dist`, e o `node_modules` dela não vai para a imagem.
+FROM node:24-slim AS web
+WORKDIR /web
+RUN corepack enable
+COPY web/package.json web/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY web ./
+RUN pnpm build
+
 FROM node:24-slim AS deps
 WORKDIR /app
 RUN corepack enable
@@ -39,6 +48,7 @@ COPY package.json ./
 # O frontend não passa pelo tsc, então vai direto para o primeiro caminho que o
 # Http.Server procura (dist/infra/http/public).
 COPY src/infra/http/public ./dist/infra/http/public
+COPY --from=web /web/dist ./web/dist
 
 USER gateway
 EXPOSE 3000
