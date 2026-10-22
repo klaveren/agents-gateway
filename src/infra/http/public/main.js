@@ -6,7 +6,12 @@ const API_BASE = window.location.origin + '/v1';
  */
 function authHeaders(extra = {}) {
   const token = localStorage.getItem('gatewayToken');
-  return token ? { ...extra, Authorization: 'Bearer ' + token } : extra;
+  const headers = token ? { ...extra, Authorization: 'Bearer ' + token } : extra;
+
+  // A credencial do chamador, repassada às tools. Sem ela o gateway só atende com ALLOW_ANONYMOUS=1
+  // (uso local); `localStorage.callerToken` serve para testar a UI contra um gateway fechado.
+  const caller = localStorage.getItem('callerToken');
+  return caller ? { ...headers, 'X-Tool-Authorization': 'Bearer ' + caller } : headers;
 }
 
 const MODE_HINTS = {

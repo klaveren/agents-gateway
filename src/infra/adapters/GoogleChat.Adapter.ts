@@ -1,6 +1,7 @@
 import { Content, FunctionDeclaration, GoogleGenerativeAI, Part, Tool } from '@google/generative-ai'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
+import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
@@ -66,7 +67,7 @@ export class GoogleChatAdapter implements IAgentAdapter {
     }
   }
 
-  async *sendMessage(agent: IAgent, sessionId: string, input: IMessageInput): AsyncIterable<IAgentEvent> {
+  async *sendMessage(agent: IAgent, sessionId: string, input: IMessageInput, _context: IExecutionContext): AsyncIterable<IAgentEvent> {
     const record = this.store.get(sessionId)
     if (!record) {
       yield { type: 'error', sessionId, timestamp: new Date(), payload: { message: `Session not found: ${sessionId}` } }
@@ -190,6 +191,9 @@ export class GoogleChatAdapter implements IAgentAdapter {
             payload: {
               inputTokens: aggregate.usageMetadata.promptTokenCount,
               outputTokens: aggregate.usageMetadata.candidatesTokenCount,
+              // Cache implícito do Gemini: parcela de `promptTokenCount`; não há gravação cobrada.
+              cacheReadTokens: aggregate.usageMetadata.cachedContentTokenCount ?? 0,
+              cacheWriteTokens: 0,
             },
           }
         }
@@ -219,7 +223,8 @@ export class GoogleChatAdapter implements IAgentAdapter {
   }
 
   private buildParts(input: IMessageInput): Part[] {
-    const parts: Part[] = [{ text: input.text }]
+    // Texto vazio não entra como parte — anexo sem frase é mensagem válida (ver GoogleAgent.Adapter).
+    const parts: Part[] = input.text.trim() ? [{ text: input.text }] : []
     for (const file of input.files ?? []) {
       parts.push({ inlineData: { data: file.data, mimeType: file.mimeType } })
     }

@@ -104,7 +104,7 @@ describe('OpenAIAgentAdapter', () => {
   it('translates the run stream into gateway events', async () => {
     const adapter = new OpenAIAgentAdapter({ run: runWith(turn) })
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'qual a selic?' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'qual a selic?' }, {}))
 
     assert.ok(events.find((e) => e.type === 'text.delta' && e.payload.text === 'Searching'))
     assert.ok(events.find((e) => e.type === 'tool.started' && e.payload.tool === 'search_web' && e.payload.args.query === 'selic'))
@@ -117,7 +117,7 @@ describe('OpenAIAgentAdapter', () => {
     const calls: ICall[] = []
     const adapter = new OpenAIAgentAdapter({ run: runWith(turn, calls) })
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent', reasoning: 'medium' })
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.ok((calls[0].maxTurns ?? 0) > 0)
     assert.ok(calls[0].signal instanceof AbortSignal)
@@ -130,8 +130,8 @@ describe('OpenAIAgentAdapter', () => {
     const adapter = new OpenAIAgentAdapter({ run: runWith(turn, calls) })
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
 
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'first' }))
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'second' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'first' }, {}))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'second' }, {}))
 
     assert.strictEqual(calls[0].input.length, 1)
     assert.strictEqual(calls[1].input.length, 2)
@@ -143,13 +143,18 @@ describe('OpenAIAgentAdapter', () => {
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
 
     await drain(
-      adapter.sendMessage(getAgent(), session.id, {
-        text: 'look',
-        files: [
-          { name: 'a.png', mimeType: 'image/png', data: 'aaa' },
-          { name: 'b.pdf', mimeType: 'application/pdf', data: 'bbb' },
-        ],
-      }),
+      adapter.sendMessage(
+        getAgent(),
+        session.id,
+        {
+          text: 'look',
+          files: [
+            { name: 'a.png', mimeType: 'image/png', data: 'aaa' },
+            { name: 'b.pdf', mimeType: 'application/pdf', data: 'bbb' },
+          ],
+        },
+        {},
+      ),
     )
 
     const message = calls[0].input[0]
@@ -164,7 +169,7 @@ describe('OpenAIAgentAdapter', () => {
     const calls: ICall[] = []
     const adapter = new OpenAIAgentAdapter({ run: runWith(turn, calls), catalog })
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.deepStrictEqual(
       calls[0].agent.tools.map((tool) => tool.name),
@@ -211,18 +216,18 @@ describe('OpenAIAgentAdapter', () => {
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
 
     // Turno 1: MCP fora do ar, o agente roda só com o que é local.
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'um' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'um' }, {}))
     assert.deepStrictEqual(calls[0].agent.mcpServers, [])
 
     // O server sobe: a geração muda e o turno seguinte passa a enxergá-lo, sem reiniciar.
     connected = true
     generation = 1
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'dois' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'dois' }, {}))
     assert.strictEqual(calls[1].agent.mcpServers.length, 1)
 
     // Reconectar de novo troca a geração: os servers antigos são fechados, não vazados.
     generation = 2
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'tres' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'tres' }, {}))
     assert.deepStrictEqual(closed, ['gen-1'])
     assert.strictEqual(calls[2].agent.mcpServers.length, 1)
   })
@@ -235,7 +240,7 @@ describe('OpenAIAgentAdapter', () => {
     })
 
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
     const error = events.find((e) => e.type === 'error')
 
     assert.ok(error && error.type === 'error')
@@ -257,11 +262,64 @@ describe('OpenAIAgentAdapter', () => {
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
     const events: IAgentEvent[] = []
 
-    for await (const event of adapter.sendMessage(getAgent(), session.id, { text: 'hi' })) {
+    for await (const event of adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {})) {
       events.push(event)
       if (event.type === 'text.delta') await adapter.cancel(session.id)
     }
 
     assert.strictEqual(events[events.length - 1].type, 'message.aborted')
+  })
+
+  it('reports the reasoning apart from the visible output, as every provider does', async () => {
+    // ⚠️ Aqui o raciocínio JÁ ESTÁ dentro de `outputTokens` da API. O contrato do gateway é uma saída
+    // só com o visível e o raciocínio à parte: 30 de saída crua com 10 de raciocínio vira 20 + 10.
+    const adapter = new OpenAIAgentAdapter({
+      run: runWith(() => [
+        {
+          type: 'raw_model_stream_event',
+          data: { type: 'response_done', response: { usage: { inputTokens: 8, outputTokens: 30, outputTokensDetails: { reasoningTokens: 10 } } } },
+        },
+      ]),
+    })
+    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
+    const usage = events.find((event) => event.type === 'usage')
+
+    assert.deepStrictEqual(usage?.payload, { inputTokens: 8, outputTokens: 20, reasoningTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0 })
+  })
+
+  it('reads the cache parcels from an object, a list of objects, snake or camel case', async () => {
+    const usageOf = async (inputTokensDetails: unknown) => {
+      const adapter = new OpenAIAgentAdapter({
+        run: runWith(() => [{ type: 'raw_model_stream_event', data: { type: 'response_done', response: { usage: { inputTokens: 100, outputTokens: 5, inputTokensDetails } } } }]),
+      })
+      const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+      const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
+
+      return events.find((event) => event.type === 'usage')?.payload
+    }
+
+    const expected = { inputTokens: 100, outputTokens: 5, reasoningTokens: undefined, cacheReadTokens: 60, cacheWriteTokens: 10 }
+
+    assert.deepStrictEqual(await usageOf({ cached_tokens: 60, cache_write_tokens: 10 }), expected)
+    assert.deepStrictEqual(await usageOf([{ cached_tokens: 40, cache_write_tokens: 10 }, { cached_tokens: 20 }]), expected)
+    assert.deepStrictEqual(await usageOf({ cachedTokens: 60, cacheWriteTokens: 10 }), expected)
+    assert.deepStrictEqual(await usageOf(undefined), { ...expected, cacheReadTokens: 0, cacheWriteTokens: 0 })
+  })
+
+  it('sends an attachment with no text without an empty input_text part', async () => {
+    const calls: ICall[] = []
+    const adapter = new OpenAIAgentAdapter({ run: runWith(turn, calls) })
+    const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: '  ', files: [{ name: 'b.pdf', mimeType: 'application/pdf', data: 'bbb' }] }, {}))
+
+    const message = calls[0].input[0]
+    assert.ok('content' in message && Array.isArray(message.content))
+    assert.deepStrictEqual(
+      message.content.map((part) => part.type),
+      ['input_file'],
+    )
   })
 })

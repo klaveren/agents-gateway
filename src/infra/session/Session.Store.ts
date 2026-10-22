@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { IUsage } from '@domain/models/AgentEvent.Model'
+import { addUsage, IUsage } from '@domain/models/AgentEvent.Model'
 import { TSessionStatus } from '@domain/models/Session.Model'
 
 /**
@@ -38,13 +38,18 @@ export interface ISessionRecord {
 export type TSessionSeed = Omit<ISessionRecord, 'id' | 'createdAt' | 'lastActivityAt' | 'status' | 'turns' | 'usage'>
 
 export interface ISessionStoreOptions {
-  /** Tempo sem atividade após o qual a sessão é descartada. Default: 1h. */
+  /** Tempo sem atividade após o qual a sessão é descartada. Default: 8h (ver `DEFAULT_TTL_MS`). */
   ttlMs?: number
   /** Teto de sessões vivas; ao estourar, a menos ativa sai. Default: 500. */
   maxSessions?: number
 }
 
-const DEFAULT_TTL_MS = 60 * 60 * 1000
+/**
+ * ⚖️ 8h, um expediente. Com 1h, quem saía para almoçar voltava a uma sessão que não existia mais: o
+ * histórico do modelo vive na memória do processo, então expirar a sessão é perder a conversa de
+ * quem ainda a considerava aberta. É por inatividade, não por idade — conversa em uso não expira.
+ */
+export const DEFAULT_TTL_MS = 8 * 60 * 60 * 1000
 const DEFAULT_MAX_SESSIONS = 500
 
 /**
@@ -119,11 +124,7 @@ export class SessionStore {
 
   /** Soma o usage de um turno ao acumulado da sessão. */
   addUsage(record: ISessionRecord, usage: IUsage): void {
-    record.usage = {
-      inputTokens: sum(record.usage.inputTokens, usage.inputTokens),
-      outputTokens: sum(record.usage.outputTokens, usage.outputTokens),
-      reasoningTokens: sum(record.usage.reasoningTokens, usage.reasoningTokens),
-    }
+    record.usage = addUsage(record.usage, usage)
   }
 
   get size(): number {
@@ -148,9 +149,4 @@ export class SessionStore {
       this.delete(record.id)
     }
   }
-}
-
-function sum(current: number | undefined, addition: number | undefined): number | undefined {
-  if (current === undefined && addition === undefined) return undefined
-  return (current ?? 0) + (addition ?? 0)
 }

@@ -1,8 +1,8 @@
 import assert from 'node:assert'
-import { describe, it } from 'node:test'
+import { describe, it, mock } from 'node:test'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { SessionStore, type TSessionSeed } from './Session.Store'
+import { DEFAULT_TTL_MS, SessionStore, type TSessionSeed } from './Session.Store'
 
 describe('SessionStore', () => {
   const seed = (overrides: Partial<TSessionSeed> = {}): TSessionSeed => ({
@@ -68,6 +68,16 @@ describe('SessionStore', () => {
     assert.deepStrictEqual(record.usage, { inputTokens: 13, outputTokens: 7, reasoningTokens: 7 })
   })
 
+  it('sums the cache parcels, and leaves out a field no turn reported', () => {
+    const store = new SessionStore()
+    const record = store.create('claude-chat', seed())
+
+    store.addUsage(record, { inputTokens: 10, cacheReadTokens: 8 })
+    store.addUsage(record, { inputTokens: 12, cacheReadTokens: 9, cacheWriteTokens: 2 })
+
+    assert.deepStrictEqual(record.usage, { inputTokens: 22, cacheReadTokens: 17, cacheWriteTokens: 2 })
+  })
+
   it('lists live sessions, most recently active first', () => {
     const store = new SessionStore()
     const first = store.create('claude-chat', seed())
@@ -86,6 +96,26 @@ describe('SessionStore', () => {
 
     assert.strictEqual(store.get(record.id), undefined)
     assert.deepStrictEqual(store.list(), [])
+  })
+
+  it('keeps a session for a working day by default: 8h of inactivity, not 1h', () => {
+    assert.strictEqual(DEFAULT_TTL_MS, 8 * 60 * 60 * 1000)
+
+    const start = Date.now()
+    const clock = mock.method(Date, 'now', () => start)
+    try {
+      const store = new SessionStore()
+      const record = store.create('claude-chat', seed())
+
+      clock.mock.mockImplementation(() => start + 7 * 60 * 60 * 1000)
+      assert.ok(store.get(record.id), 'viva depois de 7h parada')
+
+      // O `get` renova a atividade; a contagem recomeça dali.
+      clock.mock.mockImplementation(() => start + 7 * 60 * 60 * 1000 + DEFAULT_TTL_MS + 1)
+      assert.strictEqual(store.get(record.id), undefined)
+    } finally {
+      clock.mock.restore()
+    }
   })
 
   it('evicts the least recently used session past the cap', () => {

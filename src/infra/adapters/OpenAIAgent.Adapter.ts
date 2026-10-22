@@ -1,8 +1,9 @@
 import { Agent, run, user, type AgentInputItem, type MCPServer, type ModelSettings } from '@openai/agents'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
+import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IAgent } from '@domain/models/Agent.Model'
-import { IAgentEvent } from '@domain/models/AgentEvent.Model'
+import { IAgentEvent, IUsage } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
@@ -11,6 +12,7 @@ import { sessionPrefix } from '@infra/session/Session.Key'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
 import { buildOpenAIMcpServers, buildOpenAITools } from '@infra/tools/bridges/OpenAI.ToolBridge'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
+import { cacheTokensOf } from './support/Usage.Helper'
 import { composeSystemPrompt, maxOutputTokens, maxToolTurns } from './support/Prompt.Helper'
 
 const DEFAULT_MODEL = 'gpt-5.6-sol'
@@ -20,7 +22,7 @@ type TEffort = NonNullable<NonNullable<ModelSettings['reasoning']>['effort']>
 type TRun = typeof run
 type TUserContent = Parameters<typeof user>[0]
 
-export type TBuildMcpServers = (url: string) => MCPServer[]
+export type TBuildMcpServers = (url: string, token?: string) => MCPServer[]
 
 export interface IOpenAIAgentAdapterDeps {
   run?: TRun
@@ -45,7 +47,8 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
    * Uma conexão MCP por adapter, compartilhada pelas sessões e aberta sob demanda. A
    * geração vem do cliente MCP: quando ele reconecta, estes servers ficaram velhos.
    */
-  private mcp?: { generation: number; servers: Promise<MCPServer[]> }
+  /** `generation` é chave composta: conexão do MCP + credencial. Ver `connectMcpServers`. */
+  private mcp?: { generation: string; servers: Promise<MCPServer[]> }
 
   constructor(deps: IOpenAIAgentAdapterDeps = {}) {
     this.run = deps.run ?? run
@@ -77,7 +80,7 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
     }
   }
 
-  async *sendMessage(agent: IAgent, sessionId: string, input: IMessageInput): AsyncIterable<IAgentEvent> {
+  async *sendMessage(agent: IAgent, sessionId: string, input: IMessageInput, context: IExecutionContext): AsyncIterable<IAgentEvent> {
     const record = this.store.get(sessionId)
     if (!record) {
       yield { type: 'error', sessionId, timestamp: new Date(), payload: { message: `Session not found: ${sessionId}` } }
@@ -100,7 +103,7 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
       model: record.model,
       modelSettings,
       tools: buildOpenAITools(this.catalog?.localFor(agent.allowedTools) ?? []),
-      mcpServers: await this.connectMcpServers(),
+      mcpServers: await this.connectMcpServers(context),
     })
 
     const items: AgentInputItem[] = [...history, user(this.buildUserContent(input))]
@@ -176,7 +179,17 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
    * Perguntar ao catálogo a cada turno é o que faz um MCP server que subiu depois do
    * gateway entrar em uso sem reiniciar o processo.
    */
-  private async connectMcpServers(): Promise<MCPServer[]> {
+  /**
+   * ⚠️ O CACHE PASSA A CONSIDERAR A CREDENCIAL, não só a geração da conexão.
+   *
+   * Os headers pertencem ao servidor MCP, fixados na conexão. Reaproveitar a conexão entre usuários
+   * diferentes serviria a credencial de um para o outro — que é exatamente o vazamento que este
+   * desenho existe para impedir.
+   *
+   * O custo é reconectar ao alternar de usuário. A alternativa — uma conexão por processo, servindo
+   * todo mundo — é justamente a que não pode existir.
+   */
+  private async connectMcpServers(context: IExecutionContext): Promise<MCPServer[]> {
     const url = await this.catalog?.mcpEndpoint()
 
     if (!url || !this.catalog) {
@@ -184,13 +197,13 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
       return []
     }
 
-    const generation = this.catalog.mcpGeneration
+    const generation = `${this.catalog.mcpGeneration}:${context.token ?? ''}`
     if (this.mcp?.generation !== generation) {
       await this.closeMcpServers()
       this.mcp = {
         generation,
         servers: (async () => {
-          const servers = this.buildMcpServers(url)
+          const servers = this.buildMcpServers(url, context.token)
           await Promise.all(servers.map((server) => server.connect()))
           return servers
         })().catch((error: unknown) => {
@@ -217,7 +230,8 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
     const files = input.files ?? []
     if (files.length === 0) return input.text
 
-    const content: Exclude<TUserContent, string> = [{ type: 'input_text', text: input.text }]
+    // Texto vazio não vira parte — anexo sem frase é mensagem válida.
+    const content: Exclude<TUserContent, string> = input.text.trim() ? [{ type: 'input_text', text: input.text }] : []
 
     for (const file of files) {
       const dataUrl = `data:${file.mimeType};base64,${file.data}`
@@ -248,7 +262,7 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
     }
   }
 
-  private readUsage(data: unknown): { inputTokens?: number; outputTokens?: number } | undefined {
+  private readUsage(data: unknown): IUsage | undefined {
     if (typeof data !== 'object' || data === null) return undefined
 
     const response = (data as { response?: unknown }).response
@@ -257,10 +271,31 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
     const usage = (response as { usage?: unknown }).usage
     if (typeof usage !== 'object' || usage === null) return undefined
 
-    const { inputTokens, outputTokens } = usage as { inputTokens?: unknown; outputTokens?: unknown }
+    const { inputTokens, outputTokens, outputTokensDetails, inputTokensDetails } = usage as {
+      inputTokens?: unknown
+      outputTokens?: unknown
+      outputTokensDetails?: unknown
+      inputTokensDetails?: unknown
+    }
+
+    /**
+     * ⚠️ O RACIOCÍNIO VEM NUM SUB-OBJETO, e já está DENTRO de `outputTokens`.
+     *
+     * O contrato do gateway é um só: `outputTokens` é a saída VISÍVEL, e o raciocínio vem à parte
+     * (como o Gemini já devolve). Aqui ele é SUBTRAÍDO da saída e informado separado — deixá-lo nos
+     * dois contaria o raciocínio duas vezes no total e no custo.
+     */
+    const details = (typeof outputTokensDetails === 'object' && outputTokensDetails !== null ? outputTokensDetails : {}) as { reasoningTokens?: unknown }
+    const reasoning = typeof details.reasoningTokens === 'number' ? details.reasoningTokens : 0
+
+    const output = typeof outputTokens === 'number' ? outputTokens : undefined
+
     return {
       inputTokens: typeof inputTokens === 'number' ? inputTokens : undefined,
-      outputTokens: typeof outputTokens === 'number' ? outputTokens : undefined,
+      outputTokens: output === undefined ? undefined : Math.max(output - reasoning, 0),
+      reasoningTokens: reasoning || undefined,
+      cacheReadTokens: cacheTokensOf(inputTokensDetails, 'cached_tokens'),
+      cacheWriteTokens: cacheTokensOf(inputTokensDetails, 'cache_write_tokens'),
     }
   }
 

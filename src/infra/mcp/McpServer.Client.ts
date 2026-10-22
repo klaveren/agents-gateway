@@ -1,7 +1,9 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IToolDefinition, IToolResult, IToolSchema } from '@infra/tools/Tool.Types'
+import { CallerTokenScope } from './Caller.TokenScope'
 
 const CLIENT_INFO = { name: 'agents-gateway', version: '1.0.0-alpha' }
 
@@ -24,6 +26,9 @@ export interface IMcpClientDeps {
  */
 export class McpServerClient {
   private client?: Client
+
+  /** A credencial da chamada em curso. Ver `callTool` — vive entre a chamada e o `finally`. */
+  private readonly tokenScope = new CallerTokenScope()
   private connected = false
   private generation = 0
   private failures = 0
@@ -91,20 +96,25 @@ export class McpServerClient {
     }
   }
 
-  async callTool(name: string, args: Record<string, unknown>): Promise<IToolResult> {
+  async callTool(name: string, args: Record<string, unknown>, context?: IExecutionContext): Promise<IToolResult> {
     if (!(await this.ensureConnected()) || !this.client) {
       return { status: 'error', result: `MCP server unavailable; cannot run "${name}".` }
     }
 
-    try {
-      const response = await this.client.callTool({ name, arguments: args })
-      const text = readText(response.content)
+    const client = this.client
 
-      return response.isError ? { status: 'error', result: text || 'Unknown MCP error' } : { status: 'success', result: text }
-    } catch (error: unknown) {
-      await this.markDisconnected()
-      return { status: 'error', result: `MCP call failed: ${toMessage(error)}` }
-    }
+    // A credencial vai pelo escopo da chamada, nunca por campo compartilhado (`Caller.TokenScope`).
+    return this.tokenScope.run(context?.token, async () => {
+      try {
+        const response = await client.callTool({ name, arguments: args })
+        const text = readText(response.content)
+
+        return response.isError ? { status: 'error', result: text || 'Unknown MCP error' } : { status: 'success', result: text }
+      } catch (error: unknown) {
+        await this.markDisconnected()
+        return { status: 'error', result: `MCP call failed: ${toMessage(error)}` }
+      }
+    })
   }
 
   async close(): Promise<void> {
@@ -130,7 +140,23 @@ export class McpServerClient {
   private async handshake(): Promise<boolean> {
     const url = new URL(this.serverUrl)
 
-    for (const makeTransport of [() => new StreamableHTTPClientTransport(url), () => new SSEClientTransport(url)]) {
+    /**
+     * `fetch` próprio para carregar a credencial DE QUEM CHAMOU em cada requisição.
+     *
+     * ⚖️ POR QUE AQUI, e não nos headers do transporte. O transporte é criado uma vez, na conexão,
+     * e seus headers valem para sempre — o que daria uma credencial só para todos os usuários,
+     * exatamente o que este desenho existe para eliminar. Um cliente MCP por pessoa seria a outra
+     * saída, ao custo de uma conexão por pessoa.
+     *
+     * ⚠️ Sem credencial no escopo, a requisição vai SEM header: o MCP então cai no que estiver
+     * configurado no ambiente dele. É isso que mantém o `curl` de diagnóstico funcionando.
+     */
+    const fetchWithCallerToken = this.tokenScope.wrap()
+
+    for (const makeTransport of [
+      () => new StreamableHTTPClientTransport(url, { fetch: fetchWithCallerToken }),
+      () => new SSEClientTransport(url, { fetch: fetchWithCallerToken }),
+    ]) {
       const transport = makeTransport()
 
       try {

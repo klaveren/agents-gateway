@@ -1,6 +1,7 @@
 import OpenAI from 'openai'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
+import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
@@ -12,6 +13,7 @@ import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { IToolDefinition } from '@infra/tools/Tool.Types'
 import { IManualLoopProvider, IManualToolCall, IManualTurnOutcome, runManualToolLoop } from './support/ManualTool.Loop'
+import { cacheTokensOf } from './support/Usage.Helper'
 import { composeSystemPrompt, maxOutputTokens, maxToolTurns } from './support/Prompt.Helper'
 
 const DEFAULT_MODEL = 'gpt-5.6-sol'
@@ -68,7 +70,7 @@ export class OpenAIChatAdapter implements IAgentAdapter {
     }
   }
 
-  async *sendMessage(agent: IAgent, sessionId: string, input: IMessageInput): AsyncIterable<IAgentEvent> {
+  async *sendMessage(agent: IAgent, sessionId: string, input: IMessageInput, _context: IExecutionContext): AsyncIterable<IAgentEvent> {
     const record = this.store.get(sessionId)
     if (!record) {
       yield { type: 'error', sessionId, timestamp: new Date(), payload: { message: `Session not found: ${sessionId}` } }
@@ -190,7 +192,11 @@ export class OpenAIChatAdapter implements IAgentAdapter {
               timestamp: new Date(),
               payload: {
                 inputTokens: chunk.usage.prompt_tokens,
-                outputTokens: chunk.usage.completion_tokens,
+                // `completion_tokens` já INCLUI o raciocínio: sai separado, e a saída fica só com o visível.
+                outputTokens: Math.max(chunk.usage.completion_tokens - (chunk.usage.completion_tokens_details?.reasoning_tokens ?? 0), 0),
+                // O cache é automático; leitura e gravação são parcelas de `prompt_tokens`, cada uma com preço próprio.
+                cacheReadTokens: cacheTokensOf(chunk.usage.prompt_tokens_details, 'cached_tokens'),
+                cacheWriteTokens: cacheTokensOf(chunk.usage.prompt_tokens_details, 'cache_write_tokens'),
                 reasoningTokens: chunk.usage.completion_tokens_details?.reasoning_tokens,
               },
             }
@@ -230,7 +236,8 @@ export class OpenAIChatAdapter implements IAgentAdapter {
     content: OpenAI.Chat.ChatCompletionContentPart[]
     warnings: string[]
   } {
-    const content: OpenAI.Chat.ChatCompletionContentPart[] = [{ type: 'text', text: input.text }]
+    // Texto vazio não vira parte — anexo sem frase é mensagem válida.
+    const content: OpenAI.Chat.ChatCompletionContentPart[] = input.text.trim() ? [{ type: 'text', text: input.text }] : []
     const warnings: string[] = []
 
     for (const file of input.files ?? []) {

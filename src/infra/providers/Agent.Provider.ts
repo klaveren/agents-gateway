@@ -1,12 +1,16 @@
-import { getAgentById } from '@domain/Agent.Registry'
+import { AGENT_REGISTRY, getAgentById, modelFor } from '@domain/Agent.Registry'
 import { resolveSessionMode } from '@domain/Session.Policy'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { AdapterNotFoundError, AgentNotFoundError, SessionNotFoundError } from '@domain/errors/Domain.Error'
+import { AdapterNotFoundError, AgentNotFoundError, AgentUnavailableError, SessionNotFoundError } from '@domain/errors/Domain.Error'
+import { DEFAULT_SETTINGS, IAgentSettings } from '@domain/models/Settings.Model'
+import { ISettingsRepository } from '@domain/ports/SettingsRepository.Port'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
+import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
+import { caller } from '@infra/mcp/Caller.Identity'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { ISession } from '@domain/models/Session.Model'
 import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
@@ -22,13 +26,72 @@ export class AgentProvider implements IAgentProvider {
   constructor(
     private readonly adapters: Map<string, IAgentAdapter>,
     private readonly sessions: SessionStore,
-  ) {}
+
+    /**
+     * As configurações de operação vivem AQUI, na camada agnóstica.
+     *
+     * ⚖️ Nem no adapter, nem no controller. O adapter não pode ter opinião sobre quem atende ou com
+     * qual modelo — se tivesse, cada um teria a sua, que foi exatamente o que aconteceu com a
+     * credencial. O controller é transporte: colocar regra ali a tornaria invisível para quem chama
+     * o provider por outro caminho.
+     *
+     * Opcional para o teste montar o provider sem infraestrutura; ausente, valem os padrões.
+     */
+    private readonly settings?: ISettingsRepository,
+  ) {
+    /**
+     * Uma leitura no boot, e depois só quando muda.
+     *
+     * ⚖️ A ALTERNATIVA ERA LER A CADA SESSÃO. Com cache curto isso funciona, mas põe um `await` de
+     * rede no caminho de toda conversa para responder uma pergunta que quase nunca muda — e ainda
+     * faz a alteração demorar até o cache expirar. Aqui ela vale no instante em que é salva.
+     *
+     * `void`: o boot não espera pelo banco. Até a primeira leitura chegar valem os padrões, que é o
+     * comportamento certo de um serviço que não pode deixar de subir por causa disso.
+     */
+    void this.settings?.read().then((stored) => {
+      this.current = stored
+    })
+    this.settings?.subscribe((stored) => {
+      this.current = stored
+    })
+  }
+
+  /** A cópia viva das configurações. Vazia até a primeira leitura — e aí valem os padrões. */
+  private current?: IAgentSettings
 
   async createSession(input: ICreateSessionInput): Promise<IAgentSession> {
-    const agent = this.getAgent(input.agentId)
+    /**
+     * A cópia viva quando existe; senão, uma leitura; senão, o default.
+     *
+     * ⚠️ O `??` do meio não é zelo: entre o boot e a primeira leitura voltar há uma janela em que
+     * `current` está vazia, e cair direto nos padrões faria uma sessão dessa janela ser decidida por
+     * uma audiência que não é a configurada.
+     */
+    const settings = this.current ?? (await this.settings?.read()) ?? DEFAULT_SETTINGS
+
+    /**
+     * ⛔ `off` fecha para TODOS, e por isso vale aqui, na camada que qualquer caminho atravessa.
+     * Fechar impede SESSÃO NOVA, e só: conversa em andamento termina o turno — matá-la no meio
+     * deixaria a pessoa com meia resposta e registraria um erro que não foi erro.
+     *
+     * ⚖️ `restricted` e `all` dependem de QUEM chama e de a identidade ter sido PROVADA, e o provider
+     * só enxerga a identidade afirmada do `caller()`. Essa decisão mora no controller (ver
+     * `Agent.Controller.createSession`), que resolve a prova antes. Quem abrir sessão por outro
+     * caminho que não o HTTP precisa decidir a audiência por si.
+     */
+    if (settings.audience === 'off') throw new AgentUnavailableError()
+
+    // Corpo → configuração → padrão do registry. O corpo só vence quando alguém escolheu de propósito.
+    const agent = this.getAgent(input.agentId || settings.agentId)
     const mode = resolveSessionMode(agent, input)
 
-    return this.getAdapter(agent.provider, mode).createSession(agent, { ...input, mode })
+    return this.getAdapter(agent.provider, mode).createSession(agent, {
+      ...input,
+      agentId: agent.id,
+      model: modelFor(agent, input.model || settings.model),
+      mode,
+    })
   }
 
   /**
@@ -45,7 +108,17 @@ export class AgentProvider implements IAgentProvider {
     record.turns += 1
 
     try {
-      for await (const event of adapter.sendMessage(agent, sessionId, input)) {
+      /**
+       * A credencial de quem chamou, resolvida AQUI e em nenhum outro lugar.
+       *
+       * ⚖️ O provider é a camada agnóstica: é dele a decisão do que vale para esta chamada, e os
+       * adapters só recebem. Enquanto cada adapter resolvia por conta própria, uns resolviam e
+       * outros não — e os que não resolviam falavam com o MCP sem identidade, o que aparece como
+       * "não consegui consultar" e parece problema do provider.
+       */
+      const context: IExecutionContext = { token: caller()?.token }
+
+      for await (const event of adapter.sendMessage(agent, sessionId, input, context)) {
         // Somar o usage aqui vale para as seis implementações de uma vez.
         if (event.type === 'usage') this.sessions.addUsage(record, event.payload)
         yield event
@@ -79,9 +152,12 @@ export class AgentProvider implements IAgentProvider {
     return record
   }
 
-  private getAgent(agentId: string): IAgent {
-    const agent = getAgentById(agentId)
-    if (!agent) throw new AgentNotFoundError(agentId)
+  /** Sem `agentId` em lugar nenhum, vale o primeiro do registry — o padrão declarado em código. */
+  private getAgent(agentId?: string): IAgent {
+    const id = agentId || AGENT_REGISTRY[0]?.id || ''
+    const agent = getAgentById(id)
+    if (!agent) throw new AgentNotFoundError(id)
+
     return agent
   }
 

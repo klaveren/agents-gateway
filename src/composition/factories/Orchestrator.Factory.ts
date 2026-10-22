@@ -10,6 +10,7 @@ import { OpenAIAgentAdapter } from '@infra/adapters/OpenAIAgent.Adapter'
 import { OpenAIChatAdapter } from '@infra/adapters/OpenAIChat.Adapter'
 import { adapterKey, AgentProvider } from '@infra/providers/Agent.Provider'
 import { SessionStore } from '@infra/session/Session.Store'
+import { makeSettings } from './Settings.Factory'
 import { makeTools } from './Tools.Factory'
 
 let store: SessionStore | undefined
@@ -47,5 +48,9 @@ export function makeOrchestrator(): AgentProvider {
     [adapterKey(EProvider.GOOGLE, EMode.AGENT), new GoogleAgentAdapter({ store: sessions, catalog })],
   ])
 
-  return new AgentProvider(adapters, sessions)
+  /**
+   * A MESMA instância que o controller recebe (ver `makeSettings`): a tela salva num repositório e o
+   * provider escuta o mesmo, e é isso que faz a mudança valer no instante em que é gravada.
+   */
+  return new AgentProvider(adapters, sessions, makeSettings())
 }

@@ -8,7 +8,7 @@ import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import type { McpServerClient } from '@infra/mcp/McpServer.Client'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { ILocalTool } from '@infra/tools/Tool.Types'
-import { GoogleAgentAdapter, type IAdkRunParams, type IAdkRuntime, type IAdkRuntimeSpec } from './GoogleAgent.Adapter'
+import { GoogleAgentAdapter, assertNoAdkTemplateCollision, type IAdkRunParams, type IAdkRuntime, type IAdkRuntimeSpec } from './GoogleAgent.Adapter'
 
 interface IRuntimeLog {
   specs: IAdkRuntimeSpec[]
@@ -19,6 +19,14 @@ interface IRuntimeLog {
 /** Eventos no formato que o `toStructuredEvents` do ADK realmente sabe interpretar. */
 function adkEvent(parts: unknown[], partial = false): Event {
   return { actions: {}, content: { parts }, partial } as unknown as Event
+}
+
+/**
+ * O `Event` do ADK estende `LlmResponse`, e é ali que mora o `usageMetadata`. Um turno agêntico
+ * passa pelo modelo uma vez por rodada de ferramenta, e cada passagem traz o seu.
+ */
+function adkEventWithUsage(parts: unknown[], usage: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number }, partial = false): Event {
+  return { actions: {}, content: { parts }, partial, usageMetadata: usage } as unknown as Event
 }
 
 describe('GoogleAgentAdapter', () => {
@@ -101,7 +109,7 @@ describe('GoogleAgentAdapter', () => {
     const log = emptyLog()
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(turn, log) })
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'qual a selic?' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'qual a selic?' }, {}))
 
     assert.ok(events.find((e) => e.type === 'reasoning.delta' && e.payload.text === 'thinking about it'))
     assert.ok(events.find((e) => e.type === 'text.delta' && e.payload.text === 'Searching'))
@@ -114,7 +122,7 @@ describe('GoogleAgentAdapter', () => {
     const log = emptyLog()
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(turn, log) })
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent', model: 'gemini-3.6-flash' })
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.strictEqual(log.specs[0].instruction, 'You are the Researcher Agent.')
     assert.strictEqual(log.specs[0].model, 'gemini-3.6-flash')
@@ -129,8 +137,8 @@ describe('GoogleAgentAdapter', () => {
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(turn, log) })
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
 
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'first' }))
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'second' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'first' }, {}))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'second' }, {}))
 
     assert.strictEqual(log.specs.length, 1)
     assert.strictEqual(log.runs[0].sessionId, log.runs[1].sessionId)
@@ -142,10 +150,15 @@ describe('GoogleAgentAdapter', () => {
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
 
     await drain(
-      adapter.sendMessage(getAgent(), session.id, {
-        text: 'look',
-        files: [{ name: 'a.png', mimeType: 'image/png', data: 'aaa' }],
-      }),
+      adapter.sendMessage(
+        getAgent(),
+        session.id,
+        {
+          text: 'look',
+          files: [{ name: 'a.png', mimeType: 'image/png', data: 'aaa' }],
+        },
+        {},
+      ),
     )
 
     assert.deepStrictEqual(log.runs[0].newMessage.parts, [{ text: 'look' }, { inlineData: { data: 'aaa', mimeType: 'image/png' } }])
@@ -155,7 +168,7 @@ describe('GoogleAgentAdapter', () => {
     const log = emptyLog()
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(turn, log), catalog })
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.strictEqual(log.specs[0].tools.length, 1)
     const [tool] = log.specs[0].tools
@@ -177,7 +190,7 @@ describe('GoogleAgentAdapter', () => {
     })
 
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     const text = events
       .filter((e) => e.type === 'text.delta')
@@ -194,7 +207,7 @@ describe('GoogleAgentAdapter', () => {
     })
 
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.ok(events.find((e) => e.type === 'text.delta' && e.payload.text === 'Only once'))
   })
@@ -202,7 +215,7 @@ describe('GoogleAgentAdapter', () => {
   it('warns that the ADK has no reasoning-effort knob', async () => {
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(() => [], emptyLog()) })
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent', reasoning: 'high' })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.ok(events.find((e) => e.type === 'warning' && e.payload.message.includes('reasoning-effort')))
   })
@@ -219,7 +232,7 @@ describe('GoogleAgentAdapter', () => {
     })
 
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
     const error = events.find((e) => e.type === 'error')
 
     assert.ok(error && error.type === 'error')
@@ -240,11 +253,129 @@ describe('GoogleAgentAdapter', () => {
     const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
     const events: IAgentEvent[] = []
 
-    for await (const event of adapter.sendMessage(getAgent(), session.id, { text: 'hi' })) {
+    for await (const event of adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {})) {
       events.push(event)
       if (event.type === 'text.delta') await adapter.cancel(session.id)
     }
 
     assert.strictEqual(events[events.length - 1].type, 'message.aborted')
+  })
+
+  it('counts each model call once, from its final response, with the cache', async () => {
+    // Uma chamada que pede duas ferramentas chega em dois pedaços com o MESMO consumo acumulado, e o
+    // pedaço final — o único com o cache — não vira evento. O consumo sai do `afterModelCallback`,
+    // uma vez por chamada.
+    const adapter = new GoogleAgentAdapter({
+      createRuntime: (spec) => ({
+        async ensureSession() {},
+        async *runAsync() {
+          const callUsage = { promptTokenCount: 22096, candidatesTokenCount: 26, thoughtsTokenCount: 131 }
+          spec.onModelResponse?.({ partial: false, usageMetadata: callUsage })
+          yield adkEvent([{ functionCall: { name: 'search_web', args: {} } }])
+          spec.onModelResponse?.({ partial: false, usageMetadata: callUsage })
+          yield adkEvent([{ functionCall: { name: 'search_web', args: {} } }])
+          spec.onModelResponse?.({ partial: false, finishReason: 'STOP', usageMetadata: { ...callUsage, cachedContentTokenCount: 20000 } })
+          yield adkEvent([{ functionResponse: { name: 'search_web', response: { result: 256 } } }])
+          spec.onModelResponse?.({ partial: true, finishReason: 'STOP', usageMetadata: { promptTokenCount: 22603 } })
+          spec.onModelResponse?.({
+            partial: false,
+            finishReason: 'STOP',
+            usageMetadata: { promptTokenCount: 22603, cachedContentTokenCount: 20282, candidatesTokenCount: 134, thoughtsTokenCount: 81 },
+          })
+          yield adkEvent([{ text: 'done' }])
+        },
+      }),
+    })
+    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
+    const usage = events.filter((e) => e.type === 'usage').map((e) => e.type === 'usage' && e.payload)
+
+    assert.deepStrictEqual(usage, [
+      { inputTokens: 22096, outputTokens: 26, reasoningTokens: 131, cacheReadTokens: 20000, cacheWriteTokens: 0 },
+      { inputTokens: 22603, outputTokens: 134, reasoningTokens: 81, cacheReadTokens: 20282, cacheWriteTokens: 0 },
+    ])
+  })
+
+  it('reports the usage of a call that ends with no further event, at the end of the turn', async () => {
+    const adapter = new GoogleAgentAdapter({
+      createRuntime: (spec) => ({
+        async ensureSession() {},
+        async *runAsync() {
+          yield adkEvent([{ text: 'done' }])
+          spec.onModelResponse?.({ partial: false, finishReason: 'STOP', usageMetadata: { promptTokenCount: 50, candidatesTokenCount: 4 } })
+        },
+      }),
+    })
+    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
+    const usage = events.filter((e) => e.type === 'usage').map((e) => e.type === 'usage' && e.payload)
+
+    assert.deepStrictEqual(usage, [{ inputTokens: 50, outputTokens: 4, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }])
+    assert.strictEqual(events[events.length - 1].type, 'message.completed')
+  })
+
+  it('does not read usage from the events themselves', async () => {
+    const adapter = new GoogleAgentAdapter({
+      createRuntime: runtimeWith(() => [adkEventWithUsage([{ text: 'done' }], { promptTokenCount: 120, candidatesTokenCount: 30 })], emptyLog()),
+    })
+    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
+
+    assert.strictEqual(events.filter((e) => e.type === 'usage').length, 0)
+  })
+
+  it('drops usage left over from an interrupted turn at the start of the next', async () => {
+    let call = 0
+    const adapter = new GoogleAgentAdapter({
+      createRuntime: (spec) => ({
+        async ensureSession() {},
+        async *runAsync() {
+          call++
+          // O consumo chega pelo callback, antes de o evento correspondente sair do stream.
+          spec.onModelResponse?.({ partial: false, finishReason: 'STOP', usageMetadata: { promptTokenCount: call === 1 ? 999 : 10 } })
+          if (call === 1) throw new Error('boom')
+          yield adkEvent([{ text: 'ok' }])
+        },
+      }),
+    })
+    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'one' }, {}))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'two' }, {}))
+    const usage = events.filter((e) => e.type === 'usage').map((e) => e.type === 'usage' && e.payload)
+
+    assert.deepStrictEqual(
+      usage.map((payload) => payload && payload.inputTokens),
+      [10],
+    )
+  })
+
+  it('sends an attachment with no text without an empty text part, which the ADK would drop whole', async () => {
+    const log = emptyLog()
+    const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(turn, log) })
+    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: '  ', files: [{ name: 'doc.pdf', mimeType: 'application/pdf', data: 'aaa' }] }, {}))
+
+    assert.deepStrictEqual(log.runs[0].newMessage.parts, [{ inlineData: { data: 'aaa', mimeType: 'application/pdf' } }])
+  })
+})
+
+describe('assertNoAdkTemplateCollision', () => {
+  it('lets a prompt with no braces through untouched', () => {
+    assert.strictEqual(assertNoAdkTemplateCollision('Use <id> when referring to the record.'), 'Use <id> when referring to the record.')
+  })
+
+  it('rejects a single brace, which the ADK reads as session state', () => {
+    assert.throws(() => assertNoAdkTemplateCollision('Pass {id} to the tool.'), /\{id}/)
+  })
+
+  it('rejects a double brace too — the ADK has no escape, so `{{id}}` is not literal', () => {
+    // Foi exatamente isto que fez a primeira "correção" não ter efeito nenhum.
+    assert.throws(() => assertNoAdkTemplateCollision('Pass {{id}} to the tool.'), /\{\{id}}/)
+  })
+
+  it('names the patterns it found, so the fix does not need a hunt', () => {
+    assert.throws(() => assertNoAdkTemplateCollision('{alias} and {sellerId}'), /\{alias}, \{sellerId}/)
   })
 })

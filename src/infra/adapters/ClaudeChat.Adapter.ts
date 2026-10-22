@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
+import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
@@ -72,7 +73,7 @@ export class ClaudeChatAdapter implements IAgentAdapter {
     }
   }
 
-  async *sendMessage(agent: IAgent, sessionId: string, input: IMessageInput): AsyncIterable<IAgentEvent> {
+  async *sendMessage(agent: IAgent, sessionId: string, input: IMessageInput, _context: IExecutionContext): AsyncIterable<IAgentEvent> {
     const record = this.store.get(sessionId)
     if (!record) {
       yield { type: 'error', sessionId, timestamp: new Date(), payload: { message: `Session not found: ${sessionId}` } }
@@ -165,11 +166,17 @@ export class ClaudeChatAdapter implements IAgentAdapter {
 
         for await (const chunk of stream) {
           if (chunk.type === 'message_start') {
+            // `input_tokens` é só o que não passou pelo cache (ver `ClaudeAgent`): a entrada inteira soma os três.
+            const { input_tokens, cache_read_input_tokens, cache_creation_input_tokens } = chunk.message.usage
             yield {
               type: 'usage',
               sessionId,
               timestamp: new Date(),
-              payload: { inputTokens: chunk.message.usage.input_tokens },
+              payload: {
+                inputTokens: input_tokens + (cache_read_input_tokens ?? 0) + (cache_creation_input_tokens ?? 0),
+                cacheReadTokens: cache_read_input_tokens ?? 0,
+                cacheWriteTokens: cache_creation_input_tokens ?? 0,
+              },
             }
           } else if (chunk.type === 'content_block_start' && chunk.content_block.type === 'tool_use') {
             pending.set(chunk.index, { id: chunk.content_block.id, name: chunk.content_block.name, json: '' })
@@ -188,8 +195,10 @@ export class ClaudeChatAdapter implements IAgentAdapter {
               type: 'usage',
               sessionId,
               timestamp: new Date(),
+              // `output_tokens` já INCLUI o raciocínio: ele sai separado e a saída fica só com o visível,
+              // como nos outros providers — senão o total e o custo contariam o raciocínio duas vezes.
               payload: {
-                outputTokens: chunk.usage.output_tokens,
+                outputTokens: Math.max(chunk.usage.output_tokens - (chunk.usage.output_tokens_details?.thinking_tokens ?? 0), 0),
                 reasoningTokens: chunk.usage.output_tokens_details?.thinking_tokens ?? undefined,
               },
             }
@@ -223,7 +232,8 @@ export class ClaudeChatAdapter implements IAgentAdapter {
   }
 
   private buildUserContent(input: IMessageInput): { content: Anthropic.ContentBlockParam[]; warnings: string[] } {
-    const content: Anthropic.ContentBlockParam[] = [{ type: 'text', text: input.text }]
+    // Texto vazio não vira bloco: a API recusa bloco de texto vazio, e anexo sem frase é mensagem válida.
+    const content: Anthropic.ContentBlockParam[] = input.text.trim() ? [{ type: 'text', text: input.text }] : []
     const warnings: string[] = []
 
     for (const file of input.files ?? []) {

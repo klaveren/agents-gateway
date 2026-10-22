@@ -6,11 +6,26 @@ import path from 'node:path'
 import { toHttpFailure } from './Http.Error'
 import { fail } from './Http.Response'
 import { OPENAPI_DOCUMENT } from './Openapi.Schema'
-import { corsMiddleware, host, jsonLimit, requireToken } from './Security.Middleware'
+import { identityFromToken, tokenFromHeader, withCaller } from '@infra/mcp/Caller.Identity'
+import { CALLER_HEADER, corsMiddleware, host, jsonLimit, requireCaller, requireToken } from './Security.Middleware'
 
 export const API_PREFIX = '/v1'
 
-export type TRouteMethod = 'get' | 'post' | 'delete'
+/**
+ * As ÚNICAS rotas que respondem sem credencial de quem chama (com o portão do serviço, se houver).
+ *
+ * ⚖️ CURTA PARA CABER NUM OLHAR: ninguém abre uma rota por distração. `/health` é o que o
+ * orquestrador e o monitor chamam, e não tem credencial de usuário nenhuma. Fora ele:
+ *
+ * · `/shared/:id` é a conversa que alguém abriu por link, para quem não tem conta: o `:id` é o `shareId`
+ * (o segredo do link), a resposta é só leitura e só a projeção pública, e fechar o compartilhamento a
+ * revoga.
+ *
+ * Rota pública nova entra aqui — e só aqui, de propósito.
+ */
+export const PUBLIC_PATHS: readonly string[] = ['/health', '/shared/:id']
+
+export type TRouteMethod = 'get' | 'post' | 'put' | 'delete'
 
 export interface IRoute {
   method: TRouteMethod
@@ -23,7 +38,7 @@ export class HttpServer {
   public readonly app: Express
   private readonly routes: IRoute[]
 
-  constructor(controller: AgentController) {
+  constructor(private readonly controller: AgentController) {
     this.app = express()
     this.app.disable('x-powered-by')
     this.app.use(corsMiddleware())
@@ -40,13 +55,41 @@ export class HttpServer {
   }
 
   private setupRoutes() {
-    this.app.get(`${API_PREFIX}/openapi.json`, (_req, res) => {
+    /**
+     * Abre o escopo da credencial de quem chamou, e o mantém pelo turno inteiro.
+     *
+     * ⚠️ ENVOLVE O HANDLER, não só o começo dele. Um turno agêntico é um stream que vive minutos: o
+     * SDK do provider chama a tool, a tool chama o MCP, e é ali no fundo que a credencial é usada.
+     * Encerrar o escopo antes disso faria a chamada cair no que estiver configurado no ambiente do
+     * MCP — que pode ser a conta de outra pessoa.
+     *
+     * ⚖️ HEADER SEPARADO do `Authorization`, de propósito. O `Authorization` é o portão do próprio
+     * gateway (`GATEWAY_TOKEN`); este é a credencial que o gateway REPASSA às ferramentas. Misturar
+     * os dois faria o portão do serviço virar a identidade do usuário, ou o contrário.
+     *
+     * ⛔ E é a ÚNICA fonte de identidade. Nada que venha no corpo ou na query pode dizer quem o
+     * chamador é: seria pedir para a pessoa declarar a própria conta.
+     */
+    const callerScope = (req: Request, _res: Response, next: NextFunction) => {
+      const token = tokenFromHeader(req.headers[CALLER_HEADER])
+
+      // ⚠️ A identidade lida aqui é só RÓTULO (o token não é verificado). Quem decide acesso passa por
+      // `resolveCaller`, que exige a prova.
+      return withCaller(token ? { token, ...identityFromToken(token) } : {}, () => next())
+    }
+
+    const guard = requireToken()
+    const identity = requireCaller()
+
+    // O contrato também é fechado: entrega o mapa de todas as rotas, e presença de header não é
+    // identidade — então passa pelo mesmo portão e pela mesma resolução do chamador.
+    this.app.get(`${API_PREFIX}/openapi.json`, guard, identity, callerScope, this.controller.guardCaller, (_req, res) => {
       res.json(OPENAPI_DOCUMENT)
     })
 
-    const guard = requireToken()
     for (const { method, path: routePath, handler } of this.routes) {
-      this.app[method](`${API_PREFIX}${routePath}`, guard, handler)
+      const chain = PUBLIC_PATHS.includes(routePath) ? [guard, callerScope, handler] : [guard, identity, callerScope, handler]
+      this.app[method](`${API_PREFIX}${routePath}`, ...chain)
     }
 
     // Último recurso: erro que escapou de um middleware (token, corpo malformado) ainda
@@ -72,6 +115,16 @@ function buildRoutes(controller: AgentController): IRoute[] {
     { method: 'get', path: '/agents', handler: controller.getAgents },
     { method: 'get', path: '/agents/:agentId/tools', handler: controller.getAgentTools },
     { method: 'get', path: '/tools', handler: controller.getTools },
+    { method: 'get', path: '/availability', handler: controller.availability },
+    { method: 'get', path: '/settings', handler: controller.getSettings },
+    { method: 'put', path: '/settings', handler: controller.updateSettings },
+    // ⚠️ `/conversations/stats` ANTES de qualquer `/conversations/:id`: senão `stats` seria lido como id.
+    { method: 'get', path: '/conversations', handler: controller.listConversations },
+    { method: 'get', path: '/conversations/stats', handler: controller.conversationStats },
+    { method: 'get', path: '/conversations/:id/turns', handler: controller.getConversationTurns },
+    { method: 'put', path: '/conversations/:id/share', handler: controller.shareConversation },
+    { method: 'delete', path: '/conversations/:id', handler: controller.deleteConversation },
+    { method: 'get', path: '/shared/:id', handler: controller.getSharedConversation },
     { method: 'post', path: '/sessions', handler: controller.createSession },
     { method: 'get', path: '/sessions', handler: controller.listSessions },
     { method: 'get', path: '/sessions/:id', handler: controller.getSession },

@@ -22,9 +22,23 @@ export function buildOpenAITools(local: ILocalTool[]): Tool[] {
   )
 }
 
-export function buildOpenAIMcpServers(remoteUrl?: string): MCPServer[] {
+/**
+ * O servidor MCP remoto, com a credencial de quem chamou nos headers.
+ *
+ * ⚠️ O token vem do PROVIDER, por parâmetro. Este SDK conecta ao MCP por conta própria — não passa
+ * pelo `McpServerClient` do gateway — e sem a credencial toda tool responde "chamada sem
+ * credencial", com o agente encerrando a conversa dizendo que não conseguiu consultar.
+ */
+export function buildOpenAIMcpServers(remoteUrl?: string, token?: string): MCPServer[] {
   if (!remoteUrl) return []
-  return [new MCPServerStreamableHttp({ url: remoteUrl, name: 'gateway-mcp', cacheToolsList: true })]
+  return [
+    new MCPServerStreamableHttp({
+      url: remoteUrl,
+      name: 'gateway-mcp',
+      cacheToolsList: true,
+      ...(token ? { requestInit: { headers: { authorization: `Bearer ${token}` } } } : {}),
+    }),
+  ]
 }
 
 function toArgs(args: unknown): Record<string, unknown> {

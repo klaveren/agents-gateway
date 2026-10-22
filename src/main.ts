@@ -4,6 +4,7 @@ dotenv.config({ override: true })
 import { setTracingDisabled } from '@openai/agents'
 import { makeController } from '@composition/factories/Controller.Factory'
 import { makeTools } from '@composition/factories/Tools.Factory'
+import { proofFromEnv, warnIfProofDisabled } from '@infra/http/Caller.Proof'
 import { HttpServer } from '@infra/http/Http.Server'
 
 /**
@@ -32,6 +33,8 @@ async function bootstrap() {
   // `connect()` nunca lança: sem MCP server no ar o gateway segue com o toolset local, e
   // tenta de novo sozinho (com backoff) na primeira vez que alguma tool precisar dele.
   await makeTools().mcp.connect()
+
+  warnIfProofDisabled(proofFromEnv(makeTools().catalog))
 
   const server = new HttpServer(makeController())
   server.start(Number.parseInt(process.env.PORT || '3000', 10))

@@ -12,11 +12,17 @@ import { HttpServer } from './Http.Server'
  * ninguém. É justamente onde mora o tipo de defeito que passa em toda unidade e quebra em
  * produção.
  */
+/** JWT sem assinatura válida: o gateway só lê o payload, e quem confere é a prova. */
+const jwt = (payload: object) => `h.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.s`
+
 describe('HttpServer (integração)', () => {
   let base: string
   let stop: () => void
 
   before(async () => {
+    // O corpo destes casos é da API, não do portão do chamador: `ALLOW_ANONYMOUS=1` abre só o portão.
+    // O portão em si é exercitado nas suítes abaixo.
+    process.env.ALLOW_ANONYMOUS = '1'
     // O health tenta reconectar o MCP. Apontar para uma porta que recusa na hora mantém o
     // teste offline e rápido, em vez de esperar timeout de socket.
     process.env.MCP_SERVER_URL = 'http://127.0.0.1:1/mcp'
@@ -35,7 +41,10 @@ describe('HttpServer (integração)', () => {
     }
   })
 
-  after(() => stop())
+  after(() => {
+    delete process.env.ALLOW_ANONYMOUS
+    stop()
+  })
 
   it('responde o health com o envelope da API', async () => {
     const res = await fetch(`${base}/health`)
@@ -58,13 +67,13 @@ describe('HttpServer (integração)', () => {
     const res = await fetch(`${base}/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ mode: 'nope' }),
     })
     const body = await res.json()
 
     assert.strictEqual(res.status, 422)
     assert.strictEqual(body.code, 'validation_error')
-    assert.deepStrictEqual(body.details, [{ field: 'agentId', message: 'agentId is required' }])
+    assert.deepStrictEqual(body.details, [{ field: 'mode', message: 'Invalid option: expected one of "chat"|"agent"' }])
   })
 
   it('404 com código quando o agente não existe', async () => {
@@ -110,6 +119,7 @@ describe('HttpServer com GATEWAY_TOKEN', () => {
 
   before(async () => {
     process.env.GATEWAY_TOKEN = 's3cret'
+    process.env.ALLOW_ANONYMOUS = '1'
     process.env.MCP_SERVER_URL = 'http://127.0.0.1:1/mcp'
     const server = new HttpServer(makeController()).start(0)
     await new Promise((resolve) => server.once('listening', resolve))
@@ -127,6 +137,7 @@ describe('HttpServer com GATEWAY_TOKEN', () => {
 
   after(() => {
     delete process.env.GATEWAY_TOKEN
+    delete process.env.ALLOW_ANONYMOUS
     stop()
   })
 
@@ -140,5 +151,108 @@ describe('HttpServer com GATEWAY_TOKEN', () => {
 
     const certo = await fetch(`${base}/agents`, { headers: { Authorization: 'Bearer s3cret' } })
     assert.strictEqual(certo.status, 200)
+  })
+})
+
+describe('HttpServer fechado por padrão (sem ALLOW_ANONYMOUS)', () => {
+  let base: string
+  let stop: () => void
+
+  before(async () => {
+    delete process.env.ALLOW_ANONYMOUS
+    delete process.env.CALLER_PROOF_TOOL
+    delete process.env.REQUIRE_PROVEN_OWNER
+    process.env.MCP_SERVER_URL = 'http://127.0.0.1:1/mcp'
+    const server = new HttpServer(makeController()).start(0)
+    await new Promise((resolve) => server.once('listening', resolve))
+
+    const { port } = server.address() as AddressInfo
+    base = `http://127.0.0.1:${port}/v1`
+    server.unref()
+    stop = () => {
+      server.closeAllConnections()
+      server.close()
+    }
+  })
+
+  after(() => {
+    delete process.env.REQUIRE_PROVEN_OWNER
+    stop()
+  })
+
+  it('o health é público: não pede credencial nenhuma', async () => {
+    assert.strictEqual((await fetch(`${base}/health`)).status, 200)
+  })
+
+  it('/shared/:id também é pública: sem credencial responde 404 do link, não 401', async () => {
+    const res = await fetch(`${base}/shared/qualquer`)
+
+    assert.strictEqual(res.status, 404)
+    assert.strictEqual((await res.json()).code, 'not_found')
+  })
+
+  it('as rotas de conversa pedem credencial, inclusive a de estatística e a de apagar', async () => {
+    for (const [path, init] of [
+      ['/conversations'],
+      ['/conversations/stats'],
+      ['/conversations/x/turns'],
+      ['/conversations/x/share', { method: 'PUT' }],
+      ['/conversations/x', { method: 'DELETE' }],
+    ] as Array<[string, RequestInit?]>) {
+      assert.strictEqual((await fetch(`${base}${path}`, init)).status, 401, path)
+    }
+  })
+
+  it('toda outra rota responde 401 sem a credencial do chamador', async () => {
+    const calls: Array<[string, RequestInit?]> = [
+      ['/agents'],
+      ['/agents/researcher-agent/tools'],
+      ['/tools'],
+      ['/openapi.json'],
+      ['/sessions'],
+      ['/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }],
+      ['/sessions/qualquer'],
+      ['/sessions/qualquer', { method: 'DELETE' }],
+      ['/sessions/qualquer/cancel', { method: 'POST' }],
+      ['/sessions/qualquer/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"message":"oi"}' }],
+    ]
+
+    for (const [path, init] of calls) {
+      const res = await fetch(`${base}${path}`, init)
+      assert.strictEqual(res.status, 401, `${init?.method ?? 'GET'} ${path}`)
+      assert.strictEqual((await res.json()).code, 'unauthorized')
+    }
+  })
+
+  it('header vazio ou só "Bearer" não é credencial', async () => {
+    for (const value of ['', 'Bearer ', '   ']) {
+      const res = await fetch(`${base}/agents`, { headers: { 'X-Tool-Authorization': value } })
+      assert.strictEqual(res.status, 401, JSON.stringify(value))
+    }
+  })
+
+  it('credencial sem prova configurada é recusada nas rotas de identidade', async () => {
+    // Prova desligada + padrão seguro: o token só AFIRMA quem é, e isso não abre nada.
+    for (const path of ['/agents', '/tools', '/openapi.json', '/sessions']) {
+      const res = await fetch(`${base}${path}`, { headers: { 'X-Tool-Authorization': `Bearer ${jwt({ sub: 'u1' })}` } })
+      assert.strictEqual(res.status, 401, path)
+    }
+  })
+
+  it('com REQUIRE_PROVEN_OWNER=0 a identidade afirmada passa, e a persona não sai em /agents', async () => {
+    process.env.REQUIRE_PROVEN_OWNER = '0'
+    const headers = { 'X-Tool-Authorization': `Bearer ${jwt({ sub: 'u1' })}` }
+
+    const agents = await fetch(`${base}/agents`, { headers })
+    assert.strictEqual(agents.status, 200)
+    const list = (await agents.json()).result as Array<Record<string, unknown>>
+    assert.ok(list.length > 0)
+    assert.ok(list.every((agent) => !('systemPrompt' in agent)))
+
+    assert.strictEqual((await fetch(`${base}/openapi.json`, { headers })).status, 200)
+
+    // Credencial que não identifica ninguém nunca cai no escopo "sem dono".
+    const sem = await fetch(`${base}/sessions`, { headers: { 'X-Tool-Authorization': `Bearer ${jwt({})}` } })
+    assert.strictEqual(sem.status, 401)
   })
 })

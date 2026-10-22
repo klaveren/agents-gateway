@@ -2,9 +2,12 @@ import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { AdapterNotFoundError, AgentNotFoundError, ModeNotSupportedError, SessionNotFoundError, ToolsNotSupportedError } from '@domain/errors/Domain.Error'
+import { AdapterNotFoundError, AgentNotFoundError, AgentUnavailableError, ModeNotSupportedError, SessionNotFoundError, ToolsNotSupportedError } from '@domain/errors/Domain.Error'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
+import { withCaller } from '@infra/mcp/Caller.Identity'
+import { normalizeSettings } from '@domain/models/Settings.Model'
+import { NullSettingsRepository } from '@infra/persistence/Null.SettingsRepository'
 import { SessionStore } from '@infra/session/Session.Store'
 import { adapterKey, AgentProvider } from './Agent.Provider'
 
@@ -12,6 +15,7 @@ interface ISpy {
   adapter: IAgentAdapter
   calls: string[]
   seenSessionId?: string
+  seenToken?: string
 }
 
 describe('AgentProvider', () => {
@@ -36,9 +40,10 @@ describe('AgentProvider', () => {
           })
           return { id: record.id, provider, mode: record.mode, createdAt: record.createdAt }
         },
-        async *sendMessage(_agent, sessionId) {
+        async *sendMessage(_agent, sessionId, _input, context) {
           calls.push('sendMessage')
           spy.seenSessionId = sessionId
+          spy.seenToken = context?.token
           for (const event of events) yield event
         },
         async cancel(sessionId) {
@@ -64,6 +69,29 @@ describe('AgentProvider', () => {
     )
 
     return { provider, store, chat, agent }
+  }
+
+  /** O mesmo `setup`, com um repositório de configuração plugado. */
+  function setupWithSettings(settings: NullSettingsRepository) {
+    const store = new SessionStore()
+    const chat = spyAdapter(store, EProvider.GOOGLE, EMode.CHAT, [])
+    const agent = spyAdapter(store, EProvider.GOOGLE, EMode.AGENT, [])
+
+    // O agente do Claude entra para haver DOIS agentes de verdade — sem isso não dá para provar que
+    // a escolha de quem chama vence a da configuração.
+    const claude = spyAdapter(store, EProvider.CLAUDE, EMode.CHAT, [])
+
+    const provider = new AgentProvider(
+      new Map([
+        [adapterKey(EProvider.GOOGLE, EMode.CHAT), chat.adapter],
+        [adapterKey(EProvider.GOOGLE, EMode.AGENT), agent.adapter],
+        [adapterKey(EProvider.CLAUDE, EMode.CHAT), claude.adapter],
+      ]),
+      store,
+      settings,
+    )
+
+    return { provider, chat, agent, claude }
   }
 
   const drain = async (stream: AsyncIterable<IAgentEvent>) => {
@@ -103,7 +131,8 @@ describe('AgentProvider', () => {
 
     const record = provider.describe(session.id)
     assert.strictEqual(record.turns, 2)
-    assert.deepStrictEqual(record.usage, { inputTokens: 8, outputTokens: 12, reasoningTokens: undefined })
+    // Campo que o provider não informa fica de fora, em vez de virar `undefined` ou zero.
+    assert.deepStrictEqual(record.usage, { inputTokens: 8, outputTokens: 12 })
     assert.strictEqual(record.status, 'idle')
   })
 
@@ -151,5 +180,107 @@ describe('AgentProvider', () => {
     const provider = new AgentProvider(new Map(), store)
 
     await assert.rejects(provider.createSession({ agentId: 'researcher-agent' }), AdapterNotFoundError)
+  })
+
+  it('resolves the caller credential once, in the provider, and hands it to the adapter', async () => {
+    const { provider, chat } = setup()
+    const session = await provider.createSession({ agentId: 'researcher-agent' })
+
+    await withCaller({ token: 'do-usuario' }, () => drain(provider.sendMessage(session.id, { text: 'hi' })))
+
+    assert.strictEqual(chat.seenToken, 'do-usuario')
+  })
+
+  it('hands the adapter no credential when the request carried none', async () => {
+    // ⛔ Falha aberta é o risco aqui: sem credencial a chamada segue, e é o MCP que decide. O que
+    // não pode é ela aparecer com a credencial de outra pessoa.
+    const { provider, chat } = setup()
+    const session = await provider.createSession({ agentId: 'researcher-agent' })
+
+    await drain(provider.sendMessage(session.id, { text: 'hi' }))
+
+    assert.strictEqual(chat.seenToken, undefined)
+  })
+
+  it('refuses a new session while the audience is off, and says it is unavailable — not missing', async () => {
+    const { provider } = setupWithSettings(new NullSettingsRepository({ audience: 'off' }))
+
+    await assert.rejects(() => provider.createSession({ agentId: 'researcher-agent' }), AgentUnavailableError)
+  })
+
+  it('lets a conversation already open finish its turn after the audience closes', async () => {
+    // ⛔ Fechar impede sessão NOVA. Matar o turno em curso deixaria meia resposta na tela e
+    // registraria um erro que não foi erro.
+    const settings = new NullSettingsRepository({ audience: 'all' })
+    const { provider } = setupWithSettings(settings)
+    const session = await provider.createSession({ agentId: 'researcher-agent' })
+
+    await settings.save({ audience: 'off' })
+
+    await assert.doesNotReject(() => drain(provider.sendMessage(session.id, { text: 'hi' })))
+  })
+
+  it('picks up a settings change without a restart', async () => {
+    // ⚖️ É o `subscribe` fazendo efeito: sem ele, a alteração só valeria depois de um cache expirar.
+    const settings = new NullSettingsRepository({ audience: 'all' })
+    const { provider } = setupWithSettings(settings)
+
+    await assert.doesNotReject(() => provider.createSession({ agentId: 'researcher-agent' }))
+
+    await settings.save({ audience: 'off' })
+
+    await assert.rejects(() => provider.createSession({ agentId: 'researcher-agent' }), AgentUnavailableError)
+  })
+
+  it('lets the configured agent answer when the caller did not pick one', async () => {
+    // ⚠️ A REGRESSÃO: enquanto `agentId` era obrigatório no transporte, este caminho era inalcançável
+    // — trocava-se o agente na configuração e a conversa continuava no mesmo, sem nada avisar. E o
+    // tipo não denunciava: `input.agentId ?? settings.agentId` compila quando o primeiro nunca falta.
+    const { provider } = setupWithSettings(new NullSettingsRepository({ audience: 'all', agentId: 'researcher-agent' }))
+
+    const session = await provider.createSession({})
+
+    assert.strictEqual(provider.describe(session.id).agentId, 'researcher-agent')
+  })
+
+  it('lets the caller override the configured agent', async () => {
+    // Quem chama a API direto para comparar dois providers continua mandando no que quer.
+    const { provider } = setupWithSettings(new NullSettingsRepository({ audience: 'all', agentId: 'researcher-agent' }))
+
+    const session = await provider.createSession({ agentId: 'sysops-agent' })
+
+    assert.strictEqual(provider.describe(session.id).agentId, 'sysops-agent')
+    assert.strictEqual(provider.describe(session.id).provider, EProvider.CLAUDE)
+  })
+  it('treats a stored `enabled: false` as off, so an agent recalled before the upgrade stays recalled', async () => {
+    const stored = normalizeSettings({ enabled: false })
+    const { provider } = setupWithSettings(new NullSettingsRepository(stored))
+
+    await assert.rejects(() => provider.createSession({ agentId: 'researcher-agent' }), AgentUnavailableError)
+  })
+
+  it('does not decide `restricted` itself: that needs the proven identity, which the controller resolves', async () => {
+    const { provider } = setupWithSettings(new NullSettingsRepository({ audience: 'restricted' }))
+
+    await assert.doesNotReject(() => provider.createSession({ agentId: 'researcher-agent' }))
+  })
+
+  it('resolves the model: body, then settings, then left to the adapter', async () => {
+    const { provider } = setupWithSettings(new NullSettingsRepository({ audience: 'all', agentId: 'researcher-agent', model: 'gemini-3.6-flash' }))
+
+    assert.strictEqual(provider.describe((await provider.createSession({})).id).model, 'gemini-3.6-flash')
+    assert.strictEqual(provider.describe((await provider.createSession({ model: 'gemini-3.1-pro-preview' })).id).model, 'gemini-3.1-pro-preview')
+
+    const bare = setupWithSettings(new NullSettingsRepository({ audience: 'all', agentId: 'researcher-agent' }))
+    assert.strictEqual(bare.provider.describe((await bare.provider.createSession({})).id).model, 'model-x')
+  })
+
+  it('does not ship the configured model of one provider to another agent', async () => {
+    // A regressão: trocar o agente para o Claude com um modelo do Google gravado quebrava a sessão.
+    const { provider } = setupWithSettings(new NullSettingsRepository({ audience: 'all', model: 'gemini-3.6-flash' }))
+
+    const session = await provider.createSession({ agentId: 'sysops-agent' })
+
+    assert.strictEqual(provider.describe(session.id).model, 'claude-sonnet-5')
   })
 })

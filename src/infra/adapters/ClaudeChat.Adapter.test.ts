@@ -99,7 +99,7 @@ describe('ClaudeChatAdapter', () => {
     })
 
     const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent', reasoning: 'high' })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
 
     assert.strictEqual(events[0].type, 'message.started')
     assert.strictEqual(textOf(events), 'Hello world')
@@ -129,8 +129,8 @@ describe('ClaudeChatAdapter', () => {
     })
 
     const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent', language: 'Portuguese' })
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Oi' }))
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Oi de novo' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Oi' }, {}))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Oi de novo' }, {}))
 
     const occurrences = String(sent?.system).split('reply exclusively in Portuguese').length - 1
     assert.strictEqual(occurrences, 1)
@@ -149,14 +149,19 @@ describe('ClaudeChatAdapter', () => {
 
     const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
     const events = await drain(
-      adapter.sendMessage(getAgent(), session.id, {
-        text: 'Look',
-        files: [
-          { name: 'a.png', mimeType: 'image/png', data: 'aaa' },
-          { name: 'b.pdf', mimeType: 'application/pdf', data: 'bbb' },
-          { name: 'c.zip', mimeType: 'application/zip', data: 'ccc' },
-        ],
-      }),
+      adapter.sendMessage(
+        getAgent(),
+        session.id,
+        {
+          text: 'Look',
+          files: [
+            { name: 'a.png', mimeType: 'image/png', data: 'aaa' },
+            { name: 'b.pdf', mimeType: 'application/pdf', data: 'bbb' },
+            { name: 'c.zip', mimeType: 'application/zip', data: 'ccc' },
+          ],
+        },
+        {},
+      ),
     )
 
     const content = sent?.messages[0].content
@@ -176,7 +181,7 @@ describe('ClaudeChatAdapter', () => {
     })
 
     const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
-    const failed = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }))
+    const failed = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
 
     const error = failed.find((e) => e.type === 'error')
     assert.ok(error && error.type === 'error')
@@ -197,7 +202,7 @@ describe('ClaudeChatAdapter', () => {
     const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
     const events: IAgentEvent[] = []
 
-    for await (const event of adapter.sendMessage(getAgent(), session.id, { text: 'Hi' })) {
+    for await (const event of adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {})) {
       events.push(event)
       if (event.type === 'text.delta') await adapter.cancel(session.id)
     }
@@ -219,7 +224,7 @@ describe('ClaudeChatAdapter', () => {
     })
 
     const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'oi' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'oi' }, {}))
 
     assert.strictEqual(sent[0].tools, undefined)
     assert.strictEqual(sent.length, 1, 'sem tools o loop dá exatamente uma volta')
@@ -251,7 +256,7 @@ describe('ClaudeChatAdapter', () => {
     })
 
     const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent', tools: true })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'liste os arquivos' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'liste os arquivos' }, {}))
 
     // Duas idas ao modelo: uma pedindo a tool, outra com o resultado na mão.
     assert.strictEqual(sent.length, 2)
@@ -280,7 +285,7 @@ describe('ClaudeChatAdapter', () => {
     })
 
     const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent', tools: true })
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'liste' }))
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'liste' }, {}))
 
     // Um `tool_use` sem resposta envenenaria todos os turnos seguintes.
     const sentAfter: Anthropic.MessageCreateParamsStreaming[] = []
@@ -295,7 +300,7 @@ describe('ClaudeChatAdapter', () => {
       }),
     })
 
-    await drain(healthy.sendMessage(getAgent(), session.id, { text: 'de novo' }))
+    await drain(healthy.sendMessage(getAgent(), session.id, { text: 'de novo' }, {}))
 
     assert.deepStrictEqual(
       sentAfter[0].messages.map((m) => m.role),
@@ -305,9 +310,50 @@ describe('ClaudeChatAdapter', () => {
 
   it('reports a missing session rather than throwing', async () => {
     const adapter = new ClaudeChatAdapter({ client: clientWith(async () => []) })
-    const events = await drain(adapter.sendMessage(getAgent(), 'claude-chat-nope', { text: 'Hi' }))
+    const events = await drain(adapter.sendMessage(getAgent(), 'claude-chat-nope', { text: 'Hi' }, {}))
 
     assert.strictEqual(events.length, 1)
     assert.strictEqual(events[0].type, 'error')
+  })
+
+  it('counts the cache in the input and reports its parcels, with reasoning apart from the output', async () => {
+    const adapter = new ClaudeChatAdapter({
+      client: clientWith(async () =>
+        (async function* () {
+          yield { type: 'message_start', message: { usage: { input_tokens: 10, cache_read_input_tokens: 800, cache_creation_input_tokens: 190 } } }
+          yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'ok' } }
+          yield { type: 'message_delta', usage: { output_tokens: 30, output_tokens_details: { thinking_tokens: 12 } } }
+        })(),
+      ),
+    })
+
+    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
+    const usage = events.filter((e) => e.type === 'usage').map((e) => e.type === 'usage' && e.payload)
+
+    assert.deepStrictEqual(usage, [
+      { inputTokens: 1000, cacheReadTokens: 800, cacheWriteTokens: 190 },
+      { outputTokens: 18, reasoningTokens: 12 },
+    ])
+  })
+
+  it('sends an attachment with no text without an empty text block', async () => {
+    let sent: Anthropic.MessageCreateParamsStreaming | undefined
+    const adapter = new ClaudeChatAdapter({
+      client: clientWith(async (params) => {
+        sent = params
+        return (async function* () {
+          yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'ok' } }
+        })()
+      }),
+    })
+
+    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: ' ', files: [{ name: 'b.pdf', mimeType: 'application/pdf', data: 'bbb' }] }, {}))
+
+    assert.deepStrictEqual(
+      (sent?.messages[0].content as Anthropic.ContentBlockParam[]).map((block) => block.type),
+      ['document'],
+    )
   })
 })

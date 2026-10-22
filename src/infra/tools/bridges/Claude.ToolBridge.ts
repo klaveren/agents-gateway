@@ -9,7 +9,7 @@ export const REMOTE_SERVER_NAME = 'mcp'
  * O Claude Agent SDK quer tools como um MCP server. Para as locais ele oferece um
  * servidor in-process (`createSdkMcpServer`), o que evita subir qualquer processo extra.
  */
-export function buildClaudeMcpServers(local: ILocalTool[], remoteUrl?: string): Record<string, McpServerConfig> {
+export function buildClaudeMcpServers(local: ILocalTool[], remoteUrl?: string, token?: string): Record<string, McpServerConfig> {
   const servers: Record<string, McpServerConfig> = {}
 
   if (local.length > 0) {
@@ -26,7 +26,17 @@ export function buildClaudeMcpServers(local: ILocalTool[], remoteUrl?: string): 
   }
 
   if (remoteUrl) {
-    servers[REMOTE_SERVER_NAME] = { type: 'http', url: remoteUrl }
+    /**
+     * A credencial de quem chamou vai NO HEADER do servidor MCP.
+     *
+     * ⚠️ Este SDK conecta ao MCP por conta própria — não passa pelo `McpServerClient` do gateway, e
+     * portanto não herda o `fetch` que injeta a credencial lá. Sem isto, o agente do Claude fala com
+     * o MCP sem token: toda tool responde "chamada sem credencial" e a conversa termina com ele
+     * dizendo que não conseguiu acessar os dados.
+     *
+     * O token vem do PROVIDER, por parâmetro — o bridge não o busca.
+     */
+    servers[REMOTE_SERVER_NAME] = { type: 'http', url: remoteUrl, ...(token ? { headers: { authorization: `Bearer ${token}` } } : {}) }
   }
 
   return servers
@@ -35,8 +45,13 @@ export function buildClaudeMcpServers(local: ILocalTool[], remoteUrl?: string): 
 /** O helper `tool()` do SDK só aceita raw shape do zod, não JSON Schema. */
 function toZodShape(item: ILocalTool): ZodRawShape {
   const entries = Object.entries(item.inputSchema.properties).map(([key, property]) => {
-    const base = property.type === 'number' ? z.number() : property.type === 'boolean' ? z.boolean() : z.string()
-    const described = base.describe(property.description)
+    // Lido com cuidado porque `properties` é JSON Schema aberto: uma tool pode declarar propriedade
+    // sem `description`, ou com `type` composto. Cair para string é o que o SDK já fazia na prática.
+    const type = typeof property.type === 'string' ? property.type : 'string'
+    const description = typeof property.description === 'string' ? property.description : ''
+
+    const base = type === 'number' ? z.number() : type === 'boolean' ? z.boolean() : z.string()
+    const described = description ? base.describe(description) : base
     return [key, item.inputSchema.required.includes(key) ? described : described.optional()] as const
   })
 

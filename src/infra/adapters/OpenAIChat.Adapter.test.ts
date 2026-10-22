@@ -54,7 +54,7 @@ describe('OpenAIChatAdapter', () => {
     })
 
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent', reasoning: 'low' })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
 
     const text = events
       .filter((e) => e.type === 'text.delta')
@@ -84,13 +84,18 @@ describe('OpenAIChatAdapter', () => {
 
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
     await drain(
-      adapter.sendMessage(getAgent(), session.id, {
-        text: 'Read it',
-        files: [
-          { name: 'a.png', mimeType: 'image/png', data: 'aaa' },
-          { name: 'report.pdf', mimeType: 'application/pdf', data: 'bbb' },
-        ],
-      }),
+      adapter.sendMessage(
+        getAgent(),
+        session.id,
+        {
+          text: 'Read it',
+          files: [
+            { name: 'a.png', mimeType: 'image/png', data: 'aaa' },
+            { name: 'report.pdf', mimeType: 'application/pdf', data: 'bbb' },
+          ],
+        },
+        {},
+      ),
     )
 
     const content = sent?.messages[1].content
@@ -109,7 +114,7 @@ describe('OpenAIChatAdapter', () => {
     })
 
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
-    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
     const error = events.find((e) => e.type === 'error')
 
     assert.ok(error && error.type === 'error')
@@ -130,11 +135,56 @@ describe('OpenAIChatAdapter', () => {
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
     const events: IAgentEvent[] = []
 
-    for await (const event of adapter.sendMessage(getAgent(), session.id, { text: 'Hi' })) {
+    for await (const event of adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {})) {
       events.push(event)
       if (event.type === 'text.delta') await adapter.cancel(session.id)
     }
 
     assert.strictEqual(events[events.length - 1].type, 'message.aborted')
+  })
+
+  it('reports reasoning apart from the visible output, and the cache parcels of the input', async () => {
+    const adapter = new OpenAIChatAdapter({
+      client: clientWith(async () =>
+        (async function* () {
+          yield { choices: [{ delta: { content: 'ok' } }] }
+          yield {
+            choices: [],
+            usage: {
+              prompt_tokens: 100,
+              completion_tokens: 30,
+              completion_tokens_details: { reasoning_tokens: 10 },
+              prompt_tokens_details: { cached_tokens: 60, cache_write_tokens: 10 },
+            },
+          }
+        })(),
+      ),
+    })
+
+    const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
+    const usage = events.find((e) => e.type === 'usage')
+
+    assert.deepStrictEqual(usage?.payload, { inputTokens: 100, outputTokens: 20, reasoningTokens: 10, cacheReadTokens: 60, cacheWriteTokens: 10 })
+  })
+
+  it('sends an attachment with no text without an empty text part', async () => {
+    let sent: OpenAI.Chat.ChatCompletionCreateParamsStreaming | undefined
+    const adapter = new OpenAIChatAdapter({
+      client: clientWith(async (params) => {
+        sent = params
+        return (async function* () {
+          yield { choices: [{ delta: { content: 'ok' } }] }
+        })()
+      }),
+    })
+
+    const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: '', files: [{ name: 'a.png', mimeType: 'image/png', data: 'aaa' }] }, {}))
+
+    assert.deepStrictEqual(
+      (sent?.messages[1].content as OpenAI.Chat.ChatCompletionContentPart[]).map((part) => part.type),
+      ['image_url'],
+    )
   })
 })

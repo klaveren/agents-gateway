@@ -2,15 +2,16 @@ import { randomUUID } from 'node:crypto'
 import { EventType, InMemorySessionService, LlmAgent, Runner, StreamingMode, toStructuredEvents, type BaseTool, type BaseToolset, type Event } from '@google/adk'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
+import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IAgent } from '@domain/models/Agent.Model'
-import { IAgentEvent } from '@domain/models/AgentEvent.Model'
+import { IAgentEvent, IUsage } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { sessionPrefix } from '@infra/session/Session.Key'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
-import { buildAdkMcpToolset, buildAdkTools } from '@infra/tools/bridges/Adk.ToolBridge'
+import { buildAdkRemoteTools, buildAdkTools } from '@infra/tools/bridges/Adk.ToolBridge'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { composeSystemPrompt } from './support/Prompt.Helper'
 
@@ -43,11 +44,31 @@ export interface IAdkRuntime {
   runAsync(params: IAdkRunParams): AsyncGenerator<Event, void, undefined>
 }
 
+/** O consumo cru do Gemini, como vem no `usageMetadata`. */
+export interface IAdkUsageMetadata {
+  promptTokenCount?: number
+  candidatesTokenCount?: number
+  thoughtsTokenCount?: number
+  cachedContentTokenCount?: number
+}
+
+/** Uma resposta crua do modelo, do jeito que o `afterModelCallback` do ADK a entrega. */
+export interface IAdkModelResponse {
+  partial?: boolean
+  finishReason?: unknown
+  usageMetadata?: IAdkUsageMetadata
+}
+
 export interface IAdkRuntimeSpec {
   name: string
   model: string
   instruction: string
   tools: Array<BaseTool | BaseToolset>
+  /**
+   * Cada resposta crua do modelo — inclusive a ÚLTIMA de cada chamada, que o ADK não transforma em
+   * evento quando a chamada termina pedindo ferramenta. É dela que sai o consumo (ver `finalUsageOf`).
+   */
+  onModelResponse?: (response: IAdkModelResponse) => void
 }
 
 export type TAdkRuntimeFactory = (spec: IAdkRuntimeSpec) => IAdkRuntime
@@ -57,6 +78,8 @@ interface IGoogleAgentNative {
   runtime: IAdkRuntime
   userId: string
   adkSessionId: string
+  /** Consumo de chamadas já encerradas, ainda não repassado ao stream. */
+  usage: IUsage[]
 }
 
 export interface IGoogleAgentAdapterDeps {
@@ -73,6 +96,11 @@ function defaultRuntimeFactory(spec: IAdkRuntimeSpec): IAdkRuntime {
     // O ADK 1.6 usa `instruction` (singular) e `model`; não existem `instructions` nem `llm`.
     instruction: spec.instruction,
     tools: spec.tools,
+    // Só observa: devolver `undefined` mantém a resposta do modelo como veio.
+    afterModelCallback: ({ response }) => {
+      spec.onModelResponse?.(response as IAdkModelResponse)
+      return undefined
+    },
   })
   const runner = new Runner({ appName: APP_NAME, agent, sessionService })
 
@@ -101,6 +129,38 @@ function defaultRuntimeFactory(spec: IAdkRuntimeSpec): IAdkRuntime {
  * `@google/generative-ai` v0.24 — dois clientes Gemini no mesmo processo, e é
  * exatamente o contraste que o estudo quer mostrar.
  */
+/**
+ * Detecta `{identificador}` solto em `instruction` ANTES de entregar ao ADK — e falha com o texto
+ * certo, em vez de deixar o erro do ADK aparecer no meio de um turno.
+ *
+ * ⚖️ POR QUE ISTO É DETECÇÃO, E NÃO ESCAPE. O `@google/adk` interpola `{var}` dentro de
+ * `instruction` como variável de ESTADO da sessão (padrão Jinja), e não existe forma de marcar a
+ * chave como literal: `{{id}}` NÃO escapa nada — o regex do ADK (`/\{+[^{}]*}+/g`) engole `{`,
+ * `{{` ou `{{{` igual, então `{{id}}` é interpretado exatamente como `{id}`. Confirmado lendo o
+ * source do pacote (`@google/adk/dist/cjs/agents/instructions.js`) depois que a "correção" com
+ * chave dupla não teve efeito nenhum e o mesmo `Context variable not found: \`id\`.` continuou
+ * aparecendo.
+ *
+ * Por isso a correção de verdade é no CONTEÚDO do `systemPrompt` — trocar `{id}` por `<id>` na
+ * fonte do prompt. Esta função é a rede de segurança: falha no boot da sessão, apontando o padrão
+ * exato, em vez de estourar em runtime sem dizer de onde veio.
+ *
+ * ⚠️ O detector é mais ESTREITO que o do ADK de propósito. O ADK casa `{qualquer coisa}`, o que
+ * inclui um exemplo de JSON dentro do prompt; aqui só casa o que parece identificador. Um prompt
+ * com `{"chave": 1}` ainda quebra no ADK e passa por aqui — o preço de não recusar no boot um
+ * prompt que só tem um exemplo de JSON no meio.
+ */
+export function assertNoAdkTemplateCollision(prompt: string): string {
+  const matches = prompt.match(/\{+[a-zA-Z_][a-zA-Z0-9_]*\??}+/g)
+  if (matches?.length) {
+    throw new Error(
+      `systemPrompt contém ${matches.length} padrão(ões) que o @google/adk vai tentar resolver como variável de sessão e vai falhar: ${matches.slice(0, 5).join(', ')}. ` +
+        `O ADK não tem escape para chave literal — troque por outra notação (ex.: <id> em vez de {id}) na fonte do prompt.`,
+    )
+  }
+  return prompt
+}
+
 export class GoogleAgentAdapter implements IAgentAdapter {
   private readonly createRuntime: TAdkRuntimeFactory
   private readonly store: SessionStore
@@ -134,7 +194,7 @@ export class GoogleAgentAdapter implements IAgentAdapter {
     }
   }
 
-  async *sendMessage(agent: IAgent, sessionId: string, input: IMessageInput): AsyncIterable<IAgentEvent> {
+  async *sendMessage(agent: IAgent, sessionId: string, input: IMessageInput, context: IExecutionContext): AsyncIterable<IAgentEvent> {
     const record = this.store.get(sessionId)
     if (!record) {
       yield { type: 'error', sessionId, timestamp: new Date(), payload: { message: `Session not found: ${sessionId}` } }
@@ -156,7 +216,7 @@ export class GoogleAgentAdapter implements IAgentAdapter {
     }
 
     try {
-      const native = this.nativeOf(record, agent, await this.catalog?.mcpEndpoint())
+      const native = this.nativeOf(record, agent, await this.remoteTools(agent, context))
       await native.runtime.ensureSession(native.userId, native.adkSessionId)
 
       const stream = native.runtime.runAsync({
@@ -169,6 +229,8 @@ export class GoogleAgentAdapter implements IAgentAdapter {
       // Em StreamingMode.SSE o ADK manda os pedaços com `partial: true` e depois um
       // evento agregado com o texto inteiro. Repassar os dois duplicaria a resposta.
       let sawPartialText = false
+      // Sobra de um turno interrompido não pode entrar na conta deste.
+      native.usage.length = 0
 
       for await (const event of stream) {
         const isPartial = event.partial === true
@@ -181,9 +243,13 @@ export class GoogleAgentAdapter implements IAgentAdapter {
           if (mapped) yield mapped
         }
 
+        yield* this.drainUsage(native, sessionId)
+
         if (isPartial) sawPartialText = true
         else sawPartialText = false
       }
+
+      yield* this.drainUsage(native, sessionId)
 
       if (abort.signal.aborted) {
         yield { type: 'message.aborted', sessionId, timestamp: new Date() }
@@ -216,17 +282,23 @@ export class GoogleAgentAdapter implements IAgentAdapter {
    * O runtime do ADK vive aqui porque é ele que carrega o histórico entre turnos: recriá-lo
    * a cada turno apagaria a conversa.
    */
-  private nativeOf(record: ISessionRecord, agent: IAgent, remoteUrl?: string): IGoogleAgentNative {
+  private nativeOf(record: ISessionRecord, agent: IAgent, remote: BaseTool[]): IGoogleAgentNative {
     if (!record.native) {
+      const usage: IUsage[] = []
       record.native = {
         runtime: this.createRuntime({
           name: this.toAdkName(agent.id),
           model: record.model,
-          instruction: record.systemPrompt,
-          tools: this.buildTools(agent, remoteUrl),
+          instruction: assertNoAdkTemplateCollision(record.systemPrompt),
+          tools: this.buildTools(agent, remote),
+          onModelResponse: (response) => {
+            const counted = this.finalUsageOf(response)
+            if (counted) usage.push(counted)
+          },
         }),
         userId: `gateway-${record.id}`,
         adkSessionId: randomUUID(),
+        usage,
       } satisfies IGoogleAgentNative
     }
     return record.native as IGoogleAgentNative
@@ -237,11 +309,78 @@ export class GoogleAgentAdapter implements IAgentAdapter {
    * decidido ali. Uma sessão aberta com o MCP fora do ar segue sem ele até ser recriada;
    * sessões novas pegam a reconexão.
    */
-  private buildTools(agent: IAgent, remoteUrl?: string): Array<BaseTool | BaseToolset> {
-    const tools: Array<BaseTool | BaseToolset> = buildAdkTools(this.catalog?.localFor(agent.allowedTools) ?? [])
-    const remote = buildAdkMcpToolset(remoteUrl)
-    if (remote) tools.push(remote)
-    return tools
+  private buildTools(agent: IAgent, remote: BaseTool[]): Array<BaseTool | BaseToolset> {
+    return [...buildAdkTools(this.catalog?.localFor(agent.allowedTools) ?? []), ...remote]
+  }
+
+  /**
+   * As tools do MCP, declaradas por nós em vez de pelo `MCPToolset` do ADK.
+   *
+   * ⚖️ O `MCPToolset` conecta ao MCP sozinho e repassa o JSON Schema como veio; a API do Gemini
+   * recusa `$schema`, `additionalProperties` e `exclusiveMinimum` com HTTP 400, e o ADK entrega
+   * isso ao chamador como `MALFORMED_FUNCTION_CALL` — apontando para o modelo em vez do schema.
+   * Montando aqui, a declaração passa pela sanitização e a execução segue pelo `ToolCatalog`,
+   * como em qualquer outro caminho.
+   *
+   * Sem MCP conectado devolve lista vazia: o agente fica só com as tools locais, sem quebrar.
+   */
+  private async remoteTools(agent: IAgent, context: IExecutionContext): Promise<BaseTool[]> {
+    if (!this.catalog) return []
+
+    const local = new Set(this.catalog.localFor(agent.allowedTools).map((tool) => tool.name))
+    const all = await this.catalog.list(agent.allowedTools)
+
+    return buildAdkRemoteTools(
+      all.filter((tool) => !local.has(tool.name)),
+      // A credencial vem do provider e viaja até a execução — o adapter não a busca em lugar nenhum.
+      (name, args) => this.catalog!.invoke(name, args, context),
+    )
+  }
+
+  /**
+   * O consumo de UMA chamada ao modelo, contado uma vez só.
+   *
+   * ⚠️ NÃO SE LÊ O CONSUMO DOS EVENTOS:
+   *  · cada pedaço do stream traz o consumo ACUMULADO da chamada, e quando o modelo pede duas
+   *    ferramentas na mesma resposta o ADK emite um evento por pedido, cada um com o mesmo
+   *    `promptTokenCount` — somar os eventos contava a entrada da chamada duas, três vezes;
+   *  · o consumo definitivo, e o único com `cachedContentTokenCount`, vem no ÚLTIMO pedaço. Numa
+   *    chamada que termina em ferramenta esse pedaço não tem conteúdo e o ADK não o vira evento —
+   *    o cache dessas chamadas simplesmente não aparecia.
+   *
+   * O `afterModelCallback` recebe todos os pedaços, inclusive esse. O que fecha a chamada é o que
+   * não é parcial e traz `finishReason`: um por chamada, com o número final.
+   */
+  private finalUsageOf(response: IAdkModelResponse): IUsage | undefined {
+    if (response.partial === true || response.finishReason === undefined) return undefined
+
+    return this.toUsage({ usageMetadata: response.usageMetadata })
+  }
+
+  /** Repassa ao stream o consumo das chamadas que já fecharam. */
+  private *drainUsage(native: IGoogleAgentNative, sessionId: string): Generator<IAgentEvent> {
+    for (const payload of native.usage.splice(0)) yield { type: 'usage', sessionId, timestamp: new Date(), payload }
+  }
+
+  /**
+   * Traduz o `usageMetadata` do ADK. `undefined` quando não há consumo — emitir zero poluiria o
+   * stream e o acumulado.
+   */
+  private toUsage(event: { usageMetadata?: IAdkUsageMetadata }): IUsage | undefined {
+    const raw = event.usageMetadata
+    if (!raw) return undefined
+
+    const inputTokens = raw.promptTokenCount ?? 0
+    const outputTokens = raw.candidatesTokenCount ?? 0
+    // O raciocínio é cobrado como saída e não aparece em `candidatesTokenCount`. Ignorá-lo
+    // subestimaria o custo justamente nos modelos que mais pensam.
+    const reasoningTokens = raw.thoughtsTokenCount ?? 0
+
+    if (!inputTokens && !outputTokens && !reasoningTokens) return undefined
+
+    // Cache implícito: a parte lida vem em `cachedContentTokenCount`, já DENTRO de
+    // `promptTokenCount`. Gravação de cache não existe nesse modo — não é cobrada à parte.
+    return { inputTokens, outputTokens, reasoningTokens, cacheReadTokens: raw.cachedContentTokenCount ?? 0, cacheWriteTokens: 0 }
   }
 
   private toAgentEvent(event: ReturnType<typeof toStructuredEvents>[number], sessionId: string): IAgentEvent | undefined {
@@ -274,7 +413,10 @@ export class GoogleAgentAdapter implements IAgentAdapter {
   }
 
   private buildContent(input: IMessageInput): IAdkContent {
-    const parts: IAdkPart[] = [{ text: input.text }]
+    // ⛔ Texto vazio NÃO entra como parte. O ADK descarta a mensagem inteira quando a primeira parte
+    // é `text: ""` (`getContents`, @google/adk 1.6) — anexo enviado sem frase chegava ao modelo como
+    // nada, e ele respondia "aguardando o arquivo" com o arquivo já enviado.
+    const parts: IAdkPart[] = input.text.trim() ? [{ text: input.text }] : []
     for (const file of input.files ?? []) {
       parts.push({ inlineData: { data: file.data, mimeType: file.mimeType } })
     }

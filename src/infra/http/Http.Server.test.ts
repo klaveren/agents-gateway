@@ -1,7 +1,7 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import { makeController } from '@composition/factories/Controller.Factory'
-import { API_PREFIX, HttpServer } from './Http.Server'
+import { API_PREFIX, HttpServer, PUBLIC_PATHS } from './Http.Server'
 import { OPENAPI_DOCUMENT } from './Openapi.Schema'
 
 /** Express usa `:id`, o OpenAPI usa `{id}`. */
@@ -44,5 +44,12 @@ describe('HttpServer', () => {
     }
 
     assert.deepStrictEqual(orphans, [], 'descrito no OpenAPI e não registrado')
+  })
+
+  it('keeps the public allowlist to the health check and the shared link, and every entry is a real route', () => {
+    assert.deepStrictEqual(PUBLIC_PATHS, ['/health', '/shared/:id'])
+
+    const registered = new Set(server.routeTable.map(({ path }) => path))
+    assert.ok(PUBLIC_PATHS.every((path) => registered.has(path)))
   })
 })

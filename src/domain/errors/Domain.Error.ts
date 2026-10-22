@@ -47,3 +47,27 @@ export class ToolsNotSupportedError extends DomainError {
     super(`The manual tool loop is only available on the chat lane, not on "${mode}"`)
   }
 }
+
+/**
+ * O agente existe, funciona, e não atende agora.
+ *
+ * ⚖️ NÃO É "não encontrado" nem "sem permissão": é uma DECISÃO de operação, tomada na
+ * configuração. A distinção importa no relato — quem lê "indisponível" não sai procurando
+ * servidor caído nem pedindo acesso.
+ */
+export class AgentUnavailableError extends DomainError {
+  constructor(message = 'O agente está indisponível no momento.') {
+    super(message)
+    this.name = 'AgentUnavailableError'
+  }
+}
+
+/**
+ * Uma alteração de configuração que não faz sentido — por exemplo, apagar um campo obrigatório.
+ * É erro de quem pediu (422), e não do serviço.
+ */
+export class InvalidSettingsError extends DomainError {
+  constructor(public readonly field: string) {
+    super(`Settings field cannot be cleared: ${field}`)
+  }
+}

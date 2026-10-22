@@ -14,9 +14,34 @@ export type TAgentEventType =
   | 'error'
 
 export interface IUsage {
+  /** TODA a entrada do turno, cache incluído — o mesmo significado em todos os providers. */
   inputTokens?: number
+  /** Só a saída VISÍVEL. O raciocínio vem à parte, em `reasoningTokens`, em todos os providers. */
   outputTokens?: number
   reasoningTokens?: number
+  /** Parcela de `inputTokens` lida do cache — em geral cobrada a uma fração do preço de entrada. */
+  cacheReadTokens?: number
+  /** Parcela de `inputTokens` gravada no cache neste turno — em alguns providers, cobrada ACIMA da entrada. */
+  cacheWriteTokens?: number
+}
+
+const USAGE_FIELDS = ['inputTokens', 'outputTokens', 'reasoningTokens', 'cacheReadTokens', 'cacheWriteTokens'] as const
+
+/**
+ * Soma dois consumos, campo a campo — a mesma conta no turno e no acumulado da sessão.
+ *
+ * Campo que nenhum dos dois traz fica de fora, em vez de virar `undefined` ou zero: um provider
+ * que não informa raciocínio não passa a ter "0 de raciocínio".
+ */
+export function addUsage(current: IUsage, addition: IUsage): IUsage {
+  const total: IUsage = {}
+
+  for (const field of USAGE_FIELDS) {
+    if (current[field] === undefined && addition[field] === undefined) continue
+    total[field] = (current[field] ?? 0) + (addition[field] ?? 0)
+  }
+
+  return total
 }
 
 export type IAgentEvent =
