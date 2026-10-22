@@ -2,8 +2,10 @@ import {
   AdapterNotFoundError,
   AgentNotFoundError,
   AgentUnavailableError,
+  InvalidAgentError,
   InvalidSettingsError,
   ModeNotSupportedError,
+  ReadOnlyAgentError,
   SessionNotFoundError,
   ToolsNotSupportedError,
 } from '@domain/errors/Domain.Error'
@@ -11,6 +13,7 @@ import {
 export type TErrorCode =
   | 'validation_error'
   | 'agent_not_found'
+  | 'agent_read_only'
   | 'session_not_found'
   | 'mode_not_supported'
   | 'tools_not_supported'
@@ -72,6 +75,14 @@ export function toHttpFailure(error: unknown): IHttpFailure {
      * fazer a seguir.
      */
     return { status: 403, code: 'agent_unavailable', message: error.message }
+  }
+
+  if (error instanceof InvalidAgentError) {
+    return { status: 422, code: 'validation_error', message: 'Agent is invalid', details: error.issues }
+  }
+
+  if (error instanceof ReadOnlyAgentError) {
+    return { status: 409, code: 'agent_read_only', message: error.message }
   }
 
   if (error instanceof InvalidSettingsError) {

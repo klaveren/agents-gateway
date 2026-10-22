@@ -113,6 +113,10 @@ function buildRoutes(controller: AgentController): IRoute[] {
   return [
     { method: 'get', path: '/health', handler: controller.health },
     { method: 'get', path: '/agents', handler: controller.getAgents },
+    { method: 'post', path: '/agents', handler: controller.createAgent },
+    { method: 'get', path: '/agents/:agentId', handler: controller.getAgent },
+    { method: 'put', path: '/agents/:agentId', handler: controller.updateAgent },
+    { method: 'delete', path: '/agents/:agentId', handler: controller.deleteAgent },
     { method: 'get', path: '/agents/:agentId/tools', handler: controller.getAgentTools },
     { method: 'get', path: '/tools', handler: controller.getTools },
     { method: 'get', path: '/availability', handler: controller.availability },

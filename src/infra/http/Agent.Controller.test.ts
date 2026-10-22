@@ -578,7 +578,7 @@ describe('AgentController', () => {
           // O que sai é o JSON: `reasoningEfforts: undefined` não conta como campo.
           assert.ok(
             Object.keys(JSON.parse(JSON.stringify(agent))).every((key) =>
-              ['allowedTools', 'id', 'modes', 'models', 'name', 'pricing', 'provider', 'reasoningEfforts'].includes(key),
+              ['allowedTools', 'builtIn', 'id', 'modes', 'models', 'name', 'pricing', 'provider', 'reasoningEfforts'].includes(key),
             ),
           )
         }
@@ -801,6 +801,106 @@ describe('AgentController', () => {
 
         assert.deepStrictEqual(sent, ['[m1@x.test]\n\noi'])
       })
+    })
+  })
+  describe('agentes criados pela tela', () => {
+    const proof: ICallerProof = { prove: async (token) => token.startsWith('good-') }
+    const ADMIN = { token: 'good-admin', id: 'root', email: 'root@x.test', role: 'admin' }
+    const MEMBER = { token: 'good-member', id: 'm1', role: 'member' }
+
+    afterEach(() => {
+      delete process.env.ADMIN_ROLES
+    })
+
+    const toolsCatalog = () =>
+      ({ ...fakeCatalog(), list: async () => [{ origin: 'local' as const, name: 'search_web', description: '', inputSchema: {} }] }) as unknown as ToolCatalog
+
+    const body = {
+      id: 'juridico',
+      name: 'Jurídico',
+      provider: 'google',
+      systemPrompt: 'Você pesquisa jurisprudência.',
+      models: ['gemini-3.7-flash'],
+      modes: ['chat', 'agent'],
+      allowedTools: ['search_web'],
+    }
+
+    const as = async (identity: object, controller: AgentController, run: (res: Response) => Promise<void>) => {
+      const { res, locals } = mockResponse()
+      await withCaller(identity, () => run(res))
+      return locals
+    }
+
+    it('admin cria, vê com o prompt, e o agente entra na lista pública sem o prompt', async () => {
+      const controller = controllerWith({}, toolsCatalog(), proof)
+
+      const created = await as(ADMIN, controller, (res) => controller.createAgent(mockRequest({ body }), res))
+      assert.strictEqual(created.statusCode, 201)
+      assert.strictEqual((created.body?.result as { updatedBy: string }).updatedBy, 'root@x.test')
+
+      const detail = await as(ADMIN, controller, (res) => controller.getAgent(mockRequest({ params: { agentId: 'juridico' } }), res))
+      assert.strictEqual((detail.body?.result as { systemPrompt: string }).systemPrompt, body.systemPrompt)
+
+      const listed = await as(MEMBER, controller, (res) => controller.getAgents(mockRequest(), res))
+      const juridico = (listed.body?.result as Array<Record<string, unknown>>).find((agent) => agent.id === 'juridico')
+      assert.strictEqual(juridico?.builtIn, false)
+      assert.strictEqual('systemPrompt' in (juridico ?? {}), false)
+    })
+
+    it('⛔ quem não é admin recebe 404 em criar, ler, editar e apagar', async () => {
+      const controller = controllerWith({}, toolsCatalog(), proof)
+      const params = { agentId: 'juridico' }
+
+      for (const run of [
+        (res: Response) => controller.createAgent(mockRequest({ body }), res),
+        (res: Response) => controller.getAgent(mockRequest({ params }), res),
+        (res: Response) => controller.updateAgent(mockRequest({ params, body }), res),
+        (res: Response) => controller.deleteAgent(mockRequest({ params }), res),
+      ]) {
+        assert.strictEqual((await as(MEMBER, controller, run)).statusCode, 404)
+      }
+    })
+
+    it('agente inválido: 422 com todos os problemas em details', async () => {
+      const controller = controllerWith({}, toolsCatalog(), proof)
+
+      const out = await as(ADMIN, controller, (res) => controller.createAgent(mockRequest({ body: { ...body, models: ['gpt-5.6-sol'], allowedTools: ['run_bash'] } }), res))
+
+      assert.strictEqual(out.statusCode, 422)
+      assert.deepStrictEqual(
+        (out.body as unknown as { details: Array<{ field: string }> }).details.map((issue) => issue.field),
+        ['models', 'allowedTools'],
+      )
+    })
+
+    it('⛔ prompt com chave que o ADK lê como variável é recusado para Google', async () => {
+      const controller = controllerWith({}, toolsCatalog(), proof)
+
+      const out = await as(ADMIN, controller, (res) => controller.createAgent(mockRequest({ body: { ...body, systemPrompt: 'Olá {user}' } }), res))
+
+      assert.strictEqual(out.statusCode, 422)
+    })
+
+    it('embutido é só leitura: 409 agent_read_only', async () => {
+      const controller = controllerWith({}, toolsCatalog(), proof)
+
+      const out = await as(ADMIN, controller, (res) => controller.deleteAgent(mockRequest({ params: { agentId: 'researcher-agent' } }), res))
+
+      assert.strictEqual(out.statusCode, 409)
+      assert.strictEqual(out.body?.code, 'agent_read_only')
+    })
+
+    it('editar troca o agente criado; apagar tira da lista', async () => {
+      const controller = controllerWith({}, toolsCatalog(), proof)
+      const params = { agentId: 'juridico' }
+      await as(ADMIN, controller, (res) => controller.createAgent(mockRequest({ body }), res))
+
+      const updated = await as(ADMIN, controller, (res) => controller.updateAgent(mockRequest({ params, body: { ...body, id: 'ignorado', name: 'Jurídico 2' } }), res))
+      assert.strictEqual((updated.body?.result as { id: string; name: string }).name, 'Jurídico 2')
+      assert.strictEqual((updated.body?.result as { id: string }).id, 'juridico')
+
+      assert.strictEqual((await as(ADMIN, controller, (res) => controller.deleteAgent(mockRequest({ params }), res))).statusCode, 200)
+      assert.strictEqual((await as(ADMIN, controller, (res) => controller.getAgent(mockRequest({ params }), res))).statusCode, 404)
     })
   })
 })

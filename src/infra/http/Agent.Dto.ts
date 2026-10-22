@@ -18,6 +18,20 @@ export interface IAgentDto {
   reasoningEfforts?: string[]
   modes: string[]
   allowedTools: string[]
+  /** Do código (só leitura) ou criado pela tela. */
+  builtIn: boolean
+}
+
+/**
+ * O agente INTEIRO, com o prompt — só para quem administra, na tela de edição.
+ *
+ * ⛔ É a exceção ao `toAgentDto`, e mora numa rota própria de administrador: a listagem pública
+ * continua sem o prompt.
+ */
+export interface IAgentDetailDto extends IAgentDto {
+  systemPrompt: string
+  updatedAt?: Date
+  updatedBy?: string
 }
 
 /**
@@ -33,7 +47,7 @@ export interface IAgentDto {
  * Lista explícita de campos, e não `{ ...agent, systemPrompt: undefined }`: campo novo no registry
  * nasce PRIVADO e só sai quando alguém o escreve aqui. Com spread, nasceria público.
  */
-export function toAgentDto(agent: IAgent, pricing: TModelPricing = MODEL_PRICING): IAgentDto {
+export function toAgentDto(agent: IAgent, pricing: TModelPricing = MODEL_PRICING, builtIn = true): IAgentDto {
   return {
     id: agent.id,
     name: agent.name,
@@ -43,5 +57,10 @@ export function toAgentDto(agent: IAgent, pricing: TModelPricing = MODEL_PRICING
     reasoningEfforts: agent.reasoningEfforts,
     modes: agent.modes.map(String),
     allowedTools: agent.allowedTools,
+    builtIn,
   }
+}
+
+export function toAgentDetailDto(entry: { agent: IAgent; builtIn: boolean; updatedAt?: Date; updatedBy?: string }, pricing: TModelPricing = MODEL_PRICING): IAgentDetailDto {
+  return { ...toAgentDto(entry.agent, pricing, entry.builtIn), systemPrompt: entry.agent.systemPrompt, updatedAt: entry.updatedAt, updatedBy: entry.updatedBy }
 }

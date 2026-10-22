@@ -71,3 +71,20 @@ export class InvalidSettingsError extends DomainError {
     super(`Settings field cannot be cleared: ${field}`)
   }
 }
+
+/**
+ * Um agente que não pode ser salvo como veio. Carrega TODOS os problemas, campo a campo: a tela
+ * mostra cada um onde ele está, em vez de um de cada vez a cada tentativa.
+ */
+export class InvalidAgentError extends DomainError {
+  constructor(public readonly issues: Array<{ field: string; message: string }>) {
+    super(`Agent is invalid: ${issues.map((issue) => `${issue.field} (${issue.message})`).join('; ')}`)
+  }
+}
+
+/** Agente embutido (do código) não se edita nem se apaga pela API: duplica-se. */
+export class ReadOnlyAgentError extends DomainError {
+  constructor(public readonly agentId: string) {
+    super(`Built-in agent is read-only: ${agentId}`)
+  }
+}
