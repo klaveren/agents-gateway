@@ -133,6 +133,7 @@ export const useConversationsStore = defineStore('conversations', () => {
   }
 
   function apply(event: TConversationEvent): void {
+    const gone = event.type === 'conversation.deleted' ? (items.value.find((item) => item.id === event.sessionId) ?? all.find((item) => item.id === event.sessionId)) : undefined
     const known = event.type === 'conversation.updated' && (items.value.some((item) => item.id === event.session.id) || all.some((item) => item.id === event.session.id))
     if (scope.value === 'mine') {
       all = applyEvent(all, event, { q: '', agentId: '', classification: '' }).items
@@ -145,6 +146,11 @@ export const useConversationsStore = defineStore('conversations', () => {
     if (event.type === 'conversation.updated' && !known && facets.value) {
       const agent = facets.value.agent
       facets.value = { ...facets.value, agent: { ...agent, [event.session.agentId]: (agent[event.session.agentId] ?? 0) + 1 } }
+    }
+    if (gone && facets.value) {
+      const agent = { ...facets.value.agent, [gone.agentId]: Math.max((facets.value.agent[gone.agentId] ?? 1) - 1, 0) }
+      if (!agent[gone.agentId]) delete agent[gone.agentId]
+      facets.value = { ...facets.value, agent }
     }
     if (result.removed) total.value = Math.max(total.value - 1, 0)
 
