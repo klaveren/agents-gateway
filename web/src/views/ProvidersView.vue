@@ -19,12 +19,6 @@ const CONSOLE: Record<string, string> = {
 }
 const PROTOCOL_LABEL: Record<TProvider, string> = { claude: 'Anthropic', openai: 'OpenAI', google: 'Gemini' }
 
-/** Os dois modelos de compatível: o protocolo decide o formato da URL base (com ou sem `/v1`). */
-const PRESETS: Array<{ label: string; protocol: TProvider }> = [
-  { label: 'Compatível com OpenAI', protocol: 'openai' },
-  { label: 'Compatível com Anthropic', protocol: 'claude' },
-]
-
 const drafts = ref<Record<string, string>>({})
 const results = ref<Record<string, IProbeResult & { saved?: boolean }>>({})
 const busy = ref<Record<string, boolean>>({})
@@ -99,8 +93,6 @@ async function confirmRemoveProvider() {
   removingProvider.value = undefined
 }
 
-function preset(protocol: TProvider) {
-  form.value = { ...form.value, protocol }
   adding.value = true
 }
 
@@ -140,9 +132,7 @@ function sourceLabel(provider: IProviderStatus): string {
           <h1 class="text-xl font-semibold">Providers</h1>
           <p class="mt-1 text-sm text-zinc-400">Os oficiais e qualquer API compatível com OpenAI ou Anthropic. As chaves ficam criptografadas, valem na próxima chamada e nunca voltam para a tela.</p>
         </div>
-        <div class="flex gap-2">
-          <button v-for="item in PRESETS" :key="item.protocol" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400" @click="preset(item.protocol)">+ {{ item.label }}</button>
-        </div>
+        <button class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400" @click="adding = !adding">+ Adicionar provider</button>
       </header>
       <p v-if="loadError" class="text-sm text-rose-300">{{ loadError }}</p>
 
@@ -158,7 +148,7 @@ function sourceLabel(provider: IProviderStatus): string {
             <div class="flex gap-1.5">
               <button v-for="protocol in (['openai', 'claude'] as TProvider[])" :key="protocol" type="button" class="chip" :class="{ on: form.protocol === protocol }" @click="form.protocol = protocol">{{ PROTOCOL_LABEL[protocol] }}</button>
             </div>
-            <small class="hint">Qual API o provider imita. Alguns falam as duas: cadastre um de cada, se quiser usar as duas lanes de SDK.</small>
+            <small class="hint">Qual API o provider imita — é o que decide o formato da URL abaixo. Alguns falam as duas: cadastre um de cada, se quiser usar as duas lanes de SDK.</small>
           </div>
           <label class="field">
             URL base
