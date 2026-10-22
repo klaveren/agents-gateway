@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import type { Event } from '@google/adk'
+import type { Event, FunctionTool } from '@google/adk'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
@@ -173,6 +173,39 @@ describe('GoogleAgentAdapter', () => {
     assert.strictEqual(log.specs[0].tools.length, 1)
     const [tool] = log.specs[0].tools
     assert.ok('name' in tool && tool.name === 'search_web')
+  })
+
+  it('sends each MCP call with the credential of the turn in progress, not of the first turn', async () => {
+    const seen: Array<string | undefined> = []
+    const remoteCatalog = new ToolCatalog(
+      {
+        serverUrl: 'http://localhost:8000/mcp',
+        isConnected: () => true,
+        ensureConnected: async () => true,
+        connectionGeneration: 0,
+        listTools: async () => [{ origin: 'remote', name: 'run_bash', description: 'bash', inputSchema: { type: 'object', properties: {} } }],
+        callTool: async (_name: string, _args: unknown, context?: { token?: string }) => {
+          seen.push(context?.token)
+          return { status: 'success' as const, result: '' }
+        },
+      } as unknown as McpServerClient,
+      [],
+    )
+    const log = emptyLog()
+    const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(() => [], log), catalog: remoteCatalog })
+    const agent = { ...getAgent(), allowedTools: ['run_bash'] }
+    const session = await adapter.createSession(agent, { agentId: 'researcher-agent' })
+    const callBash = async () => {
+      const tool = log.specs[0].tools.find((candidate) => 'name' in candidate && candidate.name === 'run_bash') as FunctionTool
+      await tool.runAsync({ args: {}, toolContext: undefined as never })
+    }
+
+    await drain(adapter.sendMessage(agent, session.id, { text: 'first' }, { token: 'token-1' }))
+    await callBash()
+    await drain(adapter.sendMessage(agent, session.id, { text: 'second' }, { token: 'token-2' }))
+    await callBash()
+
+    assert.deepStrictEqual(seen, ['token-1', 'token-2'])
   })
 
   it('does not repeat the answer when the ADK follows partials with an aggregate', async () => {
