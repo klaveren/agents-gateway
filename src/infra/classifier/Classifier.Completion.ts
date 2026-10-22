@@ -45,9 +45,9 @@ export function apiKeyOf(provider: EProvider, env: NodeJS.ProcessEnv = process.e
  * `temperature: 0` onde o modelo aceita (Gemini, GPT sem raciocínio): a mesma entrada deve dar o mesmo
  * rótulo. A Anthropic recusa o parâmetro nos modelos atuais.
  */
-export function makeComplete(provider: EProvider, model: string, apiKey: string): TComplete {
+export function makeComplete(provider: EProvider, model: string, apiKey: string, baseUrl?: string): TComplete {
   if (provider === EProvider.CLAUDE) {
-    const client = new Anthropic({ apiKey })
+    const client = new Anthropic({ apiKey, baseURL: baseUrl })
 
     // Sem `temperature`: os modelos atuais da Anthropic recusam o parâmetro (400), e a saída já é
     // uma palavra entre quatro.
@@ -59,7 +59,7 @@ export function makeComplete(provider: EProvider, model: string, apiKey: string)
   }
 
   if (provider === EProvider.OPENAI) {
-    const client = new OpenAI({ apiKey })
+    const client = new OpenAI({ apiKey, baseURL: baseUrl })
     const reasons = /^(o\d|gpt-5)/i.test(model)
 
     return async (system, user, { maxOutputTokens }) => {

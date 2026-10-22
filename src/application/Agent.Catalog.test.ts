@@ -78,4 +78,17 @@ describe('AgentCatalog', () => {
     assert.strictEqual(new AgentCatalog([builtIn], repository).get('researcher-agent')?.name, 'Researcher')
     assert.strictEqual(new AgentCatalog([builtIn], repository).list().length, 1)
   })
+  it('⚖️ só oferece os modelos ATIVADOS no catálogo; desligar tira de todos sem reescrever o agente', () => {
+    const enabled = new Set(['claude-sonnet-5'])
+    const repository = new NullAgentRepository()
+    repository.save({ ...custom, provider: 'claude', models: ['claude-sonnet-5', 'claude-opus-5'] }, 'x')
+    const catalog = new AgentCatalog([], repository, (_provider, model) => enabled.has(model))
+
+    assert.deepStrictEqual(catalog.get('juridico')?.models, ['claude-sonnet-5'])
+    assert.deepStrictEqual(catalog.unusableModels(repository.list()[0]), ['claude-opus-5'])
+
+    enabled.delete('claude-sonnet-5')
+    assert.deepStrictEqual(catalog.get('juridico')?.models, [])
+    assert.deepStrictEqual(repository.list()[0].models, ['claude-sonnet-5', 'claude-opus-5'])
+  })
 })

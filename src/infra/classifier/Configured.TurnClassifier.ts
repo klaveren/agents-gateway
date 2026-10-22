@@ -2,6 +2,7 @@ import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgentSettings } from '@domain/models/Settings.Model'
 import { TClassification } from '@domain/models/Classification.Model'
 import { ICredentialSource } from '@domain/ports/CredentialStore.Port'
+import { IConnectionSource } from '@infra/adapters/support/Keyed.Client'
 import { ISettingsRepository } from '@domain/ports/SettingsRepository.Port'
 import { IClassifierInput, ITurnClassifier } from '@domain/ports/TurnClassifier.Port'
 import { apiKeyOf, makeComplete, providerOfModel } from './Classifier.Completion'
@@ -28,6 +29,8 @@ export interface IConfiguredClassifierDeps {
   warn?: (message: string) => void
   /** De onde vem a chave (a da tela, senão a do ambiente). Ausente = só o ambiente. */
   credentials?: ICredentialSource
+  /** Os providers configurados: com `classifierProvider`, é por aqui que saem protocolo, URL e chave. */
+  connections?: IConnectionSource
 }
 
 /** O padrão: provider pelo registry, chave pela store (ou pelo ambiente), SDK plano. */
@@ -80,7 +83,7 @@ export class ConfiguredTurnClassifier implements ITurnClassifier {
       const model = resolveClassifierModel(settings, this.deps.envModel)
       if (!model) return undefined
 
-      const complete = this.completeFor(model)
+      const complete = this.completeFor(model, settings.classifierProvider)
       if (!complete) return undefined
 
       return await new LlmTurnClassifier(complete, this.deps.prompt).classify(input)
@@ -98,16 +101,25 @@ export class ConfiguredTurnClassifier implements ITurnClassifier {
 
     if (settings?.classifyTurns !== true) return '[classifier] desligado (classifyTurns não está ligado nas configurações).'
     if (!model) return '[classifier] desligado: ligado nas configurações, mas sem modelo (defina classifierModel ou CLASSIFIER_MODEL).'
-    if (!this.completeFor(model)) return `[classifier] desligado: ${whyNot(model)}.`
+    if (!this.completeFor(model, settings.classifierProvider)) return `[classifier] desligado: ${whyNot(model)}.`
 
-    return `[classifier] ligado com o modelo ${model}.`
+    return `[classifier] ligado com o modelo ${model}${settings.classifierProvider ? ` (${settings.classifierProvider})` : ''}.`
   }
 
   /**
    * Cacheado por modelo E pela chave em vigor: o cliente do SDK não é recriado a cada turno, mas
    * trocar a chave pela tela troca o cliente no turno seguinte (e "sem chave" deixa de ser lembrado).
    */
-  private completeFor(model: string): TComplete | undefined {
+  private completeFor(model: string, providerId?: string): TComplete | undefined {
+    // Com o provider escolhido (o catálogo), a conexão dele: protocolo, URL e chave em vigor.
+    const connection = providerId ? this.deps.connections?.connection(providerId) : undefined
+    if (providerId && this.deps.connections && !this.deps.build) {
+      if (!connection?.key) return this.remember(model, undefined, `o provider ${providerId} está desligado ou sem chave`)
+      const cacheKey = `${providerId}\u0000${model}\u0000${connection.baseUrl ?? ''}\u0000${connection.key}`
+      if (!this.completions.has(cacheKey)) this.completions.set(cacheKey, makeComplete(connection.protocol, model, connection.key, connection.baseUrl))
+      return this.completions.get(cacheKey)
+    }
+
     const provider = providerOfModel(model)
     const cacheKey = `${model}\u0000${provider ? (this.deps.credentials?.get(provider) ?? '') : ''}`
     if (this.completions.has(cacheKey)) return this.completions.get(cacheKey)
@@ -120,6 +132,14 @@ export class ConfiguredTurnClassifier implements ITurnClassifier {
       this.warn(`[classifier] sem classificação: ${whyNot(model)}.`)
     }
 
+    return complete
+  }
+
+  private remember(model: string, complete: TComplete | undefined, why: string): TComplete | undefined {
+    if (!complete && !this.warned.has(model)) {
+      this.warned.add(model)
+      this.warn(`[classifier] sem classificação: ${why}.`)
+    }
     return complete
   }
 }

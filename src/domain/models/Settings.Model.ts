@@ -54,6 +54,11 @@ export interface IAgentSettings {
    * cai em `CLASSIFIER_MODEL`, e sem nenhum dos dois não há classificação.
    */
   classifierModel?: string
+  /**
+   * O provider do modelo do classificador — um modelo ATIVADO no catálogo dele. Ausente, o provider é
+   * deduzido do id do modelo (só funciona com os oficiais), como antes do catálogo.
+   */
+  classifierProvider?: string
   classifyTurns?: boolean
 
   updatedAt?: Date
@@ -98,6 +103,7 @@ export function normalizeSettings(raw: unknown): IAgentSettings {
     agentId: text(stored.agentId),
     model: text(stored.model),
     classifierModel: text(stored.classifierModel),
+    classifierProvider: text(stored.classifierProvider),
     classifyTurns: typeof stored.classifyTurns === 'boolean' ? stored.classifyTurns : undefined,
     updatedAt: date(stored.updatedAt),
     updatedBy: text(stored.updatedBy),
@@ -121,7 +127,7 @@ export type TSettingsChange = {
 }
 
 /** Os campos que quem salva controla. `updatedAt`/`updatedBy` são carimbo, não escolha. */
-const EDITABLE = ['audience', 'agentId', 'model', 'classifierModel', 'classifyTurns'] as const
+const EDITABLE = ['audience', 'agentId', 'model', 'classifierModel', 'classifierProvider', 'classifyTurns'] as const
 const REQUIRED = ['audience'] as const
 
 /**

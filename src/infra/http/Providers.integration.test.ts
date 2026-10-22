@@ -90,6 +90,13 @@ describe('Providers (integração)', () => {
       modes: ['chat'],
       allowedTools: [],
     }
+    // ⛔ Modelo que ninguém ativou no catálogo do provider não entra no agente.
+    const refused = await call('/agents', { method: 'POST', token: admin, body: agent })
+    assert.strictEqual(refused.status, 422)
+    assert.ok(refused.text.includes('not enabled'))
+
+    const { makeModelCatalog } = await import('@composition/factories/Catalog.Factory')
+    makeModelCatalog().ensureEnabled('openrouter', 'meta-llama/llama-4-maverick', 'test')
     assert.strictEqual((await call('/agents', { method: 'POST', token: admin, body: agent })).status, 201)
     assert.strictEqual((await call('/agents', { method: 'POST', token: admin, body: { ...agent, id: 'fantasma', provider: 'nao-existe' } })).status, 422)
 
@@ -242,6 +249,22 @@ describe('catálogo de modelos (integração)', () => {
     const listed = await call('/providers', { token: admin })
     const agregador = listed.body.result.find((item: { id: string }) => item.id === 'agregador')
     assert.deepStrictEqual(agregador.catalog, { total: 2, enabled: 1 })
+  })
+
+  it('⚖️ desligar o modelo tira ele do agente na hora; sem nenhum ativo, a sessão é recusada (422 agent_without_model)', async () => {
+    await call('/providers/agregador/models', { method: 'PUT', token: admin, body: { modelId: 'vendor/b', enabled: true } })
+    const agent = { id: 'do-catalogo', name: 'Do catálogo', provider: 'agregador', systemPrompt: 'curto', models: ['vendor/a', 'vendor/b'], modes: ['chat'], allowedTools: [] }
+    assert.strictEqual((await call('/agents', { method: 'POST', token: admin, body: agent })).status, 201)
+
+    await call('/providers/agregador/models', { method: 'PUT', token: admin, body: { modelId: 'vendor/b', enabled: false } })
+    const listed = (await call('/agents', { token: admin })).body.result.find((item: { id: string }) => item.id === 'do-catalogo')
+    assert.deepStrictEqual(listed.models, ['vendor/a'])
+    const detail = (await call('/agents/do-catalogo', { token: admin })).body.result
+    assert.deepStrictEqual(detail.disabledModels, ['vendor/b'])
+
+    await call('/providers/agregador/models', { method: 'PUT', token: admin, body: { modelId: 'vendor/a', enabled: false } })
+    const refused = await call('/sessions', { method: 'POST', token: admin, body: { agentId: 'do-catalogo' } })
+    assert.deepStrictEqual([refused.status, (refused.body as { code?: string }).code], [422, 'agent_without_model'])
   })
 
   it('sem chave salva, sincronizar é 422', async () => {

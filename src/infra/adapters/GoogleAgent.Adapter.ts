@@ -16,7 +16,6 @@ import { buildAdkRemoteTools, buildAdkTools } from '@infra/tools/bridges/Adk.Too
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { composeSystemPrompt } from './support/Prompt.Helper'
 
-const DEFAULT_MODEL = 'gemini-3.7-flash'
 const APP_NAME = 'agents-gateway'
 
 interface IAdkPart {
@@ -194,7 +193,8 @@ export class GoogleAgentAdapter implements IAgentAdapter {
       provider: agent.provider,
       protocol: EProvider.GOOGLE,
       mode: EMode.AGENT,
-      model: input.model || DEFAULT_MODEL,
+      // O modelo vem resolvido pelo provider de sessões (o pedido, ou o padrão do agente).
+      model: input.model || agent.models[0] || '',
       reasoning: input.reasoning,
       language: input.language,
       tools: false,

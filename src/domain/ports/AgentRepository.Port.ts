@@ -22,6 +22,8 @@ export interface IAgentRepository {
   save(agent: IAgent, by: string): IStoredAgent
   /** `true` se havia o que apagar. */
   delete(id: string): boolean
+  /** Grava a semente de primeiro boot, uma vez por banco. Agente apagado depois não volta. */
+  seedOnce(agents: readonly IAgent[], by: string): void
 }
 
 /**

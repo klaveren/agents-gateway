@@ -16,7 +16,6 @@ import { buildClaudeMcpServers, REMOTE_SERVER_NAME } from '@infra/tools/bridges/
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { composeSystemPrompt, maxToolTurns } from './support/Prompt.Helper'
 
-const DEFAULT_MODEL = 'claude-sonnet-5'
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const
@@ -73,7 +72,8 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       provider: agent.provider,
       protocol: EProvider.CLAUDE,
       mode: EMode.AGENT,
-      model: input.model || DEFAULT_MODEL,
+      // O modelo vem resolvido pelo provider de sessões (o pedido, ou o padrão do agente).
+      model: input.model || agent.models[0] || '',
       reasoning: input.reasoning,
       language: input.language,
       tools: false,

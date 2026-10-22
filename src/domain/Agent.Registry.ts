@@ -2,6 +2,11 @@ import { IAgent } from './models/Agent.Model'
 import { EProvider } from './enums/EProvider.Enum'
 import { EMode } from './enums/EMode.Enum'
 
+/**
+ * A SEMENTE dos agentes: entra no banco UMA VEZ, no primeiro boot (ver `SqliteAgentRepository.seedOnce`),
+ * e dali em diante cada um é um agente comum — editável, apagável. Não é configuração em vigor: o que
+ * vale é o que está no banco, e os modelos que valem são os ATIVADOS no catálogo do provider.
+ */
 const BUILT_IN_AGENTS: IAgent[] = [
   {
     id: 'researcher-agent',
@@ -82,7 +87,8 @@ export const AGENT_REGISTRY: IAgent[] = filterEnabledAgents(BUILT_IN_AGENTS, pro
  * adapter usa o seu padrão.
  */
 export function modelFor(agent: IAgent, model?: string): string | undefined {
-  if (!model) return undefined
+  // Sem modelo pedido, o padrão do agente (o primeiro) — não há mais modelo padrão no adapter.
+  if (!model) return agent.models[0]
 
   return agent.models.includes(model) ? model : agent.models[0]
 }

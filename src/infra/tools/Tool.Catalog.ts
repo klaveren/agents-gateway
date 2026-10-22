@@ -41,6 +41,11 @@ export class ToolCatalog {
     return (await this.mcp.ensureConnected()) ? this.mcp.serverUrl : undefined
   }
 
+  /** Os nomes de todas as tools locais deste processo. */
+  localNames(): string[] {
+    return this.local.map((tool) => tool.name)
+  }
+
   localFor(allowed: string[]): ILocalTool[] {
     return this.local.filter((tool) => allowed.includes(tool.name))
   }

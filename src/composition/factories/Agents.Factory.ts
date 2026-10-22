@@ -4,11 +4,13 @@ import { IAgentRepository } from '@domain/ports/AgentRepository.Port'
 import { NullAgentRepository } from '@infra/persistence/Null.AgentRepository'
 import { SqliteAgentRepository } from '@infra/persistence/Sqlite.AgentRepository'
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
+import { makeModelCatalog } from './Catalog.Factory'
 
 let instance: AgentCatalog | undefined
 
 /**
- * Os agentes do gateway: os embutidos mais os criados pela tela.
+ * Os agentes do gateway — todos no banco. Os três de sempre entram como SEMENTE no primeiro boot
+ * (`seedOnce`) e viram agentes comuns; os modelos que valem são os ativados no catálogo.
  *
  * ⚠️ UMA INSTÂNCIA SÓ, pelo mesmo motivo de `makeSettings`: o provider (que abre a sessão) e o
  * controller (que cria o agente) precisam ver a MESMA lista — com duas, o agente recém-criado
@@ -18,7 +20,14 @@ let instance: AgentCatalog | undefined
  * só em memória.
  */
 export function makeAgents(): AgentCatalog {
-  instance ??= new AgentCatalog(AGENT_REGISTRY, build())
+  if (instance) return instance
+
+  const repository = build()
+  repository.seedOnce(AGENT_REGISTRY, 'seed')
+
+  // ⚠️ O catálogo é pedido NA HORA, não aqui: ele próprio lê os agentes ao nascer (para ativar os
+  // modelos que eles já usam), e pedi-lo agora seria uma volta sem fim entre as duas fábricas.
+  instance = new AgentCatalog([], repository, (provider, model) => makeModelCatalog().isEnabled(provider, model))
   return instance
 }
 

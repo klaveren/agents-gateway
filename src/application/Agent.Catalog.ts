@@ -36,13 +36,26 @@ export class AgentCatalog implements IAgentDirectory {
   constructor(
     private readonly builtIns: readonly IAgent[],
     private readonly repository: IAgentRepository,
+    /**
+     * Quais modelos do agente podem ser usados AGORA — os ativados no catálogo do provider. Ausente,
+     * todos os declarados. ⚖️ Desativar um modelo o tira de TODOS os agentes na leitura, sem reescrever
+     * nenhum: religar devolve.
+     */
+    private readonly usable?: (providerId: string, modelId: string) => boolean,
   ) {}
 
+  /** Os agentes com os modelos que podem ser usados agora. */
   list(): IAgent[] {
     return this.entries().map((entry) => entry.agent)
   }
 
+  /** Como `rawEntries`, com os modelos filtrados pelo catálogo — o que a API e as sessões enxergam. */
   entries(): IAgentEntry[] {
+    return this.rawEntries().map((entry) => ({ ...entry, agent: this.effective(entry.agent) }))
+  }
+
+  /** Os agentes COMO GRAVADOS (todos os modelos declarados) — a tela de edição e a semente do catálogo. */
+  rawEntries(): IAgentEntry[] {
     const builtInIds = new Set(this.builtIns.map((agent) => agent.id))
     const custom = this.repository.list().filter((agent) => !builtInIds.has(agent.id))
 
@@ -56,8 +69,18 @@ export class AgentCatalog implements IAgentDirectory {
     return this.list().find((agent) => agent.id === id)
   }
 
+  /** Os modelos declarados que estão DESLIGADOS no catálogo — a tela de edição os mostra marcados. */
+  unusableModels(agent: IAgent): string[] {
+    return this.usable ? agent.models.filter((model) => !this.usable!(agent.provider, model)) : []
+  }
+
+  private effective(agent: IAgent): IAgent {
+    return this.usable ? { ...agent, models: agent.models.filter((model) => this.usable!(agent.provider, model)) } : agent
+  }
+
+  /** O agente como gravado, para editar: os modelos desligados aparecem (ver `unusableModels`). */
   entry(id: string): IAgentEntry | undefined {
-    return this.entries().find((entry) => entry.agent.id === id)
+    return this.rawEntries().find((entry) => entry.agent.id === id)
   }
 
   /** O que vale quando ninguém escolheu agente: o primeiro embutido, senão o primeiro criado. */

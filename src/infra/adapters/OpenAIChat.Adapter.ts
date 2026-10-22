@@ -17,8 +17,6 @@ import { IManualLoopProvider, IManualToolCall, IManualTurnOutcome, runManualTool
 import { cacheTokensOf } from './support/Usage.Helper'
 import { composeSystemPrompt, maxOutputTokens, maxToolTurns } from './support/Prompt.Helper'
 
-const DEFAULT_MODEL = 'gpt-5.6-sol'
-
 const EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 type TEffort = (typeof EFFORTS)[number]
 
@@ -57,7 +55,8 @@ export class OpenAIChatAdapter implements IAgentAdapter {
       provider: agent.provider,
       protocol: EProvider.OPENAI,
       mode: EMode.CHAT,
-      model: input.model || DEFAULT_MODEL,
+      // O modelo vem resolvido pelo provider de sessões (o pedido, ou o padrão do agente).
+      model: input.model || agent.models[0] || '',
       reasoning: input.reasoning,
       language: input.language,
       tools: input.tools === true,

@@ -65,6 +65,7 @@ export const updateSettingsSchema = z.object({
   model: clearable,
   // ⚠️ Só gravados por enquanto: o classificador de turno chega numa fase posterior.
   classifierModel: clearable,
+  classifierProvider: clearable,
   classifyTurns: z.boolean().nullable().optional(),
 })
 

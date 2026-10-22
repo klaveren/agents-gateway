@@ -57,4 +57,13 @@ describe('agentIssues', () => {
 
     assert.deepStrictEqual(issues, [{ field: 'systemPrompt', message: 'chaves viram variável' }])
   })
+  it('com catálogo, modelo não ativado é recusado — e o palpite pelo prefixo deixa de valer', () => {
+    const withCatalog = { ...rules, protocolOf: () => EProvider.GOOGLE, modelEnabled: (_provider: string, model: string) => model === 'gemini-3.7-flash' }
+
+    assert.deepStrictEqual(agentIssues(agent(), withCatalog), [])
+    assert.deepStrictEqual(
+      agentIssues(agent({ models: ['gemini-3.7-flash', 'gemini-desligado'] }), withCatalog).map((item) => item.message),
+      ['not enabled in Providers → Models: gemini-desligado'],
+    )
+  })
 })
