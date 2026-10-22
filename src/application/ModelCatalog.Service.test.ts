@@ -1,4 +1,8 @@
 import assert from 'node:assert'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { describe, it } from 'node:test'
 import { InvalidModelError } from '@domain/errors/Domain.Error'
 import { SqliteModelCatalogRepository } from '@infra/persistence/Sqlite.ModelCatalogRepository'
@@ -26,6 +30,33 @@ describe('ModelCatalogService', () => {
     )
     // O mesmo id num compatível NÃO herda o preço de fábrica: vale o que a listagem dele disse.
     assert.deepStrictEqual([compat.price, compat.priceSource], [{ input: 4, output: 20 }, 'catalog'])
+  })
+
+  it('o raciocínio da listagem é gravado; sincronização sem o dado não apaga o que se sabia', () => {
+    const catalog = build()
+    catalog.sync('claude', [{ id: 'claude-sonnet-5', reasoning: { supported: true, levels: ['low', 'high'], source: 'provider' } }], 'root')
+    catalog.sync('claude', [{ id: 'claude-sonnet-5' }], 'root')
+
+    assert.deepStrictEqual(catalog.reasoningOf('claude', 'claude-sonnet-5'), { supported: true, levels: ['low', 'high'], source: 'provider' })
+    assert.strictEqual(catalog.reasoningOf('claude', 'nao-existe'), undefined)
+  })
+
+  it('um banco anterior à coluna `reasoning` ganha a coluna e mantém as linhas', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'catalog-')), 'old.db')
+    const old = new DatabaseSync(path)
+    old.exec(`CREATE TABLE provider_models (provider_id TEXT NOT NULL, model_id TEXT NOT NULL, label TEXT, enabled INTEGER NOT NULL DEFAULT 0,
+      available INTEGER NOT NULL DEFAULT 1, context_length INTEGER, price TEXT, price_source TEXT, synced_at TEXT, updated_at TEXT NOT NULL,
+      updated_by TEXT, PRIMARY KEY (provider_id, model_id))`)
+    old.prepare("INSERT INTO provider_models (provider_id, model_id, enabled, updated_at) VALUES ('claude', 'antigo', 1, ?)").run(new Date().toISOString())
+    old.close()
+
+    const catalog = new ModelCatalogService(new SqliteModelCatalogRepository(path), DEFAULTS, () => true)
+    catalog.sync('claude', [{ id: 'antigo', reasoning: { supported: false, source: 'provider' } }], 'root')
+
+    assert.deepStrictEqual(
+      catalog.list('claude').map((model) => [model.modelId, model.enabled, model.reasoning?.supported]),
+      [['antigo', true, false]],
+    )
   })
 
   it('⚖️ a nova sincronização preserva ativação e preço manual, e marca (sem apagar) o que sumiu', () => {

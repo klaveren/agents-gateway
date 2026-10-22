@@ -2,6 +2,7 @@ import { EMode } from './enums/EMode.Enum'
 import { EProvider } from './enums/EProvider.Enum'
 import { IAgent } from './models/Agent.Model'
 import { INativeTool, isNativeTool, nativeTool, nativeToolAllowed } from './Native.Tools'
+import { REASONING_LEVELS } from './Reasoning.Levels'
 
 /** Minúsculas, dígitos e hífen; começa por letra ou dígito. Vira parte de URL e de nome no ADK. */
 export const AGENT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,47}$/
@@ -78,6 +79,15 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
     for (const model of agent.models) {
       const provider = rules.providerOf(model)
       if (provider !== protocol) issue('models', provider ? `${model} is a ${provider} model` : `unknown model: ${model}`)
+    }
+  }
+
+  // ⚠️ Nível que o protocolo não aceita seria descartado em silêncio pelo adapter: a pessoa escolheria
+  // "xhigh" e receberia o padrão. Recusa-se aqui. No Google não há nível nenhum (ver `REASONING_LEVELS`).
+  if (protocol) {
+    for (const level of agent.reasoningEfforts ?? []) {
+      if (REASONING_LEVELS[protocol].includes(level)) continue
+      issue('reasoningEfforts', REASONING_LEVELS[protocol].length ? `${level} is not a ${protocol} reasoning level` : `${protocol} has no reasoning control here`)
     }
   }
 

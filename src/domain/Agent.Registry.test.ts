@@ -14,7 +14,8 @@ describe('AgentRegistry', () => {
     assert.ok(agent, 'Researcher agent should exist')
     assert.strictEqual(agent.provider, EProvider.GOOGLE)
     assert.ok(agent.models.includes('gemini-3.7-flash'))
-    assert.ok(agent.reasoningEfforts?.includes('medium'))
+    // O Google não tem controle de raciocínio aqui (ver `REASONING_LEVELS`).
+    assert.strictEqual(agent.reasoningEfforts, undefined)
   })
 
   it('should contain a SysOps Agent (Claude)', () => {

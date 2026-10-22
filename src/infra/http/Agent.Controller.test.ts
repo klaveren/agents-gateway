@@ -578,7 +578,7 @@ describe('AgentController', () => {
           // O que sai é o JSON: `reasoningEfforts: undefined` não conta como campo.
           assert.ok(
             Object.keys(JSON.parse(JSON.stringify(agent))).every((key) =>
-              ['allowedTools', 'builtIn', 'id', 'modes', 'models', 'name', 'pricing', 'provider', 'reasoningEfforts'].includes(key),
+              ['allowedTools', 'builtIn', 'id', 'modes', 'models', 'name', 'modelReasoning', 'pricing', 'provider', 'reasoningEfforts'].includes(key),
             ),
           )
         }

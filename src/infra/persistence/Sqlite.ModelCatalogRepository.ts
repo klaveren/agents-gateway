@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { ICatalogModel, TPriceSource } from '@domain/models/ModelCatalog.Model'
+import { ICatalogModel, IModelReasoning, TPriceSource } from '@domain/models/ModelCatalog.Model'
 import { IModelPrice } from '@domain/models/Model.Pricing'
 import { IModelCatalogRepository, TCatalogPatch } from '@domain/ports/ModelCatalogRepository.Port'
 
@@ -15,6 +15,7 @@ const SCHEMA = `
     context_length  INTEGER,
     price           TEXT,
     price_source    TEXT,
+    reasoning       TEXT,
     synced_at       TEXT,
     updated_at      TEXT    NOT NULL,
     updated_by      TEXT,
@@ -24,6 +25,9 @@ const SCHEMA = `
 
 type TRow = Record<string, unknown>
 
+/** Colunas que um arquivo antigo ainda não tem. `ALTER ADD COLUMN` só acrescenta; nunca reescreve. */
+const ADDED_COLUMNS: Array<{ column: string; definition: string }> = [{ column: 'reasoning', definition: 'TEXT' }]
+
 const COLUMNS: Record<keyof TCatalogPatch, string> = {
   label: 'label',
   enabled: 'enabled',
@@ -31,6 +35,7 @@ const COLUMNS: Record<keyof TCatalogPatch, string> = {
   contextLength: 'context_length',
   price: 'price',
   priceSource: 'price_source',
+  reasoning: 'reasoning',
   syncedAt: 'synced_at',
   updatedAt: 'updated_at',
   updatedBy: 'updated_by',
@@ -45,6 +50,14 @@ export class SqliteModelCatalogRepository implements IModelCatalogRepository {
     this.db = new DatabaseSync(path)
     this.db.exec('PRAGMA journal_mode = WAL')
     this.db.exec(SCHEMA)
+    this.migrate()
+  }
+
+  private migrate(): void {
+    const existing = this.db.prepare('PRAGMA table_info(provider_models)').all() as TRow[]
+    for (const { column, definition } of ADDED_COLUMNS) {
+      if (!existing.some((row) => row.name === column)) this.db.exec(`ALTER TABLE provider_models ADD COLUMN ${column} ${definition}`)
+    }
   }
 
   list(providerId?: string): ICatalogModel[] {
@@ -62,8 +75,8 @@ export class SqliteModelCatalogRepository implements IModelCatalogRepository {
   insert(model: ICatalogModel): void {
     this.db
       .prepare(
-        `INSERT INTO provider_models (provider_id, model_id, label, enabled, available, context_length, price, price_source, synced_at, updated_at, updated_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO provider_models (provider_id, model_id, label, enabled, available, context_length, price, price_source, reasoning, synced_at, updated_at, updated_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         model.providerId,
@@ -74,6 +87,7 @@ export class SqliteModelCatalogRepository implements IModelCatalogRepository {
         model.contextLength ?? null,
         model.price ? JSON.stringify(model.price) : null,
         model.priceSource ?? null,
+        model.reasoning ? JSON.stringify(model.reasoning) : null,
         model.syncedAt?.toISOString() ?? null,
         model.updatedAt.toISOString(),
         model.updatedBy ?? null,
@@ -105,13 +119,16 @@ function toColumn(value: unknown): string | number | null {
   return value as string | number
 }
 
-function toModel(row: TRow): ICatalogModel {
-  let price: IModelPrice | undefined
+function json<T>(value: unknown): T | undefined {
   try {
-    price = typeof row.price === 'string' ? (JSON.parse(row.price) as IModelPrice) : undefined
+    return typeof value === 'string' ? (JSON.parse(value) as T) : undefined
   } catch {
-    price = undefined
+    return undefined
   }
+}
+
+function toModel(row: TRow): ICatalogModel {
+  const price = json<IModelPrice>(row.price)
 
   return {
     providerId: String(row.provider_id),
@@ -122,6 +139,7 @@ function toModel(row: TRow): ICatalogModel {
     contextLength: typeof row.context_length === 'number' ? row.context_length : undefined,
     price,
     priceSource: typeof row.price_source === 'string' ? (row.price_source as TPriceSource) : undefined,
+    reasoning: json<IModelReasoning>(row.reasoning),
     syncedAt: typeof row.synced_at === 'string' ? new Date(row.synced_at) : undefined,
     updatedAt: new Date(String(row.updated_at)),
     updatedBy: typeof row.updated_by === 'string' ? row.updated_by : undefined,

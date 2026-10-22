@@ -26,7 +26,7 @@ import { IConversationRepository } from '@domain/ports/ConversationRepository.Po
 import { ISettingsRepository } from '@domain/ports/SettingsRepository.Port'
 import { ISessionContextProvider } from '@domain/ports/SessionContextProvider.Port'
 import { SessionNotFoundError } from '@domain/errors/Domain.Error'
-import { toAgentDetailDto, toAgentDto } from './Agent.Dto'
+import { IAgentReasoningFacts, toAgentDetailDto, toAgentDto } from './Agent.Dto'
 import { assertNoAdkTemplateCollision } from '@infra/adapters/GoogleAgent.Adapter'
 import { providerOfModel } from '@infra/classifier/Classifier.Completion'
 import { NullAgentRepository } from '@infra/persistence/Null.AgentRepository'
@@ -182,7 +182,7 @@ export class AgentController {
   async getAgents(_req: Request, res: Response) {
     await this.respond(res, async () => {
       await this.requireCaller()
-      return this.agents.entries().map((entry) => toAgentDto(entry.agent, this.pricingOf(entry.agent.provider), entry.builtIn))
+      return this.agents.entries().map((entry) => toAgentDto(entry.agent, this.pricingOf(entry.agent.provider), entry.builtIn, this.reasoningFacts(entry.agent.provider)))
     })
   }
 
@@ -198,7 +198,7 @@ export class AgentController {
       const entry = this.agents.entry(req.params.agentId as string)
       if (!entry) throw new AgentNotFoundError(req.params.agentId as string)
 
-      return toAgentDetailDto(entry, this.pricingOf(entry.agent.provider), this.agents.unusableModels(entry.agent))
+      return toAgentDetailDto(entry, this.pricingOf(entry.agent.provider), this.agents.unusableModels(entry.agent), this.reasoningFacts(entry.agent.provider))
     })
   }
 
@@ -216,7 +216,12 @@ export class AgentController {
 
         const saved = this.agents.save(toAgentInput(body.id ?? '', body), { rules: await this.agentRules(), by: admin.email ?? admin.id ?? 'admin', creating: true })
 
-        return toAgentDetailDto({ agent: saved, builtIn: false, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy }, this.pricingOf(saved.provider))
+        return toAgentDetailDto(
+          { agent: saved, builtIn: false, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy },
+          this.pricingOf(saved.provider),
+          [],
+          this.reasoningFacts(saved.provider),
+        )
       },
       { status: 201, message: 'Agent created' },
     )
@@ -236,7 +241,12 @@ export class AgentController {
           creating: false,
         })
 
-        return toAgentDetailDto({ agent: saved, builtIn: false, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy }, this.pricingOf(saved.provider))
+        return toAgentDetailDto(
+          { agent: saved, builtIn: false, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy },
+          this.pricingOf(saved.provider),
+          [],
+          this.reasoningFacts(saved.provider),
+        )
       },
       { message: 'Agent updated' },
     )
@@ -772,6 +782,15 @@ export class AgentController {
   /** Os preços de um provider: os do catálogo, ou a tabela de fábrica quando não há catálogo injetado. */
   private pricingOf(provider: string): TModelPricing {
     return this.usecases.models?.pricing(provider) ?? this.pricing
+  }
+
+  /** O protocolo do provider e o raciocínio de cada modelo segundo o catálogo — o que o DTO do agente cruza. */
+  private reasoningFacts(provider: string): IAgentReasoningFacts {
+    const models = this.usecases.models
+    return {
+      protocol: this.usecases.providers?.get(provider)?.protocol ?? Object.values(EProvider).find((value) => value === provider),
+      reasoningOf: models ? (model) => models.reasoningOf(provider, model) : undefined,
+    }
   }
 
   private viewFor(admin: boolean): IConversationView {

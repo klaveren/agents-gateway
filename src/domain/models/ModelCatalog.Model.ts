@@ -9,6 +9,19 @@ import { IModelPrice } from './Model.Pricing'
  */
 export type TPriceSource = 'manual' | 'catalog' | 'default'
 
+/**
+ * Se o modelo raciocina, segundo a listagem do provider.
+ *
+ * ⚖️ `levels` só quando a listagem diz quais (a Anthropic diz, por modelo); sem ele, valem os do
+ * protocolo. `heuristic` = a listagem não diz nada (OpenAI oficial) e o palpite veio do id.
+ * AUSENTE = desconhecido, e desconhecido não bloqueia: sem dado, ninguém perde a opção.
+ */
+export interface IModelReasoning {
+  supported: boolean
+  levels?: string[]
+  source: 'provider' | 'heuristic'
+}
+
 /** Um modelo que um provider oferece — e se ele pode ser usado aqui. */
 export interface ICatalogModel {
   providerId: string
@@ -21,6 +34,7 @@ export interface ICatalogModel {
   contextLength?: number
   price?: IModelPrice
   priceSource?: TPriceSource
+  reasoning?: IModelReasoning
   syncedAt?: Date
   updatedAt: Date
   updatedBy?: string
@@ -33,4 +47,15 @@ export interface IListedModel {
   contextLength?: number
   /** Só quando a listagem traz preço (há agregadores que trazem). */
   price?: IModelPrice
+  reasoning?: IModelReasoning
+}
+
+/**
+ * Os níveis que o modelo aceita, dentro dos que o agente oferece. `null` = o catálogo não sabe, e
+ * valem os do agente; `[]` = o modelo não raciocina (ou nenhum nível do agente serve a ele).
+ */
+export function modelReasoningLevels(agentLevels: readonly string[], reasoning: IModelReasoning | undefined): string[] | null {
+  if (!reasoning) return null
+  if (!reasoning.supported) return []
+  return reasoning.levels ? agentLevels.filter((level) => reasoning.levels!.includes(level)) : [...agentLevels]
 }

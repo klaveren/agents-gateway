@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { levelsFor, REASONING_LEVELS } from '@/lib/reasoning'
 import { computed, ref, watch } from 'vue'
 import { ApiError } from '@/lib/api'
 import { providerLabel } from '@/lib/format'
@@ -20,6 +21,9 @@ const compatible = computed(() => !!providers.list.find((provider) => provider.i
 
 /** As ferramentas nativas do SDK deste provider (pelo protocolo), na ordem do risco. */
 const RISK_ORDER = ['hosted', 'session', 'server-network', 'server-read', 'server-exec']
+/** Os níveis que o protocolo deste provider aceita (Google: nenhum). */
+const reasoningLevels = computed(() => REASONING_LEVELS[protocol.value] ?? [])
+
 const natives = computed(() => agents.nativeTools.filter((tool) => tool.protocol === protocol.value).sort((a, b) => RISK_ORDER.indexOf(a.risk) - RISK_ORDER.indexOf(b.risk)))
 const RISK_LABEL: Record<string, string> = {
   hosted: 'no fornecedor',
@@ -74,7 +78,6 @@ const blank = (): IAgentInput => ({ id: '', name: '', provider: 'claude', system
 const form = ref<IAgentInput>(blank())
 /** Modelos que o agente declarava e que estão desligados no catálogo: saem ao salvar. */
 const droppedModels = ref<string[]>([])
-const effortsText = ref('')
 const issues = ref<Record<string, string[]>>({})
 const failure = ref<string>()
 const saving = ref(false)
@@ -106,18 +109,11 @@ watch(
     // Os desligados no catálogo não entram no formulário: salvar com eles seria recusado.
     droppedModels.value = agent?.disabledModels ?? []
     form.value.models = form.value.models.filter((model) => !droppedModels.value.includes(model))
-    effortsText.value = (form.value.reasoningEfforts ?? []).join(', ')
     issues.value = {}
     failure.value = undefined
   },
   { immediate: true },
 )
-
-const list = (text: string) =>
-  text
-    .split(/[,\n]/)
-    .map((item) => item.trim())
-    .filter(Boolean)
 
 function toggle<T>(values: T[], value: T) {
   const at = values.indexOf(value)
@@ -141,7 +137,7 @@ async function save() {
   issues.value = {}
   failure.value = undefined
   try {
-    const input: IAgentInput = { ...form.value, reasoningEfforts: list(effortsText.value) }
+    const input: IAgentInput = { ...form.value, reasoningEfforts: levelsFor(protocol.value, form.value.reasoningEfforts ?? []) }
     const saved = await agents.save(input, props.creating)
     emit('saved', saved.id)
   } catch (error) {
@@ -232,10 +228,15 @@ async function remove() {
         </div>
         <small v-for="message in issues.modes" :key="message" class="error">{{ message }}</small>
       </div>
-      <label class="field">
+      <div class="field">
         <span>Níveis de raciocínio</span>
-        <input v-model="effortsText" class="input font-mono" placeholder="low, medium, high" />
-      </label>
+        <div v-if="reasoningLevels.length" class="flex flex-wrap gap-1.5">
+          <button v-for="level in reasoningLevels" :key="level" type="button" class="chip font-mono" :class="{ on: form.reasoningEfforts?.includes(level) }" @click="toggle((form.reasoningEfforts ??= []), level)">{{ level }}</button>
+        </div>
+        <small v-else class="hint">O SDK do Gemini usado aqui não controla o raciocínio; o modelo decide sozinho.</small>
+        <small v-if="reasoningLevels.length" class="hint">Os que a conversa pode escolher. Modelo que não raciocina não mostra o seletor.</small>
+        <small v-for="message in issues.reasoningEfforts" :key="message" class="error">{{ message }}</small>
+      </div>
 
       <div class="field sm:col-span-2">
         <span>Ferramentas <em class="font-normal text-zinc-500">{{ agents.mcpConnected ? '' : '(MCP desconectado: só as locais aparecem)' }}</em></span>

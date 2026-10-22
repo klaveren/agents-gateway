@@ -4,6 +4,7 @@ import { IConnectionSource, requireConnection } from './support/Keyed.Client'
 import { query, type CanUseTool, type EffortLevel, type Options, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
+import { reasoningLevel } from '@domain/Reasoning.Levels'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
@@ -16,8 +17,6 @@ import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
 import { buildClaudeMcpServers, REMOTE_SERVER_NAME } from '@infra/tools/bridges/Claude.ToolBridge'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { composeSystemPrompt, maxToolTurns } from './support/Prompt.Helper'
-
-const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const
 type TImageType = (typeof IMAGE_TYPES)[number]
@@ -358,7 +357,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
   }
 
   private toEffort(reasoning: string | undefined): EffortLevel | undefined {
-    return (EFFORTS as readonly string[]).includes(reasoning ?? '') ? (reasoning as EffortLevel) : undefined
+    return reasoningLevel(EProvider.CLAUDE, reasoning) as EffortLevel | undefined
   }
 }
 
