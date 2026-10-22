@@ -315,4 +315,45 @@ describe('ClaudeChatAdapter', () => {
     assert.strictEqual(events.length, 1)
     assert.strictEqual(events[0].type, 'error')
   })
+
+  it('counts the cache in the input and reports its parcels, with reasoning apart from the output', async () => {
+    const adapter = new ClaudeChatAdapter({
+      client: clientWith(async () =>
+        (async function* () {
+          yield { type: 'message_start', message: { usage: { input_tokens: 10, cache_read_input_tokens: 800, cache_creation_input_tokens: 190 } } }
+          yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'ok' } }
+          yield { type: 'message_delta', usage: { output_tokens: 30, output_tokens_details: { thinking_tokens: 12 } } }
+        })(),
+      ),
+    })
+
+    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
+    const usage = events.filter((e) => e.type === 'usage').map((e) => e.type === 'usage' && e.payload)
+
+    assert.deepStrictEqual(usage, [
+      { inputTokens: 1000, cacheReadTokens: 800, cacheWriteTokens: 190 },
+      { outputTokens: 18, reasoningTokens: 12 },
+    ])
+  })
+
+  it('sends an attachment with no text without an empty text block', async () => {
+    let sent: Anthropic.MessageCreateParamsStreaming | undefined
+    const adapter = new ClaudeChatAdapter({
+      client: clientWith(async (params) => {
+        sent = params
+        return (async function* () {
+          yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'ok' } }
+        })()
+      }),
+    })
+
+    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: ' ', files: [{ name: 'b.pdf', mimeType: 'application/pdf', data: 'bbb' }] }, {}))
+
+    assert.deepStrictEqual(
+      (sent?.messages[0].content as Anthropic.ContentBlockParam[]).map((block) => block.type),
+      ['document'],
+    )
+  })
 })

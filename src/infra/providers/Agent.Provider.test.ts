@@ -130,7 +130,8 @@ describe('AgentProvider', () => {
 
     const record = provider.describe(session.id)
     assert.strictEqual(record.turns, 2)
-    assert.deepStrictEqual(record.usage, { inputTokens: 8, outputTokens: 12, reasoningTokens: undefined })
+    // Campo que o provider não informa fica de fora, em vez de virar `undefined` ou zero.
+    assert.deepStrictEqual(record.usage, { inputTokens: 8, outputTokens: 12 })
     assert.strictEqual(record.status, 'idle')
   })
 

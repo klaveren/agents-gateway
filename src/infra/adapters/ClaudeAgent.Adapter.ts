@@ -154,12 +154,13 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
         if (message.type === 'assistant') {
           for (const block of message.message.content) {
             if (block.type === 'tool_use') {
-              toolNames.set(block.id, block.name)
+              const tool = this.bareToolName(block.name)
+              toolNames.set(block.id, tool)
               yield {
                 type: 'tool.started',
                 sessionId,
                 timestamp: new Date(),
-                payload: { tool: block.name, args: this.toArgs(block.input) },
+                payload: { tool, args: this.toArgs(block.input) },
               }
             }
           }
@@ -191,7 +192,18 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
             sessionId,
             timestamp: new Date(),
             payload: {
-              inputTokens: message.usage.input_tokens,
+              /**
+               * ⚠️ A ENTRADA DO CLAUDE VEM EM TRÊS CAMPOS, e `input_tokens` é o MENOR deles: só o que não
+               * passou pelo cache. O que já foi enviado antes vira `cache_read_input_tokens`, o que acabou
+               * de entrar no cache vira `cache_creation_input_tokens`. Lendo só o primeiro, uma conversa
+               * inteira aparecia com dezenas de tokens de entrada — um número plausível e errado.
+               *
+               * ⚖️ Somados como entrada porque entrada é o que são, e as duas parcelas saem também
+               * SEPARADAS: o preço delas difere (leitura custa uma fração, gravação custa mais).
+               */
+              inputTokens: message.usage.input_tokens + (message.usage.cache_creation_input_tokens ?? 0) + (message.usage.cache_read_input_tokens ?? 0),
+              cacheReadTokens: message.usage.cache_read_input_tokens ?? 0,
+              cacheWriteTokens: message.usage.cache_creation_input_tokens ?? 0,
               outputTokens: message.usage.output_tokens,
             },
           }
@@ -238,11 +250,24 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     return record.native as IClaudeAgentNative
   }
 
+  /**
+   * O nome da tool sem o prefixo do SDK.
+   *
+   * ⚖️ O SDK do Claude nomeia tool de MCP como `mcp__<servidor>__<tool>`. A execução já tirava isso;
+   * o EVENTO não, então o turno gravava o nome cheio e quem agrega contava a mesma tool sob dois
+   * nomes. Um ponto só, usado no gate e na emissão, mantém o nome consistente.
+   */
+  private bareToolName(name: string): string {
+    if (!name.startsWith('mcp__')) return name
+    const [, , ...rest] = name.split('__')
+    return rest.join('__') || name
+  }
+
   private makeGate(allowed: string[]): CanUseTool {
     return async (toolName) => {
-      const [, server, ...rest] = toolName.split('__')
+      const [, server] = toolName.split('__')
       const isMcp = toolName.startsWith('mcp__')
-      const bare = isMcp ? rest.join('__') : toolName
+      const bare = this.bareToolName(toolName)
 
       if (isMcp && server === REMOTE_SERVER_NAME) return { behavior: 'allow' }
       if (allowed.includes(bare)) return { behavior: 'allow' }
@@ -274,7 +299,8 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     const files = input.files ?? []
     if (files.length === 0) return { blocks: input.text, warnings: [] }
 
-    const blocks: Exclude<SDKUserMessage['message']['content'], string> = [{ type: 'text', text: input.text }]
+    // Texto vazio não vira bloco: a API recusa bloco de texto vazio, e anexo sem frase é mensagem válida.
+    const blocks: Exclude<SDKUserMessage['message']['content'], string> = input.text.trim() ? [{ type: 'text', text: input.text }] : []
     const warnings: string[] = []
 
     for (const file of files) {

@@ -1,4 +1,4 @@
-import { IAgentEvent } from '@domain/models/AgentEvent.Model'
+import { IAgentEvent, IUsage } from '@domain/models/AgentEvent.Model'
 import { IStoredUsage } from '@domain/models/Conversation.Model'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
@@ -7,13 +7,35 @@ import { aggregateTurn } from './Turn.Aggregator'
 
 const TITLE_MAX = 60
 
-/** Normaliza o consumo para o formato gravado: os três campos, mais o total somando todos. */
-function usageOf(usage?: { inputTokens?: number; outputTokens?: number; reasoningTokens?: number }): IStoredUsage {
+/**
+ * Normaliza o consumo para o formato gravado: os campos, mais o total.
+ *
+ * O total NÃO soma o cache: ele já está dentro de `inputTokens` (ver `IStoredUsage`).
+ */
+function usageOf(usage?: IUsage): IStoredUsage {
   const inputTokens = usage?.inputTokens ?? 0
   const outputTokens = usage?.outputTokens ?? 0
   const reasoningTokens = usage?.reasoningTokens ?? 0
 
-  return { inputTokens, outputTokens, reasoningTokens, totalTokens: inputTokens + outputTokens + reasoningTokens }
+  return {
+    inputTokens,
+    outputTokens,
+    reasoningTokens,
+    totalTokens: inputTokens + outputTokens + reasoningTokens,
+    cacheReadTokens: usage?.cacheReadTokens ?? 0,
+    cacheWriteTokens: usage?.cacheWriteTokens ?? 0,
+  }
+}
+
+/** Tempo do turno, medido pelos próprios eventos: até o último, e até o primeiro texto. */
+function timingOf(startedAt: number, events: IAgentEvent[]): { durationMs?: number; firstTextMs?: number } {
+  const last = events[events.length - 1]?.timestamp
+  const firstText = events.find((event) => event.type === 'text.delta')?.timestamp
+
+  return {
+    durationMs: last ? Math.max(last.getTime() - startedAt, 0) : undefined,
+    firstTextMs: firstText ? Math.max(firstText.getTime() - startedAt, 0) : undefined,
+  }
 }
 
 /** Primeira linha da pergunta, cortada. Vazio vira `undefined` para não gravar título em branco. */
@@ -44,6 +66,7 @@ export class SendMessageUseCase {
    */
   async *execute(sessionId: string, input: IMessageInput): AsyncIterable<IAgentEvent> {
     const events: IAgentEvent[] = []
+    const startedAt = Date.now()
 
     try {
       for await (const event of this.agentProvider.sendMessage(sessionId, input)) {
@@ -53,11 +76,11 @@ export class SendMessageUseCase {
     } finally {
       // `void`: gravação não segura a resposta de quem está lendo o stream, e o repositório já
       // engole o próprio erro — banco fora do ar não pode derrubar a conversa.
-      void this.record(sessionId, input, events)
+      void this.record(sessionId, input, events, startedAt)
     }
   }
 
-  private async record(sessionId: string, input: IMessageInput, events: IAgentEvent[]): Promise<void> {
+  private async record(sessionId: string, input: IMessageInput, events: IAgentEvent[], startedAt: number): Promise<void> {
     if (!events.length) return
 
     const turn = aggregateTurn(sessionId, events)
@@ -108,6 +131,7 @@ export class SendMessageUseCase {
       reasoning: turn.reasoning || undefined,
       toolCalls: turn.toolCalls,
       usage: usageOf(turn.usage),
+      ...timingOf(startedAt, events),
       warnings: turn.warnings?.length ? turn.warnings : undefined,
       aborted: turn.aborted || undefined,
       error: turn.error,

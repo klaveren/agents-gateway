@@ -56,9 +56,11 @@ const sessionSchema = {
     usage: {
       type: 'object',
       properties: {
-        inputTokens: { type: 'integer' },
-        outputTokens: { type: 'integer' },
+        inputTokens: { type: 'integer', description: 'Whole input, cache included.' },
+        outputTokens: { type: 'integer', description: 'Visible output only; reasoning is reported apart.' },
         reasoningTokens: { type: 'integer' },
+        cacheReadTokens: { type: 'integer', description: 'Part of inputTokens read from the cache.' },
+        cacheWriteTokens: { type: 'integer', description: 'Part of inputTokens written to the cache.' },
       },
     },
     createdAt: { type: 'string', format: 'date-time' },

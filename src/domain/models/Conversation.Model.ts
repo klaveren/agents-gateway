@@ -25,6 +25,16 @@ export interface IStoredUsage {
   outputTokens?: number
   reasoningTokens?: number
   totalTokens?: number
+  /**
+   * ⚠️ O CACHE É PARCELA DA ENTRADA, não soma a ela. `inputTokens` é a entrada inteira, e o
+   * `totalTokens` não os soma de novo. A entrada nova, sem cache, é
+   * `inputTokens - cacheReadTokens - cacheWriteTokens`.
+   *
+   * ⚖️ Separados porque o preço é outro: leitura de cache custa uma fração da entrada, e gravação
+   * (em alguns providers) custa mais que ela. Quem não informa um dos dois grava zero.
+   */
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
 }
 
 /** Cabeçalho da conversa: com qual agente, com qual modelo, e o acumulado. */
@@ -53,6 +63,10 @@ export interface IConversationTurn {
   reasoning?: string
   toolCalls: Array<{ tool: string; args?: unknown; result?: unknown; error?: string }>
   usage?: IStoredUsage
+  /** Do envio da pergunta ao último evento do turno, em ms — o tempo que a pessoa esperou. */
+  durationMs?: number
+  /** Do envio ao primeiro pedaço de texto da resposta, em ms. Ausente quando não houve texto. */
+  firstTextMs?: number
   warnings?: string[]
   aborted?: boolean
   error?: string

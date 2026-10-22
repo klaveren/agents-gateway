@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { IUsage } from '@domain/models/AgentEvent.Model'
+import { addUsage, IUsage } from '@domain/models/AgentEvent.Model'
 import { TSessionStatus } from '@domain/models/Session.Model'
 
 /**
@@ -119,11 +119,7 @@ export class SessionStore {
 
   /** Soma o usage de um turno ao acumulado da sessão. */
   addUsage(record: ISessionRecord, usage: IUsage): void {
-    record.usage = {
-      inputTokens: sum(record.usage.inputTokens, usage.inputTokens),
-      outputTokens: sum(record.usage.outputTokens, usage.outputTokens),
-      reasoningTokens: sum(record.usage.reasoningTokens, usage.reasoningTokens),
-    }
+    record.usage = addUsage(record.usage, usage)
   }
 
   get size(): number {
@@ -148,9 +144,4 @@ export class SessionStore {
       this.delete(record.id)
     }
   }
-}
-
-function sum(current: number | undefined, addition: number | undefined): number | undefined {
-  if (current === undefined && addition === undefined) return undefined
-  return (current ?? 0) + (addition ?? 0)
 }

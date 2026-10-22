@@ -65,6 +65,15 @@ describe('aggregateTurn', () => {
     assert.deepStrictEqual(turn.usage, { inputTokens: 10, outputTokens: 10, reasoningTokens: 2 })
   })
 
+  it('sums cache read and write apart from the input', () => {
+    const turn = aggregateTurn('s1', [
+      ev('usage', { inputTokens: 1000, cacheReadTokens: 800, cacheWriteTokens: 0 }),
+      ev('usage', { inputTokens: 1200, cacheReadTokens: 900, cacheWriteTokens: 100, outputTokens: 50 }),
+    ])
+
+    assert.deepStrictEqual(turn.usage, { inputTokens: 2200, outputTokens: 50, cacheReadTokens: 1700, cacheWriteTokens: 100 })
+  })
+
   it('collects warnings and marks an aborted turn', () => {
     const turn = aggregateTurn('s1', [ev('warning', { message: 'anexo ignorado' }), ev('text.delta', { text: 'parcial' }), ev('message.aborted')])
 

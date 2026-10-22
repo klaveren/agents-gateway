@@ -44,11 +44,31 @@ export interface IAdkRuntime {
   runAsync(params: IAdkRunParams): AsyncGenerator<Event, void, undefined>
 }
 
+/** O consumo cru do Gemini, como vem no `usageMetadata`. */
+export interface IAdkUsageMetadata {
+  promptTokenCount?: number
+  candidatesTokenCount?: number
+  thoughtsTokenCount?: number
+  cachedContentTokenCount?: number
+}
+
+/** Uma resposta crua do modelo, do jeito que o `afterModelCallback` do ADK a entrega. */
+export interface IAdkModelResponse {
+  partial?: boolean
+  finishReason?: unknown
+  usageMetadata?: IAdkUsageMetadata
+}
+
 export interface IAdkRuntimeSpec {
   name: string
   model: string
   instruction: string
   tools: Array<BaseTool | BaseToolset>
+  /**
+   * Cada resposta crua do modelo — inclusive a ÚLTIMA de cada chamada, que o ADK não transforma em
+   * evento quando a chamada termina pedindo ferramenta. É dela que sai o consumo (ver `finalUsageOf`).
+   */
+  onModelResponse?: (response: IAdkModelResponse) => void
 }
 
 export type TAdkRuntimeFactory = (spec: IAdkRuntimeSpec) => IAdkRuntime
@@ -58,6 +78,8 @@ interface IGoogleAgentNative {
   runtime: IAdkRuntime
   userId: string
   adkSessionId: string
+  /** Consumo de chamadas já encerradas, ainda não repassado ao stream. */
+  usage: IUsage[]
 }
 
 export interface IGoogleAgentAdapterDeps {
@@ -74,6 +96,11 @@ function defaultRuntimeFactory(spec: IAdkRuntimeSpec): IAdkRuntime {
     // O ADK 1.6 usa `instruction` (singular) e `model`; não existem `instructions` nem `llm`.
     instruction: spec.instruction,
     tools: spec.tools,
+    // Só observa: devolver `undefined` mantém a resposta do modelo como veio.
+    afterModelCallback: ({ response }) => {
+      spec.onModelResponse?.(response as IAdkModelResponse)
+      return undefined
+    },
   })
   const runner = new Runner({ appName: APP_NAME, agent, sessionService })
 
@@ -202,6 +229,8 @@ export class GoogleAgentAdapter implements IAgentAdapter {
       // Em StreamingMode.SSE o ADK manda os pedaços com `partial: true` e depois um
       // evento agregado com o texto inteiro. Repassar os dois duplicaria a resposta.
       let sawPartialText = false
+      // Sobra de um turno interrompido não pode entrar na conta deste.
+      native.usage.length = 0
 
       for await (const event of stream) {
         const isPartial = event.partial === true
@@ -214,26 +243,13 @@ export class GoogleAgentAdapter implements IAgentAdapter {
           if (mapped) yield mapped
         }
 
-        /**
-         * O uso vem NO EVENTO, e um turno agêntico produz vários.
-         *
-         * ⚠️ O `Event` do ADK estende `LlmResponse`, e é ali que mora o `usageMetadata` — o adapter
-         * simplesmente não o lia, e o resultado era turno registrado com `usage` zerado: nenhuma
-         * visibilidade de custo, e nenhum erro para denunciar.
-         *
-         * ⚠️ CADA CHAMADA AO MODELO TRAZ O SEU. Uma pergunta que usa três ferramentas passa quatro
-         * vezes pelo modelo, e o consumo do turno é a SOMA — não o do último evento, que é o erro
-         * fácil de cometer aqui e faria o custo parecer uma fração do que foi.
-         *
-         * Eventos parciais repetem o acumulado do mesmo passo; contá-los somaria o mesmo consumo
-         * várias vezes.
-         */
-        const usage = !isPartial ? this.toUsage(event) : undefined
-        if (usage) yield { type: 'usage', sessionId, timestamp: new Date(), payload: usage }
+        yield* this.drainUsage(native, sessionId)
 
         if (isPartial) sawPartialText = true
         else sawPartialText = false
       }
+
+      yield* this.drainUsage(native, sessionId)
 
       if (abort.signal.aborted) {
         yield { type: 'message.aborted', sessionId, timestamp: new Date() }
@@ -268,15 +284,21 @@ export class GoogleAgentAdapter implements IAgentAdapter {
    */
   private nativeOf(record: ISessionRecord, agent: IAgent, remote: BaseTool[]): IGoogleAgentNative {
     if (!record.native) {
+      const usage: IUsage[] = []
       record.native = {
         runtime: this.createRuntime({
           name: this.toAdkName(agent.id),
           model: record.model,
           instruction: assertNoAdkTemplateCollision(record.systemPrompt),
           tools: this.buildTools(agent, remote),
+          onModelResponse: (response) => {
+            const counted = this.finalUsageOf(response)
+            if (counted) usage.push(counted)
+          },
         }),
         userId: `gateway-${record.id}`,
         adkSessionId: randomUUID(),
+        usage,
       } satisfies IGoogleAgentNative
     }
     return record.native as IGoogleAgentNative
@@ -316,10 +338,35 @@ export class GoogleAgentAdapter implements IAgentAdapter {
   }
 
   /**
-   * Traduz o `usageMetadata` do ADK. `undefined` quando o evento não carrega consumo — a maioria
-   * não carrega, e emitir zero poluiria o stream e o acumulado.
+   * O consumo de UMA chamada ao modelo, contado uma vez só.
+   *
+   * ⚠️ NÃO SE LÊ O CONSUMO DOS EVENTOS:
+   *  · cada pedaço do stream traz o consumo ACUMULADO da chamada, e quando o modelo pede duas
+   *    ferramentas na mesma resposta o ADK emite um evento por pedido, cada um com o mesmo
+   *    `promptTokenCount` — somar os eventos contava a entrada da chamada duas, três vezes;
+   *  · o consumo definitivo, e o único com `cachedContentTokenCount`, vem no ÚLTIMO pedaço. Numa
+   *    chamada que termina em ferramenta esse pedaço não tem conteúdo e o ADK não o vira evento —
+   *    o cache dessas chamadas simplesmente não aparecia.
+   *
+   * O `afterModelCallback` recebe todos os pedaços, inclusive esse. O que fecha a chamada é o que
+   * não é parcial e traz `finishReason`: um por chamada, com o número final.
    */
-  private toUsage(event: { usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number } }): IUsage | undefined {
+  private finalUsageOf(response: IAdkModelResponse): IUsage | undefined {
+    if (response.partial === true || response.finishReason === undefined) return undefined
+
+    return this.toUsage({ usageMetadata: response.usageMetadata })
+  }
+
+  /** Repassa ao stream o consumo das chamadas que já fecharam. */
+  private *drainUsage(native: IGoogleAgentNative, sessionId: string): Generator<IAgentEvent> {
+    for (const payload of native.usage.splice(0)) yield { type: 'usage', sessionId, timestamp: new Date(), payload }
+  }
+
+  /**
+   * Traduz o `usageMetadata` do ADK. `undefined` quando não há consumo — emitir zero poluiria o
+   * stream e o acumulado.
+   */
+  private toUsage(event: { usageMetadata?: IAdkUsageMetadata }): IUsage | undefined {
     const raw = event.usageMetadata
     if (!raw) return undefined
 
@@ -331,7 +378,9 @@ export class GoogleAgentAdapter implements IAgentAdapter {
 
     if (!inputTokens && !outputTokens && !reasoningTokens) return undefined
 
-    return { inputTokens, outputTokens, reasoningTokens }
+    // Cache implícito: a parte lida vem em `cachedContentTokenCount`, já DENTRO de
+    // `promptTokenCount`. Gravação de cache não existe nesse modo — não é cobrada à parte.
+    return { inputTokens, outputTokens, reasoningTokens, cacheReadTokens: raw.cachedContentTokenCount ?? 0, cacheWriteTokens: 0 }
   }
 
   private toAgentEvent(event: ReturnType<typeof toStructuredEvents>[number], sessionId: string): IAgentEvent | undefined {
@@ -364,7 +413,10 @@ export class GoogleAgentAdapter implements IAgentAdapter {
   }
 
   private buildContent(input: IMessageInput): IAdkContent {
-    const parts: IAdkPart[] = [{ text: input.text }]
+    // ⛔ Texto vazio NÃO entra como parte. O ADK descarta a mensagem inteira quando a primeira parte
+    // é `text: ""` (`getContents`, @google/adk 1.6) — anexo enviado sem frase chegava ao modelo como
+    // nada, e ele respondia "aguardando o arquivo" com o arquivo já enviado.
+    const parts: IAdkPart[] = input.text.trim() ? [{ text: input.text }] : []
     for (const file of input.files ?? []) {
       parts.push({ inlineData: { data: file.data, mimeType: file.mimeType } })
     }

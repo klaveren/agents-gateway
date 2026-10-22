@@ -261,67 +261,103 @@ describe('GoogleAgentAdapter', () => {
     assert.strictEqual(events[events.length - 1].type, 'message.aborted')
   })
 
-  it('reports the token usage the ADK puts on the event', async () => {
-    const log = emptyLog()
+  it('counts each model call once, from its final response, with the cache', async () => {
+    // Uma chamada que pede duas ferramentas chega em dois pedaços com o MESMO consumo acumulado, e o
+    // pedaço final — o único com o cache — não vira evento. O consumo sai do `afterModelCallback`,
+    // uma vez por chamada.
     const adapter = new GoogleAgentAdapter({
-      createRuntime: runtimeWith(() => [adkEventWithUsage([{ text: 'done' }], { promptTokenCount: 120, candidatesTokenCount: 30, thoughtsTokenCount: 8 })], log),
+      createRuntime: (spec) => ({
+        async ensureSession() {},
+        async *runAsync() {
+          const callUsage = { promptTokenCount: 22096, candidatesTokenCount: 26, thoughtsTokenCount: 131 }
+          spec.onModelResponse?.({ partial: false, usageMetadata: callUsage })
+          yield adkEvent([{ functionCall: { name: 'search_web', args: {} } }])
+          spec.onModelResponse?.({ partial: false, usageMetadata: callUsage })
+          yield adkEvent([{ functionCall: { name: 'search_web', args: {} } }])
+          spec.onModelResponse?.({ partial: false, finishReason: 'STOP', usageMetadata: { ...callUsage, cachedContentTokenCount: 20000 } })
+          yield adkEvent([{ functionResponse: { name: 'search_web', response: { result: 256 } } }])
+          spec.onModelResponse?.({ partial: true, finishReason: 'STOP', usageMetadata: { promptTokenCount: 22603 } })
+          spec.onModelResponse?.({
+            partial: false,
+            finishReason: 'STOP',
+            usageMetadata: { promptTokenCount: 22603, cachedContentTokenCount: 20282, candidatesTokenCount: 134, thoughtsTokenCount: 81 },
+          })
+          yield adkEvent([{ text: 'done' }])
+        },
+      }),
     })
-    const record = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
+    const usage = events.filter((e) => e.type === 'usage').map((e) => e.type === 'usage' && e.payload)
 
-    const events = await drain(adapter.sendMessage(getAgent(), record.id, { text: 'hi' }, {}))
-    const usage = events.filter((event) => event.type === 'usage')
+    assert.deepStrictEqual(usage, [
+      { inputTokens: 22096, outputTokens: 26, reasoningTokens: 131, cacheReadTokens: 20000, cacheWriteTokens: 0 },
+      { inputTokens: 22603, outputTokens: 134, reasoningTokens: 81, cacheReadTokens: 20282, cacheWriteTokens: 0 },
+    ])
+  })
+
+  it('reports the usage of a call that ends with no further event, at the end of the turn', async () => {
+    const adapter = new GoogleAgentAdapter({
+      createRuntime: (spec) => ({
+        async ensureSession() {},
+        async *runAsync() {
+          yield adkEvent([{ text: 'done' }])
+          spec.onModelResponse?.({ partial: false, finishReason: 'STOP', usageMetadata: { promptTokenCount: 50, candidatesTokenCount: 4 } })
+        },
+      }),
+    })
+    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
+    const usage = events.filter((e) => e.type === 'usage').map((e) => e.type === 'usage' && e.payload)
+
+    assert.deepStrictEqual(usage, [{ inputTokens: 50, outputTokens: 4, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }])
+    assert.strictEqual(events[events.length - 1].type, 'message.completed')
+  })
+
+  it('does not read usage from the events themselves', async () => {
+    const adapter = new GoogleAgentAdapter({
+      createRuntime: runtimeWith(() => [adkEventWithUsage([{ text: 'done' }], { promptTokenCount: 120, candidatesTokenCount: 30 })], emptyLog()),
+    })
+    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
+
+    assert.strictEqual(events.filter((e) => e.type === 'usage').length, 0)
+  })
+
+  it('drops usage left over from an interrupted turn at the start of the next', async () => {
+    let call = 0
+    const adapter = new GoogleAgentAdapter({
+      createRuntime: (spec) => ({
+        async ensureSession() {},
+        async *runAsync() {
+          call++
+          // O consumo chega pelo callback, antes de o evento correspondente sair do stream.
+          spec.onModelResponse?.({ partial: false, finishReason: 'STOP', usageMetadata: { promptTokenCount: call === 1 ? 999 : 10 } })
+          if (call === 1) throw new Error('boom')
+          yield adkEvent([{ text: 'ok' }])
+        },
+      }),
+    })
+    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'one' }, {}))
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'two' }, {}))
+    const usage = events.filter((e) => e.type === 'usage').map((e) => e.type === 'usage' && e.payload)
 
     assert.deepStrictEqual(
-      usage.map((event) => event.payload),
-      [{ inputTokens: 120, outputTokens: 30, reasoningTokens: 8 }],
+      usage.map((payload) => payload && payload.inputTokens),
+      [10],
     )
   })
 
-  it('emits one usage event per model call, so the turn is their sum', async () => {
+  it('sends an attachment with no text without an empty text part, which the ADK would drop whole', async () => {
     const log = emptyLog()
-    const adapter = new GoogleAgentAdapter({
-      createRuntime: runtimeWith(
-        () => [
-          adkEventWithUsage([{ functionCall: { name: 'search_web', args: {} } }], { promptTokenCount: 100, candidatesTokenCount: 10 }),
-          adkEventWithUsage([{ functionResponse: { name: 'search_web', response: {} } }], {}),
-          adkEventWithUsage([{ text: 'answer' }], { promptTokenCount: 180, candidatesTokenCount: 25 }),
-        ],
-        log,
-      ),
-    })
-    const record = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(turn, log) })
+    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
 
-    const events = await drain(adapter.sendMessage(getAgent(), record.id, { text: 'hi' }, {}))
-    const usage = events.filter((event) => event.type === 'usage')
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: '  ', files: [{ name: 'doc.pdf', mimeType: 'application/pdf', data: 'aaa' }] }, {}))
 
-    // Ficar com o último evento — o erro fácil aqui — faria este turno custar 180 em vez de 280.
-    assert.strictEqual(usage.length, 2)
-    assert.strictEqual(
-      usage.reduce((total, event) => total + ((event.payload as { inputTokens?: number }).inputTokens ?? 0), 0),
-      280,
-    )
-  })
-
-  it('ignores usage on partial events, which repeat the running total of the same step', async () => {
-    const log = emptyLog()
-    const adapter = new GoogleAgentAdapter({
-      createRuntime: runtimeWith(
-        () => [
-          adkEventWithUsage([{ text: 'par' }], { promptTokenCount: 50, candidatesTokenCount: 1 }, true),
-          adkEventWithUsage([{ text: 'partial' }], { promptTokenCount: 50, candidatesTokenCount: 4 }),
-        ],
-        log,
-      ),
-    })
-    const record = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
-
-    const events = await drain(adapter.sendMessage(getAgent(), record.id, { text: 'hi' }, {}))
-    const usage = events.filter((event) => event.type === 'usage')
-
-    assert.deepStrictEqual(
-      usage.map((event) => event.payload),
-      [{ inputTokens: 50, outputTokens: 4, reasoningTokens: 0 }],
-    )
+    assert.deepStrictEqual(log.runs[0].newMessage.parts, [{ inlineData: { data: 'aaa', mimeType: 'application/pdf' } }])
   })
 })
 

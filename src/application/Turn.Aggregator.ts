@@ -1,4 +1,4 @@
-import { IAgentEvent, IUsage } from '@domain/models/AgentEvent.Model'
+import { addUsage, IAgentEvent, IUsage } from '@domain/models/AgentEvent.Model'
 
 export interface ITurnToolCall {
   tool: string
@@ -58,11 +58,7 @@ export function aggregateTurn(sessionId: string, events: Iterable<IAgentEvent>):
         break
 
       case 'usage':
-        turn.usage = {
-          inputTokens: sum(turn.usage.inputTokens, event.payload.inputTokens),
-          outputTokens: sum(turn.usage.outputTokens, event.payload.outputTokens),
-          reasoningTokens: sum(turn.usage.reasoningTokens, event.payload.reasoningTokens),
-        }
+        turn.usage = addUsage(turn.usage, event.payload)
         break
 
       case 'warning':
@@ -96,9 +92,4 @@ function attachToPendingCall(turn: ITurnResult, tool: string, apply: (call: ITur
   const orphan: ITurnToolCall = { tool, args: {} }
   apply(orphan)
   turn.toolCalls.push(orphan)
-}
-
-function sum(current: number | undefined, addition: number | undefined): number | undefined {
-  if (current === undefined && addition === undefined) return undefined
-  return (current ?? 0) + (addition ?? 0)
 }

@@ -270,9 +270,9 @@ describe('OpenAIAgentAdapter', () => {
     assert.strictEqual(events[events.length - 1].type, 'message.aborted')
   })
 
-  it('extracts the reasoning tokens without adding them to the output again', async () => {
-    // ⚠️ Aqui o raciocínio JÁ ESTÁ dentro de `outputTokens` — ao contrário do Gemini, que devolve
-    // os dois separados. Somar de novo daria 40 de saída num turno que custou 30.
+  it('reports the reasoning apart from the visible output, as every provider does', async () => {
+    // ⚠️ Aqui o raciocínio JÁ ESTÁ dentro de `outputTokens` da API. O contrato do gateway é uma saída
+    // só com o visível e o raciocínio à parte: 30 de saída crua com 10 de raciocínio vira 20 + 10.
     const adapter = new OpenAIAgentAdapter({
       run: runWith(() => [
         {
@@ -286,6 +286,40 @@ describe('OpenAIAgentAdapter', () => {
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
     const usage = events.find((event) => event.type === 'usage')
 
-    assert.deepStrictEqual(usage?.payload, { inputTokens: 8, outputTokens: 30, reasoningTokens: 10 })
+    assert.deepStrictEqual(usage?.payload, { inputTokens: 8, outputTokens: 20, reasoningTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0 })
+  })
+
+  it('reads the cache parcels from an object, a list of objects, snake or camel case', async () => {
+    const usageOf = async (inputTokensDetails: unknown) => {
+      const adapter = new OpenAIAgentAdapter({
+        run: runWith(() => [{ type: 'raw_model_stream_event', data: { type: 'response_done', response: { usage: { inputTokens: 100, outputTokens: 5, inputTokensDetails } } } }]),
+      })
+      const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+      const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
+
+      return events.find((event) => event.type === 'usage')?.payload
+    }
+
+    const expected = { inputTokens: 100, outputTokens: 5, reasoningTokens: undefined, cacheReadTokens: 60, cacheWriteTokens: 10 }
+
+    assert.deepStrictEqual(await usageOf({ cached_tokens: 60, cache_write_tokens: 10 }), expected)
+    assert.deepStrictEqual(await usageOf([{ cached_tokens: 40, cache_write_tokens: 10 }, { cached_tokens: 20 }]), expected)
+    assert.deepStrictEqual(await usageOf({ cachedTokens: 60, cacheWriteTokens: 10 }), expected)
+    assert.deepStrictEqual(await usageOf(undefined), { ...expected, cacheReadTokens: 0, cacheWriteTokens: 0 })
+  })
+
+  it('sends an attachment with no text without an empty input_text part', async () => {
+    const calls: ICall[] = []
+    const adapter = new OpenAIAgentAdapter({ run: runWith(turn, calls) })
+    const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: '  ', files: [{ name: 'b.pdf', mimeType: 'application/pdf', data: 'bbb' }] }, {}))
+
+    const message = calls[0].input[0]
+    assert.ok('content' in message && Array.isArray(message.content))
+    assert.deepStrictEqual(
+      message.content.map((part) => part.type),
+      ['input_file'],
+    )
   })
 })

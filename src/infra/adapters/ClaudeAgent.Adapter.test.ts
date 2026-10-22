@@ -233,4 +233,52 @@ describe('ClaudeAgentAdapter', () => {
 
     assert.strictEqual(events[events.length - 1].type, 'message.aborted')
   })
+
+  it('counts the cache in the input and reports its parcels', async () => {
+    const adapter = new ClaudeAgentAdapter({
+      query: queryWith(() => [
+        {
+          type: 'result',
+          subtype: 'success',
+          is_error: false,
+          result: '',
+          usage: { input_tokens: 10, cache_read_input_tokens: 800, cache_creation_input_tokens: 190, output_tokens: 7 },
+        },
+      ]),
+    })
+    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
+
+    assert.deepStrictEqual(events.find((e) => e.type === 'usage')?.payload, { inputTokens: 1000, cacheReadTokens: 800, cacheWriteTokens: 190, outputTokens: 7 })
+  })
+
+  it('emits the tool name without the SDK mcp prefix, and keeps it on the result', async () => {
+    const adapter = new ClaudeAgentAdapter({
+      query: queryWith(() => [
+        { type: 'assistant', message: { content: [{ type: 'tool_use', id: 't1', name: 'mcp__mcp__crm__stats', input: {} }] } },
+        { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } },
+      ]),
+    })
+    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
+
+    assert.ok(events.find((e) => e.type === 'tool.started' && e.payload.tool === 'crm__stats'))
+    assert.ok(events.find((e) => e.type === 'tool.result' && e.payload.tool === 'crm__stats'))
+  })
+
+  it('sends an attachment with no text without an empty text block', async () => {
+    const seen: TQueryParams[] = []
+    const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen) })
+    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: '', files: [{ name: 'a.png', mimeType: 'image/png', data: 'aaa' }] }, {}))
+
+    const prompts: Array<{ message: { content: Array<{ type: string }> } }> = []
+    for await (const message of seen[0].prompt as AsyncIterable<{ message: { content: Array<{ type: string }> } }>) prompts.push(message)
+
+    assert.deepStrictEqual(
+      prompts[0].message.content.map((block) => block.type),
+      ['image'],
+    )
+  })
 })

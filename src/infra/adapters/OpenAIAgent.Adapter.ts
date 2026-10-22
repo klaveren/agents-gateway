@@ -12,6 +12,7 @@ import { sessionPrefix } from '@infra/session/Session.Key'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
 import { buildOpenAIMcpServers, buildOpenAITools } from '@infra/tools/bridges/OpenAI.ToolBridge'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
+import { cacheTokensOf } from './support/Usage.Helper'
 import { composeSystemPrompt, maxOutputTokens, maxToolTurns } from './support/Prompt.Helper'
 
 const DEFAULT_MODEL = 'gpt-5.6-sol'
@@ -229,7 +230,8 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
     const files = input.files ?? []
     if (files.length === 0) return input.text
 
-    const content: Exclude<TUserContent, string> = [{ type: 'input_text', text: input.text }]
+    // Texto vazio não vira parte — anexo sem frase é mensagem válida.
+    const content: Exclude<TUserContent, string> = input.text.trim() ? [{ type: 'input_text', text: input.text }] : []
 
     for (const file of files) {
       const dataUrl = `data:${file.mimeType};base64,${file.data}`
@@ -269,23 +271,31 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
     const usage = (response as { usage?: unknown }).usage
     if (typeof usage !== 'object' || usage === null) return undefined
 
-    const { inputTokens, outputTokens, outputTokensDetails } = usage as { inputTokens?: unknown; outputTokens?: unknown; outputTokensDetails?: unknown }
+    const { inputTokens, outputTokens, outputTokensDetails, inputTokensDetails } = usage as {
+      inputTokens?: unknown
+      outputTokens?: unknown
+      outputTokensDetails?: unknown
+      inputTokensDetails?: unknown
+    }
 
     /**
      * ⚠️ O RACIOCÍNIO VEM NUM SUB-OBJETO, e já está DENTRO de `outputTokens`.
      *
-     * Diferente do Gemini, que devolve os dois separados e exige SOMAR. Aqui somar de novo contaria
-     * o raciocínio duas vezes — por isso ele é só EXTRAÍDO, para quem lê o consumo poder mostrar
-     * quanto da saída foi o modelo pensando. Mesmo nome de campo, contrato oposto: é o tipo de
-     * detalhe que passa despercebido e infla o custo relatado sem nada denunciar.
+     * O contrato do gateway é um só: `outputTokens` é a saída VISÍVEL, e o raciocínio vem à parte
+     * (como o Gemini já devolve). Aqui ele é SUBTRAÍDO da saída e informado separado — deixá-lo nos
+     * dois contaria o raciocínio duas vezes no total e no custo.
      */
     const details = (typeof outputTokensDetails === 'object' && outputTokensDetails !== null ? outputTokensDetails : {}) as { reasoningTokens?: unknown }
     const reasoning = typeof details.reasoningTokens === 'number' ? details.reasoningTokens : 0
 
+    const output = typeof outputTokens === 'number' ? outputTokens : undefined
+
     return {
       inputTokens: typeof inputTokens === 'number' ? inputTokens : undefined,
-      outputTokens: typeof outputTokens === 'number' ? outputTokens : undefined,
+      outputTokens: output === undefined ? undefined : Math.max(output - reasoning, 0),
       reasoningTokens: reasoning || undefined,
+      cacheReadTokens: cacheTokensOf(inputTokensDetails, 'cached_tokens'),
+      cacheWriteTokens: cacheTokensOf(inputTokensDetails, 'cache_write_tokens'),
     }
   }
 

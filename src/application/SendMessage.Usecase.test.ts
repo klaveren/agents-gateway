@@ -99,8 +99,36 @@ describe('SendMessageUseCase', () => {
     for await (const _event of usecase.execute('s', { text: 'quanto custou?' })) void _event
     await done
 
-    assert.deepStrictEqual(repository.turns[0].usage, { inputTokens: 100, outputTokens: 20, reasoningTokens: 5, totalTokens: 125 })
+    assert.deepStrictEqual(repository.turns[0].usage, { inputTokens: 100, outputTokens: 20, reasoningTokens: 5, totalTokens: 125, cacheReadTokens: 0, cacheWriteTokens: 0 })
     assert.strictEqual(repository.turns[0].request, 'quanto custou?')
+  })
+
+  it('records how long the turn took and the cache apart from the input', async () => {
+    const repository = new RecordingRepository()
+    const at = (ms: number) => new Date(Date.now() + ms)
+    const usecase = new SendMessageUseCase(
+      stubProvider({
+        describe: () => session(),
+        sendMessage: async function* (sessionId) {
+          yield { type: 'message.started' as const, sessionId, timestamp: at(0) }
+          yield { type: 'text.delta' as const, sessionId, payload: { text: 'Oi' }, timestamp: at(400) }
+          yield { type: 'usage' as const, sessionId, payload: { inputTokens: 1000, cacheReadTokens: 700, outputTokens: 20 }, timestamp: at(900) }
+          yield { type: 'message.completed' as const, sessionId, timestamp: at(1000) }
+        },
+      }),
+      repository,
+    )
+
+    const done = repository.recorded()
+    for await (const _event of usecase.execute('s', { text: 'Oi' })) void _event
+    await done
+
+    const turn = repository.turns[0]
+    assert.ok(turn.firstTextMs !== undefined && turn.durationMs !== undefined)
+    assert.ok(turn.firstTextMs >= 400 && turn.firstTextMs < turn.durationMs)
+    assert.ok(turn.durationMs >= 1000 && turn.durationMs < 1500)
+    // O cache é parcela da entrada: o total não muda, e as parcelas aparecem — zero quando não vêm.
+    assert.deepStrictEqual(turn.usage, { inputTokens: 1000, outputTokens: 20, reasoningTokens: 0, totalTokens: 1020, cacheReadTokens: 700, cacheWriteTokens: 0 })
   })
 
   it('records the turn even when the reader walks away mid-stream', async () => {

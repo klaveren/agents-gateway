@@ -68,6 +68,16 @@ describe('SessionStore', () => {
     assert.deepStrictEqual(record.usage, { inputTokens: 13, outputTokens: 7, reasoningTokens: 7 })
   })
 
+  it('sums the cache parcels, and leaves out a field no turn reported', () => {
+    const store = new SessionStore()
+    const record = store.create('claude-chat', seed())
+
+    store.addUsage(record, { inputTokens: 10, cacheReadTokens: 8 })
+    store.addUsage(record, { inputTokens: 12, cacheReadTokens: 9, cacheWriteTokens: 2 })
+
+    assert.deepStrictEqual(record.usage, { inputTokens: 22, cacheReadTokens: 17, cacheWriteTokens: 2 })
+  })
+
   it('lists live sessions, most recently active first', () => {
     const store = new SessionStore()
     const first = store.create('claude-chat', seed())

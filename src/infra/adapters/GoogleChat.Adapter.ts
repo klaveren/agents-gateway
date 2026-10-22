@@ -191,6 +191,9 @@ export class GoogleChatAdapter implements IAgentAdapter {
             payload: {
               inputTokens: aggregate.usageMetadata.promptTokenCount,
               outputTokens: aggregate.usageMetadata.candidatesTokenCount,
+              // Cache implícito do Gemini: parcela de `promptTokenCount`; não há gravação cobrada.
+              cacheReadTokens: aggregate.usageMetadata.cachedContentTokenCount ?? 0,
+              cacheWriteTokens: 0,
             },
           }
         }
@@ -220,7 +223,8 @@ export class GoogleChatAdapter implements IAgentAdapter {
   }
 
   private buildParts(input: IMessageInput): Part[] {
-    const parts: Part[] = [{ text: input.text }]
+    // Texto vazio não entra como parte — anexo sem frase é mensagem válida (ver GoogleAgent.Adapter).
+    const parts: Part[] = input.text.trim() ? [{ text: input.text }] : []
     for (const file of input.files ?? []) {
       parts.push({ inlineData: { data: file.data, mimeType: file.mimeType } })
     }

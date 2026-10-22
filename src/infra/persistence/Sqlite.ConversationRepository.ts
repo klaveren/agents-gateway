@@ -34,6 +34,8 @@ const SCHEMA = `
     output_tokens    INTEGER NOT NULL DEFAULT 0,
     reasoning_tokens INTEGER NOT NULL DEFAULT 0,
     total_tokens     INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens  INTEGER NOT NULL DEFAULT 0,
+    cache_write_tokens INTEGER NOT NULL DEFAULT 0,
     metadata         TEXT,
     created_at       TEXT    NOT NULL,
     updated_at       TEXT    NOT NULL
@@ -55,12 +57,35 @@ const SCHEMA = `
     output_tokens    INTEGER NOT NULL DEFAULT 0,
     reasoning_tokens INTEGER NOT NULL DEFAULT 0,
     total_tokens     INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens  INTEGER NOT NULL DEFAULT 0,
+    cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+    duration_ms      INTEGER,
+    first_text_ms    INTEGER,
     aborted          INTEGER NOT NULL DEFAULT 0,
     error            TEXT,
     PRIMARY KEY (conversation_id, idx),
     FOREIGN KEY (conversation_id) REFERENCES conversations (id) ON DELETE CASCADE
   );
 `
+
+/**
+ * Colunas que nasceram depois da primeira versão do esquema.
+ *
+ * ⚖️ ADITIVO, e conferido antes: o `CREATE TABLE IF NOT EXISTS` não toca numa tabela que já existe,
+ * então um arquivo criado antes destas colunas continuaria sem elas. `ALTER TABLE ADD COLUMN` não
+ * apaga nem reescreve linha — o histórico fica como estava, com o default nas linhas antigas. O
+ * SQLite não tem `ADD COLUMN IF NOT EXISTS`, por isso a checagem em `PRAGMA table_info`.
+ *
+ * Cache e tempo só existem nas conversas novas: as antigas contam zero de cache e ficam sem tempo.
+ */
+const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }> = [
+  { table: 'conversations', column: 'cache_read_tokens', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'conversations', column: 'cache_write_tokens', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'conversation_turns', column: 'cache_read_tokens', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'conversation_turns', column: 'cache_write_tokens', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'conversation_turns', column: 'duration_ms', definition: 'INTEGER' },
+  { table: 'conversation_turns', column: 'first_text_ms', definition: 'INTEGER' },
+]
 
 /** Só identificador simples vira caminho JSON. Ver `listSessions`. */
 const SAFE_KEY = /^[A-Za-z0-9_]+$/
@@ -73,6 +98,11 @@ function text(value: unknown): string {
 
 function count(value: unknown): number {
   return typeof value === 'number' ? value : Number(value ?? 0)
+}
+
+/** Coluna que aceita `NULL` (tempo): ausente continua ausente, em vez de virar zero. */
+function optionalCount(value: unknown): number | undefined {
+  return typeof value === 'number' ? value : undefined
 }
 
 function json<T>(value: unknown, fallback: T): T {
@@ -90,6 +120,8 @@ function usageOf(row: TRow): IStoredUsage {
     outputTokens: count(row.output_tokens),
     reasoningTokens: count(row.reasoning_tokens),
     totalTokens: count(row.total_tokens),
+    cacheReadTokens: count(row.cache_read_tokens),
+    cacheWriteTokens: count(row.cache_write_tokens),
   }
 }
 
@@ -118,6 +150,17 @@ export class SqliteConversationRepository implements IConversationRepository {
     this.db.exec('PRAGMA journal_mode = WAL')
     this.db.exec('PRAGMA foreign_keys = ON')
     this.db.exec(SCHEMA)
+    this.migrate()
+  }
+
+  /** Acrescenta as colunas que um arquivo antigo ainda não tem. Nunca remove nem reescreve nada. */
+  private migrate(): void {
+    for (const { table, column, definition } of ADDED_COLUMNS) {
+      const existing = this.db.prepare(`PRAGMA table_info(${table})`).all() as TRow[]
+      if (existing.some((row) => row.name === column)) continue
+
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+    }
   }
 
   async saveSession(session: IConversationSession): Promise<void> {
@@ -131,8 +174,8 @@ export class SqliteConversationRepository implements IConversationRepository {
        */
       this.db
         .prepare(
-          `INSERT INTO conversations (id, agent_id, provider, mode, model, title, turns, input_tokens, output_tokens, reasoning_tokens, total_tokens, metadata, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO conversations (id, agent_id, provider, mode, model, title, turns, input_tokens, output_tokens, reasoning_tokens, total_tokens, cache_read_tokens, cache_write_tokens, metadata, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET
              agent_id = excluded.agent_id,
              provider = excluded.provider,
@@ -144,6 +187,8 @@ export class SqliteConversationRepository implements IConversationRepository {
              output_tokens = excluded.output_tokens,
              reasoning_tokens = excluded.reasoning_tokens,
              total_tokens = excluded.total_tokens,
+             cache_read_tokens = excluded.cache_read_tokens,
+             cache_write_tokens = excluded.cache_write_tokens,
              metadata = COALESCE(excluded.metadata, conversations.metadata),
              created_at = COALESCE(conversations.created_at, excluded.created_at),
              updated_at = excluded.updated_at`,
@@ -160,6 +205,8 @@ export class SqliteConversationRepository implements IConversationRepository {
           session.usage.outputTokens ?? 0,
           session.usage.reasoningTokens ?? 0,
           session.usage.totalTokens ?? 0,
+          session.usage.cacheReadTokens ?? 0,
+          session.usage.cacheWriteTokens ?? 0,
           session.metadata ? JSON.stringify(session.metadata) : null,
           session.createdAt.toISOString(),
           session.updatedAt.toISOString(),
@@ -174,8 +221,8 @@ export class SqliteConversationRepository implements IConversationRepository {
       this.db
         .prepare(
           `INSERT OR REPLACE INTO conversation_turns
-             (conversation_id, idx, at, request, response, reasoning, tool_calls, warnings, input_tokens, output_tokens, reasoning_tokens, total_tokens, aborted, error)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             (conversation_id, idx, at, request, response, reasoning, tool_calls, warnings, input_tokens, output_tokens, reasoning_tokens, total_tokens, cache_read_tokens, cache_write_tokens, duration_ms, first_text_ms, aborted, error)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           turn.sessionId,
@@ -190,6 +237,10 @@ export class SqliteConversationRepository implements IConversationRepository {
           turn.usage?.outputTokens ?? 0,
           turn.usage?.reasoningTokens ?? 0,
           turn.usage?.totalTokens ?? 0,
+          turn.usage?.cacheReadTokens ?? 0,
+          turn.usage?.cacheWriteTokens ?? 0,
+          turn.durationMs ?? null,
+          turn.firstTextMs ?? null,
           // O driver aceita number, não boolean.
           turn.aborted ? 1 : 0,
           turn.error ?? null,
@@ -244,6 +295,8 @@ export class SqliteConversationRepository implements IConversationRepository {
           reasoning: typeof row.reasoning === 'string' ? row.reasoning : undefined,
           toolCalls: json<IConversationTurn['toolCalls']>(row.tool_calls, []),
           usage: usageOf(row),
+          durationMs: optionalCount(row.duration_ms),
+          firstTextMs: optionalCount(row.first_text_ms),
           warnings: json<string[] | undefined>(row.warnings, undefined),
           aborted: count(row.aborted) === 1 || undefined,
           error: typeof row.error === 'string' ? row.error : undefined,
@@ -282,7 +335,8 @@ export class SqliteConversationRepository implements IConversationRepository {
           .prepare(
             `SELECT COUNT(*) AS conversations, COALESCE(SUM(turns), 0) AS turns,
                     COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens,
-                    COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens, COALESCE(SUM(total_tokens), 0) AS total_tokens
+                    COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens, COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                    COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens, COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens
              FROM conversations`,
           )
           .get() as TRow
@@ -291,7 +345,8 @@ export class SqliteConversationRepository implements IConversationRepository {
           .prepare(
             `SELECT provider, model, COUNT(*) AS conversations,
                     COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens,
-                    COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens, COALESCE(SUM(total_tokens), 0) AS total_tokens
+                    COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens, COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                    COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens, COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens
              FROM conversations GROUP BY provider, model ORDER BY total_tokens DESC`,
           )
           .all() as TRow[]
