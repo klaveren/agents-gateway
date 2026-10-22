@@ -43,10 +43,36 @@ export class HttpServer {
     this.app.disable('x-powered-by')
     this.app.use(corsMiddleware())
     this.app.use(express.json({ limit: jsonLimit() }))
-    this.app.use(express.static(resolvePublicDir()))
 
     this.routes = buildRoutes(controller)
     this.setupRoutes()
+    this.setupFrontend()
+  }
+
+  /**
+   * A tela: a nova (Vue, `web/dist`) na raiz e a antiga em `/legacy`, enquanto as duas convivem.
+   *
+   * ⚖️ DEPOIS DA API, de propósito: o fallback do SPA devolve `index.html` para qualquer GET que
+   * peça HTML, e registrado antes ele responderia no lugar de uma rota da API. Rota desconhecida em
+   * `/v1` continua sendo da API (404 dela), nunca a tela.
+   *
+   * Sem `web/dist` (o front não foi compilado), a antiga volta para a raiz — o gateway nunca sobe sem tela.
+   */
+  private setupFrontend() {
+    const legacy = resolvePublicDir()
+    const web = resolveWebDir()
+
+    this.app.use('/legacy', express.static(legacy))
+    if (!web) {
+      this.app.use(express.static(legacy))
+      return
+    }
+
+    this.app.use(express.static(web, { index: false }))
+    this.app.get(/^(?!\/v1(\/|$)|\/legacy(\/|$)).*/, (req, res, next) => {
+      if (!req.accepts('html')) return next()
+      res.sendFile(path.join(web, 'index.html'))
+    })
   }
 
   /** A tabela de rotas como dado, para o teste conferir contra o OpenAPI. */
@@ -140,7 +166,17 @@ function buildRoutes(controller: AgentController): IRoute[] {
 }
 
 /**
- * O frontend não passa pelo `tsc`, então ele fica em `src/` mesmo depois do build.
+ * A tela nova, compilada pelo Vite em `web/dist`. Do `dist/infra/http` (build) e do `src/infra/http`
+ * (dev) a raiz do projeto fica três níveis acima. Ausente = não compilada.
+ */
+function resolveWebDir(): string | undefined {
+  const candidates = [path.resolve(__dirname, '../../../web/dist'), path.resolve(process.cwd(), 'web/dist')]
+
+  return candidates.find((candidate) => fs.existsSync(path.join(candidate, 'index.html')))
+}
+
+/**
+ * A tela antiga. Não passa pelo `tsc`, então fica em `src/` mesmo depois do build.
  * Resolver a partir do `__dirname` faz o gateway subir de qualquer diretório — antes, com
  * `process.cwd()`, iniciar de outra pasta servia 404 em vez da UI.
  */
