@@ -1,22 +1,15 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { initials } from '@/lib/format'
+import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useConversationsStore } from '@/stores/conversations'
+import AccountMenu from './AccountMenu.vue'
 import Icon from './Icon.vue'
 
 const route = useRoute()
 const auth = useAuthStore()
 const conversations = useConversationsStore()
-const router = useRouter()
 
-async function logout() {
-  await auth.logout()
-  conversations.subscribe(auth.isAdmin)
-  void conversations.load(auth.isAdmin)
-  await router.push('/login')
-}
 
 const section = computed(() => {
   const name = String(route.name ?? '')
@@ -62,17 +55,10 @@ const links = computed<Array<{ to: string; key: string; label: string; short?: s
       <span class="hidden md:inline">{{ link.label }}</span>
       <span v-if="link.badge" class="absolute top-0.5 right-[calc(50%-20px)] md:top-1 md:right-2 min-w-[18px] rounded-full bg-emerald-500 px-1 text-center text-[10px] leading-[18px] font-semibold text-zinc-950">{{ link.badge > 99 ? '99+' : link.badge }}</span>
     </RouterLink>
+    <AccountMenu v-if="auth.user" placement="up" class="md:hidden" />
     <div class="mt-auto hidden flex-col items-center gap-2 pb-1 text-[10px] text-zinc-500 md:flex">
       <span class="h-2 w-2 rounded-full" :class="conversations.live ? 'bg-emerald-400' : 'bg-zinc-600'" :title="conversations.live ? 'Ao vivo' : 'Sem conexão ao vivo'" />
-      <template v-if="auth.user">
-        <RouterLink to="/settings" class="grid h-9 w-9 place-items-center rounded-full text-xs font-semibold" :class="auth.isAdmin ? 'bg-emerald-500/20 text-emerald-300' : 'bg-zinc-800 text-zinc-300'" :title="`${auth.user.name} (${auth.user.email})`">
-          {{ initials(auth.user.name) }}
-        </RouterLink>
-        <button class="flex w-14 flex-col items-center gap-1 rounded-xl py-1.5 text-[10px] font-medium text-zinc-400 hover:bg-zinc-800/60 hover:text-rose-300" title="Sair de todas as sessões desta conta" @click="logout">
-          <Icon name="logout" class="h-5 w-5" />
-          Sair
-        </button>
-      </template>
+      <AccountMenu v-if="auth.user" placement="side" />
       <RouterLink v-else-if="auth.localAccounts" to="/login" class="rounded-lg px-2 py-1 text-zinc-300 hover:bg-zinc-800">Entrar</RouterLink>
     </div>
   </nav>

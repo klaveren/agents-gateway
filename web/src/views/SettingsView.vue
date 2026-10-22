@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ApiError } from '@/lib/api'
 import type { TAudience } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
@@ -15,15 +15,26 @@ const agents = useAgentsStore()
 const settings = useSettingsStore()
 const providers = useProvidersStore()
 const conversations = useConversationsStore()
-const router = useRouter()
+const route = useRoute()
 
-/** No celular o "Sair" mora aqui (a barra inferior não tem espaço para ele). */
-async function logout() {
-  await auth.logout()
-  conversations.subscribe(auth.isAdmin)
-  void conversations.load(auth.isAdmin)
-  await router.push('/login')
+/**
+ * `/settings#conta` (o "Perfil" do menu da conta) leva direto ao cartão da conta. ⚠️ Tenta por um
+ * instante: os cartões de cima aparecem quando as configurações chegam, e rolar antes erra o lugar.
+ */
+function scrollToSection(id: string, tries = 10) {
+  const target = document.getElementById(id)
+  if (target && settings.current) return target.scrollIntoView({ block: 'start' })
+  if (tries > 0) setTimeout(() => scrollToSection(id, tries - 1), 100)
+  else target?.scrollIntoView({ block: 'start' })
 }
+
+watch(
+  () => route.hash,
+  (hash) => {
+    if (hash) void nextTick(() => scrollToSection(hash.slice(1)))
+  },
+  { immediate: true },
+)
 
 const gatewayToken = ref(auth.gatewayToken)
 const tokenNote = ref<string>()
@@ -127,10 +138,7 @@ async function saveSettings() {
 <template>
   <div class="scroll-thin h-full overflow-y-auto px-4 py-6">
     <div class="mx-auto flex max-w-2xl flex-col gap-6">
-      <div class="flex items-center gap-3">
-        <h1 class="text-xl font-semibold">Configuração</h1>
-        <button v-if="auth.user" class="ml-auto rounded-full bg-zinc-800 px-3 py-1.5 text-sm text-zinc-300 hover:text-rose-300 md:hidden" @click="logout">Sair</button>
-      </div>
+      <h1 class="text-xl font-semibold">Configuração</h1>
 
       <section v-if="auth.isAdmin && settings.current" class="flex flex-col gap-4 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
         <h2 class="font-medium">Operação do gateway</h2>
@@ -188,7 +196,7 @@ async function saveSettings() {
         <RouterLink v-if="!auth.signedIn && auth.localAccounts" :to="{ path: '/login', query: { next: '/settings' } }" class="text-emerald-300 underline">Entrar</RouterLink>
       </p>
 
-      <section v-if="auth.user" class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
+      <section v-if="auth.user" id="conta" class="flex scroll-mt-4 flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
         <h2 class="font-medium">Minha conta</h2>
         <p class="text-sm text-zinc-400">{{ auth.user.name }} · {{ auth.user.email }} · {{ auth.user.role === 'admin' ? 'administrador' : 'membro' }}</p>
         <form class="grid gap-3 sm:grid-cols-2" @submit.prevent="changePassword">
