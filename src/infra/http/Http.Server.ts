@@ -52,7 +52,7 @@ export class HttpServer {
 
   constructor(
     private readonly controller: AgentController,
-    auth: AuthController = new AuthController({}),
+    private readonly auth: AuthController = new AuthController({}),
     providers: ProvidersController = defaultProvidersController(),
     usage?: UsageController,
   ) {
@@ -88,6 +88,9 @@ export class HttpServer {
     this.app.use(express.static(web, { index: false }))
     this.app.get(/^(?!\/v1(\/|$)|\/legacy(\/|$)).*/, (req, res, next) => {
       if (!req.accepts('html')) return next()
+      // ⚠️ `no-cache` no index: é ele que aponta o bundle (com hash no nome). Em cache, o navegador seguia
+      // abrindo a tela ANTIGA depois de cada deploy, até alguém forçar o recarregamento.
+      res.setHeader('Cache-Control', 'no-cache')
       res.sendFile(path.join(web, 'index.html'))
     })
   }
@@ -123,15 +126,17 @@ export class HttpServer {
 
     const guard = requireToken()
     const identity = requireCaller()
+    // O token de acesso vira sessão ANTES de tudo que lê a credencial (ver `AuthController.accessTokenGate`).
+    const exchange = this.auth.accessTokenGate
 
     // O contrato também é fechado: entrega o mapa de todas as rotas, e presença de header não é
     // identidade — então passa pelo mesmo portão e pela mesma resolução do chamador.
-    this.app.get(`${API_PREFIX}/openapi.json`, guard, identity, callerScope, this.controller.guardCaller, (_req, res) => {
+    this.app.get(`${API_PREFIX}/openapi.json`, guard, exchange, identity, callerScope, this.controller.guardCaller, (_req, res) => {
       res.json(OPENAPI_DOCUMENT)
     })
 
     for (const { method, path: routePath, handler } of this.routes) {
-      const chain = PUBLIC_PATHS.includes(routePath) ? [guard, callerScope, handler] : [guard, identity, callerScope, handler]
+      const chain = PUBLIC_PATHS.includes(routePath) ? [guard, exchange, callerScope, handler] : [guard, exchange, identity, callerScope, handler]
       this.app[method](`${API_PREFIX}${routePath}`, ...chain)
     }
 
@@ -180,6 +185,9 @@ function buildRoutes(controller: AgentController, auth: AuthController, provider
     { method: 'post', path: '/auth/logout', handler: auth.logout },
     { method: 'get', path: '/auth/me', handler: auth.me },
     { method: 'put', path: '/auth/password', handler: auth.changePassword },
+    { method: 'get', path: '/auth/tokens', handler: auth.listTokens },
+    { method: 'post', path: '/auth/tokens', handler: auth.createToken },
+    { method: 'delete', path: '/auth/tokens/:id', handler: auth.revokeToken },
     { method: 'get', path: '/users', handler: auth.listUsers },
     { method: 'post', path: '/users', handler: auth.createUser },
     { method: 'put', path: '/users/:id', handler: auth.updateUser },

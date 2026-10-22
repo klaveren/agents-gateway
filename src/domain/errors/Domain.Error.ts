@@ -190,3 +190,16 @@ export class SessionBusyError extends DomainError {
     super(`Session ${sessionId} is answering; wait for the turn to finish.`)
   }
 }
+
+/** O token de acesso pedido não vale (nome, validade, limite por conta). */
+export class InvalidAccessTokenError extends DomainError {
+  constructor(public readonly issues: Array<{ field: string; message: string }>) {
+    super(`Access token is invalid: ${issues.map((issue) => `${issue.field} (${issue.message})`).join('; ')}`)
+  }
+}
+
+export class AccessTokenNotFoundError extends DomainError {
+  constructor(public readonly tokenId: string) {
+    super(`Access token not found: ${tokenId}`)
+  }
+}

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import AccessTokens from '@/components/AccessTokens.vue'
 import { ApiError } from '@/lib/api'
 import type { TAudience } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
@@ -215,6 +216,8 @@ async function saveSettings() {
           </div>
         </form>
       </section>
+
+      <AccessTokens v-if="auth.user" />
 
       <section class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
         <h2 class="font-medium">Portão do gateway</h2>

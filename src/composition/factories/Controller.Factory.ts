@@ -39,8 +39,8 @@ export function makeController(): AgentController {
 }
 
 export function makeAuthController(): AuthController {
-  const { accounts, proof } = makeAuth()
-  return new AuthController({ accounts, proof })
+  const { accounts, proof, accessTokens } = makeAuth()
+  return new AuthController({ accounts, proof, accessTokens })
 }
 
 export function makeProvidersController(): ProvidersController {
