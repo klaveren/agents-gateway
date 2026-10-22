@@ -29,9 +29,9 @@ describe('identityFromToken', () => {
     process.env.CALLER_ROLE_CLAIM = 'user.type'
     process.env.CALLER_ACCOUNT_CLAIM = 'account.alias'
 
-    const token = jwt({ user: { id: 'u9', email: 'n@x.test', type: 'seller' }, account: { alias: 'acme' } })
+    const token = jwt({ user: { id: 'u9', email: 'n@x.test', type: 'member' }, account: { alias: 'acme' } })
 
-    assert.deepStrictEqual(identityFromToken(token), { id: 'u9', email: 'n@x.test', role: 'seller', account: 'acme' })
+    assert.deepStrictEqual(identityFromToken(token), { id: 'u9', email: 'n@x.test', role: 'member', account: 'acme' })
   })
 
   it('chave que já tem pontos (claim namespaced) vale como está', () => {

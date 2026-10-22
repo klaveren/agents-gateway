@@ -6,6 +6,7 @@ import { ListSessionsUseCase } from '@application/ListSessions.Usecase'
 import { SendMessageUseCase } from '@application/SendMessage.Usecase'
 import { NullConversationRepository } from '@infra/persistence/Null.ConversationRepository'
 import { SqliteConversationRepository, DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
+import { makeClassifier } from './Classifier.Factory'
 import { makeOrchestrator } from './Orchestrator.Factory'
 
 /**
@@ -44,7 +45,7 @@ export function makeUsecases() {
     /** O MESMO repositório do `SendMessageUseCase`: o controller lê o que ele grava. */
     conversations,
     createSessionUseCase: new CreateSessionUseCase(agentProvider),
-    sendMessageUseCase: new SendMessageUseCase(agentProvider, conversations),
+    sendMessageUseCase: new SendMessageUseCase(agentProvider, conversations, makeClassifier()),
     cancelSessionUseCase: new CancelSessionUseCase(agentProvider),
     deleteSessionUseCase: new DeleteSessionUseCase(agentProvider),
     getSessionUseCase: new GetSessionUseCase(agentProvider),

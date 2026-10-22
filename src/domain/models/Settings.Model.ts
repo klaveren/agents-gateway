@@ -49,8 +49,9 @@ export interface IAgentSettings {
   model?: string
 
   /**
-   * ⚠️ SÓ GRAVADOS POR ENQUANTO. O classificador de turno chega numa fase posterior; os dois campos
-   * existem agora para a tela e o armazenamento já nascerem com o formato final, e nada os lê.
+   * O classificador de turno lê os dois A CADA TURNO (ver `ConfiguredTurnClassifier`): ligar, desligar
+   * e trocar o modelo valem na hora, sem reiniciar. `classifyTurns` ausente é DESLIGADO; modelo vazio
+   * cai em `CLASSIFIER_MODEL`, e sem nenhum dos dois não há classificação.
    */
   classifierModel?: string
   classifyTurns?: boolean

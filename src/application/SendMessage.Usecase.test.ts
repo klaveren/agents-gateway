@@ -5,6 +5,8 @@ import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
 import { IConversationSession, IConversationTurn } from '@domain/models/Conversation.Model'
 import { ISession } from '@domain/models/Session.Model'
+import { TClassification } from '@domain/models/Classification.Model'
+import { ITurnClassifier } from '@domain/ports/TurnClassifier.Port'
 import { NullConversationRepository } from '@infra/persistence/Null.ConversationRepository'
 import { SendMessageUseCase } from './SendMessage.Usecase'
 
@@ -290,6 +292,132 @@ describe('SendMessageUseCase', () => {
       for await (const _ of usecase.execute('s', { text: 'oi' })) void _
 
       assert.deepStrictEqual(sent, ['oi'])
+    })
+  })
+
+  describe('classification', () => {
+    /** Repositório que também anota os rótulos, e avisa quando um chegou. */
+    class LabelingRepository extends RecordingRepository {
+      readonly labels: Array<{ sessionId: string; index: number; classification: TClassification }> = []
+      private labeled?: () => void
+
+      whenLabeled(): Promise<void> {
+        return new Promise((resolve) => {
+          this.labeled = resolve
+        })
+      }
+
+      async classifyTurn(sessionId: string, index: number, classification: TClassification): Promise<void> {
+        this.labels.push({ sessionId, index, classification })
+        this.labeled?.()
+      }
+    }
+
+    const talking = () =>
+      stubProvider({
+        describe: () => session({ turns: 3 }),
+        sendMessage: async function* (sessionId) {
+          yield { type: 'text.delta' as const, sessionId, payload: { text: 'resposta' }, timestamp: new Date() }
+          yield { type: 'tool.started' as const, sessionId, payload: { tool: 'orders_search', args: {} }, timestamp: new Date() }
+        },
+      })
+
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 20))
+
+    it('labels the turn after saving it, with the request, the answer and the tool names', async () => {
+      const repository = new LabelingRepository()
+      const order: string[] = []
+      const appended = repository.appendTurn.bind(repository)
+      repository.appendTurn = async (turn) => {
+        await appended(turn)
+        order.push('saved')
+      }
+      let seen: unknown
+      const classifier: ITurnClassifier = {
+        classify: async (input) => {
+          order.push('classified')
+          seen = input
+          return 'blue'
+        },
+      }
+
+      const labeled = repository.whenLabeled()
+      for await (const _ of new SendMessageUseCase(talking(), repository, classifier).execute('s', { text: 'minha pergunta' })) void _
+      await labeled
+
+      assert.deepStrictEqual(order, ['saved', 'classified'])
+      assert.deepStrictEqual(seen, { request: 'minha pergunta', answer: 'resposta', tools: ['orders_search'] })
+      assert.deepStrictEqual(repository.labels, [{ sessionId: 's', index: 2, classification: 'blue' }])
+    })
+
+    it('does not hold the stream: the reader finishes while the classifier is still thinking', async () => {
+      const repository = new LabelingRepository()
+      const gate: { release?: () => void } = {}
+      let started: () => void = () => {}
+      const classifierStarted = new Promise<void>((resolve) => (started = resolve))
+      const classifier: ITurnClassifier = {
+        classify: () =>
+          new Promise((resolve) => {
+            gate.release = () => resolve('green')
+            started()
+          }),
+      }
+
+      const events: string[] = []
+      for await (const event of new SendMessageUseCase(talking(), repository, classifier).execute('s', { text: 'oi' })) events.push(event.type)
+
+      assert.ok(events.length > 0)
+      assert.deepStrictEqual(repository.labels, [])
+
+      await classifierStarted
+      const labeled = repository.whenLabeled()
+      gate.release?.()
+      await labeled
+      assert.deepStrictEqual(JSON.stringify(repository.labels.slice()), JSON.stringify([{ sessionId: 's', index: 2, classification: 'green' }]))
+    })
+
+    it('a classifier that throws: the turn is saved and has no label', async () => {
+      const repository = new LabelingRepository()
+      const original = console.warn
+      console.warn = () => {}
+      try {
+        const classifier: ITurnClassifier = {
+          classify: async () => {
+            throw new Error('provider down')
+          },
+        }
+
+        const done = repository.recorded()
+        for await (const _ of new SendMessageUseCase(talking(), repository, classifier).execute('s', { text: 'oi' })) void _
+        await done
+        await settle()
+
+        assert.strictEqual(repository.turns.length, 1)
+        assert.deepStrictEqual(repository.labels, [])
+      } finally {
+        console.warn = original
+      }
+    })
+
+    it('no label from the classifier: nothing is written', async () => {
+      const repository = new LabelingRepository()
+      const done = repository.recorded()
+      for await (const _ of new SendMessageUseCase(talking(), repository, { classify: async () => undefined }).execute('s', { text: 'oi' })) void _
+      await done
+      await settle()
+
+      assert.deepStrictEqual(repository.labels, [])
+    })
+
+    it('no classifier: the turn is saved and nothing else happens', async () => {
+      const repository = new LabelingRepository()
+      const done = repository.recorded()
+      for await (const _ of new SendMessageUseCase(talking(), repository).execute('s', { text: 'oi' })) void _
+      await done
+      await settle()
+
+      assert.strictEqual(repository.turns.length, 1)
+      assert.deepStrictEqual(repository.labels, [])
     })
   })
 })

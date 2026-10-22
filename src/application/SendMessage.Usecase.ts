@@ -3,6 +3,7 @@ import { IStoredUsage } from '@domain/models/Conversation.Model'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
+import { ITurnClassifier } from '@domain/ports/TurnClassifier.Port'
 import { aggregateTurn } from './Turn.Aggregator'
 
 const TITLE_MAX = 60
@@ -70,6 +71,8 @@ export class SendMessageUseCase {
   constructor(
     private agentProvider: IAgentProvider,
     private conversations: IConversationRepository,
+    /** Opcional: sem classificador, a conversa é gravada sem rótulo e nada mais muda. */
+    private classifier?: ITurnClassifier,
   ) {}
 
   /**
@@ -180,6 +183,35 @@ export class SendMessageUseCase {
       aborted: turn.aborted || undefined,
       error: turn.error,
     })
+
+    await this.classify(sessionId, index, input, turn)
+  }
+
+  /**
+   * Rotula o turno JÁ GRAVADO.
+   *
+   * ⚖️ Nesta ordem, e não junto: classificar custa uma chamada a um modelo, e o registro do que
+   * aconteceu não pode ficar refém dela. Se o classificador cair, demorar ou ficar caro, a conversa
+   * já está salva; o rótulo é que não existe.
+   *
+   * ⛔ NUNCA LANÇA. O contrato do classificador já é não lançar; o `try` aqui é para o dia em que uma
+   * implementação não o cumprir — `record` roda solto (`void`), e uma rejeição não tratada derrubaria
+   * o processo por causa de uma observação.
+   */
+  private async classify(sessionId: string, index: number, input: IMessageInput, turn: { text: string; toolCalls: Array<{ tool: string }> }): Promise<void> {
+    if (!this.classifier) return
+
+    try {
+      const classification = await this.classifier.classify({
+        request: input.text ?? '',
+        answer: turn.text,
+        tools: turn.toolCalls.map((call) => call.tool),
+      })
+
+      if (classification) await this.conversations.classifyTurn(sessionId, index, classification)
+    } catch (error: unknown) {
+      console.warn('[classifier] o turno ficou sem rótulo:', error instanceof Error ? error.message : error)
+    }
   }
 
   /**

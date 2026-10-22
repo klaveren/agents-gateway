@@ -176,11 +176,26 @@ pnpm dev
 The gateway listens on `http://127.0.0.1:3000/v1` and works **with no MCP server running** —
 the built-in `search_web` and `run_bash` keep it useful on their own. Point it at one with
 `MCP_SERVER_URL` (default `http://localhost:8000/mcp`) and those tools join the catalog.
-`GET /v1/tools` shows the merged view and whether MCP is connected.
+`GET /v1/tools` shows the merged view and whether MCP is connected. Writing your own server?
+See the [MCP server guide](docs/MCP-SERVER-GUIDE.md).
 
 The connection heals itself. A server that comes up *after* the gateway is picked up on the
 next tool listing or health check; one that dies mid-run drops the gateway back to local
 tools and is retried with exponential backoff (1s up to 60s). No restart either way.
+
+### Other environment variables
+
+| Env | Default | What it does |
+| --- | --- | --- |
+| `PORT` | `3000` | Port to listen on. |
+| `MCP_SERVER_URL` | `http://localhost:8000/mcp` | MCP server whose tools join the catalog. |
+| `MAX_OUTPUT_TOKENS` | `4096` | Output cap per model call in the chat lane. |
+| `MAX_TOOL_TURNS` | `12` | Tool round-trips allowed in one turn. |
+| `BASH_CWD` | *(process cwd)* | Working directory of `run_bash`. |
+| `BASH_TIMEOUT_MS` | `20000` | `run_bash` timeout. |
+| `BASH_MAX_OUTPUT_CHARS` | `4000` | `run_bash` output cap. |
+| `CONVERSATIONS_DB` | `data/gateway.db` | SQLite file for conversations **and** settings. `off` disables recording and keeps settings in memory. |
+| `GEMINI_API_KEY` | *(none)* | Alternative to `GOOGLE_GENAI_API_KEY` for the agent lane (`@google/adk`). |
 
 ### Before you run it
 
@@ -271,7 +286,8 @@ memory, lost on restart) and apply on the next session, in the same instant they
 | `audience` | `off`: nobody opens a new session. `restricted`: only callers whose **proven** role is in `AUDIENCE_ROLES`. `all` (default): every caller the gateway already lets through. |
 | `agentId` | Agent that answers when the caller sends none. Empty = first in the registry. |
 | `model` | Model used when the caller sends none. A model the chosen agent does not declare falls back to that agent's first, so switching agent never ships a stale model id to the wrong provider. |
-| `classifierModel`, `classifyTurns` | Stored only; the turn classifier comes in a later phase. |
+| `classifyTurns` | Turn on the [turn classifier](#turn-classification). Absent = off. |
+| `classifierModel` | Model that classifies. Empty = `CLASSIFIER_MODEL`; with neither, no classification. |
 
 `PUT /settings` takes a partial body: an absent field is untouched, and `null` (or `""`) on an
 optional field deletes it and reverts to the default. `audience` cannot be cleared. `GET`
@@ -302,6 +318,8 @@ whose id/e-mail is in `ADMIN_USERS`. Without `CALLER_PROOF_TOOL` nobody is an ad
 | `AGENTS_ENABLED` | *(all)* | Comma list of agent ids that **exist** in this process. An agent that is not listed is not refused, it is gone: no `/agents`, no session by any route. Use it so an agent carrying a shell tool (`run_bash`) cannot be reached. The boot fails if nothing matches. |
 | `SESSION_CONTEXT_TEMPLATE` | *(none)* | Text sent to the model before the **first** message of a session, never stored in the turn. Placeholders: `{id}` `{email}` `{role}` `{account}` `{date}`. If it cites an identity field the token lacks, no context is sent. Unset = none. |
 | `SESSION_TIMEZONE` | `UTC` | Time zone of `{date}` (IANA name; an invalid one falls back to UTC). |
+| `CLASSIFIER_MODEL` | *(none)* | Fallback model for the turn classifier when settings carry none (see [Turn classification](#turn-classification)). |
+| `CLASSIFIER_PROMPT_FILE` | *(none)* | Path to a text file that replaces the classifier prompt. A missing, unreadable or empty file is refused with a boot warning. |
 | `MODEL_PRICING_FILE` | *(none)* | Path to a JSON file of model prices, merged over the built-in table (see [Monitor, sharing and cost](#monitor-sharing-and-cost)). An invalid file is refused whole, with a boot warning. |
 
 Sessions expire after **8 hours** without activity.
@@ -325,8 +343,8 @@ history screen reads.
   active tab, so the other tabs keep their numbers. `GET /v1/conversations/stats` returns totals,
   `byModel`, `byClassification` and the estimated cost. Everyone else gets `404`.
 - **Classification** (`green`, `blue`, `amber`, `red`) is stored per turn and per conversation, where the
-  conversation carries the *worst* of its turns. The repository only stores it; the classifier that
-  produces it is a later phase.
+  conversation carries the *worst* of its turns. See [Turn classification](#turn-classification)
+  for what produces it.
 - **Sharing.** `PUT /v1/conversations/:id/share { "shared": true }` (owner or administrator) opens a
   read-only link. The `shareId` (12 random bytes, base64url) is created once and reused: closing
   keeps it and only stops it from answering, so reopening returns the same link. `GET /v1/shared/:id`
@@ -350,6 +368,45 @@ are not confirmed. Add or correct any with `MODEL_PRICING_FILE`:
 
 An entry replaces the built-in one for that model. The file is read once at boot; if any entry is
 invalid the whole file is refused and the built-in table stays, with a warning in the log.
+
+### Turn classification
+
+An optional small model labels each turn, so you can find patterns without reading every
+conversation:
+
+| Label | Meaning | Action |
+| --- | --- | --- |
+| `green` | Answered within the agent's capabilities. | none |
+| `blue` | The agent failed to deliver, or a capability is missing. | product gap |
+| `amber` | A legitimate request the system does not do, or that is out of scope. | product decision |
+| `red` | Abuse: jailbreak, prompt injection, an attempt to reach another user's or account's data. | investigate today |
+
+Severity is `green` < `blue` < `amber` < `red`; a conversation carries the worst label of its turns.
+
+It is **off by default**, because each classified turn is a paid call that sends the conversation
+text to a provider. It runs when `classifyTurns` is on in settings **and** a model resolves
+(`classifierModel` in settings, else `CLASSIFIER_MODEL`). Both are read on every turn, so toggling
+or switching the model needs no restart. The provider comes from the agent registry (which agent
+declares the model), falling back to the id prefix (`claude*`, `gemini*`, `gpt*`/`o<digit>*`), and the
+call uses the same plain SDK and API key as the chat lane (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+`GOOGLE_API_KEY`). With no model or no key it stays off and says so once in the boot log.
+
+Design rules worth knowing:
+
+- **After the turn is saved, never before.** The classifier is awaited by nothing on the reply
+  path, and a failure (or a model that answers something else) leaves the turn without a label. It
+  never changes the turn.
+- **Separate from the agent.** An agent under prompt injection is a poor judge of its own
+  conversation. The classifier has no tools: the worst a hostile text can do is a wrong label.
+- **The text is data.** Request, answer and tool names are delimited, capped at 2000 characters
+  each, and the prompt says so. Only the four exact words are accepted; anything else is no label.
+- **Output cap leaves room for reasoning.** The answer is one word, but thinking models spend the
+  output budget before writing it; a cap sized for the word alone yielded empty answers and no
+  error. The cap is 512 tokens.
+
+`CLASSIFIER_PROMPT_FILE` replaces the default prompt (generic English: the table above) with your
+own text, for a domain-specific definition of "out of scope" or "abuse". Keep the instruction that
+the quoted text is data.
 
 ### Tool safety, and actual containment
 
@@ -436,6 +493,30 @@ Failures carry a stable `code` — `validation_error`, `agent_not_found`, `sessi
 parsing prose.
 
 ---
+
+## What we learned running it in production
+
+Notes from a production deployment of this gateway. Facts, not recommendations for every setup.
+
+- **Implicit prompt cache on Gemini worked; explicit cache was not worth it.** Once measured
+  correctly (per call, from the provider's usage metadata), the implicit cache hit on about 9 of
+  10 calls. Paying for an explicit cache to improve on that was not justified.
+- **Count usage per call, not per event.** When the model asked for two or more tools in one
+  response, the ADK emitted one event per call, each carrying the same `promptTokenCount` — summing
+  events counted the input two or three times. And a call that ends in a tool request lost its
+  cache count, because its last chunk never becomes an event. Usage now comes from the model
+  callback, once per call, with cache and reasoning kept apart; the turn is their sum.
+- **Fewer tool calls beat caching.** The five costliest questions went from 6-33 tool calls each to
+  2, purely through changes on the MCP side (ranked rows that carry ids, exclusion filters,
+  server-side counts). See [docs/MCP-SERVER-GUIDE.md](docs/MCP-SERVER-GUIDE.md).
+- **Closed by default, with proven identity.** Two real findings: a proxy that injected the gateway
+  token for everyone turned "authenticated" into "anyone", and a hand-forged unsigned JWT claimed
+  another user's id. Hence `X-Tool-Authorization` on every route, and identity that decides access
+  must be proven (`CALLER_PROOF_TOOL`), not read from the token.
+- **The credential is per call.** The caller's token sat in one field of the MCP client, written at
+  the start of each call and cleared at the end. With two people at once, A's request went out with
+  B's token, and one call's cleanup blanked the other's. It now travels in an async-local scope, one
+  per call, with nothing to clear.
 
 ## Credits
 
