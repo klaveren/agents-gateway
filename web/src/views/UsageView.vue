@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import UsageSummaryView from '@/components/UsageSummaryView.vue'
 import { tokens, usd } from '@/lib/format'
-import type { IUsageFigure, IUsageSummary, IUserUsage } from '@/lib/types'
+import type { IGroupUsage, IUsageFigure, IUsageSummary, IUserUsage } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
 import { useUsageStore } from '@/stores/usage'
 
@@ -18,12 +18,28 @@ const usage = useUsageStore()
 
 const PERIODS = [7, 30, 90]
 const days = ref(30)
-const tab = computed(() => (route.query.tab === 'users' && auth.isAdmin ? 'users' : 'mine'))
+const tab = computed(() => (auth.isAdmin && (route.query.tab === 'users' || route.query.tab === 'keys') ? route.query.tab : 'mine'))
 const selectedUser = computed(() => (typeof route.query.user === 'string' ? route.query.user : undefined))
+
+/** A chave do `metadata` agrupada na aba "Por chave"; lembrada neste navegador. */
+const KEY_STORAGE = 'usage.metadataKey'
+const storedKey = () => {
+  try {
+    return localStorage.getItem(KEY_STORAGE) || 'accountId'
+  } catch {
+    return 'accountId'
+  }
+}
+const metaKey = computed(() => (typeof route.query.key === 'string' && route.query.key ? route.query.key : storedKey()))
+const keyDraft = ref(metaKey.value)
+const selectedValue = computed(() => (typeof route.query.value === 'string' ? route.query.value : undefined))
+const NO_VALUE = '~none'
 
 const mine = ref<IUsageSummary>()
 const users = ref<{ totals: IUsageFigure; users: IUserUsage[] }>()
 const detail = ref<IUsageSummary & { ownerId: string; name?: string; email?: string }>()
+const groups = ref<{ key: string; totals: IUsageFigure; groups: IGroupUsage[] }>()
+const valueDetail = ref<IUsageSummary & { key: string; value?: string }>()
 const loading = ref(false)
 const error = ref<string>()
 
@@ -32,6 +48,10 @@ async function load() {
   loading.value = true
   try {
     if (tab.value === 'mine') mine.value = await usage.mine(days.value)
+    else if (tab.value === 'keys') {
+      if (selectedValue.value) valueDetail.value = await usage.byKeyValue(metaKey.value, selectedValue.value, days.value)
+      else groups.value = await usage.byKey(metaKey.value, days.value)
+    }
     else if (selectedUser.value) detail.value = await usage.user(selectedUser.value, days.value)
     else users.value = await usage.users(days.value)
   } catch (failure) {
@@ -41,7 +61,19 @@ async function load() {
   }
 }
 
-watch([days, tab, selectedUser, () => auth.signedIn], () => void load(), { immediate: true })
+watch([days, tab, selectedUser, metaKey, selectedValue, () => auth.signedIn], () => void load(), { immediate: true })
+watch(metaKey, (key) => (keyDraft.value = key))
+
+function applyKey() {
+  const key = keyDraft.value.trim()
+  if (!key) return
+  try {
+    localStorage.setItem(KEY_STORAGE, key)
+  } catch {
+    /* sem armazenamento: vale só para esta visita */
+  }
+  void go({ key, value: undefined })
+}
 
 const cost = (item: IUsageFigure) => (item.costUsd === undefined ? '—' : `${item.costIsFloor ? '≥ ' : ''}${usd(item.costUsd)}`)
 const go = (query: Record<string, string | undefined>) => router.replace({ query: { ...route.query, ...query } })
@@ -62,6 +94,7 @@ const go = (query: Record<string, string | undefined>) => router.replace({ query
         <div v-if="auth.isAdmin" class="flex gap-1 rounded-full bg-zinc-900 p-1 text-sm">
           <button class="rounded-full px-3 py-1" :class="tab === 'mine' ? 'bg-zinc-700 text-white' : 'text-zinc-400'" @click="go({ tab: undefined, user: undefined })">Meu uso</button>
           <button class="rounded-full px-3 py-1" :class="tab === 'users' ? 'bg-zinc-700 text-white' : 'text-zinc-400'" @click="go({ tab: 'users', user: undefined })">Por usuário</button>
+          <button class="rounded-full px-3 py-1" :class="tab === 'keys' ? 'bg-zinc-700 text-white' : 'text-zinc-400'" @click="go({ tab: 'keys', user: undefined, value: undefined })">Por chave</button>
         </div>
         <div class="ml-auto flex gap-1 rounded-full bg-zinc-900 p-1 text-sm" role="group" aria-label="Período">
           <button v-for="period in PERIODS" :key="period" class="rounded-full px-3 py-1" :class="days === period ? 'bg-zinc-700 text-white' : 'text-zinc-400'" @click="days = period">{{ period }} dias</button>
@@ -69,11 +102,51 @@ const go = (query: Record<string, string | undefined>) => router.replace({ query
       </header>
 
       <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
-      <p v-if="loading && !mine && !users && !detail" class="text-sm text-zinc-500">Carregando…</p>
+      <p v-if="loading && !mine && !users && !detail && !groups && !valueDetail" class="text-sm text-zinc-500">Carregando…</p>
 
       <template v-if="tab === 'mine' && mine">
         <p class="text-xs text-zinc-500">Os tokens das suas conversas. O custo fica com quem administra o gateway.</p>
         <UsageSummaryView :summary="mine" :show-cost="false" />
+      </template>
+
+      <template v-else-if="tab === 'keys' && selectedValue && valueDetail">
+        <button class="self-start text-sm text-zinc-400 hover:text-zinc-100" @click="go({ value: undefined })">← Todos os valores de {{ metaKey }}</button>
+        <h2 class="text-lg font-medium"><span class="font-mono text-sm text-zinc-500">{{ metaKey }} =</span> {{ selectedValue === NO_VALUE ? 'sem valor' : selectedValue }}</h2>
+        <UsageSummaryView :summary="valueDetail" :show-cost="true" />
+      </template>
+
+      <template v-else-if="tab === 'keys'">
+        <form class="flex flex-wrap items-center gap-2 text-sm" @submit.prevent="applyKey">
+          <label class="text-zinc-400" for="metadata-key">Chave do metadata</label>
+          <input id="metadata-key" v-model="keyDraft" class="w-48 rounded-lg bg-zinc-900 px-2 py-1 font-mono text-zinc-100 ring-1 ring-zinc-800" placeholder="accountId" />
+          <button class="rounded-full bg-zinc-800 px-3 py-1 text-zinc-100 hover:bg-zinc-700">Agrupar</button>
+        </form>
+        <template v-if="groups">
+          <div class="grid grid-cols-3 gap-3">
+            <div class="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4"><span class="block text-xs text-zinc-500">Custo estimado</span><span class="text-2xl font-semibold tabular-nums">{{ cost(groups.totals) }}</span></div>
+            <div class="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4"><span class="block text-xs text-zinc-500">Tokens</span><span class="text-2xl font-semibold tabular-nums">{{ tokens(groups.totals.usage.totalTokens) }}</span></div>
+            <div class="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4"><span class="block text-xs text-zinc-500">Valores de {{ groups.key }}</span><span class="text-2xl font-semibold tabular-nums">{{ groups.groups.filter((group) => group.value !== undefined).length }}</span></div>
+          </div>
+          <p v-if="!groups.groups.length" class="text-sm text-zinc-500">Nenhum uso neste período.</p>
+          <table v-else class="w-full overflow-hidden rounded-2xl border border-zinc-800 text-left text-sm">
+            <thead class="bg-zinc-900 text-xs text-zinc-500">
+              <tr><th class="px-4 py-2 font-medium">{{ groups.key }}</th><th class="font-medium">Conversas</th><th class="font-medium">Turnos</th><th class="font-medium">Tokens</th><th class="pr-4 text-right font-medium">Custo</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="group in groups.groups" :key="group.value ?? NO_VALUE" class="cursor-pointer border-t border-zinc-800 hover:bg-zinc-900/70" @click="go({ value: group.value ?? NO_VALUE })">
+                <td class="px-4 py-2 font-mono" :class="group.value === undefined ? 'text-zinc-500' : 'text-zinc-200'">{{ group.value ?? 'sem valor' }}</td>
+                <td class="tabular-nums text-zinc-300">{{ group.conversations }}</td>
+                <td class="tabular-nums text-zinc-300">{{ group.turns }}</td>
+                <td class="tabular-nums text-zinc-300">{{ tokens(group.usage.totalTokens) }}</td>
+                <td class="pr-4 text-right tabular-nums text-zinc-100">{{ cost(group) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </template>
+        <p class="text-xs text-zinc-500">
+          Agrupa pelo <code>metadata</code> que quem cria a sessão envia (<code>POST /sessions</code>) — o gateway não confere esses valores. Para cobrança, crie as sessões pelo seu backend. API:
+          <code>/v1/usage/by/{{ metaKey }}</code>.
+        </p>
       </template>
 
       <template v-else-if="tab === 'users' && selectedUser && detail">

@@ -12,7 +12,7 @@ import {
   IStoredUsage,
   PREVIEW_MAX,
 } from '@domain/models/Conversation.Model'
-import { IUsageQuery, IUsageRow } from '@domain/models/Usage.Model'
+import { IUsageQuery, IUsageRow, metadataKeyIssue } from '@domain/models/Usage.Model'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 
 /**
@@ -560,9 +560,23 @@ export class SqliteConversationRepository implements IConversationRepository {
           params.push(...owner.params)
         }
 
+        /**
+         * ⛔ A chave vira caminho JSON DENTRO do SQL: só passa a que `metadataKeyIssue` aceita (lança, e o
+         * `guard` devolve vazio — quem valida antes, com a mensagem, é o controller). O valor é parâmetro.
+         */
+        const path = (key: string) => {
+          if (metadataKeyIssue(key)) throw new Error(`metadata key not allowed: ${key}`)
+          return `CAST(json_extract(c.metadata, '$.${key}') AS TEXT)`
+        }
+        for (const [key, value] of Object.entries(query.metadata ?? {})) {
+          where.push(`${path(key)} = ?`)
+          params.push(value)
+        }
+        const group = query.groupBy ? `${path(query.groupBy)} AS group_value,` : ''
+
         const rows = this.db
           .prepare(
-            `SELECT date(datetime(t.at, ?)) AS day, t.conversation_id AS conversation_id, c.title AS title,
+            `SELECT date(datetime(t.at, ?)) AS day, t.conversation_id AS conversation_id, c.title AS title, ${group}
                     json_extract(c.metadata, '$.owner.id') AS owner_id, json_extract(c.metadata, '$.owner.email') AS owner_email,
                     c.agent_id AS agent_id, c.provider AS provider, COALESCE(t.model, c.model) AS model, COUNT(*) AS turns,
                     SUM(t.input_tokens) AS input_tokens, SUM(t.output_tokens) AS output_tokens, SUM(t.reasoning_tokens) AS reasoning_tokens,
@@ -583,6 +597,7 @@ export class SqliteConversationRepository implements IConversationRepository {
           agentId: text(row.agent_id),
           provider: text(row.provider),
           model: text(row.model),
+          ...(typeof row.group_value === 'string' ? { group: row.group_value } : {}),
           turns: count(row.turns),
           usage: usageOf(row),
         }))

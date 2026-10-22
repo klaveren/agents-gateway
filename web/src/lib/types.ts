@@ -256,6 +256,11 @@ export interface IUsageSummary {
   top: Array<IUsageFigure & { id: string; title?: string; agentId: string; provider: string; model: string }>
 }
 
+/** Um valor de uma chave do `metadata` (ex.: `accountId`). Sem `value` = as conversas sem a chave. */
+export interface IGroupUsage extends IUsageFigure {
+  value?: string
+}
+
 export interface IUserUsage extends IUsageFigure {
   ownerId?: string
   email?: string

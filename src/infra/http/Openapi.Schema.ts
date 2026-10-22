@@ -675,6 +675,38 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'OK', ...json(envelope(usageSummary(true))) }, '401': failures['401'], '404': failures['404'] },
       },
     },
+    '/usage/by/{key}': {
+      get: {
+        summary:
+          'Usage grouped by the value of a session `metadata` key (e.g. `accountId`), with cost, most expensive first — the billing view for whoever integrates the gateway. Any other query parameter filters by metadata (`/usage/by/userId?accountId=xpto`). Metadata is declared by the session creator, not verified. Administrators only',
+        parameters: [{ name: 'key', in: 'path', required: true, schema: { type: 'string', pattern: '^[A-Za-z0-9_]{1,64}$' } }, ...usageParams],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  key: { type: 'string' },
+                  totals: usageFigure(true),
+                  groups: { type: 'array', items: { allOf: [usageFigure(true), { type: 'object', properties: { value: { type: 'string', description: 'Absent = conversations without the key.' } } }] } },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': { description: 'Invalid metadata key (or `owner`, which has its own routes)', ...json(failureEnvelope) },
+        },
+      },
+    },
+    '/usage/by/{key}/{value}': {
+      get: {
+        summary: 'One value of a metadata key in detail, with cost (`~none` = conversations without the key). Administrators only',
+        parameters: [{ name: 'key', in: 'path', required: true, schema: { type: 'string' } }, { name: 'value', in: 'path', required: true, schema: { type: 'string' } }, ...usageParams],
+        responses: { '200': { description: 'OK', ...json(envelope(usageSummary(true))) }, '401': failures['401'], '404': failures['404'], '422': { description: 'Invalid metadata key', ...json(failureEnvelope) } },
+      },
+    },
     '/agents': {
       post: {
         summary: 'Create an agent. Administrators only',
