@@ -36,7 +36,7 @@ export const API_PREFIX = '/v1'
  */
 export const PUBLIC_PATHS: readonly string[] = ['/health', '/shared/:id', '/auth/status', '/auth/setup', '/auth/login']
 
-export type TRouteMethod = 'get' | 'post' | 'put' | 'delete'
+export type TRouteMethod = 'get' | 'post' | 'put' | 'patch' | 'delete'
 
 export interface IRoute {
   method: TRouteMethod
@@ -200,6 +200,7 @@ function buildRoutes(controller: AgentController, auth: AuthController, provider
     { method: 'get', path: '/sessions', handler: controller.listSessions },
     { method: 'get', path: '/sessions/:id', handler: controller.getSession },
     { method: 'delete', path: '/sessions/:id', handler: controller.deleteSession },
+    { method: 'patch', path: '/sessions/:id', handler: controller.reconfigureSession },
     { method: 'post', path: '/sessions/:id/messages', handler: controller.sendMessage },
     { method: 'post', path: '/sessions/:id/cancel', handler: controller.cancelSession },
   ]

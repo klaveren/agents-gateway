@@ -26,6 +26,8 @@ export interface ISession {
   turns: number
   /** Acumulado da sessão inteira. */
   usage: IUsage
+  /** O mesmo acumulado, por modelo: com troca no meio da conversa, é o que deixa o custo certo. */
+  usageByModel?: Record<string, IUsage>
   createdAt: Date
   lastActivityAt: Date
   metadata?: Record<string, unknown>

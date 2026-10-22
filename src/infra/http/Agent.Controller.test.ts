@@ -10,6 +10,7 @@ import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { Request, Response } from 'express'
 import { AgentController, IAgentControllerDeps } from './Agent.Controller'
 import { CancelSessionUseCase } from '@application/CancelSession.Usecase'
+import { ReconfigureSessionUseCase } from '@application/ReconfigureSession.Usecase'
 import { CreateSessionUseCase } from '@application/CreateSession.Usecase'
 import { DeleteSessionUseCase } from '@application/DeleteSession.Usecase'
 import { GetSessionUseCase } from '@application/GetSession.Usecase'
@@ -66,6 +67,9 @@ describe('AgentController', () => {
       cancel: async () => {},
       dispose: async () => {},
       describe: () => record(),
+      reconfigure: () => {
+        throw new Error('not used')
+      },
       list: () => [record()],
       ...overrides,
     }
@@ -75,6 +79,7 @@ describe('AgentController', () => {
       createSession: new CreateSessionUseCase(provider),
       sendMessage: new SendMessageUseCase(provider, new NullConversationRepository()),
       cancelSession: new CancelSessionUseCase(provider),
+      reconfigureSession: new ReconfigureSessionUseCase(provider),
       deleteSession: new DeleteSessionUseCase(provider),
       getSession: new GetSessionUseCase(provider),
       listSessions: new ListSessionsUseCase(provider),
@@ -414,6 +419,10 @@ describe('AgentController', () => {
       const controller = withAlice({
         dispose: async () => void calls.push('dispose'),
         cancel: async () => void calls.push('cancel'),
+        reconfigure: () => {
+          calls.push('reconfigure')
+          return aliceSession
+        },
         sendMessage: async function* () {
           calls.push('sendMessage')
           yield { type: 'message.started' as const, sessionId: 's-alice', timestamp: new Date() }
@@ -426,6 +435,7 @@ describe('AgentController', () => {
             (res: Response) => controller.getSession(mockRequest({ params: { id: 's-alice' } }), res),
             (res: Response) => controller.deleteSession(mockRequest({ params: { id: 's-alice' } }), res),
             (res: Response) => controller.cancelSession(mockRequest({ params: { id: 's-alice' } }), res),
+            (res: Response) => controller.reconfigureSession(mockRequest({ params: { id: 's-alice' }, body: { model: 'x' } }), res),
             (res: Response) => controller.sendMessage(mockRequest({ params: { id: 's-alice' }, body: { message: 'oi' }, accept: 'application/json' }), res),
           ] as const
         ).map(async (call) => {
@@ -440,6 +450,26 @@ describe('AgentController', () => {
         assert.strictEqual(locals.body?.code, 'session_not_found')
       }
       assert.deepStrictEqual(calls, [])
+    })
+
+    it('a dona troca o modelo da própria sessão; corpo vazio é 422', async () => {
+      let received: unknown
+      const controller = withAlice({
+        reconfigure: (_id, change) => {
+          received = change
+          return { ...aliceSession, model: 'novo', reasoning: 'high' }
+        },
+      })
+
+      const ok = mockResponse()
+      await withCaller(ALICE, () => controller.reconfigureSession(mockRequest({ params: { id: 's-alice' }, body: { model: 'novo', reasoning: 'high' } }), ok.res))
+      const empty = mockResponse()
+      await withCaller(ALICE, () => controller.reconfigureSession(mockRequest({ params: { id: 's-alice' }, body: {} }), empty.res))
+
+      assert.strictEqual(ok.locals.statusCode, 200)
+      assert.deepStrictEqual(received, { model: 'novo', reasoning: 'high' })
+      assert.strictEqual((ok.locals.body?.result as { model: string }).model, 'novo')
+      assert.strictEqual(empty.locals.statusCode, 422)
     })
 
     it('a sessão de outro e a que não existe respondem IGUAL — não conta quais ids existem', async () => {
@@ -786,6 +816,9 @@ describe('AgentController', () => {
         const controller = controllerWith(
           {
             describe: () => record({ turns: 0, metadata: { owner: { id: 'm1' } } }),
+            reconfigure: () => {
+              throw new Error('not used')
+            },
             sendMessage: async function* (_id, input) {
               sent.push(input.text)
               yield { type: 'text.delta' as const, sessionId: 's', timestamp: new Date(), payload: { text: 'ok' } }

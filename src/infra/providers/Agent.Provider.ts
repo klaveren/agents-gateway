@@ -7,9 +7,12 @@ import {
   AgentNotFoundError,
   AgentUnavailableError,
   AgentWithoutModelError,
+  InvalidSessionChangeError,
   ProviderUnavailableError,
+  SessionBusyError,
   SessionNotFoundError,
 } from '@domain/errors/Domain.Error'
+import { REASONING_LEVELS } from '@domain/Reasoning.Levels'
 import { DEFAULT_SETTINGS, IAgentSettings } from '@domain/models/Settings.Model'
 import { IAgentDirectory } from '@domain/ports/AgentRepository.Port'
 import { IProviderDirectory } from '@domain/ports/ProviderRepository.Port'
@@ -22,7 +25,7 @@ import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { caller } from '@infra/mcp/Caller.Identity'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { ISession } from '@domain/models/Session.Model'
-import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
+import { IAgentProvider, ISessionChange } from '@domain/ports/AgentProvider.Port'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
 
@@ -169,6 +172,34 @@ export class AgentProvider implements IAgentProvider {
     return this.sessions.list().map(toSession)
   }
 
+  /**
+   * Troca o modelo e/ou o raciocínio de uma sessão viva. Os adapters leem os dois do registro a cada
+   * turno, então basta mudar o registro: o histórico segue o mesmo.
+   *
+   * ⛔ Só modelo que o agente oferece AGORA (os ativados no catálogo, que já vêm filtrados) — o provider
+   * não muda: outro provider é outro formato de histórico, e isso é conversa nova.
+   * ⛔ Nunca no meio de um turno: metade da resposta sairia de um modelo e o custo de outro.
+   */
+  reconfigure(sessionId: string, change: ISessionChange): ISession {
+    const record = this.requireSession(sessionId)
+    if (record.status === 'running') throw new SessionBusyError(sessionId)
+
+    const agent = this.getAgent(record.agentId)
+    const levels = REASONING_LEVELS[record.protocol]
+    const issues: Array<{ field: string; message: string }> = []
+    if (change.model !== undefined && !agent.models.includes(change.model)) issues.push({ field: 'model', message: `not offered by ${agent.id}: ${change.model}` })
+    if (change.reasoning && !levels.includes(change.reasoning))
+      issues.push({
+        field: 'reasoning',
+        message: levels.length ? `not a ${record.protocol} reasoning level: ${change.reasoning}` : `${record.protocol} has no reasoning control here`,
+      })
+    if (issues.length) throw new InvalidSessionChangeError(issues)
+
+    if (change.model !== undefined) record.model = change.model
+    if (change.reasoning !== undefined) record.reasoning = change.reasoning || undefined
+    return toSession(record)
+  }
+
   private requireSession(sessionId: string): ISessionRecord {
     const record = this.sessions.get(sessionId)
     if (!record) throw new SessionNotFoundError(sessionId)
@@ -228,6 +259,7 @@ function toSession(record: ISessionRecord): ISession {
     status: record.status,
     turns: record.turns,
     usage: record.usage,
+    usageByModel: record.usageByModel,
     createdAt: record.createdAt,
     lastActivityAt: new Date(record.lastActivityAt),
     metadata: record.metadata,

@@ -5,6 +5,7 @@ import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
 import { IConversationTurn } from '@domain/models/Conversation.Model'
 import { CancelSessionUseCase } from '@application/CancelSession.Usecase'
+import { ReconfigureSessionUseCase } from '@application/ReconfigureSession.Usecase'
 import { CreateSessionUseCase } from '@application/CreateSession.Usecase'
 import { DeleteSessionUseCase } from '@application/DeleteSession.Usecase'
 import { GetSessionUseCase } from '@application/GetSession.Usecase'
@@ -57,6 +58,9 @@ describe('AgentController — conversas, monitor e compartilhamento', () => {
       cancel: async () => {},
       dispose: async () => {},
       describe: () => ({}),
+      reconfigure: () => {
+        throw new Error('not used')
+      },
       list: () => [],
     } as unknown as IAgentProvider
 
@@ -65,6 +69,7 @@ describe('AgentController — conversas, monitor e compartilhamento', () => {
       createSession: new CreateSessionUseCase(provider),
       sendMessage: new SendMessageUseCase(provider, conversations),
       cancelSession: new CancelSessionUseCase(provider),
+      reconfigureSession: new ReconfigureSessionUseCase(provider),
       deleteSession: new DeleteSessionUseCase(provider),
       getSession: new GetSessionUseCase(provider),
       listSessions: new ListSessionsUseCase(provider),

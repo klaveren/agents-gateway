@@ -4,11 +4,19 @@ import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { ISession } from '@domain/models/Session.Model'
 
+/** `reasoning: null` volta ao padrão do provider; campo ausente não muda. */
+export interface ISessionChange {
+  model?: string
+  reasoning?: string | null
+}
+
 export interface IAgentProvider {
   createSession(input: ICreateSessionInput): Promise<IAgentSession>
   sendMessage(sessionId: string, input: IMessageInput): AsyncIterable<IAgentEvent>
   cancel(sessionId: string): Promise<void>
   dispose(sessionId: string): Promise<void>
   describe(sessionId: string): ISession
+  /** Troca o modelo e/ou o nível de raciocínio de uma sessão viva; vale a partir do próximo turno. */
+  reconfigure(sessionId: string, change: ISessionChange): ISession
   list(): ISession[]
 }

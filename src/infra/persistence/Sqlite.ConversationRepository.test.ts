@@ -48,6 +48,35 @@ describe('SqliteConversationRepository', () => {
     assert.strictEqual(found?.createdAt.toISOString(), '2026-08-30T10:00:00.000Z')
   })
 
+  it('troca de modelo: o turno guarda o seu modelo e nível; a conversa, o consumo por modelo; stats e uso separam', async () => {
+    const repo = repository()
+    const usageByModel = { 'gemini-3.7-flash': { inputTokens: 100, totalTokens: 100 }, 'gemini-3.1-pro': { inputTokens: 50, totalTokens: 50 } }
+    await repo.saveSession(session({ usageByModel, usage: { inputTokens: 150, totalTokens: 150 } }))
+    await repo.appendTurn(turn({ index: 0, model: 'gemini-3.7-flash', usage: { inputTokens: 100, totalTokens: 100 } }))
+    await repo.appendTurn(turn({ index: 1, model: 'gemini-3.1-pro', effort: 'high', usage: { inputTokens: 50, totalTokens: 50 } }))
+    // Um cabeçalho regravado sem o consumo por modelo não o apaga.
+    await repo.saveSession(session({ usage: { inputTokens: 150, totalTokens: 150 } }))
+
+    const [first, second] = await repo.listTurns('s1')
+    assert.deepStrictEqual([first.model, first.effort, second.model, second.effort], ['gemini-3.7-flash', undefined, 'gemini-3.1-pro', 'high'])
+    assert.deepStrictEqual((await repo.findSession('s1'))?.usageByModel, usageByModel)
+
+    const stats = await repo.stats()
+    assert.deepStrictEqual(
+      stats.byModel.map((item) => [item.model, item.usage.inputTokens]),
+      [
+        ['gemini-3.7-flash', 100],
+        ['gemini-3.1-pro', 50],
+      ],
+    )
+
+    const rows = await repo.usage({ since: new Date('2026-08-01T00:00:00.000Z'), tzOffsetMinutes: 0 })
+    assert.deepStrictEqual(rows.map((row) => [row.model, row.turns]).sort(), [
+      ['gemini-3.1-pro', 1],
+      ['gemini-3.7-flash', 1],
+    ])
+  })
+
   it('never overwrites a turn: a repeated index goes to the next free one', async () => {
     const repo = repository()
     await repo.saveSession(session())

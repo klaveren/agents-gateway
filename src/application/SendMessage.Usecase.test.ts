@@ -53,6 +53,9 @@ const stubProvider = (overrides: Partial<IAgentProvider> = {}): IAgentProvider =
   cancel: async () => {},
   dispose: async () => {},
   describe: () => ({}) as ISession,
+  reconfigure: () => {
+    throw new Error('not used')
+  },
   list: () => [],
   ...overrides,
 })
@@ -91,6 +94,9 @@ describe('SendMessageUseCase', () => {
     const usecase = new SendMessageUseCase(
       stubProvider({
         describe: () => session(),
+        reconfigure: () => {
+          throw new Error('not used')
+        },
         sendMessage: async function* () {
           yield { type: 'usage' as const, sessionId: 's', timestamp: new Date(), payload: { inputTokens: 100, outputTokens: 20, reasoningTokens: 5 } }
         },
@@ -112,6 +118,9 @@ describe('SendMessageUseCase', () => {
     const usecase = new SendMessageUseCase(
       stubProvider({
         describe: () => session(),
+        reconfigure: () => {
+          throw new Error('not used')
+        },
         sendMessage: async function* (sessionId) {
           yield { type: 'message.started' as const, sessionId, timestamp: at(0) }
           yield { type: 'text.delta' as const, sessionId, payload: { text: 'Oi' }, timestamp: at(400) }
@@ -139,6 +148,9 @@ describe('SendMessageUseCase', () => {
     const usecase = new SendMessageUseCase(
       stubProvider({
         describe: () => session(),
+        reconfigure: () => {
+          throw new Error('not used')
+        },
         sendMessage: async function* (sessionId) {
           yield { type: 'text.delta' as const, sessionId, payload: { text: 'Li o arquivo' }, timestamp: new Date() }
         },
@@ -169,6 +181,9 @@ describe('SendMessageUseCase', () => {
     const usecase = new SendMessageUseCase(
       stubProvider({
         describe: () => session(),
+        reconfigure: () => {
+          throw new Error('not used')
+        },
         sendMessage: async function* (sessionId) {
           yield { type: 'text.delta' as const, sessionId, payload: { text: 'Oi' }, timestamp: new Date() }
         },
@@ -190,6 +205,9 @@ describe('SendMessageUseCase', () => {
     const usecase = new SendMessageUseCase(
       stubProvider({
         describe: () => session(),
+        reconfigure: () => {
+          throw new Error('not used')
+        },
         sendMessage: async function* () {
           yield { type: 'text.delta' as const, sessionId: 's', timestamp: new Date(), payload: { text: 'come' } }
           yield { type: 'text.delta' as const, sessionId: 's', timestamp: new Date(), payload: { text: 'ço' } }
@@ -216,6 +234,9 @@ describe('SendMessageUseCase', () => {
       new SendMessageUseCase(
         stubProvider({
           describe: () => session({ turns }),
+          reconfigure: () => {
+            throw new Error('not used')
+          },
           sendMessage: async function* () {
             yield { type: 'text.delta' as const, sessionId: 's', timestamp: new Date(), payload: { text: 'ok' } }
           },
@@ -270,6 +291,9 @@ describe('SendMessageUseCase', () => {
     const counting = (sent: string[], turns = { n: 0 }) =>
       stubProvider({
         describe: () => session({ turns: turns.n }),
+        reconfigure: () => {
+          throw new Error('not used')
+        },
         sendMessage: async function* (_id, input) {
           turns.n += 1
           sent.push(input.text)
@@ -343,6 +367,9 @@ describe('SendMessageUseCase', () => {
     const talking = () =>
       stubProvider({
         describe: () => session({ turns: 3 }),
+        reconfigure: () => {
+          throw new Error('not used')
+        },
         sendMessage: async function* (sessionId) {
           yield { type: 'text.delta' as const, sessionId, payload: { text: 'resposta' }, timestamp: new Date() }
           yield { type: 'tool.started' as const, sessionId, payload: { tool: 'orders_search', args: {} }, timestamp: new Date() }

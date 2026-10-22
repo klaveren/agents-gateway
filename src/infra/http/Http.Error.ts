@@ -5,6 +5,8 @@ import {
   AgentWithoutModelError,
   InvalidAgentError,
   InvalidModelError,
+  InvalidSessionChangeError,
+  SessionBusyError,
   ModelNotFoundError,
   InvalidProviderError,
   ProviderInUseError,
@@ -33,6 +35,7 @@ export type TErrorCode =
   | 'invalid_credentials'
   | 'login_locked'
   | 'session_not_found'
+  | 'session_busy'
   | 'mode_not_supported'
   | 'tools_not_supported'
   | 'adapter_not_found'
@@ -97,6 +100,14 @@ export function toHttpFailure(error: unknown): IHttpFailure {
 
   if (error instanceof AgentWithoutModelError) {
     return { status: 422, code: 'agent_without_model', message: error.message }
+  }
+
+  if (error instanceof InvalidSessionChangeError) {
+    return { status: 422, code: 'validation_error', message: 'Session change is invalid', details: error.issues }
+  }
+
+  if (error instanceof SessionBusyError) {
+    return { status: 409, code: 'session_busy', message: error.message }
   }
 
   if (error instanceof InvalidModelError) {

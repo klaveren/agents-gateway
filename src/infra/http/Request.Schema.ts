@@ -26,6 +26,11 @@ export const createSessionSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 })
 
+/** A troca no meio da conversa: `reasoning: null` volta ao padrão; campo ausente não muda. */
+export const reconfigureSessionSchema = z
+  .object({ model: z.string().trim().min(1).max(200).optional(), reasoning: z.string().trim().min(1).max(40).nullable().optional() })
+  .refine((body) => body.model !== undefined || body.reasoning !== undefined, 'send model and/or reasoning')
+
 const fileSchema = z.object({
   name: z.string().min(1),
   mimeType: z.string().min(1),

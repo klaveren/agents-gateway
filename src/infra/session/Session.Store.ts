@@ -33,6 +33,8 @@ export interface ISessionRecord {
   turns: number
   /** Acumulado da sessão inteira. Quem soma é o AgentProvider, ao repassar o stream. */
   usage: IUsage
+  /** O acumulado por modelo — o modelo pode trocar no meio da sessão (ver `AgentProvider.reconfigure`). */
+  usageByModel?: Record<string, IUsage>
   metadata?: Record<string, unknown>
   abort?: AbortController
   native?: unknown
@@ -128,6 +130,7 @@ export class SessionStore {
   /** Soma o usage de um turno ao acumulado da sessão. */
   addUsage(record: ISessionRecord, usage: IUsage): void {
     record.usage = addUsage(record.usage, usage)
+    record.usageByModel = { ...record.usageByModel, [record.model]: addUsage(record.usageByModel?.[record.model] ?? {}, usage) }
   }
 
   get size(): number {

@@ -176,3 +176,17 @@ export class AgentWithoutModelError extends DomainError {
     super(`Agent ${agentId} has no enabled model. Enable one in Providers → Models, then pick it in the agent.`)
   }
 }
+
+/** O que se pediu trocar numa sessão viva não vale (modelo fora do agente, nível fora do protocolo). */
+export class InvalidSessionChangeError extends DomainError {
+  constructor(public readonly issues: Array<{ field: string; message: string }>) {
+    super(`Session change is invalid: ${issues.map((issue) => `${issue.field} (${issue.message})`).join('; ')}`)
+  }
+}
+
+/** A sessão está no meio de um turno: trocar agora valeria pela metade. */
+export class SessionBusyError extends DomainError {
+  constructor(public readonly sessionId: string) {
+    super(`Session ${sessionId} is answering; wait for the turn to finish.`)
+  }
+}
