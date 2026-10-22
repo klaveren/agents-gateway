@@ -177,11 +177,12 @@ describe('runManualToolLoop', () => {
         return { status: 'success' as const, result: 'ok' }
       },
     } as unknown as ToolCatalog
-    const { provider } = fakeProvider([{ text: '', calls: [call('read_note')] }, { text: 'ok', calls: [] }])
+    const { provider } = fakeProvider([
+      { text: '', calls: [call('read_note')] },
+      { text: 'ok', calls: [] },
+    ])
 
-    await drain(
-      runManualToolLoop<TMessage>({ ...base, context: { token: 'tok-a' }, history: [], tools: [tool('read_note')], catalog, provider }),
-    )
+    await drain(runManualToolLoop<TMessage>({ ...base, context: { token: 'tok-a' }, history: [], tools: [tool('read_note')], catalog, provider }))
 
     // Sem isso a tool MCP sai sem Authorization e o MCP responde com a identidade do ambiente.
     assert.deepStrictEqual(seen, ['tok-a'])

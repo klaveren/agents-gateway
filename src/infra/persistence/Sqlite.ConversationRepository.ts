@@ -412,9 +412,7 @@ export class SqliteConversationRepository implements IConversationRepository {
         const pageSize = Math.min(Math.max(Math.trunc(query.pageSize) || 1, 1), 500)
         const page = Math.max(Math.trunc(query.page) || 1, 1)
 
-        const rows = this.db
-          .prepare(`SELECT * FROM conversations ${listClause} ${RECENT_FIRST} LIMIT ? OFFSET ?`)
-          .all(...listParams, pageSize, (page - 1) * pageSize) as TRow[]
+        const rows = this.db.prepare(`SELECT * FROM conversations ${listClause} ${RECENT_FIRST} LIMIT ? OFFSET ?`).all(...listParams, pageSize, (page - 1) * pageSize) as TRow[]
         const total = this.db.prepare(`SELECT COUNT(*) AS n FROM conversations ${listClause}`).get(...listParams) as TRow
 
         const facet = (column: string): Record<string, number> => {
