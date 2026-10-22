@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import type { IOutgoingFile } from '@/stores/thread'
 import Icon from './Icon.vue'
 
@@ -10,6 +10,17 @@ const text = ref('')
 const files = ref<IOutgoingFile[]>([])
 const area = ref<HTMLTextAreaElement>()
 const picker = ref<HTMLInputElement>()
+
+/**
+ * No celular o texto de exemplo vira só "Mensagem": "Mensagem para <agente>" quebrava em duas linhas e
+ * dobrava a altura da caixa vazia. O agente já está no cabeçalho.
+ */
+const narrowQuery = typeof window !== 'undefined' ? window.matchMedia('(max-width: 767px)') : undefined
+const narrow = ref(narrowQuery?.matches ?? false)
+const onNarrow = (event: MediaQueryListEvent) => (narrow.value = event.matches)
+narrowQuery?.addEventListener('change', onNarrow)
+onBeforeUnmount(() => narrowQuery?.removeEventListener('change', onNarrow))
+const shownPlaceholder = computed(() => (narrow.value || !props.placeholder ? 'Mensagem' : props.placeholder))
 
 /** O conteúdo vai em base64 (`files[].data`), como a API espera. */
 async function attach(event: Event) {
@@ -69,7 +80,7 @@ function onKey(event: KeyboardEvent) {
         v-model="text"
         rows="1"
         :disabled="disabled"
-        :placeholder="placeholder ?? 'Mensagem'"
+        :placeholder="shownPlaceholder"
         class="scroll-thin max-h-[200px] min-h-10 flex-1 resize-none rounded-2xl bg-zinc-800 px-4 py-2.5 text-[15px] outline-none placeholder:text-zinc-500 focus:ring-1 focus:ring-emerald-500/60 disabled:opacity-50"
         @input="grow"
         @keydown="onKey"
