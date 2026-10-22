@@ -1,4 +1,6 @@
 import { Content, FunctionDeclaration, GoogleGenerativeAI, Part, Tool } from '@google/generative-ai'
+import { ICredentialSource } from '@domain/ports/CredentialStore.Port'
+import { KeyedClient } from './support/Keyed.Client'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
@@ -21,6 +23,8 @@ type THistory = Content[]
 
 export interface IGoogleChatAdapterDeps {
   client?: GoogleGenerativeAI
+  /** De onde vem a chave em cada chamada. Ausente = a do ambiente. */
+  credentials?: ICredentialSource
   store?: SessionStore
   catalog?: ToolCatalog
 }
@@ -34,12 +38,12 @@ export interface IGoogleChatAdapterDeps {
  * `RequestOptions` de `getGenerativeModel` não tem campo `signal` nesta versão.
  */
 export class GoogleChatAdapter implements IAgentAdapter {
-  private readonly client: GoogleGenerativeAI
+  private readonly clients: KeyedClient<GoogleGenerativeAI>
   private readonly store: SessionStore
   private readonly catalog?: ToolCatalog
 
   constructor(deps: IGoogleChatAdapterDeps = {}) {
-    this.client = deps.client ?? new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || 'AIzaSy-dummy')
+    this.clients = new KeyedClient(EProvider.GOOGLE, (key) => new GoogleGenerativeAI(key), deps.credentials, deps.client)
     this.store = deps.store ?? new SessionStore()
     this.catalog = deps.catalog
   }
@@ -148,7 +152,8 @@ export class GoogleChatAdapter implements IAgentAdapter {
    * `functionCall` nas parts do stream, e devolver o `functionResponse` no history.
    */
   private loopProvider(record: ISessionRecord, sessionId: string): IManualLoopProvider<Content> {
-    const client = this.client
+    // Pedido aqui, dentro do turno: a chave em vigor AGORA, e a falta dela vira evento de erro do turno.
+    const client = this.clients.get()
 
     return {
       async *runTurn(history, tools, signal): AsyncGenerator<IAgentEvent, IManualTurnOutcome> {

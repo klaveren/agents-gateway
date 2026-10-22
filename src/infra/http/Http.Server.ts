@@ -1,5 +1,9 @@
 import { AgentController } from './Agent.Controller'
 import { AuthController } from './Auth.Controller'
+import { ProvidersController } from './Providers.Controller'
+import { randomBytes } from 'node:crypto'
+import { SqliteCredentialStore } from '@infra/persistence/Sqlite.CredentialStore'
+import { SecretBox } from '@infra/secrets/Aes.SecretBox'
 import express, { Express, NextFunction, Request, RequestHandler, Response } from 'express'
 import { Server } from 'node:http'
 import fs from 'node:fs'
@@ -45,13 +49,18 @@ export class HttpServer {
   constructor(
     private readonly controller: AgentController,
     auth: AuthController = new AuthController({}),
+    // Sem providers injetado: chaves só em memória, sobre o ambiente — o teste e quem monta à mão.
+    providers: ProvidersController = new ProvidersController({
+      credentials: new SqliteCredentialStore(new SecretBox(randomBytes(32))),
+      agents: { list: () => [], get: () => undefined },
+    }),
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
     this.app.use(corsMiddleware())
     this.app.use(express.json({ limit: jsonLimit() }))
 
-    this.routes = buildRoutes(controller, auth)
+    this.routes = buildRoutes(controller, auth, providers)
     this.setupRoutes()
     this.setupFrontend()
   }
@@ -142,8 +151,12 @@ export class HttpServer {
   }
 }
 
-function buildRoutes(controller: AgentController, auth: AuthController): IRoute[] {
+function buildRoutes(controller: AgentController, auth: AuthController, providers: ProvidersController): IRoute[] {
   return [
+    { method: 'get', path: '/providers', handler: providers.list },
+    { method: 'put', path: '/providers/:id/key', handler: providers.saveKey },
+    { method: 'delete', path: '/providers/:id/key', handler: providers.clearKey },
+    { method: 'post', path: '/providers/:id/test', handler: providers.test },
     { method: 'get', path: '/health', handler: controller.health },
     { method: 'get', path: '/auth/status', handler: auth.status },
     { method: 'post', path: '/auth/setup', handler: auth.setup },

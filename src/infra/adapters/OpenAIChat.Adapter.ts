@@ -1,4 +1,6 @@
 import OpenAI from 'openai'
+import { ICredentialSource } from '@domain/ports/CredentialStore.Port'
+import { KeyedClient } from './support/Keyed.Client'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
@@ -26,6 +28,8 @@ type THistory = OpenAI.Chat.ChatCompletionMessageParam[]
 
 export interface IOpenAIChatAdapterDeps {
   client?: OpenAI
+  /** De onde vem a chave em cada chamada. Ausente = a do ambiente. */
+  credentials?: ICredentialSource
   store?: SessionStore
   catalog?: ToolCatalog
 }
@@ -37,12 +41,12 @@ export interface IOpenAIChatAdapterDeps {
  * à mão em `support/ManualTool.Loop`.
  */
 export class OpenAIChatAdapter implements IAgentAdapter {
-  private readonly client: OpenAI
+  private readonly clients: KeyedClient<OpenAI>
   private readonly store: SessionStore
   private readonly catalog?: ToolCatalog
 
   constructor(deps: IOpenAIChatAdapterDeps = {}) {
-    this.client = deps.client ?? new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'sk-dummy' })
+    this.clients = new KeyedClient(EProvider.OPENAI, (key) => new OpenAI({ apiKey: key }), deps.credentials, deps.client)
     this.store = deps.store ?? new SessionStore()
     this.catalog = deps.catalog
   }
@@ -149,7 +153,8 @@ export class OpenAIChatAdapter implements IAgentAdapter {
    * formato de history do Chat Completions.
    */
   private loopProvider(record: ISessionRecord, sessionId: string): IManualLoopProvider<OpenAI.Chat.ChatCompletionMessageParam> {
-    const client = this.client
+    // Pedido aqui, dentro do turno: a chave em vigor AGORA, e a falta dela vira evento de erro do turno.
+    const client = this.clients.get()
     const effort = this.toEffort(record.reasoning)
 
     return {

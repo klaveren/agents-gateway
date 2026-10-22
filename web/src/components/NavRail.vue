@@ -21,7 +21,7 @@ async function logout() {
 const section = computed(() => {
   const name = String(route.name ?? '')
   if (name.startsWith('agent')) return 'agents'
-  return ['settings', 'users'].includes(name) ? name : 'inbox'
+  return ['settings', 'users', 'providers'].includes(name) ? name : 'inbox'
 })
 
 const links = computed(() => [
@@ -29,6 +29,7 @@ const links = computed(() => [
   ...(auth.isAdmin
     ? [
         { to: '/agents', key: 'agents', label: 'Agentes', icon: 'agents' as const, badge: 0 },
+        { to: '/providers', key: 'providers', label: 'Providers', icon: 'key' as const, badge: 0 },
         { to: '/users', key: 'users', label: 'Usuários', icon: 'users' as const, badge: 0 },
       ]
     : []),

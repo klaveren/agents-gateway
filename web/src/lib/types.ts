@@ -147,3 +147,22 @@ export interface ISession {
   expiresAt: string
   user: IUser
 }
+
+export interface IProviderStatus {
+  provider: TProvider
+  configured: boolean
+  source: 'stored' | 'env' | 'none'
+  last4?: string
+  updatedAt?: string
+  updatedBy?: string
+  unreadable?: boolean
+  models: string[]
+  agents: Array<{ id: string; name: string }>
+}
+
+export interface IProbeResult {
+  ok: boolean
+  models?: number
+  status?: number
+  message?: string
+}
