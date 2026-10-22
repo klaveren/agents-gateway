@@ -1,3 +1,4 @@
+import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { IToolDefinition, IToolResult } from '@infra/tools/Tool.Types'
@@ -39,6 +40,8 @@ export interface IManualLoopParams<TMessage> {
   tools: IToolDefinition[]
   provider: IManualLoopProvider<TMessage>
   catalog: ToolCatalog | undefined
+  /** A credencial de quem chamou. Sem ela a tool MCP iria sem header, ou com a identidade do ambiente. */
+  context: IExecutionContext
   signal: AbortSignal
   maxTurns: number
 }
@@ -53,7 +56,7 @@ export interface IManualLoopParams<TMessage> {
  * Devolve o texto acumulado do turno.
  */
 export async function* runManualToolLoop<TMessage>(params: IManualLoopParams<TMessage>): AsyncGenerator<IAgentEvent, string> {
-  const { sessionId, history, tools, provider, catalog, signal, maxTurns } = params
+  const { sessionId, history, tools, provider, catalog, context, signal, maxTurns } = params
   let answer = ''
 
   for (let turn = 1; turn <= maxTurns; turn += 1) {
@@ -74,7 +77,7 @@ export async function* runManualToolLoop<TMessage>(params: IManualLoopParams<TMe
         payload: { tool: call.name, args: call.args },
       }
 
-      const executed = await execute(catalog, call)
+      const executed = await execute(catalog, call, context)
       results.push({ call, outcome: executed })
 
       yield executed.status === 'error'
@@ -99,11 +102,11 @@ export async function* runManualToolLoop<TMessage>(params: IManualLoopParams<TMe
   return answer
 }
 
-async function execute(catalog: ToolCatalog | undefined, call: IManualToolCall): Promise<IToolResult> {
+async function execute(catalog: ToolCatalog | undefined, call: IManualToolCall, context: IExecutionContext): Promise<IToolResult> {
   if (!catalog) {
     return { status: 'error', result: `No tool catalog is wired; cannot run "${call.name}".` }
   }
 
   // O catálogo já aplica a política do run_bash: deny-list, timeout, cwd e corte de saída.
-  return catalog.invoke(call.name, call.args)
+  return catalog.invoke(call.name, call.args, context)
 }

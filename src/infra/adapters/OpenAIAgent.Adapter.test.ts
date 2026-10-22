@@ -179,57 +179,86 @@ describe('OpenAIAgentAdapter', () => {
     assert.deepStrictEqual(calls[0].agent.mcpServers, [])
   })
 
-  it('rebuilds the MCP servers when the connection generation changes', async () => {
-    let generation = 0
-    let connected = false
-    const closed: string[] = []
-
-    const catalogWithClock = new ToolCatalog(
+  const mcpCatalog = (isUp: () => boolean) =>
+    new ToolCatalog(
       {
         serverUrl: 'http://localhost:8000/mcp',
-        isConnected: () => connected,
-        ensureConnected: async () => connected,
-        get connectionGeneration() {
-          return generation
-        },
+        isConnected: isUp,
+        ensureConnected: async () => isUp(),
+        connectionGeneration: 1,
         listTools: async () => [],
         callTool: async () => ({ status: 'success' as const, result: '' }),
       } as unknown as McpServerClient,
       [],
     )
 
-    const fakeServer = (name: string) =>
-      ({
-        name,
-        async connect() {},
-        async close() {
-          closed.push(name)
-        },
-      }) as unknown as MCPServer
+  const trackedServer = (token: string | undefined, log: { opened: string[]; closed: string[] }) =>
+    ({
+      name: `mcp-${token}`,
+      async connect() {
+        log.opened.push(String(token))
+      },
+      async close() {
+        log.closed.push(String(token))
+      },
+    }) as unknown as MCPServer
 
+  it('opens the MCP connection per turn and closes it when the turn ends', async () => {
+    let up = false
+    const log = { opened: [] as string[], closed: [] as string[] }
     const calls: ICall[] = []
     const adapter = new OpenAIAgentAdapter({
       run: runWith(turn, calls),
-      catalog: catalogWithClock,
-      buildMcpServers: () => [fakeServer('gen-' + generation)],
+      catalog: mcpCatalog(() => up),
+      buildMcpServers: (_url, token) => [trackedServer(token, log)],
     })
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
 
-    // Turno 1: MCP fora do ar, o agente roda só com o que é local.
+    // MCP fora do ar: só as tools locais.
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'um' }, {}))
     assert.deepStrictEqual(calls[0].agent.mcpServers, [])
 
-    // O server sobe: a geração muda e o turno seguinte passa a enxergá-lo, sem reiniciar.
-    connected = true
-    generation = 1
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'dois' }, {}))
+    // MCP sobe: o turno seguinte enxerga, sem reiniciar — e devolve a conexão ao terminar.
+    up = true
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'dois' }, { token: 'a' }))
     assert.strictEqual(calls[1].agent.mcpServers.length, 1)
+    assert.deepStrictEqual(log, { opened: ['a'], closed: ['a'] })
+  })
 
-    // Reconectar de novo troca a geração: os servers antigos são fechados, não vazados.
-    generation = 2
-    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'tres' }, {}))
-    assert.deepStrictEqual(closed, ['gen-1'])
-    assert.strictEqual(calls[2].agent.mcpServers.length, 1)
+  it('never lets one caller close the MCP connection another caller is using', async () => {
+    const log = { opened: [] as string[], closed: [] as string[] }
+    let releaseA: () => void = () => {}
+    const gateA = new Promise<void>((resolve) => (releaseA = resolve))
+
+    // O turno de A fica preso no meio do stream até B terminar o dele inteiro.
+    const run = (async (_agent: Agent, input: AgentInputItem[]) => ({
+      async *[Symbol.asyncIterator]() {
+        const text = JSON.stringify(input.at(-1))
+        if (text.includes('de A')) await gateA
+        yield { type: 'raw_model_stream_event', data: { type: 'output_text_delta', delta: 'ok' } }
+      },
+      completed: Promise.resolve(),
+      history: input,
+    })) as unknown as TRun
+
+    const adapter = new OpenAIAgentAdapter({
+      run,
+      catalog: mcpCatalog(() => true),
+      buildMcpServers: (_url, token) => [trackedServer(token, log)],
+    })
+    const sessionA = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+    const sessionB = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+
+    const turnA = drain(adapter.sendMessage(getAgent(), sessionA.id, { text: 'de A' }, { token: 'a' }))
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    await drain(adapter.sendMessage(getAgent(), sessionB.id, { text: 'de B' }, { token: 'b' }))
+
+    // B entrou e saiu enquanto A ainda rodava: só a conexão de B pode ter sido fechada.
+    assert.deepStrictEqual(log.closed, ['b'])
+
+    releaseA()
+    await turnA
+    assert.deepStrictEqual(log.closed.sort(), ['a', 'b'])
   })
 
   it('surfaces run failures as a normalized error event', async () => {

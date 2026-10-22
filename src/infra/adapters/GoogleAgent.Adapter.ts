@@ -80,6 +80,12 @@ interface IGoogleAgentNative {
   adkSessionId: string
   /** Consumo de chamadas já encerradas, ainda não repassado ao stream. */
   usage: IUsage[]
+  /**
+   * A credencial do turno EM CURSO. O runtime (e com ele o closure das tools) vive a sessão
+   * inteira; capturar o contexto do 1º turno no closure congelava o token — renovado ou vencido,
+   * o MCP seguia recebendo o primeiro. As tools leem daqui, e cada turno atualiza.
+   */
+  caller: { context: IExecutionContext }
 }
 
 export interface IGoogleAgentAdapterDeps {
@@ -216,7 +222,8 @@ export class GoogleAgentAdapter implements IAgentAdapter {
     }
 
     try {
-      const native = this.nativeOf(record, agent, await this.remoteTools(agent, context))
+      const native = await this.nativeOf(record, agent, context)
+      native.caller.context = context
       await native.runtime.ensureSession(native.userId, native.adkSessionId)
 
       const stream = native.runtime.runAsync({
@@ -282,9 +289,12 @@ export class GoogleAgentAdapter implements IAgentAdapter {
    * O runtime do ADK vive aqui porque é ele que carrega o histórico entre turnos: recriá-lo
    * a cada turno apagaria a conversa.
    */
-  private nativeOf(record: ISessionRecord, agent: IAgent, remote: BaseTool[]): IGoogleAgentNative {
+  private async nativeOf(record: ISessionRecord, agent: IAgent, context: IExecutionContext): Promise<IGoogleAgentNative> {
     if (!record.native) {
       const usage: IUsage[] = []
+      const caller = { context }
+      // As tools remotas só são listadas quando o runtime nasce: depois, o resultado seria descartado.
+      const remote = await this.remoteTools(agent, caller)
       record.native = {
         runtime: this.createRuntime({
           name: this.toAdkName(agent.id),
@@ -299,6 +309,7 @@ export class GoogleAgentAdapter implements IAgentAdapter {
         userId: `gateway-${record.id}`,
         adkSessionId: randomUUID(),
         usage,
+        caller,
       } satisfies IGoogleAgentNative
     }
     return record.native as IGoogleAgentNative
@@ -324,7 +335,7 @@ export class GoogleAgentAdapter implements IAgentAdapter {
    *
    * Sem MCP conectado devolve lista vazia: o agente fica só com as tools locais, sem quebrar.
    */
-  private async remoteTools(agent: IAgent, context: IExecutionContext): Promise<BaseTool[]> {
+  private async remoteTools(agent: IAgent, caller: { context: IExecutionContext }): Promise<BaseTool[]> {
     if (!this.catalog) return []
 
     const local = new Set(this.catalog.localFor(agent.allowedTools).map((tool) => tool.name))
@@ -332,8 +343,8 @@ export class GoogleAgentAdapter implements IAgentAdapter {
 
     return buildAdkRemoteTools(
       all.filter((tool) => !local.has(tool.name)),
-      // A credencial vem do provider e viaja até a execução — o adapter não a busca em lugar nenhum.
-      (name, args) => this.catalog!.invoke(name, args, context),
+      // A credencial vem do provider e é lida NA EXECUÇÃO, do turno em curso — nunca a do 1º turno.
+      (name, args) => this.catalog!.invoke(name, args, caller.context),
     )
   }
 

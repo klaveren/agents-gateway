@@ -48,6 +48,26 @@ describe('SqliteConversationRepository', () => {
     assert.strictEqual(found?.createdAt.toISOString(), '2026-08-30T10:00:00.000Z')
   })
 
+  it('never overwrites a turn: a repeated index goes to the next free one', async () => {
+    const repo = repository()
+    await repo.saveSession(session())
+    assert.strictEqual(await repo.appendTurn(turn({ index: 0, request: 'primeira' })), 0)
+    await repo.classifyTurn('s1', 0, 'green')
+
+    // Índice repetido (turnos concorrentes, sessão perdida): antes o INSERT OR REPLACE apagava o
+    // turno 0 — e a classificação dele. E devolve onde ficou, para o rótulo não cair no turno 0.
+    assert.strictEqual(await repo.appendTurn(turn({ index: 0, request: 'segunda' })), 1)
+
+    const turns = await repo.listTurns('s1')
+    assert.deepStrictEqual(
+      turns.map((item) => [item.index, item.request, item.classification]),
+      [
+        [0, 'primeira', 'green'],
+        [1, 'segunda', undefined],
+      ],
+    )
+  })
+
   it('keeps the three token fields apart across a round trip', async () => {
     // ⚠️ É a razão de os campos existirem separados: guardar o raciocínio dentro da saída daria o
     // total certo e apagaria quanto do gasto foi o modelo pensando.
@@ -353,6 +373,23 @@ describe('SqliteConversationRepository — monitor, rótulos e compartilhamento'
       assert.deepStrictEqual(
         last.sessions.map((item) => item.id),
         ['e'],
+      )
+    })
+
+    it('desempata pelo id: conversas com o mesmo updated_at não repetem nem somem entre páginas', async () => {
+      const repo = repository()
+      const tied = new Date('2026-08-30T10:00:00Z')
+      for (const id of ['m', 'x', 'b', 'q', 'f']) await repo.saveSession(session({ id, updatedAt: tied }))
+
+      const pages = await Promise.all([1, 2, 3].map((page) => repo.pageSessions({ page, pageSize: 2 })))
+
+      assert.deepStrictEqual(
+        pages.flatMap((page) => page.sessions.map((item) => item.id)),
+        ['x', 'q', 'm', 'f', 'b'],
+      )
+      assert.deepStrictEqual(
+        (await repo.listSessions({})).map((item) => item.id),
+        ['x', 'q', 'm', 'f', 'b'],
       )
     })
 

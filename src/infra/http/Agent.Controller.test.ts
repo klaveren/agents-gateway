@@ -745,7 +745,7 @@ describe('AgentController', () => {
       it('PUT parcial: ausente não mexe, valor troca, null e vazio apagam, e carimba quem alterou', async () => {
         const settings = new NullSettingsRepository({ audience: 'all', agentId: 'sysops-agent', model: 'claude-opus-5' })
 
-        let locals = await call(ADMIN, put({ audience: 'restricted' }), settings)
+        const locals = await call(ADMIN, put({ audience: 'restricted' }), settings)
         assert.strictEqual(locals.statusCode, 200)
         let stored = await settings.read()
         assert.deepStrictEqual([stored.audience, stored.agentId, stored.model, stored.updatedBy], ['restricted', 'sysops-agent', 'claude-opus-5', 'root@x.test'])

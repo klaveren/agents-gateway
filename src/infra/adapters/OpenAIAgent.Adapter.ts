@@ -43,12 +43,6 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
   private readonly store: SessionStore
   private readonly catalog?: ToolCatalog
   private readonly buildMcpServers: TBuildMcpServers
-  /**
-   * Uma conexão MCP por adapter, compartilhada pelas sessões e aberta sob demanda. A
-   * geração vem do cliente MCP: quando ele reconecta, estes servers ficaram velhos.
-   */
-  /** `generation` é chave composta: conexão do MCP + credencial. Ver `connectMcpServers`. */
-  private mcp?: { generation: string; servers: Promise<MCPServer[]> }
 
   constructor(deps: IOpenAIAgentAdapterDeps = {}) {
     this.run = deps.run ?? run
@@ -97,13 +91,17 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
     const effort = this.toEffort(record.reasoning)
     if (effort) modelSettings.reasoning = { effort }
 
+    // Conexão MCP POR TURNO. O adapter é singleton; um slot compartilhado fazia o turno de um
+    // usuário fechar as tools de outro no meio do stream, e vazava a conexão de quem perdia a corrida.
+    const mcpServers = await this.openMcpServers(context)
+
     const oaiAgent = new Agent({
       name: agent.name,
       instructions: record.systemPrompt,
       model: record.model,
       modelSettings,
       tools: buildOpenAITools(this.catalog?.localFor(agent.allowedTools) ?? []),
-      mcpServers: await this.connectMcpServers(context),
+      mcpServers,
     })
 
     const items: AgentInputItem[] = [...history, user(this.buildUserContent(input))]
@@ -157,6 +155,7 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
       yield { type: 'error', sessionId, timestamp: new Date(), payload: { message } }
     } finally {
       record.abort = undefined
+      await this.closeMcpServers(mcpServers)
     }
   }
 
@@ -176,53 +175,26 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
   /**
    * O SDK não conecta os MCP servers sozinho: o ciclo de vida é de quem os passa.
    *
-   * Perguntar ao catálogo a cada turno é o que faz um MCP server que subiu depois do
-   * gateway entrar em uso sem reiniciar o processo.
+   * Os headers do MCP (a credencial de quem chama) ficam fixados na conexão, então ela pertence ao
+   * turno: aberta aqui, fechada no `finally` do mesmo turno. Nada é compartilhado entre usuários, e
+   * perguntar ao catálogo a cada turno é o que pega um MCP que subiu depois do gateway.
    */
-  /**
-   * ⚠️ O CACHE PASSA A CONSIDERAR A CREDENCIAL, não só a geração da conexão.
-   *
-   * Os headers pertencem ao servidor MCP, fixados na conexão. Reaproveitar a conexão entre usuários
-   * diferentes serviria a credencial de um para o outro — que é exatamente o vazamento que este
-   * desenho existe para impedir.
-   *
-   * O custo é reconectar ao alternar de usuário. A alternativa — uma conexão por processo, servindo
-   * todo mundo — é justamente a que não pode existir.
-   */
-  private async connectMcpServers(context: IExecutionContext): Promise<MCPServer[]> {
+  private async openMcpServers(context: IExecutionContext): Promise<MCPServer[]> {
     const url = await this.catalog?.mcpEndpoint()
+    if (!url) return []
 
-    if (!url || !this.catalog) {
-      await this.closeMcpServers()
+    const servers = this.buildMcpServers(url, context.token)
+    try {
+      await Promise.all(servers.map((server) => server.connect()))
+      return servers
+    } catch (error: unknown) {
+      console.warn('[OpenAIAgent] MCP indisponível, seguindo só com as tools locais:', error)
+      await this.closeMcpServers(servers)
       return []
     }
-
-    const generation = `${this.catalog.mcpGeneration}:${context.token ?? ''}`
-    if (this.mcp?.generation !== generation) {
-      await this.closeMcpServers()
-      this.mcp = {
-        generation,
-        servers: (async () => {
-          const servers = this.buildMcpServers(url, context.token)
-          await Promise.all(servers.map((server) => server.connect()))
-          return servers
-        })().catch((error: unknown) => {
-          console.warn('[OpenAIAgent] MCP indisponível, seguindo só com as tools locais:', error)
-          this.mcp = undefined
-          return []
-        }),
-      }
-    }
-
-    return this.mcp.servers
   }
 
-  private async closeMcpServers(): Promise<void> {
-    const stale = this.mcp
-    this.mcp = undefined
-    if (!stale) return
-
-    const servers = await stale.servers.catch(() => [])
+  private async closeMcpServers(servers: MCPServer[]): Promise<void> {
     await Promise.all(servers.map((server) => server.close().catch(() => undefined)))
   }
 

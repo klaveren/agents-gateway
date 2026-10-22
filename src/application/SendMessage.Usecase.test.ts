@@ -27,9 +27,10 @@ class RecordingRepository extends NullConversationRepository {
     this.sessions.push(session)
   }
 
-  async appendTurn(turn: IConversationTurn): Promise<void> {
+  async appendTurn(turn: IConversationTurn): Promise<number | undefined> {
     this.turns.push(turn)
     this.resolve?.()
+    return turn.index
   }
 }
 
@@ -223,17 +224,43 @@ describe('SendMessageUseCase', () => {
       )
 
     let done = repository.recorded()
-    for await (const _event of build(1).execute('s', { text: 'primeira pergunta' })) void _event
+    for await (const _event of build(0).execute('s', { text: 'primeira pergunta' })) void _event
     await done
 
     done = repository.recorded()
-    for await (const _event of build(2).execute('s', { text: 'segunda pergunta' })) void _event
+    for await (const _event of build(1).execute('s', { text: 'segunda pergunta' })) void _event
     await done
 
     assert.deepStrictEqual(
       repository.sessions.map((item) => item.title),
       ['primeira pergunta', undefined],
     )
+  })
+
+  it('takes the turn index before the provider accepts the turn, so a lost session cannot rewind it', async () => {
+    const repository = new RecordingRepository()
+    let describable = true
+    const usecase = new SendMessageUseCase(
+      stubProvider({
+        describe: () => {
+          if (!describable) throw new Error('Session not found')
+          return session({ turns: 3 })
+        },
+        sendMessage: async function* () {
+          // A sessão sai do store no meio do turno (cancelada, ou o processo a perdeu).
+          describable = false
+          yield { type: 'text.delta' as const, sessionId: 's', timestamp: new Date(), payload: { text: 'ok' } }
+        },
+      }),
+      repository,
+    )
+
+    const done = repository.recorded()
+    for await (const _event of usecase.execute('s', { text: 'quarta' })) void _event
+    await done
+
+    // Antes, sem sessão para descrever, o índice virava 0 e o turno apagava o primeiro.
+    assert.strictEqual(repository.turns[0].index, 3)
   })
 
   describe('contexto da primeira mensagem', () => {
@@ -329,8 +356,9 @@ describe('SendMessageUseCase', () => {
       const order: string[] = []
       const appended = repository.appendTurn.bind(repository)
       repository.appendTurn = async (turn) => {
-        await appended(turn)
+        const stored = await appended(turn)
         order.push('saved')
+        return stored
       }
       let seen: unknown
       const classifier: ITurnClassifier = {
@@ -347,7 +375,7 @@ describe('SendMessageUseCase', () => {
 
       assert.deepStrictEqual(order, ['saved', 'classified'])
       assert.deepStrictEqual(seen, { request: 'minha pergunta', answer: 'resposta', tools: ['orders_search'] })
-      assert.deepStrictEqual(repository.labels, [{ sessionId: 's', index: 2, classification: 'blue' }])
+      assert.deepStrictEqual(repository.labels, [{ sessionId: 's', index: 3, classification: 'blue' }])
     })
 
     it('does not hold the stream: the reader finishes while the classifier is still thinking', async () => {
@@ -373,7 +401,7 @@ describe('SendMessageUseCase', () => {
       const labeled = repository.whenLabeled()
       gate.release?.()
       await labeled
-      assert.deepStrictEqual(JSON.stringify(repository.labels.slice()), JSON.stringify([{ sessionId: 's', index: 2, classification: 'green' }]))
+      assert.deepStrictEqual(JSON.stringify(repository.labels.slice()), JSON.stringify([{ sessionId: 's', index: 3, classification: 'green' }]))
     })
 
     it('a classifier that throws: the turn is saved and has no label', async () => {

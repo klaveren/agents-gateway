@@ -73,7 +73,7 @@ export class ClaudeChatAdapter implements IAgentAdapter {
     }
   }
 
-  async *sendMessage(agent: IAgent, sessionId: string, input: IMessageInput, _context: IExecutionContext): AsyncIterable<IAgentEvent> {
+  async *sendMessage(agent: IAgent, sessionId: string, input: IMessageInput, context: IExecutionContext): AsyncIterable<IAgentEvent> {
     const record = this.store.get(sessionId)
     if (!record) {
       yield { type: 'error', sessionId, timestamp: new Date(), payload: { message: `Session not found: ${sessionId}` } }
@@ -105,6 +105,7 @@ export class ClaudeChatAdapter implements IAgentAdapter {
         history,
         tools,
         catalog: this.catalog,
+        context,
         provider: this.loopProvider(record, sessionId),
         signal: abort.signal,
         maxTurns: maxToolTurns(),

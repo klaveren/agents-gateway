@@ -339,7 +339,7 @@ describe('AgentController — conversas, monitor e compartilhamento', () => {
       const { controller } = await setup()
 
       const out = await call(ALICE, (res) => turns('a1')(res, controller))
-      const [turn] = out.body?.result.turns
+      const [turn] = out.body!.result.turns
 
       assert.strictEqual(out.status, 200)
       assert.strictEqual(turn.request, 'qual o estoque?')
@@ -350,7 +350,7 @@ describe('AgentController — conversas, monitor e compartilhamento', () => {
     it('o administrador lê a de qualquer um, COM custo e rótulo', async () => {
       const { controller } = await setup()
 
-      const [turn] = (await call(ADMIN, (res) => turns('a1')(res, controller))).body?.result.turns
+      const [turn] = (await call(ADMIN, (res) => turns('a1')(res, controller))).body!.result.turns
 
       assert.strictEqual(turn.costUsd, 3)
       assert.strictEqual(turn.classification, 'red')
@@ -448,7 +448,7 @@ describe('AgentController — conversas, monitor e compartilhamento', () => {
 
     it('GET /shared/:id abre sem credencial e devolve SÓ a projeção pública', async () => {
       const { controller } = await setup()
-      const { shareId } = (await call(ALICE, (res) => share('a1', { shared: true })(res, controller))).body?.result
+      const { shareId } = (await call(ALICE, (res) => share('a1', { shared: true })(res, controller))).body!.result
 
       const out = await call(undefined, (res) => shared(shareId)(res, controller))
       const text = JSON.stringify(out.body)
@@ -466,7 +466,7 @@ describe('AgentController — conversas, monitor e compartilhamento', () => {
 
     it('⛔ descompartilhar REVOGA: o mesmo link passa a dar 404', async () => {
       const { controller } = await setup()
-      const { shareId } = (await call(ALICE, (res) => share('a1', { shared: true })(res, controller))).body?.result
+      const { shareId } = (await call(ALICE, (res) => share('a1', { shared: true })(res, controller))).body!.result
       assert.strictEqual((await call(undefined, (res) => shared(shareId)(res, controller))).status, 200)
 
       await call(ALICE, (res) => share('a1', { shared: false })(res, controller))
@@ -521,7 +521,7 @@ describe('AgentController — conversas, monitor e compartilhamento', () => {
       const { controller, conversations } = build({ pricing: { 'claude-sonnet-5': { input: 1, output: 1 } } })
       await seed(conversations)
 
-      const [first] = (await call(ADMIN, (res) => controller.listConversations(request({ query: { scope: 'all' } }), res))).body?.result.sessions
+      const [first] = (await call(ADMIN, (res) => controller.listConversations(request({ query: { scope: 'all' } }), res))).body!.result.sessions
       assert.strictEqual(first.costUsd, 1.1)
     })
   })

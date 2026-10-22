@@ -55,14 +55,22 @@ export class SqliteSettingsRepository implements ISettingsRepository {
   async read(): Promise<IAgentSettings> {
     if (this.cached) return this.cached
 
-    const stored = this.guard('read', () => {
+    let stored: unknown
+    try {
       const row = this.db?.prepare('SELECT value FROM settings WHERE id = ?').get(SINGLETON) as { value?: unknown } | undefined
+      stored = typeof row?.value === 'string' ? (JSON.parse(row.value) as unknown) : undefined
+    } catch (error) {
+      /**
+       * ⛔ FALHA FECHA. "Não há configuração gravada" e "não consegui ler a configuração" são coisas
+       * diferentes: a primeira vale o padrão; a segunda pode estar escondendo um `off` gravado pelo
+       * admin, e devolver o padrão (`all`) abriria o gateway justamente quando ele foi desligado.
+       * Não fixa no cache: a próxima leitura tenta de novo.
+       */
+      console.error('[sqlite] leitura das configurações falhou; atendendo como `off` até ler de novo.', error)
+      return { ...DEFAULT_SETTINGS, audience: 'off' }
+    }
 
-      return typeof row?.value === 'string' ? (JSON.parse(row.value) as unknown) : undefined
-    })
-
-    // Só guarda o que veio do banco: uma leitura que falhou não pode fixar o default como se fosse
-    // a configuração — a próxima tenta de novo.
+    // Nada gravado (instalação nova ou sem banco): vale o padrão, e também não fixa no cache.
     if (stored === undefined) return DEFAULT_SETTINGS
 
     this.cached = normalizeSettings(stored)
