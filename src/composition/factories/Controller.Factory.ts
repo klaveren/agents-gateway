@@ -1,6 +1,8 @@
 import { AgentController } from '@infra/http/Agent.Controller'
 import { makeTools } from './Tools.Factory'
 import { proofFromEnv } from '@infra/http/Caller.Proof'
+import { sessionContextFromEnv } from '@infra/session/Template.SessionContext'
+import { makeSettings } from './Settings.Factory'
 import { makeUsecases } from './Usecases.Factory'
 
 export function makeController(): AgentController {
@@ -10,6 +12,8 @@ export function makeController(): AgentController {
   return new AgentController({
     catalog,
     proof: proofFromEnv(catalog),
+    settings: makeSettings(),
+    sessionContext: sessionContextFromEnv(),
     createSession: usecases.createSessionUseCase,
     sendMessage: usecases.sendMessageUseCase,
     cancelSession: usecases.cancelSessionUseCase,

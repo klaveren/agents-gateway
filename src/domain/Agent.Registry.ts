@@ -2,7 +2,7 @@ import { IAgent } from './models/Agent.Model'
 import { EProvider } from './enums/EProvider.Enum'
 import { EMode } from './enums/EMode.Enum'
 
-export const AGENT_REGISTRY: IAgent[] = [
+const BUILT_IN_AGENTS: IAgent[] = [
   {
     id: 'researcher-agent',
     name: 'Researcher Agent',
@@ -38,6 +38,54 @@ ALWAYS use the 'search_web' tool when you need external data.`,
     allowedTools: ['search_web', 'run_bash'],
   },
 ]
+
+/**
+ * Quais agentes EXISTEM neste processo, dada a lista de `AGENTS_ENABLED` (ids separados por vírgula).
+ *
+ * ⛔ ISTO É PERÍMETRO, NÃO PREFERÊNCIA. Um agente que carrega uma tool perigosa (`run_bash`) está a
+ * um `agentId` de distância de quem alcança `POST /sessions`. Filtrar AQUI, e não na rota, é a
+ * diferença entre uma regra e uma estrutura: um agente fora da lista não é recusado, ele não existe —
+ * some de `/agents` e de `getAgentById`, e nenhuma sessão pode nascer dele por caminho nenhum.
+ *
+ * ⚖️ Vazio ou ausente mantém todos: é o certo para quem sobe o gateway local para experimentar. Em
+ * qualquer lugar exposto, declare a lista.
+ *
+ * ⚠️ Lista que não casa com NADA lança. O sintoma de um erro de digitação seria `agent_not_found`
+ * em toda chamada, longe da causa; falhar no boot mostra a causa uma vez, no lugar certo.
+ */
+export function filterEnabledAgents(agents: IAgent[], raw: string | undefined): IAgent[] {
+  const allowed = (raw || '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean)
+
+  if (allowed.length === 0) return agents
+
+  const kept = agents.filter((agent) => allowed.includes(agent.id))
+  if (kept.length === 0) throw new Error(`AGENTS_ENABLED não casa com nenhum agente: ${allowed.join(', ')}`)
+
+  return kept
+}
+
+export const AGENT_REGISTRY: IAgent[] = filterEnabledAgents(BUILT_IN_AGENTS, process.env.AGENTS_ENABLED)
+
+/**
+ * O modelo pedido, se AQUELE agente o declara. Senão, o primeiro que ele declara.
+ *
+ * ⛔ AGENTE E MODELO SÃO CAMPOS INDEPENDENTES NA CONFIGURAÇÃO, e não são coisas independentes na
+ * realidade. Trocar o agente para outro provider com o modelo do anterior gravado mandava um modelo
+ * de um provider para o outro — e o erro que voltava ("modelo inexistente ou sem acesso") manda
+ * procurar permissão quando o problema é uma combinação impossível.
+ *
+ * O guard fica no caminho de APLICAÇÃO, e não só ao salvar: configuração gravada antes dele continua
+ * existindo, e não pode derrubar a sessão de ninguém. Sem modelo pedido, devolve `undefined` e o
+ * adapter usa o seu padrão.
+ */
+export function modelFor(agent: IAgent, model?: string): string | undefined {
+  if (!model) return undefined
+
+  return agent.models.includes(model) ? model : agent.models[0]
+}
 
 export function getAgentById(id: string): IAgent | undefined {
   return AGENT_REGISTRY.find((a) => a.id === id)

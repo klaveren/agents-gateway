@@ -38,13 +38,18 @@ export interface ISessionRecord {
 export type TSessionSeed = Omit<ISessionRecord, 'id' | 'createdAt' | 'lastActivityAt' | 'status' | 'turns' | 'usage'>
 
 export interface ISessionStoreOptions {
-  /** Tempo sem atividade após o qual a sessão é descartada. Default: 1h. */
+  /** Tempo sem atividade após o qual a sessão é descartada. Default: 8h (ver `DEFAULT_TTL_MS`). */
   ttlMs?: number
   /** Teto de sessões vivas; ao estourar, a menos ativa sai. Default: 500. */
   maxSessions?: number
 }
 
-const DEFAULT_TTL_MS = 60 * 60 * 1000
+/**
+ * ⚖️ 8h, um expediente. Com 1h, quem saía para almoçar voltava a uma sessão que não existia mais: o
+ * histórico do modelo vive na memória do processo, então expirar a sessão é perder a conversa de
+ * quem ainda a considerava aberta. É por inatividade, não por idade — conversa em uso não expira.
+ */
+export const DEFAULT_TTL_MS = 8 * 60 * 60 * 1000
 const DEFAULT_MAX_SESSIONS = 500
 
 /**

@@ -1,4 +1,4 @@
-import { AGENT_REGISTRY, getAgentById } from '@domain/Agent.Registry'
+import { AGENT_REGISTRY, getAgentById, modelFor } from '@domain/Agent.Registry'
 import { resolveSessionMode } from '@domain/Session.Policy'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -64,16 +64,34 @@ export class AgentProvider implements IAgentProvider {
     /**
      * A cópia viva quando existe; senão, uma leitura; senão, o default.
      *
-     * ⛔ Fechar impede SESSÃO NOVA, e só. Conversa em andamento termina o turno: matá-la no meio
-     * deixaria a pessoa com meia resposta e registraria um erro que não foi erro.
+     * ⚠️ O `??` do meio não é zelo: entre o boot e a primeira leitura voltar há uma janela em que
+     * `current` está vazia, e cair direto nos padrões faria uma sessão dessa janela ser decidida por
+     * uma audiência que não é a configurada.
      */
     const settings = this.current ?? (await this.settings?.read()) ?? DEFAULT_SETTINGS
-    if (!settings.enabled) throw new AgentUnavailableError()
 
-    const agent = this.getAgent(input.agentId ?? settings.agentId)
+    /**
+     * ⛔ `off` fecha para TODOS, e por isso vale aqui, na camada que qualquer caminho atravessa.
+     * Fechar impede SESSÃO NOVA, e só: conversa em andamento termina o turno — matá-la no meio
+     * deixaria a pessoa com meia resposta e registraria um erro que não foi erro.
+     *
+     * ⚖️ `restricted` e `all` dependem de QUEM chama e de a identidade ter sido PROVADA, e o provider
+     * só enxerga a identidade afirmada do `caller()`. Essa decisão mora no controller (ver
+     * `Agent.Controller.createSession`), que resolve a prova antes. Quem abrir sessão por outro
+     * caminho que não o HTTP precisa decidir a audiência por si.
+     */
+    if (settings.audience === 'off') throw new AgentUnavailableError()
+
+    // Corpo → configuração → padrão do registry. O corpo só vence quando alguém escolheu de propósito.
+    const agent = this.getAgent(input.agentId || settings.agentId)
     const mode = resolveSessionMode(agent, input)
 
-    return this.getAdapter(agent.provider, mode).createSession(agent, { ...input, mode })
+    return this.getAdapter(agent.provider, mode).createSession(agent, {
+      ...input,
+      agentId: agent.id,
+      model: modelFor(agent, input.model || settings.model),
+      mode,
+    })
   }
 
   /**

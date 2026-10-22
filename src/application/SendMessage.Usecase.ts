@@ -68,16 +68,39 @@ export class SendMessageUseCase {
     const events: IAgentEvent[] = []
     const startedAt = Date.now()
 
+    // `input` sem o contexto é o que se REGISTRA; `sent` é o que vai ao modelo. Decidido antes do
+    // primeiro evento: o provider soma o turno ao começar, e depois disso a sessão já não tem zero.
+    const recorded: IMessageInput = { ...input }
+    delete recorded.context
+    const sent = this.withContext(sessionId, input)
+
     try {
-      for await (const event of this.agentProvider.sendMessage(sessionId, input)) {
+      for await (const event of this.agentProvider.sendMessage(sessionId, sent)) {
         events.push(event)
         yield event
       }
     } finally {
       // `void`: gravação não segura a resposta de quem está lendo o stream, e o repositório já
       // engole o próprio erro — banco fora do ar não pode derrubar a conversa.
-      void this.record(sessionId, input, events, startedAt)
+      void this.record(sessionId, recorded, events, startedAt)
     }
+  }
+
+  /**
+   * O contexto do sistema vai na PRIMEIRA mensagem só: dali em diante ele já está no histórico do
+   * modelo, e repeti-lo pagaria os mesmos tokens a cada turno para dizer a mesma coisa.
+   *
+   * ⚠️ Sessão que não se consegue descrever (saiu do store) conta como "já tem turno": na dúvida não
+   * se injeta nada — o provider vai recusar a sessão de qualquer forma.
+   */
+  private withContext(sessionId: string, input: IMessageInput): IMessageInput {
+    const { context, ...rest } = input
+    if (!context) return rest
+
+    const session = this.describeQuietly(sessionId)
+    if (!session || session.turns > 0) return rest
+
+    return { ...rest, text: rest.text.trim() ? `${context}\n\n${rest.text}` : context }
   }
 
   private async record(sessionId: string, input: IMessageInput, events: IAgentEvent[], startedAt: number): Promise<void> {

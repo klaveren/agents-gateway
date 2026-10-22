@@ -259,6 +259,52 @@ the owner merely separates conversations instead of protecting them from each ot
 
 A token that carries no readable id is never treated as anonymous.
 
+### Operating the gateway without a deploy
+
+Who the agent serves, which agent answers and with which model are *operating* decisions, so
+they live in settings you change at runtime (`GET`/`PUT /v1/settings`) instead of in `.env`. They
+are stored in the same SQLite file as the conversations (`CONVERSATIONS_DB`; `off` keeps them in
+memory, lost on restart) and apply on the next session, in the same instant they are saved.
+
+| Setting | Meaning |
+| --- | --- |
+| `audience` | `off`: nobody opens a new session. `restricted`: only callers whose **proven** role is in `AUDIENCE_ROLES`. `all` (default): every caller the gateway already lets through. |
+| `agentId` | Agent that answers when the caller sends none. Empty = first in the registry. |
+| `model` | Model used when the caller sends none. A model the chosen agent does not declare falls back to that agent's first, so switching agent never ships a stale model id to the wrong provider. |
+| `classifierModel`, `classifyTurns` | Stored only; the turn classifier comes in a later phase. |
+
+`PUT /settings` takes a partial body: an absent field is untouched, and `null` (or `""`) on an
+optional field deletes it and reverts to the default. `audience` cannot be cleared. `GET`
+returns what is stored plus `defaults`, the values that apply to empty fields. Both routes answer
+`404` (not `403`) to anyone who is not an administrator, so the route's existence is not
+revealed. Closing the audience only blocks *new* sessions; a turn already running finishes. A
+refusal is `403` with code `agent_unavailable`.
+
+Access rules, in order: a role in `DENIED_ROLES` is refused under **any** audience, `all`
+included; `off` refuses everyone; `restricted` needs a *proven* identity whose role is in
+`AUDIENCE_ROLES`; `all` admits anyone with a proven identity, and one that is only *claimed* is
+admitted solely when `REQUIRE_PROVEN_OWNER` is off (an anonymous call, which exists only with
+`ALLOW_ANONYMOUS=1`, is admitted under `all`: there is no identity to forge). The role comes from
+`CALLER_ROLE_CLAIM`. For a caller that is not proven, `DENIED_ROLES` only sees what the token
+*says*: refusing on a claim is the safe direction, but configure proof if you need it airtight.
+`GET /v1/availability` answers `{ "available": true|false }` for the current caller; the bundled
+UI can use it to decide whether to show the assistant.
+
+Settings administrators are callers with a **proven** identity whose role is in `ADMIN_ROLES` or
+whose id/e-mail is in `ADMIN_USERS`. Without `CALLER_PROOF_TOOL` nobody is an administrator.
+
+| Env | Default | What it does |
+| --- | --- | --- |
+| `AUDIENCE_ROLES` | `admin` | Comma list of roles admitted under `audience: restricted`. |
+| `DENIED_ROLES` | *(empty)* | Comma list of roles refused under every audience. |
+| `ADMIN_ROLES` | `admin` | Comma list of roles that may read and write settings. |
+| `ADMIN_USERS` | *(empty)* | Comma list of ids or e-mails that may read and write settings. |
+| `AGENTS_ENABLED` | *(all)* | Comma list of agent ids that **exist** in this process. An agent that is not listed is not refused, it is gone: no `/agents`, no session by any route. Use it so an agent carrying a shell tool (`run_bash`) cannot be reached. The boot fails if nothing matches. |
+| `SESSION_CONTEXT_TEMPLATE` | *(none)* | Text sent to the model before the **first** message of a session, never stored in the turn. Placeholders: `{id}` `{email}` `{role}` `{account}` `{date}`. If it cites an identity field the token lacks, no context is sent. Unset = none. |
+| `SESSION_TIMEZONE` | `UTC` | Time zone of `{date}` (IANA name; an invalid one falls back to UTC). |
+
+Sessions expire after **8 hours** without activity.
+
 ### Tool safety, and actual containment
 
 `run_bash` runs with a timeout, an output cap, a configurable `cwd`, and a deny-list for the
@@ -314,7 +360,10 @@ the build if it drifts from the routes the server actually registers.
 | `GET /v1/agents` | The registry (never the system prompt), including which lanes each agent supports. |
 | `GET /v1/agents/:agentId/tools` | Tool catalog filtered by what that agent declares. |
 | `GET /v1/tools` | Full catalog: built-in tools merged with whatever MCP exposes. |
-| `POST /v1/sessions` | `{ agentId, mode, model, reasoning, language }` → a session. |
+| `GET /v1/availability` | `{ available }`: does the agent serve you right now? |
+| `GET /v1/settings` | Operating settings plus `defaults`. Administrators only (404 otherwise). |
+| `PUT /v1/settings` | Partial update; `null` reverts an optional field. Administrators only. |
+| `POST /v1/sessions` | `{ agentId?, mode, model, reasoning, language }` → a session. `403 agent_unavailable` when the audience refuses you. |
 | `GET /v1/sessions` | Your live sessions, most recently active first. |
 | `GET /v1/sessions/:id` | Lane, model, turns and accumulated usage. |
 | `DELETE /v1/sessions/:id` | Ends the session, aborting anything in flight. |

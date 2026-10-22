@@ -61,3 +61,13 @@ export class AgentUnavailableError extends DomainError {
     this.name = 'AgentUnavailableError'
   }
 }
+
+/**
+ * Uma alteração de configuração que não faz sentido — por exemplo, apagar um campo obrigatório.
+ * É erro de quem pediu (422), e não do serviço.
+ */
+export class InvalidSettingsError extends DomainError {
+  constructor(public readonly field: string) {
+    super(`Settings field cannot be cleared: ${field}`)
+  }
+}

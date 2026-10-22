@@ -105,10 +105,49 @@ const agentSchema = {
   },
 }
 
+const settingsSchema = {
+  type: 'object',
+  properties: {
+    audience: {
+      type: 'string',
+      enum: ['off', 'restricted', 'all'],
+      description:
+        '`off`: nobody opens a new session. `restricted`: only callers whose PROVEN role is in `AUDIENCE_ROLES`. `all`: every caller the gateway lets through. Roles in `DENIED_ROLES` are refused under every value.',
+    },
+    agentId: { type: 'string', description: 'Registry agent that answers when the caller does not pick one. Absent = the registry default.' },
+    model: { type: 'string', description: "Model used when the caller sends none. A model the chosen agent does not declare falls back to the agent's first." },
+    classifierModel: { type: 'string', description: 'Stored only for now: the turn classifier arrives in a later phase.' },
+    classifyTurns: { type: 'boolean', description: 'Stored only for now: the turn classifier arrives in a later phase.' },
+    updatedAt: { type: 'string', format: 'date-time' },
+    updatedBy: { type: 'string' },
+  },
+  required: ['audience'],
+}
+
+const settingsResult = {
+  allOf: [
+    settingsSchema,
+    {
+      type: 'object',
+      description: 'What applies when an optional field is empty.',
+      properties: {
+        defaults: { type: 'object', properties: { agentId: { type: 'string' }, model: { type: 'string' } } },
+      },
+    },
+  ],
+}
+
+const nullableText = { type: ['string', 'null'], description: 'Absent leaves it untouched. `null` (or an empty string) deletes it and reverts to the default.' }
+
 const failures = {
   '401': {
     description:
       'Missing or invalid gateway bearer token; or no caller credential (`X-Tool-Authorization`) on any route but `/health`; or a credential that could not be proven (see `CALLER_PROOF_TOOL`, `REQUIRE_PROVEN_OWNER`). `ALLOW_ANONYMOUS=1` waives the missing-credential case.',
+    content: { 'application/json': { schema: failureEnvelope } },
+  },
+  '403': {
+    description:
+      'Code `agent_unavailable`: the agent is not serving this caller right now (audience `off`, a role outside `AUDIENCE_ROLES` under `restricted`, or a role in `DENIED_ROLES`). An operating decision, not a missing permission to ask for.',
     content: { 'application/json': { schema: failureEnvelope } },
   },
   '404': {
@@ -167,6 +206,42 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'OK', ...json(envelope(toolsResult)) }, '401': failures['401'] },
       },
     },
+    '/availability': {
+      get: {
+        summary: 'Whether the agent serves the current caller right now. Yes or no only; any authenticated caller may ask',
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { available: { type: 'boolean' } }, required: ['available'] })) },
+          '401': failures['401'],
+        },
+      },
+    },
+    '/settings': {
+      get: {
+        summary: 'Operating settings plus the defaults that apply to empty fields. Administrators only; anyone else gets 404',
+        responses: { '200': { description: 'OK', ...json(envelope(settingsResult)) }, '401': failures['401'], '404': failures['404'] },
+      },
+      put: {
+        summary: 'Partial update. Absent fields are untouched; `null` or an empty string on an optional field reverts it to the default. Administrators only',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  audience: { type: 'string', enum: ['off', 'restricted', 'all'], description: 'Required in storage: it cannot be cleared.' },
+                  agentId: nullableText,
+                  model: nullableText,
+                  classifierModel: nullableText,
+                  classifyTurns: { type: ['boolean', 'null'] },
+                },
+              },
+            },
+          },
+        },
+        responses: { '200': { description: 'The stored settings', ...json(envelope(settingsSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
     '/sessions': {
       post: {
         summary: 'Open a session on a lane',
@@ -177,14 +252,14 @@ export const OPENAPI_DOCUMENT = {
               schema: {
                 type: 'object',
                 properties: {
-                  agentId: { type: 'string' },
+                  agentId: { type: 'string', description: 'Optional. Falls back to the configured agent (`PUT /settings`), then to the registry default.' },
                   mode: { type: 'string', enum: ['chat', 'agent'], default: 'chat' },
                   tools: {
                     type: 'boolean',
                     default: false,
                     description: 'Chat lane only: run the hand-rolled tool loop. On the agent lane the SDK owns the loop.',
                   },
-                  model: { type: 'string' },
+                  model: { type: 'string', description: "Falls back to the configured model; a model the agent does not declare falls back to the agent's first." },
                   reasoning: { type: 'string' },
                   language: { type: 'string' },
                   systemPrompt: { type: 'string' },
@@ -193,7 +268,6 @@ export const OPENAPI_DOCUMENT = {
                     description: 'Free-form. The `owner` key is reserved: it is stamped from the caller credential and any `owner` sent here is discarded.',
                   },
                 },
-                required: ['agentId'],
               },
             },
           },
@@ -201,6 +275,7 @@ export const OPENAPI_DOCUMENT = {
         responses: {
           '201': { description: 'Created. The session is owned by the caller (`metadata.owner`).', ...json(envelope(sessionSchema)) },
           '401': failures['401'],
+          '403': failures['403'],
           '404': failures['404'],
           '422': failures['422'],
         },

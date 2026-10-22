@@ -1,4 +1,12 @@
-import { AdapterNotFoundError, AgentNotFoundError, AgentUnavailableError, ModeNotSupportedError, SessionNotFoundError, ToolsNotSupportedError } from '@domain/errors/Domain.Error'
+import {
+  AdapterNotFoundError,
+  AgentNotFoundError,
+  AgentUnavailableError,
+  InvalidSettingsError,
+  ModeNotSupportedError,
+  SessionNotFoundError,
+  ToolsNotSupportedError,
+} from '@domain/errors/Domain.Error'
 
 export type TErrorCode =
   | 'validation_error'
@@ -64,6 +72,10 @@ export function toHttpFailure(error: unknown): IHttpFailure {
      * fazer a seguir.
      */
     return { status: 403, code: 'agent_unavailable', message: error.message }
+  }
+
+  if (error instanceof InvalidSettingsError) {
+    return { status: 422, code: 'validation_error', message: error.message }
   }
 
   if (error instanceof ModeNotSupportedError) {

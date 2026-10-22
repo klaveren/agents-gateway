@@ -184,4 +184,63 @@ describe('SendMessageUseCase', () => {
       ['primeira pergunta', undefined],
     )
   })
+
+  describe('contexto da primeira mensagem', () => {
+    const CONTEXT = '[contexto do sistema]'
+
+    /** Provider que anota o texto recebido e conta turnos como o real: o turno soma ao começar. */
+    const counting = (sent: string[], turns = { n: 0 }) =>
+      stubProvider({
+        describe: () => session({ turns: turns.n }),
+        sendMessage: async function* (_id, input) {
+          turns.n += 1
+          sent.push(input.text)
+          yield { type: 'text.delta' as const, sessionId: 's', timestamp: new Date(), payload: { text: 'ok' } }
+        },
+      })
+
+    it('goes before the text on the first message only', async () => {
+      const sent: string[] = []
+      const usecase = new SendMessageUseCase(counting(sent), new NullConversationRepository())
+
+      for await (const _ of usecase.execute('s', { text: 'Quantos pedidos?', context: CONTEXT })) void _
+      for await (const _ of usecase.execute('s', { text: 'E clientes?', context: CONTEXT })) void _
+
+      assert.deepStrictEqual(sent, [`${CONTEXT}\n\nQuantos pedidos?`, 'E clientes?'])
+    })
+
+    it('never reaches the adapter as a field, and is not recorded in the turn or the title', async () => {
+      const repository = new RecordingRepository()
+      const seen: Array<Record<string, unknown>> = []
+      const turns = { n: 0 }
+      const provider = counting([], turns)
+      const usecase = new SendMessageUseCase({ ...provider, sendMessage: (id, input) => (seen.push({ ...input }), provider.sendMessage(id, input)) }, repository)
+
+      const done = repository.recorded()
+      for await (const _ of usecase.execute('s', { text: 'Quantos pedidos?', context: CONTEXT })) void _
+      await done
+
+      assert.strictEqual('context' in seen[0], false)
+      assert.strictEqual(repository.turns[0].request, 'Quantos pedidos?')
+      assert.strictEqual(repository.sessions[0].title, 'Quantos pedidos?')
+    })
+
+    it('an attachment with no text still carries the context', async () => {
+      const sent: string[] = []
+      const usecase = new SendMessageUseCase(counting(sent), new NullConversationRepository())
+
+      for await (const _ of usecase.execute('s', { text: '', files: [{ name: 'a.png', mimeType: 'image/png', data: 'AA==' }], context: CONTEXT })) void _
+
+      assert.deepStrictEqual(sent, [CONTEXT])
+    })
+
+    it('no context, no change', async () => {
+      const sent: string[] = []
+      const usecase = new SendMessageUseCase(counting(sent), new NullConversationRepository())
+
+      for await (const _ of usecase.execute('s', { text: 'oi' })) void _
+
+      assert.deepStrictEqual(sent, ['oi'])
+    })
+  })
 })

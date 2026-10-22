@@ -9,8 +9,8 @@ import { GoogleChatAdapter } from '@infra/adapters/GoogleChat.Adapter'
 import { OpenAIAgentAdapter } from '@infra/adapters/OpenAIAgent.Adapter'
 import { OpenAIChatAdapter } from '@infra/adapters/OpenAIChat.Adapter'
 import { adapterKey, AgentProvider } from '@infra/providers/Agent.Provider'
-import { NullSettingsRepository } from '@infra/persistence/Null.SettingsRepository'
 import { SessionStore } from '@infra/session/Session.Store'
+import { makeSettings } from './Settings.Factory'
 import { makeTools } from './Tools.Factory'
 
 let store: SessionStore | undefined
@@ -49,8 +49,8 @@ export function makeOrchestrator(): AgentProvider {
   ])
 
   /**
-   * Sem banco plugado, as configurações vivem em memória (ver `NullSettingsRepository`). Trocar por
-   * um repositório de verdade é trocar esta linha — nada acima daqui sabe qual é.
+   * A MESMA instância que o controller recebe (ver `makeSettings`): a tela salva num repositório e o
+   * provider escuta o mesmo, e é isso que faz a mudança valer no instante em que é gravada.
    */
-  return new AgentProvider(adapters, sessions, new NullSettingsRepository())
+  return new AgentProvider(adapters, sessions, makeSettings())
 }
