@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import ConversationList from '@/components/ConversationList.vue'
 import NewConversation from '@/components/NewConversation.vue'
@@ -18,11 +18,7 @@ const thread = useThreadStore()
 const isNew = computed(() => route.name === 'new')
 const hasDetail = computed(() => isNew.value || !!props.id)
 
-onMounted(() => {
-  void conversations.load(auth.isAdmin)
-  conversations.subscribe(auth.isAdmin)
-})
-onBeforeUnmount(() => conversations.unsubscribe())
+onMounted(() => void conversations.load(auth.isAdmin))
 
 watch(
   () => props.id,

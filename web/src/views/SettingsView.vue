@@ -4,11 +4,13 @@ import { ApiError } from '@/lib/api'
 import type { TAudience } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import { useAuthStore } from '@/stores/auth'
+import { useConversationsStore } from '@/stores/conversations'
 import { useSettingsStore } from '@/stores/settings'
 
 const auth = useAuthStore()
 const agents = useAgentsStore()
 const settings = useSettingsStore()
+const conversations = useConversationsStore()
 
 const gatewayToken = ref(auth.gatewayToken)
 const callerToken = ref(auth.callerToken)
@@ -49,6 +51,11 @@ watch(
 
 async function saveTokens() {
   await auth.saveTokens(gatewayToken.value, callerToken.value)
+  // Outra credencial é outra pessoa: lista, agentes e assinatura ao vivo recomeçam com ela.
+  conversations.subscribe(auth.isAdmin)
+  void conversations.load(auth.isAdmin)
+  void agents.load().catch(() => undefined)
+  if (auth.isAdmin) void settings.load().catch(() => undefined)
   tokenNote.value = auth.unauthorized ? 'O gateway recusou essas credenciais.' : auth.isAdmin ? 'Salvo. Você é administrador.' : 'Salvo.'
 }
 
