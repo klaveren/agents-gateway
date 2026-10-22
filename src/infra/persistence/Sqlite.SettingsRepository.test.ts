@@ -85,14 +85,22 @@ describe('SqliteSettingsRepository', () => {
   )
 
   it(
-    'a corrupt document reads as the default and never throws',
+    'a corrupt document fails closed — it may be hiding an `off` the admin saved',
     withFile(async (path) => {
       new SqliteSettingsRepository(path).close()
       const raw = new DatabaseSync(path)
       raw.prepare('INSERT OR REPLACE INTO settings (id, value, updated_at) VALUES (?, ?, ?)').run('agent', '{not json', 'x')
       raw.close()
 
-      assert.deepStrictEqual(await new SqliteSettingsRepository(path).read(), DEFAULT_SETTINGS)
+      const repo = new SqliteSettingsRepository(path)
+      // Nunca lança, mas também nunca cai no padrão `all`.
+      assert.strictEqual((await repo.read()).audience, 'off')
+
+      // Não fixa o estado de falha: consertado o documento, a próxima leitura vê o valor real.
+      const fix = new DatabaseSync(path)
+      fix.prepare('UPDATE settings SET value = ? WHERE id = ?').run(JSON.stringify({ audience: 'restricted' }), 'agent')
+      fix.close()
+      assert.strictEqual((await repo.read()).audience, 'restricted')
     }),
   )
 
