@@ -14,6 +14,7 @@ import { toSharedConversation } from '@domain/models/Conversation.Model'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { MODEL_PRICING, TModelPricing } from '@domain/models/Model.Pricing'
 import { allowsCaller, mergeSettings } from '@domain/models/Settings.Model'
+import { IConversationEvents, TConversationEvent } from '@domain/ports/ConversationEvents.Port'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { ISettingsRepository } from '@domain/ports/SettingsRepository.Port'
 import { ISessionContextProvider } from '@domain/ports/SessionContextProvider.Port'
@@ -65,6 +66,8 @@ export interface IAgentControllerDeps {
   conversations: IConversationRepository
   /** A tabela de preços ativa (de fábrica + `MODEL_PRICING_FILE`). Ausente = a de fábrica. */
   pricing?: TModelPricing
+  /** Por onde chegam as mudanças nas conversas gravadas. Ausente = `/conversations/events` só mantém a conexão. */
+  events?: IConversationEvents
 }
 
 /**
@@ -99,6 +102,7 @@ export class AgentController {
     this.shareConversation = this.shareConversation.bind(this)
     this.deleteConversation = this.deleteConversation.bind(this)
     this.getSharedConversation = this.getSharedConversation.bind(this)
+    this.conversationEvents = this.conversationEvents.bind(this)
   }
 
   async health(_req: Request, res: Response) {
@@ -301,10 +305,51 @@ export class AgentController {
     const limit = Number.parseInt(String(query.limit ?? ''), 10)
     const sessions = await this.usecases.conversations.listSessions({
       limit: Number.isFinite(limit) && limit > 0 ? limit : 100,
-      filter: metadataFilter(query, ['page', 'pageSize', 'q', 'classification', 'provider']),
+      filter: metadataFilter(query, ['page', 'pageSize', 'q', 'classification', 'provider', 'agentId']),
     })
 
     return { sessions: sessions.map((session) => toConversationDto(session, view)), scope: 'all' }
+  }
+
+  /**
+   * As mudanças nas conversas gravadas, ao vivo (SSE) — o que mantém a caixa de entrada em dia.
+   *
+   * ⛔ A MESMA REGRA DA LISTAGEM, aplicada evento a evento: administrador vê todas; os demais, só as
+   * suas (`ownsSession`). O veredito é tomado ao conectar — quem perde o papel de admin continua
+   * recebendo até reconectar, como continuaria com a lista já aberta na tela.
+   *
+   * ⚠️ `conversation.updated` sai na projeção de quem LÊ (`toConversationDto`): o não administrador
+   * não recebe rótulo nem custo por aqui, do mesmo jeito que não recebe pela listagem.
+   */
+  async conversationEvents(_req: Request, res: Response) {
+    let resolved: IResolvedCaller
+    let admin: boolean
+    try {
+      resolved = await this.requireCaller()
+      admin = (await checkAdminAccess(this.usecases.proof)).allowed
+    } catch (error: unknown) {
+      return this.sendFailure(res, error, '[AgentController.conversationEvents]')
+    }
+
+    const stream = new SseStream(res)
+    stream.open()
+    stream.comment('ready')
+
+    const view = this.viewFor(admin)
+    const unsubscribe =
+      this.usecases.events?.subscribe((event: TConversationEvent) => {
+        const metadata = event.type === 'conversation.updated' ? event.session.metadata : event.metadata
+        if (!admin && !ownsSession(resolved, metadata)) return
+
+        if (event.type === 'conversation.updated') stream.emit(event.type, { session: toConversationDto(event.session, view) })
+        else stream.emit(event.type, { sessionId: event.sessionId })
+      }) ?? (() => undefined)
+
+    // Em `res`, não em `req` — ver `sendMessageAsStream`: o `close` do request dispara cedo demais.
+    res.on('close', () => {
+      unsubscribe()
+      stream.close()
+    })
   }
 
   /**

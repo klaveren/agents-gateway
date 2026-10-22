@@ -287,7 +287,7 @@ describe('AgentController — conversas, monitor e compartilhamento', () => {
       )
       assert.strictEqual(searched.total, 1)
       // As abas contam sobre a busca "alice", não sobre a aba `red`.
-      assert.deepStrictEqual(searched.facets, { classification: { red: 1 }, provider: { claude: 2 } })
+      assert.deepStrictEqual(searched.facets, { classification: { red: 1 }, provider: { claude: 2 }, agent: { 'researcher-agent': 2 } })
 
       const wide = (await call(ADMIN, all({ page: '1', pageSize: '100000' })(controller))).body?.result
       assert.strictEqual(wide.pageSize, 50, 'o teto de pageSize é 50')

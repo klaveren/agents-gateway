@@ -46,6 +46,13 @@ export class SseStream {
     this.res.write(`id: ${this.sequence}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
   }
 
+  /** Evento que não é de turno (a caixa de entrada): mesmo enquadramento, nome e dado próprios. */
+  emit(type: string, data: unknown): void {
+    if (this.closed) return
+    this.sequence += 1
+    this.res.write(`id: ${this.sequence}\nevent: ${type}\ndata: ${JSON.stringify({ type, ...(data as object) })}\n\n`)
+  }
+
   comment(text: string): void {
     if (this.closed) return
     this.res.write(`: ${text}\n\n`)

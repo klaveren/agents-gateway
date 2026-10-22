@@ -13,7 +13,7 @@ export const SEARCH_MAX = 100
  * que impede um `pageSize=100000` de trazer o banco inteiro de volta numa chamada só.
  *
  * ⚠️ `classification` desconhecida é IGNORADA (e não vira "nenhum resultado"): um filtro que some
- * alarga a lista, o que é o erro mais visível dos dois. `provider` só aceita identificador simples.
+ * alarga a lista, o que é o erro mais visível dos dois. `provider` e `agentId` só aceitam identificador simples.
  */
 export function parsePageQuery(query: Record<string, unknown>): IConversationPageQuery {
   const int = (value: unknown) => Number.parseInt(String(value ?? ''), 10)
@@ -23,6 +23,7 @@ export function parsePageQuery(query: Record<string, unknown>): IConversationPag
   const q = typeof query.q === 'string' ? query.q.trim().slice(0, SEARCH_MAX) : ''
   const classification = CLASSIFICATIONS.includes(query.classification as TClassification) ? (query.classification as TClassification) : undefined
   const provider = typeof query.provider === 'string' && /^[a-z0-9_-]{1,40}$/i.test(query.provider) ? query.provider : undefined
+  const agentId = typeof query.agentId === 'string' && /^[a-z0-9_-]{1,64}$/i.test(query.agentId) ? query.agentId : undefined
 
   return {
     page: Number.isFinite(page) && page >= 1 ? page : 1,
@@ -30,6 +31,7 @@ export function parsePageQuery(query: Record<string, unknown>): IConversationPag
     q: q || undefined,
     classification,
     provider,
+    agentId,
   }
 }
 

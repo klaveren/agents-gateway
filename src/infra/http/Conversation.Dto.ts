@@ -1,5 +1,5 @@
 import { TClassification } from '@domain/models/Classification.Model'
-import { IConversationSession, IConversationStats, IConversationTurn, IStoredUsage } from '@domain/models/Conversation.Model'
+import { IConversationPreview, IConversationSession, IConversationStats, IConversationTurn, IStoredUsage } from '@domain/models/Conversation.Model'
 import { costOf, TModelPricing } from '@domain/models/Model.Pricing'
 
 /**
@@ -25,6 +25,8 @@ export interface IConversationDto {
   metadata?: Record<string, unknown>
   shared: boolean
   shareId?: string
+  /** O último turno, encurtado. Conteúdo da própria conversa: sai para quem já pode lê-la. */
+  preview?: IConversationPreview
   /** Só para administrador. */
   classification?: TClassification
   /** Só para administrador. Ausente quando o modelo não tem preço — nunca zero. */
@@ -51,6 +53,7 @@ export function toConversationDto(session: IConversationSession, view: IConversa
     metadata: session.metadata,
     shared: session.shared === true,
     shareId: session.shared ? session.shareId : undefined,
+    preview: session.preview,
   }
 
   if (!view.admin) return dto

@@ -4,6 +4,8 @@ import { DeleteSessionUseCase } from '@application/DeleteSession.Usecase'
 import { GetSessionUseCase } from '@application/GetSession.Usecase'
 import { ListSessionsUseCase } from '@application/ListSessions.Usecase'
 import { SendMessageUseCase } from '@application/SendMessage.Usecase'
+import { InMemoryConversationEvents } from '@infra/events/InMemory.ConversationEvents'
+import { NotifyingConversationRepository } from '@infra/persistence/Notifying.ConversationRepository'
 import { NullConversationRepository } from '@infra/persistence/Null.ConversationRepository'
 import { SqliteConversationRepository, DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
 import { makeClassifier } from './Classifier.Factory'
@@ -39,11 +41,15 @@ export function makeConversationRepository() {
 export function makeUsecases() {
   const agentProvider = makeOrchestrator()
 
-  const conversations = makeConversationRepository()
+  // Toda escrita passa pelo decorador, que avisa a caixa de entrada; a leitura vai direto.
+  const events = new InMemoryConversationEvents()
+  const conversations = new NotifyingConversationRepository(makeConversationRepository(), events)
 
   return {
     /** O MESMO repositório do `SendMessageUseCase`: o controller lê o que ele grava. */
     conversations,
+    /** O MESMO barramento em que o repositório publica: a rota SSE assina este. */
+    events,
     createSessionUseCase: new CreateSessionUseCase(agentProvider),
     sendMessageUseCase: new SendMessageUseCase(agentProvider, conversations, makeClassifier()),
     cancelSessionUseCase: new CancelSessionUseCase(agentProvider),

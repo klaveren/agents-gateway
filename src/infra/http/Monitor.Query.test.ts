@@ -4,7 +4,14 @@ import { metadataFilter, PAGE_SIZE_DEFAULT, PAGE_SIZE_MAX, parsePageQuery, SEARC
 
 describe('parsePageQuery', () => {
   it('o que não serve vira o padrão, em vez de erro', () => {
-    assert.deepStrictEqual(parsePageQuery({ page: 'abc', pageSize: '-3' }), { page: 1, pageSize: PAGE_SIZE_DEFAULT, q: undefined, classification: undefined, provider: undefined })
+    assert.deepStrictEqual(parsePageQuery({ page: 'abc', pageSize: '-3' }), {
+      page: 1,
+      pageSize: PAGE_SIZE_DEFAULT,
+      q: undefined,
+      classification: undefined,
+      provider: undefined,
+      agentId: undefined,
+    })
     assert.strictEqual(parsePageQuery({ page: '0' }).page, 1)
     assert.strictEqual(parsePageQuery({ page: '4' }).page, 4)
   })

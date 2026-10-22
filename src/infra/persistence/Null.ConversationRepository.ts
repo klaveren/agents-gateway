@@ -23,7 +23,7 @@ export class NullConversationRepository implements IConversationRepository {
     return []
   }
   async pageSessions(): Promise<IConversationPage> {
-    return { sessions: [], total: 0, facets: { classification: {}, provider: {} } }
+    return { sessions: [], total: 0, facets: { classification: {}, provider: {}, agent: {} } }
   }
   async listTurns(): Promise<IConversationTurn[]> {
     return []

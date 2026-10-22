@@ -10,6 +10,7 @@ import {
   IConversationTurn,
   IOwnerFilter,
   IStoredUsage,
+  PREVIEW_MAX,
 } from '@domain/models/Conversation.Model'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 
@@ -130,6 +131,22 @@ const ADDED_INDEXES = [
  * ordem, e o `OFFSET` repete uma conversa numa página e some com outra.
  */
 const RECENT_FIRST = 'ORDER BY updated_at DESC, id DESC'
+
+/**
+ * O cabeçalho mais a prévia do último turno, lida na hora.
+ *
+ * ⚖️ Subconsulta e não coluna: a chave `(conversation_id, idx)` acha o último turno direto pelo
+ * índice, e numa página de até 50 linhas isso é barato. Uma coluna copiada no cabeçalho seria mais
+ * uma escrita por turno — e a primeira vez que divergisse, a lista mostraria o que a conversa não diz.
+ */
+const LAST_TURN = (expression: string, alias: string) =>
+  `(SELECT ${expression} FROM conversation_turns WHERE conversation_turns.conversation_id = conversations.id ORDER BY idx DESC LIMIT 1) AS ${alias}`
+const SESSION_COLUMNS = [
+  'conversations.*',
+  LAST_TURN(`substr(request, 1, ${PREVIEW_MAX})`, 'last_request'),
+  LAST_TURN(`substr(response, 1, ${PREVIEW_MAX})`, 'last_response'),
+  LAST_TURN('at', 'last_at'),
+].join(', ')
 
 /** Onde mora o dono dentro do `metadata`. Fixo e sem entrada de fora: vai para dentro do SQL. */
 const OWNER_ID = "json_extract(metadata, '$.owner.id')"
@@ -363,7 +380,7 @@ export class SqliteConversationRepository implements IConversationRepository {
         const limit = Math.min(Math.max(options.limit ?? 100, 1), 500)
         const clause = where.length ? `WHERE ${where.join(' AND ')}` : ''
 
-        const rows = this.db.prepare(`SELECT * FROM conversations ${clause} ${RECENT_FIRST} LIMIT ?`).all(...params, limit) as TRow[]
+        const rows = this.db.prepare(`SELECT ${SESSION_COLUMNS} FROM conversations ${clause} ${RECENT_FIRST} LIMIT ?`).all(...params, limit) as TRow[]
 
         return rows.map((row) => this.toSession(row))
       }) ?? []
@@ -383,7 +400,7 @@ export class SqliteConversationRepository implements IConversationRepository {
    * "JOÃO" não acha "joão".
    */
   async pageSessions(query: IConversationPageQuery): Promise<IConversationPage> {
-    const empty: IConversationPage = { sessions: [], total: 0, facets: { classification: {}, provider: {} } }
+    const empty: IConversationPage = { sessions: [], total: 0, facets: { classification: {}, provider: {}, agent: {} } }
 
     return (
       this.guard('pageSessions', () => {
@@ -406,6 +423,10 @@ export class SqliteConversationRepository implements IConversationRepository {
           tab.push('provider = ?')
           tabParams.push(query.provider)
         }
+        if (query.agentId) {
+          tab.push('agent_id = ?')
+          tabParams.push(query.agentId)
+        }
 
         const searchClause = search.length ? `WHERE ${search.join(' AND ')}` : ''
         const listClause = [...search, ...tab].length ? `WHERE ${[...search, ...tab].join(' AND ')}` : ''
@@ -414,7 +435,9 @@ export class SqliteConversationRepository implements IConversationRepository {
         const pageSize = Math.min(Math.max(Math.trunc(query.pageSize) || 1, 1), 500)
         const page = Math.max(Math.trunc(query.page) || 1, 1)
 
-        const rows = this.db.prepare(`SELECT * FROM conversations ${listClause} ${RECENT_FIRST} LIMIT ? OFFSET ?`).all(...listParams, pageSize, (page - 1) * pageSize) as TRow[]
+        const rows = this.db
+          .prepare(`SELECT ${SESSION_COLUMNS} FROM conversations ${listClause} ${RECENT_FIRST} LIMIT ? OFFSET ?`)
+          .all(...listParams, pageSize, (page - 1) * pageSize) as TRow[]
         const total = this.db.prepare(`SELECT COUNT(*) AS n FROM conversations ${listClause}`).get(...listParams) as TRow
 
         const facet = (column: string): Record<string, number> => {
@@ -424,7 +447,11 @@ export class SqliteConversationRepository implements IConversationRepository {
           return Object.fromEntries(grouped.filter((row) => typeof row.value === 'string' && row.value).map((row) => [row.value as string, count(row.n)]))
         }
 
-        return { sessions: rows.map((row) => this.toSession(row)), total: count(total.n), facets: { classification: facet('classification'), provider: facet('provider') } }
+        return {
+          sessions: rows.map((row) => this.toSession(row)),
+          total: count(total.n),
+          facets: { classification: facet('classification'), provider: facet('provider'), agent: facet('agent_id') },
+        }
       }) ?? empty
     )
   }
@@ -463,7 +490,7 @@ export class SqliteConversationRepository implements IConversationRepository {
 
   async findSession(sessionId: string): Promise<IConversationSession | undefined> {
     return this.guard('findSession', () => {
-      const row = this.db.prepare('SELECT * FROM conversations WHERE id = ?').get(sessionId) as TRow | undefined
+      const row = this.db.prepare(`SELECT ${SESSION_COLUMNS} FROM conversations WHERE id = ?`).get(sessionId) as TRow | undefined
 
       return row ? this.toSession(row) : undefined
     })
@@ -473,7 +500,7 @@ export class SqliteConversationRepository implements IConversationRepository {
     return this.guard('findByShareId', () => {
       if (!shareId) return undefined
 
-      const row = this.db.prepare('SELECT * FROM conversations WHERE share_id = ?').get(shareId) as TRow | undefined
+      const row = this.db.prepare(`SELECT ${SESSION_COLUMNS} FROM conversations WHERE share_id = ?`).get(shareId) as TRow | undefined
 
       return row ? this.toSession(row) : undefined
     })
@@ -566,6 +593,7 @@ export class SqliteConversationRepository implements IConversationRepository {
       // Sempre booleano: a coluna é `NOT NULL DEFAULT 0`, então "ausente" é "fechada".
       shared: count(row.shared) === 1,
       shareId: typeof row.share_id === 'string' ? row.share_id : undefined,
+      preview: typeof row.last_at === 'string' ? { at: new Date(row.last_at), request: text(row.last_request), text: text(row.last_response) } : undefined,
     }
   }
 
