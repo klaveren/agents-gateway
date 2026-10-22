@@ -24,16 +24,18 @@ const agentName = (id: string) => agents.byId.get(id)?.name ?? id
     <p v-if="!t.turns" class="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6 text-center text-sm text-zinc-400">Nenhum uso neste período.</p>
 
     <template v-else>
-      <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div class="flex flex-wrap gap-2">
         <div class="tile"><span class="tile-label">Tokens</span><span class="tile-value">{{ tokens(t.usage.totalTokens) }}</span></div>
         <div class="tile"><span class="tile-label">Conversas</span><span class="tile-value">{{ t.conversations }}</span></div>
         <div class="tile"><span class="tile-label">Turnos</span><span class="tile-value">{{ t.turns }}</span></div>
         <div v-if="showCost" class="tile"><span class="tile-label">Custo estimado</span><span class="tile-value">{{ cost(t) }}</span></div>
-        <div v-else class="tile"><span class="tile-label">Cache lido</span><span class="tile-value">{{ tokens(t.usage.cacheReadTokens) }}</span></div>
+        <div class="tile"><span class="tile-label">Entrada</span><span class="tile-value">{{ tokens(t.usage.inputTokens) }}</span></div>
+        <div class="tile"><span class="tile-label">Resposta</span><span class="tile-value">{{ tokens(t.usage.outputTokens) }}</span></div>
+        <div class="tile"><span class="tile-label">Cache lido</span><span class="tile-value">{{ tokens(t.usage.cacheReadTokens) }}</span></div>
+        <div class="tile"><span class="tile-label">Cache gravado</span><span class="tile-value">{{ tokens(t.usage.cacheWriteTokens) }}</span></div>
       </div>
       <p class="-mt-1 text-xs text-zinc-500">
-        Entrada {{ tokens(t.usage.inputTokens) }} · saída {{ tokens(t.usage.outputTokens) }} · raciocínio {{ tokens(t.usage.reasoningTokens) }}
-        <template v-if="showCost"> · cache lido {{ tokens(t.usage.cacheReadTokens) }}</template>
+        Raciocínio {{ tokens(t.usage.reasoningTokens) }} (cobrado como resposta)
         <template v-if="showCost && t.costIsFloor"> · ≥ = há modelo sem preço; o custo é um piso</template>
       </p>
 
@@ -88,13 +90,13 @@ const agentName = (id: string) => agents.byId.get(id)?.name ?? id
 @reference '../style.css';
 
 .tile {
-  @apply flex flex-col gap-1 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4;
+  @apply flex min-w-28 flex-1 basis-28 flex-col gap-0.5 rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-2.5;
 }
 .tile-label {
-  @apply text-xs text-zinc-500;
+  @apply truncate text-[11px] text-zinc-500;
 }
 .tile-value {
-  @apply text-2xl font-semibold text-zinc-100 tabular-nums;
+  @apply truncate text-lg font-semibold text-zinc-100 tabular-nums;
 }
 .card {
   @apply rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4;
