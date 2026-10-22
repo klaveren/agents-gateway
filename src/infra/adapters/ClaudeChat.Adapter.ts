@@ -1,6 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
-import { ICredentialSource } from '@domain/ports/CredentialStore.Port'
-import { KeyedClient } from './support/Keyed.Client'
+import { IConnectionSource, KeyedClient } from './support/Keyed.Client'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
@@ -30,8 +29,8 @@ type THistory = Anthropic.MessageParam[]
 
 export interface IClaudeChatAdapterDeps {
   client?: Anthropic
-  /** De onde vem a chave em cada chamada. Ausente = a do ambiente. */
-  credentials?: ICredentialSource
+  /** De onde vêm a chave e a URL em cada chamada. Ausente = a chave do ambiente, a URL oficial. */
+  connections?: IConnectionSource
   store?: SessionStore
   catalog?: ToolCatalog
 }
@@ -49,7 +48,7 @@ export class ClaudeChatAdapter implements IAgentAdapter {
   private readonly catalog?: ToolCatalog
 
   constructor(deps: IClaudeChatAdapterDeps = {}) {
-    this.clients = new KeyedClient(EProvider.CLAUDE, (key) => new Anthropic({ apiKey: key }), deps.credentials, deps.client)
+    this.clients = new KeyedClient(EProvider.CLAUDE, ({ key, baseUrl }) => new Anthropic({ apiKey: key, baseURL: baseUrl }), deps.connections, deps.client)
     this.store = deps.store ?? new SessionStore()
     this.catalog = deps.catalog
   }
@@ -57,7 +56,9 @@ export class ClaudeChatAdapter implements IAgentAdapter {
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
     const record = this.store.create(sessionPrefix(EProvider.CLAUDE, EMode.CHAT), {
       agentId: agent.id,
-      provider: EProvider.CLAUDE,
+      // O provider configurado (o oficial ou um compatível); o protocolo é o deste adapter.
+      provider: agent.provider,
+      protocol: EProvider.CLAUDE,
       mode: EMode.CHAT,
       model: input.model || DEFAULT_MODEL,
       reasoning: input.reasoning,
@@ -148,7 +149,7 @@ export class ClaudeChatAdapter implements IAgentAdapter {
    */
   private loopProvider(record: ISessionRecord, sessionId: string): IManualLoopProvider<Anthropic.MessageParam> {
     // Pedido aqui, dentro do turno: a chave em vigor AGORA, e a falta dela vira evento de erro do turno.
-    const client = this.clients.get()
+    const client = this.clients.get(record.provider)
     const effort = this.toEffort(record.reasoning)
 
     return {

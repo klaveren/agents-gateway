@@ -47,3 +47,13 @@ export const CLASSIFICATION_COLOR: Record<string, string> = {
 }
 
 export const CLASSIFICATION_LABEL: Record<string, string> = { green: 'Verde', blue: 'Azul', amber: 'Âmbar', red: 'Vermelho' }
+
+/** O nome de um provider pelo id: os oficiais têm rótulo próprio; um compatível aparece pelo id. */
+export function providerLabel(id: string, names: ReadonlyMap<string, string> = new Map()): string {
+  return names.get(id) ?? PROVIDER_LABEL[id as TProvider] ?? id
+}
+
+/** A cor do avatar: a do oficial, ou neutra para um compatível (que pode servir modelos de todo mundo). */
+export function providerColor(id: string): string {
+  return PROVIDER_COLOR[id as TProvider] ?? 'bg-zinc-600'
+}

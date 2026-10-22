@@ -15,7 +15,8 @@ import { TComplete } from './Llm.TurnClassifier'
  */
 export function providerOfModel(model: string, agents = AGENT_REGISTRY): EProvider | undefined {
   const declared = agents.find((agent) => agent.models.includes(model))
-  if (declared) return declared.provider
+  const protocol = Object.values(EProvider).find((value) => value === declared?.provider)
+  if (protocol) return protocol
 
   const id = model.toLowerCase()
   if (id.startsWith('claude')) return EProvider.CLAUDE

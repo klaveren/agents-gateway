@@ -54,14 +54,69 @@ describe('Providers (integração)', () => {
 
     assert.strictEqual(saved.status, 200)
     assert.ok(!saved.text.includes(SECRET) && !listed.text.includes(SECRET))
-    const claude = JSON.parse(listed.text).result.find((item: { provider: string }) => item.provider === 'claude')
-    assert.deepStrictEqual([claude.source, claude.last4, claude.updatedBy], ['stored', '7777', 'root@x.test'])
+    const claude = JSON.parse(listed.text).result.find((item: { id: string }) => item.id === 'claude')
+    assert.deepStrictEqual([claude.credential.source, claude.credential.last4, claude.credential.updatedBy], ['stored', '7777', 'root@x.test'])
     assert.ok(claude.models.includes('claude-sonnet-5'))
   })
 
   it('remover volta a "none" (sem chave no ambiente)', async () => {
     const removed = JSON.parse((await call('/providers/claude/key', { method: 'DELETE', token: admin })).text).result
-    assert.strictEqual(removed.source, 'none')
+    assert.strictEqual(removed.credential.source, 'none')
+  })
+
+  it('cria um compatível (OpenRouter) já com a chave; a URL perde a barra final; a chave não volta', async () => {
+    const created = await call('/providers', {
+      method: 'POST',
+      token: admin,
+      body: { id: 'openrouter', name: 'OpenRouter', protocol: 'openai', baseUrl: 'https://openrouter.ai/api/v1/', key: 'sk-or-v1-segredo-4321' },
+    })
+    const body = JSON.parse(created.text).result
+
+    assert.strictEqual(created.status, 201)
+    assert.deepStrictEqual(
+      [body.protocol, body.baseUrl, body.official, body.credential.source, body.credential.last4],
+      ['openai', 'https://openrouter.ai/api/v1', false, 'stored', '4321'],
+    )
+    assert.ok(!created.text.includes('segredo'))
+  })
+
+  it('um agente aponta para o compatível, com ids de modelo do provider; com agente usando, o provider não se apaga (409)', async () => {
+    const agent = {
+      id: 'roteado',
+      name: 'Roteado',
+      provider: 'openrouter',
+      systemPrompt: 'Responda curto.',
+      models: ['meta-llama/llama-4-maverick'],
+      modes: ['chat'],
+      allowedTools: [],
+    }
+    assert.strictEqual((await call('/agents', { method: 'POST', token: admin, body: agent })).status, 201)
+    assert.strictEqual((await call('/agents', { method: 'POST', token: admin, body: { ...agent, id: 'fantasma', provider: 'nao-existe' } })).status, 422)
+
+    const blocked = await call('/providers/openrouter', { method: 'DELETE', token: admin })
+    assert.strictEqual(blocked.status, 409)
+    assert.ok(blocked.text.includes('Roteado'))
+  })
+
+  it('⛔ URL sem https, com credencial embutida ou protocolo google: 422', async () => {
+    for (const body of [
+      { id: 'x1', name: 'X', protocol: 'openai', baseUrl: 'http://example.com/v1' },
+      { id: 'x2', name: 'X', protocol: 'openai', baseUrl: 'https://user:pass@example.com/v1' },
+      { id: 'x3', name: 'X', protocol: 'google', baseUrl: 'https://example.com' },
+    ]) {
+      assert.strictEqual((await call('/providers', { method: 'POST', token: admin, body })).status, 422)
+    }
+    assert.strictEqual(
+      (await call('/providers', { method: 'POST', token: admin, body: { id: 'local', name: 'vLLM', protocol: 'openai', baseUrl: 'http://localhost:8000/v1' } })).status,
+      201,
+    )
+  })
+
+  it('⛔ oficial não se apaga nem muda de URL; compatível se apaga', async () => {
+    assert.strictEqual((await call('/providers/claude', { method: 'DELETE', token: admin })).status, 422)
+    assert.strictEqual((await call('/providers/claude', { method: 'PUT', token: admin, body: { baseUrl: 'https://outro.example.com' } })).status, 422)
+    assert.strictEqual((await call('/providers/local', { method: 'DELETE', token: admin })).status, 200)
+    assert.strictEqual((await call('/providers/local/key', { method: 'PUT', token: admin, body: { key: SECRET } })).status, 404)
   })
 
   it('provider desconhecido é 404; chave com espaço é 422', async () => {
@@ -72,11 +127,11 @@ describe('Providers (integração)', () => {
 
 describe('probeKey', () => {
   it('ok com a contagem de modelos; erro do fornecedor com a chave mascarada', async () => {
-    const ok = await probeKey(EProvider.OPENAI, SECRET, (async () => new Response(JSON.stringify({ data: [{}, {}, {}] }), { status: 200 })) as typeof fetch)
+    const ok = await probeKey({ protocol: EProvider.OPENAI }, SECRET, (async () => new Response(JSON.stringify({ data: [{}, {}, {}] }), { status: 200 })) as typeof fetch)
     assert.deepStrictEqual(ok, { ok: true, models: 3 })
 
     const failed = await probeKey(
-      EProvider.CLAUDE,
+      { protocol: EProvider.CLAUDE },
       SECRET,
       (async () => new Response(JSON.stringify({ error: { message: `invalid x-api-key ${SECRET}` } }), { status: 401 })) as typeof fetch,
     )
@@ -86,9 +141,37 @@ describe('probeKey', () => {
     assert.ok(failed.message?.includes('…7777'))
   })
 
+  it('⚠️ compatível com listagem pública: responde sem chave também, então o resultado diz que a chave não foi provada', async () => {
+    const calls: Array<{ url: string; auth?: string }> = []
+    const fetcher = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, auth: (init?.headers as Record<string, string> | undefined)?.Authorization })
+      return new Response(JSON.stringify({ data: [{}, {}] }), { status: 200 })
+    }) as unknown as typeof fetch
+
+    const result = await probeKey({ protocol: EProvider.OPENAI, baseUrl: 'https://api.compativel.example/v1' }, 'sk-inventada-123', fetcher)
+
+    assert.deepStrictEqual(result, { ok: true, models: 2, unverified: true, message: result.message })
+    assert.deepStrictEqual(
+      calls.map((call) => [call.url, !!call.auth]),
+      [
+        ['https://api.compativel.example/v1/models', true],
+        ['https://api.compativel.example/v1/models', false],
+      ],
+    )
+  })
+
+  it('compatível que exige chave na listagem: o 200 com chave vale como prova', async () => {
+    const fetcher = (async (_url: string, init?: RequestInit) =>
+      (init?.headers as Record<string, string> | undefined)?.Authorization
+        ? new Response(JSON.stringify({ data: [{}] }), { status: 200 })
+        : new Response('{}', { status: 401 })) as unknown as typeof fetch
+
+    assert.deepStrictEqual(await probeKey({ protocol: EProvider.OPENAI, baseUrl: 'https://api.compativel.example/v1' }, 'sk-boa-123', fetcher), { ok: true, models: 1 })
+  })
+
   it('a chave vai em cabeçalho, nunca na URL', async () => {
     const urls: string[] = []
-    await probeKey(EProvider.GOOGLE, SECRET, (async (url: string) => (urls.push(url), new Response('{}', { status: 200 }))) as unknown as typeof fetch)
+    await probeKey({ protocol: EProvider.GOOGLE }, SECRET, (async (url: string) => (urls.push(url), new Response('{}', { status: 200 }))) as unknown as typeof fetch)
     assert.ok(!urls[0].includes(SECRET))
   })
 })

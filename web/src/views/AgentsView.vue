@@ -4,10 +4,11 @@ import { useRoute, useRouter } from 'vue-router'
 import AgentAvatar from '@/components/AgentAvatar.vue'
 import AgentForm from '@/components/AgentForm.vue'
 import Icon from '@/components/Icon.vue'
-import { PROVIDER_LABEL } from '@/lib/format'
+import { providerLabel } from '@/lib/format'
 import type { IAgentDetail } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import { useAuthStore } from '@/stores/auth'
+import { useProvidersStore } from '@/stores/providers'
 
 const props = defineProps<{ id?: string }>()
 
@@ -15,6 +16,7 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const agents = useAgentsStore()
+const providers = useProvidersStore()
 
 const detail = ref<IAgentDetail>()
 const template = ref<IAgentDetail>()
@@ -24,7 +26,11 @@ const creating = computed(() => route.name === 'agent-new')
 const builtIns = computed(() => agents.list.filter((agent) => agent.builtIn))
 const created = computed(() => agents.list.filter((agent) => !agent.builtIn))
 
-onMounted(() => void agents.loadTools().catch(() => undefined))
+onMounted(() => {
+  void agents.loadTools().catch(() => undefined)
+  // Os providers configurados, para o formulário escolher entre eles.
+  void providers.load().catch(() => undefined)
+})
 
 watch(
   () => [props.id, creating.value] as const,
@@ -78,7 +84,7 @@ watch(creating, (value) => {
           <AgentAvatar :name="agent.name" :provider="agent.provider" size="sm" />
           <span class="min-w-0">
             <span class="block truncate text-sm font-medium">{{ agent.name }}</span>
-            <span class="block truncate text-xs text-zinc-500">{{ PROVIDER_LABEL[agent.provider] }} · {{ agent.models[0] }}</span>
+            <span class="block truncate text-xs text-zinc-500">{{ providerLabel(agent.provider) }} · {{ agent.models[0] }}</span>
           </span>
         </RouterLink>
       </template>

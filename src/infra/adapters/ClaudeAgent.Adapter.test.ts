@@ -124,7 +124,10 @@ describe('ClaudeAgentAdapter', () => {
   it('hands the key in effect to the CLI subprocess, read on every turn', async () => {
     const seen: TQueryParams[] = []
     let key = 'sk-ant-primeira'
-    const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), credentials: { get: () => key } })
+    const adapter = new ClaudeAgentAdapter({
+      query: queryWith(turn, seen),
+      connections: { connection: (id) => ({ providerId: id, name: 'Claude', protocol: EProvider.CLAUDE, key }) },
+    })
     const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
 
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
@@ -135,9 +138,23 @@ describe('ClaudeAgentAdapter', () => {
     assert.strictEqual(seen[1].options?.env?.ANTHROPIC_API_KEY, 'sk-ant-segunda')
   })
 
+  it('a compatible provider (OpenRouter) goes through ANTHROPIC_BASE_URL with the key as a bearer token, never as the Anthropic key', async () => {
+    const seen: TQueryParams[] = []
+    const adapter = new ClaudeAgentAdapter({
+      query: queryWith(turn, seen),
+      connections: { connection: (id) => ({ providerId: id, name: 'OpenRouter', protocol: EProvider.CLAUDE, baseUrl: 'https://openrouter.ai/api', key: 'sk-or-123' }) },
+    })
+    const session = await adapter.createSession({ ...getAgent(), provider: 'openrouter' }, { agentId: 'sysops-agent' })
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
+
+    assert.strictEqual(seen[0].options?.env?.ANTHROPIC_BASE_URL, 'https://openrouter.ai/api')
+    assert.strictEqual(seen[0].options?.env?.ANTHROPIC_AUTH_TOKEN, 'sk-or-123')
+    assert.strictEqual(seen[0].options?.env?.ANTHROPIC_API_KEY, '')
+  })
+
   it('without any key, the turn ends with an error that says where to fix it — and the CLI never starts', async () => {
     const seen: TQueryParams[] = []
-    const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), credentials: { get: () => undefined } })
+    const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), connections: { connection: (id) => ({ providerId: id, name: 'Claude', protocol: EProvider.CLAUDE }) } })
     const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 

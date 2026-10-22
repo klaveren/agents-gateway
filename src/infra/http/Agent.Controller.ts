@@ -19,6 +19,7 @@ import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { MODEL_PRICING, TModelPricing } from '@domain/models/Model.Pricing'
 import { allowsCaller, mergeSettings } from '@domain/models/Settings.Model'
 import { IConversationEvents, TConversationEvent } from '@domain/ports/ConversationEvents.Port'
+import { IProviderDirectory } from '@domain/ports/ProviderRepository.Port'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { ISettingsRepository } from '@domain/ports/SettingsRepository.Port'
 import { ISessionContextProvider } from '@domain/ports/SessionContextProvider.Port'
@@ -81,6 +82,8 @@ export interface IAgentControllerDeps {
   pricing?: TModelPricing
   /** Por onde chegam as mudanças nas conversas gravadas. Ausente = `/conversations/events` só mantém a conexão. */
   events?: IConversationEvents
+  /** Os providers configurados — para o agente apontar para um que existe. Ausente = só os oficiais. */
+  providers?: IProviderDirectory
   /**
    * Os agentes: embutidos e criados. O MESMO catálogo do provider (ver `makeAgents`). Ausente, só os
    * embutidos, com os criados em memória.
@@ -251,8 +254,10 @@ export class AgentController {
     return {
       knownTools: tools.map((tool) => tool.name),
       providerOf: (model) => providerOfModel(model, []),
+      protocolOf: (id) => this.usecases.providers?.get(id)?.protocol ?? Object.values(EProvider).find((value) => value === id),
       promptIssue: (agent) => {
-        if (agent.provider !== EProvider.GOOGLE) return undefined
+        const protocol = this.usecases.providers?.get(agent.provider)?.protocol ?? agent.provider
+        if (protocol !== EProvider.GOOGLE) return undefined
         try {
           assertNoAdkTemplateCollision(agent.systemPrompt)
           return undefined

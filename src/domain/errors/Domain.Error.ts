@@ -125,3 +125,32 @@ export class SetupUnavailableError extends DomainError {
     super('Setup is not available')
   }
 }
+
+export class InvalidProviderError extends DomainError {
+  constructor(public readonly issues: Array<{ field: string; message: string }>) {
+    super(`Provider is invalid: ${issues.map((issue) => `${issue.field} (${issue.message})`).join('; ')}`)
+  }
+}
+
+export class ProviderNotFoundError extends DomainError {
+  constructor(public readonly providerId: string) {
+    super(`Provider not found: ${providerId}`)
+  }
+}
+
+/** Provider que algum agente usa não se apaga: troque o provider desses agentes antes. */
+export class ProviderInUseError extends DomainError {
+  constructor(
+    public readonly providerId: string,
+    public readonly agents: string[],
+  ) {
+    super(`Provider ${providerId} is used by: ${agents.join(', ')}`)
+  }
+}
+
+/** O provider do agente não existe ou está desligado: nenhuma sessão nasce nele. */
+export class ProviderUnavailableError extends DomainError {
+  constructor(public readonly providerId: string) {
+    super(`Provider ${providerId} is not available (missing or disabled). Check it in Providers.`)
+  }
+}

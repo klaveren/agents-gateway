@@ -307,19 +307,29 @@ const failures = {
 
 const json = (schema: object) => ({ content: { 'application/json': { schema } } })
 
-const providerParam = [{ name: 'id', in: 'path', required: true, schema: { type: 'string', enum: ['claude', 'openai', 'google'] } }]
+const providerParam = [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }]
 
 const providerStatusSchema = {
   type: 'object',
-  description: 'NEVER the key itself: where it comes from and its last four characters.',
+  description: 'A configured provider. NEVER the key itself: `credential` says where it comes from and its last four characters.',
   properties: {
-    provider: { type: 'string', enum: ['claude', 'openai', 'google'] },
-    configured: { type: 'boolean' },
-    source: { type: 'string', enum: ['stored', 'env', 'none'], description: '`stored` (saved through the API, wins over the environment), `env`, or `none`.' },
-    last4: { type: 'string' },
-    updatedAt: { type: 'string', format: 'date-time' },
-    updatedBy: { type: 'string' },
-    unreadable: { type: 'boolean', description: 'A stored key that no longer decrypts (the master key changed): save it again.' },
+    id: { type: 'string' },
+    name: { type: 'string' },
+    protocol: { type: 'string', enum: ['claude', 'openai', 'google'], description: 'Which SDK talks to it. Compatible providers speak `openai` or `claude` (Anthropic).' },
+    baseUrl: { type: 'string', description: 'Compatible providers only.' },
+    official: { type: 'boolean' },
+    enabled: { type: 'boolean' },
+    credential: {
+      type: 'object',
+      properties: {
+        configured: { type: 'boolean' },
+        source: { type: 'string', enum: ['stored', 'env', 'none'] },
+        last4: { type: 'string' },
+        updatedAt: { type: 'string', format: 'date-time' },
+        updatedBy: { type: 'string' },
+        unreadable: { type: 'boolean' },
+      },
+    },
     models: { type: 'array', items: { type: 'string' } },
     agents: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' } } } },
   },
@@ -327,7 +337,7 @@ const providerStatusSchema = {
 
 const probeSchema = {
   type: 'object',
-  properties: { ok: { type: 'boolean' }, models: { type: 'integer' }, status: { type: 'integer' }, message: { type: 'string', description: 'The provider error, with the key masked.' } },
+  properties: { ok: { type: 'boolean' }, unverified: { type: 'boolean', description: 'Answered, but the listing is public: the key is not proven yet.' }, models: { type: 'integer' }, status: { type: 'integer' }, message: { type: 'string', description: 'The provider error, with the key masked.' } },
 }
 
 const userSchema = {
@@ -471,6 +481,37 @@ export const OPENAPI_DOCUMENT = {
       get: {
         summary: 'Each provider: whether a key is configured, where it comes from and what it unlocks. Administrators only; anyone else gets 404',
         responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: providerStatusSchema })) }, '401': failures['401'], '404': failures['404'] },
+      },
+      post: {
+        summary: 'Add any OpenAI- or Anthropic-compatible provider: protocol `openai` or `claude`, an https base URL (http only for localhost), and optionally its key. Administrators only',
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            properties: { id: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{1,31}$' }, name: { type: 'string' }, protocol: { type: 'string', enum: ['openai', 'claude'] }, baseUrl: { type: 'string' }, key: { type: 'string' } },
+            required: ['id', 'name', 'protocol', 'baseUrl'],
+          }),
+        },
+        responses: { '201': { description: 'Created', ...json(envelope(providerStatusSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/providers/{id}': {
+      put: {
+        summary: 'Rename, enable or disable a provider; compatible ones can change their base URL. Administrators only',
+        parameters: providerParam,
+        requestBody: { required: true, ...json({ type: 'object', properties: { name: { type: 'string' }, baseUrl: { type: 'string' }, enabled: { type: 'boolean' } } }) },
+        responses: { '200': { description: 'Updated', ...json(envelope(providerStatusSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+      delete: {
+        summary: 'Delete a compatible provider and its key. Official ones answer 422; one still used by an agent answers 409 `provider_in_use`. Administrators only',
+        parameters: providerParam,
+        responses: {
+          '200': { description: 'Deleted', ...json(envelope({ type: 'null' })) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '409': { description: '`provider_in_use`, with `details.agents`', ...json(failureEnvelope) },
+          '422': failures['422'],
+        },
       },
     },
     '/providers/{id}/key': {

@@ -8,6 +8,7 @@ describe('SessionStore', () => {
   const seed = (overrides: Partial<TSessionSeed> = {}): TSessionSeed => ({
     agentId: 'sysops-agent',
     provider: EProvider.CLAUDE,
+    protocol: EProvider.CLAUDE,
     mode: EMode.CHAT,
     model: 'claude-sonnet-5',
     tools: false,

@@ -1,6 +1,5 @@
 import { Content, FunctionDeclaration, GoogleGenerativeAI, Part, Tool } from '@google/generative-ai'
-import { ICredentialSource } from '@domain/ports/CredentialStore.Port'
-import { KeyedClient } from './support/Keyed.Client'
+import { IConnectionSource, KeyedClient } from './support/Keyed.Client'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
@@ -23,8 +22,8 @@ type THistory = Content[]
 
 export interface IGoogleChatAdapterDeps {
   client?: GoogleGenerativeAI
-  /** De onde vem a chave em cada chamada. Ausente = a do ambiente. */
-  credentials?: ICredentialSource
+  /** De onde vêm a chave e a URL em cada chamada. Ausente = a chave do ambiente, a URL oficial. */
+  connections?: IConnectionSource
   store?: SessionStore
   catalog?: ToolCatalog
 }
@@ -43,7 +42,7 @@ export class GoogleChatAdapter implements IAgentAdapter {
   private readonly catalog?: ToolCatalog
 
   constructor(deps: IGoogleChatAdapterDeps = {}) {
-    this.clients = new KeyedClient(EProvider.GOOGLE, (key) => new GoogleGenerativeAI(key), deps.credentials, deps.client)
+    this.clients = new KeyedClient(EProvider.GOOGLE, ({ key }) => new GoogleGenerativeAI(key), deps.connections, deps.client)
     this.store = deps.store ?? new SessionStore()
     this.catalog = deps.catalog
   }
@@ -51,7 +50,9 @@ export class GoogleChatAdapter implements IAgentAdapter {
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
     const record = this.store.create(sessionPrefix(EProvider.GOOGLE, EMode.CHAT), {
       agentId: agent.id,
-      provider: EProvider.GOOGLE,
+      // O provider configurado (o oficial ou um compatível); o protocolo é o deste adapter.
+      provider: agent.provider,
+      protocol: EProvider.GOOGLE,
       mode: EMode.CHAT,
       model: input.model || DEFAULT_MODEL,
       reasoning: input.reasoning,
@@ -153,7 +154,7 @@ export class GoogleChatAdapter implements IAgentAdapter {
    */
   private loopProvider(record: ISessionRecord, sessionId: string): IManualLoopProvider<Content> {
     // Pedido aqui, dentro do turno: a chave em vigor AGORA, e a falta dela vira evento de erro do turno.
-    const client = this.clients.get()
+    const client = this.clients.get(record.provider)
 
     return {
       async *runTurn(history, tools, signal): AsyncGenerator<IAgentEvent, IManualTurnOutcome> {

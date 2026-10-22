@@ -1,10 +1,10 @@
-import { EProvider } from '../enums/EProvider.Enum'
 import { EMode } from '../enums/EMode.Enum'
 
 export interface IAgent {
   id: string
   name: string
-  provider: EProvider
+  /** O id do provider configurado. Os oficiais têm id igual ao protocolo (`claude`, `openai`, `google`). */
+  provider: string
   systemPrompt: string
   models: string[]
   reasoningEfforts?: string[]

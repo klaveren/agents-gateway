@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { ApiError } from '@/lib/api'
-import { PROVIDER_LABEL } from '@/lib/format'
-import type { IAgentDetail, IAgentInput, TMode, TProvider } from '@/lib/types'
+import { providerLabel } from '@/lib/format'
+import { useProvidersStore } from '@/stores/providers'
+import type { IAgentDetail, IAgentInput, TMode } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import ConfirmDialog from './ConfirmDialog.vue'
 
@@ -10,11 +11,17 @@ const props = defineProps<{ agent?: IAgentDetail; creating: boolean }>()
 const emit = defineEmits<{ saved: [id: string]; duplicate: [agent: IAgentDetail]; removed: [] }>()
 
 const agents = useAgentsStore()
+const providers = useProvidersStore()
+
+/** Os providers configurados e ligados; um desligado só aparece se for o deste agente. */
+const providerOptions = computed(() => providers.list.filter((provider) => provider.enabled || provider.id === form.value.provider))
+const protocol = computed(() => providers.list.find((provider) => provider.id === form.value.provider)?.protocol ?? form.value.provider)
+const compatible = computed(() => !!providers.list.find((provider) => provider.id === form.value.provider)?.baseUrl)
 
 /** Sugestões por provider — os modelos que os embutidos já declaram. Digitar outro também vale. */
 const suggestions = computed(() => {
-  const byProvider: Record<string, Set<string>> = { claude: new Set(), openai: new Set(), google: new Set() }
-  for (const agent of agents.list) for (const model of agent.models) byProvider[agent.provider]?.add(model)
+  const byProvider: Record<string, Set<string>> = {}
+  for (const agent of agents.list) for (const model of agent.models) (byProvider[agent.provider] ??= new Set()).add(model)
   return byProvider
 })
 
@@ -128,7 +135,10 @@ async function remove() {
       <div class="field sm:col-span-2">
         <span>Provider</span>
         <div class="flex gap-1.5">
-          <button v-for="provider in (['claude', 'openai', 'google'] as TProvider[])" :key="provider" type="button" class="chip" :class="{ on: form.provider === provider }" @click="form.provider = provider">{{ PROVIDER_LABEL[provider] }}</button>
+          <button v-for="provider in providerOptions" :key="provider.id" type="button" class="chip" :class="{ on: form.provider === provider.id }" @click="form.provider = provider.id">
+            {{ provider.name }}<span v-if="!provider.enabled" class="text-[10px] text-zinc-500"> desligado</span>
+          </button>
+          <span v-if="!providerOptions.length" class="text-sm text-zinc-500">{{ providerLabel(form.provider) }}</span>
         </div>
       </div>
 
@@ -138,6 +148,7 @@ async function remove() {
         <div class="flex flex-wrap gap-1">
           <button v-for="model in suggestions[form.provider]" :key="model" type="button" class="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300 hover:bg-zinc-700" @click="addModel(model)">+ {{ model }}</button>
         </div>
+        <small v-if="compatible" class="hint">Provider compatível: use os ids de modelo dele, como ele os lista. Tool use e raciocínio variam por modelo.</small>
         <small v-for="message in issues.models" :key="message" class="error">{{ message }}</small>
       </label>
 
@@ -176,7 +187,7 @@ async function remove() {
       <label class="field sm:col-span-2">
         <span>Instrução do sistema</span>
         <textarea v-model="form.systemPrompt" required rows="10" class="input scroll-thin font-mono text-[13px] leading-relaxed" placeholder="Você é o agente…" />
-        <small v-if="form.provider === 'google'" class="hint">Gemini (ADK): não use {chaves} — o ADK as lê como variável de sessão.</small>
+        <small v-if="protocol === 'google'" class="hint">Gemini (ADK): não use {chaves} — o ADK as lê como variável de sessão.</small>
         <small v-for="message in issues.systemPrompt" :key="message" class="error">{{ message }}</small>
       </label>
     </fieldset>
