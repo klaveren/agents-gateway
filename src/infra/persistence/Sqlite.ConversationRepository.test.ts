@@ -376,6 +376,23 @@ describe('SqliteConversationRepository — monitor, rótulos e compartilhamento'
       )
     })
 
+    it('desempata pelo id: conversas com o mesmo updated_at não repetem nem somem entre páginas', async () => {
+      const repo = repository()
+      const tied = new Date('2026-08-30T10:00:00Z')
+      for (const id of ['m', 'x', 'b', 'q', 'f']) await repo.saveSession(session({ id, updatedAt: tied }))
+
+      const pages = await Promise.all([1, 2, 3].map((page) => repo.pageSessions({ page, pageSize: 2 })))
+
+      assert.deepStrictEqual(
+        pages.flatMap((page) => page.sessions.map((item) => item.id)),
+        ['x', 'q', 'm', 'f', 'b'],
+      )
+      assert.deepStrictEqual(
+        (await repo.listSessions({})).map((item) => item.id),
+        ['x', 'q', 'm', 'f', 'b'],
+      )
+    })
+
     it('busca o título, o e-mail, o id e a conta do dono, sem diferenciar caixa', async () => {
       const repo = await seed()
       const ids = async (q: string) => (await repo.pageSessions({ page: 1, pageSize: 10, q })).sessions.map((item) => item.id)

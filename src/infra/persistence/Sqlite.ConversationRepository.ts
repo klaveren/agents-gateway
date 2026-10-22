@@ -53,7 +53,7 @@ const SCHEMA = `
     updated_at       TEXT    NOT NULL
   );
 
-  CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations (updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_conversations_recent ON conversations (updated_at DESC, id DESC);
   CREATE INDEX IF NOT EXISTS idx_conversations_model ON conversations (provider, model);
 
   CREATE TABLE IF NOT EXISTS conversation_turns (
@@ -120,7 +120,16 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
 const ADDED_INDEXES = [
   'CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_share ON conversations (share_id)',
   'CREATE INDEX IF NOT EXISTS idx_conversations_classification ON conversations (classification)',
+  // Substituído por `idx_conversations_recent`, que cobre o desempate por `id`.
+  'DROP INDEX IF EXISTS idx_conversations_updated',
 ]
+
+/**
+ * A ordem das listagens. ⚠️ O `id` desempata: `updated_at` tem resolução de milissegundo e empata
+ * fácil (importação, turnos simultâneos); sem desempate o SQLite devolve os empatados em qualquer
+ * ordem, e o `OFFSET` repete uma conversa numa página e some com outra.
+ */
+const RECENT_FIRST = 'ORDER BY updated_at DESC, id DESC'
 
 /** Onde mora o dono dentro do `metadata`. Fixo e sem entrada de fora: vai para dentro do SQL. */
 const OWNER_ID = "json_extract(metadata, '$.owner.id')"
@@ -352,7 +361,7 @@ export class SqliteConversationRepository implements IConversationRepository {
         const limit = Math.min(Math.max(options.limit ?? 100, 1), 500)
         const clause = where.length ? `WHERE ${where.join(' AND ')}` : ''
 
-        const rows = this.db.prepare(`SELECT * FROM conversations ${clause} ORDER BY updated_at DESC LIMIT ?`).all(...params, limit) as TRow[]
+        const rows = this.db.prepare(`SELECT * FROM conversations ${clause} ${RECENT_FIRST} LIMIT ?`).all(...params, limit) as TRow[]
 
         return rows.map((row) => this.toSession(row))
       }) ?? []
@@ -404,7 +413,7 @@ export class SqliteConversationRepository implements IConversationRepository {
         const page = Math.max(Math.trunc(query.page) || 1, 1)
 
         const rows = this.db
-          .prepare(`SELECT * FROM conversations ${listClause} ORDER BY updated_at DESC LIMIT ? OFFSET ?`)
+          .prepare(`SELECT * FROM conversations ${listClause} ${RECENT_FIRST} LIMIT ? OFFSET ?`)
           .all(...listParams, pageSize, (page - 1) * pageSize) as TRow[]
         const total = this.db.prepare(`SELECT COUNT(*) AS n FROM conversations ${listClause}`).get(...listParams) as TRow
 
