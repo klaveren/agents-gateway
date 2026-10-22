@@ -12,6 +12,8 @@
  * e a lane SSE nem por lá passava. Conversa terminada não existia em lugar nenhum.
  */
 
+import { TClassification } from './Classification.Model'
+
 /**
  * Consumo gravado.
  *
@@ -48,9 +50,32 @@ export interface IConversationSession {
   createdAt: Date
   updatedAt: Date
   turns: number
+  /**
+   * A PIOR classificação entre os turnos desta conversa.
+   *
+   * ⚠️ Pior, não a mais recente nem a mais comum (ver `worstOf`). Só é escrita por `classifyTurn`:
+   * `saveSession` regrava o cabeçalho a cada turno e não a toca.
+   */
+  classification?: TClassification
   usage: IStoredUsage
   /** Espaço para quem chama identificar o dono da conversa. O gateway não interpreta o conteúdo. */
   metadata?: Record<string, unknown>
+  /**
+   * A conversa está aberta por link, para quem não tem credencial.
+   *
+   * ⚠️ AUSENTE É FECHADO. Registro gravado antes deste campo existir não o tem e continua privado —
+   * um padrão que abrisse tornaria público o histórico inteiro na primeira atualização. Só é escrito
+   * por `setShared`; `saveSession` não o toca.
+   */
+  shared?: boolean
+  /**
+   * O identificador do LINK público — separado do `id` da sessão de propósito.
+   *
+   * ⚖️ O `id` da sessão carrega o prefixo do provider (`google-agent-…`): infra vazando para uma URL
+   * que uma pessoa vê e cola. O `shareId` é curto, sem prefixo, e ESTÁVEL: gerado no primeiro
+   * compartilhamento e reusado, para o link não trocar a cada vez que se liga e desliga.
+   */
+  shareId?: string
 }
 
 /** Um turno: o que foi perguntado, o que foi respondido, e o que o agente fez no caminho. */
@@ -59,6 +84,8 @@ export interface IConversationTurn {
   index: number
   at: Date
   request: string
+  /** O que veio anexado à pergunta — só o descritivo; o conteúdo (base64) nunca é gravado. */
+  files?: Array<{ name: string; mimeType: string; size: number }>
   text: string
   reasoning?: string
   toolCalls: Array<{ tool: string; args?: unknown; result?: unknown; error?: string }>
@@ -70,6 +97,69 @@ export interface IConversationTurn {
   warnings?: string[]
   aborted?: boolean
   error?: string
+  /** Como este turno foi rotulado. Ausente enquanto ninguém classificou (ou a classificação falhou). */
+  classification?: TClassification
+}
+
+/**
+ * O que um link público mostra — e, sobretudo, o que ele NÃO mostra.
+ *
+ * ⛔ NÃO É O REGISTRO. Um `IConversationTurn` carrega `toolCalls[].args` e `.result`, que são os
+ * RETORNOS CRUS das ferramentas (dado de cliente, de pedido, de conta), o `reasoning` do modelo, os
+ * anexos e a `classification` — o rótulo interno que julga a conversa. Nada disso é assunto de quem
+ * abre um link. O `metadata` também fica de fora: é onde mora a identidade do dono.
+ *
+ * ⚖️ ESTA FUNÇÃO É A REGRA, e mora no domínio em vez do controller de propósito: rota nova que
+ * exponha conversa passa por aqui, ou repete a decisão — e a segunda cópia é a que esquece um campo.
+ * Lista explícita de campos, nunca spread: campo novo no registro nasce PRIVADO.
+ *
+ * ⚠️ O QUE ELA NÃO RESOLVE: a resposta do agente é texto corrido e pode citar dado da conta. Nenhuma
+ * projeção limpa isso. Compartilhar é ato deliberado de quem já podia ler — cabe à tela avisar.
+ */
+export interface ISharedConversation {
+  /** O `shareId`, nunca o id interno da sessão. */
+  id: string
+  title?: string
+  createdAt: Date
+  turns: Array<{ at: Date; request: string; text: string }>
+}
+
+export function toSharedConversation(session: IConversationSession & { shareId: string }, turns: IConversationTurn[]): ISharedConversation {
+  return {
+    id: session.shareId,
+    title: session.title,
+    createdAt: session.createdAt,
+    turns: turns.map((turn) => ({ at: turn.at, request: turn.request, text: turn.text })),
+  }
+}
+
+/** Quem é dono: o que `metadata.owner` guarda. Conta, quando existe, tem de bater também. */
+export interface IOwnerFilter {
+  id: string
+  account?: string
+}
+
+/** Recorte de uma página do monitor. Os filtros são todos opcionais e se somam. */
+export interface IConversationPageQuery {
+  /** 1 em diante. */
+  page: number
+  pageSize: number
+  /** Trecho do título, do e-mail, do id ou da conta do dono — sem diferenciar caixa (ASCII). */
+  q?: string
+  classification?: TClassification
+  provider?: string
+}
+
+/**
+ * Uma página de conversas, com o total e as contagens que sustentam as abas.
+ *
+ * ⚖️ `facets` é contado sobre a BUSCA, não sobre a aba: com a aba "red" aberta, a aba "amber"
+ * continua dizendo quantas há. Contar sobre a página daria um número que muda ao paginar.
+ */
+export interface IConversationPage {
+  sessions: IConversationSession[]
+  total: number
+  facets: { classification: Record<string, number>; provider: Record<string, number> }
 }
 
 /**
@@ -82,7 +172,13 @@ export interface IConversationTurn {
 export interface IConversationStats {
   conversations: number
   turns: number
+  /** Pessoas distintas, pelo `metadata.owner.id`. Conversa sem dono não conta. */
+  users: number
+  /** Contas distintas, pelo `metadata.owner.account`. */
+  accounts: number
   usage: IStoredUsage
   /** Quanto cada modelo consumiu. É o que permite comparar custo ao trocar de modelo. */
   byModel: Array<{ provider: string; model: string; conversations: number; usage: IStoredUsage }>
+  /** Quantas conversas em cada sinal. Chave ausente = nenhuma. */
+  byClassification: Record<string, number>
 }

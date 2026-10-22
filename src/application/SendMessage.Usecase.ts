@@ -27,6 +27,26 @@ function usageOf(usage?: IUsage): IStoredUsage {
   }
 }
 
+/** Bytes do arquivo a partir do base64, sem decodificar o conteúdo. */
+function base64Size(data: string): number {
+  const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0
+
+  return Math.max(Math.floor((data.length * 3) / 4) - padding, 0)
+}
+
+/**
+ * Descritivo dos anexos, para o registro.
+ *
+ * ⛔ SEM o `data`: o turno gravado é lido por quem monitora, e o conteúdo de um arquivo não precisa
+ * morar no banco para provar que ele chegou. Nome, tipo e tamanho bastam — e é o que responde, depois,
+ * "a imagem chegou ao agente?".
+ */
+function filesOf(input: IMessageInput): Array<{ name: string; mimeType: string; size: number }> | undefined {
+  if (!input.files?.length) return undefined
+
+  return input.files.map((file) => ({ name: file.name, mimeType: file.mimeType, size: base64Size(file.data ?? '') }))
+}
+
 /** Tempo do turno, medido pelos próprios eventos: até o último, e até o primeiro texto. */
 function timingOf(startedAt: number, events: IAgentEvent[]): { durationMs?: number; firstTextMs?: number } {
   const last = events[events.length - 1]?.timestamp
@@ -150,6 +170,7 @@ export class SendMessageUseCase {
       index,
       at: new Date(),
       request: input.text ?? '',
+      files: filesOf(input),
       text: turn.text,
       reasoning: turn.reasoning || undefined,
       toolCalls: turn.toolCalls,

@@ -302,8 +302,54 @@ whose id/e-mail is in `ADMIN_USERS`. Without `CALLER_PROOF_TOOL` nobody is an ad
 | `AGENTS_ENABLED` | *(all)* | Comma list of agent ids that **exist** in this process. An agent that is not listed is not refused, it is gone: no `/agents`, no session by any route. Use it so an agent carrying a shell tool (`run_bash`) cannot be reached. The boot fails if nothing matches. |
 | `SESSION_CONTEXT_TEMPLATE` | *(none)* | Text sent to the model before the **first** message of a session, never stored in the turn. Placeholders: `{id}` `{email}` `{role}` `{account}` `{date}`. If it cites an identity field the token lacks, no context is sent. Unset = none. |
 | `SESSION_TIMEZONE` | `UTC` | Time zone of `{date}` (IANA name; an invalid one falls back to UTC). |
+| `MODEL_PRICING_FILE` | *(none)* | Path to a JSON file of model prices, merged over the built-in table (see [Monitor, sharing and cost](#monitor-sharing-and-cost)). An invalid file is refused whole, with a boot warning. |
 
 Sessions expire after **8 hours** without activity.
+
+### Monitor, sharing and cost
+
+Every turn is recorded (SQLite, see `CONVERSATIONS_DB`), and the *persisted* conversation is a
+different thing from the live session behind `/v1/sessions`: it survives restarts, and it is what a
+history screen reads.
+
+- **Yours.** `GET /v1/conversations` lists the caller's own conversations; any other query key
+  filters on `metadata` (`?app=web`). The owner comes from the proven credential only — keys
+  starting with `owner` in the query are dropped, so `?owner=<someone>` reads nothing of theirs.
+  `GET /v1/conversations/:id/turns` and `DELETE /v1/conversations/:id` work for the owner **or an
+  administrator**; anyone else gets `404`, identical to a conversation that does not exist. Deleting
+  removes the record only; a live session keeps running until `DELETE /v1/sessions/:id`.
+- **Monitor (administrators only).** `GET /v1/conversations?scope=all` lists everyone's. With
+  `page=` the server paginates (`pageSize` 1–50, default 10), searches `q` (≤100 chars: title and
+  owner e-mail, id and account) and filters by `classification` and `provider`, returning
+  `{ sessions, total, page, pageSize, facets, scope }`. `facets` counts over the *search*, not the
+  active tab, so the other tabs keep their numbers. `GET /v1/conversations/stats` returns totals,
+  `byModel`, `byClassification` and the estimated cost. Everyone else gets `404`.
+- **Classification** (`green`, `blue`, `amber`, `red`) is stored per turn and per conversation, where the
+  conversation carries the *worst* of its turns. The repository only stores it; the classifier that
+  produces it is a later phase.
+- **Sharing.** `PUT /v1/conversations/:id/share { "shared": true }` (owner or administrator) opens a
+  read-only link. The `shareId` (12 random bytes, base64url) is created once and reused: closing
+  keeps it and only stops it from answering, so reopening returns the same link. `GET /v1/shared/:id`
+  is **public** (the only route besides `/health`) and returns just `{ id, title, createdAt, turns:
+  [{ at, request, text }] }` — no tool calls, reasoning, attachments, classification, usage or
+  metadata. A conversation that does not exist and one that is not shared both answer `404`. Anyone
+  holding the link can read the text of the answers, so share deliberately.
+- **Cost.** `costUsd` is an *estimate* from a price table ($ per 1M tokens): fresh input
+  (`input − cacheRead − cacheWrite`) at the input price, cache reads and writes at theirs, and
+  output **plus reasoning** at the output price. A model with no price has no `costUsd` — never
+  zero. It appears only in administrator responses (monitor listing, turns read by an
+  administrator, stats), never to the plain owner. `GET /v1/agents` carries the per-model `pricing`
+  so a selector can show it and sort cheapest first.
+
+The built-in table covers the models the registry declares, except `o4-mini` and `o3-pro`, whose prices
+are not confirmed. Add or correct any with `MODEL_PRICING_FILE`:
+
+```json
+{ "o4-mini": { "input": 1.1, "output": 4.4, "cacheRead": 0.275 } }
+```
+
+An entry replaces the built-in one for that model. The file is read once at boot; if any entry is
+invalid the whole file is refused and the built-in table stays, with a warning in the log.
 
 ### Tool safety, and actual containment
 
@@ -351,18 +397,24 @@ Files are named `<What>.<Kind>.ts` — `ClaudeChat.Adapter.ts`, `Agent.Provider.
 
 ### API
 
-Versioned under `/v1`. Everything but `/health` needs the caller's credential — see [Caller identity](#caller-identity). The full contract is served at `/v1/openapi.json`, and a test fails
+Versioned under `/v1`. Everything but `/health` and `/shared/:id` needs the caller's credential — see [Caller identity](#caller-identity). The full contract is served at `/v1/openapi.json`, and a test fails
 the build if it drifts from the routes the server actually registers.
 
 | Route | What it does |
 | --- | --- |
 | `GET /v1/health` | Liveness, MCP status, live session count. Public. |
-| `GET /v1/agents` | The registry (never the system prompt), including which lanes each agent supports. |
+| `GET /v1/agents` | The registry (never the system prompt): lanes, models and per-model `pricing`. |
 | `GET /v1/agents/:agentId/tools` | Tool catalog filtered by what that agent declares. |
 | `GET /v1/tools` | Full catalog: built-in tools merged with whatever MCP exposes. |
 | `GET /v1/availability` | `{ available }`: does the agent serve you right now? |
 | `GET /v1/settings` | Operating settings plus `defaults`. Administrators only (404 otherwise). |
 | `PUT /v1/settings` | Partial update; `null` reverts an optional field. Administrators only. |
+| `GET /v1/conversations` | Your persisted conversations; `?scope=all` (+ `page`, `pageSize`, `q`, `classification`, `provider`) lists everyone's, administrators only. |
+| `GET /v1/conversations/stats` | Totals, by model, by classification, estimated cost. Administrators only (404 otherwise). |
+| `GET /v1/conversations/:id/turns` | The turns. Owner or administrator (404 otherwise); `costUsd` for administrators only. |
+| `PUT /v1/conversations/:id/share` | `{ shared }`: open or close the read-only link. Owner or administrator. |
+| `DELETE /v1/conversations/:id` | Deletes the persisted record. Owner or administrator. |
+| `GET /v1/shared/:id` | A shared conversation, read-only and stripped to question and answer. **Public.** |
 | `POST /v1/sessions` | `{ agentId?, mode, model, reasoning, language }` → a session. `403 agent_unavailable` when the audience refuses you. |
 | `GET /v1/sessions` | Your live sessions, most recently active first. |
 | `GET /v1/sessions/:id` | Lane, model, turns and accumulated usage. |

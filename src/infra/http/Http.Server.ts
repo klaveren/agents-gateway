@@ -15,10 +15,15 @@ export const API_PREFIX = '/v1'
  * As ÚNICAS rotas que respondem sem credencial de quem chama (com o portão do serviço, se houver).
  *
  * ⚖️ CURTA PARA CABER NUM OLHAR: ninguém abre uma rota por distração. `/health` é o que o
- * orquestrador e o monitor chamam, e não tem credencial de usuário nenhuma. Uma rota pública futura
- * (um `/shared/:id`, para quem não tem conta) entra aqui — e só aqui, de propósito.
+ * orquestrador e o monitor chamam, e não tem credencial de usuário nenhuma. Fora ele:
+ *
+ * · `/shared/:id` é a conversa que alguém abriu por link, para quem não tem conta: o `:id` é o `shareId`
+ * (o segredo do link), a resposta é só leitura e só a projeção pública, e fechar o compartilhamento a
+ * revoga.
+ *
+ * Rota pública nova entra aqui — e só aqui, de propósito.
  */
-export const PUBLIC_PATHS: readonly string[] = ['/health']
+export const PUBLIC_PATHS: readonly string[] = ['/health', '/shared/:id']
 
 export type TRouteMethod = 'get' | 'post' | 'put' | 'delete'
 
@@ -113,6 +118,13 @@ function buildRoutes(controller: AgentController): IRoute[] {
     { method: 'get', path: '/availability', handler: controller.availability },
     { method: 'get', path: '/settings', handler: controller.getSettings },
     { method: 'put', path: '/settings', handler: controller.updateSettings },
+    // ⚠️ `/conversations/stats` ANTES de qualquer `/conversations/:id`: senão `stats` seria lido como id.
+    { method: 'get', path: '/conversations', handler: controller.listConversations },
+    { method: 'get', path: '/conversations/stats', handler: controller.conversationStats },
+    { method: 'get', path: '/conversations/:id/turns', handler: controller.getConversationTurns },
+    { method: 'put', path: '/conversations/:id/share', handler: controller.shareConversation },
+    { method: 'delete', path: '/conversations/:id', handler: controller.deleteConversation },
+    { method: 'get', path: '/shared/:id', handler: controller.getSharedConversation },
     { method: 'post', path: '/sessions', handler: controller.createSession },
     { method: 'get', path: '/sessions', handler: controller.listSessions },
     { method: 'get', path: '/sessions/:id', handler: controller.getSession },

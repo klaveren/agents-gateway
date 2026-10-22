@@ -46,8 +46,8 @@ describe('HttpServer', () => {
     assert.deepStrictEqual(orphans, [], 'descrito no OpenAPI e não registrado')
   })
 
-  it('keeps the public allowlist to the health check, and every entry is a real route', () => {
-    assert.deepStrictEqual(PUBLIC_PATHS, ['/health'])
+  it('keeps the public allowlist to the health check and the shared link, and every entry is a real route', () => {
+    assert.deepStrictEqual(PUBLIC_PATHS, ['/health', '/shared/:id'])
 
     const registered = new Set(server.routeTable.map(({ path }) => path))
     assert.ok(PUBLIC_PATHS.every((path) => registered.has(path)))

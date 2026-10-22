@@ -41,6 +41,8 @@ export function makeUsecases() {
   const conversations = makeConversationRepository()
 
   return {
+    /** O MESMO repositório do `SendMessageUseCase`: o controller lê o que ele grava. */
+    conversations,
     createSessionUseCase: new CreateSessionUseCase(agentProvider),
     sendMessageUseCase: new SendMessageUseCase(agentProvider, conversations),
     cancelSessionUseCase: new CancelSessionUseCase(agentProvider),

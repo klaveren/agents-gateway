@@ -131,6 +131,55 @@ describe('SendMessageUseCase', () => {
     assert.deepStrictEqual(turn.usage, { inputTokens: 1000, outputTokens: 20, reasoningTokens: 0, totalTokens: 1020, cacheReadTokens: 700, cacheWriteTokens: 0 })
   })
 
+  it('records what was attached — name, type and size, never the content', async () => {
+    const repository = new RecordingRepository()
+    const usecase = new SendMessageUseCase(
+      stubProvider({
+        describe: () => session(),
+        sendMessage: async function* (sessionId) {
+          yield { type: 'text.delta' as const, sessionId, payload: { text: 'Li o arquivo' }, timestamp: new Date() }
+        },
+      }),
+      repository,
+    )
+
+    // Tamanhos com e sem padding no base64: 11 bytes (`=`), 10 (`==`) e 12 (sem padding).
+    const files = ['hello world', 'hello worl', 'hello world!'].map((content, i) => ({ name: `f${i}.txt`, mimeType: 'text/plain', data: Buffer.from(content).toString('base64') }))
+
+    const done = repository.recorded()
+    for await (const _event of usecase.execute('s', { text: 'segue', files })) void _event
+    await done
+
+    assert.deepStrictEqual(repository.turns[0].files, [
+      { name: 'f0.txt', mimeType: 'text/plain', size: 11 },
+      { name: 'f1.txt', mimeType: 'text/plain', size: 10 },
+      { name: 'f2.txt', mimeType: 'text/plain', size: 12 },
+    ])
+    assert.ok(
+      files.every((file) => !JSON.stringify(repository.turns[0]).includes(file.data)),
+      'o base64 não pode ir para o registro',
+    )
+  })
+
+  it('records no files field when nothing was attached', async () => {
+    const repository = new RecordingRepository()
+    const usecase = new SendMessageUseCase(
+      stubProvider({
+        describe: () => session(),
+        sendMessage: async function* (sessionId) {
+          yield { type: 'text.delta' as const, sessionId, payload: { text: 'Oi' }, timestamp: new Date() }
+        },
+      }),
+      repository,
+    )
+
+    const done = repository.recorded()
+    for await (const _event of usecase.execute('s', { text: 'oi' })) void _event
+    await done
+
+    assert.strictEqual(repository.turns[0].files, undefined)
+  })
+
   it('records the turn even when the reader walks away mid-stream', async () => {
     // ⚠️ É o `finally` fazendo efeito: fechar a aba encerra o gerador por fora, e o turno
     // interrompido é justamente o que alguém vai querer investigar depois.

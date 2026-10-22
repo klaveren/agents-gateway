@@ -70,6 +70,101 @@ const sessionSchema = {
   },
 }
 
+const usageSchema = sessionSchema.properties.usage
+
+const classificationSchema = { type: 'string', enum: ['green', 'amber', 'red', 'blue'] }
+
+const conversationSchema = {
+  type: 'object',
+  description: 'A persisted conversation (survives restarts), as opposed to a live session.',
+  properties: {
+    id: { type: 'string' },
+    agentId: { type: 'string' },
+    provider: { type: 'string' },
+    mode: { type: 'string' },
+    model: { type: 'string' },
+    title: { type: 'string' },
+    createdAt: { type: 'string', format: 'date-time' },
+    updatedAt: { type: 'string', format: 'date-time' },
+    turns: { type: 'integer' },
+    usage: usageSchema,
+    metadata: { type: 'object', description: '`owner` holds `id`, and `email` / `account` when the credential carries them.' },
+    shared: { type: 'boolean' },
+    shareId: { type: 'string', description: 'The public link id, present while shared.' },
+    classification: { ...classificationSchema, description: 'ADMIN responses only. The worst label among the turns.' },
+    costUsd: { type: 'number', description: 'ADMIN responses only. Estimated; absent when the model has no known price (never zero).' },
+  },
+}
+
+const turnSchema = {
+  type: 'object',
+  properties: {
+    sessionId: { type: 'string' },
+    index: { type: 'integer' },
+    at: { type: 'string', format: 'date-time' },
+    request: { type: 'string' },
+    files: {
+      type: 'array',
+      description: 'What was attached: name, type and size only. The content is never stored.',
+      items: {
+        type: 'object',
+        properties: { name: { type: 'string' }, mimeType: { type: 'string' }, size: { type: 'integer', description: 'Bytes, from the base64 length.' } },
+      },
+    },
+    text: { type: 'string' },
+    reasoning: { type: 'string' },
+    toolCalls: { type: 'array', items: { type: 'object' } },
+    usage: usageSchema,
+    durationMs: { type: 'integer' },
+    firstTextMs: { type: 'integer' },
+    warnings: { type: 'array', items: { type: 'string' } },
+    aborted: { type: 'boolean' },
+    error: { type: 'string' },
+    classification: { ...classificationSchema, description: 'ADMIN responses only.' },
+    costUsd: { type: 'number', description: 'ADMIN responses only. Absent when the model has no known price.' },
+  },
+}
+
+const sharedConversationSchema = {
+  type: 'object',
+  description: 'The public, read-only projection: no tool calls, reasoning, attachments, classification, usage or metadata.',
+  properties: {
+    id: { type: 'string', description: 'The shareId.' },
+    title: { type: 'string' },
+    createdAt: { type: 'string', format: 'date-time' },
+    turns: {
+      type: 'array',
+      items: { type: 'object', properties: { at: { type: 'string', format: 'date-time' }, request: { type: 'string' }, text: { type: 'string' } } },
+    },
+  },
+}
+
+const statsSchema = {
+  type: 'object',
+  properties: {
+    conversations: { type: 'integer' },
+    turns: { type: 'integer' },
+    users: { type: 'integer', description: 'Distinct `metadata.owner.id`.' },
+    accounts: { type: 'integer', description: 'Distinct `metadata.owner.account`.' },
+    usage: usageSchema,
+    costUsd: { type: 'number', description: 'Estimated, summing only the models with a known price: a floor when some model has none.' },
+    byModel: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          provider: { type: 'string' },
+          model: { type: 'string' },
+          conversations: { type: 'integer' },
+          usage: usageSchema,
+          costUsd: { type: 'number' },
+        },
+      },
+    },
+    byClassification: { type: 'object', additionalProperties: { type: 'integer' }, description: 'Conversations per label; an absent key means none.' },
+  },
+}
+
 const toolSchema = {
   type: 'object',
   properties: {
@@ -99,6 +194,22 @@ const agentSchema = {
     name: { type: 'string' },
     provider: { type: 'string', enum: ['claude', 'openai', 'google'] },
     models: { type: 'array', items: { type: 'string' } },
+    pricing: {
+      type: 'object',
+      description:
+        'Price per 1M tokens of each model this agent offers that has a known price, keyed by model id. A model absent here has no known price (not zero); sort it last. Extend with `MODEL_PRICING_FILE`.',
+      additionalProperties: {
+        type: 'object',
+        properties: {
+          input: { type: 'number', description: 'USD per 1M fresh input tokens.' },
+          output: { type: 'number', description: 'USD per 1M output tokens; reasoning is billed at this price.' },
+          cacheRead: { type: 'number' },
+          cacheWrite: { type: 'number' },
+          introductoryUntil: { type: 'string', description: 'YYYY-MM-DD: the price is promotional until then.' },
+        },
+        required: ['input', 'output'],
+      },
+    },
     reasoningEfforts: { type: 'array', items: { type: 'string' } },
     modes: { type: 'array', items: { type: 'string', enum: ['chat', 'agent'] } },
     allowedTools: { type: 'array', items: { type: 'string' } },
@@ -142,7 +253,7 @@ const nullableText = { type: ['string', 'null'], description: 'Absent leaves it 
 const failures = {
   '401': {
     description:
-      'Missing or invalid gateway bearer token; or no caller credential (`X-Tool-Authorization`) on any route but `/health`; or a credential that could not be proven (see `CALLER_PROOF_TOOL`, `REQUIRE_PROVEN_OWNER`). `ALLOW_ANONYMOUS=1` waives the missing-credential case.',
+      'Missing or invalid gateway bearer token; or no caller credential (`X-Tool-Authorization`) on any route but `/health` and `/shared/{id}`; or a credential that could not be proven (see `CALLER_PROOF_TOOL`, `REQUIRE_PROVEN_OWNER`). `ALLOW_ANONYMOUS=1` waives the missing-credential case.',
     content: { 'application/json': { schema: failureEnvelope } },
   },
   '403': {
@@ -151,7 +262,8 @@ const failures = {
     content: { 'application/json': { schema: failureEnvelope } },
   },
   '404': {
-    description: 'Agent not found, or session not found. A session that belongs to someone else answers exactly like one that does not exist.',
+    description:
+      'Agent, session or conversation not found. One that belongs to someone else answers exactly like one that does not exist. Admin-only routes (`/settings`, `/conversations/stats`, `/conversations?scope=all`) answer 404 to everyone else, so their existence is not confirmed either.',
     content: { 'application/json': { schema: failureEnvelope } },
   },
   '422': { description: 'Validation failed', content: { 'application/json': { schema: failureEnvelope } } },
@@ -174,7 +286,7 @@ export const OPENAPI_DOCUMENT = {
         type: 'apiKey',
         in: 'header',
         name: 'X-Tool-Authorization',
-        description: "The caller's own credential, forwarded to the tools. Required on every route except `/health`; identifies the owner of a session.",
+        description: "The caller's own credential, forwarded to the tools. Required on every route except `/health` and `/shared/{id}`; identifies the owner of a session.",
       },
     },
   },
@@ -240,6 +352,108 @@ export const OPENAPI_DOCUMENT = {
           },
         },
         responses: { '200': { description: 'The stored settings', ...json(envelope(settingsSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/conversations': {
+      get: {
+        summary: "List the caller's own persisted conversations, most recently updated first. `scope=all` (administrators only) lists everyone's",
+        description:
+          'Any other query key becomes an exact filter on `metadata` (plain identifiers only). Keys starting with `owner` are discarded: the owner comes from the credential, never from the query. With `scope=all` and `page`, the server paginates and searches.',
+        parameters: [
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 500 } },
+          { name: 'scope', in: 'query', schema: { type: 'string', enum: ['all'] }, description: 'Administrators only; anyone else gets 404.' },
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 }, description: '`scope=all` only. Turns on server-side pagination.' },
+          { name: 'pageSize', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 50, default: 10 } },
+          { name: 'q', in: 'query', schema: { type: 'string', maxLength: 100 }, description: 'Searches title and owner e-mail, id and account (case-insensitive for ASCII).' },
+          { name: 'classification', in: 'query', schema: classificationSchema },
+          { name: 'provider', in: 'query', schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': {
+            description: 'OK. The paginated form adds `total`, `page`, `pageSize`, `scope` and `facets` (counted over the search, not over the active tab).',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  sessions: { type: 'array', items: conversationSchema },
+                  total: { type: 'integer' },
+                  page: { type: 'integer' },
+                  pageSize: { type: 'integer' },
+                  scope: { type: 'string', enum: ['all'] },
+                  facets: {
+                    type: 'object',
+                    properties: {
+                      classification: { type: 'object', additionalProperties: { type: 'integer' } },
+                      provider: { type: 'object', additionalProperties: { type: 'integer' } },
+                    },
+                  },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+    },
+    '/conversations/stats': {
+      get: {
+        summary: 'Aggregate totals, by model and by classification, with the estimated cost. Administrators only; anyone else gets 404',
+        responses: { '200': { description: 'OK', ...json(envelope(statsSchema)) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/conversations/{id}/turns': {
+      get: {
+        summary: 'The turns of a persisted conversation. The owner or an administrator; anyone else gets 404. `costUsd` and `classification` appear only for administrators',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(envelope({ type: 'object', properties: { sessionId: { type: 'string' }, turns: { type: 'array', items: turnSchema } } })),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+    },
+    '/conversations/{id}/share': {
+      put: {
+        summary: 'Open or close the conversation by link. The owner or an administrator; anyone else gets 404',
+        description:
+          'The shareId is created once (12 random bytes, base64url) and reused: closing keeps it and only stops `GET /shared/{id}` from answering, reopening returns the same link.',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', properties: { shared: { type: 'boolean' } }, required: ['shared'] } } } },
+        responses: {
+          '200': {
+            description: 'OK. `shareId` is present only while shared.',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: { sessionId: { type: 'string' }, shared: { type: 'boolean' }, shareId: { type: 'string' } },
+                required: ['sessionId', 'shared'],
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
+    '/conversations/{id}': {
+      delete: {
+        summary: 'Delete the persisted record (header and turns). The owner or an administrator. A live session, if any, keeps running: end it with `DELETE /sessions/{id}`',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'null' })) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/shared/{id}': {
+      get: {
+        summary: 'A conversation opened by link, read-only. PUBLIC: no caller credential needed (the gateway token still applies when set)',
+        description: '`id` is the shareId, not the session id. A conversation that does not exist and one that is not shared both answer 404.',
+        security: [],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'OK', ...json(envelope(sharedConversationSchema)) }, '404': failures['404'] },
       },
     },
     '/sessions': {

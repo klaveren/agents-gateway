@@ -5,16 +5,22 @@ import { GetSessionUseCase } from '@application/GetSession.Usecase'
 import { ListSessionsUseCase } from '@application/ListSessions.Usecase'
 import { SendMessageUseCase } from '@application/SendMessage.Usecase'
 import { aggregateTurn } from '@application/Turn.Aggregator'
+import { randomBytes } from 'node:crypto'
 import { AGENT_REGISTRY, getAgentById } from '@domain/Agent.Registry'
 import { AgentUnavailableError } from '@domain/errors/Domain.Error'
 import { AgentNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
+import { toSharedConversation } from '@domain/models/Conversation.Model'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
+import { MODEL_PRICING, TModelPricing } from '@domain/models/Model.Pricing'
 import { allowsCaller, mergeSettings } from '@domain/models/Settings.Model'
+import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { ISettingsRepository } from '@domain/ports/SettingsRepository.Port'
 import { ISessionContextProvider } from '@domain/ports/SessionContextProvider.Port'
 import { SessionNotFoundError } from '@domain/errors/Domain.Error'
 import { toAgentDto } from './Agent.Dto'
+import { IConversationView, toConversationDto, toStatsDto, toTurnDto } from './Conversation.Dto'
+import { metadataFilter, parsePageQuery } from './Monitor.Query'
 import { IResolvedCaller, ownerOf, ownsSession, resolveCaller } from './Caller.Access'
 import { checkAdminAccess } from './Caller.Admin'
 import { ICallerProof } from './Caller.Proof'
@@ -22,7 +28,7 @@ import { audienceRules } from './Caller.Roles'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
 import { parseBody } from './Request.Parser'
-import { createSessionSchema, sendMessageSchema, updateSettingsSchema } from './Request.Schema'
+import { createSessionSchema, sendMessageSchema, shareConversationSchema, updateSettingsSchema } from './Request.Schema'
 import { toSessionDto } from './Session.Dto'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { SseStream } from './Sse.Stream'
@@ -52,6 +58,23 @@ export interface IAgentControllerDeps {
   settings: ISettingsRepository
   /** Escreve o contexto que abre a conversa. Ausente = nenhum contexto. */
   sessionContext?: ISessionContextProvider
+  /**
+   * O MESMO repositório em que o `SendMessageUseCase` grava (ver `makeUsecases`): com dois, a tela
+   * leria um arquivo e o turno seria gravado no outro.
+   */
+  conversations: IConversationRepository
+  /** A tabela de preços ativa (de fábrica + `MODEL_PRICING_FILE`). Ausente = a de fábrica. */
+  pricing?: TModelPricing
+}
+
+/**
+ * O id do LINK público: 12 bytes aleatórios em base64url (16 caracteres, 96 bits), sem prefixo de
+ * provider.
+ *
+ * ⚖️ Curto porque uma pessoa vê e cola; imprevisível porque É o segredo do link.
+ */
+function newShareId(): string {
+  return randomBytes(12).toString('base64url')
 }
 
 export class AgentController {
@@ -70,6 +93,12 @@ export class AgentController {
     this.availability = this.availability.bind(this)
     this.getSettings = this.getSettings.bind(this)
     this.updateSettings = this.updateSettings.bind(this)
+    this.listConversations = this.listConversations.bind(this)
+    this.conversationStats = this.conversationStats.bind(this)
+    this.getConversationTurns = this.getConversationTurns.bind(this)
+    this.shareConversation = this.shareConversation.bind(this)
+    this.deleteConversation = this.deleteConversation.bind(this)
+    this.getSharedConversation = this.getSharedConversation.bind(this)
   }
 
   async health(_req: Request, res: Response) {
@@ -103,7 +132,7 @@ export class AgentController {
   async getAgents(_req: Request, res: Response) {
     await this.respond(res, async () => {
       await this.requireCaller()
-      return AGENT_REGISTRY.map(toAgentDto)
+      return AGENT_REGISTRY.map((agent) => toAgentDto(agent, this.pricing))
     })
   }
 
@@ -210,6 +239,176 @@ export class AgentController {
         return this.usecases.settings.read()
       },
       { message: 'Settings updated' },
+    )
+  }
+
+  /**
+   * As conversas GRAVADAS (as que sobrevivem ao processo), em oposição a `GET /sessions`, que lista as
+   * VIVAS. Uma sessão viva pode não ter turno ainda; uma conversa gravada quase sempre não tem sessão
+   * viva (o processo reiniciou, o TTL expirou). A tela de histórico quer esta.
+   *
+   * ⛔ O RECORTE POR DONO NÃO VEM DA QUERY. Vem da credencial provada, e qualquer `owner*` na query é
+   * descartado — `?owner=<outro>` seria todo o trabalho necessário para ler a conversa alheia. O resto
+   * da query vira filtro sobre `metadata`: são rótulos, não identidade.
+   *
+   * `?scope=all` é o monitor: caminho SEPARADO e explícito, só para administrador. Deixá-lo como
+   * ausência de filtro faria a rota irrestrita ser a fácil de alcançar por engano.
+   */
+  async listConversations(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        const query = req.query as Record<string, unknown>
+        if (query.scope === 'all') return this.listAllConversations(query)
+
+        const resolved = await this.requireCaller()
+        const identity = resolved.identity
+
+        const limit = Number.parseInt(String(query.limit ?? ''), 10)
+        const sessions = await this.usecases.conversations.listSessions({
+          limit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
+          filter: metadataFilter(query),
+          // Sem identidade (anônimo) = só as SEM dono; com identidade = só as dela.
+          owner: identity?.id ? { id: identity.id, account: identity.account } : null,
+        })
+
+        // Cinto e suspensório: o SQL já recortou, e a mesma regra do resto da API confere de novo.
+        const view = this.viewFor(false)
+
+        return { sessions: sessions.filter((session) => ownsSession(resolved, session.metadata)).map((session) => toConversationDto(session, view)) }
+      },
+      { message: 'Conversations listed' },
+    )
+  }
+
+  /**
+   * TODAS as conversas, de todo mundo — o monitor.
+   *
+   * ⛔ É A EXCEÇÃO AO ISOLAMENTO desta API, e a única junto de `stats`: administrador PROVADO
+   * (`checkAdminAccess`) ou 404, sem distinguir os motivos. Com `page`, a paginação é no servidor.
+   */
+  private async listAllConversations(query: Record<string, unknown>) {
+    await this.requireAdmin('listAllConversations')
+    const view = this.viewFor(true)
+
+    if (query.page !== undefined) {
+      const paging = parsePageQuery(query)
+      const page = await this.usecases.conversations.pageSessions(paging)
+
+      return { ...page, sessions: page.sessions.map((session) => toConversationDto(session, view)), page: paging.page, pageSize: paging.pageSize, scope: 'all' }
+    }
+
+    const limit = Number.parseInt(String(query.limit ?? ''), 10)
+    const sessions = await this.usecases.conversations.listSessions({
+      limit: Number.isFinite(limit) && limit > 0 ? limit : 100,
+      filter: metadataFilter(query, ['page', 'pageSize', 'q', 'classification', 'provider']),
+    })
+
+    return { sessions: sessions.map((session) => toConversationDto(session, view)), scope: 'all' }
+  }
+
+  /**
+   * O retrato agregado — totais, por modelo, por sinal e o custo estimado.
+   *
+   * ⛔ MESMA PORTA DO MONITOR. Não é conteúdo, mas é o retrato de quem usa e quanto custa — e isso
+   * não é de qualquer um. Registrada ANTES de `/conversations/:id` para o `stats` nunca ser lido como id.
+   */
+  async conversationStats(_req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        await this.requireAdmin('conversationStats')
+
+        return toStatsDto(await this.usecases.conversations.stats(), this.pricing)
+      },
+      { message: 'Stats computed' },
+    )
+  }
+
+  /** Os turnos de uma conversa gravada. Dono ou administrador; qualquer outro recebe 404. */
+  async getConversationTurns(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        const id = req.params.id as string
+        const { conversation, admin } = await this.requireConversationAccess(id)
+        const view = this.viewFor(admin)
+
+        const turns = await this.usecases.conversations.listTurns(id)
+
+        return { sessionId: id, turns: turns.map((turn) => toTurnDto(turn, conversation.model, view)) }
+      },
+      { message: 'Turns listed' },
+    )
+  }
+
+  /**
+   * Abre ou fecha a conversa por link. Dono ou administrador.
+   *
+   * ⚠️ O administrador também pode: quem já lê a conversa inteira não ganha poder novo
+   * compartilhando-a. O que não pode é um terceiro abrir a conversa de outro por conhecer o id.
+   *
+   * O `shareId` nasce no primeiro compartilhamento e é REUSADO: religar devolve o mesmo link, e
+   * desligar não o apaga — só a leitura pública passa a recusá-lo.
+   */
+  async shareConversation(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        const id = req.params.id as string
+        const { conversation } = await this.requireConversationAccess(id)
+        const { shared } = parseBody(shareConversationSchema, req.body)
+
+        const shareId = conversation.shareId ?? newShareId()
+        await this.usecases.conversations.setShared(id, shared, shared ? shareId : undefined)
+
+        return { sessionId: id, shared, shareId: shared ? shareId : undefined }
+      },
+      { message: 'Conversation sharing updated' },
+    )
+  }
+
+  /**
+   * A conversa compartilhada, para quem NÃO tem credencial. A única rota desta API sem dono (ver
+   * `PUBLIC_PATHS`).
+   *
+   * ⛔ SÓ LEITURA, e só a projeção pública — ver `toSharedConversation`. Devolver o turno gravado
+   * publicaria retorno cru de ferramenta, raciocínio do modelo, anexos e o rótulo da conversa.
+   *
+   * ⚠️ NÃO EXISTE e NÃO COMPARTILHADA respondem IGUAL (404): distinguir contaria a quem sondasse quais
+   * links existem. O `:id` é o `shareId`; o id da sessão não abre nada por aqui.
+   */
+  async getSharedConversation(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        const conversation = await this.usecases.conversations.findByShareId(req.params.id as string)
+        if (!conversation?.shared || !conversation.shareId) throw new HttpError(404, 'not_found', 'Shared conversation not found')
+
+        const turns = await this.usecases.conversations.listTurns(conversation.id)
+
+        return toSharedConversation({ ...conversation, shareId: conversation.shareId }, turns)
+      },
+      { message: 'Shared conversation' },
+    )
+  }
+
+  /**
+   * Apaga o registro (cabeçalho e turnos). Dono ou administrador.
+   *
+   * ⚠️ A sessão VIVA, se houver, segue: quem a encerra é `DELETE /sessions/:id`. São coisas distintas.
+   */
+  async deleteConversation(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        const id = req.params.id as string
+        await this.requireConversationAccess(id)
+
+        await this.usecases.conversations.deleteSession(id)
+        return null
+      },
+      { message: 'Conversation deleted' },
     )
   }
 
@@ -365,6 +564,35 @@ export class AgentController {
     if (!ownsSession(resolved, metadata)) throw new SessionNotFoundError(sessionId)
 
     return resolved
+  }
+
+  /** A tabela de preços em vigor. */
+  private get pricing(): TModelPricing {
+    return this.usecases.pricing ?? MODEL_PRICING
+  }
+
+  private viewFor(admin: boolean): IConversationView {
+    return { admin, pricing: this.pricing }
+  }
+
+  /**
+   * A conversa gravada existe E é do chamador, ou ele é administrador — senão, a MESMA resposta
+   * (404) para os dois casos.
+   *
+   * ⛔ FILTRAR A LISTAGEM NÃO PROTEGE NADA se o detalhe abre por id. Ids aparecem em log, em print, no
+   * histórico do navegador de outra pessoa; sem esta conferência um deles é a conversa inteira de
+   * outro. ⚠️ 404 igual para "não existe" e "não é sua": distinguir contaria quais ids existem.
+   *
+   * `admin` volta junto porque quem lê decide o que mostrar (custo, rótulo) pelo mesmo veredito.
+   */
+  private async requireConversationAccess(id: string) {
+    const resolved = await this.requireCaller()
+    const admin = (await checkAdminAccess(this.usecases.proof)).allowed
+
+    const conversation = await this.usecases.conversations.findSession(id)
+    if (!conversation || (!admin && !ownsSession(resolved, conversation.metadata))) throw new HttpError(404, 'not_found', `Conversation not found: ${id}`)
+
+    return { resolved, admin, conversation }
   }
 
   /** A audiência configurada admite este chamador? Ver `allowsCaller` para a ordem das regras. */

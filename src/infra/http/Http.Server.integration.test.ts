@@ -184,6 +184,25 @@ describe('HttpServer fechado por padrão (sem ALLOW_ANONYMOUS)', () => {
     assert.strictEqual((await fetch(`${base}/health`)).status, 200)
   })
 
+  it('/shared/:id também é pública: sem credencial responde 404 do link, não 401', async () => {
+    const res = await fetch(`${base}/shared/qualquer`)
+
+    assert.strictEqual(res.status, 404)
+    assert.strictEqual((await res.json()).code, 'not_found')
+  })
+
+  it('as rotas de conversa pedem credencial, inclusive a de estatística e a de apagar', async () => {
+    for (const [path, init] of [
+      ['/conversations'],
+      ['/conversations/stats'],
+      ['/conversations/x/turns'],
+      ['/conversations/x/share', { method: 'PUT' }],
+      ['/conversations/x', { method: 'DELETE' }],
+    ] as Array<[string, RequestInit?]>) {
+      assert.strictEqual((await fetch(`${base}${path}`, init)).status, 401, path)
+    }
+  })
+
   it('toda outra rota responde 401 sem a credencial do chamador', async () => {
     const calls: Array<[string, RequestInit?]> = [
       ['/agents'],

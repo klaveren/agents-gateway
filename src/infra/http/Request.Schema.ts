@@ -68,6 +68,10 @@ export const updateSettingsSchema = z.object({
   classifyTurns: z.boolean().nullable().optional(),
 })
 
+/** Abrir ou fechar a conversa por link. Booleano estrito: `"false"` (texto) não pode abrir. */
+export const shareConversationSchema = z.object({ shared: z.boolean() })
+
 export type TCreateSessionBody = z.infer<typeof createSessionSchema>
 export type TSendMessageBody = z.infer<typeof sendMessageSchema>
 export type TUpdateSettingsBody = z.infer<typeof updateSettingsSchema>
+export type TShareConversationBody = z.infer<typeof shareConversationSchema>

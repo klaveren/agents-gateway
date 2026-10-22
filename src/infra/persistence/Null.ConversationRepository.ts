@@ -1,4 +1,5 @@
-import { IConversationSession, IConversationStats, IConversationTurn } from '@domain/models/Conversation.Model'
+import { TClassification } from '@domain/models/Classification.Model'
+import { IConversationPage, IConversationSession, IConversationStats, IConversationTurn } from '@domain/models/Conversation.Model'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 
 /**
@@ -15,8 +16,12 @@ import { IConversationRepository } from '@domain/ports/ConversationRepository.Po
 export class NullConversationRepository implements IConversationRepository {
   async saveSession(_session: IConversationSession): Promise<void> {}
   async appendTurn(_turn: IConversationTurn): Promise<void> {}
+  async classifyTurn(_sessionId: string, _index: number, _classification: TClassification): Promise<void> {}
   async listSessions(): Promise<IConversationSession[]> {
     return []
+  }
+  async pageSessions(): Promise<IConversationPage> {
+    return { sessions: [], total: 0, facets: { classification: {}, provider: {} } }
   }
   async listTurns(): Promise<IConversationTurn[]> {
     return []
@@ -24,8 +29,12 @@ export class NullConversationRepository implements IConversationRepository {
   async findSession(): Promise<undefined> {
     return undefined
   }
+  async setShared(_sessionId: string, _shared: boolean, _shareId?: string): Promise<void> {}
+  async findByShareId(): Promise<undefined> {
+    return undefined
+  }
   async deleteSession(_sessionId: string): Promise<void> {}
   async stats(): Promise<IConversationStats> {
-    return { conversations: 0, turns: 0, usage: {}, byModel: [] }
+    return { conversations: 0, turns: 0, users: 0, accounts: 0, usage: {}, byModel: [], byClassification: {} }
   }
 }
