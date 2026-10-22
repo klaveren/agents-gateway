@@ -30,12 +30,12 @@ const agentName = (id: string) => agents.byId.get(id)?.name ?? id
         <div class="tile"><span class="tile-label">Turnos</span><span class="tile-value">{{ t.turns }}</span></div>
         <div v-if="showCost" class="tile"><span class="tile-label">Custo estimado</span><span class="tile-value">{{ cost(t) }}</span></div>
         <div class="tile"><span class="tile-label">Entrada</span><span class="tile-value">{{ tokens(t.usage.inputTokens) }}</span></div>
-        <div class="tile"><span class="tile-label">Resposta</span><span class="tile-value">{{ tokens(t.usage.outputTokens) }}</span></div>
+        <div class="tile"><span class="tile-label">Saída</span><span class="tile-value">{{ tokens(t.usage.outputTokens) }}</span></div>
         <div class="tile"><span class="tile-label">Cache lido</span><span class="tile-value">{{ tokens(t.usage.cacheReadTokens) }}</span></div>
         <div class="tile"><span class="tile-label">Cache gravado</span><span class="tile-value">{{ tokens(t.usage.cacheWriteTokens) }}</span></div>
       </div>
       <p class="-mt-1 text-xs text-zinc-500">
-        Raciocínio {{ tokens(t.usage.reasoningTokens) }} (cobrado como resposta)
+        Raciocínio {{ tokens(t.usage.reasoningTokens) }} (cobrado como saída)
         <template v-if="showCost && t.costIsFloor"> · ≥ = há modelo sem preço; o custo é um piso</template>
       </p>
 
