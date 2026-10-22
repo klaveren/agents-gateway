@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { ICredentialSource } from '@domain/ports/CredentialStore.Port'
-import { requireKey } from './support/Keyed.Client'
+import { IConnectionSource, requireConnection } from './support/Keyed.Client'
 import { EventType, Gemini, InMemorySessionService, LlmAgent, Runner, StreamingMode, toStructuredEvents, type BaseTool, type BaseToolset, type Event } from '@google/adk'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -97,7 +96,7 @@ export interface IGoogleAgentAdapterDeps {
    * De onde vem a chave. ⚠️ Vale ao NASCER a sessão: o runtime do ADK é da sessão inteira (carrega o
    * histórico), então trocar a chave pela tela vale para as conversas que começam depois.
    */
-  credentials?: ICredentialSource
+  connections?: IConnectionSource
   createRuntime?: TAdkRuntimeFactory
   store?: SessionStore
   catalog?: ToolCatalog
@@ -180,19 +179,20 @@ export class GoogleAgentAdapter implements IAgentAdapter {
   private readonly createRuntime: TAdkRuntimeFactory
   private readonly store: SessionStore
   private readonly catalog?: ToolCatalog
-  private readonly credentials?: ICredentialSource
+  private readonly connections?: IConnectionSource
 
   constructor(deps: IGoogleAgentAdapterDeps = {}) {
     this.createRuntime = deps.createRuntime ?? defaultRuntimeFactory
     this.store = deps.store ?? new SessionStore()
     this.catalog = deps.catalog
-    this.credentials = deps.credentials
+    this.connections = deps.connections
   }
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
     const record = this.store.create(sessionPrefix(EProvider.GOOGLE, EMode.AGENT), {
       agentId: agent.id,
-      provider: EProvider.GOOGLE,
+      provider: agent.provider,
+      protocol: EProvider.GOOGLE,
       mode: EMode.AGENT,
       model: input.model || DEFAULT_MODEL,
       reasoning: input.reasoning,
@@ -308,7 +308,7 @@ export class GoogleAgentAdapter implements IAgentAdapter {
       const remote = await this.remoteTools(agent, caller)
       record.native = {
         runtime: this.createRuntime({
-          apiKey: this.credentials ? requireKey(EProvider.GOOGLE, this.credentials) : undefined,
+          apiKey: this.connections ? requireConnection(record.provider, EProvider.GOOGLE, this.connections).key : undefined,
           name: this.toAdkName(agent.id),
           model: record.model,
           instruction: assertNoAdkTemplateCollision(record.systemPrompt),

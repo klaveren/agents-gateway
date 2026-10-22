@@ -2,9 +2,10 @@ import { AGENT_REGISTRY, getAgentById, modelFor } from '@domain/Agent.Registry'
 import { resolveSessionMode } from '@domain/Session.Policy'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { AdapterNotFoundError, AgentNotFoundError, AgentUnavailableError, SessionNotFoundError } from '@domain/errors/Domain.Error'
+import { AdapterNotFoundError, AgentNotFoundError, AgentUnavailableError, ProviderUnavailableError, SessionNotFoundError } from '@domain/errors/Domain.Error'
 import { DEFAULT_SETTINGS, IAgentSettings } from '@domain/models/Settings.Model'
 import { IAgentDirectory } from '@domain/ports/AgentRepository.Port'
+import { IProviderDirectory } from '@domain/ports/ProviderRepository.Port'
 import { ISettingsRepository } from '@domain/ports/SettingsRepository.Port'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
@@ -45,6 +46,12 @@ export class AgentProvider implements IAgentProvider {
      * embutidos — o teste monta o provider sem banco.
      */
     private readonly agents: IAgentDirectory = { list: () => AGENT_REGISTRY, get: getAgentById },
+
+    /**
+     * Os providers configurados: o agente aponta para um id, e é o PROTOCOLO dele que escolhe o adapter
+     * (um `openrouter` que fala OpenAI vai para os adapters da OpenAI). Ausente, só os oficiais.
+     */
+    private readonly providers?: IProviderDirectory,
   ) {
     /**
      * Uma leitura no boot, e depois só quando muda.
@@ -93,7 +100,7 @@ export class AgentProvider implements IAgentProvider {
     const agent = this.getAgent(input.agentId || settings.agentId)
     const mode = resolveSessionMode(agent, input)
 
-    return this.getAdapter(agent.provider, mode).createSession(agent, {
+    return this.getAdapter(this.protocolOf(agent.provider), mode).createSession(agent, {
       ...input,
       agentId: agent.id,
       model: modelFor(agent, input.model || settings.model),
@@ -109,7 +116,7 @@ export class AgentProvider implements IAgentProvider {
   async *sendMessage(sessionId: string, input: IMessageInput): AsyncIterable<IAgentEvent> {
     const record = this.requireSession(sessionId)
     const agent = this.getAgent(record.agentId)
-    const adapter = this.getAdapter(record.provider, record.mode)
+    const adapter = this.getAdapter(record.protocol, record.mode)
 
     record.status = 'running'
     record.turns += 1
@@ -137,7 +144,7 @@ export class AgentProvider implements IAgentProvider {
 
   async cancel(sessionId: string): Promise<void> {
     const record = this.requireSession(sessionId)
-    return this.getAdapter(record.provider, record.mode).cancel(sessionId)
+    return this.getAdapter(record.protocol, record.mode).cancel(sessionId)
   }
 
   /** Encerrar inclui abortar o que estiver em curso: quem faz as duas coisas é o store. */
@@ -166,6 +173,22 @@ export class AgentProvider implements IAgentProvider {
     if (!agent) throw new AgentNotFoundError(id)
 
     return agent
+  }
+
+  /**
+   * ⛔ Provider desligado ou removido não abre sessão: a mensagem diz onde resolver, em vez de a
+   * primeira chamada falhar com um 401 de lugar nenhum.
+   */
+  private protocolOf(providerId: string): EProvider {
+    if (!this.providers) {
+      const official = Object.values(EProvider).find((value) => value === providerId)
+      if (!official) throw new ProviderUnavailableError(providerId)
+      return official
+    }
+
+    const provider = this.providers.get(providerId)
+    if (!provider?.enabled) throw new ProviderUnavailableError(providerId)
+    return provider.protocol
   }
 
   private getAdapter(provider: EProvider, mode: EMode): IAgentAdapter {

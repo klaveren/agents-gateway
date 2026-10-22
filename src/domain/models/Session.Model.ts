@@ -1,5 +1,4 @@
 import { EMode } from '@domain/enums/EMode.Enum'
-import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IUsage } from '@domain/models/AgentEvent.Model'
 
 export type TSessionStatus = 'idle' | 'running'
@@ -15,7 +14,8 @@ export type TSessionStatus = 'idle' | 'running'
 export interface ISession {
   id: string
   agentId: string
-  provider: EProvider
+  /** O provider configurado (`claude`, `openrouter`…). */
+  provider: string
   mode: EMode
   model: string
   reasoning?: string

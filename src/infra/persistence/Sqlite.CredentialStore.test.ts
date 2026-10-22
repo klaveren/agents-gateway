@@ -27,7 +27,7 @@ describe('SqliteCredentialStore', () => {
     const store = new SqliteCredentialStore(new SecretBox(randomBytes(32)), ':memory:', env)
     store.save(EProvider.OPENAI, 'sk-proj-muito-secreta-abcd', 'root@x.test')
 
-    const status = store.status()
+    const status = store.status(Object.values(EProvider))
     assert.ok(!JSON.stringify(status).includes('muito-secreta'))
     assert.ok(!JSON.stringify(status).includes('do-ambiente'))
     assert.deepStrictEqual(
@@ -51,7 +51,7 @@ describe('SqliteCredentialStore', () => {
 
       const other = new SqliteCredentialStore(new SecretBox(randomBytes(32)), path, env)
       assert.strictEqual(other.get(EProvider.CLAUDE), 'sk-ant-do-ambiente-9999')
-      assert.strictEqual(other.status()[0].unreadable, true)
+      assert.strictEqual(other.status(Object.values(EProvider))[0].unreadable, true)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -59,7 +59,7 @@ describe('SqliteCredentialStore', () => {
 
   it('avisa quem escuta a cada troca', () => {
     const store = new SqliteCredentialStore(new SecretBox(randomBytes(32)), ':memory:', {})
-    const changed: EProvider[] = []
+    const changed: string[] = []
     store.subscribe((provider) => changed.push(provider))
 
     store.save(EProvider.GOOGLE, 'AIza-teste-1234', 'root')

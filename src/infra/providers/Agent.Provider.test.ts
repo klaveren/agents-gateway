@@ -33,6 +33,7 @@ describe('AgentProvider', () => {
           const record = store.create(`${provider}-${mode}`, {
             agentId: agent.id,
             provider,
+            protocol: provider,
             mode: input.mode ?? EMode.CHAT,
             model: input.model ?? 'model-x',
             tools: input.tools === true,
@@ -114,6 +115,34 @@ describe('AgentProvider', () => {
     assert.strictEqual(session.mode, EMode.CHAT)
     assert.deepStrictEqual(chat.calls, ['createSession'])
     await assert.rejects(provider.createSession({ agentId: 'researcher-agent' }), /researcher-agent/)
+  })
+
+  it('routes an agent on a compatible provider (OpenRouter speaking OpenAI) to the OpenAI adapter; a disabled provider opens nothing', async () => {
+    const store = new SessionStore()
+    const openai = spyAdapter(store, EProvider.OPENAI, EMode.CHAT, [])
+    const agent = { id: 'roteado', name: 'Roteado', provider: 'openrouter', systemPrompt: 'p', models: ['meta-llama/llama-4'], modes: [EMode.CHAT], allowedTools: [] }
+    let enabled = true
+    const providers = {
+      list: () => [],
+      get: (id: string) =>
+        id === 'openrouter'
+          ? { id, name: 'OpenRouter', protocol: EProvider.OPENAI, baseUrl: 'https://openrouter.ai/api/v1', official: false, enabled, createdAt: new Date(), updatedAt: new Date() }
+          : undefined,
+      connection: () => undefined,
+    }
+    const provider = new AgentProvider(
+      new Map([[adapterKey(EProvider.OPENAI, EMode.CHAT), openai.adapter]]),
+      store,
+      undefined,
+      { list: () => [agent], get: (id) => (id === agent.id ? agent : undefined) },
+      providers,
+    )
+
+    await provider.createSession({ agentId: 'roteado' })
+    assert.deepStrictEqual(openai.calls, ['createSession'])
+
+    enabled = false
+    await assert.rejects(provider.createSession({ agentId: 'roteado' }), /openrouter/)
   })
 
   it('defaults to the chat lane when no mode is given', async () => {

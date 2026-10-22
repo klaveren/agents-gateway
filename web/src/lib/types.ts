@@ -16,7 +16,8 @@ export interface IUsage {
 export interface IConversation {
   id: string
   agentId: string
-  provider: TProvider
+  /** O id do provider configurado (`claude`, `openrouter`…). */
+  provider: string
   mode: TMode
   model: string
   title?: string
@@ -76,7 +77,8 @@ export interface IModelPrice {
 export interface IAgent {
   id: string
   name: string
-  provider: TProvider
+  /** O id do provider configurado (`claude`, `openrouter`…). */
+  provider: string
   models: string[]
   pricing: Record<string, IModelPrice>
   reasoningEfforts?: string[]
@@ -94,7 +96,7 @@ export interface IAgentDetail extends IAgent {
 export interface IAgentInput {
   id?: string
   name: string
-  provider: TProvider
+  provider: string
   systemPrompt: string
   models: string[]
   reasoningEfforts?: string[]
@@ -149,13 +151,21 @@ export interface ISession {
 }
 
 export interface IProviderStatus {
-  provider: TProvider
-  configured: boolean
-  source: 'stored' | 'env' | 'none'
-  last4?: string
-  updatedAt?: string
-  updatedBy?: string
-  unreadable?: boolean
+  id: string
+  name: string
+  /** O SDK que fala com ele. Compatível fala `openai` ou `claude` (Anthropic). */
+  protocol: TProvider
+  baseUrl?: string
+  official: boolean
+  enabled: boolean
+  credential: {
+    configured: boolean
+    source: 'stored' | 'env' | 'none'
+    last4?: string
+    updatedAt?: string
+    updatedBy?: string
+    unreadable?: boolean
+  }
   models: string[]
   agents: Array<{ id: string; name: string }>
 }

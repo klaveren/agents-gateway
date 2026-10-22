@@ -1,7 +1,6 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { EProvider } from '@domain/enums/EProvider.Enum'
 import { ENV_KEY_NAME, ICredentialStatus, ICredentialStore } from '@domain/ports/CredentialStore.Port'
 import { SecretBox } from '@infra/secrets/Aes.SecretBox'
 
@@ -25,8 +24,8 @@ type TRow = Record<string, unknown>
  */
 export class SqliteCredentialStore implements ICredentialStore {
   private readonly db?: DatabaseSync
-  private readonly memory = new Map<EProvider, { key?: string; last4: string; updatedAt: Date; updatedBy?: string }>()
-  private readonly listeners: Array<(provider: EProvider) => void> = []
+  private readonly memory = new Map<string, { key?: string; last4: string; updatedAt: Date; updatedBy?: string }>()
+  private readonly listeners: Array<(provider: string) => void> = []
 
   /** `path` ausente = só memória (`CONVERSATIONS_DB=off`): vale até o restart, por cima do `.env`. */
   constructor(
@@ -43,14 +42,14 @@ export class SqliteCredentialStore implements ICredentialStore {
     }
   }
 
-  get(provider: EProvider): string | undefined {
-    return this.memory.get(provider)?.key ?? (this.env[ENV_KEY_NAME[provider]]?.trim() || undefined)
+  get(provider: string): string | undefined {
+    return this.memory.get(provider)?.key ?? this.fromEnv(provider)
   }
 
-  status(): ICredentialStatus[] {
-    return Object.values(EProvider).map((provider) => {
+  status(providerIds: readonly string[]): ICredentialStatus[] {
+    return providerIds.map((provider) => {
       const stored = this.memory.get(provider)
-      const fromEnv = this.env[ENV_KEY_NAME[provider]]?.trim()
+      const fromEnv = this.fromEnv(provider)
 
       if (stored?.key) return { provider, configured: true, source: 'stored', last4: stored.last4, updatedAt: stored.updatedAt, updatedBy: stored.updatedBy }
       const unreadable = stored ? { unreadable: true, updatedAt: stored.updatedAt, updatedBy: stored.updatedBy } : {}
@@ -59,7 +58,7 @@ export class SqliteCredentialStore implements ICredentialStore {
     })
   }
 
-  save(provider: EProvider, key: string, by: string): void {
+  save(provider: string, key: string, by: string): void {
     const clean = key.trim()
     const entry = { key: clean, last4: clean.slice(-4), updatedAt: new Date(), updatedBy: by }
 
@@ -74,20 +73,19 @@ export class SqliteCredentialStore implements ICredentialStore {
     this.notify(provider)
   }
 
-  clear(provider: EProvider): void {
+  clear(provider: string): void {
     this.db?.prepare('DELETE FROM provider_credentials WHERE provider = ?').run(provider)
     this.memory.delete(provider)
     this.notify(provider)
   }
 
-  subscribe(listener: (provider: EProvider) => void): void {
+  subscribe(listener: (provider: string) => void): void {
     this.listeners.push(listener)
   }
 
   private load(): void {
     for (const row of this.db!.prepare('SELECT * FROM provider_credentials').all() as TRow[]) {
-      const provider = String(row.provider) as EProvider
-      if (!Object.values(EProvider).includes(provider)) continue
+      const provider = String(row.provider)
 
       // Ilegível fica registrado SEM chave: a tela avisa, e a do `.env` (se houver) continua valendo.
       const key = this.box.open(String(row.sealed))
@@ -101,7 +99,13 @@ export class SqliteCredentialStore implements ICredentialStore {
     }
   }
 
-  private notify(provider: EProvider): void {
+  /** Só os oficiais têm variável de ambiente; um compatível vive só do que foi salvo. */
+  private fromEnv(provider: string): string | undefined {
+    const name = ENV_KEY_NAME[provider]
+    return (name && this.env[name]?.trim()) || undefined
+  }
+
+  private notify(provider: string): void {
     for (const listener of this.listeners) {
       try {
         listener(provider)

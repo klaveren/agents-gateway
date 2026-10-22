@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { fullTime, PROVIDER_LABEL, tokens, usd } from '@/lib/format'
-import type { TProvider } from '@/lib/types'
+import { fullTime, providerLabel, tokens, usd } from '@/lib/format'
 import { useAgentsStore } from '@/stores/agents'
 import { useAuthStore } from '@/stores/auth'
 import { useConversationsStore } from '@/stores/conversations'
@@ -84,7 +83,7 @@ async function continueFresh() {
       <div class="min-w-0">
         <div class="truncate font-medium">{{ header?.title || agent?.name || 'Conversa' }}</div>
         <div class="truncate text-xs text-zinc-400">
-          {{ agent?.name ?? header?.agentId }} · {{ PROVIDER_LABEL[(header?.provider ?? agent?.provider ?? 'claude') as TProvider] }} {{ header?.model }} ·
+          {{ agent?.name ?? header?.agentId }} · {{ providerLabel(header?.provider ?? agent?.provider ?? '') }} {{ header?.model }} ·
           {{ header?.mode === 'agent' ? 'Agents SDK' : 'chat' }}
           <template v-if="auth.isAdmin && owner"> · {{ owner.email ?? owner.id }}</template>
         </div>

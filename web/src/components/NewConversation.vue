@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { PROVIDER_LABEL } from '@/lib/format'
+import { providerLabel } from '@/lib/format'
 import type { TMode } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import { useThreadStore, type IOutgoingFile } from '@/stores/thread'
@@ -79,7 +79,7 @@ async function send(text: string, files: IOutgoingFile[]) {
               <AgentAvatar :name="option.name" :provider="option.provider" />
               <span class="min-w-0">
                 <span class="block truncate font-medium">{{ option.name }}</span>
-                <span class="block truncate text-xs text-zinc-400">{{ PROVIDER_LABEL[option.provider] }} · {{ option.allowedTools.join(', ') || 'sem tools' }}</span>
+                <span class="block truncate text-xs text-zinc-400">{{ providerLabel(option.provider) }} · {{ option.allowedTools.join(', ') || 'sem tools' }}</span>
               </span>
               <span v-if="!option.builtIn" class="ml-auto rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-400">criado</span>
             </button>

@@ -2,7 +2,9 @@ import { AgentController } from './Agent.Controller'
 import { AuthController } from './Auth.Controller'
 import { ProvidersController } from './Providers.Controller'
 import { randomBytes } from 'node:crypto'
+import { ProvidersService } from '@application/Providers.Service'
 import { SqliteCredentialStore } from '@infra/persistence/Sqlite.CredentialStore'
+import { SqliteProviderRepository } from '@infra/persistence/Sqlite.ProviderRepository'
 import { SecretBox } from '@infra/secrets/Aes.SecretBox'
 import express, { Express, NextFunction, Request, RequestHandler, Response } from 'express'
 import { Server } from 'node:http'
@@ -49,11 +51,7 @@ export class HttpServer {
   constructor(
     private readonly controller: AgentController,
     auth: AuthController = new AuthController({}),
-    // Sem providers injetado: chaves só em memória, sobre o ambiente — o teste e quem monta à mão.
-    providers: ProvidersController = new ProvidersController({
-      credentials: new SqliteCredentialStore(new SecretBox(randomBytes(32))),
-      agents: { list: () => [], get: () => undefined },
-    }),
+    providers: ProvidersController = defaultProvidersController(),
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
@@ -154,6 +152,9 @@ export class HttpServer {
 function buildRoutes(controller: AgentController, auth: AuthController, providers: ProvidersController): IRoute[] {
   return [
     { method: 'get', path: '/providers', handler: providers.list },
+    { method: 'post', path: '/providers', handler: providers.create },
+    { method: 'put', path: '/providers/:id', handler: providers.update },
+    { method: 'delete', path: '/providers/:id', handler: providers.remove },
     { method: 'put', path: '/providers/:id/key', handler: providers.saveKey },
     { method: 'delete', path: '/providers/:id/key', handler: providers.clearKey },
     { method: 'post', path: '/providers/:id/test', handler: providers.test },
@@ -215,4 +216,10 @@ function resolvePublicDir(): string {
   const candidates = [path.resolve(__dirname, 'public'), path.resolve(__dirname, '../../../src/infra/http/public'), path.resolve(process.cwd(), 'src/infra/http/public')]
 
   return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[candidates.length - 1]
+}
+
+/** Sem providers injetado: tudo em memória, sobre o ambiente — o teste e quem monta à mão. */
+function defaultProvidersController(): ProvidersController {
+  const credentials = new SqliteCredentialStore(new SecretBox(randomBytes(32)))
+  return new ProvidersController({ providers: new ProvidersService(new SqliteProviderRepository(), credentials), credentials, agents: { list: () => [], get: () => undefined } })
 }

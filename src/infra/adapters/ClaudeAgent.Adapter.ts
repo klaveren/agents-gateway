@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { ICredentialSource } from '@domain/ports/CredentialStore.Port'
-import { requireKey } from './support/Keyed.Client'
+import { IConnectionSource, requireConnection } from './support/Keyed.Client'
 import { query, type CanUseTool, type EffortLevel, type Options, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -37,12 +36,12 @@ interface IClaudeAgentNative {
 export interface IClaudeAgentAdapterDeps {
   query?: TQuery
   /**
-   * De onde vem a chave em cada turno. Ausente = o subprocesso herda o ambiente, como antes.
+   * De onde vêm a chave e a URL em cada turno. Ausente = o subprocesso herda o ambiente, como antes.
    *
    * ⚠️ O CLI do Claude é um SUBPROCESSO: ele não vê a store, só o `env` que recebe. A chave vai em
    * `options.env` a cada turno — é o que faz a troca pela tela valer sem reiniciar.
    */
-  credentials?: ICredentialSource
+  connections?: IConnectionSource
   store?: SessionStore
   catalog?: ToolCatalog
 }
@@ -59,11 +58,11 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
   private readonly store: SessionStore
   private readonly catalog?: ToolCatalog
 
-  private readonly credentials?: ICredentialSource
+  private readonly connections?: IConnectionSource
 
   constructor(deps: IClaudeAgentAdapterDeps = {}) {
     this.query = deps.query ?? query
-    this.credentials = deps.credentials
+    this.connections = deps.connections
     this.store = deps.store ?? new SessionStore()
     this.catalog = deps.catalog
   }
@@ -71,7 +70,8 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
     const record = this.store.create(sessionPrefix(EProvider.CLAUDE, EMode.AGENT), {
       agentId: agent.id,
-      provider: EProvider.CLAUDE,
+      provider: agent.provider,
+      protocol: EProvider.CLAUDE,
       mode: EMode.AGENT,
       model: input.model || DEFAULT_MODEL,
       reasoning: input.reasoning,
@@ -110,9 +110,9 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message } }
     }
 
-    let apiKey: string | undefined
+    let env: Record<string, string | undefined> | undefined
     try {
-      apiKey = this.credentials ? requireKey(EProvider.CLAUDE, this.credentials) : undefined
+      env = this.connections ? cliEnv(requireConnection(record.provider, EProvider.CLAUDE, this.connections)) : undefined
     } catch (error: unknown) {
       yield { type: 'error', sessionId, timestamp: new Date(), payload: { message: error instanceof Error ? error.message : String(error) } }
       return
@@ -138,7 +138,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       maxTurns: maxToolTurns(),
       abortController: abort,
       ...(native.started ? { resume: native.sdkSessionId } : { sessionId: native.sdkSessionId }),
-      ...(apiKey ? { env: { ...process.env, ANTHROPIC_API_KEY: apiKey } } : {}),
+      ...(env ? { env } : {}),
     }
 
     const effort = this.toEffort(record.reasoning)
@@ -352,4 +352,17 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
   private toEffort(reasoning: string | undefined): EffortLevel | undefined {
     return (EFFORTS as readonly string[]).includes(reasoning ?? '') ? (reasoning as EffortLevel) : undefined
   }
+}
+
+/**
+ * O ambiente do subprocesso do CLI para uma conexão.
+ *
+ * ⚖️ OFICIAL: `ANTHROPIC_API_KEY`. COMPATÍVEL (OpenRouter e afins): `ANTHROPIC_BASE_URL` mais a chave
+ * como `ANTHROPIC_AUTH_TOKEN` (Bearer), com `ANTHROPIC_API_KEY` VAZIA — é o que esses gateways
+ * documentam, e o que impede o CLI de mandar a chave no cabeçalho da Anthropic a um terceiro.
+ */
+export function cliEnv(connection: { key: string; baseUrl?: string; compatible: boolean }): Record<string, string | undefined> {
+  if (!connection.compatible) return { ...process.env, ANTHROPIC_API_KEY: connection.key }
+
+  return { ...process.env, ANTHROPIC_BASE_URL: connection.baseUrl, ANTHROPIC_AUTH_TOKEN: connection.key, ANTHROPIC_API_KEY: '' }
 }

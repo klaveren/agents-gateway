@@ -11,7 +11,7 @@ import { OpenAIChatAdapter } from '@infra/adapters/OpenAIChat.Adapter'
 import { adapterKey, AgentProvider } from '@infra/providers/Agent.Provider'
 import { SessionStore } from '@infra/session/Session.Store'
 import { makeAgents } from './Agents.Factory'
-import { makeCredentials } from './Credentials.Factory'
+import { makeProviders } from './Providers.Factory'
 import { makeSettings } from './Settings.Factory'
 import { makeTools } from './Tools.Factory'
 
@@ -40,21 +40,21 @@ export function makeOrchestrator(): AgentProvider {
 
   const { catalog } = makeTools()
   const sessions = makeSessionStore()
-  // A MESMA store da tela de Providers: a chave salva lá vale na próxima chamada de qualquer lane.
-  const credentials = makeCredentials()
+  // O MESMO diretório da tela de Providers: chave e URL salvas lá valem na próxima chamada de qualquer lane.
+  const connections = makeProviders()
 
   const adapters = new Map<string, IAgentAdapter>([
-    [adapterKey(EProvider.CLAUDE, EMode.CHAT), new ClaudeChatAdapter({ store: sessions, catalog, credentials })],
-    [adapterKey(EProvider.OPENAI, EMode.CHAT), new OpenAIChatAdapter({ store: sessions, catalog, credentials })],
-    [adapterKey(EProvider.GOOGLE, EMode.CHAT), new GoogleChatAdapter({ store: sessions, catalog, credentials })],
-    [adapterKey(EProvider.CLAUDE, EMode.AGENT), new ClaudeAgentAdapter({ store: sessions, catalog, credentials })],
-    [adapterKey(EProvider.OPENAI, EMode.AGENT), new OpenAIAgentAdapter({ store: sessions, catalog, credentials })],
-    [adapterKey(EProvider.GOOGLE, EMode.AGENT), new GoogleAgentAdapter({ store: sessions, catalog, credentials })],
+    [adapterKey(EProvider.CLAUDE, EMode.CHAT), new ClaudeChatAdapter({ store: sessions, catalog, connections })],
+    [adapterKey(EProvider.OPENAI, EMode.CHAT), new OpenAIChatAdapter({ store: sessions, catalog, connections })],
+    [adapterKey(EProvider.GOOGLE, EMode.CHAT), new GoogleChatAdapter({ store: sessions, catalog, connections })],
+    [adapterKey(EProvider.CLAUDE, EMode.AGENT), new ClaudeAgentAdapter({ store: sessions, catalog, connections })],
+    [adapterKey(EProvider.OPENAI, EMode.AGENT), new OpenAIAgentAdapter({ store: sessions, catalog, connections })],
+    [adapterKey(EProvider.GOOGLE, EMode.AGENT), new GoogleAgentAdapter({ store: sessions, catalog, connections })],
   ])
 
   /**
    * A MESMA instância que o controller recebe (ver `makeSettings`): a tela salva num repositório e o
    * provider escuta o mesmo, e é isso que faz a mudança valer no instante em que é gravada.
    */
-  return new AgentProvider(adapters, sessions, makeSettings(), makeAgents())
+  return new AgentProvider(adapters, sessions, makeSettings(), makeAgents(), connections)
 }

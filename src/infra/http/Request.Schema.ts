@@ -1,6 +1,5 @@
 import { z } from 'zod'
 import { EMode } from '@domain/enums/EMode.Enum'
-import { EProvider } from '@domain/enums/EProvider.Enum'
 import { AUDIENCES } from '@domain/models/Settings.Model'
 
 /** Base64 infla ~33%, então o teto em caracteres é maior que o tamanho real do arquivo. */
@@ -79,7 +78,8 @@ export const updateSettingsSchema = z.object({
 export const agentBodySchema = z.object({
   id: z.string().trim().min(1).max(64).optional(),
   name: z.string().trim().min(1).max(200),
-  provider: z.enum(EProvider),
+  // O id de um provider configurado; se ele existe, quem diz é a regra (`protocolOf`), com o resto.
+  provider: z.string().trim().min(1).max(32),
   systemPrompt: z.string().min(1),
   models: z.array(z.string().trim().min(1)).min(1).max(20),
   reasoningEfforts: z.array(z.string().trim().min(1)).max(10).optional(),

@@ -3,6 +3,10 @@ import {
   AgentNotFoundError,
   AgentUnavailableError,
   InvalidAgentError,
+  InvalidProviderError,
+  ProviderInUseError,
+  ProviderNotFoundError,
+  ProviderUnavailableError,
   InvalidCredentialsError,
   InvalidUserError,
   LoginLockedError,
@@ -19,6 +23,8 @@ export type TErrorCode =
   | 'validation_error'
   | 'agent_not_found'
   | 'agent_read_only'
+  | 'provider_in_use'
+  | 'provider_unavailable'
   | 'invalid_credentials'
   | 'login_locked'
   | 'session_not_found'
@@ -82,6 +88,22 @@ export function toHttpFailure(error: unknown): IHttpFailure {
      * fazer a seguir.
      */
     return { status: 403, code: 'agent_unavailable', message: error.message }
+  }
+
+  if (error instanceof InvalidProviderError) {
+    return { status: 422, code: 'validation_error', message: 'Provider is invalid', details: error.issues }
+  }
+
+  if (error instanceof ProviderNotFoundError) {
+    return { status: 404, code: 'not_found', message: 'Not found' }
+  }
+
+  if (error instanceof ProviderInUseError) {
+    return { status: 409, code: 'provider_in_use', message: error.message, details: { agents: error.agents } }
+  }
+
+  if (error instanceof ProviderUnavailableError) {
+    return { status: 422, code: 'provider_unavailable', message: error.message }
   }
 
   if (error instanceof InvalidUserError) {

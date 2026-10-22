@@ -31,6 +31,11 @@ export interface IAgentRules {
    */
   knownTools: readonly string[]
   providerOf(model: string): EProvider | undefined
+  /**
+   * O protocolo do provider configurado, ou `undefined` se ele não existe. Ausente = só os três
+   * oficiais existem (id igual ao protocolo).
+   */
+  protocolOf?(providerId: string): EProvider | undefined
   /** Problema do prompt para aquele provider (ex.: chaves que o ADK lê como variável). */
   promptIssue?(agent: IAgent): string | undefined
 }
@@ -52,12 +57,18 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
   if (!agent.name.trim()) issue('name', 'required')
   else if (agent.name.length > AGENT_NAME_MAX) issue('name', `at most ${AGENT_NAME_MAX} characters`)
 
-  if (!Object.values(EProvider).includes(agent.provider)) issue('provider', `unknown provider: ${String(agent.provider)}`)
+  const protocol = rules.protocolOf ? rules.protocolOf(agent.provider) : Object.values(EProvider).find((value) => value === agent.provider)
+  if (!protocol) issue('provider', `unknown provider: ${String(agent.provider)}`)
 
   if (!agent.models.length) issue('models', 'at least one model')
-  for (const model of agent.models) {
-    const provider = rules.providerOf(model)
-    if (provider !== agent.provider) issue('models', provider ? `${model} is a ${provider} model` : `unknown model: ${model}`)
+  // ⚖️ Só nos OFICIAIS o id do modelo diz de quem ele é. Num compatível (OpenRouter: `anthropic/…`,
+  // `meta-llama/…`) qualquer id é plausível — quem confere é o catálogo de modelos do provider.
+  const official = protocol !== undefined && protocol === agent.provider
+  if (official) {
+    for (const model of agent.models) {
+      const provider = rules.providerOf(model)
+      if (provider !== protocol) issue('models', provider ? `${model} is a ${provider} model` : `unknown model: ${model}`)
+    }
   }
 
   if (!agent.modes.length) issue('modes', 'at least one lane')
