@@ -15,6 +15,13 @@ import { ToolCatalog } from '@infra/tools/Tool.Catalog'
  */
 export interface ICallerProof {
   prove(token: string): Promise<boolean>
+  /**
+   * Esta prova responde por ESTE token? Ausente = responde por todos (a prova por tool do MCP).
+   *
+   * ⚖️ É o que deixa as contas locais conviverem com a prova externa: token de fora, sem prova
+   * externa configurada, cai na regra de sempre (`REQUIRE_PROVEN_OWNER`) em vez de ser recusado.
+   */
+  covers?(token: string): boolean
 }
 
 export const DEFAULT_PROOF_FIELD = 'authenticated'

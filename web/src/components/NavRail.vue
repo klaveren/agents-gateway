@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { initials } from '@/lib/format'
 import { useAuthStore } from '@/stores/auth'
 import { useConversationsStore } from '@/stores/conversations'
 import Icon from './Icon.vue'
@@ -8,12 +9,29 @@ import Icon from './Icon.vue'
 const route = useRoute()
 const auth = useAuthStore()
 const conversations = useConversationsStore()
+const router = useRouter()
 
-const section = computed(() => (String(route.name ?? '').startsWith('agent') ? 'agents' : route.name === 'settings' ? 'settings' : 'inbox'))
+async function logout() {
+  await auth.logout()
+  conversations.subscribe(auth.isAdmin)
+  void conversations.load(auth.isAdmin)
+  await router.push('/login')
+}
+
+const section = computed(() => {
+  const name = String(route.name ?? '')
+  if (name.startsWith('agent')) return 'agents'
+  return ['settings', 'users'].includes(name) ? name : 'inbox'
+})
 
 const links = computed(() => [
   { to: '/', key: 'inbox', label: 'Conversas', icon: 'inbox' as const, badge: conversations.unread.size },
-  ...(auth.isAdmin ? [{ to: '/agents', key: 'agents', label: 'Agentes', icon: 'agents' as const, badge: 0 }] : []),
+  ...(auth.isAdmin
+    ? [
+        { to: '/agents', key: 'agents', label: 'Agentes', icon: 'agents' as const, badge: 0 },
+        { to: '/users', key: 'users', label: 'Usuários', icon: 'users' as const, badge: 0 },
+      ]
+    : []),
   { to: '/settings', key: 'settings', label: 'Configuração', icon: 'settings' as const, badge: 0 },
 ])
 </script>
@@ -33,9 +51,15 @@ const links = computed(() => [
       {{ link.label }}
       <span v-if="link.badge" class="absolute top-1 right-2 min-w-[18px] rounded-full bg-emerald-500 px-1 text-center text-[10px] leading-[18px] font-semibold text-zinc-950">{{ link.badge > 99 ? '99+' : link.badge }}</span>
     </RouterLink>
-    <div class="mt-auto flex flex-col items-center gap-1 pb-1 text-[10px] text-zinc-500">
+    <div class="mt-auto flex flex-col items-center gap-2 pb-1 text-[10px] text-zinc-500">
       <span class="h-2 w-2 rounded-full" :class="conversations.live ? 'bg-emerald-400' : 'bg-zinc-600'" :title="conversations.live ? 'Ao vivo' : 'Sem conexão ao vivo'" />
-      {{ auth.isAdmin ? 'admin' : 'usuário' }}
+      <template v-if="auth.user">
+        <RouterLink to="/settings" class="grid h-9 w-9 place-items-center rounded-full text-xs font-semibold" :class="auth.isAdmin ? 'bg-emerald-500/20 text-emerald-300' : 'bg-zinc-800 text-zinc-300'" :title="`${auth.user.name} (${auth.user.email})`">
+          {{ initials(auth.user.name) }}
+        </RouterLink>
+        <button class="hover:text-zinc-200" title="Sair" @click="logout">Sair</button>
+      </template>
+      <RouterLink v-else-if="auth.localAccounts" to="/login" class="rounded-lg px-2 py-1 text-zinc-300 hover:bg-zinc-800">Entrar</RouterLink>
     </div>
   </nav>
 </template>

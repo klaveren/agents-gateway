@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import NavRail from './components/NavRail.vue'
 import { useAgentsStore } from './stores/agents'
 import { useAuthStore } from './stores/auth'
@@ -8,6 +9,24 @@ import { useConversationsStore } from './stores/conversations'
 const auth = useAuthStore()
 const agents = useAgentsStore()
 const conversations = useConversationsStore()
+const route = useRoute()
+const router = useRouter()
+
+/** Sem nenhuma conta ainda, tudo leva ao setup do primeiro admin. */
+watch(
+  () => [auth.checked, auth.setupRequired, route.name] as const,
+  ([checked, setupRequired, name]) => {
+    if (checked && setupRequired && name !== 'setup') void router.replace('/setup')
+  },
+)
+
+// A sessão caiu (401): volta ao login, guardando onde a pessoa estava.
+watch(
+  () => auth.signedIn,
+  (signedIn, was) => {
+    if (was && !signedIn && auth.localAccounts && route.name !== 'login') void router.replace({ path: '/login', query: { next: route.fullPath } })
+  },
+)
 
 onMounted(async () => {
   await auth.probe()

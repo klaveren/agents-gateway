@@ -2,9 +2,10 @@ import dotenv from 'dotenv'
 dotenv.config({ override: true })
 
 import { setTracingDisabled } from '@openai/agents'
-import { makeController } from '@composition/factories/Controller.Factory'
+import { makeAuth } from '@composition/factories/Auth.Factory'
+import { makeAuthController, makeController } from '@composition/factories/Controller.Factory'
 import { makeTools } from '@composition/factories/Tools.Factory'
-import { proofFromEnv, warnIfProofDisabled } from '@infra/http/Caller.Proof'
+import { warnIfProofDisabled } from '@infra/http/Caller.Proof'
 import { HttpServer } from '@infra/http/Http.Server'
 
 /**
@@ -34,9 +35,10 @@ async function bootstrap() {
   // tenta de novo sozinho (com backoff) na primeira vez que alguma tool precisar dele.
   await makeTools().mcp.connect()
 
-  warnIfProofDisabled(proofFromEnv(makeTools().catalog))
+  // Com contas locais há prova (a do token deste gateway); o aviso fica para quem roda sem banco.
+  warnIfProofDisabled(makeAuth().proof)
 
-  const server = new HttpServer(makeController())
+  const server = new HttpServer(makeController(), makeAuthController())
   server.start(Number.parseInt(process.env.PORT || '3000', 10))
 }
 

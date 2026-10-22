@@ -3,6 +3,11 @@ import {
   AgentNotFoundError,
   AgentUnavailableError,
   InvalidAgentError,
+  InvalidCredentialsError,
+  InvalidUserError,
+  LoginLockedError,
+  SetupUnavailableError,
+  UserNotFoundError,
   InvalidSettingsError,
   ModeNotSupportedError,
   ReadOnlyAgentError,
@@ -14,6 +19,8 @@ export type TErrorCode =
   | 'validation_error'
   | 'agent_not_found'
   | 'agent_read_only'
+  | 'invalid_credentials'
+  | 'login_locked'
   | 'session_not_found'
   | 'mode_not_supported'
   | 'tools_not_supported'
@@ -75,6 +82,23 @@ export function toHttpFailure(error: unknown): IHttpFailure {
      * fazer a seguir.
      */
     return { status: 403, code: 'agent_unavailable', message: error.message }
+  }
+
+  if (error instanceof InvalidUserError) {
+    return { status: 422, code: 'validation_error', message: 'User change is invalid', details: error.issues }
+  }
+
+  if (error instanceof InvalidCredentialsError) {
+    return { status: 401, code: 'invalid_credentials', message: error.message }
+  }
+
+  if (error instanceof LoginLockedError) {
+    return { status: 429, code: 'login_locked', message: error.message, details: { retryAfterSeconds: error.retryAfterSeconds } }
+  }
+
+  // ⚠️ 404 para os dois: setup fechado e conta inexistente não contam nada a quem sonda.
+  if (error instanceof SetupUnavailableError || error instanceof UserNotFoundError) {
+    return { status: 404, code: 'not_found', message: 'Not found' }
   }
 
   if (error instanceof InvalidAgentError) {

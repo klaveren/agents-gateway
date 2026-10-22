@@ -127,3 +127,23 @@ export interface IAgentEvent {
   sessionId: string
   payload?: Record<string, unknown>
 }
+
+export type TUserRole = 'admin' | 'member'
+
+export interface IUser {
+  id: string
+  email: string
+  name: string
+  role: TUserRole
+  disabled: boolean
+  createdAt: string
+  updatedAt: string
+  updatedBy?: string
+  lastLoginAt?: string
+}
+
+export interface ISession {
+  token: string
+  expiresAt: string
+  user: IUser
+}

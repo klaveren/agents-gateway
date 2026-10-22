@@ -88,3 +88,40 @@ export class ReadOnlyAgentError extends DomainError {
     super(`Built-in agent is read-only: ${agentId}`)
   }
 }
+
+/** Uma conta que não pode ser criada ou mudada como veio. Todos os problemas, campo a campo. */
+export class InvalidUserError extends DomainError {
+  constructor(public readonly issues: Array<{ field: string; message: string }>) {
+    super(`User change is invalid: ${issues.map((issue) => `${issue.field} (${issue.message})`).join('; ')}`)
+  }
+}
+
+export class UserNotFoundError extends DomainError {
+  constructor(public readonly userId: string) {
+    super(`User not found: ${userId}`)
+  }
+}
+
+/**
+ * Login recusado. ⛔ UMA mensagem só para e-mail inexistente, senha errada e conta desativada:
+ * distinguir contaria a quem tenta quais e-mails têm conta.
+ */
+export class InvalidCredentialsError extends DomainError {
+  constructor() {
+    super('Invalid e-mail or password')
+  }
+}
+
+/** Tentativas demais para o mesmo e-mail: espera antes de tentar de novo. */
+export class LoginLockedError extends DomainError {
+  constructor(public readonly retryAfterSeconds: number) {
+    super('Too many attempts. Try again later.')
+  }
+}
+
+/** O setup do primeiro admin não está disponível: já há conta, ou o pedido não veio desta máquina. */
+export class SetupUnavailableError extends DomainError {
+  constructor() {
+    super('Setup is not available')
+  }
+}
