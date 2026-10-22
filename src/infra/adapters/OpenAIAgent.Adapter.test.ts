@@ -8,7 +8,7 @@ import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import type { McpServerClient } from '@infra/mcp/McpServer.Client'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { ILocalTool } from '@infra/tools/Tool.Types'
-import { OpenAIAgentAdapter } from './OpenAIAgent.Adapter'
+import { hostedName, OpenAIAgentAdapter } from './OpenAIAgent.Adapter'
 
 type TRun = typeof run
 
@@ -377,5 +377,12 @@ describe('OpenAIAgentAdapter', () => {
       message.content.map((part) => part.type),
       ['input_file'],
     )
+  })
+
+  it('o nome das hospedadas no histórico é o do catálogo, não o tipo do item da API', () => {
+    assert.strictEqual(hostedName('web_search_call'), 'web_search')
+    assert.strictEqual(hostedName('code_interpreter_call'), 'code_interpreter')
+    assert.strictEqual(hostedName('search_web'), 'search_web')
+    assert.strictEqual(hostedName('algo_call'), 'algo_call')
   })
 })

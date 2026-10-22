@@ -41,5 +41,12 @@ export const useAgentsStore = defineStore('agents', () => {
     await load()
   }
 
-  return { list, tools, nativeTools, mcpConnected, loaded, byId, load, loadTools, detail, save, remove }
+  /** O nome legível de uma ferramenta no histórico: o rótulo da nativa (`WebSearch` → "Busca na web"), senão o próprio nome. */
+  function toolLabel(name: string): string {
+    // `…_call`: como as conversas gravadas antes da normalização guardaram as hospedadas da OpenAI.
+    const base = name.replace(/_call$/, '')
+    return nativeTools.value.find((tool) => tool.sdkName === name || tool.sdkName === base)?.label ?? name
+  }
+
+  return { list, tools, nativeTools, mcpConnected, toolLabel, loaded, byId, load, loadTools, detail, save, remove }
 })

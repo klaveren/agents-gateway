@@ -3,10 +3,12 @@ import { computed } from 'vue'
 import { CLASSIFICATION_COLOR, CLASSIFICATION_LABEL, shortTime, tokens, usd } from '@/lib/format'
 import { renderMarkdown } from '@/lib/markdown'
 import type { ITurn } from '@/lib/types'
+import { useAgentsStore } from '@/stores/agents'
 import type { IPendingTurn } from '@/stores/thread'
 
 /** Um turno vira dois balões: a pergunta (direita) e a resposta do agente (esquerda). */
 const props = defineProps<{ turn?: ITurn; pending?: IPendingTurn; showCost: boolean }>()
+const agents = useAgentsStore()
 
 const request = computed(() => props.turn?.request ?? props.pending?.request ?? '')
 const files = computed(() => props.turn?.files?.length ?? props.pending?.files ?? 0)
@@ -47,11 +49,11 @@ const thinking = computed(() => !!props.pending && !text.value && !props.pending
             'border-zinc-700 bg-zinc-800/70 text-zinc-300': tool.status === 'done',
             'border-rose-500/40 bg-rose-500/10 text-rose-300': tool.status === 'error',
           }"
-          :title="tool.message"
+          :title="tool.message ?? tool.tool"
         >
           <span v-if="tool.status === 'running'" class="h-2 w-2 animate-pulse rounded-full bg-sky-400" />
           <span v-else>{{ tool.status === 'done' ? '✓' : '✕' }}</span>
-          {{ tool.tool }}
+          {{ agents.toolLabel(tool.tool) }}
         </span>
       </div>
 
