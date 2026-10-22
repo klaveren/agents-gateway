@@ -12,7 +12,7 @@ import {
   type ModelSettings,
   type Tool,
 } from '@openai/agents'
-import { nativeToolsOf } from '@domain/Native.Tools'
+import { NATIVE_TOOLS, nativeToolsOf } from '@domain/Native.Tools'
 import { IConnectionSource, requireConnection } from './support/Keyed.Client'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -287,7 +287,7 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
     if (typeof rawItem !== 'object' || rawItem === null) return { tool: 'unknown', args: {} }
 
     const raw = rawItem as { name?: unknown; arguments?: unknown }
-    const tool = typeof raw.name === 'string' ? raw.name : 'unknown'
+    const tool = hostedName(typeof raw.name === 'string' ? raw.name : 'unknown')
 
     if (typeof raw.arguments !== 'string') return { tool, args: {} }
 
@@ -347,4 +347,14 @@ function hostedTool(name: string): Tool | undefined {
   if (name === 'code_interpreter') return codeInterpreterTool()
   if (name === 'image_generation') return imageGenerationTool()
   return undefined
+}
+
+/**
+ * A chamada de uma ferramenta hospedada chega com o tipo do item da Responses API (`web_search_call`,
+ * `code_interpreter_call`); o histórico grava o nome do catálogo (`web_search`), o mesmo que o agente
+ * liga — e é por ele que a tela mostra "Busca na web".
+ */
+export function hostedName(name: string): string {
+  const base = name.replace(/_call$/, '')
+  return NATIVE_TOOLS.some((tool) => tool.protocol === EProvider.OPENAI && tool.sdkName === base) ? base : name
 }

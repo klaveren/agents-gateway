@@ -31,6 +31,8 @@ watch(
 onMounted(async () => {
   await auth.probe()
   await agents.load().catch(() => undefined)
+  // As ferramentas (com os rótulos das nativas), para o histórico mostrar "Busca na web" e não `WebSearch`.
+  void agents.loadTools().catch(() => undefined)
   // Assinado aqui, e não na caixa de entrada: o contador de não lidas vale em qualquer tela.
   conversations.subscribe(auth.isAdmin)
 })
