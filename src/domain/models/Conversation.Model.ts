@@ -76,6 +76,23 @@ export interface IConversationSession {
    * compartilhamento e reusado, para o link não trocar a cada vez que se liga e desliga.
    */
   shareId?: string
+  /**
+   * O último turno, encurtado — o que a caixa de entrada mostra na linha.
+   *
+   * ⚖️ LIDO DO TURNO, não guardado no cabeçalho: uma coluna a mais seria uma segunda cópia para manter
+   * em dia a cada gravação, e a primeira que divergisse mostraria na lista uma frase que a conversa
+   * não tem. Ausente quando a conversa ainda não tem turno.
+   */
+  preview?: IConversationPreview
+}
+
+export const PREVIEW_MAX = 160
+
+export interface IConversationPreview {
+  at: Date
+  /** Até `PREVIEW_MAX` caracteres de cada lado. */
+  request: string
+  text: string
 }
 
 /** Um turno: o que foi perguntado, o que foi respondido, e o que o agente fez no caminho. */
@@ -148,6 +165,7 @@ export interface IConversationPageQuery {
   q?: string
   classification?: TClassification
   provider?: string
+  agentId?: string
 }
 
 /**
@@ -159,7 +177,7 @@ export interface IConversationPageQuery {
 export interface IConversationPage {
   sessions: IConversationSession[]
   total: number
-  facets: { classification: Record<string, number>; provider: Record<string, number> }
+  facets: { classification: Record<string, number>; provider: Record<string, number>; agent: Record<string, number> }
 }
 
 /**

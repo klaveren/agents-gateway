@@ -118,9 +118,10 @@ function buildRoutes(controller: AgentController): IRoute[] {
     { method: 'get', path: '/availability', handler: controller.availability },
     { method: 'get', path: '/settings', handler: controller.getSettings },
     { method: 'put', path: '/settings', handler: controller.updateSettings },
-    // ⚠️ `/conversations/stats` ANTES de qualquer `/conversations/:id`: senão `stats` seria lido como id.
+    // ⚠️ `/conversations/stats` e `/events` ANTES de qualquer `/conversations/:id`: senão seriam lidos como id.
     { method: 'get', path: '/conversations', handler: controller.listConversations },
     { method: 'get', path: '/conversations/stats', handler: controller.conversationStats },
+    { method: 'get', path: '/conversations/events', handler: controller.conversationEvents },
     { method: 'get', path: '/conversations/:id/turns', handler: controller.getConversationTurns },
     { method: 'put', path: '/conversations/:id/share', handler: controller.shareConversation },
     { method: 'delete', path: '/conversations/:id', handler: controller.deleteConversation },

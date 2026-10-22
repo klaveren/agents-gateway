@@ -91,6 +91,11 @@ const conversationSchema = {
     metadata: { type: 'object', description: '`owner` holds `id`, and `email` / `account` when the credential carries them.' },
     shared: { type: 'boolean' },
     shareId: { type: 'string', description: 'The public link id, present while shared.' },
+    preview: {
+      type: 'object',
+      description: 'The last turn, cut to 160 characters per side. Absent while the conversation has no turn.',
+      properties: { at: { type: 'string', format: 'date-time' }, request: { type: 'string' }, text: { type: 'string' } },
+    },
     classification: { ...classificationSchema, description: 'ADMIN responses only. The worst label among the turns.' },
     costUsd: { type: 'number', description: 'ADMIN responses only. Estimated; absent when the model has no known price (never zero).' },
   },
@@ -367,6 +372,7 @@ export const OPENAPI_DOCUMENT = {
           { name: 'q', in: 'query', schema: { type: 'string', maxLength: 100 }, description: 'Searches title and owner e-mail, id and account (case-insensitive for ASCII).' },
           { name: 'classification', in: 'query', schema: classificationSchema },
           { name: 'provider', in: 'query', schema: { type: 'string' } },
+          { name: 'agentId', in: 'query', schema: { type: 'string' }, description: '`scope=all` with `page` only.' },
         ],
         responses: {
           '200': {
@@ -385,6 +391,7 @@ export const OPENAPI_DOCUMENT = {
                     properties: {
                       classification: { type: 'object', additionalProperties: { type: 'integer' } },
                       provider: { type: 'object', additionalProperties: { type: 'integer' } },
+                      agent: { type: 'object', additionalProperties: { type: 'integer' } },
                     },
                   },
                 },
@@ -400,6 +407,14 @@ export const OPENAPI_DOCUMENT = {
       get: {
         summary: 'Aggregate totals, by model and by classification, with the estimated cost. Administrators only; anyone else gets 404',
         responses: { '200': { description: 'OK', ...json(envelope(statsSchema)) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/conversations/events': {
+      get: {
+        summary: 'Live changes to persisted conversations (SSE). Administrators receive all of them; anyone else, only their own',
+        description:
+          'Events: `conversation.updated` with `{ session }` in the same projection as the listing (no `classification` or `costUsd` unless administrator), and `conversation.deleted` with `{ sessionId }`. A `: ping` comment every 15s keeps the connection open.',
+        responses: { '200': { description: 'An event stream', content: { 'text/event-stream': { schema: { type: 'string' } } } }, '401': failures['401'] },
       },
     },
     '/conversations/{id}/turns': {

@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
-import { IConversationSession, IConversationTurn } from '@domain/models/Conversation.Model'
+import { IConversationSession, IConversationTurn, PREVIEW_MAX } from '@domain/models/Conversation.Model'
 import { SqliteConversationRepository } from './Sqlite.ConversationRepository'
 
 const session = (over: Partial<IConversationSession> = {}): IConversationSession => ({
@@ -442,9 +442,40 @@ describe('SqliteConversationRepository — monitor, rótulos e compartilhamento'
       assert.deepStrictEqual(page.facets.provider, { google: 2, openai: 2, claude: 1 })
     })
 
+    it('o agente recorta a lista, e a contagem por agente é sobre a busca', async () => {
+      const repo = await seed()
+      await repo.saveSession(session({ id: 'z', agentId: 'sysops-agent', updatedAt: new Date('2026-08-30T09:00:00Z') }))
+
+      const page = await repo.pageSessions({ page: 1, pageSize: 10, agentId: 'sysops-agent' })
+
+      assert.deepStrictEqual(
+        page.sessions.map((item) => item.id),
+        ['z'],
+      )
+      assert.strictEqual(page.facets.agent['sysops-agent'], 1)
+      assert.ok(page.facets.agent[session().agentId] >= 5)
+    })
+
+    it('a prévia é o ÚLTIMO turno, encurtada, e some quando não há turno', async () => {
+      const repo = repository()
+      await repo.saveSession(session({ id: 'p' }))
+      assert.strictEqual((await repo.findSession('p'))?.preview, undefined)
+
+      await repo.appendTurn(turn({ sessionId: 'p', index: 0, request: 'primeira', text: 'um' }))
+      await repo.appendTurn(turn({ sessionId: 'p', index: 1, request: 'segunda', text: 'x'.repeat(500), at: new Date('2026-08-30T10:09:00Z') }))
+
+      const [listed] = await repo.listSessions({})
+      const preview = (await repo.findSession('p'))?.preview
+      assert.strictEqual(preview?.request, 'segunda')
+      assert.strictEqual(preview?.text.length, PREVIEW_MAX)
+      assert.strictEqual(preview?.at.toISOString(), '2026-08-30T10:09:00.000Z')
+      assert.deepStrictEqual(listed.preview, preview)
+      assert.deepStrictEqual((await repo.pageSessions({ page: 1, pageSize: 1 })).sessions[0].preview, preview)
+    })
+
     it('banco vazio e banco fechado devolvem uma página vazia, não um erro', async () => {
       const repo = repository()
-      assert.deepStrictEqual(await repo.pageSessions({ page: 1, pageSize: 10 }), { sessions: [], total: 0, facets: { classification: {}, provider: {} } })
+      assert.deepStrictEqual(await repo.pageSessions({ page: 1, pageSize: 10 }), { sessions: [], total: 0, facets: { classification: {}, provider: {}, agent: {} } })
 
       repo.close()
       assert.strictEqual((await repo.pageSessions({ page: 1, pageSize: 10 })).total, 0)
