@@ -2,34 +2,41 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 
-const VERSION = 'v1'
+const VERSION = 'v2'
+/** O formato antigo, sem AAD: ainda abre, para os segredos gravados antes não ficarem ilegíveis. */
+const LEGACY_VERSION = 'v1'
 
 /**
  * Fecha e abre segredo com AES-256-GCM: IV aleatório por segredo, e a etiqueta de autenticação junto
  * — conteúdo adulterado ou chave-mestra errada FALHAM ao abrir, em vez de devolver lixo.
  *
- * Formato: `v1.<iv>.<tag>.<cifrado>`, em base64url.
+ * Formato: `v2.<iv>.<tag>.<cifrado>`, em base64url.
+ *
+ * ⛔ AAD = o dono do segredo (o id do provider, `mcp:<id>:…`): o cifrado de um não abre como o de outro.
+ * Sem isso, quem escreve no banco copiava a chave do provider A para o B e a fazia sair por outra URL.
  */
 export class SecretBox {
   constructor(private readonly key: Buffer) {
     if (key.length !== 32) throw new Error('A chave-mestra precisa ter 32 bytes')
   }
 
-  seal(plain: string): string {
+  seal(plain: string, owner = ''): string {
     const iv = randomBytes(12)
     const cipher = createCipheriv('aes-256-gcm', this.key, iv)
+    cipher.setAAD(Buffer.from(owner, 'utf8'))
     const sealed = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()])
 
     return [VERSION, iv, cipher.getAuthTag(), sealed].map((part) => (typeof part === 'string' ? part : part.toString('base64url'))).join('.')
   }
 
   /** `undefined` para o que não abre — formato estranho, adulterado ou fechado com outra chave. */
-  open(box: string): string | undefined {
+  open(box: string, owner = ''): string | undefined {
     try {
       const [version, iv, tag, sealed] = box.split('.')
-      if (version !== VERSION || !iv || !tag || !sealed) return undefined
+      if ((version !== VERSION && version !== LEGACY_VERSION) || !iv || !tag || !sealed) return undefined
 
       const decipher = createDecipheriv('aes-256-gcm', this.key, Buffer.from(iv, 'base64url'))
+      if (version === VERSION) decipher.setAAD(Buffer.from(owner, 'utf8'))
       decipher.setAuthTag(Buffer.from(tag, 'base64url'))
       return Buffer.concat([decipher.update(Buffer.from(sealed, 'base64url')), decipher.final()]).toString('utf8')
     } catch {

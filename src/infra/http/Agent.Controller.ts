@@ -1,3 +1,5 @@
+import { clientMetadata } from '@domain/Session.Metadata'
+import { metaPlaceholderKeys } from '@infra/sandbox/Egress.Proxy'
 import { CancelSessionUseCase } from '@application/CancelSession.Usecase'
 import { ReconfigureSessionUseCase } from '@application/ReconfigureSession.Usecase'
 import { CreateSessionUseCase } from '@application/CreateSession.Usecase'
@@ -116,6 +118,16 @@ function newShareId(): string {
   return randomBytes(12).toString('base64url')
 }
 
+/** Conversas vivas por conta (`SESSIONS_PER_OWNER`, padrão 50). Anônimos contam como uma conta só. */
+function sessionsPerOwner(): number {
+  return Number(process.env.SESSIONS_PER_OWNER) || 50
+}
+
+/** Streams de eventos abertos por conta (`STREAMS_PER_OWNER`, padrão 20). */
+function streamsPerOwner(): number {
+  return Number(process.env.STREAMS_PER_OWNER) || 20
+}
+
 export class AgentController {
   constructor(private readonly usecases: IAgentControllerDeps) {
     this.health = this.health.bind(this)
@@ -148,6 +160,8 @@ export class AgentController {
   }
 
   private readonly agents: AgentCatalog
+  /** Streams de eventos abertos por conta (ver `conversationEvents`). */
+  private readonly openStreams = new Map<string, number>()
 
   /** O repositório das conversas — o mesmo do `SendMessageUseCase`; o uso (`UsageController`) lê dele. */
   get conversations(): IConversationRepository {
@@ -156,12 +170,12 @@ export class AgentController {
 
   async health(_req: Request, res: Response) {
     await this.respond(res, async () => {
-      // Health é o lugar natural para tentar reconectar: quem monitora chama de tempos em
-      // tempos, e com isso os MCPs se recuperam mesmo sem nenhum tráfego de tool.
-      // ⛔ Rota pública: só contagem e se há algum de pé — nada de nome nem URL.
-      await this.usecases.catalog.mcp.connectAll()
-      const servers = this.usecases.catalog.mcp.status().filter((server) => server.enabled)
+      // ⛔ Rota pública e BARATA: sem reconectar MCP (cada chamada abria conexão com todos os servidores
+      // — amplificação de graça para quem martelar) e sem contagens. O detalhe é só para admin.
+      if (!(await checkAdminAccess(this.usecases.proof)).allowed) return { status: 'ok' }
 
+      void this.usecases.catalog.mcp.connectAll()
+      const servers = this.usecases.catalog.mcp.status().filter((server) => server.enabled)
       return {
         status: 'ok',
         uptimeSeconds: Math.floor((Date.now() - STARTED_AT) / 1000),
@@ -336,16 +350,26 @@ export class AgentController {
         if (!(await this.admits(resolved))) throw new AgentUnavailableError()
 
         const body = parseBody(createSessionSchema, req.body)
+        // O papel PROVADO de administrador: libera assinatura, ferramenta perigosa e o que segue abaixo.
+        const adminAccess = (await checkAdminAccess(this.usecases.proof)).allowed
 
-        // ⛔ O `owner` do corpo é descartado SEMPRE. Dono só sai da credencial: aceitar o do corpo
-        // seria deixar a pessoa declarar de quem é a sessão — e criar uma na conta de outra.
-        const { owner: _declared, ...metadata } = body.metadata ?? {}
+        // ⛔ Trocar as instruções do agente é decisão de quem o administra: um membro descartaria as
+        // regras que o admin escreveu (as travas do agente vivem no prompt).
+        if (body.systemPrompt?.trim() && !adminAccess) {
+          throw new HttpError(422, 'validation_error', 'Request body is invalid', [{ field: 'systemPrompt', message: 'only administrators can replace the agent instructions' }])
+        }
+
+        // ⛔ O `owner` (e a delegação) do corpo são descartados SEMPRE: só o servidor os escreve. Para
+        // quem não é admin, também as chaves que abrem a rede de um contêiner (`{meta:…}`).
+        const { metadata, issues } = clientMetadata(body.metadata, { admin: adminAccess, protectedKeys: this.egressMetadataKeys() })
+        if (issues.length) throw new HttpError(422, 'validation_error', 'Request body is invalid', issues)
         const owner = ownerOf(resolved)
 
-        // Agente de assinatura: só com o papel PROVADO de administrador (ver `subscriptionAdminOnly`).
-        const subscriptionAccess = (await checkAdminAccess(this.usecases.proof)).allowed
+        // ⛔ Teto por dono: sem ele, 500 sessões de uma pessoa despejavam as de todo mundo.
+        const mine = (await this.usecases.listSessions.execute()).filter((session) => (session.metadata?.owner as { id?: string } | undefined)?.id === owner?.id).length
+        if (mine >= sessionsPerOwner()) throw new HttpError(429, 'rate_limited', `At most ${sessionsPerOwner()} live conversations per account: close one first`)
 
-        return this.usecases.createSession.execute({ ...body, metadata: owner ? { ...metadata, owner } : metadata, subscriptionAccess })
+        return this.usecases.createSession.execute({ ...body, metadata: owner ? { ...metadata, owner } : metadata, adminAccess })
       },
       { status: 201, message: 'Session created successfully' },
     )
@@ -505,6 +529,12 @@ export class AgentController {
       return this.sendFailure(res, error, '[AgentController.conversationEvents]')
     }
 
+    // ⛔ Teto de streams abertos por conta: cada um segura uma inscrição e um relógio de heartbeat.
+    const key = ownerOf(resolved)?.id ?? ''
+    const open = this.openStreams.get(key) ?? 0
+    if (open >= streamsPerOwner()) return this.sendFailure(res, new HttpError(429, 'rate_limited', 'Too many open event streams'), '[AgentController.conversationEvents]')
+    this.openStreams.set(key, open + 1)
+
     const stream = new SseStream(res)
     stream.open()
     stream.comment('ready')
@@ -523,7 +553,15 @@ export class AgentController {
     res.on('close', () => {
       unsubscribe()
       stream.close()
+      const left = (this.openStreams.get(key) ?? 1) - 1
+      if (left > 0) this.openStreams.set(key, left)
+      else this.openStreams.delete(key)
     })
+  }
+
+  /** As chaves de `metadata` que algum contêiner usa no egresso (`{meta:chave}`). */
+  private egressMetadataKeys(): string[] {
+    return this.usecases.catalog.mcp.list().flatMap((server) => metaPlaceholderKeys(server.container?.allowedHosts ?? []))
   }
 
   /**

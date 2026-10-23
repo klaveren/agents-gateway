@@ -1,3 +1,4 @@
+import { isCloudMetadataHost } from '../Url.Policy'
 /**
  * Um servidor MCP cadastrado pela tela, de onde os agentes tiram ferramentas.
  *
@@ -122,5 +123,6 @@ export function mcpUrlIssue(url: string): string | undefined {
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return 'use http:// or https://'
   if (parsed.username || parsed.password) return 'put the credential in the authentication, not in the URL'
+  if (isCloudMetadataHost(parsed.hostname)) return 'cloud metadata and link-local addresses are not allowed'
   return undefined
 }

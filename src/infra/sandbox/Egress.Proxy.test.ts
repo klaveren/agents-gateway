@@ -87,3 +87,11 @@ describe('containerArgs', () => {
     assert.ok(args.includes('--proxy-server=http://gw-egress:3128'))
   })
 })
+
+describe('isPrivateAddress — túneis IPv6', () => {
+  it('⛔ 6to4, Teredo e NAT64 (embutem um IPv4 da rede interna) são privados', async () => {
+    const { isPrivateAddress } = await import('./Egress.Proxy')
+    for (const address of ['2002:c0a8:0101::1', '2001:0:4136:e378::1', '64:ff9b::a00:1']) assert.ok(isPrivateAddress(address), address)
+    assert.ok(!isPrivateAddress('2606:4700:4700::1111'))
+  })
+})

@@ -55,7 +55,7 @@ export async function listModels(connection: { protocol: EProvider; baseUrl?: st
 
 async function fetchPage(protocol: EProvider, base: string, key: string, cursor: string | undefined, fetcher: typeof fetch): Promise<TPage> {
   const { url, headers } = request(protocol, base, key, cursor)
-  const response = await fetcher(url, { headers, signal: AbortSignal.timeout(TIMEOUT_MS) })
+  const response = await fetcher(url, { headers, signal: AbortSignal.timeout(TIMEOUT_MS), redirect: 'error' })
   const body = (await response.json().catch(() => undefined)) as Record<string, unknown> | undefined
 
   if (!response.ok) {

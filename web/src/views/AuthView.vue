@@ -17,6 +17,7 @@ const isSetup = computed(() => route.name === 'setup')
 const name = ref('')
 const email = ref('')
 const password = ref('')
+const code = ref('')
 const confirm = ref('')
 const error = ref<string>()
 const issues = ref<Record<string, string[]>>({})
@@ -32,7 +33,7 @@ async function submit() {
 
   busy.value = true
   try {
-    if (isSetup.value) await auth.setup({ name: name.value, email: email.value, password: password.value })
+    if (isSetup.value) await auth.setup({ name: name.value, email: email.value, password: password.value, code: code.value.trim() })
     else await auth.login(email.value, password.value)
 
     // Outra pessoa: lista, agentes e assinatura ao vivo recomeçam com a credencial nova.
@@ -44,7 +45,7 @@ async function submit() {
     if (failure instanceof ApiError && failure.status === 422) issues.value = failure.fieldIssues
     else if (failure instanceof ApiError && failure.code === 'login_locked') error.value = 'Muitas tentativas. Espere alguns minutos e tente de novo.'
     else if (failure instanceof ApiError && failure.code === 'invalid_credentials') error.value = 'E-mail ou senha inválidos.'
-    else if (failure instanceof ApiError && isSetup.value && failure.status === 404) error.value = 'O setup só funciona nesta máquina (127.0.0.1) e enquanto não houver nenhuma conta.'
+    else if (failure instanceof ApiError && isSetup.value && failure.status === 404) error.value = 'Código de instalação errado, ou já existe uma conta. O código aparece no log do servidor ao iniciar ([setup] …).'
     else error.value = failure instanceof Error ? failure.message : String(failure)
   } finally {
     busy.value = false
@@ -59,10 +60,15 @@ async function submit() {
         <div class="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-emerald-400 to-teal-600 text-sm font-bold text-zinc-950">AG</div>
         <div>
           <h1 class="font-semibold">{{ isSetup ? 'Criar o primeiro administrador' : 'Entrar' }}</h1>
-          <p class="text-xs text-zinc-400">{{ isSetup ? 'Só nesta máquina, e só uma vez.' : 'Agents Gateway' }}</p>
+          <p class="text-xs text-zinc-400">{{ isSetup ? 'Só uma vez, com o código do log do servidor.' : 'Agents Gateway' }}</p>
         </div>
       </div>
 
+      <label v-if="isSetup" class="field">
+        Código de instalação
+        <input v-model="code" required autocomplete="off" spellcheck="false" placeholder="AB12-CD34-EF56" class="input font-mono uppercase" />
+        <small class="hint">Está no log do servidor, na linha que começa com [setup].</small>
+      </label>
       <label v-if="isSetup" class="field">
         Nome
         <input v-model="name" required autocomplete="name" class="input" />
@@ -105,5 +111,8 @@ async function submit() {
 }
 .error {
   @apply text-xs font-normal text-rose-300;
+}
+.hint {
+  @apply text-xs font-normal text-zinc-500;
 }
 </style>

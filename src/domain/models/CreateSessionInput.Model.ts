@@ -21,13 +21,15 @@ export interface ICreateSessionInput {
   tools?: boolean
   metadata?: Record<string, unknown>
   /**
-   * Quem pede pode usar agente de ASSINATURA (ver `subscriptionAdminOnly`). Só a porta HTTP preenche,
-   * com o papel PROVADO do chamador; ausente = não pode, quando a regra está ligada.
+   * Quem pede é ADMINISTRADOR PROVADO — o que libera agente de assinatura (`subscriptionAdminOnly`) e
+   * agente com ferramenta perigosa (`dangerousToolsAdminOnly`). Só a porta HTTP preenche; ausente = não é.
    */
-  subscriptionAccess?: boolean
+  adminAccess?: boolean
   /**
    * A sessão nasce de uma DELEGAÇÃO (ver `DelegationService`) — o único caminho que abre um subagente.
-   * ⛔ Interno: o schema HTTP não aceita este campo, e nenhum controller o repassa.
+   * A filha herda o `adminAccess` da conversa-mãe (`parentSessionId`), e nunca mais do que ela.
+   * ⛔ Internos: o schema HTTP não aceita estes campos, e nenhum controller os repassa.
    */
   delegated?: boolean
+  parentSessionId?: string
 }

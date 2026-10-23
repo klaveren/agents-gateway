@@ -1,6 +1,7 @@
 import assert from 'node:assert'
 import { AddressInfo } from 'node:net'
 import { after, before, describe, it } from 'node:test'
+import { makeAuth } from '@composition/factories/Auth.Factory'
 import { makeAuthController, makeController } from '@composition/factories/Controller.Factory'
 import { HttpServer } from './Http.Server'
 
@@ -49,17 +50,20 @@ describe('contas locais (integração)', () => {
     assert.deepStrictEqual((await call('/auth/status')).body.result, { localAccounts: true, setupRequired: true })
   })
 
-  it('⛔ setup atrás de proxy (X-Forwarded-For) é recusado, mesmo vindo do loopback', async () => {
-    const out = await call('/auth/setup', { method: 'POST', body: { email: 'root@x.test', name: 'Root', password: PASSWORD }, headers: { 'X-Forwarded-For': '203.0.113.9' } })
-    assert.strictEqual(out.status, 404)
+  it('⛔ setup sem o código do log (ou com outro) é recusado, mesmo vindo desta máquina', async () => {
+    assert.strictEqual((await call('/auth/setup', { method: 'POST', body: { email: 'root@x.test', name: 'Root', password: PASSWORD } })).status, 404)
+    assert.strictEqual((await call('/auth/setup', { method: 'POST', body: { code: 'AAAA-BBBB-CCCC', email: 'root@x.test', name: 'Root', password: PASSWORD } })).status, 404)
   })
 
-  it('setup do loopback cria o admin e já entra; a segunda vez é recusada', async () => {
-    const out = await call('/auth/setup', { method: 'POST', body: { email: 'root@x.test', name: 'Root', password: PASSWORD } })
+  it('setup com o código cria o admin e já entra; a segunda vez é recusada', async () => {
+    const out = await call('/auth/setup', { method: 'POST', body: { code: makeAuth().accounts?.setupCode, email: 'root@x.test', name: 'Root', password: PASSWORD } })
     assert.strictEqual(out.status, 201)
     rootToken = out.body.result.token
 
-    assert.strictEqual((await call('/auth/setup', { method: 'POST', body: { email: 'b@x.test', name: 'B', password: PASSWORD } })).status, 404)
+    assert.strictEqual(
+      (await call('/auth/setup', { method: 'POST', body: { code: makeAuth().accounts?.setupCode, email: 'b@x.test', name: 'B', password: PASSWORD } })).status,
+      404,
+    )
     assert.strictEqual((await call('/auth/status')).body.result.setupRequired, false)
   })
 

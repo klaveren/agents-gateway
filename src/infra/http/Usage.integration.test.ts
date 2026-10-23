@@ -1,6 +1,7 @@
 import assert from 'node:assert'
 import { AddressInfo } from 'node:net'
 import { after, before, describe, it } from 'node:test'
+import { makeAuth } from '@composition/factories/Auth.Factory'
 import { makeAuthController, makeController, makeProvidersController, makeUsageController } from '@composition/factories/Controller.Factory'
 import { HttpServer } from './Http.Server'
 
@@ -35,7 +36,8 @@ describe('uso (integração)', () => {
       server.close()
     }
 
-    admin = (await call('/auth/setup', { method: 'POST', body: { email: 'root@x.test', name: 'Root', password: PASSWORD } })).body.result.token
+    admin = (await call('/auth/setup', { method: 'POST', body: { code: makeAuth().accounts?.setupCode, email: 'root@x.test', name: 'Root', password: PASSWORD } })).body.result
+      .token
     memberId = (await call('/users', { method: 'POST', token: admin, body: { email: 'ana@x.test', name: 'Ana', password: PASSWORD } })).body.result.id
     member = (await call('/auth/login', { method: 'POST', body: { email: 'ana@x.test', password: PASSWORD } })).body.result.token
 

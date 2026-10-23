@@ -55,7 +55,12 @@ export function isPrivateAddress(address: string): boolean {
 
   if (ip.includes(':')) {
     if (ip === '::' || ip === '::1') return true
-    const first = Number.parseInt(ip.split(':')[0] || '0', 16)
+    const groups = ip.split(':')
+    const first = Number.parseInt(groups[0] || '0', 16)
+    const second = Number.parseInt(groups[1] || '0', 16)
+    // Túneis que embutem um IPv4 (e com ele a rede interna): 6to4 `2002::/16`, Teredo `2001:0::/32`,
+    // NAT64 `64:ff9b::/96`.
+    if (first === 0x2002 || (first === 0x2001 && second === 0) || (first === 0x64 && second === 0xff9b)) return true
     return (first & 0xfe00) === 0xfc00 || (first & 0xffc0) === 0xfe80 || (first & 0xff00) === 0xff00
   }
   // Não é IP: quem decide é a lista e, depois, o DNS.
@@ -129,7 +134,23 @@ export function resolveAllowedHosts(patterns: readonly string[], metadata: Recor
     }
     const value = metadata?.[match[1]]
     const values = Array.isArray(value) ? value : [value]
-    for (const entry of values) if (typeof entry === 'string' && /^[A-Za-z0-9.-]+$/.test(entry.trim())) resolved.push(entry.trim())
+    for (const entry of values) if (typeof entry === 'string' && isMetaHost(entry.trim())) resolved.push(entry.trim())
   }
   return [...new Set(resolved)]
+}
+
+/**
+ * ⛔ O valor de um `{meta:…}` tem que ser UM HOST de verdade, com pelo menos dois rótulos e TLD de letras.
+ * A lista casa subdomínios: `com` sozinho liberaria todo `*.com`.
+ */
+export function isMetaHost(value: string): boolean {
+  const labels = value.toLowerCase().split('.')
+  if (labels.length < 2 || value.length > 253) return false
+  if (!labels.every((label) => /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(label))) return false
+  return /^[a-z]{2,63}$/.test(labels[labels.length - 1])
+}
+
+/** As chaves de `metadata` que um conjunto de padrões cita (`{meta:chave}`). */
+export function metaPlaceholderKeys(patterns: readonly string[]): string[] {
+  return patterns.map((pattern) => /^\{meta:([A-Za-z0-9_]+)\}$/.exec(pattern.trim())?.[1]).filter((key): key is string => !!key)
 }

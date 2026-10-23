@@ -3,6 +3,7 @@ import { AddressInfo } from 'node:net'
 import { after, before, describe, it } from 'node:test'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { makeAuth } from '@composition/factories/Auth.Factory'
 import { makeAuthController, makeController, makeProvidersController, makeUsageController } from '@composition/factories/Controller.Factory'
 import { HttpServer } from './Http.Server'
 
@@ -45,7 +46,7 @@ describe('MCP do próprio gateway (integração)', () => {
       server.close()
     }
 
-    admin = (await call('/auth/setup', { method: 'POST', body: { email: 'root@x.test', name: 'Root', password: PASSWORD } })).result.token
+    admin = (await call('/auth/setup', { method: 'POST', body: { code: makeAuth().accounts?.setupCode, email: 'root@x.test', name: 'Root', password: PASSWORD } })).result.token
     await call('/users', { method: 'POST', token: admin, body: { email: 'ana@x.test', name: 'Ana', password: PASSWORD } })
     member = (await call('/auth/login', { method: 'POST', body: { email: 'ana@x.test', password: PASSWORD } })).result.token
   })

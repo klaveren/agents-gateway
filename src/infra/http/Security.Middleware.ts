@@ -1,10 +1,79 @@
+import { createHash, timingSafeEqual } from 'node:crypto'
 import cors, { CorsOptions } from 'cors'
 import { NextFunction, Request, RequestHandler, Response } from 'express'
 import { tokenFromHeader } from '@infra/mcp/Caller.Identity'
 import { HttpError } from './Http.Error'
 
 export const DEFAULT_HOST = '127.0.0.1'
-export const DEFAULT_JSON_LIMIT = '25mb'
+/** ⛔ O corpo de QUALQUER rota: pequeno. Ele é lido antes da autenticação, então é o que um anônimo manda. */
+export const DEFAULT_JSON_LIMIT = '256kb'
+/** Só a mensagem de uma conversa leva anexo (base64) — e só ela tem o teto grande. */
+export const DEFAULT_MESSAGE_JSON_LIMIT = '25mb'
+
+export function messageJsonLimit(): string {
+  return process.env.MESSAGE_JSON_LIMIT || DEFAULT_MESSAGE_JSON_LIMIT
+}
+
+/**
+ * ⛔ Os cabeçalhos do navegador. `frame-ancestors 'none'` e `X-Frame-Options`: a tela de admin não abre
+ * dentro do site de outro (clickjacking). A CSP só deixa rodar o que vem desta origem — um XSS que
+ * escape do markdown não carrega script de fora nem manda o token para outro lugar.
+ */
+export function securityHeaders(): RequestHandler {
+  const csp = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data: blob:",
+    "connect-src 'self'",
+    "frame-ancestors 'none'",
+    "base-uri 'none'",
+    "object-src 'none'",
+    "form-action 'self'",
+  ].join('; ')
+  return (req, res, next) => {
+    res.setHeader('Content-Security-Policy', csp)
+    res.setHeader('X-Frame-Options', 'DENY')
+    res.setHeader('X-Content-Type-Options', 'nosniff')
+    res.setHeader('Referrer-Policy', 'no-referrer')
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin')
+    // A API nunca vai para cache: as respostas carregam conversa, uso e configuração.
+    if (req.path.startsWith('/v1')) res.setHeader('Cache-Control', 'no-store')
+    next()
+  }
+}
+
+/**
+ * ⛔ Limite por ORIGEM (o endereço do socket — o `X-Forwarded-For` se escreve): `max` pedidos por janela.
+ * Em memória, com teto de origens rastreadas. É o que segura quem troca de e-mail a cada tentativa de
+ * login, e quem martela o setup.
+ */
+export function rateLimit(options: { windowMs: number; max: number }, now: () => number = Date.now): RequestHandler {
+  const hits = new Map<string, { count: number; resetAt: number }>()
+  return (req, res, next) => {
+    const origin = req.socket?.remoteAddress ?? ''
+    const at = now()
+    const current = hits.get(origin)
+    const entry = current && current.resetAt > at ? current : { count: 0, resetAt: at + options.windowMs }
+    entry.count += 1
+    hits.set(origin, entry)
+    if (hits.size > 10_000) for (const [key, value] of hits) if (value.resetAt <= at) hits.delete(key)
+
+    if (entry.count > options.max) {
+      res.setHeader('Retry-After', String(Math.ceil((entry.resetAt - at) / 1000)))
+      res.status(429).json({ ok: false, message: 'Too many requests', code: 'rate_limited' })
+      return
+    }
+    next()
+  }
+}
+
+/** Compara dois segredos sem vazar, pelo tempo, quantos caracteres batem. */
+export function sameSecret(given: string, expected: string): boolean {
+  const digest = (value: string) => createHash('sha256').update(value).digest()
+  return timingSafeEqual(digest(given), digest(expected))
+}
 
 export function host(): string {
   return process.env.HOST || DEFAULT_HOST
@@ -49,7 +118,7 @@ export function requireToken(token = process.env.GATEWAY_TOKEN): RequestHandler 
     const header = req.headers.authorization
     const presented = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined
 
-    if (presented !== token) {
+    if (!sameSecret(presented ?? '', token)) {
       return next(new HttpError(401, 'unauthorized', 'Missing or invalid bearer token'))
     }
 

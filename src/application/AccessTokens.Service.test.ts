@@ -19,7 +19,7 @@ describe('AccessTokensService', () => {
     const accounts = new AccountsService(users, new ScryptPasswordHasher({ N: 1024, r: 8, p: 1 }), issuer, () => now)
     const repository = new SqliteAccessTokenRepository(':memory:')
     const service = new AccessTokensService(repository, users, issuer, () => new Date(now))
-    const admin = accounts.setup({ email: 'root@x.test', name: 'Root', password: 'frase longa o bastante' }, true).user
+    const admin = accounts.setup({ email: 'root@x.test', name: 'Root', password: 'frase longa o bastante' }, accounts.setupCode).user
     return { service, repository, users, issuer, accounts, admin, advance: (ms: number) => (now += ms) }
   }
 

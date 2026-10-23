@@ -11,7 +11,9 @@ import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepositor
  */
 export function sessionWorkspace(sessionId: string, root = workspacesRoot()): string {
   const dir = join(root, sessionId.replace(/[^a-zA-Z0-9_-]/g, '_'))
-  mkdirSync(dir, { recursive: true })
+  // ⛔ 0700: o `/tmp` é de todos os usuários da máquina; a pasta de uma conversa é só do gateway.
+  mkdirSync(root, { recursive: true, mode: 0o700 })
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
   return dir
 }
 

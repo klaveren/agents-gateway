@@ -37,11 +37,16 @@ describe('toHttpFailure', () => {
   })
 
   it('falls back to 500 for anything unexpected', () => {
-    assert.deepStrictEqual(toHttpFailure(new Error('boom')), {
-      status: 500,
-      code: 'internal_error',
-      message: 'boom',
-    })
-    assert.strictEqual(toHttpFailure('just a string').message, 'just a string')
+    const failure = toHttpFailure(new Error('boom em /etc/segredo'))
+    assert.strictEqual(failure.status, 500)
+    assert.strictEqual(failure.code, 'internal_error')
+    // ⛔ O texto do erro inesperado não sai: só uma referência para achar no log.
+    assert.match(failure.message, /^Internal error \(ref [0-9a-f]{8}\)$/)
+    assert.ok(!toHttpFailure('just a string').message.includes('just a string'))
+  })
+
+  it('corpo grande demais é 413 e malformado é 400, não 500', () => {
+    assert.strictEqual(toHttpFailure(Object.assign(new Error('x'), { type: 'entity.too.large' })).status, 413)
+    assert.strictEqual(toHttpFailure(Object.assign(new SyntaxError('x'), { type: 'entity.parse.failed' })).status, 400)
   })
 })

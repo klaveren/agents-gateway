@@ -71,6 +71,16 @@ export class AccessTokensService {
   }
 
   /**
+   * Revoga TODOS os tokens ativos de uma conta. ⛔ É o que a troca de senha pelo admin e o "encerrar
+   * sessões" fazem também: antes, um `agw_` sobrevivia aos dois e seguia valendo por até um ano.
+   */
+  revokeAll(userId: string): number {
+    const active = this.tokens.listByUser(userId).filter((token) => !token.revokedAt)
+    for (const token of active) this.tokens.update(token.id, { revokedAt: this.now() })
+    return active.length
+  }
+
+  /**
    * O token de acesso → um token de sessão da conta, ou nada.
    * ⛔ Recusa revogado, vencido, de conta apagada ou desativada.
    */

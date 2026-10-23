@@ -10,6 +10,7 @@ import {
   ModeNotSupportedError,
   SessionBusyError,
   SessionNotFoundError,
+  DangerousToolsRestrictedError,
   SubagentOnlyError,
   SubscriptionRestrictedError,
   ToolsNotSupportedError,
@@ -186,7 +187,7 @@ describe('AgentProvider', () => {
     await assert.rejects(provider.createSession({ agentId: 'cx' }), SubscriptionRestrictedError)
     assert.deepStrictEqual(lane.calls, [])
 
-    const session = await provider.createSession({ agentId: 'cx', subscriptionAccess: true })
+    const session = await provider.createSession({ agentId: 'cx', adminAccess: true })
     assert.strictEqual(session.mode, EMode.AGENT)
     assert.deepStrictEqual(lane.calls, ['createSession'])
   })
@@ -406,11 +407,22 @@ describe('AgentProvider', () => {
     assert.strictEqual(provider.describe(session.id).agentId, 'researcher-agent')
   })
 
+  it('⛔ agente com ferramenta que alcança o servidor (run_bash): só administrador; a filha herda da mãe', async () => {
+    const { provider } = setupWithSettings(new NullSettingsRepository({ audience: 'all', agentId: 'researcher-agent' }))
+
+    await assert.rejects(provider.createSession({ agentId: 'sysops-agent' }), DangerousToolsRestrictedError)
+    await assert.rejects(provider.createSession({ agentId: 'sysops-agent', delegated: true, parentSessionId: 'qualquer' }), DangerousToolsRestrictedError)
+
+    const parent = await provider.createSession({ agentId: 'sysops-agent', adminAccess: true })
+    const child = await provider.createSession({ agentId: 'sysops-agent', delegated: true, parentSessionId: parent.id })
+    assert.strictEqual(provider.describe(child.id).agentId, 'sysops-agent')
+  })
+
   it('lets the caller override the configured agent', async () => {
     // Quem chama a API direto para comparar dois providers continua mandando no que quer.
     const { provider } = setupWithSettings(new NullSettingsRepository({ audience: 'all', agentId: 'researcher-agent' }))
 
-    const session = await provider.createSession({ agentId: 'sysops-agent' })
+    const session = await provider.createSession({ agentId: 'sysops-agent', adminAccess: true })
 
     assert.strictEqual(provider.describe(session.id).agentId, 'sysops-agent')
     assert.strictEqual(provider.describe(session.id).provider, EProvider.CLAUDE)
@@ -442,7 +454,7 @@ describe('AgentProvider', () => {
     // A regressão: trocar o agente para o Claude com um modelo do Google gravado quebrava a sessão.
     const { provider } = setupWithSettings(new NullSettingsRepository({ audience: 'all', model: 'gemini-3.6-flash' }))
 
-    const session = await provider.createSession({ agentId: 'sysops-agent' })
+    const session = await provider.createSession({ agentId: 'sysops-agent', adminAccess: true })
 
     assert.strictEqual(provider.describe(session.id).model, 'claude-sonnet-5')
   })

@@ -42,6 +42,9 @@ const AUTHS: TMcpAuth[] = ['caller', 'header', 'none']
  * ⛔ O SEGREDO SÓ ENTRA: fica cifrado no mesmo cofre das chaves dos providers (`mcp:<id>`), e para fora
  * sai só "configurado" e os quatro últimos caracteres.
  */
+/** O id do servidor MCP do próprio gateway (ver `Tools.Factory`). */
+const SELF_MCP_SERVER_ID = 'gateway'
+
 export class McpServersService {
   constructor(
     private readonly servers: IMcpServerRepository,
@@ -79,8 +82,10 @@ export class McpServersService {
       ...(kind === 'container' ? { container: containerOf(input.container) } : {}),
       url: kind === 'container' ? '' : (input.url ?? '').trim(),
       transport: input.transport ?? 'auto',
-      auth: input.auth ?? 'caller',
-      headerName: (input.auth ?? 'caller') === 'none' ? undefined : input.headerName?.trim() || undefined,
+      // ⛔ `none` por padrão: `caller` manda a sessão de quem conversa (o JWT do gateway) para o servidor,
+      // e isso é escolha consciente de quem o cadastra, nunca o default.
+      auth: input.auth ?? 'none',
+      headerName: (input.auth ?? 'none') === 'none' ? undefined : input.headerName?.trim() || undefined,
       enabled: true,
       createdAt: this.now(),
       updatedAt: this.now(),
@@ -106,6 +111,8 @@ export class McpServersService {
     }
     next.headerName = next.auth === 'none' ? undefined : next.headerName?.trim() || undefined
     const issues = issuesOf(next)
+    // ⛔ O servidor do próprio gateway leva o `GATEWAY_TOKEN`: a URL dele não se edita.
+    if (id === SELF_MCP_SERVER_ID && next.url !== current.url) issues.push({ field: 'url', message: 'the gateway server URL is fixed' })
     if (issues.length) throw new InvalidMcpServerError(issues)
 
     return this.servers.update(id, {
@@ -163,6 +170,12 @@ export class McpServersService {
 
 const IMAGE = /^[a-z0-9]+(?:[._/-][a-z0-9]+)*(?::[A-Za-z0-9._-]{1,128})?(?:@sha256:[a-f0-9]{64})?$/
 const ENV_NAME = /^[A-Z_][A-Z0-9_]{0,63}$/
+/**
+ * ⛔ Nomes que não viram variável do contêiner: o valor passa pelo ambiente do processo `docker` DO HOST,
+ * e com eles o admin redirecionaria o cliente do Docker (`DOCKER_HOST`), injetaria código (`LD_PRELOAD`,
+ * `NODE_OPTIONS`) ou trocaria o proxy de egresso.
+ */
+const RESERVED_ENV = /^(DOCKER_.*|PATH|HOME|USER|SHELL|LD_.*|DYLD_.*|NODE_OPTIONS|NODE_PATH|.*_PROXY|.*_proxy)$/i
 const HOST_PATTERN = /^(\*\.)?[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*$|^\{meta:[A-Za-z0-9_]+\}$/
 /** Caminhos que nunca viram graváveis: são do kernel e do sistema. */
 const FORBIDDEN_PATHS = /^\/(proc|sys|dev|etc|bin|sbin|usr|lib|var\/run|run)(\/|$)/
@@ -193,7 +206,10 @@ function containerIssues(container: IMcpContainer): Array<{ field: string; messa
   if (!(container.cpus >= 0.25 && container.cpus <= 4)) issues.push({ field: 'cpus', message: '0.25 to 4' })
   if (container.network === 'allowlist' && !container.allowedHosts.length) issues.push({ field: 'allowedHosts', message: 'list at least one domain (or {meta:key})' })
   for (const host of container.allowedHosts) if (!HOST_PATTERN.test(host)) issues.push({ field: 'allowedHosts', message: `not a domain: ${host}` })
-  for (const name of container.env) if (!ENV_NAME.test(name)) issues.push({ field: 'env', message: `use UPPER_CASE names: ${name}` })
+  for (const name of container.env) {
+    if (!ENV_NAME.test(name)) issues.push({ field: 'env', message: `use UPPER_CASE names: ${name}` })
+    else if (RESERVED_ENV.test(name)) issues.push({ field: 'env', message: `reserved name, it would change the host docker process: ${name}` })
+  }
   return issues
 }
 

@@ -1,4 +1,4 @@
-import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
+import { randomBytes, scrypt, scryptSync, timingSafeEqual } from 'node:crypto'
 import { IPasswordHasher } from '@domain/ports/PasswordHasher.Port'
 
 /**
@@ -32,5 +32,23 @@ export class ScryptPasswordHasher implements IPasswordHasher {
     } catch {
       return false
     }
+  }
+
+  /** No pool de threads do libuv: o laço de eventos segue atendendo enquanto a senha é conferida. */
+  verifyAsync(password: string, stored: string): Promise<boolean> {
+    const [scheme, N, r, p, salt, key] = stored.split('$')
+    if (scheme !== 'scrypt' || !salt || !key) return Promise.resolve(false)
+    const expected = Buffer.from(key, 'base64url')
+    const params = { N: Number(N), r: Number(r), p: Number(p) }
+
+    return new Promise((resolve) => {
+      try {
+        scrypt(password, Buffer.from(salt, 'base64url'), expected.length, { ...params, maxmem: 128 * params.N * params.r * 2 }, (error, actual) =>
+          resolve(!error && actual.length === expected.length && timingSafeEqual(actual, expected)),
+        )
+      } catch {
+        resolve(false)
+      }
+    })
   }
 }

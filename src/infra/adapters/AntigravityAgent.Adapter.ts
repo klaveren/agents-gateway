@@ -47,8 +47,9 @@ const TURN_TIMEOUT_S = 600
  */
 export function antigravityArgs(prompt: string, model: string, conversationId?: string): string[] {
   return [
-    '-p',
-    prompt,
+    // ⛔ `-p=<texto>` e não `-p <texto>`: separado, um texto que começa com `--` vira flag do CLI
+    // (verificado: `-p "--help"` imprimia a ajuda). Colado, é sempre o valor.
+    `-p=${prompt}`,
     '--output-format',
     'stream-json',
     '--print-timeout',

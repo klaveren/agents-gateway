@@ -1,3 +1,4 @@
+import { isCloudMetadataHost } from './Url.Policy'
 import { EProvider } from './enums/EProvider.Enum'
 
 export const PROVIDER_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,31}$/
@@ -51,6 +52,7 @@ function baseUrlIssue(raw: string): string | undefined {
   if (url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) return 'use https (http only for localhost)'
   if (url.username || url.password) return 'no credentials in the URL — the key goes in its own field'
   if (url.search || url.hash) return 'no query string or fragment'
+  if (isCloudMetadataHost(url.hostname)) return 'cloud metadata and link-local addresses are not allowed'
   return undefined
 }
 

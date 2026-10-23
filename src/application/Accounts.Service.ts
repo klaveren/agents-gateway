@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { InvalidCredentialsError, InvalidUserError, LoginLockedError, SetupUnavailableError, UserNotFoundError } from '@domain/errors/Domain.Error'
 import { IUser, TUserRole, toUser } from '@domain/models/User.Model'
 import { IPasswordHasher } from '@domain/ports/PasswordHasher.Port'
@@ -8,6 +8,18 @@ import { newUserIssues, normalizeEmail, passwordIssue, userChangeIssues } from '
 
 export const LOCK_AFTER_FAILURES = 5
 export const LOCK_MS = 15 * 60_000
+/** Teto do mapa de falhas: um e-mail inventado por pedido não pode crescer a memória sem fim. */
+const MAX_TRACKED_FAILURES = 10_000
+
+/** O código de instalação: 12 caracteres em três grupos (`AB12-CD34-EF56`). */
+function newSetupCode(): string {
+  return (randomBytes(6).toString('hex').toUpperCase().match(/.{4}/g) ?? []).join('-')
+}
+
+function sameCode(given: string | undefined, expected: string): boolean {
+  const digest = (value: string) => createHash('sha256').update(value.trim().toUpperCase()).digest()
+  return !!given && timingSafeEqual(digest(given), digest(expected))
+}
 
 export interface ISession {
   token: string
@@ -25,22 +37,30 @@ export interface INewUser {
 /**
  * As contas do gateway: o primeiro admin, o login, e o que o admin faz com as contas dos outros.
  *
- * ⛔ A TRAVA DE FORÇA BRUTA é por e-mail e EM MEMÓRIA: cinco falhas seguidas fecham o e-mail por 15
- * minutos, exista a conta ou não (responder diferente contaria quais existem). Restart zera — é uma
- * trava contra tentativa automática, não um registro de auditoria.
+ * ⛔ A TRAVA DE FORÇA BRUTA é por e-mail E ORIGEM, em memória: cinco falhas seguidas da mesma origem
+ * fecham aquele e-mail para ela por 15 minutos, exista a conta ou não (responder diferente contaria quais
+ * existem). Por origem para que ninguém de fora tranque o admin legítimo; o limite por IP da porta
+ * (`rateLimit`) segura quem troca de e-mail a cada tentativa. Restart zera.
  */
 export class AccountsService {
   private readonly failures = new Map<string, { count: number; lockedUntil?: number }>()
   /** Hash de uma senha qualquer: o login sem conta paga o MESMO custo do login com conta. */
   private readonly decoy: string
+  /**
+   * ⛔ O CÓDIGO DE INSTALAÇÃO do primeiro admin: gerado no boot (ou `SETUP_CODE`), impresso no log do
+   * servidor, obrigatório no setup. Quem lê o log é quem opera a máquina — e não "quem chega primeiro".
+   */
+  readonly setupCode: string
 
   constructor(
     private readonly users: IUserRepository,
     private readonly hasher: IPasswordHasher,
     private readonly tokens: ITokenIssuer,
     private readonly now: () => number = Date.now,
+    setupCode: string = process.env.SETUP_CODE?.trim() || newSetupCode(),
   ) {
     this.decoy = hasher.hash(randomBytes(16).toString('hex'))
+    this.setupCode = setupCode
   }
 
   setupRequired(): boolean {
@@ -50,11 +70,12 @@ export class AccountsService {
   /**
    * O primeiro admin.
    *
-   * ⛔ SÓ COM ZERO CONTAS E SÓ DESTA MÁQUINA (`fromLoopback`, decidido no transporte): sem isso, o
-   * primeiro a abrir a tela de um gateway recém-instalado e exposto viraria dono dele.
+   * ⛔ SÓ COM ZERO CONTAS E COM O CÓDIGO DO LOG: sem isso, o primeiro a abrir a tela de um gateway
+   * recém-instalado e exposto viraria dono dele. Antes a prova era "veio de loopback" — e um proxy na
+   * mesma máquina que não põe `X-Forwarded-For` entregava o admin a qualquer um.
    */
-  setup(input: Omit<INewUser, 'role'>, fromLoopback: boolean): ISession {
-    if (!fromLoopback || !this.setupRequired()) throw new SetupUnavailableError()
+  setup(input: Omit<INewUser, 'role'>, code: string | undefined): ISession {
+    if (!this.setupRequired() || !sameCode(code, this.setupCode)) throw new SetupUnavailableError()
 
     const user = this.insert({ ...input, role: 'admin' }, 'setup')
     // O setup já entra: conta como o primeiro acesso.
@@ -62,25 +83,39 @@ export class AccountsService {
     return this.sessionFor(user.id)
   }
 
-  login(email: string, password: string): ISession {
-    const key = normalizeEmail(email)
+  /**
+   * ⚠️ ASSÍNCRONO: o scrypt custa dezenas de milissegundos de CPU, e a versão síncrona travava o processo
+   * inteiro (todas as rotas, todos os streams) enquanto alguém disparava logins em paralelo.
+   */
+  async login(email: string, password: string, origin = ''): Promise<ISession> {
+    const user = this.users.findByEmail(normalizeEmail(email))
+    const key = `${normalizeEmail(email)}\u0000${origin}`
     const state = this.failures.get(key)
     if (state?.lockedUntil && state.lockedUntil > this.now()) throw new LoginLockedError(Math.ceil((state.lockedUntil - this.now()) / 1000))
 
-    const user = this.users.findByEmail(key)
     // A conferência roda SEMPRE, contra o hash falso quando não há conta: o tempo da resposta não
     // pode contar se o e-mail existe.
-    const matches = this.hasher.verify(password, user?.passwordHash ?? this.decoy)
+    const hash = user?.passwordHash ?? this.decoy
+    const matches = this.hasher.verifyAsync ? await this.hasher.verifyAsync(password, hash) : this.hasher.verify(password, hash)
 
     if (!user || user.disabled || !matches) {
       const count = (state?.lockedUntil && state.lockedUntil <= this.now() ? 0 : (state?.count ?? 0)) + 1
-      this.failures.set(key, { count, lockedUntil: count >= LOCK_AFTER_FAILURES ? this.now() + LOCK_MS : undefined })
+      this.trackFailure(key, { count, lockedUntil: count >= LOCK_AFTER_FAILURES ? this.now() + LOCK_MS : undefined })
       throw new InvalidCredentialsError()
     }
 
     this.failures.delete(key)
     this.users.update(user.id, { lastLoginAt: new Date(this.now()) })
     return this.sessionFor(user.id)
+  }
+
+  /** Com teto: no limite, saem primeiro as travas vencidas, e depois as mais antigas. */
+  private trackFailure(key: string, state: { count: number; lockedUntil?: number }) {
+    this.failures.delete(key)
+    this.failures.set(key, state)
+    if (this.failures.size <= MAX_TRACKED_FAILURES) return
+    for (const [entry, value] of this.failures) if (!value.lockedUntil || value.lockedUntil <= this.now()) this.failures.delete(entry)
+    while (this.failures.size > MAX_TRACKED_FAILURES) this.failures.delete(this.failures.keys().next().value as string)
   }
 
   me(id: string): IUser {

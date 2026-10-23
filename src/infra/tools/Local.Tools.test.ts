@@ -37,6 +37,33 @@ describe('LocalTools', () => {
     assert.strictEqual(seen?.cwd, '/tmp/sandbox')
   })
 
+  it('⛔ o shell recebe o ambiente mínimo (sem chave, token ou segredo) e, sem BASH_CWD, a pasta vazia da conversa', async () => {
+    const saved = { key: process.env.OPENAI_API_KEY, gate: process.env.GATEWAY_TOKEN }
+    process.env.OPENAI_API_KEY = 'sk-nao-pode-vazar'
+    process.env.GATEWAY_TOKEN = 'gate-nao-pode-vazar'
+    try {
+      let seen: IExecOptions | undefined
+      const tools = makeLocalTools({
+        exec: async (_command, options) => ((seen = options), { stdout: 'ok', stderr: '' }),
+        fetchHtml: async () => '',
+        policy: { ...policy, cwd: '' },
+      })
+      await find(tools, 'run_bash').execute({ command: 'env' }, { sessionId: 'conv-1' })
+
+      assert.ok(seen?.env.PATH)
+      assert.ok(!JSON.stringify(seen?.env).includes('nao-pode-vazar'))
+      assert.match(seen?.cwd ?? '', /gateway-sub\/conv-1$/)
+    } finally {
+      for (const [name, value] of [
+        ['OPENAI_API_KEY', saved.key],
+        ['GATEWAY_TOKEN', saved.gate],
+      ] as const) {
+        if (value === undefined) delete process.env[name]
+        else process.env[name] = value
+      }
+    }
+  })
+
   it('refuses a destructive command without ever reaching the shell', async () => {
     let called = false
     const tools = toolsWith(async () => {

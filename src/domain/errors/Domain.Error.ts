@@ -155,6 +155,16 @@ export class ProviderUnavailableError extends DomainError {
   }
 }
 
+/** ⛔ Agente com ferramenta que alcança este servidor (run_bash, Bash/Read/Write do SDK), para quem não administra. */
+export class DangerousToolsRestrictedError extends DomainError {
+  constructor(
+    public readonly agentId: string,
+    public readonly tools: string[],
+  ) {
+    super(`Agent ${agentId} has tools that reach this server (${tools.join(', ')}): only administrators can use it (DANGEROUS_TOOLS_ADMIN_ONLY).`)
+  }
+}
+
 /** ⛔ Subagente só é chamado por outro agente: conversa direta com ele é recusada. */
 export class SubagentOnlyError extends DomainError {
   constructor(public readonly agentId: string) {

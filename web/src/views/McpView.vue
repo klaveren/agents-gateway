@@ -34,7 +34,7 @@ const selected = computed(() => (props.id ? mcp.list.find((server) => server.id 
 
 const loadError = ref<string>()
 const blankContainer = (): IMcpContainer => ({ image: '', args: [], writable: [], memoryMb: 1024, cpus: 1, network: 'none', allowedHosts: [], env: [] })
-const blank = (): INewMcpServer => ({ id: '', name: '', kind: 'remote', container: blankContainer(), url: '', transport: 'auto', auth: 'caller', headerName: 'Authorization', secret: '' })
+const blank = (): INewMcpServer => ({ id: '', name: '', kind: 'remote', container: blankContainer(), url: '', transport: 'auto', auth: 'none', headerName: 'Authorization', secret: '' })
 /** O rascunho do contêiner na edição (a cópia do que está gravado). */
 const containerDraft = ref<IMcpContainer>(blankContainer())
 const envValues = ref<Record<string, string>>({})
@@ -236,6 +236,7 @@ async function confirmRemove() {
               <button v-for="(option, value) in AUTH_LABEL" :key="value" type="button" class="chip" :class="{ on: form.auth === value }" @click="form.auth = value">{{ option.label }}</button>
             </div>
             <small class="hint">{{ AUTH_LABEL[form.auth].hint }}</small>
+            <small v-if="form.auth === 'caller'" class="text-xs text-amber-300">⚠ Este servidor recebe a sessão de quem conversa (o token do gateway) e pode usá-la como essa pessoa. Só para um servidor seu, de confiança.</small>
           </div>
           <div v-if="form.kind === 'remote' && form.auth === 'header'" class="grid gap-3 sm:grid-cols-2">
             <label class="field">Header<input v-model="form.headerName" class="input font-mono" placeholder="Authorization" /></label>
@@ -305,6 +306,7 @@ async function confirmRemove() {
               <button v-for="(option, value) in AUTH_LABEL" :key="value" type="button" class="chip" :class="{ on: edit.auth === value }" @click="edit.auth = value">{{ option.label }}</button>
             </div>
             <small class="hint">{{ AUTH_LABEL[edit.auth].hint }}</small>
+            <small v-if="edit.auth === 'caller' && selected?.id !== 'gateway'" class="text-xs text-amber-300">⚠ Este servidor recebe a sessão de quem conversa (o token do gateway) e pode usá-la como essa pessoa. Só para um servidor seu, de confiança.</small>
           </div>
           <label v-if="edit.auth === 'header'" class="field sm:w-1/2">Header<input v-model="edit.headerName" class="input font-mono" /></label>
           <div v-if="dirty" class="flex gap-2">

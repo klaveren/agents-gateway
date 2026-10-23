@@ -1,8 +1,7 @@
 import { ChildProcess, execFile, spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { homedir, tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import type { Codex, CodexOptions } from '@openai/codex-sdk'
@@ -12,6 +11,7 @@ import { IModelPrice, MODEL_PRICING, TModelPricing } from '@domain/models/Model.
 import { REASONING_LEVELS } from '@domain/Reasoning.Levels'
 import { antigravityBin } from '@infra/adapters/AntigravityAgent.Adapter'
 import { CODEX_LOCKED_FEATURES } from '@infra/adapters/CodexAgent.Adapter'
+import { codexBinary, untestedCodex } from '@infra/adapters/support/Codex.Binary'
 import { esmImport } from '@infra/adapters/support/Esm.Import'
 import { subscriptionEnv, subscriptionHome } from '@infra/adapters/support/Subscription.Workspace'
 import { IProbeResult } from './Provider.Probe'
@@ -139,6 +139,8 @@ async function probeTurn(protocol: EProvider, workspace: string, token?: string)
   if (protocol === EProvider.CODEX) {
     const home = subscriptionHome('codex')
     if (!existsSync(join(home, 'auth.json'))) throw new Error('O ChatGPT não está conectado: use Entrar.')
+    const untested = untestedCodex()
+    if (untested) throw new Error(untested)
     const Codex = (await esmImport<{ Codex: new (options?: CodexOptions) => Codex }>('@openai/codex-sdk')).Codex
     const codex = new Codex({
       env: subscriptionEnv({ HOME: workspace, CODEX_HOME: home }),
@@ -162,7 +164,7 @@ async function probeTurn(protocol: EProvider, workspace: string, token?: string)
 
   if (protocol === EProvider.ANTIGRAVITY) {
     const home = subscriptionHome('antigravity')
-    const { stdout } = await run(antigravityBin(), ['-p', PROBE_PROMPT, '--output-format', 'json', '--print-timeout', '60s', '--sandbox'], {
+    const { stdout } = await run(antigravityBin(), [`-p=${PROBE_PROMPT}`, '--output-format', 'json', '--print-timeout', '60s', '--sandbox'], {
       cwd: workspace,
       env: subscriptionEnv({ HOME: home }),
       timeout: 90_000,
@@ -288,7 +290,7 @@ function loginCommand(protocol: EProvider): { command: string; args: string[]; h
   if (protocol === EProvider.ANTIGRAVITY) {
     // O login do `agy` acontece no primeiro uso: um turno mínimo que, sem conta, pede para entrar.
     // ⚠️ Só com TERMINAL: sem TTY ele recusa ("Run 'agy' to log in"). O `script` dá um pseudo-terminal.
-    const agy = [antigravityBin(), '-p', PROBE_PROMPT, '--output-format', 'json', '--print-timeout', '120s', '--sandbox']
+    const agy = [antigravityBin(), `-p=${PROBE_PROMPT}`, '--output-format', 'json', '--print-timeout', '120s', '--sandbox']
     const pty =
       process.platform === 'darwin'
         ? // O `script` do macOS não aceita socket como entrada (o `stdin` do Node é um): o `cat` põe um pipe no meio.
@@ -306,19 +308,4 @@ function shellQuote(value: string): string {
 function loginFailure(output: string, code: number | null): string {
   if (/timed out/i.test(output)) return 'O tempo do login acabou. Comece de novo.'
   return output.trim().split('\n').slice(-2).join(' ').slice(0, 300) || `o login saiu com código ${code}`
-}
-
-/** O binário que o `@openai/codex-sdk` usa — o mesmo caminho que ele resolve. */
-export function codexBinary(): string {
-  const triple = `${process.platform}-${process.arch}`
-  const vendor: Record<string, [string, string]> = {
-    'darwin-arm64': ['@openai/codex-darwin-arm64', 'aarch64-apple-darwin'],
-    'darwin-x64': ['@openai/codex-darwin-x64', 'x86_64-apple-darwin'],
-    'linux-arm64': ['@openai/codex-linux-arm64', 'aarch64-unknown-linux-musl'],
-    'linux-x64': ['@openai/codex-linux-x64', 'x86_64-unknown-linux-musl'],
-  }
-  const target = vendor[triple]
-  if (!target) throw new Error(`Codex não tem binário para ${triple}`)
-  const codexRequire = createRequire(require.resolve('@openai/codex/package.json'))
-  return join(dirname(codexRequire.resolve(`${target[0]}/package.json`)), 'vendor', target[1], 'bin', 'codex')
 }
