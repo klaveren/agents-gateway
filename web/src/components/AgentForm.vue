@@ -48,9 +48,6 @@ const protocol = computed(() => providers.list.find((provider) => provider.id ==
 const compatible = computed(() => !!providers.list.find((provider) => provider.id === form.value.provider)?.baseUrl)
 /** Assinatura: só a lane agent (as APIs de chat exigem chave). */
 const subscription = computed(() => SUBSCRIPTION_PROTOCOLS.includes(protocol.value))
-watch(subscription, (value) => {
-  if (value) form.value.modes = ['agent']
-})
 
 /** As ferramentas nativas do SDK deste provider (pelo protocolo), na ordem do risco. */
 const RISK_ORDER = ['hosted', 'session', 'server-network', 'server-read', 'server-exec']
@@ -109,6 +106,11 @@ const DANGEROUS = new Set(['run_bash'])
 
 const blank = (): IAgentInput => ({ id: '', name: '', provider: 'claude', soul: '', systemPrompt: '', models: [], reasoningEfforts: [], modes: ['chat', 'agent'], allowedTools: [], role: null })
 const form = ref<IAgentInput>(blank())
+// ⚠️ DEPOIS de `form`: o `watch` lê o getter na hora (via `protocol` → `form`), e antes da declaração
+// isso derrubava o formulário inteiro ("Cannot access before initialization").
+watch(subscription, (value) => {
+  if (value) form.value.modes = ['agent']
+})
 /** Modelos que o agente declarava e que estão desligados no catálogo: saem ao salvar. */
 const droppedModels = ref<string[]>([])
 const issues = ref<Record<string, string[]>>({})
