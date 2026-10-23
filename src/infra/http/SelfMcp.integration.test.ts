@@ -94,6 +94,22 @@ describe('MCP do próprio gateway (integração)', () => {
     assert.ok(tools.local.some((tool: { name: string }) => tool.name === 'run_bash'))
   })
 
+  it('list_providers e list_models: só o ativo por padrão; includeDisabled mostra o resto', async () => {
+    const client = await connect(admin)
+    type TItem = { id?: string; modelId?: string; enabled: boolean }
+
+    const providers = json(await client.callTool({ name: 'list_providers', arguments: {} })) as TItem[]
+    const allProviders = json(await client.callTool({ name: 'list_providers', arguments: { includeDisabled: true } })) as TItem[]
+    assert.ok(providers.length && providers.every((provider) => provider.enabled))
+    // As assinaturas nascem desligadas: só aparecem pedindo.
+    assert.ok(allProviders.some((provider) => provider.id === 'claude-sub' && !provider.enabled))
+
+    const models = json(await client.callTool({ name: 'list_models', arguments: { providerId: 'claude' } })) as TItem[]
+    const allModels = json(await client.callTool({ name: 'list_models', arguments: { providerId: 'claude', includeDisabled: true } })) as TItem[]
+    assert.ok(models.every((model) => model.enabled))
+    assert.ok(allModels.length >= models.length)
+  })
+
   it('as ferramentas seguem as regras da API: agentes sem prompt, uso do membro sem custo, uso por chave para o admin', async () => {
     const asMember = await connect(member)
     const agents = json(await asMember.callTool({ name: 'list_agents', arguments: {} }))

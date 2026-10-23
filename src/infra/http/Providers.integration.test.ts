@@ -45,6 +45,21 @@ describe('Providers (integração)', () => {
 
   after(() => stop())
 
+  it('/protocols: qualquer conta lê os metadados dos protocolos, sem nada de configuração', async () => {
+    const listed = await call('/protocols', { token: member })
+    assert.strictEqual(listed.status, 200)
+    const protocols = JSON.parse(listed.text).result as Array<{ id: string; subscription: boolean; lanes: string[] }>
+    assert.deepStrictEqual(
+      protocols.filter((protocol) => protocol.subscription).map((protocol) => [protocol.id, protocol.lanes]),
+      [
+        ['claude-sub', ['agent']],
+        ['codex', ['agent']],
+        ['antigravity', ['agent']],
+      ],
+    )
+    assert.strictEqual((await call('/protocols')).status, 401)
+  })
+
   it('⛔ membro recebe 404 em tudo', async () => {
     assert.strictEqual((await call('/providers', { token: member })).status, 404)
     assert.strictEqual((await call('/providers/claude/key', { method: 'PUT', token: member, body: { key: SECRET } })).status, 404)

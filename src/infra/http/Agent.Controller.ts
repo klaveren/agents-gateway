@@ -16,7 +16,7 @@ import { AGENT_REGISTRY } from '@domain/Agent.Registry'
 import { IAgentRules } from '@domain/Agent.Policy'
 import { NATIVE_TOOLS, nativeToolAllowed } from '@domain/Native.Tools'
 import { dangerousToolsAdminOnly, dangerousToolsOf } from '@domain/Tool.Policy'
-import { subscriptionAdminOnly } from '@domain/Subscription.Policy'
+import { isSubscription, subscriptionAdminOnly } from '@domain/Subscription.Policy'
 import { delegationMaxDepth } from '@domain/models/Delegation.Model'
 import { maxOutputTokens, maxToolTurns } from '@infra/adapters/support/Prompt.Helper'
 import { bashPolicy } from '@infra/tools/Bash.Guard'
@@ -233,8 +233,12 @@ export class AgentController {
 
     const provider = body.classifierProvider === undefined ? current.classifierProvider : body.classifierProvider || undefined
     const model = body.classifierModel === undefined ? current.classifierModel : body.classifierModel || undefined
-    if (body.classifierProvider && !this.usecases.providers?.connection(body.classifierProvider))
-      issues.push({ field: 'classifierProvider', message: `${body.classifierProvider} is disabled or does not exist` })
+    const classifier = body.classifierProvider ? this.usecases.providers?.connection(body.classifierProvider) : undefined
+    if (body.classifierProvider && !classifier) issues.push({ field: 'classifierProvider', message: `${body.classifierProvider} is disabled or does not exist` })
+    // O classificador fala o SDK plano com chave de API: assinatura não serve, e sem chave nada classifica.
+    else if (classifier && isSubscription(classifier.protocol))
+      issues.push({ field: 'classifierProvider', message: `${classifier.providerId} is a subscription: the classifier needs an API key` })
+    else if (classifier && !classifier.key) issues.push({ field: 'classifierProvider', message: `${classifier.providerId} has no API key` })
     if ((body.classifierModel || body.classifierProvider) && provider && model && this.usecases.models && !this.usecases.models.isEnabled(provider, model)) {
       issues.push({ field: 'classifierModel', message: `${model} is not enabled in ${provider}` })
     }
