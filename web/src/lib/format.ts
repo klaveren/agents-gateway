@@ -1,4 +1,3 @@
-
 /** Hora de hoje, "ontem", dia da semana nesta semana, senão a data — como uma caixa de mensagens. */
 export function shortTime(iso: string | undefined, now = new Date()): string {
   if (!iso) return ''

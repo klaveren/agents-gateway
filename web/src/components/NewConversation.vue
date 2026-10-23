@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import type { TMode } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import { useProtocolsStore } from '@/stores/protocols'
-import { useThreadStore, type IOutgoingFile } from '@/stores/thread'
+import { reconcileDraft, useThreadStore, type IOutgoingFile } from '@/stores/thread'
 import AgentAvatar from './AgentAvatar.vue'
 import Composer from './Composer.vue'
 import Icon from './Icon.vue'
@@ -23,7 +23,13 @@ const MODE_HINT: Record<string, string> = {
 }
 
 const draft = computed(() => thread.draft)
-const agent = computed(() => agents.byId.get(draft.value?.agentId ?? ''))
+/**
+ * Os agentes que a tela mostra (nunca subagente) e, entre eles, os que abrem conversa agora. O membro só
+ * recebe ativos; o admin recebe todos, e os inativos aparecem desabilitados com o motivo.
+ */
+const listed = computed(() => agents.conversable)
+const usable = computed(() => listed.value.filter((option) => !option.unavailable))
+const agent = computed(() => usable.value.find((option) => option.id === draft.value?.agentId))
 
 /** Os níveis que valem para o modelo escolhido: os dele no catálogo, ou os do agente quando o catálogo não sabe. */
 const reasoningLevels = computed(() => {
@@ -40,34 +46,46 @@ watch(reasoningLevels, (levels) => {
 /**
  * Rascunho novo ao entrar — a não ser que já exista um SEM sessão (o "nova conversa com o mesmo
  * agente" de uma conversa encerrada, que chega aqui com agente e modelo já escolhidos).
+ *
+ * ⚠️ Esse rascunho guarda a escolha de ANTES: a lista de agentes muda (modelo desativado, lane que saiu,
+ * agente que ficou indisponível), então ele é conferido contra o agente de agora toda vez.
  */
 function ensureDraft() {
-  const found = agents.byId.get(String(route.query.agent ?? ''))
-  const asked = found?.role === 'subagent' ? undefined : found
+  // Enviando, o rascunho já virou sessão: mexer nele agora jogaria fora a conversa que está nascendo.
+  if (thread.sending) return
+  const asked = usable.value.find((option) => option.id === String(route.query.agent ?? ''))
   if (asked && thread.draft?.agentId !== asked.id) return pick(asked.id, true)
 
-  const first = agents.conversable[0]
-  if ((thread.draft && !thread.sessionId && agents.byId.has(thread.draft.agentId)) || !first) return
-  thread.startDraft({ agentId: first.id, mode: first.modes[0] ?? 'chat', tools: false, model: first.models[0] })
+  const current = thread.draft && !thread.sessionId ? usable.value.find((option) => option.id === thread.draft?.agentId) : undefined
+  if (thread.draft && current) {
+    const next = reconcileDraft(thread.draft, current)
+    const { mode, tools, model, reasoning } = thread.draft
+    if (next.mode !== mode || next.tools !== tools || next.model !== model || next.reasoning !== reasoning) thread.draft = next
+    return
+  }
+
+  const first = usable.value[0]
+  if (first) thread.startDraft(reconcileDraft({ agentId: first.id, mode: 'chat', tools: false }, first))
 }
 
 onMounted(ensureDraft)
 watch(() => agents.list, ensureDraft)
 
 function pick(id: string, fresh = false) {
-  const next = agents.byId.get(id)
+  const next = usable.value.find((option) => option.id === id)
   if (!next) return
   const previous = fresh ? undefined : thread.draft
-  const mode = previous && next.modes.includes(previous.mode) ? previous.mode : (next.modes[0] ?? 'chat')
-  thread.startDraft({ agentId: id, mode, tools: !!previous?.tools && next.allowedTools.length > 0, model: next.models[0] })
+  // O modelo volta ao primeiro do agente novo; a lane acompanha a anterior quando o agente também a tem.
+  thread.startDraft(reconcileDraft({ agentId: id, mode: previous?.mode ?? 'chat', tools: !!previous?.tools }, next))
 }
 
 function setMode(mode: TMode, tools: boolean) {
   if (thread.draft) thread.draft = { ...thread.draft, mode, tools }
 }
 
-async function send(text: string, files: IOutgoingFile[]) {
-  const created = await thread.send(text, files)
+async function send(text: string, files: IOutgoingFile[], settle: (ok: boolean) => void) {
+  const { ok, created } = await thread.send(text, files)
+  settle(ok)
   if (created) await router.replace(`/c/${created}`)
 }
 </script>
@@ -82,18 +100,24 @@ async function send(text: string, files: IOutgoingFile[]) {
     <div class="scroll-thin min-h-0 flex-1 overflow-y-auto px-4 py-5">
       <div class="mx-auto flex max-w-3xl flex-col gap-5">
         <template v-if="!thread.turns.length && !thread.pending">
+          <p v-if="!usable.length" class="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 text-center text-sm text-zinc-400">
+            {{ agents.loaded ? 'Nenhum agente disponível.' : 'Carregando agentes…' }}
+          </p>
           <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <button
-              v-for="option in agents.conversable"
+              v-for="option in listed"
               :key="option.id"
-              class="flex min-w-0 items-center gap-3 rounded-xl border px-3 py-2 text-left transition-colors"
-              :class="option.id === draft?.agentId ? 'border-emerald-500/60 bg-emerald-500/10' : 'border-zinc-800 hover:bg-zinc-900'"
+              :disabled="!!option.unavailable"
+              :title="option.unavailable?.label"
+              class="flex min-w-0 items-center gap-3 rounded-xl border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+              :class="option.id === draft?.agentId ? 'border-emerald-500/60 bg-emerald-500/10' : option.unavailable ? 'border-zinc-800' : 'border-zinc-800 hover:bg-zinc-900'"
               @click="pick(option.id)"
             >
               <AgentAvatar :name="option.name" :provider="option.provider" size="sm" />
               <span class="min-w-0 flex-1">
                 <span class="block truncate text-sm font-medium">{{ option.name }}</span>
                 <span class="block truncate text-xs text-zinc-400">{{ protocols.providerName(option.provider) }} · {{ option.allowedTools.join(', ') || 'sem tools' }}</span>
+                <span v-if="option.unavailable" class="block truncate text-xs text-amber-300">{{ option.unavailable.label }}</span>
               </span>
               <span v-if="!option.builtIn" class="ml-auto rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-400">criado</span>
             </button>

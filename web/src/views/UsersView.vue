@@ -47,16 +47,31 @@ const resetDone = ref<string>()
 const ending = ref<IUser>()
 const endingBusy = ref(false)
 
+/** ⚠️ Todos os problemas de um 422, com o campo — inclusive de campos que não têm input na tela (senão sumiriam). */
+function issuesSummary(error: ApiError): string {
+  const items = Array.isArray(error.details) ? (error.details as Array<{ field?: string; message?: string }>) : []
+  const lines = items.map((item) => (item.field ? `${item.field}: ${item.message ?? 'inválido'}` : (item.message ?? 'inválido')))
+  return lines.join('; ') || error.message
+}
+
+const errorText = (error: unknown): string => (error instanceof ApiError && error.status === 422 ? issuesSummary(error) : error instanceof Error ? error.message : String(error))
+
 async function endSessions() {
   const target = ending.value
   if (!target) return
   endingBusy.value = true
+  rowError.value = {}
   try {
     await users.revokeSessions(target.id)
     resetDone.value = `Sessões de ${target.name} encerradas. Ela precisa entrar de novo em todos os aparelhos.`
     ending.value = undefined
     // A própria conta: a sessão deste navegador também caiu.
     if (target.id === auth.user?.id) await auth.probe()
+  } catch (error) {
+    // Falhou: o aviso de sucesso não pode ficar, e o erro aparece na conta (o diálogo fecha).
+    resetDone.value = undefined
+    rowError.value = { ...rowError.value, [target.id]: `Não foi possível encerrar as sessões: ${errorText(error)}` }
+    ending.value = undefined
   } finally {
     endingBusy.value = false
   }
@@ -105,8 +120,7 @@ async function apply() {
     // A própria conta mudou de papel: o token antigo não vale mais, a sessão é refeita.
     if (current.user.id === auth.user?.id) await auth.probe()
   } catch (error) {
-    const message = error instanceof ApiError && error.status === 422 ? Object.values(error.fieldIssues).flat().join('; ') : error instanceof Error ? error.message : String(error)
-    rowError.value = { ...rowError.value, [current.user.id]: translate(message) }
+    rowError.value = { ...rowError.value, [current.user.id]: translate(errorText(error)) }
     pending.value = undefined
   } finally {
     applying.value = false
@@ -129,7 +143,8 @@ async function create() {
     await router.push(`/users/${created.id}`)
   } catch (error) {
     if (error instanceof ApiError && error.status === 422) formIssues.value = error.fieldIssues
-    else formError.value = error instanceof Error ? error.message : String(error)
+    // O resumo vem sempre: campo sem input na tela (papel, por ex.) não teria onde mostrar a mensagem.
+    formError.value = errorText(error)
   }
 }
 
@@ -142,7 +157,7 @@ async function doReset() {
     resetting.value = undefined
     resetPassword.value = ''
   } catch (error) {
-    resetError.value = error instanceof ApiError && error.status === 422 ? Object.values(error.fieldIssues).flat().join('; ') : String(error)
+    resetError.value = errorText(error)
   }
 }
 </script>

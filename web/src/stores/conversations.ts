@@ -98,17 +98,25 @@ export const useConversationsStore = defineStore('conversations', () => {
     }
   }
 
+  /**
+   * ⚠️ A resposta de uma página pertence ao filtro (e ao usuário) de QUANDO foi pedida. Se `load` ou
+   * `reset` rodou no meio, a geração mudou e a página velha não pode entrar na lista de agora.
+   */
   async function loadMore(): Promise<void> {
     if (!hasMore.value || loading.value) return
+    const current = generation
     loading.value = true
     try {
       const result = await fetchPage(page.value + 1)
+      if (current !== generation) return
       page.value += 1
       const known = new Set(items.value.map((item) => item.id))
       items.value = [...items.value, ...result.sessions.filter((item) => !known.has(item.id))]
       total.value = result.total ?? total.value
+    } catch (failure) {
+      if (current === generation) error.value = failure instanceof Error ? failure.message : String(failure)
     } finally {
-      loading.value = false
+      if (current === generation) loading.value = false
     }
   }
 
@@ -184,7 +192,10 @@ export const useConversationsStore = defineStore('conversations', () => {
           live.value = true
           if (!first) void load(admin)
           first = false
-          for await (const frame of readSse(body)) apply(frame.data as TConversationEvent)
+          for await (const frame of readSse(body)) {
+            if (controller.signal.aborted) return
+            apply(frame.data as TConversationEvent)
+          }
         } catch {
           // Caiu ou foi abortado: o laço decide.
         }
@@ -200,6 +211,23 @@ export const useConversationsStore = defineStore('conversations', () => {
     stream?.abort()
     stream = undefined
     live.value = false
+  }
+
+  /** Logout: zera lista, contadores e a conversa selecionada, e fecha a assinatura. Respostas em voo ficam obsoletas. */
+  function reset(): void {
+    generation++
+    unsubscribe()
+    all = []
+    items.value = []
+    total.value = 0
+    facets.value = undefined
+    page.value = 1
+    scope.value = 'mine'
+    loading.value = false
+    error.value = undefined
+    filters.value = { q: '', agentId: '', classification: '' }
+    unread.value = new Set()
+    selectedId.value = undefined
   }
 
   function find(id: string): IConversation | undefined {
@@ -218,5 +246,28 @@ export const useConversationsStore = defineStore('conversations', () => {
     apply({ type: 'conversation.deleted', sessionId: id })
   }
 
-  return { items, total, facets, scope, loading, error, filters, unread, live, selectedId, hasMore, load, loadMore, setFilters, apply, select, subscribe, unsubscribe, find, share, remove }
+  return {
+    items,
+    total,
+    facets,
+    scope,
+    loading,
+    error,
+    filters,
+    unread,
+    live,
+    selectedId,
+    hasMore,
+    load,
+    loadMore,
+    setFilters,
+    apply,
+    select,
+    subscribe,
+    unsubscribe,
+    reset,
+    find,
+    share,
+    remove,
+  }
 })

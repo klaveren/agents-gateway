@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { IProviderStatus, ISubscriptionLogin } from '@/lib/types'
 import { useProvidersStore } from '@/stores/providers'
 
@@ -19,6 +19,9 @@ const error = ref<string>()
 const copied = ref<string>()
 const now = ref(Date.now())
 let poll: ReturnType<typeof setInterval> | undefined
+let copyTimer: ReturnType<typeof setTimeout> | undefined
+/** ⚠️ Falso depois de sair da tela: uma resposta que chega tarde não reabre o polling nem mexe no estado. */
+let alive = true
 
 /** O que a tela diz quando não dá para ser nativo — por assinatura. */
 const HELP: Record<string, { note?: string; missing?: string; command?: string; link?: { href: string; label: string } }> = {
@@ -43,10 +46,12 @@ async function act(work: () => Promise<ISubscriptionLogin>) {
   busy.value = true
   error.value = undefined
   try {
-    login.value = await work()
+    const next = await work()
+    if (!alive) return
+    login.value = next
     watchLogin()
   } catch (failure) {
-    error.value = failure instanceof Error ? failure.message : String(failure)
+    if (alive) error.value = failure instanceof Error ? failure.message : String(failure)
   } finally {
     busy.value = false
   }
@@ -62,8 +67,13 @@ function watchLogin() {
   poll = setInterval(async () => {
     now.value = Date.now()
     try {
-      login.value = await providers.login(props.provider.id, 'status')
-    } catch {
+      const next = await providers.login(props.provider.id, 'status')
+      if (!alive) return
+      login.value = next
+      error.value = undefined
+    } catch (failure) {
+      // Segue tentando (rede pode voltar), mas o erro não fica escondido.
+      if (alive) error.value = failure instanceof Error ? failure.message : String(failure)
       return
     }
     if (login.value.state !== 'waiting') watchLogin()
@@ -79,9 +89,11 @@ async function copy(text: string, what: string) {
   try {
     await navigator.clipboard.writeText(text)
     copied.value = what
-    setTimeout(() => (copied.value = undefined), 1500)
+    if (copyTimer) clearTimeout(copyTimer)
+    copyTimer = setTimeout(() => (copied.value = undefined), 1500)
   } catch {
     copied.value = undefined
+    error.value = 'não foi possível copiar; selecione e copie à mão'
   }
 }
 
@@ -96,7 +108,23 @@ function send() {
   return act(() => providers.loginCode(props.provider.id, value))
 }
 
-onBeforeUnmount(stop)
+// Voltar à tela com um login em andamento (outra aba, outro refresh): retoma de onde o servidor está.
+onMounted(async () => {
+  try {
+    const current = await providers.login(props.provider.id, 'status')
+    if (!alive || current.state !== 'waiting') return
+    login.value = current
+    watchLogin()
+  } catch (failure) {
+    if (alive) error.value = failure instanceof Error ? failure.message : String(failure)
+  }
+})
+
+onBeforeUnmount(() => {
+  alive = false
+  stop()
+  if (copyTimer) clearTimeout(copyTimer)
+})
 </script>
 
 <template>

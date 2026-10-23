@@ -1,8 +1,9 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { api, openStream } from '@/lib/api'
+import { api, ApiError, openStream } from '@/lib/api'
 import { readSse } from '@/lib/sse'
-import type { IAgentEvent, IConversation, ISessionState, ITurn, IUsage, TMode } from '@/lib/types'
+import type { IAgent, IAgentEvent, IConversation, ISessionState, ITurn, IUsage, TMode } from '@/lib/types'
+import { useAgentsStore } from './agents'
 
 export interface IDraft {
   agentId: string
@@ -37,6 +38,33 @@ export interface IOutgoingFile {
   data: string
 }
 
+/** `ok: false` = a mensagem NÃO foi registrada (quem chamou devolve o texto à caixa). `created`: sessão que nasceu aqui. */
+export interface ISendResult {
+  ok: boolean
+  created?: string
+}
+
+type TDraftAgent = Pick<IAgent, 'models' | 'modes' | 'allowedTools' | 'modelReasoning' | 'reasoningEfforts'>
+
+/**
+ * Ajusta o rascunho ao agente COMO ESTÁ AGORA: a lista de agentes muda (modelo desativado, lane que
+ * saiu) e o rascunho guardava a escolha de antes. Modelo ou lane que não existem mais voltam ao
+ * primeiro do agente; o nível de raciocínio que o modelo não aceita volta ao padrão.
+ *
+ * ⚖️ Pura e exportada: é a regra do rascunho, e testá-la não pode depender de tela.
+ */
+export function reconcileDraft(draft: IDraft, agent: TDraftAgent): IDraft {
+  const model = draft.model && agent.models.includes(draft.model) ? draft.model : agent.models[0]
+  const mode = agent.modes.includes(draft.mode) ? draft.mode : (agent.modes[0] ?? 'chat')
+  const tools = mode === 'chat' && draft.tools && agent.allowedTools.length > 0
+  const levels = (model ? agent.modelReasoning?.[model] : undefined) ?? agent.reasoningEfforts ?? []
+  const reasoning = draft.reasoning && levels.includes(draft.reasoning) ? draft.reasoning : undefined
+  return { agentId: draft.agentId, mode, tools, model, reasoning }
+}
+
+const isNotFound = (failure: unknown): boolean => failure instanceof ApiError && failure.status === 404
+const messageOf = (failure: unknown): string => (failure instanceof Error ? failure.message : String(failure))
+
 /**
  * A conversa aberta: o histórico gravado, a sessão viva (se houver) e o turno em andamento.
  *
@@ -59,10 +87,25 @@ export const useThreadStore = defineStore('thread', () => {
   const sending = ref(false)
 
   let inFlight: AbortController | undefined
+  /**
+   * ⚠️ Muda a cada troca de conversa (open, startDraft, reset). O `send` guarda o número com que
+   * começou: se mudou, o stream é de OUTRA conversa e nada dele pode tocar o estado de agora.
+   */
   let generation = 0
+  /** Sessão que nasceu num envio que falhou depois: a próxima tentativa que der certo ainda tem de trocar a rota. */
+  let unrouted: string | undefined
+
+  /** Passa para outra conversa: derruba o stream em andamento e invalida o que ele ainda entregar. */
+  function leave(): number {
+    inFlight?.abort()
+    inFlight = undefined
+    sending.value = false
+    unrouted = undefined
+    return ++generation
+  }
 
   async function open(id: string, known?: IConversation): Promise<void> {
-    const current = ++generation
+    const current = leave()
     sessionId.value = id
     header.value = known
     draft.value = undefined
@@ -74,16 +117,27 @@ export const useThreadStore = defineStore('thread', () => {
     loading.value = true
 
     try {
+      let unsure = false
+      let historyFailure: string | undefined
       const [history, live] = await Promise.all([
-        api<{ turns: ITurn[] }>(`/conversations/${encodeURIComponent(id)}/turns`).catch(() => ({ turns: [] as ITurn[] })),
-        api<ISessionState>(`/sessions/${encodeURIComponent(id)}`).catch(() => undefined),
+        api<{ turns: ITurn[] }>(`/conversations/${encodeURIComponent(id)}/turns`).catch((failure) => {
+          if (!isNotFound(failure)) historyFailure = messageOf(failure)
+          return { turns: [] as ITurn[] }
+        }),
+        api<ISessionState>(`/sessions/${encodeURIComponent(id)}`).catch((failure) => {
+          // ⚠️ Só o 404 diz "a sessão não existe". Rede ou 5xx não provam nada: marcar "não ativa" trancaria a conversa por um tropeço.
+          if (!isNotFound(failure)) unsure = true
+          return undefined
+        }),
       ])
       if (current !== generation) return
       turns.value = history.turns
-      liveSession.value = !!live
+      liveSession.value = !!live || unsure
       session.value = live ? { model: live.model, reasoning: live.reasoning } : undefined
+      if (historyFailure) error.value = `Não foi possível carregar o histórico: ${historyFailure}`
+      else if (unsure) error.value = 'Não foi possível confirmar se a sessão está ativa. Tente de novo em instantes.'
     } catch (failure) {
-      if (current === generation) error.value = failure instanceof Error ? failure.message : String(failure)
+      if (current === generation) error.value = messageOf(failure)
     } finally {
       if (current === generation) loading.value = false
     }
@@ -91,7 +145,7 @@ export const useThreadStore = defineStore('thread', () => {
 
   /** Conversa nova: ainda sem sessão. A sessão nasce na primeira mensagem. */
   function startDraft(next: IDraft): void {
-    generation++
+    leave()
     sessionId.value = undefined
     header.value = undefined
     turns.value = []
@@ -114,46 +168,104 @@ export const useThreadStore = defineStore('thread', () => {
     if (history && id === sessionId.value && history.turns.length >= turns.value.length) turns.value = history.turns
   }
 
-  /** Devolve o id da sessão quando ela nasce aqui — quem chamou troca a rota para ela. */
-  async function send(text: string, files: IOutgoingFile[]): Promise<string | undefined> {
-    if (sending.value) return undefined
+  /**
+   * Manda a mensagem. Devolve `ok` (a mensagem ficou registrada?) e o id da sessão quando ela nasce
+   * aqui — quem chamou troca a rota para ela.
+   *
+   * ⚠️ Um turno SEM resposta não fica no histórico como enviado: o texto volta para quem digitou
+   * (`ok: false`) e o erro aparece. Só a parada pedida pelo usuário mantém o turno, marcado como interrompido.
+   */
+  async function send(text: string, files: IOutgoingFile[]): Promise<ISendResult> {
+    if (sending.value) return { ok: false }
+    const mine = generation
+    const stale = () => mine !== generation
     sending.value = true
     error.value = undefined
-    let created: string | undefined
+    let ok = false
+    const controller = new AbortController()
+    inFlight = controller
+    let turn: IPendingTurn | undefined
 
     try {
       if (!sessionId.value) {
         if (!draft.value) throw new Error('Escolha um agente para começar.')
         const { agentId, mode, tools, model, reasoning } = draft.value
-        sessionId.value = created = (await api<{ id: string }>('/sessions', { method: 'POST', body: { agentId, mode, tools: mode === 'chat' && tools, model, reasoning } })).id
+        const born = (
+          await api<{ id: string }>('/sessions', { method: 'POST', body: { agentId, mode, tools: mode === 'chat' && tools, model, reasoning }, signal: controller.signal })
+        ).id
+        if (stale()) return { ok: false }
+        sessionId.value = unrouted = born
         liveSession.value = true
         if (model) session.value = { model, reasoning }
       }
 
       const id = sessionId.value
-      const turn: IPendingTurn = { request: text, files: files.length, text: '', reasoning: '', tools: [], warnings: [], aborted: false }
+      turn = { request: text, files: files.length, text: '', reasoning: '', tools: [], warnings: [], aborted: false }
       pending.value = turn
-      inFlight = new AbortController()
 
-      const body = await openStream(`/sessions/${encodeURIComponent(id)}/messages`, { method: 'POST', body: { message: text, files }, signal: inFlight.signal })
-      for await (const frame of readSse(body)) applyEvent(turn, frame.data as IAgentEvent)
-
-      turns.value = [...turns.value, settled(id, turn, turns.value.length, session.value)]
-      pending.value = undefined
-      setTimeout(() => void refresh(), 600)
-    } catch (failure) {
-      const aborted = failure instanceof DOMException && failure.name === 'AbortError'
-      if (pending.value) {
-        turns.value = [...turns.value, settled(sessionId.value ?? '', { ...pending.value, aborted: aborted || pending.value.aborted }, turns.value.length, session.value)]
-        pending.value = undefined
+      const body = await openStream(`/sessions/${encodeURIComponent(id)}/messages`, { method: 'POST', body: { message: text, files }, signal: controller.signal })
+      for await (const frame of readSse(body)) {
+        if (stale()) return { ok: false }
+        applyEvent(turn, frame.data as IAgentEvent)
       }
-      if (!aborted) error.value = failure instanceof Error ? failure.message : String(failure)
+      if (stale()) return { ok: false }
+
+      pending.value = undefined
+      if (turn.error && !turn.text && !turn.tools.length && !turn.aborted) {
+        // O stream terminou em erro sem nenhuma resposta: não é um turno, é uma falha.
+        error.value = turn.error
+        return { ok: false }
+      }
+      turns.value = [...turns.value, settled(id, turn, turns.value.length, session.value)]
+      setTimeout(() => void refresh(), 600)
+      ok = true
+    } catch (failure) {
+      // A conversa mudou no meio: o erro (inclusive o AbortError do `open`) é do stream antigo, não desta tela.
+      if (stale()) return { ok: false }
+      const aborted = failure instanceof DOMException && failure.name === 'AbortError'
+
+      if (aborted && turn) {
+        turns.value = [...turns.value, settled(sessionId.value ?? '', { ...(pending.value ?? turn), aborted: true }, turns.value.length, session.value)]
+        ok = true
+      } else if (!aborted) {
+        const partial = pending.value ?? turn
+        pending.value = undefined
+        if (partial?.text) {
+          // Já chegou resposta: o turno existe, mesmo interrompido pela falha.
+          turns.value = [...turns.value, settled(sessionId.value ?? '', partial, turns.value.length, session.value)]
+          ok = true
+        }
+        error.value = describe(failure)
+      }
+      pending.value = undefined
     } finally {
-      inFlight = undefined
-      sending.value = false
+      if (!stale()) {
+        if (inFlight === controller) inFlight = undefined
+        sending.value = false
+      }
     }
 
-    return created
+    // ⚠️ Falhou: não troca a rota (a caixa de texto some junto com a tela); a sessão fica para a próxima tentativa.
+    if (!ok) return { ok }
+    const created = unrouted
+    unrouted = undefined
+    return { ok, created }
+  }
+
+  /** O texto do erro de envio — e o que ele implica: 404 = sessão encerrada; 409 `model_disabled` = relê os agentes. */
+  function describe(failure: unknown): string {
+    if (failure instanceof ApiError && failure.status === 404 && sessionId.value) {
+      liveSession.value = false
+      return 'Falha ao enviar: sessão encerrada. Comece uma nova conversa.'
+    }
+    if (failure instanceof ApiError && failure.status === 409 && failure.code === 'model_disabled') {
+      // O modelo saiu do ar: a lista de agentes de agora diz quais ainda servem (e o rascunho se ajusta a ela).
+      void useAgentsStore()
+        .load()
+        .catch(() => undefined)
+      return failure.message
+    }
+    return messageOf(failure)
   }
 
   /**
@@ -165,6 +277,20 @@ export const useThreadStore = defineStore('thread', () => {
     if (!id || sending.value) return
     const updated = await api<ISessionState>(`/sessions/${encodeURIComponent(id)}`, { method: 'PATCH', body: change })
     if (id === sessionId.value) session.value = { model: updated.model, reasoning: updated.reasoning }
+  }
+
+  /** Logout: esquece tudo da conversa aberta e derruba o stream, para a próxima conta não herdar nada. */
+  function reset(): void {
+    leave()
+    sessionId.value = undefined
+    header.value = undefined
+    turns.value = []
+    loading.value = false
+    error.value = undefined
+    liveSession.value = undefined
+    session.value = undefined
+    draft.value = undefined
+    pending.value = undefined
   }
 
   async function stop(): Promise<void> {
@@ -211,7 +337,7 @@ export const useThreadStore = defineStore('thread', () => {
     pending.value = { ...turn, tools: [...turn.tools] }
   }
 
-  return { sessionId, header, turns, loading, error, liveSession, session, draft, pending, sending, open, startDraft, setHeader, refresh, send, reconfigure, stop }
+  return { sessionId, header, turns, loading, error, liveSession, session, draft, pending, sending, open, startDraft, setHeader, refresh, send, reconfigure, stop, reset }
 })
 
 /** O turno do stream no formato do gravado, até a releitura trazer o de verdade. */

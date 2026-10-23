@@ -25,6 +25,12 @@ const onlyEnabled = ref(false)
 const editing = ref<string>()
 const draft = ref({ input: '', output: '' })
 const rowError = ref<Record<string, string>>({})
+const newId = ref('')
+const adding = ref(false)
+const addError = ref<string>()
+
+/** O mesmo formato que o servidor aceita para o id de um modelo. */
+const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,199}$/
 
 const SOURCE: Record<string, string> = { manual: 'manual', catalog: 'da listagem', default: 'sugerido' }
 
@@ -60,6 +66,30 @@ async function sync() {
     error.value = failure instanceof Error ? failure.message : String(failure)
   } finally {
     syncing.value = false
+  }
+}
+
+/** Adiciona um modelo pelo id — para quem não lista (assinatura) ou não traz o modelo na listagem. Entra desligado. */
+async function addById() {
+  const modelId = newId.value.trim()
+  if (!modelId) return
+  addError.value = undefined
+  note.value = undefined
+  if (!MODEL_ID.test(modelId)) {
+    addError.value = 'id inválido: letras, números e . _ : / @ -, até 200 caracteres'
+    return
+  }
+  adding.value = true
+  try {
+    const added = await providers.addModel(props.provider.id, modelId)
+    // Idempotente: se já existia, o servidor devolve o mesmo modelo e a linha só é atualizada.
+    models.value = models.value.some((model) => model.modelId === added.modelId) ? models.value.map((model) => (model.modelId === added.modelId ? added : model)) : [...models.value, added]
+    newId.value = ''
+    note.value = `${added.modelId} adicionado (desligado até você ativar).`
+  } catch (failure) {
+    addError.value = failure instanceof ApiError ? Object.values(failure.fieldIssues).flat().join('; ') || failure.message : failure instanceof Error ? failure.message : String(failure)
+  } finally {
+    adding.value = false
   }
 }
 
@@ -115,6 +145,12 @@ function context(tokens?: number): string {
 
     <p v-if="note" class="text-xs text-emerald-300">{{ note }}</p>
     <p v-if="error" class="text-xs text-rose-300">{{ error }}</p>
+
+    <form class="flex flex-wrap items-center gap-2" @submit.prevent="addById">
+      <input v-model="newId" autocomplete="off" spellcheck="false" aria-label="Adicionar modelo por id" placeholder="Adicionar modelo por id" class="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-sm outline-none focus:border-emerald-500/60" />
+      <button type="submit" :disabled="adding || !newId.trim()" class="rounded-full bg-zinc-800 px-3 py-1 text-xs hover:bg-zinc-700 disabled:opacity-40">{{ adding ? 'Adicionando…' : 'Adicionar' }}</button>
+      <p v-if="addError" class="w-full text-xs text-rose-300">{{ addError }}</p>
+    </form>
 
     <div v-if="models.length" class="flex flex-wrap items-center gap-2">
       <input v-model="search" type="search" placeholder="Buscar modelo…" class="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-sm outline-none focus:border-emerald-500/60" />

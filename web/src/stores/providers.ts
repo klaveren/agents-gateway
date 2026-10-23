@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api } from '@/lib/api'
 import type { ICatalogModel, IModelPrice, IProbeResult, IProviderStatus, ISubscriptionLogin, TProvider } from '@/lib/types'
+import { useAgentsStore } from './agents'
 
 export interface INewProvider {
   id: string
@@ -19,6 +20,13 @@ export const useProvidersStore = defineStore('providers', () => {
     list.value = await api<IProviderStatus[]>('/providers')
   }
 
+  /** ⚖️ Os agentes dependem do provider e dos modelos dele: depois de mudar um, a lista de agentes recarrega. O erro aqui não derruba a ação que já deu certo. */
+  async function reloadAgents(): Promise<void> {
+    await useAgentsStore()
+      .load()
+      .catch(() => undefined)
+  }
+
   async function create(input: INewProvider): Promise<void> {
     await api('/providers', { method: 'POST', body: input })
     await load()
@@ -27,21 +35,25 @@ export const useProvidersStore = defineStore('providers', () => {
   async function update(id: string, change: { name?: string; baseUrl?: string; enabled?: boolean }): Promise<void> {
     await api(`/providers/${encodeURIComponent(id)}`, { method: 'PUT', body: change })
     await load()
+    await reloadAgents()
   }
 
   async function remove(id: string): Promise<void> {
     await api(`/providers/${encodeURIComponent(id)}`, { method: 'DELETE' })
     await load()
+    await reloadAgents()
   }
 
   async function save(id: string, key: string): Promise<void> {
     await api(`/providers/${encodeURIComponent(id)}/key`, { method: 'PUT', body: { key } })
     await load()
+    await reloadAgents()
   }
 
   async function clear(id: string): Promise<void> {
     await api(`/providers/${encodeURIComponent(id)}/key`, { method: 'DELETE' })
     await load()
+    await reloadAgents()
   }
 
   /** Com `key`, testa a colada (antes de salvar); sem, a que está em vigor. */
@@ -64,7 +76,17 @@ export const useProvidersStore = defineStore('providers', () => {
   /** Liga/desliga e/ou define o preço manual (`price: null` volta ao sugerido). */
   async function updateModel(id: string, change: { modelId: string; enabled?: boolean; price?: IModelPrice | null }): Promise<ICatalogModel> {
     const model = await api<ICatalogModel>(`/providers/${encodeURIComponent(id)}/models`, { method: 'PUT', body: change })
-    if (change.enabled !== undefined) await load()
+    if (change.enabled !== undefined) {
+      await load()
+      await reloadAgents()
+    }
+    return model
+  }
+
+  /** Adiciona um modelo pelo id (vale para qualquer provider, inclusive assinatura sem listagem): entra desligado, com preço sugerido. Idempotente. */
+  async function addModel(id: string, modelId: string): Promise<ICatalogModel> {
+    const model = await api<ICatalogModel>(`/providers/${encodeURIComponent(id)}/models`, { method: 'POST', body: { modelId } })
+    await load()
     return model
   }
 
@@ -78,5 +100,5 @@ export const useProvidersStore = defineStore('providers', () => {
     return api<ISubscriptionLogin>(`/providers/${encodeURIComponent(id)}/login/code`, { method: 'POST', body: { code } })
   }
 
-  return { list, names, load, create, update, remove, save, clear, test, models, syncModels, updateModel, login, loginCode }
+  return { list, names, load, create, update, remove, save, clear, test, models, syncModels, updateModel, addModel, login, loginCode }
 })

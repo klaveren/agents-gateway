@@ -9,7 +9,15 @@ describe('protocols', () => {
   it('levelsFor: só os níveis do protocolo, na ordem que o servidor manda', () => {
     const protocols = useProtocolsStore()
     protocols.list = [
-      { id: 'claude', label: 'Anthropic', subscription: false, lanes: ['chat', 'agent'], reasoningLevels: ['low', 'medium', 'high', 'max'], nativeFamily: 'claude', brand: 'claude' },
+      {
+        id: 'claude',
+        label: 'Anthropic',
+        subscription: false,
+        lanes: ['chat', 'agent'],
+        reasoningLevels: ['low', 'medium', 'high', 'max'],
+        nativeFamily: 'claude',
+        brand: 'claude',
+      },
       { id: 'google', label: 'Gemini', subscription: false, lanes: ['chat', 'agent'], reasoningLevels: [], nativeFamily: 'google', brand: 'google' },
     ]
 
@@ -22,7 +30,17 @@ describe('protocols', () => {
     const protocols = useProtocolsStore()
     protocols.list = [{ id: 'codex', label: 'Codex', subscription: true, lanes: ['agent'], reasoningLevels: [], nativeFamily: 'codex', brand: 'openai' }]
     useAgentsStore().list = [
-      { id: 'a', name: 'A', provider: 'chatgpt', models: [], pricing: {}, modes: ['agent'], allowedTools: [], builtIn: false, providerInfo: { id: 'chatgpt', name: 'ChatGPT da Ana', protocol: 'codex' } },
+      {
+        id: 'a',
+        name: 'A',
+        provider: 'chatgpt',
+        models: [],
+        pricing: {},
+        modes: ['agent'],
+        allowedTools: [],
+        builtIn: false,
+        providerInfo: { id: 'chatgpt', name: 'ChatGPT da Ana', protocol: 'codex' },
+      },
     ]
 
     expect(protocols.providerName('chatgpt')).toBe('ChatGPT da Ana')

@@ -1,10 +1,11 @@
 <script setup lang="ts">
+import { storeToRefs } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import UsageSummaryView from '@/components/UsageSummaryView.vue'
 import UsageTiles from '@/components/UsageTiles.vue'
 import { tokens, usd } from '@/lib/format'
-import type { IGroupUsage, IUsageFigure, IUsageSummary, IUserUsage } from '@/lib/types'
+import type { IUsageFigure } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
 import { useUsageStore } from '@/stores/usage'
 
@@ -36,30 +37,12 @@ const keyDraft = ref(metaKey.value)
 const selectedValue = computed(() => (typeof route.query.value === 'string' ? route.query.value : undefined))
 const NO_VALUE = '~none'
 
-const mine = ref<IUsageSummary>()
-const users = ref<{ totals: IUsageFigure; users: IUserUsage[] }>()
-const detail = ref<IUsageSummary & { ownerId: string; name?: string; email?: string }>()
-const groups = ref<{ key: string; totals: IUsageFigure; groups: IGroupUsage[] }>()
-const valueDetail = ref<IUsageSummary & { key: string; value?: string }>()
-const loading = ref(false)
-const error = ref<string>()
+// ⚠️ Os dados moram na store: ela descarta resposta velha e limpa o que era de outro usuário/chave/período.
+const { mine, users, detail, groups, valueDetail, loading, error } = storeToRefs(usage)
 
-async function load() {
-  error.value = undefined
-  loading.value = true
-  try {
-    if (tab.value === 'mine') mine.value = await usage.mine(days.value)
-    else if (tab.value === 'keys') {
-      if (selectedValue.value) valueDetail.value = await usage.byKeyValue(metaKey.value, selectedValue.value, days.value)
-      else groups.value = await usage.byKey(metaKey.value, days.value)
-    }
-    else if (selectedUser.value) detail.value = await usage.user(selectedUser.value, days.value)
-    else users.value = await usage.users(days.value)
-  } catch (failure) {
-    error.value = failure instanceof Error ? failure.message : String(failure)
-  } finally {
-    loading.value = false
-  }
+function load() {
+  if (!auth.signedIn) return usage.reset()
+  return usage.load({ tab: tab.value, days: days.value, user: selectedUser.value, key: metaKey.value, value: selectedValue.value })
 }
 
 watch([days, tab, selectedUser, metaKey, selectedValue, () => auth.signedIn], () => void load(), { immediate: true })

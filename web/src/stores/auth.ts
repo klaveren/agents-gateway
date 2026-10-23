@@ -3,6 +3,11 @@ import { computed, ref } from 'vue'
 import { api, ApiError, authHeaders, CALLER_TOKEN_KEY, GATEWAY_TOKEN_KEY, setUnauthorizedHandler } from '@/lib/api'
 import { readLocal, writeLocal } from '@/lib/storage'
 import type { ISession, IUser } from '@/lib/types'
+import { useAgentsStore } from './agents'
+import { useConversationsStore } from './conversations'
+import { useSettingsStore } from './settings'
+import { useThreadStore } from './thread'
+import { useUsageStore } from './usage'
 
 /**
  * A sessão: quem está logado, e se é admin.
@@ -25,7 +30,46 @@ export const useAuthStore = defineStore('auth', () => {
 
   const signedIn = computed(() => !!user.value)
 
+  /**
+   * Esquece o que é de quem estava logado: a lista de conversas, a conversa aberta, as não lidas, o uso e as
+   * configurações. ⚠️ Sem isto, quem entra depois no mesmo navegador vê, por um instante, os dados do anterior.
+   */
+  function clearClientState(): void {
+    useConversationsStore().reset()
+    useThreadStore().reset()
+    useUsageStore().reset()
+    useSettingsStore().reset()
+  }
+
+  /**
+   * Refaz o que depende de QUEM é e do que PODE: agentes, configurações (só admin) e o stream de eventos das
+   * conversas (que muda de escopo com o papel). Roda quando o papel ou a conta muda, ou o portão é trocado.
+   */
+  async function rescope(): Promise<void> {
+    // Saiu de uma conta e há login: não há escopo até entrar de novo (a tela de login é quem refaz).
+    if (!user.value && localAccounts.value) return
+    const conversations = useConversationsStore()
+    conversations.subscribe(isAdmin.value)
+    void conversations.load(isAdmin.value)
+    const settings = useSettingsStore()
+    await Promise.all([
+      useAgentsStore()
+        .load()
+        .catch(() => undefined),
+      isAdmin.value ? settings.load().catch(() => undefined) : settings.reset(),
+    ])
+  }
+
   async function probe(): Promise<void> {
+    const wasChecked = checked.value
+    const before = { admin: isAdmin.value, userId: user.value?.id }
+    await scan()
+    // Entrar (antes sem conta) quem chama já refaz o escopo; aqui é papel ou conta que mudou no meio da sessão.
+    const login = before.userId === undefined && user.value !== undefined
+    if (wasChecked && !login && (before.admin !== isAdmin.value || before.userId !== user.value?.id)) await rescope()
+  }
+
+  async function scan(): Promise<void> {
     try {
       const status = await api<{ localAccounts: boolean; setupRequired: boolean }>('/auth/status').catch(() => ({ localAccounts: false, setupRequired: false }))
       localAccounts.value = status.localAccounts
@@ -76,7 +120,9 @@ export const useAuthStore = defineStore('auth', () => {
     await api('/auth/logout', { method: 'POST' }).catch(() => undefined)
     user.value = undefined
     isAdmin.value = false
-    return probe()
+    clearClientState()
+    await scan()
+    await rescope()
   }
 
   /** As outras sessões caem; esta continua com o token novo que o gateway devolve. */
@@ -85,14 +131,17 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = session.user
   }
 
-  function saveGatewayToken(value: string): Promise<void> {
+  /** ⚠️ Outro portão pode mostrar outro escopo: depois de sondar, refaz agentes, configurações e eventos. */
+  async function saveGatewayToken(value: string): Promise<void> {
     gatewayToken.value = value.trim()
     writeLocal(GATEWAY_TOKEN_KEY, gatewayToken.value || null)
-    return probe()
+    await scan()
+    await rescope()
   }
 
   // Sessão recusada pelo gateway (venceu, conta desativada, papel trocado): sai e a tela pede login.
   setUnauthorizedHandler(() => {
+    if (user.value) clearClientState()
     user.value = undefined
     isAdmin.value = false
   })

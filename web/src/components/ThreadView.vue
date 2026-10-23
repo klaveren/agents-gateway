@@ -28,6 +28,8 @@ const copied = ref(false)
 const confirming = ref(false)
 const deleting = ref(false)
 const deleteError = ref<string>()
+/** Falha de compartilhar ou de copiar o link: aparece numa faixa, em vez de morrer calada. */
+const actionError = ref<string>()
 
 const header = computed(() => thread.header)
 const agent = computed(() => agents.byId.get(header.value?.agentId ?? thread.draft?.agentId ?? ''))
@@ -73,20 +75,34 @@ watch(
   () => void nextTick(() => scroller.value?.scrollTo({ top: scroller.value.scrollHeight })),
 )
 
-async function send(text: string, files: IOutgoingFile[]) {
-  const created = await thread.send(text, files)
+async function send(text: string, files: IOutgoingFile[], settle: (ok: boolean) => void) {
+  const { ok, created } = await thread.send(text, files)
+  settle(ok)
   if (created) await router.replace(`/c/${created}`)
 }
 
 async function toggleShare() {
   if (!header.value) return
-  await conversations.share(header.value.id, !header.value.shared)
+  actionError.value = undefined
+  try {
+    await conversations.share(header.value.id, !header.value.shared)
+  } catch (error) {
+    actionError.value = `Não foi possível ${header.value.shared ? 'parar de compartilhar' : 'compartilhar'}: ${error instanceof Error ? error.message : String(error)}`
+  }
 }
 
 async function copyShare() {
-  await navigator.clipboard.writeText(shareUrl.value).catch(() => undefined)
-  copied.value = true
-  setTimeout(() => (copied.value = false), 1500)
+  actionError.value = undefined
+  try {
+    // ⚠️ `navigator.clipboard` some fora de HTTPS e pode recusar a permissão: só é "Copiado" se a escrita deu certo.
+    if (!navigator.clipboard) throw new Error('o navegador não permite copiar aqui')
+    await navigator.clipboard.writeText(shareUrl.value)
+    copied.value = true
+    setTimeout(() => (copied.value = false), 1500)
+  } catch (error) {
+    copied.value = false
+    actionError.value = `Não foi possível copiar o link: ${error instanceof Error ? error.message : String(error)}`
+  }
 }
 
 async function remove() {
@@ -144,6 +160,11 @@ async function continueFresh() {
     <div v-if="children.length" class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-zinc-800/80 bg-zinc-900/40 px-4 py-1.5 text-xs text-zinc-400">
       <span>{{ children.length }} delegaç{{ children.length === 1 ? 'ão' : 'ões' }} · {{ tokens(childTokens) }} tokens<template v-if="auth.isAdmin && childCost !== undefined"> · {{ usd(childCost) }}</template></span>
       <RouterLink v-for="child in children" :key="child.id" :to="`/c/${child.id}`" class="rounded-full bg-zinc-800 px-2 py-0.5 text-zinc-300 hover:bg-zinc-700">{{ agents.byId.get(child.agentId)?.name ?? child.agentId }}</RouterLink>
+    </div>
+
+    <div v-if="actionError" class="flex items-center gap-2 border-b border-rose-500/20 bg-rose-500/10 px-4 py-2 text-xs text-rose-200">
+      {{ actionError }}
+      <button class="ml-auto hover:text-white" title="Fechar" @click="actionError = undefined"><Icon name="x" class="h-4 w-4" /></button>
     </div>
 
     <div v-if="shareUrl" class="flex items-center gap-2 border-b border-emerald-500/20 bg-emerald-500/10 px-4 py-2 text-xs text-emerald-200">
