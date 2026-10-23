@@ -27,7 +27,7 @@ import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { sessionPrefix } from '@infra/session/Session.Key'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
 import { buildOpenAIMcpServers, buildOpenAITools } from '@infra/tools/bridges/OpenAI.ToolBridge'
-import { ToolCatalog } from '@infra/tools/Tool.Catalog'
+import { IAgentMcpServer, ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { cacheTokensOf } from './support/Usage.Helper'
 import { composeSystemPrompt, maxOutputTokens, maxToolTurns } from './support/Prompt.Helper'
 
@@ -35,7 +35,7 @@ type TEffort = NonNullable<NonNullable<ModelSettings['reasoning']>['effort']>
 type TRun = typeof run
 type TUserContent = Parameters<typeof user>[0]
 
-export type TBuildMcpServers = (url: string, token?: string) => MCPServer[]
+export type TBuildMcpServers = (remotes: readonly IAgentMcpServer[], token?: string) => MCPServer[]
 
 export interface IOpenAIAgentAdapterDeps {
   run?: TRun
@@ -138,7 +138,7 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
 
     // Conexão MCP POR TURNO. O adapter é singleton; um slot compartilhado fazia o turno de um
     // usuário fechar as tools de outro no meio do stream, e vazava a conexão de quem perdia a corrida.
-    const mcpServers = await this.openMcpServers(context)
+    const mcpServers = await this.openMcpServers(context, agent.allowedTools)
 
     const oaiAgent = new Agent({
       name: agent.name,
@@ -243,19 +243,25 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
     return entry.provider.getModel(name)
   }
 
-  private async openMcpServers(context: IExecutionContext): Promise<MCPServer[]> {
-    const url = await this.catalog?.mcpEndpoint()
-    if (!url) return []
+  /** Os servidores MCP que ESTE agente escolheu. ⚖️ Um que não conecta sai sozinho: os outros seguem. */
+  private async openMcpServers(context: IExecutionContext, allowedTools: readonly string[]): Promise<MCPServer[]> {
+    const remotes = (await this.catalog?.mcpServersFor(allowedTools)) ?? []
+    if (!remotes.length) return []
 
-    const servers = this.buildMcpServers(url, context.token)
-    try {
-      await Promise.all(servers.map((server) => server.connect()))
-      return servers
-    } catch (error: unknown) {
-      console.warn('[OpenAIAgent] MCP indisponível, seguindo só com as tools locais:', error)
-      await this.closeMcpServers(servers)
-      return []
-    }
+    const servers = this.buildMcpServers(remotes, context.token)
+    const opened = await Promise.all(
+      servers.map(async (server) => {
+        try {
+          await server.connect()
+          return server
+        } catch (error: unknown) {
+          console.warn(`[OpenAIAgent] MCP ${server.name} indisponível, seguindo sem ele:`, error)
+          await server.close().catch(() => undefined)
+          return undefined
+        }
+      }),
+    )
+    return opened.filter((server): server is MCPServer => !!server)
   }
 
   private async closeMcpServers(servers: MCPServer[]): Promise<void> {

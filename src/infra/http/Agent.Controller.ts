@@ -157,13 +157,15 @@ export class AgentController {
   async health(_req: Request, res: Response) {
     await this.respond(res, async () => {
       // Health é o lugar natural para tentar reconectar: quem monitora chama de tempos em
-      // tempos, e com isso o MCP se recupera mesmo sem nenhum tráfego de tool.
-      const connected = (await this.usecases.catalog.mcpEndpoint()) !== undefined
+      // tempos, e com isso os MCPs se recuperam mesmo sem nenhum tráfego de tool.
+      // ⛔ Rota pública: só contagem e se há algum de pé — nada de nome nem URL.
+      await this.usecases.catalog.mcp.connectAll()
+      const servers = this.usecases.catalog.mcp.status().filter((server) => server.enabled)
 
       return {
         status: 'ok',
         uptimeSeconds: Math.floor((Date.now() - STARTED_AT) / 1000),
-        mcp: { url: this.usecases.catalog.mcpUrl, connected },
+        mcp: { connected: servers.some((server) => server.connected), servers: servers.length },
         sessions: (await this.usecases.listSessions.execute()).length,
       }
     })
@@ -285,6 +287,7 @@ export class AgentController {
     return {
       knownTools: tools.map((tool) => tool.name),
       providerOf: (model) => providerOfModel(model, []),
+      mcpServerExists: (id) => !!this.usecases.catalog.mcp.get(id),
       modelEnabled: this.usecases.models ? (provider, model) => this.usecases.models!.isEnabled(provider, model) : undefined,
       protocolOf: (id) => this.usecases.providers?.get(id)?.protocol ?? Object.values(EProvider).find((value) => value === id),
       promptIssue: (agent) => {
@@ -869,8 +872,10 @@ export class AgentController {
   private async catalogFor(allowed: string[]) {
     const { catalog } = this.usecases
     const tools = await catalog.list(allowed)
+    // Sem `lastError`: a mensagem pode trazer endereço interno, e esta rota é de qualquer chamador.
+    const servers = catalog.mcp.status().map(({ id, name, enabled, connected }) => ({ id, name, enabled, connected }))
 
-    return { mcp: { url: catalog.mcpUrl, connected: catalog.mcpConnected }, tools }
+    return { mcp: { connected: servers.some((server) => server.connected), servers }, tools }
   }
 
   /** Um lugar só para o envelope de sucesso e para a tradução de erro em status e código. */

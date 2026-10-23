@@ -45,6 +45,17 @@ describe('agentIssues', () => {
     assert.deepStrictEqual(agentIssues(agent({ provider: EProvider.OPENAI, models: ['gpt-5'], reasoningEfforts: ['none', 'xhigh'] }), rules), [])
   })
 
+  it('⛔ MCP: formato mcp:<servidor>/<ferramenta> e servidor existente (a ferramenta não é exigida)', () => {
+    const withServers = { ...rules, mcpServerExists: (id: string) => id === 'crm' }
+    assert.deepStrictEqual(agentIssues(agent({ allowedTools: ['mcp:crm/stats', 'mcp:crm/*'] }), withServers), [])
+    assert.deepStrictEqual(
+      agentIssues(agent({ allowedTools: ['mcp:outro/x', 'mcp:crm', 'mcp:/x'] }), withServers).map((issue) => issue.message.split(':')[0]),
+      ['unknown MCP server', 'invalid MCP tool (use mcp', 'invalid MCP tool (use mcp'],
+    )
+    // Sem nenhum servidor cadastrado, qualquer MCP é recusado.
+    assert.deepStrictEqual(fields(agentIssues(agent({ allowedTools: ['mcp:crm/x'] }), rules)), ['allowedTools'])
+  })
+
   it('recusa id que já existe', () => {
     assert.deepStrictEqual(fields(agentIssues(agent({ id: 'sysops-agent' }), rules)), ['id'])
   })

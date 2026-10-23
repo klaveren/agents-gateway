@@ -49,10 +49,8 @@ describe('AgentController', () => {
   /** Catálogo falso: nenhum teste aqui abre socket. */
   const fakeCatalog = (connected = false) =>
     ({
-      mcpUrl: 'http://localhost:8000/mcp',
       mcpConnected: connected,
-      mcpGeneration: connected ? 1 : 0,
-      mcpEndpoint: async () => (connected ? 'http://localhost:8000/mcp' : undefined),
+      mcp: { connectAll: async () => undefined, status: () => [{ id: 'crm', name: 'CRM', enabled: true, connected }], get: () => undefined },
       localFor: () => [],
       list: async () => [{ origin: 'local' as const, name: 'run_bash', description: '', inputSchema: {} }],
       invoke: async () => ({ status: 'success' as const, result: '' }),
@@ -164,11 +162,11 @@ describe('AgentController', () => {
   it('lets health retry the MCP connection, so it heals without any tool traffic', async () => {
     let attempts = 0
     const catalog = {
-      mcpUrl: 'http://localhost:8000/mcp',
-      mcpConnected: false,
-      mcpEndpoint: async () => {
-        attempts += 1
-        return attempts > 1 ? 'http://localhost:8000/mcp' : undefined
+      mcp: {
+        connectAll: async () => {
+          attempts += 1
+        },
+        status: () => [{ id: 'crm', name: 'CRM', enabled: true, connected: attempts > 1 }],
       },
     } as unknown as ToolCatalog
 

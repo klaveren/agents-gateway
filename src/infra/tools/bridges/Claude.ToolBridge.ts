@@ -1,15 +1,20 @@
 import { createSdkMcpServer, tool, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
 import { z, type ZodRawShape } from 'zod'
+import { IAgentMcpServer } from '../Tool.Catalog'
 import { ILocalTool } from '../Tool.Types'
 
 export const LOCAL_SERVER_NAME = 'gateway'
-export const REMOTE_SERVER_NAME = 'mcp'
 
 /**
  * O Claude Agent SDK quer tools como um MCP server. Para as locais ele oferece um
  * servidor in-process (`createSdkMcpServer`), o que evita subir qualquer processo extra.
  */
-export function buildClaudeMcpServers(local: ILocalTool[], remoteUrl?: string, token?: string): Record<string, McpServerConfig> {
+/** O nome do servidor MCP no SDK (as tools viram `mcp__<nome>__<tool>`): `mcp_<id>`, sem hífen. */
+export function claudeMcpServerName(serverId: string): string {
+  return `mcp_${serverId.replace(/-/g, '_')}`
+}
+
+export function buildClaudeMcpServers(local: ILocalTool[], remotes: readonly IAgentMcpServer[] = [], token?: string): Record<string, McpServerConfig> {
   const servers: Record<string, McpServerConfig> = {}
 
   if (local.length > 0) {
@@ -25,21 +30,30 @@ export function buildClaudeMcpServers(local: ILocalTool[], remoteUrl?: string, t
     })
   }
 
-  if (remoteUrl) {
+  for (const remote of remotes) {
     /**
-     * A credencial de quem chamou vai NO HEADER do servidor MCP.
+     * A credencial vai NO HEADER do servidor, conforme o `auth` dele.
      *
      * ⚠️ Este SDK conecta ao MCP por conta própria — não passa pelo `McpServerClient` do gateway, e
-     * portanto não herda o `fetch` que injeta a credencial lá. Sem isto, o agente do Claude fala com
-     * o MCP sem token: toda tool responde "chamada sem credencial" e a conversa termina com ele
-     * dizendo que não conseguiu acessar os dados.
-     *
-     * O token vem do PROVIDER, por parâmetro — o bridge não o busca.
+     * portanto não herda o `fetch` que injeta a credencial lá. Sem isto, com `auth: caller`, o agente do
+     * Claude falaria com o MCP sem token: toda tool responderia "chamada sem credencial".
      */
-    servers[REMOTE_SERVER_NAME] = { type: 'http', url: remoteUrl, ...(token ? { headers: { authorization: `Bearer ${token}` } } : {}) }
+    const headers = mcpHeaders(remote, token)
+    servers[claudeMcpServerName(remote.config.id)] = {
+      type: remote.config.transport === 'sse' ? 'sse' : 'http',
+      url: remote.config.url,
+      ...(headers ? { headers } : {}),
+    }
   }
 
   return servers
+}
+
+/** Os headers de um servidor MCP para quem conecta por conta própria (os SDKs agênticos). */
+export function mcpHeaders(remote: IAgentMcpServer, token?: string): Record<string, string> | undefined {
+  if (remote.config.auth === 'caller') return token ? { authorization: `Bearer ${token}` } : undefined
+  if (remote.config.auth === 'header' && remote.header) return { [remote.header.name]: remote.header.value }
+  return undefined
 }
 
 /** O helper `tool()` do SDK só aceita raw shape do zod, não JSON Schema. */

@@ -2,6 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
+import { TMcpAuth, TMcpTransport } from '@domain/models/McpServer.Model'
 import { IToolDefinition, IToolResult, IToolSchema } from '@infra/tools/Tool.Types'
 import { CallerTokenScope } from './Caller.TokenScope'
 
@@ -14,6 +15,21 @@ export interface IMcpClientDeps {
   createClient?: () => Client
   /** Injetável para o teste não precisar dormir esperando o backoff. */
   now?: () => number
+  /** O `fetch` de base (o teste injeta um falso para conferir os headers). */
+  fetch?: typeof fetch
+}
+
+/**
+ * Como o cliente fala com ESTE servidor. Padrão: `caller` (a credencial de quem conversa) e `auto`
+ * (Streamable HTTP, caindo para SSE) — o comportamento de antes dos servidores virarem cadastro.
+ */
+export interface IMcpClientOptions {
+  auth?: TMcpAuth
+  /** O header fixo de `auth: header`, LIDO A CADA REQUISIÇÃO: trocar o segredo vale sem reconectar. */
+  header?: () => { name: string; value: string } | undefined
+  transport?: TMcpTransport
+  /** O nome no log (o id do servidor). */
+  label?: string
 }
 
 /**
@@ -36,13 +52,18 @@ export class McpServerClient {
   private inFlight?: Promise<boolean>
   private readonly createClient: () => Client
   private readonly now: () => number
+  private readonly baseFetch: typeof fetch
+  /** O último erro de conexão ou de chamada, para a tela de MCPs. */
+  lastError?: string
 
   constructor(
     public readonly serverUrl: string,
     deps: IMcpClientDeps = {},
+    private readonly options: IMcpClientOptions = {},
   ) {
     this.createClient = deps.createClient ?? (() => new Client(CLIENT_INFO))
     this.now = deps.now ?? Date.now
+    this.baseFetch = deps.fetch ?? fetch
   }
 
   isConnected(): boolean {
@@ -90,6 +111,7 @@ export class McpServerClient {
         inputSchema: toSchema(tool.inputSchema),
       }))
     } catch (error: unknown) {
+      this.lastError = toMessage(error)
       console.warn(`[mcp] Falha ao listar tools: ${toMessage(error)}`)
       await this.markDisconnected()
       return []
@@ -151,12 +173,14 @@ export class McpServerClient {
      * ⚠️ Sem credencial no escopo, a requisição vai SEM header: o MCP então cai no que estiver
      * configurado no ambiente dele. É isso que mantém o `curl` de diagnóstico funcionando.
      */
-    const fetchWithCallerToken = this.tokenScope.wrap()
+    const fetchWithCredential = this.credentialFetch()
+    const transport = this.options.transport ?? 'auto'
+    const makers = [
+      ...(transport === 'sse' ? [] : [() => new StreamableHTTPClientTransport(url, { fetch: fetchWithCredential })]),
+      ...(transport === 'http' ? [] : [() => new SSEClientTransport(url, { fetch: fetchWithCredential })]),
+    ]
 
-    for (const makeTransport of [
-      () => new StreamableHTTPClientTransport(url, { fetch: fetchWithCallerToken }),
-      () => new SSEClientTransport(url, { fetch: fetchWithCallerToken }),
-    ]) {
+    for (const makeTransport of makers) {
       const transport = makeTransport()
 
       try {
@@ -170,9 +194,11 @@ export class McpServerClient {
         this.nextAttemptAt = 0
         this.generation += 1
 
+        this.lastError = undefined
         console.log(`[mcp] Conectado em ${this.serverUrl}`)
         return true
-      } catch {
+      } catch (error: unknown) {
+        this.lastError = toMessage(error)
         // Transporte que falhou continua segurando timer de reconexão e socket. Sem fechar,
         // cada tentativa do backoff vaza um handle — e o backoff tenta para sempre.
         await transport.close().catch(() => undefined)
@@ -182,6 +208,26 @@ export class McpServerClient {
 
     this.scheduleRetry()
     return false
+  }
+
+  /**
+   * O `fetch` com a credencial DESTE servidor:
+   * - `caller`: a de quem chamou, pelo escopo da chamada (ver `CallerTokenScope`);
+   * - `header`: o segredo fixo, lido na hora;
+   * - `none`: nada.
+   */
+  private credentialFetch(): typeof fetch {
+    const auth = this.options.auth ?? 'caller'
+    if (auth === 'caller') return this.tokenScope.wrap(this.baseFetch)
+    if (auth === 'none') return this.baseFetch
+
+    return (input, init) => {
+      const header = this.options.header?.()
+      if (!header) return this.baseFetch(input, init)
+      const headers = new Headers(init?.headers)
+      headers.set(header.name, header.value)
+      return this.baseFetch(input, { ...init, headers })
+    }
   }
 
   private async markDisconnected(): Promise<void> {

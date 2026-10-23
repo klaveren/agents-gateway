@@ -5,7 +5,7 @@ import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
-import type { McpServerClient } from '@infra/mcp/McpServer.Client'
+import { fakeMcpRegistry, mcpTool } from '@infra/mcp/Mcp.Fake'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { ILocalTool } from '@infra/tools/Tool.Types'
 import { GoogleAgentAdapter, assertNoAdkTemplateCollision, type IAdkRunParams, type IAdkRuntime, type IAdkRuntimeSpec } from './GoogleAgent.Adapter'
@@ -70,32 +70,22 @@ describe('GoogleAgentAdapter', () => {
     return collected
   }
 
-  const catalog = new ToolCatalog(
+  const catalog = new ToolCatalog(fakeMcpRegistry(), [
     {
-      serverUrl: 'http://localhost:8000/mcp',
-      isConnected: () => false,
-      ensureConnected: async () => false,
-      connectionGeneration: 0,
-      listTools: async () => [],
-      callTool: async () => ({ status: 'success' as const, result: '' }),
-    } as unknown as McpServerClient,
-    [
-      {
-        origin: 'local',
-        name: 'search_web',
-        description: 'local search',
-        inputSchema: {
-          type: 'object',
-          properties: { query: { type: 'string', description: 'q' } },
-          required: ['query'],
-          additionalProperties: false,
-        },
-        async execute() {
-          return { status: 'success', result: 'ok' }
-        },
-      } satisfies ILocalTool,
-    ],
-  )
+      origin: 'local',
+      name: 'search_web',
+      description: 'local search',
+      inputSchema: {
+        type: 'object',
+        properties: { query: { type: 'string', description: 'q' } },
+        required: ['query'],
+        additionalProperties: false,
+      },
+      async execute() {
+        return { status: 'success', result: 'ok' }
+      },
+    } satisfies ILocalTool,
+  ])
 
   it('creates a session on the agent lane', async () => {
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(() => [], emptyLog()) })
@@ -188,22 +178,21 @@ describe('GoogleAgentAdapter', () => {
   it('sends each MCP call with the credential of the turn in progress, not of the first turn', async () => {
     const seen: Array<string | undefined> = []
     const remoteCatalog = new ToolCatalog(
-      {
-        serverUrl: 'http://localhost:8000/mcp',
-        isConnected: () => true,
-        ensureConnected: async () => true,
-        connectionGeneration: 0,
-        listTools: async () => [{ origin: 'remote', name: 'run_bash', description: 'bash', inputSchema: { type: 'object', properties: {} } }],
-        callTool: async (_name: string, _args: unknown, context?: { token?: string }) => {
-          seen.push(context?.token)
-          return { status: 'success' as const, result: '' }
+      fakeMcpRegistry([
+        {
+          id: 'crm',
+          tools: [mcpTool('run_bash', 'bash')],
+          onCall: (_name, _args, context) => {
+            seen.push(context?.token)
+            return { status: 'success' as const, result: '' }
+          },
         },
-      } as unknown as McpServerClient,
+      ]),
       [],
     )
     const log = emptyLog()
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(() => [], log), catalog: remoteCatalog })
-    const agent = { ...getAgent(), allowedTools: ['run_bash'] }
+    const agent = { ...getAgent(), allowedTools: ['mcp:crm/run_bash'] }
     const session = await adapter.createSession(agent, { agentId: 'researcher-agent' })
     const callBash = async () => {
       const tool = log.specs[0].tools.find((candidate) => 'name' in candidate && candidate.name === 'run_bash') as FunctionTool

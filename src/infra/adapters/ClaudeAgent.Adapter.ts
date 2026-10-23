@@ -14,8 +14,8 @@ import { IFileAttachment, IMessageInput } from '@domain/models/MessageInput.Mode
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { sessionPrefix } from '@infra/session/Session.Key'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
-import { buildClaudeMcpServers, REMOTE_SERVER_NAME } from '@infra/tools/bridges/Claude.ToolBridge'
-import { ToolCatalog } from '@infra/tools/Tool.Catalog'
+import { buildClaudeMcpServers, claudeMcpServerName } from '@infra/tools/bridges/Claude.ToolBridge'
+import { IAgentMcpServer, ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { composeSystemPrompt, maxToolTurns } from './support/Prompt.Helper'
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const
@@ -120,7 +120,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
 
     const local = this.catalog?.localFor(agent.allowedTools) ?? []
     const natives = nativeToolsOf(agent.allowedTools, EProvider.CLAUDE).map((tool) => tool.sdkName)
-    const remoteUrl = await this.catalog?.mcpEndpoint()
+    const remotes = (await this.catalog?.mcpServersFor(agent.allowedTools)) ?? []
 
     const options: Options = {
       model: record.model,
@@ -129,10 +129,10 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       // eles. Vazio = nenhum: sem isto o agente ganharia Bash/Read/Edit sobre a máquina do host. As
       // tools nossas (locais e do MCP) chegam por `mcpServers`.
       tools: natives,
-      mcpServers: buildClaudeMcpServers(local, remoteUrl, context.token),
+      mcpServers: buildClaudeMcpServers(local, remotes, context.token),
       // Nomes soltos em `allowedTools` aprovam antes de o callback rodar e o SDK
       // avisa que o `canUseTool` foi sombreado; por isso o gate fica só aqui.
-      canUseTool: this.makeGate([...agent.allowedTools, ...natives]),
+      canUseTool: this.makeGate([...agent.allowedTools, ...natives], remotes),
       // Isolamento: sem isto o subprocesso lê o ~/.claude e o CLAUDE.md da máquina.
       settingSources: [],
       includePartialMessages: true,
@@ -291,14 +291,20 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     return rest.join('__') || name
   }
 
-  private makeGate(allowed: string[]): CanUseTool {
+  /**
+   * ⛔ O portão: tool local ou nativa só se o agente a tem; de servidor MCP, só as escolhidas nele (ou
+   * todas, com `mcp:<id>/*`). Servidor que o agente não escolheu nem é montado.
+   */
+  private makeGate(allowed: string[], remotes: readonly IAgentMcpServer[] = []): CanUseTool {
+    const byServer = new Map(remotes.map((remote) => [claudeMcpServerName(remote.config.id), remote]))
     return async (toolName) => {
       const [, server] = toolName.split('__')
       const isMcp = toolName.startsWith('mcp__')
       const bare = this.bareToolName(toolName)
 
-      if (isMcp && server === REMOTE_SERVER_NAME) return { behavior: 'allow' }
-      if (allowed.includes(bare)) return { behavior: 'allow' }
+      const remote = isMcp ? byServer.get(server) : undefined
+      if (remote && (!remote.tools || remote.tools.includes(bare))) return { behavior: 'allow' }
+      if (!remote && allowed.includes(bare)) return { behavior: 'allow' }
 
       return { behavior: 'deny', message: `Tool "${bare}" is not enabled for this agent.` }
     }

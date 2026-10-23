@@ -1,3 +1,5 @@
+import { McpServersService } from '@application/McpServers.Service'
+import { McpServersController } from '@infra/http/McpServers.Controller'
 import { AgentController } from '@infra/http/Agent.Controller'
 import { AuthController } from '@infra/http/Auth.Controller'
 import { ProvidersController } from '@infra/http/Providers.Controller'
@@ -49,4 +51,17 @@ export function makeProvidersController(): ProvidersController {
 
 export function makeUsageController(conversations: AgentController['conversations']): UsageController {
   return new UsageController({ conversations, proof: makeAuth().proof, models: makeModelCatalog(), accounts: makeAuth().accounts })
+}
+
+export function makeMcpServersController(): McpServersController {
+  const { mcp, servers } = makeTools()
+  return new McpServersController({
+    service: new McpServersService(servers, makeCredentials(), () =>
+      makeAgents()
+        .rawEntries()
+        .map((entry) => entry.agent),
+    ),
+    registry: mcp,
+    proof: makeAuth().proof,
+  })
 }

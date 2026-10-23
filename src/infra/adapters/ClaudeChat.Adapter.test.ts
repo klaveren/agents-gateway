@@ -5,7 +5,7 @@ import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
-import type { McpServerClient } from '@infra/mcp/McpServer.Client'
+import { fakeMcpRegistry } from '@infra/mcp/Mcp.Fake'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { ILocalTool } from '@infra/tools/Tool.Types'
 import { ClaudeChatAdapter } from './ClaudeChat.Adapter'
@@ -55,17 +55,7 @@ describe('ClaudeChatAdapter', () => {
     },
   }
 
-  const catalog = new ToolCatalog(
-    {
-      serverUrl: 'http://localhost:8000/mcp',
-      isConnected: () => false,
-      ensureConnected: async () => false,
-      connectionGeneration: 0,
-      listTools: async () => [],
-      callTool: async () => ({ status: 'success' as const, result: '' }),
-    } as unknown as McpServerClient,
-    [runBash],
-  )
+  const catalog = new ToolCatalog(fakeMcpRegistry(), [runBash])
 
   it('creates a chat session carrying model, reasoning and language', async () => {
     const adapter = new ClaudeChatAdapter({ client: clientWith(async () => []) })
