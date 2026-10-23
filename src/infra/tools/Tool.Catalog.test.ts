@@ -98,4 +98,25 @@ describe('ToolCatalog', () => {
     assert.deepStrictEqual(await withDefault.invoke('whoami', {}), { status: 'success', result: 'default:whoami' })
     assert.strictEqual((await withDefault.invoke('nao-existe/x', {})).status, 'error')
   })
+
+  it('quem pode delegar (`agent:<id>`) ganha a delegate_to_agent, só com os escolhidos; e ela recebe o contexto', async () => {
+    const seen: unknown[] = []
+    const withDelegation = new ToolCatalog(fakeMcpRegistry(), [localTool('run_bash', 'bash')], (allowed) => ({
+      ...localTool('delegate_to_agent', 'ok'),
+      inputSchema: { type: 'object', properties: { agentId: { type: 'string', enum: [...allowed] } }, required: [], additionalProperties: false },
+      execute: async (_args, context) => (seen.push(context), { status: 'success', result: 'ok' }),
+    }))
+
+    assert.deepStrictEqual(
+      withDelegation.localFor(['run_bash']).map((tool) => tool.name),
+      ['run_bash'],
+    )
+    const box = await withDelegation.toolbox(['agent:tradutor', 'agent:pesquisa'])
+    assert.deepStrictEqual(
+      box.tools.map((tool) => [tool.name, tool.inputSchema.properties.agentId?.enum]),
+      [['delegate_to_agent', ['tradutor', 'pesquisa']]],
+    )
+    await box.invoke('delegate_to_agent', {}, { sessionId: 'pai', token: 't' })
+    assert.deepStrictEqual(seen, [{ sessionId: 'pai', token: 't' }])
+  })
 })

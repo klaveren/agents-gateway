@@ -354,7 +354,7 @@ export class GoogleAgentAdapter implements IAgentAdapter {
           model: record.model,
           modelOf: () => record.model,
           instruction: assertNoAdkTemplateCollision(record.systemPrompt),
-          tools: this.buildTools(agent, remote),
+          tools: this.buildTools(agent, remote, caller),
           onModelResponse: (response) => {
             const counted = this.finalUsageOf(response)
             if (counted) usage.push(counted)
@@ -374,8 +374,8 @@ export class GoogleAgentAdapter implements IAgentAdapter {
    * decidido ali. Uma sessão aberta com o MCP fora do ar segue sem ele até ser recriada;
    * sessões novas pegam a reconexão.
    */
-  private buildTools(agent: IAgent, remote: BaseTool[]): Array<BaseTool | BaseToolset> {
-    return [...buildAdkTools(this.catalog?.localFor(agent.allowedTools) ?? []), ...remote]
+  private buildTools(agent: IAgent, remote: BaseTool[], caller?: { context: IExecutionContext }): Array<BaseTool | BaseToolset> {
+    return [...buildAdkTools(this.catalog?.localFor(agent.allowedTools) ?? [], () => caller?.context), ...remote]
   }
 
   /**

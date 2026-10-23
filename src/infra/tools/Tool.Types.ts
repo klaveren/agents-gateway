@@ -1,3 +1,5 @@
+import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
+
 /**
  * JSON Schema de entrada de uma tool.
  *
@@ -32,5 +34,6 @@ export interface IToolResult {
 
 export interface ILocalTool extends IToolDefinition {
   origin: 'local'
-  execute(args: Record<string, unknown>): Promise<IToolResult>
+  /** `context` = quem chamou e de que turno (a delegação precisa; as outras ignoram). */
+  execute(args: Record<string, unknown>, context?: IExecutionContext): Promise<IToolResult>
 }

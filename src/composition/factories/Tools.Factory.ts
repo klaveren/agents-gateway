@@ -3,11 +3,14 @@ import { IMcpServerRepository } from '@domain/ports/McpServerRepository.Port'
 import { McpRegistry } from '@infra/mcp/Mcp.Registry'
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
 import { SqliteMcpServerRepository } from '@infra/persistence/Sqlite.McpServerRepository'
+import { DelegationSlot, makeDelegateTool } from '@infra/tools/Delegate.Tool'
 import { makeLocalTools } from '@infra/tools/Local.Tools'
 import { DEFAULT_MCP_SERVER, ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { makeCredentials } from './Credentials.Factory'
 
 export interface ITools {
+  /** Onde a ferramenta `delegate_to_agent` encontra o serviço (preenchido em `makeUsecases`). */
+  delegation: DelegationSlot
   mcp: McpRegistry
   servers: IMcpServerRepository
   catalog: ToolCatalog
@@ -29,7 +32,8 @@ export function makeTools(): ITools {
     keepSelfUrl(servers)
 
     const mcp = new McpRegistry(servers, makeCredentials(), undefined, (config) => gatewayGate(config))
-    instance = { mcp, servers, catalog: new ToolCatalog(mcp, makeLocalTools()) }
+    const delegation = new DelegationSlot()
+    instance = { delegation, mcp, servers, catalog: new ToolCatalog(mcp, makeLocalTools(), (allowed) => makeDelegateTool(allowed, delegation)) }
   }
   return instance
 }

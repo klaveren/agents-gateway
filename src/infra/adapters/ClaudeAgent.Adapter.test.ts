@@ -257,6 +257,20 @@ describe('ClaudeAgentAdapter', () => {
     assert.strictEqual((await gate('mcp__gateway__search_web', {}, options))?.behavior, 'deny')
   })
 
+  it('libera a delegate_to_agent de quem pode delegar (ela vem de agent:<id>, não de um nome)', async () => {
+    const seen: TQueryParams[] = []
+    const catalog = new ToolCatalog(fakeMcpRegistry(), [localTool('run_bash')], () => localTool('delegate_to_agent'))
+    const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog })
+    const agent = { ...getAgent(), allowedTools: ['agent:tradutor'] }
+    const session = await adapter.createSession(agent, { agentId: 'sysops-agent' })
+    await drain(adapter.sendMessage(agent, session.id, { text: 'hi' }, {}))
+
+    const gate = seen[0].options?.canUseTool
+    const options = { signal: new AbortController().signal, toolUseID: 't1', requestId: 'r1' }
+    assert.strictEqual((await gate!('mcp__gateway__delegate_to_agent', {}, options))?.behavior, 'allow')
+    assert.strictEqual((await gate!('mcp__gateway__run_bash', {}, options))?.behavior, 'deny')
+  })
+
   it('reports an error result from the SDK', async () => {
     const adapter = new ClaudeAgentAdapter({
       query: queryWith(() => [{ type: 'result', subtype: 'error_max_turns', is_error: true, errors: ['too many turns'], usage: {} }]),

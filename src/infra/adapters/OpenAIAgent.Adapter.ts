@@ -145,7 +145,7 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
       instructions: record.systemPrompt,
       model,
       modelSettings,
-      tools: [...buildOpenAITools(this.catalog?.localFor(agent.allowedTools) ?? []), ...hosted],
+      tools: [...buildOpenAITools(this.catalog?.localFor(agent.allowedTools) ?? [], context), ...hosted],
       mcpServers,
     })
 

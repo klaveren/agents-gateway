@@ -129,10 +129,11 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       // eles. Vazio = nenhum: sem isto o agente ganharia Bash/Read/Edit sobre a máquina do host. As
       // tools nossas (locais e do MCP) chegam por `mcpServers`.
       tools: natives,
-      mcpServers: buildClaudeMcpServers(local, remotes, context.token),
+      mcpServers: buildClaudeMcpServers(local, remotes, context.token, context),
       // Nomes soltos em `allowedTools` aprovam antes de o callback rodar e o SDK
       // avisa que o `canUseTool` foi sombreado; por isso o gate fica só aqui.
-      canUseTool: this.makeGate([...agent.allowedTools, ...natives], remotes),
+      // As locais montadas entram pelo NOME — a `delegate_to_agent` vem de `agent:<id>`, não de um nome em `allowedTools`.
+      canUseTool: this.makeGate([...agent.allowedTools, ...natives, ...local.map((tool) => tool.name)], remotes),
       // Isolamento: sem isto o subprocesso lê o ~/.claude e o CLAUDE.md da máquina.
       settingSources: [],
       includePartialMessages: true,
