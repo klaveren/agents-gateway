@@ -119,7 +119,6 @@ async function send(text: string, files: IOutgoingFile[], settle: (ok: boolean) 
                 <span class="block truncate text-xs text-zinc-400">{{ protocols.providerName(option.provider) }} · {{ option.allowedTools.join(', ') || 'sem tools' }}</span>
                 <span v-if="option.unavailable" class="block truncate text-xs text-amber-300">{{ option.unavailable.label }}</span>
               </span>
-              <span v-if="!option.builtIn" class="ml-auto rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-400">criado</span>
             </button>
           </div>
 

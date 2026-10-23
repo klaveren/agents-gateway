@@ -97,12 +97,12 @@ onMounted(async () => {
   await loadClassifierOptions()
 })
 
-/** Os modelos ativados de cada provider ligado — a lista do classificador. */
+/** Os modelos ativados de cada provider ligado e com chave de API — a lista do classificador (assinatura não classifica). */
 async function loadClassifierOptions() {
   await providers.load().catch(() => undefined)
   const lists = await Promise.all(
     providers.list
-      .filter((provider) => provider.enabled)
+      .filter((provider) => provider.enabled && !provider.subscription && provider.credential.configured)
       .map(async (provider) => (await providers.models(provider.id).catch(() => [])).filter((model) => model.enabled).map((model) => ({ value: `${provider.id}::${model.modelId}`, provider: provider.id, model: model.modelId }))),
   )
   classifierOptions.value = lists.flat()
@@ -198,8 +198,9 @@ async function saveSettings() {
           <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
             Agente padrão
             <select v-model="agentId" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2" @change="onAgentChange">
-              <option value="">Padrão ({{ settings.current.defaults?.agentId }})</option>
-              <option v-for="option in agents.conversable" :key="option.id" :value="option.id">{{ option.name }}</option>
+              <option value="">Padrão ({{ settings.current.defaults?.agentId ?? 'nenhum agente ativo' }})</option>
+              <!-- Inativo aparece, mas não se escolhe: o servidor recusaria, e o motivo diz o que resolver. -->
+              <option v-for="option in agents.conversable" :key="option.id" :value="option.id" :disabled="!!option.unavailable">{{ option.name }}{{ option.unavailable ? ` (${option.unavailable.label})` : '' }}</option>
             </select>
           </label>
           <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
