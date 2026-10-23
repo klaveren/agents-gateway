@@ -567,6 +567,12 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'OK', ...json(envelope(userSchema)) }, '401': failures['401'], '404': failures['404'] },
       },
     },
+    '/auth/cookie': {
+      post: {
+        summary: 'Move the session sent in X-Tool-Authorization into the HttpOnly session cookie (migration for browsers that kept the token in storage)',
+        responses: { '200': { description: 'Cookie set' }, '401': failures['401'], '422': failures['422'] },
+      },
+    },
     '/auth/password': {
       put: {
         summary: 'Change your own password; the current one is required',

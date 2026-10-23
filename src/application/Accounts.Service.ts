@@ -210,6 +210,12 @@ export class AccountsService {
     return toUser(stored)
   }
 
+  /** Quando um token de sessão DESTE gateway vence — `undefined` para o que não é dele ou não vale. */
+  expiryOf(token: string): Date | undefined {
+    const claims = this.tokens.verify(token)
+    return claims ? new Date(claims.exp * 1000) : undefined
+  }
+
   private sessionFor(id: string): ISession {
     const user = this.me(id)
     const ver = this.users.findById(id)?.sessionVersion ?? 0

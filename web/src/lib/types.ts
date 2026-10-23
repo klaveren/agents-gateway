@@ -170,8 +170,8 @@ export interface IUser {
   lastLoginAt?: string
 }
 
+/** A sessão que o login devolve à TELA: sem o token, que fica no cookie HttpOnly. */
 export interface ISession {
-  token: string
   expiresAt: string
   user: IUser
 }
