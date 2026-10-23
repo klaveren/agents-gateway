@@ -63,7 +63,7 @@ export class McpServersService {
       url: input.url.trim(),
       transport: input.transport ?? 'auto',
       auth: input.auth ?? 'caller',
-      headerName: input.auth === 'header' ? input.headerName?.trim() || 'Authorization' : undefined,
+      headerName: (input.auth ?? 'caller') === 'none' ? undefined : input.headerName?.trim() || undefined,
       enabled: true,
       createdAt: this.now(),
       updatedAt: this.now(),
@@ -82,7 +82,7 @@ export class McpServersService {
   update(id: string, change: TMcpServerChange, by: string): IMcpServerConfig {
     const current = this.get(id)
     const next: IMcpServerConfig = { ...current, ...definedOnly(change) }
-    next.headerName = next.auth === 'header' ? next.headerName?.trim() || 'Authorization' : undefined
+    next.headerName = next.auth === 'none' ? undefined : next.headerName?.trim() || undefined
     const issues = issuesOf(next)
     if (issues.length) throw new InvalidMcpServerError(issues)
 
@@ -131,7 +131,7 @@ function issuesOf(config: IMcpServerConfig): Array<{ field: string; message: str
   if (urlIssue) issues.push({ field: 'url', message: urlIssue })
   if (!TRANSPORTS.includes(config.transport)) issues.push({ field: 'transport', message: `one of ${TRANSPORTS.join(', ')}` })
   if (!AUTHS.includes(config.auth)) issues.push({ field: 'auth', message: `one of ${AUTHS.join(', ')}` })
-  if (config.auth === 'header' && config.headerName && !HEADER_NAME.test(config.headerName)) issues.push({ field: 'headerName', message: 'letters, digits and hyphens' })
+  if (config.headerName && !HEADER_NAME.test(config.headerName)) issues.push({ field: 'headerName', message: 'letters, digits and hyphens' })
   return issues
 }
 

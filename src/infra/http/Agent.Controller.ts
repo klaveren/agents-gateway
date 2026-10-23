@@ -294,7 +294,8 @@ export class AgentController {
         const protocol = this.usecases.providers?.get(agent.provider)?.protocol ?? agent.provider
         if (protocol !== EProvider.GOOGLE) return undefined
         try {
-          assertNoAdkTemplateCollision(agent.systemPrompt)
+          // O soul vai junto no prompt: as mesmas `{chaves}` quebrariam o ADK nele também.
+          assertNoAdkTemplateCollision(`${agent.soul ?? ''}\n${agent.systemPrompt}`)
           return undefined
         } catch (error: unknown) {
           return error instanceof Error ? error.message : String(error)
@@ -902,6 +903,7 @@ function toAgentInput(id: string, body: TAgentBody): IAgent {
     name: body.name,
     provider: body.provider,
     systemPrompt: body.systemPrompt,
+    ...(body.soul?.trim() ? { soul: body.soul.trim() } : {}),
     models: [...new Set(body.models)],
     reasoningEfforts: body.reasoningEfforts?.length ? [...new Set(body.reasoningEfforts)] : undefined,
     modes: [...new Set(body.modes)],

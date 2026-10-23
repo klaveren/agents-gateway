@@ -95,6 +95,33 @@ describe('McpRegistry', () => {
     assert.strictEqual(registry.header('crm'), undefined)
   })
 
+  it('⚖️ semente nova chega a um banco já semeado (marca por servidor); a antiga marca vale para o default', () => {
+    const repository = new SqliteMcpServerRepository(':memory:')
+    repository.seedOnce([server({ id: 'default' })])
+    repository.delete('default')
+    repository.seedOnce([server({ id: 'default' }), server({ id: 'gateway' })])
+    assert.deepStrictEqual(
+      repository.list().map((entry) => entry.id),
+      ['gateway'],
+    )
+  })
+
+  it('`caller` com header configurado: a credencial de quem chama vai no header pedido', async () => {
+    const seen: Headers[] = []
+    const fakeFetch = (async (_input: unknown, init?: RequestInit) => {
+      seen.push(new Headers(init?.headers))
+      return new Response('nope', { status: 500 })
+    }) as typeof fetch
+    const client = new McpServerClient(
+      'http://127.0.0.1:1/mcp',
+      { fetch: fakeFetch },
+      { auth: 'caller', callerHeader: 'X-Tool-Authorization', fixedHeaders: () => ({ Authorization: 'Bearer portao' }) },
+    )
+    await client.connect()
+    assert.ok(seen.length > 0)
+    assert.ok(seen.every((headers) => headers.get('authorization') === 'Bearer portao'))
+  })
+
   it('a semente entra uma vez só: servidor apagado não volta no boot seguinte', () => {
     const repository = new SqliteMcpServerRepository(':memory:')
     repository.seedOnce([server({ id: 'default' })])

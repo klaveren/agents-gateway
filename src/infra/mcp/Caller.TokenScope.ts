@@ -24,13 +24,13 @@ export class CallerTokenScope {
    * `fetch` que leva a credencial do escopo atual. Sem credencial no escopo, vai sem header: o MCP
    * então cai no token do ambiente dele — é o que mantém `curl` e stdio funcionando.
    */
-  wrap(base: typeof fetch = fetch): typeof fetch {
+  wrap(base: typeof fetch = fetch, header = 'authorization'): typeof fetch {
     return (input, init) => {
       const token = this.storage.getStore()?.token
       if (!token) return base(input, init)
 
       const headers = new Headers(init?.headers)
-      headers.set('authorization', `Bearer ${token}`)
+      headers.set(header, `Bearer ${token}`)
 
       return base(input, { ...init, headers })
     }

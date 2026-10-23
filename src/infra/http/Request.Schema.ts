@@ -87,6 +87,7 @@ export const agentBodySchema = z.object({
   // O id de um provider configurado; se ele existe, quem diz é a regra (`protocolOf`), com o resto.
   provider: z.string().trim().min(1).max(32),
   systemPrompt: z.string().min(1),
+  soul: z.string().max(20_000).optional(),
   models: z.array(z.string().trim().min(1)).min(1).max(20),
   reasoningEfforts: z.array(z.string().trim().min(1)).max(10).optional(),
   modes: z.array(z.enum(EMode)).min(1),

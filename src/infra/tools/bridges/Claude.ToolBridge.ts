@@ -51,9 +51,10 @@ export function buildClaudeMcpServers(local: ILocalTool[], remotes: readonly IAg
 
 /** Os headers de um servidor MCP para quem conecta por conta própria (os SDKs agênticos). */
 export function mcpHeaders(remote: IAgentMcpServer, token?: string): Record<string, string> | undefined {
-  if (remote.config.auth === 'caller') return token ? { authorization: `Bearer ${token}` } : undefined
-  if (remote.config.auth === 'header' && remote.header) return { [remote.header.name]: remote.header.value }
-  return undefined
+  const headers: Record<string, string> = { ...remote.fixed }
+  if (remote.config.auth === 'caller' && token) headers[remote.callerHeader ?? 'authorization'] = `Bearer ${token}`
+  if (remote.config.auth === 'header' && remote.header) headers[remote.header.name] = remote.header.value
+  return Object.keys(headers).length ? headers : undefined
 }
 
 /** O helper `tool()` do SDK só aceita raw shape do zod, não JSON Schema. */

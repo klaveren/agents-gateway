@@ -45,6 +45,8 @@ export interface IAgentDto {
  */
 export interface IAgentDetailDto extends IAgentDto {
   systemPrompt: string
+  /** Quem o agente é (personalidade). Só para quem administra, como o prompt. */
+  soul?: string
   /** Modelos que o agente declara e que estão DESLIGADOS no catálogo: não são oferecidos até religar. */
   disabledModels?: string[]
   updatedAt?: Date
@@ -90,6 +92,7 @@ export function toAgentDetailDto(
   return {
     ...toAgentDto(entry.agent, pricing, entry.builtIn, reasoning),
     systemPrompt: entry.agent.systemPrompt,
+    soul: entry.agent.soul,
     updatedAt: entry.updatedAt,
     updatedBy: entry.updatedBy,
     disabledModels,

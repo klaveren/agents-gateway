@@ -45,4 +45,10 @@ describe('pontes MCP com vários servidores', () => {
       ],
     )
   })
+
+  it('a credencial de quem conversa vai no header configurado, mais os headers fixos (o portão)', () => {
+    const self: IAgentMcpServer = { config: config('gateway'), callerHeader: 'X-Tool-Authorization', fixed: { Authorization: 'Bearer portao' } }
+    const servers = buildClaudeMcpServers([], [self], 'jwt') as Record<string, { headers?: Record<string, string> }>
+    assert.deepStrictEqual(servers.mcp_gateway.headers, { Authorization: 'Bearer portao', 'X-Tool-Authorization': 'Bearer jwt' })
+  })
 })

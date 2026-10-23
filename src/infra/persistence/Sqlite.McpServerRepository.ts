@@ -92,10 +92,18 @@ export class SqliteMcpServerRepository implements IMcpServerRepository {
     return this.db.prepare('DELETE FROM mcp_servers WHERE id = ?').run(id).changes > 0
   }
 
+  /**
+   * ⚖️ A MARCA É POR SERVIDOR (`seeded:<id>`): uma semente nova (o MCP do próprio gateway) chega a um banco
+   * antigo, e a que foi apagada não volta. A marca antiga, do banco inteiro, vale como a do `default`.
+   */
   seedOnce(servers: readonly IMcpServerConfig[]): void {
-    if (this.db.prepare("SELECT 1 FROM mcp_meta WHERE key = 'seeded'").get()) return
-    for (const server of servers) if (!this.get(server.id)) this.insert(server)
-    this.db.prepare("INSERT INTO mcp_meta (key, value) VALUES ('seeded', ?)").run(new Date().toISOString())
+    const legacy = !!this.db.prepare("SELECT 1 FROM mcp_meta WHERE key = 'seeded'").get()
+    for (const server of servers) {
+      const key = `seeded:${server.id}`
+      if (this.db.prepare('SELECT 1 FROM mcp_meta WHERE key = ?').get(key) || (legacy && server.id === 'default')) continue
+      if (!this.get(server.id)) this.insert(server)
+      this.db.prepare('INSERT INTO mcp_meta (key, value) VALUES (?, ?)').run(key, new Date().toISOString())
+    }
   }
 }
 

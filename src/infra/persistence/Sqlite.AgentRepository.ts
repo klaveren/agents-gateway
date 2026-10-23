@@ -28,6 +28,9 @@ const SCHEMA = `
 
 type TRow = Record<string, unknown>
 
+/** Os agentes da semente de antes da marca por agente: num banco com a marca antiga, já foram semeados. */
+const LEGACY_SEED = ['researcher-agent', 'sysops-agent', 'analyst-agent']
+
 /** Os agentes criados pela tela, no mesmo arquivo das conversas (`CONVERSATIONS_DB`). */
 export class SqliteAgentRepository implements IAgentRepository {
   private readonly db: DatabaseSync
@@ -75,12 +78,21 @@ export class SqliteAgentRepository implements IAgentRepository {
    * de voltar no boot seguinte; id que já existe não é sobrescrito.
    */
   seedOnce(agents: readonly IAgent[], by: string): void {
-    if (this.db.prepare("SELECT 1 FROM agent_meta WHERE key = 'seeded'").get()) return
-
+    // ⚖️ A marca é POR AGENTE (`seeded:<id>`): um agente novo na semente chega a um banco antigo, e um
+    // apagado não volta. A marca antiga, do banco inteiro, vale para os agentes que já existiam nela.
+    const legacy = !!this.db.prepare("SELECT 1 FROM agent_meta WHERE key = 'seeded'").get()
     const now = new Date().toISOString()
     const insert = this.db.prepare('INSERT OR IGNORE INTO agents (id, document, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?)')
-    for (const agent of agents) insert.run(agent.id, JSON.stringify(agent), now, now, by)
-    this.db.prepare("INSERT INTO agent_meta (key, value) VALUES ('seeded', ?)").run(now)
+    const marked = this.db.prepare('SELECT 1 FROM agent_meta WHERE key = ?')
+    const mark = this.db.prepare('INSERT OR IGNORE INTO agent_meta (key, value) VALUES (?, ?)')
+
+    for (const agent of agents) {
+      const key = `seeded:${agent.id}`
+      if (marked.get(key) || (legacy && LEGACY_SEED.includes(agent.id))) continue
+      insert.run(agent.id, JSON.stringify(agent), now, now, by)
+      mark.run(key, now)
+    }
+    if (!legacy) mark.run('seeded', now)
   }
 
   delete(id: string): boolean {

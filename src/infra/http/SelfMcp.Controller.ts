@@ -73,19 +73,20 @@ function turnView(result: unknown) {
 const agentShape = {
   id: z.string().describe('2–48 lowercase letters, digits or hyphens.'),
   name: z.string(),
+  soul: z.string().optional().describe('Who the agent is: identity, tone, values, way of speaking. The system prompt says what it does.'),
   provider: z.string().describe('A configured provider id (claude, openai, google or a compatible one).'),
   systemPrompt: z.string(),
   models: z.array(z.string()).describe('Models ENABLED in that provider catalog; the first is the default.'),
   reasoningEfforts: z.array(z.string()).optional(),
   modes: z.array(z.enum(['chat', 'agent'])),
-  allowedTools: z.array(z.string()).default([]),
+  allowedTools: z.array(z.string()).default([]).describe('Local names, `sdk:…` natives and `mcp:<server>/<tool>`; see list_tools.'),
 }
 
 /**
  * As ferramentas, segundo quem chama.
  *
  * ⛔ Ferramenta de admin NEM É REGISTRADA para quem não administra, e as de escrita só existem com
- * `SELF_MCP_WRITE=1` — o cliente não vê o que não pode usar. A API, por baixo, recusaria de qualquer jeito.
+ * `SELF_MCP_WRITE=0` desligando — o cliente não vê o que não pode usar. A API, por baixo, recusaria de qualquer jeito.
  * ⛔ Chave de API e senha não passam por aqui: não há ferramenta para elas.
  */
 function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolean; write: boolean }) {
@@ -215,6 +216,38 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   )
 
   server.registerTool(
+    'list_tools',
+    {
+      description:
+        'Everything an agent can be given in allowedTools: local tools (by name), SDK native tools (`sdk:…`, per provider protocol, with risk) and the MCP servers with their tools (`mcp:<server>/<tool>` or `mcp:<server>/*`).',
+      annotations: { readOnlyHint: true },
+    },
+    async () => {
+      const catalog = await api('GET', '/tools')
+      if (!catalog.ok) return reply(catalog)
+      const { tools, native } = catalog.result as {
+        tools?: Array<{ name: string; description: string }>
+        native?: Array<{ id: string; protocol: string; label: string; risk: string; officialOnly: boolean }>
+      }
+      const servers = await api('GET', '/mcp-servers')
+      const mcp = servers.ok
+        ? await Promise.all(
+            ((servers.result as Array<{ id: string; name: string; enabled: boolean }>) ?? [])
+              .filter((entry) => entry.enabled)
+              .map(async (entry) => {
+                const listed = await api('GET', `/mcp-servers/${encodeURIComponent(entry.id)}/tools`)
+                const names = listed.ok
+                  ? ((listed.result as Array<{ name: string; description: string }>) ?? []).map((tool) => ({ ref: `mcp:${entry.id}/${tool.name}`, description: tool.description }))
+                  : []
+                return { server: entry.id, name: entry.name, all: `mcp:${entry.id}/*`, tools: names }
+              }),
+          )
+        : []
+      return text({ local: (tools ?? []).map((tool) => ({ name: tool.name, description: tool.description })), native, mcp })
+    },
+  )
+
+  server.registerTool(
     'get_agent',
     { description: 'One agent in full, system prompt included.', inputSchema: { agentId: z.string() }, annotations: { readOnlyHint: true } },
     async ({ agentId }) => reply(await api('GET', `/agents/${encodeURIComponent(agentId)}`)),
@@ -229,6 +262,23 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
       inputSchema: { providerId: z.string(), modelId: z.string(), enabled: z.boolean() },
     },
     async ({ providerId, modelId, enabled }) => reply(await api('PUT', `/providers/${encodeURIComponent(providerId)}/models`, { body: { modelId, enabled } })),
+  )
+
+  server.registerTool(
+    'set_model_price',
+    {
+      description:
+        'Set the price of a model in a provider catalog, in USD per 1M tokens (saved as a manual price, which syncs never overwrite). Use official pricing pages as the source; never guess.',
+      inputSchema: {
+        providerId: z.string(),
+        modelId: z.string(),
+        input: z.number().min(0).max(10000).describe('USD per 1M fresh input tokens'),
+        output: z.number().min(0).max(10000).describe('USD per 1M output tokens'),
+        cacheRead: z.number().min(0).max(10000).optional(),
+        cacheWrite: z.number().min(0).max(10000).optional(),
+      },
+    },
+    async ({ providerId, modelId, ...price }) => reply(await api('PUT', `/providers/${encodeURIComponent(providerId)}/models`, { body: { modelId, price } })),
   )
 
   server.registerTool(
@@ -264,7 +314,9 @@ async function serve(req: Request, res: Response): Promise<void> {
   // A mesma regra da tela: só quem administra lê `/settings`.
   const admin = (await api('GET', '/settings')).ok
   const server = new McpServer({ name: 'agents-gateway', version: '1.0.0' })
-  registerTools(server, api, { admin, write: process.env.SELF_MCP_WRITE === '1' })
+  // ⚖️ Escrita LIGADA para admin por padrão (o Atlas precisa dela); `SELF_MCP_WRITE=0` desliga. A API, por
+  // baixo, continua só deixando admin escrever.
+  registerTools(server, api, { admin, write: process.env.SELF_MCP_WRITE !== '0' })
 
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
   res.on('close', () => {

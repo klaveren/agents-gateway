@@ -102,7 +102,7 @@ function makeDefault(modelId: string) {
 /** Ferramentas que mudam algo fora da conversa: o formulário avisa antes de dar ao agente. */
 const DANGEROUS = new Set(['run_bash'])
 
-const blank = (): IAgentInput => ({ id: '', name: '', provider: 'claude', systemPrompt: '', models: [], reasoningEfforts: [], modes: ['chat', 'agent'], allowedTools: [] })
+const blank = (): IAgentInput => ({ id: '', name: '', provider: 'claude', soul: '', systemPrompt: '', models: [], reasoningEfforts: [], modes: ['chat', 'agent'], allowedTools: [] })
 const form = ref<IAgentInput>(blank())
 /** Modelos que o agente declarava e que estão desligados no catálogo: saem ao salvar. */
 const droppedModels = ref<string[]>([])
@@ -133,7 +133,7 @@ const readOnly = computed(() => !!props.agent?.builtIn && !props.creating)
 watch(
   () => [props.agent, props.creating] as const,
   ([agent]) => {
-    form.value = agent ? { id: agent.id, name: agent.name, provider: agent.provider, systemPrompt: agent.systemPrompt, models: [...agent.models], reasoningEfforts: [...(agent.reasoningEfforts ?? [])], modes: [...agent.modes], allowedTools: [...agent.allowedTools] } : blank()
+    form.value = agent ? { id: agent.id, name: agent.name, provider: agent.provider, soul: agent.soul ?? '', systemPrompt: agent.systemPrompt, models: [...agent.models], reasoningEfforts: [...(agent.reasoningEfforts ?? [])], modes: [...agent.modes], allowedTools: [...agent.allowedTools] } : blank()
     // Os desligados no catálogo não entram no formulário: salvar com eles seria recusado.
     droppedModels.value = agent?.disabledModels ?? []
     form.value.models = form.value.models.filter((model) => !droppedModels.value.includes(model))
@@ -340,7 +340,12 @@ async function remove() {
       </div>
 
       <label class="field sm:col-span-2">
-        <span>Instrução do sistema</span>
+        <span>Soul <em class="font-normal text-zinc-500">— quem o agente é: identidade, tom, valores, jeito de falar. Vai para o modelo antes do prompt.</em></span>
+        <textarea v-model="form.soul" rows="4" maxlength="8000" class="input scroll-thin text-[13px] leading-relaxed" placeholder="Você é a Íris: gentil, direta, explica sem jargão e admite quando não sabe." />
+        <small v-for="message in issues.soul" :key="message" class="error">{{ message }}</small>
+      </label>
+      <label class="field sm:col-span-2">
+        <span>Instrução do sistema <em class="font-normal text-zinc-500">— o que o agente faz: função, regras, como usar as ferramentas</em></span>
         <textarea v-model="form.systemPrompt" required rows="10" class="input scroll-thin font-mono text-[13px] leading-relaxed" placeholder="Você é o agente…" />
         <small v-if="protocol === 'google'" class="hint">Gemini (ADK): não use {chaves} — o ADK as lê como variável de sessão.</small>
         <small v-for="message in issues.systemPrompt" :key="message" class="error">{{ message }}</small>

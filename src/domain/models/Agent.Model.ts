@@ -5,6 +5,11 @@ export interface IAgent {
   name: string
   /** O id do provider configurado. Os oficiais têm id igual ao protocolo (`claude`, `openai`, `google`). */
   provider: string
+  /**
+   * QUEM o agente é: identidade, tom, valores, jeito de falar. ⚖️ Separado do `systemPrompt`, que diz O QUE
+   * ele faz (função, regras): dá para ajustar a personalidade sem mexer nas regras, e vice-versa.
+   */
+  soul?: string
   systemPrompt: string
   models: string[]
   reasoningEfforts?: string[]
