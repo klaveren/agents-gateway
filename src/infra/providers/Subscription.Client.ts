@@ -1,3 +1,4 @@
+import { Terminal } from '@xterm/headless'
 import { ChildProcess, execFile, spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
@@ -11,6 +12,7 @@ import { IModelPrice, MODEL_PRICING, TModelPricing } from '@domain/models/Model.
 import { REASONING_LEVELS } from '@domain/Reasoning.Levels'
 import { antigravityBin } from '@infra/adapters/AntigravityAgent.Adapter'
 import { CODEX_LOCKED_FEATURES } from '@infra/adapters/CodexAgent.Adapter'
+import { claudeBinary } from '@infra/adapters/support/Claude.Binary'
 import { codexBinary, untestedCodex } from '@infra/adapters/support/Codex.Binary'
 import { esmImport } from '@infra/adapters/support/Esm.Import'
 import { subscriptionEnv, subscriptionHome } from '@infra/adapters/support/Subscription.Workspace'
@@ -123,7 +125,13 @@ async function probeTurn(protocol: EProvider, workspace: string, token?: string)
     let text = ''
     for await (const message of query({
       prompt: PROBE_PROMPT,
-      options: { cwd: workspace, tools: [], settingSources: [], maxTurns: 1, env: subscriptionEnv({ HOME: homedir(), CLAUDE_CODE_OAUTH_TOKEN: token, ENABLE_CLAUDEAI_MCP_SERVERS: 'false' }) },
+      options: {
+        cwd: workspace,
+        tools: [],
+        settingSources: [],
+        maxTurns: 1,
+        env: subscriptionEnv({ HOME: homedir(), CLAUDE_CODE_OAUTH_TOKEN: token, ENABLE_CLAUDEAI_MCP_SERVERS: 'false' }),
+      },
     })) {
       if (message.type !== 'result') continue
       if (message.subtype !== 'success' || message.is_error)
@@ -191,16 +199,41 @@ export interface ISubscriptionLoginView {
   needsCode: boolean
   expiresAt?: string
   message?: string
+  /** O cliente não está nesta máquina: a tela mostra como instalar, em vez de um erro. */
+  missing?: boolean
+}
+
+export interface ILoginOptions {
+  /** O login que termina num TOKEN (Claude): quem o guarda — no cofre, cifrado. ⛔ Ele não vai para a tela. */
+  onToken?: (token: string) => void
 }
 
 interface ILoginRun {
   child: ChildProcess
   view: ISubscriptionLoginView
   output: string
+  /** O token que o login do Claude imprimiu — só até ir para o cofre. */
+  token?: string
 }
 
-// eslint-disable-next-line no-control-regex -- é exatamente o ESC das cores de terminal
-const ANSI = /\u001b\[[0-9;?]*[a-zA-Z]/g
+/** O hiperlink de terminal (OSC 8): `ESC ] 8 ; ; <url> BEL`. O Claude Code entrega o link do login assim, inteiro. */
+// eslint-disable-next-line no-control-regex -- os bytes ESC e BEL do OSC 8
+const OSC8_URL = /\u001b\]8;[^;]*;(https:\/\/[^\u0007\u001b]+)/
+/**
+ * O token de um ano do `claude setup-token` (`sk-ant-oat01-…`), COMPLETO: seguido de espaço ou quebra de
+ * linha — um pedaço que chegou primeiro não vale. ⛔ Nunca sai do servidor: vai para o cofre.
+ * O prefixo fica aberto (`sk-ant-<tipo><nn>-`) para um formato novo não escapar da captura.
+ */
+const CLAUDE_TOKEN_DONE = /sk-ant-[a-z]*\d{2}-[A-Za-z0-9_-]{20,}(?=\s)/
+/** ⛔ Máscara GENÉRICA da saída guardada e do log: qualquer `sk-…` longo, seja qual for o formato. */
+const ANY_SECRET = /sk-[A-Za-z0-9_-]{16,}/g
+
+/** O que cada login procura na saída do cliente: o link a abrir e, no Codex, o código de dispositivo. */
+const LOGIN_URL: Partial<Record<EProvider, RegExp>> = {
+  [EProvider.CODEX]: /https:\/\/auth\.openai\.com\/\S+/,
+  [EProvider.ANTIGRAVITY]: /https:\/\/accounts\.google\.com\/\S+/,
+  [EProvider.CLAUDE_SUB]: /https:\/\/claude\.(?:com|ai)\/\S*oauth\/authorize\S+/,
+}
 
 /**
  * O login de uma assinatura pela TELA: o gateway roda o login oficial do cliente, num HOME só dele, e
@@ -219,8 +252,12 @@ export class SubscriptionLogins {
     return this.runs.get(protocol)?.view ?? { state: 'idle', needsCode: false }
   }
 
-  async start(protocol: EProvider): Promise<ISubscriptionLoginView> {
+  async start(protocol: EProvider, options: ILoginOptions = {}): Promise<ISubscriptionLoginView> {
     this.cancel(protocol)
+    if (protocol === EProvider.ANTIGRAVITY && !onPath(antigravityBin())) {
+      const view: ISubscriptionLoginView = { state: 'failed', needsCode: false, missing: true, message: `O Antigravity CLI (${antigravityBin()}) não está nesta máquina.` }
+      return view
+    }
     const { command, args, home, needsCode, ttlMs } = loginCommand(protocol)
     const child = this.spawner(command, args, {
       cwd: home,
@@ -229,15 +266,36 @@ export class SubscriptionLogins {
       // Grupo próprio: cancelar mata o `sh`, o `script` e o cliente juntos.
       detached: true,
     })
+    // A tela do terminal, larga como o pseudo-terminal (400 colunas): é dela que se lê o que o cliente mostrou.
+    const screen = new Terminal({ cols: 400, rows: 60, scrollback: 2000, allowProposedApi: true })
     const current: ILoginRun = { child, output: '', view: { state: 'waiting', needsCode, expiresAt: new Date(Date.now() + ttlMs).toISOString() } }
     this.runs.set(protocol, current)
 
     const seen = new Promise<void>((resolve) => {
       const read = (chunk: Buffer) => {
-        current.output = (current.output + chunk.toString().replace(ANSI, '')).slice(-20_000)
-        current.view.url ??= current.output.match(protocol === EProvider.CODEX ? /https:\/\/auth\.openai\.com\/\S+/ : /https:\/\/accounts\.google\.com\/\S+/)?.[0]
-        if (protocol === EProvider.CODEX) current.view.userCode ??= current.output.match(/\b[A-Z0-9]{4}-[A-Z0-9]{4,6}\b/)?.[0]
-        if (current.view.url && (protocol !== EProvider.CODEX || current.view.userCode)) resolve()
+        const raw = chunk.toString()
+        // O link inteiro vem no hiperlink do terminal (OSC 8), no fluxo bruto.
+        current.view.url ??= OSC8_URL.exec(raw)?.[1]
+        // ⚠️ O resto se lê na TELA RENDERIZADA, não no fluxo com os códigos arrancados: os clientes desenham
+        // com movimento de cursor, e tirar os códigos por regex perdia caractere — o token do Claude saía
+        // `sk-ant-at01-` em vez de `sk-ant-oat01-` (e o 401 dizia "Not logged in").
+        screen.write(raw, () => {
+          const text = rendered(screen)
+          // ⛔ O token não fica na saída guardada (ela vira mensagem de erro) — só no `current.token`, até o cofre.
+          // ⛔ Só nas linhas que o cursor JÁ DEIXOU: na linha em que ele está, o token pode estar pela metade.
+          const token = CLAUDE_TOKEN_DONE.exec(`${rendered(screen, true)}\n`)?.[0]
+          if (token) current.token = token
+          current.output = text.replace(ANY_SECRET, '[token]').slice(-20_000)
+          current.view.url ??= LOGIN_URL[protocol]?.exec(current.output)?.[0]
+          // ⚠️ O `claude setup-token` NÃO SAI sozinho: depois do token (ou de um erro) ele espera um Enter.
+          // Esperar o `close` deixava a tela em "aguardando" para sempre — termina aqui, pelo que apareceu.
+          if (protocol === EProvider.CLAUDE_SUB && current.view.state === 'waiting') {
+            if (current.token) this.finishClaude(protocol, current, options)
+            else if (/OAuth error[^\n]*/i.test(current.output)) this.failClaude(protocol, current)
+          }
+          if (protocol === EProvider.CODEX) current.view.userCode ??= current.output.match(/\b[A-Z0-9]{4}-[A-Z0-9]{4,6}\b/)?.[0]
+          if (current.view.url && (protocol !== EProvider.CODEX || current.view.userCode)) resolve()
+        })
       }
       child.stdout?.on('data', read)
       child.stderr?.on('data', read)
@@ -246,22 +304,73 @@ export class SubscriptionLogins {
     })
 
     child.on('error', (error) => Object.assign(current.view, { state: 'failed', message: error.message }))
-    child.on('close', (code) => {
-      if (current.view.state !== 'waiting') return
-      const ok = protocol === EProvider.ANTIGRAVITY ? /"status"\s*:\s*"SUCCESS"/.test(current.output) : code === 0
-      Object.assign(current.view, ok ? { state: 'done', message: 'Conectado.' } : { state: 'failed', message: loginFailure(current.output, code) })
-    })
+    // O `close` espera a tela processar o que já chegou: a última linha (o JSON do Antigravity) pode estar na fila.
+    child.on('close', (code) =>
+      screen.write('', () => {
+        if (current.view.state !== 'waiting') return
+        let ok = protocol === EProvider.ANTIGRAVITY ? /"status"\s*:\s*"SUCCESS"/.test(current.output) : code === 0
+        // O Claude termina pelo que aparece na saída (ver `read`); saiu sem token, falhou.
+        if (protocol === EProvider.CLAUDE_SUB) ok = false
+        Object.assign(current.view, ok ? { state: 'done', message: 'Conectado.' } : { state: 'failed', message: loginFailure(current.output, code) })
+      }),
+    )
 
     await seen
     return current.view
+  }
+
+  private finishClaude(protocol: EProvider, current: ILoginRun, options: ILoginOptions): void {
+    try {
+      options.onToken?.(current.token as string)
+      Object.assign(current.view, { state: 'done', message: 'Conectado.' })
+    } catch (error: unknown) {
+      Object.assign(current.view, { state: 'failed', message: `O token não pôde ser salvo: ${error instanceof Error ? error.message : String(error)}` })
+    }
+    current.token = undefined
+    this.stop(current)
+  }
+
+  private failClaude(protocol: EProvider, current: ILoginRun): void {
+    const reason = /OAuth error:?\s*([^\n]*?)(?:Press Enter to retry\.?)?\s*$/im.exec(current.output)?.[1]?.trim() || 'o Claude recusou o código'
+    Object.assign(current.view, { state: 'failed', message: `${reason} Clique em Entrar de novo e use o código do link novo.` })
+    this.stop(current)
+  }
+
+  /** Encerra o processo de um login (o grupo inteiro: `sh`, `script` e o cliente). */
+  private stop(current: ILoginRun): void {
+    if (current.child.exitCode !== null || !current.child.pid) {
+      if (current.child.exitCode === null) current.child.kill('SIGTERM')
+      return
+    }
+    try {
+      process.kill(-current.child.pid, 'SIGTERM')
+    } catch {
+      current.child.kill('SIGTERM')
+    }
   }
 
   /** O código que a página de login devolveu (Antigravity), direto para o processo que espera. */
   submit(protocol: EProvider, code: string): ISubscriptionLoginView {
     const current = this.runs.get(protocol)
     if (!current || current.view.state !== 'waiting' || !current.view.needsCode) return this.view(protocol)
-    // Num pseudo-terminal, o Enter é `\r`.
-    current.child.stdin?.write(`${code.trim()}\r`)
+    // Num pseudo-terminal, o Enter é `\r`. ⚠️ SEPARADO do código e um instante depois: o campo do Claude
+    // trata um bloco grande que chega de uma vez como COLAGEM e engole o `\r` junto — o código aparecia
+    // mascarado e nunca era enviado (verificado com um código real de 92 caracteres).
+    const before = current.output.length
+    current.child.stdin?.write(code.trim())
+    setTimeout(() => current.child.stdin?.write('\r'), 600)
+    // Diagnóstico (`LOGIN_DEBUG=1`): o que o cliente respondeu ao código, com o token sempre mascarado.
+    if (process.env.LOGIN_DEBUG?.trim() === '1') {
+      for (const delay of [3_000, 10_000, 25_000]) {
+        setTimeout(
+          () =>
+            console.log(
+              `[login-debug ${protocol} +${delay / 1000}s] ${JSON.stringify(current.output.slice(before).replace(ANY_SECRET, '[token]').replace(/\s+/g, ' ').slice(-800))}`,
+            ),
+          delay,
+        )
+      }
+    }
     return current.view
   }
 
@@ -291,18 +400,45 @@ function loginCommand(protocol: EProvider): { command: string; args: string[]; h
     // O login do `agy` acontece no primeiro uso: um turno mínimo que, sem conta, pede para entrar.
     // ⚠️ Só com TERMINAL: sem TTY ele recusa ("Run 'agy' to log in"). O `script` dá um pseudo-terminal.
     const agy = [antigravityBin(), `-p=${PROBE_PROMPT}`, '--output-format', 'json', '--print-timeout', '120s', '--sandbox']
-    const pty =
-      process.platform === 'darwin'
-        ? // O `script` do macOS não aceita socket como entrada (o `stdin` do Node é um): o `cat` põe um pipe no meio.
-          { command: '/bin/sh', args: ['-c', 'cat | script -q /dev/null "$@"', 'sh', ...agy] }
-        : { command: 'script', args: ['-qfec', agy.map(shellQuote).join(' '), '/dev/null'] }
-    return { ...pty, home: subscriptionHome('antigravity'), needsCode: true, ttlMs: 60_000 }
+    return { ...inTerminal(agy), home: subscriptionHome('antigravity'), needsCode: true, ttlMs: 60_000 }
+  }
+  if (protocol === EProvider.CLAUDE_SUB) {
+    // `claude setup-token`: o login da conta Claude que termina num token de um ano. Também só com TERMINAL.
+    return { ...inTerminal([claudeBinary(), 'setup-token']), home: subscriptionHome('claude'), needsCode: true, ttlMs: 10 * 60_000 }
   }
   throw new Error(`${protocol} has no login here`)
 }
 
+/**
+ * Um comando num PSEUDO-TERMINAL, largo (400 colunas, para link e token não quebrarem de linha).
+ * macOS: o `script` não aceita socket como entrada (o `stdin` do Node é um), então o `cat` põe um pipe no
+ * meio. Linux: o `script` do util-linux, com `-e` para devolver o código de saída do comando.
+ */
+export function inTerminal(argv: readonly string[], platform: string = process.platform): { command: string; args: string[] } {
+  const wide = `stty cols 400 rows 50 2>/dev/null; exec ${argv.map(shellQuote).join(' ')}`
+  return platform === 'darwin'
+    ? { command: '/bin/sh', args: ['-c', 'cat | script -q /dev/null /bin/sh -c "$1"', 'sh', wide] }
+    : { command: 'script', args: ['-qfec', wide, '/dev/null'] }
+}
+
+/** O binário existe: caminho absoluto, ou algum diretório do PATH. */
+export function onPath(command: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (command.includes('/')) return existsSync(command)
+  return (env.PATH ?? '').split(':').some((dir) => dir && existsSync(join(dir, command)))
+}
+
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
+/** O texto da tela, linha a linha, como uma pessoa o veria. */
+function rendered(screen: Terminal, finishedOnly = false): string {
+  const buffer = screen.buffer.active
+  // `finishedOnly`: só até a linha ANTES do cursor (as que o cliente já terminou de escrever).
+  const end = finishedOnly ? buffer.baseY + buffer.cursorY : buffer.length
+  const lines: string[] = []
+  for (let index = 0; index < end; index++) lines.push(buffer.getLine(index)?.translateToString(true) ?? '')
+  return lines.join('\n').replace(/\n+$/, '')
 }
 
 function loginFailure(output: string, code: number | null): string {

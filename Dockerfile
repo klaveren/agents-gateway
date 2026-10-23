@@ -3,6 +3,10 @@
 # A deny-list do run_bash barra o comando catastrófico, mas não é contenção: um modelo com
 # shell continua rodando como o seu usuário, no seu $HOME. Este container é a contenção.
 
+# Globais: valem nas linhas `FROM` (o estágio do Antigravity escolhe o download pela arquitetura).
+ARG AGY_VERSION=1.4.6
+ARG TARGETARCH
+
 FROM node:24-slim AS build
 WORKDIR /app
 RUN corepack enable
@@ -29,6 +33,22 @@ COPY package.json pnpm-lock.yaml ./
 # plataforma, e sem ele a lane agent do Claude falha no primeiro turno.
 RUN pnpm install --frozen-lockfile --prod
 
+# O Antigravity CLI oficial (github.com/google-antigravity/antigravity-cli): versão FIXA e sha256 CONFERIDO
+# pelo próprio BuildKit (`ADD --checksum`) — download que não bate com o hash derruba o build.
+FROM scratch AS agy-arm64
+ARG AGY_VERSION
+ADD --checksum=sha256:ef88c996178b55a3c5416f2c8b67a9c343ac0a62c900e7b7158ee2ff1135ad96 \
+    https://github.com/google-antigravity/antigravity-cli/releases/download/${AGY_VERSION}/agy_cli_linux_arm64.tar.gz /agy.tar.gz
+FROM scratch AS agy-amd64
+ARG AGY_VERSION
+ADD --checksum=sha256:513c74ad3e70323839a65d8dccc6f9977b0903e5facd914cbb06be283c2bb640 \
+    https://github.com/google-antigravity/antigravity-cli/releases/download/${AGY_VERSION}/agy_cli_linux_x64.tar.gz /agy.tar.gz
+# `TARGETARCH` (do buildx: amd64 / arm64) escolhe o download da plataforma.
+FROM agy-${TARGETARCH} AS agy-download
+FROM node:24-slim AS agy
+COPY --from=agy-download /agy.tar.gz /tmp/agy.tar.gz
+RUN mkdir -p /opt/agy && tar -xzf /tmp/agy.tar.gz -C /opt/agy && chmod 0755 /opt/agy/antigravity
+
 FROM node:24-slim AS runtime
 ARG BUILD_VERSION=dev
 ARG BUILD_REVISION=unknown
@@ -46,6 +66,13 @@ ENV NODE_ENV=production \
 # o exec() usa /bin/sh diretamente e não depende do shell de login.
 # `/app/data` é o ÚNICO lugar gravável além de /tmp: banco, chave-mestra e logins (o PVC monta aqui).
 # Com isso a imagem roda com `readOnlyRootFilesystem`.
+# ⚠️ `ca-certificates`: o `node:24-slim` não traz os certificados do sistema. O Node não sente (tem os dele),
+# mas o Codex (Rust) e o Antigravity (Go) usam os do sistema — sem eles, todo login e toda conversa por
+# assinatura falhava com "error sending request".
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin gateway \
     && mkdir -p /app/data \
     && chown gateway:gateway /app/data
@@ -58,6 +85,8 @@ COPY package.json ./
 # Http.Server procura (dist/infra/http/public).
 COPY src/infra/http/public ./dist/infra/http/public
 COPY --from=web /web/dist ./web/dist
+# O Antigravity no PATH como `agy` (o nome que o gateway procura; `ANTIGRAVITY_BIN` troca).
+COPY --from=agy /opt/agy/antigravity /usr/local/bin/agy
 
 USER gateway
 VOLUME ["/app/data"]

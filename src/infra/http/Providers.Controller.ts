@@ -256,8 +256,11 @@ export class ProvidersController {
   /** Começa o login oficial do cliente (num HOME só do gateway) e devolve o link para abrir. */
   async loginStart(req: Request, res: Response) {
     await this.respond(res, async () => {
-      await this.requireAdmin('subscriptionLogin')
-      return this.logins.start(this.subscriptionOf(req))
+      const admin = await this.requireAdmin('subscriptionLogin')
+      const protocol = this.subscriptionOf(req)
+      const provider = this.deps.providers.get(this.idOf(req)) as IProviderConfig
+      // O login do Claude termina num token: ele vai direto para o cofre, como a "chave" deste provider.
+      return this.logins.start(protocol, { onToken: (token) => this.deps.credentials.save(provider.id, token, admin) })
     })
   }
 
@@ -280,7 +283,8 @@ export class ProvidersController {
 
   private subscriptionOf(req: Request): EProvider {
     const provider = this.deps.providers.get(this.idOf(req)) as IProviderConfig
-    if (provider.protocol !== EProvider.CODEX && provider.protocol !== EProvider.ANTIGRAVITY) throw new HttpError(422, 'validation_error', 'Este provider não tem login pela tela.')
+    if (provider.protocol !== EProvider.CODEX && provider.protocol !== EProvider.ANTIGRAVITY && provider.protocol !== EProvider.CLAUDE_SUB)
+      throw new HttpError(422, 'validation_error', 'Este provider não tem login pela tela.')
     return provider.protocol
   }
 
