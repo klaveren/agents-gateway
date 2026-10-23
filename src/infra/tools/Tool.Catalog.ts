@@ -20,6 +20,10 @@ export interface IAgentMcpServer {
   tools?: string[]
   /** O header fixo (`auth: header`). `caller` usa a credencial da chamada; `none`, nada. */
   header?: { name: string; value: string }
+  /** Em que header vai a credencial de `auth: caller` (padrão `authorization`). */
+  callerHeader?: string
+  /** Headers de toda requisição, além da credencial (ex.: o portão do próprio gateway). */
+  fixed?: Record<string, string>
 }
 
 /** O servidor do `CALLER_PROOF_TOOL` quando o nome vem solto (o semeado de `MCP_SERVER_URL`). */
@@ -101,7 +105,14 @@ export class ToolCatalog {
       const client = await this.mcp.connected(id)
       const config = this.mcp.get(id)
       if (!client || !config) continue
-      servers.push({ config, ...(choice.all ? {} : { tools: [...choice.tools] }), ...(config.auth === 'header' ? { header: this.mcp.header(id) } : {}) })
+      const fixed = this.mcp.fixedHeaders(config)
+      servers.push({
+        config,
+        ...(choice.all ? {} : { tools: [...choice.tools] }),
+        ...(config.auth === 'header' ? { header: this.mcp.header(id) } : {}),
+        ...(config.auth === 'caller' && config.headerName ? { callerHeader: config.headerName } : {}),
+        ...(fixed ? { fixed } : {}),
+      })
     }
     return servers
   }

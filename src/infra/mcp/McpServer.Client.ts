@@ -28,6 +28,10 @@ export interface IMcpClientOptions {
   /** O header fixo de `auth: header`, LIDO A CADA REQUISIÇÃO: trocar o segredo vale sem reconectar. */
   header?: () => { name: string; value: string } | undefined
   transport?: TMcpTransport
+  /** Em que header vai a credencial de `auth: caller`. Padrão `authorization`. */
+  callerHeader?: string
+  /** Headers fixos de toda requisição (ex.: o `GATEWAY_TOKEN` do portão, no MCP do próprio gateway). */
+  fixedHeaders?: () => Record<string, string> | undefined
   /** O nome no log (o id do servidor). */
   label?: string
 }
@@ -218,15 +222,25 @@ export class McpServerClient {
    */
   private credentialFetch(): typeof fetch {
     const auth = this.options.auth ?? 'caller'
-    if (auth === 'caller') return this.tokenScope.wrap(this.baseFetch)
-    if (auth === 'none') return this.baseFetch
+    const fixed = this.options.fixedHeaders
+    const base: typeof fetch = fixed
+      ? (input, init) => {
+          const extra = fixed()
+          if (!extra) return this.baseFetch(input, init)
+          const headers = new Headers(init?.headers)
+          for (const [name, value] of Object.entries(extra)) headers.set(name, value)
+          return this.baseFetch(input, { ...init, headers })
+        }
+      : this.baseFetch
+    if (auth === 'caller') return this.tokenScope.wrap(base, this.options.callerHeader)
+    if (auth === 'none') return base
 
     return (input, init) => {
       const header = this.options.header?.()
-      if (!header) return this.baseFetch(input, init)
+      if (!header) return base(input, init)
       const headers = new Headers(init?.headers)
       headers.set(header.name, header.value)
-      return this.baseFetch(input, { ...init, headers })
+      return base(input, { ...init, headers })
     }
   }
 

@@ -28,6 +28,8 @@ export class McpRegistry {
     private readonly servers: IMcpServerRepository,
     private readonly secrets: ICredentialSource,
     private readonly make: TMcpClientFactory = (config, options) => new McpServerClient(config.url, {}, options),
+    /** Headers fixos por servidor (ex.: o portão do próprio gateway). */
+    readonly fixedHeaders: (config: IMcpServerConfig) => Record<string, string> | undefined = () => undefined,
   ) {}
 
   list(): IMcpServerConfig[] {
@@ -51,7 +53,14 @@ export class McpRegistry {
     if (current?.fingerprint === fingerprint) return current.client
 
     if (current) void current.client.close()
-    const client = this.make(config, { auth: config.auth, transport: config.transport, label: config.id, header: () => this.header(config.id) })
+    const client = this.make(config, {
+      auth: config.auth,
+      transport: config.transport,
+      label: config.id,
+      callerHeader: config.auth === 'caller' ? config.headerName : undefined,
+      header: () => this.header(config.id),
+      fixedHeaders: () => this.fixedHeaders(this.servers.get(config.id) ?? config),
+    })
     this.clients.set(id, { fingerprint, client })
     return client
   }

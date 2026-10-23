@@ -9,6 +9,7 @@ import { isMcpToolRef, parseMcpToolRef } from './models/McpServer.Model'
 export const AGENT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,47}$/
 export const AGENT_NAME_MAX = 80
 export const AGENT_PROMPT_MAX = 20_000
+export const AGENT_SOUL_MAX = 8_000
 
 export interface IAgentIssue {
   field: string
@@ -120,6 +121,8 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
     else if (!(rules.nativeAllowed ?? nativeToolAllowed)(native)) issue('allowedTools', `blocked by NATIVE_TOOLS_ENABLED: ${tool}`)
     else if (native.officialOnly && !official) issue('allowedTools', `${native.label} works only with the official provider`)
   }
+
+  if (agent.soul && agent.soul.length > AGENT_SOUL_MAX) issue('soul', `at most ${AGENT_SOUL_MAX} characters`)
 
   if (!agent.systemPrompt.trim()) issue('systemPrompt', 'required')
   else if (agent.systemPrompt.length > AGENT_PROMPT_MAX) issue('systemPrompt', `at most ${AGENT_PROMPT_MAX} characters`)

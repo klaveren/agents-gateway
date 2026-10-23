@@ -21,7 +21,7 @@ describe('McpServersService', () => {
     const { service, secrets } = build()
     const created = service.create({ id: 'crm', name: 'CRM', url: 'https://mcp.exemplo.com/mcp', auth: 'header', secret: 'Bearer s3gr3d0' }, 'root')
 
-    assert.deepStrictEqual([created.transport, created.auth, created.headerName, created.enabled], ['auto', 'header', 'Authorization', true])
+    assert.deepStrictEqual([created.transport, created.auth, created.headerName, created.enabled], ['auto', 'header', undefined, true])
     assert.strictEqual(secrets.get('mcp:crm'), 'Bearer s3gr3d0')
     assert.deepStrictEqual([service.secretStatus('crm').configured, service.secretStatus('crm').last4], [true, 'r3d0'])
   })
@@ -49,9 +49,10 @@ describe('McpServersService', () => {
     assert.deepStrictEqual([free.service.list(), free.secrets.get('mcp:crm')], [[], undefined])
   })
 
-  it('atualizar para `caller` tira o nome do header', () => {
+  it('o header vale para `caller` (onde vai a credencial de quem conversa) e some com `none`', () => {
     const { service } = build()
     service.create({ id: 'crm', name: 'CRM', url: 'https://x.com/mcp', auth: 'header', headerName: 'X-Api-Key' }, 'root')
-    assert.strictEqual(service.update('crm', { auth: 'caller' }, 'root').headerName, undefined)
+    assert.strictEqual(service.update('crm', { auth: 'caller' }, 'root').headerName, 'X-Api-Key')
+    assert.strictEqual(service.update('crm', { auth: 'none' }, 'root').headerName, undefined)
   })
 })

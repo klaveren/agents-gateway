@@ -251,7 +251,7 @@ const agentDetailSchema = {
     {
       type: 'object',
       description: 'ADMIN only. The full agent, system prompt included.',
-      properties: { systemPrompt: { type: 'string' }, updatedAt: { type: 'string', format: 'date-time' }, updatedBy: { type: 'string' } },
+      properties: { systemPrompt: { type: 'string' }, soul: { type: 'string', description: 'Who the agent is: identity, tone, values. Composed before the system prompt.' }, updatedAt: { type: 'string', format: 'date-time' }, updatedBy: { type: 'string' } },
     },
   ],
 }
@@ -263,6 +263,7 @@ const agentBody = {
     name: { type: 'string' },
     provider: { type: 'string', enum: ['claude', 'openai', 'google'] },
     systemPrompt: { type: 'string' },
+    soul: { type: 'string', maxLength: 8000, description: 'Who the agent is (identity, tone, values); the system prompt says what it does.' },
     models: { type: 'array', items: { type: 'string' }, description: 'Every model must belong to `provider`.' },
     reasoningEfforts: { type: 'array', items: { type: 'string' } },
     modes: { type: 'array', items: { type: 'string', enum: ['chat', 'agent'] } },
@@ -761,7 +762,7 @@ export const OPENAPI_DOCUMENT = {
     '/mcp': {
       post: {
         summary:
-          'The gateway as an MCP server (Streamable HTTP, stateless, JSON responses): list_agents, start_conversation, send_message, switch_model, list_conversations, get_conversation, my_usage — plus, for administrators, usage_by_key, list_providers, list_models, get_agent and (with SELF_MCP_WRITE=1) set_model_enabled and save_agent. Same credentials and rules as this API',
+          'The gateway as an MCP server (Streamable HTTP, stateless, JSON responses): list_agents, start_conversation, send_message, switch_model, list_conversations, get_conversation, my_usage — plus, for administrators, usage_by_key, list_providers, list_models, list_tools, get_agent and — unless SELF_MCP_WRITE=0 — set_model_enabled, set_model_price and save_agent. Same credentials and rules as this API',
         requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', description: 'A JSON-RPC 2.0 message' } } } },
         responses: { '200': { description: 'JSON-RPC response', content: { 'application/json': { schema: { type: 'object' } } } }, '401': failures['401'] },
       },

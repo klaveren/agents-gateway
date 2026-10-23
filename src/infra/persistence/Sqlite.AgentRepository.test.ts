@@ -48,6 +48,25 @@ describe('SqliteAgentRepository', () => {
 
     assert.deepStrictEqual(repo.list(), [])
   })
+  it('⚖️ agente NOVO na semente chega a um banco já semeado (marca por agente); o apagado não volta', () => {
+    const repo = new SqliteAgentRepository(':memory:')
+    repo.seedOnce([{ ...agent, id: 'researcher-agent' }], 'seed')
+    repo.delete('researcher-agent')
+
+    repo.seedOnce(
+      [
+        { ...agent, id: 'researcher-agent' },
+        { ...agent, id: 'atlas', soul: 'calmo' },
+      ],
+      'seed',
+    )
+
+    assert.deepStrictEqual(
+      repo.list().map((item) => [item.id, item.soul]),
+      [['atlas', 'calmo']],
+    )
+  })
+
   it('a semente entra UMA vez: agente apagado não volta no boot seguinte, e id existente não é sobrescrito', () => {
     const repo = new SqliteAgentRepository(':memory:')
     repo.save({ ...agent, id: 'sysops', name: 'Meu SysOps' }, 'root')

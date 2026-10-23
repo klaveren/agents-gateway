@@ -10,8 +10,16 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 4096
  * idioma a cada turno e o Google mandava o prompt duas vezes (no history e em
  * `systemInstruction`).
  */
+/**
+ * O prompt que o modelo recebe: o soul (quem o agente é) e as instruções (o que ele faz).
+ *
+ * ⚖️ UM PONTO SÓ para as seis lanes. O soul vale mesmo quando a sessão traz um prompt próprio
+ * (`input.systemPrompt`): troca-se a tarefa, não a identidade do agente.
+ */
 export function composeSystemPrompt(agent: IAgent, input: ICreateSessionInput): string {
-  const base = input.systemPrompt?.trim() || agent.systemPrompt
+  const instructions = input.systemPrompt?.trim() || agent.systemPrompt
+  const soul = agent.soul?.trim()
+  const base = soul ? `## Quem você é\n${soul}\n\n## Como você trabalha\n${instructions}` : instructions
   if (!input.language) return base
   return `${base}\n\nIMPORTANT: Please reply exclusively in ${input.language}.`
 }

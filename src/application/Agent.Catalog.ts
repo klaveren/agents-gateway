@@ -120,6 +120,7 @@ function toAgent(stored: IStoredAgent): IAgent {
     name: stored.name,
     provider: stored.provider,
     systemPrompt: stored.systemPrompt,
+    ...(stored.soul ? { soul: stored.soul } : {}),
     models: stored.models,
     reasoningEfforts: stored.reasoningEfforts,
     modes: stored.modes,

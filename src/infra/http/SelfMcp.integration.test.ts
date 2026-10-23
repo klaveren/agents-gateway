@@ -61,18 +61,32 @@ describe('MCP do próprio gateway (integração)', () => {
     assert.strictEqual((await fetch(`${base}/mcp`, { headers: { 'X-Tool-Authorization': `Bearer ${member}` } })).status, 405)
   })
 
-  it('⛔ o membro só vê as ferramentas comuns; o admin vê as de admin, e as de escrita só com SELF_MCP_WRITE=1', async () => {
+  it('⛔ o membro só vê as ferramentas comuns; o admin vê as de admin e as de escrita (SELF_MCP_WRITE=0 desliga a escrita)', async () => {
     const common = ['get_conversation', 'list_agents', 'list_conversations', 'my_usage', 'send_message', 'start_conversation', 'switch_model']
+    const adminRead = ['get_agent', 'list_models', 'list_providers', 'list_tools', 'usage_by_key']
+    const write = ['save_agent', 'set_model_enabled', 'set_model_price']
     assert.deepStrictEqual(await names(member), common)
-    assert.deepStrictEqual(await names(admin), [...common, 'get_agent', 'list_models', 'list_providers', 'usage_by_key'].sort())
+    assert.deepStrictEqual(await names(admin), [...common, ...adminRead, ...write].sort())
 
-    process.env.SELF_MCP_WRITE = '1'
+    process.env.SELF_MCP_WRITE = '0'
     try {
-      assert.deepStrictEqual(await names(admin), [...common, 'get_agent', 'list_models', 'list_providers', 'save_agent', 'set_model_enabled', 'usage_by_key'].sort())
-      assert.ok(!(await names(member)).includes('save_agent'))
+      assert.deepStrictEqual(await names(admin), [...common, ...adminRead].sort())
     } finally {
       delete process.env.SELF_MCP_WRITE
     }
+  })
+
+  it('set_model_price grava como preço manual; list_tools mostra locais, nativas e MCPs', async () => {
+    const client = await connect(admin)
+    const listed = await client.callTool({ name: 'list_models', arguments: { providerId: 'claude' } })
+    const model = json(listed)[0]?.modelId ?? 'claude-sonnet-5'
+    await client.callTool({ name: 'set_model_price', arguments: { providerId: 'claude', modelId: model, input: 1.5, output: 7.5 } })
+    const after = json(await client.callTool({ name: 'list_models', arguments: { providerId: 'claude' } })).find((entry: { modelId: string }) => entry.modelId === model)
+    assert.deepStrictEqual([after.price.input, after.price.output, after.priceSource], [1.5, 7.5, 'manual'])
+
+    const tools = json(await client.callTool({ name: 'list_tools', arguments: {} }))
+    assert.ok(Array.isArray(tools.local) && Array.isArray(tools.native) && Array.isArray(tools.mcp))
+    assert.ok(tools.local.some((tool: { name: string }) => tool.name === 'run_bash'))
   })
 
   it('as ferramentas seguem as regras da API: agentes sem prompt, uso do membro sem custo, uso por chave para o admin', async () => {

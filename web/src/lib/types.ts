@@ -103,6 +103,8 @@ export interface IAgent {
 }
 
 export interface IAgentDetail extends IAgent {
+  /** Quem o agente é (personalidade). */
+  soul?: string
   systemPrompt: string
   /** Declarados pelo agente, mas desligados no catálogo do provider. */
   disabledModels?: string[]
@@ -114,6 +116,8 @@ export interface IAgentInput {
   id?: string
   name: string
   provider: string
+  /** Quem o agente é (personalidade). */
+  soul?: string
   systemPrompt: string
   models: string[]
   reasoningEfforts?: string[]

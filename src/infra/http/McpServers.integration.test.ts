@@ -67,7 +67,7 @@ describe('guia MCPs (integração)', () => {
 
     const list = await call('/mcp-servers', { token: admin })
     assert.ok(!list.text.includes(pat))
-    assert.strictEqual(list.body.result[0].secret.configured, true)
+    assert.strictEqual(list.body.result.find((entry: { id: string }) => entry.id === 'gw').secret.configured, true)
   })
 
   it('o agente escolhe ferramentas do servidor; servidor em uso não se apaga (409); servidor que não existe é recusado', async () => {
@@ -91,7 +91,7 @@ describe('guia MCPs (integração)', () => {
 
     const listed = await call('/mcp-servers', { token: admin })
     assert.deepStrictEqual(
-      listed.body.result[0].agents.map((entry: { id: string }) => entry.id),
+      listed.body.result.find((entry: { id: string }) => entry.id === 'gw').agents.map((entry: { id: string }) => entry.id),
       ['operador'],
     )
   })
