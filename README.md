@@ -289,6 +289,7 @@ memory, lost on restart) and apply on the next session, in the same instant they
 | `classifyTurns` | Turn on the [turn classifier](#turn-classification). Absent = off. |
 | `classifierProvider` | Provider that classifies: enabled, with an API key (subscriptions do not classify). |
 | `classifierModel` | Model that classifies, enabled in that provider's catalog. Without both, no classification. |
+| `limits` | Live caps: `maxToolTurns`, `maxOutputTokens`, `delegationMaxDepth`, `bashTimeoutMs`, `bashMaxOutputChars`, `sessionsPerOwner`, `streamsPerOwner`. Each has a range (`GET /settings` returns `limitBounds` and `limitsInEffect`); `null` on one falls back to its env variable, which is now only the initial value. |
 
 `PUT /settings` takes a partial body: an absent field is untouched, and `null` (or `""`) on an
 optional field deletes it and reverts to the default. `audience` cannot be cleared. `GET`
