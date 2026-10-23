@@ -12,6 +12,7 @@ import {
   makeUsageController,
 } from '@composition/factories/Controller.Factory'
 import { cleanupOrphans } from '@infra/sandbox/Docker.Sandbox'
+import { bootIssues } from '@infra/http/Boot.Checks'
 import { clearSessionWorkspaces } from '@infra/adapters/support/Subscription.Workspace'
 import { makeTools } from '@composition/factories/Tools.Factory'
 import { warnIfProofDisabled } from '@infra/http/Caller.Proof'
@@ -38,6 +39,11 @@ function bridgeGoogleApiKey(): void {
 }
 
 async function bootstrap() {
+  const issues = bootIssues()
+  if (issues.length) {
+    for (const issue of issues) console.error(`[security] ${issue}`)
+    process.exit(1)
+  }
   bridgeGoogleApiKey()
 
   // Conecta os servidores MCP cadastrados sem esperar: nenhum `connect()` lança, e servidor fora do ar
@@ -50,6 +56,9 @@ async function bootstrap() {
 
   // Com contas locais há prova (a do token deste gateway); o aviso fica para quem roda sem banco.
   warnIfProofDisabled(makeAuth().proof)
+  // Sem nenhuma conta: o código que a tela de setup pede. Só quem lê o log do servidor o tem.
+  const accounts = makeAuth().accounts
+  if (accounts?.setupRequired()) console.log(`[setup] Nenhuma conta ainda. Código de instalação do primeiro admin: ${accounts.setupCode}`)
 
   const controller = makeController()
   const server = new HttpServer(

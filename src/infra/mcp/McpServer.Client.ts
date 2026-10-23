@@ -118,7 +118,7 @@ export class McpServerClient {
         inputSchema: toSchema(tool.inputSchema),
       }))
     } catch (error: unknown) {
-      this.lastError = toMessage(error)
+      this.lastError = withoutRemoteBody(toMessage(error))
       console.warn(`[mcp] Falha ao listar tools: ${toMessage(error)}`)
       await this.markDisconnected()
       return []
@@ -131,7 +131,7 @@ export class McpServerClient {
     try {
       return (await this.client.listTools()).tools as Array<Record<string, unknown>>
     } catch (error: unknown) {
-      this.lastError = toMessage(error)
+      this.lastError = withoutRemoteBody(toMessage(error))
       await this.markDisconnected()
       return []
     }
@@ -231,7 +231,7 @@ export class McpServerClient {
         console.log(`[mcp] Conectado em ${this.serverUrl}`)
         return true
       } catch (error: unknown) {
-        this.lastError = toMessage(error)
+        this.lastError = withoutRemoteBody(toMessage(error))
         // Transporte que falhou continua segurando timer de reconexão e socket. Sem fechar,
         // cada tentativa do backoff vaza um handle — e o backoff tenta para sempre.
         await transport.close().catch(() => undefined)
@@ -316,4 +316,13 @@ function readText(content: unknown): string {
 
 function toMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * ⛔ O erro do SDK traz o CORPO da resposta remota (`Error POSTing to endpoint: <corpo>`). Com uma URL
+ * interna cadastrada, isso virava leitura de qualquer serviço da rede pela tela. Fica só o começo, curto.
+ */
+export function withoutRemoteBody(message: string): string {
+  const cut = message.replace(/(Error [A-Z]+ing to endpoint)[^:]*:[\s\S]*$/, '$1 (remote body omitted)')
+  return cut.length > 200 ? `${cut.slice(0, 200)}…` : cut
 }

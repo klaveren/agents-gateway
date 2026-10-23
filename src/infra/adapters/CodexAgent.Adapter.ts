@@ -16,6 +16,7 @@ import { sessionPrefix } from '@infra/session/Session.Key'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
 import { mcpHeaders } from '@infra/tools/bridges/Claude.ToolBridge'
 import { IAgentMcpServer, ToolCatalog } from '@infra/tools/Tool.Catalog'
+import { untestedCodex } from './support/Codex.Binary'
 import { esmImport } from './support/Esm.Import'
 import { IConnectionSource, UnavailableProviderError } from './support/Keyed.Client'
 import { composeSystemPrompt } from './support/Prompt.Helper'
@@ -41,6 +42,8 @@ export interface ICodexAgentAdapterDeps {
   load?: () => Promise<TCodexClass>
   /** O `CODEX_HOME` do gateway (ver `subscriptionHome`). */
   home?: () => string
+  /** A conferência da versão do binário (ver `untestedCodex`). */
+  versionIssue?: () => string | undefined
 }
 
 /**
@@ -92,6 +95,7 @@ export class CodexAgentAdapter implements IAgentAdapter {
   private readonly connections?: IConnectionSource
   private readonly load: () => Promise<TCodexClass>
   private readonly home: () => string
+  private readonly versionIssue: () => string | undefined
 
   constructor(deps: ICodexAgentAdapterDeps = {}) {
     this.store = deps.store ?? new SessionStore()
@@ -99,6 +103,7 @@ export class CodexAgentAdapter implements IAgentAdapter {
     this.connections = deps.connections
     this.load = deps.load ?? (async () => (await esmImport<{ Codex: TCodexClass }>('@openai/codex-sdk')).Codex)
     this.home = deps.home ?? (() => subscriptionHome('codex'))
+    this.versionIssue = deps.versionIssue ?? (deps.load ? () => undefined : () => untestedCodex())
   }
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
@@ -127,6 +132,12 @@ export class CodexAgentAdapter implements IAgentAdapter {
     }
     if (this.connections && !this.connections.connection(record.provider)) {
       yield { type: 'error', sessionId, timestamp: now(), payload: { message: new UnavailableProviderError(record.provider).message } }
+      return
+    }
+
+    const untested = this.versionIssue()
+    if (untested) {
+      yield { type: 'error', sessionId, timestamp: now(), payload: { message: untested } }
       return
     }
 

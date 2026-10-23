@@ -72,6 +72,7 @@ export class DelegationService {
           agentId: request.agentId,
           mode,
           delegated: true,
+          parentSessionId: parent.id,
           ...(mode === EMode.CHAT ? { tools: true } : {}),
           metadata: {
             ...(metadata.owner ? { owner: metadata.owner } : {}),

@@ -16,43 +16,44 @@ describe('AccountsService', () => {
     return { service, users, advance: (ms: number) => (now += ms) }
   }
 
-  it('⛔ setup: só desta máquina, só uma vez, e cria admin já logado', () => {
+  it('⛔ setup: só com o código do log, só uma vez, e cria admin já logado', async () => {
     const { service } = build()
 
-    assert.throws(() => service.setup({ email: 'root@x.test', name: 'Root', password: PASSWORD }, false), SetupUnavailableError)
-    const session = service.setup({ email: 'Root@X.test', name: 'Root', password: PASSWORD }, true)
+    assert.throws(() => service.setup({ email: 'root@x.test', name: 'Root', password: PASSWORD }, undefined), SetupUnavailableError)
+    assert.throws(() => service.setup({ email: 'root@x.test', name: 'Root', password: PASSWORD }, 'AAAA-BBBB-CCCC'), SetupUnavailableError)
+    const session = service.setup({ email: 'Root@X.test', name: 'Root', password: PASSWORD }, service.setupCode)
     assert.strictEqual(session.user.role, 'admin')
     assert.strictEqual(session.user.email, 'root@x.test')
-    assert.throws(() => service.setup({ email: 'outro@x.test', name: 'Outro', password: PASSWORD }, true), SetupUnavailableError)
+    assert.throws(() => service.setup({ email: 'outro@x.test', name: 'Outro', password: PASSWORD }, service.setupCode), SetupUnavailableError)
   })
 
-  it('login: a mesma recusa para e-mail inexistente, senha errada e conta desativada', () => {
+  it('login: a mesma recusa para e-mail inexistente, senha errada e conta desativada', async () => {
     const { service } = build()
-    const root = service.setup({ email: 'root@x.test', name: 'Root', password: PASSWORD }, true).user
+    const root = service.setup({ email: 'root@x.test', name: 'Root', password: PASSWORD }, service.setupCode).user
     const ana = service.create({ email: 'ana@x.test', name: 'Ana', password: PASSWORD, role: 'member' }, 'root@x.test')
     service.update(ana.id, { disabled: true }, root.id, 'root@x.test')
 
-    assert.throws(() => service.login('ninguem@x.test', PASSWORD), InvalidCredentialsError)
-    assert.throws(() => service.login('root@x.test', 'senha errada!!'), InvalidCredentialsError)
-    assert.throws(() => service.login('ana@x.test', PASSWORD), InvalidCredentialsError)
-    assert.ok(service.login('ROOT@x.test', PASSWORD).token)
+    await assert.rejects(service.login('ninguem@x.test', PASSWORD), InvalidCredentialsError)
+    await assert.rejects(service.login('root@x.test', 'senha errada!!'), InvalidCredentialsError)
+    await assert.rejects(service.login('ana@x.test', PASSWORD), InvalidCredentialsError)
+    assert.ok((await service.login('ROOT@x.test', PASSWORD)).token)
     assert.ok(service.me(root.id).lastLoginAt)
   })
 
-  it('⛔ força bruta: cinco falhas travam o e-mail, mesmo com a senha certa depois; a trava vence', () => {
+  it('⛔ força bruta: cinco falhas travam o e-mail, mesmo com a senha certa depois; a trava vence', async () => {
     const { service, advance } = build()
-    service.setup({ email: 'root@x.test', name: 'Root', password: PASSWORD }, true)
+    service.setup({ email: 'root@x.test', name: 'Root', password: PASSWORD }, service.setupCode)
 
-    for (let attempt = 0; attempt < LOCK_AFTER_FAILURES; attempt++) assert.throws(() => service.login('root@x.test', 'errada errada'), InvalidCredentialsError)
-    assert.throws(() => service.login('root@x.test', PASSWORD), LoginLockedError)
+    for (let attempt = 0; attempt < LOCK_AFTER_FAILURES; attempt++) await assert.rejects(service.login('root@x.test', 'errada errada'), InvalidCredentialsError)
+    await assert.rejects(service.login('root@x.test', PASSWORD), LoginLockedError)
 
     advance(LOCK_MS + 1)
-    assert.ok(service.login('root@x.test', PASSWORD).token)
+    assert.ok((await service.login('root@x.test', PASSWORD)).token)
   })
 
-  it('⛔ o último admin não sai; com dois, um pode tirar o admin do outro', () => {
+  it('⛔ o último admin não sai; com dois, um pode tirar o admin do outro', async () => {
     const { service } = build()
-    const root = service.setup({ email: 'root@x.test', name: 'Root', password: PASSWORD }, true).user
+    const root = service.setup({ email: 'root@x.test', name: 'Root', password: PASSWORD }, service.setupCode).user
 
     assert.throws(() => service.update(root.id, { role: 'member' }, root.id, 'root'), InvalidUserError)
 
@@ -60,18 +61,27 @@ describe('AccountsService', () => {
     assert.strictEqual(service.update(root.id, { role: 'member' }, bia.id, 'bia').role, 'member')
   })
 
-  it('trocar a própria senha exige a atual; a nova passa a valer', () => {
+  it('trocar a própria senha exige a atual; a nova passa a valer', async () => {
     const { service } = build()
-    const root = service.setup({ email: 'root@x.test', name: 'Root', password: PASSWORD }, true).user
+    const root = service.setup({ email: 'root@x.test', name: 'Root', password: PASSWORD }, service.setupCode).user
 
     assert.throws(() => service.changeOwnPassword(root.id, 'não é esta', 'outra frase longa'), InvalidUserError)
     service.changeOwnPassword(root.id, PASSWORD, 'outra frase longa')
-    assert.ok(service.login('root@x.test', 'outra frase longa').token)
+    assert.ok((await service.login('root@x.test', 'outra frase longa')).token)
   })
 
-  it('o hash nunca sai: a lista é de contas, sem senha', () => {
+  it('⛔ a trava é por e-mail E origem: quem erra de fora não tranca o admin que entra de outro lugar', async () => {
     const { service } = build()
-    service.setup({ email: 'root@x.test', name: 'Root', password: PASSWORD }, true)
+    service.setup({ email: 'root@x.test', name: 'Root', password: PASSWORD }, service.setupCode)
+
+    for (let attempt = 0; attempt < LOCK_AFTER_FAILURES; attempt++) await assert.rejects(service.login('root@x.test', 'errada errada', '203.0.113.9'), InvalidCredentialsError)
+    await assert.rejects(service.login('root@x.test', PASSWORD, '203.0.113.9'), LoginLockedError)
+    assert.ok((await service.login('root@x.test', PASSWORD, '127.0.0.1')).token)
+  })
+
+  it('o hash nunca sai: a lista é de contas, sem senha', async () => {
+    const { service } = build()
+    service.setup({ email: 'root@x.test', name: 'Root', password: PASSWORD }, service.setupCode)
 
     assert.ok(!JSON.stringify(service.list()).includes('scrypt$'))
   })

@@ -1,3 +1,4 @@
+import { dangerousToolsOf } from '@domain/Tool.Policy'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { Request, Response } from 'express'
@@ -80,7 +81,11 @@ const agentShape = {
   reasoningEfforts: z.array(z.string()).optional(),
   modes: z.array(z.enum(['chat', 'agent'])),
   allowedTools: z.array(z.string()).default([]).describe('Local names, `sdk:…` natives and `mcp:<server>/<tool>`; see list_tools.'),
-  role: z.enum(['subagent']).nullable().optional().describe('`subagent`: only called by another agent through delegation (`agent:<id>`), never in a direct conversation. `null` makes it a regular agent.'),
+  role: z
+    .enum(['subagent'])
+    .nullable()
+    .optional()
+    .describe('`subagent`: only called by another agent through delegation (`agent:<id>`), never in a direct conversation. `null` makes it a regular agent.'),
 }
 
 /**
@@ -290,6 +295,17 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
       inputSchema: agentShape,
     },
     async (agent) => {
+      // ⛔ Pelo MCP, nunca ferramenta que alcança este servidor: um prompt injection (de uma busca, de outro
+      // MCP) num agente com estas ferramentas de escrita criaria um com `run_bash` e conversaria com ele.
+      const dangerous = dangerousToolsOf(agent.allowedTools ?? [])
+      if (dangerous.length) {
+        return reply({
+          ok: false,
+          status: 422,
+          code: 'validation_error',
+          message: `Tools that reach this server cannot be granted through MCP: ${dangerous.join(', ')}. Use the Agents screen.`,
+        })
+      }
       const exists = (await api('GET', `/agents/${encodeURIComponent(agent.id)}`)).ok
       return reply(exists ? await api('PUT', `/agents/${encodeURIComponent(agent.id)}`, { body: agent }) : await api('POST', '/agents', { body: agent }))
     },

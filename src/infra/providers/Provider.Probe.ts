@@ -47,7 +47,7 @@ export async function probeKey(connection: { protocol: EProvider; baseUrl?: stri
   const { url, headers } = requestFor(connection.protocol, key, connection.baseUrl)
 
   try {
-    const response = await fetcher(url, { headers, signal: AbortSignal.timeout(TIMEOUT_MS) })
+    const response = await fetcher(url, { headers, signal: AbortSignal.timeout(TIMEOUT_MS), redirect: 'error' })
     const body = (await response.json().catch(() => undefined)) as { data?: unknown[]; models?: unknown[]; error?: { message?: string } } | undefined
 
     if (!response.ok) return { ok: false, status: response.status, message: maskKey(body?.error?.message ?? `HTTP ${response.status}`, key) }
@@ -71,7 +71,7 @@ export async function probeKey(connection: { protocol: EProvider; baseUrl?: stri
 /** A mesma URL, sem credencial nenhuma: responde 200? */
 async function answersWithoutKey(url: string, fetcher: typeof fetch): Promise<boolean> {
   try {
-    return (await fetcher(url, { signal: AbortSignal.timeout(TIMEOUT_MS) })).ok
+    return (await fetcher(url, { signal: AbortSignal.timeout(TIMEOUT_MS), redirect: 'error' })).ok
   } catch {
     return false
   }

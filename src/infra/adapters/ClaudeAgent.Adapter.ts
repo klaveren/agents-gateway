@@ -155,7 +155,8 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       abortController: abort,
       ...(native.started ? { resume: native.sdkSessionId } : { sessionId: native.sdkSessionId }),
       ...(env ? { env } : {}),
-      ...(this.protocol === EProvider.CLAUDE_SUB ? { cwd: sessionWorkspace(sessionId) } : {}),
+      // Toda lane num diretório vazio por conversa: o `cwd` do processo é a pasta do gateway (`.env`, banco).
+      cwd: sessionWorkspace(sessionId),
     }
 
     const effort = this.toEffort(record.reasoning)
@@ -398,7 +399,10 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
  * documentam, e o que impede o CLI de mandar a chave no cabeçalho da Anthropic a um terceiro.
  */
 export function cliEnv(connection: { key: string; baseUrl?: string; compatible: boolean }): Record<string, string | undefined> {
-  if (!connection.compatible) return { ...process.env, ANTHROPIC_API_KEY: connection.key }
+  // ⛔ Ambiente MÍNIMO, nunca `{ ...process.env }`: com `sdk:Bash`/`sdk:Read` o CLI levaria as outras chaves,
+  // o `GATEWAY_TOKEN` e o `SECRETS_KEY`. O HOME fica (o CLI guarda estado nele); o `cwd` é o da conversa.
+  const base = subscriptionEnv({ HOME: process.env.HOME })
+  if (!connection.compatible) return { ...base, ANTHROPIC_API_KEY: connection.key }
 
-  return { ...process.env, ANTHROPIC_BASE_URL: connection.baseUrl, ANTHROPIC_AUTH_TOKEN: connection.key, ANTHROPIC_API_KEY: '' }
+  return { ...base, ANTHROPIC_BASE_URL: connection.baseUrl, ANTHROPIC_AUTH_TOKEN: connection.key, ANTHROPIC_API_KEY: '' }
 }

@@ -67,7 +67,7 @@ export class SqliteCredentialStore implements ICredentialStore {
         `INSERT INTO provider_credentials (provider, sealed, last4, updated_at, updated_by) VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(provider) DO UPDATE SET sealed = excluded.sealed, last4 = excluded.last4, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
       )
-      .run(provider, this.box.seal(clean), entry.last4, entry.updatedAt.toISOString(), by)
+      .run(provider, this.box.seal(clean, provider), entry.last4, entry.updatedAt.toISOString(), by)
 
     this.memory.set(provider, entry)
     this.notify(provider)
@@ -88,7 +88,7 @@ export class SqliteCredentialStore implements ICredentialStore {
       const provider = String(row.provider)
 
       // Ilegível fica registrado SEM chave: a tela avisa, e a do `.env` (se houver) continua valendo.
-      const key = this.box.open(String(row.sealed))
+      const key = this.box.open(String(row.sealed), provider)
       if (!key) console.warn(`[credentials] a chave salva de ${provider} não decifra (a chave-mestra mudou?); cole de novo.`)
       this.memory.set(provider, {
         key,

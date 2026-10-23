@@ -101,7 +101,7 @@ export const agentBodySchema = z.object({
  * (`passwordIssue`), que devolve o problema campo a campo junto dos outros.
  */
 const password = z.string().max(500)
-export const setupSchema = z.object({ email: z.string().max(200), name: z.string().max(200), password })
+export const setupSchema = z.object({ email: z.string().max(200), name: z.string().max(200), password, code: z.string().max(100).optional() })
 export const loginSchema = z.object({ email: z.string().max(200), password })
 export const createUserSchema = z.object({ email: z.string().max(200), name: z.string().max(200), password, role: z.enum(['admin', 'member']).default('member') })
 export const updateUserSchema = z.object({ name: z.string().max(200).optional(), role: z.enum(['admin', 'member']).optional(), disabled: z.boolean().optional() })

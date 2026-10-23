@@ -4,6 +4,7 @@ import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import {
   AdapterNotFoundError,
+  DangerousToolsRestrictedError,
   SubagentOnlyError,
   SubscriptionRestrictedError,
   AgentNotFoundError,
@@ -16,6 +17,7 @@ import {
 } from '@domain/errors/Domain.Error'
 import { REASONING_LEVELS } from '@domain/Reasoning.Levels'
 import { isSubscription, subscriptionAdminOnly } from '@domain/Subscription.Policy'
+import { dangerousToolsAdminOnly, dangerousToolsOf } from '@domain/Tool.Policy'
 import { DEFAULT_SETTINGS, IAgentSettings } from '@domain/models/Settings.Model'
 import { IAgentDirectory } from '@domain/ports/AgentRepository.Port'
 import { IProviderDirectory } from '@domain/ports/ProviderRepository.Port'
@@ -38,6 +40,9 @@ export function adapterKey(provider: EProvider, mode: EMode): string {
 }
 
 export class AgentProvider implements IAgentProvider {
+  /** As sessões abertas por administrador provado — é o que a filha de uma delegação herda. */
+  private readonly adminSessions = new Set<string>()
+
   constructor(
     private readonly adapters: Map<string, IAgentAdapter>,
     private readonly sessions: SessionStore,
@@ -115,17 +120,28 @@ export class AgentProvider implements IAgentProvider {
     if (!agent.models.length) throw new AgentWithoutModelError(agent.id)
     const mode = resolveSessionMode(agent, input)
     const protocol = this.protocolOf(agent.provider)
-    if (isSubscription(protocol) && subscriptionAdminOnly() && !input.subscriptionAccess) throw new SubscriptionRestrictedError(agent.provider)
+    // A filha de uma delegação vale o que a mãe vale: admin só se a mãe foi aberta por admin.
+    const admin = !!input.adminAccess || (!!input.delegated && !!input.parentSessionId && this.adminSessions.has(input.parentSessionId))
+    if (isSubscription(protocol) && subscriptionAdminOnly() && !admin) throw new SubscriptionRestrictedError(agent.provider)
+    // ⛔ Ferramenta que alcança este servidor (run_bash, Bash/Read/Write… do SDK): só administrador.
+    const dangerous = dangerousToolsOf(agent.allowedTools)
+    if (dangerous.length && dangerousToolsAdminOnly() && !admin) throw new DangerousToolsRestrictedError(agent.id, dangerous)
     // ⛔ Subagente: só pela delegação. Aqui, e não na tela, porque é por aqui que todo caminho passa.
     if (agent.role === 'subagent' && !input.delegated) throw new SubagentOnlyError(agent.id)
 
-    const { subscriptionAccess: _access, delegated: _delegated, ...rest } = input
-    return this.getAdapter(protocol, mode).createSession(agent, {
+    const { adminAccess: _access, delegated: _delegated, parentSessionId: _parent, ...rest } = input
+    const created = await this.getAdapter(protocol, mode).createSession(agent, {
       ...rest,
       agentId: agent.id,
       model: modelFor(agent, input.model || settings.model),
       mode,
     })
+    if (admin) {
+      this.adminSessions.add(created.id)
+      // Sessão que o store já despejou não precisa mais da marca.
+      if (this.adminSessions.size > 1000) for (const id of this.adminSessions) if (!this.sessions.get(id)) this.adminSessions.delete(id)
+    }
+    return created
   }
 
   /**

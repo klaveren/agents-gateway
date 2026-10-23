@@ -23,19 +23,6 @@ export interface IAuthControllerDeps {
 /** Marca, em `res.locals`, que a requisição chegou com um token de acesso (trocado na porta). */
 const VIA_ACCESS_TOKEN = 'viaAccessToken'
 
-const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
-
-/**
- * O pedido veio DESTA máquina, sem passar por proxy?
- *
- * ⚠️ O ENDEREÇO DO SOCKET, não `req.ip`: com `trust proxy` ligado o `req.ip` vem do cabeçalho, e o
- * cabeçalho se escreve. E com `X-Forwarded-For` presente o pedido passou por um proxy — que pode estar
- * nesta máquina repassando a internet inteira; aí não é loopback para o que importa aqui.
- */
-export function isLoopback(req: Request): boolean {
-  return LOOPBACK.has(req.socket?.remoteAddress ?? '') && !req.headers['x-forwarded-for']
-}
-
 /** Login, sessão e a tela de Usuários. Separado do `AgentController`: é outro assunto, com outra porta. */
 export class AuthController {
   constructor(private readonly deps: IAuthControllerDeps) {
@@ -120,8 +107,8 @@ export class AuthController {
     await this.respond(
       res,
       async () => {
-        const body = parseBody(setupSchema, req.body)
-        return toSessionDto(this.accounts.setup(body, isLoopback(req)))
+        const { code, ...body } = parseBody(setupSchema, req.body)
+        return toSessionDto(this.accounts.setup(body, code))
       },
       { status: 201, message: 'Administrator created' },
     )
@@ -130,7 +117,8 @@ export class AuthController {
   async login(req: Request, res: Response) {
     await this.respond(res, async () => {
       const body = parseBody(loginSchema, req.body)
-      return toSessionDto(this.accounts.login(body.email, body.password))
+      // A origem é o endereço do SOCKET, não `req.ip` (que vem de cabeçalho com `trust proxy`).
+      return toSessionDto(await this.accounts.login(body.email, body.password, req.socket?.remoteAddress ?? ''))
     })
   }
 
@@ -202,6 +190,7 @@ export class AuthController {
         const admin = await this.requireAdmin('resetPassword')
         const body = parseBody(resetPasswordSchema, req.body)
         this.accounts.resetPassword(req.params.id as string, body.password, admin.by)
+        this.deps.accessTokens?.revokeAll(req.params.id as string)
         return null
       },
       { message: 'Password reset' },
@@ -214,6 +203,7 @@ export class AuthController {
       async () => {
         const admin = await this.requireAdmin('revokeSessions')
         this.accounts.revokeSessions(req.params.id as string, admin.by)
+        this.deps.accessTokens?.revokeAll(req.params.id as string)
         return null
       },
       { message: 'Sessions ended' },

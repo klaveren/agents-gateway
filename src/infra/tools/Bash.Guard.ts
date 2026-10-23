@@ -35,7 +35,8 @@ export function bashPolicy(): IBashPolicy {
   return {
     timeoutMs: readPositiveInt(process.env.BASH_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
     maxOutputChars: readPositiveInt(process.env.BASH_MAX_OUTPUT_CHARS, DEFAULT_MAX_OUTPUT_CHARS),
-    cwd: process.env.BASH_CWD ? path.resolve(process.env.BASH_CWD) : process.cwd(),
+    // ⛔ Sem `BASH_CWD`, o diretório vazio da conversa (ver `run_bash`) — nunca a pasta do gateway.
+    cwd: process.env.BASH_CWD ? path.resolve(process.env.BASH_CWD) : '',
   }
 }
 

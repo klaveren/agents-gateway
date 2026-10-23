@@ -55,7 +55,7 @@ export const useAuthStore = defineStore('auth', () => {
     await start(await api<ISession>('/auth/login', { method: 'POST', body: { email, password } }))
   }
 
-  async function setup(input: { email: string; name: string; password: string }): Promise<void> {
+  async function setup(input: { email: string; name: string; password: string; code: string }): Promise<void> {
     await start(await api<ISession>('/auth/setup', { method: 'POST', body: input }))
   }
 

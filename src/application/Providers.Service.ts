@@ -72,6 +72,10 @@ export class ProvidersService implements IProviderDirectory {
     const issues = providerIssues({ name: change.name ?? current.name, baseUrl: change.baseUrl }, [])
     if (issues.length) throw new InvalidProviderError(issues)
 
+    // ⛔ URL nova, chave apagada: a chave salva foi dada para OUTRO endereço. Sem isto, trocar a URL e
+    // clicar em "Testar" mandava a chave para onde a URL nova apontasse.
+    if (change.baseUrl !== undefined && normalizeBaseUrl(change.baseUrl) !== current.baseUrl) this.credentials.clear(id)
+
     return this.providers.update(id, {
       name: change.name?.trim(),
       baseUrl: change.baseUrl === undefined ? undefined : normalizeBaseUrl(change.baseUrl),

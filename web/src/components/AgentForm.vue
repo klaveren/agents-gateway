@@ -298,7 +298,7 @@ async function remove() {
           </button>
           <span v-if="!agents.tools.length" class="text-sm text-zinc-500">Nenhuma disponível.</span>
         </div>
-        <small v-if="form.allowedTools.some((tool) => DANGEROUS.has(tool))" class="text-amber-300">⚠ run_bash executa comandos no servidor do gateway. Quem conversa com este agente ganha esse poder.</small>
+        <small v-if="form.allowedTools.some((tool) => DANGEROUS.has(tool))" class="text-amber-300">⚠ run_bash executa comandos no servidor do gateway. Por isso, só administradores conversam com este agente (DANGEROUS_TOOLS_ADMIN_ONLY).</small>
         <small v-for="message in issues.allowedTools" :key="message" class="error">{{ message }}</small>
       </div>
 
@@ -369,7 +369,7 @@ async function remove() {
             <span class="shrink-0 rounded-full px-2 py-0.5 text-[10px]" :class="RISK_CLASS[tool.risk]">{{ RISK_LABEL[tool.risk] }}</span>
           </li>
         </ul>
-        <small v-if="form.allowedTools.some((id) => natives.find((tool) => tool.id === id && tool.risk.startsWith('server')))" class="text-amber-300">⚠ Ferramentas que tocam este servidor dão ao agente acesso ao disco, à rede ou a comandos daqui — sem as travas do run_bash.</small>
+        <small v-if="form.allowedTools.some((id) => natives.find((tool) => tool.id === id && tool.risk.startsWith('server')))" class="text-amber-300">⚠ Ferramentas que tocam este servidor dão ao agente acesso ao disco, à rede ou a comandos daqui. Só administradores conversam com ele.</small>
       </div>
 
       <div class="field sm:col-span-2">

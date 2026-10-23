@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import {
   AdapterNotFoundError,
   AgentNotFoundError,
@@ -15,6 +16,7 @@ import {
   McpServerInUseError,
   ProviderNotFoundError,
   ProviderUnavailableError,
+  DangerousToolsRestrictedError,
   SubagentOnlyError,
   SubscriptionRestrictedError,
   InvalidCredentialsError,
@@ -39,7 +41,10 @@ export type TErrorCode =
   | 'mcp_server_in_use'
   | 'provider_unavailable'
   | 'subscription_restricted'
+  | 'payload_too_large'
+  | 'rate_limited'
   | 'subagent_only'
+  | 'dangerous_tools_restricted'
   | 'upstream_error'
   | 'agent_without_model'
   | 'invalid_credentials'
@@ -153,6 +158,10 @@ export function toHttpFailure(error: unknown): IHttpFailure {
     return { status: 409, code: 'provider_in_use', message: error.message, details: { agents: error.agents } }
   }
 
+  if (error instanceof DangerousToolsRestrictedError) {
+    return { status: 403, code: 'dangerous_tools_restricted', message: error.message }
+  }
+
   if (error instanceof SubagentOnlyError) {
     return { status: 422, code: 'subagent_only', message: error.message }
   }
@@ -214,9 +223,16 @@ export function toHttpFailure(error: unknown): IHttpFailure {
     return { status: 500, code: 'adapter_not_found', message: error.message }
   }
 
-  return {
-    status: 500,
-    code: 'internal_error',
-    message: error instanceof Error ? error.message : String(error),
+  // Erro do `express.json`: corpo grande demais ou malformado é culpa do pedido, não do servidor.
+  const parser = error as { type?: string; status?: number }
+  if (parser?.type === 'entity.too.large') return { status: 413, code: 'payload_too_large', message: 'Request body is too large' }
+  if (parser?.type === 'entity.parse.failed' || parser?.type === 'encoding.unsupported' || parser?.type === 'charset.unsupported') {
+    return { status: 400, code: 'validation_error', message: 'Request body is not valid JSON' }
   }
+
+  // ⛔ O 500 sai GENÉRICO: o texto de um erro inesperado traz caminho de arquivo, SQL, URL de MCP, corpo
+  // de resposta de terceiro. O detalhe vai para o log, com o mesmo id que a resposta leva.
+  const reference = randomUUID().slice(0, 8)
+  console.error(`[internal ${reference}]`, error instanceof Error ? (error.stack ?? error.message) : String(error))
+  return { status: 500, code: 'internal_error', message: `Internal error (ref ${reference})` }
 }

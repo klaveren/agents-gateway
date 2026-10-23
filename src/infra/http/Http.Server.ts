@@ -21,7 +21,7 @@ import { fail } from './Http.Response'
 import { OPENAPI_DOCUMENT } from './Openapi.Schema'
 import { identityFromToken, tokenFromHeader, withCaller } from '@infra/mcp/Caller.Identity'
 import { handleSelfMcp, rejectSelfMcp } from './SelfMcp.Controller'
-import { CALLER_HEADER, corsMiddleware, host, jsonLimit, requireCaller, requireToken } from './Security.Middleware'
+import { CALLER_HEADER, corsMiddleware, host, jsonLimit, requireCaller, requireToken, messageJsonLimit, rateLimit, securityHeaders } from './Security.Middleware'
 
 export const API_PREFIX = '/v1'
 
@@ -40,6 +40,11 @@ export const API_PREFIX = '/v1'
  *
  * Rota pública nova entra aqui — e só aqui, de propósito.
  */
+/** A mensagem de uma conversa: a única rota com o teto de corpo grande (anexos). */
+const MESSAGE_ROUTE = /^\/v1\/sessions\/[^/]+\/messages\/?$/
+/** As rotas com limite por origem (ver `rateLimit`). */
+export const THROTTLED_PATHS = ['/auth/login', '/auth/setup']
+
 export const PUBLIC_PATHS: readonly string[] = ['/health', '/shared/:id', '/auth/status', '/auth/setup', '/auth/login']
 
 export type TRouteMethod = 'get' | 'post' | 'put' | 'patch' | 'delete'
@@ -65,8 +70,13 @@ export class HttpServer {
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
+    this.app.use(securityHeaders())
     this.app.use(corsMiddleware())
-    this.app.use(express.json({ limit: jsonLimit() }))
+    // ⛔ Dois tetos: o pequeno vale para tudo (o corpo é lido ANTES da autenticação); o grande, só para a
+    // mensagem de uma conversa, que leva anexo.
+    const small = express.json({ limit: jsonLimit() })
+    const large = express.json({ limit: messageJsonLimit() })
+    this.app.use((req, res, next) => (MESSAGE_ROUTE.test(req.path) ? large(req, res, next) : small(req, res, next)))
 
     this.routes = buildRoutes(
       controller,
@@ -94,9 +104,12 @@ export class HttpServer {
     const legacy = resolvePublicDir()
     const web = resolveWebDir()
 
-    this.app.use('/legacy', express.static(legacy))
+    // ⛔ A tela antiga só com `LEGACY_UI=1`: ela divide a origem e o token com a nova e não passou pela
+    // revisão de segurança — um XSS nela levaria a sessão da nova.
+    const legacyOn = process.env.LEGACY_UI?.trim() === '1'
+    if (legacyOn) this.app.use('/legacy', express.static(legacy))
     if (!web) {
-      this.app.use(express.static(legacy))
+      if (legacyOn) this.app.use(express.static(legacy))
       return
     }
 
@@ -150,8 +163,11 @@ export class HttpServer {
       res.json(OPENAPI_DOCUMENT)
     })
 
+    // ⛔ Login e setup: 20 por minuto por origem. A trava por e-mail não segura quem troca de e-mail.
+    const throttled = rateLimit({ windowMs: 60_000, max: Number(process.env.AUTH_RATE_LIMIT) || 20 })
     for (const { method, path: routePath, handler } of this.routes) {
-      const chain = PUBLIC_PATHS.includes(routePath) ? [guard, exchange, callerScope, handler] : [guard, exchange, identity, callerScope, handler]
+      const open = PUBLIC_PATHS.includes(routePath) ? [guard, exchange, callerScope, handler] : [guard, exchange, identity, callerScope, handler]
+      const chain = THROTTLED_PATHS.includes(routePath) ? [throttled, ...open] : open
       this.app[method](`${API_PREFIX}${routePath}`, ...chain)
     }
 
