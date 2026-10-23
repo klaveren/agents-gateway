@@ -310,6 +310,19 @@ const settingsResult = {
 
 const nullableText = { type: ['string', 'null'], description: 'Absent leaves it untouched. `null` (or an empty string) deletes it and reverts to the default.' }
 
+const accessTokenSchema = {
+  type: 'object',
+  properties: {
+    id: { type: 'string' },
+    name: { type: 'string' },
+    prefix: { type: 'string', description: 'The first characters, to recognize the token.' },
+    createdAt: { type: 'string', format: 'date-time' },
+    expiresAt: { type: 'string', format: 'date-time' },
+    lastUsedAt: { type: 'string', format: 'date-time' },
+    revokedAt: { type: 'string', format: 'date-time' },
+  },
+}
+
 const failures = {
   '401': {
     description:
@@ -509,6 +522,30 @@ export const OPENAPI_DOCUMENT = {
         summary: 'Change your own password; the current one is required',
         requestBody: { required: true, ...json({ type: 'object', properties: { current: { type: 'string' }, password: passwordField }, required: ['current', 'password'] }) },
         responses: { '200': { description: 'Changed. Every other session ends; this one continues with the session returned', ...json(envelope(authSessionSchema)) }, '401': failures['401'], '422': failures['422'] },
+      },
+    },
+    '/auth/tokens': {
+      get: {
+        summary: 'Your personal access tokens (name, prefix, dates). The token itself is never returned again',
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: accessTokenSchema })) }, '401': failures['401'] },
+      },
+      post: {
+        summary:
+          'Create a personal access token (`agw_…`) for scripts and MCP clients — sent in X-Tool-Authorization like a session token. It acts as your account (role changes apply; a disabled account stops it) and survives sign-out. Requires a signed-in session: an access token cannot create tokens',
+        requestBody: { required: true, ...json({ type: 'object', properties: { name: { type: 'string', maxLength: 60 }, expiresInDays: { type: 'integer', minimum: 1, maximum: 365 } }, required: ['name'] }) },
+        responses: {
+          '201': { description: 'Created. `token` is shown only now', ...json(envelope({ allOf: [accessTokenSchema, { type: 'object', properties: { token: { type: 'string' } } }] })) },
+          '401': failures['401'],
+          '403': { description: 'Called with an access token', ...json(failureEnvelope) },
+          '422': failures['422'],
+        },
+      },
+    },
+    '/auth/tokens/{id}': {
+      delete: {
+        summary: 'Revoke one of your access tokens. Requires a signed-in session',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'Revoked', ...json(envelope({ type: 'null' })) }, '401': failures['401'], '403': { description: 'Called with an access token', ...json(failureEnvelope) }, '404': failures['404'] },
       },
     },
     '/users': {

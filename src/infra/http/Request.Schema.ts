@@ -106,6 +106,7 @@ export const resetPasswordSchema = z.object({ password })
 export const changePasswordSchema = z.object({ current: password, password })
 
 /** Abrir ou fechar a conversa por link. Booleano estrito: `"false"` (texto) não pode abrir. */
+export const createAccessTokenSchema = z.object({ name: z.string().max(200), expiresInDays: z.number().int().optional() })
 export const shareConversationSchema = z.object({ shared: z.boolean() })
 
 export type TCreateSessionBody = z.infer<typeof createSessionSchema>

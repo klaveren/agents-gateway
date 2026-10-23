@@ -1,19 +1,27 @@
+import { AccessTokensService } from '@application/AccessTokens.Service'
 import { AccountsService, ISession } from '@application/Accounts.Service'
+import { IAccessToken, isAccessToken } from '@domain/models/AccessToken.Model'
 import { IUser } from '@domain/models/User.Model'
-import { Request, Response } from 'express'
+import { NextFunction, Request, Response } from 'express'
 import { provenCaller } from './Caller.Access'
 import { checkAdminAccess } from './Caller.Admin'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
 import { parseBody } from './Request.Parser'
-import { changePasswordSchema, createUserSchema, loginSchema, resetPasswordSchema, setupSchema, updateUserSchema } from './Request.Schema'
+import { CALLER_HEADER } from './Security.Middleware'
+import { createAccessTokenSchema, changePasswordSchema, createUserSchema, loginSchema, resetPasswordSchema, setupSchema, updateUserSchema } from './Request.Schema'
 
 export interface IAuthControllerDeps {
   /** Ausente = sem contas locais (`CONVERSATIONS_DB=off`): as rotas respondem 404, o status diz que não há. */
   accounts?: AccountsService
   proof?: ICallerProof
+  /** Os tokens de acesso pessoais. Ausente junto com as contas locais. */
+  accessTokens?: AccessTokensService
 }
+
+/** Marca, em `res.locals`, que a requisição chegou com um token de acesso (trocado na porta). */
+const VIA_ACCESS_TOKEN = 'viaAccessToken'
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
 
@@ -31,9 +39,76 @@ export function isLoopback(req: Request): boolean {
 /** Login, sessão e a tela de Usuários. Separado do `AgentController`: é outro assunto, com outra porta. */
 export class AuthController {
   constructor(private readonly deps: IAuthControllerDeps) {
-    for (const name of ['status', 'setup', 'login', 'logout', 'me', 'changePassword', 'listUsers', 'createUser', 'updateUser', 'resetPassword', 'revokeSessions'] as const) {
+    for (const name of [
+      'status',
+      'setup',
+      'login',
+      'logout',
+      'me',
+      'changePassword',
+      'listUsers',
+      'createUser',
+      'updateUser',
+      'resetPassword',
+      'revokeSessions',
+      'listTokens',
+      'createToken',
+      'revokeToken',
+    ] as const) {
       this[name] = this[name].bind(this)
     }
+    this.accessTokenGate = this.accessTokenGate.bind(this)
+  }
+
+  /**
+   * A TROCA NA PORTA: um token de acesso (`agw_…`) no header da conta vira, só nesta requisição, um token de
+   * sessão novo da conta (ver `AccessTokensService.exchange`). Dali em diante prova, dono e admin funcionam
+   * sem saber que houve troca — e o MCP repassa o header já trocado às próprias chamadas.
+   *
+   * ⛔ Token de acesso que não vale é 401 AQUI, e não "sem identidade" mais adiante: com ele no header, a
+   * pessoa quis se identificar, e cair no anônimo esconderia que o token foi revogado.
+   */
+  accessTokenGate(req: Request, res: Response, next: NextFunction) {
+    const header = req.headers[CALLER_HEADER]
+    const raw = typeof header === 'string' ? header.replace(/^Bearer\s+/i, '').trim() : ''
+    if (!isAccessToken(raw)) return next()
+
+    const session = this.deps.accessTokens?.exchange(raw)
+    if (!session) return next(new HttpError(401, 'unauthorized', 'Access token is invalid, expired or revoked'))
+
+    req.headers[CALLER_HEADER] = `Bearer ${session}`
+    res.locals[VIA_ACCESS_TOKEN] = true
+    next()
+  }
+
+  /** Os tokens de acesso da própria conta. Nunca o token: só nome, prefixo e datas. */
+  async listTokens(_req: Request, res: Response) {
+    await this.respond(res, async () => this.tokens.list(await this.requireSelf()).map(toTokenDto))
+  }
+
+  /** ⛔ Só por sessão (login): um token de acesso não cria outro — um vazado não se multiplica. */
+  async createToken(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        const id = await this.requireSession(res)
+        const body = parseBody(createAccessTokenSchema, req.body)
+        const created = this.tokens.create(id, body)
+        return { token: created.token, ...toTokenDto(created.accessToken) }
+      },
+      { status: 201, message: 'Access token created. Copy it now: it is not shown again.' },
+    )
+  }
+
+  async revokeToken(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        this.tokens.revoke(await this.requireSession(res), req.params.id as string)
+        return null
+      },
+      { message: 'Access token revoked' },
+    )
   }
 
   /** Público: a tela pergunta se precisa mostrar o setup. Só isso — nada sobre quem são as contas. */
@@ -150,6 +225,18 @@ export class AuthController {
     return this.deps.accounts
   }
 
+  private get tokens(): AccessTokensService {
+    if (!this.deps.accessTokens) throw new HttpError(404, 'not_found', 'Local accounts are disabled')
+    return this.deps.accessTokens
+  }
+
+  /** A conta, provada E logada por sessão — não por token de acesso. */
+  private async requireSession(res: Response): Promise<string> {
+    const id = await this.requireSelf()
+    if (res.locals[VIA_ACCESS_TOKEN]) throw new HttpError(403, 'forbidden', 'Sign in to manage access tokens; an access token cannot manage tokens')
+    return id
+  }
+
   private async requireSelf(): Promise<string> {
     const identity = await provenCaller(this.deps.proof)
     if (!identity?.id) throw new HttpError(401, 'unauthorized', 'Missing or unverifiable caller credential')
@@ -190,6 +277,11 @@ function toUserDto(user: IUser) {
     updatedBy: user.updatedBy,
     lastLoginAt: user.lastLoginAt,
   }
+}
+
+/** Lista explícita: o hash nunca sai. */
+function toTokenDto(token: IAccessToken) {
+  return { id: token.id, name: token.name, prefix: token.prefix, createdAt: token.createdAt, expiresAt: token.expiresAt, lastUsedAt: token.lastUsedAt, revokedAt: token.revokedAt }
 }
 
 function toSessionDto(session: ISession) {

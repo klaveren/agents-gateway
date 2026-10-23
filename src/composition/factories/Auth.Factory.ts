@@ -3,11 +3,13 @@ import { HmacTokenIssuer } from '@infra/auth/Hmac.TokenIssuer'
 import { CompositeCallerProof, LocalCallerProof } from '@infra/auth/Local.CallerProof'
 import { ScryptPasswordHasher } from '@infra/auth/Scrypt.PasswordHasher'
 import { ICallerProof, proofFromEnv } from '@infra/http/Caller.Proof'
+import { AccessTokensService } from '@application/AccessTokens.Service'
+import { SqliteAccessTokenRepository } from '@infra/persistence/Sqlite.AccessTokenRepository'
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
 import { SqliteUserRepository } from '@infra/persistence/Sqlite.UserRepository'
 import { makeTools } from './Tools.Factory'
 
-let instance: { accounts: AccountsService; proof: ICallerProof } | undefined
+let instance: { accounts: AccountsService; proof: ICallerProof; accessTokens: AccessTokensService } | undefined
 
 /**
  * As contas e a prova de quem chama.
@@ -19,7 +21,7 @@ let instance: { accounts: AccountsService; proof: ICallerProof } | undefined
  * reabririam o setup a cada restart — o primeiro a chegar viraria admin de novo. Fica só a prova
  * externa, como antes.
  */
-export function makeAuth(): { accounts?: AccountsService; proof?: ICallerProof } {
+export function makeAuth(): { accounts?: AccountsService; proof?: ICallerProof; accessTokens?: AccessTokensService } {
   if (instance) return instance
 
   const external = proofFromEnv(makeTools().catalog)
@@ -32,6 +34,7 @@ export function makeAuth(): { accounts?: AccountsService; proof?: ICallerProof }
   instance = {
     accounts: new AccountsService(users, new ScryptPasswordHasher(), tokens),
     proof: new CompositeCallerProof(new LocalCallerProof(tokens, users), external),
+    accessTokens: new AccessTokensService(new SqliteAccessTokenRepository(configured || DEFAULT_DB_PATH), users, tokens),
   }
   return instance
 }

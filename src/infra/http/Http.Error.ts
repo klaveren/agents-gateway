@@ -14,6 +14,8 @@ import {
   ProviderUnavailableError,
   InvalidCredentialsError,
   InvalidUserError,
+  InvalidAccessTokenError,
+  AccessTokenNotFoundError,
   LoginLockedError,
   SetupUnavailableError,
   UserNotFoundError,
@@ -41,6 +43,7 @@ export type TErrorCode =
   | 'adapter_not_found'
   | 'agent_unavailable'
   | 'unauthorized'
+  | 'forbidden'
   | 'not_found'
   | 'internal_error'
 
@@ -132,6 +135,14 @@ export function toHttpFailure(error: unknown): IHttpFailure {
 
   if (error instanceof ProviderUnavailableError) {
     return { status: 422, code: 'provider_unavailable', message: error.message }
+  }
+
+  if (error instanceof InvalidAccessTokenError) {
+    return { status: 422, code: 'validation_error', message: 'Access token is invalid', details: error.issues }
+  }
+
+  if (error instanceof AccessTokenNotFoundError) {
+    return { status: 404, code: 'not_found', message: error.message }
   }
 
   if (error instanceof InvalidUserError) {
