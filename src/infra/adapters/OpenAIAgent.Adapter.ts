@@ -245,7 +245,7 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
 
   /** Os servidores MCP que ESTE agente escolheu. ⚖️ Um que não conecta sai sozinho: os outros seguem. */
   private async openMcpServers(context: IExecutionContext, allowedTools: readonly string[]): Promise<MCPServer[]> {
-    const remotes = (await this.catalog?.mcpServersFor(allowedTools)) ?? []
+    const remotes = (await this.catalog?.mcpServersFor(allowedTools, context)) ?? []
     if (!remotes.length) return []
 
     const servers = this.buildMcpServers(remotes, context.token)

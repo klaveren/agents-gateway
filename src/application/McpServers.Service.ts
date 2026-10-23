@@ -1,13 +1,27 @@
 import { InvalidMcpServerError, McpServerInUseError, McpServerNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgent } from '@domain/models/Agent.Model'
-import { IMcpServerConfig, MCP_SERVER_ID_PATTERN, mcpSecretKey, mcpSelection, mcpUrlIssue, TMcpAuth, TMcpTransport } from '@domain/models/McpServer.Model'
+import {
+  IMcpContainer,
+  IMcpServerConfig,
+  MCP_CONTAINER_DEFAULTS,
+  MCP_SERVER_ID_PATTERN,
+  mcpEnvSecretKey,
+  mcpSecretKey,
+  mcpSelection,
+  mcpUrlIssue,
+  TMcpAuth,
+  TMcpKind,
+  TMcpTransport,
+} from '@domain/models/McpServer.Model'
 import { ICredentialStatus, ICredentialStore } from '@domain/ports/CredentialStore.Port'
 import { IMcpServerRepository } from '@domain/ports/McpServerRepository.Port'
 
 export interface IMcpServerInput {
   id: string
   name: string
-  url: string
+  kind?: TMcpKind
+  container?: Partial<IMcpContainer>
+  url?: string
   transport?: TMcpTransport
   auth?: TMcpAuth
   headerName?: string
@@ -15,7 +29,7 @@ export interface IMcpServerInput {
   secret?: string
 }
 
-export type TMcpServerChange = Partial<Pick<IMcpServerConfig, 'name' | 'url' | 'transport' | 'auth' | 'headerName' | 'enabled'>>
+export type TMcpServerChange = Partial<Pick<IMcpServerConfig, 'name' | 'url' | 'transport' | 'auth' | 'headerName' | 'enabled'>> & { container?: Partial<IMcpContainer> }
 
 const NAME_MAX = 80
 const HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/
@@ -57,10 +71,13 @@ export class McpServersService {
   }
 
   create(input: IMcpServerInput, by: string): IMcpServerConfig {
+    const kind = input.kind ?? 'remote'
     const config: IMcpServerConfig = {
       id: input.id.trim(),
       name: input.name.trim(),
-      url: input.url.trim(),
+      kind,
+      ...(kind === 'container' ? { container: containerOf(input.container) } : {}),
+      url: kind === 'container' ? '' : (input.url ?? '').trim(),
       transport: input.transport ?? 'auto',
       auth: input.auth ?? 'caller',
       headerName: (input.auth ?? 'caller') === 'none' ? undefined : input.headerName?.trim() || undefined,
@@ -81,7 +98,12 @@ export class McpServersService {
 
   update(id: string, change: TMcpServerChange, by: string): IMcpServerConfig {
     const current = this.get(id)
-    const next: IMcpServerConfig = { ...current, ...definedOnly(change) }
+    const { container, ...rest } = change
+    const next: IMcpServerConfig = {
+      ...current,
+      ...definedOnly(rest),
+      ...(current.kind === 'container' ? { container: containerOf({ ...current.container, ...definedOnly(container ?? {}) }) } : {}),
+    }
     next.headerName = next.auth === 'none' ? undefined : next.headerName?.trim() || undefined
     const issues = issuesOf(next)
     if (issues.length) throw new InvalidMcpServerError(issues)
@@ -93,6 +115,7 @@ export class McpServersService {
       auth: next.auth,
       headerName: next.headerName,
       enabled: next.enabled,
+      ...(next.container ? { container: next.container } : {}),
       updatedAt: this.now(),
       updatedBy: by,
     })!
@@ -109,6 +132,19 @@ export class McpServersService {
     this.secrets.clear(mcpSecretKey(id))
   }
 
+  /** As variáveis secretas do contêiner: o NOME e se há valor — ⛔ nunca o valor. */
+  envStatus(id: string): Array<{ name: string; configured: boolean }> {
+    const server = this.get(id)
+    return (server.container?.env ?? []).map((name) => ({ name, configured: this.secrets.status([mcpEnvSecretKey(id, name)])[0].configured }))
+  }
+
+  saveEnv(id: string, name: string, value: string, by: string): void {
+    const server = this.get(id)
+    if (!server.container?.env.includes(name)) throw new InvalidMcpServerError([{ field: 'env', message: `not a declared variable: ${name}` }])
+    if (!value) throw new InvalidMcpServerError([{ field: 'env', message: 'required' }])
+    this.secrets.save(mcpEnvSecretKey(id, name), value, by)
+  }
+
   /** ⛔ Com agente usando, recusa e diz quais (409) — apagar deixaria ferramentas apontando para o nada. */
   remove(id: string): void {
     this.get(id)
@@ -118,15 +154,54 @@ export class McpServersService {
         id,
         using.map((agent) => agent.name),
       )
+    const server = this.servers.get(id)
     this.servers.delete(id)
     this.secrets.clear(mcpSecretKey(id))
+    for (const name of server?.container?.env ?? []) this.secrets.clear(mcpEnvSecretKey(id, name))
   }
+}
+
+const IMAGE = /^[a-z0-9]+(?:[._/-][a-z0-9]+)*(?::[A-Za-z0-9._-]{1,128})?(?:@sha256:[a-f0-9]{64})?$/
+const ENV_NAME = /^[A-Z_][A-Z0-9_]{0,63}$/
+const HOST_PATTERN = /^(\*\.)?[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*$|^\{meta:[A-Za-z0-9_]+\}$/
+/** Caminhos que nunca viram graváveis: são do kernel e do sistema. */
+const FORBIDDEN_PATHS = /^\/(proc|sys|dev|etc|bin|sbin|usr|lib|var\/run|run)(\/|$)/
+
+function containerOf(input: Partial<IMcpContainer> = {}): IMcpContainer {
+  const clean = (list: unknown) => (Array.isArray(list) ? list.map((entry) => String(entry).trim()).filter(Boolean) : [])
+  return {
+    image: String(input.image ?? '').trim(),
+    args: Array.isArray(input.args) ? input.args.map(String) : MCP_CONTAINER_DEFAULTS.args,
+    writable: clean(input.writable),
+    memoryMb: Number(input.memoryMb ?? MCP_CONTAINER_DEFAULTS.memoryMb),
+    cpus: Number(input.cpus ?? MCP_CONTAINER_DEFAULTS.cpus),
+    network: input.network === 'allowlist' ? 'allowlist' : 'none',
+    allowedHosts: clean(input.allowedHosts),
+    env: clean(input.env),
+  }
+}
+
+/** ⛔ O que o cadastro pode pedir — e só isso: as travas do contêiner não passam por aqui. */
+function containerIssues(container: IMcpContainer): Array<{ field: string; message: string }> {
+  const issues: Array<{ field: string; message: string }> = []
+  if (!IMAGE.test(container.image)) issues.push({ field: 'image', message: 'a Docker image like registry/name:tag' })
+  if (container.args.length > 32 || container.args.some((arg) => arg.length > 300 || /[\n\r\0]/.test(arg)))
+    issues.push({ field: 'args', message: 'up to 32 arguments, one line each' })
+  for (const path of container.writable)
+    if (!path.startsWith('/') || path === '/' || FORBIDDEN_PATHS.test(path) || path.includes('..')) issues.push({ field: 'writable', message: `not allowed: ${path}` })
+  if (!(container.memoryMb >= 128 && container.memoryMb <= 4096)) issues.push({ field: 'memoryMb', message: '128 to 4096' })
+  if (!(container.cpus >= 0.25 && container.cpus <= 4)) issues.push({ field: 'cpus', message: '0.25 to 4' })
+  if (container.network === 'allowlist' && !container.allowedHosts.length) issues.push({ field: 'allowedHosts', message: 'list at least one domain (or {meta:key})' })
+  for (const host of container.allowedHosts) if (!HOST_PATTERN.test(host)) issues.push({ field: 'allowedHosts', message: `not a domain: ${host}` })
+  for (const name of container.env) if (!ENV_NAME.test(name)) issues.push({ field: 'env', message: `use UPPER_CASE names: ${name}` })
+  return issues
 }
 
 function issuesOf(config: IMcpServerConfig): Array<{ field: string; message: string }> {
   const issues: Array<{ field: string; message: string }> = []
   if (!config.name) issues.push({ field: 'name', message: 'required' })
   else if (config.name.length > NAME_MAX) issues.push({ field: 'name', message: `at most ${NAME_MAX} characters` })
+  if (config.kind === 'container') return [...issues, ...containerIssues(config.container ?? containerOf())]
   const urlIssue = mcpUrlIssue(config.url)
   if (urlIssue) issues.push({ field: 'url', message: urlIssue })
   if (!TRANSPORTS.includes(config.transport)) issues.push({ field: 'transport', message: `one of ${TRANSPORTS.join(', ')}` })

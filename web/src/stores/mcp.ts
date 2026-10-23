@@ -1,11 +1,13 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { api } from '@/lib/api'
-import type { IMcpServer, IMcpTool, TMcpAuth, TMcpTransport } from '@/lib/types'
+import type { IMcpContainer, IMcpServer, IMcpTool, TMcpAuth, TMcpTransport } from '@/lib/types'
 
 export interface INewMcpServer {
   id: string
   name: string
+  kind: 'remote' | 'container'
+  container?: IMcpContainer
   url: string
   transport: TMcpTransport
   auth: TMcpAuth
@@ -28,7 +30,7 @@ export const useMcpStore = defineStore('mcp', () => {
     return created
   }
 
-  async function update(id: string, change: Partial<Pick<IMcpServer, 'name' | 'url' | 'transport' | 'auth' | 'headerName' | 'enabled'>>): Promise<void> {
+  async function update(id: string, change: Partial<Pick<IMcpServer, 'name' | 'url' | 'transport' | 'auth' | 'headerName' | 'enabled' | 'container'>>): Promise<void> {
     await api(`/mcp-servers/${encodeURIComponent(id)}`, { method: 'PUT', body: change })
     await load()
   }
@@ -54,11 +56,22 @@ export const useMcpStore = defineStore('mcp', () => {
     return result
   }
 
+  async function saveEnv(id: string, name: string, value: string): Promise<void> {
+    await api(`/mcp-servers/${encodeURIComponent(id)}/env/${encodeURIComponent(name)}`, { method: 'PUT', body: { value } })
+    await load()
+  }
+
+  async function stop(id: string): Promise<number> {
+    const result = await api<{ stopped: number }>(`/mcp-servers/${encodeURIComponent(id)}/stop`, { method: 'POST' })
+    await load()
+    return result.stopped
+  }
+
   async function loadTools(id: string): Promise<IMcpTool[]> {
     const result = await api<IMcpTool[]>(`/mcp-servers/${encodeURIComponent(id)}/tools`)
     tools.value = { ...tools.value, [id]: result }
     return result
   }
 
-  return { list, tools, load, create, update, remove, saveSecret, clearSecret, test, loadTools }
+  return { list, tools, load, create, update, remove, saveSecret, clearSecret, saveEnv, stop, test, loadTools }
 })

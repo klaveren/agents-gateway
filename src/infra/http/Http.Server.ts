@@ -3,6 +3,7 @@ import { AuthController } from './Auth.Controller'
 import { ProvidersController } from './Providers.Controller'
 import { UsageController } from './Usage.Controller'
 import { McpServersController } from './McpServers.Controller'
+import { McpProxyController } from './McpProxy.Controller'
 import { randomBytes } from 'node:crypto'
 import { McpServersService } from '@application/McpServers.Service'
 import { ProvidersService } from '@application/Providers.Service'
@@ -60,13 +61,22 @@ export class HttpServer {
     providers: ProvidersController = defaultProvidersController(),
     usage?: UsageController,
     mcpServers: McpServersController = defaultMcpServersController(),
+    mcpProxy?: McpProxyController,
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
     this.app.use(corsMiddleware())
     this.app.use(express.json({ limit: jsonLimit() }))
 
-    this.routes = buildRoutes(controller, auth, providers, usage ?? new UsageController({ conversations: controller.conversations }), mcpServers)
+    this.routes = buildRoutes(
+      controller,
+      auth,
+      providers,
+      usage ?? new UsageController({ conversations: controller.conversations }),
+      mcpServers,
+      mcpProxy ??
+        new McpProxyController({ registry: new McpRegistry(new SqliteMcpServerRepository(), { get: () => undefined }), session: () => undefined, agentTools: () => undefined }),
+    )
     this.setupRoutes()
     this.setupFrontend()
   }
@@ -162,8 +172,17 @@ export class HttpServer {
   }
 }
 
-function buildRoutes(controller: AgentController, auth: AuthController, providers: ProvidersController, usage: UsageController, mcpServers: McpServersController): IRoute[] {
+function buildRoutes(
+  controller: AgentController,
+  auth: AuthController,
+  providers: ProvidersController,
+  usage: UsageController,
+  mcpServers: McpServersController,
+  mcpProxy: McpProxyController,
+): IRoute[] {
   return [
+    // A ponte dos SDKs agênticos até os MCPs em contêiner (ver `McpProxy.Controller`).
+    { method: 'post', path: '/mcp-proxy/:serverId', handler: mcpProxy.handle },
     { method: 'get', path: '/mcp-servers', handler: mcpServers.list },
     { method: 'post', path: '/mcp-servers', handler: mcpServers.create },
     { method: 'put', path: '/mcp-servers/:id', handler: mcpServers.update },
@@ -172,6 +191,8 @@ function buildRoutes(controller: AgentController, auth: AuthController, provider
     { method: 'delete', path: '/mcp-servers/:id/secret', handler: mcpServers.clearSecret },
     { method: 'post', path: '/mcp-servers/:id/test', handler: mcpServers.test },
     { method: 'get', path: '/mcp-servers/:id/tools', handler: mcpServers.tools },
+    { method: 'put', path: '/mcp-servers/:id/env/:name', handler: mcpServers.saveEnv },
+    { method: 'post', path: '/mcp-servers/:id/stop', handler: mcpServers.stopInstances },
     // O gateway como servidor MCP (ver `SelfMcp.Controller`): só POST; sem estado, GET e DELETE são 405.
     { method: 'post', path: '/mcp', handler: handleSelfMcp },
     { method: 'get', path: '/mcp', handler: rejectSelfMcp },

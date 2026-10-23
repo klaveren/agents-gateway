@@ -329,6 +329,11 @@ const mcpServerBody = {
   properties: {
     id: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{1,31}$', description: 'Only on create.' },
     name: { type: 'string' },
+    kind: { type: 'string', enum: ['remote', 'container'], description: 'container = the gateway runs the image in an isolated container, one per conversation. Only on create.' },
+    container: {
+      type: 'object',
+      description: 'Image, args (`{proxy}` = the egress proxy URL), writable tmpfs paths, memoryMb, cpus, network (none | allowlist), allowedHosts (domains or {meta:key}) and env (secret variable names). Hardening (read-only, no capabilities, no volumes, no ports) is fixed.',
+    },
     url: { type: 'string', description: 'http(s) URL of the MCP endpoint.' },
     transport: { type: 'string', enum: ['auto', 'http', 'sse'] },
     auth: { type: 'string', enum: ['caller', 'header', 'none'], description: 'caller = forward the conversing caller credential; header = a fixed secret header.' },
@@ -750,6 +755,30 @@ export const OPENAPI_DOCUMENT = {
         summary: 'Connect now (ignoring the backoff) and count the tools. Administrators only',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: { '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { ok: { type: 'boolean' }, tools: { type: 'integer' }, message: { type: 'string' } } })) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/mcp-servers/{id}/env/{name}': {
+      put: {
+        summary: 'Save the value of a declared secret variable of a container MCP (encrypted; never returned). Administrators only',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }, { name: 'name', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', properties: { value: { type: 'string' } }, required: ['value'] }) },
+        responses: { '200': { description: 'Saved', ...json(envelope(mcpServerSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/mcp-servers/{id}/stop': {
+      post: {
+        summary: 'Stop every running instance (one per conversation) of a container MCP. Administrators only',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { stopped: { type: 'integer' } } })) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/mcp-proxy/{serverId}': {
+      post: {
+        summary:
+          "Bridge used by the agentic SDK lanes to reach a container MCP: requires the conversation in X-Gateway-Session, owned by the caller, whose agent selected this server. Forwards tools/list and tools/call to that conversation's own isolated instance",
+        parameters: [{ name: 'serverId', in: 'path', required: true, schema: { type: 'string' } }, { name: 'X-Gateway-Session', in: 'header', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', description: 'A JSON-RPC 2.0 message' } } } },
+        responses: { '200': { description: 'JSON-RPC response', content: { 'application/json': { schema: { type: 'object' } } } }, '401': failures['401'], '404': failures['404'] },
       },
     },
     '/mcp-servers/{id}/tools': {

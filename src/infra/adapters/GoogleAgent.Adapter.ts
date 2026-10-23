@@ -393,7 +393,7 @@ export class GoogleAgentAdapter implements IAgentAdapter {
     if (!this.catalog) return []
 
     // ⛔ Só os servidores e as ferramentas que ESTE agente escolheu (ver `ToolCatalog.toolbox`).
-    const toolbox = await this.catalog.toolbox(agent.allowedTools)
+    const toolbox = await this.catalog.toolbox(agent.allowedTools, caller.context)
 
     return buildAdkRemoteTools(
       toolbox.tools.filter((tool) => tool.origin === 'mcp'),

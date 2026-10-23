@@ -1,3 +1,4 @@
+import { McpProxyController } from '@infra/http/McpProxy.Controller'
 import { McpServersService } from '@application/McpServers.Service'
 import { McpServersController } from '@infra/http/McpServers.Controller'
 import { AgentController } from '@infra/http/Agent.Controller'
@@ -64,4 +65,9 @@ export function makeMcpServersController(): McpServersController {
     registry: mcp,
     proof: makeAuth().proof,
   })
+}
+
+export function makeMcpProxyController(): McpProxyController {
+  const { mcp } = makeTools()
+  return new McpProxyController({ registry: mcp, proof: makeAuth().proof, session: (id) => mcp.session(id), agentTools: (id) => makeAgents().entry(id)?.agent.allowedTools })
 }

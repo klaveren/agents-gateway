@@ -33,7 +33,9 @@ export function makeTools(): ITools {
 
     const mcp = new McpRegistry(servers, makeCredentials(), undefined, (config) => gatewayGate(config))
     const delegation = new DelegationSlot()
-    instance = { delegation, mcp, servers, catalog: new ToolCatalog(mcp, makeLocalTools(), (allowed) => makeDelegateTool(allowed, delegation)) }
+    // Os SDKs agênticos chegam aos MCPs em contêiner pelo proxy do próprio gateway (`/v1/mcp-proxy/<id>`).
+    const containerProxy = { base: selfUrl().replace(/\/v1\/mcp$/, '/v1/mcp-proxy'), headers: () => gatewayGate({ id: SELF_MCP_SERVER } as IMcpServerConfig) ?? {} }
+    instance = { delegation, mcp, servers, catalog: new ToolCatalog(mcp, makeLocalTools(), (allowed) => makeDelegateTool(allowed, delegation), containerProxy) }
   }
   return instance
 }

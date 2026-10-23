@@ -120,7 +120,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
 
     const local = this.catalog?.localFor(agent.allowedTools) ?? []
     const natives = nativeToolsOf(agent.allowedTools, EProvider.CLAUDE).map((tool) => tool.sdkName)
-    const remotes = (await this.catalog?.mcpServersFor(agent.allowedTools)) ?? []
+    const remotes = (await this.catalog?.mcpServersFor(agent.allowedTools, context)) ?? []
 
     const options: Options = {
       model: record.model,

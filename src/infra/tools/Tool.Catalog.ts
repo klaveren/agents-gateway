@@ -43,6 +43,11 @@ export class ToolCatalog {
     private readonly local: ILocalTool[],
     /** A ferramenta de delegação de um agente (os `agent:<id>` dele). Ausente = sem delegação. */
     private readonly delegation?: (allowed: readonly string[]) => ILocalTool,
+    /**
+     * O proxy MCP do próprio gateway (`/v1/mcp-proxy/<id>`), por onde os SDKs agênticos chegam aos MCPs em
+     * contêiner — eles nunca falam com o Docker. Ausente = contêiner só nas lanes que usam a caixa.
+     */
+    private readonly containerProxy?: { base: string; headers: () => Record<string, string> },
   ) {}
 
   /** Algum servidor MCP ligado está conectado agora (para health e relatório). */
@@ -74,12 +79,13 @@ export class ToolCatalog {
    * oferecendo o mesmo nome (ou um deles igual ao de uma local), vira `<servidor>__<ferramenta>`. A
    * local vence sempre: é a que tem a política do gateway (run_bash, timeouts).
    */
-  async toolbox(allowed: readonly string[]): Promise<IToolbox> {
+  async toolbox(allowed: readonly string[], context?: IExecutionContext): Promise<IToolbox> {
     const local = this.localFor(allowed)
     const remote: Array<{ server: string; tool: IToolDefinition }> = []
 
     for (const [server, choice] of mcpSelection(allowed)) {
-      const tools = await this.mcp.tools(server)
+      // Contêiner: a instância DESTA conversa (o `sessionId` do contexto); sem conversa, não há instância.
+      const tools = await this.mcp.tools(server, context?.sessionId).catch(() => [])
       for (const tool of tools) if (choice.all || choice.tools.has(tool.name)) remote.push({ server, tool })
     }
 
@@ -104,12 +110,30 @@ export class ToolCatalog {
     }
   }
 
+  /** O servidor de um contêiner, visto por um SDK agêntico: o proxy do gateway, preso à conversa. */
+  private viaProxy(config: IMcpServerConfig): IMcpServerConfig | undefined {
+    if (!this.containerProxy) return undefined
+    return { ...config, kind: 'remote', url: `${this.containerProxy.base}/${config.id}`, transport: 'http', auth: 'caller', headerName: 'X-Tool-Authorization' }
+  }
+
   /** Os servidores MCP que um agente escolheu e que estão de pé agora — os SDKs agênticos conectam neles. */
-  async mcpServersFor(allowed: readonly string[]): Promise<IAgentMcpServer[]> {
+  async mcpServersFor(allowed: readonly string[], context?: IExecutionContext): Promise<IAgentMcpServer[]> {
     const servers: IAgentMcpServer[] = []
     for (const [id, choice] of mcpSelection(allowed)) {
+      const stored = this.mcp.get(id)
+      if (stored?.kind === 'container') {
+        const proxied = stored.enabled && context?.sessionId ? this.viaProxy(stored) : undefined
+        if (!proxied || !context?.sessionId) continue
+        servers.push({
+          config: proxied,
+          ...(choice.all ? {} : { tools: [...choice.tools] }),
+          callerHeader: 'X-Tool-Authorization',
+          fixed: { ...this.containerProxy!.headers(), 'X-Gateway-Session': context.sessionId },
+        })
+        continue
+      }
       const client = await this.mcp.connected(id)
-      const config = this.mcp.get(id)
+      const config = stored
       if (!client || !config) continue
       const fixed = this.mcp.fixedHeaders(config)
       servers.push({
@@ -137,7 +161,12 @@ export class ToolCatalog {
   }
 
   private async callMcp(server: string, tool: string, args: Record<string, unknown>, context?: IExecutionContext): Promise<IToolResult> {
-    const client = this.mcp.client(server)
+    let client
+    try {
+      client = await this.mcp.clientFor(server, context?.sessionId)
+    } catch (error: unknown) {
+      return { status: 'error', result: error instanceof Error ? error.message : String(error) }
+    }
     if (!client) return { status: 'error', result: `MCP server unavailable: ${server}` }
     return client.callTool(tool, args, context)
   }

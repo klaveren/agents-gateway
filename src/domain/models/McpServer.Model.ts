@@ -9,9 +9,51 @@
 export type TMcpAuth = 'caller' | 'header' | 'none'
 export type TMcpTransport = 'auto' | 'http' | 'sse'
 
+/**
+ * `remote`: um MCP que já está no ar, por HTTP/SSE. `container`: o gateway sobe a imagem num contêiner
+ * ISOLADO, um por conversa (ver `IMcpContainer`).
+ */
+export type TMcpKind = 'remote' | 'container'
+
+/**
+ * Um MCP em contêiner. ⛔ O que NÃO está aqui não é configurável: disco só leitura, sem capacidades, sem
+ * volumes, sem portas, sem a rede do servidor — as travas são do gateway, não do cadastro.
+ */
+export interface IMcpContainer {
+  image: string
+  args: string[]
+  /** Caminhos graváveis (em memória) — o resto é só leitura. */
+  writable: string[]
+  memoryMb: number
+  cpus: number
+  /** `none`: sem rede. `allowlist`: só os domínios listados, pelo proxy do gateway. */
+  network: 'none' | 'allowlist'
+  /** Domínios (com subdomínios) ou `{meta:chave}` — o valor daquela chave no `metadata` da conversa. */
+  allowedHosts: string[]
+  /** Nomes das variáveis secretas (os valores ficam cifrados no cofre, `mcp:<id>:env:<NOME>`). */
+  env: string[]
+}
+
+export const MCP_CONTAINER_DEFAULTS: Pick<IMcpContainer, 'writable' | 'memoryMb' | 'cpus' | 'network' | 'allowedHosts' | 'env' | 'args'> = {
+  args: [],
+  writable: [],
+  memoryMb: 1024,
+  cpus: 1,
+  network: 'none',
+  allowedHosts: [],
+  env: [],
+}
+
+export const mcpEnvSecretKey = (serverId: string, name: string) => `mcp:${serverId}:env:${name}`
+
 export interface IMcpServerConfig {
   id: string
   name: string
+  /** Padrão `remote`. */
+  kind?: TMcpKind
+  /** Só em `container`. */
+  container?: IMcpContainer
+  /** Em `remote`, a URL do MCP. Em `container`, vazia. */
   url: string
   transport: TMcpTransport
   auth: TMcpAuth

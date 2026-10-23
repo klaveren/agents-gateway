@@ -3,7 +3,15 @@ dotenv.config({ override: true })
 
 import { setTracingDisabled } from '@openai/agents'
 import { makeAuth } from '@composition/factories/Auth.Factory'
-import { makeAuthController, makeController, makeMcpServersController, makeProvidersController, makeUsageController } from '@composition/factories/Controller.Factory'
+import {
+  makeAuthController,
+  makeController,
+  makeMcpProxyController,
+  makeMcpServersController,
+  makeProvidersController,
+  makeUsageController,
+} from '@composition/factories/Controller.Factory'
+import { cleanupOrphans } from '@infra/sandbox/Docker.Sandbox'
 import { makeTools } from '@composition/factories/Tools.Factory'
 import { warnIfProofDisabled } from '@infra/http/Caller.Proof'
 import { HttpServer } from '@infra/http/Http.Server'
@@ -34,12 +42,21 @@ async function bootstrap() {
   // Conecta os servidores MCP cadastrados sem esperar: nenhum `connect()` lança, e servidor fora do ar
   // tenta de novo sozinho (com backoff) na primeira vez que uma ferramenta dele for pedida.
   void makeTools().mcp.connectAll()
+  // Contêineres e redes de MCP que um processo anterior deixou (queda, reinício) saem antes de tudo.
+  void cleanupOrphans()
 
   // Com contas locais há prova (a do token deste gateway); o aviso fica para quem roda sem banco.
   warnIfProofDisabled(makeAuth().proof)
 
   const controller = makeController()
-  const server = new HttpServer(controller, makeAuthController(), makeProvidersController(), makeUsageController(controller.conversations), makeMcpServersController())
+  const server = new HttpServer(
+    controller,
+    makeAuthController(),
+    makeProvidersController(),
+    makeUsageController(controller.conversations),
+    makeMcpServersController(),
+    makeMcpProxyController(),
+  )
   server.start(Number.parseInt(process.env.PORT || '3000', 10))
 }
 
