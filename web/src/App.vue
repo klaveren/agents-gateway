@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ApiError } from './lib/api'
 import NavRail from './components/NavRail.vue'
 import { useAgentsStore } from './stores/agents'
 import { useAuthStore } from './stores/auth'
@@ -39,6 +40,8 @@ async function loadAgents() {
   try {
     await agents.load()
   } catch (error) {
+    // 401 é "falta entrar", não falha: a tela de login já diz isso.
+    if (error instanceof ApiError && error.status === 401) return
     agentsError.value = error instanceof Error ? error.message : String(error)
   } finally {
     retrying.value = false
