@@ -100,6 +100,8 @@ export interface IAgent {
   modes: TMode[]
   allowedTools: string[]
   builtIn: boolean
+  /** `subagent`: só é chamado por outro agente (delegação); não abre conversa. */
+  role?: 'subagent'
 }
 
 export interface IAgentDetail extends IAgent {
@@ -123,6 +125,8 @@ export interface IAgentInput {
   reasoningEfforts?: string[]
   modes: TMode[]
   allowedTools: string[]
+  /** `null` volta a agente normal. */
+  role?: 'subagent' | null
 }
 
 export interface ITool {

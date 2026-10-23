@@ -25,4 +25,9 @@ export interface ICreateSessionInput {
    * com o papel PROVADO do chamador; ausente = não pode, quando a regra está ligada.
    */
   subscriptionAccess?: boolean
+  /**
+   * A sessão nasce de uma DELEGAÇÃO (ver `DelegationService`) — o único caminho que abre um subagente.
+   * ⛔ Interno: o schema HTTP não aceita este campo, e nenhum controller o repassa.
+   */
+  delegated?: boolean
 }

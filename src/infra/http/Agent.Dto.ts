@@ -35,6 +35,8 @@ export interface IAgentDto {
   allowedTools: string[]
   /** Do código (só leitura) ou criado pela tela. */
   builtIn: boolean
+  /** `subagent`: só chamado por outro agente; não abre conversa direta. */
+  role?: string
 }
 
 /**
@@ -80,6 +82,7 @@ export function toAgentDto(agent: IAgent, pricing: TModelPricing = MODEL_PRICING
     modes: agent.modes.map(String),
     allowedTools: agent.allowedTools,
     builtIn,
+    ...(agent.role ? { role: agent.role } : {}),
   }
 }
 

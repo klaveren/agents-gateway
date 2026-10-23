@@ -25,7 +25,8 @@ const error = ref<string>()
 
 const creating = computed(() => route.name === 'agent-new')
 const builtIns = computed(() => agents.list.filter((agent) => agent.builtIn))
-const created = computed(() => agents.list.filter((agent) => !agent.builtIn))
+const created = computed(() => agents.list.filter((agent) => !agent.builtIn && agent.role !== 'subagent'))
+const subagents = computed(() => agents.list.filter((agent) => !agent.builtIn && agent.role === 'subagent'))
 
 onMounted(() => {
   void agents.loadTools().catch(() => undefined)
@@ -73,7 +74,7 @@ watch(creating, (value) => {
         <h1 class="text-xl font-semibold">Agentes</h1>
         <RouterLink to="/agents/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Novo agente" @click="template = undefined"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
-      <template v-for="group in [{ label: 'Criados', items: created }, { label: 'Embutidos', items: builtIns }]" :key="group.label">
+      <template v-for="group in [{ label: 'Criados', items: created }, { label: 'Subagentes', items: subagents }, { label: 'Embutidos', items: builtIns }]" :key="group.label">
         <h2 v-if="group.items.length" class="px-4 pt-3 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">{{ group.label }}</h2>
         <RouterLink
           v-for="agent in group.items"
@@ -89,7 +90,7 @@ watch(creating, (value) => {
           </span>
         </RouterLink>
       </template>
-      <p v-if="!created.length" class="px-4 py-2 text-sm text-zinc-500">Nenhum agente criado ainda.</p>
+      <p v-if="!created.length && !subagents.length" class="px-4 py-2 text-sm text-zinc-500">Nenhum agente criado ainda.</p>
     </template>
 
     <template #detail>
@@ -104,7 +105,7 @@ watch(creating, (value) => {
             <h2 class="truncate text-lg font-semibold">{{ detail.name }}</h2>
             <p class="truncate font-mono text-xs text-zinc-500">{{ detail.id }}</p>
           </div>
-          <RouterLink :to="{ path: '/new', query: { agent: detail.id } }" class="ml-auto shrink-0 rounded-full bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700">Conversar</RouterLink>
+          <RouterLink v-if="detail.role !== 'subagent'" :to="{ path: '/new', query: { agent: detail.id } }" class="ml-auto shrink-0 rounded-full bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700">Conversar</RouterLink>
         </div>
         <AgentForm :agent="detail" :creating="false" @saved="(saved) => agents.detail(saved).then((fresh) => (detail = fresh))" @duplicate="duplicate" @removed="router.push('/agents')" />
       </template>

@@ -71,6 +71,15 @@ describe('AgentCatalog', () => {
     assert.throws(() => catalog.remove('juridico'), AgentNotFoundError)
   })
 
+  it('o papel de subagente sobrevive à gravação; sem ele, volta a agente normal', () => {
+    const catalog = build()
+    catalog.save({ ...custom, role: 'subagent' }, options(true))
+    assert.strictEqual(catalog.get('juridico')?.role, 'subagent')
+
+    catalog.save(custom, options(false))
+    assert.strictEqual(catalog.get('juridico')?.role, undefined)
+  })
+
   it('um criado com o id de um embutido (arquivo antigo) não sombreia o embutido', () => {
     const repository = new NullAgentRepository()
     repository.save({ ...builtIn, name: 'impostor' }, 'x')

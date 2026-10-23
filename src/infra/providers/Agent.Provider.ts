@@ -4,6 +4,7 @@ import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import {
   AdapterNotFoundError,
+  SubagentOnlyError,
   SubscriptionRestrictedError,
   AgentNotFoundError,
   AgentUnavailableError,
@@ -115,8 +116,10 @@ export class AgentProvider implements IAgentProvider {
     const mode = resolveSessionMode(agent, input)
     const protocol = this.protocolOf(agent.provider)
     if (isSubscription(protocol) && subscriptionAdminOnly() && !input.subscriptionAccess) throw new SubscriptionRestrictedError(agent.provider)
+    // ⛔ Subagente: só pela delegação. Aqui, e não na tela, porque é por aqui que todo caminho passa.
+    if (agent.role === 'subagent' && !input.delegated) throw new SubagentOnlyError(agent.id)
 
-    const { subscriptionAccess: _access, ...rest } = input
+    const { subscriptionAccess: _access, delegated: _delegated, ...rest } = input
     return this.getAdapter(protocol, mode).createSession(agent, {
       ...rest,
       agentId: agent.id,

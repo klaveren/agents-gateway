@@ -71,6 +71,7 @@ export class DelegationService {
         const created = await this.createSession.execute({
           agentId: request.agentId,
           mode,
+          delegated: true,
           ...(mode === EMode.CHAT ? { tools: true } : {}),
           metadata: {
             ...(metadata.owner ? { owner: metadata.owner } : {}),

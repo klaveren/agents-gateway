@@ -11,6 +11,8 @@ export const useAgentsStore = defineStore('agents', () => {
   const loaded = ref(false)
 
   const byId = computed(() => new Map(list.value.map((agent) => [agent.id, agent])))
+  /** Os que abrem conversa: subagente só é chamado por outro agente. */
+  const conversable = computed(() => list.value.filter((agent) => agent.role !== 'subagent'))
 
   async function load(): Promise<void> {
     list.value = await api<IAgent[]>('/agents')
@@ -48,5 +50,5 @@ export const useAgentsStore = defineStore('agents', () => {
     return nativeTools.value.find((tool) => tool.sdkName === name || tool.sdkName === base)?.label ?? name
   }
 
-  return { list, tools, nativeTools, mcpConnected, toolLabel, loaded, byId, load, loadTools, detail, save, remove }
+  return { list, conversable, tools, nativeTools, mcpConnected, toolLabel, loaded, byId, load, loadTools, detail, save, remove }
 })

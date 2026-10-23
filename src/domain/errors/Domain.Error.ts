@@ -155,6 +155,13 @@ export class ProviderUnavailableError extends DomainError {
   }
 }
 
+/** ⛔ Subagente só é chamado por outro agente: conversa direta com ele é recusada. */
+export class SubagentOnlyError extends DomainError {
+  constructor(public readonly agentId: string) {
+    super(`Agent ${agentId} is a subagent: it is only called by another agent (delegate_to_agent), never in a direct conversation.`)
+  }
+}
+
 /** ⛔ Agente de assinatura (conta pessoal de quem fez o login) para quem não administra. */
 export class SubscriptionRestrictedError extends DomainError {
   constructor(public readonly providerId: string) {

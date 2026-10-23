@@ -241,7 +241,7 @@ const agentSchema = {
     },
     modes: { type: 'array', items: { type: 'string', enum: ['chat', 'agent'] } },
     allowedTools: { type: 'array', items: { type: 'string' } },
-    builtIn: { type: 'boolean', description: 'Declared in code (read-only) or created through the API.' },
+    builtIn: { type: 'boolean', description: 'Declared in code (read-only) or created through the API.' }, role: { type: 'string', enum: ['subagent'], description: 'Present on subagents: only called by another agent.' },
   },
 }
 
@@ -264,6 +264,7 @@ const agentBody = {
     provider: { type: 'string', enum: ['claude', 'openai', 'google'] },
     systemPrompt: { type: 'string' },
     soul: { type: 'string', maxLength: 8000, description: 'Who the agent is (identity, tone, values); the system prompt says what it does.' },
+    role: { type: ['string', 'null'], enum: ['subagent', null], description: '`subagent`: only called by another agent (delegation), never in a direct conversation.' },
     models: { type: 'array', items: { type: 'string' }, description: 'Every model must belong to `provider`.' },
     reasoningEfforts: { type: 'array', items: { type: 'string' } },
     modes: { type: 'array', items: { type: 'string', enum: ['chat', 'agent'] } },

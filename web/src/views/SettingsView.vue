@@ -160,7 +160,7 @@ async function saveSettings() {
             Agente padrão
             <select v-model="agentId" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2">
               <option value="">Padrão ({{ settings.current.defaults?.agentId }})</option>
-              <option v-for="option in agents.list" :key="option.id" :value="option.id">{{ option.name }}</option>
+              <option v-for="option in agents.conversable" :key="option.id" :value="option.id">{{ option.name }}</option>
             </select>
           </label>
           <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">

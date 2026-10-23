@@ -75,6 +75,8 @@ describe('DelegationService', () => {
       delegationDepth: 1,
       delegationChain: ['redator', 'tradutor'],
     })
+    // É a marca que deixa abrir um subagente (ver `AgentProvider.createSession`).
+    assert.strictEqual(created[0].delegated, true)
   })
 
   it('⛔ recusa: fora da lista, ciclo (inclusive o próprio agente) e acima da profundidade', async () => {

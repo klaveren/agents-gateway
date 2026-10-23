@@ -24,6 +24,10 @@ describe('request validation', () => {
     })
   })
 
+  it('⛔ `delegated` e `subscriptionAccess` vindos do corpo são descartados: quem decide é o servidor', () => {
+    assert.deepStrictEqual(parseBody(createSessionSchema, { agentId: 'tradutor', delegated: true, subscriptionAccess: true }), { agentId: 'tradutor' })
+  })
+
   it('accepts a full session body', () => {
     const body = {
       agentId: 'sysops-agent',
