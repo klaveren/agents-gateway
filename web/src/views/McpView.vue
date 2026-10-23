@@ -4,9 +4,10 @@ import { useRoute, useRouter } from 'vue-router'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import Icon from '@/components/Icon.vue'
 import MasterDetail from '@/components/MasterDetail.vue'
+import McpContainerFields from '@/components/McpContainerFields.vue'
 import { ApiError } from '@/lib/api'
 import { fullTime, initials } from '@/lib/format'
-import type { IMcpServer, TMcpAuth, TMcpTransport } from '@/lib/types'
+import type { IMcpContainer, IMcpServer, TMcpAuth, TMcpTransport } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
 import { useMcpStore, type INewMcpServer } from '@/stores/mcp'
 
@@ -32,7 +33,11 @@ const adding = computed(() => route.name === 'mcp-new')
 const selected = computed(() => (props.id ? mcp.list.find((server) => server.id === props.id) : undefined))
 
 const loadError = ref<string>()
-const blank = (): INewMcpServer => ({ id: '', name: '', url: '', transport: 'auto', auth: 'caller', headerName: 'Authorization', secret: '' })
+const blankContainer = (): IMcpContainer => ({ image: '', args: [], writable: [], memoryMb: 1024, cpus: 1, network: 'none', allowedHosts: [], env: [] })
+const blank = (): INewMcpServer => ({ id: '', name: '', kind: 'remote', container: blankContainer(), url: '', transport: 'auto', auth: 'caller', headerName: 'Authorization', secret: '' })
+/** O rascunho do contêiner na edição (a cópia do que está gravado). */
+const containerDraft = ref<IMcpContainer>(blankContainer())
+const envValues = ref<Record<string, string>>({})
 const form = ref<INewMcpServer>(blank())
 const formIssues = ref<Record<string, string[]>>({})
 const formError = ref<string>()
@@ -60,6 +65,7 @@ watch(
       void mcp.loadTools(server.id).catch(() => undefined)
     }
     edit.value = { name: server.name, url: server.url, transport: server.transport, auth: server.auth, headerName: server.headerName ?? 'Authorization' }
+    if (server.container && server.id !== previous?.id) containerDraft.value = JSON.parse(JSON.stringify(server.container)) as IMcpContainer
   },
   { immediate: true },
 )
@@ -94,8 +100,11 @@ async function create() {
   formIssues.value = {}
   formError.value = undefined
   try {
-    const { secret: value, headerName, ...rest } = form.value
-    const created = await mcp.create({ ...rest, ...(rest.auth === 'header' ? { headerName, secret: value?.trim() || undefined } : {}) })
+    const { secret: value, headerName, container, ...rest } = form.value
+    const created =
+      rest.kind === 'container'
+        ? await mcp.create({ id: rest.id, name: rest.name, kind: 'container', container, url: '', transport: 'auto', auth: 'none' })
+        : await mcp.create({ ...rest, ...(rest.auth === 'header' ? { headerName, secret: value?.trim() || undefined } : {}) })
     form.value = blank()
     await router.push(`/mcp/${created.id}`)
   } catch (error) {
@@ -118,6 +127,17 @@ async function run(work: () => Promise<void>) {
 
 const save = () => run(async () => mcp.update(selected.value!.id, { ...edit.value!, headerName: edit.value!.auth === 'header' ? edit.value!.headerName : undefined }))
 const toggle = () => run(async () => mcp.update(selected.value!.id, { enabled: !selected.value!.enabled }))
+const containerDirty = computed(() => !!selected.value?.container && JSON.stringify(selected.value.container) !== JSON.stringify(containerDraft.value))
+const saveContainer = () => run(async () => mcp.update(selected.value!.id, { name: edit.value!.name, container: containerDraft.value }))
+const saveEnv = (name: string) =>
+  run(async () => {
+    await mcp.saveEnv(selected.value!.id, name, envValues.value[name] ?? '')
+    envValues.value = { ...envValues.value, [name]: '' }
+  })
+const stopAll = () =>
+  run(async () => {
+    await mcp.stop(selected.value!.id)
+  })
 const saveSecret = () =>
   run(async () => {
     await mcp.saveSecret(selected.value!.id, secret.value)
@@ -170,7 +190,7 @@ async function confirmRemove() {
         <span class="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-violet-500/20 text-xs font-semibold text-violet-200">{{ initials(server.name) }}</span>
         <span class="min-w-0 flex-1">
           <span class="block truncate text-sm font-medium">{{ server.name }}</span>
-          <span class="block truncate text-xs text-zinc-500">{{ server.enabled ? (server.status.connected ? 'conectado' : 'sem conexão') : 'desligado' }} · {{ server.agents.length }} agente(s)</span>
+          <span class="block truncate text-xs text-zinc-500">{{ !server.enabled ? 'desligado' : server.kind === 'container' ? `contêiner · ${server.status.instances ?? 0} ativa(s)` : server.status.connected ? 'conectado' : 'sem conexão' }} · {{ server.agents.length }} agente(s)</span>
         </span>
         <span class="h-2 w-2 shrink-0 rounded-full" :class="server.enabled && server.status.connected ? 'bg-emerald-400' : 'bg-zinc-600'" />
       </RouterLink>
@@ -180,6 +200,14 @@ async function confirmRemove() {
       <template v-if="adding">
         <h2 class="mx-auto mb-4 max-w-3xl text-lg font-semibold">Novo MCP</h2>
         <form class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="create">
+          <div class="field">
+            Tipo
+            <div class="flex flex-wrap gap-1.5">
+              <button type="button" class="chip" :class="{ on: form.kind === 'remote' }" @click="form.kind = 'remote'">Remoto (URL)</button>
+              <button type="button" class="chip" :class="{ on: form.kind === 'container' }" @click="form.kind = 'container'">Contêiner isolado</button>
+            </div>
+            <small class="hint">{{ form.kind === 'remote' ? 'Um MCP que já está no ar, por HTTP/SSE.' : 'O gateway sobe a imagem num contêiner trancado — um por conversa.' }}</small>
+          </div>
           <div class="grid gap-3 sm:grid-cols-2">
             <label class="field">Nome<input v-model="form.name" required class="input" placeholder="CRM interno" @blur="slug" /><small v-for="m in formIssues.name" :key="m" class="error">{{ m }}</small></label>
             <label class="field">
@@ -188,27 +216,28 @@ async function confirmRemove() {
               <small class="hint">Os agentes escolhem as ferramentas como <code>mcp:{{ form.id || 'id' }}/…</code>. Não muda depois.</small>
               <small v-for="m in formIssues.id" :key="m" class="error">{{ m }}</small>
             </label>
-            <label class="field sm:col-span-2">
+            <label v-if="form.kind === 'remote'" class="field sm:col-span-2">
               URL
               <input v-model="form.url" required class="input font-mono" placeholder="https://mcp.exemplo.com/mcp" />
               <small v-for="m in formIssues.url" :key="m" class="error">{{ m }}</small>
               <small v-if="pointsToSelf(form.url)" class="text-amber-300">⚠ É o MCP do próprio gateway: um agente que conversa com outros agentes pode entrar em recursão.</small>
             </label>
           </div>
-          <div class="field">
+          <McpContainerFields v-if="form.kind === 'container' && form.container" v-model="form.container" :issues="formIssues" />
+          <div v-if="form.kind === 'remote'" class="field">
             Transporte
             <div class="flex flex-wrap gap-1.5">
               <button v-for="(label, value) in TRANSPORT_LABEL" :key="value" type="button" class="chip" :class="{ on: form.transport === value }" @click="form.transport = value">{{ label }}</button>
             </div>
           </div>
-          <div class="field">
+          <div v-if="form.kind === 'remote'" class="field">
             Autenticação
             <div class="flex flex-wrap gap-1.5">
               <button v-for="(option, value) in AUTH_LABEL" :key="value" type="button" class="chip" :class="{ on: form.auth === value }" @click="form.auth = value">{{ option.label }}</button>
             </div>
             <small class="hint">{{ AUTH_LABEL[form.auth].hint }}</small>
           </div>
-          <div v-if="form.auth === 'header'" class="grid gap-3 sm:grid-cols-2">
+          <div v-if="form.kind === 'remote' && form.auth === 'header'" class="grid gap-3 sm:grid-cols-2">
             <label class="field">Header<input v-model="form.headerName" class="input font-mono" placeholder="Authorization" /></label>
             <label class="field">Valor (segredo)<input v-model="form.secret" type="password" autocomplete="off" spellcheck="false" class="input font-mono" placeholder="Bearer …" /></label>
           </div>
@@ -237,7 +266,29 @@ async function confirmRemove() {
           É o MCP do próprio gateway: um agente com estas ferramentas pode abrir conversas com outros agentes — inclusive com ele mesmo. Dê só as ferramentas de que ele precisa.
         </p>
 
-        <form class="flex flex-col gap-3" @submit.prevent="save">
+        <template v-if="selected.kind === 'container'">
+          <div class="flex flex-wrap items-center gap-2 text-xs text-zinc-400">
+            <span class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-emerald-300">contêiner isolado</span>
+            <span>{{ selected.status.instances ?? 0 }} instância(s) ativa(s) — uma por conversa</span>
+            <button v-if="selected.status.instances" type="button" class="ml-auto rounded-full px-3 py-1 text-rose-300 hover:bg-rose-500/10" :disabled="busy" @click="stopAll">Encerrar todas</button>
+          </div>
+          <label class="field">Nome<input v-model="edit.name" required class="input" /></label>
+          <McpContainerFields v-model="containerDraft" />
+          <div v-if="containerDirty || edit.name !== selected.name" class="flex gap-2">
+            <button type="button" :disabled="busy" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="saveContainer">Salvar alterações</button>
+            <span class="self-center text-xs text-zinc-500">Vale para as próximas conversas; as instâncias abertas seguem como estão.</span>
+          </div>
+          <div v-if="selected.env?.length" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
+            <h3 class="text-sm font-medium text-zinc-200">Variáveis secretas</h3>
+            <form v-for="variable in selected.env" :key="variable.name" class="flex flex-wrap items-center gap-2" @submit.prevent="saveEnv(variable.name)">
+              <code class="w-40 shrink-0 text-xs text-zinc-300">{{ variable.name }}</code>
+              <input v-model="envValues[variable.name]" type="password" autocomplete="off" :placeholder="variable.configured ? 'definida — colar para trocar' : 'sem valor'" class="input min-w-0 flex-1 font-mono text-sm" />
+              <button type="submit" :disabled="busy || !envValues[variable.name]" class="rounded-full bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700 disabled:opacity-40">Salvar</button>
+            </form>
+          </div>
+        </template>
+
+        <form v-if="selected.kind !== 'container'" class="flex flex-col gap-3" @submit.prevent="save">
           <div class="grid gap-3 sm:grid-cols-2">
             <label class="field">Nome<input v-model="edit.name" required class="input" /></label>
             <label class="field">URL<input v-model="edit.url" required class="input font-mono" /></label>
@@ -261,7 +312,7 @@ async function confirmRemove() {
           </div>
         </form>
 
-        <div v-if="selected.auth === 'header'" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
+        <div v-if="selected.kind !== 'container' && selected.auth === 'header'" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
           <p class="text-xs" :class="selected.secret.configured ? 'text-zinc-400' : 'text-amber-300'">
             <template v-if="selected.secret.configured">Segredo salvo · termina em …{{ selected.secret.last4 }}<template v-if="selected.secret.updatedAt"> · {{ fullTime(selected.secret.updatedAt) }}</template></template>
             <template v-else>Sem segredo: o header não é enviado.</template>

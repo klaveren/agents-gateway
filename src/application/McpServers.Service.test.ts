@@ -55,4 +55,47 @@ describe('McpServersService', () => {
     assert.strictEqual(service.update('crm', { auth: 'caller' }, 'root').headerName, 'X-Api-Key')
     assert.strictEqual(service.update('crm', { auth: 'none' }, 'root').headerName, undefined)
   })
+
+  it('contêiner: imagem válida, caminhos graváveis seguros, limites e domínios; variável secreta só declarada', () => {
+    const { service, secrets } = build()
+    const created = service.create(
+      {
+        id: 'pw',
+        name: 'Playwright',
+        kind: 'container',
+        container: {
+          image: 'mcr.microsoft.com/playwright/mcp:latest',
+          args: ['--isolated'],
+          writable: ['/home/node'],
+          network: 'allowlist',
+          allowedHosts: ['{meta:siteDomain}'],
+          env: ['API_TOKEN'],
+        },
+      },
+      'root',
+    )
+    assert.deepStrictEqual([created.kind, created.url, created.container?.memoryMb, created.container?.network], ['container', '', 1024, 'allowlist'])
+
+    assert.throws(
+      () =>
+        service.create(
+          {
+            id: 'ruim',
+            name: 'x',
+            kind: 'container',
+            container: { image: 'Bad Image', writable: ['/etc', '/'], memoryMb: 99999, network: 'allowlist', allowedHosts: [], env: ['minusculo'] },
+          },
+          'root',
+        ),
+      (error: InvalidMcpServerError) => ['image', 'writable', 'memoryMb', 'allowedHosts', 'env'].every((field) => error.issues.some((issue) => issue.field === field)),
+    )
+
+    service.saveEnv('pw', 'API_TOKEN', 's3cr3t', 'root')
+    assert.strictEqual(secrets.get('mcp:pw:env:API_TOKEN'), 's3cr3t')
+    assert.deepStrictEqual(service.envStatus('pw'), [{ name: 'API_TOKEN', configured: true }])
+    assert.throws(() => service.saveEnv('pw', 'OUTRA', 'x', 'root'), InvalidMcpServerError)
+
+    service.remove('pw')
+    assert.strictEqual(secrets.get('mcp:pw:env:API_TOKEN'), undefined)
+  })
 })

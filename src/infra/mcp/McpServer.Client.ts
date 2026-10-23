@@ -1,5 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { TMcpAuth, TMcpTransport } from '@domain/models/McpServer.Model'
@@ -34,6 +35,8 @@ export interface IMcpClientOptions {
   fixedHeaders?: () => Record<string, string> | undefined
   /** O nome no log (o id do servidor). */
   label?: string
+  /** Em vez de HTTP: um processo (o `docker run` de um MCP em contêiner) falando MCP pelo stdio. */
+  stdio?: { command: string; args: string[]; env: Record<string, string> }
 }
 
 /**
@@ -122,6 +125,29 @@ export class McpServerClient {
     }
   }
 
+  /** As ferramentas como o servidor as descreve (esquema inteiro) — para o proxy MCP repassar sem perder nada. */
+  async listToolsRaw(): Promise<Array<Record<string, unknown>>> {
+    if (!(await this.ensureConnected()) || !this.client) return []
+    try {
+      return (await this.client.listTools()).tools as Array<Record<string, unknown>>
+    } catch (error: unknown) {
+      this.lastError = toMessage(error)
+      await this.markDisconnected()
+      return []
+    }
+  }
+
+  /** A chamada com a resposta INTEIRA (imagens, recursos) — para o proxy MCP. */
+  async callToolRaw(name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+    if (!(await this.ensureConnected()) || !this.client) return { content: [{ type: 'text', text: `MCP server unavailable; cannot run "${name}".` }], isError: true }
+    try {
+      return (await this.client.callTool({ name, arguments: args })) as Record<string, unknown>
+    } catch (error: unknown) {
+      await this.markDisconnected()
+      return { content: [{ type: 'text', text: `MCP call failed: ${toMessage(error)}` }], isError: true }
+    }
+  }
+
   async callTool(name: string, args: Record<string, unknown>, context?: IExecutionContext): Promise<IToolResult> {
     if (!(await this.ensureConnected()) || !this.client) {
       return { status: 'error', result: `MCP server unavailable; cannot run "${name}".` }
@@ -179,10 +205,13 @@ export class McpServerClient {
      */
     const fetchWithCredential = this.credentialFetch()
     const transport = this.options.transport ?? 'auto'
-    const makers = [
-      ...(transport === 'sse' ? [] : [() => new StreamableHTTPClientTransport(url, { fetch: fetchWithCredential })]),
-      ...(transport === 'http' ? [] : [() => new SSEClientTransport(url, { fetch: fetchWithCredential })]),
-    ]
+    const stdio = this.options.stdio
+    const makers = stdio
+      ? [() => new StdioClientTransport({ command: stdio.command, args: stdio.args, env: stdio.env, stderr: 'ignore' })]
+      : [
+          ...(transport === 'sse' ? [] : [() => new StreamableHTTPClientTransport(url, { fetch: fetchWithCredential })]),
+          ...(transport === 'http' ? [] : [() => new SSEClientTransport(url, { fetch: fetchWithCredential })]),
+        ]
 
     for (const makeTransport of makers) {
       const transport = makeTransport()

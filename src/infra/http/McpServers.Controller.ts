@@ -17,10 +17,22 @@ export interface IMcpServersControllerDeps {
 
 const transport = z.enum(['auto', 'http', 'sse'])
 const auth = z.enum(['caller', 'header', 'none'])
+const containerSchema = z.object({
+  image: z.string().max(300).optional(),
+  args: z.array(z.string().max(300)).max(32).optional(),
+  writable: z.array(z.string().max(200)).max(8).optional(),
+  memoryMb: z.number().optional(),
+  cpus: z.number().optional(),
+  network: z.enum(['none', 'allowlist']).optional(),
+  allowedHosts: z.array(z.string().max(200)).max(50).optional(),
+  env: z.array(z.string().max(64)).max(20).optional(),
+})
 const createSchema = z.object({
   id: z.string().max(64),
   name: z.string().max(200),
-  url: z.string().max(2000),
+  kind: z.enum(['remote', 'container']).optional(),
+  container: containerSchema.optional(),
+  url: z.string().max(2000).optional(),
   transport: transport.optional(),
   auth: auth.optional(),
   headerName: z.string().max(64).optional(),
@@ -28,6 +40,7 @@ const createSchema = z.object({
 })
 const updateSchema = z.object({
   name: z.string().max(200).optional(),
+  container: containerSchema.optional(),
   url: z.string().max(2000).optional(),
   transport: transport.optional(),
   auth: auth.optional(),
@@ -35,6 +48,7 @@ const updateSchema = z.object({
   enabled: z.boolean().optional(),
 })
 const secretSchema = z.object({ secret: z.string().max(4000) })
+const envSchema = z.object({ value: z.string().max(8000) })
 
 /**
  * A guia MCPs: o cadastro dos servidores de onde os agentes tiram ferramentas.
@@ -44,7 +58,7 @@ const secretSchema = z.object({ secret: z.string().max(4000) })
  */
 export class McpServersController {
   constructor(private readonly deps: IMcpServersControllerDeps) {
-    for (const name of ['list', 'create', 'update', 'remove', 'saveSecret', 'clearSecret', 'test', 'tools'] as const) this[name] = this[name].bind(this)
+    for (const name of ['list', 'create', 'update', 'remove', 'saveSecret', 'clearSecret', 'test', 'tools', 'saveEnv', 'stopInstances'] as const) this[name] = this[name].bind(this)
   }
 
   async list(_req: Request, res: Response) {
@@ -118,6 +132,30 @@ export class McpServersController {
     )
   }
 
+  /** O valor de uma variável secreta do contêiner. ⛔ Só entra; nunca volta. */
+  async saveEnv(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        const by = await this.requireAdmin('saveMcpEnv')
+        const id = this.idOf(req)
+        this.deps.service.saveEnv(id, req.params.name as string, parseBody(envSchema, req.body).value, by)
+        return this.toDto(this.deps.service.get(id))
+      },
+      { message: 'Variable saved' },
+    )
+  }
+
+  /** Encerra as instâncias (conversas) de um contêiner — a próxima ferramenta sobe uma nova. */
+  async stopInstances(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      await this.requireAdmin('stopMcpInstances')
+      const id = this.idOf(req)
+      this.deps.service.get(id)
+      return { stopped: await this.deps.registry.closeInstances({ serverId: id }) }
+    })
+  }
+
   /** Conecta AGORA (ignorando o backoff) e lista as ferramentas — o botão "Testar conexão". */
   async test(req: Request, res: Response) {
     await this.respond(res, async () => {
@@ -134,7 +172,7 @@ export class McpServersController {
       await this.requireAdmin('listMcpTools')
       const id = this.idOf(req)
       this.deps.service.get(id)
-      return (await this.deps.registry.tools(id)).map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }))
+      return (await this.deps.registry.probeTools(id)).map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }))
     })
   }
 
@@ -144,6 +182,8 @@ export class McpServersController {
     return {
       id: server.id,
       name: server.name,
+      kind: server.kind ?? 'remote',
+      ...(server.container ? { container: server.container, env: this.deps.service.envStatus(server.id) } : {}),
       url: server.url,
       transport: server.transport,
       auth: server.auth,
@@ -156,10 +196,14 @@ export class McpServersController {
         updatedAt: secret.updatedAt,
         updatedBy: secret.updatedBy,
       },
-      status: { connected: status?.connected ?? false, ...(status?.lastError ? { lastError: status.lastError } : {}) },
+      status: {
+        connected: status?.connected ?? false,
+        ...(status?.lastError ? { lastError: status.lastError } : {}),
+        ...(status?.instances !== undefined ? { instances: status.instances } : {}),
+      },
       agents: this.deps.service.usedBy(server.id).map((agent) => ({ id: agent.id, name: agent.name })),
       /** A URL é o MCP do próprio gateway: agente que conversa com agentes pode entrar em recursão. */
-      selfReference: /\/v1\/mcp\/?$/.test(new URL(server.url).pathname),
+      selfReference: server.kind !== 'container' && /\/v1\/mcp\/?$/.test(safePath(server.url)),
       createdAt: server.createdAt,
       updatedAt: server.updatedAt,
       updatedBy: server.updatedBy,
@@ -187,5 +231,13 @@ export class McpServersController {
       if (failure.status >= 500) console.error('[McpServersController] Error:', failure.message)
       res.status(failure.status).json(fail(failure.message, failure.code, failure.details))
     }
+  }
+}
+
+function safePath(url: string): string {
+  try {
+    return new URL(url).pathname
+  } catch {
+    return ''
   }
 }

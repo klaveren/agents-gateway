@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { IMcpServerConfig, TMcpAuth, TMcpTransport } from '@domain/models/McpServer.Model'
+import { IMcpContainer, IMcpServerConfig, TMcpAuth, TMcpKind, TMcpTransport } from '@domain/models/McpServer.Model'
 import { IMcpServerRepository, TMcpServerPatch } from '@domain/ports/McpServerRepository.Port'
 
 const SCHEMA = `
@@ -25,9 +25,16 @@ const SCHEMA = `
 
 type TRow = Record<string, unknown>
 
+/** Colunas que um arquivo antigo ainda não tem. */
+const ADDED_COLUMNS: Array<{ column: string; definition: string }> = [
+  { column: 'kind', definition: "TEXT NOT NULL DEFAULT 'remote'" },
+  { column: 'container', definition: 'TEXT' },
+]
+
 const COLUMNS: Record<keyof TMcpServerPatch, string> = {
   name: 'name',
   url: 'url',
+  container: 'container',
   transport: 'transport',
   auth: 'auth',
   headerName: 'header_name',
@@ -45,6 +52,10 @@ export class SqliteMcpServerRepository implements IMcpServerRepository {
     this.db = new DatabaseSync(path)
     this.db.exec('PRAGMA journal_mode = WAL')
     this.db.exec(SCHEMA)
+    const existing = this.db.prepare('PRAGMA table_info(mcp_servers)').all() as TRow[]
+    for (const { column, definition } of ADDED_COLUMNS) {
+      if (!existing.some((row) => row.name === column)) this.db.exec(`ALTER TABLE mcp_servers ADD COLUMN ${column} ${definition}`)
+    }
   }
 
   list(): IMcpServerConfig[] {
@@ -58,10 +69,14 @@ export class SqliteMcpServerRepository implements IMcpServerRepository {
 
   insert(server: IMcpServerConfig): void {
     this.db
-      .prepare('INSERT INTO mcp_servers (id, name, url, transport, auth, header_name, enabled, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .prepare(
+        'INSERT INTO mcp_servers (id, name, kind, container, url, transport, auth, header_name, enabled, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      )
       .run(
         server.id,
         server.name,
+        server.kind ?? 'remote',
+        server.container ? JSON.stringify(server.container) : null,
         server.url,
         server.transport,
         server.auth,
@@ -81,6 +96,7 @@ export class SqliteMcpServerRepository implements IMcpServerRepository {
         if (value === undefined || value === null) return null
         if (value instanceof Date) return value.toISOString()
         if (typeof value === 'boolean') return value ? 1 : 0
+        if (typeof value === 'object') return JSON.stringify(value)
         return value as string
       })
       this.db.prepare(`UPDATE mcp_servers SET ${keys.map((key) => `${COLUMNS[key]} = ?`).join(', ')} WHERE id = ?`).run(...values, id)
@@ -111,6 +127,8 @@ function toServer(row: TRow): IMcpServerConfig {
   return {
     id: String(row.id),
     name: String(row.name),
+    kind: (typeof row.kind === 'string' ? row.kind : 'remote') as TMcpKind,
+    ...(typeof row.container === 'string' ? { container: JSON.parse(row.container) as IMcpContainer } : {}),
     url: String(row.url),
     transport: String(row.transport) as TMcpTransport,
     auth: String(row.auth) as TMcpAuth,

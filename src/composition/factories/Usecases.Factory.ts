@@ -53,6 +53,14 @@ export function makeUsecases() {
   const sendMessage = new SendMessageUseCase(agentProvider, conversations, makeClassifier())
   // A delegação usa os MESMOS casos de uso: a conversa filha é gravada e avisada como qualquer outra.
   makeTools().delegation.bind(new DelegationService(agentProvider, createSession, sendMessage, undefined, (id) => makeAgents().get(id)?.modes))
+  // Os MCPs em contêiner leem a conversa (agente e `metadata`) para os domínios `{meta:…}` e para o proxy.
+  makeTools().mcp.setSessionLookup((id) => {
+    try {
+      return agentProvider.describe(id)
+    } catch {
+      return undefined
+    }
+  })
 
   return {
     /** O MESMO repositório do `SendMessageUseCase`: o controller lê o que ele grava. */

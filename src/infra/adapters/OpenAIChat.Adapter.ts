@@ -99,7 +99,7 @@ export class OpenAIChatAdapter implements IAgentAdapter {
 
     try {
       // ⛔ Só o que o agente escolheu: locais e as de MCP dos servidores dele (ver `ToolCatalog.toolbox`).
-      const toolbox = record.tools ? await this.catalog?.toolbox(agent.allowedTools) : undefined
+      const toolbox = record.tools ? await this.catalog?.toolbox(agent.allowedTools, context) : undefined
       const tools = toolbox?.tools ?? []
 
       yield* runManualToolLoop<OpenAI.Chat.ChatCompletionMessageParam>({

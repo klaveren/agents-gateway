@@ -275,16 +275,32 @@ export type TMcpAuth = 'caller' | 'header' | 'none'
 export type TMcpTransport = 'auto' | 'http' | 'sse'
 
 /** Um servidor MCP cadastrado. ⛔ O segredo nunca vem: só se está configurado e o final dele. */
+/** Um MCP em contêiner isolado (um por conversa). As travas não aparecem aqui: não são configuráveis. */
+export interface IMcpContainer {
+  image: string
+  args: string[]
+  writable: string[]
+  memoryMb: number
+  cpus: number
+  network: 'none' | 'allowlist'
+  allowedHosts: string[]
+  env: string[]
+}
+
 export interface IMcpServer {
   id: string
   name: string
+  kind: 'remote' | 'container'
+  container?: IMcpContainer
+  /** Só em contêiner: as variáveis secretas declaradas e se têm valor (⛔ nunca o valor). */
+  env?: Array<{ name: string; configured: boolean }>
   url: string
   transport: TMcpTransport
   auth: TMcpAuth
   headerName?: string
   enabled: boolean
   secret: { configured: boolean; last4?: string; unreadable?: boolean; updatedAt?: string; updatedBy?: string }
-  status: { connected: boolean; lastError?: string }
+  status: { connected: boolean; lastError?: string; instances?: number }
   agents: Array<{ id: string; name: string }>
   /** A URL é o MCP do próprio gateway. */
   selfReference: boolean
