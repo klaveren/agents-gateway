@@ -5,10 +5,12 @@ import NavRail from './components/NavRail.vue'
 import { useAgentsStore } from './stores/agents'
 import { useAuthStore } from './stores/auth'
 import { useConversationsStore } from './stores/conversations'
+import { useProtocolsStore } from './stores/protocols'
 
 const auth = useAuthStore()
 const agents = useAgentsStore()
 const conversations = useConversationsStore()
+const protocols = useProtocolsStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -30,6 +32,8 @@ watch(
 
 onMounted(async () => {
   await auth.probe()
+  // As regras de cada protocolo (lanes, níveis, assinatura): vêm do servidor, a tela não copia.
+  void protocols.load().catch(() => undefined)
   await agents.load().catch(() => undefined)
   // As ferramentas (com os rótulos das nativas), para o histórico mostrar "Busca na web" e não `WebSearch`.
   void agents.loadTools().catch(() => undefined)

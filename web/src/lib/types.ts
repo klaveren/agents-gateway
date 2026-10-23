@@ -102,6 +102,10 @@ export interface IAgent {
   builtIn: boolean
   /** `subagent`: só é chamado por outro agente (delegação); não abre conversa. */
   role?: 'subagent'
+  /** O provider como está no banco: o nome que a tela mostra e o protocolo. */
+  providerInfo?: { id: string; name: string; protocol?: TProvider }
+  /** Só para admin: por que o agente não abre conversa agora. Ausente = ativo. */
+  unavailable?: { reason: 'provider_disabled' | 'no_model' | 'no_key' | 'admin_only'; label: string }
 }
 
 export interface IAgentDetail extends IAgent {
@@ -133,7 +137,24 @@ export interface ITool {
   name: string
   description: string
   origin: 'local' | 'mcp'
+  /** Alcança este servidor: com `DANGEROUS_TOOLS_ADMIN_ONLY`, o agente que a tem só conversa com admin. */
+  dangerous?: boolean
 }
+
+/** Um protocolo como o servidor o descreve (`GET /protocols`) — a tela não copia mais essas regras. */
+export interface IProtocolInfo {
+  id: TProvider
+  label: string
+  subscription: boolean
+  lanes: TMode[]
+  reasoningLevels: string[]
+  nativeFamily: TProvider
+  brand: 'claude' | 'openai' | 'google'
+  consoleUrl?: string
+  envName?: string
+}
+
+export type TLimitName = 'maxToolTurns' | 'maxOutputTokens' | 'delegationMaxDepth' | 'bashTimeoutMs' | 'bashMaxOutputChars' | 'sessionsPerOwner' | 'streamsPerOwner'
 
 export type TAudience = 'off' | 'restricted' | 'all'
 
@@ -147,6 +168,20 @@ export interface ISettings {
   updatedAt?: string
   updatedBy?: string
   defaults?: { agentId?: string; model?: string }
+  /** Os limites gravados na tela; o que falta vale pelo `.env` ou pelo padrão. */
+  limits?: Partial<Record<TLimitName, number>>
+  /** O que vale agora, limite a limite (só leitura). */
+  limitsInEffect?: Record<TLimitName, number>
+  limitBounds?: Record<TLimitName, { min: number; max: number; env: string }>
+  /** Decisões de implantação: a tela mostra, só o deploy muda. */
+  deployment?: {
+    dangerousToolsAdminOnly: boolean
+    subscriptionAdminOnly: boolean
+    localToolsEnabled?: string
+    nativeToolsEnabled?: string
+    agentsEnabled?: string
+    allowAnonymous: boolean
+  }
 }
 
 /** Eventos do stream de um turno (`POST /sessions/:id/messages`). */
@@ -188,7 +223,7 @@ export interface IProviderStatus {
   enabled: boolean
   credential: {
     configured: boolean
-    source: 'stored' | 'env' | 'none'
+    source: 'stored' | 'none'
     last4?: string
     updatedAt?: string
     updatedBy?: string
@@ -236,6 +271,7 @@ export interface INativeTool {
   officialOnly: boolean
   /** Dentro do perímetro do deploy (`NATIVE_TOOLS_ENABLED`). */
   allowed: boolean
+  dangerous?: boolean
   reason?: string
 }
 

@@ -5,11 +5,11 @@ import AgentAvatar from '@/components/AgentAvatar.vue'
 import AgentForm from '@/components/AgentForm.vue'
 import Icon from '@/components/Icon.vue'
 import MasterDetail from '@/components/MasterDetail.vue'
-import { providerLabel } from '@/lib/format'
 import type { IAgentDetail } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import { useAuthStore } from '@/stores/auth'
 import { useProvidersStore } from '@/stores/providers'
+import { useProtocolsStore } from '@/stores/protocols'
 
 const props = defineProps<{ id?: string }>()
 
@@ -18,6 +18,7 @@ const router = useRouter()
 const auth = useAuthStore()
 const agents = useAgentsStore()
 const providers = useProvidersStore()
+const protocols = useProtocolsStore()
 
 const detail = ref<IAgentDetail>()
 const template = ref<IAgentDetail>()
@@ -86,7 +87,7 @@ watch(creating, (value) => {
           <AgentAvatar :name="agent.name" :provider="agent.provider" size="sm" />
           <span class="min-w-0 flex-1">
             <span class="block truncate text-sm font-medium">{{ agent.name }}</span>
-            <span class="block truncate text-xs text-zinc-500">{{ providerLabel(agent.provider) }} · {{ agent.models[0] }}</span>
+            <span class="block truncate text-xs text-zinc-500">{{ protocols.providerName(agent.provider) }} · {{ agent.models[0] }}</span>
           </span>
         </RouterLink>
       </template>

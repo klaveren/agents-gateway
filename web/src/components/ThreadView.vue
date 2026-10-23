@@ -3,8 +3,9 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { api } from '@/lib/api'
 import type { IConversation } from '@/lib/types'
 import { useRouter } from 'vue-router'
-import { fullTime, providerLabel, tokens, usd } from '@/lib/format'
+import { fullTime, tokens, usd } from '@/lib/format'
 import { useAgentsStore } from '@/stores/agents'
+import { useProtocolsStore } from '@/stores/protocols'
 import { useAuthStore } from '@/stores/auth'
 import { useConversationsStore } from '@/stores/conversations'
 import { useThreadStore, type IOutgoingFile } from '@/stores/thread'
@@ -18,6 +19,7 @@ import TurnBubbles from './TurnBubbles.vue'
 const router = useRouter()
 const auth = useAuthStore()
 const agents = useAgentsStore()
+const protocols = useProtocolsStore()
 const conversations = useConversationsStore()
 const thread = useThreadStore()
 
@@ -119,7 +121,7 @@ async function continueFresh() {
       <div class="min-w-0">
         <div class="truncate font-medium">{{ header?.title || agent?.name || 'Conversa' }}</div>
         <div class="truncate text-xs text-zinc-400">
-          {{ agent?.name ?? header?.agentId }} · {{ providerLabel(header?.provider ?? agent?.provider ?? '') }} {{ currentModel }}<template v-if="thread.session?.reasoning"> ({{ thread.session.reasoning }})</template> ·
+          {{ agent?.name ?? header?.agentId }} · {{ protocols.providerName(header?.provider ?? agent?.provider ?? '') }} {{ currentModel }}<template v-if="thread.session?.reasoning"> ({{ thread.session.reasoning }})</template> ·
           {{ header?.mode === 'agent' ? 'Agents SDK' : 'chat' }}
           <template v-if="auth.isAdmin && owner"> · {{ owner.email ?? owner.id }}</template>
         </div>

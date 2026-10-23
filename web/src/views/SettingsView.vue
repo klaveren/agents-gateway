@@ -9,12 +9,13 @@ import { useAuthStore } from '@/stores/auth'
 import { useConversationsStore } from '@/stores/conversations'
 import { useProvidersStore } from '@/stores/providers'
 import { useSettingsStore } from '@/stores/settings'
-import { providerLabel } from '@/lib/format'
+import { useProtocolsStore } from '@/stores/protocols'
 
 const auth = useAuthStore()
 const agents = useAgentsStore()
 const settings = useSettingsStore()
 const providers = useProvidersStore()
+const protocols = useProtocolsStore()
 const conversations = useConversationsStore()
 const route = useRoute()
 
@@ -175,7 +176,7 @@ async function saveSettings() {
             <select v-model="classifier" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2 text-sm">
               <option value="">Nenhum (CLASSIFIER_MODEL, se houver)</option>
               <option v-if="classifier && !classifierOptions.some((option) => option.value === classifier)" :value="classifier">{{ classifier.replace('::', ' · ') }} (não ativado)</option>
-              <option v-for="option in classifierOptions" :key="option.value" :value="option.value">{{ providerLabel(option.provider, providers.names) }} · {{ option.model }}</option>
+              <option v-for="option in classifierOptions" :key="option.value" :value="option.value">{{ protocols.providerName(option.provider) }} · {{ option.model }}</option>
             </select>
             <small class="text-xs text-zinc-500">Os modelos ativados em Providers. Prefira um pequeno: ele roda a cada turno.</small>
           </label>
