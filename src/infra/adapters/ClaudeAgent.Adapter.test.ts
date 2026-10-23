@@ -8,7 +8,7 @@ import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { fakeMcpRegistry, mcpTool } from '@infra/mcp/Mcp.Fake'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { ILocalTool } from '@infra/tools/Tool.Types'
-import { ClaudeAgentAdapter } from './ClaudeAgent.Adapter'
+import { ClaudeAgentAdapter, cliEnv } from './ClaudeAgent.Adapter'
 
 type TQuery = typeof query
 type TQueryParams = Parameters<TQuery>[0]
@@ -159,11 +159,17 @@ describe('ClaudeAgentAdapter', () => {
     const session = await adapter.createSession(agent, { agentId: 'sysops-agent' })
     const events = await drain(adapter.sendMessage(agent, session.id, { text: 'hi' }, {}))
 
-    assert.deepStrictEqual(seen[0].options?.tools, ['WebSearch', 'TodoWrite'])
+    // `sdk:TodoWrite` vai ao CLI com os nomes de hoje (o 2.1.28x trocou TodoWrite por Task*).
+    assert.deepStrictEqual(seen[0].options?.tools, ['WebSearch', 'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate'])
     const gate = seen[0].options?.canUseTool as (name: string, input: Record<string, unknown>, options: unknown) => Promise<{ behavior: string }>
     assert.strictEqual((await gate('WebSearch', {}, {})).behavior, 'allow')
+    assert.strictEqual((await gate('TaskCreate', {}, {})).behavior, 'allow')
     assert.strictEqual((await gate('Bash', {}, {})).behavior, 'deny')
-    assert.ok(events.find((event) => event.type === 'warning' && String(event.payload.message).includes('TodoWrite')))
+    assert.ok(events.find((event) => event.type === 'warning' && String(event.payload.message).includes('TaskCreate')))
+  })
+
+  it('⛔ o CLI não carrega os conectores da conta claude.ai de quem fez o login', () => {
+    assert.strictEqual(cliEnv({ key: 'k', compatible: false }).ENABLE_CLAUDEAI_MCP_SERVERS, 'false')
   })
 
   it('sem nativas, nenhum built-in: tools continua vazio', async () => {

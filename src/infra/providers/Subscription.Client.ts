@@ -123,7 +123,7 @@ async function probeTurn(protocol: EProvider, workspace: string, token?: string)
     let text = ''
     for await (const message of query({
       prompt: PROBE_PROMPT,
-      options: { cwd: workspace, tools: [], settingSources: [], maxTurns: 1, env: subscriptionEnv({ HOME: homedir(), CLAUDE_CODE_OAUTH_TOKEN: token }) },
+      options: { cwd: workspace, tools: [], settingSources: [], maxTurns: 1, env: subscriptionEnv({ HOME: homedir(), CLAUDE_CODE_OAUTH_TOKEN: token, ENABLE_CLAUDEAI_MCP_SERVERS: 'false' }) },
     })) {
       if (message.type !== 'result') continue
       if (message.subtype !== 'success' || message.is_error)
