@@ -33,7 +33,7 @@ const CONSOLE: Record<string, string> = {
 const PROTOCOL_LABEL: Record<TProvider, string> = { claude: 'Anthropic', openai: 'OpenAI', google: 'Gemini', 'claude-sub': 'Claude Code', codex: 'Codex', antigravity: 'Antigravity' }
 /** De onde vem o login de cada assinatura, para o texto da tela. */
 const SUBSCRIPTION_HINT: Record<string, string> = {
-  'claude-sub': 'Usa o login do Claude Code deste computador (claude login). Para usar outra conta, cole um token gerado por `claude setup-token`.',
+  'claude-sub': 'Entra com a sua conta Claude (Pro/Max): o gateway gera um token de um ano e o guarda cifrado. No Mac, sem token, vale o login do Claude Code deste computador.',
   codex: 'Entra com a sua conta do ChatGPT. O gateway guarda esse login num lugar só dele, separado do seu Codex.',
   antigravity: 'Entra com a sua conta Google do Antigravity. O gateway guarda esse login num lugar só dele, separado do seu agy.',
 }
@@ -234,7 +234,7 @@ function sourceLabel(provider: IProviderStatus): string {
             deste servidor. Os preços dos modelos são os da API, para mostrar quanto a conversa custaria em tokens.
           </p>
           <p class="text-xs text-zinc-400">{{ SUBSCRIPTION_HINT[selected.protocol] }}</p>
-          <SubscriptionLogin v-if="selected.protocol !== 'claude-sub'" :provider="selected" @done="test(selected.id)" />
+          <SubscriptionLogin :provider="selected" @done="providers.load().then(() => test(selected!.id))" />
           <div v-if="selected.protocol !== 'claude-sub'" class="flex">
             <button type="button" :disabled="busy[selected.id]" class="rounded-full bg-zinc-800 px-4 py-2 text-sm hover:bg-zinc-700 disabled:opacity-40" @click="test(selected.id)">{{ busy[selected.id] ? 'Testando…' : 'Testar' }}</button>
           </div>

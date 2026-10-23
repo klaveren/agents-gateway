@@ -20,6 +20,23 @@ const copied = ref<string>()
 const now = ref(Date.now())
 let poll: ReturnType<typeof setInterval> | undefined
 
+/** O que a tela diz quando não dá para ser nativo — por assinatura. */
+const HELP: Record<string, { note?: string; missing?: string; command?: string; link?: { href: string; label: string } }> = {
+  codex: {
+    note: 'Se a página do ChatGPT pedir para ativar o login com código de dispositivo, ative em Configurações → Segurança e clique em Entrar de novo.',
+    link: { href: 'https://chatgpt.com/#settings/Security', label: 'Abrir a segurança do ChatGPT ↗' },
+  },
+  'claude-sub': {
+    note: 'Sem conseguir pelo Entrar? Gere o token em qualquer máquina com o Claude Code e cole no campo "Token OAuth" abaixo.',
+    command: 'claude setup-token',
+  },
+  antigravity: {
+    missing: 'O Antigravity CLI não está na máquina do gateway. Na imagem oficial ele já vem; fora dela, instale a versão 1.4.6 (Linux ou macOS) e, se não estiver no PATH como "agy", aponte ANTIGRAVITY_BIN para o binário.',
+    link: { href: 'https://github.com/google-antigravity/antigravity-cli/releases/tag/1.4.6', label: 'Baixar o Antigravity CLI 1.4.6 ↗' },
+  },
+}
+const help = computed(() => HELP[props.provider.protocol] ?? {})
+
 const secondsLeft = computed(() => (login.value.expiresAt ? Math.max(0, Math.round((Date.parse(login.value.expiresAt) - now.value) / 1000)) : undefined))
 
 async function act(work: () => Promise<ISubscriptionLogin>) {
@@ -87,7 +104,7 @@ onBeforeUnmount(stop)
     <div class="flex flex-wrap items-center gap-2">
       <span class="text-sm font-medium">Conta</span>
       <span v-if="login.state === 'done'" class="text-sm text-emerald-300">✓ Conectado</span>
-      <span v-else-if="login.state === 'failed'" class="text-sm text-rose-300">✕ {{ login.message }}</span>
+      <span v-else-if="login.state === 'failed' && !login.missing" class="text-sm text-rose-300">✕ {{ login.message }}</span>
       <button v-if="login.state !== 'waiting'" type="button" :disabled="busy" class="ml-auto rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="start">
         {{ busy ? 'Abrindo…' : 'Entrar' }}
       </button>
@@ -123,6 +140,18 @@ onBeforeUnmount(stop)
         Aguardando o login<template v-if="secondsLeft !== undefined"> · expira em {{ secondsLeft >= 120 ? `${Math.round(secondsLeft / 60)} min` : `${secondsLeft} s` }}</template>
       </p>
     </template>
+    <div v-if="login.missing && help.missing" class="flex flex-col gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+      <span>{{ help.missing }}</span>
+      <a v-if="help.link" :href="help.link.href" target="_blank" rel="noopener noreferrer" class="text-emerald-300 hover:underline">{{ help.link.label }}</a>
+    </div>
+    <div v-else-if="help.note" class="flex flex-col gap-1.5 text-xs text-zinc-500">
+      <span>{{ help.note }}</span>
+      <div v-if="help.command" class="flex items-center gap-2">
+        <code class="rounded bg-zinc-950 px-2 py-1 font-mono text-zinc-300">{{ help.command }}</code>
+        <button type="button" class="rounded-full bg-zinc-800 px-3 py-1 hover:bg-zinc-700" @click="copy(help.command, 'command')">{{ copied === 'command' ? 'Copiado' : 'Copiar' }}</button>
+      </div>
+      <a v-if="help.link" :href="help.link.href" target="_blank" rel="noopener noreferrer" class="text-emerald-400 hover:underline">{{ help.link.label }}</a>
+    </div>
     <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
   </div>
 </template>

@@ -328,4 +328,6 @@ export interface ISubscriptionLogin {
   needsCode: boolean
   expiresAt?: string
   message?: string
+  /** O cliente não está na máquina do gateway: a tela mostra como instalar. */
+  missing?: boolean
 }

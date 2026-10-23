@@ -11,6 +11,7 @@ import { IModelPrice, MODEL_PRICING, TModelPricing } from '@domain/models/Model.
 import { REASONING_LEVELS } from '@domain/Reasoning.Levels'
 import { antigravityBin } from '@infra/adapters/AntigravityAgent.Adapter'
 import { CODEX_LOCKED_FEATURES } from '@infra/adapters/CodexAgent.Adapter'
+import { claudeBinary } from '@infra/adapters/support/Claude.Binary'
 import { codexBinary, untestedCodex } from '@infra/adapters/support/Codex.Binary'
 import { esmImport } from '@infra/adapters/support/Esm.Import'
 import { subscriptionEnv, subscriptionHome } from '@infra/adapters/support/Subscription.Workspace'
@@ -123,7 +124,13 @@ async function probeTurn(protocol: EProvider, workspace: string, token?: string)
     let text = ''
     for await (const message of query({
       prompt: PROBE_PROMPT,
-      options: { cwd: workspace, tools: [], settingSources: [], maxTurns: 1, env: subscriptionEnv({ HOME: homedir(), CLAUDE_CODE_OAUTH_TOKEN: token, ENABLE_CLAUDEAI_MCP_SERVERS: 'false' }) },
+      options: {
+        cwd: workspace,
+        tools: [],
+        settingSources: [],
+        maxTurns: 1,
+        env: subscriptionEnv({ HOME: homedir(), CLAUDE_CODE_OAUTH_TOKEN: token, ENABLE_CLAUDEAI_MCP_SERVERS: 'false' }),
+      },
     })) {
       if (message.type !== 'result') continue
       if (message.subtype !== 'success' || message.is_error)
@@ -191,16 +198,41 @@ export interface ISubscriptionLoginView {
   needsCode: boolean
   expiresAt?: string
   message?: string
+  /** O cliente não está nesta máquina: a tela mostra como instalar, em vez de um erro. */
+  missing?: boolean
+}
+
+export interface ILoginOptions {
+  /** O login que termina num TOKEN (Claude): quem o guarda — no cofre, cifrado. ⛔ Ele não vai para a tela. */
+  onToken?: (token: string) => void
 }
 
 interface ILoginRun {
   child: ChildProcess
   view: ISubscriptionLoginView
   output: string
+  /** O token que o login do Claude imprimiu — só até ir para o cofre. */
+  token?: string
+  /** O fim da saída, sem máscara, só para achar um token partido entre dois pedaços. */
+  tail: string
 }
 
 // eslint-disable-next-line no-control-regex -- é exatamente o ESC das cores de terminal
 const ANSI = /\u001b\[[0-9;?]*[a-zA-Z]/g
+/** O hiperlink de terminal (OSC 8): `ESC ] 8 ; ; <url> BEL`. O Claude Code entrega o link do login assim, inteiro. */
+// eslint-disable-next-line no-control-regex -- os bytes ESC e BEL do OSC 8
+const OSC8_URL = /\u001b\]8;[^;]*;(https:\/\/[^\u0007\u001b]+)/
+// eslint-disable-next-line no-control-regex -- o resto das sequências OSC, para limpar a saída
+const OSC = /\u001b\][^\u0007\u001b]*(\u0007|\u001b\\)/g
+/** O token de um ano do `claude setup-token`. ⛔ Nunca sai do servidor: vai para o cofre e some da saída guardada. */
+const CLAUDE_TOKEN = /sk-ant-oat\d{2}-[A-Za-z0-9_-]{20,}/
+
+/** O que cada login procura na saída do cliente: o link a abrir e, no Codex, o código de dispositivo. */
+const LOGIN_URL: Partial<Record<EProvider, RegExp>> = {
+  [EProvider.CODEX]: /https:\/\/auth\.openai\.com\/\S+/,
+  [EProvider.ANTIGRAVITY]: /https:\/\/accounts\.google\.com\/\S+/,
+  [EProvider.CLAUDE_SUB]: /https:\/\/claude\.(?:com|ai)\/\S*oauth\/authorize\S+/,
+}
 
 /**
  * O login de uma assinatura pela TELA: o gateway roda o login oficial do cliente, num HOME só dele, e
@@ -219,8 +251,12 @@ export class SubscriptionLogins {
     return this.runs.get(protocol)?.view ?? { state: 'idle', needsCode: false }
   }
 
-  async start(protocol: EProvider): Promise<ISubscriptionLoginView> {
+  async start(protocol: EProvider, options: ILoginOptions = {}): Promise<ISubscriptionLoginView> {
     this.cancel(protocol)
+    if (protocol === EProvider.ANTIGRAVITY && !onPath(antigravityBin())) {
+      const view: ISubscriptionLoginView = { state: 'failed', needsCode: false, missing: true, message: `O Antigravity CLI (${antigravityBin()}) não está nesta máquina.` }
+      return view
+    }
     const { command, args, home, needsCode, ttlMs } = loginCommand(protocol)
     const child = this.spawner(command, args, {
       cwd: home,
@@ -229,13 +265,22 @@ export class SubscriptionLogins {
       // Grupo próprio: cancelar mata o `sh`, o `script` e o cliente juntos.
       detached: true,
     })
-    const current: ILoginRun = { child, output: '', view: { state: 'waiting', needsCode, expiresAt: new Date(Date.now() + ttlMs).toISOString() } }
+    const current: ILoginRun = { child, output: '', tail: '', view: { state: 'waiting', needsCode, expiresAt: new Date(Date.now() + ttlMs).toISOString() } }
     this.runs.set(protocol, current)
 
     const seen = new Promise<void>((resolve) => {
       const read = (chunk: Buffer) => {
-        current.output = (current.output + chunk.toString().replace(ANSI, '')).slice(-20_000)
-        current.view.url ??= current.output.match(protocol === EProvider.CODEX ? /https:\/\/auth\.openai\.com\/\S+/ : /https:\/\/accounts\.google\.com\/\S+/)?.[0]
+        const raw = chunk.toString()
+        // O link inteiro vem no hiperlink do terminal; o texto visível pode estar quebrado em linhas.
+        current.view.url ??= OSC8_URL.exec(raw)?.[1]
+        const text = raw.replace(OSC, '').replace(ANSI, '')
+        // O token pode chegar partido em dois pedaços: procura no fim do anterior + este.
+        current.tail = (current.tail + text).slice(-600)
+        const token = CLAUDE_TOKEN.exec(current.tail)?.[0]
+        // ⛔ O token não fica na saída guardada (ela vira mensagem de erro).
+        if (token) current.token = token
+        current.output = (current.output + text.replace(new RegExp(CLAUDE_TOKEN.source, 'g'), '[token]')).slice(-20_000)
+        current.view.url ??= LOGIN_URL[protocol]?.exec(current.output)?.[0]
         if (protocol === EProvider.CODEX) current.view.userCode ??= current.output.match(/\b[A-Z0-9]{4}-[A-Z0-9]{4,6}\b/)?.[0]
         if (current.view.url && (protocol !== EProvider.CODEX || current.view.userCode)) resolve()
       }
@@ -248,7 +293,18 @@ export class SubscriptionLogins {
     child.on('error', (error) => Object.assign(current.view, { state: 'failed', message: error.message }))
     child.on('close', (code) => {
       if (current.view.state !== 'waiting') return
-      const ok = protocol === EProvider.ANTIGRAVITY ? /"status"\s*:\s*"SUCCESS"/.test(current.output) : code === 0
+      let ok = protocol === EProvider.ANTIGRAVITY ? /"status"\s*:\s*"SUCCESS"/.test(current.output) : code === 0
+      if (protocol === EProvider.CLAUDE_SUB) {
+        ok = !!current.token
+        if (current.token) {
+          try {
+            options.onToken?.(current.token)
+          } catch {
+            ok = false
+          }
+          current.token = undefined
+        }
+      }
       Object.assign(current.view, ok ? { state: 'done', message: 'Conectado.' } : { state: 'failed', message: loginFailure(current.output, code) })
     })
 
@@ -291,14 +347,31 @@ function loginCommand(protocol: EProvider): { command: string; args: string[]; h
     // O login do `agy` acontece no primeiro uso: um turno mínimo que, sem conta, pede para entrar.
     // ⚠️ Só com TERMINAL: sem TTY ele recusa ("Run 'agy' to log in"). O `script` dá um pseudo-terminal.
     const agy = [antigravityBin(), `-p=${PROBE_PROMPT}`, '--output-format', 'json', '--print-timeout', '120s', '--sandbox']
-    const pty =
-      process.platform === 'darwin'
-        ? // O `script` do macOS não aceita socket como entrada (o `stdin` do Node é um): o `cat` põe um pipe no meio.
-          { command: '/bin/sh', args: ['-c', 'cat | script -q /dev/null "$@"', 'sh', ...agy] }
-        : { command: 'script', args: ['-qfec', agy.map(shellQuote).join(' '), '/dev/null'] }
-    return { ...pty, home: subscriptionHome('antigravity'), needsCode: true, ttlMs: 60_000 }
+    return { ...inTerminal(agy), home: subscriptionHome('antigravity'), needsCode: true, ttlMs: 60_000 }
+  }
+  if (protocol === EProvider.CLAUDE_SUB) {
+    // `claude setup-token`: o login da conta Claude que termina num token de um ano. Também só com TERMINAL.
+    return { ...inTerminal([claudeBinary(), 'setup-token']), home: subscriptionHome('claude'), needsCode: true, ttlMs: 10 * 60_000 }
   }
   throw new Error(`${protocol} has no login here`)
+}
+
+/**
+ * Um comando num PSEUDO-TERMINAL, largo (400 colunas, para link e token não quebrarem de linha).
+ * macOS: o `script` não aceita socket como entrada (o `stdin` do Node é um), então o `cat` põe um pipe no
+ * meio. Linux: o `script` do util-linux, com `-e` para devolver o código de saída do comando.
+ */
+export function inTerminal(argv: readonly string[], platform: string = process.platform): { command: string; args: string[] } {
+  const wide = `stty cols 400 rows 50 2>/dev/null; exec ${argv.map(shellQuote).join(' ')}`
+  return platform === 'darwin'
+    ? { command: '/bin/sh', args: ['-c', 'cat | script -q /dev/null /bin/sh -c "$1"', 'sh', wide] }
+    : { command: 'script', args: ['-qfec', wide, '/dev/null'] }
+}
+
+/** O binário existe: caminho absoluto, ou algum diretório do PATH. */
+export function onPath(command: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (command.includes('/')) return existsSync(command)
+  return (env.PATH ?? '').split(':').some((dir) => dir && existsSync(join(dir, command)))
 }
 
 function shellQuote(value: string): string {

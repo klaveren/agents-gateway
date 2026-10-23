@@ -36,8 +36,8 @@ function workspacesRoot(): string {
  * que lê o disco), conectores, plugins, regras de permissão — e tudo isso entraria nas conversas dos
  * agentes. Aqui só existe o login, feito pela tela de Providers.
  */
-export function subscriptionHome(kind: 'codex' | 'antigravity', env: NodeJS.ProcessEnv = process.env): string {
-  const override = (kind === 'codex' ? env.CODEX_SUB_HOME : env.ANTIGRAVITY_HOME)?.trim()
+export function subscriptionHome(kind: 'codex' | 'antigravity' | 'claude', env: NodeJS.ProcessEnv = process.env): string {
+  const override = (kind === 'codex' ? env.CODEX_SUB_HOME : kind === 'antigravity' ? env.ANTIGRAVITY_HOME : env.CLAUDE_SUB_HOME)?.trim()
   if (override) {
     mkdirSync(resolve(override), { recursive: true })
     return resolve(override)
@@ -45,7 +45,8 @@ export function subscriptionHome(kind: 'codex' | 'antigravity', env: NodeJS.Proc
   // ⛔ ANTIGRAVITY NO macOS: O HOME REAL. O `agy` guarda o login no Keychain, e o Keychain mora no HOME:
   // com um HOME falso o macOS não acha o `login.keychain` e oferece "redefinir" — apagaria o Keychain da
   // pessoa. Vale o login do `agy` dela; o isolamento fica no `--sandbox` e no diretório vazio da conversa.
-  if (kind === 'antigravity' && process.platform === 'darwin') return homedir()
+  // O mesmo vale para o `claude setup-token` no Mac (o login do host mora no Keychain).
+  if ((kind === 'antigravity' || kind === 'claude') && process.platform === 'darwin') return homedir()
   const dir = join(dataDir(env), `${kind}-home`)
   mkdirSync(dir, { recursive: true })
   return dir
