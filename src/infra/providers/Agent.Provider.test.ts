@@ -10,6 +10,7 @@ import {
   ModeNotSupportedError,
   SessionBusyError,
   SessionNotFoundError,
+  SubagentOnlyError,
   SubscriptionRestrictedError,
   ToolsNotSupportedError,
 } from '@domain/errors/Domain.Error'
@@ -187,6 +188,18 @@ describe('AgentProvider', () => {
 
     const session = await provider.createSession({ agentId: 'cx', subscriptionAccess: true })
     assert.strictEqual(session.mode, EMode.AGENT)
+    assert.deepStrictEqual(lane.calls, ['createSession'])
+  })
+
+  it('⛔ subagente: conversa direta é recusada; pela delegação, abre', async () => {
+    const store = new SessionStore()
+    const lane = spyAdapter(store, EProvider.GOOGLE, EMode.CHAT, [])
+    const sub = { id: 'tradutor', name: 'Tradutor', provider: 'google', systemPrompt: 'p', models: ['gemini-x'], modes: [EMode.CHAT], allowedTools: [], role: 'subagent' as const }
+    const provider = new AgentProvider(new Map([[adapterKey(EProvider.GOOGLE, EMode.CHAT), lane.adapter]]), store, undefined, { list: () => [sub], get: () => sub })
+
+    await assert.rejects(provider.createSession({ agentId: 'tradutor' }), SubagentOnlyError)
+    assert.deepStrictEqual(lane.calls, [])
+    await provider.createSession({ agentId: 'tradutor', delegated: true })
     assert.deepStrictEqual(lane.calls, ['createSession'])
   })
 

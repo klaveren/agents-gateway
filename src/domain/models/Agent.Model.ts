@@ -16,4 +16,12 @@ export interface IAgent {
   /** Lanes de execução suportadas por este agente. */
   modes: EMode[]
   allowedTools: string[]
+  /**
+   * `subagent`: só é chamado por OUTRO agente (`delegate_to_agent`, via `agent:<id>`) e nunca abre
+   * conversa direta — nem pela tela, nem pela API, nem pelo MCP. Ausente = agente normal.
+   */
+  role?: TAgentRole
 }
+
+export type TAgentRole = 'subagent'
+export const AGENT_ROLES: readonly TAgentRole[] = ['subagent']

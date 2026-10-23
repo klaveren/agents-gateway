@@ -92,6 +92,8 @@ export const agentBodySchema = z.object({
   reasoningEfforts: z.array(z.string().trim().min(1)).max(10).optional(),
   modes: z.array(z.enum(EMode)).min(1),
   allowedTools: z.array(z.string().trim().min(1)).max(100).default([]),
+  /** `subagent`: só chamado por outro agente; `null` volta a agente normal. */
+  role: z.enum(['subagent']).nullable().optional(),
 })
 
 /**

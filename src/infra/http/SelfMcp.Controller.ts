@@ -80,6 +80,7 @@ const agentShape = {
   reasoningEfforts: z.array(z.string()).optional(),
   modes: z.array(z.enum(['chat', 'agent'])),
   allowedTools: z.array(z.string()).default([]).describe('Local names, `sdk:…` natives and `mcp:<server>/<tool>`; see list_tools.'),
+  role: z.enum(['subagent']).nullable().optional().describe('`subagent`: only called by another agent through delegation (`agent:<id>`), never in a direct conversation. `null` makes it a regular agent.'),
 }
 
 /**
@@ -93,7 +94,8 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   server.registerTool(
     'list_agents',
     {
-      description: 'List the agents you can talk to: provider, models (with price), reasoning levels per model, lanes and tools. Never includes the system prompt.',
+      description:
+        'List the agents: provider, models (with price), reasoning levels per model, lanes and tools. Never includes the system prompt. Agents with `role: subagent` are only called by other agents and cannot start a conversation.',
       annotations: { readOnlyHint: true },
     },
     async () => reply(await api('GET', '/agents')),

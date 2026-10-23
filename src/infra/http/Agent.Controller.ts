@@ -405,6 +405,10 @@ export class AgentController {
         if (typeof body.agentId === 'string' && body.agentId && !this.agents.get(body.agentId)) {
           throw new HttpError(422, 'validation_error', 'Request body is invalid', [{ field: 'agentId', message: `unknown agent: ${body.agentId}` }])
         }
+        // Subagente como padrão faria toda conversa sem agente escolhido falhar com `subagent_only`.
+        if (typeof body.agentId === 'string' && body.agentId && this.agents.get(body.agentId)?.role === 'subagent') {
+          throw new HttpError(422, 'validation_error', 'Request body is invalid', [{ field: 'agentId', message: `${body.agentId} is a subagent: it cannot be the default agent` }])
+        }
 
         // Merge, não substituição: a tela manda o que mudou. O repositório SUBSTITUI o documento.
         const current = await this.usecases.settings.read()
@@ -912,6 +916,7 @@ function toAgentInput(id: string, body: TAgentBody): IAgent {
     reasoningEfforts: body.reasoningEfforts?.length ? [...new Set(body.reasoningEfforts)] : undefined,
     modes: [...new Set(body.modes)],
     allowedTools: [...new Set(body.allowedTools)],
+    ...(body.role ? { role: body.role } : {}),
   }
 }
 

@@ -107,7 +107,7 @@ function makeDefault(modelId: string) {
 /** Ferramentas que mudam algo fora da conversa: o formulário avisa antes de dar ao agente. */
 const DANGEROUS = new Set(['run_bash'])
 
-const blank = (): IAgentInput => ({ id: '', name: '', provider: 'claude', soul: '', systemPrompt: '', models: [], reasoningEfforts: [], modes: ['chat', 'agent'], allowedTools: [] })
+const blank = (): IAgentInput => ({ id: '', name: '', provider: 'claude', soul: '', systemPrompt: '', models: [], reasoningEfforts: [], modes: ['chat', 'agent'], allowedTools: [], role: null })
 const form = ref<IAgentInput>(blank())
 /** Modelos que o agente declarava e que estão desligados no catálogo: saem ao salvar. */
 const droppedModels = ref<string[]>([])
@@ -138,7 +138,7 @@ const readOnly = computed(() => !!props.agent?.builtIn && !props.creating)
 watch(
   () => [props.agent, props.creating] as const,
   ([agent]) => {
-    form.value = agent ? { id: agent.id, name: agent.name, provider: agent.provider, soul: agent.soul ?? '', systemPrompt: agent.systemPrompt, models: [...agent.models], reasoningEfforts: [...(agent.reasoningEfforts ?? [])], modes: [...agent.modes], allowedTools: [...agent.allowedTools] } : blank()
+    form.value = agent ? { id: agent.id, name: agent.name, provider: agent.provider, soul: agent.soul ?? '', systemPrompt: agent.systemPrompt, models: [...agent.models], reasoningEfforts: [...(agent.reasoningEfforts ?? [])], modes: [...agent.modes], allowedTools: [...agent.allowedTools], role: agent.role ?? null } : blank()
     // Os desligados no catálogo não entram no formulário: salvar com eles seria recusado.
     droppedModels.value = agent?.disabledModels ?? []
     form.value.models = form.value.models.filter((model) => !droppedModels.value.includes(model))
@@ -313,7 +313,7 @@ async function remove() {
             :class="{ on: form.allowedTools.includes(`agent:${other.id}`) }"
             @click="toggle(form.allowedTools, `agent:${other.id}`)"
           >
-            {{ other.name }}
+            {{ other.name }}<span v-if="other.role === 'subagent'" class="ml-1 text-[10px] text-zinc-500">subagente</span>
           </button>
         </div>
         <small v-if="form.allowedTools.some((entry) => entry.startsWith('agent:')) && !form.modes.includes('agent')" class="hint">Na lane chat, a delegação só roda com o loop de ferramentas ligado.</small>
@@ -372,6 +372,14 @@ async function remove() {
         <small v-if="form.allowedTools.some((id) => natives.find((tool) => tool.id === id && tool.risk.startsWith('server')))" class="text-amber-300">⚠ Ferramentas que tocam este servidor dão ao agente acesso ao disco, à rede ou a comandos daqui — sem as travas do run_bash.</small>
       </div>
 
+      <div class="field sm:col-span-2">
+        <label class="flex items-center gap-3">
+          <button type="button" role="switch" :aria-checked="form.role === 'subagent'" class="switch" :class="{ on: form.role === 'subagent' }" @click="form.role = form.role === 'subagent' ? null : 'subagent'"><span /></button>
+          <span>Só subagente</span>
+        </label>
+        <small class="hint">Só é chamado por outro agente (delegação, em "Pode delegar a"). Não aparece em Nova conversa e não abre conversa direta, nem pela API.</small>
+      </div>
+
       <label class="field sm:col-span-2">
         <span>Soul <em class="font-normal text-zinc-500">— quem o agente é: identidade, tom, valores, jeito de falar. Vai para o modelo antes do prompt.</em></span>
         <textarea v-model="form.soul" rows="4" maxlength="8000" class="input scroll-thin text-[13px] leading-relaxed" placeholder="Você é a Íris: gentil, direta, explica sem jargão e admite quando não sabe." />
@@ -427,5 +435,17 @@ async function remove() {
 }
 .chip.danger.on {
   @apply border-amber-500/60 bg-amber-500/15 text-amber-200;
+}
+.switch {
+  @apply relative h-6 w-11 shrink-0 rounded-full bg-zinc-700 transition-colors;
+}
+.switch span {
+  @apply absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform;
+}
+.switch.on {
+  @apply bg-emerald-500;
+}
+.switch.on span {
+  @apply translate-x-5;
 }
 </style>

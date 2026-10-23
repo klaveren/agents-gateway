@@ -125,5 +125,6 @@ function toAgent(stored: IStoredAgent): IAgent {
     reasoningEfforts: stored.reasoningEfforts,
     modes: stored.modes,
     allowedTools: stored.allowedTools,
+    ...(stored.role ? { role: stored.role } : {}),
   }
 }

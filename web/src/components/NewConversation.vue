@@ -41,10 +41,11 @@ watch(reasoningLevels, (levels) => {
  * agente" de uma conversa encerrada, que chega aqui com agente e modelo já escolhidos).
  */
 function ensureDraft() {
-  const asked = agents.byId.get(String(route.query.agent ?? ''))
+  const found = agents.byId.get(String(route.query.agent ?? ''))
+  const asked = found?.role === 'subagent' ? undefined : found
   if (asked && thread.draft?.agentId !== asked.id) return pick(asked.id, true)
 
-  const first = agents.list[0]
+  const first = agents.conversable[0]
   if ((thread.draft && !thread.sessionId && agents.byId.has(thread.draft.agentId)) || !first) return
   thread.startDraft({ agentId: first.id, mode: first.modes[0] ?? 'chat', tools: false, model: first.models[0] })
 }
@@ -82,7 +83,7 @@ async function send(text: string, files: IOutgoingFile[]) {
         <template v-if="!thread.turns.length && !thread.pending">
           <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <button
-              v-for="option in agents.list"
+              v-for="option in agents.conversable"
               :key="option.id"
               class="flex min-w-0 items-center gap-3 rounded-xl border px-3 py-2 text-left transition-colors"
               :class="option.id === draft?.agentId ? 'border-emerald-500/60 bg-emerald-500/10' : 'border-zinc-800 hover:bg-zinc-900'"
