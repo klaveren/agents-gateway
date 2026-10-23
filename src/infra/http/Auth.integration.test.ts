@@ -155,4 +155,42 @@ describe('contas locais (integração)', () => {
     assert.strictEqual((await call('/auth/me', { token: here })).status, 401)
     assert.strictEqual((await call('/auth/me', { token: elsewhere })).status, 401)
   })
+
+  describe('⛔ sessão da tela em cookie HttpOnly', () => {
+    const raw = (path: string, init: RequestInit = {}) => fetch(`${base}${path}`, init)
+    const host = () => new URL(base).host
+
+    it('o login da tela grava o cookie (HttpOnly, SameSite=Strict) e NÃO devolve o token no corpo', async () => {
+      const res = await raw('/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Gateway-Client': 'web', Origin: `http://${host()}` },
+        body: JSON.stringify({ email: 'root@x.test', password: PASSWORD }),
+      })
+      const cookie = res.headers.get('set-cookie') ?? ''
+      const body = (await res.json()) as { result: Record<string, unknown> }
+      assert.strictEqual(res.status, 200)
+      assert.match(cookie, /^gw_session_\d+=.+; Path=\/; HttpOnly; SameSite=Strict; Max-Age=\d+/)
+      assert.strictEqual(body.result.token, undefined)
+      assert.ok(body.result.user)
+
+      // O cookie sozinho abre a conta; um pedido que muda algo sem `Origin` desta origem é recusado.
+      const jar = cookie.split(';')[0]
+      assert.strictEqual((await raw('/auth/me', { headers: { Cookie: jar } })).status, 200)
+      assert.strictEqual((await raw('/auth/logout', { method: 'POST', headers: { Cookie: jar } })).status, 403)
+      assert.strictEqual((await raw('/auth/logout', { method: 'POST', headers: { Cookie: jar, Origin: 'https://evil.example' } })).status, 403)
+
+      const out = await raw('/auth/logout', { method: 'POST', headers: { Cookie: jar, Origin: `http://${host()}` } })
+      assert.strictEqual(out.status, 200)
+      assert.match(out.headers.get('set-cookie') ?? '', /Max-Age=0/)
+      assert.strictEqual((await raw('/auth/me', { headers: { Cookie: jar } })).status, 401)
+    })
+
+    it('quem tinha o token no navegador migra para o cookie sem novo login; token de fora não vira cookie', async () => {
+      const login = await call('/auth/login', { method: 'POST', body: { email: 'root@x.test', password: PASSWORD } })
+      const moved = await raw('/auth/cookie', { method: 'POST', headers: { 'X-Tool-Authorization': `Bearer ${login.body.result.token}` } })
+      assert.strictEqual(moved.status, 200)
+      assert.match(moved.headers.get('set-cookie') ?? '', /HttpOnly/)
+      assert.strictEqual((await raw('/auth/cookie', { method: 'POST' })).status, 401)
+    })
+  })
 })

@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { api, ApiError, CALLER_TOKEN_KEY, GATEWAY_TOKEN_KEY, setUnauthorizedHandler } from '@/lib/api'
+import { api, ApiError, authHeaders, CALLER_TOKEN_KEY, GATEWAY_TOKEN_KEY, setUnauthorizedHandler } from '@/lib/api'
 import { readLocal, writeLocal } from '@/lib/storage'
 import type { ISession, IUser } from '@/lib/types'
 
@@ -11,7 +11,8 @@ import type { ISession, IUser } from '@/lib/types'
  * papel guardado aqui: é a mesma porta das telas de operação, e vale também para quem entra por uma
  * prova externa em vez de conta local.
  *
- * O token vai no `X-Tool-Authorization` (a chave `callerToken`), o cabeçalho que o gateway já lia.
+ * ⛔ A SESSÃO MORA NUM COOKIE HttpOnly que o gateway grava no login: o JavaScript não a lê, e um XSS não
+ * a leva. Esta store só sabe QUEM está logado (`/auth/me`), nunca o token.
  */
 export const useAuthStore = defineStore('auth', () => {
   const gatewayToken = ref(readLocal(GATEWAY_TOKEN_KEY) ?? '')
@@ -30,7 +31,8 @@ export const useAuthStore = defineStore('auth', () => {
       localAccounts.value = status.localAccounts
       setupRequired.value = status.setupRequired
 
-      user.value = readLocal(CALLER_TOKEN_KEY) ? await api<IUser>('/auth/me').catch(() => undefined) : undefined
+      await migrateStoredSession()
+      user.value = await api<IUser>('/auth/me').catch(() => undefined)
 
       try {
         await api('/settings')
@@ -45,8 +47,18 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  /**
+   * Quem entrou antes do cookie tem o token no `localStorage`: ele vira cookie uma vez (`/auth/cookie`)
+   * e some daqui — sem pedir login de novo. Token vencido também some, e a tela pede login.
+   */
+  async function migrateStoredSession(): Promise<void> {
+    const stored = readLocal(CALLER_TOKEN_KEY)
+    if (!stored) return
+    await fetch('/v1/auth/cookie', { method: 'POST', headers: { ...authHeaders(), 'X-Tool-Authorization': `Bearer ${stored}` } }).catch(() => undefined)
+    writeLocal(CALLER_TOKEN_KEY, null)
+  }
+
   async function start(session: ISession): Promise<void> {
-    writeLocal(CALLER_TOKEN_KEY, session.token)
     user.value = session.user
     await probe()
   }
@@ -62,7 +74,6 @@ export const useAuthStore = defineStore('auth', () => {
   /** Sai NO SERVIDOR (todas as sessões da conta) e depois aqui. Se o servidor não responder, sai daqui mesmo assim. */
   async function logout(): Promise<void> {
     await api('/auth/logout', { method: 'POST' }).catch(() => undefined)
-    writeLocal(CALLER_TOKEN_KEY, null)
     user.value = undefined
     isAdmin.value = false
     return probe()
@@ -71,7 +82,6 @@ export const useAuthStore = defineStore('auth', () => {
   /** As outras sessões caem; esta continua com o token novo que o gateway devolve. */
   async function changePassword(current: string, password: string): Promise<void> {
     const session = await api<ISession>('/auth/password', { method: 'PUT', body: { current, password } })
-    writeLocal(CALLER_TOKEN_KEY, session.token)
     user.value = session.user
   }
 
@@ -83,7 +93,6 @@ export const useAuthStore = defineStore('auth', () => {
 
   // Sessão recusada pelo gateway (venceu, conta desativada, papel trocado): sai e a tela pede login.
   setUnauthorizedHandler(() => {
-    writeLocal(CALLER_TOKEN_KEY, null)
     user.value = undefined
     isAdmin.value = false
   })

@@ -1,3 +1,5 @@
+import { clearSessionCookie, setSessionCookie, wantsCookieOnly } from './Session.Cookie'
+import { tokenFromHeader } from '@infra/mcp/Caller.Identity'
 import { AccessTokensService } from '@application/AccessTokens.Service'
 import { AccountsService, ISession } from '@application/Accounts.Service'
 import { IAccessToken, isAccessToken } from '@domain/models/AccessToken.Model'
@@ -29,6 +31,7 @@ export class AuthController {
     for (const name of [
       'status',
       'setup',
+      'sessionCookie',
       'login',
       'logout',
       'me',
@@ -108,7 +111,7 @@ export class AuthController {
       res,
       async () => {
         const { code, ...body } = parseBody(setupSchema, req.body)
-        return toSessionDto(this.accounts.setup(body, code))
+        return this.session(req, res, this.accounts.setup(body, code))
       },
       { status: 201, message: 'Administrator created' },
     )
@@ -118,16 +121,17 @@ export class AuthController {
     await this.respond(res, async () => {
       const body = parseBody(loginSchema, req.body)
       // A origem é o endereço do SOCKET, não `req.ip` (que vem de cabeçalho com `trust proxy`).
-      return toSessionDto(await this.accounts.login(body.email, body.password, req.socket?.remoteAddress ?? ''))
+      return this.session(req, res, await this.accounts.login(body.email, body.password, req.socket?.remoteAddress ?? ''))
     })
   }
 
   /** Sai de todas as sessões da conta. Depois disto, nenhum token emitido antes vale. */
-  async logout(_req: Request, res: Response) {
+  async logout(req: Request, res: Response) {
     await this.respond(
       res,
       async () => {
         this.accounts.logout(await this.requireSelf())
+        clearSessionCookie(req, res)
         return null
       },
       { message: 'Signed out' },
@@ -146,10 +150,36 @@ export class AuthController {
         const id = await this.requireSelf()
         const body = parseBody(changePasswordSchema, req.body)
         // Volta a sessão nova: esta continua, as outras caem.
-        return toSessionDto(this.accounts.changeOwnPassword(id, body.current, body.password))
+        return this.session(req, res, this.accounts.changeOwnPassword(id, body.current, body.password))
       },
       { message: 'Password changed' },
     )
+  }
+
+  /**
+   * Passa para o cookie a sessão que veio no cabeçalho — a migração de quem tinha o token guardado no
+   * navegador (o `localStorage` de antes). Só com sessão local já PROVADA: a rota não é pública.
+   */
+  async sessionCookie(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        await this.requireSelf()
+        const token = tokenFromHeader(req.headers[CALLER_HEADER])
+        const expiresAt = token ? this.deps.accounts?.expiryOf(token) : undefined
+        if (!token || !expiresAt) throw new HttpError(422, 'validation_error', 'Only a gateway session can become a cookie')
+        setSessionCookie(req, res, { token, expiresAt })
+        return null
+      },
+      { message: 'Session moved to a cookie' },
+    )
+  }
+
+  /** A sessão nova: no cookie sempre; no corpo, só para quem não é a tela (curl, testes, outro sistema). */
+  private session(req: Request, res: Response, session: ISession) {
+    setSessionCookie(req, res, session)
+    const dto = toSessionDto(session)
+    return wantsCookieOnly(req) ? { expiresAt: dto.expiresAt, user: dto.user } : dto
   }
 
   async listUsers(_req: Request, res: Response) {

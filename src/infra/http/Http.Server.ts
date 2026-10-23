@@ -1,3 +1,4 @@
+import { cookieCredential } from './Session.Cookie'
 import { AgentController } from './Agent.Controller'
 import { AuthController } from './Auth.Controller'
 import { ProvidersController } from './Providers.Controller'
@@ -77,6 +78,8 @@ export class HttpServer {
     const small = express.json({ limit: jsonLimit() })
     const large = express.json({ limit: messageJsonLimit() })
     this.app.use((req, res, next) => (MESSAGE_ROUTE.test(req.path) ? large(req, res, next) : small(req, res, next)))
+    // A sessão da tela chega no cookie HttpOnly; daqui em diante é a mesma credencial do cabeçalho.
+    this.app.use(cookieCredential())
 
     this.routes = buildRoutes(
       controller,
@@ -238,6 +241,7 @@ function buildRoutes(
     { method: 'post', path: '/auth/login', handler: auth.login },
     { method: 'post', path: '/auth/logout', handler: auth.logout },
     { method: 'get', path: '/auth/me', handler: auth.me },
+    { method: 'post', path: '/auth/cookie', handler: auth.sessionCookie },
     { method: 'put', path: '/auth/password', handler: auth.changePassword },
     { method: 'get', path: '/auth/tokens', handler: auth.listTokens },
     { method: 'post', path: '/auth/tokens', handler: auth.createToken },
