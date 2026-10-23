@@ -424,7 +424,7 @@ const providerStatusSchema = {
       type: 'object',
       properties: {
         configured: { type: 'boolean' },
-        source: { type: 'string', enum: ['stored', 'env', 'none'] },
+        source: { type: 'string', enum: ['stored', 'none'] },
         last4: { type: 'string' },
         updatedAt: { type: 'string', format: 'date-time' },
         updatedBy: { type: 'string' },

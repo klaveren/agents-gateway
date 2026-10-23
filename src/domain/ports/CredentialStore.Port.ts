@@ -1,5 +1,5 @@
 /** De onde vem a chave em vigor de um provider. */
-export type TCredentialSource = 'stored' | 'env' | 'none'
+export type TCredentialSource = 'stored' | 'none'
 
 /** O que a tela pode saber de uma chave — ⛔ nunca a chave. */
 export interface ICredentialStatus {
