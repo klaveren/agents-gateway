@@ -323,6 +323,37 @@ const accessTokenSchema = {
   },
 }
 
+const mcpServerBody = {
+  type: 'object',
+  properties: {
+    id: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{1,31}$', description: 'Only on create.' },
+    name: { type: 'string' },
+    url: { type: 'string', description: 'http(s) URL of the MCP endpoint.' },
+    transport: { type: 'string', enum: ['auto', 'http', 'sse'] },
+    auth: { type: 'string', enum: ['caller', 'header', 'none'], description: 'caller = forward the conversing caller credential; header = a fixed secret header.' },
+    headerName: { type: 'string', description: 'Header for auth: header (default Authorization).' },
+    secret: { type: 'string', description: 'Only on create; later via /secret.' },
+    enabled: { type: 'boolean', description: 'Only on update.' },
+  },
+}
+
+const mcpServerSchema = {
+  type: 'object',
+  properties: {
+    id: { type: 'string' },
+    name: { type: 'string' },
+    url: { type: 'string' },
+    transport: { type: 'string', enum: ['auto', 'http', 'sse'] },
+    auth: { type: 'string', enum: ['caller', 'header', 'none'] },
+    headerName: { type: 'string' },
+    enabled: { type: 'boolean' },
+    secret: { type: 'object', properties: { configured: { type: 'boolean' }, last4: { type: 'string' }, unreadable: { type: 'boolean' } } },
+    status: { type: 'object', properties: { connected: { type: 'boolean' }, lastError: { type: 'string' } } },
+    agents: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' } } } },
+    selfReference: { type: 'boolean', description: 'The URL is this gateway own /v1/mcp.' },
+  },
+}
+
 const failures = {
   '401': {
     description:
@@ -674,6 +705,57 @@ export const OPENAPI_DOCUMENT = {
         parameters: providerParam,
         requestBody: { required: false, ...json({ type: 'object', properties: { key: { type: 'string' } } }) },
         responses: { '200': { description: 'The probe result', ...json(envelope(probeSchema)) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/mcp-servers': {
+      get: {
+        summary: 'The MCP servers agents can use tools from: URL, transport, authentication (caller credential, a fixed secret header, or none), status and the agents using each. The secret is never returned. Administrators only',
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: mcpServerSchema })) }, '401': failures['401'], '404': failures['404'] },
+      },
+      post: {
+        summary: 'Register an MCP server. Agents then pick its tools as `mcp:<id>/<tool>` or `mcp:<id>/*`. Administrators only',
+        requestBody: { required: true, ...json(mcpServerBody) },
+        responses: { '201': { description: 'Created', ...json(envelope(mcpServerSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/mcp-servers/{id}': {
+      put: {
+        summary: 'Change an MCP server (name, URL, transport, authentication, header, enabled). Administrators only',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json(mcpServerBody) },
+        responses: { '200': { description: 'OK', ...json(envelope(mcpServerSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+      delete: {
+        summary: 'Remove an MCP server and its secret. 409 while an agent uses it. Administrators only',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'Deleted', ...json(envelope({ type: 'null' })) }, '401': failures['401'], '404': failures['404'], '409': { description: '`mcp_server_in_use`, with `details.agents`', ...json(failureEnvelope) } },
+      },
+    },
+    '/mcp-servers/{id}/secret': {
+      put: {
+        summary: 'Save the secret header value (auth: header), encrypted. Never returned. Administrators only',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', properties: { secret: { type: 'string' } }, required: ['secret'] }) },
+        responses: { '200': { description: 'Saved', ...json(envelope(mcpServerSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+      delete: {
+        summary: 'Remove the saved secret. Administrators only',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'Removed', ...json(envelope(mcpServerSchema)) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/mcp-servers/{id}/test': {
+      post: {
+        summary: 'Connect now (ignoring the backoff) and count the tools. Administrators only',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { ok: { type: 'boolean' }, tools: { type: 'integer' }, message: { type: 'string' } } })) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/mcp-servers/{id}/tools': {
+      get: {
+        summary: 'The tools the server offers now (name, description, input schema). Administrators only',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, description: { type: 'string' }, inputSchema: { type: 'object' } } } })) }, '401': failures['401'], '404': failures['404'] },
       },
     },
     '/mcp': {

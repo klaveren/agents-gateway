@@ -10,6 +10,9 @@ import {
   ModelNotFoundError,
   InvalidProviderError,
   ProviderInUseError,
+  InvalidMcpServerError,
+  McpServerNotFoundError,
+  McpServerInUseError,
   ProviderNotFoundError,
   ProviderUnavailableError,
   InvalidCredentialsError,
@@ -31,6 +34,7 @@ export type TErrorCode =
   | 'agent_not_found'
   | 'agent_read_only'
   | 'provider_in_use'
+  | 'mcp_server_in_use'
   | 'provider_unavailable'
   | 'upstream_error'
   | 'agent_without_model'
@@ -127,6 +131,18 @@ export function toHttpFailure(error: unknown): IHttpFailure {
 
   if (error instanceof ProviderNotFoundError) {
     return { status: 404, code: 'not_found', message: 'Not found' }
+  }
+
+  if (error instanceof InvalidMcpServerError) {
+    return { status: 422, code: 'validation_error', message: 'MCP server is invalid', details: error.issues }
+  }
+
+  if (error instanceof McpServerNotFoundError) {
+    return { status: 404, code: 'not_found', message: error.message }
+  }
+
+  if (error instanceof McpServerInUseError) {
+    return { status: 409, code: 'mcp_server_in_use', message: error.message, details: { agents: error.agents } }
   }
 
   if (error instanceof ProviderInUseError) {

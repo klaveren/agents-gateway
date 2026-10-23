@@ -1,44 +1,46 @@
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
-import { McpServerClient } from '@infra/mcp/McpServer.Client'
+import { IMcpServerConfig, MCP_ALL_TOOLS, mcpSelection, parseMcpToolRef } from '@domain/models/McpServer.Model'
+import { McpRegistry } from '@infra/mcp/Mcp.Registry'
 import { ILocalTool, IToolDefinition, IToolResult } from './Tool.Types'
 
+/** Quem executa uma ferramenta pelo nome com que o modelo a pediu. */
+export interface IToolInvoker {
+  invoke(name: string, args: Record<string, unknown>, context?: IExecutionContext): Promise<IToolResult>
+}
+
+/** As ferramentas de UM agente, com os nomes que o modelo vê, e como executá-las. */
+export interface IToolbox extends IToolInvoker {
+  tools: IToolDefinition[]
+}
+
+/** Um servidor MCP escolhido por um agente, para os SDKs agênticos que conectam por conta própria. */
+export interface IAgentMcpServer {
+  config: IMcpServerConfig
+  /** `undefined` = todas as ferramentas (`mcp:<id>/*`); senão, só estas. */
+  tools?: string[]
+  /** O header fixo (`auth: header`). `caller` usa a credencial da chamada; `none`, nada. */
+  header?: { name: string; value: string }
+}
+
+/** O servidor do `CALLER_PROOF_TOOL` quando o nome vem solto (o semeado de `MCP_SERVER_URL`). */
+export const DEFAULT_MCP_SERVER = 'default'
+
 /**
- * A visão única de "que tools existem", unindo o MCP server (quando conectado) com o
- * toolset local embutido.
+ * A visão de "que ferramentas existem": as LOCAIS (em processo) e as dos servidores MCP cadastrados.
  *
- * `allowedTools` do registry filtra as tools **locais**, que são um conjunto fixo e
- * conhecido. Tools vindas do MCP passam todas: quem escolheu subir aquele server foi o
- * operador, e barrar descoberta dinâmica tiraria a graça do MCP.
+ * ⛔ UM AGENTE SÓ VÊ O QUE ESCOLHEU: locais pelo nome, MCP por `mcp:<servidor>/<ferramenta>` ou
+ * `mcp:<servidor>/*` (ver `toolbox`). Antes dos servidores virarem cadastro, toda ferramenta do MCP
+ * passava para todo agente.
  */
 export class ToolCatalog {
   constructor(
-    private readonly mcp: McpServerClient,
+    readonly mcp: McpRegistry,
     private readonly local: ILocalTool[],
   ) {}
 
-  get mcpUrl(): string {
-    return this.mcp.serverUrl
-  }
-
-  /** Status síncrono, para health e relatório. Não tenta reconectar. */
+  /** Algum servidor MCP ligado está conectado agora (para health e relatório). */
   get mcpConnected(): boolean {
-    return this.mcp.isConnected()
-  }
-
-  /** Muda a cada reconexão; quem cacheia recurso derivado compara para saber que expirou. */
-  get mcpGeneration(): number {
-    return this.mcp.connectionGeneration
-  }
-
-  /**
-   * A URL do MCP se ele estiver utilizável — reconectando se necessário e se a janela de
-   * backoff já passou.
-   *
-   * É isto que os adapters usam para decidir se ligam o MCP nativo do SDK. Usar o getter
-   * síncrono aqui congelava a decisão do boot: server que subisse depois nunca aparecia.
-   */
-  async mcpEndpoint(): Promise<string | undefined> {
-    return (await this.mcp.ensureConnected()) ? this.mcp.serverUrl : undefined
+    return this.mcp.status().some((server) => server.connected)
   }
 
   /** Os nomes de todas as tools locais deste processo. */
@@ -46,32 +48,80 @@ export class ToolCatalog {
     return this.local.map((tool) => tool.name)
   }
 
-  localFor(allowed: string[]): ILocalTool[] {
+  localFor(allowed: readonly string[]): ILocalTool[] {
     return this.local.filter((tool) => allowed.includes(tool.name))
   }
 
-  /** Catálogo completo para relatório e health. Uma tool local sombreia a homônima do MCP. */
-  async list(allowed: string[]): Promise<IToolDefinition[]> {
-    const local = this.localFor(allowed)
-    const names = new Set(local.map((tool) => tool.name))
-    const remote = (await this.mcp.listTools()).filter((tool) => !names.has(tool.name))
-
-    return [...local, ...remote]
+  /** As tools LOCAIS permitidas (as de MCP vêm por servidor, em `/mcp-servers`). */
+  async list(allowed: readonly string[]): Promise<IToolDefinition[]> {
+    return this.localFor(allowed)
   }
 
   /**
-   * Caminho de execução do gateway. Na lane `agent` quem executa é o próprio Agents SDK;
-   * isto serve para diagnóstico e para qualquer chamador que não seja um SDK agêntico.
+   * As ferramentas de um agente, prontas para o loop manual (lanes chat) e para o ADK.
+   *
+   * ⚖️ O NOME QUE O MODELO VÊ é o da ferramenta quando ele é único na caixa; com dois servidores
+   * oferecendo o mesmo nome (ou um deles igual ao de uma local), vira `<servidor>__<ferramenta>`. A
+   * local vence sempre: é a que tem a política do gateway (run_bash, timeouts).
    */
+  async toolbox(allowed: readonly string[]): Promise<IToolbox> {
+    const local = this.localFor(allowed)
+    const remote: Array<{ server: string; tool: IToolDefinition }> = []
+
+    for (const [server, choice] of mcpSelection(allowed)) {
+      const tools = await this.mcp.tools(server)
+      for (const tool of tools) if (choice.all || choice.tools.has(tool.name)) remote.push({ server, tool })
+    }
+
+    const counts = new Map<string, number>()
+    for (const name of [...local.map((tool) => tool.name), ...remote.map(({ tool }) => tool.name)]) counts.set(name, (counts.get(name) ?? 0) + 1)
+    const routes = new Map<string, { server: string; tool: string }>()
+    const exposed = remote.map(({ server, tool }) => {
+      const name = counts.get(tool.name) === 1 ? tool.name : `${server}__${tool.name}`.slice(0, 64)
+      routes.set(name, { server, tool: tool.name })
+      return { ...tool, name, origin: 'mcp' as const }
+    })
+
+    return {
+      tools: [...local, ...exposed],
+      invoke: async (name, args, context) => {
+        const own = local.find((tool) => tool.name === name)
+        if (own) return own.execute(args)
+        const route = routes.get(name)
+        if (!route) return { status: 'error', result: `Tool not available to this agent: ${name}` }
+        return this.callMcp(route.server, route.tool, args, context)
+      },
+    }
+  }
+
+  /** Os servidores MCP que um agente escolheu e que estão de pé agora — os SDKs agênticos conectam neles. */
+  async mcpServersFor(allowed: readonly string[]): Promise<IAgentMcpServer[]> {
+    const servers: IAgentMcpServer[] = []
+    for (const [id, choice] of mcpSelection(allowed)) {
+      const client = await this.mcp.connected(id)
+      const config = this.mcp.get(id)
+      if (!client || !config) continue
+      servers.push({ config, ...(choice.all ? {} : { tools: [...choice.tools] }), ...(config.auth === 'header' ? { header: this.mcp.header(id) } : {}) })
+    }
+    return servers
+  }
+
   /**
-   * ⚖️ `context` VEM DE FORA. O catálogo não busca credencial: recebe a que vale para esta
-   * chamada, do provider. Buscá-la aqui espalharia a decisão por mais um lugar — e foi assim que
-   * adapters acabaram chamando o MCP sem token.
+   * Executa uma ferramenta pelo nome: local, `servidor/ferramenta`, ou — nome solto que não é local — a
+   * do servidor `default`. É o caminho do `CALLER_PROOF_TOOL` e de diagnóstico.
    */
   async invoke(name: string, args: Record<string, unknown>, context?: IExecutionContext): Promise<IToolResult> {
     const tool = this.local.find((candidate) => candidate.name === name)
     if (tool) return tool.execute(args)
 
-    return this.mcp.callTool(name, args, context)
+    const ref = parseMcpToolRef(name.startsWith('mcp:') ? name : `mcp:${name.includes('/') ? name : `${DEFAULT_MCP_SERVER}/${name}`}`)
+    if (!ref || ref.tool === MCP_ALL_TOOLS) return { status: 'error', result: `Unknown tool: ${name}` }
+    return this.callMcp(ref.server, ref.tool, args, context)
+  }
+
+  private async callMcp(server: string, tool: string, args: Record<string, unknown>, context?: IExecutionContext): Promise<IToolResult> {
+    const client = this.mcp.client(server)
+    if (!client) return { status: 'error', result: `MCP server unavailable: ${server}` }
+    return client.callTool(tool, args, context)
   }
 }

@@ -1,4 +1,6 @@
-import { MCPServerStreamableHttp, tool, type MCPServer, type Tool } from '@openai/agents'
+import { MCPServerSSE, MCPServerStreamableHttp, tool, type MCPServer, type Tool } from '@openai/agents'
+import { IAgentMcpServer } from '../Tool.Catalog'
+import { mcpHeaders } from './Claude.ToolBridge'
 import { ILocalTool } from '../Tool.Types'
 
 /**
@@ -23,22 +25,25 @@ export function buildOpenAITools(local: ILocalTool[]): Tool[] {
 }
 
 /**
- * O servidor MCP remoto, com a credencial de quem chamou nos headers.
+ * Os servidores MCP do agente, cada um com a SUA credencial e o filtro das ferramentas escolhidas.
  *
- * ⚠️ O token vem do PROVIDER, por parâmetro. Este SDK conecta ao MCP por conta própria — não passa
- * pelo `McpServerClient` do gateway — e sem a credencial toda tool responde "chamada sem
+ * ⚠️ O token de `auth: caller` vem do PROVIDER, por parâmetro. Este SDK conecta ao MCP por conta própria —
+ * não passa pelo `McpServerClient` do gateway — e sem a credencial toda tool responde "chamada sem
  * credencial", com o agente encerrando a conversa dizendo que não conseguiu consultar.
  */
-export function buildOpenAIMcpServers(remoteUrl?: string, token?: string): MCPServer[] {
-  if (!remoteUrl) return []
-  return [
-    new MCPServerStreamableHttp({
-      url: remoteUrl,
-      name: 'gateway-mcp',
+export function buildOpenAIMcpServers(remotes: readonly IAgentMcpServer[] = [], token?: string): MCPServer[] {
+  return remotes.map((remote) => {
+    const headers = mcpHeaders(remote, token)
+    const options = {
+      url: remote.config.url,
+      name: `mcp_${remote.config.id}`,
       cacheToolsList: true,
-      ...(token ? { requestInit: { headers: { authorization: `Bearer ${token}` } } } : {}),
-    }),
-  ]
+      // `undefined` = todas (`mcp:<id>/*`); senão, só as escolhidas no agente.
+      ...(remote.tools ? { toolFilter: { allowedToolNames: remote.tools } } : {}),
+      ...(headers ? { requestInit: { headers } } : {}),
+    }
+    return remote.config.transport === 'sse' ? new MCPServerSSE(options) : new MCPServerStreamableHttp(options)
+  })
 }
 
 function toArgs(args: unknown): Record<string, unknown> {

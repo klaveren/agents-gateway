@@ -5,7 +5,7 @@ import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
-import type { McpServerClient } from '@infra/mcp/McpServer.Client'
+import { fakeMcpRegistry } from '@infra/mcp/Mcp.Fake'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { ILocalTool } from '@infra/tools/Tool.Types'
 import { hostedName, OpenAIAgentAdapter } from './OpenAIAgent.Adapter'
@@ -27,7 +27,7 @@ describe('OpenAIAgentAdapter', () => {
     systemPrompt: 'You are a Data Analyst Agent.',
     models: ['gpt-5.6-sol'],
     modes: [EMode.CHAT, EMode.AGENT],
-    allowedTools: ['search_web'],
+    allowedTools: ['search_web', 'mcp:crm/*'],
   })
 
   const turn = () => [
@@ -66,32 +66,22 @@ describe('OpenAIAgentAdapter', () => {
     return collected
   }
 
-  const catalog = new ToolCatalog(
+  const catalog = new ToolCatalog(fakeMcpRegistry(), [
     {
-      serverUrl: 'http://localhost:8000/mcp',
-      isConnected: () => false,
-      ensureConnected: async () => false,
-      connectionGeneration: 0,
-      listTools: async () => [],
-      callTool: async () => ({ status: 'success' as const, result: '' }),
-    } as unknown as McpServerClient,
-    [
-      {
-        origin: 'local',
-        name: 'search_web',
-        description: 'local search',
-        inputSchema: {
-          type: 'object',
-          properties: { query: { type: 'string', description: 'q' } },
-          required: ['query'],
-          additionalProperties: false,
-        },
-        async execute() {
-          return { status: 'success', result: 'ok' }
-        },
-      } satisfies ILocalTool,
-    ],
-  )
+      origin: 'local',
+      name: 'search_web',
+      description: 'local search',
+      inputSchema: {
+        type: 'object',
+        properties: { query: { type: 'string', description: 'q' } },
+        required: ['query'],
+        additionalProperties: false,
+      },
+      async execute() {
+        return { status: 'success', result: 'ok' }
+      },
+    } satisfies ILocalTool,
+  ])
 
   it('creates a session on the agent lane', async () => {
     const adapter = new OpenAIAgentAdapter({ run: runWith(() => []) })
@@ -206,18 +196,7 @@ describe('OpenAIAgentAdapter', () => {
     assert.deepStrictEqual(calls[0].agent.mcpServers, [])
   })
 
-  const mcpCatalog = (isUp: () => boolean) =>
-    new ToolCatalog(
-      {
-        serverUrl: 'http://localhost:8000/mcp',
-        isConnected: isUp,
-        ensureConnected: async () => isUp(),
-        connectionGeneration: 1,
-        listTools: async () => [],
-        callTool: async () => ({ status: 'success' as const, result: '' }),
-      } as unknown as McpServerClient,
-      [],
-    )
+  const mcpCatalog = (isUp: () => boolean) => new ToolCatalog(fakeMcpRegistry([{ id: 'crm', connected: isUp }]), [])
 
   const trackedServer = (token: string | undefined, log: { opened: string[]; closed: string[] }) =>
     ({
@@ -237,7 +216,7 @@ describe('OpenAIAgentAdapter', () => {
     const adapter = new OpenAIAgentAdapter({
       run: runWith(turn, calls),
       catalog: mcpCatalog(() => up),
-      buildMcpServers: (_url, token) => [trackedServer(token, log)],
+      buildMcpServers: (_remotes, token) => [trackedServer(token, log)],
     })
     const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
 
@@ -271,7 +250,7 @@ describe('OpenAIAgentAdapter', () => {
     const adapter = new OpenAIAgentAdapter({
       run,
       catalog: mcpCatalog(() => true),
-      buildMcpServers: (_url, token) => [trackedServer(token, log)],
+      buildMcpServers: (_remotes, token) => [trackedServer(token, log)],
     })
     const sessionA = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
     const sessionB = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { levelsFor, REASONING_LEVELS } from '@/lib/reasoning'
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ApiError } from '@/lib/api'
 import { providerLabel } from '@/lib/format'
 import { useProvidersStore } from '@/stores/providers'
 import type { IAgentDetail, IAgentInput, ICatalogModel, TMode } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
+import { useMcpStore } from '@/stores/mcp'
 import ConfirmDialog from './ConfirmDialog.vue'
 
 const props = defineProps<{ agent?: IAgentDetail; creating: boolean }>()
@@ -13,6 +14,33 @@ const emit = defineEmits<{ saved: [id: string]; duplicate: [agent: IAgentDetail]
 
 const agents = useAgentsStore()
 const providers = useProvidersStore()
+const mcp = useMcpStore()
+
+/**
+ * Os MCPs: por servidor ligado, "todas as ferramentas" (`mcp:<id>/*`) ou uma a uma (`mcp:<id>/<tool>`).
+ * As ferramentas de cada servidor são lidas ao abrir o formulário.
+ */
+onMounted(async () => {
+  await mcp.load().catch(() => undefined)
+  await Promise.all(mcp.list.filter((server) => server.enabled).map((server) => mcp.loadTools(server.id).catch(() => [])))
+})
+const mcpRef = (server: string, tool: string) => `mcp:${server}/${tool}`
+const enabledMcp = computed(() => mcp.list.filter((server) => server.enabled))
+/** O que o agente escolheu e já não aparece acima (servidor desligado, removido, ou ferramenta que sumiu). */
+const orphanMcp = computed(() =>
+  form.value.allowedTools.filter((entry) => {
+    if (!entry.startsWith('mcp:')) return false
+    const [server, tool] = entry.slice(4).split('/')
+    if (!enabledMcp.value.some((candidate) => candidate.id === server)) return true
+    return tool !== '*' && !(mcp.tools[server] ?? []).some((candidate) => candidate.name === tool)
+  }),
+)
+function toggleAllMcp(server: string) {
+  const all = mcpRef(server, '*')
+  if (form.value.allowedTools.includes(all)) form.value.allowedTools = form.value.allowedTools.filter((entry) => entry !== all)
+  // "Todas" substitui as escolhidas uma a uma do mesmo servidor.
+  else form.value.allowedTools = [...form.value.allowedTools.filter((entry) => !entry.startsWith(`mcp:${server}/`)), all]
+}
 
 /** Os providers configurados e ligados; um desligado só aparece se for o deste agente. */
 const providerOptions = computed(() => providers.list.filter((provider) => provider.enabled || provider.id === form.value.provider))
@@ -239,7 +267,7 @@ async function remove() {
       </div>
 
       <div class="field sm:col-span-2">
-        <span>Ferramentas <em class="font-normal text-zinc-500">{{ agents.mcpConnected ? '' : '(MCP desconectado: só as locais aparecem)' }}</em></span>
+        <span>Ferramentas locais</span>
         <div class="flex flex-wrap gap-1.5">
           <button
             v-for="tool in agents.tools"
@@ -256,6 +284,42 @@ async function remove() {
         </div>
         <small v-if="form.allowedTools.some((tool) => DANGEROUS.has(tool))" class="text-amber-300">⚠ run_bash executa comandos no servidor do gateway. Quem conversa com este agente ganha esse poder.</small>
         <small v-for="message in issues.allowedTools" :key="message" class="error">{{ message }}</small>
+      </div>
+
+      <div class="field sm:col-span-2">
+        <span>MCPs <em class="font-normal text-zinc-500">— os servidores cadastrados em MCPs; o agente só vê o que for marcado aqui</em></span>
+        <div v-if="enabledMcp.length" class="flex flex-col gap-2">
+          <div v-for="server in enabledMcp" :key="server.id" class="rounded-xl border border-zinc-800 px-3 py-2 font-normal">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="text-sm text-zinc-200">{{ server.name }}</span>
+              <code class="text-[11px] text-zinc-500">mcp:{{ server.id }}</code>
+              <span v-if="!server.status.connected" class="text-[11px] text-amber-300">sem conexão</span>
+              <label class="ml-auto flex items-center gap-1.5 text-xs text-zinc-400">
+                <input type="checkbox" class="accent-emerald-500" :checked="form.allowedTools.includes(mcpRef(server.id, '*'))" @change="toggleAllMcp(server.id)" />
+                Todas as ferramentas
+              </label>
+            </div>
+            <div v-if="!form.allowedTools.includes(mcpRef(server.id, '*'))" class="mt-2 flex flex-wrap gap-1.5">
+              <button
+                v-for="tool in mcp.tools[server.id] ?? []"
+                :key="tool.name"
+                type="button"
+                class="chip font-mono text-xs"
+                :class="{ on: form.allowedTools.includes(mcpRef(server.id, tool.name)) }"
+                :title="tool.description"
+                @click="toggle(form.allowedTools, mcpRef(server.id, tool.name))"
+              >
+                {{ tool.name }}
+              </button>
+              <span v-if="!(mcp.tools[server.id] ?? []).length" class="text-xs text-zinc-500">Nenhuma ferramenta listada agora.</span>
+            </div>
+          </div>
+        </div>
+        <span v-else class="text-sm font-normal text-zinc-500">Nenhum MCP ligado. <RouterLink to="/mcp" class="text-emerald-400 hover:underline">Cadastrar em MCPs</RouterLink>.</span>
+        <div v-if="orphanMcp.length" class="flex flex-wrap items-center gap-1.5 text-xs font-normal">
+          <span class="text-amber-300">Escolhidas, mas indisponíveis agora:</span>
+          <button v-for="entry in orphanMcp" :key="entry" type="button" class="chip on font-mono text-xs" title="Clique para tirar do agente" @click="toggle(form.allowedTools, entry)">{{ entry }} ✕</button>
+        </div>
       </div>
 
       <div v-if="natives.length" class="field sm:col-span-2">

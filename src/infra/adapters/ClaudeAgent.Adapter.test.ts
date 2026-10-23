@@ -5,7 +5,7 @@ import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
-import type { McpServerClient } from '@infra/mcp/McpServer.Client'
+import { fakeMcpRegistry, mcpTool } from '@infra/mcp/Mcp.Fake'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { ILocalTool } from '@infra/tools/Tool.Types'
 import { ClaudeAgentAdapter } from './ClaudeAgent.Adapter'
@@ -23,7 +23,7 @@ describe('ClaudeAgentAdapter', () => {
     systemPrompt: 'You are a system operator.',
     models: ['claude-sonnet-5'],
     modes: [EMode.CHAT, EMode.AGENT],
-    allowedTools: ['run_bash'],
+    allowedTools: ['run_bash', 'mcp:crm/read_file'],
   })
 
   const turn = () => [
@@ -73,18 +73,7 @@ describe('ClaudeAgentAdapter', () => {
     },
   })
 
-  const catalogWith = (connected: boolean) =>
-    new ToolCatalog(
-      {
-        serverUrl: 'http://localhost:8000/mcp',
-        isConnected: () => connected,
-        ensureConnected: async () => connected,
-        connectionGeneration: connected ? 1 : 0,
-        listTools: async () => [],
-        callTool: async () => ({ status: 'success' as const, result: '' }),
-      } as unknown as McpServerClient,
-      [localTool('run_bash')],
-    )
+  const catalogWith = (connected: boolean) => new ToolCatalog(fakeMcpRegistry([{ id: 'crm', connected, tools: [mcpTool('read_file')] }]), [localTool('run_bash')])
 
   it('creates a session on the agent lane', async () => {
     const adapter = new ClaudeAgentAdapter({ query: queryWith(() => []) })
@@ -233,7 +222,7 @@ describe('ClaudeAgentAdapter', () => {
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     const servers = seen[0].options?.mcpServers ?? {}
-    assert.deepStrictEqual(Object.keys(servers).sort(), ['gateway', 'mcp'])
+    assert.deepStrictEqual(Object.keys(servers).sort(), ['gateway', 'mcp_crm'])
     // Built-ins seguem desligados: o agente não ganha Bash/Read sobre a máquina do host.
     assert.deepStrictEqual(seen[0].options?.tools, [])
   })
@@ -260,7 +249,10 @@ describe('ClaudeAgentAdapter', () => {
 
     const options = { signal: new AbortController().signal, toolUseID: 't1', requestId: 'r1' }
     assert.strictEqual((await gate('mcp__gateway__run_bash', {}, options))?.behavior, 'allow')
-    assert.strictEqual((await gate('mcp__mcp__read_file', {}, options))?.behavior, 'allow')
+    assert.strictEqual((await gate('mcp__mcp_crm__read_file', {}, options))?.behavior, 'allow')
+    // ⛔ Do servidor escolhido, só a ferramenta escolhida; de servidor que o agente não tem, nada.
+    assert.strictEqual((await gate('mcp__mcp_crm__delete_all', {}, options))?.behavior, 'deny')
+    assert.strictEqual((await gate('mcp__mcp_outro__read_file', {}, options))?.behavior, 'deny')
     assert.strictEqual((await gate('Bash', {}, options))?.behavior, 'deny')
     assert.strictEqual((await gate('mcp__gateway__search_web', {}, options))?.behavior, 'deny')
   })

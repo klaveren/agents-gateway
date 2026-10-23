@@ -266,3 +266,30 @@ export interface IUserUsage extends IUsageFigure {
   email?: string
   name?: string
 }
+
+export type TMcpAuth = 'caller' | 'header' | 'none'
+export type TMcpTransport = 'auto' | 'http' | 'sse'
+
+/** Um servidor MCP cadastrado. ⛔ O segredo nunca vem: só se está configurado e o final dele. */
+export interface IMcpServer {
+  id: string
+  name: string
+  url: string
+  transport: TMcpTransport
+  auth: TMcpAuth
+  headerName?: string
+  enabled: boolean
+  secret: { configured: boolean; last4?: string; unreadable?: boolean; updatedAt?: string; updatedBy?: string }
+  status: { connected: boolean; lastError?: string }
+  agents: Array<{ id: string; name: string }>
+  /** A URL é o MCP do próprio gateway. */
+  selfReference: boolean
+  createdAt: string
+  updatedAt: string
+  updatedBy?: string
+}
+
+export interface IMcpTool {
+  name: string
+  description: string
+}

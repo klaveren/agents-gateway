@@ -2,8 +2,12 @@ import { AgentController } from './Agent.Controller'
 import { AuthController } from './Auth.Controller'
 import { ProvidersController } from './Providers.Controller'
 import { UsageController } from './Usage.Controller'
+import { McpServersController } from './McpServers.Controller'
 import { randomBytes } from 'node:crypto'
+import { McpServersService } from '@application/McpServers.Service'
 import { ProvidersService } from '@application/Providers.Service'
+import { McpRegistry } from '@infra/mcp/Mcp.Registry'
+import { SqliteMcpServerRepository } from '@infra/persistence/Sqlite.McpServerRepository'
 import { SqliteCredentialStore } from '@infra/persistence/Sqlite.CredentialStore'
 import { SqliteProviderRepository } from '@infra/persistence/Sqlite.ProviderRepository'
 import { SecretBox } from '@infra/secrets/Aes.SecretBox'
@@ -55,13 +59,14 @@ export class HttpServer {
     private readonly auth: AuthController = new AuthController({}),
     providers: ProvidersController = defaultProvidersController(),
     usage?: UsageController,
+    mcpServers: McpServersController = defaultMcpServersController(),
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
     this.app.use(corsMiddleware())
     this.app.use(express.json({ limit: jsonLimit() }))
 
-    this.routes = buildRoutes(controller, auth, providers, usage ?? new UsageController({ conversations: controller.conversations }))
+    this.routes = buildRoutes(controller, auth, providers, usage ?? new UsageController({ conversations: controller.conversations }), mcpServers)
     this.setupRoutes()
     this.setupFrontend()
   }
@@ -157,8 +162,16 @@ export class HttpServer {
   }
 }
 
-function buildRoutes(controller: AgentController, auth: AuthController, providers: ProvidersController, usage: UsageController): IRoute[] {
+function buildRoutes(controller: AgentController, auth: AuthController, providers: ProvidersController, usage: UsageController, mcpServers: McpServersController): IRoute[] {
   return [
+    { method: 'get', path: '/mcp-servers', handler: mcpServers.list },
+    { method: 'post', path: '/mcp-servers', handler: mcpServers.create },
+    { method: 'put', path: '/mcp-servers/:id', handler: mcpServers.update },
+    { method: 'delete', path: '/mcp-servers/:id', handler: mcpServers.remove },
+    { method: 'put', path: '/mcp-servers/:id/secret', handler: mcpServers.saveSecret },
+    { method: 'delete', path: '/mcp-servers/:id/secret', handler: mcpServers.clearSecret },
+    { method: 'post', path: '/mcp-servers/:id/test', handler: mcpServers.test },
+    { method: 'get', path: '/mcp-servers/:id/tools', handler: mcpServers.tools },
     // O gateway como servidor MCP (ver `SelfMcp.Controller`): só POST; sem estado, GET e DELETE são 405.
     { method: 'post', path: '/mcp', handler: handleSelfMcp },
     { method: 'get', path: '/mcp', handler: rejectSelfMcp },
@@ -243,6 +256,13 @@ function resolvePublicDir(): string {
 }
 
 /** Sem providers injetado: tudo em memória, sobre o ambiente — o teste e quem monta à mão. */
+/** Sem composição (testes que sobem só o servidor): cadastro em memória, vazio. */
+function defaultMcpServersController(): McpServersController {
+  const credentials = new SqliteCredentialStore(new SecretBox(randomBytes(32)))
+  const servers = new SqliteMcpServerRepository()
+  return new McpServersController({ service: new McpServersService(servers, credentials, () => []), registry: new McpRegistry(servers, credentials) })
+}
+
 function defaultProvidersController(): ProvidersController {
   const credentials = new SqliteCredentialStore(new SecretBox(randomBytes(32)))
   return new ProvidersController({ providers: new ProvidersService(new SqliteProviderRepository(), credentials), credentials, agents: { list: () => [], get: () => undefined } })

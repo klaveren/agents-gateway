@@ -3,6 +3,7 @@ import { EProvider } from './enums/EProvider.Enum'
 import { IAgent } from './models/Agent.Model'
 import { INativeTool, isNativeTool, nativeTool, nativeToolAllowed } from './Native.Tools'
 import { REASONING_LEVELS } from './Reasoning.Levels'
+import { isMcpToolRef, parseMcpToolRef } from './models/McpServer.Model'
 
 /** Minúsculas, dígitos e hífen; começa por letra ou dígito. Vira parte de URL e de nome no ADK. */
 export const AGENT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,47}$/
@@ -43,6 +44,11 @@ export interface IAgentRules {
    * prefixo do id deixa de valer): agente só oferece modelo que alguém ativou em Providers.
    */
   modelEnabled?(providerId: string, modelId: string): boolean
+  /**
+   * O servidor MCP existe? (`mcp:<servidor>/…`). Ausente = nenhum servidor cadastrado, e toda referência
+   * a MCP é recusada.
+   */
+  mcpServerExists?(serverId: string): boolean
   /** O perímetro das nativas. Ausente = `nativeToolAllowed` com o ambiente do processo. */
   nativeAllowed?(tool: INativeTool): boolean
   /** Problema do prompt para aquele provider (ex.: chaves que o ADK lê como variável). */
@@ -95,6 +101,13 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
   for (const mode of agent.modes) if (!Object.values(EMode).includes(mode)) issue('modes', `unknown lane: ${String(mode)}`)
 
   for (const tool of agent.allowedTools) {
+    // ⚖️ MCP: o servidor tem de existir; a ferramenta, não — o servidor pode estar fora do ar ao salvar.
+    if (isMcpToolRef(tool)) {
+      const ref = parseMcpToolRef(tool)
+      if (!ref) issue('allowedTools', `invalid MCP tool (use mcp:<server>/<tool> or mcp:<server>/*): ${tool}`)
+      else if (!rules.mcpServerExists?.(ref.server)) issue('allowedTools', `unknown MCP server: ${ref.server}`)
+      continue
+    }
     if (!isNativeTool(tool)) {
       if (!rules.knownTools.includes(tool)) issue('allowedTools', `not available: ${tool}`)
       continue

@@ -1,6 +1,6 @@
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
-import { ToolCatalog } from '@infra/tools/Tool.Catalog'
+import { IToolInvoker } from '@infra/tools/Tool.Catalog'
 import { IToolDefinition, IToolResult } from '@infra/tools/Tool.Types'
 
 export interface IManualToolCall {
@@ -39,7 +39,8 @@ export interface IManualLoopParams<TMessage> {
   history: TMessage[]
   tools: IToolDefinition[]
   provider: IManualLoopProvider<TMessage>
-  catalog: ToolCatalog | undefined
+  /** Quem executa as ferramentas do agente — a caixa dele (`ToolCatalog.toolbox`). */
+  catalog: IToolInvoker | undefined
   /** A credencial de quem chamou. Sem ela a tool MCP iria sem header, ou com a identidade do ambiente. */
   context: IExecutionContext
   signal: AbortSignal
@@ -102,7 +103,7 @@ export async function* runManualToolLoop<TMessage>(params: IManualLoopParams<TMe
   return answer
 }
 
-async function execute(catalog: ToolCatalog | undefined, call: IManualToolCall, context: IExecutionContext): Promise<IToolResult> {
+async function execute(catalog: IToolInvoker | undefined, call: IManualToolCall, context: IExecutionContext): Promise<IToolResult> {
   if (!catalog) {
     return { status: 'error', result: `No tool catalog is wired; cannot run "${call.name}".` }
   }

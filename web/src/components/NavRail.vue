@@ -15,6 +15,7 @@ const section = computed(() => {
   const name = String(route.name ?? '')
   if (name.startsWith('agent')) return 'agents'
   if (name.startsWith('provider')) return 'providers'
+  if (name.startsWith('mcp')) return 'mcp'
   if (name === 'user' || name.startsWith('user-')) return 'users'
   return ['settings', 'users', 'usage'].includes(name) ? name : 'inbox'
 })
@@ -23,14 +24,15 @@ const section = computed(() => {
  * ⚖️ Abaixo de `md` o trilho vira uma BARRA INFERIOR: no celular, 68px de coluna fixa eram quase um
  * quinto da tela. Os mesmos links; o "Sair" passa para o topo da Configuração.
  */
-const links = computed<Array<{ to: string; key: string; label: string; short?: string; icon: 'inbox' | 'chart' | 'agents' | 'key' | 'users' | 'settings'; badge: number }>>(() => [
-  { to: '/', key: 'inbox', label: 'Conversas', icon: 'inbox' as const, badge: conversations.unread.size },
+const links = computed<Array<{ to: string; key: string; label: string; short?: string; icon: 'inbox' | 'chart' | 'agents' | 'key' | 'users' | 'settings' | 'plug'; badge: number }>>(() => [
+  { to: '/', key: 'inbox', label: 'Conversas', short: 'Chats', icon: 'inbox' as const, badge: conversations.unread.size },
   ...(auth.signedIn ? [{ to: '/usage', key: 'usage', label: 'Uso', icon: 'chart' as const, badge: 0 }] : []),
   ...(auth.isAdmin
     ? [
         { to: '/agents', key: 'agents', label: 'Agentes', icon: 'agents' as const, badge: 0 },
-        { to: '/providers', key: 'providers', label: 'Providers', icon: 'key' as const, badge: 0 },
-        { to: '/users', key: 'users', label: 'Usuários', icon: 'users' as const, badge: 0 },
+        { to: '/providers', key: 'providers', label: 'Providers', short: 'APIs', icon: 'key' as const, badge: 0 },
+        { to: '/mcp', key: 'mcp', label: 'MCPs', icon: 'plug' as const, badge: 0 },
+        { to: '/users', key: 'users', label: 'Usuários', short: 'Equipe', icon: 'users' as const, badge: 0 },
       ]
     : []),
   { to: '/settings', key: 'settings', label: 'Configuração', short: 'Ajustes', icon: 'settings' as const, badge: 0 },

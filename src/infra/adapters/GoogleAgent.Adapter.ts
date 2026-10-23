@@ -392,13 +392,13 @@ export class GoogleAgentAdapter implements IAgentAdapter {
   private async remoteTools(agent: IAgent, caller: { context: IExecutionContext }): Promise<BaseTool[]> {
     if (!this.catalog) return []
 
-    const local = new Set(this.catalog.localFor(agent.allowedTools).map((tool) => tool.name))
-    const all = await this.catalog.list(agent.allowedTools)
+    // ⛔ Só os servidores e as ferramentas que ESTE agente escolheu (ver `ToolCatalog.toolbox`).
+    const toolbox = await this.catalog.toolbox(agent.allowedTools)
 
     return buildAdkRemoteTools(
-      all.filter((tool) => !local.has(tool.name)),
+      toolbox.tools.filter((tool) => tool.origin === 'mcp'),
       // A credencial vem do provider e é lida NA EXECUÇÃO, do turno em curso — nunca a do 1º turno.
-      (name, args) => this.catalog!.invoke(name, args, caller.context),
+      (name, args) => toolbox.invoke(name, args, caller.context),
     )
   }
 

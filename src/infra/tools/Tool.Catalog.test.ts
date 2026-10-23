@@ -1,8 +1,9 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import type { McpServerClient } from '@infra/mcp/McpServer.Client'
+import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
+import { fakeMcpRegistry, mcpTool } from '@infra/mcp/Mcp.Fake'
 import { ToolCatalog } from './Tool.Catalog'
-import { ILocalTool, IToolDefinition, IToolResult } from './Tool.Types'
+import { ILocalTool, IToolResult } from './Tool.Types'
 
 function localTool(name: string, result: string): ILocalTool {
   return {
@@ -16,127 +17,85 @@ function localTool(name: string, result: string): ILocalTool {
   }
 }
 
-function mcpTool(name: string): IToolDefinition {
-  return {
-    origin: 'mcp',
-    name,
-    description: `remote ${name}`,
-    inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false },
-  }
-}
-
-function fakeMcp(options: {
-  connected: boolean
-  tools?: IToolDefinition[]
-  onCall?: (name: string) => void
-  onEnsure?: () => void
-  onContext?: (token?: string) => void
-}): McpServerClient {
-  return {
-    serverUrl: 'http://localhost:8000/mcp',
-    isConnected: () => options.connected,
-    ensureConnected: async () => {
-      options.onEnsure?.()
-      return options.connected
-    },
-    connectionGeneration: options.connected ? 1 : 0,
-    listTools: async () => (options.connected ? (options.tools ?? []) : []),
-    callTool: async (name: string, _args: Record<string, unknown>, context?: { token?: string }) => {
-      options.onCall?.(name)
-      options.onContext?.(context?.token)
-      return { status: 'success' as const, result: `mcp:${name}` }
-    },
-  } as unknown as McpServerClient
-}
-
 describe('ToolCatalog', () => {
-  const local = [localTool('search_web', 'searched'), localTool('run_bash', 'ran')]
+  const contexts: Array<IExecutionContext | undefined> = []
+  const registry = () =>
+    fakeMcpRegistry([
+      {
+        id: 'crm',
+        tools: [mcpTool('stats'), mcpTool('search'), mcpTool('run_bash')],
+        onCall: (name, _args, context) => (contexts.push(context), { status: 'success', result: `crm:${name}` }),
+      },
+      { id: 'docs', tools: [mcpTool('search'), mcpTool('read')] },
+      { id: 'fora', connected: false, tools: [mcpTool('nada')] },
+    ])
+  const catalog = () => new ToolCatalog(registry(), [localTool('run_bash', 'local bash'), localTool('search_web', 'web')])
 
-  it('filters the local toolset by what the agent declared', () => {
-    const catalog = new ToolCatalog(fakeMcp({ connected: false }), local)
-
+  it('filtra as locais pelo que o agente declarou', () => {
     assert.deepStrictEqual(
-      catalog.localFor(['run_bash']).map((tool) => tool.name),
-      ['run_bash'],
+      catalog()
+        .localFor(['search_web'])
+        .map((tool) => tool.name),
+      ['search_web'],
     )
   })
 
-  it('merges MCP tools with the local ones', async () => {
-    const catalog = new ToolCatalog(fakeMcp({ connected: true, tools: [mcpTool('read_file')] }), local)
-    const listed = await catalog.list(['search_web', 'run_bash'])
-
+  it('⛔ o agente só vê o MCP que escolheu: nada de MCP sem `mcp:` e, de um servidor, só as escolhidas', async () => {
     assert.deepStrictEqual(
-      listed.map((tool) => `${tool.origin}:${tool.name}`),
-      ['local:search_web', 'local:run_bash', 'mcp:read_file'],
+      (await catalog().toolbox(['search_web'])).tools.map((tool) => tool.name),
+      ['search_web'],
+    )
+    assert.deepStrictEqual(
+      (await catalog().toolbox(['mcp:crm/stats'])).tools.map((tool) => tool.name),
+      ['stats'],
+    )
+    assert.deepStrictEqual((await catalog().toolbox(['mcp:docs/*'])).tools.map((tool) => tool.name).sort(), ['read', 'search'])
+  })
+
+  it('⚖️ nome repetido entre servidores (ou igual a uma local) ganha o prefixo do servidor; a local vence', async () => {
+    const box = await catalog().toolbox(['run_bash', 'mcp:crm/*', 'mcp:docs/search'])
+
+    assert.deepStrictEqual(box.tools.map((tool) => tool.name).sort(), ['crm__run_bash', 'crm__search', 'docs__search', 'run_bash', 'stats'])
+    assert.deepStrictEqual(await box.invoke('run_bash', {}), { status: 'success', result: 'local bash' })
+    assert.deepStrictEqual(await box.invoke('crm__search', {}), { status: 'success', result: 'crm:search' })
+    assert.deepStrictEqual(await box.invoke('docs__search', {}), { status: 'success', result: 'docs:search' })
+    assert.strictEqual((await box.invoke('read', {})).status, 'error')
+  })
+
+  it('servidor fora do ar não derruba a caixa: o agente segue com o resto', async () => {
+    assert.deepStrictEqual(
+      (await catalog().toolbox(['mcp:fora/*', 'mcp:crm/stats'])).tools.map((tool) => tool.name),
+      ['stats'],
     )
   })
 
-  it('keeps the gateway useful when the MCP server is down', async () => {
-    const catalog = new ToolCatalog(fakeMcp({ connected: false, tools: [mcpTool('read_file')] }), local)
-    const listed = await catalog.list(['search_web', 'run_bash'])
+  it('os SDKs agênticos recebem só os servidores do agente que estão de pé, com o filtro de ferramentas', async () => {
+    const servers = await catalog().mcpServersFor(['mcp:crm/stats', 'mcp:docs/*', 'mcp:fora/*', 'search_web'])
 
-    assert.strictEqual(catalog.mcpConnected, false)
     assert.deepStrictEqual(
-      listed.map((tool) => tool.name),
-      ['search_web', 'run_bash'],
+      servers.map((server) => [server.config.id, server.tools]),
+      [
+        ['crm', ['stats']],
+        ['docs', undefined],
+      ],
     )
   })
 
-  it('lets a local tool shadow a remote one with the same name', async () => {
-    const catalog = new ToolCatalog(fakeMcp({ connected: true, tools: [mcpTool('run_bash')] }), local)
-    const listed = await catalog.list(['run_bash'])
+  it('leva a credencial da chamada até o cliente MCP', async () => {
+    contexts.length = 0
+    const box = await catalog().toolbox(['mcp:crm/stats'])
+    await box.invoke('stats', {}, { token: 'abc' })
+    await box.invoke('stats', {})
 
-    assert.strictEqual(listed.length, 1)
-    assert.strictEqual(listed[0].origin, 'local')
+    assert.deepStrictEqual(contexts, [{ token: 'abc' }, undefined])
   })
 
-  it('offers the MCP endpoint only when it is actually usable, retrying if needed', async () => {
-    let ensured = 0
-    const up = new ToolCatalog(fakeMcp({ connected: true, onEnsure: () => (ensured += 1) }), local)
-    const down = new ToolCatalog(fakeMcp({ connected: false }), local)
+  it('invoke por nome: local, `servidor/ferramenta`, e nome solto no servidor `default`', async () => {
+    const withDefault = new ToolCatalog(fakeMcpRegistry([{ id: 'default', tools: [mcpTool('whoami')] }, { id: 'crm' }]), [localTool('run_bash', 'local bash')])
 
-    assert.strictEqual(await up.mcpEndpoint(), 'http://localhost:8000/mcp')
-    assert.strictEqual(await down.mcpEndpoint(), undefined)
-
-    // Perguntar de novo tenta de novo: é isso que permite um server que subiu depois do
-    // gateway entrar em uso sem reiniciar o processo.
-    await up.mcpEndpoint()
-    assert.strictEqual(ensured, 2)
-  })
-
-  it('exposes the connection generation so cached resources can expire', () => {
-    assert.strictEqual(new ToolCatalog(fakeMcp({ connected: true }), local).mcpGeneration, 1)
-    assert.strictEqual(new ToolCatalog(fakeMcp({ connected: false }), local).mcpGeneration, 0)
-  })
-
-  it('runs local tools in process and forwards the rest to MCP', async () => {
-    const calls: string[] = []
-    const catalog = new ToolCatalog(fakeMcp({ connected: true, onCall: (name) => calls.push(name) }), local)
-
-    assert.deepStrictEqual(await catalog.invoke('run_bash', {}), { status: 'success', result: 'ran' })
-    assert.strictEqual(calls.length, 0)
-
-    assert.deepStrictEqual(await catalog.invoke('read_file', {}), { status: 'success', result: 'mcp:read_file' })
-    assert.deepStrictEqual(calls, ['read_file'])
-  })
-
-  it('carries the caller credential down to the MCP client', async () => {
-    const seen: Array<string | undefined> = []
-    const catalog = new ToolCatalog(fakeMcp({ connected: true, tools: [mcpTool('remote_thing')], onContext: (token) => seen.push(token) }), local)
-
-    await catalog.invoke('remote_thing', {}, { token: 'do-usuario' })
-
-    assert.deepStrictEqual(seen, ['do-usuario'])
-  })
-
-  it('does not carry a credential when the call has none', async () => {
-    // ⛔ A regressão que importa: uma chamada sem credencial NÃO pode herdar a da anterior.
-    const seen: Array<string | undefined> = []
-    const catalog = new ToolCatalog(fakeMcp({ connected: true, tools: [mcpTool('remote_thing')], onContext: (token) => seen.push(token) }), local)
-
-    await catalog.invoke('remote_thing', {}, { token: 'do-usuario' })
-    await catalog.invoke('remote_thing', {})
-
-    assert.deepStrictEqual(seen, ['do-usuario', undefined])
+    assert.deepStrictEqual(await withDefault.invoke('run_bash', {}), { status: 'success', result: 'local bash' })
+    assert.deepStrictEqual(await withDefault.invoke('crm/stats', {}), { status: 'success', result: 'crm:stats' })
+    assert.deepStrictEqual(await withDefault.invoke('whoami', {}), { status: 'success', result: 'default:whoami' })
+    assert.strictEqual((await withDefault.invoke('nao-existe/x', {})).status, 'error')
   })
 })

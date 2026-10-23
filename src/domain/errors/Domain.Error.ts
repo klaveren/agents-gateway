@@ -203,3 +203,26 @@ export class AccessTokenNotFoundError extends DomainError {
     super(`Access token not found: ${tokenId}`)
   }
 }
+
+/** O servidor MCP pedido não vale (id, nome, URL, autenticação). Todos os problemas de uma vez. */
+export class InvalidMcpServerError extends DomainError {
+  constructor(public readonly issues: Array<{ field: string; message: string }>) {
+    super(`MCP server is invalid: ${issues.map((issue) => `${issue.field} (${issue.message})`).join('; ')}`)
+  }
+}
+
+export class McpServerNotFoundError extends DomainError {
+  constructor(public readonly serverId: string) {
+    super(`MCP server not found: ${serverId}`)
+  }
+}
+
+/** Ainda há agente usando o servidor: tirar dele primeiro (como `ProviderInUseError`). */
+export class McpServerInUseError extends DomainError {
+  constructor(
+    public readonly serverId: string,
+    public readonly agents: string[],
+  ) {
+    super(`MCP server ${serverId} is used by: ${agents.join(', ')}`)
+  }
+}

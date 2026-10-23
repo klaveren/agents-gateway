@@ -98,13 +98,15 @@ export class GoogleChatAdapter implements IAgentAdapter {
     }
 
     try {
-      const tools = record.tools ? ((await this.catalog?.list(agent.allowedTools)) ?? []) : []
+      // ⛔ Só o que o agente escolheu: locais e as de MCP dos servidores dele (ver `ToolCatalog.toolbox`).
+      const toolbox = record.tools ? await this.catalog?.toolbox(agent.allowedTools) : undefined
+      const tools = toolbox?.tools ?? []
 
       yield* runManualToolLoop<Content>({
         sessionId,
         history,
         tools,
-        catalog: this.catalog,
+        catalog: toolbox,
         context,
         provider: this.loopProvider(record, sessionId),
         signal: abort.signal,
