@@ -6,7 +6,7 @@ import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { SessionStore } from '@infra/session/Session.Store'
-import { CODEX_LOCKED_FEATURES, CodexAgentAdapter, codexMcpServers } from './CodexAgent.Adapter'
+import { CODEX_LOCKED_FEATURES, CodexAgentAdapter, codexMcpServers, withMcpHint } from './CodexAgent.Adapter'
 
 interface ICall {
   options: CodexOptions
@@ -54,6 +54,7 @@ describe('CodexAgentAdapter', () => {
     ...(turn === 1 ? [{ type: 'thread.started', thread_id: 'th-1' } as ThreadEvent] : []),
     { type: 'item.completed', item: { id: 'e', type: 'error', message: 'Code Mode aviso' } },
     { type: 'item.completed', item: { id: 'a', type: 'agent_message', text: `resposta ${turn}` } },
+    { type: 'item.completed', item: { id: 'b', type: 'agent_message', text: 'fim' } },
     { type: 'turn.completed', usage: { input_tokens: 100, cached_input_tokens: 40, cache_write_input_tokens: 0, output_tokens: 7, reasoning_output_tokens: 3 } },
   ]
 
@@ -99,7 +100,11 @@ describe('CodexAgentAdapter', () => {
     )
     assert.deepStrictEqual(
       first.map((event) => event.type),
-      ['message.started', 'warning', 'text.delta', 'usage', 'message.completed'],
+      ['message.started', 'warning', 'text.delta', 'text.delta', 'usage', 'message.completed'],
+    )
+    assert.deepStrictEqual(
+      first.filter((event) => event.type === 'text.delta').map((event) => event.payload),
+      [{ text: 'resposta 1' }, { text: '\n\nfim' }],
     )
     assert.deepStrictEqual(first.find((event) => event.type === 'usage')?.payload, {
       inputTokens: 100,
@@ -138,5 +143,11 @@ describe('CodexAgentAdapter', () => {
   it('o id da sessão carrega o protocolo', async () => {
     const session = await new CodexAgentAdapter({ store: new SessionStore() }).createSession(agent, {})
     assert.ok(session.id.startsWith(`${EProvider.CODEX}-${EMode.AGENT}-`))
+  })
+
+  it('as instruções dizem quais ferramentas vêm do MCP (o Codex tem internas de mesmo nome)', () => {
+    assert.strictEqual(withMcpHint('base', []), 'base')
+    const hinted = withMcpHint('base', [{ config: { id: 'gateway' } as never, tools: ['list_agents'] }])
+    assert.match(hinted, /servidor MCP `gateway`: list_agents/)
   })
 })

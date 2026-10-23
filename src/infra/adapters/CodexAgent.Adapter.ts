@@ -28,6 +28,11 @@ interface ICodexNative {
   threadId?: string
 }
 
+/** O que o turno já emitiu: o Codex manda a resposta em várias mensagens, e coladas elas viram "fim.Começo". */
+interface ICodexTurn {
+  texted: boolean
+}
+
 export interface ICodexAgentAdapterDeps {
   store?: SessionStore
   catalog?: ToolCatalog
@@ -144,7 +149,7 @@ export class CodexAgentAdapter implements IAgentAdapter {
       const codex = new Codex({
         env: subscriptionEnv({ HOME: workspace, CODEX_HOME: home }),
         config: {
-          developer_instructions: record.systemPrompt,
+          developer_instructions: withMcpHint(record.systemPrompt, remotes),
           features: { ...CODEX_LOCKED_FEATURES },
           // ⛔ Login em ARQUIVO no CODEX_HOME do gateway, nunca no Keychain da pessoa.
           cli_auth_credentials_store: 'file',
@@ -166,8 +171,9 @@ export class CodexAgentAdapter implements IAgentAdapter {
       const thread = native.threadId ? codex.resumeThread(native.threadId, options) : codex.startThread(options)
       const { events } = await thread.runStreamed(prompt, { signal: abort.signal })
 
+      const turn: ICodexTurn = { texted: false }
       for await (const event of events) {
-        for (const mapped of codexEvents(event, sessionId, native)) {
+        for (const mapped of codexEvents(event, sessionId, native, turn)) {
           yield mapped
           if (mapped.type === 'error') return
         }
@@ -215,6 +221,17 @@ export class CodexAgentAdapter implements IAgentAdapter {
   }
 }
 
+/**
+ * ⚠️ O Codex tem ferramentas internas com nome de ferramenta nossa (`list_agents`, da colaboração dele),
+ * e modelo menor escolhe a interna — verificado com o GPT-5.6 Terra, que respondia "1 agente: /root".
+ * Dizer quais vêm do MCP resolve.
+ */
+export function withMcpHint(systemPrompt: string, remotes: readonly IAgentMcpServer[]): string {
+  if (!remotes.length) return systemPrompt
+  const lines = remotes.map((remote) => `- servidor MCP \`${remote.config.id}\`: ${remote.tools?.join(', ') ?? 'todas as ferramentas dele'}`)
+  return `${systemPrompt}\n\n## Ferramentas\nAs ferramentas deste agente chegam por MCP:\n${lines.join('\n')}\nQuando o pedido citar uma delas, chame a do MCP, nunca uma ferramenta interna de mesmo nome.`
+}
+
 /** `mcp_servers` da config do Codex: URL, headers (a credencial de quem conversa) e o filtro de ferramentas. */
 export function codexMcpServers(remotes: readonly IAgentMcpServer[], token?: string): Record<string, Record<string, unknown>> {
   const servers: Record<string, Record<string, unknown>> = {}
@@ -230,7 +247,7 @@ export function codexMcpServers(remotes: readonly IAgentMcpServer[], token?: str
 }
 
 /** Um evento do Codex nos eventos do gateway. */
-export function codexEvents(event: ThreadEvent, sessionId: string, native: ICodexNative): IAgentEvent[] {
+export function codexEvents(event: ThreadEvent, sessionId: string, native: ICodexNative, turn: ICodexTurn = { texted: false }): IAgentEvent[] {
   const timestamp = new Date()
   switch (event.type) {
     case 'thread.started':
@@ -239,7 +256,7 @@ export function codexEvents(event: ThreadEvent, sessionId: string, native: ICode
     case 'item.started':
       return event.item.type === 'mcp_tool_call' ? [{ type: 'tool.started', sessionId, timestamp, payload: { tool: event.item.tool, args: toArgs(event.item.arguments) } }] : []
     case 'item.completed':
-      return itemEvents(event.item, sessionId, timestamp)
+      return itemEvents(event.item, sessionId, timestamp, turn)
     case 'turn.completed':
       return [
         {
@@ -265,10 +282,13 @@ export function codexEvents(event: ThreadEvent, sessionId: string, native: ICode
   }
 }
 
-function itemEvents(item: ThreadItem, sessionId: string, timestamp: Date): IAgentEvent[] {
+function itemEvents(item: ThreadItem, sessionId: string, timestamp: Date, turn: ICodexTurn): IAgentEvent[] {
   switch (item.type) {
-    case 'agent_message':
-      return [{ type: 'text.delta', sessionId, timestamp, payload: { text: item.text } }]
+    case 'agent_message': {
+      const text = turn.texted ? `\n\n${item.text}` : item.text
+      turn.texted = true
+      return [{ type: 'text.delta', sessionId, timestamp, payload: { text } }]
+    }
     case 'reasoning':
       return [{ type: 'reasoning.delta', sessionId, timestamp, payload: { text: item.text } }]
     case 'mcp_tool_call':
