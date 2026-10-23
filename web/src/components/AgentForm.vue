@@ -104,6 +104,19 @@ function makeDefault(modelId: string) {
 /** Ferramentas que mudam algo fora da conversa: o formulário avisa antes de dar ao agente. */
 const DANGEROUS = new Set(['run_bash'])
 
+/** O nome que a pessoa vê de cada campo, para o resumo do erro perto do Salvar. */
+const FIELD_LABEL: Record<string, string> = {
+  id: 'Id',
+  name: 'Nome',
+  provider: 'Provider',
+  models: 'Modelos',
+  modes: 'Lanes',
+  reasoningEfforts: 'Raciocínio',
+  allowedTools: 'Ferramentas',
+  soul: 'Soul',
+  systemPrompt: 'Prompt',
+}
+
 const blank = (): IAgentInput => ({ id: '', name: '', provider: 'claude', soul: '', systemPrompt: '', models: [], reasoningEfforts: [], modes: ['chat', 'agent'], allowedTools: [], role: null })
 const form = ref<IAgentInput>(blank())
 // ⚠️ DEPOIS de `form`: o `watch` lê o getter na hora (via `protocol` → `form`), e antes da declaração
@@ -121,7 +134,7 @@ const deleting = ref(false)
 
 watch(
   () => form.value.provider,
-  async (provider) => {
+  async (provider, previous) => {
     if (!provider) return
     loadingModels.value = true
     try {
@@ -130,6 +143,14 @@ watch(
       enabledModels.value = []
     } finally {
       loadingModels.value = false
+    }
+    // ⚠️ TROCOU O PROVIDER: os modelos do anterior não existem neste. Mantê-los marcados fazia o servidor
+    // recusar ("not enabled in Providers → Models") e a tela parecia "não salvar". Ficam só os que este
+    // provider oferece; sem nenhum, o primeiro ativado vira o padrão.
+    if (previous !== undefined && previous !== provider) {
+      const offered = new Set(enabledModels.value.map((model) => model.modelId))
+      const kept = form.value.models.filter((model) => offered.has(model))
+      form.value.models = kept.length ? kept : enabledModels.value.slice(0, 1).map((model) => model.modelId)
     }
   },
   { immediate: true },
@@ -396,6 +417,10 @@ async function remove() {
     </fieldset>
 
     <p v-if="failure && !Object.keys(issues).length" class="text-sm text-rose-300">{{ failure }}</p>
+    <!-- O erro de campo aparece junto do campo, que pode estar fora da tela: aqui, perto do Salvar, o resumo. -->
+    <p v-else-if="Object.keys(issues).length" class="text-sm text-rose-300">
+      Não salvou — corrija: {{ Object.entries(issues).map(([field, messages]) => `${FIELD_LABEL[field] ?? field} (${messages.join('; ')})`).join(' · ') }}
+    </p>
     <p v-if="agent?.updatedBy" class="text-xs text-zinc-500">Alterado por {{ agent.updatedBy }} em {{ agent.updatedAt ? new Date(agent.updatedAt).toLocaleString('pt-BR') : '' }}</p>
 
     <div v-if="!readOnly" class="flex gap-2">
