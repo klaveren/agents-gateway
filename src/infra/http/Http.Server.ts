@@ -224,6 +224,7 @@ function buildRoutes(
     { method: 'get', path: '/usage/users/:ownerId', handler: usage.user },
     { method: 'get', path: '/usage/by/:key', handler: usage.byKey },
     { method: 'get', path: '/usage/by/:key/:value', handler: usage.byKeyValue },
+    { method: 'get', path: '/protocols', handler: providers.protocols },
     { method: 'get', path: '/providers', handler: providers.list },
     { method: 'post', path: '/providers', handler: providers.create },
     { method: 'put', path: '/providers/:id', handler: providers.update },

@@ -1,3 +1,4 @@
+import { liveLimit } from '@domain/models/Limits.Model'
 import { IAgent } from '@domain/models/Agent.Model'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 
@@ -24,7 +25,10 @@ export function composeSystemPrompt(agent: IAgent, input: ICreateSessionInput): 
   return `${base}\n\nIMPORTANT: Please reply exclusively in ${input.language}.`
 }
 
+/** Teto de tokens de saída por resposta: o das configurações, senão `MAX_OUTPUT_TOKENS`, senão o padrão. */
 export function maxOutputTokens(): number {
+  const configured = liveLimit('maxOutputTokens')
+  if (configured) return configured
   const parsed = Number.parseInt(process.env.MAX_OUTPUT_TOKENS ?? '', 10)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_OUTPUT_TOKENS
 }
@@ -33,6 +37,8 @@ const DEFAULT_MAX_TOOL_TURNS = 12
 
 /** Teto de idas e voltas de tool num turno. O loop antigo, feito à mão, não tinha nenhum. */
 export function maxToolTurns(): number {
+  const configured = liveLimit('maxToolTurns')
+  if (configured) return configured
   const parsed = Number.parseInt(process.env.MAX_TOOL_TURNS ?? '', 10)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_TOOL_TURNS
 }

@@ -1,3 +1,5 @@
+import { liveLimit } from './Limits.Model'
+
 /**
  * Delegação: um agente pedindo a outro, numa conversa FILHA ligada à que a originou.
  *
@@ -14,8 +16,10 @@ export const DELEGATED_FROM = 'delegatedFrom'
 export const DELEGATION_DEPTH = 'delegationDepth'
 export const DELEGATION_CHAIN = 'delegationChain'
 
-/** Profundidade máxima: a raiz chama (1), a filha chama (2), e para aí. `DELEGATION_MAX_DEPTH` muda. */
+/** Profundidade máxima: a raiz chama (1), a filha chama (2), e para aí. As configurações (ou `DELEGATION_MAX_DEPTH`) mudam. */
 export function delegationMaxDepth(env: NodeJS.ProcessEnv = process.env): number {
+  const configured = liveLimit('delegationMaxDepth')
+  if (configured !== undefined) return configured
   const parsed = Number.parseInt(env.DELEGATION_MAX_DEPTH ?? '', 10)
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 2
 }

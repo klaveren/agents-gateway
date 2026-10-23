@@ -1,4 +1,4 @@
-import { AGENT_REGISTRY, getAgentById, modelFor } from '@domain/Agent.Registry'
+import { modelFor } from '@domain/Agent.Registry'
 import { resolveSessionMode } from '@domain/Session.Policy'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -59,13 +59,10 @@ export class AgentProvider implements IAgentProvider {
      *
      * Opcional para o teste montar o provider sem infraestrutura; ausente, valem os padrões.
      */
-    private readonly settings?: ISettingsRepository,
+    private readonly settings: ISettingsRepository | undefined,
 
-    /**
-     * De onde vêm os agentes: embutidos e criados pela tela (ver `makeAgents`). Ausente, só os
-     * embutidos — o teste monta o provider sem banco.
-     */
-    private readonly agents: IAgentDirectory = { list: () => AGENT_REGISTRY, get: getAgentById },
+    /** De onde vêm os agentes: o catálogo do banco (ver `makeAgents`). Sem padrão: o seed não é fonte. */
+    private readonly agents: IAgentDirectory,
 
     /**
      * Os providers configurados: o agente aponta para um id, e é o PROTOCOLO dele que escolhe o adapter
@@ -130,6 +127,9 @@ export class AgentProvider implements IAgentProvider {
     if (dangerous.length && dangerousToolsAdminOnly() && !admin) throw new DangerousToolsRestrictedError(agent.id, dangerous)
     // ⛔ Subagente: só pela delegação. Aqui, e não na tela, porque é por aqui que todo caminho passa.
     if (agent.role === 'subagent' && !input.delegated) throw new SubagentOnlyError(agent.id)
+
+    // ⛔ Modelo pedido que o agente não oferece (desativado, ou de outro agente): erro, não troca muda.
+    if (input.model && !agent.models.includes(input.model)) throw new ModelDisabledError(agent.provider, input.model)
 
     const { adminAccess: _access, delegated: _delegated, parentSessionId: _parent, ...rest } = input
     const created = await this.getAdapter(protocol, mode).createSession(agent, {

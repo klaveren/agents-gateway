@@ -21,7 +21,11 @@ import { withCaller } from '@infra/mcp/Caller.Identity'
 import { normalizeSettings } from '@domain/models/Settings.Model'
 import { NullSettingsRepository } from '@infra/persistence/Null.SettingsRepository'
 import { SessionStore } from '@infra/session/Session.Store'
+import { AGENT_REGISTRY, getAgentById } from '@domain/Agent.Registry'
 import { adapterKey, AgentProvider } from './Agent.Provider'
+
+/** Os agentes-semente como diretório: no teste, o seed faz o papel do banco. */
+const SEED = { list: () => AGENT_REGISTRY, get: getAgentById }
 
 interface ISpy {
   adapter: IAgentAdapter
@@ -79,6 +83,8 @@ describe('AgentProvider', () => {
         [adapterKey(EProvider.GOOGLE, EMode.AGENT), agent.adapter],
       ]),
       store,
+      undefined,
+      SEED,
     )
 
     return { provider, store, chat, agent }
@@ -102,6 +108,7 @@ describe('AgentProvider', () => {
       ]),
       store,
       settings,
+      SEED,
     )
 
     return { provider, chat, agent, claude }
@@ -341,7 +348,7 @@ describe('AgentProvider', () => {
 
   it('reports a missing adapter for the lane', async () => {
     const store = new SessionStore()
-    const provider = new AgentProvider(new Map(), store)
+    const provider = new AgentProvider(new Map(), store, undefined, SEED)
 
     await assert.rejects(provider.createSession({ agentId: 'researcher-agent' }), AdapterNotFoundError)
   })

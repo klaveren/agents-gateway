@@ -1,3 +1,4 @@
+import { applyLimits } from '@domain/models/Limits.Model'
 import { ISettingsRepository } from '@domain/ports/SettingsRepository.Port'
 import { NullSettingsRepository } from '@infra/persistence/Null.SettingsRepository'
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
@@ -17,7 +18,14 @@ let instance: ISettingsRepository | undefined
  * a tela salvaria numa e o provider continuaria lendo a outra — o "salvo" que não muda nada.
  */
 export function makeSettings(): ISettingsRepository {
-  instance ??= build()
+  if (instance) return instance
+  instance = build()
+  // Os limites da tela num espelho síncrono: quem pergunta está no meio de um turno (ver `Limits.Model`).
+  instance.subscribe((settings) => applyLimits(settings.limits))
+  void instance
+    .read()
+    .then((settings) => applyLimits(settings.limits))
+    .catch(() => undefined)
   return instance
 }
 

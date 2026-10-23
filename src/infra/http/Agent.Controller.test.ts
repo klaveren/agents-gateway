@@ -21,6 +21,9 @@ import { NullSettingsRepository } from '@infra/persistence/Null.SettingsReposito
 import { IAgentSettings } from '@domain/models/Settings.Model'
 import { withCaller } from '@infra/mcp/Caller.Identity'
 import { ICallerProof } from './Caller.Proof'
+import { AgentCatalog } from '@application/Agent.Catalog'
+import { AGENT_REGISTRY } from '@domain/Agent.Registry'
+import { NullAgentRepository } from '@infra/persistence/Null.AgentRepository'
 
 interface IBody {
   ok: boolean
@@ -85,6 +88,8 @@ describe('AgentController', () => {
       settings: new NullSettingsRepository(),
       conversations: new NullConversationRepository(),
       ...extra,
+      // O seed faz o papel do banco no teste.
+      agents: extra.agents ?? new AgentCatalog(AGENT_REGISTRY, new NullAgentRepository()),
     }
 
     return new AgentController(deps)
@@ -634,7 +639,21 @@ describe('AgentController', () => {
           // O que sai é o JSON: `reasoningEfforts: undefined` não conta como campo.
           assert.ok(
             Object.keys(JSON.parse(JSON.stringify(agent))).every((key) =>
-              ['allowedTools', 'builtIn', 'id', 'modes', 'models', 'name', 'modelReasoning', 'pricing', 'provider', 'providerInfo', 'reasoningEfforts', 'role', 'unavailable'].includes(key),
+              [
+                'allowedTools',
+                'builtIn',
+                'id',
+                'modes',
+                'models',
+                'name',
+                'modelReasoning',
+                'pricing',
+                'provider',
+                'providerInfo',
+                'reasoningEfforts',
+                'role',
+                'unavailable',
+              ].includes(key),
             ),
           )
         }

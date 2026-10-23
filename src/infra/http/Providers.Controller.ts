@@ -9,6 +9,7 @@ import { listModels } from '@infra/providers/Model.Listing'
 import { probeKey } from '@infra/providers/Provider.Probe'
 import { listSubscriptionModels, probeSubscription, SubscriptionLogins } from '@infra/providers/Subscription.Client'
 import { isSubscription } from '@domain/Subscription.Policy'
+import { protocolCatalog } from '@domain/Protocol.Catalog'
 import { Request, Response } from 'express'
 import { z } from 'zod'
 import { checkAdminAccess } from './Caller.Admin'
@@ -79,8 +80,17 @@ export class ProvidersController {
       'loginCode',
       'loginCancel',
       'addModel',
+      'protocols',
     ] as const)
       this[name] = this[name].bind(this)
+  }
+
+  /**
+   * Os protocolos e o que a tela precisa de cada um (lanes, níveis, assinatura, rótulo, console).
+   * Para qualquer chamador autenticado: é metadado das regras, sem nada de configuração ou chave.
+   */
+  async protocols(_req: Request, res: Response) {
+    await this.respond(res, async () => protocolCatalog())
   }
 
   async list(_req: Request, res: Response) {

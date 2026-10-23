@@ -127,7 +127,10 @@ export class AgentCatalog implements IAgentDirectory {
    */
   remove(id: string, options: { defaultAgentId?: string } = {}): void {
     if (this.isBuiltIn(id)) throw new ReadOnlyAgentError(id)
-    const delegators = this.repository.list().filter((agent) => agent.id !== id && agent.allowedTools.includes(`agent:${id}`)).map((agent) => agent.id)
+    const delegators = this.repository
+      .list()
+      .filter((agent) => agent.id !== id && agent.allowedTools.includes(`agent:${id}`))
+      .map((agent) => agent.id)
     const isDefault = options.defaultAgentId === id
     if (delegators.length || isDefault) throw new AgentInUseError(id, delegators, isDefault)
     if (!this.repository.delete(id)) throw new AgentNotFoundError(id)

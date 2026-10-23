@@ -15,6 +15,11 @@ import { ModelCatalogService } from '@application/ModelCatalog.Service'
 import { AGENT_REGISTRY } from '@domain/Agent.Registry'
 import { IAgentRules } from '@domain/Agent.Policy'
 import { NATIVE_TOOLS, nativeToolAllowed } from '@domain/Native.Tools'
+import { dangerousToolsAdminOnly, dangerousToolsOf } from '@domain/Tool.Policy'
+import { subscriptionAdminOnly } from '@domain/Subscription.Policy'
+import { delegationMaxDepth } from '@domain/models/Delegation.Model'
+import { maxOutputTokens, maxToolTurns } from '@infra/adapters/support/Prompt.Helper'
+import { bashPolicy } from '@infra/tools/Bash.Guard'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
 import { AgentUnavailableError } from '@domain/errors/Domain.Error'
@@ -24,6 +29,7 @@ import { toSharedConversation } from '@domain/models/Conversation.Model'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { MODEL_PRICING, TModelPricing } from '@domain/models/Model.Pricing'
 import { allowsCaller, mergeSettings } from '@domain/models/Settings.Model'
+import { LIMIT_BOUNDS, liveLimit } from '@domain/models/Limits.Model'
 import { IConversationEvents, TConversationEvent } from '@domain/ports/ConversationEvents.Port'
 import { IProviderDirectory } from '@domain/ports/ProviderRepository.Port'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
@@ -32,7 +38,6 @@ import { ISessionContextProvider } from '@domain/ports/SessionContextProvider.Po
 import { SessionNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgentReasoningFacts, toAgentDetailDto, toAgentDto } from './Agent.Dto'
 import { assertNoAdkTemplateCollision } from '@infra/adapters/GoogleAgent.Adapter'
-import { NullAgentRepository } from '@infra/persistence/Null.AgentRepository'
 import { IConversationView, toConversationDto, toStatsDto, toTurnDto } from './Conversation.Dto'
 import { metadataFilter, parsePageQuery } from './Monitor.Query'
 import { IResolvedCaller, ownerOf, ownsSession, resolveCaller } from './Caller.Access'
@@ -101,11 +106,8 @@ export interface IAgentControllerDeps {
   providers?: IProviderDirectory
   /** O catálogo de modelos: preços por provider, e os modelos que um agente pode oferecer. */
   models?: ModelCatalogService
-  /**
-   * Os agentes: embutidos e criados. O MESMO catálogo do provider (ver `makeAgents`). Ausente, só os
-   * embutidos, com os criados em memória.
-   */
-  agents?: AgentCatalog
+  /** Os agentes do banco: o MESMO catálogo do provider (ver `makeAgents`). */
+  agents: AgentCatalog
 }
 
 /**
@@ -118,14 +120,14 @@ function newShareId(): string {
   return randomBytes(12).toString('base64url')
 }
 
-/** Conversas vivas por conta (`SESSIONS_PER_OWNER`, padrão 50). Anônimos contam como uma conta só. */
+/** Conversas vivas por conta (configurações, senão `SESSIONS_PER_OWNER`, padrão 50). Anônimos contam como uma conta só. */
 function sessionsPerOwner(): number {
-  return Number(process.env.SESSIONS_PER_OWNER) || 50
+  return liveLimit('sessionsPerOwner') ?? (Number(process.env.SESSIONS_PER_OWNER) || 50)
 }
 
-/** Streams de eventos abertos por conta (`STREAMS_PER_OWNER`, padrão 20). */
+/** Streams de eventos abertos por conta (configurações, senão `STREAMS_PER_OWNER`, padrão 20). */
 function streamsPerOwner(): number {
-  return Number(process.env.STREAMS_PER_OWNER) || 20
+  return liveLimit('streamsPerOwner') ?? (Number(process.env.STREAMS_PER_OWNER) || 20)
 }
 
 export class AgentController {
@@ -156,7 +158,7 @@ export class AgentController {
     this.createAgent = this.createAgent.bind(this)
     this.updateAgent = this.updateAgent.bind(this)
     this.deleteAgent = this.deleteAgent.bind(this)
-    this.agents = usecases.agents ?? new AgentCatalog(AGENT_REGISTRY, new NullAgentRepository())
+    this.agents = usecases.agents
   }
 
   private readonly agents: AgentCatalog
@@ -225,12 +227,14 @@ export class AgentController {
     const current = await this.usecases.settings.read()
     const agentId = body.agentId === undefined ? current.agentId : body.agentId || undefined
     const agent = agentId ? this.agents.get(agentId) : this.agents.fallback()
-    if (body.agentId && agent && !this.agents.isRunnable(agent)) issues.push({ field: 'agentId', message: `${agent.id} is not available (${UNAVAILABLE_LABEL[this.unavailableOf(agent, true) ?? 'no_model']})` })
+    if (body.agentId && agent && !this.agents.isRunnable(agent))
+      issues.push({ field: 'agentId', message: `${agent.id} is not available (${UNAVAILABLE_LABEL[this.unavailableOf(agent, true) ?? 'no_model']})` })
     if (body.model && agent && !agent.models.includes(body.model)) issues.push({ field: 'model', message: `${body.model} is not an enabled model of ${agent.id}` })
 
     const provider = body.classifierProvider === undefined ? current.classifierProvider : body.classifierProvider || undefined
     const model = body.classifierModel === undefined ? current.classifierModel : body.classifierModel || undefined
-    if (body.classifierProvider && !this.usecases.providers?.connection(body.classifierProvider)) issues.push({ field: 'classifierProvider', message: `${body.classifierProvider} is disabled or does not exist` })
+    if (body.classifierProvider && !this.usecases.providers?.connection(body.classifierProvider))
+      issues.push({ field: 'classifierProvider', message: `${body.classifierProvider} is disabled or does not exist` })
     if ((body.classifierModel || body.classifierProvider) && provider && model && this.usecases.models && !this.usecases.models.isEnabled(provider, model)) {
       issues.push({ field: 'classifierModel', message: `${model} is not enabled in ${provider}` })
     }
@@ -381,8 +385,16 @@ export class AgentController {
     await this.respond(res, async () => {
       await this.requireCaller()
       // As nativas vão junto, com o veredito do perímetro: a tela mostra as bloqueadas desabilitadas, com o porquê.
-      const native = NATIVE_TOOLS.map((tool) => ({ ...tool, allowed: nativeToolAllowed(tool), reason: nativeToolAllowed(tool) ? undefined : 'blocked by NATIVE_TOOLS_ENABLED' }))
-      return { ...(await this.catalogFor(this.localTools)), native }
+      // `dangerous`: alcança este servidor; com `DANGEROUS_TOOLS_ADMIN_ONLY`, o agente que a tem só conversa com admin.
+      const dangerous = (id: string) => dangerousToolsOf([id]).length > 0
+      const native = NATIVE_TOOLS.map((tool) => ({
+        ...tool,
+        dangerous: dangerous(tool.id),
+        allowed: nativeToolAllowed(tool),
+        reason: nativeToolAllowed(tool) ? undefined : 'blocked by NATIVE_TOOLS_ENABLED',
+      }))
+      const catalog = await this.catalogFor(this.localTools)
+      return { ...catalog, tools: catalog.tools.map((tool) => ({ ...tool, dangerous: dangerous(tool.name) })), native, limits: { delegationMaxDepth: delegationMaxDepth() } }
     })
   }
 
@@ -459,7 +471,32 @@ export class AgentController {
        */
       const fallback = this.agents.fallback()
 
-      return { ...(await this.usecases.settings.read()), defaults: { agentId: fallback?.id, model: fallback?.models[0] } }
+      const bash = bashPolicy()
+
+      return {
+        ...(await this.usecases.settings.read()),
+        defaults: { agentId: fallback?.id, model: fallback?.models[0] },
+        // O que vale AGORA (a tela, senão o `.env`, senão o padrão) e a faixa que a gravação aceita.
+        limitsInEffect: {
+          maxToolTurns: maxToolTurns(),
+          maxOutputTokens: maxOutputTokens(),
+          delegationMaxDepth: delegationMaxDepth(),
+          bashTimeoutMs: bash.timeoutMs,
+          bashMaxOutputChars: bash.maxOutputChars,
+          sessionsPerOwner: sessionsPerOwner(),
+          streamsPerOwner: streamsPerOwner(),
+        },
+        limitBounds: LIMIT_BOUNDS,
+        // ⛔ Decisões de implantação e de segurança: a tela MOSTRA, e só o deploy muda.
+        deployment: {
+          dangerousToolsAdminOnly: dangerousToolsAdminOnly(),
+          subscriptionAdminOnly: subscriptionAdminOnly(),
+          localToolsEnabled: process.env.LOCAL_TOOLS_ENABLED?.trim() || undefined,
+          nativeToolsEnabled: process.env.NATIVE_TOOLS_ENABLED?.trim() || undefined,
+          agentsEnabled: process.env.AGENTS_ENABLED?.trim() || undefined,
+          allowAnonymous: process.env.ALLOW_ANONYMOUS === '1',
+        },
+      }
     })
   }
 

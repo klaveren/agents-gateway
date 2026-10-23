@@ -163,7 +163,10 @@ export class AgentInUseError extends DomainError {
     public readonly isDefault: boolean,
   ) {
     super(
-      [delegators.length ? `delegated to by ${delegators.join(', ')}` : '', isDefault ? 'it is the default agent in Settings' : ''].filter(Boolean).join('; ').replace(/^/, `Agent ${agentId} is in use: `),
+      [delegators.length ? `delegated to by ${delegators.join(', ')}` : '', isDefault ? 'it is the default agent in Settings' : '']
+        .filter(Boolean)
+        .join('; ')
+        .replace(/^/, `Agent ${agentId} is in use: `),
     )
   }
 }

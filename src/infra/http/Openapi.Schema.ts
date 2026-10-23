@@ -190,7 +190,8 @@ const toolsResult = {
     tools: { type: 'array', items: toolSchema },
     native: {
       type: 'array',
-      description: 'SDK-native tools (Agents SDK lane only), by protocol. Store `id` in `allowedTools`. `server-*` risks run ON the gateway host and are blocked unless listed in `NATIVE_TOOLS_ENABLED`.',
+      description:
+        'SDK-native tools (Agents SDK lane only), by protocol. Store `id` in `allowedTools`. `server-*` risks run ON the gateway host and are blocked unless listed in `NATIVE_TOOLS_ENABLED`.',
       items: {
         type: 'object',
         properties: {
@@ -241,7 +242,8 @@ const agentSchema = {
     },
     modes: { type: 'array', items: { type: 'string', enum: ['chat', 'agent'] } },
     allowedTools: { type: 'array', items: { type: 'string' } },
-    builtIn: { type: 'boolean', description: 'Declared in code (read-only) or created through the API.' }, role: { type: 'string', enum: ['subagent'], description: 'Present on subagents: only called by another agent.' },
+    builtIn: { type: 'boolean', description: 'Declared in code (read-only) or created through the API.' },
+    role: { type: 'string', enum: ['subagent'], description: 'Present on subagents: only called by another agent.' },
   },
 }
 
@@ -251,7 +253,12 @@ const agentDetailSchema = {
     {
       type: 'object',
       description: 'ADMIN only. The full agent, system prompt included.',
-      properties: { systemPrompt: { type: 'string' }, soul: { type: 'string', description: 'Who the agent is: identity, tone, values. Composed before the system prompt.' }, updatedAt: { type: 'string', format: 'date-time' }, updatedBy: { type: 'string' } },
+      properties: {
+        systemPrompt: { type: 'string' },
+        soul: { type: 'string', description: 'Who the agent is: identity, tone, values. Composed before the system prompt.' },
+        updatedAt: { type: 'string', format: 'date-time' },
+        updatedBy: { type: 'string' },
+      },
     },
   ],
 }
@@ -333,7 +340,8 @@ const mcpServerBody = {
     kind: { type: 'string', enum: ['remote', 'container'], description: 'container = the gateway runs the image in an isolated container, one per conversation. Only on create.' },
     container: {
       type: 'object',
-      description: 'Image, args (`{proxy}` = the egress proxy URL), writable tmpfs paths, memoryMb, cpus, network (none | allowlist), allowedHosts (domains or {meta:key}) and env (secret variable names). Hardening (read-only, no capabilities, no volumes, no ports) is fixed.',
+      description:
+        'Image, args (`{proxy}` = the egress proxy URL), writable tmpfs paths, memoryMb, cpus, network (none | allowlist), allowedHosts (domains or {meta:key}) and env (secret variable names). Hardening (read-only, no capabilities, no volumes, no ports) is fixed.',
     },
     url: { type: 'string', description: 'http(s) URL of the MCP endpoint.' },
     transport: { type: 'string', enum: ['auto', 'http', 'sse'] },
@@ -382,7 +390,17 @@ const failures = {
 
 const json = (schema: object) => ({ content: { 'application/json': { schema } } })
 
-const usageTokens = { type: 'object', properties: { inputTokens: { type: 'integer' }, outputTokens: { type: 'integer' }, reasoningTokens: { type: 'integer' }, totalTokens: { type: 'integer' }, cacheReadTokens: { type: 'integer' }, cacheWriteTokens: { type: 'integer' } } }
+const usageTokens = {
+  type: 'object',
+  properties: {
+    inputTokens: { type: 'integer' },
+    outputTokens: { type: 'integer' },
+    reasoningTokens: { type: 'integer' },
+    totalTokens: { type: 'integer' },
+    cacheReadTokens: { type: 'integer' },
+    cacheWriteTokens: { type: 'integer' },
+  },
+}
 const usageFigure = (withCost: boolean) => ({
   type: 'object',
   properties: {
@@ -397,10 +415,16 @@ const usageSummary = (withCost: boolean) => ({
   properties: {
     period: { type: 'object', properties: { days: { type: 'integer' }, since: { type: 'string', format: 'date-time' }, tzOffsetMinutes: { type: 'integer' } } },
     totals: usageFigure(withCost),
-    daily: { type: 'array', items: { allOf: [usageFigure(withCost), { type: 'object', properties: { date: { type: 'string', description: 'YYYY-MM-DD in the caller time zone.' } } }] } },
+    daily: {
+      type: 'array',
+      items: { allOf: [usageFigure(withCost), { type: 'object', properties: { date: { type: 'string', description: 'YYYY-MM-DD in the caller time zone.' } } }] },
+    },
     byAgent: { type: 'array', items: { allOf: [usageFigure(withCost), { type: 'object', properties: { agentId: { type: 'string' } } }] } },
     byModel: { type: 'array', items: { allOf: [usageFigure(withCost), { type: 'object', properties: { provider: { type: 'string' }, model: { type: 'string' } } }] } },
-    top: { type: 'array', items: { allOf: [usageFigure(withCost), { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' }, agentId: { type: 'string' } } }] } },
+    top: {
+      type: 'array',
+      items: { allOf: [usageFigure(withCost), { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' }, agentId: { type: 'string' } } }] },
+    },
   },
 })
 const usageParams = [
@@ -456,8 +480,16 @@ const catalogModelSchema = {
     enabled: { type: 'boolean', description: 'Can be offered by an agent. New models start disabled.' },
     available: { type: 'boolean', description: 'Seen in the last listing. False = it disappeared from the provider; kept, never deleted.' },
     contextLength: { type: 'integer' },
-    price: { type: 'object', properties: { input: { type: 'number' }, output: { type: 'number' }, cacheRead: { type: 'number' }, cacheWrite: { type: 'number' } }, description: 'USD per 1M tokens.' },
-    priceSource: { type: 'string', enum: ['manual', 'catalog', 'default'], description: '`manual` wins and survives syncs; `catalog` came with the listing; `default` is the factory table (official providers only).' },
+    price: {
+      type: 'object',
+      properties: { input: { type: 'number' }, output: { type: 'number' }, cacheRead: { type: 'number' }, cacheWrite: { type: 'number' } },
+      description: 'USD per 1M tokens.',
+    },
+    priceSource: {
+      type: 'string',
+      enum: ['manual', 'catalog', 'default'],
+      description: '`manual` wins and survives syncs; `catalog` came with the listing; `default` is the factory table (official providers only).',
+    },
     reasoning: {
       type: 'object',
       properties: { supported: { type: 'boolean' }, levels: { type: 'array', items: { type: 'string' } }, source: { type: 'string', enum: ['provider', 'heuristic'] } },
@@ -471,7 +503,13 @@ const catalogModelSchema = {
 
 const probeSchema = {
   type: 'object',
-  properties: { ok: { type: 'boolean' }, unverified: { type: 'boolean', description: 'Answered, but the listing is public: the key is not proven yet.' }, models: { type: 'integer' }, status: { type: 'integer' }, message: { type: 'string', description: 'The provider error, with the key masked.' } },
+  properties: {
+    ok: { type: 'boolean' },
+    unverified: { type: 'boolean', description: 'Answered, but the listing is public: the key is not proven yet.' },
+    models: { type: 'integer' },
+    status: { type: 'integer' },
+    message: { type: 'string', description: 'The provider error, with the key masked.' },
+  },
 }
 
 const userSchema = {
@@ -498,7 +536,10 @@ const authSessionSchema = {
 
 const passwordField = { type: 'string', minLength: 10, maxLength: 200 }
 const userIdParam = [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }]
-const lastAdmin = { description: 'Invalid change, e.g. removing the last active administrator or disabling your own account. `details` lists `{ field, message }`', ...json(failureEnvelope) }
+const lastAdmin = {
+  description: 'Invalid change, e.g. removing the last active administrator or disabling your own account. `details` lists `{ field, message }`',
+  ...json(failureEnvelope),
+}
 
 export const OPENAPI_DOCUMENT = {
   openapi: '3.1.0',
@@ -539,8 +580,15 @@ export const OPENAPI_DOCUMENT = {
       post: {
         summary: 'Create the first administrator. Only with zero accounts, and only from this machine (loopback, no proxy). Public',
         security: [],
-        requestBody: { required: true, ...json({ type: 'object', properties: { email: { type: 'string' }, name: { type: 'string' }, password: passwordField }, required: ['email', 'name', 'password'] }) },
-        responses: { '201': { description: 'Created and signed in', ...json(envelope(authSessionSchema)) }, '404': { description: 'Setup not available', ...json(failureEnvelope) }, '422': failures['422'] },
+        requestBody: {
+          required: true,
+          ...json({ type: 'object', properties: { email: { type: 'string' }, name: { type: 'string' }, password: passwordField }, required: ['email', 'name', 'password'] }),
+        },
+        responses: {
+          '201': { description: 'Created and signed in', ...json(envelope(authSessionSchema)) },
+          '404': { description: 'Setup not available', ...json(failureEnvelope) },
+          '422': failures['422'],
+        },
       },
     },
     '/auth/login': {
@@ -577,7 +625,11 @@ export const OPENAPI_DOCUMENT = {
       put: {
         summary: 'Change your own password; the current one is required',
         requestBody: { required: true, ...json({ type: 'object', properties: { current: { type: 'string' }, password: passwordField }, required: ['current', 'password'] }) },
-        responses: { '200': { description: 'Changed. Every other session ends; this one continues with the session returned', ...json(envelope(authSessionSchema)) }, '401': failures['401'], '422': failures['422'] },
+        responses: {
+          '200': { description: 'Changed. Every other session ends; this one continues with the session returned', ...json(envelope(authSessionSchema)) },
+          '401': failures['401'],
+          '422': failures['422'],
+        },
       },
     },
     '/auth/tokens': {
@@ -588,9 +640,15 @@ export const OPENAPI_DOCUMENT = {
       post: {
         summary:
           'Create a personal access token (`agw_…`) for scripts and MCP clients — sent in X-Tool-Authorization like a session token. It acts as your account (role changes apply; a disabled account stops it) and survives sign-out. Requires a signed-in session: an access token cannot create tokens',
-        requestBody: { required: true, ...json({ type: 'object', properties: { name: { type: 'string', maxLength: 60 }, expiresInDays: { type: 'integer', minimum: 1, maximum: 365 } }, required: ['name'] }) },
+        requestBody: {
+          required: true,
+          ...json({ type: 'object', properties: { name: { type: 'string', maxLength: 60 }, expiresInDays: { type: 'integer', minimum: 1, maximum: 365 } }, required: ['name'] }),
+        },
         responses: {
-          '201': { description: 'Created. `token` is shown only now', ...json(envelope({ allOf: [accessTokenSchema, { type: 'object', properties: { token: { type: 'string' } } }] })) },
+          '201': {
+            description: 'Created. `token` is shown only now',
+            ...json(envelope({ allOf: [accessTokenSchema, { type: 'object', properties: { token: { type: 'string' } } }] })),
+          },
           '401': failures['401'],
           '403': { description: 'Called with an access token', ...json(failureEnvelope) },
           '422': failures['422'],
@@ -601,7 +659,12 @@ export const OPENAPI_DOCUMENT = {
       delete: {
         summary: 'Revoke one of your access tokens. Requires a signed-in session',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-        responses: { '200': { description: 'Revoked', ...json(envelope({ type: 'null' })) }, '401': failures['401'], '403': { description: 'Called with an access token', ...json(failureEnvelope) }, '404': failures['404'] },
+        responses: {
+          '200': { description: 'Revoked', ...json(envelope({ type: 'null' })) },
+          '401': failures['401'],
+          '403': { description: 'Called with an access token', ...json(failureEnvelope) },
+          '404': failures['404'],
+        },
       },
     },
     '/users': {
@@ -613,7 +676,11 @@ export const OPENAPI_DOCUMENT = {
         summary: 'Create an account with an initial password. Administrators only',
         requestBody: {
           required: true,
-          ...json({ type: 'object', properties: { email: { type: 'string' }, name: { type: 'string' }, password: passwordField, role: { type: 'string', enum: ['admin', 'member'], default: 'member' } }, required: ['email', 'name', 'password'] }),
+          ...json({
+            type: 'object',
+            properties: { email: { type: 'string' }, name: { type: 'string' }, password: passwordField, role: { type: 'string', enum: ['admin', 'member'], default: 'member' } },
+            required: ['email', 'name', 'password'],
+          }),
         },
         responses: { '201': { description: 'Created', ...json(envelope(userSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
@@ -622,7 +689,10 @@ export const OPENAPI_DOCUMENT = {
       put: {
         summary: 'Rename, grant or revoke administrator, enable or disable. Accounts are never deleted: their conversations keep an owner. Administrators only',
         parameters: userIdParam,
-        requestBody: { required: true, ...json({ type: 'object', properties: { name: { type: 'string' }, role: { type: 'string', enum: ['admin', 'member'] }, disabled: { type: 'boolean' } } }) },
+        requestBody: {
+          required: true,
+          ...json({ type: 'object', properties: { name: { type: 'string' }, role: { type: 'string', enum: ['admin', 'member'] }, disabled: { type: 'boolean' } } }),
+        },
         responses: { '200': { description: 'Updated', ...json(envelope(userSchema)) }, '401': failures['401'], '404': failures['404'], '422': lastAdmin },
       },
     },
@@ -641,18 +711,57 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'Set', ...json(envelope({ type: 'null' })) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
     },
+    '/protocols': {
+      get: {
+        summary:
+          'Every protocol and what a client needs from it: label, subscription, lanes, reasoning levels, native-tool family, brand, API-key console and the env variable imported once into the vault. Any authenticated caller',
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'string' },
+                    label: { type: 'string' },
+                    subscription: { type: 'boolean' },
+                    lanes: { type: 'array', items: { type: 'string', enum: ['chat', 'agent'] } },
+                    reasoningLevels: { type: 'array', items: { type: 'string' } },
+                    nativeFamily: { type: 'string' },
+                    brand: { type: 'string', enum: ['claude', 'openai', 'google'] },
+                    consoleUrl: { type: 'string' },
+                    envName: { type: 'string' },
+                  },
+                  required: ['id', 'label', 'subscription', 'lanes', 'reasoningLevels', 'nativeFamily', 'brand'],
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+        },
+      },
+    },
     '/providers': {
       get: {
         summary: 'Each provider: whether a key is configured, where it comes from and what it unlocks. Administrators only; anyone else gets 404',
         responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: providerStatusSchema })) }, '401': failures['401'], '404': failures['404'] },
       },
       post: {
-        summary: 'Add any OpenAI- or Anthropic-compatible provider: protocol `openai` or `claude`, an https base URL (http only for localhost), and optionally its key. Administrators only',
+        summary:
+          'Add any OpenAI- or Anthropic-compatible provider: protocol `openai` or `claude`, an https base URL (http only for localhost), and optionally its key. Administrators only',
         requestBody: {
           required: true,
           ...json({
             type: 'object',
-            properties: { id: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{1,31}$' }, name: { type: 'string' }, protocol: { type: 'string', enum: ['openai', 'claude'] }, baseUrl: { type: 'string' }, key: { type: 'string' } },
+            properties: {
+              id: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{1,31}$' },
+              name: { type: 'string' },
+              protocol: { type: 'string', enum: ['openai', 'claude'] },
+              baseUrl: { type: 'string' },
+              key: { type: 'string' },
+            },
             required: ['id', 'name', 'protocol', 'baseUrl'],
           }),
         },
@@ -685,19 +794,28 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: catalogModelSchema })) }, '401': failures['401'], '404': failures['404'] },
       },
       post: {
-        summary: 'Add a model by id (for providers without a listing, or a model the listing does not bring yet). It starts disabled, with the factory price suggested when there is one. Administrators only',
+        summary:
+          'Add a model by id (for providers without a listing, or a model the listing does not bring yet). It starts disabled, with the factory price suggested when there is one. Administrators only',
         parameters: providerParam,
         requestBody: { required: true, ...json({ type: 'object', properties: { modelId: { type: 'string' } }, required: ['modelId'] }) },
         responses: { '201': { description: 'Added', ...json(envelope(catalogModelSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
       put: {
-        summary: 'Enable/disable one model and/or set its manual price (`price: null` reverts to the listing or factory price). The model id goes in the body because ids may contain `/`. Administrators only',
+        summary:
+          'Enable/disable one model and/or set its manual price (`price: null` reverts to the listing or factory price). The model id goes in the body because ids may contain `/`. Administrators only',
         parameters: providerParam,
         requestBody: {
           required: true,
           ...json({
             type: 'object',
-            properties: { modelId: { type: 'string' }, enabled: { type: 'boolean' }, price: { type: ['object', 'null'], properties: { input: { type: 'number' }, output: { type: 'number' }, cacheRead: { type: 'number' }, cacheWrite: { type: 'number' } } } },
+            properties: {
+              modelId: { type: 'string' },
+              enabled: { type: 'boolean' },
+              price: {
+                type: ['object', 'null'],
+                properties: { input: { type: 'number' }, output: { type: 'number' }, cacheRead: { type: 'number' }, cacheWrite: { type: 'number' } },
+              },
+            },
             required: ['modelId'],
           }),
         },
@@ -731,10 +849,25 @@ export const OPENAPI_DOCUMENT = {
     },
     '/providers/{id}/models/sync': {
       post: {
-        summary: "Fetch the provider's model listing and merge it: new models start disabled, enabling and manual prices are kept, missing ones are marked unavailable. Administrators only",
+        summary:
+          "Fetch the provider's model listing and merge it: new models start disabled, enabling and manual prices are kept, missing ones are marked unavailable. Administrators only",
         parameters: providerParam,
         responses: {
-          '200': { description: 'Synced', ...json(envelope({ type: 'object', properties: { added: { type: 'integer' }, updated: { type: 'integer' }, missing: { type: 'integer' }, total: { type: 'integer' }, models: { type: 'array', items: catalogModelSchema } } })) },
+          '200': {
+            description: 'Synced',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  added: { type: 'integer' },
+                  updated: { type: 'integer' },
+                  missing: { type: 'integer' },
+                  total: { type: 'integer' },
+                  models: { type: 'array', items: catalogModelSchema },
+                },
+              }),
+            ),
+          },
           '401': failures['401'],
           '404': failures['404'],
           '422': { description: 'No key saved for this provider', ...json(failureEnvelope) },
@@ -765,7 +898,8 @@ export const OPENAPI_DOCUMENT = {
     },
     '/mcp-servers': {
       get: {
-        summary: 'The MCP servers agents can use tools from: URL, transport, authentication (caller credential, a fixed secret header, or none), status and the agents using each. The secret is never returned. Administrators only',
+        summary:
+          'The MCP servers agents can use tools from: URL, transport, authentication (caller credential, a fixed secret header, or none), status and the agents using each. The secret is never returned. Administrators only',
         responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: mcpServerSchema })) }, '401': failures['401'], '404': failures['404'] },
       },
       post: {
@@ -784,7 +918,12 @@ export const OPENAPI_DOCUMENT = {
       delete: {
         summary: 'Remove an MCP server and its secret. 409 while an agent uses it. Administrators only',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-        responses: { '200': { description: 'Deleted', ...json(envelope({ type: 'null' })) }, '401': failures['401'], '404': failures['404'], '409': { description: '`mcp_server_in_use`, with `details.agents`', ...json(failureEnvelope) } },
+        responses: {
+          '200': { description: 'Deleted', ...json(envelope({ type: 'null' })) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '409': { description: '`mcp_server_in_use`, with `details.agents`', ...json(failureEnvelope) },
+        },
       },
     },
     '/mcp-servers/{id}/secret': {
@@ -804,13 +943,20 @@ export const OPENAPI_DOCUMENT = {
       post: {
         summary: 'Connect now (ignoring the backoff) and count the tools. Administrators only',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { ok: { type: 'boolean' }, tools: { type: 'integer' }, message: { type: 'string' } } })) }, '401': failures['401'], '404': failures['404'] },
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { ok: { type: 'boolean' }, tools: { type: 'integer' }, message: { type: 'string' } } })) },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
       },
     },
     '/mcp-servers/{id}/env/{name}': {
       put: {
         summary: 'Save the value of a declared secret variable of a container MCP (encrypted; never returned). Administrators only',
-        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }, { name: 'name', in: 'path', required: true, schema: { type: 'string' } }],
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'name', in: 'path', required: true, schema: { type: 'string' } },
+        ],
         requestBody: { required: true, ...json({ type: 'object', properties: { value: { type: 'string' } }, required: ['value'] }) },
         responses: { '200': { description: 'Saved', ...json(envelope(mcpServerSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
@@ -819,14 +965,21 @@ export const OPENAPI_DOCUMENT = {
       post: {
         summary: 'Stop every running instance (one per conversation) of a container MCP. Administrators only',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { stopped: { type: 'integer' } } })) }, '401': failures['401'], '404': failures['404'] },
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { stopped: { type: 'integer' } } })) },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
       },
     },
     '/mcp-proxy/{serverId}': {
       post: {
         summary:
           "Bridge used by the agentic SDK lanes to reach a container MCP: requires the conversation in X-Gateway-Session, owned by the caller, whose agent selected this server. Forwards tools/list and tools/call to that conversation's own isolated instance",
-        parameters: [{ name: 'serverId', in: 'path', required: true, schema: { type: 'string' } }, { name: 'X-Gateway-Session', in: 'header', required: true, schema: { type: 'string' } }],
+        parameters: [
+          { name: 'serverId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'X-Gateway-Session', in: 'header', required: true, schema: { type: 'string' } },
+        ],
         requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', description: 'A JSON-RPC 2.0 message' } } } },
         responses: { '200': { description: 'JSON-RPC response', content: { 'application/json': { schema: { type: 'object' } } } }, '401': failures['401'], '404': failures['404'] },
       },
@@ -835,7 +988,16 @@ export const OPENAPI_DOCUMENT = {
       get: {
         summary: 'The tools the server offers now (name, description, input schema). Administrators only',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, description: { type: 'string' }, inputSchema: { type: 'object' } } } })) }, '401': failures['401'], '404': failures['404'] },
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({ type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, description: { type: 'string' }, inputSchema: { type: 'object' } } } }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
       },
     },
     '/mcp': {
@@ -867,7 +1029,10 @@ export const OPENAPI_DOCUMENT = {
                 type: 'object',
                 properties: {
                   totals: usageFigure(true),
-                  users: { type: 'array', items: { allOf: [usageFigure(true), { type: 'object', properties: { ownerId: { type: 'string' }, email: { type: 'string' }, name: { type: 'string' } } }] } },
+                  users: {
+                    type: 'array',
+                    items: { allOf: [usageFigure(true), { type: 'object', properties: { ownerId: { type: 'string' }, email: { type: 'string' }, name: { type: 'string' } } }] },
+                  },
                 },
               }),
             ),
@@ -898,7 +1063,10 @@ export const OPENAPI_DOCUMENT = {
                 properties: {
                   key: { type: 'string' },
                   totals: usageFigure(true),
-                  groups: { type: 'array', items: { allOf: [usageFigure(true), { type: 'object', properties: { value: { type: 'string', description: 'Absent = conversations without the key.' } } }] } },
+                  groups: {
+                    type: 'array',
+                    items: { allOf: [usageFigure(true), { type: 'object', properties: { value: { type: 'string', description: 'Absent = conversations without the key.' } } }] },
+                  },
                 },
               }),
             ),
@@ -912,8 +1080,17 @@ export const OPENAPI_DOCUMENT = {
     '/usage/by/{key}/{value}': {
       get: {
         summary: 'One value of a metadata key in detail, with cost (`~none` = conversations without the key). Administrators only',
-        parameters: [{ name: 'key', in: 'path', required: true, schema: { type: 'string' } }, { name: 'value', in: 'path', required: true, schema: { type: 'string' } }, ...usageParams],
-        responses: { '200': { description: 'OK', ...json(envelope(usageSummary(true))) }, '401': failures['401'], '404': failures['404'], '422': { description: 'Invalid metadata key', ...json(failureEnvelope) } },
+        parameters: [
+          { name: 'key', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'value', in: 'path', required: true, schema: { type: 'string' } },
+          ...usageParams,
+        ],
+        responses: {
+          '200': { description: 'OK', ...json(envelope(usageSummary(true))) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': { description: 'Invalid metadata key', ...json(failureEnvelope) },
+        },
       },
     },
     '/agents': {

@@ -58,6 +58,11 @@ function reply(answer: ISelfReply, pick: (result: unknown) => unknown = (result)
   return { ...text({ status: answer.status, code: answer.code, message: answer.message, details: answer.details }), isError: true }
 }
 
+/** Só os itens com `enabled: true` (e o que mais `keep` exigir). */
+function enabledOnly(result: unknown, keep: (item: Record<string, unknown>) => boolean = () => true): unknown {
+  return Array.isArray(result) ? (result as Array<Record<string, unknown>>).filter((item) => item.enabled === true && keep(item)) : result
+}
+
 /** O turno agregado, sem o que só a tela usa. */
 function turnView(result: unknown) {
   const turn = (result ?? {}) as Record<string, unknown>
@@ -210,16 +215,27 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   server.registerTool(
     'list_providers',
     {
-      description: 'The configured providers: protocol, status, whether a key is set (never the key), catalog counts and the agents using each.',
+      description:
+        'The configured providers that are turned on: protocol, status, whether a key is set (never the key), catalog counts and the agents using each. `includeDisabled: true` lists the ones turned off too.',
+      inputSchema: { includeDisabled: z.boolean().optional() },
       annotations: { readOnlyHint: true },
     },
-    async () => reply(await api('GET', '/providers')),
+    // ⚖️ Só o que está ATIVO por padrão: o agente que lê isto monta agentes, e um provider desligado não serve.
+    async ({ includeDisabled }) => reply(await api('GET', '/providers'), (result) => (includeDisabled ? result : enabledOnly(result))),
   )
 
   server.registerTool(
     'list_models',
-    { description: "A provider's model catalog: enabled, price, reasoning support.", inputSchema: { providerId: z.string() }, annotations: { readOnlyHint: true } },
-    async ({ providerId }) => reply(await api('GET', `/providers/${encodeURIComponent(providerId)}/models`)),
+    {
+      description:
+        "A provider's usable models (enabled and still offered by the provider): price, reasoning support. `includeDisabled: true` lists the whole catalog, to enable one.",
+      inputSchema: { providerId: z.string(), includeDisabled: z.boolean().optional() },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ providerId, includeDisabled }) =>
+      reply(await api('GET', `/providers/${encodeURIComponent(providerId)}/models`), (result) =>
+        includeDisabled ? result : enabledOnly(result, (model) => model.available !== false),
+      ),
   )
 
   server.registerTool(

@@ -1,3 +1,4 @@
+import { liveLimit } from '@domain/models/Limits.Model'
 import path from 'node:path'
 
 export interface IBashPolicy {
@@ -33,8 +34,8 @@ const DENIED: ReadonlyArray<{ pattern: RegExp; reason: string }> = [
 
 export function bashPolicy(): IBashPolicy {
   return {
-    timeoutMs: readPositiveInt(process.env.BASH_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
-    maxOutputChars: readPositiveInt(process.env.BASH_MAX_OUTPUT_CHARS, DEFAULT_MAX_OUTPUT_CHARS),
+    timeoutMs: liveLimit('bashTimeoutMs') ?? readPositiveInt(process.env.BASH_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
+    maxOutputChars: liveLimit('bashMaxOutputChars') ?? readPositiveInt(process.env.BASH_MAX_OUTPUT_CHARS, DEFAULT_MAX_OUTPUT_CHARS),
     // ⛔ Sem `BASH_CWD`, o diretório vazio da conversa (ver `run_bash`) — nunca a pasta do gateway.
     cwd: process.env.BASH_CWD ? path.resolve(process.env.BASH_CWD) : '',
   }

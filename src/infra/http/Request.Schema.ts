@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { LIMIT_BOUNDS, LIMIT_NAMES, TLimitName } from '@domain/models/Limits.Model'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { AUDIENCES } from '@domain/models/Settings.Model'
 
@@ -72,6 +73,17 @@ export const updateSettingsSchema = z.object({
   classifierModel: clearable,
   classifierProvider: clearable,
   classifyTurns: z.boolean().nullable().optional(),
+  // Cada limite na faixa dele; `null` num limite volta ao `.env`, e `null` no objeto volta todos.
+  limits: z
+    .object(
+      Object.fromEntries(LIMIT_NAMES.map((name) => [name, z.number().int().min(LIMIT_BOUNDS[name].min).max(LIMIT_BOUNDS[name].max).nullable().optional()])) as Record<
+        TLimitName,
+        z.ZodOptional<z.ZodNullable<z.ZodNumber>>
+      >,
+    )
+    .strict()
+    .nullable()
+    .optional(),
 })
 
 /**
