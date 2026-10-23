@@ -45,14 +45,14 @@ export function securityHeaders(): RequestHandler {
 }
 
 /**
- * ⛔ Limite por ORIGEM (o endereço do socket — o `X-Forwarded-For` se escreve): `max` pedidos por janela.
+ * ⛔ Limite por ORIGEM (`clientIp`: o socket, ou o IP real se o proxy for confiável): `max` pedidos por janela.
  * Em memória, com teto de origens rastreadas. É o que segura quem troca de e-mail a cada tentativa de
  * login, e quem martela o setup.
  */
 export function rateLimit(options: { windowMs: number; max: number }, now: () => number = Date.now): RequestHandler {
   const hits = new Map<string, { count: number; resetAt: number }>()
   return (req, res, next) => {
-    const origin = req.socket?.remoteAddress ?? ''
+    const origin = clientIp(req)
     const at = now()
     const current = hits.get(origin)
     const entry = current && current.resetAt > at ? current : { count: 0, resetAt: at + options.windowMs }
@@ -67,6 +67,44 @@ export function rateLimit(options: { windowMs: number; max: number }, now: () =>
     }
     next()
   }
+}
+
+/** Os nomes de faixa que o `proxy-addr` (o `trust proxy` do Express) entende. */
+const PROXY_NAMES = ['loopback', 'linklocal', 'uniquelocal']
+const IPV4_CIDR = /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/
+const IPV6_CIDR = /^[0-9a-f:]+(\/\d{1,3})?$/i
+/** Confiar nestes = confiar em qualquer um: o `X-Forwarded-For` voltaria a ser escrito pelo atacante. */
+const TRUST_EVERYONE = ['0.0.0.0/0', '::/0', '::/1', '0.0.0.0/1']
+
+/**
+ * ⛔ Em QUEM o gateway confia para dizer o IP real (`X-Forwarded-For`) e o protocolo (`X-Forwarded-Proto`):
+ * só nos proxies listados em `TRUST_PROXY` — IPs, CIDRs ou `loopback`/`linklocal`/`uniquelocal`.
+ * Sem a variável, ninguém: vale o endereço do socket, que é o certo sem proxy na frente.
+ */
+export function trustProxyIssue(raw: string | undefined): string | undefined {
+  const value = raw?.trim()
+  if (!value) return undefined
+  if (/^(true|\*|\d+)$/i.test(value)) return `TRUST_PROXY=${value} would trust any client: list the proxy addresses or CIDRs (e.g. 10.42.0.0/16)`
+  for (const entry of value.split(',').map((part) => part.trim())) {
+    if (TRUST_EVERYONE.includes(entry)) return `TRUST_PROXY entry ${entry} trusts the whole internet`
+    if (!PROXY_NAMES.includes(entry) && !IPV4_CIDR.test(entry) && !IPV6_CIDR.test(entry)) return `TRUST_PROXY entry is not an IP, CIDR or ${PROXY_NAMES.join('/')}: ${entry}`
+  }
+  return undefined
+}
+
+/** O valor do `trust proxy` do Express, ou `undefined` (desligado). */
+export function trustProxySetting(env: NodeJS.ProcessEnv = process.env): string[] | undefined {
+  const value = env.TRUST_PROXY?.trim()
+  if (!value || trustProxyIssue(value)) return undefined
+  return value.split(',').map((part) => part.trim())
+}
+
+/**
+ * O IP de quem chama: `req.ip`, que com `TRUST_PROXY` é o primeiro endereço NÃO confiável do
+ * `X-Forwarded-For` (lido da direita) e, sem ele, o do socket. Um só lugar para limite e trava de login.
+ */
+export function clientIp(req: Request): string {
+  return req.ip || req.socket?.remoteAddress || ''
 }
 
 /** Compara dois segredos sem vazar, pelo tempo, quantos caracteres batem. */

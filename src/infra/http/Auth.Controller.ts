@@ -1,3 +1,4 @@
+import { clientIp } from './Security.Middleware'
 import { clearSessionCookie, setSessionCookie, wantsCookieOnly } from './Session.Cookie'
 import { tokenFromHeader } from '@infra/mcp/Caller.Identity'
 import { AccessTokensService } from '@application/AccessTokens.Service'
@@ -120,8 +121,8 @@ export class AuthController {
   async login(req: Request, res: Response) {
     await this.respond(res, async () => {
       const body = parseBody(loginSchema, req.body)
-      // A origem é o endereço do SOCKET, não `req.ip` (que vem de cabeçalho com `trust proxy`).
-      return this.session(req, res, await this.accounts.login(body.email, body.password, req.socket?.remoteAddress ?? ''))
+      // A origem: o socket, ou o IP real que um proxy CONFIÁVEL (`TRUST_PROXY`) informou.
+      return this.session(req, res, await this.accounts.login(body.email, body.password, clientIp(req)))
     })
   }
 
