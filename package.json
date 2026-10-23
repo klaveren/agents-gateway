@@ -48,6 +48,7 @@
     "@openai/codex": "0.163.0",
     "@openai/codex-sdk": "0.163.0",
     "@types/express": "^5.0.6",
+    "@xterm/headless": "6.0.0",
     "axios": "^1.20.0",
     "cheerio": "^1.2.0",
     "cors": "^2.8.6",

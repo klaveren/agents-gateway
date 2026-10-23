@@ -32,7 +32,8 @@ function fakeSpawn(chunks: string[], code: number | null = 0) {
 const ESC = '\u001b'
 const BEL = '\u0007'
 const URL = 'https://claude.com/cai/oauth/authorize?code=true&client_id=abc&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&state=xyz'
-const TOKEN = 'sk-ant-oat01-' + 'A'.repeat(90)
+// O formato que o CLI 2.1.309 imprime de verdade (`at01`, não `oat01`).
+const TOKEN = 'sk-ant-at01-' + 'A'.repeat(90)
 
 describe('login do Claude pela tela (claude setup-token)', () => {
   it('⛔ pega o link do hiperlink de terminal e o token partido em dois pedaços; o token vai ao cofre e nunca à tela', async () => {
@@ -52,7 +53,7 @@ describe('login do Claude pela tela (claude setup-token)', () => {
     assert.deepStrictEqual(saved, [TOKEN])
     const after = logins.view(EProvider.CLAUDE_SUB)
     assert.strictEqual(after.state, 'done')
-    assert.ok(!JSON.stringify(after).includes('sk-ant-oat'))
+    assert.ok(!JSON.stringify(after).includes('sk-ant-'))
   })
 
   it('sem token na saída, falha — e a mensagem de erro não carrega token nenhum', async () => {
@@ -84,6 +85,17 @@ describe('login do Claude: o processo não sai sozinho', () => {
     const view = logins.view(EProvider.CLAUDE_SUB)
     assert.strictEqual(view.state, 'failed')
     assert.match(view.message ?? '', /Invalid code/)
+  })
+})
+
+describe('a saída é lida na tela renderizada', () => {
+  it('⛔ o token desenhado com movimento de cursor sai inteiro (arrancar os códigos perdia o "o" de `oat01`)', async () => {
+    const saved: string[] = []
+    // O CLI escreve a linha, volta o cursor e redesenha por cima — como o Ink faz.
+    const logins = new SubscriptionLogins(fakeSpawn([`${ESC}]8;;${URL}${BEL}x\r\n`, `sk-ant-o${ESC}[1D${ESC}[1C`, `at01-${'B'.repeat(90)}\r\n`], null))
+    await logins.start(EProvider.CLAUDE_SUB, { onToken: (token) => saved.push(token) })
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    assert.deepStrictEqual(saved, [`sk-ant-oat01-${'B'.repeat(90)}`])
   })
 })
 
