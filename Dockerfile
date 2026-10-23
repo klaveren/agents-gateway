@@ -30,16 +30,25 @@ COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile --prod
 
 FROM node:24-slim AS runtime
+ARG BUILD_VERSION=dev
+ARG BUILD_REVISION=unknown
+LABEL org.opencontainers.image.title="agents-gateway" \
+      org.opencontainers.image.version="${BUILD_VERSION}" \
+      org.opencontainers.image.revision="${BUILD_REVISION}"
+
+# ⚠️ Sem `BASH_CWD`: com ele, o `run_bash` de TODAS as conversas caía na mesma pasta. Sem ele, cada
+# conversa ganha a sua, vazia, em /tmp (no k8s, um `emptyDir`).
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
-    PORT=3000 \
-    BASH_CWD=/workspace
+    PORT=3000
 
-# `run_bash` roda com este usuário. O shell é nologin porque ninguém deve logar como ele;
+# O processo roda com este usuário. O shell é nologin porque ninguém deve logar como ele;
 # o exec() usa /bin/sh diretamente e não depende do shell de login.
+# `/app/data` é o ÚNICO lugar gravável além de /tmp: banco, chave-mestra e logins (o PVC monta aqui).
+# Com isso a imagem roda com `readOnlyRootFilesystem`.
 RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin gateway \
-    && mkdir -p /workspace \
-    && chown gateway:gateway /workspace
+    && mkdir -p /app/data \
+    && chown gateway:gateway /app/data
 
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
@@ -51,6 +60,7 @@ COPY src/infra/http/public ./dist/infra/http/public
 COPY --from=web /web/dist ./web/dist
 
 USER gateway
+VOLUME ["/app/data"]
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
