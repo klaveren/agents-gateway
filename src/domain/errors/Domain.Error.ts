@@ -155,6 +155,36 @@ export class ProviderUnavailableError extends DomainError {
   }
 }
 
+/** ⛔ Agente que outro usa (delegação) ou que é o padrão das configurações: apagar quebraria quem depende dele. */
+export class AgentInUseError extends DomainError {
+  constructor(
+    public readonly agentId: string,
+    public readonly delegators: string[],
+    public readonly isDefault: boolean,
+  ) {
+    super(
+      [delegators.length ? `delegated to by ${delegators.join(', ')}` : '', isDefault ? 'it is the default agent in Settings' : ''].filter(Boolean).join('; ').replace(/^/, `Agent ${agentId} is in use: `),
+    )
+  }
+}
+
+/** ⛔ Nenhum agente pode abrir conversa agora (provider desligado, sem modelo, sem chave). */
+export class NoAgentAvailableError extends DomainError {
+  constructor() {
+    super('No agent is available right now: enable a provider, a model and save a key in Providers.')
+  }
+}
+
+/** ⛔ O modelo da conversa foi desativado (ou sumiu do provider) depois que ela começou. */
+export class ModelDisabledError extends DomainError {
+  constructor(
+    public readonly providerId: string,
+    public readonly modelId: string,
+  ) {
+    super(`Model ${modelId} is no longer enabled for ${providerId}: switch the conversation model or enable it in Providers.`)
+  }
+}
+
 /** ⛔ Agente com ferramenta que alcança este servidor (run_bash, Bash/Read/Write do SDK), para quem não administra. */
 export class DangerousToolsRestrictedError extends DomainError {
   constructor(

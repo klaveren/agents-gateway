@@ -82,6 +82,9 @@ describe('guia MCPs (integração)', () => {
       modes: ['chat'],
       allowedTools: ['mcp:gw/list_agents'],
     }
+    // O modelo tem de estar ATIVADO no catálogo (o boot não liga mais nada sozinho).
+    await call('/providers/claude/models', { method: 'POST', token: admin, body: { modelId: 'claude-sonnet-5' } })
+    await call('/providers/claude/models', { method: 'PUT', token: admin, body: { modelId: 'claude-sonnet-5', enabled: true } })
     const created = await call('/agents', { method: 'POST', token: admin, body: agent })
     assert.strictEqual(created.status, 201, created.text)
 

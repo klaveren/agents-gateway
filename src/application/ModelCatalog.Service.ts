@@ -31,10 +31,11 @@ export class ModelCatalogService {
     return this.catalog.list(providerId)
   }
 
+  /** Os UTILIZÁVEIS: ativados por quem administra E ainda na listagem do provider (ver `isEnabled`). */
   enabledIds(providerId: string): string[] {
     return this.catalog
       .list(providerId)
-      .filter((model) => model.enabled)
+      .filter((model) => model.enabled && model.available)
       .map((model) => model.modelId)
   }
 
@@ -43,8 +44,27 @@ export class ModelCatalogService {
     return this.catalog.get(providerId, modelId)?.reasoning
   }
 
+  /**
+   * O modelo pode ser usado: ATIVADO e DISPONÍVEL. ⚠️ Modelo que sumiu da listagem do provider fica
+   * `available: false` na sincronização — e seguia oferecido nos agentes e na conversa, para falhar na hora.
+   */
   isEnabled(providerId: string, modelId: string): boolean {
-    return this.catalog.get(providerId, modelId)?.enabled === true
+    const model = this.catalog.get(providerId, modelId)
+    return model?.enabled === true && model.available
+  }
+
+  /**
+   * Acrescenta um modelo por id, à mão — para provider sem listagem (assinatura) ou modelo que a listagem
+   * ainda não traz. Nasce desligado, como os da sincronização, com o preço sugerido se houver.
+   */
+  addModel(providerId: string, modelId: string, by: string): ICatalogModel {
+    const id = modelId.trim()
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,199}$/.test(id)) throw new InvalidModelError([{ field: 'modelId', message: 'use letters, digits and . _ : / @ -' }])
+    const current = this.catalog.get(providerId, id)
+    if (current) return current
+    const now = this.now()
+    this.catalog.insert({ providerId, modelId: id, enabled: false, available: true, ...this.suggestedPrice(providerId, { id }), updatedAt: now, updatedBy: by })
+    return this.catalog.get(providerId, id) as ICatalogModel
   }
 
   sync(providerId: string, listed: readonly IListedModel[], by: string): ISyncResult {
@@ -133,11 +153,21 @@ export class ModelCatalogService {
     return this.catalog.update(providerId, modelId, { price, priceSource: 'manual', updatedAt: now, updatedBy: by }) as ICatalogModel
   }
 
-  /** Os preços de um provider, no formato que `costOf` lê. */
+  /**
+   * Os preços de um provider, no formato que `costOf` lê — SÓ os do catálogo. ⚖️ A tabela de fábrica é
+   * sugestão na sincronização (`suggestedPrice`), não uma segunda fonte: antes ela entrava inteira aqui, e
+   * aparecia custo para modelo que ninguém acrescentou e que o banco não conseguia tirar.
+   */
   pricing(providerId: string): TModelPricing {
-    const prices: TModelPricing = this.isOfficial(providerId) ? { ...this.defaults } : {}
+    const prices: TModelPricing = {}
     for (const model of this.catalog.list(providerId)) if (model.price) prices[model.modelId] = model.price
     return prices
+  }
+
+  /** Desliga todos os modelos de um provider (ele foi removido), sem apagar: o custo das conversas antigas fica. */
+  disableAll(providerId: string, by: string): void {
+    const now = this.now()
+    for (const model of this.catalog.list(providerId)) this.catalog.update(providerId, model.modelId, { enabled: false, available: false, updatedAt: now, updatedBy: by })
   }
 
   clear(providerId: string): void {

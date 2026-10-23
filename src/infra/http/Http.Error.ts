@@ -16,7 +16,10 @@ import {
   McpServerInUseError,
   ProviderNotFoundError,
   ProviderUnavailableError,
+  AgentInUseError,
   DangerousToolsRestrictedError,
+  ModelDisabledError,
+  NoAgentAvailableError,
   SubagentOnlyError,
   SubscriptionRestrictedError,
   InvalidCredentialsError,
@@ -45,6 +48,9 @@ export type TErrorCode =
   | 'rate_limited'
   | 'subagent_only'
   | 'dangerous_tools_restricted'
+  | 'agent_in_use'
+  | 'no_agent_available'
+  | 'model_disabled'
   | 'upstream_error'
   | 'agent_without_model'
   | 'invalid_credentials'
@@ -156,6 +162,18 @@ export function toHttpFailure(error: unknown): IHttpFailure {
 
   if (error instanceof ProviderInUseError) {
     return { status: 409, code: 'provider_in_use', message: error.message, details: { agents: error.agents } }
+  }
+
+  if (error instanceof AgentInUseError) {
+    return { status: 409, code: 'agent_in_use', message: error.message, details: { delegators: error.delegators, isDefault: error.isDefault } }
+  }
+
+  if (error instanceof NoAgentAvailableError) {
+    return { status: 503, code: 'no_agent_available', message: error.message }
+  }
+
+  if (error instanceof ModelDisabledError) {
+    return { status: 409, code: 'model_disabled', message: error.message, details: { providerId: error.providerId, modelId: error.modelId } }
   }
 
   if (error instanceof DangerousToolsRestrictedError) {

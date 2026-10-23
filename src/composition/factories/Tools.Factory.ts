@@ -6,6 +6,7 @@ import { SqliteMcpServerRepository } from '@infra/persistence/Sqlite.McpServerRe
 import { DelegationSlot, makeDelegateTool } from '@infra/tools/Delegate.Tool'
 import { makeLocalTools } from '@infra/tools/Local.Tools'
 import { DEFAULT_MCP_SERVER, ToolCatalog } from '@infra/tools/Tool.Catalog'
+import { makeAgents } from './Agents.Factory'
 import { makeCredentials } from './Credentials.Factory'
 
 export interface ITools {
@@ -35,7 +36,7 @@ export function makeTools(): ITools {
     const delegation = new DelegationSlot()
     // Os SDKs agênticos chegam aos MCPs em contêiner pelo proxy do próprio gateway (`/v1/mcp-proxy/<id>`).
     const containerProxy = { base: selfUrl().replace(/\/v1\/mcp$/, '/v1/mcp-proxy'), headers: () => gatewayGate({ id: SELF_MCP_SERVER, url: selfUrl() } as IMcpServerConfig) ?? {} }
-    instance = { delegation, mcp, servers, catalog: new ToolCatalog(mcp, makeLocalTools(), (allowed) => makeDelegateTool(allowed, delegation), containerProxy) }
+    instance = { delegation, mcp, servers, catalog: new ToolCatalog(mcp, makeLocalTools(), (allowed) => makeDelegateTool(runnableTargets(allowed), delegation), containerProxy) }
   }
   return instance
 }
@@ -43,6 +44,19 @@ export function makeTools(): ITools {
 /** O MCP do PRÓPRIO gateway (`/v1/mcp`), cadastrado como servidor do sistema: é dele que o Atlas tira as ferramentas. */
 export const SELF_MCP_SERVER = 'gateway'
 const SYSTEM = 'system'
+
+/**
+ * Os alvos de delegação que PODEM abrir conversa agora — a ferramenta só anuncia esses ao modelo. Pedido
+ * na hora (os agentes mudam), e sem nenhum ativo fica a lista original: a delegação explica o motivo.
+ */
+function runnableTargets(allowed: readonly string[]): string[] {
+  const agents = makeAgents()
+  const active = allowed.filter((id) => {
+    const agent = agents.get(id)
+    return !!agent && agents.isRunnable(agent)
+  })
+  return active.length ? active : [...allowed]
+}
 
 function selfUrl(env: NodeJS.ProcessEnv = process.env): string {
   const bound = env.HOST?.trim()

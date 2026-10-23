@@ -684,6 +684,12 @@ export const OPENAPI_DOCUMENT = {
         parameters: providerParam,
         responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: catalogModelSchema })) }, '401': failures['401'], '404': failures['404'] },
       },
+      post: {
+        summary: 'Add a model by id (for providers without a listing, or a model the listing does not bring yet). It starts disabled, with the factory price suggested when there is one. Administrators only',
+        parameters: providerParam,
+        requestBody: { required: true, ...json({ type: 'object', properties: { modelId: { type: 'string' } }, required: ['modelId'] }) },
+        responses: { '201': { description: 'Added', ...json(envelope(catalogModelSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
       put: {
         summary: 'Enable/disable one model and/or set its manual price (`price: null` reverts to the listing or factory price). The model id goes in the body because ids may contain `/`. Administrators only',
         parameters: providerParam,

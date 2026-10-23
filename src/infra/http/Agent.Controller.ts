@@ -1,3 +1,4 @@
+import { agentUnavailable, TAgentUnavailable, UNAVAILABLE_LABEL } from '@domain/Agent.Availability'
 import { clientMetadata } from '@domain/Session.Metadata'
 import { metaPlaceholderKeys } from '@infra/sandbox/Egress.Proxy'
 import { CancelSessionUseCase } from '@application/CancelSession.Usecase'
@@ -198,11 +199,56 @@ export class AgentController {
     }
   }
 
+  /**
+   * ⛔ SÓ O QUE ESTÁ ATIVO para quem não administra: agente com provider desligado, sem modelo, sem chave
+   * ou que exige admin não aparece — antes aparecia, e falhava só ao abrir a conversa. O admin vê todos,
+   * cada inativo com o motivo (`unavailable`), para saber o que ligar.
+   */
   async getAgents(_req: Request, res: Response) {
     await this.respond(res, async () => {
       await this.requireCaller()
-      return this.agents.entries().map((entry) => toAgentDto(entry.agent, this.pricingOf(entry.agent.provider), entry.builtIn, this.reasoningFacts(entry.agent.provider)))
+      const admin = (await checkAdminAccess(this.usecases.proof)).allowed
+      return this.agents
+        .entries()
+        .map((entry) => ({ entry, unavailable: this.unavailableOf(entry.agent, admin) }))
+        .filter(({ unavailable }) => admin || !unavailable)
+        .map(({ entry, unavailable }) => ({
+          ...toAgentDto(entry.agent, this.pricingOf(entry.agent.provider), entry.builtIn, this.reasoningFacts(entry.agent.provider)),
+          providerInfo: this.providerInfo(entry.agent.provider),
+          ...(unavailable ? { unavailable: { reason: unavailable, label: UNAVAILABLE_LABEL[unavailable] } } : {}),
+        }))
     })
+  }
+
+  /** O que as configurações novas apontam e não está ativo: agente, modelo do agente, classificador. */
+  private async settingsIssues(body: { agentId?: string | null; model?: string | null; classifierModel?: string | null; classifierProvider?: string | null }) {
+    const issues: Array<{ field: string; message: string }> = []
+    const current = await this.usecases.settings.read()
+    const agentId = body.agentId === undefined ? current.agentId : body.agentId || undefined
+    const agent = agentId ? this.agents.get(agentId) : this.agents.fallback()
+    if (body.agentId && agent && !this.agents.isRunnable(agent)) issues.push({ field: 'agentId', message: `${agent.id} is not available (${UNAVAILABLE_LABEL[this.unavailableOf(agent, true) ?? 'no_model']})` })
+    if (body.model && agent && !agent.models.includes(body.model)) issues.push({ field: 'model', message: `${body.model} is not an enabled model of ${agent.id}` })
+
+    const provider = body.classifierProvider === undefined ? current.classifierProvider : body.classifierProvider || undefined
+    const model = body.classifierModel === undefined ? current.classifierModel : body.classifierModel || undefined
+    if (body.classifierProvider && !this.usecases.providers?.connection(body.classifierProvider)) issues.push({ field: 'classifierProvider', message: `${body.classifierProvider} is disabled or does not exist` })
+    if ((body.classifierModel || body.classifierProvider) && provider && model && this.usecases.models && !this.usecases.models.isEnabled(provider, model)) {
+      issues.push({ field: 'classifierModel', message: `${model} is not enabled in ${provider}` })
+    }
+    return issues
+  }
+
+  /** Por que o agente não abre conversa para este chamador agora (ver `agentUnavailable`). */
+  private unavailableOf(agent: IAgent, admin: boolean): TAgentUnavailable | undefined {
+    const directory = this.usecases.providers
+    if (!directory) return agent.models.length ? undefined : 'no_model'
+    return agentUnavailable(agent, { provider: directory.get(agent.provider), hasKey: !!directory.connection(agent.provider)?.key, admin })
+  }
+
+  /** O provider como a tela mostra: o NOME do banco, não um rótulo fixo no código. */
+  private providerInfo(id: string): { id: string; name: string; protocol?: string } {
+    const provider = this.usecases.providers?.get(id)
+    return { id, name: provider?.name ?? id, protocol: provider?.protocol }
   }
 
   /**
@@ -280,7 +326,7 @@ export class AgentController {
       res,
       async () => {
         await this.requireAdmin('deleteAgent')
-        this.agents.remove(req.params.agentId as string)
+        this.agents.remove(req.params.agentId as string, { defaultAgentId: (await this.usecases.settings.read()).agentId })
 
         return null
       },
@@ -301,8 +347,13 @@ export class AgentController {
     return {
       knownTools: tools.map((tool) => tool.name),
       providerOf: (model) => providerOfModel(model, []),
-      mcpServerExists: (id) => !!this.usecases.catalog.mcp.get(id),
-      agentExists: (id) => !!this.agents.entry(id),
+      // ⛔ Servidor DESLIGADO não serve: o agente o perdia em silêncio na hora de rodar.
+      mcpServerExists: (id) => this.usecases.catalog.mcp.get(id)?.enabled === true,
+      // ⛔ Delegar só para quem pode abrir conversa agora; um alvo inativo devolvia erro ao modelo-pai.
+      agentExists: (id) => {
+        const target = this.agents.get(id)
+        return !!target && this.agents.isRunnable(target)
+      },
       modelEnabled: this.usecases.models ? (provider, model) => this.usecases.models!.isEnabled(provider, model) : undefined,
       protocolOf: (id) => this.usecases.providers?.get(id)?.protocol ?? Object.values(EProvider).find((value) => value === id),
       promptIssue: (agent) => {
@@ -433,6 +484,9 @@ export class AgentController {
         if (typeof body.agentId === 'string' && body.agentId && this.agents.get(body.agentId)?.role === 'subagent') {
           throw new HttpError(422, 'validation_error', 'Request body is invalid', [{ field: 'agentId', message: `${body.agentId} is a subagent: it cannot be the default agent` }])
         }
+        // ⛔ Nada que não esteja ATIVO: antes o modelo inválido era trocado em silêncio pelo primeiro do agente.
+        const issues = await this.settingsIssues(body)
+        if (issues.length) throw new HttpError(422, 'validation_error', 'Request body is invalid', issues)
 
         // Merge, não substituição: a tela manda o que mudou. O repositório SUBSTITUI o documento.
         const current = await this.usecases.settings.read()
@@ -920,7 +974,11 @@ export class AgentController {
     const { catalog } = this.usecases
     const tools = await catalog.list(allowed)
     // Sem `lastError`: a mensagem pode trazer endereço interno, e esta rota é de qualquer chamador.
-    const servers = catalog.mcp.status().map(({ id, name, enabled, connected }) => ({ id, name, enabled, connected }))
+    // ⛔ Só os LIGADOS: o desligado não roda, e o nome dele não é assunto de quem não administra.
+    const servers = catalog.mcp
+      .status()
+      .filter((server) => server.enabled)
+      .map(({ id, name, enabled, connected }) => ({ id, name, enabled, connected }))
 
     return { mcp: { connected: servers.some((server) => server.connected), servers }, tools }
   }

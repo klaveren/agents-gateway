@@ -234,6 +234,7 @@ function buildRoutes(
     { method: 'get', path: '/providers/:id/models', handler: providers.listModels },
     { method: 'post', path: '/providers/:id/models/sync', handler: providers.syncModels },
     { method: 'put', path: '/providers/:id/models', handler: providers.updateModel },
+    { method: 'post', path: '/providers/:id/models', handler: providers.addModel },
     { method: 'get', path: '/providers/:id/login', handler: providers.loginStatus },
     { method: 'post', path: '/providers/:id/login', handler: providers.loginStart },
     { method: 'post', path: '/providers/:id/login/code', handler: providers.loginCode },

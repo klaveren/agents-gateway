@@ -1,5 +1,5 @@
 import { agentIssues, IAgentRules } from '@domain/Agent.Policy'
-import { AgentNotFoundError, InvalidAgentError, ReadOnlyAgentError } from '@domain/errors/Domain.Error'
+import { AgentInUseError, AgentNotFoundError, InvalidAgentError, ReadOnlyAgentError } from '@domain/errors/Domain.Error'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentDirectory, IAgentRepository, IStoredAgent } from '@domain/ports/AgentRepository.Port'
 
@@ -42,6 +42,11 @@ export class AgentCatalog implements IAgentDirectory {
      * nenhum: religar devolve.
      */
     private readonly usable?: (providerId: string, modelId: string) => boolean,
+    /**
+     * O agente pode abrir conversa agora (ver `agentUnavailable`) — provider ligado, modelo ativo, chave.
+     * Ausente: todo agente com modelo conta. É o que escolhe o PADRÃO e os alvos de delegação.
+     */
+    private readonly runnable?: (agent: IAgent) => boolean,
   ) {}
 
   /** Os agentes com os modelos que podem ser usados agora. */
@@ -83,9 +88,18 @@ export class AgentCatalog implements IAgentDirectory {
     return this.rawEntries().find((entry) => entry.agent.id === id)
   }
 
-  /** O que vale quando ninguém escolheu agente: o primeiro embutido, senão o primeiro criado. */
+  /**
+   * O que vale quando ninguém escolheu agente: o primeiro que PODE abrir conversa e não é subagente.
+   * ⚠️ Antes era só o primeiro da lista — que podia estar com o provider desligado, sem modelo ou ser
+   * subagente, e toda conversa sem agente escolhido falhava.
+   */
   fallback(): IAgent | undefined {
-    return this.list()[0]
+    return this.list().find((agent) => agent.role !== 'subagent' && this.isRunnable(agent))
+  }
+
+  /** O agente (já com os modelos utilizáveis) pode abrir conversa agora. */
+  isRunnable(agent: IAgent): boolean {
+    return this.runnable ? this.runnable(agent) : agent.models.length > 0
   }
 
   isBuiltIn(id: string): boolean {
@@ -107,8 +121,15 @@ export class AgentCatalog implements IAgentDirectory {
     return this.repository.save(agent, options.by)
   }
 
-  remove(id: string): void {
+  /**
+   * ⛔ Não apaga agente que outro usa: um `agent:<id>` órfão travava todo salvamento do agente que delega,
+   * e o padrão das configurações apagado fazia toda conversa sem agente escolhido falhar.
+   */
+  remove(id: string, options: { defaultAgentId?: string } = {}): void {
     if (this.isBuiltIn(id)) throw new ReadOnlyAgentError(id)
+    const delegators = this.repository.list().filter((agent) => agent.id !== id && agent.allowedTools.includes(`agent:${id}`)).map((agent) => agent.id)
+    const isDefault = options.defaultAgentId === id
+    if (delegators.length || isDefault) throw new AgentInUseError(id, delegators, isDefault)
     if (!this.repository.delete(id)) throw new AgentNotFoundError(id)
   }
 }

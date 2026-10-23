@@ -34,4 +34,6 @@ export interface IAgentRepository {
 export interface IAgentDirectory {
   list(): IAgent[]
   get(id: string): IAgent | undefined
+  /** O agente quando ninguém escolheu: o primeiro que pode abrir conversa e não é subagente. */
+  fallback?(): IAgent | undefined
 }

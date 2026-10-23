@@ -46,6 +46,7 @@ const createSchema = z.object({
   key: key.optional(),
 })
 const price = z.number().min(0).max(10_000)
+const addModelSchema = z.object({ modelId: z.string().trim().min(1).max(200) })
 const modelChangeSchema = z.object({
   modelId: z.string().trim().min(1).max(200),
   enabled: z.boolean().optional(),
@@ -77,6 +78,7 @@ export class ProvidersController {
       'loginStart',
       'loginCode',
       'loginCancel',
+      'addModel',
     ] as const)
       this[name] = this[name].bind(this)
   }
@@ -121,7 +123,7 @@ export class ProvidersController {
     await this.respond(
       res,
       async () => {
-        await this.requireAdmin('removeProvider')
+        const admin = await this.requireAdmin('removeProvider')
         const id = this.idOf(req)
         this.deps.providers.remove(id, (providerId) =>
           this.deps.agents
@@ -129,7 +131,8 @@ export class ProvidersController {
             .filter((agent) => agent.provider === providerId)
             .map((agent) => agent.name),
         )
-        this.deps.models?.clear(id)
+        // Desliga, não apaga: as conversas antigas com esse provider continuam com preço.
+        this.deps.models?.disableAll(id, admin)
         return null
       },
       { message: 'Provider removed' },
@@ -222,6 +225,20 @@ export class ProvidersController {
         return { ...result, models: this.catalog.list(provider.id).map(toModelDto) }
       },
       { message: 'Models synced' },
+    )
+  }
+
+  /** Acrescenta um modelo por id (provider sem listagem, ou modelo que a listagem não traz). Nasce desligado. */
+  async addModel(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        const admin = await this.requireAdmin('addModel')
+        const id = this.idOf(req)
+        const { modelId } = parseBody(addModelSchema, req.body)
+        return toModelDto(this.catalog.addModel(id, modelId, admin))
+      },
+      { status: 201, message: 'Model added' },
     )
   }
 

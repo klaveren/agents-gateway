@@ -4,6 +4,8 @@ import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import {
   AdapterNotFoundError,
+  ModelDisabledError,
+  NoAgentAvailableError,
   DangerousToolsRestrictedError,
   SubagentOnlyError,
   SubscriptionRestrictedError,
@@ -152,6 +154,9 @@ export class AgentProvider implements IAgentProvider {
   async *sendMessage(sessionId: string, input: IMessageInput): AsyncIterable<IAgentEvent> {
     const record = this.requireSession(sessionId)
     const agent = this.getAgent(record.agentId)
+    // ⛔ O modelo da conversa foi desativado (ou sumiu do provider) depois que ela começou: erro claro, em
+    // vez de seguir usando um modelo que quem administra tirou. `agent.models` já vem só com os utilizáveis.
+    if (record.model && !agent.models.includes(record.model)) throw new ModelDisabledError(record.provider, record.model)
     const adapter = this.getAdapter(record.protocol, record.mode)
 
     record.status = 'running'
@@ -230,11 +235,18 @@ export class AgentProvider implements IAgentProvider {
     return record
   }
 
-  /** Sem `agentId` em lugar nenhum, vale o primeiro da lista — o primeiro embutido. */
+  /**
+   * Sem `agentId` em lugar nenhum, vale o padrão do diretório: o primeiro que PODE abrir conversa.
+   * ⚠️ Antes era o primeiro da lista, que podia estar desligado ou ser subagente.
+   */
   private getAgent(agentId?: string): IAgent {
-    const id = agentId || this.agents.list()[0]?.id || ''
-    const agent = this.agents.get(id)
-    if (!agent) throw new AgentNotFoundError(id)
+    if (!agentId) {
+      const fallback = this.agents.fallback ? this.agents.fallback() : this.agents.list()[0]
+      if (!fallback) throw new NoAgentAvailableError()
+      return fallback
+    }
+    const agent = this.agents.get(agentId)
+    if (!agent) throw new AgentNotFoundError(agentId)
 
     return agent
   }
