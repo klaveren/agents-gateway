@@ -288,6 +288,7 @@ export class AgentController {
       knownTools: tools.map((tool) => tool.name),
       providerOf: (model) => providerOfModel(model, []),
       mcpServerExists: (id) => !!this.usecases.catalog.mcp.get(id),
+      agentExists: (id) => !!this.agents.entry(id),
       modelEnabled: this.usecases.models ? (provider, model) => this.usecases.models!.isEnabled(provider, model) : undefined,
       protocolOf: (id) => this.usecases.providers?.get(id)?.protocol ?? Object.values(EProvider).find((value) => value === id),
       promptIssue: (agent) => {

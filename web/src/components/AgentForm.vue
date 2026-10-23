@@ -287,6 +287,23 @@ async function remove() {
       </div>
 
       <div class="field sm:col-span-2">
+        <span>Pode delegar a <em class="font-normal text-zinc-500">— outros agentes a quem este pede parte do trabalho (rodam com as permissões de quem conversa; até 2 níveis, sem ciclos)</em></span>
+        <div class="flex flex-wrap gap-1.5">
+          <button
+            v-for="other in agents.list.filter((candidate) => candidate.id !== form.id)"
+            :key="other.id"
+            type="button"
+            class="chip"
+            :class="{ on: form.allowedTools.includes(`agent:${other.id}`) }"
+            @click="toggle(form.allowedTools, `agent:${other.id}`)"
+          >
+            {{ other.name }}
+          </button>
+        </div>
+        <small v-if="form.allowedTools.some((entry) => entry.startsWith('agent:')) && !form.modes.includes('agent')" class="hint">Na lane chat, a delegação só roda com o loop de ferramentas ligado.</small>
+      </div>
+
+      <div class="field sm:col-span-2">
         <span>MCPs <em class="font-normal text-zinc-500">— os servidores cadastrados em MCPs; o agente só vê o que for marcado aqui</em></span>
         <div v-if="enabledMcp.length" class="flex flex-col gap-2">
           <div v-for="server in enabledMcp" :key="server.id" class="rounded-xl border border-zinc-800 px-3 py-2 font-normal">

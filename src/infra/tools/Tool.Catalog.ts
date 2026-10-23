@@ -1,6 +1,7 @@
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IMcpServerConfig, MCP_ALL_TOOLS, mcpSelection, parseMcpToolRef } from '@domain/models/McpServer.Model'
 import { McpRegistry } from '@infra/mcp/Mcp.Registry'
+import { delegatesOf } from '@domain/models/Delegation.Model'
 import { ILocalTool, IToolDefinition, IToolResult } from './Tool.Types'
 
 /** Quem executa uma ferramenta pelo nome com que o modelo a pediu. */
@@ -40,6 +41,8 @@ export class ToolCatalog {
   constructor(
     readonly mcp: McpRegistry,
     private readonly local: ILocalTool[],
+    /** A ferramenta de delegação de um agente (os `agent:<id>` dele). Ausente = sem delegação. */
+    private readonly delegation?: (allowed: readonly string[]) => ILocalTool,
   ) {}
 
   /** Algum servidor MCP ligado está conectado agora (para health e relatório). */
@@ -52,8 +55,11 @@ export class ToolCatalog {
     return this.local.map((tool) => tool.name)
   }
 
+  /** As locais que o agente escolheu — e, se ele pode delegar (`agent:<id>`), a `delegate_to_agent` dele. */
   localFor(allowed: readonly string[]): ILocalTool[] {
-    return this.local.filter((tool) => allowed.includes(tool.name))
+    const tools = this.local.filter((tool) => allowed.includes(tool.name))
+    const delegates = delegatesOf(allowed)
+    return delegates.length && this.delegation ? [...tools, this.delegation(delegates)] : tools
   }
 
   /** As tools LOCAIS permitidas (as de MCP vêm por servidor, em `/mcp-servers`). */
@@ -90,7 +96,7 @@ export class ToolCatalog {
       tools: [...local, ...exposed],
       invoke: async (name, args, context) => {
         const own = local.find((tool) => tool.name === name)
-        if (own) return own.execute(args)
+        if (own) return own.execute(args, context)
         const route = routes.get(name)
         if (!route) return { status: 'error', result: `Tool not available to this agent: ${name}` }
         return this.callMcp(route.server, route.tool, args, context)
@@ -123,7 +129,7 @@ export class ToolCatalog {
    */
   async invoke(name: string, args: Record<string, unknown>, context?: IExecutionContext): Promise<IToolResult> {
     const tool = this.local.find((candidate) => candidate.name === name)
-    if (tool) return tool.execute(args)
+    if (tool) return tool.execute(args, context)
 
     const ref = parseMcpToolRef(name.startsWith('mcp:') ? name : `mcp:${name.includes('/') ? name : `${DEFAULT_MCP_SERVER}/${name}`}`)
     if (!ref || ref.tool === MCP_ALL_TOOLS) return { status: 'error', result: `Unknown tool: ${name}` }

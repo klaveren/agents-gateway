@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import { api } from '@/lib/api'
+import type { IConversation } from '@/lib/types'
 import { useRouter } from 'vue-router'
 import { fullTime, providerLabel, tokens, usd } from '@/lib/format'
 import { useAgentsStore } from '@/stores/agents'
@@ -30,6 +32,25 @@ const agent = computed(() => agents.byId.get(header.value?.agentId ?? thread.dra
 const owner = computed(() => header.value?.metadata?.owner)
 const shareUrl = computed(() => (header.value?.shared && header.value.shareId ? `${location.origin}/v1/shared/${header.value.shareId}` : ''))
 const readOnly = computed(() => thread.liveSession === false)
+
+/** De quem esta conversa é filha (delegada por outro agente) e as filhas que ela abriu. */
+const parentId = computed(() => (typeof header.value?.metadata?.delegatedBy === 'string' ? header.value.metadata.delegatedBy : undefined))
+const parentAgent = computed(() => {
+  const from = header.value?.metadata?.delegatedFrom
+  return typeof from === 'string' ? (agents.byId.get(from)?.name ?? from) : 'outro agente'
+})
+const children = ref<IConversation[]>([])
+watch(
+  () => [header.value?.id, thread.turns.length] as const,
+  async ([id]) => {
+    if (!id) return (children.value = [])
+    const page = await api<{ sessions: IConversation[] }>('/conversations', { query: { delegatedBy: id, limit: 50 } }).catch(() => ({ sessions: [] }))
+    if (id === header.value?.id) children.value = page.sessions
+  },
+  { immediate: true },
+)
+const childTokens = computed(() => children.value.reduce((total, child) => total + (child.usage.totalTokens ?? 0), 0))
+const childCost = computed(() => (children.value.some((child) => child.costUsd !== undefined) ? children.value.reduce((total, child) => total + (child.costUsd ?? 0), 0) : undefined))
 /** O modelo em vigor: o da sessão viva (pode ter trocado), senão o da conversa. */
 const currentModel = computed(() => thread.session?.model ?? header.value?.model)
 
@@ -113,6 +134,15 @@ async function continueFresh() {
         </button>
       </div>
     </header>
+
+    <div v-if="parentId" class="flex items-center gap-2 border-b border-violet-500/20 bg-violet-500/10 px-4 py-2 text-xs text-violet-200">
+      Delegada por {{ parentAgent }}.
+      <RouterLink :to="`/c/${parentId}`" class="ml-auto hover:text-white">Abrir a conversa original →</RouterLink>
+    </div>
+    <div v-if="children.length" class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-zinc-800/80 bg-zinc-900/40 px-4 py-1.5 text-xs text-zinc-400">
+      <span>{{ children.length }} delegaç{{ children.length === 1 ? 'ão' : 'ões' }} · {{ tokens(childTokens) }} tokens<template v-if="auth.isAdmin && childCost !== undefined"> · {{ usd(childCost) }}</template></span>
+      <RouterLink v-for="child in children" :key="child.id" :to="`/c/${child.id}`" class="rounded-full bg-zinc-800 px-2 py-0.5 text-zinc-300 hover:bg-zinc-700">{{ agents.byId.get(child.agentId)?.name ?? child.agentId }}</RouterLink>
+    </div>
 
     <div v-if="shareUrl" class="flex items-center gap-2 border-b border-emerald-500/20 bg-emerald-500/10 px-4 py-2 text-xs text-emerald-200">
       Aberta por link — quem tiver o endereço lê as perguntas e respostas.

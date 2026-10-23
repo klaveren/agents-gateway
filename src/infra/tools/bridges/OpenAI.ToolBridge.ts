@@ -1,4 +1,5 @@
 import { MCPServerSSE, MCPServerStreamableHttp, tool, type MCPServer, type Tool } from '@openai/agents'
+import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IAgentMcpServer } from '../Tool.Catalog'
 import { mcpHeaders } from './Claude.ToolBridge'
 import { ILocalTool } from '../Tool.Types'
@@ -7,7 +8,7 @@ import { ILocalTool } from '../Tool.Types'
  * O `@openai/agents` aceita JSON Schema direto quando `strict: true`, então as tools
  * locais entram sem precisar de zod. As remotas entram como MCP server nativo.
  */
-export function buildOpenAITools(local: ILocalTool[]): Tool[] {
+export function buildOpenAITools(local: ILocalTool[], context?: IExecutionContext): Tool[] {
   return local.map((item) =>
     tool({
       name: item.name,
@@ -17,7 +18,7 @@ export function buildOpenAITools(local: ILocalTool[]): Tool[] {
       // A política de segurança vive no executor local, que vale para as três lanes.
       needsApproval: false,
       async execute(args: unknown) {
-        const outcome = await item.execute(toArgs(args))
+        const outcome = await item.execute(toArgs(args), context)
         return outcome.result
       },
     }),

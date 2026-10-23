@@ -56,6 +56,15 @@ describe('agentIssues', () => {
     assert.deepStrictEqual(fields(agentIssues(agent({ allowedTools: ['mcp:crm/x'] }), rules)), ['allowedTools'])
   })
 
+  it('⛔ delegação: a um agente que existe, nunca a si mesmo', () => {
+    const withAgents = { ...rules, agentExists: (id: string) => ['tradutor', 'pesquisa-juridica'].includes(id) }
+    assert.deepStrictEqual(agentIssues(agent({ allowedTools: ['agent:tradutor'] }), withAgents), [])
+    assert.deepStrictEqual(
+      agentIssues(agent({ allowedTools: ['agent:pesquisa-juridica', 'agent:fantasma', 'agent:'] }), withAgents).map((issue) => issue.message),
+      ['an agent cannot delegate to itself', 'unknown agent to delegate to: fantasma', 'invalid delegation (use agent:<id>): agent:'],
+    )
+  })
+
   it('recusa id que já existe', () => {
     assert.deepStrictEqual(fields(agentIssues(agent({ id: 'sysops-agent' }), rules)), ['id'])
   })

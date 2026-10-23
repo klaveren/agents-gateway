@@ -1,5 +1,6 @@
 import { createSdkMcpServer, tool, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
 import { z, type ZodRawShape } from 'zod'
+import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IAgentMcpServer } from '../Tool.Catalog'
 import { ILocalTool } from '../Tool.Types'
 
@@ -14,7 +15,7 @@ export function claudeMcpServerName(serverId: string): string {
   return `mcp_${serverId.replace(/-/g, '_')}`
 }
 
-export function buildClaudeMcpServers(local: ILocalTool[], remotes: readonly IAgentMcpServer[] = [], token?: string): Record<string, McpServerConfig> {
+export function buildClaudeMcpServers(local: ILocalTool[], remotes: readonly IAgentMcpServer[] = [], token?: string, context?: IExecutionContext): Record<string, McpServerConfig> {
   const servers: Record<string, McpServerConfig> = {}
 
   if (local.length > 0) {
@@ -23,7 +24,7 @@ export function buildClaudeMcpServers(local: ILocalTool[], remotes: readonly IAg
       version: '1.0.0',
       tools: local.map((item) =>
         tool(item.name, item.description, toZodShape(item), async (args: Record<string, unknown>) => {
-          const outcome = await item.execute(args)
+          const outcome = await item.execute(args, context)
           return { content: [{ type: 'text' as const, text: outcome.result }], isError: outcome.status === 'error' }
         }),
       ),

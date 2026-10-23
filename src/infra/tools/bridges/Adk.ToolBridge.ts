@@ -1,4 +1,5 @@
 import { FunctionTool, MCPToolset } from '@google/adk'
+import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { ILocalTool, IToolDefinition, IToolSchema } from '../Tool.Types'
 
 type TAdkTool = ConstructorParameters<typeof FunctionTool>[0]
@@ -8,7 +9,8 @@ type TAdkSchema = NonNullable<TAdkTool['parameters']>
  * O ADK aceita o `Schema` do `@google/genai`, cujos tipos são MAIÚSCULOS — `OBJECT`,
  * `STRING` — e não os do JSON Schema. Daí a conversão.
  */
-export function buildAdkTools(local: ILocalTool[]): FunctionTool[] {
+/** `context` é lido NA EXECUÇÃO: o runtime do ADK vive a sessão inteira, e o contexto muda a cada turno. */
+export function buildAdkTools(local: ILocalTool[], context: () => IExecutionContext | undefined = () => undefined): FunctionTool[] {
   return local.map(
     (item) =>
       new FunctionTool({
@@ -16,7 +18,7 @@ export function buildAdkTools(local: ILocalTool[]): FunctionTool[] {
         description: item.description,
         parameters: toGenAiSchema(item.inputSchema),
         async execute(args: unknown) {
-          return item.execute(typeof args === 'object' && args !== null ? (args as Record<string, unknown>) : {})
+          return item.execute(typeof args === 'object' && args !== null ? (args as Record<string, unknown>) : {}, context())
         },
       }),
   )

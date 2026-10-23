@@ -18,4 +18,8 @@ export interface IExecutionContext {
    * decide se aceita isso.
    */
   token?: string
+  /** A sessão do turno em curso — é por ela que a delegação sabe de onde veio (ver `Delegation.Service`). */
+  sessionId?: string
+  /** O agente que está respondendo. */
+  agentId?: string
 }

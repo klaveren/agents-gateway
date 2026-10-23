@@ -16,8 +16,23 @@ const text = computed(() => props.turn?.text ?? props.pending?.text ?? '')
 const reasoning = computed(() => props.turn?.reasoning ?? props.pending?.reasoning ?? '')
 const tools = computed(() => {
   if (props.pending) return props.pending.tools
-  return (props.turn?.toolCalls ?? []).map((call) => ({ tool: call.tool, status: call.error ? ('error' as const) : ('done' as const), message: call.error }))
+  return (props.turn?.toolCalls ?? []).map((call) => ({ tool: call.tool, status: call.error ? ('error' as const) : ('done' as const), message: call.error, delegation: delegationOf(call) }))
 })
+
+/**
+ * A delegação de um turno: a quem foi e a conversa filha. O resultado vem como o SDK o entregou (texto,
+ * blocos ou JSON aninhado), então o id é procurado no texto serializado.
+ */
+const delegated = (tool: object) => (tool as { delegation?: { agentId?: string; sessionId: string } }).delegation
+
+function delegationOf(call: { tool: string; args?: unknown; result?: unknown }): { agentId?: string; sessionId: string } | undefined {
+  if (!call.tool.endsWith('delegate_to_agent')) return undefined
+  const serialized = JSON.stringify(call.result ?? '')
+  const sessionId = /sessionId\\*"\s*:\s*\\*"([^"\\]+)/.exec(serialized)?.[1]
+  if (!sessionId) return undefined
+  const agentId = (call.args as { agentId?: string } | undefined)?.agentId ?? /agentId\\*"\s*:\s*\\*"([^"\\]+)/.exec(serialized)?.[1]
+  return { agentId, sessionId }
+}
 const warnings = computed(() => props.turn?.warnings ?? props.pending?.warnings ?? [])
 const aborted = computed(() => props.turn?.aborted ?? props.pending?.aborted ?? false)
 const error = computed(() => props.turn?.error ?? props.pending?.error)
@@ -53,7 +68,10 @@ const thinking = computed(() => !!props.pending && !text.value && !props.pending
         >
           <span v-if="tool.status === 'running'" class="h-2 w-2 animate-pulse rounded-full bg-sky-400" />
           <span v-else>{{ tool.status === 'done' ? '✓' : '✕' }}</span>
-          {{ agents.toolLabel(tool.tool) }}
+          <RouterLink v-if="delegated(tool)" :to="`/c/${delegated(tool)!.sessionId}`" class="underline-offset-2 hover:underline">
+            Delegou a {{ agents.byId.get(delegated(tool)!.agentId ?? '')?.name ?? delegated(tool)!.agentId ?? 'outro agente' }} →
+          </RouterLink>
+          <template v-else>{{ agents.toolLabel(tool.tool) }}</template>
         </span>
       </div>
 

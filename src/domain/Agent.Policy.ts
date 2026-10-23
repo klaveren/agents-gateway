@@ -4,6 +4,7 @@ import { IAgent } from './models/Agent.Model'
 import { INativeTool, isNativeTool, nativeTool, nativeToolAllowed } from './Native.Tools'
 import { REASONING_LEVELS } from './Reasoning.Levels'
 import { isMcpToolRef, parseMcpToolRef } from './models/McpServer.Model'
+import { AGENT_TOOL_PREFIX, isAgentToolRef } from './models/Delegation.Model'
 
 /** Minúsculas, dígitos e hífen; começa por letra ou dígito. Vira parte de URL e de nome no ADK. */
 export const AGENT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,47}$/
@@ -50,6 +51,8 @@ export interface IAgentRules {
    * a MCP é recusada.
    */
   mcpServerExists?(serverId: string): boolean
+  /** O agente existe? (`agent:<id>`, a quem este pode delegar). Ausente = nenhuma delegação vale. */
+  agentExists?(agentId: string): boolean
   /** O perímetro das nativas. Ausente = `nativeToolAllowed` com o ambiente do processo. */
   nativeAllowed?(tool: INativeTool): boolean
   /** Problema do prompt para aquele provider (ex.: chaves que o ADK lê como variável). */
@@ -103,6 +106,14 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
 
   for (const tool of agent.allowedTools) {
     // ⚖️ MCP: o servidor tem de existir; a ferramenta, não — o servidor pode estar fora do ar ao salvar.
+    // ⛔ Delegação: a outro agente que exista — nunca a si mesmo (a volta mais curta de uma recursão).
+    if (isAgentToolRef(tool)) {
+      const target = tool.slice(AGENT_TOOL_PREFIX.length)
+      if (!target) issue('allowedTools', `invalid delegation (use agent:<id>): ${tool}`)
+      else if (target === agent.id) issue('allowedTools', 'an agent cannot delegate to itself')
+      else if (!rules.agentExists?.(target)) issue('allowedTools', `unknown agent to delegate to: ${target}`)
+      continue
+    }
     if (isMcpToolRef(tool)) {
       const ref = parseMcpToolRef(tool)
       if (!ref) issue('allowedTools', `invalid MCP tool (use mcp:<server>/<tool> or mcp:<server>/*): ${tool}`)

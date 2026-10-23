@@ -53,6 +53,9 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => observer?.disconnect())
+
+/** As conversas delegadas por outro agente (filhas) aparecem dentro da conversa que as originou, não na lista. */
+const topLevel = computed(() => conversations.items.filter((conversation) => !conversation.metadata?.delegatedBy))
 </script>
 
 <template>
@@ -105,7 +108,7 @@ onBeforeUnmount(() => observer?.disconnect())
       <p v-else-if="!conversations.loading && !conversations.items.length" class="m-6 text-center text-sm text-zinc-500">Nenhuma conversa{{ conversations.filters.q || conversations.filters.agentId ? ' com esse filtro' : ' ainda' }}.</p>
 
       <ConversationRow
-        v-for="conversation in conversations.items"
+        v-for="conversation in topLevel"
         :key="conversation.id"
         :conversation="conversation"
         :active="conversation.id === conversations.selectedId"

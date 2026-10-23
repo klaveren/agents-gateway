@@ -11,6 +11,9 @@ import { NullConversationRepository } from '@infra/persistence/Null.Conversation
 import { SqliteConversationRepository, DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
 import { makeClassifier } from './Classifier.Factory'
 import { makeOrchestrator } from './Orchestrator.Factory'
+import { makeTools } from './Tools.Factory'
+import { makeAgents } from './Agents.Factory'
+import { DelegationService } from '@application/Delegation.Service'
 
 /**
  * Onde a conversa é gravada.
@@ -46,13 +49,18 @@ export function makeUsecases() {
   const events = new InMemoryConversationEvents()
   const conversations = new NotifyingConversationRepository(makeConversationRepository(), events)
 
+  const createSession = new CreateSessionUseCase(agentProvider)
+  const sendMessage = new SendMessageUseCase(agentProvider, conversations, makeClassifier())
+  // A delegação usa os MESMOS casos de uso: a conversa filha é gravada e avisada como qualquer outra.
+  makeTools().delegation.bind(new DelegationService(agentProvider, createSession, sendMessage, undefined, (id) => makeAgents().get(id)?.modes))
+
   return {
     /** O MESMO repositório do `SendMessageUseCase`: o controller lê o que ele grava. */
     conversations,
     /** O MESMO barramento em que o repositório publica: a rota SSE assina este. */
     events,
-    createSessionUseCase: new CreateSessionUseCase(agentProvider),
-    sendMessageUseCase: new SendMessageUseCase(agentProvider, conversations, makeClassifier()),
+    createSessionUseCase: createSession,
+    sendMessageUseCase: sendMessage,
     cancelSessionUseCase: new CancelSessionUseCase(agentProvider),
     reconfigureSessionUseCase: new ReconfigureSessionUseCase(agentProvider),
     deleteSessionUseCase: new DeleteSessionUseCase(agentProvider),
