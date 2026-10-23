@@ -32,7 +32,6 @@ import { ISessionContextProvider } from '@domain/ports/SessionContextProvider.Po
 import { SessionNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgentReasoningFacts, toAgentDetailDto, toAgentDto } from './Agent.Dto'
 import { assertNoAdkTemplateCollision } from '@infra/adapters/GoogleAgent.Adapter'
-import { providerOfModel } from '@infra/classifier/Classifier.Completion'
 import { NullAgentRepository } from '@infra/persistence/Null.AgentRepository'
 import { IConversationView, toConversationDto, toStatsDto, toTurnDto } from './Conversation.Dto'
 import { metadataFilter, parsePageQuery } from './Monitor.Query'
@@ -336,17 +335,14 @@ export class AgentController {
 
   /**
    * Os fatos que a regra do agente precisa, lidos AGORA: as tools do catálogo neste instante (o MCP
-   * pode ter subido ou caído) e o que cada provider recusa no prompt.
-   *
-   * ⚠️ O provider do modelo sai SÓ do prefixo do id (`providerOfModel(model, [])`): se viesse também
-   * dos agentes declarados, um agente criado com um modelo trocado ensinaria a regra a aceitar o erro.
+   * pode ter subido ou caído) e o que cada provider recusa no prompt. O modelo é conferido no
+   * catálogo do provider (`modelEnabled`), nunca pelo prefixo do id.
    */
   private async agentRules(): Promise<Omit<IAgentRules, 'takenIds'>> {
     const tools = await this.usecases.catalog.list(this.localTools)
 
     return {
       knownTools: tools.map((tool) => tool.name),
-      providerOf: (model) => providerOfModel(model, []),
       // ⛔ Servidor DESLIGADO não serve: o agente o perdia em silêncio na hora de rodar.
       mcpServerExists: (id) => this.usecases.catalog.mcp.get(id)?.enabled === true,
       // ⛔ Delegar só para quem pode abrir conversa agora; um alvo inativo devolvia erro ao modelo-pai.

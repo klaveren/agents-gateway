@@ -50,13 +50,13 @@ export interface IAgentSettings {
 
   /**
    * O classificador de turno lê os dois A CADA TURNO (ver `ConfiguredTurnClassifier`): ligar, desligar
-   * e trocar o modelo valem na hora, sem reiniciar. `classifyTurns` ausente é DESLIGADO; modelo vazio
-   * cai em `CLASSIFIER_MODEL`, e sem nenhum dos dois não há classificação.
+   * e trocar o modelo valem na hora, sem reiniciar. `classifyTurns` ausente é DESLIGADO, e sem
+   * provider E modelo escolhidos não há classificação.
    */
   classifierModel?: string
   /**
-   * O provider do modelo do classificador — um modelo ATIVADO no catálogo dele. Ausente, o provider é
-   * deduzido do id do modelo (só funciona com os oficiais), como antes do catálogo.
+   * O provider do modelo do classificador — ligado, com chave de API, e o modelo ATIVADO no catálogo
+   * dele. Ausente = sem classificação: o provider nunca é deduzido do id do modelo.
    */
   classifierProvider?: string
   classifyTurns?: boolean

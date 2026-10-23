@@ -287,7 +287,8 @@ memory, lost on restart) and apply on the next session, in the same instant they
 | `agentId` | Agent that answers when the caller sends none. Empty = first in the registry. |
 | `model` | Model used when the caller sends none. A model the chosen agent does not declare falls back to that agent's first, so switching agent never ships a stale model id to the wrong provider. |
 | `classifyTurns` | Turn on the [turn classifier](#turn-classification). Absent = off. |
-| `classifierModel` | Model that classifies. Empty = `CLASSIFIER_MODEL`; with neither, no classification. |
+| `classifierProvider` | Provider that classifies: enabled, with an API key (subscriptions do not classify). |
+| `classifierModel` | Model that classifies, enabled in that provider's catalog. Without both, no classification. |
 
 `PUT /settings` takes a partial body: an absent field is untouched, and `null` (or `""`) on an
 optional field deletes it and reverts to the default. `audience` cannot be cleared. `GET`
@@ -318,7 +319,6 @@ whose id/e-mail is in `ADMIN_USERS`. Without `CALLER_PROOF_TOOL` nobody is an ad
 | `AGENTS_ENABLED` | *(all)* | Comma list of agent ids that **exist** in this process. An agent that is not listed is not refused, it is gone: no `/agents`, no session by any route. Use it so an agent carrying a shell tool (`run_bash`) cannot be reached. The boot fails if nothing matches. |
 | `SESSION_CONTEXT_TEMPLATE` | *(none)* | Text sent to the model before the **first** message of a session, never stored in the turn. Placeholders: `{id}` `{email}` `{role}` `{account}` `{date}`. If it cites an identity field the token lacks, no context is sent. Unset = none. |
 | `SESSION_TIMEZONE` | `UTC` | Time zone of `{date}` (IANA name; an invalid one falls back to UTC). |
-| `CLASSIFIER_MODEL` | *(none)* | Fallback model for the turn classifier when settings carry none (see [Turn classification](#turn-classification)). |
 | `CLASSIFIER_PROMPT_FILE` | *(none)* | Path to a text file that replaces the classifier prompt. A missing, unreadable or empty file is refused with a boot warning. |
 | `MODEL_PRICING_FILE` | *(none)* | Path to a JSON file of model prices, merged over the built-in table (see [Monitor, sharing and cost](#monitor-sharing-and-cost)). An invalid file is refused whole, with a boot warning. |
 
@@ -384,12 +384,12 @@ conversation:
 Severity is `green` < `blue` < `amber` < `red`; a conversation carries the worst label of its turns.
 
 It is **off by default**, because each classified turn is a paid call that sends the conversation
-text to a provider. It runs when `classifyTurns` is on in settings **and** a model resolves
-(`classifierModel` in settings, else `CLASSIFIER_MODEL`). Both are read on every turn, so toggling
-or switching the model needs no restart. The provider comes from the agent registry (which agent
-declares the model), falling back to the id prefix (`claude*`, `gemini*`, `gpt*`/`o<digit>*`), and the
-call uses the same plain SDK and API key as the chat lane (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
-`GOOGLE_API_KEY`). With no model or no key it stays off and says so once in the boot log.
+text to a provider. It runs when `classifyTurns` is on in settings **and** both `classifierProvider`
+and `classifierModel` are set. They are read on every turn, so toggling or switching needs no
+restart. The call goes through that provider's connection (protocol, base URL and the key saved in
+Providers), on the same plain SDK as the chat lane. The provider is never guessed from the model id.
+A provider that is off, keyless or a subscription, or a model not enabled in its catalog, keeps it off
+and says so once in the log.
 
 Design rules worth knowing:
 

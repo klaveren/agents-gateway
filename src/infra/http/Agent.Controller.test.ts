@@ -921,7 +921,9 @@ describe('AgentController', () => {
     })
 
     it('agente inválido: 422 com todos os problemas em details', async () => {
-      const controller = controllerWith({}, toolsCatalog(), proof)
+      // O modelo é conferido no catálogo do provider, nunca pelo prefixo do id.
+      const models = { isEnabled: (_provider: string, model: string) => model === 'gemini-3.7-flash' } as never
+      const controller = controllerWith({}, toolsCatalog(), proof, { models })
 
       const out = await as(ADMIN, controller, (res) => controller.createAgent(mockRequest({ body: { ...body, models: ['gpt-5.6-sol'], allowedTools: ['run_bash'] } }), res))
 

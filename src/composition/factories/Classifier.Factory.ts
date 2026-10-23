@@ -1,7 +1,7 @@
 import { ITurnClassifier } from '@domain/ports/TurnClassifier.Port'
 import { loadClassifierPrompt } from '@infra/classifier/Classifier.Prompt'
 import { ConfiguredTurnClassifier } from '@infra/classifier/Configured.TurnClassifier'
-import { makeCredentials } from './Credentials.Factory'
+import { makeModelCatalog } from './Catalog.Factory'
 import { makeProviders } from './Providers.Factory'
 import { makeSettings } from './Settings.Factory'
 
@@ -14,7 +14,7 @@ let instance: ITurnClassifier | undefined
  * quando uma variável de ambiente manda faria a tela de configuração mentir: o botão mudaria e nada
  * aconteceria até o próximo deploy. Desligado, ele não faz chamada nenhuma.
  *
- * Uma linha no boot diz se está ligado e, se não, por quê (sem modelo, sem chave).
+ * Uma linha no boot diz se está ligado e, se não, por quê (sem provider, sem chave, modelo inativo).
  */
 export function makeClassifier(): ITurnClassifier {
   if (instance) return instance
@@ -22,9 +22,8 @@ export function makeClassifier(): ITurnClassifier {
   const classifier = new ConfiguredTurnClassifier({
     settings: makeSettings(),
     prompt: loadClassifierPrompt(),
-    envModel: process.env.CLASSIFIER_MODEL,
-    credentials: makeCredentials(),
     connections: makeProviders(),
+    modelEnabled: (providerId, modelId) => makeModelCatalog().isEnabled(providerId, modelId),
   })
 
   // `void`: o boot não espera pelo banco, e `status` nunca lança.
