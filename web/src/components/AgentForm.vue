@@ -52,7 +52,9 @@ const enabledMcp = computed(() => mcp.list.filter((server) => server.enabled))
 function mcpOffered(entry: string): boolean {
   const [server, tool] = entry.slice(4).split('/')
   if (!enabledMcp.value.some((candidate) => candidate.id === server)) return false
-  return tool === '*' || (mcp.tools[server] ?? []).some((candidate) => candidate.name === tool)
+  // ⚠️ Servidor que não listou nada (fora do ar, ou só lista dentro de uma conversa) não prova que a ferramenta sumiu.
+  const listed = mcp.tools[server] ?? []
+  return tool === '*' || !listed.length || listed.some((candidate) => candidate.name === tool)
 }
 function toggleAllMcp(server: string) {
   const all = mcpRef(server, '*')
