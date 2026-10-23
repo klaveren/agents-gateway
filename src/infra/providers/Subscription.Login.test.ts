@@ -6,7 +6,7 @@ import { EProvider } from '@domain/enums/EProvider.Enum'
 import { inTerminal, onPath, SubscriptionLogins } from './Subscription.Client'
 
 /** Um `spawn` falso: o "terminal" escreve os pedaços dados e sai com `code`. */
-function fakeSpawn(chunks: string[], code = 0) {
+function fakeSpawn(chunks: string[], code: number | null = 0) {
   return (() => {
     const child = Object.assign(new EventEmitter(), {
       stdout: new PassThrough(),
@@ -18,10 +18,12 @@ function fakeSpawn(chunks: string[], code = 0) {
     })
     setImmediate(() => {
       for (const chunk of chunks) child.stdout.write(chunk)
-      setImmediate(() => {
-        child.exitCode = code
-        child.emit('close', code)
-      })
+      // `null` = o processo NÃO sai sozinho (o `claude setup-token` real espera um Enter depois do token).
+      if (code !== null)
+        setImmediate(() => {
+          child.exitCode = code
+          child.emit('close', code)
+        })
     })
     return child
   }) as never
@@ -60,6 +62,28 @@ describe('login do Claude pela tela (claude setup-token)', () => {
     const view = logins.view(EProvider.CLAUDE_SUB)
     assert.strictEqual(view.state, 'failed')
     assert.match(view.message ?? '', /invalid code/)
+  })
+})
+
+describe('login do Claude: o processo não sai sozinho', () => {
+  it('⛔ o token aparecendo já conecta — sem esperar o processo terminar', async () => {
+    const saved: string[] = []
+    const logins = new SubscriptionLogins(fakeSpawn([`${ESC}]8;;${URL}${BEL}x`, `\r\n${TOKEN}\r\nPress Enter to continue`], null))
+    await logins.start(EProvider.CLAUDE_SUB, { onToken: (token) => saved.push(token) })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.deepStrictEqual(saved, [TOKEN])
+    assert.strictEqual(logins.view(EProvider.CLAUDE_SUB).state, 'done')
+  })
+
+  it('código recusado vira "falhou" com o motivo do CLI, em vez de "aguardando" para sempre', async () => {
+    const logins = new SubscriptionLogins(
+      fakeSpawn([`${ESC}]8;;${URL}${BEL}x`, '\r\nOAuth error: Invalid code. Please make sure the full code was copied\r\nPress Enter to retry.'], null),
+    )
+    await logins.start(EProvider.CLAUDE_SUB)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const view = logins.view(EProvider.CLAUDE_SUB)
+    assert.strictEqual(view.state, 'failed')
+    assert.match(view.message ?? '', /Invalid code/)
   })
 })
 

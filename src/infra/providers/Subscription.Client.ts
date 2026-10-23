@@ -226,6 +226,8 @@ const OSC8_URL = /\u001b\]8;[^;]*;(https:\/\/[^\u0007\u001b]+)/
 const OSC = /\u001b\][^\u0007\u001b]*(\u0007|\u001b\\)/g
 /** O token de um ano do `claude setup-token`. ⛔ Nunca sai do servidor: vai para o cofre e some da saída guardada. */
 const CLAUDE_TOKEN = /sk-ant-oat\d{2}-[A-Za-z0-9_-]{20,}/
+/** O token COMPLETO: seguido de espaço ou quebra de linha. Sem isso, um pedaço que chegou primeiro valia como token. */
+const CLAUDE_TOKEN_DONE = /sk-ant-oat\d{2}-[A-Za-z0-9_-]{20,}(?=\s)/
 
 /** O que cada login procura na saída do cliente: o link a abrir e, no Codex, o código de dispositivo. */
 const LOGIN_URL: Partial<Record<EProvider, RegExp>> = {
@@ -276,11 +278,17 @@ export class SubscriptionLogins {
         const text = raw.replace(OSC, '').replace(ANSI, '')
         // O token pode chegar partido em dois pedaços: procura no fim do anterior + este.
         current.tail = (current.tail + text).slice(-600)
-        const token = CLAUDE_TOKEN.exec(current.tail)?.[0]
+        const token = CLAUDE_TOKEN_DONE.exec(current.tail)?.[0]
         // ⛔ O token não fica na saída guardada (ela vira mensagem de erro).
         if (token) current.token = token
         current.output = (current.output + text.replace(new RegExp(CLAUDE_TOKEN.source, 'g'), '[token]')).slice(-20_000)
         current.view.url ??= LOGIN_URL[protocol]?.exec(current.output)?.[0]
+        // ⚠️ O `claude setup-token` NÃO SAI sozinho: depois do token (ou de um erro) ele espera um Enter.
+        // Esperar o `close` deixava a tela em "aguardando" para sempre — termina aqui, pelo que apareceu.
+        if (protocol === EProvider.CLAUDE_SUB && current.view.state === 'waiting') {
+          if (current.token) this.finishClaude(protocol, current, options)
+          else if (/OAuth error[^\n]*/i.test(current.output)) this.failClaude(protocol, current)
+        }
         if (protocol === EProvider.CODEX) current.view.userCode ??= current.output.match(/\b[A-Z0-9]{4}-[A-Z0-9]{4,6}\b/)?.[0]
         if (current.view.url && (protocol !== EProvider.CODEX || current.view.userCode)) resolve()
       }
@@ -294,22 +302,43 @@ export class SubscriptionLogins {
     child.on('close', (code) => {
       if (current.view.state !== 'waiting') return
       let ok = protocol === EProvider.ANTIGRAVITY ? /"status"\s*:\s*"SUCCESS"/.test(current.output) : code === 0
-      if (protocol === EProvider.CLAUDE_SUB) {
-        ok = !!current.token
-        if (current.token) {
-          try {
-            options.onToken?.(current.token)
-          } catch {
-            ok = false
-          }
-          current.token = undefined
-        }
-      }
+      // O Claude termina pelo que aparece na saída (ver `read`); saiu sem token, falhou.
+      if (protocol === EProvider.CLAUDE_SUB) ok = false
       Object.assign(current.view, ok ? { state: 'done', message: 'Conectado.' } : { state: 'failed', message: loginFailure(current.output, code) })
     })
 
     await seen
     return current.view
+  }
+
+  private finishClaude(protocol: EProvider, current: ILoginRun, options: ILoginOptions): void {
+    try {
+      options.onToken?.(current.token as string)
+      Object.assign(current.view, { state: 'done', message: 'Conectado.' })
+    } catch (error: unknown) {
+      Object.assign(current.view, { state: 'failed', message: `O token não pôde ser salvo: ${error instanceof Error ? error.message : String(error)}` })
+    }
+    current.token = undefined
+    this.stop(current)
+  }
+
+  private failClaude(protocol: EProvider, current: ILoginRun): void {
+    const reason = /OAuth error:?\s*([^\n]*?)(?:Press Enter to retry\.?)?\s*$/im.exec(current.output)?.[1]?.trim() || 'o Claude recusou o código'
+    Object.assign(current.view, { state: 'failed', message: `${reason} Clique em Entrar de novo e use o código do link novo.` })
+    this.stop(current)
+  }
+
+  /** Encerra o processo de um login (o grupo inteiro: `sh`, `script` e o cliente). */
+  private stop(current: ILoginRun): void {
+    if (current.child.exitCode !== null || !current.child.pid) {
+      if (current.child.exitCode === null) current.child.kill('SIGTERM')
+      return
+    }
+    try {
+      process.kill(-current.child.pid, 'SIGTERM')
+    } catch {
+      current.child.kill('SIGTERM')
+    }
   }
 
   /** O código que a página de login devolveu (Antigravity), direto para o processo que espera. */
