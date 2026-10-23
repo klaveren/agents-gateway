@@ -12,6 +12,7 @@ import {
   makeUsageController,
 } from '@composition/factories/Controller.Factory'
 import { cleanupOrphans } from '@infra/sandbox/Docker.Sandbox'
+import { clearSessionWorkspaces } from '@infra/adapters/support/Subscription.Workspace'
 import { makeTools } from '@composition/factories/Tools.Factory'
 import { warnIfProofDisabled } from '@infra/http/Caller.Proof'
 import { HttpServer } from '@infra/http/Http.Server'
@@ -44,6 +45,8 @@ async function bootstrap() {
   void makeTools().mcp.connectAll()
   // Contêineres e redes de MCP que um processo anterior deixou (queda, reinício) saem antes de tudo.
   void cleanupOrphans()
+  // Os diretórios vazios das conversas de assinatura de um processo anterior.
+  clearSessionWorkspaces()
 
   // Com contas locais há prova (a do token deste gateway); o aviso fica para quem roda sem banco.
   warnIfProofDisabled(makeAuth().proof)

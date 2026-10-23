@@ -96,4 +96,14 @@ describe('agentIssues', () => {
       ['not enabled in Providers → Models: gemini-desligado'],
     )
   })
+
+  it('⛔ assinatura só na lane agent; o Claude da assinatura usa as nativas do Claude', () => {
+    const codex = agent({ provider: 'codex', models: ['gpt-6.1-sol'], modes: [EMode.CHAT, EMode.AGENT], allowedTools: [] })
+    assert.deepStrictEqual(
+      agentIssues(codex, { ...rules, modelEnabled: () => true }).map((issue) => [issue.field, issue.message]),
+      [['modes', 'codex runs only in the agent lane']],
+    )
+    const claudeSub = agent({ provider: 'claude-sub', models: ['claude-opus-5-5'], modes: [EMode.AGENT], allowedTools: ['sdk:WebSearch'] })
+    assert.deepStrictEqual(agentIssues(claudeSub, { ...rules, modelEnabled: () => true }), [])
+  })
 })

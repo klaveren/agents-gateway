@@ -1,6 +1,6 @@
 /** O que a API do gateway devolve — espelho do OpenAPI (`/v1/openapi.json`). */
 
-export type TProvider = 'claude' | 'openai' | 'google'
+export type TProvider = 'claude' | 'openai' | 'google' | 'claude-sub' | 'codex' | 'antigravity'
 export type TMode = 'chat' | 'agent'
 export type TClassification = 'green' | 'blue' | 'amber' | 'red'
 
@@ -179,6 +179,8 @@ export interface IProviderStatus {
   protocol: TProvider
   baseUrl?: string
   official: boolean
+  /** Fala pela assinatura de uma pessoa (Claude Pro/Max, ChatGPT, Google), sem chave de API. */
+  subscription?: boolean
   enabled: boolean
   credential: {
     configured: boolean
@@ -312,4 +314,14 @@ export interface IMcpServer {
 export interface IMcpTool {
   name: string
   description: string
+}
+
+/** O login de uma assinatura em andamento (ver `/providers/:id/login`). */
+export interface ISubscriptionLogin {
+  state: 'idle' | 'waiting' | 'done' | 'failed'
+  url?: string
+  userCode?: string
+  needsCode: boolean
+  expiresAt?: string
+  message?: string
 }

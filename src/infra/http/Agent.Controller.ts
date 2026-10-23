@@ -342,7 +342,10 @@ export class AgentController {
         const { owner: _declared, ...metadata } = body.metadata ?? {}
         const owner = ownerOf(resolved)
 
-        return this.usecases.createSession.execute({ ...body, metadata: owner ? { ...metadata, owner } : metadata })
+        // Agente de assinatura: só com o papel PROVADO de administrador (ver `subscriptionAdminOnly`).
+        const subscriptionAccess = (await checkAdminAccess(this.usecases.proof)).allowed
+
+        return this.usecases.createSession.execute({ ...body, metadata: owner ? { ...metadata, owner } : metadata, subscriptionAccess })
       },
       { status: 201, message: 'Session created successfully' },
     )

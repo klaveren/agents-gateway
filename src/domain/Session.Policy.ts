@@ -14,7 +14,8 @@ import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
  * decisão.
  */
 export function resolveSessionMode(agent: IAgent, input: ICreateSessionInput): EMode {
-  const mode = input.mode ?? EMode.CHAT
+  // Sem pedido, chat — ou a lane que o agente tem, quando ele não tem chat (os de assinatura).
+  const mode = input.mode ?? (agent.modes.includes(EMode.CHAT) ? EMode.CHAT : (agent.modes[0] ?? EMode.CHAT))
 
   if (!agent.modes.includes(mode)) throw new ModeNotSupportedError(agent.id, mode)
   if (input.tools && mode !== EMode.CHAT) throw new ToolsNotSupportedError(mode)

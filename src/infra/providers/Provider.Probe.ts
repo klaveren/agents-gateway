@@ -19,7 +19,7 @@ const TIMEOUT_MS = 8_000
  * ⚖️ A chave vai em CABEÇALHO nos três (o Gemini aceita `x-goog-api-key`): na URL ela acabaria em log
  * de proxy.
  */
-const OFFICIAL_BASE: Record<EProvider, string> = {
+const OFFICIAL_BASE: Partial<Record<EProvider, string>> = {
   [EProvider.CLAUDE]: 'https://api.anthropic.com',
   [EProvider.OPENAI]: 'https://api.openai.com/v1',
   [EProvider.GOOGLE]: 'https://generativelanguage.googleapis.com/v1beta',

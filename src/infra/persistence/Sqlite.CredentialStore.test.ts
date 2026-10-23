@@ -27,7 +27,7 @@ describe('SqliteCredentialStore', () => {
     const store = new SqliteCredentialStore(new SecretBox(randomBytes(32)), ':memory:', env)
     store.save(EProvider.OPENAI, 'sk-proj-muito-secreta-abcd', 'root@x.test')
 
-    const status = store.status(Object.values(EProvider))
+    const status = store.status([EProvider.CLAUDE, EProvider.OPENAI, EProvider.GOOGLE])
     assert.ok(!JSON.stringify(status).includes('muito-secreta'))
     assert.ok(!JSON.stringify(status).includes('do-ambiente'))
     assert.deepStrictEqual(

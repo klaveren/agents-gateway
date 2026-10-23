@@ -4,6 +4,7 @@ import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import {
   AdapterNotFoundError,
+  SubscriptionRestrictedError,
   AgentNotFoundError,
   AgentUnavailableError,
   AgentWithoutModelError,
@@ -13,6 +14,7 @@ import {
   SessionNotFoundError,
 } from '@domain/errors/Domain.Error'
 import { REASONING_LEVELS } from '@domain/Reasoning.Levels'
+import { isSubscription, subscriptionAdminOnly } from '@domain/Subscription.Policy'
 import { DEFAULT_SETTINGS, IAgentSettings } from '@domain/models/Settings.Model'
 import { IAgentDirectory } from '@domain/ports/AgentRepository.Port'
 import { IProviderDirectory } from '@domain/ports/ProviderRepository.Port'
@@ -111,9 +113,12 @@ export class AgentProvider implements IAgentProvider {
     // Os modelos do agente já vêm filtrados pelo catálogo: sem nenhum ativado, não há com o que conversar.
     if (!agent.models.length) throw new AgentWithoutModelError(agent.id)
     const mode = resolveSessionMode(agent, input)
+    const protocol = this.protocolOf(agent.provider)
+    if (isSubscription(protocol) && subscriptionAdminOnly() && !input.subscriptionAccess) throw new SubscriptionRestrictedError(agent.provider)
 
-    return this.getAdapter(this.protocolOf(agent.provider), mode).createSession(agent, {
-      ...input,
+    const { subscriptionAccess: _access, ...rest } = input
+    return this.getAdapter(protocol, mode).createSession(agent, {
+      ...rest,
       agentId: agent.id,
       model: modelFor(agent, input.model || settings.model),
       mode,

@@ -1,3 +1,4 @@
+import { SubscriptionLogins } from '@infra/providers/Subscription.Client'
 import { McpProxyController } from '@infra/http/McpProxy.Controller'
 import { McpServersService } from '@application/McpServers.Service'
 import { McpServersController } from '@infra/http/McpServers.Controller'
@@ -47,7 +48,14 @@ export function makeAuthController(): AuthController {
 }
 
 export function makeProvidersController(): ProvidersController {
-  return new ProvidersController({ providers: makeProviders(), credentials: makeCredentials(), agents: makeAgents(), models: makeModelCatalog(), proof: makeAuth().proof })
+  return new ProvidersController({
+    providers: makeProviders(),
+    credentials: makeCredentials(),
+    agents: makeAgents(),
+    models: makeModelCatalog(),
+    proof: makeAuth().proof,
+    logins: new SubscriptionLogins(),
+  })
 }
 
 export function makeUsageController(conversations: AgentController['conversations']): UsageController {

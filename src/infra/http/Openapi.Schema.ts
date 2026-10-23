@@ -435,6 +435,18 @@ const providerStatusSchema = {
   },
 }
 
+const loginSchema = {
+  type: 'object',
+  properties: {
+    state: { type: 'string', enum: ['idle', 'waiting', 'done', 'failed'] },
+    url: { type: 'string' },
+    userCode: { type: 'string' },
+    needsCode: { type: 'boolean' },
+    expiresAt: { type: 'string', format: 'date-time' },
+    message: { type: 'string' },
+  },
+}
+
 const catalogModelSchema = {
   type: 'object',
   properties: {
@@ -677,6 +689,31 @@ export const OPENAPI_DOCUMENT = {
           }),
         },
         responses: { '200': { description: 'Updated', ...json(envelope(catalogModelSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/providers/{id}/login': {
+      get: {
+        summary: 'The subscription login in progress (ChatGPT via Codex, Google via Antigravity): link, device code and state. Administrators only',
+        parameters: providerParam,
+        responses: { '200': { description: 'OK', ...json(envelope(loginSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+      post: {
+        summary: "Start the client's official login in a home of the gateway's own; returns the link to open (and the device code). Administrators only",
+        parameters: providerParam,
+        responses: { '200': { description: 'Started', ...json(envelope(loginSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+      delete: {
+        summary: 'Cancel the login in progress. Administrators only',
+        parameters: providerParam,
+        responses: { '200': { description: 'Cancelled', ...json(envelope(loginSchema)) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/providers/{id}/login/code': {
+      post: {
+        summary: 'Hand the code the login page returned (Antigravity) to the waiting login. Administrators only',
+        parameters: providerParam,
+        requestBody: { required: true, ...json({ type: 'object', properties: { code: { type: 'string' } }, required: ['code'] }) },
+        responses: { '200': { description: 'Sent', ...json(envelope(loginSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
     },
     '/providers/{id}/models/sync': {

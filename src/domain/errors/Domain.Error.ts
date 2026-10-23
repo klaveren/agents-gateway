@@ -155,6 +155,13 @@ export class ProviderUnavailableError extends DomainError {
   }
 }
 
+/** ⛔ Agente de assinatura (conta pessoal de quem fez o login) para quem não administra. */
+export class SubscriptionRestrictedError extends DomainError {
+  constructor(public readonly providerId: string) {
+    super(`Provider ${providerId} runs on a personal subscription: only administrators can use it (SUBSCRIPTION_ADMIN_ONLY).`)
+  }
+}
+
 export class ModelNotFoundError extends DomainError {
   constructor(
     public readonly providerId: string,

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { nativeToolsOf } from '@domain/Native.Tools'
-import { IConnectionSource, requireConnection } from './support/Keyed.Client'
+import { IConnectionSource, requireConnection, UnavailableProviderError } from './support/Keyed.Client'
+import { sessionWorkspace, subscriptionEnv } from './support/Subscription.Workspace'
 import { query, type CanUseTool, type EffortLevel, type Options, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -43,6 +44,12 @@ export interface IClaudeAgentAdapterDeps {
   connections?: IConnectionSource
   store?: SessionStore
   catalog?: ToolCatalog
+  /**
+   * Pela ASSINATURA (Claude Pro/Max), protocolo `claude-sub`: nenhuma chave de API vai ao CLI, que usa o
+   * login do host — ou o `CLAUDE_CODE_OAUTH_TOKEN` (de `claude setup-token`) salvo no lugar da chave.
+   * ⛔ O CLI recebe o ambiente mínimo, não o `.env` do gateway, e roda num diretório vazio por conversa.
+   */
+  subscription?: boolean
 }
 
 /**
@@ -58,19 +65,21 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
   private readonly catalog?: ToolCatalog
 
   private readonly connections?: IConnectionSource
+  private readonly protocol: EProvider
 
   constructor(deps: IClaudeAgentAdapterDeps = {}) {
     this.query = deps.query ?? query
     this.connections = deps.connections
+    this.protocol = deps.subscription ? EProvider.CLAUDE_SUB : EProvider.CLAUDE
     this.store = deps.store ?? new SessionStore()
     this.catalog = deps.catalog
   }
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
-    const record = this.store.create(sessionPrefix(EProvider.CLAUDE, EMode.AGENT), {
+    const record = this.store.create(sessionPrefix(this.protocol, EMode.AGENT), {
       agentId: agent.id,
       provider: agent.provider,
-      protocol: EProvider.CLAUDE,
+      protocol: this.protocol,
       mode: EMode.AGENT,
       // O modelo vem resolvido pelo provider de sessões (o pedido, ou o padrão do agente).
       model: input.model || agent.models[0] || '',
@@ -112,7 +121,12 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
 
     let env: Record<string, string | undefined> | undefined
     try {
-      env = this.connections ? cliEnv(requireConnection(record.provider, EProvider.CLAUDE, this.connections)) : undefined
+      env =
+        this.protocol === EProvider.CLAUDE_SUB
+          ? this.subscriptionEnv(record.provider)
+          : this.connections
+            ? cliEnv(requireConnection(record.provider, EProvider.CLAUDE, this.connections))
+            : undefined
     } catch (error: unknown) {
       yield { type: 'error', sessionId, timestamp: new Date(), payload: { message: error instanceof Error ? error.message : String(error) } }
       return
@@ -141,6 +155,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       abortController: abort,
       ...(native.started ? { resume: native.sdkSessionId } : { sessionId: native.sdkSessionId }),
       ...(env ? { env } : {}),
+      ...(this.protocol === EProvider.CLAUDE_SUB ? { cwd: sessionWorkspace(sessionId) } : {}),
     }
 
     const effort = this.toEffort(record.reasoning)
@@ -309,6 +324,13 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
 
       return { behavior: 'deny', message: `Tool "${bare}" is not enabled for this agent.` }
     }
+  }
+
+  /** Sem chave de API: o login do host, ou o token OAuth salvo no lugar da chave. */
+  private subscriptionEnv(providerId: string): Record<string, string> {
+    const connection = this.connections?.connection(providerId)
+    if (this.connections && !connection) throw new UnavailableProviderError(providerId)
+    return subscriptionEnv({ HOME: process.env.HOME, CLAUDE_CODE_OAUTH_TOKEN: connection?.key })
   }
 
   async cancel(sessionId: string): Promise<void> {
