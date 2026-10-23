@@ -108,7 +108,7 @@ function context(tokens?: number): string {
     <div class="flex flex-wrap items-center gap-2">
       <span class="text-sm font-medium">Modelos</span>
       <span class="text-xs text-zinc-500">{{ enabledCount }} ativados de {{ models.length }}<template v-if="lastSync"> · lista de {{ fullTime(lastSync) }}</template></span>
-      <button type="button" :disabled="syncing || !provider.credential.configured" class="ml-auto rounded-full bg-zinc-800 px-3 py-1 text-xs hover:bg-zinc-700 disabled:opacity-40" :title="provider.credential.configured ? '' : 'Salve uma chave antes'" @click="sync">
+      <button type="button" :disabled="syncing || (!provider.credential.configured && !provider.subscription)" class="ml-auto rounded-full bg-zinc-800 px-3 py-1 text-xs hover:bg-zinc-700 disabled:opacity-40" :title="provider.credential.configured || provider.subscription ? '' : 'Salve uma chave antes'" @click="sync">
         {{ syncing ? 'Atualizando…' : 'Atualizar lista' }}
       </button>
     </div>
@@ -122,7 +122,7 @@ function context(tokens?: number): string {
     </div>
 
     <p v-if="loading" class="text-xs text-zinc-500">Carregando…</p>
-    <p v-else-if="!models.length" class="text-xs text-zinc-500">Nenhum modelo ainda. {{ provider.credential.configured ? 'Clique em "Atualizar lista" para buscar os do provider.' : 'Salve uma chave e atualize a lista.' }}</p>
+    <p v-else-if="!models.length" class="text-xs text-zinc-500">Nenhum modelo ainda. {{ provider.credential.configured || provider.subscription ? 'Clique em "Atualizar lista" para buscar os do provider.' : 'Salve uma chave e atualize a lista.' }}</p>
 
     <ul v-if="visible.length" class="scroll-thin max-h-96 divide-y divide-zinc-800/70 overflow-y-auto">
       <li v-for="model in visible" :key="model.modelId" class="flex flex-wrap items-center gap-x-3 gap-y-1 py-2" :class="{ 'opacity-50': !model.available }">

@@ -68,6 +68,7 @@ export const NATIVE_TOOLS: readonly INativeTool[] = [
   hosted(EProvider.GOOGLE, 'google_search', 'Google Search', 'Busca no Google, feita pelo Gemini.', true),
   hosted(EProvider.GOOGLE, 'url_context', 'Contexto de URL', 'O Gemini lê páginas pela infraestrutura do Google.', true),
   hosted(EProvider.GOOGLE, 'code_execution', 'Execução de código', 'Roda código no sandbox do Gemini.', true),
+  hosted(EProvider.CODEX, 'web_search', 'Busca na web', 'Busca na internet, feita pelo Codex na conta do ChatGPT.', false),
 ]
 
 export function isNativeTool(id: string): boolean {

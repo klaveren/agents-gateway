@@ -30,14 +30,32 @@ export function usd(value: number | undefined): string {
 }
 
 export function initials(name: string): string {
-  const words = name.replace(/\(.*?\)/g, '').trim().split(/\s+/).filter(Boolean)
+  const words = name
+    .replace(/\(.*?\)/g, '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
   return ((words[0]?.[0] ?? '?') + (words[1]?.[0] ?? '')).toUpperCase()
 }
 
-export const PROVIDER_LABEL: Record<TProvider, string> = { claude: 'Claude', openai: 'OpenAI', google: 'Gemini' }
+export const PROVIDER_LABEL: Record<TProvider, string> = {
+  claude: 'Claude',
+  openai: 'OpenAI',
+  google: 'Gemini',
+  'claude-sub': 'Claude (assinatura)',
+  codex: 'ChatGPT (assinatura)',
+  antigravity: 'Antigravity (assinatura)',
+}
 
 /** Cor de cada provider: o avatar diz de quem é a conversa antes de ler o nome. */
-export const PROVIDER_COLOR: Record<TProvider, string> = { claude: 'bg-claude', openai: 'bg-openai', google: 'bg-google' }
+export const PROVIDER_COLOR: Record<TProvider, string> = {
+  claude: 'bg-claude',
+  openai: 'bg-openai',
+  google: 'bg-google',
+  'claude-sub': 'bg-claude',
+  codex: 'bg-openai',
+  antigravity: 'bg-google',
+}
 
 export const CLASSIFICATION_COLOR: Record<string, string> = {
   green: 'bg-emerald-500',

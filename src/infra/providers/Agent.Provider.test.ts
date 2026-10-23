@@ -10,6 +10,7 @@ import {
   ModeNotSupportedError,
   SessionBusyError,
   SessionNotFoundError,
+  SubscriptionRestrictedError,
   ToolsNotSupportedError,
 } from '@domain/errors/Domain.Error'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
@@ -162,6 +163,31 @@ describe('AgentProvider', () => {
 
     await assert.rejects(provider.createSession({ agentId: 'vazio' }), /Providers → Models/)
     assert.deepStrictEqual(chat.calls, [])
+  })
+
+  it('⛔ agente de assinatura: só com acesso de administrador, e cai na lane agent sem pedir', async () => {
+    const store = new SessionStore()
+    const lane = spyAdapter(store, EProvider.CODEX, EMode.AGENT, [])
+    const codex = { id: 'cx', name: 'Cx', provider: 'codex', systemPrompt: 'p', models: ['gpt-6.1-sol'], modes: [EMode.AGENT], allowedTools: [] }
+    const directory = {
+      get: (id: string) =>
+        id === 'codex' ? { id, name: 'ChatGPT', protocol: EProvider.CODEX, official: true, enabled: true, createdAt: new Date(), updatedAt: new Date() } : undefined,
+      list: () => [],
+    }
+    const provider = new AgentProvider(
+      new Map([[adapterKey(EProvider.CODEX, EMode.AGENT), lane.adapter]]),
+      store,
+      undefined,
+      { list: () => [codex], get: () => codex },
+      directory as never,
+    )
+
+    await assert.rejects(provider.createSession({ agentId: 'cx' }), SubscriptionRestrictedError)
+    assert.deepStrictEqual(lane.calls, [])
+
+    const session = await provider.createSession({ agentId: 'cx', subscriptionAccess: true })
+    assert.strictEqual(session.mode, EMode.AGENT)
+    assert.deepStrictEqual(lane.calls, ['createSession'])
   })
 
   it('defaults to the chat lane when no mode is given', async () => {

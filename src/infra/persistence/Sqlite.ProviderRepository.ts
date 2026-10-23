@@ -40,8 +40,8 @@ export class SqliteProviderRepository implements IProviderRepository {
     this.db.exec(SCHEMA)
 
     const now = new Date().toISOString()
-    const seed = this.db.prepare('INSERT OR IGNORE INTO providers (id, name, protocol, base_url, official, enabled, created_at, updated_at) VALUES (?, ?, ?, NULL, 1, 1, ?, ?)')
-    for (const provider of OFFICIAL_PROVIDERS) seed.run(provider.id, provider.name, provider.protocol, now, now)
+    const seed = this.db.prepare('INSERT OR IGNORE INTO providers (id, name, protocol, base_url, official, enabled, created_at, updated_at) VALUES (?, ?, ?, NULL, 1, ?, ?, ?)')
+    for (const provider of OFFICIAL_PROVIDERS) seed.run(provider.id, provider.name, provider.protocol, provider.enabled ? 1 : 0, now, now)
   }
 
   list(): IProviderConfig[] {

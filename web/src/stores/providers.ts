@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api } from '@/lib/api'
-import type { ICatalogModel, IModelPrice, IProbeResult, IProviderStatus, TProvider } from '@/lib/types'
+import type { ICatalogModel, IModelPrice, IProbeResult, IProviderStatus, ISubscriptionLogin, TProvider } from '@/lib/types'
 
 export interface INewProvider {
   id: string
@@ -54,7 +54,9 @@ export const useProvidersStore = defineStore('providers', () => {
   }
 
   async function syncModels(id: string): Promise<{ added: number; updated: number; missing: number; total: number; models: ICatalogModel[] }> {
-    const result = await api<{ added: number; updated: number; missing: number; total: number; models: ICatalogModel[] }>(`/providers/${encodeURIComponent(id)}/models/sync`, { method: 'POST' })
+    const result = await api<{ added: number; updated: number; missing: number; total: number; models: ICatalogModel[] }>(`/providers/${encodeURIComponent(id)}/models/sync`, {
+      method: 'POST',
+    })
     await load()
     return result
   }
@@ -66,5 +68,15 @@ export const useProvidersStore = defineStore('providers', () => {
     return model
   }
 
-  return { list, names, load, create, update, remove, save, clear, test, models, syncModels, updateModel }
+  /** O login de uma assinatura pela tela: começar, ver o estado, colar o código, cancelar. */
+  function login(id: string, action: 'status' | 'start' | 'cancel'): Promise<ISubscriptionLogin> {
+    const method = action === 'start' ? 'POST' : action === 'cancel' ? 'DELETE' : 'GET'
+    return api<ISubscriptionLogin>(`/providers/${encodeURIComponent(id)}/login`, { method })
+  }
+
+  function loginCode(id: string, code: string): Promise<ISubscriptionLogin> {
+    return api<ISubscriptionLogin>(`/providers/${encodeURIComponent(id)}/login/code`, { method: 'POST', body: { code } })
+  }
+
+  return { list, names, load, create, update, remove, save, clear, test, models, syncModels, updateModel, login, loginCode }
 })

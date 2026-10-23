@@ -5,6 +5,7 @@ import AgentAvatar from '@/components/AgentAvatar.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import MasterDetail from '@/components/MasterDetail.vue'
 import ProviderModels from '@/components/ProviderModels.vue'
+import SubscriptionLogin from '@/components/SubscriptionLogin.vue'
 import Icon from '@/components/Icon.vue'
 import { ApiError } from '@/lib/api'
 import { fullTime } from '@/lib/format'
@@ -29,7 +30,13 @@ const CONSOLE: Record<string, string> = {
   openai: 'https://platform.openai.com/api-keys',
   google: 'https://aistudio.google.com/apikey',
 }
-const PROTOCOL_LABEL: Record<TProvider, string> = { claude: 'Anthropic', openai: 'OpenAI', google: 'Gemini' }
+const PROTOCOL_LABEL: Record<TProvider, string> = { claude: 'Anthropic', openai: 'OpenAI', google: 'Gemini', 'claude-sub': 'Claude Code', codex: 'Codex', antigravity: 'Antigravity' }
+/** De onde vem o login de cada assinatura, para o texto da tela. */
+const SUBSCRIPTION_HINT: Record<string, string> = {
+  'claude-sub': 'Usa o login do Claude Code deste computador (claude login). Para usar outra conta, cole um token gerado por `claude setup-token`.',
+  codex: 'Entra com a sua conta do ChatGPT. O gateway guarda esse login num lugar só dele, separado do seu Codex.',
+  antigravity: 'Entra com a sua conta Google do Antigravity. O gateway guarda esse login num lugar só dele, separado do seu agy.',
+}
 
 const drafts = ref<Record<string, string>>({})
 const results = ref<Record<string, IProbeResult & { saved?: boolean }>>({})
@@ -121,6 +128,7 @@ async function create() {
 /** A linha de baixo na lista: o que falta, ou o resumo. */
 function rowStatus(provider: IProviderStatus): string {
   if (!provider.enabled) return 'desligado'
+  if (provider.subscription) return `assinatura · ${provider.catalog ? `${provider.catalog.enabled} de ${provider.catalog.total} modelos` : 'modelos não listados'}`
   if (!provider.credential.configured) return 'sem chave'
   const models = provider.catalog ? `${provider.catalog.enabled} de ${provider.catalog.total} modelos` : 'modelos não listados'
   return `${provider.official ? 'oficial' : `compatível ${PROTOCOL_LABEL[provider.protocol]}`} · ${models}`
@@ -128,6 +136,7 @@ function rowStatus(provider: IProviderStatus): string {
 
 function sourceLabel(provider: IProviderStatus): string {
   const credential = provider.credential
+  if (provider.subscription) return credential.source === 'stored' ? `Token salvo pela tela · termina em …${credential.last4}` : 'Pela assinatura, sem chave de API'
   if (credential.source === 'stored') return `Chave salva pela tela · termina em …${credential.last4}`
   if (credential.source === 'env') return `Chave do .env (${ENV_NAME[provider.id]}) · termina em …${credential.last4}`
   return 'Sem chave'
@@ -160,9 +169,9 @@ function sourceLabel(provider: IProviderStatus): string {
         <AgentAvatar :name="provider.name" :provider="provider.id" size="sm" />
         <span class="min-w-0 flex-1">
           <span class="block truncate text-sm font-medium">{{ provider.name }}</span>
-          <span class="block truncate text-xs" :class="provider.enabled && !provider.credential.configured ? 'text-amber-300' : 'text-zinc-500'">{{ rowStatus(provider) }}</span>
+          <span class="block truncate text-xs" :class="provider.enabled && !provider.credential.configured && !provider.subscription ? 'text-amber-300' : 'text-zinc-500'">{{ rowStatus(provider) }}</span>
         </span>
-        <span class="h-2 w-2 shrink-0 rounded-full" :class="provider.enabled && provider.credential.configured ? 'bg-emerald-400' : 'bg-zinc-600'" :title="provider.enabled ? 'Ligado' : 'Desligado'" />
+        <span class="h-2 w-2 shrink-0 rounded-full" :class="provider.enabled && (provider.credential.configured || provider.subscription) ? 'bg-emerald-400' : 'bg-zinc-600'" :title="provider.enabled ? 'Ligado' : 'Desligado'" />
       </RouterLink>
     </template>
 
@@ -203,8 +212,8 @@ function sourceLabel(provider: IProviderStatus): string {
         <div class="flex items-center gap-3">
           <AgentAvatar :name="selected.name" :provider="selected.id" size="lg" />
           <div class="min-w-0">
-            <h2 class="text-lg font-semibold">{{ selected.name }} <span class="ml-1 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] font-normal text-zinc-400">{{ selected.official ? 'oficial' : `compatível ${PROTOCOL_LABEL[selected.protocol]}` }}</span></h2>
-            <p class="text-xs break-all" :class="selected.credential.configured ? 'text-zinc-400' : 'text-amber-300'">
+            <h2 class="text-lg font-semibold">{{ selected.name }} <span class="ml-1 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] font-normal text-zinc-400">{{ selected.subscription ? 'assinatura' : selected.official ? 'oficial' : `compatível ${PROTOCOL_LABEL[selected.protocol]}` }}</span></h2>
+            <p class="text-xs break-all" :class="selected.credential.configured || selected.subscription ? 'text-zinc-400' : 'text-amber-300'">
               {{ sourceLabel(selected) }}<template v-if="selected.baseUrl"> · <code>{{ selected.baseUrl }}</code></template>
             </p>
           </div>
@@ -219,16 +228,28 @@ function sourceLabel(provider: IProviderStatus): string {
         </p>
         <p v-if="selected.credential.updatedBy && selected.credential.source === 'stored'" class="text-xs text-zinc-500">Chave salva por {{ selected.credential.updatedBy }} em {{ fullTime(selected.credential.updatedAt) }}</p>
 
-        <form class="flex flex-wrap items-center gap-2" @submit.prevent="save(selected.id)">
+        <template v-if="selected.subscription">
+          <p class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+            Conta pessoal: os agentes usam a SUA assinatura, então só quem administra conversa com eles (SUBSCRIPTION_ADMIN_ONLY). Cada conversa roda num diretório vazio, sem terminal nem acesso ao disco
+            deste servidor. Os preços dos modelos são os da API, para mostrar quanto a conversa custaria em tokens.
+          </p>
+          <p class="text-xs text-zinc-400">{{ SUBSCRIPTION_HINT[selected.protocol] }}</p>
+          <SubscriptionLogin v-if="selected.protocol !== 'claude-sub'" :provider="selected" @done="test(selected.id)" />
+          <div v-if="selected.protocol !== 'claude-sub'" class="flex">
+            <button type="button" :disabled="busy[selected.id]" class="rounded-full bg-zinc-800 px-4 py-2 text-sm hover:bg-zinc-700 disabled:opacity-40" @click="test(selected.id)">{{ busy[selected.id] ? 'Testando…' : 'Testar' }}</button>
+          </div>
+        </template>
+
+        <form v-if="!selected.subscription || selected.protocol === 'claude-sub'" class="flex flex-wrap items-center gap-2" @submit.prevent="save(selected.id)">
           <input
             v-model="drafts[selected.id]"
             type="password"
             autocomplete="off"
             spellcheck="false"
-            :placeholder="selected.credential.configured ? 'Colar nova chave para trocar' : 'Colar a chave de API'"
+            :placeholder="selected.subscription ? 'Token OAuth (opcional)' : selected.credential.configured ? 'Colar nova chave para trocar' : 'Colar a chave de API'"
             class="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-sm outline-none focus:border-emerald-500/60"
           />
-          <button type="button" :disabled="busy[selected.id] || (!drafts[selected.id] && !selected.credential.configured)" class="rounded-full bg-zinc-800 px-4 py-2 text-sm hover:bg-zinc-700 disabled:opacity-40" @click="test(selected.id)">Testar</button>
+          <button type="button" :disabled="busy[selected.id] || (!drafts[selected.id] && !selected.credential.configured && !selected.subscription)" class="rounded-full bg-zinc-800 px-4 py-2 text-sm hover:bg-zinc-700 disabled:opacity-40" @click="test(selected.id)">Testar</button>
           <button type="submit" :disabled="busy[selected.id] || !drafts[selected.id]?.trim()" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40">Salvar</button>
           <button v-if="selected.credential.source === 'stored'" type="button" class="rounded-full px-3 py-2 text-sm text-rose-300 hover:bg-rose-500/10" @click="removingKey = selected">Remover chave</button>
         </form>
@@ -247,7 +268,7 @@ function sourceLabel(provider: IProviderStatus): string {
           <span>Agentes:</span>
           <span v-for="agent in selected.agents" :key="agent.id" class="rounded-full bg-zinc-800 px-2 py-0.5 text-zinc-300">{{ agent.name }}</span>
           <span v-if="!selected.agents.length">nenhum ainda</span>
-          <a v-if="CONSOLE[selected.id]" :href="CONSOLE[selected.id]" target="_blank" rel="noopener noreferrer" class="ml-auto text-emerald-400 hover:underline">Gerar chave ↗</a>
+          <a v-if="CONSOLE[selected.id] && !selected.subscription" :href="CONSOLE[selected.id]" target="_blank" rel="noopener noreferrer" class="ml-auto text-emerald-400 hover:underline">Gerar chave ↗</a>
           <button v-if="!selected.official" type="button" class="ml-auto text-rose-300 hover:underline" @click="removingProvider = selected">Remover provider</button>
         </div>
       </section>

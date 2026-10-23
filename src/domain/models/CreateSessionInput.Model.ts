@@ -20,4 +20,9 @@ export interface ICreateSessionInput {
    */
   tools?: boolean
   metadata?: Record<string, unknown>
+  /**
+   * Quem pede pode usar agente de ASSINATURA (ver `subscriptionAdminOnly`). Só a porta HTTP preenche,
+   * com o papel PROVADO do chamador; ausente = não pode, quando a regra está ligada.
+   */
+  subscriptionAccess?: boolean
 }

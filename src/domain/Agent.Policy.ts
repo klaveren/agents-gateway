@@ -1,4 +1,5 @@
 import { EMode } from './enums/EMode.Enum'
+import { isSubscription, lanesOf, nativeFamily } from './Subscription.Policy'
 import { EProvider } from './enums/EProvider.Enum'
 import { IAgent } from './models/Agent.Model'
 import { INativeTool, isNativeTool, nativeTool, nativeToolAllowed } from './Native.Tools'
@@ -82,7 +83,8 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
   if (!agent.models.length) issue('models', 'at least one model')
   // ⚖️ Só nos OFICIAIS o id do modelo diz de quem ele é. Num compatível (que pode servir modelos de
   // vários fabricantes, com ids próprios) qualquer id é plausível — quem confere é o catálogo de modelos do provider.
-  const official = protocol !== undefined && protocol === agent.provider
+  // Os de assinatura conferem pelo catálogo (o id do modelo não diz de quem ele é: o Antigravity serve Claude).
+  const official = protocol !== undefined && protocol === agent.provider && !isSubscription(protocol)
   if (protocol && rules.modelEnabled) {
     for (const model of agent.models) if (!rules.modelEnabled(agent.provider, model)) issue('models', `not enabled in Providers → Models: ${model}`)
   } else if (official) {
@@ -103,6 +105,8 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
 
   if (!agent.modes.length) issue('modes', 'at least one lane')
   for (const mode of agent.modes) if (!Object.values(EMode).includes(mode)) issue('modes', `unknown lane: ${String(mode)}`)
+  // ⛔ Assinatura só tem a lane agent: as APIs de chat exigem chave (ver `Subscription.Policy`).
+  if (protocol) for (const mode of agent.modes) if (!lanesOf(protocol).includes(mode)) issue('modes', `${protocol} runs only in the agent lane`)
 
   for (const tool of agent.allowedTools) {
     // ⚖️ MCP: o servidor tem de existir; a ferramenta, não — o servidor pode estar fora do ar ao salvar.
@@ -128,7 +132,7 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
     // ⛔ Nativa: tem de ser do SDK deste provider, estar no perímetro do deploy e, se exigir, o provider ser o oficial.
     const native = nativeTool(tool)
     if (!native) issue('allowedTools', `unknown SDK tool: ${tool}`)
-    else if (native.protocol !== protocol) issue('allowedTools', `${native.label} is a ${native.protocol} SDK tool`)
+    else if (native.protocol !== (protocol && nativeFamily(protocol))) issue('allowedTools', `${native.label} is a ${native.protocol} SDK tool`)
     else if (!(rules.nativeAllowed ?? nativeToolAllowed)(native)) issue('allowedTools', `blocked by NATIVE_TOOLS_ENABLED: ${tool}`)
     else if (native.officialOnly && !official) issue('allowedTools', `${native.label} works only with the official provider`)
   }

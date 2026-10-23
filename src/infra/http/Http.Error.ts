@@ -15,6 +15,7 @@ import {
   McpServerInUseError,
   ProviderNotFoundError,
   ProviderUnavailableError,
+  SubscriptionRestrictedError,
   InvalidCredentialsError,
   InvalidUserError,
   InvalidAccessTokenError,
@@ -36,6 +37,7 @@ export type TErrorCode =
   | 'provider_in_use'
   | 'mcp_server_in_use'
   | 'provider_unavailable'
+  | 'subscription_restricted'
   | 'upstream_error'
   | 'agent_without_model'
   | 'invalid_credentials'
@@ -147,6 +149,10 @@ export function toHttpFailure(error: unknown): IHttpFailure {
 
   if (error instanceof ProviderInUseError) {
     return { status: 409, code: 'provider_in_use', message: error.message, details: { agents: error.agents } }
+  }
+
+  if (error instanceof SubscriptionRestrictedError) {
+    return { status: 403, code: 'subscription_restricted', message: error.message }
   }
 
   if (error instanceof ProviderUnavailableError) {

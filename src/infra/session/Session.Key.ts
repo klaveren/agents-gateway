@@ -8,7 +8,8 @@ import { EProvider } from '@domain/enums/EProvider.Enum'
  * sozinho, sem um mapa paralelo de sessão para lane vivendo em outro lugar.
  */
 export function sessionPrefix(provider: EProvider, mode: EMode): string {
-  return `${provider}-${mode}`
+  // O hífen separa as partes: `claude-sub` vira `claudesub`, senão o modo seria lido como `sub`.
+  return `${provider.replace(/-/g, '')}-${mode}`
 }
 
 export function readMode(sessionId: string): EMode | undefined {
@@ -18,5 +19,5 @@ export function readMode(sessionId: string): EMode | undefined {
 
 export function readProvider(sessionId: string): EProvider | undefined {
   const provider = sessionId.split('-')[0]
-  return Object.values(EProvider).find((value) => value === provider)
+  return Object.values(EProvider).find((value) => value.replace(/-/g, '') === provider)
 }

@@ -11,6 +11,11 @@ export const REASONING_LEVELS: Record<EProvider, readonly string[]> = {
   [EProvider.CLAUDE]: ['low', 'medium', 'high', 'xhigh', 'max'],
   [EProvider.OPENAI]: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
   [EProvider.GOOGLE]: [],
+  [EProvider.CLAUDE_SUB]: ['low', 'medium', 'high', 'xhigh', 'max'],
+  // `modelReasoningEffort` do Codex SDK.
+  [EProvider.CODEX]: ['minimal', 'low', 'medium', 'high', 'xhigh'],
+  // ⚠️ VAZIO DE PROPÓSITO: no Antigravity o nível é parte do id do modelo (`gemini-4-argon-high`).
+  [EProvider.ANTIGRAVITY]: [],
 }
 
 /** O nível pedido, se o protocolo o aceita; senão `undefined` (o provider usa o padrão dele). */

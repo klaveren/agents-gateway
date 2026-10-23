@@ -7,6 +7,8 @@ import { IAgentDirectory } from '@domain/ports/AgentRepository.Port'
 import { ICredentialStore } from '@domain/ports/CredentialStore.Port'
 import { listModels } from '@infra/providers/Model.Listing'
 import { probeKey } from '@infra/providers/Provider.Probe'
+import { listSubscriptionModels, probeSubscription, SubscriptionLogins } from '@infra/providers/Subscription.Client'
+import { isSubscription } from '@domain/Subscription.Policy'
 import { Request, Response } from 'express'
 import { z } from 'zod'
 import { checkAdminAccess } from './Caller.Admin'
@@ -25,12 +27,17 @@ export interface IProvidersControllerDeps {
   /** Injetáveis para o teste não sair para a rede. */
   probe?: typeof probeKey
   list?: typeof listModels
+  /** As assinaturas: teste, listagem e login pelos clientes oficiais (ver `Subscription.Client`). */
+  subscriptionProbe?: typeof probeSubscription
+  subscriptionList?: typeof listSubscriptionModels
+  logins?: SubscriptionLogins
 }
 
 /** Uma chave de API: texto sem espaço, com teto — ninguém cola um arquivo inteiro aqui. */
 const key = z.string().trim().min(8).max(500).regex(/^\S+$/, 'no spaces')
 const keySchema = z.object({ key })
 const testSchema = z.object({ key: key.optional() })
+const loginCodeSchema = z.object({ code: z.string().trim().min(4).max(2000).regex(/^\S+$/, 'no spaces') })
 const createSchema = z.object({
   id: z.string().trim().max(32),
   name: z.string().max(200),
@@ -55,7 +62,23 @@ const updateSchema = z.object({ name: z.string().max(200).optional(), baseUrl: z
  */
 export class ProvidersController {
   constructor(private readonly deps: IProvidersControllerDeps) {
-    for (const name of ['list', 'create', 'update', 'remove', 'saveKey', 'clearKey', 'test', 'listModels', 'syncModels', 'updateModel'] as const) this[name] = this[name].bind(this)
+    for (const name of [
+      'list',
+      'create',
+      'update',
+      'remove',
+      'saveKey',
+      'clearKey',
+      'test',
+      'listModels',
+      'syncModels',
+      'updateModel',
+      'loginStatus',
+      'loginStart',
+      'loginCode',
+      'loginCancel',
+    ] as const)
+      this[name] = this[name].bind(this)
   }
 
   async list(_req: Request, res: Response) {
@@ -147,6 +170,9 @@ export class ProvidersController {
       const provider = this.deps.providers.get(this.idOf(req)) as IProviderConfig
       const { key: pasted } = parseBody(testSchema, req.body ?? {})
 
+      // Assinatura: um turno mínimo pelo cliente oficial. A "chave" do Claude é o token OAuth, opcional.
+      if (isSubscription(provider.protocol)) return (this.deps.subscriptionProbe ?? probeSubscription)(provider.protocol, pasted ?? this.deps.credentials.get(provider.id))
+
       const candidate = pasted ?? this.deps.credentials.get(provider.id)
       if (!candidate) return { ok: false, message: 'Nenhuma chave para testar.' }
 
@@ -172,6 +198,16 @@ export class ProvidersController {
       async () => {
         const admin = await this.requireAdmin('syncModels')
         const provider = this.deps.providers.get(this.idOf(req)) as IProviderConfig
+        if (isSubscription(provider.protocol)) {
+          let listed
+          try {
+            listed = await (this.deps.subscriptionList ?? listSubscriptionModels)(provider.protocol)
+          } catch (error: unknown) {
+            throw new HttpError(502, 'upstream_error', error instanceof Error ? error.message : String(error))
+          }
+          const result = this.catalog.sync(provider.id, listed, admin)
+          return { ...result, models: this.catalog.list(provider.id).map(toModelDto) }
+        }
         const key = this.deps.credentials.get(provider.id)
         if (!key) throw new HttpError(422, 'validation_error', 'Salve uma chave antes de atualizar a lista de modelos.')
 
@@ -209,6 +245,50 @@ export class ProvidersController {
     )
   }
 
+  /** O login de uma assinatura em andamento: link, código de dispositivo e estado. */
+  async loginStatus(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      await this.requireAdmin('subscriptionLogin')
+      return this.logins.view(this.subscriptionOf(req))
+    })
+  }
+
+  /** Começa o login oficial do cliente (num HOME só do gateway) e devolve o link para abrir. */
+  async loginStart(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      await this.requireAdmin('subscriptionLogin')
+      return this.logins.start(this.subscriptionOf(req))
+    })
+  }
+
+  /** O código que a página de login devolveu, colado na tela. */
+  async loginCode(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      await this.requireAdmin('subscriptionLogin')
+      return this.logins.submit(this.subscriptionOf(req), parseBody(loginCodeSchema, req.body).code)
+    })
+  }
+
+  async loginCancel(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      await this.requireAdmin('subscriptionLogin')
+      const protocol = this.subscriptionOf(req)
+      this.logins.cancel(protocol)
+      return this.logins.view(protocol)
+    })
+  }
+
+  private subscriptionOf(req: Request): EProvider {
+    const provider = this.deps.providers.get(this.idOf(req)) as IProviderConfig
+    if (provider.protocol !== EProvider.CODEX && provider.protocol !== EProvider.ANTIGRAVITY) throw new HttpError(422, 'validation_error', 'Este provider não tem login pela tela.')
+    return provider.protocol
+  }
+
+  private get logins(): SubscriptionLogins {
+    if (!this.deps.logins) throw new HttpError(404, 'not_found', 'Not found')
+    return this.deps.logins
+  }
+
   private get catalog(): ModelCatalogService {
     if (!this.deps.models) throw new HttpError(404, 'not_found', 'Not found')
     return this.deps.models
@@ -225,6 +305,7 @@ export class ProvidersController {
       protocol: provider.protocol,
       baseUrl: provider.baseUrl,
       official: provider.official,
+      subscription: isSubscription(provider.protocol),
       enabled: provider.enabled,
       updatedAt: provider.updatedAt,
       updatedBy: provider.updatedBy,

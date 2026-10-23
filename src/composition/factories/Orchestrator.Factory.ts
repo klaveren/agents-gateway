@@ -2,8 +2,10 @@ import { setTracingDisabled } from '@openai/agents'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
+import { AntigravityAgentAdapter } from '@infra/adapters/AntigravityAgent.Adapter'
 import { ClaudeAgentAdapter } from '@infra/adapters/ClaudeAgent.Adapter'
 import { ClaudeChatAdapter } from '@infra/adapters/ClaudeChat.Adapter'
+import { CodexAgentAdapter } from '@infra/adapters/CodexAgent.Adapter'
 import { GoogleAgentAdapter } from '@infra/adapters/GoogleAgent.Adapter'
 import { GoogleChatAdapter } from '@infra/adapters/GoogleChat.Adapter'
 import { OpenAIAgentAdapter } from '@infra/adapters/OpenAIAgent.Adapter'
@@ -50,6 +52,10 @@ export function makeOrchestrator(): AgentProvider {
     [adapterKey(EProvider.CLAUDE, EMode.AGENT), new ClaudeAgentAdapter({ store: sessions, catalog, connections })],
     [adapterKey(EProvider.OPENAI, EMode.AGENT), new OpenAIAgentAdapter({ store: sessions, catalog, connections })],
     [adapterKey(EProvider.GOOGLE, EMode.AGENT), new GoogleAgentAdapter({ store: sessions, catalog, connections })],
+    // As assinaturas: só a lane agent (ver `Subscription.Policy`).
+    [adapterKey(EProvider.CLAUDE_SUB, EMode.AGENT), new ClaudeAgentAdapter({ store: sessions, catalog, connections, subscription: true })],
+    [adapterKey(EProvider.CODEX, EMode.AGENT), new CodexAgentAdapter({ store: sessions, catalog, connections })],
+    [adapterKey(EProvider.ANTIGRAVITY, EMode.AGENT), new AntigravityAgentAdapter({ store: sessions, connections })],
   ])
 
   /**

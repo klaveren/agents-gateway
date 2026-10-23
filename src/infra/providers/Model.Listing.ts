@@ -6,7 +6,7 @@ import { maskKey } from './Provider.Probe'
 const TIMEOUT_MS = 15_000
 const MAX_PAGES = 20
 
-const OFFICIAL_BASE: Record<EProvider, string> = {
+const OFFICIAL_BASE: Partial<Record<EProvider, string>> = {
   [EProvider.CLAUDE]: 'https://api.anthropic.com',
   [EProvider.OPENAI]: 'https://api.openai.com/v1',
   [EProvider.GOOGLE]: 'https://generativelanguage.googleapis.com/v1beta',
@@ -35,7 +35,7 @@ type TPage = { items: IListedModel[]; next?: string }
  * ⛔ Lança com a chave mascarada.
  */
 export async function listModels(connection: { protocol: EProvider; baseUrl?: string }, key: string, fetcher: typeof fetch = fetch): Promise<IListedModel[]> {
-  const base = connection.baseUrl ?? OFFICIAL_BASE[connection.protocol]
+  const base = connection.baseUrl ?? OFFICIAL_BASE[connection.protocol] ?? ''
   const all: IListedModel[] = []
   let cursor: string | undefined
 

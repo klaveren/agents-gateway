@@ -33,8 +33,12 @@ export interface IProviderConnection {
   key?: string
 }
 
-export const OFFICIAL_PROVIDERS: ReadonlyArray<Pick<IProviderConfig, 'id' | 'name' | 'protocol'>> = [
-  { id: 'claude', name: 'Claude (Anthropic)', protocol: EProvider.CLAUDE },
-  { id: 'openai', name: 'OpenAI', protocol: EProvider.OPENAI },
-  { id: 'google', name: 'Gemini (Google)', protocol: EProvider.GOOGLE },
+/** ⚖️ Os de assinatura nascem DESLIGADOS: usam a conta pessoal de quem fez o login no host. */
+export const OFFICIAL_PROVIDERS: ReadonlyArray<Pick<IProviderConfig, 'id' | 'name' | 'protocol' | 'enabled'>> = [
+  { id: 'claude', name: 'Claude (Anthropic)', protocol: EProvider.CLAUDE, enabled: true },
+  { id: 'openai', name: 'OpenAI', protocol: EProvider.OPENAI, enabled: true },
+  { id: 'google', name: 'Gemini (Google)', protocol: EProvider.GOOGLE, enabled: true },
+  { id: 'claude-sub', name: 'Claude (assinatura)', protocol: EProvider.CLAUDE_SUB, enabled: false },
+  { id: 'codex', name: 'ChatGPT (assinatura)', protocol: EProvider.CODEX, enabled: false },
+  { id: 'antigravity', name: 'Antigravity (assinatura)', protocol: EProvider.ANTIGRAVITY, enabled: false },
 ]

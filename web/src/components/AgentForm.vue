@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { levelsFor, REASONING_LEVELS } from '@/lib/reasoning'
+import { levelsFor, REASONING_LEVELS, SUBSCRIPTION_PROTOCOLS } from '@/lib/reasoning'
 import { computed, onMounted, ref, watch } from 'vue'
 import { ApiError } from '@/lib/api'
 import { providerLabel } from '@/lib/format'
@@ -46,6 +46,11 @@ function toggleAllMcp(server: string) {
 const providerOptions = computed(() => providers.list.filter((provider) => provider.enabled || provider.id === form.value.provider))
 const protocol = computed(() => providers.list.find((provider) => provider.id === form.value.provider)?.protocol ?? form.value.provider)
 const compatible = computed(() => !!providers.list.find((provider) => provider.id === form.value.provider)?.baseUrl)
+/** Assinatura: só a lane agent (as APIs de chat exigem chave). */
+const subscription = computed(() => SUBSCRIPTION_PROTOCOLS.includes(protocol.value))
+watch(subscription, (value) => {
+  if (value) form.value.modes = ['agent']
+})
 
 /** As ferramentas nativas do SDK deste provider (pelo protocolo), na ordem do risco. */
 const RISK_ORDER = ['hosted', 'session', 'server-network', 'server-read', 'server-exec']
@@ -252,8 +257,19 @@ async function remove() {
       <div class="field">
         <span>Lanes</span>
         <div class="flex flex-wrap gap-1.5">
-          <button v-for="mode in (['chat', 'agent'] as TMode[])" :key="mode" type="button" class="chip" :class="{ on: form.modes.includes(mode) }" @click="toggle(form.modes, mode)">{{ mode === 'chat' ? 'Chat' : 'Agents SDK' }}</button>
+          <button
+            v-for="mode in (['chat', 'agent'] as TMode[])"
+            :key="mode"
+            type="button"
+            class="chip disabled:opacity-40"
+            :class="{ on: form.modes.includes(mode) }"
+            :disabled="subscription && mode === 'chat'"
+            @click="toggle(form.modes, mode)"
+          >
+            {{ mode === 'chat' ? 'Chat' : 'Agents SDK' }}
+          </button>
         </div>
+        <small v-if="subscription" class="hint">Assinatura: só a lane Agents SDK, e só quem administra conversa com este agente (a conta é pessoal).</small>
         <small v-for="message in issues.modes" :key="message" class="error">{{ message }}</small>
       </div>
       <div class="field">
