@@ -1,10 +1,21 @@
-node_modules
-dist
+# ⛔ Nada disto entra no contexto do build: o contexto vai inteiro para o builder (remoto, no buildx).
+# `data/` tem o banco, a chave-mestra (secrets.key) e o login do Codex (codex-home/auth.json).
+data
+**/*.db
+**/*.db-*
+**/secrets.key
+**/codex-home
+**/antigravity-home
+
+# `**/`: sem isso o padrão só casa na raiz, e o web/node_modules do Mac (binários darwin) entrava.
+**/node_modules
+**/dist
 .git
 .github
-.env
-.env.*
+**/.env
+**/.env.*
 !.env.example
 *.log
 Dockerfile
 docker-compose.yml
+infra
