@@ -1,3 +1,4 @@
+import { trustProxyIssue } from './Security.Middleware'
 const LOOPBACK_HOSTS = ['127.0.0.1', 'localhost', '::1']
 const AUTH_SECRET_MIN = 32
 
@@ -16,6 +17,9 @@ export function bootIssues(env: NodeJS.ProcessEnv = process.env): string[] {
   // Segredo curto deixa forjar token de admin offline (HS256).
   const secret = env.AUTH_SECRET?.trim()
   if (secret && secret.length < AUTH_SECRET_MIN) issues.push(`AUTH_SECRET has ${secret.length} characters: use at least ${AUTH_SECRET_MIN} (or leave it unset to generate one).`)
+
+  const proxy = trustProxyIssue(env.TRUST_PROXY)
+  if (proxy) issues.push(proxy)
 
   return issues
 }

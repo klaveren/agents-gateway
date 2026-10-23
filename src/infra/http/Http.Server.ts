@@ -22,7 +22,7 @@ import { fail } from './Http.Response'
 import { OPENAPI_DOCUMENT } from './Openapi.Schema'
 import { identityFromToken, tokenFromHeader, withCaller } from '@infra/mcp/Caller.Identity'
 import { handleSelfMcp, rejectSelfMcp } from './SelfMcp.Controller'
-import { CALLER_HEADER, corsMiddleware, host, jsonLimit, requireCaller, requireToken, messageJsonLimit, rateLimit, securityHeaders } from './Security.Middleware'
+import { CALLER_HEADER, corsMiddleware, host, jsonLimit, requireCaller, requireToken, messageJsonLimit, rateLimit, securityHeaders, trustProxySetting } from './Security.Middleware'
 
 export const API_PREFIX = '/v1'
 
@@ -71,6 +71,9 @@ export class HttpServer {
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
+    // Atrás de um proxy listado em `TRUST_PROXY`, `req.ip` e `req.secure` vêm do `X-Forwarded-*` dele.
+    const trusted = trustProxySetting()
+    if (trusted) this.app.set('trust proxy', trusted)
     this.app.use(securityHeaders())
     this.app.use(corsMiddleware())
     // ⛔ Dois tetos: o pequeno vale para tudo (o corpo é lido ANTES da autenticação); o grande, só para a
