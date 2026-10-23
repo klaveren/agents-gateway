@@ -133,7 +133,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     }
 
     const local = this.catalog?.localFor(agent.allowedTools) ?? []
-    const natives = nativeToolsOf(agent.allowedTools, EProvider.CLAUDE).map((tool) => tool.sdkName)
+    const natives = nativeToolsOf(agent.allowedTools, EProvider.CLAUDE).flatMap((tool) => tool.sdkNames ?? [tool.sdkName])
     const remotes = (await this.catalog?.mcpServersFor(agent.allowedTools, context)) ?? []
 
     const options: Options = {
@@ -331,7 +331,9 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
   private subscriptionEnv(providerId: string): Record<string, string> {
     const connection = this.connections?.connection(providerId)
     if (this.connections && !connection) throw new UnavailableProviderError(providerId)
-    return subscriptionEnv({ HOME: process.env.HOME, CLAUDE_CODE_OAUTH_TOKEN: connection?.key })
+    // ⛔ Sem os conectores da conta claude.ai de quem fez o login (Docs, Drive…): com o login do host o CLI
+    // os carregava, e eles apareciam para os agentes do gateway.
+    return subscriptionEnv({ HOME: process.env.HOME, CLAUDE_CODE_OAUTH_TOKEN: connection?.key, ENABLE_CLAUDEAI_MCP_SERVERS: 'false' })
   }
 
   async cancel(sessionId: string): Promise<void> {
@@ -401,7 +403,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
 export function cliEnv(connection: { key: string; baseUrl?: string; compatible: boolean }): Record<string, string | undefined> {
   // ⛔ Ambiente MÍNIMO, nunca `{ ...process.env }`: com `sdk:Bash`/`sdk:Read` o CLI levaria as outras chaves,
   // o `GATEWAY_TOKEN` e o `SECRETS_KEY`. O HOME fica (o CLI guarda estado nele); o `cwd` é o da conversa.
-  const base = subscriptionEnv({ HOME: process.env.HOME })
+  const base = subscriptionEnv({ HOME: process.env.HOME, ENABLE_CLAUDEAI_MCP_SERVERS: 'false' })
   if (!connection.compatible) return { ...base, ANTHROPIC_API_KEY: connection.key }
 
   return { ...base, ANTHROPIC_BASE_URL: connection.baseUrl, ANTHROPIC_AUTH_TOKEN: connection.key, ANTHROPIC_API_KEY: '' }
