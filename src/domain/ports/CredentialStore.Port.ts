@@ -1,5 +1,5 @@
 /** De onde vem a chave em vigor de um provider. */
-export type TCredentialSource = 'stored' | 'env' | 'none'
+export type TCredentialSource = 'stored' | 'none'
 
 /** O que a tela pode saber de uma chave — ⛔ nunca a chave. */
 export interface ICredentialStatus {
@@ -41,7 +41,7 @@ export interface ICredentialStore extends ICredentialSource {
   subscribe(listener: (providerId: string) => void): void
 }
 
-/** A variável de ambiente de cada provider OFICIAL — a reserva quando não há chave salva. */
+/** A variável de ambiente de cada provider OFICIAL — importada para o cofre uma vez, no primeiro boot. */
 export const ENV_KEY_NAME: Readonly<Record<string, string>> = {
   claude: 'ANTHROPIC_API_KEY',
   openai: 'OPENAI_API_KEY',

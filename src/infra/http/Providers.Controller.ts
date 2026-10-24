@@ -9,6 +9,7 @@ import { listModels } from '@infra/providers/Model.Listing'
 import { probeKey } from '@infra/providers/Provider.Probe'
 import { listSubscriptionModels, probeSubscription, SubscriptionLogins } from '@infra/providers/Subscription.Client'
 import { isSubscription } from '@domain/Subscription.Policy'
+import { protocolCatalog } from '@domain/Protocol.Catalog'
 import { Request, Response } from 'express'
 import { z } from 'zod'
 import { checkAdminAccess } from './Caller.Admin'
@@ -46,6 +47,7 @@ const createSchema = z.object({
   key: key.optional(),
 })
 const price = z.number().min(0).max(10_000)
+const addModelSchema = z.object({ modelId: z.string().trim().min(1).max(200) })
 const modelChangeSchema = z.object({
   modelId: z.string().trim().min(1).max(200),
   enabled: z.boolean().optional(),
@@ -77,8 +79,18 @@ export class ProvidersController {
       'loginStart',
       'loginCode',
       'loginCancel',
+      'addModel',
+      'protocols',
     ] as const)
       this[name] = this[name].bind(this)
+  }
+
+  /**
+   * Os protocolos e o que a tela precisa de cada um (lanes, níveis, assinatura, rótulo, console).
+   * Para qualquer chamador autenticado: é metadado das regras, sem nada de configuração ou chave.
+   */
+  async protocols(_req: Request, res: Response) {
+    await this.respond(res, async () => protocolCatalog())
   }
 
   async list(_req: Request, res: Response) {
@@ -121,7 +133,7 @@ export class ProvidersController {
     await this.respond(
       res,
       async () => {
-        await this.requireAdmin('removeProvider')
+        const admin = await this.requireAdmin('removeProvider')
         const id = this.idOf(req)
         this.deps.providers.remove(id, (providerId) =>
           this.deps.agents
@@ -129,7 +141,8 @@ export class ProvidersController {
             .filter((agent) => agent.provider === providerId)
             .map((agent) => agent.name),
         )
-        this.deps.models?.clear(id)
+        // Desliga, não apaga: as conversas antigas com esse provider continuam com preço.
+        this.deps.models?.disableAll(id, admin)
         return null
       },
       { message: 'Provider removed' },
@@ -222,6 +235,20 @@ export class ProvidersController {
         return { ...result, models: this.catalog.list(provider.id).map(toModelDto) }
       },
       { message: 'Models synced' },
+    )
+  }
+
+  /** Acrescenta um modelo por id (provider sem listagem, ou modelo que a listagem não traz). Nasce desligado. */
+  async addModel(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        const admin = await this.requireAdmin('addModel')
+        const id = this.idOf(req)
+        const { modelId } = parseBody(addModelSchema, req.body)
+        return toModelDto(this.catalog.addModel(id, modelId, admin))
+      },
+      { status: 201, message: 'Model added' },
     )
   }
 

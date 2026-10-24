@@ -1,4 +1,5 @@
 import { InvalidSettingsError } from '@domain/errors/Domain.Error'
+import { ILimits, normalizeLimits } from './Limits.Model'
 
 /**
  * As decisões que mudam sem deploy.
@@ -50,16 +51,19 @@ export interface IAgentSettings {
 
   /**
    * O classificador de turno lê os dois A CADA TURNO (ver `ConfiguredTurnClassifier`): ligar, desligar
-   * e trocar o modelo valem na hora, sem reiniciar. `classifyTurns` ausente é DESLIGADO; modelo vazio
-   * cai em `CLASSIFIER_MODEL`, e sem nenhum dos dois não há classificação.
+   * e trocar o modelo valem na hora, sem reiniciar. `classifyTurns` ausente é DESLIGADO, e sem
+   * provider E modelo escolhidos não há classificação.
    */
   classifierModel?: string
   /**
-   * O provider do modelo do classificador — um modelo ATIVADO no catálogo dele. Ausente, o provider é
-   * deduzido do id do modelo (só funciona com os oficiais), como antes do catálogo.
+   * O provider do modelo do classificador — ligado, com chave de API, e o modelo ATIVADO no catálogo
+   * dele. Ausente = sem classificação: o provider nunca é deduzido do id do modelo.
    */
   classifierProvider?: string
   classifyTurns?: boolean
+
+  /** Os tetos ajustáveis (ver `Limits.Model`). Ausente, ou um limite ausente = o `.env` ou o padrão. */
+  limits?: ILimits
 
   updatedAt?: Date
   updatedBy?: string
@@ -105,6 +109,7 @@ export function normalizeSettings(raw: unknown): IAgentSettings {
     classifierModel: text(stored.classifierModel),
     classifierProvider: text(stored.classifierProvider),
     classifyTurns: typeof stored.classifyTurns === 'boolean' ? stored.classifyTurns : undefined,
+    limits: normalizeLimits(stored.limits),
     updatedAt: date(stored.updatedAt),
     updatedBy: text(stored.updatedBy),
   }
@@ -123,11 +128,11 @@ export function normalizeSettings(raw: unknown): IAgentSettings {
  * sem regra de quem alcança o agente — não existe padrão para o qual voltar.
  */
 export type TSettingsChange = {
-  [K in keyof IAgentSettings]?: undefined extends IAgentSettings[K] ? IAgentSettings[K] | null : IAgentSettings[K]
-}
+  [K in Exclude<keyof IAgentSettings, 'limits'>]?: undefined extends IAgentSettings[K] ? IAgentSettings[K] | null : IAgentSettings[K]
+} & { limits?: { [K in keyof ILimits]?: number | null } | null }
 
 /** Os campos que quem salva controla. `updatedAt`/`updatedBy` são carimbo, não escolha. */
-const EDITABLE = ['audience', 'agentId', 'model', 'classifierModel', 'classifierProvider', 'classifyTurns'] as const
+const EDITABLE = ['audience', 'agentId', 'model', 'classifierModel', 'classifierProvider', 'classifyTurns', 'limits'] as const
 const REQUIRED = ['audience'] as const
 
 /**
@@ -152,7 +157,13 @@ export function mergeSettings(current: IAgentSettings, changes: TSettingsChange,
     if (clearing && (REQUIRED as readonly string[]).includes(field)) throw new InvalidSettingsError(field)
 
     if (clearing) delete next[field]
-    else next[field] = value
+    else if (field === 'limits') {
+      // Limite a limite: `null` num deles volta ao `.env`; os que não vieram ficam como estão.
+      const merged: Record<string, unknown> = { ...(current.limits ?? {}), ...(value as object) }
+      for (const name of Object.keys(merged)) if (merged[name] === null || merged[name] === undefined) delete merged[name]
+      if (Object.keys(merged).length) next.limits = merged
+      else delete next.limits
+    } else next[field] = value
   }
 
   // ⚠️ Chave sem valor precisa SUMIR, não ficar `undefined`: um driver que serializa `undefined`

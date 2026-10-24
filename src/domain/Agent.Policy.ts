@@ -36,7 +36,8 @@ export interface IAgentRules {
    * por baixo. Só entra aqui tool local que algum embutido HABILITADO já tem, mais as do MCP.
    */
   knownTools: readonly string[]
-  providerOf(model: string): EProvider | undefined
+  /** De qual oficial é um modelo, pelo id. Só vale sem `modelEnabled` (o catálogo é a regra). */
+  providerOf?(model: string): EProvider | undefined
   /**
    * O protocolo do provider configurado, ou `undefined` se ele não existe. Ausente = só os três
    * oficiais existem (id igual ao protocolo).
@@ -87,7 +88,7 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
   const official = protocol !== undefined && protocol === agent.provider && !isSubscription(protocol)
   if (protocol && rules.modelEnabled) {
     for (const model of agent.models) if (!rules.modelEnabled(agent.provider, model)) issue('models', `not enabled in Providers → Models: ${model}`)
-  } else if (official) {
+  } else if (official && rules.providerOf) {
     for (const model of agent.models) {
       const provider = rules.providerOf(model)
       if (provider !== protocol) issue('models', provider ? `${model} is a ${provider} model` : `unknown model: ${model}`)

@@ -1,37 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import OpenAI from 'openai'
-import { AGENT_REGISTRY } from '@domain/Agent.Registry'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { TComplete } from './Llm.TurnClassifier'
-
-/**
- * De qual provider é um modelo.
- *
- * ⚖️ O REGISTRY MANDA: o agente que declara o modelo diz o provider, e é a mesma resposta que as
- * sessões usam. O prefixo do id só entra para o modelo que nenhum agente declara — e é o caso comum
- * do classificador, que quer um modelo MENOR do que os dos agentes. Id que não casa com nada devolve
- * `undefined` (classificador desligado), em vez de chutar um provider e falhar a cada turno.
- */
-export function providerOfModel(model: string, agents = AGENT_REGISTRY): EProvider | undefined {
-  const declared = agents.find((agent) => agent.models.includes(model))
-  const protocol = Object.values(EProvider).find((value) => value === declared?.provider)
-  if (protocol) return protocol
-
-  const id = model.toLowerCase()
-  if (id.startsWith('claude')) return EProvider.CLAUDE
-  if (id.startsWith('gemini')) return EProvider.GOOGLE
-  if (/^(gpt|o\d|chatgpt)/.test(id)) return EProvider.OPENAI
-
-  return undefined
-}
-
-/** A chave que o provider exige, ou `undefined` se não estiver definida. */
-export function apiKeyOf(provider: EProvider, env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const name = provider === EProvider.CLAUDE ? 'ANTHROPIC_API_KEY' : provider === EProvider.OPENAI ? 'OPENAI_API_KEY' : 'GOOGLE_API_KEY'
-
-  return env[name]?.trim() || undefined
-}
 
 /**
  * A função `complete` de um modelo, sobre o SDK PLANO do provider — o mesmo das lanes `chat`.

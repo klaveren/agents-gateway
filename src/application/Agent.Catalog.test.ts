@@ -2,7 +2,7 @@ import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { AgentNotFoundError, InvalidAgentError, ReadOnlyAgentError } from '@domain/errors/Domain.Error'
+import { AgentInUseError, AgentNotFoundError, InvalidAgentError, ReadOnlyAgentError } from '@domain/errors/Domain.Error'
 import { IAgent } from '@domain/models/Agent.Model'
 import { NullAgentRepository } from '@infra/persistence/Null.AgentRepository'
 import { AgentCatalog, ISaveAgentOptions } from './Agent.Catalog'
@@ -99,5 +99,32 @@ describe('AgentCatalog', () => {
     enabled.delete('claude-sonnet-5')
     assert.deepStrictEqual(catalog.get('juridico')?.models, [])
     assert.deepStrictEqual(repository.list()[0].models, ['claude-sonnet-5', 'claude-opus-5'])
+  })
+  it('o padrão é o primeiro que pode rodar e não é subagente', () => {
+    const sub: IAgent = { ...custom, id: 'sub', role: 'subagent' }
+    const ok: IAgent = { ...custom, id: 'ok' }
+    const catalog = new AgentCatalog([builtIn, sub, ok], new NullAgentRepository(), undefined, (agent) => agent.id !== 'researcher-agent')
+
+    assert.strictEqual(catalog.fallback()?.id, 'ok')
+    assert.strictEqual(new AgentCatalog([builtIn], new NullAgentRepository(), undefined, () => false).fallback(), undefined)
+  })
+
+  it('⛔ não apaga agente a quem outro delega, nem o padrão das configurações; diz quem referencia', () => {
+    const catalog = build()
+    catalog.save(custom, options(true))
+    catalog.save({ ...custom, id: 'chefe', allowedTools: ['search_web', 'agent:juridico'] }, { ...options(true), rules: { ...options(true).rules, agentExists: () => true } })
+
+    assert.throws(
+      () => catalog.remove('juridico'),
+      (error: unknown) => error instanceof AgentInUseError && error.delegators.join() === 'chefe' && !error.isDefault,
+    )
+    assert.throws(
+      () => catalog.remove('chefe', { defaultAgentId: 'chefe' }),
+      (error: unknown) => error instanceof AgentInUseError && error.isDefault,
+    )
+
+    catalog.remove('chefe')
+    catalog.remove('juridico')
+    assert.strictEqual(catalog.get('juridico'), undefined)
   })
 })

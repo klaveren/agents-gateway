@@ -45,6 +45,21 @@ describe('Providers (integração)', () => {
 
   after(() => stop())
 
+  it('/protocols: qualquer conta lê os metadados dos protocolos, sem nada de configuração', async () => {
+    const listed = await call('/protocols', { token: member })
+    assert.strictEqual(listed.status, 200)
+    const protocols = JSON.parse(listed.text).result as Array<{ id: string; subscription: boolean; lanes: string[] }>
+    assert.deepStrictEqual(
+      protocols.filter((protocol) => protocol.subscription).map((protocol) => [protocol.id, protocol.lanes]),
+      [
+        ['claude-sub', ['agent']],
+        ['codex', ['agent']],
+        ['antigravity', ['agent']],
+      ],
+    )
+    assert.strictEqual((await call('/protocols')).status, 401)
+  })
+
   it('⛔ membro recebe 404 em tudo', async () => {
     assert.strictEqual((await call('/providers', { token: member })).status, 404)
     assert.strictEqual((await call('/providers/claude/key', { method: 'PUT', token: member, body: { key: SECRET } })).status, 404)
@@ -58,7 +73,8 @@ describe('Providers (integração)', () => {
     assert.ok(!saved.text.includes(SECRET) && !listed.text.includes(SECRET))
     const claude = JSON.parse(listed.text).result.find((item: { id: string }) => item.id === 'claude')
     assert.deepStrictEqual([claude.credential.source, claude.credential.last4, claude.credential.updatedBy], ['stored', '7777', 'root@x.test'])
-    assert.ok(claude.models.includes('claude-sonnet-5'))
+    // Os modelos que os agentes deste provider USAM agora: só os ativados (nada foi ativado aqui).
+    assert.ok(!claude.models.includes('claude-sonnet-5'))
   })
 
   it('remover volta a "none" (sem chave no ambiente)', async () => {
@@ -236,9 +252,17 @@ describe('catálogo de modelos (integração)', () => {
 
   after(() => stop())
 
-  it('os modelos que os agentes embutidos usam já nascem no catálogo, ativados', async () => {
+  it('⛔ o boot NÃO liga modelo nenhum: os dos agentes-semente não entram ativados sozinhos', async () => {
     const claude = (await call('/providers/claude/models', { token: admin })).body.result as Array<{ modelId: string; enabled: boolean }>
-    assert.ok(claude.find((model) => model.modelId === 'claude-sonnet-5')?.enabled)
+    assert.ok(!claude.find((model) => model.modelId === 'claude-sonnet-5')?.enabled)
+  })
+
+  it('acrescentar modelo por id: nasce desligado, com o preço de fábrica sugerido; repetido não duplica', async () => {
+    const added = await call('/providers/claude/models', { method: 'POST', token: admin, body: { modelId: 'claude-sonnet-5' } })
+    assert.deepStrictEqual([added.status, added.body.result.enabled, added.body.result.priceSource], [201, false, 'default'])
+    const again = await call('/providers/claude/models', { method: 'POST', token: admin, body: { modelId: 'claude-sonnet-5' } })
+    assert.strictEqual(again.status, 201)
+    assert.strictEqual((await call('/providers/claude/models', { method: 'POST', token: admin, body: { modelId: 'com espaço' } })).status, 422)
   })
 
   it('sincronizar → os novos entram desligados; ligar e dar preço manual por corpo (id com barra)', async () => {

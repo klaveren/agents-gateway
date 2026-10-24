@@ -12,6 +12,11 @@ const SCHEMA = `
     updated_at  TEXT NOT NULL,
     updated_by  TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS credential_meta (
+    key    TEXT NOT NULL PRIMARY KEY,
+    value  TEXT NOT NULL
+  );
 `
 
 type TRow = Record<string, unknown>
@@ -27,7 +32,7 @@ export class SqliteCredentialStore implements ICredentialStore {
   private readonly memory = new Map<string, { key?: string; last4: string; updatedAt: Date; updatedBy?: string }>()
   private readonly listeners: Array<(provider: string) => void> = []
 
-  /** `path` ausente = só memória (`CONVERSATIONS_DB=off`): vale até o restart, por cima do `.env`. */
+  /** `path` ausente = só memória (`CONVERSATIONS_DB=off`): vale até o restart (com o `.env` importado a cada boot). */
   constructor(
     private readonly box: SecretBox,
     path?: string,
@@ -40,20 +45,37 @@ export class SqliteCredentialStore implements ICredentialStore {
       this.db.exec(SCHEMA)
       this.load()
     }
+    this.importFromEnv()
+  }
+
+  /**
+   * ⚖️ O `.env` vira o cofre UMA VEZ: a chave de um oficial que está só no ambiente é importada (cifrada)
+   * no primeiro boot, e daí em diante vale o cofre e só ele. Antes o `.env` era uma segunda fonte viva:
+   * "Remover chave" na tela não desligava nada, porque a do ambiente continuava valendo.
+   * A marca por provider (`env-imported:<id>`) impede que a chave removida pela tela volte no boot seguinte.
+   */
+  private importFromEnv(): void {
+    for (const provider of Object.keys(ENV_KEY_NAME)) {
+      const key = this.fromEnv(provider)
+      if (!key || this.memory.get(provider)?.key) continue
+      const marker = `env-imported:${provider}`
+      if (this.db?.prepare('SELECT 1 FROM credential_meta WHERE key = ?').get(marker)) continue
+      this.save(provider, key, 'env')
+      this.db?.prepare('INSERT OR REPLACE INTO credential_meta (key, value) VALUES (?, ?)').run(marker, new Date().toISOString())
+      console.log(`[credentials] a chave de ${provider} veio do ambiente para o cofre; daqui em diante vale a da tela.`)
+    }
   }
 
   get(provider: string): string | undefined {
-    return this.memory.get(provider)?.key ?? this.fromEnv(provider)
+    return this.memory.get(provider)?.key
   }
 
   status(providerIds: readonly string[]): ICredentialStatus[] {
     return providerIds.map((provider) => {
       const stored = this.memory.get(provider)
-      const fromEnv = this.fromEnv(provider)
 
       if (stored?.key) return { provider, configured: true, source: 'stored', last4: stored.last4, updatedAt: stored.updatedAt, updatedBy: stored.updatedBy }
       const unreadable = stored ? { unreadable: true, updatedAt: stored.updatedAt, updatedBy: stored.updatedBy } : {}
-      if (fromEnv) return { provider, configured: true, source: 'env', last4: fromEnv.slice(-4), ...unreadable }
       return { provider, configured: false, source: 'none', ...unreadable }
     })
   }

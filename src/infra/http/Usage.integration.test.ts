@@ -41,6 +41,8 @@ describe('uso (integração)', () => {
     memberId = (await call('/users', { method: 'POST', token: admin, body: { email: 'ana@x.test', name: 'Ana', password: PASSWORD } })).body.result.id
     member = (await call('/auth/login', { method: 'POST', body: { email: 'ana@x.test', password: PASSWORD } })).body.result.token
 
+    // O preço vem SÓ do catálogo: o modelo entra nele (com o preço de fábrica sugerido), como faz quem administra.
+    await call('/providers/claude/models', { method: 'POST', token: admin, body: { modelId: 'claude-sonnet-5' } })
     // Uma conversa da Ana e uma de outra pessoa, gravadas direto no repositório. Sonnet 5 de fábrica: $2/$10 por 1M → $3 cada.
     const now = new Date()
     // O `metadata` de cobrança: a conta da Ana é texto; a do outro, número (vira texto no agrupamento).

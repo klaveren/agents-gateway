@@ -21,6 +21,9 @@ import { NullSettingsRepository } from '@infra/persistence/Null.SettingsReposito
 import { IAgentSettings } from '@domain/models/Settings.Model'
 import { withCaller } from '@infra/mcp/Caller.Identity'
 import { ICallerProof } from './Caller.Proof'
+import { AgentCatalog } from '@application/Agent.Catalog'
+import { AGENT_REGISTRY } from '@domain/Agent.Registry'
+import { NullAgentRepository } from '@infra/persistence/Null.AgentRepository'
 
 interface IBody {
   ok: boolean
@@ -85,6 +88,8 @@ describe('AgentController', () => {
       settings: new NullSettingsRepository(),
       conversations: new NullConversationRepository(),
       ...extra,
+      // O seed faz o papel do banco no teste.
+      agents: extra.agents ?? new AgentCatalog(AGENT_REGISTRY, new NullAgentRepository()),
     }
 
     return new AgentController(deps)
@@ -634,7 +639,21 @@ describe('AgentController', () => {
           // O que sai é o JSON: `reasoningEfforts: undefined` não conta como campo.
           assert.ok(
             Object.keys(JSON.parse(JSON.stringify(agent))).every((key) =>
-              ['allowedTools', 'builtIn', 'id', 'modes', 'models', 'name', 'modelReasoning', 'pricing', 'provider', 'reasoningEfforts'].includes(key),
+              [
+                'allowedTools',
+                'builtIn',
+                'id',
+                'modes',
+                'models',
+                'name',
+                'modelReasoning',
+                'pricing',
+                'provider',
+                'providerInfo',
+                'reasoningEfforts',
+                'role',
+                'unavailable',
+              ].includes(key),
             ),
           )
         }
@@ -828,6 +847,57 @@ describe('AgentController', () => {
         assert.strictEqual((await settings.read()).audience, 'restricted')
       })
 
+      /** Providers falsos: `google` ligado com chave, `openai` desligado, `codex` (assinatura) ligado. */
+      const providers = {
+        list: () => [],
+        get: (id: string) =>
+          ({
+            google: { id, name: 'Gemini', protocol: EProvider.GOOGLE, enabled: true },
+            openai: { id, name: 'OpenAI', protocol: EProvider.OPENAI, enabled: false },
+            codex: { id, name: 'ChatGPT', protocol: EProvider.CODEX, enabled: true },
+          })[id],
+        connection: (id: string) =>
+          ({ google: { providerId: id, name: 'Gemini', protocol: EProvider.GOOGLE, key: 'k' }, codex: { providerId: id, name: 'ChatGPT', protocol: EProvider.CODEX } })[id],
+      } as never
+      const withRules = async (body: unknown, settings = new NullSettingsRepository()) => {
+        const { res, locals } = mockResponse()
+        const agents = new AgentCatalog(AGENT_REGISTRY, new NullAgentRepository(), undefined, (agent) => agent.provider === 'google')
+        const controller = controllerWith({}, fakeCatalog(), proof, { settings, agents, providers })
+        await withCaller(ADMIN, () => controller.updateSettings(mockRequest({ body }), res))
+        return { locals, settings }
+      }
+
+      it('⛔ PUT recusa o que não está ativo: agente inativo, modelo fora do agente, classificador desligado ou de assinatura', async () => {
+        for (const body of [
+          { agentId: 'sysops-agent' },
+          { agentId: 'researcher-agent', model: 'gpt-5.6-sol' },
+          { classifierProvider: 'openai', classifierModel: 'gpt-5.6-sol' },
+          { classifierProvider: 'codex', classifierModel: 'gpt-6.1-sol' },
+        ]) {
+          const { locals, settings } = await withRules(body)
+          assert.strictEqual(locals.statusCode, 422, JSON.stringify(body))
+          assert.deepStrictEqual(await settings.read(), { audience: 'all' }, 'nada é gravado')
+        }
+
+        assert.strictEqual((await withRules({ agentId: 'researcher-agent', model: 'gemini-3.6-flash' })).locals.statusCode, 200)
+      })
+
+      it('limites: gravados na faixa, um a um; fora da faixa é 422; a leitura traz o que vale e a faixa', async () => {
+        const settings = new NullSettingsRepository()
+
+        assert.strictEqual((await withRules({ limits: { maxToolTurns: 0 } }, settings)).locals.statusCode, 422)
+        assert.strictEqual((await withRules({ limits: { inventado: 3 } }, settings)).locals.statusCode, 422)
+        assert.strictEqual((await withRules({ limits: { maxToolTurns: 30, streamsPerOwner: 5 } }, settings)).locals.statusCode, 200)
+        await withRules({ limits: { streamsPerOwner: null } }, settings)
+        assert.deepStrictEqual((await settings.read()).limits, { maxToolTurns: 30 })
+
+        const read = await call(ADMIN, get, settings)
+        const result = read.body?.result as { limitsInEffect: Record<string, number>; limitBounds: Record<string, { min: number }>; deployment: Record<string, unknown> }
+        assert.strictEqual(typeof result.limitsInEffect.maxOutputTokens, 'number')
+        assert.strictEqual(result.limitBounds.maxToolTurns.min, 1)
+        assert.strictEqual(result.deployment.dangerousToolsAdminOnly, true)
+      })
+
       it('a mudança vale na sessão seguinte, pelo mesmo repositório', async () => {
         const settings = new NullSettingsRepository()
         await call(ADMIN, put({ audience: 'off' }), settings)
@@ -906,6 +976,44 @@ describe('AgentController', () => {
       assert.strictEqual('systemPrompt' in (juridico ?? {}), false)
     })
 
+    it('⛔ a lista: o membro vê só os ativos; o admin vê todos, cada inativo com o motivo e o provider do banco', async () => {
+      const providers = {
+        list: () => [],
+        get: (id: string) => (id === 'google' ? { id, name: 'Gemini do banco', protocol: EProvider.GOOGLE, enabled: true } : undefined),
+        connection: (id: string) => (id === 'google' ? { providerId: id, name: 'Gemini do banco', protocol: EProvider.GOOGLE, key: 'k' } : undefined),
+      } as never
+      const agents = new AgentCatalog(AGENT_REGISTRY, new NullAgentRepository(), undefined, (agent) => agent.provider === 'google')
+      const controller = controllerWith({}, toolsCatalog(), proof, { agents, providers })
+      type TListed = Array<{ id: string; unavailable?: { reason: string }; providerInfo: { name: string } }>
+
+      const member = (await as(MEMBER, controller, (res) => controller.getAgents(mockRequest(), res))).body?.result as TListed
+      assert.deepStrictEqual(
+        member.map((agent) => agent.id),
+        ['researcher-agent'],
+      )
+
+      const admin = (await as(ADMIN, controller, (res) => controller.getAgents(mockRequest(), res))).body?.result as TListed
+      const byId = Object.fromEntries(admin.map((agent) => [agent.id, agent]))
+      assert.strictEqual(admin.length, AGENT_REGISTRY.length)
+      assert.strictEqual(byId['researcher-agent'].unavailable, undefined)
+      assert.strictEqual(byId['researcher-agent'].providerInfo.name, 'Gemini do banco')
+      assert.strictEqual(byId['sysops-agent'].unavailable?.reason, 'provider_disabled')
+    })
+
+    it('/tools: cada ferramenta diz se é perigosa, e vai o limite de delegação', async () => {
+      const controller = controllerWith({}, toolsCatalog(), proof)
+
+      const result = (await as(MEMBER, controller, (res) => controller.getTools(mockRequest(), res))).body?.result as {
+        tools: Array<{ name: string; dangerous: boolean }>
+        native: Array<{ id: string; dangerous: boolean; risk: string }>
+        limits: { delegationMaxDepth: number }
+      }
+
+      assert.deepStrictEqual(result.tools, [{ origin: 'local', name: 'search_web', description: '', inputSchema: {}, dangerous: false }])
+      for (const tool of result.native) assert.strictEqual(tool.dangerous, tool.risk.startsWith('server-'), tool.id)
+      assert.strictEqual(result.limits.delegationMaxDepth, 2)
+    })
+
     it('⛔ quem não é admin recebe 404 em criar, ler, editar e apagar', async () => {
       const controller = controllerWith({}, toolsCatalog(), proof)
       const params = { agentId: 'juridico' }
@@ -921,7 +1029,9 @@ describe('AgentController', () => {
     })
 
     it('agente inválido: 422 com todos os problemas em details', async () => {
-      const controller = controllerWith({}, toolsCatalog(), proof)
+      // O modelo é conferido no catálogo do provider, nunca pelo prefixo do id.
+      const models = { isEnabled: (_provider: string, model: string) => model === 'gemini-3.7-flash' } as never
+      const controller = controllerWith({}, toolsCatalog(), proof, { models })
 
       const out = await as(ADMIN, controller, (res) => controller.createAgent(mockRequest({ body: { ...body, models: ['gpt-5.6-sol'], allowedTools: ['run_bash'] } }), res))
 

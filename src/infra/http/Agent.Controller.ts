@@ -1,3 +1,4 @@
+import { agentUnavailable, TAgentUnavailable, UNAVAILABLE_LABEL } from '@domain/Agent.Availability'
 import { clientMetadata } from '@domain/Session.Metadata'
 import { metaPlaceholderKeys } from '@infra/sandbox/Egress.Proxy'
 import { CancelSessionUseCase } from '@application/CancelSession.Usecase'
@@ -14,6 +15,11 @@ import { ModelCatalogService } from '@application/ModelCatalog.Service'
 import { AGENT_REGISTRY } from '@domain/Agent.Registry'
 import { IAgentRules } from '@domain/Agent.Policy'
 import { NATIVE_TOOLS, nativeToolAllowed } from '@domain/Native.Tools'
+import { dangerousToolsAdminOnly, dangerousToolsOf } from '@domain/Tool.Policy'
+import { isSubscription, subscriptionAdminOnly } from '@domain/Subscription.Policy'
+import { delegationMaxDepth } from '@domain/models/Delegation.Model'
+import { maxOutputTokens, maxToolTurns } from '@infra/adapters/support/Prompt.Helper'
+import { bashPolicy } from '@infra/tools/Bash.Guard'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
 import { AgentUnavailableError } from '@domain/errors/Domain.Error'
@@ -23,6 +29,7 @@ import { toSharedConversation } from '@domain/models/Conversation.Model'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { MODEL_PRICING, TModelPricing } from '@domain/models/Model.Pricing'
 import { allowsCaller, mergeSettings } from '@domain/models/Settings.Model'
+import { LIMIT_BOUNDS, liveLimit } from '@domain/models/Limits.Model'
 import { IConversationEvents, TConversationEvent } from '@domain/ports/ConversationEvents.Port'
 import { IProviderDirectory } from '@domain/ports/ProviderRepository.Port'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
@@ -31,8 +38,6 @@ import { ISessionContextProvider } from '@domain/ports/SessionContextProvider.Po
 import { SessionNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgentReasoningFacts, toAgentDetailDto, toAgentDto } from './Agent.Dto'
 import { assertNoAdkTemplateCollision } from '@infra/adapters/GoogleAgent.Adapter'
-import { providerOfModel } from '@infra/classifier/Classifier.Completion'
-import { NullAgentRepository } from '@infra/persistence/Null.AgentRepository'
 import { IConversationView, toConversationDto, toStatsDto, toTurnDto } from './Conversation.Dto'
 import { metadataFilter, parsePageQuery } from './Monitor.Query'
 import { IResolvedCaller, ownerOf, ownsSession, resolveCaller } from './Caller.Access'
@@ -101,11 +106,8 @@ export interface IAgentControllerDeps {
   providers?: IProviderDirectory
   /** O catálogo de modelos: preços por provider, e os modelos que um agente pode oferecer. */
   models?: ModelCatalogService
-  /**
-   * Os agentes: embutidos e criados. O MESMO catálogo do provider (ver `makeAgents`). Ausente, só os
-   * embutidos, com os criados em memória.
-   */
-  agents?: AgentCatalog
+  /** Os agentes do banco: o MESMO catálogo do provider (ver `makeAgents`). */
+  agents: AgentCatalog
 }
 
 /**
@@ -118,14 +120,14 @@ function newShareId(): string {
   return randomBytes(12).toString('base64url')
 }
 
-/** Conversas vivas por conta (`SESSIONS_PER_OWNER`, padrão 50). Anônimos contam como uma conta só. */
+/** Conversas vivas por conta (configurações, senão `SESSIONS_PER_OWNER`, padrão 50). Anônimos contam como uma conta só. */
 function sessionsPerOwner(): number {
-  return Number(process.env.SESSIONS_PER_OWNER) || 50
+  return liveLimit('sessionsPerOwner') ?? (Number(process.env.SESSIONS_PER_OWNER) || 50)
 }
 
-/** Streams de eventos abertos por conta (`STREAMS_PER_OWNER`, padrão 20). */
+/** Streams de eventos abertos por conta (configurações, senão `STREAMS_PER_OWNER`, padrão 20). */
 function streamsPerOwner(): number {
-  return Number(process.env.STREAMS_PER_OWNER) || 20
+  return liveLimit('streamsPerOwner') ?? (Number(process.env.STREAMS_PER_OWNER) || 20)
 }
 
 export class AgentController {
@@ -156,7 +158,7 @@ export class AgentController {
     this.createAgent = this.createAgent.bind(this)
     this.updateAgent = this.updateAgent.bind(this)
     this.deleteAgent = this.deleteAgent.bind(this)
-    this.agents = usecases.agents ?? new AgentCatalog(AGENT_REGISTRY, new NullAgentRepository())
+    this.agents = usecases.agents
   }
 
   private readonly agents: AgentCatalog
@@ -198,11 +200,62 @@ export class AgentController {
     }
   }
 
+  /**
+   * ⛔ SÓ O QUE ESTÁ ATIVO para quem não administra: agente com provider desligado, sem modelo, sem chave
+   * ou que exige admin não aparece — antes aparecia, e falhava só ao abrir a conversa. O admin vê todos,
+   * cada inativo com o motivo (`unavailable`), para saber o que ligar.
+   */
   async getAgents(_req: Request, res: Response) {
     await this.respond(res, async () => {
       await this.requireCaller()
-      return this.agents.entries().map((entry) => toAgentDto(entry.agent, this.pricingOf(entry.agent.provider), entry.builtIn, this.reasoningFacts(entry.agent.provider)))
+      const admin = (await checkAdminAccess(this.usecases.proof)).allowed
+      return this.agents
+        .entries()
+        .map((entry) => ({ entry, unavailable: this.unavailableOf(entry.agent, admin) }))
+        .filter(({ unavailable }) => admin || !unavailable)
+        .map(({ entry, unavailable }) => ({
+          ...toAgentDto(entry.agent, this.pricingOf(entry.agent.provider), entry.builtIn, this.reasoningFacts(entry.agent.provider)),
+          providerInfo: this.providerInfo(entry.agent.provider),
+          ...(unavailable ? { unavailable: { reason: unavailable, label: UNAVAILABLE_LABEL[unavailable] } } : {}),
+        }))
     })
+  }
+
+  /** O que as configurações novas apontam e não está ativo: agente, modelo do agente, classificador. */
+  private async settingsIssues(body: { agentId?: string | null; model?: string | null; classifierModel?: string | null; classifierProvider?: string | null }) {
+    const issues: Array<{ field: string; message: string }> = []
+    const current = await this.usecases.settings.read()
+    const agentId = body.agentId === undefined ? current.agentId : body.agentId || undefined
+    const agent = agentId ? this.agents.get(agentId) : this.agents.fallback()
+    if (body.agentId && agent && !this.agents.isRunnable(agent))
+      issues.push({ field: 'agentId', message: `${agent.id} is not available (${UNAVAILABLE_LABEL[this.unavailableOf(agent, true) ?? 'no_model']})` })
+    if (body.model && agent && !agent.models.includes(body.model)) issues.push({ field: 'model', message: `${body.model} is not an enabled model of ${agent.id}` })
+
+    const provider = body.classifierProvider === undefined ? current.classifierProvider : body.classifierProvider || undefined
+    const model = body.classifierModel === undefined ? current.classifierModel : body.classifierModel || undefined
+    const classifier = body.classifierProvider ? this.usecases.providers?.connection(body.classifierProvider) : undefined
+    if (body.classifierProvider && !classifier) issues.push({ field: 'classifierProvider', message: `${body.classifierProvider} is disabled or does not exist` })
+    // O classificador fala o SDK plano com chave de API: assinatura não serve, e sem chave nada classifica.
+    else if (classifier && isSubscription(classifier.protocol))
+      issues.push({ field: 'classifierProvider', message: `${classifier.providerId} is a subscription: the classifier needs an API key` })
+    else if (classifier && !classifier.key) issues.push({ field: 'classifierProvider', message: `${classifier.providerId} has no API key` })
+    if ((body.classifierModel || body.classifierProvider) && provider && model && this.usecases.models && !this.usecases.models.isEnabled(provider, model)) {
+      issues.push({ field: 'classifierModel', message: `${model} is not enabled in ${provider}` })
+    }
+    return issues
+  }
+
+  /** Por que o agente não abre conversa para este chamador agora (ver `agentUnavailable`). */
+  private unavailableOf(agent: IAgent, admin: boolean): TAgentUnavailable | undefined {
+    const directory = this.usecases.providers
+    if (!directory) return agent.models.length ? undefined : 'no_model'
+    return agentUnavailable(agent, { provider: directory.get(agent.provider), hasKey: !!directory.connection(agent.provider)?.key, admin })
+  }
+
+  /** O provider como a tela mostra: o NOME do banco, não um rótulo fixo no código. */
+  private providerInfo(id: string): { id: string; name: string; protocol?: string } {
+    const provider = this.usecases.providers?.get(id)
+    return { id, name: provider?.name ?? id, protocol: provider?.protocol }
   }
 
   /**
@@ -280,7 +333,7 @@ export class AgentController {
       res,
       async () => {
         await this.requireAdmin('deleteAgent')
-        this.agents.remove(req.params.agentId as string)
+        this.agents.remove(req.params.agentId as string, { defaultAgentId: (await this.usecases.settings.read()).agentId })
 
         return null
       },
@@ -290,19 +343,21 @@ export class AgentController {
 
   /**
    * Os fatos que a regra do agente precisa, lidos AGORA: as tools do catálogo neste instante (o MCP
-   * pode ter subido ou caído) e o que cada provider recusa no prompt.
-   *
-   * ⚠️ O provider do modelo sai SÓ do prefixo do id (`providerOfModel(model, [])`): se viesse também
-   * dos agentes declarados, um agente criado com um modelo trocado ensinaria a regra a aceitar o erro.
+   * pode ter subido ou caído) e o que cada provider recusa no prompt. O modelo é conferido no
+   * catálogo do provider (`modelEnabled`), nunca pelo prefixo do id.
    */
   private async agentRules(): Promise<Omit<IAgentRules, 'takenIds'>> {
     const tools = await this.usecases.catalog.list(this.localTools)
 
     return {
       knownTools: tools.map((tool) => tool.name),
-      providerOf: (model) => providerOfModel(model, []),
-      mcpServerExists: (id) => !!this.usecases.catalog.mcp.get(id),
-      agentExists: (id) => !!this.agents.entry(id),
+      // ⛔ Servidor DESLIGADO não serve: o agente o perdia em silêncio na hora de rodar.
+      mcpServerExists: (id) => this.usecases.catalog.mcp.get(id)?.enabled === true,
+      // ⛔ Delegar só para quem pode abrir conversa agora; um alvo inativo devolvia erro ao modelo-pai.
+      agentExists: (id) => {
+        const target = this.agents.get(id)
+        return !!target && this.agents.isRunnable(target)
+      },
       modelEnabled: this.usecases.models ? (provider, model) => this.usecases.models!.isEnabled(provider, model) : undefined,
       protocolOf: (id) => this.usecases.providers?.get(id)?.protocol ?? Object.values(EProvider).find((value) => value === id),
       promptIssue: (agent) => {
@@ -334,8 +389,16 @@ export class AgentController {
     await this.respond(res, async () => {
       await this.requireCaller()
       // As nativas vão junto, com o veredito do perímetro: a tela mostra as bloqueadas desabilitadas, com o porquê.
-      const native = NATIVE_TOOLS.map((tool) => ({ ...tool, allowed: nativeToolAllowed(tool), reason: nativeToolAllowed(tool) ? undefined : 'blocked by NATIVE_TOOLS_ENABLED' }))
-      return { ...(await this.catalogFor(this.localTools)), native }
+      // `dangerous`: alcança este servidor; com `DANGEROUS_TOOLS_ADMIN_ONLY`, o agente que a tem só conversa com admin.
+      const dangerous = (id: string) => dangerousToolsOf([id]).length > 0
+      const native = NATIVE_TOOLS.map((tool) => ({
+        ...tool,
+        dangerous: dangerous(tool.id),
+        allowed: nativeToolAllowed(tool),
+        reason: nativeToolAllowed(tool) ? undefined : 'blocked by NATIVE_TOOLS_ENABLED',
+      }))
+      const catalog = await this.catalogFor(this.localTools)
+      return { ...catalog, tools: catalog.tools.map((tool) => ({ ...tool, dangerous: dangerous(tool.name) })), native, limits: { delegationMaxDepth: delegationMaxDepth() } }
     })
   }
 
@@ -412,7 +475,32 @@ export class AgentController {
        */
       const fallback = this.agents.fallback()
 
-      return { ...(await this.usecases.settings.read()), defaults: { agentId: fallback?.id, model: fallback?.models[0] } }
+      const bash = bashPolicy()
+
+      return {
+        ...(await this.usecases.settings.read()),
+        defaults: { agentId: fallback?.id, model: fallback?.models[0] },
+        // O que vale AGORA (a tela, senão o `.env`, senão o padrão) e a faixa que a gravação aceita.
+        limitsInEffect: {
+          maxToolTurns: maxToolTurns(),
+          maxOutputTokens: maxOutputTokens(),
+          delegationMaxDepth: delegationMaxDepth(),
+          bashTimeoutMs: bash.timeoutMs,
+          bashMaxOutputChars: bash.maxOutputChars,
+          sessionsPerOwner: sessionsPerOwner(),
+          streamsPerOwner: streamsPerOwner(),
+        },
+        limitBounds: LIMIT_BOUNDS,
+        // ⛔ Decisões de implantação e de segurança: a tela MOSTRA, e só o deploy muda.
+        deployment: {
+          dangerousToolsAdminOnly: dangerousToolsAdminOnly(),
+          subscriptionAdminOnly: subscriptionAdminOnly(),
+          localToolsEnabled: process.env.LOCAL_TOOLS_ENABLED?.trim() || undefined,
+          nativeToolsEnabled: process.env.NATIVE_TOOLS_ENABLED?.trim() || undefined,
+          agentsEnabled: process.env.AGENTS_ENABLED?.trim() || undefined,
+          allowAnonymous: process.env.ALLOW_ANONYMOUS === '1',
+        },
+      }
     })
   }
 
@@ -433,6 +521,9 @@ export class AgentController {
         if (typeof body.agentId === 'string' && body.agentId && this.agents.get(body.agentId)?.role === 'subagent') {
           throw new HttpError(422, 'validation_error', 'Request body is invalid', [{ field: 'agentId', message: `${body.agentId} is a subagent: it cannot be the default agent` }])
         }
+        // ⛔ Nada que não esteja ATIVO: antes o modelo inválido era trocado em silêncio pelo primeiro do agente.
+        const issues = await this.settingsIssues(body)
+        if (issues.length) throw new HttpError(422, 'validation_error', 'Request body is invalid', issues)
 
         // Merge, não substituição: a tela manda o que mudou. O repositório SUBSTITUI o documento.
         const current = await this.usecases.settings.read()
@@ -920,7 +1011,11 @@ export class AgentController {
     const { catalog } = this.usecases
     const tools = await catalog.list(allowed)
     // Sem `lastError`: a mensagem pode trazer endereço interno, e esta rota é de qualquer chamador.
-    const servers = catalog.mcp.status().map(({ id, name, enabled, connected }) => ({ id, name, enabled, connected }))
+    // ⛔ Só os LIGADOS: o desligado não roda, e o nome dele não é assunto de quem não administra.
+    const servers = catalog.mcp
+      .status()
+      .filter((server) => server.enabled)
+      .map(({ id, name, enabled, connected }) => ({ id, name, enabled, connected }))
 
     return { mcp: { connected: servers.some((server) => server.connected), servers }, tools }
   }

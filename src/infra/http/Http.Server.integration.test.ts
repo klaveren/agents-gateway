@@ -246,7 +246,8 @@ describe('HttpServer fechado por padrão (sem ALLOW_ANONYMOUS)', () => {
     const agents = await fetch(`${base}/agents`, { headers })
     assert.strictEqual(agents.status, 200)
     const list = (await agents.json()).result as Array<Record<string, unknown>>
-    assert.ok(list.length > 0)
+    // ⛔ Quem não administra só vê agente ATIVO — e aqui nenhum provider tem chave nem modelo ativado.
+    assert.deepStrictEqual(list, [])
     assert.ok(list.every((agent) => !('systemPrompt' in agent)))
 
     assert.strictEqual((await fetch(`${base}/openapi.json`, { headers })).status, 200)

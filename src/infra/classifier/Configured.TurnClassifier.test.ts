@@ -1,25 +1,38 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
+import { EProvider } from '@domain/enums/EProvider.Enum'
+import { IProviderConnection } from '@domain/models/Provider.Model'
 import { NullSettingsRepository } from '@infra/persistence/Null.SettingsRepository'
-import { ConfiguredTurnClassifier, resolveClassifierModel } from './Configured.TurnClassifier'
+import { ConfiguredTurnClassifier, resolveClassifierTarget } from './Configured.TurnClassifier'
 import { TComplete } from './Llm.TurnClassifier'
 
 const input = { request: 'hi', answer: 'hello', tools: [] }
+const ON = { audience: 'all' as const, classifyTurns: true, classifierProvider: 'openai', classifierModel: 'm' }
 
-/** `build` que anota os modelos pedidos e as chamadas, sem rede. */
-function harness(over: { settings?: ConstructorParameters<typeof NullSettingsRepository>[0]; envModel?: string; answer?: string; buildable?: boolean } = {}) {
+/** Conexões em memória, `build` que anota os modelos pedidos e as chamadas, sem rede. */
+function harness(
+  over: {
+    settings?: ConstructorParameters<typeof NullSettingsRepository>[0]
+    connections?: Record<string, Partial<IProviderConnection>>
+    enabled?: (providerId: string, modelId: string) => boolean
+    answer?: string
+  } = {},
+) {
   const settings = new NullSettingsRepository(over.settings ?? { audience: 'all' })
+  const connections = over.connections ?? { openai: { protocol: EProvider.OPENAI, key: 'sk-teste' } }
   const built: string[] = []
   const calls: string[] = []
   const warnings: string[] = []
   const classifier = new ConfiguredTurnClassifier({
     settings,
     prompt: 'P',
-    envModel: over.envModel,
+    connections: {
+      connection: (id) => (connections[id] ? ({ providerId: id, name: id, protocol: EProvider.OPENAI, ...connections[id] } as IProviderConnection) : undefined),
+    },
+    modelEnabled: over.enabled,
     warn: (message) => warnings.push(message),
-    build: (model) => {
+    build: (_connection, model) => {
       built.push(model)
-      if (over.buildable === false) return undefined
       const complete: TComplete = async () => {
         calls.push(model)
         return over.answer ?? 'amber'
@@ -28,75 +41,66 @@ function harness(over: { settings?: ConstructorParameters<typeof NullSettingsRep
     },
   })
 
-  return { settings, classifier, built, calls, warnings }
+  return { settings, classifier, connections, built, calls, warnings }
 }
 
-describe('resolveClassifierModel', () => {
-  it('settings first, then CLASSIFIER_MODEL, then nothing', () => {
-    assert.strictEqual(resolveClassifierModel({ audience: 'all', classifierModel: 'from-settings' }, 'from-env'), 'from-settings')
-    assert.strictEqual(resolveClassifierModel({ audience: 'all' }, 'from-env'), 'from-env')
-    assert.strictEqual(resolveClassifierModel({ audience: 'all', classifierModel: '  ' }, ' from-env '), 'from-env')
-    assert.strictEqual(resolveClassifierModel({ audience: 'all' }, undefined), undefined)
-    assert.strictEqual(resolveClassifierModel(undefined, ''), undefined)
+describe('resolveClassifierTarget', () => {
+  it('provider and model from settings, both or nothing', () => {
+    assert.deepStrictEqual(resolveClassifierTarget({ audience: 'all', classifierProvider: ' openai ', classifierModel: ' m ' }), { providerId: 'openai', model: 'm' })
+    assert.strictEqual(resolveClassifierTarget({ audience: 'all', classifierModel: 'm' }), undefined)
+    assert.strictEqual(resolveClassifierTarget({ audience: 'all', classifierProvider: 'openai', classifierModel: '  ' }), undefined)
+    assert.strictEqual(resolveClassifierTarget(undefined), undefined)
   })
 })
 
 describe('ConfiguredTurnClassifier', () => {
   it('off by default: no model call, not even a build', async () => {
-    const { classifier, built, calls } = harness({ envModel: 'm' })
+    const { classifier, built, calls } = harness({ settings: { ...ON, classifyTurns: undefined } })
 
     assert.strictEqual(await classifier.classify(input), undefined)
     assert.deepStrictEqual([built, calls], [[], []])
   })
 
   it('classifyTurns false is off', async () => {
-    const { classifier, calls } = harness({ settings: { audience: 'all', classifyTurns: false }, envModel: 'm' })
+    const { classifier, calls } = harness({ settings: { ...ON, classifyTurns: false } })
 
     assert.strictEqual(await classifier.classify(input), undefined)
     assert.deepStrictEqual(calls, [])
   })
 
-  it('on without any model: no call', async () => {
-    const { classifier, calls } = harness({ settings: { audience: 'all', classifyTurns: true } })
+  it('⛔ a model without a chosen provider does not classify (no guessing by the id prefix)', async () => {
+    const { classifier, calls } = harness({ settings: { audience: 'all', classifyTurns: true, classifierModel: 'gpt-5-mini' } })
 
     assert.strictEqual(await classifier.classify(input), undefined)
     assert.deepStrictEqual(calls, [])
   })
 
-  it('on with the environment model', async () => {
-    const { classifier, calls } = harness({ settings: { audience: 'all', classifyTurns: true }, envModel: 'env-model' })
+  it('on with the chosen provider and model', async () => {
+    const { classifier, calls } = harness({ settings: ON })
 
     assert.strictEqual(await classifier.classify(input), 'amber')
-    assert.deepStrictEqual(calls, ['env-model'])
-  })
-
-  it('the settings model wins over the environment', async () => {
-    const { classifier, calls } = harness({ settings: { audience: 'all', classifyTurns: true, classifierModel: 'ui-model' }, envModel: 'env-model' })
-
-    await classifier.classify(input)
-
-    assert.deepStrictEqual(calls, ['ui-model'])
+    assert.deepStrictEqual(calls, ['m'])
   })
 
   it('toggling in settings takes effect on the next turn, without a restart', async () => {
-    const { classifier, settings, calls } = harness({ envModel: 'm' })
+    const { classifier, settings, calls } = harness()
 
     assert.strictEqual(await classifier.classify(input), undefined)
 
-    await settings.save({ audience: 'all', classifyTurns: true })
+    await settings.save(ON)
     assert.strictEqual(await classifier.classify(input), 'amber')
 
-    await settings.save({ audience: 'all', classifyTurns: false })
+    await settings.save({ ...ON, classifyTurns: false })
     assert.strictEqual(await classifier.classify(input), undefined)
 
     assert.strictEqual(calls.length, 1)
   })
 
   it('changing the model in settings switches model on the next turn, building each once', async () => {
-    const { classifier, settings, calls, built } = harness({ settings: { audience: 'all', classifyTurns: true, classifierModel: 'a' } })
+    const { classifier, settings, calls, built } = harness({ settings: { ...ON, classifierModel: 'a' } })
 
     await classifier.classify(input)
-    await settings.save({ audience: 'all', classifyTurns: true, classifierModel: 'b' })
+    await settings.save({ ...ON, classifierModel: 'b' })
     await classifier.classify(input)
     await classifier.classify(input)
 
@@ -104,13 +108,30 @@ describe('ConfiguredTurnClassifier', () => {
     assert.deepStrictEqual(built, ['a', 'b'])
   })
 
-  it('a model that cannot be built (no key, unknown provider): no label, one warning', async () => {
-    const { classifier, warnings, calls } = harness({ settings: { audience: 'all', classifyTurns: true }, envModel: 'm', buildable: false })
+  it('a provider turned off, without a key, of a subscription or with the model inactive: no label, one warning each', async () => {
+    const cases = [
+      harness({ settings: ON, connections: {} }),
+      harness({ settings: ON, connections: { openai: { key: undefined } } }),
+      harness({ settings: ON, connections: { openai: { protocol: EProvider.CODEX, key: 'x' } } }),
+      harness({ settings: ON, enabled: () => false }),
+    ]
 
-    assert.strictEqual(await classifier.classify(input), undefined)
-    assert.strictEqual(await classifier.classify(input), undefined)
-    assert.deepStrictEqual(calls, [])
-    assert.strictEqual(warnings.length, 1)
+    for (const { classifier, warnings, calls } of cases) {
+      assert.strictEqual(await classifier.classify(input), undefined)
+      assert.strictEqual(await classifier.classify(input), undefined)
+      assert.deepStrictEqual(calls, [])
+      assert.strictEqual(warnings.length, 1)
+    }
+  })
+
+  it('a new key on the screen rebuilds the client on the next turn', async () => {
+    const { classifier, connections, built } = harness({ settings: ON })
+
+    await classifier.classify(input)
+    connections.openai.key = 'sk-outra'
+    await classifier.classify(input)
+
+    assert.deepStrictEqual(built, ['m', 'm'])
   })
 
   it('never throws when the settings cannot be read', async () => {
@@ -135,9 +156,9 @@ describe('ConfiguredTurnClassifier', () => {
   })
 
   it('the boot line says why it is off, or that it is on', async () => {
-    assert.match(await harness({ envModel: 'm' }).classifier.status(), /desligado.*classifyTurns/)
-    assert.match(await harness({ settings: { audience: 'all', classifyTurns: true } }).classifier.status(), /sem modelo/)
-    assert.match(await harness({ settings: { audience: 'all', classifyTurns: true }, envModel: 'm', buildable: false }).classifier.status(), /desligado: .*provider|chave/)
-    assert.match(await harness({ settings: { audience: 'all', classifyTurns: true }, envModel: 'm' }).classifier.status(), /ligado com o modelo m/)
+    assert.match(await harness().classifier.status(), /desligado.*classifyTurns/)
+    assert.match(await harness({ settings: { audience: 'all', classifyTurns: true } }).classifier.status(), /sem provider e modelo/)
+    assert.match(await harness({ settings: ON, connections: {} }).classifier.status(), /desligado: .*desligado ou não existe/)
+    assert.match(await harness({ settings: ON }).classifier.status(), /ligado com o modelo m \(openai\)/)
   })
 })

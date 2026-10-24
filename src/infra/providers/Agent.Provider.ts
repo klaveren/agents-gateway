@@ -1,9 +1,11 @@
-import { AGENT_REGISTRY, getAgentById, modelFor } from '@domain/Agent.Registry'
+import { modelFor } from '@domain/Agent.Registry'
 import { resolveSessionMode } from '@domain/Session.Policy'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import {
   AdapterNotFoundError,
+  ModelDisabledError,
+  NoAgentAvailableError,
   DangerousToolsRestrictedError,
   SubagentOnlyError,
   SubscriptionRestrictedError,
@@ -57,13 +59,10 @@ export class AgentProvider implements IAgentProvider {
      *
      * Opcional para o teste montar o provider sem infraestrutura; ausente, valem os padrões.
      */
-    private readonly settings?: ISettingsRepository,
+    private readonly settings: ISettingsRepository | undefined,
 
-    /**
-     * De onde vêm os agentes: embutidos e criados pela tela (ver `makeAgents`). Ausente, só os
-     * embutidos — o teste monta o provider sem banco.
-     */
-    private readonly agents: IAgentDirectory = { list: () => AGENT_REGISTRY, get: getAgentById },
+    /** De onde vêm os agentes: o catálogo do banco (ver `makeAgents`). Sem padrão: o seed não é fonte. */
+    private readonly agents: IAgentDirectory,
 
     /**
      * Os providers configurados: o agente aponta para um id, e é o PROTOCOLO dele que escolhe o adapter
@@ -129,6 +128,9 @@ export class AgentProvider implements IAgentProvider {
     // ⛔ Subagente: só pela delegação. Aqui, e não na tela, porque é por aqui que todo caminho passa.
     if (agent.role === 'subagent' && !input.delegated) throw new SubagentOnlyError(agent.id)
 
+    // ⛔ Modelo pedido que o agente não oferece (desativado, ou de outro agente): erro, não troca muda.
+    if (input.model && !agent.models.includes(input.model)) throw new ModelDisabledError(agent.provider, input.model)
+
     const { adminAccess: _access, delegated: _delegated, parentSessionId: _parent, ...rest } = input
     const created = await this.getAdapter(protocol, mode).createSession(agent, {
       ...rest,
@@ -152,6 +154,9 @@ export class AgentProvider implements IAgentProvider {
   async *sendMessage(sessionId: string, input: IMessageInput): AsyncIterable<IAgentEvent> {
     const record = this.requireSession(sessionId)
     const agent = this.getAgent(record.agentId)
+    // ⛔ O modelo da conversa foi desativado (ou sumiu do provider) depois que ela começou: erro claro, em
+    // vez de seguir usando um modelo que quem administra tirou. `agent.models` já vem só com os utilizáveis.
+    if (record.model && !agent.models.includes(record.model)) throw new ModelDisabledError(record.provider, record.model)
     const adapter = this.getAdapter(record.protocol, record.mode)
 
     record.status = 'running'
@@ -230,11 +235,18 @@ export class AgentProvider implements IAgentProvider {
     return record
   }
 
-  /** Sem `agentId` em lugar nenhum, vale o primeiro da lista — o primeiro embutido. */
+  /**
+   * Sem `agentId` em lugar nenhum, vale o padrão do diretório: o primeiro que PODE abrir conversa.
+   * ⚠️ Antes era o primeiro da lista, que podia estar desligado ou ser subagente.
+   */
   private getAgent(agentId?: string): IAgent {
-    const id = agentId || this.agents.list()[0]?.id || ''
-    const agent = this.agents.get(id)
-    if (!agent) throw new AgentNotFoundError(id)
+    if (!agentId) {
+      const fallback = this.agents.fallback ? this.agents.fallback() : this.agents.list()[0]
+      if (!fallback) throw new NoAgentAvailableError()
+      return fallback
+    }
+    const agent = this.agents.get(agentId)
+    if (!agent) throw new AgentNotFoundError(agentId)
 
     return agent
   }

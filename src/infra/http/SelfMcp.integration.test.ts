@@ -49,6 +49,10 @@ describe('MCP do próprio gateway (integração)', () => {
     admin = (await call('/auth/setup', { method: 'POST', body: { code: makeAuth().accounts?.setupCode, email: 'root@x.test', name: 'Root', password: PASSWORD } })).result.token
     await call('/users', { method: 'POST', token: admin, body: { email: 'ana@x.test', name: 'Ana', password: PASSWORD } })
     member = (await call('/auth/login', { method: 'POST', body: { email: 'ana@x.test', password: PASSWORD } })).result.token
+    // Um agente ATIVO para o membro ver (o Atlas): modelo no catálogo e ativado, e uma chave (de teste) no Claude.
+    await call('/providers/claude/models', { method: 'POST', token: admin, body: { modelId: 'claude-sonnet-5' } })
+    await call('/providers/claude/models', { method: 'PUT', token: admin, body: { modelId: 'claude-sonnet-5', enabled: true } })
+    await call('/providers/claude/key', { method: 'PUT', token: admin, body: { key: 'sk-ant-teste-00000000' } })
   })
 
   after(() => {
@@ -88,6 +92,22 @@ describe('MCP do próprio gateway (integração)', () => {
     const tools = json(await client.callTool({ name: 'list_tools', arguments: {} }))
     assert.ok(Array.isArray(tools.local) && Array.isArray(tools.native) && Array.isArray(tools.mcp))
     assert.ok(tools.local.some((tool: { name: string }) => tool.name === 'run_bash'))
+  })
+
+  it('list_providers e list_models: só o ativo por padrão; includeDisabled mostra o resto', async () => {
+    const client = await connect(admin)
+    type TItem = { id?: string; modelId?: string; enabled: boolean }
+
+    const providers = json(await client.callTool({ name: 'list_providers', arguments: {} })) as TItem[]
+    const allProviders = json(await client.callTool({ name: 'list_providers', arguments: { includeDisabled: true } })) as TItem[]
+    assert.ok(providers.length && providers.every((provider) => provider.enabled))
+    // As assinaturas nascem desligadas: só aparecem pedindo.
+    assert.ok(allProviders.some((provider) => provider.id === 'claude-sub' && !provider.enabled))
+
+    const models = json(await client.callTool({ name: 'list_models', arguments: { providerId: 'claude' } })) as TItem[]
+    const allModels = json(await client.callTool({ name: 'list_models', arguments: { providerId: 'claude', includeDisabled: true } })) as TItem[]
+    assert.ok(models.every((model) => model.enabled))
+    assert.ok(allModels.length >= models.length)
   })
 
   it('as ferramentas seguem as regras da API: agentes sem prompt, uso do membro sem custo, uso por chave para o admin', async () => {

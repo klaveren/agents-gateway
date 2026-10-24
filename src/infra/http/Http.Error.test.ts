@@ -1,6 +1,15 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { AdapterNotFoundError, AgentNotFoundError, AgentUnavailableError, ModeNotSupportedError, SessionNotFoundError } from '@domain/errors/Domain.Error'
+import {
+  AdapterNotFoundError,
+  AgentInUseError,
+  AgentNotFoundError,
+  AgentUnavailableError,
+  ModeNotSupportedError,
+  ModelDisabledError,
+  NoAgentAvailableError,
+  SessionNotFoundError,
+} from '@domain/errors/Domain.Error'
 import { HttpError, toHttpFailure } from './Http.Error'
 
 describe('toHttpFailure', () => {
@@ -12,6 +21,9 @@ describe('toHttpFailure', () => {
         new ModeNotSupportedError('a', 'telepathy'),
         new AdapterNotFoundError('google', 'agent'),
         new AgentUnavailableError(),
+        new AgentInUseError('a', ['b'], false),
+        new NoAgentAvailableError(),
+        new ModelDisabledError('openai', 'gpt-x'),
       ].map((error) => {
         const failure = toHttpFailure(error)
         return [failure.status, failure.code]
@@ -24,6 +36,9 @@ describe('toHttpFailure', () => {
         // ⚠️ Nem 404 (o agente existe) nem 500 (ninguém quebrou): desligar é decisão de operação.
         // E o código não é `unauthorized`, que mandaria pedir acesso em vez de pedir para religar.
         [403, 'agent_unavailable'],
+        [409, 'agent_in_use'],
+        [503, 'no_agent_available'],
+        [409, 'model_disabled'],
       ],
     )
   })

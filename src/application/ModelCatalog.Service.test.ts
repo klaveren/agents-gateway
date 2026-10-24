@@ -92,11 +92,24 @@ describe('ModelCatalogService', () => {
     assert.deepStrictEqual(catalog.enabledIds('claude'), [])
   })
 
-  it('os preços de um provider: catálogo por cima da fábrica no oficial; só o catálogo no compatível', () => {
+  it('⛔ os preços de um provider vêm SÓ do catálogo: a fábrica é sugestão ao acrescentar, nunca uma segunda fonte', () => {
     const catalog = build()
     catalog.sync('agregador', [{ id: 'x/y', price: { input: 1, output: 2 } }], 'root')
 
-    assert.deepStrictEqual(catalog.pricing('claude'), DEFAULTS)
+    assert.deepStrictEqual(catalog.pricing('claude'), {})
+    catalog.addModel('claude', 'claude-sonnet-5', 'root')
+    assert.deepStrictEqual(catalog.pricing('claude'), { 'claude-sonnet-5': DEFAULTS['claude-sonnet-5'] })
     assert.deepStrictEqual(catalog.pricing('agregador'), { 'x/y': { input: 1, output: 2 } })
+  })
+
+  it('⛔ utilizável = ativado E disponível: modelo que sumiu da listagem deixa de valer', () => {
+    const catalog = build()
+    catalog.sync('agregador', [{ id: 'a' }, { id: 'b' }], 'root')
+    catalog.setEnabled('agregador', 'a', true, 'root')
+    catalog.setEnabled('agregador', 'b', true, 'root')
+    catalog.sync('agregador', [{ id: 'a' }], 'root')
+
+    assert.deepStrictEqual(catalog.enabledIds('agregador'), ['a'])
+    assert.strictEqual(catalog.isEnabled('agregador', 'b'), false)
   })
 })

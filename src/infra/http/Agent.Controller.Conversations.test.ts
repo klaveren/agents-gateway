@@ -18,6 +18,9 @@ import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { Request, Response } from 'express'
 import { AgentController } from './Agent.Controller'
 import { ICallerProof } from './Caller.Proof'
+import { AgentCatalog } from '@application/Agent.Catalog'
+import { AGENT_REGISTRY } from '@domain/Agent.Registry'
+import { NullAgentRepository } from '@infra/persistence/Null.AgentRepository'
 
 interface IBody {
   ok: boolean
@@ -65,6 +68,7 @@ describe('AgentController — conversas, monitor e compartilhamento', () => {
     } as unknown as IAgentProvider
 
     const controller = new AgentController({
+      agents: new AgentCatalog(AGENT_REGISTRY, new NullAgentRepository()),
       catalog: fakeCatalog(),
       createSession: new CreateSessionUseCase(provider),
       sendMessage: new SendMessageUseCase(provider, conversations),

@@ -7,6 +7,8 @@ import {
   AgentNotFoundError,
   AgentUnavailableError,
   InvalidSessionChangeError,
+  ModelDisabledError,
+  NoAgentAvailableError,
   ModeNotSupportedError,
   SessionBusyError,
   SessionNotFoundError,
@@ -21,7 +23,11 @@ import { withCaller } from '@infra/mcp/Caller.Identity'
 import { normalizeSettings } from '@domain/models/Settings.Model'
 import { NullSettingsRepository } from '@infra/persistence/Null.SettingsRepository'
 import { SessionStore } from '@infra/session/Session.Store'
+import { AGENT_REGISTRY, getAgentById } from '@domain/Agent.Registry'
 import { adapterKey, AgentProvider } from './Agent.Provider'
+
+/** Os agentes-semente como diretório: no teste, o seed faz o papel do banco. */
+const SEED = { list: () => AGENT_REGISTRY, get: getAgentById }
 
 interface ISpy {
   adapter: IAgentAdapter
@@ -79,6 +85,8 @@ describe('AgentProvider', () => {
         [adapterKey(EProvider.GOOGLE, EMode.AGENT), agent.adapter],
       ]),
       store,
+      undefined,
+      SEED,
     )
 
     return { provider, store, chat, agent }
@@ -102,6 +110,7 @@ describe('AgentProvider', () => {
       ]),
       store,
       settings,
+      SEED,
     )
 
     return { provider, chat, agent, claude }
@@ -165,6 +174,35 @@ describe('AgentProvider', () => {
 
     await assert.rejects(provider.createSession({ agentId: 'vazio' }), /Providers → Models/)
     assert.deepStrictEqual(chat.calls, [])
+  })
+
+  it('⛔ modelo pedido que o agente não oferece: model_disabled, e não a troca muda pelo primeiro', async () => {
+    const store = new SessionStore()
+    const chat = spyAdapter(store, EProvider.GOOGLE, EMode.CHAT, [])
+    const agent = { id: 'm', name: 'M', provider: 'google', systemPrompt: 'p', models: ['gemini-a', 'gemini-b'], modes: [EMode.CHAT], allowedTools: [] }
+    const provider = new AgentProvider(new Map([[adapterKey(EProvider.GOOGLE, EMode.CHAT), chat.adapter]]), store, undefined, { list: () => [agent], get: () => agent })
+
+    await assert.rejects(provider.createSession({ agentId: 'm', model: 'gemini-z' }), ModelDisabledError)
+    assert.deepStrictEqual(chat.calls, [])
+  })
+
+  it('⛔ modelo da conversa desativado no meio dela: a mensagem seguinte é model_disabled', async () => {
+    const store = new SessionStore()
+    const chat = spyAdapter(store, EProvider.GOOGLE, EMode.CHAT, [])
+    const agent = { id: 'm', name: 'M', provider: 'google', systemPrompt: 'p', models: ['gemini-a', 'gemini-b'], modes: [EMode.CHAT], allowedTools: [] }
+    const provider = new AgentProvider(new Map([[adapterKey(EProvider.GOOGLE, EMode.CHAT), chat.adapter]]), store, undefined, { list: () => [agent], get: () => agent })
+
+    const session = await provider.createSession({ agentId: 'm', model: 'gemini-b' })
+    agent.models = ['gemini-a']
+
+    await assert.rejects(drain(provider.sendMessage(session.id, { text: 'oi' })), ModelDisabledError)
+    assert.deepStrictEqual(chat.calls, ['createSession'])
+  })
+
+  it('sem agente pedido e sem nenhum ativo: nenhum agente disponível', async () => {
+    const provider = new AgentProvider(new Map(), new SessionStore(), undefined, { list: () => [], get: () => undefined, fallback: () => undefined })
+
+    await assert.rejects(provider.createSession({}), NoAgentAvailableError)
   })
 
   it('⛔ agente de assinatura: só com acesso de administrador, e cai na lane agent sem pedir', async () => {
@@ -341,7 +379,7 @@ describe('AgentProvider', () => {
 
   it('reports a missing adapter for the lane', async () => {
     const store = new SessionStore()
-    const provider = new AgentProvider(new Map(), store)
+    const provider = new AgentProvider(new Map(), store, undefined, SEED)
 
     await assert.rejects(provider.createSession({ agentId: 'researcher-agent' }), AdapterNotFoundError)
   })
