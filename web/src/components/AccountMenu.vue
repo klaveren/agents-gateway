@@ -3,7 +3,6 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { initials } from '@/lib/format'
 import { useAuthStore } from '@/stores/auth'
-import { useConversationsStore } from '@/stores/conversations'
 import Icon from './Icon.vue'
 
 /**
@@ -13,7 +12,6 @@ import Icon from './Icon.vue'
 defineProps<{ placement: 'side' | 'up' }>()
 
 const auth = useAuthStore()
-const conversations = useConversationsStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -38,9 +36,8 @@ watch(() => route.fullPath, () => (open.value = false))
 
 async function logout() {
   open.value = false
+  // ⚠️ `logout` limpa o estado de quem saiu e refaz o escopo (conversas, agentes, eventos) sozinho.
   await auth.logout()
-  conversations.subscribe(auth.isAdmin)
-  void conversations.load(auth.isAdmin)
   await router.push('/login')
 }
 </script>

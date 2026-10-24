@@ -40,7 +40,9 @@ const DAYS = [
   { value: '', label: 'Sem validade' },
 ] as const
 
-const active = computed(() => tokens.value.filter((token) => !token.revokedAt))
+/** Ativo = não revogado E dentro da validade: token vencido não vale e não conta nos 20. */
+const isActive = (token: IAccessToken) => !token.revokedAt && (!token.expiresAt || new Date(token.expiresAt).getTime() > Date.now())
+const active = computed(() => tokens.value.filter(isActive))
 const mcpCommand = computed(() =>
   revealed.value
     ? `claude mcp add --transport http gateway ${location.origin}/v1/mcp --header "X-Tool-Authorization: Bearer ${revealed.value.token}"${auth.gatewayToken ? ' --header "Authorization: Bearer <GATEWAY_TOKEN>"' : ''}`
@@ -123,7 +125,7 @@ async function revoke() {
     <p v-if="loadError" class="text-sm text-rose-300">{{ loadError }}</p>
 
     <ul v-if="tokens.length" class="divide-y divide-zinc-800 rounded-xl border border-zinc-800">
-      <li v-for="token in tokens" :key="token.id" class="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2" :class="{ 'opacity-50': token.revokedAt }">
+      <li v-for="token in tokens" :key="token.id" class="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2" :class="{ 'opacity-50': !isActive(token) }">
         <div class="min-w-0 flex-1 basis-48">
           <div class="flex items-center gap-2">
             <span class="truncate text-sm font-medium">{{ token.name }}</span>
@@ -133,6 +135,7 @@ async function revoke() {
             criado {{ fullTime(token.createdAt) }} ·
             {{ token.lastUsedAt ? `usado ${fullTime(token.lastUsedAt)}` : 'nunca usado' }} ·
             <template v-if="token.revokedAt">revogado {{ fullTime(token.revokedAt) }}</template>
+            <template v-else-if="!isActive(token)">venceu {{ fullTime(token.expiresAt!) }}</template>
             <template v-else>{{ token.expiresAt ? `vale até ${fullTime(token.expiresAt)}` : 'sem validade' }}</template>
           </div>
         </div>

@@ -42,8 +42,16 @@ const form = ref<INewMcpServer>(blank())
 const formIssues = ref<Record<string, string[]>>({})
 const formError = ref<string>()
 
-const edit = ref<{ name: string; url: string; transport: TMcpTransport; auth: TMcpAuth; headerName: string }>()
+interface IEdit {
+  name: string
+  url: string
+  transport: TMcpTransport
+  auth: TMcpAuth
+  headerName: string
+}
+const edit = ref<IEdit>()
 const editError = ref<string>()
+const toolsError = ref<string>()
 const secret = ref('')
 const busy = ref(false)
 const testResult = ref<{ ok: boolean; tools: number; message?: string }>()
@@ -54,18 +62,27 @@ onMounted(async () => {
   if (auth.isAdmin) await mcp.load().catch((error) => (loadError.value = describe(error)))
 })
 
+const editOf = (server: IMcpServer): IEdit => ({ name: server.name, url: server.url, transport: server.transport, auth: server.auth, headerName: server.headerName ?? 'Authorization' })
+
 // Ao abrir um servidor: o formulário de edição com o que está gravado, e as ferramentas dele.
 watch(
   selected,
   (server, previous) => {
     if (!server) return (edit.value = undefined)
-    if (server.id !== previous?.id) {
+    const switched = server.id !== previous?.id
+    if (switched) {
       testResult.value = undefined
+      editError.value = undefined
+      toolsError.value = undefined
+      // ⛔ Segredo digitado é de UM servidor: não pode aparecer no formulário de outro.
       secret.value = ''
-      void mcp.loadTools(server.id).catch(() => undefined)
+      envValues.value = {}
+      mcp.loadTools(server.id).catch((error) => (toolsError.value = describe(error)))
     }
-    edit.value = { name: server.name, url: server.url, transport: server.transport, auth: server.auth, headerName: server.headerName ?? 'Authorization' }
-    if (server.container && server.id !== previous?.id) containerDraft.value = JSON.parse(JSON.stringify(server.container)) as IMcpContainer
+    // ⚠️ "Testar" e "Ligado" recarregam a lista e o `selected` muda de objeto: a edição não salva só é
+    // sobrescrita quando o servidor é outro ou quando o formulário ainda não tinha mudança.
+    if (switched || !edit.value || JSON.stringify(edit.value) === JSON.stringify(editOf(previous!))) edit.value = editOf(server)
+    if (server.container && switched) containerDraft.value = JSON.parse(JSON.stringify(server.container)) as IMcpContainer
   },
   { immediate: true },
 )
@@ -79,8 +96,28 @@ const dirty = computed(() => {
 const tools = computed(() => (selected.value ? (mcp.tools[selected.value.id] ?? []) : []))
 const pointsToSelf = (url: string) => /\/v1\/mcp\/?$/.test(url.trim())
 
+/** ⚠️ Todos os problemas de um 422, com o campo — inclusive de campos que não têm input na tela (senão sumiriam). */
+function issuesSummary(error: ApiError): string {
+  const items = Array.isArray(error.details) ? (error.details as Array<{ field?: string; message?: string }>) : []
+  const lines = items.map((item) => (item.field ? `${item.field}: ${item.message ?? 'inválido'}` : (item.message ?? 'inválido')))
+  return lines.join('; ') || error.message
+}
+
+/** Os problemas de `container.*` por campo do contêiner (`container.image` → `image`): `fieldIssues` só guarda o 1º trecho. */
+function containerIssuesOf(error: ApiError): Record<string, string[]> {
+  const issues: Record<string, string[]> = {}
+  for (const item of Array.isArray(error.details) ? (error.details as Array<{ field?: string; message?: string }>) : []) {
+    const [head, field] = (item.field ?? '').split('.')
+    if (head === 'container' && field) (issues[field] ??= []).push(item.message ?? 'inválido')
+  }
+  return issues
+}
+
+/** ⚠️ Com "Sem rede" o campo de domínios some da tela: o que sobrou digitado nele não vai no corpo. */
+const containerPayload = (container: IMcpContainer): IMcpContainer => (container.network === 'none' ? { ...container, allowedHosts: [] } : container)
+
 function describe(error: unknown): string {
-  if (error instanceof ApiError && error.status === 422) return Object.values(error.fieldIssues).flat().join('; ') || error.message
+  if (error instanceof ApiError && error.status === 422) return issuesSummary(error)
   if (error instanceof ApiError && error.code === 'mcp_server_in_use') return `${error.message}. Tire o servidor desses agentes antes.`
   return error instanceof Error ? error.message : String(error)
 }
@@ -103,12 +140,12 @@ async function create() {
     const { secret: value, headerName, container, ...rest } = form.value
     const created =
       rest.kind === 'container'
-        ? await mcp.create({ id: rest.id, name: rest.name, kind: 'container', container, url: '', transport: 'auto', auth: 'none' })
+        ? await mcp.create({ id: rest.id, name: rest.name, kind: 'container', container: container && containerPayload(container), url: '', transport: 'auto', auth: 'none' })
         : await mcp.create({ ...rest, ...(rest.auth === 'header' ? { headerName, secret: value?.trim() || undefined } : {}) })
     form.value = blank()
     await router.push(`/mcp/${created.id}`)
   } catch (error) {
-    if (error instanceof ApiError && error.status === 422) formIssues.value = error.fieldIssues
+    if (error instanceof ApiError && error.status === 422) formIssues.value = { ...error.fieldIssues, ...containerIssuesOf(error) }
     formError.value = describe(error)
   }
 }
@@ -127,8 +164,8 @@ async function run(work: () => Promise<void>) {
 
 const save = () => run(async () => mcp.update(selected.value!.id, { ...edit.value!, headerName: edit.value!.auth === 'header' ? edit.value!.headerName : undefined }))
 const toggle = () => run(async () => mcp.update(selected.value!.id, { enabled: !selected.value!.enabled }))
-const containerDirty = computed(() => !!selected.value?.container && JSON.stringify(selected.value.container) !== JSON.stringify(containerDraft.value))
-const saveContainer = () => run(async () => mcp.update(selected.value!.id, { name: edit.value!.name, container: containerDraft.value }))
+const containerDirty = computed(() => !!selected.value?.container && JSON.stringify(selected.value.container) !== JSON.stringify(containerPayload(containerDraft.value)))
+const saveContainer = () => run(async () => mcp.update(selected.value!.id, { name: edit.value!.name, container: containerPayload(containerDraft.value) }))
 const saveEnv = (name: string) =>
   run(async () => {
     await mcp.saveEnv(selected.value!.id, name, envValues.value[name] ?? '')
@@ -242,7 +279,7 @@ async function confirmRemove() {
             <label class="field">Header<input v-model="form.headerName" class="input font-mono" placeholder="Authorization" /></label>
             <label class="field">Valor (segredo)<input v-model="form.secret" type="password" autocomplete="off" spellcheck="false" class="input font-mono" placeholder="Bearer …" /></label>
           </div>
-          <p v-if="formError && !Object.keys(formIssues).length" class="text-sm text-rose-300">{{ formError }}</p>
+          <p v-if="formError" class="text-sm text-rose-300">{{ formError }}</p>
           <div class="flex gap-2">
             <button type="submit" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400">Adicionar</button>
             <RouterLink to="/mcp" class="rounded-full px-4 py-2 text-sm hover:bg-zinc-800">Cancelar</RouterLink>
@@ -341,6 +378,7 @@ async function confirmRemove() {
               <div v-if="tool.description" class="text-xs text-zinc-500">{{ tool.description }}</div>
             </li>
           </ul>
+          <p v-else-if="toolsError" class="text-xs text-rose-300">{{ toolsError }}</p>
           <p v-else class="text-xs text-zinc-500">{{ selected.enabled ? 'Nenhuma ferramenta listada (servidor fora do ar, ou sem ferramentas).' : 'Ligue o servidor para listar as ferramentas.' }}</p>
         </div>
 

@@ -1,5 +1,3 @@
-import type { TProvider } from './types'
-
 /** Hora de hoje, "ontem", dia da semana nesta semana, senão a data — como uma caixa de mensagens. */
 export function shortTime(iso: string | undefined, now = new Date()): string {
   if (!iso) return ''
@@ -38,25 +36,6 @@ export function initials(name: string): string {
   return ((words[0]?.[0] ?? '?') + (words[1]?.[0] ?? '')).toUpperCase()
 }
 
-export const PROVIDER_LABEL: Record<TProvider, string> = {
-  claude: 'Claude',
-  openai: 'OpenAI',
-  google: 'Gemini',
-  'claude-sub': 'Claude (assinatura)',
-  codex: 'ChatGPT (assinatura)',
-  antigravity: 'Antigravity (assinatura)',
-}
-
-/** Cor de cada provider: o avatar diz de quem é a conversa antes de ler o nome. */
-export const PROVIDER_COLOR: Record<TProvider, string> = {
-  claude: 'bg-claude',
-  openai: 'bg-openai',
-  google: 'bg-google',
-  'claude-sub': 'bg-claude',
-  codex: 'bg-openai',
-  antigravity: 'bg-google',
-}
-
 export const CLASSIFICATION_COLOR: Record<string, string> = {
   green: 'bg-emerald-500',
   blue: 'bg-sky-500',
@@ -65,13 +44,3 @@ export const CLASSIFICATION_COLOR: Record<string, string> = {
 }
 
 export const CLASSIFICATION_LABEL: Record<string, string> = { green: 'Verde', blue: 'Azul', amber: 'Âmbar', red: 'Vermelho' }
-
-/** O nome de um provider pelo id: os oficiais têm rótulo próprio; um compatível aparece pelo id. */
-export function providerLabel(id: string, names: ReadonlyMap<string, string> = new Map()): string {
-  return names.get(id) ?? PROVIDER_LABEL[id as TProvider] ?? id
-}
-
-/** A cor do avatar: a do oficial, ou neutra para um compatível (que pode servir modelos de todo mundo). */
-export function providerColor(id: string): string {
-  return PROVIDER_COLOR[id as TProvider] ?? 'bg-zinc-600'
-}

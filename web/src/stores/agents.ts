@@ -8,6 +8,9 @@ export const useAgentsStore = defineStore('agents', () => {
   const tools = ref<ITool[]>([])
   const nativeTools = ref<INativeTool[]>([])
   const mcpConnected = ref(false)
+  /** Limites do servidor que a tela cita em texto (`GET /tools`). */
+  const limits = ref<{ delegationMaxDepth: number }>({ delegationMaxDepth: 2 })
+  const toolsLoaded = ref(false)
   const loaded = ref(false)
 
   const byId = computed(() => new Map(list.value.map((agent) => [agent.id, agent])))
@@ -20,10 +23,12 @@ export const useAgentsStore = defineStore('agents', () => {
   }
 
   async function loadTools(): Promise<void> {
-    const result = await api<{ mcp: { connected: boolean }; tools: ITool[]; native?: INativeTool[] }>('/tools')
+    const result = await api<{ mcp: { connected: boolean }; tools: ITool[]; native?: INativeTool[]; limits?: { delegationMaxDepth: number } }>('/tools')
     tools.value = result.tools
     nativeTools.value = result.native ?? []
     mcpConnected.value = result.mcp.connected
+    if (result.limits) limits.value = result.limits
+    toolsLoaded.value = true
   }
 
   function detail(id: string): Promise<IAgentDetail> {
@@ -34,13 +39,14 @@ export const useAgentsStore = defineStore('agents', () => {
     const saved = creating
       ? await api<IAgentDetail>('/agents', { method: 'POST', body: input })
       : await api<IAgentDetail>(`/agents/${encodeURIComponent(input.id ?? '')}`, { method: 'PUT', body: input })
-    await load()
+    // ⚠️ Já gravou: falha ao reler a lista não pode virar "não salvou".
+    await load().catch(() => undefined)
     return saved
   }
 
   async function remove(id: string): Promise<void> {
     await api(`/agents/${encodeURIComponent(id)}`, { method: 'DELETE' })
-    await load()
+    await load().catch(() => undefined)
   }
 
   /** O nome legível de uma ferramenta no histórico: o rótulo da nativa (`WebSearch` → "Busca na web"), senão o próprio nome. */
@@ -50,5 +56,5 @@ export const useAgentsStore = defineStore('agents', () => {
     return nativeTools.value.find((tool) => tool.sdkName === name || tool.sdkName === base)?.label ?? name
   }
 
-  return { list, conversable, tools, nativeTools, mcpConnected, toolLabel, loaded, byId, load, loadTools, detail, save, remove }
+  return { list, conversable, tools, nativeTools, mcpConnected, limits, toolsLoaded, toolLabel, loaded, byId, load, loadTools, detail, save, remove }
 })

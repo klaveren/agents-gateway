@@ -52,7 +52,11 @@ onMounted(() => {
   if (sentinel.value) observer.observe(sentinel.value)
 })
 
-onBeforeUnmount(() => observer?.disconnect())
+// ⚠️ A busca pendente não pode disparar depois da tela sair (logout): recarregaria a lista do usuário anterior.
+onBeforeUnmount(() => {
+  observer?.disconnect()
+  clearTimeout(debounce)
+})
 
 /** As conversas delegadas por outro agente (filhas) aparecem dentro da conversa que as originou, não na lista. */
 const topLevel = computed(() => conversations.items.filter((conversation) => !conversation.metadata?.delegatedBy))

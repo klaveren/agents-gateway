@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { levelsFor, REASONING_LEVELS, SUBSCRIPTION_PROTOCOLS } from '@/lib/reasoning'
 import { computed, onMounted, ref, watch } from 'vue'
 import { ApiError } from '@/lib/api'
-import { providerLabel } from '@/lib/format'
+import { defaultLanes, findOrphans, isUsableProvider, pruneModels, pruneNatives, summarizeIssues } from '@/lib/agentForm'
 import { useProvidersStore } from '@/stores/providers'
+import { useProtocolsStore } from '@/stores/protocols'
 import type { IAgentDetail, IAgentInput, ICatalogModel, TMode } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import { useMcpStore } from '@/stores/mcp'
@@ -14,27 +14,48 @@ const emit = defineEmits<{ saved: [id: string]; duplicate: [agent: IAgentDetail]
 
 const agents = useAgentsStore()
 const providers = useProvidersStore()
+const protocols = useProtocolsStore()
 const mcp = useMcpStore()
+
+/**
+ * Providers e protocolos carregados: sem eles o formulário não sabe lanes, níveis nem nativas, e o Salvar
+ * fica desligado (⚠️ antes ele salvava com o que estivesse na tela, que podia ser o provider errado).
+ */
+const ready = ref(false)
+const loadError = ref<string>()
+async function loadBase() {
+  loadError.value = undefined
+  try {
+    await Promise.all([providers.load(), protocols.loaded ? undefined : protocols.load()])
+    ready.value = true
+  } catch (error) {
+    loadError.value = error instanceof Error ? error.message : String(error)
+  }
+}
 
 /**
  * Os MCPs: por servidor ligado, "todas as ferramentas" (`mcp:<id>/*`) ou uma a uma (`mcp:<id>/<tool>`).
  * As ferramentas de cada servidor são lidas ao abrir o formulário.
  */
+const mcpReady = ref(false)
 onMounted(async () => {
-  await mcp.load().catch(() => undefined)
+  void loadBase()
+  const loaded = await mcp.load().then(
+    () => true,
+    () => false,
+  )
   await Promise.all(mcp.list.filter((server) => server.enabled).map((server) => mcp.loadTools(server.id).catch(() => [])))
+  mcpReady.value = loaded
 })
 const mcpRef = (server: string, tool: string) => `mcp:${server}/${tool}`
 const enabledMcp = computed(() => mcp.list.filter((server) => server.enabled))
-/** O que o agente escolheu e já não aparece acima (servidor desligado, removido, ou ferramenta que sumiu). */
-const orphanMcp = computed(() =>
-  form.value.allowedTools.filter((entry) => {
-    if (!entry.startsWith('mcp:')) return false
-    const [server, tool] = entry.slice(4).split('/')
-    if (!enabledMcp.value.some((candidate) => candidate.id === server)) return true
-    return tool !== '*' && !(mcp.tools[server] ?? []).some((candidate) => candidate.name === tool)
-  }),
-)
+function mcpOffered(entry: string): boolean {
+  const [server, tool] = entry.slice(4).split('/')
+  if (!enabledMcp.value.some((candidate) => candidate.id === server)) return false
+  // ⚠️ Servidor que não listou nada (fora do ar, ou só lista dentro de uma conversa) não prova que a ferramenta sumiu.
+  const listed = mcp.tools[server] ?? []
+  return tool === '*' || !listed.length || listed.some((candidate) => candidate.name === tool)
+}
 function toggleAllMcp(server: string) {
   const all = mcpRef(server, '*')
   if (form.value.allowedTools.includes(all)) form.value.allowedTools = form.value.allowedTools.filter((entry) => entry !== all)
@@ -44,17 +65,19 @@ function toggleAllMcp(server: string) {
 
 /** Os providers configurados e ligados; um desligado só aparece se for o deste agente. */
 const providerOptions = computed(() => providers.list.filter((provider) => provider.enabled || provider.id === form.value.provider))
-const protocol = computed(() => providers.list.find((provider) => provider.id === form.value.provider)?.protocol ?? form.value.provider)
+const protocol = computed(() => protocols.protocolOf(form.value.provider) ?? form.value.provider)
+const protocolInfo = computed(() => protocols.get(protocol.value))
 const compatible = computed(() => !!providers.list.find((provider) => provider.id === form.value.provider)?.baseUrl)
-/** Assinatura: só a lane agent (as APIs de chat exigem chave). */
-const subscription = computed(() => SUBSCRIPTION_PROTOCOLS.includes(protocol.value))
+/** ⚖️ Quem manda é o servidor (`GET /protocols`): assinatura só tem a lane agent (as APIs de chat exigem chave). */
+const subscription = computed(() => !!protocolInfo.value?.subscription)
+const lanesAllowed = computed<TMode[]>(() => protocolInfo.value?.lanes ?? ['chat', 'agent'])
 
-/** As ferramentas nativas do SDK deste provider (pelo protocolo), na ordem do risco. */
+/** As ferramentas nativas do SDK deste provider (pela família do protocolo), na ordem do risco. */
 const RISK_ORDER = ['hosted', 'session', 'server-network', 'server-read', 'server-exec']
 /** Os níveis que o protocolo deste provider aceita (Google: nenhum). */
-const reasoningLevels = computed(() => REASONING_LEVELS[protocol.value] ?? [])
+const reasoningLevels = computed(() => protocolInfo.value?.reasoningLevels ?? [])
 
-const natives = computed(() => agents.nativeTools.filter((tool) => tool.protocol === protocol.value).sort((a, b) => RISK_ORDER.indexOf(a.risk) - RISK_ORDER.indexOf(b.risk)))
+const natives = computed(() => agents.nativeTools.filter((tool) => tool.protocol === protocolInfo.value?.nativeFamily).sort((a, b) => RISK_ORDER.indexOf(a.risk) - RISK_ORDER.indexOf(b.risk)))
 const RISK_LABEL: Record<string, string> = {
   hosted: 'no fornecedor',
   session: 'só a conversa',
@@ -101,35 +124,102 @@ function makeDefault(modelId: string) {
   form.value.models = [modelId, ...form.value.models.filter((model) => model !== modelId)]
 }
 
-/** Ferramentas que mudam algo fora da conversa: o formulário avisa antes de dar ao agente. */
-const DANGEROUS = new Set(['run_bash'])
+/** Ferramentas que mudam algo fora da conversa: quem diz é o servidor (`dangerous` em `GET /tools`). */
+const dangerousNames = computed(() => new Set(agents.tools.filter((tool) => tool.dangerous).map((tool) => tool.name)))
+const dangerousChosen = computed(() => form.value.allowedTools.filter((name) => dangerousNames.value.has(name)))
+const dangerousNative = computed(() => form.value.allowedTools.some((id) => natives.value.some((tool) => tool.id === id && tool.dangerous)))
 
-const blank = (): IAgentInput => ({ id: '', name: '', provider: 'claude', soul: '', systemPrompt: '', models: [], reasoningEfforts: [], modes: ['chat', 'agent'], allowedTools: [], role: null })
+/** O nome que a pessoa vê de cada campo, para o resumo do erro perto do Salvar. */
+const FIELD_LABEL: Record<string, string> = {
+  id: 'Id',
+  name: 'Nome',
+  provider: 'Provider',
+  models: 'Modelos',
+  modes: 'Lanes',
+  reasoningEfforts: 'Raciocínio',
+  allowedTools: 'Ferramentas',
+  soul: 'Soul',
+  systemPrompt: 'Prompt',
+  role: 'Só subagente',
+}
+
+const blank = (): IAgentInput => ({ id: '', name: '', provider: '', soul: '', systemPrompt: '', models: [], reasoningEfforts: [], modes: ['chat', 'agent'], allowedTools: [], role: null })
 const form = ref<IAgentInput>(blank())
-// ⚠️ DEPOIS de `form`: o `watch` lê o getter na hora (via `protocol` → `form`), e antes da declaração
-// isso derrubava o formulário inteiro ("Cannot access before initialization").
-watch(subscription, (value) => {
-  if (value) form.value.modes = ['agent']
-})
+
+/** Entradas `sdk:`/`agent:`/`mcp:` que nenhuma lista oferece: sem checkbox, mas o servidor recusa o salvamento. */
+const orphans = computed(() =>
+  findOrphans(form.value.allowedTools, {
+    natives: agents.toolsLoaded && protocols.loaded ? new Set(natives.value.map((tool) => tool.id)) : undefined,
+    agents: agents.loaded ? new Set(agents.list.filter((candidate) => candidate.id !== form.value.id).map((candidate) => candidate.id)) : undefined,
+    mcp: mcpReady.value ? mcpOffered : undefined,
+  }),
+)
+
 /** Modelos que o agente declarava e que estão desligados no catálogo: saem ao salvar. */
 const droppedModels = ref<string[]>([])
 const issues = ref<Record<string, string[]>>({})
 const failure = ref<string>()
 const saving = ref(false)
+const confirmingSave = ref(false)
 const confirming = ref(false)
 const deleting = ref(false)
+
+/** O padrão de um agente novo: o primeiro provider que já abre conversa (ligado, com chave ou assinatura). */
+const defaultProvider = computed(() => providers.list.find((provider) => isUsableProvider(provider, protocols.get(provider.protocol)))?.id ?? '')
+function applyDefaultProvider() {
+  if (props.creating && !props.agent && !form.value.provider && defaultProvider.value) selectProvider(defaultProvider.value)
+}
+watch(defaultProvider, applyDefaultProvider)
+
+// Só a troca feita pela pessoa poda os modelos: carregar um agente existente não pode mexer no que ele declara.
+let userChanged = false
+/** ⚠️ Cada troca de provider vale uma geração: a resposta de uma anterior chega depois e é descartada. */
+let generation = 0
+
+/**
+ * A pessoa escolheu outro provider. Os modelos saem quando o catálogo novo chega (watcher abaixo); o resto
+ * é decidido já: a nativa `sdk:` de outra família (claude-sub usa as do claude) e a lane que o protocolo
+ * não aceita fariam o servidor recusar, e a busca e o aviso de modelos descartados eram do provider anterior.
+ */
+function selectProvider(id: string) {
+  if (id === form.value.provider) return
+  userChanged = true
+  const next = providers.list.find((provider) => provider.id === id)?.protocol ?? id
+  const info = protocols.get(next)
+  modelSearch.value = ''
+  droppedModels.value = []
+  form.value.provider = id
+  form.value.modes = defaultLanes(info)
+  form.value.reasoningEfforts = protocols.levelsFor(next, form.value.reasoningEfforts ?? [])
+  if (agents.toolsLoaded) form.value.allowedTools = pruneNatives(form.value.allowedTools, agents.nativeTools, info?.nativeFamily)
+}
 
 watch(
   () => form.value.provider,
   async (provider) => {
-    if (!provider) return
-    loadingModels.value = true
-    try {
-      enabledModels.value = (await providers.models(provider)).filter((model) => model.enabled)
-    } catch {
+    const token = ++generation
+    if (!provider) {
       enabledModels.value = []
-    } finally {
       loadingModels.value = false
+      return
+    }
+    loadingModels.value = true
+    let models: ICatalogModel[]
+    try {
+      models = (await providers.models(provider)).filter((model) => model.enabled)
+    } catch {
+      models = []
+    }
+    // ⚠️ Resposta de um provider que já não é o escolhido (troca rápida, ou outro agente aberto): ignora.
+    if (token !== generation) return
+    enabledModels.value = models
+    loadingModels.value = false
+    // ⚠️ TROCOU O PROVIDER: os modelos do anterior não existem neste. Mantê-los marcados fazia o servidor
+    // recusar ("not enabled in Providers → Models") e a tela parecia "não salvar". Ficam só os que este
+    // provider oferece; sem nenhum, o primeiro ativado vira o padrão.
+    if (userChanged) {
+      userChanged = false
+      form.value.models = pruneModels(form.value.models, models.map((model) => model.modelId))
     }
   },
   { immediate: true },
@@ -140,12 +230,15 @@ const readOnly = computed(() => !!props.agent?.builtIn && !props.creating)
 watch(
   () => [props.agent, props.creating] as const,
   ([agent]) => {
+    userChanged = false
+    modelSearch.value = ''
     form.value = agent ? { id: agent.id, name: agent.name, provider: agent.provider, soul: agent.soul ?? '', systemPrompt: agent.systemPrompt, models: [...agent.models], reasoningEfforts: [...(agent.reasoningEfforts ?? [])], modes: [...agent.modes], allowedTools: [...agent.allowedTools], role: agent.role ?? null } : blank()
     // Os desligados no catálogo não entram no formulário: salvar com eles seria recusado.
     droppedModels.value = agent?.disabledModels ?? []
     form.value.models = form.value.models.filter((model) => !droppedModels.value.includes(model))
     issues.value = {}
     failure.value = undefined
+    applyDefaultProvider()
   },
   { immediate: true },
 )
@@ -167,15 +260,23 @@ function slugify() {
     .slice(0, 48)
 }
 
+/** O que será gravado, em uma linha, para a confirmação do Salvar. */
+const saveSummary = computed(() => {
+  const { models, modes, allowedTools } = form.value
+  return `Provider ${protocols.providerName(form.value.provider)}, ${models.length} modelo(s)${models[0] ? ` (padrão ${models[0]})` : ''}, lanes ${modes.join(' + ') || 'nenhuma'}, ${allowedTools.length} ferramenta(s).`
+})
+
 async function save() {
+  confirmingSave.value = false
   saving.value = true
   issues.value = {}
   failure.value = undefined
   try {
-    const input: IAgentInput = { ...form.value, reasoningEfforts: levelsFor(protocol.value, form.value.reasoningEfforts ?? []) }
+    const input: IAgentInput = { ...form.value, reasoningEfforts: protocols.levelsFor(protocol.value, form.value.reasoningEfforts ?? []) }
     const saved = await agents.save(input, props.creating)
     emit('saved', saved.id)
   } catch (error) {
+    // ⚠️ Todo 422 vira resumo perto do Salvar: o campo com problema pode nem ter input na tela.
     if (error instanceof ApiError && error.status === 422) issues.value = error.fieldIssues
     failure.value = error instanceof Error ? error.message : String(error)
   } finally {
@@ -191,6 +292,7 @@ async function remove() {
     confirming.value = false
     emit('removed')
   } catch (error) {
+    // 409 `agent_in_use`: a mensagem do servidor diz quem ainda referencia o agente.
     failure.value = error instanceof Error ? error.message : String(error)
     confirming.value = false
   } finally {
@@ -200,7 +302,7 @@ async function remove() {
 </script>
 
 <template>
-  <form class="mx-auto flex max-w-3xl flex-col gap-5" @submit.prevent="save">
+  <form class="mx-auto flex max-w-3xl flex-col gap-5" @submit.prevent="confirmingSave = true">
     <div v-if="readOnly" class="flex items-center gap-3 rounded-xl border border-zinc-700 bg-zinc-900 p-3 text-sm text-zinc-300">
       Agente embutido: declarado no código, só leitura. Para mudar, duplique e edite a cópia.
       <button type="button" class="ml-auto rounded-full bg-zinc-800 px-3 py-1.5 hover:bg-zinc-700" @click="agent && emit('duplicate', agent)">Duplicar</button>
@@ -222,10 +324,10 @@ async function remove() {
       <div class="field sm:col-span-2">
         <span>Provider</span>
         <div class="flex flex-wrap gap-1.5">
-          <button v-for="provider in providerOptions" :key="provider.id" type="button" class="chip" :class="{ on: form.provider === provider.id }" @click="form.provider = provider.id">
+          <button v-for="provider in providerOptions" :key="provider.id" type="button" class="chip" :class="{ on: form.provider === provider.id }" @click="selectProvider(provider.id)">
             {{ provider.name }}<span v-if="!provider.enabled" class="text-[10px] text-zinc-500"> desligado</span>
           </button>
-          <span v-if="!providerOptions.length" class="text-sm text-zinc-500">{{ providerLabel(form.provider) }}</span>
+          <span v-if="!providerOptions.length" class="text-sm text-zinc-500">{{ form.provider ? protocols.providerName(form.provider) : 'Nenhum provider pronto — configure em Providers.' }}</span>
         </div>
       </div>
 
@@ -265,7 +367,7 @@ async function remove() {
             type="button"
             class="chip disabled:opacity-40"
             :class="{ on: form.modes.includes(mode) }"
-            :disabled="subscription && mode === 'chat'"
+            :disabled="!lanesAllowed.includes(mode) || (subscription && mode === 'chat')"
             @click="toggle(form.modes, mode)"
           >
             {{ mode === 'chat' ? 'Chat' : 'Agents SDK' }}
@@ -292,7 +394,7 @@ async function remove() {
             :key="tool.name"
             type="button"
             class="chip"
-            :class="{ on: form.allowedTools.includes(tool.name), danger: DANGEROUS.has(tool.name) }"
+            :class="{ on: form.allowedTools.includes(tool.name), danger: tool.dangerous }"
             :title="tool.description"
             @click="toggle(form.allowedTools, tool.name)"
           >
@@ -300,12 +402,12 @@ async function remove() {
           </button>
           <span v-if="!agents.tools.length" class="text-sm text-zinc-500">Nenhuma disponível.</span>
         </div>
-        <small v-if="form.allowedTools.some((tool) => DANGEROUS.has(tool))" class="text-amber-300">⚠ run_bash executa comandos no servidor do gateway. Por isso, só administradores conversam com este agente (DANGEROUS_TOOLS_ADMIN_ONLY).</small>
+        <small v-if="dangerousChosen.length" class="text-amber-300">⚠ {{ dangerousChosen.join(', ') }} alcança o servidor do gateway. Por isso, só administradores conversam com este agente (DANGEROUS_TOOLS_ADMIN_ONLY).</small>
         <small v-for="message in issues.allowedTools" :key="message" class="error">{{ message }}</small>
       </div>
 
       <div class="field sm:col-span-2">
-        <span>Pode delegar a <em class="font-normal text-zinc-500">— outros agentes a quem este pede parte do trabalho (rodam com as permissões de quem conversa; até 2 níveis, sem ciclos)</em></span>
+        <span>Pode delegar a <em class="font-normal text-zinc-500">— outros agentes a quem este pede parte do trabalho (rodam com as permissões de quem conversa; até {{ agents.limits.delegationMaxDepth }} níveis, sem ciclos)</em></span>
         <div class="flex flex-wrap gap-1.5">
           <button
             v-for="other in agents.list.filter((candidate) => candidate.id !== form.id)"
@@ -351,10 +453,6 @@ async function remove() {
           </div>
         </div>
         <span v-else class="text-sm font-normal text-zinc-500">Nenhum MCP ligado. <RouterLink to="/mcp" class="text-emerald-400 hover:underline">Cadastrar em MCPs</RouterLink>.</span>
-        <div v-if="orphanMcp.length" class="flex flex-wrap items-center gap-1.5 text-xs font-normal">
-          <span class="text-amber-300">Escolhidas, mas indisponíveis agora:</span>
-          <button v-for="entry in orphanMcp" :key="entry" type="button" class="chip on font-mono text-xs" title="Clique para tirar do agente" @click="toggle(form.allowedTools, entry)">{{ entry }} ✕</button>
-        </div>
       </div>
 
       <div v-if="natives.length" class="field sm:col-span-2">
@@ -371,7 +469,16 @@ async function remove() {
             <span class="shrink-0 rounded-full px-2 py-0.5 text-[10px]" :class="RISK_CLASS[tool.risk]">{{ RISK_LABEL[tool.risk] }}</span>
           </li>
         </ul>
-        <small v-if="form.allowedTools.some((id) => natives.find((tool) => tool.id === id && tool.risk.startsWith('server')))" class="text-amber-300">⚠ Ferramentas que tocam este servidor dão ao agente acesso ao disco, à rede ou a comandos daqui. Só administradores conversam com ele.</small>
+        <small v-if="dangerousNative" class="text-amber-300">⚠ Ferramentas que tocam este servidor dão ao agente acesso ao disco, à rede ou a comandos daqui. Só administradores conversam com ele.</small>
+      </div>
+
+      <div v-if="orphans.length" class="field sm:col-span-2">
+        <span>Órfãs <em class="font-normal text-zinc-500">— escolhidas, mas que este provider ou o servidor não oferecem; o servidor recusa o salvamento com elas</em></span>
+        <div class="flex flex-wrap gap-1.5">
+          <button v-for="entry in orphans" :key="entry" type="button" class="chip on danger font-mono text-xs" title="Clique para tirar do agente" @click="toggle(form.allowedTools, entry)">
+            <span class="mr-1 rounded-full bg-amber-500/20 px-1.5 text-[10px] text-amber-200">órfão</span>{{ entry }} ✕
+          </button>
+        </div>
       </div>
 
       <div class="field sm:col-span-2">
@@ -395,14 +502,33 @@ async function remove() {
       </label>
     </fieldset>
 
-    <p v-if="failure && !Object.keys(issues).length" class="text-sm text-rose-300">{{ failure }}</p>
+    <p v-if="failure && !Object.keys(issues).length" class="text-sm whitespace-pre-line text-rose-300">{{ failure }}</p>
+    <!-- O erro de campo aparece junto do campo, que pode estar fora da tela: aqui, perto do Salvar, o resumo. -->
+    <p v-else-if="Object.keys(issues).length" class="text-sm text-rose-300">
+      Não salvou — corrija: {{ summarizeIssues(issues, FIELD_LABEL) }}
+    </p>
     <p v-if="agent?.updatedBy" class="text-xs text-zinc-500">Alterado por {{ agent.updatedBy }} em {{ agent.updatedAt ? new Date(agent.updatedAt).toLocaleString('pt-BR') : '' }}</p>
 
+    <p v-if="!readOnly && loadError" class="text-sm text-rose-300">
+      Não consegui carregar os providers ({{ loadError }}), então não dá para salvar.
+      <button type="button" class="underline hover:text-rose-200" @click="loadBase">Tentar de novo</button>
+    </p>
+    <p v-else-if="!readOnly && !ready" class="text-xs text-zinc-500">Carregando providers…</p>
+
     <div v-if="!readOnly" class="flex gap-2">
-      <button type="submit" :disabled="saving" class="rounded-full bg-emerald-500 px-5 py-2 font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50">{{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar' }}</button>
+      <button type="submit" :disabled="saving || !ready || !!loadError || !form.provider" class="rounded-full bg-emerald-500 px-5 py-2 font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50">{{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar' }}</button>
       <button v-if="!creating && agent" type="button" class="rounded-full bg-zinc-800 px-4 py-2 hover:bg-zinc-700" @click="emit('duplicate', agent)">Duplicar</button>
       <button v-if="!creating && agent" type="button" class="ml-auto rounded-full px-4 py-2 text-rose-300 hover:bg-rose-500/10" @click="confirming = true">Apagar</button>
     </div>
+    <ConfirmDialog
+      :open="confirmingSave"
+      :title="`${creating ? 'Criar' : 'Salvar'} o agente ${form.name}?`"
+      :message="saveSummary"
+      :action="creating ? 'Criar' : 'Salvar'"
+      tone="neutral"
+      @confirm="save"
+      @cancel="confirmingSave = false"
+    />
     <ConfirmDialog
       :open="confirming"
       :title="`Apagar o agente ${agent?.name ?? ''}?`"

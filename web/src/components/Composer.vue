@@ -4,7 +4,8 @@ import type { IOutgoingFile } from '@/stores/thread'
 import Icon from './Icon.vue'
 
 const props = defineProps<{ sending: boolean; disabled?: boolean; placeholder?: string }>()
-const emit = defineEmits<{ send: [text: string, files: IOutgoingFile[]]; stop: [] }>()
+/** `settle(false)`: o envio falhou — o texto e os anexos voltam para a caixa. */
+const emit = defineEmits<{ send: [text: string, files: IOutgoingFile[], settle: (ok: boolean) => void]; stop: [] }>()
 
 const text = ref('')
 const files = ref<IOutgoingFile[]>([])
@@ -48,7 +49,16 @@ function submit() {
   if (props.sending || props.disabled) return
   const message = text.value.trim()
   if (!message && !files.value.length) return
-  emit('send', message, files.value)
+  const sentFiles = files.value
+  // ⚠️ Limpa na hora (a resposta chega em streaming), mas devolve se o envio falhar: o texto digitado não se perde.
+  // Se já digitou outra coisa por cima, não sobrescreve.
+  const settle = (ok: boolean) => {
+    if (ok || text.value || files.value.length) return
+    text.value = message
+    files.value = sentFiles
+    void nextTick(grow)
+  }
+  emit('send', message, sentFiles, settle)
   text.value = ''
   files.value = []
   void nextTick(grow)

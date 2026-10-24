@@ -3,19 +3,18 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import AccessTokens from '@/components/AccessTokens.vue'
 import { ApiError } from '@/lib/api'
-import type { TAudience } from '@/lib/types'
+import type { ISettings, TAudience, TLimitName } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import { useAuthStore } from '@/stores/auth'
-import { useConversationsStore } from '@/stores/conversations'
 import { useProvidersStore } from '@/stores/providers'
 import { useSettingsStore } from '@/stores/settings'
-import { providerLabel } from '@/lib/format'
+import { useProtocolsStore } from '@/stores/protocols'
 
 const auth = useAuthStore()
 const agents = useAgentsStore()
 const settings = useSettingsStore()
 const providers = useProvidersStore()
-const conversations = useConversationsStore()
+const protocols = useProtocolsStore()
 const route = useRoute()
 
 /**
@@ -54,6 +53,35 @@ const classifierOptions = ref<Array<{ value: string; provider: string; model: st
 const classifyTurns = ref(false)
 const saved = ref<string>()
 const failure = ref<string>()
+/** Os problemas de um 422, campo a campo — mostrados junto do Salvar. */
+const issues = ref<Array<{ field: string; message: string }>>([])
+/** Os limites em edição; vazio = volta ao padrão do `.env` (vai como `null`). */
+const limitDrafts = ref<Partial<Record<TLimitName, number | ''>>>({})
+
+const LIMITS: Array<{ name: TLimitName; label: string }> = [
+  { name: 'maxToolTurns', label: 'Voltas de ferramenta por turno' },
+  { name: 'maxOutputTokens', label: 'Tokens de saída por resposta' },
+  { name: 'delegationMaxDepth', label: 'Profundidade de delegação' },
+  { name: 'bashTimeoutMs', label: 'Tempo limite do bash (ms)' },
+  { name: 'bashMaxOutputChars', label: 'Saída máxima do bash (caracteres)' },
+  { name: 'sessionsPerOwner', label: 'Sessões simultâneas por dono' },
+  { name: 'streamsPerOwner', label: 'Streams simultâneos por dono' },
+]
+
+const DEPLOYMENT: Array<{ key: keyof NonNullable<ISettings['deployment']>; label: string }> = [
+  { key: 'dangerousToolsAdminOnly', label: 'Ferramentas perigosas só para admin' },
+  { key: 'subscriptionAdminOnly', label: 'Assinaturas só para admin' },
+  { key: 'allowAnonymous', label: 'Aceita chamador anônimo' },
+  { key: 'localToolsEnabled', label: 'Ferramentas locais' },
+  { key: 'nativeToolsEnabled', label: 'Ferramentas nativas' },
+  { key: 'agentsEnabled', label: 'Agentes habilitados' },
+]
+
+/** Booleano vira sim/não; texto (lista do `.env`) aparece como veio; ausente é "—". */
+function deploymentValue(value: boolean | string | undefined): string {
+  if (typeof value === 'boolean') return value ? 'sim' : 'não'
+  return value || '—'
+}
 
 const AUDIENCE: Array<{ value: TAudience; label: string; hint: string }> = [
   { value: 'all', label: 'Aberto', hint: 'Todo chamador que o gateway deixa passar abre sessão.' },
@@ -69,12 +97,12 @@ onMounted(async () => {
   await loadClassifierOptions()
 })
 
-/** Os modelos ativados de cada provider ligado — a lista do classificador. */
+/** Os modelos ativados de cada provider ligado e com chave de API — a lista do classificador (assinatura não classifica). */
 async function loadClassifierOptions() {
   await providers.load().catch(() => undefined)
   const lists = await Promise.all(
     providers.list
-      .filter((provider) => provider.enabled)
+      .filter((provider) => provider.enabled && !provider.subscription && provider.credential.configured)
       .map(async (provider) => (await providers.models(provider.id).catch(() => [])).filter((model) => model.enabled).map((model) => ({ value: `${provider.id}::${model.modelId}`, provider: provider.id, model: model.modelId }))),
   )
   classifierOptions.value = lists.flat()
@@ -89,15 +117,20 @@ watch(
     model.value = current.model ?? ''
     classifier.value = current.classifierModel ? `${current.classifierProvider ?? ''}::${current.classifierModel}` : ''
     classifyTurns.value = current.classifyTurns ?? false
+    limitDrafts.value = Object.fromEntries(LIMITS.map(({ name }) => [name, current.limits?.[name] ?? ''])) as Partial<Record<TLimitName, number | ''>>
   },
   { immediate: true },
 )
 
+/** ⚠️ O modelo é do agente: trocar o agente larga o modelo (volta a "Padrão do agente") em vez de mandar um que ele não tem. */
+function onAgentChange() {
+  model.value = ''
+}
+
 async function saveGatewayToken() {
+  // Agentes, configurações e eventos das conversas são refeitos pela store ao trocar o portão.
   await auth.saveGatewayToken(gatewayToken.value)
-  conversations.subscribe(auth.isAdmin)
-  void conversations.load(auth.isAdmin)
-  void agents.load().catch(() => undefined)
+  if (auth.isAdmin) void loadClassifierOptions()
   tokenNote.value = auth.unauthorized ? 'O gateway recusou o token.' : 'Salvo.'
 }
 
@@ -118,6 +151,7 @@ async function changePassword() {
 async function saveSettings() {
   saved.value = undefined
   failure.value = undefined
+  issues.value = []
   try {
     // Vazio vira `null`: volta ao padrão em vez de gravar texto em branco.
     const [classifierProvider, classifierModel] = classifier.value ? classifier.value.split('::') : ['', '']
@@ -128,10 +162,15 @@ async function saveSettings() {
       classifierModel: classifierModel || null,
       classifierProvider: classifierProvider || null,
       classifyTurns: classifyTurns.value,
+      // Vazio = `null`: o limite volta ao padrão do `.env`.
+      limits: Object.fromEntries(LIMITS.map(({ name }) => [name, limitDrafts.value[name] === '' || limitDrafts.value[name] === undefined ? null : Number(limitDrafts.value[name])])),
     })
     saved.value = 'Configuração salva — vale para a próxima sessão.'
   } catch (error) {
-    failure.value = error instanceof ApiError && error.details ? Object.values(error.fieldIssues).flat().join('; ') : String(error)
+    if (error instanceof ApiError && Array.isArray(error.details) && error.details.length) {
+      issues.value = (error.details as Array<{ field?: string; message?: string }>).map((item) => ({ field: item.field ?? '', message: item.message ?? 'inválido' }))
+      failure.value = 'Não salvou: corrija o que está abaixo.'
+    } else failure.value = error instanceof Error ? error.message : String(error)
   }
 }
 </script>
@@ -158,9 +197,10 @@ async function saveSettings() {
         <div class="grid gap-3 sm:grid-cols-2">
           <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
             Agente padrão
-            <select v-model="agentId" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2">
-              <option value="">Padrão ({{ settings.current.defaults?.agentId }})</option>
-              <option v-for="option in agents.conversable" :key="option.id" :value="option.id">{{ option.name }}</option>
+            <select v-model="agentId" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2" @change="onAgentChange">
+              <option value="">Padrão ({{ settings.current.defaults?.agentId ?? 'nenhum agente ativo' }})</option>
+              <!-- Inativo aparece, mas não se escolhe: o servidor recusaria, e o motivo diz o que resolver. -->
+              <option v-for="option in agents.conversable" :key="option.id" :value="option.id" :disabled="!!option.unavailable">{{ option.name }}{{ option.unavailable ? ` (${option.unavailable.label})` : '' }}</option>
             </select>
           </label>
           <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
@@ -173,15 +213,35 @@ async function saveSettings() {
           <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
             Modelo do classificador
             <select v-model="classifier" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2 text-sm">
-              <option value="">Nenhum (CLASSIFIER_MODEL, se houver)</option>
+              <option value="">Nenhum (sem classificação)</option>
               <option v-if="classifier && !classifierOptions.some((option) => option.value === classifier)" :value="classifier">{{ classifier.replace('::', ' · ') }} (não ativado)</option>
-              <option v-for="option in classifierOptions" :key="option.value" :value="option.value">{{ providerLabel(option.provider, providers.names) }} · {{ option.model }}</option>
+              <option v-for="option in classifierOptions" :key="option.value" :value="option.value">{{ protocols.providerName(option.provider) }} · {{ option.model }}</option>
             </select>
-            <small class="text-xs text-zinc-500">Os modelos ativados em Providers. Prefira um pequeno: ele roda a cada turno.</small>
+            <small class="text-xs text-zinc-500">Os modelos ativados em Providers (com chave, não assinatura). Sem escolha, nada é classificado. Prefira um pequeno: ele roda a cada turno.</small>
           </label>
           <label class="flex items-center gap-2 self-end pb-2 text-sm text-zinc-300">
             <input v-model="classifyTurns" type="checkbox" class="accent-emerald-500" /> Classificar cada turno
           </label>
+        </div>
+
+        <div v-if="settings.current.limitBounds" class="flex flex-col gap-2">
+          <h3 class="text-sm font-medium text-zinc-300">Limites</h3>
+          <p class="text-xs text-zinc-400">Vazio = vale o padrão do servidor (o número cinza). Cada limite tem mínimo e máximo.</p>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label v-for="limit in LIMITS" :key="limit.name" class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
+              {{ limit.label }}
+              <input
+                v-model="limitDrafts[limit.name]"
+                type="number"
+                step="1"
+                :min="settings.current.limitBounds[limit.name]?.min"
+                :max="settings.current.limitBounds[limit.name]?.max"
+                :placeholder="String(settings.current.limitsInEffect?.[limit.name] ?? '')"
+                class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm tabular-nums"
+              />
+              <small class="text-xs text-zinc-500">{{ settings.current.limitBounds[limit.name]?.min }} a {{ settings.current.limitBounds[limit.name]?.max }} · <code>{{ settings.current.limitBounds[limit.name]?.env }}</code></small>
+            </label>
+          </div>
         </div>
 
         <div class="flex items-center gap-3">
@@ -189,10 +249,24 @@ async function saveSettings() {
           <span v-if="saved" class="text-sm text-emerald-300">{{ saved }}</span>
           <span v-if="failure" class="text-sm text-rose-300">{{ failure }}</span>
         </div>
+        <ul v-if="issues.length" class="list-disc pl-5 text-sm text-rose-300">
+          <li v-for="(issue, index) in issues" :key="index"><code v-if="issue.field" class="text-xs text-rose-200">{{ issue.field }}</code><template v-if="issue.field">: </template>{{ issue.message }}</li>
+        </ul>
         <p v-if="settings.current.updatedBy" class="text-xs text-zinc-500">Última alteração por {{ settings.current.updatedBy }} em {{ new Date(settings.current.updatedAt ?? '').toLocaleString('pt-BR') }}</p>
       </section>
 
-      <p v-else-if="!auth.isAdmin" class="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5 text-sm text-zinc-400">
+      <section v-if="auth.isAdmin && settings.current?.deployment" class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
+        <h2 class="font-medium">Implantação</h2>
+        <p class="text-xs text-zinc-400">Decisões do deploy: só leitura aqui. Mudam no <code>.env</code> do servidor, com reinício.</p>
+        <dl class="grid gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
+          <div v-for="item in DEPLOYMENT" :key="item.key" class="flex min-w-0 items-baseline justify-between gap-3 border-b border-zinc-800/70 pb-1.5">
+            <dt class="text-zinc-400">{{ item.label }}</dt>
+            <dd class="min-w-0 truncate font-mono text-xs text-zinc-200" :title="deploymentValue(settings.current.deployment[item.key])">{{ deploymentValue(settings.current.deployment[item.key]) }}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <p v-if="!auth.isAdmin" class="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5 text-sm text-zinc-400">
         As configurações de operação são só de quem administra.
         <RouterLink v-if="!auth.signedIn && auth.localAccounts" :to="{ path: '/login', query: { next: '/settings' } }" class="text-emerald-300 underline">Entrar</RouterLink>
       </p>

@@ -6,8 +6,19 @@ import type { ISettings } from '@/lib/types'
 export const useSettingsStore = defineStore('settings', () => {
   const current = ref<ISettings>()
 
+  /** ⚠️ Resposta que chega depois de um `reset()` (ou de outra carga) é descartada: não ressuscita dados de quem saiu. */
+  let generation = 0
+
   async function load(): Promise<void> {
-    current.value = await api<ISettings>('/settings')
+    const mine = ++generation
+    const loaded = await api<ISettings>('/settings')
+    if (mine === generation) current.value = loaded
+  }
+
+  /** Esquece as configurações (logout, ou quem deixou de ser admin). */
+  function reset(): void {
+    generation++
+    current.value = undefined
   }
 
   /** Escrita parcial: `null` volta o campo ao padrão (ver `PUT /settings`). */
@@ -16,5 +27,5 @@ export const useSettingsStore = defineStore('settings', () => {
     await load()
   }
 
-  return { current, load, save }
+  return { current, load, save, reset }
 })

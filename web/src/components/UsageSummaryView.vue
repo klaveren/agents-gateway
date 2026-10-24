@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { providerLabel, tokens, usd } from '@/lib/format'
+import { tokens, usd } from '@/lib/format'
 import type { IUsageFigure, IUsageSummary } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
+import { useProtocolsStore } from '@/stores/protocols'
 import UsageDailyChart from './UsageDailyChart.vue'
 import UsageTiles from './UsageTiles.vue'
 
@@ -10,6 +11,7 @@ import UsageTiles from './UsageTiles.vue'
 const props = defineProps<{ summary: IUsageSummary; showCost: boolean }>()
 
 const agents = useAgentsStore()
+const protocols = useProtocolsStore()
 
 const t = computed(() => props.summary.totals)
 const cost = (item: IUsageFigure) => (item.costUsd === undefined ? '' : `${item.costIsFloor ? '≥ ' : ''}${usd(item.costUsd)}`)
@@ -51,7 +53,7 @@ const agentName = (id: string) => agents.byId.get(id)?.name ?? id
             <li v-for="item in summary.byModel" :key="`${item.provider}:${item.model}`">
               <div class="flex items-baseline gap-2 text-sm">
                 <span class="truncate font-mono text-[13px] text-zinc-200">{{ item.model }}</span>
-                <span class="shrink-0 text-xs text-zinc-500">{{ providerLabel(item.provider) }}</span>
+                <span class="shrink-0 text-xs text-zinc-500">{{ protocols.providerName(item.provider) }}</span>
                 <span class="ml-auto shrink-0 text-xs text-zinc-400">{{ tokens(item.usage.totalTokens) }}<template v-if="showCost"> · {{ cost(item) }}</template></span>
               </div>
               <div class="mt-1 h-1.5 rounded-full bg-zinc-800"><div class="h-1.5 rounded-full bg-emerald-500/70" :style="{ width: share(item, summary.byModel) }" /></div>
