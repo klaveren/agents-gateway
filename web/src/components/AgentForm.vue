@@ -49,12 +49,24 @@ onMounted(async () => {
 })
 const mcpRef = (server: string, tool: string) => `mcp:${server}/${tool}`
 const enabledMcp = computed(() => mcp.list.filter((server) => server.enabled))
+/**
+ * ⚖️ Órfã de MCP é só a de um servidor que não existe ou está desligado — a mesma regra do servidor, que
+ * não exige a ferramenta. A listagem que a tela recebe não prova que ela sumiu: o servidor pode estar fora
+ * do ar, só listar dentro de uma conversa, ou (o MCP do próprio gateway) listar para a tela só as
+ * ferramentas que não são de admin. As escolhidas e não listadas aparecem no servidor delas, marcadas.
+ */
 function mcpOffered(entry: string): boolean {
-  const [server, tool] = entry.slice(4).split('/')
-  if (!enabledMcp.value.some((candidate) => candidate.id === server)) return false
-  // ⚠️ Servidor que não listou nada (fora do ar, ou só lista dentro de uma conversa) não prova que a ferramenta sumiu.
+  const [server] = entry.slice(4).split('/')
+  return enabledMcp.value.some((candidate) => candidate.id === server)
+}
+/** As ferramentas de um servidor na tela: as que ele lista agora e as escolhidas que ele não listou. */
+function mcpChips(server: string): Array<{ name: string; description?: string; unlisted?: boolean }> {
   const listed = mcp.tools[server] ?? []
-  return tool === '*' || !listed.length || listed.some((candidate) => candidate.name === tool)
+  const chosen = form.value.allowedTools
+    .filter((entry) => entry.startsWith(`mcp:${server}/`) && !entry.endsWith('/*'))
+    .map((entry) => entry.slice(`mcp:${server}/`.length))
+    .filter((name) => !listed.some((tool) => tool.name === name))
+  return [...listed, ...chosen.map((name) => ({ name, unlisted: true }))]
 }
 function toggleAllMcp(server: string) {
   const all = mcpRef(server, '*')
@@ -190,6 +202,42 @@ const saving = ref(false)
 const confirmingSave = ref(false)
 const confirming = ref(false)
 const deleting = ref(false)
+
+/**
+ * As guias do formulário: o texto do agente na primeira, e cada grupo de capacidades na sua. A contagem diz
+ * quanto está escolhido sem abrir a guia; o ponto vermelho, que o servidor recusou algo ali.
+ */
+type TTab = 'agente' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk'
+const tab = ref<TTab>('agente')
+const TAB_FIELDS: Record<TTab, string[]> = {
+  agente: ['id', 'name', 'soul', 'systemPrompt', 'role'],
+  modelos: ['providers', 'models', 'modes', 'reasoningEfforts'],
+  ferramentas: ['allowedTools'],
+  mcps: [],
+  sdk: [],
+}
+const tabs = computed(() => {
+  const tools = form.value.allowedTools
+  const alert = (id: TTab) => (TAB_FIELDS[id].some((field) => issues.value[field]?.length) ? 'O servidor recusou algo nesta guia' : undefined)
+  const all: Array<{ id: TTab; label: string; count?: number; alert?: string }> = [
+    { id: 'agente', label: 'Agente', alert: alert('agente') },
+    { id: 'modelos', label: 'Modelos', count: form.value.providers.reduce((total, target) => total + target.models.length, 0), alert: alert('modelos') },
+    {
+      id: 'ferramentas',
+      label: 'Ferramentas',
+      count: tools.filter((entry) => !entry.startsWith('mcp:') && !entry.startsWith('sdk:')).length,
+      alert: alert('ferramentas') ?? (orphans.value.length ? 'Há ferramentas órfãs' : undefined),
+    },
+    { id: 'mcps', label: 'MCPs', count: tools.filter((entry) => entry.startsWith('mcp:')).length },
+    { id: 'sdk', label: 'SDK', count: tools.filter((entry) => entry.startsWith('sdk:')).length },
+  ]
+  // Sem nativa para os providers escolhidos, a guia do SDK não tem o que mostrar.
+  return all.filter((item) => item.id !== 'sdk' || natives.value.length || item.count)
+})
+// A guia que sumiu (tirou o provider das nativas) não fica aberta vazia.
+watch(tabs, (list) => {
+  if (!list.some((item) => item.id === tab.value)) tab.value = 'agente'
+})
 
 /** O padrão de um agente novo: o primeiro provider que já abre conversa (ligado, com chave ou assinatura). */
 const defaultProvider = computed(() => providers.list.find((provider) => isUsableProvider(provider, protocols.get(provider.protocol)))?.id ?? '')
@@ -362,8 +410,24 @@ async function remove() {
 </script>
 
 <template>
-  <form class="mx-auto flex max-w-3xl flex-col gap-5" @submit.prevent="confirmingSave = true">
-    <fieldset class="grid gap-4 sm:grid-cols-2">
+  <form class="mx-auto flex max-w-3xl flex-col gap-5" @submit.prevent="confirmingSave = true" @invalid.capture="tab = 'agente'">
+    <nav class="flex flex-wrap gap-1 border-b border-zinc-800" role="tablist">
+      <button
+        v-for="item in tabs"
+        :key="item.id"
+        type="button"
+        role="tab"
+        :aria-selected="tab === item.id"
+        class="-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm"
+        :class="tab === item.id ? 'border-emerald-500 text-zinc-100' : 'border-transparent text-zinc-400 hover:text-zinc-200'"
+        @click="tab = item.id"
+      >
+        {{ item.label }}
+        <span v-if="item.count" class="rounded-full bg-zinc-800 px-1.5 text-[10px] text-zinc-400">{{ item.count }}</span>
+        <span v-if="item.alert" class="h-1.5 w-1.5 rounded-full bg-rose-400" :title="item.alert" />
+      </button>
+    </nav>
+    <fieldset v-show="tab === 'agente'" class="grid gap-4 sm:grid-cols-2">
       <label class="field">
         <span>Nome</span>
         <input v-model="form.name" required maxlength="80" class="input" @blur="slugify" />
@@ -376,6 +440,27 @@ async function remove() {
         <small v-for="message in issues.id" :key="message" class="error">{{ message }}</small>
       </label>
 
+      <div class="field sm:col-span-2">
+        <label class="flex items-center gap-3">
+          <button type="button" role="switch" :aria-checked="form.role === 'subagent'" class="switch" :class="{ on: form.role === 'subagent' }" @click="form.role = form.role === 'subagent' ? null : 'subagent'"><span /></button>
+          <span>Só subagente</span>
+        </label>
+        <small class="hint">Só é chamado por outro agente (delegação, em "Pode delegar a"). Não aparece em Nova conversa e não abre conversa direta, nem pela API.</small>
+      </div>
+
+      <label class="field sm:col-span-2">
+        <span>Soul <em class="font-normal text-zinc-500">— quem o agente é: identidade, tom, valores, jeito de falar. Vai para o modelo antes do prompt.</em></span>
+        <textarea v-model="form.soul" rows="4" maxlength="8000" class="input scroll-thin text-[13px] leading-relaxed" placeholder="Você é a Íris: gentil, direta, explica sem jargão e admite quando não sabe." />
+        <small v-for="message in issues.soul" :key="message" class="error">{{ message }}</small>
+      </label>
+      <label class="field sm:col-span-2">
+        <span>Instrução do sistema <em class="font-normal text-zinc-500">— o que o agente faz: função, regras, como usar as ferramentas</em></span>
+        <textarea v-model="form.systemPrompt" required rows="10" class="input scroll-thin font-mono text-[13px] leading-relaxed" placeholder="Você é o agente…" />
+        <small v-if="anyGoogle" class="hint">Gemini (ADK): não use {chaves} — o ADK as lê como variável de sessão.</small>
+        <small v-for="message in issues.systemPrompt" :key="message" class="error">{{ message }}</small>
+      </label>
+    </fieldset>
+    <fieldset v-show="tab === 'modelos'" class="grid gap-4 sm:grid-cols-2">
       <div class="field sm:col-span-2">
         <span>Providers <em class="font-normal text-zinc-500">— onde o agente roda; a conversa troca entre eles no meio. O primeiro é o padrão.</em></span>
         <div class="flex flex-wrap gap-1.5">
@@ -449,6 +534,8 @@ async function remove() {
         <small v-for="message in issues.reasoningEfforts" :key="message" class="error">{{ message }}</small>
       </div>
 
+    </fieldset>
+    <fieldset v-show="tab === 'ferramentas'" class="grid gap-4 sm:grid-cols-2">
       <div class="field sm:col-span-2">
         <span>Ferramentas locais</span>
         <div class="flex flex-wrap gap-1.5">
@@ -486,6 +573,17 @@ async function remove() {
         <small v-if="form.allowedTools.some((entry) => entry.startsWith('agent:')) && !form.modes.includes('agent')" class="hint">Na lane chat, a delegação só roda com o loop de ferramentas ligado.</small>
       </div>
 
+      <div v-if="orphans.length" class="field sm:col-span-2">
+        <span>Órfãs <em class="font-normal text-zinc-500">— escolhidas, mas que os providers do agente ou o servidor não oferecem; o servidor recusa o salvamento com elas</em></span>
+        <div class="flex flex-wrap gap-1.5">
+          <button v-for="entry in orphans" :key="entry" type="button" class="chip on danger font-mono text-xs" title="Clique para tirar do agente" @click="toggle(form.allowedTools, entry)">
+            <span class="mr-1 rounded-full bg-amber-500/20 px-1.5 text-[10px] text-amber-200">órfão</span>{{ entry }} ✕
+          </button>
+        </div>
+      </div>
+
+    </fieldset>
+    <fieldset v-show="tab === 'mcps'" class="grid gap-4 sm:grid-cols-2">
       <div class="field sm:col-span-2">
         <span>MCPs <em class="font-normal text-zinc-500">— os servidores cadastrados em MCPs; o agente só vê o que for marcado aqui</em></span>
         <div v-if="enabledMcp.length" class="flex flex-col gap-2">
@@ -501,23 +599,25 @@ async function remove() {
             </div>
             <div v-if="!form.allowedTools.includes(mcpRef(server.id, '*'))" class="mt-2 flex flex-wrap gap-1.5">
               <button
-                v-for="tool in mcp.tools[server.id] ?? []"
+                v-for="tool in mcpChips(server.id)"
                 :key="tool.name"
                 type="button"
                 class="chip font-mono text-xs"
                 :class="{ on: form.allowedTools.includes(mcpRef(server.id, tool.name)) }"
-                :title="tool.description"
+                :title="tool.unlisted ? 'Escolhida, mas o servidor não a listou agora (fora do ar, ou só aparece dentro de uma conversa)' : tool.description"
                 @click="toggle(form.allowedTools, mcpRef(server.id, tool.name))"
               >
-                {{ tool.name }}
+                {{ tool.name }}<span v-if="tool.unlisted" class="ml-1 text-[10px] text-zinc-500">não listada</span>
               </button>
-              <span v-if="!(mcp.tools[server.id] ?? []).length" class="text-xs text-zinc-500">Nenhuma ferramenta listada agora.</span>
+              <span v-if="!mcpChips(server.id).length" class="text-xs text-zinc-500">Nenhuma ferramenta listada agora.</span>
             </div>
           </div>
         </div>
         <span v-else class="text-sm font-normal text-zinc-500">Nenhum MCP ligado. <RouterLink to="/mcp" class="text-emerald-400 hover:underline">Cadastrar em MCPs</RouterLink>.</span>
       </div>
 
+    </fieldset>
+    <fieldset v-show="tab === 'sdk'" class="grid gap-4 sm:grid-cols-2">
       <div v-if="natives.length" class="field sm:col-span-2">
         <span>Ferramentas do SDK <em class="font-normal text-zinc-500">— só na lane Agents SDK</em></span>
         <p v-if="!form.modes.includes('agent')" class="text-xs font-normal text-amber-300">Este agente não tem a lane Agents SDK ligada: as ferramentas do SDK não serão usadas.</p>
@@ -536,34 +636,6 @@ async function remove() {
         <small v-if="dangerousNative" class="text-amber-300">⚠ Ferramentas que tocam este servidor dão ao agente acesso ao disco, à rede ou a comandos daqui. Só administradores conversam com ele.</small>
       </div>
 
-      <div v-if="orphans.length" class="field sm:col-span-2">
-        <span>Órfãs <em class="font-normal text-zinc-500">— escolhidas, mas que os providers do agente ou o servidor não oferecem; o servidor recusa o salvamento com elas</em></span>
-        <div class="flex flex-wrap gap-1.5">
-          <button v-for="entry in orphans" :key="entry" type="button" class="chip on danger font-mono text-xs" title="Clique para tirar do agente" @click="toggle(form.allowedTools, entry)">
-            <span class="mr-1 rounded-full bg-amber-500/20 px-1.5 text-[10px] text-amber-200">órfão</span>{{ entry }} ✕
-          </button>
-        </div>
-      </div>
-
-      <div class="field sm:col-span-2">
-        <label class="flex items-center gap-3">
-          <button type="button" role="switch" :aria-checked="form.role === 'subagent'" class="switch" :class="{ on: form.role === 'subagent' }" @click="form.role = form.role === 'subagent' ? null : 'subagent'"><span /></button>
-          <span>Só subagente</span>
-        </label>
-        <small class="hint">Só é chamado por outro agente (delegação, em "Pode delegar a"). Não aparece em Nova conversa e não abre conversa direta, nem pela API.</small>
-      </div>
-
-      <label class="field sm:col-span-2">
-        <span>Soul <em class="font-normal text-zinc-500">— quem o agente é: identidade, tom, valores, jeito de falar. Vai para o modelo antes do prompt.</em></span>
-        <textarea v-model="form.soul" rows="4" maxlength="8000" class="input scroll-thin text-[13px] leading-relaxed" placeholder="Você é a Íris: gentil, direta, explica sem jargão e admite quando não sabe." />
-        <small v-for="message in issues.soul" :key="message" class="error">{{ message }}</small>
-      </label>
-      <label class="field sm:col-span-2">
-        <span>Instrução do sistema <em class="font-normal text-zinc-500">— o que o agente faz: função, regras, como usar as ferramentas</em></span>
-        <textarea v-model="form.systemPrompt" required rows="10" class="input scroll-thin font-mono text-[13px] leading-relaxed" placeholder="Você é o agente…" />
-        <small v-if="anyGoogle" class="hint">Gemini (ADK): não use {chaves} — o ADK as lê como variável de sessão.</small>
-        <small v-for="message in issues.systemPrompt" :key="message" class="error">{{ message }}</small>
-      </label>
     </fieldset>
 
     <p v-if="failure && !Object.keys(issues).length" class="text-sm whitespace-pre-line text-rose-300">{{ failure }}</p>
