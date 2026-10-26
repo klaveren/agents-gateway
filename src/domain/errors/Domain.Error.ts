@@ -82,13 +82,6 @@ export class InvalidAgentError extends DomainError {
   }
 }
 
-/** Agente embutido (do código) não se edita nem se apaga pela API: duplica-se. */
-export class ReadOnlyAgentError extends DomainError {
-  constructor(public readonly agentId: string) {
-    super(`Built-in agent is read-only: ${agentId}`)
-  }
-}
-
 /** Uma conta que não pode ser criada ou mudada como veio. Todos os problemas, campo a campo. */
 export class InvalidUserError extends DomainError {
   constructor(public readonly issues: Array<{ field: string; message: string }>) {

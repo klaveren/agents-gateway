@@ -2,22 +2,22 @@ import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { AgentInUseError, AgentNotFoundError, InvalidAgentError, ReadOnlyAgentError } from '@domain/errors/Domain.Error'
+import { AgentInUseError, AgentNotFoundError, InvalidAgentError } from '@domain/errors/Domain.Error'
 import { IAgent } from '@domain/models/Agent.Model'
 import { NullAgentRepository } from '@infra/persistence/Null.AgentRepository'
 import { AgentCatalog, ISaveAgentOptions } from './Agent.Catalog'
 
 describe('AgentCatalog', () => {
-  const builtIn: IAgent = {
-    id: 'researcher-agent',
-    name: 'Researcher',
+  const base: IAgent = {
+    id: 'pesquisa',
+    name: 'Pesquisa',
     provider: EProvider.GOOGLE,
     systemPrompt: 'pesquise',
     models: ['gemini-3.7-flash'],
     modes: [EMode.CHAT],
     allowedTools: ['search_web'],
   }
-  const custom: IAgent = { ...builtIn, id: 'juridico', name: 'Jurídico' }
+  const custom: IAgent = { ...base, id: 'juridico', name: 'Jurídico' }
 
   const options = (creating: boolean): ISaveAgentOptions => ({
     rules: { knownTools: ['search_web'], providerOf: () => EProvider.GOOGLE },
@@ -25,30 +25,32 @@ describe('AgentCatalog', () => {
     creating,
   })
 
-  const build = () => new AgentCatalog([builtIn], new NullAgentRepository())
+  const build = () => new AgentCatalog(new NullAgentRepository())
 
-  it('lista os embutidos primeiro e os criados depois, e acha os dois por id', () => {
+  it('lista os agentes na ordem em que foram criados, e acha cada um por id', () => {
     const catalog = build()
+    catalog.save(base, options(true))
     catalog.save(custom, options(true))
 
     assert.deepStrictEqual(
-      catalog.entries().map((entry) => [entry.agent.id, entry.builtIn]),
-      [
-        ['researcher-agent', true],
-        ['juridico', false],
-      ],
+      catalog.entries().map((entry) => entry.agent.id),
+      ['pesquisa', 'juridico'],
     )
     assert.strictEqual(catalog.get('juridico')?.name, 'Jurídico')
     assert.strictEqual(catalog.entry('juridico')?.updatedBy, 'root@x.test')
-    assert.strictEqual(catalog.fallback()?.id, 'researcher-agent')
+    assert.strictEqual(catalog.fallback()?.id, 'pesquisa')
   })
 
-  it('⛔ embutido é só leitura: nem atualizar, nem apagar, nem criar por cima', () => {
-    const catalog = build()
+  it('todo agente é editável e apagável, inclusive o primeiro', () => {
+    const repository = new NullAgentRepository()
+    repository.save(base, 'seed')
+    const catalog = new AgentCatalog(repository)
 
-    assert.throws(() => catalog.save({ ...builtIn, name: 'outro' }, options(false)), ReadOnlyAgentError)
-    assert.throws(() => catalog.remove('researcher-agent'), ReadOnlyAgentError)
-    assert.throws(() => catalog.save(builtIn, options(true)), InvalidAgentError)
+    catalog.save({ ...base, name: 'outro' }, options(false))
+    assert.strictEqual(catalog.get('pesquisa')?.name, 'outro')
+
+    catalog.remove('pesquisa')
+    assert.strictEqual(catalog.get('pesquisa'), undefined)
   })
 
   it('criar com id já criado é recusado; atualizar o que não existe é 404', () => {
@@ -80,18 +82,11 @@ describe('AgentCatalog', () => {
     assert.strictEqual(catalog.get('juridico')?.role, undefined)
   })
 
-  it('um criado com o id de um embutido (arquivo antigo) não sombreia o embutido', () => {
-    const repository = new NullAgentRepository()
-    repository.save({ ...builtIn, name: 'impostor' }, 'x')
-
-    assert.strictEqual(new AgentCatalog([builtIn], repository).get('researcher-agent')?.name, 'Researcher')
-    assert.strictEqual(new AgentCatalog([builtIn], repository).list().length, 1)
-  })
   it('⚖️ só oferece os modelos ATIVADOS no catálogo; desligar tira de todos sem reescrever o agente', () => {
     const enabled = new Set(['claude-sonnet-5'])
     const repository = new NullAgentRepository()
     repository.save({ ...custom, provider: 'claude', models: ['claude-sonnet-5', 'claude-opus-5'] }, 'x')
-    const catalog = new AgentCatalog([], repository, (_provider, model) => enabled.has(model))
+    const catalog = new AgentCatalog(repository, (_provider, model) => enabled.has(model))
 
     assert.deepStrictEqual(catalog.get('juridico')?.models, ['claude-sonnet-5'])
     assert.deepStrictEqual(catalog.unusableModels(repository.list()[0]), ['claude-opus-5'])
@@ -101,12 +96,17 @@ describe('AgentCatalog', () => {
     assert.deepStrictEqual(repository.list()[0].models, ['claude-sonnet-5', 'claude-opus-5'])
   })
   it('o padrão é o primeiro que pode rodar e não é subagente', () => {
-    const sub: IAgent = { ...custom, id: 'sub', role: 'subagent' }
-    const ok: IAgent = { ...custom, id: 'ok' }
-    const catalog = new AgentCatalog([builtIn, sub, ok], new NullAgentRepository(), undefined, (agent) => agent.id !== 'researcher-agent')
+    const repository = new NullAgentRepository()
+    repository.save(base, 'x')
+    repository.save({ ...custom, id: 'sub', role: 'subagent' }, 'x')
+    repository.save({ ...custom, id: 'ok' }, 'x')
+    const catalog = new AgentCatalog(repository, undefined, (agent) => agent.id !== 'pesquisa')
 
     assert.strictEqual(catalog.fallback()?.id, 'ok')
-    assert.strictEqual(new AgentCatalog([builtIn], new NullAgentRepository(), undefined, () => false).fallback(), undefined)
+
+    const only = new NullAgentRepository()
+    only.save(base, 'x')
+    assert.strictEqual(new AgentCatalog(only, undefined, () => false).fallback(), undefined)
   })
 
   it('⛔ não apaga agente a quem outro delega, nem o padrão das configurações; diz quem referencia', () => {

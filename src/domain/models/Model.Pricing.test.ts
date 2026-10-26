@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { AGENT_REGISTRY } from '../Agent.Registry'
+import { TEST_AGENTS } from '../../testing/Agents.Fixture'
 import { costOf, MODEL_PRICING, mergePricing, outputPriceOf } from './Model.Pricing'
 
 describe('costOf', () => {
@@ -46,8 +46,8 @@ describe('costOf', () => {
     for (const [model, price] of Object.entries(MODEL_PRICING)) assert.ok(price.cacheRead !== undefined, `${model} sem cacheRead`)
   })
 
-  it('só traz preço de modelo que o registro declara, e deixa de fora o que não foi conferido', () => {
-    const declared = new Set(AGENT_REGISTRY.flatMap((agent) => agent.models))
+  it('só traz preço de modelo que os agentes declaram, e deixa de fora o que não foi conferido', () => {
+    const declared = new Set(TEST_AGENTS.flatMap((agent) => agent.models))
 
     assert.ok(Object.keys(MODEL_PRICING).every((model) => declared.has(model)))
     assert.strictEqual(MODEL_PRICING['o4-mini'], undefined)

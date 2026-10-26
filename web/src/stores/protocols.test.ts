@@ -38,7 +38,6 @@ describe('protocols', () => {
         pricing: {},
         modes: ['agent'],
         allowedTools: [],
-        builtIn: false,
         providerInfo: { id: 'chatgpt', name: 'ChatGPT da Ana', protocol: 'codex' },
       },
     ]

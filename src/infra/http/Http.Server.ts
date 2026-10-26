@@ -98,29 +98,20 @@ export class HttpServer {
   }
 
   /**
-   * A tela: a nova (Vue, `web/dist`) na raiz e a antiga em `/legacy`, enquanto as duas convivem.
+   * A tela (Vue, `web/dist`) na raiz.
    *
    * ⚖️ DEPOIS DA API, de propósito: o fallback do SPA devolve `index.html` para qualquer GET que
    * peça HTML, e registrado antes ele responderia no lugar de uma rota da API. Rota desconhecida em
    * `/v1` continua sendo da API (404 dela), nunca a tela.
    *
-   * Sem `web/dist` (o front não foi compilado), a antiga volta para a raiz — o gateway nunca sobe sem tela.
+   * Sem `web/dist` (o front não foi compilado), sobe só a API.
    */
   private setupFrontend() {
-    const legacy = resolvePublicDir()
     const web = resolveWebDir()
-
-    // ⛔ A tela antiga só com `LEGACY_UI=1`: ela divide a origem e o token com a nova e não passou pela
-    // revisão de segurança — um XSS nela levaria a sessão da nova.
-    const legacyOn = process.env.LEGACY_UI?.trim() === '1'
-    if (legacyOn) this.app.use('/legacy', express.static(legacy))
-    if (!web) {
-      if (legacyOn) this.app.use(express.static(legacy))
-      return
-    }
+    if (!web) return
 
     this.app.use(express.static(web, { index: false }))
-    this.app.get(/^(?!\/v1(\/|$)|\/legacy(\/|$)).*/, (req, res, next) => {
+    this.app.get(/^(?!\/v1(\/|$)).*/, (req, res, next) => {
       if (!req.accepts('html')) return next()
       // ⚠️ `no-cache` no index: é ele que aponta o bundle (com hash no nome). Em cache, o navegador seguia
       // abrindo a tela ANTIGA depois de cada deploy, até alguém forçar o recarregamento.
@@ -292,17 +283,6 @@ function resolveWebDir(): string | undefined {
   const candidates = [path.resolve(__dirname, '../../../web/dist'), path.resolve(process.cwd(), 'web/dist')]
 
   return candidates.find((candidate) => fs.existsSync(path.join(candidate, 'index.html')))
-}
-
-/**
- * A tela antiga. Não passa pelo `tsc`, então fica em `src/` mesmo depois do build.
- * Resolver a partir do `__dirname` faz o gateway subir de qualquer diretório — antes, com
- * `process.cwd()`, iniciar de outra pasta servia 404 em vez da UI.
- */
-function resolvePublicDir(): string {
-  const candidates = [path.resolve(__dirname, 'public'), path.resolve(__dirname, '../../../src/infra/http/public'), path.resolve(process.cwd(), 'src/infra/http/public')]
-
-  return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[candidates.length - 1]
 }
 
 /** Sem providers injetado: tudo em memória, sobre o ambiente — o teste e quem monta à mão. */

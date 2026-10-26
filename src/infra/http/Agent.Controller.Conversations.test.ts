@@ -18,9 +18,7 @@ import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { Request, Response } from 'express'
 import { AgentController } from './Agent.Controller'
 import { ICallerProof } from './Caller.Proof'
-import { AgentCatalog } from '@application/Agent.Catalog'
-import { AGENT_REGISTRY } from '@domain/Agent.Registry'
-import { NullAgentRepository } from '@infra/persistence/Null.AgentRepository'
+import { testAgentCatalog } from '../../testing/Agents.Fixture'
 
 interface IBody {
   ok: boolean
@@ -68,7 +66,7 @@ describe('AgentController — conversas, monitor e compartilhamento', () => {
     } as unknown as IAgentProvider
 
     const controller = new AgentController({
-      agents: new AgentCatalog(AGENT_REGISTRY, new NullAgentRepository()),
+      agents: testAgentCatalog(),
       catalog: fakeCatalog(),
       createSession: new CreateSessionUseCase(provider),
       sendMessage: new SendMessageUseCase(provider, conversations),
@@ -121,7 +119,7 @@ describe('AgentController — conversas, monitor e compartilhamento', () => {
 
   /** Alice com duas conversas, Bob com uma, e uma sem dono. O modelo da da Alice tem preço; o da do Bob não. */
   const seed = async (repo: SqliteConversationRepository) => {
-    const base = { agentId: 'researcher-agent', provider: 'google', mode: 'chat', turns: 1, createdAt: new Date('2026-09-01T10:00:00Z') }
+    const base = { agentId: 'pesquisa-teste', provider: 'google', mode: 'chat', turns: 1, createdAt: new Date('2026-09-01T10:00:00Z') }
     const rows = [
       {
         id: 'a1',
@@ -296,7 +294,7 @@ describe('AgentController — conversas, monitor e compartilhamento', () => {
       )
       assert.strictEqual(searched.total, 1)
       // As abas contam sobre a busca "alice", não sobre a aba `red`.
-      assert.deepStrictEqual(searched.facets, { classification: { red: 1 }, provider: { claude: 2 }, agent: { 'researcher-agent': 2 } })
+      assert.deepStrictEqual(searched.facets, { classification: { red: 1 }, provider: { claude: 2 }, agent: { 'pesquisa-teste': 2 } })
 
       const wide = (await call(ADMIN, all({ page: '1', pageSize: '100000' })(controller))).body?.result
       assert.strictEqual(wide.pageSize, 50, 'o teto de pageSize é 50')

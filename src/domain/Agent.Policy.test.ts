@@ -1,13 +1,13 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { agentIssues, IAgentRules } from './Agent.Policy'
+import { agentIssues, IAgentRules, modelFor } from './Agent.Policy'
 import { EMode } from './enums/EMode.Enum'
 import { EProvider } from './enums/EProvider.Enum'
 import { IAgent } from './models/Agent.Model'
 
 describe('agentIssues', () => {
   const rules: IAgentRules = {
-    takenIds: ['sysops-agent'],
+    takenIds: ['operador-teste'],
     knownTools: ['search_web'],
     providerOf: (model) => (model.startsWith('gemini') ? EProvider.GOOGLE : model.startsWith('gpt') ? EProvider.OPENAI : undefined),
   }
@@ -66,7 +66,7 @@ describe('agentIssues', () => {
   })
 
   it('recusa id que já existe', () => {
-    assert.deepStrictEqual(fields(agentIssues(agent({ id: 'sysops-agent' }), rules)), ['id'])
+    assert.deepStrictEqual(fields(agentIssues(agent({ id: 'operador-teste' }), rules)), ['id'])
   })
 
   it('⚠️ recusa modelo de outro provider, e modelo que ninguém reconhece', () => {
@@ -78,7 +78,7 @@ describe('agentIssues', () => {
     )
   })
 
-  it('⛔ recusa tool fora do perímetro (ex.: run_bash com o sysops desabilitado)', () => {
+  it('⛔ recusa tool fora do perímetro (ex.: run_bash fora do perímetro)', () => {
     assert.deepStrictEqual(fields(agentIssues(agent({ allowedTools: ['search_web', 'run_bash'] }), rules)), ['allowedTools'])
   })
 
@@ -105,5 +105,31 @@ describe('agentIssues', () => {
     )
     const claudeSub = agent({ provider: 'claude-sub', models: ['claude-opus-5-5'], modes: [EMode.AGENT], allowedTools: ['sdk:WebSearch'] })
     assert.deepStrictEqual(agentIssues(claudeSub, { ...rules, modelEnabled: () => true }), [])
+  })
+})
+
+describe('modelFor', () => {
+  const agent: IAgent = {
+    id: 'pesquisa-teste',
+    name: 'Pesquisa (teste)',
+    provider: EProvider.GOOGLE,
+    systemPrompt: 'Você pesquisa.',
+    models: ['gemini-3.7-flash', 'gemini-3.6-flash'],
+    modes: [EMode.CHAT],
+    allowedTools: [],
+  }
+
+  it('mantém o modelo que o agente declara', () => {
+    assert.strictEqual(modelFor(agent, agent.models[1]), agent.models[1])
+  })
+
+  it('cai no primeiro do agente quando o modelo é de outro provider', () => {
+    assert.strictEqual(modelFor(agent, 'um-modelo-de-outro-provider'), agent.models[0])
+  })
+
+  it('sem modelo pedido vale o padrão do agente (o primeiro): não há mais padrão no adapter', () => {
+    assert.strictEqual(modelFor(agent, undefined), agent.models[0])
+    assert.strictEqual(modelFor(agent, ''), agent.models[0])
+    assert.strictEqual(modelFor({ ...agent, models: [] }, undefined), undefined)
   })
 })

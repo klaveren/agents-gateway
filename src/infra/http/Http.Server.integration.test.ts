@@ -206,7 +206,7 @@ describe('HttpServer fechado por padrão (sem ALLOW_ANONYMOUS)', () => {
   it('toda outra rota responde 401 sem a credencial do chamador', async () => {
     const calls: Array<[string, RequestInit?]> = [
       ['/agents'],
-      ['/agents/researcher-agent/tools'],
+      ['/agents/pesquisa-teste/tools'],
       ['/tools'],
       ['/openapi.json'],
       ['/sessions'],

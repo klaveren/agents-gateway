@@ -2,9 +2,9 @@ import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import type { GenerateContentRequest, GoogleGenerativeAI, ModelParams } from '@google/generative-ai'
 import { EMode } from '@domain/enums/EMode.Enum'
-import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
+import { GOOGLE_TEST_AGENT } from '../../testing/Agents.Fixture'
 import { GoogleChatAdapter } from './GoogleChat.Adapter'
 
 interface ISingleRequestOptions {
@@ -13,15 +13,7 @@ interface ISingleRequestOptions {
 type TStream = (request: GenerateContentRequest, options?: ISingleRequestOptions) => Promise<unknown>
 
 describe('GoogleChatAdapter', () => {
-  const getAgent = (): IAgent => ({
-    id: 'researcher-agent',
-    name: 'Researcher',
-    provider: EProvider.GOOGLE,
-    systemPrompt: 'You are the Researcher Agent.',
-    models: ['gemini-3.7-flash'],
-    modes: [EMode.CHAT, EMode.AGENT],
-    allowedTools: ['search_web'],
-  })
+  const getAgent = (): IAgent => ({ ...GOOGLE_TEST_AGENT, models: ['gemini-3.7-flash'] })
 
   const clientWith = (generateContentStream: TStream, onModel?: (params: ModelParams) => void): GoogleGenerativeAI =>
     ({
@@ -41,7 +33,7 @@ describe('GoogleChatAdapter', () => {
 
   it('creates a chat session on the chat lane', async () => {
     const adapter = new GoogleChatAdapter({ client: clientWith(async () => ({ stream: [], response: {} })) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id })
 
     assert.ok(session.id.startsWith('google-chat-'))
     assert.strictEqual(session.mode, EMode.CHAT)
@@ -67,7 +59,7 @@ describe('GoogleChatAdapter', () => {
       ),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
 
     const text = events
@@ -102,11 +94,11 @@ describe('GoogleChatAdapter', () => {
       ),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id })
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
 
     // O adapter anterior mandava o prompt duas vezes: aqui ele só aparece em systemInstruction.
-    assert.strictEqual(modelParams?.systemInstruction, 'You are the Researcher Agent.')
+    assert.strictEqual(modelParams?.systemInstruction, GOOGLE_TEST_AGENT.systemPrompt)
     assert.strictEqual(sent?.contents.length, 1)
     assert.strictEqual(sent?.contents[0].role, 'user')
   })
@@ -121,7 +113,7 @@ describe('GoogleChatAdapter', () => {
       })),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent', reasoning: 'high' })
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id, reasoning: 'high' })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
 
     assert.ok(events.find((e) => e.type === 'warning' && e.payload.message.includes('thinking control')))
@@ -144,7 +136,7 @@ describe('GoogleChatAdapter', () => {
       }),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id })
     const events: IAgentEvent[] = []
 
     for await (const event of adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {})) {
@@ -163,7 +155,7 @@ describe('GoogleChatAdapter', () => {
       }),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
     const error = events.find((e) => e.type === 'error')
 
@@ -181,7 +173,7 @@ describe('GoogleChatAdapter', () => {
       })),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
 
     assert.deepStrictEqual(events.find((e) => e.type === 'usage')?.payload, { inputTokens: 1000, outputTokens: 4, cacheReadTokens: 700, cacheWriteTokens: 0 })
@@ -201,7 +193,7 @@ describe('GoogleChatAdapter', () => {
       }),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id })
     await drain(adapter.sendMessage(getAgent(), session.id, { text: '', files: [{ name: 'a.png', mimeType: 'image/png', data: 'aaa' }] }, {}))
 
     assert.deepStrictEqual(sent?.contents[0].parts, [{ inlineData: { data: 'aaa', mimeType: 'image/png' } }])

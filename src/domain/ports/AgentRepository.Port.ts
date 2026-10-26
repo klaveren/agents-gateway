@@ -8,13 +8,13 @@ export interface IStoredAgent extends IAgent {
 }
 
 /**
- * Onde moram os agentes criados pela tela. Os embutidos (`Agent.Registry`) não passam por aqui.
+ * Onde moram os agentes — todos, a semente (`Agent.Seed`) inclusive.
  *
  * ⚖️ SÍNCRONO, ao contrário dos outros repositórios: o agente é procurado no caminho de TODA sessão
  * nova e de toda listagem, e o driver (`node:sqlite`) já é síncrono — um `await` aqui só espalharia
  * assincronia por quem hoje pergunta "esse agente existe?" sem esperar nada.
  *
- * ⛔ LER NUNCA DERRUBA: banco fora do ar lista vazio, e os embutidos continuam atendendo. ESCREVER
+ * ⛔ LER NUNCA DERRUBA: banco fora do ar lista vazio, e o resto do gateway segue. ESCREVER
  * lança: é ação de quem administra, e falhar em silêncio diria "salvo" sem ter salvo.
  */
 export interface IAgentRepository {
@@ -27,7 +27,7 @@ export interface IAgentRepository {
 }
 
 /**
- * Quem responde "que agentes existem" — embutidos e criados, numa lista só.
+ * Quem responde "que agentes existem".
  *
  * É o que o provider e o controller consultam: nenhum dos dois sabe de onde o agente veio.
  */

@@ -276,6 +276,12 @@ A token that carries no readable id is never treated as anonymous.
 
 ### Operating the gateway without a deploy
 
+Agents, providers, models and keys live in the database, and only what is active shows up. A fresh
+database starts with a single agent, **Atlas**, which creates and adjusts the others through the
+gateway's own tools (`save_agent`, `list_models`, …). No model is enabled at boot: an agent becomes
+active once its provider is on, one of its models is enabled in Providers → Models and there is a
+key (or a subscription login).
+
 Who the agent serves, which agent answers and with which model are *operating* decisions, so
 they live in settings you change at runtime (`GET`/`PUT /v1/settings`) instead of in `.env`. They
 are stored in the same SQLite file as the conversations (`CONVERSATIONS_DB`; `off` keeps them in
@@ -284,8 +290,8 @@ memory, lost on restart) and apply on the next session, in the same instant they
 | Setting | Meaning |
 | --- | --- |
 | `audience` | `off`: nobody opens a new session. `restricted`: only callers whose **proven** role is in `AUDIENCE_ROLES`. `all` (default): every caller the gateway already lets through. |
-| `agentId` | Agent that answers when the caller sends none. Empty = first in the registry. |
-| `model` | Model used when the caller sends none. A model the chosen agent does not declare falls back to that agent's first, so switching agent never ships a stale model id to the wrong provider. |
+| `agentId` | Agent that answers when the caller sends none. Empty = the first active agent that is not a subagent. Must be active to be saved. |
+| `model` | Model used when the caller sends none. Must be one of the chosen agent's enabled models (`422` otherwise); a model asked for explicitly that the agent does not offer is `409 model_disabled`, never silently swapped. |
 | `classifyTurns` | Turn on the [turn classifier](#turn-classification). Absent = off. |
 | `classifierProvider` | Provider that classifies: enabled, with an API key (subscriptions do not classify). |
 | `classifierModel` | Model that classifies, enabled in that provider's catalog. Without both, no classification. |
@@ -317,7 +323,6 @@ whose id/e-mail is in `ADMIN_USERS`. Without `CALLER_PROOF_TOOL` nobody is an ad
 | `DENIED_ROLES` | *(empty)* | Comma list of roles refused under every audience. |
 | `ADMIN_ROLES` | `admin` | Comma list of roles that may read and write settings. |
 | `ADMIN_USERS` | *(empty)* | Comma list of ids or e-mails that may read and write settings. |
-| `AGENTS_ENABLED` | *(all)* | Comma list of agent ids that **exist** in this process. An agent that is not listed is not refused, it is gone: no `/agents`, no session by any route. Use it so an agent carrying a shell tool (`run_bash`) cannot be reached. The boot fails if nothing matches. |
 | `SESSION_CONTEXT_TEMPLATE` | *(none)* | Text sent to the model before the **first** message of a session, never stored in the turn. Placeholders: `{id}` `{email}` `{role}` `{account}` `{date}`. If it cites an identity field the token lacks, no context is sent. Unset = none. |
 | `SESSION_TIMEZONE` | `UTC` | Time zone of `{date}` (IANA name; an invalid one falls back to UTC). |
 | `CLASSIFIER_PROMPT_FILE` | *(none)* | Path to a text file that replaces the classifier prompt. A missing, unreadable or empty file is refused with a boot warning. |
@@ -360,14 +365,15 @@ history screen reads.
   administrator, stats), never to the plain owner. `GET /v1/agents` carries the per-model `pricing`
   so a selector can show it and sort cheapest first.
 
-The built-in table covers the models the registry declares, except `o4-mini` and `o3-pro`, whose prices
-are not confirmed. Add or correct any with `MODEL_PRICING_FILE`:
+Prices live in each provider's model catalog (Providers → Models), and that is what usage and cost read.
+The built-in table is only the *suggested* price for a model when it enters the catalog (sync or
+"add by id"). Add or correct suggestions with `MODEL_PRICING_FILE`:
 
 ```json
 { "o4-mini": { "input": 1.1, "output": 4.4, "cacheRead": 0.275 } }
 ```
 
-An entry replaces the built-in one for that model. The file is read once at boot; if any entry is
+An entry replaces the built-in suggestion for that model. The file is read once at boot; if any entry is
 invalid the whole file is refused and the built-in table stays, with a warning in the log.
 
 ### Turn classification
@@ -443,7 +449,7 @@ with no `/Users` in sight.
 
 | Layer | Responsibility |
 | --- | --- |
-| **Domain** | `Agent.Registry`, `EMode`, and the `IAgentEvent` union every lane speaks. |
+| **Domain** | `Agent.Seed` (Atlas), `Agent.Policy`, `EMode`, and the `IAgentEvent` union every lane speaks. |
 | **Application** | Three thin use cases and the controller that turns events into SSE. |
 | **Infra (adapters)** | `*Chat.Adapter` on the plain SDKs, `*Agent.Adapter` on the Agents SDKs. |
 | **Infra (tools)** | `ToolCatalog` merging MCP discovery with the built-in toolset, plus one bridge per SDK. |
@@ -461,7 +467,7 @@ the build if it drifts from the routes the server actually registers.
 | Route | What it does |
 | --- | --- |
 | `GET /v1/health` | Liveness, MCP status, live session count. Public. |
-| `GET /v1/agents` | The registry (never the system prompt): lanes, models and per-model `pricing`. |
+| `GET /v1/agents` | The agents in the database (never the system prompt): lanes, enabled models and per-model `pricing`. Members see only the active ones; admins see all, each inactive one with `unavailable`. |
 | `GET /v1/agents/:agentId/tools` | Tool catalog filtered by what that agent declares. |
 | `GET /v1/tools` | Full catalog: built-in tools merged with whatever MCP exposes. |
 | `GET /v1/availability` | `{ available }`: does the agent serve you right now? |

@@ -37,7 +37,7 @@ class RecordingRepository extends NullConversationRepository {
 const session = (over: Partial<ISession> = {}): ISession =>
   ({
     id: 's',
-    agentId: 'researcher-agent',
+    agentId: 'pesquisa-teste',
     provider: EProvider.OPENAI,
     mode: EMode.CHAT,
     model: 'model-x',

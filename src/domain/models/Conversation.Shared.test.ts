@@ -11,7 +11,7 @@ import { IConversationSession, IConversationTurn, toSharedConversation } from '.
 
 const SESSION: IConversationSession & { shareId: string } = {
   id: 'google-agent-abc',
-  agentId: 'researcher-agent',
+  agentId: 'pesquisa-teste',
   provider: 'google',
   mode: 'agent',
   model: 'gemini-3.7-flash',

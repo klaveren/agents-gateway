@@ -23,11 +23,11 @@ import { withCaller } from '@infra/mcp/Caller.Identity'
 import { normalizeSettings } from '@domain/models/Settings.Model'
 import { NullSettingsRepository } from '@infra/persistence/Null.SettingsRepository'
 import { SessionStore } from '@infra/session/Session.Store'
-import { AGENT_REGISTRY, getAgentById } from '@domain/Agent.Registry'
+import { TEST_AGENT_DIRECTORY } from '../../testing/Agents.Fixture'
 import { adapterKey, AgentProvider } from './Agent.Provider'
 
-/** Os agentes-semente como diretório: no teste, o seed faz o papel do banco. */
-const SEED = { list: () => AGENT_REGISTRY, get: getAgentById }
+/** Os agentes de teste como diretório: no teste, eles fazem o papel do banco. */
+const SEED = TEST_AGENT_DIRECTORY
 
 interface ISpy {
   adapter: IAgentAdapter
@@ -135,7 +135,7 @@ describe('AgentProvider', () => {
 
     assert.strictEqual(session.mode, EMode.CHAT)
     assert.deepStrictEqual(chat.calls, ['createSession'])
-    await assert.rejects(provider.createSession({ agentId: 'researcher-agent' }), /researcher-agent/)
+    await assert.rejects(provider.createSession({ agentId: 'pesquisa-teste' }), /pesquisa-teste/)
   })
 
   it('routes an agent on a compatible provider (OpenRouter speaking OpenAI) to the OpenAI adapter; a disabled provider opens nothing', async () => {
@@ -244,7 +244,7 @@ describe('AgentProvider', () => {
 
   it('defaults to the chat lane when no mode is given', async () => {
     const { provider, chat, agent } = setup()
-    const session = await provider.createSession({ agentId: 'researcher-agent' })
+    const session = await provider.createSession({ agentId: 'pesquisa-teste' })
 
     assert.strictEqual(session.mode, EMode.CHAT)
     assert.deepStrictEqual(chat.calls, ['createSession'])
@@ -253,7 +253,7 @@ describe('AgentProvider', () => {
 
   it('routes the turn by the session itself, with no agentId from the caller', async () => {
     const { provider, chat, agent } = setup()
-    const session = await provider.createSession({ agentId: 'researcher-agent', mode: EMode.AGENT })
+    const session = await provider.createSession({ agentId: 'pesquisa-teste', mode: EMode.AGENT })
 
     await drain(provider.sendMessage(session.id, { text: 'hi' }))
     await provider.cancel(session.id)
@@ -266,7 +266,7 @@ describe('AgentProvider', () => {
   it('counts turns and accumulates usage in one place for every lane', async () => {
     const usage: IAgentEvent[] = [{ type: 'usage', sessionId: 'x', timestamp: new Date(), payload: { inputTokens: 4, outputTokens: 6 } }]
     const { provider } = setup(usage)
-    const session = await provider.createSession({ agentId: 'researcher-agent' })
+    const session = await provider.createSession({ agentId: 'pesquisa-teste' })
 
     await drain(provider.sendMessage(session.id, { text: 'one' }))
     await drain(provider.sendMessage(session.id, { text: 'two' }))
@@ -328,7 +328,7 @@ describe('AgentProvider', () => {
 
     it('⛔ no Google não há nível; e no meio de um turno não se troca nada', async () => {
       const { provider, store } = setup()
-      const session = await provider.createSession({ agentId: 'researcher-agent' })
+      const session = await provider.createSession({ agentId: 'pesquisa-teste' })
 
       assert.throws(() => provider.reconfigure(session.id, { reasoning: 'low' }), InvalidSessionChangeError)
       assert.strictEqual(provider.reconfigure(session.id, { model: 'gemini-3.6-flash' }).model, 'gemini-3.6-flash')
@@ -340,7 +340,7 @@ describe('AgentProvider', () => {
 
   it('lists and disposes sessions', async () => {
     const { provider } = setup()
-    const session = await provider.createSession({ agentId: 'researcher-agent' })
+    const session = await provider.createSession({ agentId: 'pesquisa-teste' })
 
     assert.strictEqual(provider.list().length, 1)
 
@@ -353,7 +353,7 @@ describe('AgentProvider', () => {
   it('rejects a lane the agent does not declare', async () => {
     const { provider } = setup()
 
-    await assert.rejects(provider.createSession({ agentId: 'researcher-agent', mode: 'telepathy' as EMode }), ModeNotSupportedError)
+    await assert.rejects(provider.createSession({ agentId: 'pesquisa-teste', mode: 'telepathy' as EMode }), ModeNotSupportedError)
   })
 
   it('refuses the manual tool loop outside the chat lane', async () => {
@@ -361,9 +361,9 @@ describe('AgentProvider', () => {
 
     // Na lane agent quem conduz o loop é o SDK; ligar o nosso por cima seria pedir duas
     // orquestrações para o mesmo turno.
-    await assert.rejects(provider.createSession({ agentId: 'researcher-agent', mode: EMode.AGENT, tools: true }), ToolsNotSupportedError)
+    await assert.rejects(provider.createSession({ agentId: 'pesquisa-teste', mode: EMode.AGENT, tools: true }), ToolsNotSupportedError)
 
-    const allowed = await provider.createSession({ agentId: 'researcher-agent', tools: true })
+    const allowed = await provider.createSession({ agentId: 'pesquisa-teste', tools: true })
     assert.strictEqual(allowed.mode, EMode.CHAT)
   })
 
@@ -381,12 +381,12 @@ describe('AgentProvider', () => {
     const store = new SessionStore()
     const provider = new AgentProvider(new Map(), store, undefined, SEED)
 
-    await assert.rejects(provider.createSession({ agentId: 'researcher-agent' }), AdapterNotFoundError)
+    await assert.rejects(provider.createSession({ agentId: 'pesquisa-teste' }), AdapterNotFoundError)
   })
 
   it('resolves the caller credential once, in the provider, and hands it to the adapter', async () => {
     const { provider, chat } = setup()
-    const session = await provider.createSession({ agentId: 'researcher-agent' })
+    const session = await provider.createSession({ agentId: 'pesquisa-teste' })
 
     await withCaller({ token: 'do-usuario' }, () => drain(provider.sendMessage(session.id, { text: 'hi' })))
 
@@ -397,7 +397,7 @@ describe('AgentProvider', () => {
     // ⛔ Falha aberta é o risco aqui: sem credencial a chamada segue, e é o MCP que decide. O que
     // não pode é ela aparecer com a credencial de outra pessoa.
     const { provider, chat } = setup()
-    const session = await provider.createSession({ agentId: 'researcher-agent' })
+    const session = await provider.createSession({ agentId: 'pesquisa-teste' })
 
     await drain(provider.sendMessage(session.id, { text: 'hi' }))
 
@@ -407,7 +407,7 @@ describe('AgentProvider', () => {
   it('refuses a new session while the audience is off, and says it is unavailable — not missing', async () => {
     const { provider } = setupWithSettings(new NullSettingsRepository({ audience: 'off' }))
 
-    await assert.rejects(() => provider.createSession({ agentId: 'researcher-agent' }), AgentUnavailableError)
+    await assert.rejects(() => provider.createSession({ agentId: 'pesquisa-teste' }), AgentUnavailableError)
   })
 
   it('lets a conversation already open finish its turn after the audience closes', async () => {
@@ -415,7 +415,7 @@ describe('AgentProvider', () => {
     // registraria um erro que não foi erro.
     const settings = new NullSettingsRepository({ audience: 'all' })
     const { provider } = setupWithSettings(settings)
-    const session = await provider.createSession({ agentId: 'researcher-agent' })
+    const session = await provider.createSession({ agentId: 'pesquisa-teste' })
 
     await settings.save({ audience: 'off' })
 
@@ -427,64 +427,64 @@ describe('AgentProvider', () => {
     const settings = new NullSettingsRepository({ audience: 'all' })
     const { provider } = setupWithSettings(settings)
 
-    await assert.doesNotReject(() => provider.createSession({ agentId: 'researcher-agent' }))
+    await assert.doesNotReject(() => provider.createSession({ agentId: 'pesquisa-teste' }))
 
     await settings.save({ audience: 'off' })
 
-    await assert.rejects(() => provider.createSession({ agentId: 'researcher-agent' }), AgentUnavailableError)
+    await assert.rejects(() => provider.createSession({ agentId: 'pesquisa-teste' }), AgentUnavailableError)
   })
 
   it('lets the configured agent answer when the caller did not pick one', async () => {
     // ⚠️ A REGRESSÃO: enquanto `agentId` era obrigatório no transporte, este caminho era inalcançável
     // — trocava-se o agente na configuração e a conversa continuava no mesmo, sem nada avisar. E o
     // tipo não denunciava: `input.agentId ?? settings.agentId` compila quando o primeiro nunca falta.
-    const { provider } = setupWithSettings(new NullSettingsRepository({ audience: 'all', agentId: 'researcher-agent' }))
+    const { provider } = setupWithSettings(new NullSettingsRepository({ audience: 'all', agentId: 'pesquisa-teste' }))
 
     const session = await provider.createSession({})
 
-    assert.strictEqual(provider.describe(session.id).agentId, 'researcher-agent')
+    assert.strictEqual(provider.describe(session.id).agentId, 'pesquisa-teste')
   })
 
   it('⛔ agente com ferramenta que alcança o servidor (run_bash): só administrador; a filha herda da mãe', async () => {
-    const { provider } = setupWithSettings(new NullSettingsRepository({ audience: 'all', agentId: 'researcher-agent' }))
+    const { provider } = setupWithSettings(new NullSettingsRepository({ audience: 'all', agentId: 'pesquisa-teste' }))
 
-    await assert.rejects(provider.createSession({ agentId: 'sysops-agent' }), DangerousToolsRestrictedError)
-    await assert.rejects(provider.createSession({ agentId: 'sysops-agent', delegated: true, parentSessionId: 'qualquer' }), DangerousToolsRestrictedError)
+    await assert.rejects(provider.createSession({ agentId: 'operador-teste' }), DangerousToolsRestrictedError)
+    await assert.rejects(provider.createSession({ agentId: 'operador-teste', delegated: true, parentSessionId: 'qualquer' }), DangerousToolsRestrictedError)
 
-    const parent = await provider.createSession({ agentId: 'sysops-agent', adminAccess: true })
-    const child = await provider.createSession({ agentId: 'sysops-agent', delegated: true, parentSessionId: parent.id })
-    assert.strictEqual(provider.describe(child.id).agentId, 'sysops-agent')
+    const parent = await provider.createSession({ agentId: 'operador-teste', adminAccess: true })
+    const child = await provider.createSession({ agentId: 'operador-teste', delegated: true, parentSessionId: parent.id })
+    assert.strictEqual(provider.describe(child.id).agentId, 'operador-teste')
   })
 
   it('lets the caller override the configured agent', async () => {
     // Quem chama a API direto para comparar dois providers continua mandando no que quer.
-    const { provider } = setupWithSettings(new NullSettingsRepository({ audience: 'all', agentId: 'researcher-agent' }))
+    const { provider } = setupWithSettings(new NullSettingsRepository({ audience: 'all', agentId: 'pesquisa-teste' }))
 
-    const session = await provider.createSession({ agentId: 'sysops-agent', adminAccess: true })
+    const session = await provider.createSession({ agentId: 'operador-teste', adminAccess: true })
 
-    assert.strictEqual(provider.describe(session.id).agentId, 'sysops-agent')
+    assert.strictEqual(provider.describe(session.id).agentId, 'operador-teste')
     assert.strictEqual(provider.describe(session.id).provider, EProvider.CLAUDE)
   })
   it('treats a stored `enabled: false` as off, so an agent recalled before the upgrade stays recalled', async () => {
     const stored = normalizeSettings({ enabled: false })
     const { provider } = setupWithSettings(new NullSettingsRepository(stored))
 
-    await assert.rejects(() => provider.createSession({ agentId: 'researcher-agent' }), AgentUnavailableError)
+    await assert.rejects(() => provider.createSession({ agentId: 'pesquisa-teste' }), AgentUnavailableError)
   })
 
   it('does not decide `restricted` itself: that needs the proven identity, which the controller resolves', async () => {
     const { provider } = setupWithSettings(new NullSettingsRepository({ audience: 'restricted' }))
 
-    await assert.doesNotReject(() => provider.createSession({ agentId: 'researcher-agent' }))
+    await assert.doesNotReject(() => provider.createSession({ agentId: 'pesquisa-teste' }))
   })
 
   it("resolves the model: body, then settings, then the agent's default", async () => {
-    const { provider } = setupWithSettings(new NullSettingsRepository({ audience: 'all', agentId: 'researcher-agent', model: 'gemini-3.6-flash' }))
+    const { provider } = setupWithSettings(new NullSettingsRepository({ audience: 'all', agentId: 'pesquisa-teste', model: 'gemini-3.6-flash' }))
 
     assert.strictEqual(provider.describe((await provider.createSession({})).id).model, 'gemini-3.6-flash')
     assert.strictEqual(provider.describe((await provider.createSession({ model: 'gemini-3.1-pro-preview' })).id).model, 'gemini-3.1-pro-preview')
 
-    const bare = setupWithSettings(new NullSettingsRepository({ audience: 'all', agentId: 'researcher-agent' }))
+    const bare = setupWithSettings(new NullSettingsRepository({ audience: 'all', agentId: 'pesquisa-teste' }))
     assert.strictEqual(bare.provider.describe((await bare.provider.createSession({})).id).model, 'gemini-3.7-flash')
   })
 
@@ -492,7 +492,7 @@ describe('AgentProvider', () => {
     // A regressão: trocar o agente para o Claude com um modelo do Google gravado quebrava a sessão.
     const { provider } = setupWithSettings(new NullSettingsRepository({ audience: 'all', model: 'gemini-3.6-flash' }))
 
-    const session = await provider.createSession({ agentId: 'sysops-agent', adminAccess: true })
+    const session = await provider.createSession({ agentId: 'operador-teste', adminAccess: true })
 
     assert.strictEqual(provider.describe(session.id).model, 'claude-sonnet-5')
   })

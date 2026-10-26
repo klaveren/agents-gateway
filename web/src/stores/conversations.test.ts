@@ -8,7 +8,7 @@ vi.mock('@/lib/api', () => ({ api: vi.fn(), openStream: vi.fn() }))
 
 const conversation = (id: string, updatedAt: string, over: Partial<IConversation> = {}): IConversation => ({
   id,
-  agentId: 'researcher-agent',
+  agentId: 'agente-a',
   provider: 'google',
   mode: 'chat',
   model: 'gemini-3.7-flash',
@@ -40,7 +40,7 @@ describe('applyEvent', () => {
   })
 
   it('a que não casa com o filtro aberto sai da lista (ou nem entra)', () => {
-    const filters = { ...none, agentId: 'sysops-agent' }
+    const filters = { ...none, agentId: 'agente-b' }
     const result = applyEvent(list, { type: 'conversation.updated', session: conversation('a', '2026-10-22T10:05:00Z') }, filters)
 
     expect(result.items.map((item) => item.id)).toEqual(['b'])

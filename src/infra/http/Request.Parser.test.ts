@@ -19,8 +19,8 @@ describe('request validation', () => {
   }
 
   it('accepts a minimal session body and keeps the optional fields optional', () => {
-    assert.deepStrictEqual(parseBody(createSessionSchema, { agentId: 'researcher-agent' }), {
-      agentId: 'researcher-agent',
+    assert.deepStrictEqual(parseBody(createSessionSchema, { agentId: 'pesquisa-teste' }), {
+      agentId: 'pesquisa-teste',
     })
   })
 
@@ -30,7 +30,7 @@ describe('request validation', () => {
 
   it('accepts a full session body', () => {
     const body = {
-      agentId: 'sysops-agent',
+      agentId: 'operador-teste',
       mode: EMode.AGENT,
       model: 'claude-opus-5',
       reasoning: 'high',
@@ -47,7 +47,7 @@ describe('request validation', () => {
   })
 
   it('refuses a lane that is not a lane', () => {
-    reject(createSessionSchema, { agentId: 'researcher-agent', mode: 'telepathy' })
+    reject(createSessionSchema, { agentId: 'pesquisa-teste', mode: 'telepathy' })
   })
 
   it('defaults the message to empty but demands text or attachment', () => {

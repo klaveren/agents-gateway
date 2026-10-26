@@ -1,4 +1,4 @@
-import { modelFor } from '@domain/Agent.Registry'
+import { modelFor } from '@domain/Agent.Policy'
 import { resolveSessionMode } from '@domain/Session.Policy'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'

@@ -5,7 +5,7 @@ import { ILimits, normalizeLimits } from './Limits.Model'
  * As decisões que mudam sem deploy.
  *
  * ⚖️ POR QUE ISTO EXISTE, se já há `.env` e código. Qual agente atende e com que modelo eram
- * escolhas do `Agent.Registry.ts` e de variáveis de ambiente — decisões de DEPLOY. Recolher o
+ * escolhas do código e de variáveis de ambiente — decisões de DEPLOY. Recolher o
  * agente porque está respondendo mal, ou trocar de modelo para comparar custo, são decisões de
  * OPERAÇÃO: se dependem de publicar, não são tomadas na hora em que importam.
  *

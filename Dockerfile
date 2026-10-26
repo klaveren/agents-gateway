@@ -81,9 +81,6 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
-# O frontend não passa pelo tsc, então vai direto para o primeiro caminho que o
-# Http.Server procura (dist/infra/http/public).
-COPY src/infra/http/public ./dist/infra/http/public
 COPY --from=web /web/dist ./web/dist
 # O Antigravity no PATH como `agy` (o nome que o gateway procura; `ANTIGRAVITY_BIN` troca).
 COPY --from=agy /opt/agy/antigravity /usr/local/bin/agy

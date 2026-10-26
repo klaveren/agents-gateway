@@ -2,11 +2,11 @@ import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import type { Event, FunctionTool } from '@google/adk'
 import { EMode } from '@domain/enums/EMode.Enum'
-import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { fakeMcpRegistry, mcpTool } from '@infra/mcp/Mcp.Fake'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
+import { GOOGLE_TEST_AGENT } from '../../testing/Agents.Fixture'
 import { ILocalTool } from '@infra/tools/Tool.Types'
 import { GoogleAgentAdapter, assertNoAdkTemplateCollision, type IAdkRunParams, type IAdkRuntime, type IAdkRuntimeSpec } from './GoogleAgent.Adapter'
 
@@ -30,15 +30,7 @@ function adkEventWithUsage(parts: unknown[], usage: { promptTokenCount?: number;
 }
 
 describe('GoogleAgentAdapter', () => {
-  const getAgent = (): IAgent => ({
-    id: 'researcher-agent',
-    name: 'Researcher',
-    provider: EProvider.GOOGLE,
-    systemPrompt: 'You are the Researcher Agent.',
-    models: ['gemini-3.7-flash'],
-    modes: [EMode.CHAT, EMode.AGENT],
-    allowedTools: ['search_web'],
-  })
+  const getAgent = (): IAgent => ({ ...GOOGLE_TEST_AGENT, models: ['gemini-3.7-flash'] })
 
   const turn = (): Event[] => [
     adkEvent([{ text: 'thinking about it', thought: true }]),
@@ -89,7 +81,7 @@ describe('GoogleAgentAdapter', () => {
 
   it('creates a session on the agent lane', async () => {
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(() => [], emptyLog()) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id })
 
     assert.ok(session.id.startsWith('google-agent-'))
     assert.strictEqual(session.mode, EMode.AGENT)
@@ -98,7 +90,7 @@ describe('GoogleAgentAdapter', () => {
   it('maps ADK structured events onto gateway events', async () => {
     const log = emptyLog()
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(turn, log) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'qual a selic?' }, {}))
 
     assert.ok(events.find((e) => e.type === 'reasoning.delta' && e.payload.text === 'thinking about it'))
@@ -111,10 +103,10 @@ describe('GoogleAgentAdapter', () => {
   it('builds the ADK agent with instruction and model, and creates the session first', async () => {
     const log = emptyLog()
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(turn, log) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent', model: 'gemini-3.6-flash' })
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id, model: 'gemini-3.6-flash' })
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
-    assert.strictEqual(log.specs[0].instruction, 'You are the Researcher Agent.')
+    assert.strictEqual(log.specs[0].instruction, GOOGLE_TEST_AGENT.systemPrompt)
     assert.strictEqual(log.specs[0].model, 'gemini-3.6-flash')
     // `runAsync` lança "Session not found" se a sessão não existir antes.
     assert.strictEqual(log.ensured.length, 1)
@@ -125,7 +117,7 @@ describe('GoogleAgentAdapter', () => {
   it('reuses one runtime per session so history survives the turn', async () => {
     const log = emptyLog()
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(turn, log) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id })
 
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'first' }, {}))
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'second' }, {}))
@@ -137,7 +129,7 @@ describe('GoogleAgentAdapter', () => {
   it('sends attachments as inlineData parts', async () => {
     const log = emptyLog()
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(turn, log) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id })
 
     await drain(
       adapter.sendMessage(
@@ -158,7 +150,7 @@ describe('GoogleAgentAdapter', () => {
     const log = emptyLog()
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(turn, log), catalog })
     const agent = { ...getAgent(), allowedTools: ['search_web', 'sdk:google:google_search', 'sdk:google:code_execution', 'sdk:WebSearch'] }
-    const session = await adapter.createSession(agent, { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(agent, { agentId: GOOGLE_TEST_AGENT.id })
     await drain(adapter.sendMessage(agent, session.id, { text: 'hi' }, {}))
 
     assert.deepStrictEqual(log.specs[0].natives, ['google_search', 'code_execution'])
@@ -167,7 +159,7 @@ describe('GoogleAgentAdapter', () => {
   it('hands the local toolset to the ADK agent', async () => {
     const log = emptyLog()
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(turn, log), catalog })
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id })
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.strictEqual(log.specs[0].tools.length, 1)
@@ -193,7 +185,7 @@ describe('GoogleAgentAdapter', () => {
     const log = emptyLog()
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(() => [], log), catalog: remoteCatalog })
     const agent = { ...getAgent(), allowedTools: ['mcp:crm/run_bash'] }
-    const session = await adapter.createSession(agent, { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(agent, { agentId: GOOGLE_TEST_AGENT.id })
     const callBash = async () => {
       const tool = log.specs[0].tools.find((candidate) => 'name' in candidate && candidate.name === 'run_bash') as FunctionTool
       await tool.runAsync({ args: {}, toolContext: undefined as never })
@@ -221,7 +213,7 @@ describe('GoogleAgentAdapter', () => {
       ),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     const text = events
@@ -238,7 +230,7 @@ describe('GoogleAgentAdapter', () => {
       createRuntime: runtimeWith(() => [adkEvent([{ text: 'Only once' }])], log),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.ok(events.find((e) => e.type === 'text.delta' && e.payload.text === 'Only once'))
@@ -246,7 +238,7 @@ describe('GoogleAgentAdapter', () => {
 
   it('warns that the ADK has no reasoning-effort knob', async () => {
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(() => [], emptyLog()) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent', reasoning: 'high' })
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id, reasoning: 'high' })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.ok(events.find((e) => e.type === 'warning' && e.payload.message.includes('reasoning-effort')))
@@ -263,7 +255,7 @@ describe('GoogleAgentAdapter', () => {
       }),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
     const error = events.find((e) => e.type === 'error')
 
@@ -282,7 +274,7 @@ describe('GoogleAgentAdapter', () => {
       }),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id })
     const events: IAgentEvent[] = []
 
     for await (const event of adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {})) {
@@ -318,7 +310,7 @@ describe('GoogleAgentAdapter', () => {
         },
       }),
     })
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
     const usage = events.filter((e) => e.type === 'usage').map((e) => e.type === 'usage' && e.payload)
 
@@ -338,7 +330,7 @@ describe('GoogleAgentAdapter', () => {
         },
       }),
     })
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
     const usage = events.filter((e) => e.type === 'usage').map((e) => e.type === 'usage' && e.payload)
 
@@ -350,7 +342,7 @@ describe('GoogleAgentAdapter', () => {
     const adapter = new GoogleAgentAdapter({
       createRuntime: runtimeWith(() => [adkEventWithUsage([{ text: 'done' }], { promptTokenCount: 120, candidatesTokenCount: 30 })], emptyLog()),
     })
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.strictEqual(events.filter((e) => e.type === 'usage').length, 0)
@@ -370,7 +362,7 @@ describe('GoogleAgentAdapter', () => {
         },
       }),
     })
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id })
 
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'one' }, {}))
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'two' }, {}))
@@ -385,7 +377,7 @@ describe('GoogleAgentAdapter', () => {
   it('sends an attachment with no text without an empty text part, which the ADK would drop whole', async () => {
     const log = emptyLog()
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(turn, log) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id })
 
     await drain(adapter.sendMessage(getAgent(), session.id, { text: '  ', files: [{ name: 'doc.pdf', mimeType: 'application/pdf', data: 'aaa' }] }, {}))
 

@@ -7,6 +7,7 @@ import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { fakeMcpRegistry } from '@infra/mcp/Mcp.Fake'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
+import { OPENAI_TEST_AGENT } from '../../testing/Agents.Fixture'
 import { ILocalTool } from '@infra/tools/Tool.Types'
 import { hostedName, OpenAIAgentAdapter } from './OpenAIAgent.Adapter'
 
@@ -20,15 +21,7 @@ interface ICall {
 }
 
 describe('OpenAIAgentAdapter', () => {
-  const getAgent = (): IAgent => ({
-    id: 'analyst-agent',
-    name: 'Data Analyst',
-    provider: EProvider.OPENAI,
-    systemPrompt: 'You are a Data Analyst Agent.',
-    models: ['gpt-5.6-sol'],
-    modes: [EMode.CHAT, EMode.AGENT],
-    allowedTools: ['search_web', 'mcp:crm/*'],
-  })
+  const getAgent = (): IAgent => ({ ...OPENAI_TEST_AGENT, models: ['gpt-5.6-sol'], allowedTools: ['search_web', 'mcp:crm/*'] })
 
   const turn = () => [
     { type: 'raw_model_stream_event', data: { type: 'output_text_delta', delta: 'Searching' } },
@@ -85,7 +78,7 @@ describe('OpenAIAgentAdapter', () => {
 
   it('creates a session on the agent lane', async () => {
     const adapter = new OpenAIAgentAdapter({ run: runWith(() => []) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: OPENAI_TEST_AGENT.id })
 
     assert.ok(session.id.startsWith('openai-agent-'))
     assert.strictEqual(session.mode, EMode.AGENT)
@@ -93,7 +86,7 @@ describe('OpenAIAgentAdapter', () => {
 
   it('translates the run stream into gateway events', async () => {
     const adapter = new OpenAIAgentAdapter({ run: runWith(turn) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: OPENAI_TEST_AGENT.id })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'qual a selic?' }, {}))
 
     assert.ok(events.find((e) => e.type === 'text.delta' && e.payload.text === 'Searching'))
@@ -106,19 +99,19 @@ describe('OpenAIAgentAdapter', () => {
   it('hands the loop to the SDK with a turn cap and an abort signal', async () => {
     const calls: ICall[] = []
     const adapter = new OpenAIAgentAdapter({ run: runWith(turn, calls) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent', reasoning: 'medium' })
+    const session = await adapter.createSession(getAgent(), { agentId: OPENAI_TEST_AGENT.id, reasoning: 'medium' })
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.ok((calls[0].maxTurns ?? 0) > 0)
     assert.ok(calls[0].signal instanceof AbortSignal)
     assert.strictEqual(calls[0].agent.modelSettings.reasoning?.effort, 'medium')
-    assert.strictEqual(calls[0].agent.instructions, 'You are a Data Analyst Agent.')
+    assert.strictEqual(calls[0].agent.instructions, OPENAI_TEST_AGENT.systemPrompt)
   })
 
   it('carries the history from one turn into the next', async () => {
     const calls: ICall[] = []
     const adapter = new OpenAIAgentAdapter({ run: runWith(turn, calls) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: OPENAI_TEST_AGENT.id })
 
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'first' }, {}))
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'second' }, {}))
@@ -130,7 +123,7 @@ describe('OpenAIAgentAdapter', () => {
   it('sends attachments as input_image and input_file parts', async () => {
     const calls: ICall[] = []
     const adapter = new OpenAIAgentAdapter({ run: runWith(turn, calls) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: OPENAI_TEST_AGENT.id })
 
     await drain(
       adapter.sendMessage(
@@ -160,7 +153,7 @@ describe('OpenAIAgentAdapter', () => {
 
     const official: ICall[] = []
     const adapter = new OpenAIAgentAdapter({ run: runWith(turn, official), catalog })
-    const session = await adapter.createSession(agent, { agentId: 'analyst-agent' })
+    const session = await adapter.createSession(agent, { agentId: OPENAI_TEST_AGENT.id })
     await drain(adapter.sendMessage(agent, session.id, { text: 'hi' }, {}))
     assert.deepStrictEqual(
       official[0].agent.tools.map((tool) => tool.name),
@@ -173,7 +166,7 @@ describe('OpenAIAgentAdapter', () => {
       catalog,
       connections: { connection: (id) => ({ providerId: id, name: 'Compatível', protocol: EProvider.OPENAI, baseUrl: 'https://api.compativel.example/v1', key: 'k' }) },
     })
-    const other = await compatible.createSession({ ...agent, provider: 'compat' }, { agentId: 'analyst-agent' })
+    const other = await compatible.createSession({ ...agent, provider: 'compat' }, { agentId: OPENAI_TEST_AGENT.id })
     const events = await drain(compatible.sendMessage(agent, other.id, { text: 'hi' }, {}))
     assert.deepStrictEqual(
       viaCompatible[0].agent.tools.map((tool) => tool.name),
@@ -185,7 +178,7 @@ describe('OpenAIAgentAdapter', () => {
   it('registers the local toolset on the SDK agent', async () => {
     const calls: ICall[] = []
     const adapter = new OpenAIAgentAdapter({ run: runWith(turn, calls), catalog })
-    const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: OPENAI_TEST_AGENT.id })
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.deepStrictEqual(
@@ -218,7 +211,7 @@ describe('OpenAIAgentAdapter', () => {
       catalog: mcpCatalog(() => up),
       buildMcpServers: (_remotes, token) => [trackedServer(token, log)],
     })
-    const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: OPENAI_TEST_AGENT.id })
 
     // MCP fora do ar: só as tools locais.
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'um' }, {}))
@@ -252,8 +245,8 @@ describe('OpenAIAgentAdapter', () => {
       catalog: mcpCatalog(() => true),
       buildMcpServers: (_remotes, token) => [trackedServer(token, log)],
     })
-    const sessionA = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
-    const sessionB = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+    const sessionA = await adapter.createSession(getAgent(), { agentId: OPENAI_TEST_AGENT.id })
+    const sessionB = await adapter.createSession(getAgent(), { agentId: OPENAI_TEST_AGENT.id })
 
     const turnA = drain(adapter.sendMessage(getAgent(), sessionA.id, { text: 'de A' }, { token: 'a' }))
     await new Promise((resolve) => setTimeout(resolve, 5))
@@ -274,7 +267,7 @@ describe('OpenAIAgentAdapter', () => {
       }) as unknown as TRun,
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: OPENAI_TEST_AGENT.id })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
     const error = events.find((e) => e.type === 'error')
 
@@ -294,7 +287,7 @@ describe('OpenAIAgentAdapter', () => {
       })) as unknown as TRun,
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: OPENAI_TEST_AGENT.id })
     const events: IAgentEvent[] = []
 
     for await (const event of adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {})) {
@@ -316,7 +309,7 @@ describe('OpenAIAgentAdapter', () => {
         },
       ]),
     })
-    const session = await adapter.createSession(getAgent(), { agentId: 'researcher-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: OPENAI_TEST_AGENT.id })
 
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
     const usage = events.find((event) => event.type === 'usage')
@@ -329,7 +322,7 @@ describe('OpenAIAgentAdapter', () => {
       const adapter = new OpenAIAgentAdapter({
         run: runWith(() => [{ type: 'raw_model_stream_event', data: { type: 'response_done', response: { usage: { inputTokens: 100, outputTokens: 5, inputTokensDetails } } } }]),
       })
-      const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+      const session = await adapter.createSession(getAgent(), { agentId: OPENAI_TEST_AGENT.id })
       const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
       return events.find((event) => event.type === 'usage')?.payload
@@ -346,7 +339,7 @@ describe('OpenAIAgentAdapter', () => {
   it('sends an attachment with no text without an empty input_text part', async () => {
     const calls: ICall[] = []
     const adapter = new OpenAIAgentAdapter({ run: runWith(turn, calls) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: OPENAI_TEST_AGENT.id })
 
     await drain(adapter.sendMessage(getAgent(), session.id, { text: '  ', files: [{ name: 'b.pdf', mimeType: 'application/pdf', data: 'bbb' }] }, {}))
 

@@ -52,7 +52,7 @@ describe('uso (integração)', () => {
     ] as const) {
       await controller.conversations.saveSession({
         id,
-        agentId: 'sysops-agent',
+        agentId: 'operador-teste',
         provider: 'claude',
         mode: 'agent',
         model: 'claude-sonnet-5',

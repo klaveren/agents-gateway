@@ -26,14 +26,14 @@ describe('toAgentDto — raciocínio', () => {
   }
 
   it('cruza os níveis do agente (na ordem do protocolo) com o que o catálogo sabe de cada modelo', () => {
-    const dto = toAgentDto(agent(), {}, false, { protocol: EProvider.CLAUDE, reasoningOf: (model) => catalog[model] })
+    const dto = toAgentDto(agent(), {}, { protocol: EProvider.CLAUDE, reasoningOf: (model) => catalog[model] })
 
     assert.deepStrictEqual(dto.reasoningEfforts, ['low', 'high', 'max'])
     assert.deepStrictEqual(dto.modelReasoning, { raciocina: ['low', 'high', 'max'], parcial: ['low'], 'nao-raciocina': [], desconhecido: null })
   })
 
   it('nível gravado que o protocolo não aceita some (um agente Google antigo não oferece raciocínio)', () => {
-    const dto = toAgentDto(agent({ provider: EProvider.GOOGLE, models: ['gemini'], reasoningEfforts: ['low'] }), {}, false, { protocol: EProvider.GOOGLE })
+    const dto = toAgentDto(agent({ provider: EProvider.GOOGLE, models: ['gemini'], reasoningEfforts: ['low'] }), {}, { protocol: EProvider.GOOGLE })
 
     assert.strictEqual(dto.reasoningEfforts, undefined)
     assert.deepStrictEqual(dto.modelReasoning, { gemini: [] })

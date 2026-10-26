@@ -31,7 +31,6 @@ import {
   UserNotFoundError,
   InvalidSettingsError,
   ModeNotSupportedError,
-  ReadOnlyAgentError,
   SessionNotFoundError,
   ToolsNotSupportedError,
 } from '@domain/errors/Domain.Error'
@@ -39,7 +38,6 @@ import {
 export type TErrorCode =
   | 'validation_error'
   | 'agent_not_found'
-  | 'agent_read_only'
   | 'provider_in_use'
   | 'mcp_server_in_use'
   | 'provider_unavailable'
@@ -219,10 +217,6 @@ export function toHttpFailure(error: unknown): IHttpFailure {
 
   if (error instanceof InvalidAgentError) {
     return { status: 422, code: 'validation_error', message: 'Agent is invalid', details: error.issues }
-  }
-
-  if (error instanceof ReadOnlyAgentError) {
-    return { status: 409, code: 'agent_read_only', message: error.message }
   }
 
   if (error instanceof InvalidSettingsError) {
