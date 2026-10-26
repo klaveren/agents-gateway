@@ -1,6 +1,3 @@
-import { readLocal } from './storage'
-
-export const GATEWAY_TOKEN_KEY = 'gatewayToken'
 /** ⚠️ Só para a migração: a sessão de antes ficava aqui. Hoje ela mora num cookie HttpOnly (ver `auth.ts`). */
 export const CALLER_TOKEN_KEY = 'callerToken'
 
@@ -29,17 +26,13 @@ export class ApiError extends Error {
 }
 
 /**
- * Os cabeçalhos da tela: o portão do serviço (`GATEWAY_TOKEN`, da tela de configuração) e a marca de que
- * quem chama é a tela.
+ * Os cabeçalhos da tela: a marca de que quem chama é a tela.
  *
  * ⛔ A SESSÃO NÃO PASSA POR AQUI: ela vai no cookie HttpOnly, que o navegador manda sozinho e o
  * JavaScript não lê. A marca `X-Gateway-Client: web` faz o login devolver a sessão só no cookie.
  */
 export function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
-  const headers: Record<string, string> = { ...extra, 'X-Gateway-Client': 'web' }
-  const gateway = readLocal(GATEWAY_TOKEN_KEY)
-  if (gateway) headers.Authorization = `Bearer ${gateway}`
-  return headers
+  return { ...extra, 'X-Gateway-Client': 'web' }
 }
 
 interface IRequest {

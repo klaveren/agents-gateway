@@ -23,3 +23,11 @@ export function bootIssues(env: NodeJS.ProcessEnv = process.env): string[] {
 
   return issues
 }
+
+/** O que não impede de subir, mas precisa ser dito: configuração que parece proteger e não protege mais. */
+export function bootWarnings(env: NodeJS.ProcessEnv = process.env): string[] {
+  const warnings: string[] = []
+  // ⚠️ O portão do serviço saiu: quem ainda o define acharia que está protegido por ele. A proteção é o login.
+  if (env.GATEWAY_TOKEN?.trim()) warnings.push('GATEWAY_TOKEN no longer has any effect: access is protected by the login (accounts and access tokens). Remove it.')
+  return warnings
+}

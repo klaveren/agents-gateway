@@ -22,12 +22,12 @@ import { fail } from './Http.Response'
 import { OPENAPI_DOCUMENT } from './Openapi.Schema'
 import { identityFromToken, tokenFromHeader, withCaller } from '@infra/mcp/Caller.Identity'
 import { handleSelfMcp, rejectSelfMcp } from './SelfMcp.Controller'
-import { CALLER_HEADER, corsMiddleware, host, jsonLimit, requireCaller, requireToken, messageJsonLimit, rateLimit, securityHeaders, trustProxySetting } from './Security.Middleware'
+import { CALLER_HEADER, corsMiddleware, host, jsonLimit, requireCaller, messageJsonLimit, rateLimit, securityHeaders, trustProxySetting } from './Security.Middleware'
 
 export const API_PREFIX = '/v1'
 
 /**
- * As ÚNICAS rotas que respondem sem credencial de quem chama (com o portão do serviço, se houver).
+ * As ÚNICAS rotas que respondem sem credencial de quem chama.
  *
  * ⚖️ CURTA PARA CABER NUM OLHAR: ninguém abre uma rota por distração. `/health` é o que o
  * orquestrador e o monitor chamam, e não tem credencial de usuário nenhuma. Fora ele:
@@ -134,9 +134,9 @@ export class HttpServer {
      * Encerrar o escopo antes disso faria a chamada cair no que estiver configurado no ambiente do
      * MCP — que pode ser a conta de outra pessoa.
      *
-     * ⚖️ HEADER SEPARADO do `Authorization`, de propósito. O `Authorization` é o portão do próprio
-     * gateway (`GATEWAY_TOKEN`); este é a credencial que o gateway REPASSA às ferramentas. Misturar
-     * os dois faria o portão do serviço virar a identidade do usuário, ou o contrário.
+     * ⚖️ HEADER PRÓPRIO (`X-Tool-Authorization`), e não o `Authorization`: é a credencial que o gateway
+     * REPASSA às ferramentas, e um proxy na frente que mexa no `Authorization` não a toca. Na tela, vem do
+     * cookie HttpOnly (ver `Session.Cookie`).
      *
      * ⛔ E é a ÚNICA fonte de identidade. Nada que venha no corpo ou na query pode dizer quem o
      * chamador é: seria pedir para a pessoa declarar a própria conta.
@@ -149,21 +149,20 @@ export class HttpServer {
       return withCaller(token ? { token, ...identityFromToken(token) } : {}, () => next())
     }
 
-    const guard = requireToken()
     const identity = requireCaller()
     // O token de acesso vira sessão ANTES de tudo que lê a credencial (ver `AuthController.accessTokenGate`).
     const exchange = this.auth.accessTokenGate
 
     // O contrato também é fechado: entrega o mapa de todas as rotas, e presença de header não é
     // identidade — então passa pelo mesmo portão e pela mesma resolução do chamador.
-    this.app.get(`${API_PREFIX}/openapi.json`, guard, exchange, identity, callerScope, this.controller.guardCaller, (_req, res) => {
+    this.app.get(`${API_PREFIX}/openapi.json`, exchange, identity, callerScope, this.controller.guardCaller, (_req, res) => {
       res.json(OPENAPI_DOCUMENT)
     })
 
     // ⛔ Login e setup: 20 por minuto por origem. A trava por e-mail não segura quem troca de e-mail.
     const throttled = rateLimit({ windowMs: 60_000, max: Number(process.env.AUTH_RATE_LIMIT) || 20 })
     for (const { method, path: routePath, handler } of this.routes) {
-      const open = PUBLIC_PATHS.includes(routePath) ? [guard, exchange, callerScope, handler] : [guard, exchange, identity, callerScope, handler]
+      const open = PUBLIC_PATHS.includes(routePath) ? [exchange, callerScope, handler] : [exchange, identity, callerScope, handler]
       const chain = THROTTLED_PATHS.includes(routePath) ? [throttled, ...open] : open
       this.app[method](`${API_PREFIX}${routePath}`, ...chain)
     }

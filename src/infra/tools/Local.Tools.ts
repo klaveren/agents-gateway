@@ -85,7 +85,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
         }
 
         try {
-          // ⛔ Ambiente MÍNIMO: o shell herdava o `process.env` inteiro — chaves de API, `GATEWAY_TOKEN`,
+          // ⛔ Ambiente MÍNIMO: o shell herdava o `process.env` inteiro — chaves de API, `AUTH_SECRET`,
           // `SECRETS_KEY` —, e um `env` bastava para levar tudo. E o `cwd` é o diretório vazio da conversa.
           const { stdout, stderr } = await run(command, {
             cwd: policy.cwd || sessionWorkspace(context?.sessionId ?? 'run_bash'),

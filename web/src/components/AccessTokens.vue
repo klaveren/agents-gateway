@@ -2,7 +2,6 @@
 import { computed, onMounted, ref } from 'vue'
 import { api, ApiError } from '@/lib/api'
 import { fullTime } from '@/lib/format'
-import { useAuthStore } from '@/stores/auth'
 import ConfirmDialog from './ConfirmDialog.vue'
 import Icon from './Icon.vue'
 
@@ -22,7 +21,6 @@ interface IAccessToken {
  * ⛔ O token aparece UMA vez, logo depois de criado, e some da tela ao fechar o aviso — o servidor guarda só
  * o hash e não o devolve de novo.
  */
-const auth = useAuthStore()
 const tokens = ref<IAccessToken[]>([])
 const loadError = ref<string>()
 const name = ref('Claude Code')
@@ -45,7 +43,7 @@ const isActive = (token: IAccessToken) => !token.revokedAt && (!token.expiresAt 
 const active = computed(() => tokens.value.filter(isActive))
 const mcpCommand = computed(() =>
   revealed.value
-    ? `claude mcp add --transport http gateway ${location.origin}/v1/mcp --header "X-Tool-Authorization: Bearer ${revealed.value.token}"${auth.gatewayToken ? ' --header "Authorization: Bearer <GATEWAY_TOKEN>"' : ''}`
+    ? `claude mcp add --transport http gateway ${location.origin}/v1/mcp --header "X-Tool-Authorization: Bearer ${revealed.value.token}"`
     : '',
 )
 

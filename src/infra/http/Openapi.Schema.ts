@@ -550,7 +550,6 @@ export const OPENAPI_DOCUMENT = {
   servers: [{ url: '/v1' }],
   components: {
     securitySchemes: {
-      bearerAuth: { type: 'http', scheme: 'bearer', description: "The gateway's own gate, enforced only when `GATEWAY_TOKEN` is set." },
       callerAuth: {
         type: 'apiKey',
         in: 'header',

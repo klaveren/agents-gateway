@@ -220,7 +220,6 @@ rejects every cross-origin request. The bundled UI is same-origin and unaffected
 | --- | --- | --- |
 | `HOST` | `127.0.0.1` | Interface to bind. Change it only if you know who else is on the network. |
 | `CORS_ORIGINS` | *(none)* | Comma-separated allowlist. Needed if you serve a frontend from another port. |
-| `GATEWAY_TOKEN` | *(none)* | When set, `/v1/*` requires `Authorization: Bearer`. The UI reads it from `localStorage.gatewayToken`. |
 | `ALLOW_ANONYMOUS` | *(off)* | Needed to use the bundled UI and plain `curl`, which send no caller credential. See [Caller identity](#caller-identity). |
 | `JSON_LIMIT` | `25mb` | Request body cap. Base64 attachments inflate ~33%. |
 
@@ -231,12 +230,13 @@ gateway forwards the caller's own credential to the MCP tools (header `X-Tool-Au
 kept apart from `Authorization` on purpose) and uses it to keep one caller's sessions away from
 another's.
 
-**Closed by default.** Every route except `/health` answers `401` when `X-Tool-Authorization` is
-missing. This matters when something in front of the gateway injects `GATEWAY_TOKEN` for
-everyone (a same-origin proxy, say): the bearer gate then proves nothing about the caller, and
-every anonymous request would otherwise get an authenticated pipe. For local `curl` and the
-bundled demo UI, open it explicitly with `ALLOW_ANONYMOUS=1` (anonymous callers share one
-"no owner" scope and cannot see sessions that have an owner).
+**Closed by default.** Every route except `/health` and the entry points (`/auth/status`, `/auth/setup`,
+`/auth/login`, `/shared/:id`) answers `401` without the caller's credential: the UI's HttpOnly session
+cookie, or `X-Tool-Authorization: Bearer <access token>` for scripts and MCP clients. The plain
+`Authorization` header is not a credential here, so a proxy in front that sets it opens nothing. For
+local `curl` without an account, open it explicitly with `ALLOW_ANONYMOUS=1` (anonymous callers share
+one "no owner" scope and cannot see sessions that have an owner). There is no service-wide shared
+secret: a leftover `GATEWAY_TOKEN` only logs a warning at boot.
 
 The token payload is read **without verifying the signature**, only to *label* who is calling.
 A forged token claims anything, so identity that decides access has to be **proven**: the

@@ -111,7 +111,7 @@ export class McpServersService {
     }
     next.headerName = next.auth === 'none' ? undefined : next.headerName?.trim() || undefined
     const issues = issuesOf(next)
-    // ⛔ O servidor do próprio gateway leva o `GATEWAY_TOKEN`: a URL dele não se edita.
+    // ⛔ O servidor do próprio gateway é este processo: a URL dele não se edita.
     if (id === SELF_MCP_SERVER_ID && next.url !== current.url) issues.push({ field: 'url', message: 'the gateway server URL is fixed' })
     if (issues.length) throw new InvalidMcpServerError(issues)
 

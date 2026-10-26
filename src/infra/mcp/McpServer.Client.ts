@@ -31,7 +31,7 @@ export interface IMcpClientOptions {
   transport?: TMcpTransport
   /** Em que header vai a credencial de `auth: caller`. Padrão `authorization`. */
   callerHeader?: string
-  /** Headers fixos de toda requisição (ex.: o `GATEWAY_TOKEN` do portão, no MCP do próprio gateway). */
+  /** Headers fixos de toda requisição (ex.: `X-Gateway-Session`, no proxy dos MCPs em contêiner). */
   fixedHeaders?: () => Record<string, string> | undefined
   /** O nome no log (o id do servidor). */
   label?: string

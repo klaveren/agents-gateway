@@ -143,37 +143,14 @@ export function corsMiddleware(): RequestHandler {
   return cors(corsOptions())
 }
 
-/**
- * Exige `Authorization: Bearer` quando `GATEWAY_TOKEN` está definido.
- *
- * Desligado por default para não atrapalhar o uso local; ligue quando o gateway sair de
- * `127.0.0.1`.
- */
-export function requireToken(token = process.env.GATEWAY_TOKEN): RequestHandler {
-  return (req: Request, _res: Response, next: NextFunction) => {
-    if (!token) return next()
-
-    const header = req.headers.authorization
-    const presented = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined
-
-    if (!sameSecret(presented ?? '', token)) {
-      return next(new HttpError(401, 'unauthorized', 'Missing or invalid bearer token'))
-    }
-
-    return next()
-  }
-}
-
 /** O header com a credencial do PRÓPRIO chamador — a que o gateway repassa às tools. */
 export const CALLER_HEADER = 'x-tool-authorization'
 
 /**
  * ⛔ EXIGE A CREDENCIAL DE QUEM CHAMA — fechado por padrão, com escape explícito.
  *
- * O `GATEWAY_TOKEN` é a chave do SERVIÇO, e quem fica na frente do gateway (um proxy que injeta o
- * token para não deixá-lo no bundle do navegador) a satisfaz em nome de TODO MUNDO. O efeito, que é
- * fácil de não medir: qualquer pessoa que alcance o proxy ganha um cano autenticado até aqui — e
- * um `curl` anônimo criaria sessão e faria o agente rodar, gastando de verdade.
+ * Sem ela, qualquer um que alcance a porta (ou um proxy na frente) teria um cano até aqui — e um
+ * `curl` anônimo criaria sessão e faria o agente rodar, gastando de verdade.
  *
  * ⚠️ CORS NÃO RESOLVE ISTO, e é a conclusão errada mais fácil de tirar: ele impede o NAVEGADOR de
  * ler resposta de outra origem; `curl` não tem navegador e ignora tudo.

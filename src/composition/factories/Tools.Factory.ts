@@ -32,10 +32,10 @@ export function makeTools(): ITools {
     servers.seedOnce([...seedFromEnv(), selfServer()])
     keepSelfUrl(servers)
 
-    const mcp = new McpRegistry(servers, makeCredentials(), undefined, (config) => gatewayGate(config))
+    const mcp = new McpRegistry(servers, makeCredentials())
     const delegation = new DelegationSlot()
     // Os SDKs agênticos chegam aos MCPs em contêiner pelo proxy do próprio gateway (`/v1/mcp-proxy/<id>`).
-    const containerProxy = { base: selfUrl().replace(/\/v1\/mcp$/, '/v1/mcp-proxy'), headers: () => gatewayGate({ id: SELF_MCP_SERVER, url: selfUrl() } as IMcpServerConfig) ?? {} }
+    const containerProxy = { base: selfUrl().replace(/\/v1\/mcp$/, '/v1/mcp-proxy') }
     instance = { delegation, mcp, servers, catalog: new ToolCatalog(mcp, makeLocalTools(), (allowed) => makeDelegateTool(runnableTargets(allowed), delegation), containerProxy) }
   }
   return instance
@@ -88,15 +88,8 @@ function selfServer(): IMcpServerConfig {
 function keepSelfUrl(servers: IMcpServerRepository): void {
   const current = servers.get(SELF_MCP_SERVER)
   const url = selfUrl()
-  // ⛔ Sempre a URL deste processo: é para ela, e só ela, que vai o `GATEWAY_TOKEN` (ver `gatewayGate`).
+  // ⛔ Sempre a URL deste processo: o servidor `gateway` é este gateway, e não um endereço que se edita.
   if (current && current.url !== url) servers.update(SELF_MCP_SERVER, { url, updatedAt: new Date(), updatedBy: SYSTEM })
-}
-
-/** Com `GATEWAY_TOKEN`, a chamada ao próprio gateway também precisa passar pelo portão. */
-function gatewayGate(config: IMcpServerConfig): Record<string, string> | undefined {
-  const token = process.env.GATEWAY_TOKEN?.trim()
-  // ⛔ Pela URL, não só pelo id: um id `gateway` apontado para outro lugar levaria o token do portão junto.
-  return config.id === SELF_MCP_SERVER && config.url === selfUrl() && token ? { Authorization: `Bearer ${token}` } : undefined
 }
 
 function seedFromEnv(env: NodeJS.ProcessEnv = process.env): IMcpServerConfig[] {

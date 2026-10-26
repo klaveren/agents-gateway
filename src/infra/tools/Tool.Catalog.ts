@@ -47,7 +47,7 @@ export class ToolCatalog {
      * O proxy MCP do próprio gateway (`/v1/mcp-proxy/<id>`), por onde os SDKs agênticos chegam aos MCPs em
      * contêiner — eles nunca falam com o Docker. Ausente = contêiner só nas lanes que usam a caixa.
      */
-    private readonly containerProxy?: { base: string; headers: () => Record<string, string> },
+    private readonly containerProxy?: { base: string },
   ) {}
 
   /** Algum servidor MCP ligado está conectado agora (para health e relatório). */
@@ -128,7 +128,7 @@ export class ToolCatalog {
           config: proxied,
           ...(choice.all ? {} : { tools: [...choice.tools] }),
           callerHeader: 'X-Tool-Authorization',
-          fixed: { ...this.containerProxy!.headers(), 'X-Gateway-Session': context.sessionId },
+          fixed: { 'X-Gateway-Session': context.sessionId },
         })
         continue
       }
