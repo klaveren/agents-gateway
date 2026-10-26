@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { api, ApiError, authHeaders, CALLER_TOKEN_KEY, GATEWAY_TOKEN_KEY, setUnauthorizedHandler } from '@/lib/api'
+import { api, ApiError, authHeaders, CALLER_TOKEN_KEY, setUnauthorizedHandler } from '@/lib/api'
 import { readLocal, writeLocal } from '@/lib/storage'
 import type { ISession, IUser } from '@/lib/types'
 import { useAgentsStore } from './agents'
@@ -19,8 +19,11 @@ import { useUsageStore } from './usage'
  * ⛔ A SESSÃO MORA NUM COOKIE HttpOnly que o gateway grava no login: o JavaScript não a lê, e um XSS não
  * a leva. Esta store só sabe QUEM está logado (`/auth/me`), nunca o token.
  */
+/** ⚠️ Só a limpeza: o portão do serviço (`GATEWAY_TOKEN`) saiu, e o que ficou no navegador de quem o usou não vale mais nada. */
+const RETIRED_GATEWAY_TOKEN_KEY = 'gatewayToken'
+
 export const useAuthStore = defineStore('auth', () => {
-  const gatewayToken = ref(readLocal(GATEWAY_TOKEN_KEY) ?? '')
+  writeLocal(RETIRED_GATEWAY_TOKEN_KEY, null)
   const user = ref<IUser>()
   const isAdmin = ref(false)
   const checked = ref(false)
@@ -43,7 +46,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   /**
    * Refaz o que depende de QUEM é e do que PODE: agentes, configurações (só admin) e o stream de eventos das
-   * conversas (que muda de escopo com o papel). Roda quando o papel ou a conta muda, ou o portão é trocado.
+   * conversas (que muda de escopo com o papel). Roda quando o papel ou a conta muda, e no logout.
    */
   async function rescope(): Promise<void> {
     // Saiu de uma conta e há login: não há escopo até entrar de novo (a tela de login é quem refaz).
@@ -131,14 +134,6 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = session.user
   }
 
-  /** ⚠️ Outro portão pode mostrar outro escopo: depois de sondar, refaz agentes, configurações e eventos. */
-  async function saveGatewayToken(value: string): Promise<void> {
-    gatewayToken.value = value.trim()
-    writeLocal(GATEWAY_TOKEN_KEY, gatewayToken.value || null)
-    await scan()
-    await rescope()
-  }
-
   // Sessão recusada pelo gateway (venceu, conta desativada, papel trocado): sai e a tela pede login.
   setUnauthorizedHandler(() => {
     if (user.value) clearClientState()
@@ -146,5 +141,5 @@ export const useAuthStore = defineStore('auth', () => {
     isAdmin.value = false
   })
 
-  return { gatewayToken, user, isAdmin, checked, unauthorized, localAccounts, setupRequired, signedIn, probe, login, setup, logout, changePassword, saveGatewayToken }
+  return { user, isAdmin, checked, unauthorized, localAccounts, setupRequired, signedIn, probe, login, setup, logout, changePassword }
 })

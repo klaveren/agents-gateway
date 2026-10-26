@@ -82,8 +82,8 @@ describe('AntigravityAgentAdapter', () => {
 
   it('primeiro turno leva as instruções; o segundo retoma a conversa, sem repeti-las; ambiente mínimo', async () => {
     const calls: ISpawned[] = []
-    const previous = process.env.GATEWAY_TOKEN
-    process.env.GATEWAY_TOKEN = 'segredo-do-gateway'
+    const previous = process.env.AUTH_SECRET
+    process.env.AUTH_SECRET = 'segredo-do-gateway'
     try {
       const adapter = new AntigravityAgentAdapter({ store: new SessionStore(), spawn: fakeSpawn(calls, turn), home: () => '/Users/pessoa' })
       const session = await adapter.createSession(agent, {})
@@ -100,8 +100,8 @@ describe('AntigravityAgentAdapter', () => {
       assert.ok(!JSON.stringify(first.options.env).includes('segredo-do-gateway'))
       assert.ok(first.options.cwd?.includes('gateway-sub'))
     } finally {
-      if (previous === undefined) delete process.env.GATEWAY_TOKEN
-      else process.env.GATEWAY_TOKEN = previous
+      if (previous === undefined) delete process.env.AUTH_SECRET
+      else process.env.AUTH_SECRET = previous
     }
   })
 

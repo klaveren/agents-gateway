@@ -60,8 +60,8 @@ function dataDir(env: NodeJS.ProcessEnv): string {
 const PASSTHROUGH = ['PATH', 'LANG', 'LC_ALL', 'TMPDIR', 'USER', 'LOGNAME', 'TERM'] as const
 
 /**
- * ⛔ O ambiente mínimo do subprocesso: nunca o `.env` do gateway (chaves de API, `GATEWAY_TOKEN`, o
- * segredo do JWT). Só o que um binário precisa para rodar, mais o que cada cliente pede.
+ * ⛔ O ambiente mínimo do subprocesso: nunca o `.env` do gateway (chaves de API, `AUTH_SECRET` — o
+ * segredo do JWT —, `SECRETS_KEY`). Só o que um binário precisa para rodar, mais o que cada cliente pede.
  */
 export function subscriptionEnv(extra: Record<string, string | undefined>, env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const out: Record<string, string> = {}

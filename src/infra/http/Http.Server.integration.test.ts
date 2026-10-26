@@ -113,47 +113,6 @@ describe('HttpServer (integração)', () => {
   })
 })
 
-describe('HttpServer com GATEWAY_TOKEN', () => {
-  let base: string
-  let stop: () => void
-
-  before(async () => {
-    process.env.GATEWAY_TOKEN = 's3cret'
-    process.env.ALLOW_ANONYMOUS = '1'
-    process.env.MCP_SERVER_URL = 'http://127.0.0.1:1/mcp'
-    const server = new HttpServer(makeController()).start(0)
-    await new Promise((resolve) => server.once('listening', resolve))
-
-    const { port } = server.address() as AddressInfo
-    base = `http://127.0.0.1:${port}/v1`
-    // `fetch` deixa socket em keep-alive: sem derrubar as conexões o close() nunca completa.
-    // E nada de esperar o callback — o node:test encerra quando o loop drena.
-    server.unref()
-    stop = () => {
-      server.closeAllConnections()
-      server.close()
-    }
-  })
-
-  after(() => {
-    delete process.env.GATEWAY_TOKEN
-    delete process.env.ALLOW_ANONYMOUS
-    stop()
-  })
-
-  it('barra sem token e passa com o token certo', async () => {
-    const semToken = await fetch(`${base}/agents`)
-    assert.strictEqual(semToken.status, 401)
-    assert.strictEqual((await semToken.json()).code, 'unauthorized')
-
-    const errado = await fetch(`${base}/agents`, { headers: { Authorization: 'Bearer nope' } })
-    assert.strictEqual(errado.status, 401)
-
-    const certo = await fetch(`${base}/agents`, { headers: { Authorization: 'Bearer s3cret' } })
-    assert.strictEqual(certo.status, 200)
-  })
-})
-
 describe('HttpServer fechado por padrão (sem ALLOW_ANONYMOUS)', () => {
   let base: string
   let stop: () => void
@@ -178,6 +137,17 @@ describe('HttpServer fechado por padrão (sem ALLOW_ANONYMOUS)', () => {
   after(() => {
     delete process.env.REQUIRE_PROVEN_OWNER
     stop()
+  })
+
+  it('⛔ o `Authorization` não é credencial: sem `X-Tool-Authorization` continua 401, mesmo com GATEWAY_TOKEN no ambiente', async () => {
+    process.env.GATEWAY_TOKEN = 's3cret'
+    try {
+      const res = await fetch(`${base}/agents`, { headers: { Authorization: 'Bearer s3cret' } })
+      assert.strictEqual(res.status, 401)
+      assert.strictEqual((await res.json()).code, 'unauthorized')
+    } finally {
+      delete process.env.GATEWAY_TOKEN
+    }
   })
 
   it('o health é público: não pede credencial nenhuma', async () => {

@@ -23,14 +23,14 @@ type TSelfApi = (method: string, path: string, options?: { body?: unknown; query
  * custo para quem não administra. Passar pela API é o que garante que o MCP segue as MESMAS regras, sem uma
  * segunda cópia que um dia divergiria. O preço é um salto local por ferramenta.
  *
- * ⛔ Só os dois headers de credencial seguem adiante (`Authorization` é o portão do serviço;
- * `X-Tool-Authorization`, a conta). Nada do corpo do MCP vira identidade.
+ * ⛔ Só o header da credencial (`X-Tool-Authorization`, a conta) segue adiante. Nada do corpo do MCP vira
+ * identidade.
  */
 function selfApi(req: Request): TSelfApi {
   const address = req.socket.localAddress?.replace(/^::ffff:/, '') || '127.0.0.1'
   const base = `http://${address.includes(':') ? `[${address}]` : address}:${req.socket.localPort}/v1`
   const credentials: Record<string, string> = {}
-  for (const name of ['authorization', 'x-tool-authorization']) {
+  for (const name of ['x-tool-authorization']) {
     const value = req.headers[name]
     if (typeof value === 'string') credentials[name] = value
   }

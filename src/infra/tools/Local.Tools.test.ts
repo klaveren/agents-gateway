@@ -38,9 +38,9 @@ describe('LocalTools', () => {
   })
 
   it('⛔ o shell recebe o ambiente mínimo (sem chave, token ou segredo) e, sem BASH_CWD, a pasta vazia da conversa', async () => {
-    const saved = { key: process.env.OPENAI_API_KEY, gate: process.env.GATEWAY_TOKEN }
+    const saved = { key: process.env.OPENAI_API_KEY, gate: process.env.AUTH_SECRET }
     process.env.OPENAI_API_KEY = 'sk-nao-pode-vazar'
-    process.env.GATEWAY_TOKEN = 'gate-nao-pode-vazar'
+    process.env.AUTH_SECRET = 'segredo-nao-pode-vazar'
     try {
       let seen: IExecOptions | undefined
       const tools = makeLocalTools({
@@ -56,7 +56,7 @@ describe('LocalTools', () => {
     } finally {
       for (const [name, value] of [
         ['OPENAI_API_KEY', saved.key],
-        ['GATEWAY_TOKEN', saved.gate],
+        ['AUTH_SECRET', saved.gate],
       ] as const) {
         if (value === undefined) delete process.env[name]
         else process.env[name] = value

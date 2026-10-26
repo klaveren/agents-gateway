@@ -402,7 +402,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
  */
 export function cliEnv(connection: { key: string; baseUrl?: string; compatible: boolean }): Record<string, string | undefined> {
   // ⛔ Ambiente MÍNIMO, nunca `{ ...process.env }`: com `sdk:Bash`/`sdk:Read` o CLI levaria as outras chaves,
-  // o `GATEWAY_TOKEN` e o `SECRETS_KEY`. O HOME fica (o CLI guarda estado nele); o `cwd` é o da conversa.
+  // o `AUTH_SECRET` e o `SECRETS_KEY`. O HOME fica (o CLI guarda estado nele); o `cwd` é o da conversa.
   const base = subscriptionEnv({ HOME: process.env.HOME, ENABLE_CLAUDEAI_MCP_SERVERS: 'false' })
   if (!connection.compatible) return { ...base, ANTHROPIC_API_KEY: connection.key }
 

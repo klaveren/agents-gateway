@@ -36,8 +36,6 @@ watch(
   { immediate: true },
 )
 
-const gatewayToken = ref(auth.gatewayToken)
-const tokenNote = ref<string>()
 
 const currentPassword = ref('')
 const nextPassword = ref('')
@@ -124,13 +122,6 @@ watch(
 /** ⚠️ O modelo é do agente: trocar o agente larga o modelo (volta a "Padrão do agente") em vez de mandar um que ele não tem. */
 function onAgentChange() {
   model.value = ''
-}
-
-async function saveGatewayToken() {
-  // Agentes, configurações e eventos das conversas são refeitos pela store ao trocar o portão.
-  await auth.saveGatewayToken(gatewayToken.value)
-  if (auth.isAdmin) void loadClassifierOptions()
-  tokenNote.value = auth.unauthorized ? 'O gateway recusou o token.' : 'Salvo.'
 }
 
 async function changePassword() {
@@ -291,19 +282,6 @@ async function saveSettings() {
       </section>
 
       <AccessTokens v-if="auth.user" />
-
-      <section class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
-        <h2 class="font-medium">Portão do gateway</h2>
-        <p class="text-xs text-zinc-400">Só quando o servidor define <code>GATEWAY_TOKEN</code>. Fica neste navegador (localStorage). Quem você é vem do login, não daqui.</p>
-        <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
-          Token do gateway
-          <input v-model="gatewayToken" type="password" autocomplete="off" class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 font-mono text-sm" />
-        </label>
-        <div class="flex items-center gap-3">
-          <button class="rounded-full bg-zinc-800 px-4 py-2 text-sm hover:bg-zinc-700" @click="saveGatewayToken">Salvar token</button>
-          <span v-if="tokenNote" class="text-sm text-zinc-300">{{ tokenNote }}</span>
-        </div>
-      </section>
     </div>
   </div>
 </template>
