@@ -2,9 +2,9 @@ import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import type OpenAI from 'openai'
 import { EMode } from '@domain/enums/EMode.Enum'
-import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
+import { OPENAI_TEST_AGENT } from '../../testing/Agents.Fixture'
 import { OpenAIChatAdapter } from './OpenAIChat.Adapter'
 
 interface IRequestOptions {
@@ -13,15 +13,7 @@ interface IRequestOptions {
 type TCreate = (params: OpenAI.Chat.ChatCompletionCreateParamsStreaming, options?: IRequestOptions) => Promise<unknown>
 
 describe('OpenAIChatAdapter', () => {
-  const getAgent = (): IAgent => ({
-    id: 'analyst-agent',
-    name: 'Data Analyst',
-    provider: EProvider.OPENAI,
-    systemPrompt: 'You are a Data Analyst Agent.',
-    models: ['gpt-5.6-sol'],
-    modes: [EMode.CHAT, EMode.AGENT],
-    allowedTools: ['search_web'],
-  })
+  const getAgent = (): IAgent => ({ ...OPENAI_TEST_AGENT, models: ['gpt-5.6-sol'], allowedTools: ['search_web'] })
 
   const clientWith = (create: TCreate): OpenAI => ({ chat: { completions: { create } } }) as unknown as OpenAI
 
@@ -33,7 +25,7 @@ describe('OpenAIChatAdapter', () => {
 
   it('creates a chat session on the chat lane', async () => {
     const adapter = new OpenAIChatAdapter({ client: clientWith(async () => []) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: OPENAI_TEST_AGENT.id })
 
     assert.ok(session.id.startsWith('openai-chat-'))
     assert.strictEqual(session.mode, EMode.CHAT)
@@ -53,7 +45,7 @@ describe('OpenAIChatAdapter', () => {
       }),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent', reasoning: 'low' })
+    const session = await adapter.createSession(getAgent(), { agentId: OPENAI_TEST_AGENT.id, reasoning: 'low' })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
 
     const text = events
@@ -82,7 +74,7 @@ describe('OpenAIChatAdapter', () => {
       }),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: OPENAI_TEST_AGENT.id })
     await drain(
       adapter.sendMessage(
         getAgent(),
@@ -113,7 +105,7 @@ describe('OpenAIChatAdapter', () => {
       }),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: OPENAI_TEST_AGENT.id })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
     const error = events.find((e) => e.type === 'error')
 
@@ -132,7 +124,7 @@ describe('OpenAIChatAdapter', () => {
       ),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: OPENAI_TEST_AGENT.id })
     const events: IAgentEvent[] = []
 
     for await (const event of adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {})) {
@@ -161,7 +153,7 @@ describe('OpenAIChatAdapter', () => {
       ),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: OPENAI_TEST_AGENT.id })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
     const usage = events.find((e) => e.type === 'usage')
 
@@ -179,7 +171,7 @@ describe('OpenAIChatAdapter', () => {
       }),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'analyst-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: OPENAI_TEST_AGENT.id })
     await drain(adapter.sendMessage(getAgent(), session.id, { text: '', files: [{ name: 'a.png', mimeType: 'image/png', data: 'aaa' }] }, {}))
 
     assert.deepStrictEqual(

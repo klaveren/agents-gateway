@@ -25,7 +25,6 @@ const template = ref<IAgentDetail>()
 const error = ref<string>()
 
 const creating = computed(() => route.name === 'agent-new')
-// Os agentes moram no banco: não há mais grupo "Embutidos".
 const created = computed(() => agents.list.filter((agent) => agent.role !== 'subagent'))
 const subagents = computed(() => agents.list.filter((agent) => agent.role === 'subagent'))
 
@@ -65,7 +64,7 @@ watch(
 
 /** A cópia nasce sem id e com "(cópia)" no nome: o id é escolhido de novo, e não colide com o original. */
 function duplicate(source: IAgentDetail) {
-  template.value = { ...source, id: '', name: `${source.name.replace(/\s*\(.*?\)\s*/g, ' ').trim()} (cópia)`, builtIn: false }
+  template.value = { ...source, id: '', name: `${source.name.replace(/\s*\(.*?\)\s*/g, ' ').trim()} (cópia)` }
   void router.push('/agents/new')
 }
 

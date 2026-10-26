@@ -7,6 +7,7 @@ import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { fakeMcpRegistry } from '@infra/mcp/Mcp.Fake'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
+import { CLAUDE_TEST_AGENT } from '../../testing/Agents.Fixture'
 import { ILocalTool } from '@infra/tools/Tool.Types'
 import { ClaudeChatAdapter } from './ClaudeChat.Adapter'
 
@@ -16,15 +17,7 @@ interface IRequestOptions {
 type TCreate = (params: Anthropic.MessageCreateParamsStreaming, options?: IRequestOptions) => Promise<unknown>
 
 describe('ClaudeChatAdapter', () => {
-  const getAgent = (): IAgent => ({
-    id: 'sysops-agent',
-    name: 'SysOps',
-    provider: EProvider.CLAUDE,
-    systemPrompt: 'You are a system operator.',
-    models: ['claude-sonnet-5'],
-    modes: [EMode.CHAT, EMode.AGENT],
-    allowedTools: ['run_bash'],
-  })
+  const getAgent = (): IAgent => ({ ...CLAUDE_TEST_AGENT, models: ['claude-sonnet-5'], allowedTools: ['run_bash'] })
 
   const clientWith = (create: TCreate): Anthropic => ({ messages: { create } }) as unknown as Anthropic
 
@@ -61,7 +54,7 @@ describe('ClaudeChatAdapter', () => {
     const adapter = new ClaudeChatAdapter({ client: clientWith(async () => []) })
 
     const session = await adapter.createSession(getAgent(), {
-      agentId: 'sysops-agent',
+      agentId: CLAUDE_TEST_AGENT.id,
       model: 'claude-opus-5',
       reasoning: 'xhigh',
       language: 'Portuguese',
@@ -88,7 +81,7 @@ describe('ClaudeChatAdapter', () => {
       }),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent', reasoning: 'high' })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id, reasoning: 'high' })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
 
     assert.strictEqual(events[0].type, 'message.started')
@@ -118,7 +111,7 @@ describe('ClaudeChatAdapter', () => {
       }),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent', language: 'Portuguese' })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id, language: 'Portuguese' })
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Oi' }, {}))
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Oi de novo' }, {}))
 
@@ -137,7 +130,7 @@ describe('ClaudeChatAdapter', () => {
       }),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
     const events = await drain(
       adapter.sendMessage(
         getAgent(),
@@ -170,7 +163,7 @@ describe('ClaudeChatAdapter', () => {
       }),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
     const failed = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
 
     const error = failed.find((e) => e.type === 'error')
@@ -189,7 +182,7 @@ describe('ClaudeChatAdapter', () => {
       ),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
     const events: IAgentEvent[] = []
 
     for await (const event of adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {})) {
@@ -213,7 +206,7 @@ describe('ClaudeChatAdapter', () => {
       }),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'oi' }, {}))
 
     assert.strictEqual(sent[0].tools, undefined)
@@ -245,7 +238,7 @@ describe('ClaudeChatAdapter', () => {
       }),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent', tools: true })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id, tools: true })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'liste os arquivos' }, {}))
 
     // Duas idas ao modelo: uma pedindo a tool, outra com o resultado na mão.
@@ -274,7 +267,7 @@ describe('ClaudeChatAdapter', () => {
       }),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent', tools: true })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id, tools: true })
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'liste' }, {}))
 
     // Um `tool_use` sem resposta envenenaria todos os turnos seguintes.
@@ -317,7 +310,7 @@ describe('ClaudeChatAdapter', () => {
       ),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
     const usage = events.filter((e) => e.type === 'usage').map((e) => e.type === 'usage' && e.payload)
 
@@ -338,7 +331,7 @@ describe('ClaudeChatAdapter', () => {
       }),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
     await drain(adapter.sendMessage(getAgent(), session.id, { text: ' ', files: [{ name: 'b.pdf', mimeType: 'application/pdf', data: 'bbb' }] }, {}))
 
     assert.deepStrictEqual(

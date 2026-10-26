@@ -225,7 +225,6 @@ watch(
   { immediate: true },
 )
 
-const readOnly = computed(() => !!props.agent?.builtIn && !props.creating)
 
 watch(
   () => [props.agent, props.creating] as const,
@@ -303,12 +302,7 @@ async function remove() {
 
 <template>
   <form class="mx-auto flex max-w-3xl flex-col gap-5" @submit.prevent="confirmingSave = true">
-    <div v-if="readOnly" class="flex items-center gap-3 rounded-xl border border-zinc-700 bg-zinc-900 p-3 text-sm text-zinc-300">
-      Agente embutido: declarado no código, só leitura. Para mudar, duplique e edite a cópia.
-      <button type="button" class="ml-auto rounded-full bg-zinc-800 px-3 py-1.5 hover:bg-zinc-700" @click="agent && emit('duplicate', agent)">Duplicar</button>
-    </div>
-
-    <fieldset :disabled="readOnly" class="grid gap-4 sm:grid-cols-2">
+    <fieldset class="grid gap-4 sm:grid-cols-2">
       <label class="field">
         <span>Nome</span>
         <input v-model="form.name" required maxlength="80" class="input" @blur="slugify" />
@@ -509,13 +503,13 @@ async function remove() {
     </p>
     <p v-if="agent?.updatedBy" class="text-xs text-zinc-500">Alterado por {{ agent.updatedBy }} em {{ agent.updatedAt ? new Date(agent.updatedAt).toLocaleString('pt-BR') : '' }}</p>
 
-    <p v-if="!readOnly && loadError" class="text-sm text-rose-300">
+    <p v-if="loadError" class="text-sm text-rose-300">
       Não consegui carregar os providers ({{ loadError }}), então não dá para salvar.
       <button type="button" class="underline hover:text-rose-200" @click="loadBase">Tentar de novo</button>
     </p>
-    <p v-else-if="!readOnly && !ready" class="text-xs text-zinc-500">Carregando providers…</p>
+    <p v-else-if="!ready" class="text-xs text-zinc-500">Carregando providers…</p>
 
-    <div v-if="!readOnly" class="flex gap-2">
+    <div class="flex gap-2">
       <button type="submit" :disabled="saving || !ready || !!loadError || !form.provider" class="rounded-full bg-emerald-500 px-5 py-2 font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50">{{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar' }}</button>
       <button v-if="!creating && agent" type="button" class="rounded-full bg-zinc-800 px-4 py-2 hover:bg-zinc-700" @click="emit('duplicate', agent)">Duplicar</button>
       <button v-if="!creating && agent" type="button" class="ml-auto rounded-full px-4 py-2 text-rose-300 hover:bg-rose-500/10" @click="confirming = true">Apagar</button>

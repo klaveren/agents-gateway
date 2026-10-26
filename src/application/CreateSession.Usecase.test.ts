@@ -33,7 +33,7 @@ describe('CreateSessionUseCase', () => {
       }),
     )
 
-    const result = await usecase.execute({ agentId: 'analyst-agent' })
+    const result = await usecase.execute({ agentId: 'analista-teste' })
 
     assert.strictEqual(result.id, 'mock-session-123')
     assert.strictEqual(result.provider, EProvider.OPENAI)

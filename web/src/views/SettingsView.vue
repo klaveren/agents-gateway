@@ -74,7 +74,6 @@ const DEPLOYMENT: Array<{ key: keyof NonNullable<ISettings['deployment']>; label
   { key: 'allowAnonymous', label: 'Aceita chamador anônimo' },
   { key: 'localToolsEnabled', label: 'Ferramentas locais' },
   { key: 'nativeToolsEnabled', label: 'Ferramentas nativas' },
-  { key: 'agentsEnabled', label: 'Agentes habilitados' },
 ]
 
 /** Booleano vira sim/não; texto (lista do `.env`) aparece como veio; ausente é "—". */

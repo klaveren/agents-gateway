@@ -10,14 +10,14 @@ import { InvalidSettingsError } from '@domain/errors/Domain.Error'
 import { allowsCaller, AUDIENCES, DEFAULT_SETTINGS, IAudienceCaller, IAudienceRules, mergeSettings, normalizeSettings, TAudience } from './Settings.Model'
 
 describe('mergeSettings', () => {
-  const gravado = { ...DEFAULT_SETTINGS, agentId: 'researcher-agent', model: 'gemini-3.7-flash', classifierModel: 'c-1' }
+  const gravado = { ...DEFAULT_SETTINGS, agentId: 'pesquisa-teste', model: 'gemini-3.7-flash', classifierModel: 'c-1' }
 
   it('campo ausente não mexe no que está gravado', () => {
     const next = mergeSettings(gravado, { audience: 'restricted' })
 
     assert.equal(next.audience, 'restricted')
     assert.equal(next.model, 'gemini-3.7-flash')
-    assert.equal(next.agentId, 'researcher-agent')
+    assert.equal(next.agentId, 'pesquisa-teste')
   })
 
   it('campo com valor troca', () => {

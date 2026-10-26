@@ -212,7 +212,7 @@ const toolsResult = {
 
 const agentSchema = {
   type: 'object',
-  description: 'Never carries the system prompt: the registry entry is projected, not passed through.',
+  description: 'Never carries the system prompt: the stored agent is projected, not passed through.',
   properties: {
     id: { type: 'string' },
     name: { type: 'string' },
@@ -242,7 +242,6 @@ const agentSchema = {
     },
     modes: { type: 'array', items: { type: 'string', enum: ['chat', 'agent'] } },
     allowedTools: { type: 'array', items: { type: 'string' } },
-    builtIn: { type: 'boolean', description: 'Declared in code (read-only) or created through the API.' },
     role: { type: 'string', enum: ['subagent'], description: 'Present on subagents: only called by another agent.' },
   },
 }
@@ -278,7 +277,7 @@ const agentBody = {
     allowedTools: {
       type: 'array',
       items: { type: 'string' },
-      description: 'MCP tools, plus the built-in tools some ENABLED built-in agent already has (the `AGENTS_ENABLED` perimeter).',
+      description: 'MCP tools, plus the local tools inside the `LOCAL_TOOLS_ENABLED` perimeter.',
     },
   },
   required: ['name', 'provider', 'systemPrompt', 'models', 'modes'],
@@ -293,7 +292,7 @@ const settingsSchema = {
       description:
         '`off`: nobody opens a new session. `restricted`: only callers whose PROVEN role is in `AUDIENCE_ROLES`. `all`: every caller the gateway lets through. Roles in `DENIED_ROLES` are refused under every value.',
     },
-    agentId: { type: 'string', description: 'Registry agent that answers when the caller does not pick one. Absent = the registry default.' },
+    agentId: { type: 'string', description: 'Agent that answers when the caller does not pick one (must be active). Absent = the first active agent that is not a subagent.' },
     model: { type: 'string', description: "Model used when the caller sends none. A model the chosen agent does not declare falls back to the agent's first." },
     classifierModel: { type: 'string', description: 'Model that labels each turn — an enabled model of `classifierProvider`.' },
     classifierProvider: { type: 'string', description: 'Provider of the classifier model. Absent: inferred from the model id (official providers only).' },
@@ -1105,7 +1104,8 @@ export const OPENAPI_DOCUMENT = {
         },
       },
       get: {
-        summary: 'The agent registry, including the lanes each agent supports. Requires a proven caller; never exposes the system prompt',
+        summary:
+          'The agents, including the lanes each supports. Members see only the active ones; admins see all, each inactive one with `unavailable`. Requires a proven caller; never exposes the system prompt',
         responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: agentSchema })) }, '401': failures['401'] },
       },
     },
@@ -1116,7 +1116,7 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'OK', ...json(envelope(agentDetailSchema)) }, '401': failures['401'], '404': failures['404'] },
       },
       put: {
-        summary: 'Replace a created agent. Built-in agents answer 409 `agent_read_only`. Administrators only. Live sessions keep the agent they started with',
+        summary: 'Replace an agent. Administrators only. Live sessions keep the agent they started with',
         parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: { required: true, ...json(agentBody) },
         responses: {
@@ -1310,7 +1310,7 @@ export const OPENAPI_DOCUMENT = {
               schema: {
                 type: 'object',
                 properties: {
-                  agentId: { type: 'string', description: 'Optional. Falls back to the configured agent (`PUT /settings`), then to the registry default.' },
+                  agentId: { type: 'string', description: 'Optional. Falls back to the configured agent (`PUT /settings`), then to the first active agent.' },
                   mode: { type: 'string', enum: ['chat', 'agent'], default: 'chat' },
                   tools: {
                     type: 'boolean',

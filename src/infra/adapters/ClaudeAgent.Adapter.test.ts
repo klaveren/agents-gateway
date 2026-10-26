@@ -7,6 +7,7 @@ import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { fakeMcpRegistry, mcpTool } from '@infra/mcp/Mcp.Fake'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
+import { CLAUDE_TEST_AGENT } from '../../testing/Agents.Fixture'
 import { ILocalTool } from '@infra/tools/Tool.Types'
 import { ClaudeAgentAdapter, cliEnv } from './ClaudeAgent.Adapter'
 
@@ -16,15 +17,7 @@ type TQueryParams = Parameters<TQuery>[0]
 const CLI_SESSION_ID = '11111111-2222-4333-8444-555555555555'
 
 describe('ClaudeAgentAdapter', () => {
-  const getAgent = (): IAgent => ({
-    id: 'sysops-agent',
-    name: 'SysOps',
-    provider: EProvider.CLAUDE,
-    systemPrompt: 'You are a system operator.',
-    models: ['claude-sonnet-5'],
-    modes: [EMode.CHAT, EMode.AGENT],
-    allowedTools: ['run_bash', 'mcp:crm/read_file'],
-  })
+  const getAgent = (): IAgent => ({ ...CLAUDE_TEST_AGENT, models: ['claude-sonnet-5'], allowedTools: ['run_bash', 'mcp:crm/read_file'] })
 
   const turn = () => [
     { type: 'system', subtype: 'init', session_id: CLI_SESSION_ID },
@@ -77,7 +70,7 @@ describe('ClaudeAgentAdapter', () => {
 
   it('creates a session on the agent lane', async () => {
     const adapter = new ClaudeAgentAdapter({ query: queryWith(() => []) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
 
     assert.ok(session.id.startsWith('claude-agent-'))
     assert.strictEqual(session.mode, EMode.AGENT)
@@ -85,7 +78,7 @@ describe('ClaudeAgentAdapter', () => {
 
   it('translates the SDK message stream into gateway events', async () => {
     const adapter = new ClaudeAgentAdapter({ query: queryWith(turn) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'list files' }, {}))
 
     assert.ok(events.find((e) => e.type === 'text.delta' && e.payload.text === 'Listing'))
@@ -101,7 +94,7 @@ describe('ClaudeAgentAdapter', () => {
   it('never runs a hand-rolled tool loop: no tools and no host settings leak in', async () => {
     const seen: TQueryParams[] = []
     const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent', reasoning: 'high' })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id, reasoning: 'high' })
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.deepStrictEqual(seen[0].options?.tools, [])
@@ -117,7 +110,7 @@ describe('ClaudeAgentAdapter', () => {
       query: queryWith(turn, seen),
       connections: { connection: (id) => ({ providerId: id, name: 'Claude', protocol: EProvider.CLAUDE, key }) },
     })
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
 
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
     key = 'sk-ant-segunda'
@@ -133,7 +126,7 @@ describe('ClaudeAgentAdapter', () => {
       query: queryWith(turn, seen),
       connections: { connection: (id) => ({ providerId: id, name: 'OpenRouter', protocol: EProvider.CLAUDE, baseUrl: 'https://openrouter.ai/api', key: 'sk-or-123' }) },
     })
-    const session = await adapter.createSession({ ...getAgent(), provider: 'openrouter' }, { agentId: 'sysops-agent' })
+    const session = await adapter.createSession({ ...getAgent(), provider: 'openrouter' }, { agentId: CLAUDE_TEST_AGENT.id })
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.strictEqual(seen[0].options?.env?.ANTHROPIC_BASE_URL, 'https://openrouter.ai/api')
@@ -144,7 +137,7 @@ describe('ClaudeAgentAdapter', () => {
   it('without any key, the turn ends with an error that says where to fix it — and the CLI never starts', async () => {
     const seen: TQueryParams[] = []
     const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), connections: { connection: (id) => ({ providerId: id, name: 'Claude', protocol: EProvider.CLAUDE }) } })
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.strictEqual(seen.length, 0)
@@ -156,7 +149,7 @@ describe('ClaudeAgentAdapter', () => {
     const init = { type: 'system', subtype: 'init', session_id: 'cli-1', tools: ['WebSearch'] }
     const adapter = new ClaudeAgentAdapter({ query: queryWith(() => [init, ...turn()], seen) })
     const agent = { ...getAgent(), allowedTools: ['sdk:WebSearch', 'sdk:TodoWrite'] }
-    const session = await adapter.createSession(agent, { agentId: 'sysops-agent' })
+    const session = await adapter.createSession(agent, { agentId: CLAUDE_TEST_AGENT.id })
     const events = await drain(adapter.sendMessage(agent, session.id, { text: 'hi' }, {}))
 
     // `sdk:TodoWrite` vai ao CLI com os nomes de hoje (o 2.1.28x trocou TodoWrite por Task*).
@@ -175,7 +168,7 @@ describe('ClaudeAgentAdapter', () => {
   it('sem nativas, nenhum built-in: tools continua vazio', async () => {
     const seen: TQueryParams[] = []
     const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.deepStrictEqual(seen[0].options?.tools, [])
@@ -184,7 +177,7 @@ describe('ClaudeAgentAdapter', () => {
   it('plants a uuid on the first turn and resumes the CLI session afterwards', async () => {
     const seen: TQueryParams[] = []
     const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
 
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'first' }, {}))
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'second' }, {}))
@@ -202,7 +195,7 @@ describe('ClaudeAgentAdapter', () => {
   it('switches to streaming input when there are attachments', async () => {
     const seen: TQueryParams[] = []
     const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
 
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'plain' }, {}))
     await drain(
@@ -224,7 +217,7 @@ describe('ClaudeAgentAdapter', () => {
   it('hands tools to the SDK as MCP servers, local and remote', async () => {
     const seen: TQueryParams[] = []
     const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog: catalogWith(true) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     const servers = seen[0].options?.mcpServers ?? {}
@@ -236,7 +229,7 @@ describe('ClaudeAgentAdapter', () => {
   it('omits the remote server when no MCP is connected', async () => {
     const seen: TQueryParams[] = []
     const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog: catalogWith(false) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.deepStrictEqual(Object.keys(seen[0].options?.mcpServers ?? {}), ['gateway'])
@@ -245,7 +238,7 @@ describe('ClaudeAgentAdapter', () => {
   it('gates tool use through canUseTool instead of allowedTools', async () => {
     const seen: TQueryParams[] = []
     const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog: catalogWith(true) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     const gate = seen[0].options?.canUseTool
@@ -268,7 +261,7 @@ describe('ClaudeAgentAdapter', () => {
     const catalog = new ToolCatalog(fakeMcpRegistry(), [localTool('run_bash')], () => localTool('delegate_to_agent'))
     const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog })
     const agent = { ...getAgent(), allowedTools: ['agent:tradutor'] }
-    const session = await adapter.createSession(agent, { agentId: 'sysops-agent' })
+    const session = await adapter.createSession(agent, { agentId: CLAUDE_TEST_AGENT.id })
     await drain(adapter.sendMessage(agent, session.id, { text: 'hi' }, {}))
 
     const gate = seen[0].options?.canUseTool
@@ -282,7 +275,7 @@ describe('ClaudeAgentAdapter', () => {
       query: queryWith(() => [{ type: 'result', subtype: 'error_max_turns', is_error: true, errors: ['too many turns'], usage: {} }]),
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
     const error = events.find((e) => e.type === 'error')
 
@@ -300,7 +293,7 @@ describe('ClaudeAgentAdapter', () => {
         })()) as unknown as TQuery,
     })
 
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
     const events: IAgentEvent[] = []
 
     for await (const event of adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {})) {
@@ -323,7 +316,7 @@ describe('ClaudeAgentAdapter', () => {
         },
       ]),
     })
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.deepStrictEqual(events.find((e) => e.type === 'usage')?.payload, { inputTokens: 1000, cacheReadTokens: 800, cacheWriteTokens: 190, outputTokens: 7 })
@@ -336,7 +329,7 @@ describe('ClaudeAgentAdapter', () => {
         { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } },
       ]),
     })
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.ok(events.find((e) => e.type === 'tool.started' && e.payload.tool === 'crm__stats'))
@@ -346,7 +339,7 @@ describe('ClaudeAgentAdapter', () => {
   it('sends an attachment with no text without an empty text block', async () => {
     const seen: TQueryParams[] = []
     const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen) })
-    const session = await adapter.createSession(getAgent(), { agentId: 'sysops-agent' })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
 
     await drain(adapter.sendMessage(getAgent(), session.id, { text: '', files: [{ name: 'a.png', mimeType: 'image/png', data: 'aaa' }] }, {}))
 

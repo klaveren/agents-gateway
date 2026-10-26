@@ -99,7 +99,6 @@ export interface IAgent {
   modelReasoning?: Record<string, string[] | null>
   modes: TMode[]
   allowedTools: string[]
-  builtIn: boolean
   /** `subagent`: só é chamado por outro agente (delegação); não abre conversa. */
   role?: 'subagent'
   /** O provider como está no banco: o nome que a tela mostra e o protocolo. */
@@ -179,7 +178,6 @@ export interface ISettings {
     subscriptionAdminOnly: boolean
     localToolsEnabled?: string
     nativeToolsEnabled?: string
-    agentsEnabled?: string
     allowAnonymous: boolean
   }
 }

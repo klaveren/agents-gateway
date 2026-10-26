@@ -30,13 +30,13 @@ describe('SqliteSettingsRepository', () => {
     'survives a reopen, with the date back as a Date',
     withFile(async (path) => {
       const first = new SqliteSettingsRepository(path)
-      await first.save({ audience: 'restricted', agentId: 'sysops-agent', model: 'claude-opus-5', updatedBy: 'root@x.test' })
+      await first.save({ audience: 'restricted', agentId: 'operador-teste', model: 'claude-opus-5', updatedBy: 'root@x.test' })
       first.close()
 
       const stored = await new SqliteSettingsRepository(path).read()
 
       assert.strictEqual(stored.audience, 'restricted')
-      assert.strictEqual(stored.agentId, 'sysops-agent')
+      assert.strictEqual(stored.agentId, 'operador-teste')
       assert.strictEqual(stored.updatedBy, 'root@x.test')
       assert.ok(stored.updatedAt instanceof Date)
     }),
@@ -46,7 +46,7 @@ describe('SqliteSettingsRepository', () => {
     'save REPLACES: a field left out of the object is gone, not kept',
     withFile(async (path) => {
       const repo = new SqliteSettingsRepository(path)
-      await repo.save({ audience: 'all', agentId: 'sysops-agent', model: 'claude-opus-5' })
+      await repo.save({ audience: 'all', agentId: 'operador-teste', model: 'claude-opus-5' })
       await repo.save({ audience: 'all' })
       repo.close()
 

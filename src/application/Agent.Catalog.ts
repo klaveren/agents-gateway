@@ -1,12 +1,11 @@
 import { agentIssues, IAgentRules } from '@domain/Agent.Policy'
-import { AgentInUseError, AgentNotFoundError, InvalidAgentError, ReadOnlyAgentError } from '@domain/errors/Domain.Error'
+import { AgentInUseError, AgentNotFoundError, InvalidAgentError } from '@domain/errors/Domain.Error'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentDirectory, IAgentRepository, IStoredAgent } from '@domain/ports/AgentRepository.Port'
 
-/** Um agente na lista da tela: de onde veio, e — se foi criado — quem mexeu por último. */
+/** Um agente na lista da tela, com quem mexeu por último. */
 export interface IAgentEntry {
   agent: IAgent
-  builtIn: boolean
   updatedAt?: Date
   updatedBy?: string
 }
@@ -20,21 +19,13 @@ export interface ISaveAgentOptions {
 }
 
 /**
- * Os agentes do gateway: os EMBUTIDOS (código, filtrados por `AGENTS_ENABLED`) e os CRIADOS pela tela.
- *
- * ⚖️ O EMBUTIDO VENCE. Um id embutido nunca é tomado por um criado (a regra recusa na criação), mas se
- * um arquivo antigo tiver um — um agente que virou embutido depois de criado —, é o do código que
- * responde: ele é o que foi revisado.
- *
- * ⛔ EMBUTIDO É SÓ LEITURA. Editar o `sysops-agent` pela tela seria trocar o que o código declara
- * sem passar por revisão nenhuma; para mudar, duplica-se e edita-se a cópia.
+ * Os agentes do gateway — todos no banco, editáveis e apagáveis (a semente entra uma vez, ver `seedOnce`).
  *
  * ⚠️ Sessão já aberta fica com o agente com que nasceu: o adapter compõe o prompt na criação, e
  * mudar o agente aqui vale para a PRÓXIMA sessão.
  */
 export class AgentCatalog implements IAgentDirectory {
   constructor(
-    private readonly builtIns: readonly IAgent[],
     private readonly repository: IAgentRepository,
     /**
      * Quais modelos do agente podem ser usados AGORA — os ativados no catálogo do provider. Ausente,
@@ -61,13 +52,7 @@ export class AgentCatalog implements IAgentDirectory {
 
   /** Os agentes COMO GRAVADOS (todos os modelos declarados) — a tela de edição e a semente do catálogo. */
   rawEntries(): IAgentEntry[] {
-    const builtInIds = new Set(this.builtIns.map((agent) => agent.id))
-    const custom = this.repository.list().filter((agent) => !builtInIds.has(agent.id))
-
-    return [
-      ...this.builtIns.map((agent) => ({ agent, builtIn: true })),
-      ...custom.map((stored) => ({ agent: toAgent(stored), builtIn: false, updatedAt: stored.updatedAt, updatedBy: stored.updatedBy })),
-    ]
+    return this.repository.list().map((stored) => ({ agent: toAgent(stored), updatedAt: stored.updatedAt, updatedBy: stored.updatedBy }))
   }
 
   get(id: string): IAgent | undefined {
@@ -102,19 +87,11 @@ export class AgentCatalog implements IAgentDirectory {
     return this.runnable ? this.runnable(agent) : agent.models.length > 0
   }
 
-  isBuiltIn(id: string): boolean {
-    return this.builtIns.some((agent) => agent.id === id)
-  }
-
   save(agent: IAgent, options: ISaveAgentOptions): IStoredAgent {
-    if (this.isBuiltIn(agent.id)) {
-      if (!options.creating) throw new ReadOnlyAgentError(agent.id)
-    } else if (!options.creating && !this.repository.list().some((stored) => stored.id === agent.id)) {
-      throw new AgentNotFoundError(agent.id)
-    }
+    if (!options.creating && !this.repository.list().some((stored) => stored.id === agent.id)) throw new AgentNotFoundError(agent.id)
 
-    // Na criação nenhum id existente serve; na atualização, só os embutidos (o próprio é este).
-    const takenIds = options.creating ? this.list().map((existing) => existing.id) : this.builtIns.map((existing) => existing.id)
+    // Na criação nenhum id existente serve; na atualização, o próprio é este.
+    const takenIds = options.creating ? this.list().map((existing) => existing.id) : []
     const issues = agentIssues(agent, { ...options.rules, takenIds })
     if (issues.length) throw new InvalidAgentError(issues)
 
@@ -126,7 +103,6 @@ export class AgentCatalog implements IAgentDirectory {
    * e o padrão das configurações apagado fazia toda conversa sem agente escolhido falhar.
    */
   remove(id: string, options: { defaultAgentId?: string } = {}): void {
-    if (this.isBuiltIn(id)) throw new ReadOnlyAgentError(id)
     const delegators = this.repository
       .list()
       .filter((agent) => agent.id !== id && agent.allowedTools.includes(`agent:${id}`))

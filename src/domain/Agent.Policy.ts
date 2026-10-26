@@ -26,14 +26,13 @@ export interface IAgentIssue {
  * A regra é daqui; os fatos, de quem os conhece.
  */
 export interface IAgentRules {
-  /** Ids que já existem e não podem ser tomados — os embutidos e, na criação, os criados. */
+  /** Ids que já existem e não podem ser tomados (na criação, todos os agentes). */
   takenIds: readonly string[]
   /**
    * As tools que um agente criado PODE receber.
    *
-   * ⛔ É O PERÍMETRO DE `AGENTS_ENABLED` CONTINUANDO: quem tira o `sysops-agent` da lista tira o
-   * `run_bash` do gateway, e uma tela que deixasse dar `run_bash` a um agente novo desfaria isso
-   * por baixo. Só entra aqui tool local que algum embutido HABILITADO já tem, mais as do MCP.
+   * ⛔ É O PERÍMETRO DE `LOCAL_TOOLS_ENABLED` CONTINUANDO: quem tira o `run_bash` da lista o tira do
+   * gateway, e uma tela que deixasse dá-lo a um agente desfaria isso por baixo (ver `localToolPerimeter`).
    */
   knownTools: readonly string[]
   /** De qual oficial é um modelo, pelo id. Só vale sem `modelEnabled` (o catálogo é a regra). */
@@ -148,4 +147,23 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
   }
 
   return issues
+}
+
+/**
+ * O modelo pedido, se AQUELE agente o declara. Senão, o primeiro que ele declara.
+ *
+ * ⛔ AGENTE E MODELO SÃO CAMPOS INDEPENDENTES NA CONFIGURAÇÃO, e não são coisas independentes na
+ * realidade. Trocar o agente para outro provider com o modelo do anterior gravado mandava um modelo
+ * de um provider para o outro — e o erro que voltava ("modelo inexistente ou sem acesso") manda
+ * procurar permissão quando o problema é uma combinação impossível.
+ *
+ * O guard fica no caminho de APLICAÇÃO, e não só ao salvar: configuração gravada antes dele continua
+ * existindo, e não pode derrubar a sessão de ninguém. Sem modelo pedido, devolve `undefined` e o
+ * adapter usa o seu padrão.
+ */
+export function modelFor(agent: IAgent, model?: string): string | undefined {
+  // Sem modelo pedido, o padrão do agente (o primeiro) — não há mais modelo padrão no adapter.
+  if (!model) return agent.models[0]
+
+  return agent.models.includes(model) ? model : agent.models[0]
 }

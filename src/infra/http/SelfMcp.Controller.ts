@@ -307,7 +307,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   server.registerTool(
     'save_agent',
     {
-      description: 'Create an agent, or replace a created one with the same id (built-in agents are read-only). Every problem comes back at once, field by field.',
+      description: 'Create an agent, or replace the one with the same id. Every problem comes back at once, field by field.',
       inputSchema: agentShape,
     },
     async (agent) => {

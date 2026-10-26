@@ -6,7 +6,7 @@ import { DEFAULT_TTL_MS, SessionStore, type TSessionSeed } from './Session.Store
 
 describe('SessionStore', () => {
   const seed = (overrides: Partial<TSessionSeed> = {}): TSessionSeed => ({
-    agentId: 'sysops-agent',
+    agentId: 'operador-teste',
     provider: EProvider.CLAUDE,
     protocol: EProvider.CLAUDE,
     mode: EMode.CHAT,
@@ -38,10 +38,10 @@ describe('SessionStore', () => {
   it('knows which agent and lane a session belongs to', () => {
     const store = new SessionStore()
     const chat = store.create('claude-chat', seed())
-    const agent = store.create('google-agent', seed({ agentId: 'researcher-agent', provider: EProvider.GOOGLE, mode: EMode.AGENT }))
+    const agent = store.create('google-agent', seed({ agentId: 'pesquisa-teste', provider: EProvider.GOOGLE, mode: EMode.AGENT }))
 
     // É isto que permite tirar o agentId do path da requisição.
-    assert.strictEqual(store.get(chat.id)?.agentId, 'sysops-agent')
+    assert.strictEqual(store.get(chat.id)?.agentId, 'operador-teste')
     assert.strictEqual(store.get(chat.id)?.mode, EMode.CHAT)
     assert.strictEqual(store.get(agent.id)?.provider, EProvider.GOOGLE)
     assert.strictEqual(store.get(agent.id)?.mode, EMode.AGENT)

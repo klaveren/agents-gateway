@@ -9,7 +9,7 @@ import { SqliteConversationRepository } from './Sqlite.ConversationRepository'
 describe('NotifyingConversationRepository', () => {
   const session: IConversationSession = {
     id: 's1',
-    agentId: 'researcher-agent',
+    agentId: 'pesquisa-teste',
     provider: 'google',
     mode: 'chat',
     model: 'gemini-3.7-flash',

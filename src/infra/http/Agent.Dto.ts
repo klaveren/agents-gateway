@@ -33,8 +33,6 @@ export interface IAgentDto {
   modelReasoning: Record<string, string[] | null>
   modes: string[]
   allowedTools: string[]
-  /** Do código (só leitura) ou criado pela tela. */
-  builtIn: boolean
   /** `subagent`: só chamado por outro agente; não abre conversa direta. */
   role?: string
 }
@@ -65,10 +63,10 @@ export interface IAgentDetailDto extends IAgentDto {
  * agentes existem, em que provider e modelo e com que lanes — para escolher. Não precisa, em
  * nenhum caso, do texto que instrui o modelo: isso é o produto, não o contrato.
  *
- * Lista explícita de campos, e não `{ ...agent, systemPrompt: undefined }`: campo novo no registry
+ * Lista explícita de campos, e não `{ ...agent, systemPrompt: undefined }`: campo novo no agente
  * nasce PRIVADO e só sai quando alguém o escreve aqui. Com spread, nasceria público.
  */
-export function toAgentDto(agent: IAgent, pricing: TModelPricing = MODEL_PRICING, builtIn = true, reasoning: IAgentReasoningFacts = {}): IAgentDto {
+export function toAgentDto(agent: IAgent, pricing: TModelPricing = MODEL_PRICING, reasoning: IAgentReasoningFacts = {}): IAgentDto {
   const efforts = reasoning.protocol ? protocolLevels(reasoning.protocol, agent.reasoningEfforts ?? []) : (agent.reasoningEfforts ?? [])
 
   return {
@@ -81,19 +79,18 @@ export function toAgentDto(agent: IAgent, pricing: TModelPricing = MODEL_PRICING
     modelReasoning: Object.fromEntries(agent.models.map((model) => [model, efforts.length ? modelReasoningLevels(efforts, reasoning.reasoningOf?.(model)) : []])),
     modes: agent.modes.map(String),
     allowedTools: agent.allowedTools,
-    builtIn,
     ...(agent.role ? { role: agent.role } : {}),
   }
 }
 
 export function toAgentDetailDto(
-  entry: { agent: IAgent; builtIn: boolean; updatedAt?: Date; updatedBy?: string },
+  entry: { agent: IAgent; updatedAt?: Date; updatedBy?: string },
   pricing: TModelPricing = MODEL_PRICING,
   disabledModels: string[] = [],
   reasoning: IAgentReasoningFacts = {},
 ): IAgentDetailDto {
   return {
-    ...toAgentDto(entry.agent, pricing, entry.builtIn, reasoning),
+    ...toAgentDto(entry.agent, pricing, reasoning),
     systemPrompt: entry.agent.systemPrompt,
     soul: entry.agent.soul,
     updatedAt: entry.updatedAt,

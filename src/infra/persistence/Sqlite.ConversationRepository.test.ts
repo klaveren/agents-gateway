@@ -9,7 +9,7 @@ import { SqliteConversationRepository } from './Sqlite.ConversationRepository'
 
 const session = (over: Partial<IConversationSession> = {}): IConversationSession => ({
   id: 's1',
-  agentId: 'researcher-agent',
+  agentId: 'pesquisa-teste',
   provider: 'google',
   mode: 'chat',
   model: 'gemini-3.7-flash',
@@ -473,15 +473,15 @@ describe('SqliteConversationRepository — monitor, rótulos e compartilhamento'
 
     it('o agente recorta a lista, e a contagem por agente é sobre a busca', async () => {
       const repo = await seed()
-      await repo.saveSession(session({ id: 'z', agentId: 'sysops-agent', updatedAt: new Date('2026-08-30T09:00:00Z') }))
+      await repo.saveSession(session({ id: 'z', agentId: 'operador-teste', updatedAt: new Date('2026-08-30T09:00:00Z') }))
 
-      const page = await repo.pageSessions({ page: 1, pageSize: 10, agentId: 'sysops-agent' })
+      const page = await repo.pageSessions({ page: 1, pageSize: 10, agentId: 'operador-teste' })
 
       assert.deepStrictEqual(
         page.sessions.map((item) => item.id),
         ['z'],
       )
-      assert.strictEqual(page.facets.agent['sysops-agent'], 1)
+      assert.strictEqual(page.facets.agent['operador-teste'], 1)
       assert.ok(page.facets.agent[session().agentId] >= 5)
     })
 

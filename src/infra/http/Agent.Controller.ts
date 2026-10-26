@@ -12,7 +12,6 @@ import { aggregateTurn } from '@application/Turn.Aggregator'
 import { randomBytes } from 'node:crypto'
 import { AgentCatalog } from '@application/Agent.Catalog'
 import { ModelCatalogService } from '@application/ModelCatalog.Service'
-import { AGENT_REGISTRY } from '@domain/Agent.Registry'
 import { IAgentRules } from '@domain/Agent.Policy'
 import { NATIVE_TOOLS, nativeToolAllowed } from '@domain/Native.Tools'
 import { dangerousToolsAdminOnly, dangerousToolsOf } from '@domain/Tool.Policy'
@@ -57,16 +56,14 @@ import { NextFunction, Request, Response } from 'express'
  * As tools LOCAIS que um agente PODE receber — o perímetro, decidido no deploy.
  *
  * ⛔ `LOCAL_TOOLS_ENABLED` (lista separada por vírgula) é o perímetro, e a tela não o amplia: tirar o
- * `run_bash` dali tira o `run_bash` do gateway, para qualquer agente criado ou editado. Sem a variável:
- * com `AGENTS_ENABLED` declarado, valem as tools dos agentes-semente habilitados (o comportamento de
- * antes de os agentes irem para o banco); sem nenhuma das duas, todas as locais.
+ * `run_bash` dali tira o `run_bash` do gateway, para qualquer agente criado ou editado. Sem a variável,
+ * todas as locais.
  */
 export function localToolPerimeter(all: readonly string[], env: NodeJS.ProcessEnv = process.env): string[] {
   const declared = env.LOCAL_TOOLS_ENABLED?.split(',')
     .map((name) => name.trim())
     .filter(Boolean)
   if (declared?.length) return all.filter((name) => declared.includes(name))
-  if (env.AGENTS_ENABLED?.trim()) return [...new Set(AGENT_REGISTRY.flatMap((agent) => agent.allowedTools))].filter((name) => all.includes(name))
   return [...all]
 }
 const STARTED_AT = Date.now()
@@ -214,7 +211,7 @@ export class AgentController {
         .map((entry) => ({ entry, unavailable: this.unavailableOf(entry.agent, admin) }))
         .filter(({ unavailable }) => admin || !unavailable)
         .map(({ entry, unavailable }) => ({
-          ...toAgentDto(entry.agent, this.pricingOf(entry.agent.provider), entry.builtIn, this.reasoningFacts(entry.agent.provider)),
+          ...toAgentDto(entry.agent, this.pricingOf(entry.agent.provider), this.reasoningFacts(entry.agent.provider)),
           providerInfo: this.providerInfo(entry.agent.provider),
           ...(unavailable ? { unavailable: { reason: unavailable, label: UNAVAILABLE_LABEL[unavailable] } } : {}),
         }))
@@ -288,18 +285,13 @@ export class AgentController {
 
         const saved = this.agents.save(toAgentInput(body.id ?? '', body), { rules: await this.agentRules(), by: admin.email ?? admin.id ?? 'admin', creating: true })
 
-        return toAgentDetailDto(
-          { agent: saved, builtIn: false, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy },
-          this.pricingOf(saved.provider),
-          [],
-          this.reasoningFacts(saved.provider),
-        )
+        return toAgentDetailDto({ agent: saved, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy }, this.pricingOf(saved.provider), [], this.reasoningFacts(saved.provider))
       },
       { status: 201, message: 'Agent created' },
     )
   }
 
-  /** Substitui um agente criado. Embutido responde 409 (`agent_read_only`): duplica-se para editar. */
+  /** Substitui um agente. */
   async updateAgent(req: Request, res: Response) {
     await this.respond(
       res,
@@ -313,12 +305,7 @@ export class AgentController {
           creating: false,
         })
 
-        return toAgentDetailDto(
-          { agent: saved, builtIn: false, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy },
-          this.pricingOf(saved.provider),
-          [],
-          this.reasoningFacts(saved.provider),
-        )
+        return toAgentDetailDto({ agent: saved, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy }, this.pricingOf(saved.provider), [], this.reasoningFacts(saved.provider))
       },
       { message: 'Agent updated' },
     )
@@ -497,7 +484,6 @@ export class AgentController {
           subscriptionAdminOnly: subscriptionAdminOnly(),
           localToolsEnabled: process.env.LOCAL_TOOLS_ENABLED?.trim() || undefined,
           nativeToolsEnabled: process.env.NATIVE_TOOLS_ENABLED?.trim() || undefined,
-          agentsEnabled: process.env.AGENTS_ENABLED?.trim() || undefined,
           allowAnonymous: process.env.ALLOW_ANONYMOUS === '1',
         },
       }

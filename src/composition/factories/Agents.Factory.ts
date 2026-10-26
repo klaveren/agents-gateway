@@ -1,5 +1,5 @@
 import { AgentCatalog } from '@application/Agent.Catalog'
-import { AGENT_REGISTRY } from '@domain/Agent.Registry'
+import { AGENT_SEED } from '@domain/Agent.Seed'
 import { IAgentRepository } from '@domain/ports/AgentRepository.Port'
 import { NullAgentRepository } from '@infra/persistence/Null.AgentRepository'
 import { SqliteAgentRepository } from '@infra/persistence/Sqlite.AgentRepository'
@@ -11,8 +11,8 @@ import { makeProviders } from './Providers.Factory'
 let instance: AgentCatalog | undefined
 
 /**
- * Os agentes do gateway — todos no banco. Os três de sempre entram como SEMENTE no primeiro boot
- * (`seedOnce`) e viram agentes comuns; os modelos que valem são os ativados no catálogo.
+ * Os agentes do gateway — todos no banco. O Atlas entra como SEMENTE no primeiro boot (`seedOnce`) e
+ * vira um agente comum; os modelos que valem são os ativados no catálogo.
  *
  * ⚠️ UMA INSTÂNCIA SÓ, pelo mesmo motivo de `makeSettings`: o provider (que abre a sessão) e o
  * controller (que cria o agente) precisam ver a MESMA lista — com duas, o agente recém-criado
@@ -25,7 +25,7 @@ export function makeAgents(): AgentCatalog {
   if (instance) return instance
 
   const repository = build()
-  repository.seedOnce(AGENT_REGISTRY, 'seed')
+  repository.seedOnce(AGENT_SEED, 'seed')
 
   // ⚠️ O catálogo é pedido NA HORA, não aqui: ele próprio lê os agentes ao nascer (para ativar os
   // modelos que eles já usam), e pedi-lo agora seria uma volta sem fim entre as duas fábricas.
@@ -33,7 +33,6 @@ export function makeAgents(): AgentCatalog {
   // A restrição por papel (assinatura, ferramenta perigosa) é de quem chama, e o provider de sessões a aplica.
   const providers = makeProviders()
   instance = new AgentCatalog(
-    [],
     repository,
     (provider, model) => makeModelCatalog().isEnabled(provider, model),
     (agent) => !agentUnavailable(agent, { provider: providers.get(agent.provider), hasKey: !!providers.connection(agent.provider)?.key, admin: true }),

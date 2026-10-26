@@ -9,11 +9,7 @@ describe('localToolPerimeter', () => {
     assert.deepStrictEqual(localToolPerimeter(all, { LOCAL_TOOLS_ENABLED: 'search_web, inexistente' }), ['search_web'])
   })
 
-  it('sem a variável, com AGENTS_ENABLED: as tools dos agentes-semente (o comportamento de antes)', () => {
-    assert.ok(localToolPerimeter(all, { AGENTS_ENABLED: 'researcher-agent' }).every((name) => all.includes(name)))
-  })
-
-  it('sem nenhuma das duas: todas as locais', () => {
+  it('sem a variável: todas as locais', () => {
     assert.deepStrictEqual(localToolPerimeter(all, {}), all)
   })
 })
