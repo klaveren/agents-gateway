@@ -1,7 +1,7 @@
 import { EMode } from './enums/EMode.Enum'
 import { isSubscription, lanesOf, nativeFamily } from './Subscription.Policy'
 import { EProvider } from './enums/EProvider.Enum'
-import { IAgent } from './models/Agent.Model'
+import { IAgent, IAgentTarget } from './models/Agent.Model'
 import { INativeTool, isNativeTool, nativeTool, nativeToolAllowed } from './Native.Tools'
 import { REASONING_LEVELS } from './Reasoning.Levels'
 import { isMcpToolRef, parseMcpToolRef } from './models/McpServer.Model'
@@ -77,36 +77,53 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
   if (!agent.name.trim()) issue('name', 'required')
   else if (agent.name.length > AGENT_NAME_MAX) issue('name', `at most ${AGENT_NAME_MAX} characters`)
 
-  const protocol = rules.protocolOf ? rules.protocolOf(agent.provider) : Object.values(EProvider).find((value) => value === agent.provider)
-  if (!protocol) issue('provider', `unknown provider: ${String(agent.provider)}`)
+  // Cada provider do agente, com o protocolo resolvido (ausente = provider desconhecido).
+  const providers = agent.providers ?? []
+  const targets = providers.map((target) => {
+    const protocol = rules.protocolOf ? rules.protocolOf(target.provider) : Object.values(EProvider).find((value) => value === target.provider)
+    // ⚖️ Só nos OFICIAIS o id do modelo diz de quem ele é. Num compatível (que pode servir modelos de
+    // vários fabricantes, com ids próprios) qualquer id é plausível — quem confere é o catálogo de modelos do provider.
+    // Os de assinatura conferem pelo catálogo (o id do modelo não diz de quem ele é: o Antigravity serve Claude).
+    const official = protocol !== undefined && protocol === target.provider && !isSubscription(protocol)
+    return { ...target, protocol, official }
+  })
 
-  if (!agent.models.length) issue('models', 'at least one model')
-  // ⚖️ Só nos OFICIAIS o id do modelo diz de quem ele é. Num compatível (que pode servir modelos de
-  // vários fabricantes, com ids próprios) qualquer id é plausível — quem confere é o catálogo de modelos do provider.
-  // Os de assinatura conferem pelo catálogo (o id do modelo não diz de quem ele é: o Antigravity serve Claude).
-  const official = protocol !== undefined && protocol === agent.provider && !isSubscription(protocol)
-  if (protocol && rules.modelEnabled) {
-    for (const model of agent.models) if (!rules.modelEnabled(agent.provider, model)) issue('models', `not enabled in Providers → Models: ${model}`)
-  } else if (official && rules.providerOf) {
-    for (const model of agent.models) {
-      const provider = rules.providerOf(model)
-      if (provider !== protocol) issue('models', provider ? `${model} is a ${provider} model` : `unknown model: ${model}`)
+  if (!targets.length) issue('providers', 'at least one provider')
+  const seen = new Set<string>()
+  for (const target of targets) {
+    if (seen.has(target.provider)) issue('providers', `listed twice: ${target.provider}`)
+    seen.add(target.provider)
+    if (!target.protocol) issue('providers', `unknown provider: ${String(target.provider)}`)
+
+    if (!target.models.length) issue('models', `${target.provider}: at least one model`)
+    if (target.protocol && rules.modelEnabled) {
+      for (const model of target.models) if (!rules.modelEnabled(target.provider, model)) issue('models', `${target.provider}: not enabled in Providers → Models: ${model}`)
+    } else if (target.official && rules.providerOf) {
+      for (const model of target.models) {
+        const provider = rules.providerOf(model)
+        if (provider !== target.protocol) issue('models', provider ? `${model} is a ${provider} model` : `unknown model: ${model}`)
+      }
     }
   }
+  const protocols = targets.flatMap((target) => (target.protocol ? [target.protocol] : []))
 
-  // ⚠️ Nível que o protocolo não aceita seria descartado em silêncio pelo adapter: a pessoa escolheria
-  // "xhigh" e receberia o padrão. Recusa-se aqui. No Google não há nível nenhum (ver `REASONING_LEVELS`).
-  if (protocol) {
+  // ⚠️ Nível que nenhum protocolo do agente aceita seria descartado em silêncio pelo adapter: a pessoa
+  // escolheria "xhigh" e receberia o padrão. Recusa-se aqui. Com vários providers, cada um usa os níveis
+  // que o seu protocolo aceita — basta valer em um. No Google não há nível nenhum (ver `REASONING_LEVELS`).
+  if (protocols.length) {
     for (const level of agent.reasoningEfforts ?? []) {
-      if (REASONING_LEVELS[protocol].includes(level)) continue
-      issue('reasoningEfforts', REASONING_LEVELS[protocol].length ? `${level} is not a ${protocol} reasoning level` : `${protocol} has no reasoning control here`)
+      if (protocols.some((protocol) => REASONING_LEVELS[protocol].includes(level))) continue
+      const known = protocols.filter((protocol) => REASONING_LEVELS[protocol].length)
+      issue('reasoningEfforts', known.length ? `${level} is not a reasoning level of ${known.join(', ')}` : `${protocols.join(', ')} has no reasoning control here`)
     }
   }
 
   if (!agent.modes.length) issue('modes', 'at least one lane')
   for (const mode of agent.modes) if (!Object.values(EMode).includes(mode)) issue('modes', `unknown lane: ${String(mode)}`)
-  // ⛔ Assinatura só tem a lane agent: as APIs de chat exigem chave (ver `Subscription.Policy`).
-  if (protocol) for (const mode of agent.modes) if (!lanesOf(protocol).includes(mode)) issue('modes', `${protocol} runs only in the agent lane`)
+  // ⛔ Assinatura só tem a lane agent: as APIs de chat exigem chave (ver `Subscription.Policy`). A lane
+  // precisa de ao menos um provider que a rode; a sessão só troca para os que rodam a lane dela.
+  if (protocols.length)
+    for (const mode of agent.modes) if (!protocols.some((protocol) => lanesOf(protocol).includes(mode))) issue('modes', `${protocols.join(', ')} runs only in the agent lane`)
 
   for (const tool of agent.allowedTools) {
     // ⚖️ MCP: o servidor tem de existir; a ferramenta, não — o servidor pode estar fora do ar ao salvar.
@@ -129,12 +146,14 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
       continue
     }
 
-    // ⛔ Nativa: tem de ser do SDK deste provider, estar no perímetro do deploy e, se exigir, o provider ser o oficial.
+    // ⛔ Nativa: tem de ser do SDK de um provider do agente, estar no perímetro do deploy e, se exigir, haver
+    // um provider OFICIAL daquela família. Nos outros providers ela não vai (os adapters filtram pela família).
     const native = nativeTool(tool)
-    if (!native) issue('allowedTools', `unknown SDK tool: ${tool}`)
-    else if (native.protocol !== (protocol && nativeFamily(protocol))) issue('allowedTools', `${native.label} is a ${native.protocol} SDK tool`)
+    const family = native && targets.filter((target) => target.protocol && nativeFamily(target.protocol) === native.protocol)
+    if (!native || !family) issue('allowedTools', `unknown SDK tool: ${tool}`)
+    else if (!family.length) issue('allowedTools', `${native.label} is a ${native.protocol} SDK tool`)
     else if (!(rules.nativeAllowed ?? nativeToolAllowed)(native)) issue('allowedTools', `blocked by NATIVE_TOOLS_ENABLED: ${tool}`)
-    else if (native.officialOnly && !official) issue('allowedTools', `${native.label} works only with the official provider`)
+    else if (native.officialOnly && !family.some((target) => target.official)) issue('allowedTools', `${native.label} works only with the official provider`)
   }
 
   if (agent.soul && agent.soul.length > AGENT_SOUL_MAX) issue('soul', `at most ${AGENT_SOUL_MAX} characters`)
@@ -149,8 +168,25 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
   return issues
 }
 
+/** O provider e o modelo de uma sessão. */
+export interface IAgentChoice {
+  provider: string
+  model: string
+}
+
+/** O agente oferece este modelo NESTE provider? */
+export function offers(agent: IAgent, provider: string, model: string): boolean {
+  return agent.providers.some((target) => target.provider === provider && target.models.includes(model))
+}
+
+/** Todos os pares provider + modelo do agente, o padrão primeiro. */
+export function choicesOf(agent: IAgent): IAgentChoice[] {
+  return agent.providers.flatMap((target) => target.models.map((model) => ({ provider: target.provider, model })))
+}
+
 /**
- * O modelo pedido, se AQUELE agente o declara. Senão, o primeiro que ele declara.
+ * O provider e o modelo pedidos, se AQUELE agente os declara. Senão, o padrão: o primeiro modelo do
+ * primeiro provider (que tenha modelo).
  *
  * ⛔ AGENTE E MODELO SÃO CAMPOS INDEPENDENTES NA CONFIGURAÇÃO, e não são coisas independentes na
  * realidade. Trocar o agente para outro provider com o modelo do anterior gravado mandava um modelo
@@ -158,12 +194,29 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
  * procurar permissão quando o problema é uma combinação impossível.
  *
  * O guard fica no caminho de APLICAÇÃO, e não só ao salvar: configuração gravada antes dele continua
- * existindo, e não pode derrubar a sessão de ninguém. Sem modelo pedido, devolve `undefined` e o
- * adapter usa o seu padrão.
+ * existindo, e não pode derrubar a sessão de ninguém.
+ *
+ * Só o modelo, sem provider: o primeiro provider que o oferece. Só o provider: o primeiro modelo dele.
+ * `usable` restringe a busca (ex.: só os providers que podem rodar agora); o padrão cai no primeiro que passa.
  */
-export function modelFor(agent: IAgent, model?: string): string | undefined {
-  // Sem modelo pedido, o padrão do agente (o primeiro) — não há mais modelo padrão no adapter.
-  if (!model) return agent.models[0]
+export function targetFor(agent: IAgent, provider?: string, model?: string, usable: (target: IAgentTarget) => boolean = () => true): IAgentChoice | undefined {
+  const candidates = agent.providers.filter((target) => target.models.length && usable(target))
+  const match =
+    (provider && model && candidates.find((target) => target.provider === provider && target.models.includes(model))) ||
+    (!provider && model && candidates.find((target) => target.models.includes(model))) ||
+    (provider && !model && candidates.find((target) => target.provider === provider))
+  if (match) return { provider: match.provider, model: model && match.models.includes(model) ? model : match.models[0] }
 
-  return agent.models.includes(model) ? model : agent.models[0]
+  const fallback = candidates[0]
+  return fallback ? { provider: fallback.provider, model: fallback.models[0] } : undefined
+}
+
+/**
+ * O que o adapter grava ao criar a sessão: o provider e o modelo que o `AgentProvider` já resolveu (e
+ * conferiu), ou — quem chama o adapter direto — o padrão do agente.
+ */
+export function sessionChoice(agent: IAgent, input: { provider?: string; model?: string }): IAgentChoice {
+  const provider = input.provider || agent.providers[0]?.provider || ''
+  const model = input.model || agent.providers.find((target) => target.provider === provider)?.models[0] || ''
+  return { provider, model }
 }

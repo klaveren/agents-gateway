@@ -3,12 +3,15 @@ import { ref } from 'vue'
 import { api, ApiError, openStream } from '@/lib/api'
 import { readSse } from '@/lib/sse'
 import type { IAgent, IAgentEvent, IConversation, ISessionState, ITurn, IUsage, TMode } from '@/lib/types'
+import { levelsOf, resolveChoice } from '@/lib/agentChoice'
 import { useAgentsStore } from './agents'
 
 export interface IDraft {
   agentId: string
   mode: TMode
   tools: boolean
+  /** Um dos providers do agente; vai junto do modelo. */
+  provider?: string
   model?: string
   reasoning?: string
 }
@@ -44,22 +47,25 @@ export interface ISendResult {
   created?: string
 }
 
-type TDraftAgent = Pick<IAgent, 'models' | 'modes' | 'allowedTools' | 'modelReasoning' | 'reasoningEfforts'>
+type TDraftAgent = Pick<IAgent, 'providers' | 'modes' | 'allowedTools' | 'reasoningEfforts'>
 
 /**
- * Ajusta o rascunho ao agente COMO ESTÁ AGORA: a lista de agentes muda (modelo desativado, lane que
- * saiu) e o rascunho guardava a escolha de antes. Modelo ou lane que não existem mais voltam ao
- * primeiro do agente; o nível de raciocínio que o modelo não aceita volta ao padrão.
+ * Ajusta o rascunho ao agente COMO ESTÁ AGORA: a lista de agentes muda (modelo desativado, provider
+ * que saiu, lane que saiu) e o rascunho guardava a escolha de antes. Provider + modelo ou lane que não
+ * existem mais voltam ao padrão do agente; o nível de raciocínio que o modelo não aceita volta ao padrão.
+ * `lanesOf` diz as lanes do provider escolhido (assinatura só roda a agent); ausente, todas.
  *
  * ⚖️ Pura e exportada: é a regra do rascunho, e testá-la não pode depender de tela.
  */
-export function reconcileDraft(draft: IDraft, agent: TDraftAgent): IDraft {
-  const model = draft.model && agent.models.includes(draft.model) ? draft.model : agent.models[0]
-  const mode = agent.modes.includes(draft.mode) ? draft.mode : (agent.modes[0] ?? 'chat')
+export function reconcileDraft(draft: IDraft, agent: TDraftAgent, lanesOf?: (providerId: string) => readonly TMode[] | undefined): IDraft {
+  const choice = resolveChoice(agent, { provider: draft.provider, model: draft.model })
+  const lanes = (choice && lanesOf?.(choice.provider)) ?? ['chat', 'agent']
+  const modes = agent.modes.filter((mode) => lanes.includes(mode))
+  const mode = modes.includes(draft.mode) ? draft.mode : (modes[0] ?? agent.modes[0] ?? 'chat')
   const tools = mode === 'chat' && draft.tools && agent.allowedTools.length > 0
-  const levels = (model ? agent.modelReasoning?.[model] : undefined) ?? agent.reasoningEfforts ?? []
+  const levels = levelsOf(agent, choice)
   const reasoning = draft.reasoning && levels.includes(draft.reasoning) ? draft.reasoning : undefined
-  return { agentId: draft.agentId, mode, tools, model, reasoning }
+  return { agentId: draft.agentId, mode, tools, provider: choice?.provider, model: choice?.model, reasoning }
 }
 
 const isNotFound = (failure: unknown): boolean => failure instanceof ApiError && failure.status === 404
@@ -133,7 +139,7 @@ export const useThreadStore = defineStore('thread', () => {
       if (current !== generation) return
       turns.value = history.turns
       liveSession.value = !!live || unsure
-      session.value = live ? { model: live.model, reasoning: live.reasoning } : undefined
+      session.value = live ? { provider: live.provider, model: live.model, reasoning: live.reasoning } : undefined
       if (historyFailure) error.value = `Não foi possível carregar o histórico: ${historyFailure}`
       else if (unsure) error.value = 'Não foi possível confirmar se a sessão está ativa. Tente de novo em instantes.'
     } catch (failure) {
@@ -189,14 +195,18 @@ export const useThreadStore = defineStore('thread', () => {
     try {
       if (!sessionId.value) {
         if (!draft.value) throw new Error('Escolha um agente para começar.')
-        const { agentId, mode, tools, model, reasoning } = draft.value
+        const { agentId, mode, tools, provider, model, reasoning } = draft.value
         const born = (
-          await api<{ id: string }>('/sessions', { method: 'POST', body: { agentId, mode, tools: mode === 'chat' && tools, model, reasoning }, signal: controller.signal })
+          await api<{ id: string }>('/sessions', {
+            method: 'POST',
+            body: { agentId, mode, tools: mode === 'chat' && tools, provider, model, reasoning },
+            signal: controller.signal,
+          })
         ).id
         if (stale()) return { ok: false }
         sessionId.value = unrouted = born
         liveSession.value = true
-        if (model) session.value = { model, reasoning }
+        if (model) session.value = { provider, model, reasoning }
       }
 
       const id = sessionId.value
@@ -269,14 +279,15 @@ export const useThreadStore = defineStore('thread', () => {
   }
 
   /**
-   * Troca o modelo e/ou o raciocínio da sessão viva — vale a partir da próxima mensagem. `reasoning: null`
-   * volta ao padrão do provider. Lança o erro da API (ex.: 409 com um turno em andamento).
+   * Troca o provider, o modelo e/ou o raciocínio da sessão viva — vale a partir da próxima mensagem.
+   * Outro provider recebe a transcrição dos turnos (o servidor a monta). `reasoning: null` volta ao padrão
+   * do provider. Lança o erro da API (ex.: 409 com um turno em andamento).
    */
-  async function reconfigure(change: { model?: string; reasoning?: string | null }): Promise<void> {
+  async function reconfigure(change: { provider?: string; model?: string; reasoning?: string | null }): Promise<void> {
     const id = sessionId.value
     if (!id || sending.value) return
     const updated = await api<ISessionState>(`/sessions/${encodeURIComponent(id)}`, { method: 'PATCH', body: change })
-    if (id === sessionId.value) session.value = { model: updated.model, reasoning: updated.reasoning }
+    if (id === sessionId.value) session.value = { provider: updated.provider, model: updated.model, reasoning: updated.reasoning }
   }
 
   /** Logout: esquece tudo da conversa aberta e derruba o stream, para a próxima conta não herdar nada. */
@@ -350,6 +361,7 @@ function settled(sessionId: string, turn: IPendingTurn, index: number, state?: I
     text: turn.text,
     reasoning: turn.reasoning || undefined,
     model: state?.model,
+    provider: state?.provider,
     effort: state?.reasoning,
     toolCalls: turn.tools.map((tool) => ({ tool: tool.tool, error: tool.status === 'error' ? tool.message : undefined })),
     usage: turn.usage,

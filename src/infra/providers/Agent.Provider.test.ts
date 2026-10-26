@@ -10,6 +10,7 @@ import {
   ModelDisabledError,
   NoAgentAvailableError,
   ModeNotSupportedError,
+  ProviderNotOfferedError,
   SessionBusyError,
   SessionNotFoundError,
   DangerousToolsRestrictedError,
@@ -125,7 +126,14 @@ describe('AgentProvider', () => {
   it('opens a session on an agent created through the API, looked up in the directory', async () => {
     const store = new SessionStore()
     const chat = spyAdapter(store, EProvider.GOOGLE, EMode.CHAT, [])
-    const created = { id: 'juridico', name: 'Jurídico', provider: EProvider.GOOGLE, systemPrompt: 'p', models: ['gemini-3.7-flash'], modes: [EMode.CHAT], allowedTools: [] }
+    const created = {
+      id: 'juridico',
+      name: 'Jurídico',
+      providers: [{ provider: EProvider.GOOGLE, models: ['gemini-3.7-flash'] }],
+      systemPrompt: 'p',
+      modes: [EMode.CHAT],
+      allowedTools: [],
+    }
     const provider = new AgentProvider(new Map([[adapterKey(EProvider.GOOGLE, EMode.CHAT), chat.adapter]]), store, undefined, {
       list: () => [created],
       get: (id) => (id === created.id ? created : undefined),
@@ -141,7 +149,14 @@ describe('AgentProvider', () => {
   it('routes an agent on a compatible provider (OpenRouter speaking OpenAI) to the OpenAI adapter; a disabled provider opens nothing', async () => {
     const store = new SessionStore()
     const openai = spyAdapter(store, EProvider.OPENAI, EMode.CHAT, [])
-    const agent = { id: 'roteado', name: 'Roteado', provider: 'openrouter', systemPrompt: 'p', models: ['meta-llama/llama-4'], modes: [EMode.CHAT], allowedTools: [] }
+    const agent = {
+      id: 'roteado',
+      name: 'Roteado',
+      providers: [{ provider: 'openrouter', models: ['meta-llama/llama-4'] }],
+      systemPrompt: 'p',
+      modes: [EMode.CHAT],
+      allowedTools: [],
+    }
     let enabled = true
     const providers = {
       list: () => [],
@@ -169,7 +184,7 @@ describe('AgentProvider', () => {
   it('refuses a session on an agent with no enabled model, saying where to fix it', async () => {
     const store = new SessionStore()
     const chat = spyAdapter(store, EProvider.GOOGLE, EMode.CHAT, [])
-    const empty = { id: 'vazio', name: 'Vazio', provider: 'google', systemPrompt: 'p', models: [], modes: [EMode.CHAT], allowedTools: [] }
+    const empty = { id: 'vazio', name: 'Vazio', providers: [{ provider: 'google', models: [] }], systemPrompt: 'p', modes: [EMode.CHAT], allowedTools: [] }
     const provider = new AgentProvider(new Map([[adapterKey(EProvider.GOOGLE, EMode.CHAT), chat.adapter]]), store, undefined, { list: () => [empty], get: () => empty })
 
     await assert.rejects(provider.createSession({ agentId: 'vazio' }), /Providers → Models/)
@@ -179,7 +194,7 @@ describe('AgentProvider', () => {
   it('⛔ modelo pedido que o agente não oferece: model_disabled, e não a troca muda pelo primeiro', async () => {
     const store = new SessionStore()
     const chat = spyAdapter(store, EProvider.GOOGLE, EMode.CHAT, [])
-    const agent = { id: 'm', name: 'M', provider: 'google', systemPrompt: 'p', models: ['gemini-a', 'gemini-b'], modes: [EMode.CHAT], allowedTools: [] }
+    const agent = { id: 'm', name: 'M', providers: [{ provider: 'google', models: ['gemini-a', 'gemini-b'] }], systemPrompt: 'p', modes: [EMode.CHAT], allowedTools: [] }
     const provider = new AgentProvider(new Map([[adapterKey(EProvider.GOOGLE, EMode.CHAT), chat.adapter]]), store, undefined, { list: () => [agent], get: () => agent })
 
     await assert.rejects(provider.createSession({ agentId: 'm', model: 'gemini-z' }), ModelDisabledError)
@@ -189,11 +204,11 @@ describe('AgentProvider', () => {
   it('⛔ modelo da conversa desativado no meio dela: a mensagem seguinte é model_disabled', async () => {
     const store = new SessionStore()
     const chat = spyAdapter(store, EProvider.GOOGLE, EMode.CHAT, [])
-    const agent = { id: 'm', name: 'M', provider: 'google', systemPrompt: 'p', models: ['gemini-a', 'gemini-b'], modes: [EMode.CHAT], allowedTools: [] }
+    const agent = { id: 'm', name: 'M', providers: [{ provider: 'google', models: ['gemini-a', 'gemini-b'] }], systemPrompt: 'p', modes: [EMode.CHAT], allowedTools: [] }
     const provider = new AgentProvider(new Map([[adapterKey(EProvider.GOOGLE, EMode.CHAT), chat.adapter]]), store, undefined, { list: () => [agent], get: () => agent })
 
     const session = await provider.createSession({ agentId: 'm', model: 'gemini-b' })
-    agent.models = ['gemini-a']
+    agent.providers[0].models = ['gemini-a']
 
     await assert.rejects(drain(provider.sendMessage(session.id, { text: 'oi' })), ModelDisabledError)
     assert.deepStrictEqual(chat.calls, ['createSession'])
@@ -208,7 +223,7 @@ describe('AgentProvider', () => {
   it('⛔ agente de assinatura: só com acesso de administrador, e cai na lane agent sem pedir', async () => {
     const store = new SessionStore()
     const lane = spyAdapter(store, EProvider.CODEX, EMode.AGENT, [])
-    const codex = { id: 'cx', name: 'Cx', provider: 'codex', systemPrompt: 'p', models: ['gpt-6.1-sol'], modes: [EMode.AGENT], allowedTools: [] }
+    const codex = { id: 'cx', name: 'Cx', providers: [{ provider: 'codex', models: ['gpt-6.1-sol'] }], systemPrompt: 'p', modes: [EMode.AGENT], allowedTools: [] }
     const directory = {
       get: (id: string) =>
         id === 'codex' ? { id, name: 'ChatGPT', protocol: EProvider.CODEX, official: true, enabled: true, createdAt: new Date(), updatedAt: new Date() } : undefined,
@@ -233,7 +248,15 @@ describe('AgentProvider', () => {
   it('⛔ subagente: conversa direta é recusada; pela delegação, abre', async () => {
     const store = new SessionStore()
     const lane = spyAdapter(store, EProvider.GOOGLE, EMode.CHAT, [])
-    const sub = { id: 'tradutor', name: 'Tradutor', provider: 'google', systemPrompt: 'p', models: ['gemini-x'], modes: [EMode.CHAT], allowedTools: [], role: 'subagent' as const }
+    const sub = {
+      id: 'tradutor',
+      name: 'Tradutor',
+      providers: [{ provider: 'google', models: ['gemini-x'] }],
+      systemPrompt: 'p',
+      modes: [EMode.CHAT],
+      allowedTools: [],
+      role: 'subagent' as const,
+    }
     const provider = new AgentProvider(new Map([[adapterKey(EProvider.GOOGLE, EMode.CHAT), lane.adapter]]), store, undefined, { list: () => [sub], get: () => sub })
 
     await assert.rejects(provider.createSession({ agentId: 'tradutor' }), SubagentOnlyError)
@@ -285,9 +308,8 @@ describe('AgentProvider', () => {
       const agent = {
         id: 'escritor',
         name: 'Escritor',
-        provider: EProvider.CLAUDE,
+        providers: [{ provider: EProvider.CLAUDE, models: ['claude-sonnet-5', 'claude-opus-5'] }],
         systemPrompt: 'p',
-        models: ['claude-sonnet-5', 'claude-opus-5'],
         modes: [EMode.CHAT],
         allowedTools: [],
       }
@@ -309,8 +331,8 @@ describe('AgentProvider', () => {
 
       assert.deepStrictEqual([changed.model, changed.reasoning], ['claude-opus-5', 'high'])
       assert.deepStrictEqual(provider.describe(session.id).usageByModel, {
-        'claude-sonnet-5': { inputTokens: 10, outputTokens: 1 },
-        'claude-opus-5': { inputTokens: 10, outputTokens: 1 },
+        'claude|claude-sonnet-5': { inputTokens: 10, outputTokens: 1 },
+        'claude|claude-opus-5': { inputTokens: 10, outputTokens: 1 },
       })
       assert.strictEqual(provider.reconfigure(session.id, { reasoning: null }).reasoning, undefined)
     })
@@ -495,5 +517,172 @@ describe('AgentProvider', () => {
     const session = await provider.createSession({ agentId: 'operador-teste', adminAccess: true })
 
     assert.strictEqual(provider.describe(session.id).model, 'claude-sonnet-5')
+  })
+})
+
+describe('AgentProvider — agente com vários providers', () => {
+  interface ISeen {
+    provider: string
+    text: string
+    nativeBefore: unknown
+  }
+
+  /** Um agente em três providers: Claude e OpenAI pela API, Codex pela assinatura (só a lane agent). */
+  const HYBRID = {
+    id: 'hibrido',
+    name: 'Híbrido',
+    providers: [
+      { provider: 'claude', models: ['claude-sonnet-5'] },
+      { provider: 'openai', models: ['gpt-5.6-sol'] },
+      { provider: 'codex', models: ['gpt-6.1-sol'] },
+      { provider: 'semchave', models: ['gpt-x'] },
+    ],
+    systemPrompt: 'p',
+    modes: [EMode.CHAT, EMode.AGENT],
+    allowedTools: [],
+  }
+  const PROTOCOL: Record<string, EProvider> = { claude: EProvider.CLAUDE, openai: EProvider.OPENAI, codex: EProvider.CODEX, semchave: EProvider.OPENAI }
+
+  function setup(options: { completes?: boolean; runnable?: (provider: string) => boolean } = {}) {
+    const store = new SessionStore()
+    const seen: ISeen[] = []
+    const answer = (protocol: EProvider): IAgentAdapter => ({
+      async createSession(agent, input) {
+        const record = store.create(protocol, {
+          agentId: agent.id,
+          provider: input.provider!,
+          protocol,
+          mode: input.mode ?? EMode.CHAT,
+          model: input.model!,
+          reasoning: input.reasoning,
+          tools: false,
+          systemPrompt: agent.systemPrompt,
+          native: { from: protocol },
+        })
+        return { id: record.id, provider: protocol, mode: record.mode, createdAt: record.createdAt }
+      },
+      async *sendMessage(_agent, sessionId, input) {
+        const record = store.get(sessionId)!
+        seen.push({ provider: record.provider, text: input.text, nativeBefore: record.native })
+        record.native = { from: record.protocol }
+        yield { type: 'text.delta', sessionId, timestamp: new Date(), payload: { text: `resposta de ${record.provider}` } }
+        yield { type: 'tool.started', sessionId, timestamp: new Date(), payload: { tool: 'search_web', args: {} } }
+        yield { type: 'usage', sessionId, timestamp: new Date(), payload: { inputTokens: 10, outputTokens: 1 } }
+        if (options.completes !== false) yield { type: 'message.completed', sessionId, timestamp: new Date() }
+      },
+      async cancel() {},
+    })
+    const config = (id: string) =>
+      PROTOCOL[id] ? { id, name: id, protocol: PROTOCOL[id], official: id === PROTOCOL[id], enabled: true, createdAt: new Date(), updatedAt: new Date() } : undefined
+    const provider = new AgentProvider(
+      new Map([
+        [adapterKey(EProvider.CLAUDE, EMode.CHAT), answer(EProvider.CLAUDE)],
+        [adapterKey(EProvider.CLAUDE, EMode.AGENT), answer(EProvider.CLAUDE)],
+        [adapterKey(EProvider.OPENAI, EMode.CHAT), answer(EProvider.OPENAI)],
+        [adapterKey(EProvider.CODEX, EMode.AGENT), answer(EProvider.CODEX)],
+      ]),
+      store,
+      undefined,
+      {
+        list: () => [HYBRID],
+        get: (id) => (id === HYBRID.id ? HYBRID : undefined),
+        isTargetRunnable: (_agent, target) => options.runnable?.(target.provider) ?? true,
+      },
+      {
+        list: () => [],
+        get: config,
+        connection: (id) => {
+          const found = config(id)
+          return found ? { providerId: id, name: id, protocol: found.protocol, ...(id === 'semchave' ? {} : { key: 'k' }) } : undefined
+        },
+      },
+    )
+    return { provider, store, seen }
+  }
+
+  const drain = async (stream: AsyncIterable<IAgentEvent>) => {
+    for await (const _event of stream) void _event
+  }
+
+  it('abre no provider pedido; sem pedido, no padrão — pulando o que não roda agora', async () => {
+    const { provider } = setup({ runnable: (id) => id !== 'claude' })
+
+    assert.strictEqual(provider.describe((await provider.createSession({ agentId: 'hibrido', provider: 'claude' })).id).provider, 'claude')
+    assert.strictEqual(provider.describe((await provider.createSession({ agentId: 'hibrido', model: 'gpt-5.6-sol' })).id).provider, 'openai')
+    const fallback = provider.describe((await provider.createSession({ agentId: 'hibrido' })).id)
+    assert.deepStrictEqual([fallback.provider, fallback.model], ['openai', 'gpt-5.6-sol'])
+
+    await assert.rejects(provider.createSession({ agentId: 'hibrido', provider: 'google' }), ProviderNotOfferedError)
+    await assert.rejects(provider.createSession({ agentId: 'hibrido', provider: 'claude', model: 'gpt-5.6-sol' }), ModelDisabledError)
+  })
+
+  it('assinatura abre na lane agent, mesmo com chat no agente', async () => {
+    const { provider } = setup()
+    const session = await provider.createSession({ agentId: 'hibrido', provider: 'codex', adminAccess: true })
+
+    assert.strictEqual(provider.describe(session.id).mode, EMode.AGENT)
+    await assert.rejects(provider.createSession({ agentId: 'hibrido', provider: 'codex', mode: EMode.CHAT, adminAccess: true }), ModeNotSupportedError)
+  })
+
+  it('troca de provider no meio: zera o estado nativo, leva a transcrição UMA vez e conta o uso por provider', async () => {
+    const { provider, seen } = setup()
+    const session = await provider.createSession({ agentId: 'hibrido', provider: 'openai', reasoning: 'none' })
+    await drain(provider.sendMessage(session.id, { text: 'meu nome é Ana' }))
+
+    const changed = provider.reconfigure(session.id, { provider: 'claude' })
+    assert.deepStrictEqual([changed.provider, changed.model, changed.reasoning, changed.handoff], ['claude', 'claude-sonnet-5', undefined, true])
+
+    await drain(provider.sendMessage(session.id, { text: 'qual é o meu nome?' }))
+    await drain(provider.sendMessage(session.id, { text: 'e agora?' }))
+
+    const [, handed, after] = seen
+    assert.strictEqual(handed.provider, 'claude')
+    assert.strictEqual(handed.nativeBefore, undefined)
+    assert.match(handed.text, /Pessoa: meu nome é Ana/)
+    assert.match(handed.text, /Assistente: resposta de openai/)
+    assert.match(handed.text, /Ferramentas usadas: search_web/)
+    assert.match(handed.text, /qual é o meu nome\?$/)
+    assert.strictEqual(after.text, 'e agora?')
+    assert.strictEqual(provider.describe(session.id).handoff, undefined)
+    assert.deepStrictEqual(provider.describe(session.id).usageByModel, {
+      'openai|gpt-5.6-sol': { inputTokens: 10, outputTokens: 1 },
+      'claude|claude-sonnet-5': { inputTokens: 20, outputTokens: 2 },
+    })
+  })
+
+  it('o turno que não concluiu no provider novo não dá o repasse por entregue: o próximo recomeça com a transcrição de agora', async () => {
+    const { provider, seen } = setup({ completes: false })
+    const session = await provider.createSession({ agentId: 'hibrido', provider: 'openai' })
+    await drain(provider.sendMessage(session.id, { text: 'um' }))
+    provider.reconfigure(session.id, { provider: 'claude' })
+
+    await drain(provider.sendMessage(session.id, { text: 'dois' }))
+    await drain(provider.sendMessage(session.id, { text: 'três' }))
+
+    assert.match(seen[2].text, /Pessoa: um/)
+    assert.match(seen[2].text, /Pessoa: dois/)
+    assert.strictEqual(seen[2].nativeBefore, undefined)
+  })
+
+  it('⛔ recusa provider fora do agente, sem chave, que não roda a lane, e assinatura sem admin', async () => {
+    const { provider } = setup()
+    const chat = await provider.createSession({ agentId: 'hibrido', provider: 'claude' })
+
+    assert.throws(() => provider.reconfigure(chat.id, { provider: 'google' }), ProviderNotOfferedError)
+    assert.throws(
+      () => provider.reconfigure(chat.id, { provider: 'semchave' }),
+      (error: InvalidSessionChangeError) => error instanceof InvalidSessionChangeError && /no API key/.test(error.message),
+    )
+    assert.throws(
+      () => provider.reconfigure(chat.id, { provider: 'codex' }),
+      (error: InvalidSessionChangeError) => error instanceof InvalidSessionChangeError && /agent lane|does not run the chat lane/.test(error.message),
+    )
+    assert.throws(() => provider.reconfigure(chat.id, { provider: 'openai', model: 'claude-sonnet-5' }), InvalidSessionChangeError)
+    assert.strictEqual(provider.describe(chat.id).provider, 'claude')
+
+    const lane = await provider.createSession({ agentId: 'hibrido', provider: 'claude', mode: EMode.AGENT })
+    assert.throws(() => provider.reconfigure(lane.id, { provider: 'codex' }), SubscriptionRestrictedError)
+    const admin = await provider.createSession({ agentId: 'hibrido', provider: 'claude', mode: EMode.AGENT, adminAccess: true })
+    assert.strictEqual(provider.reconfigure(admin.id, { provider: 'codex' }).provider, 'codex')
   })
 })

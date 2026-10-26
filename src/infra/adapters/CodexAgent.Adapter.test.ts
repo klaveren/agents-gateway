@@ -41,7 +41,7 @@ function fakeCodex(calls: ICall[], events: (turn: number) => ThreadEvent[]) {
   }
 }
 
-const agent: IAgent = { id: 'cx', name: 'Cx', provider: 'codex', systemPrompt: 'Seja breve.', models: ['gpt-6.1-sol'], modes: [EMode.AGENT], allowedTools: [] }
+const agent: IAgent = { id: 'cx', name: 'Cx', providers: [{ provider: 'codex', models: ['gpt-6.1-sol'] }], systemPrompt: 'Seja breve.', modes: [EMode.AGENT], allowedTools: [] }
 
 async function collect(stream: AsyncIterable<IAgentEvent>): Promise<IAgentEvent[]> {
   const out: IAgentEvent[] = []

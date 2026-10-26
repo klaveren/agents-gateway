@@ -1,3 +1,4 @@
+import { sessionChoice } from '@domain/Agent.Policy'
 import { randomUUID } from 'node:crypto'
 import { nativeToolsOf } from '@domain/Native.Tools'
 import { IConnectionSource, requireConnection, UnavailableProviderError } from './support/Keyed.Client'
@@ -76,13 +77,14 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
   }
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
+    const choice = sessionChoice(agent, input)
     const record = this.store.create(sessionPrefix(this.protocol, EMode.AGENT), {
       agentId: agent.id,
-      provider: agent.provider,
+      provider: choice.provider,
       protocol: this.protocol,
       mode: EMode.AGENT,
       // O modelo vem resolvido pelo provider de sessões (o pedido, ou o padrão do agente).
-      model: input.model || agent.models[0] || '',
+      model: choice.model,
       reasoning: input.reasoning,
       language: input.language,
       tools: false,

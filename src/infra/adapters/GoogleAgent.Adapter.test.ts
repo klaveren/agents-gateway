@@ -2,6 +2,7 @@ import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import type { Event, FunctionTool } from '@google/adk'
 import { EMode } from '@domain/enums/EMode.Enum'
+import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { fakeMcpRegistry, mcpTool } from '@infra/mcp/Mcp.Fake'
@@ -30,7 +31,7 @@ function adkEventWithUsage(parts: unknown[], usage: { promptTokenCount?: number;
 }
 
 describe('GoogleAgentAdapter', () => {
-  const getAgent = (): IAgent => ({ ...GOOGLE_TEST_AGENT, models: ['gemini-3.7-flash'] })
+  const getAgent = (): IAgent => ({ ...GOOGLE_TEST_AGENT, providers: [{ provider: EProvider.GOOGLE, models: ['gemini-3.7-flash'] }] })
 
   const turn = (): Event[] => [
     adkEvent([{ text: 'thinking about it', thought: true }]),

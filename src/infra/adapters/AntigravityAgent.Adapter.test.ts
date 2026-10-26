@@ -34,10 +34,9 @@ function fakeSpawn(calls: ISpawned[], lines: (turn: number) => string[], code = 
 const agent: IAgent = {
   id: 'gema',
   name: 'Gema',
-  provider: 'antigravity',
+  providers: [{ provider: 'antigravity', models: ['gemini-3.8-flash-medium'] }],
   soul: 'Você é a Gema.',
   systemPrompt: 'Seja breve.',
-  models: ['gemini-3.8-flash-medium'],
   modes: [EMode.AGENT],
   allowedTools: [],
 }

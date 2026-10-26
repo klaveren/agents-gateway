@@ -13,11 +13,12 @@ import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
  * Moravam no `Agent.Provider`, em infra. O domínio ficava com a classe de erro e sem a
  * decisão.
  */
-export function resolveSessionMode(agent: IAgent, input: ICreateSessionInput): EMode {
-  // Sem pedido, chat — ou a lane que o agente tem, quando ele não tem chat (os de assinatura).
-  const mode = input.mode ?? (agent.modes.includes(EMode.CHAT) ? EMode.CHAT : (agent.modes[0] ?? EMode.CHAT))
+export function resolveSessionMode(agent: IAgent, input: ICreateSessionInput, lanes: readonly EMode[] = Object.values(EMode)): EMode {
+  // Sem pedido, chat — ou a lane que o agente tem NESTE provider, quando não há chat (os de assinatura).
+  const offered = agent.modes.filter((mode) => lanes.includes(mode))
+  const mode = input.mode ?? (offered.includes(EMode.CHAT) ? EMode.CHAT : (offered[0] ?? agent.modes[0] ?? EMode.CHAT))
 
-  if (!agent.modes.includes(mode)) throw new ModeNotSupportedError(agent.id, mode)
+  if (!offered.includes(mode)) throw new ModeNotSupportedError(agent.id, mode)
   if (input.tools && mode !== EMode.CHAT) throw new ToolsNotSupportedError(mode)
 
   return mode

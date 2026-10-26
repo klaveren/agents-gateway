@@ -15,7 +15,14 @@ describe('McpServersService', () => {
     const secrets = new SqliteCredentialStore(new SecretBox(randomBytes(32)), ':memory:')
     return { service: new McpServersService(new SqliteMcpServerRepository(':memory:'), secrets, () => agents), secrets }
   }
-  const agent = (allowedTools: string[]): IAgent => ({ id: 'a', name: 'Agente A', provider: EProvider.CLAUDE, systemPrompt: 'p', models: ['m'], modes: [EMode.CHAT], allowedTools })
+  const agent = (allowedTools: string[]): IAgent => ({
+    id: 'a',
+    name: 'Agente A',
+    providers: [{ provider: EProvider.CLAUDE, models: ['m'] }],
+    systemPrompt: 'p',
+    modes: [EMode.CHAT],
+    allowedTools,
+  })
 
   it('cria com os padrões, e o segredo vai para o cofre — só o final dele é visível', () => {
     const { service, secrets } = build()

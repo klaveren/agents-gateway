@@ -59,7 +59,8 @@ export interface IConversationSession {
   classification?: TClassification
   usage: IStoredUsage
   /**
-   * O consumo por modelo, quando a conversa trocou de modelo no meio (ou foi gravada depois disto).
+   * O consumo por provider + modelo (`usageKey`), quando a conversa trocou de modelo no meio (ou foi
+   * gravada depois disto). A chave antiga é só o modelo, do provider da conversa (`parseUsageKey`).
    * ⚖️ Ausente nas conversas antigas: aí vale `model` + `usage`, como sempre.
    */
   usageByModel?: Record<string, IStoredUsage>
@@ -112,6 +113,8 @@ export interface IConversationTurn {
   reasoning?: string
   /** O modelo que respondeu ESTE turno. Ausente nos antigos: vale o da conversa. */
   model?: string
+  /** O provider que respondeu ESTE turno — a conversa pode trocar de provider no meio. Ausente nos antigos: vale o da conversa. */
+  provider?: string
   /** O nível de raciocínio pedido neste turno (o `reasoning` acima é o TEXTO do raciocínio). */
   effort?: string
   toolCalls: Array<{ tool: string; args?: unknown; result?: unknown; error?: string }>

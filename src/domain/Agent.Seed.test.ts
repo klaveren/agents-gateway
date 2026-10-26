@@ -16,9 +16,9 @@ describe('AGENT_SEED', () => {
   it('o Atlas é um agente Claude da lane agent, com raciocínio e a WebSearch nativa', () => {
     const [atlas] = AGENT_SEED
 
-    assert.strictEqual(atlas.provider, EProvider.CLAUDE)
+    assert.strictEqual(atlas.providers[0].provider, EProvider.CLAUDE)
     assert.deepStrictEqual(atlas.modes, [EMode.AGENT])
-    assert.ok(atlas.models.includes('claude-sonnet-5'))
+    assert.ok(atlas.providers[0].models.includes('claude-sonnet-5'))
     assert.ok(atlas.reasoningEfforts?.includes('high'))
     assert.ok(atlas.allowedTools.includes('sdk:WebSearch'))
   })

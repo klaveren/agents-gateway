@@ -47,7 +47,7 @@ describe('costOf', () => {
   })
 
   it('só traz preço de modelo que os agentes declaram, e deixa de fora o que não foi conferido', () => {
-    const declared = new Set(TEST_AGENTS.flatMap((agent) => agent.models))
+    const declared = new Set(TEST_AGENTS.flatMap((agent) => agent.providers.flatMap((target) => target.models)))
 
     assert.ok(Object.keys(MODEL_PRICING).every((model) => declared.has(model)))
     assert.strictEqual(MODEL_PRICING['o4-mini'], undefined)

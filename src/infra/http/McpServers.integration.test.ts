@@ -76,9 +76,8 @@ describe('guia MCPs (integração)', () => {
     const agent = {
       id: 'operador',
       name: 'Operador',
-      provider: 'claude',
+      providers: [{ provider: 'claude', models: ['claude-sonnet-5'] }],
       systemPrompt: 'Você opera o gateway.',
-      models: ['claude-sonnet-5'],
       modes: ['chat'],
       allowedTools: ['mcp:gw/list_agents'],
     }

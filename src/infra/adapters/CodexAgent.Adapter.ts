@@ -1,3 +1,4 @@
+import { sessionChoice } from '@domain/Agent.Policy'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Codex, CodexOptions, ThreadEvent, ThreadItem, ThreadOptions, UserInput } from '@openai/codex-sdk'
@@ -107,12 +108,13 @@ export class CodexAgentAdapter implements IAgentAdapter {
   }
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
+    const choice = sessionChoice(agent, input)
     const record = this.store.create(sessionPrefix(EProvider.CODEX, EMode.AGENT), {
       agentId: agent.id,
-      provider: agent.provider,
+      provider: choice.provider,
       protocol: EProvider.CODEX,
       mode: EMode.AGENT,
-      model: input.model || agent.models[0] || '',
+      model: choice.model,
       reasoning: input.reasoning,
       language: input.language,
       tools: false,

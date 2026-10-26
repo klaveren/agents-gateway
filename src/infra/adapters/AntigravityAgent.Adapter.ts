@@ -1,3 +1,4 @@
+import { sessionChoice } from '@domain/Agent.Policy'
 import { spawn as nodeSpawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { EMode } from '@domain/enums/EMode.Enum'
@@ -85,12 +86,13 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
   }
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
+    const choice = sessionChoice(agent, input)
     const record = this.store.create(sessionPrefix(EProvider.ANTIGRAVITY, EMode.AGENT), {
       agentId: agent.id,
-      provider: agent.provider,
+      provider: choice.provider,
       protocol: EProvider.ANTIGRAVITY,
       mode: EMode.AGENT,
-      model: input.model || agent.models[0] || '',
+      model: choice.model,
       reasoning: input.reasoning,
       language: input.language,
       tools: false,

@@ -55,19 +55,23 @@ watch(
 )
 const childTokens = computed(() => children.value.reduce((total, child) => total + (child.usage.totalTokens ?? 0), 0))
 const childCost = computed(() => (children.value.some((child) => child.costUsd !== undefined) ? children.value.reduce((total, child) => total + (child.costUsd ?? 0), 0) : undefined))
-/** O modelo em vigor: o da sessão viva (pode ter trocado), senão o da conversa. */
+/** O provider e o modelo em vigor: os da sessão viva (podem ter trocado), senão os da conversa. */
 const currentModel = computed(() => thread.session?.model ?? header.value?.model)
+const currentProvider = computed(() => thread.session?.provider ?? header.value?.provider ?? agent.value?.providers[0]?.id ?? '')
 
 /**
- * O aviso antes do turno que mudou de modelo ou de nível em relação ao anterior. Só compara turnos que
- * registram o modelo (os antigos não registram).
+ * O aviso antes do turno que mudou de provider, de modelo ou de nível em relação ao anterior. Só compara
+ * turnos que registram o modelo (os antigos não registram); o provider ausente é o da conversa.
  */
 function switchBefore(index: number): string | undefined {
   const turn = thread.turns[index]
   const previous = thread.turns[index - 1]
   if (!turn?.model || !previous?.model) return undefined
-  if (turn.model === previous.model && (turn.effort ?? '') === (previous.effort ?? '')) return undefined
-  return `trocou para ${turn.model}${turn.effort ? ` · ${turn.effort}` : ''}`
+  const fallback = header.value?.provider ?? ''
+  const provider = turn.provider ?? fallback
+  const providerChanged = provider !== (previous.provider ?? fallback)
+  if (!providerChanged && turn.model === previous.model && (turn.effort ?? '') === (previous.effort ?? '')) return undefined
+  return `trocou para ${providerChanged ? `${protocols.providerName(provider)} · ` : ''}${turn.model}${turn.effort ? ` · ${turn.effort}` : ''}`
 }
 
 watch(
@@ -124,7 +128,7 @@ async function remove() {
 async function continueFresh() {
   const source = header.value
   if (!source) return
-  thread.startDraft({ agentId: source.agentId, mode: source.mode, tools: false, model: source.model })
+  thread.startDraft({ agentId: source.agentId, mode: source.mode, tools: false, provider: source.provider, model: source.model })
   await router.push({ path: '/new', query: { from: source.id } })
 }
 </script>
@@ -133,11 +137,11 @@ async function continueFresh() {
   <section class="flex h-full flex-col">
     <header class="flex items-center gap-3 border-b border-zinc-800/80 bg-zinc-900/40 px-4 py-2.5">
       <RouterLink to="/" class="grid h-9 w-9 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 lg:hidden" title="Voltar"><Icon name="back" class="h-5 w-5" /></RouterLink>
-      <AgentAvatar :name="agent?.name ?? header?.agentId ?? '?'" :provider="header?.provider ?? agent?.provider ?? 'claude'" size="sm" />
+      <AgentAvatar :name="agent?.name ?? header?.agentId ?? '?'" :provider="currentProvider || 'claude'" size="sm" />
       <div class="min-w-0">
         <div class="truncate font-medium">{{ header?.title || agent?.name || 'Conversa' }}</div>
         <div class="truncate text-xs text-zinc-400">
-          {{ agent?.name ?? header?.agentId }} · {{ protocols.providerName(header?.provider ?? agent?.provider ?? '') }} {{ currentModel }}<template v-if="thread.session?.reasoning"> ({{ thread.session.reasoning }})</template> ·
+          {{ agent?.name ?? header?.agentId }} · {{ protocols.providerName(currentProvider) }} {{ currentModel }}<template v-if="thread.session?.reasoning"> ({{ thread.session.reasoning }})</template> ·
           {{ header?.mode === 'agent' ? 'Agents SDK' : 'chat' }}
           <template v-if="auth.isAdmin && owner"> · {{ owner.email ?? owner.id }}</template>
         </div>
@@ -200,7 +204,7 @@ async function continueFresh() {
         <Icon name="refresh" class="h-4 w-4" /> Nova conversa com {{ agent?.name ?? 'o mesmo agente' }}
       </button>
     </div>
-    <SessionTuner v-if="!readOnly && thread.liveSession && agent" :agent="agent" :fallback-model="header?.model" />
+    <SessionTuner v-if="!readOnly && thread.liveSession && agent" :agent="agent" :mode="header?.mode" :fallback="{ provider: header?.provider, model: header?.model }" />
     <Composer v-if="!readOnly" :sending="thread.sending" :disabled="thread.liveSession === undefined" @send="send" @stop="thread.stop" />
   </section>
 </template>

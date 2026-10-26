@@ -1,4 +1,5 @@
-import { modelFor } from '@domain/Agent.Policy'
+import { offers, targetFor } from '@domain/Agent.Policy'
+import { handoffText } from '@domain/Handoff.Policy'
 import { resolveSessionMode } from '@domain/Session.Policy'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -13,18 +14,19 @@ import {
   AgentUnavailableError,
   AgentWithoutModelError,
   InvalidSessionChangeError,
+  ProviderNotOfferedError,
   ProviderUnavailableError,
   SessionBusyError,
   SessionNotFoundError,
 } from '@domain/errors/Domain.Error'
 import { REASONING_LEVELS } from '@domain/Reasoning.Levels'
-import { isSubscription, subscriptionAdminOnly } from '@domain/Subscription.Policy'
+import { isSubscription, lanesOf, subscriptionAdminOnly } from '@domain/Subscription.Policy'
 import { dangerousToolsAdminOnly, dangerousToolsOf } from '@domain/Tool.Policy'
 import { DEFAULT_SETTINGS, IAgentSettings } from '@domain/models/Settings.Model'
 import { IAgentDirectory } from '@domain/ports/AgentRepository.Port'
 import { IProviderDirectory } from '@domain/ports/ProviderRepository.Port'
 import { ISettingsRepository } from '@domain/ports/SettingsRepository.Port'
-import { IAgent } from '@domain/models/Agent.Model'
+import { IAgent, IAgentTarget } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
@@ -115,27 +117,24 @@ export class AgentProvider implements IAgentProvider {
 
     // Corpo → configuração → padrão do registry. O corpo só vence quando alguém escolheu de propósito.
     const agent = this.getAgent(input.agentId || settings.agentId)
-    // Os modelos do agente já vêm filtrados pelo catálogo: sem nenhum ativado, não há com o que conversar.
-    if (!agent.models.length) throw new AgentWithoutModelError(agent.id)
-    const mode = resolveSessionMode(agent, input)
-    const protocol = this.protocolOf(agent.provider)
+    const choice = this.chooseTarget(agent, input, settings)
+    const protocol = this.protocolOf(choice.provider)
+    const mode = resolveSessionMode(agent, input, lanesOf(protocol))
     // A filha de uma delegação vale o que a mãe vale: admin só se a mãe foi aberta por admin.
     const admin = !!input.adminAccess || (!!input.delegated && !!input.parentSessionId && this.adminSessions.has(input.parentSessionId))
-    if (isSubscription(protocol) && subscriptionAdminOnly() && !admin) throw new SubscriptionRestrictedError(agent.provider)
+    if (isSubscription(protocol) && subscriptionAdminOnly() && !admin) throw new SubscriptionRestrictedError(choice.provider)
     // ⛔ Ferramenta que alcança este servidor (run_bash, Bash/Read/Write… do SDK): só administrador.
     const dangerous = dangerousToolsOf(agent.allowedTools)
     if (dangerous.length && dangerousToolsAdminOnly() && !admin) throw new DangerousToolsRestrictedError(agent.id, dangerous)
     // ⛔ Subagente: só pela delegação. Aqui, e não na tela, porque é por aqui que todo caminho passa.
     if (agent.role === 'subagent' && !input.delegated) throw new SubagentOnlyError(agent.id)
 
-    // ⛔ Modelo pedido que o agente não oferece (desativado, ou de outro agente): erro, não troca muda.
-    if (input.model && !agent.models.includes(input.model)) throw new ModelDisabledError(agent.provider, input.model)
-
     const { adminAccess: _access, delegated: _delegated, parentSessionId: _parent, ...rest } = input
     const created = await this.getAdapter(protocol, mode).createSession(agent, {
       ...rest,
       agentId: agent.id,
-      model: modelFor(agent, input.model || settings.model),
+      provider: choice.provider,
+      model: choice.model,
       mode,
     })
     if (admin) {
@@ -156,8 +155,13 @@ export class AgentProvider implements IAgentProvider {
     const agent = this.getAgent(record.agentId)
     // ⛔ O modelo da conversa foi desativado (ou sumiu do provider) depois que ela começou: erro claro, em
     // vez de seguir usando um modelo que quem administra tirou. `agent.models` já vem só com os utilizáveis.
-    if (record.model && !agent.models.includes(record.model)) throw new ModelDisabledError(record.provider, record.model)
+    if (record.model && !offers(agent, record.provider, record.model)) throw new ModelDisabledError(record.provider, record.model)
     const adapter = this.getAdapter(record.protocol, record.mode)
+    // Acabou de trocar de provider: a transcrição vai antes da mensagem, só para o modelo — o turno
+    // gravado continua o que a pessoa escreveu (quem grava é o `SendMessageUseCase`, com o input dele).
+    const handoff = record.handoff
+    const sent = handoff ? { ...input, text: `${handoff}\n\n${input.text}` } : input
+    const turn = { text: '', tools: [] as string[], by: `${record.provider} · ${record.model}`, completed: false }
 
     record.status = 'running'
     record.turns += 1
@@ -173,13 +177,30 @@ export class AgentProvider implements IAgentProvider {
        */
       const context: IExecutionContext = { token: caller()?.token, sessionId, agentId: record.agentId }
 
-      for await (const event of adapter.sendMessage(agent, sessionId, input, context)) {
+      for await (const event of adapter.sendMessage(agent, sessionId, sent, context)) {
         // Somar o usage aqui vale para as seis implementações de uma vez.
         if (event.type === 'usage') this.sessions.addUsage(record, event.payload)
+        else if (event.type === 'text.delta') turn.text += event.payload.text
+        else if (event.type === 'tool.started') turn.tools.push(event.payload.tool)
+        else if (event.type === 'message.completed') turn.completed = true
         yield event
       }
     } finally {
       record.status = 'idle'
+      // ⚖️ O turno entra na transcrição mesmo interrompido (o que saiu, saiu).
+      if (turn.text || turn.tools.length) {
+        record.transcript = [...(record.transcript ?? []), { request: input.text, files: input.files?.map((file) => file.name), text: turn.text, tools: turn.tools, by: turn.by }]
+      }
+      // O repasse só se dá por entregue quando o provider novo CONCLUIU um turno. Falhou antes: o estado
+      // nativo é zerado de novo e o próximo turno leva a transcrição de agora — com o que falhou dentro, e
+      // sem o risco de o SDK já ter guardado metade do repasse e recebê-lo duas vezes.
+      if (handoff && record.handoff === handoff) {
+        if (turn.completed) record.handoff = undefined
+        else {
+          record.native = undefined
+          record.handoff = handoffText(record.transcript ?? [])
+        }
+      }
     }
   }
 
@@ -202,11 +223,18 @@ export class AgentProvider implements IAgentProvider {
   }
 
   /**
-   * Troca o modelo e/ou o raciocínio de uma sessão viva. Os adapters leem os dois do registro a cada
-   * turno, então basta mudar o registro: o histórico segue o mesmo.
+   * Troca o modelo, o raciocínio e/ou o PROVIDER de uma sessão viva.
    *
-   * ⛔ Só modelo que o agente oferece AGORA (os ativados no catálogo, que já vêm filtrados) — o provider
-   * não muda: outro provider é outro formato de histórico, e isso é conversa nova.
+   * Mesmo provider: os adapters leem modelo e raciocínio do registro a cada turno, então basta mudar o
+   * registro — o histórico segue o mesmo.
+   *
+   * Outro provider: o histórico do anterior mora no SDK dele, e o novo não o lê. O estado nativo é
+   * zerado (cada adapter recomeça o seu sozinho, ver `nativeOf`) e o próximo turno leva a transcrição
+   * (`Handoff.Policy`): o que foi pedido, respondido e que ferramentas rodaram.
+   *
+   * ⛔ Só provider e modelo que o agente oferece AGORA (os ativados no catálogo, que já vêm filtrados).
+   * ⛔ O provider novo passa pelas mesmas travas da criação: ligado, com chave, assinatura só para admin,
+   * e a lane da sessão (sessão chat não vai para assinatura, que só tem a lane agent).
    * ⛔ Nunca no meio de um turno: metade da resposta sairia de um modelo e o custo de outro.
    */
   reconfigure(sessionId: string, change: ISessionChange): ISession {
@@ -214,19 +242,68 @@ export class AgentProvider implements IAgentProvider {
     if (record.status === 'running') throw new SessionBusyError(sessionId)
 
     const agent = this.getAgent(record.agentId)
-    const levels = REASONING_LEVELS[record.protocol]
+    const provider = change.provider ?? record.provider
+    const switching = provider !== record.provider
+    const target = agent.providers.find((candidate) => candidate.provider === provider)
+    if (!target) throw new ProviderNotOfferedError(agent.id, provider)
+
+    const model = change.model ?? (switching ? target.models[0] : record.model)
     const issues: Array<{ field: string; message: string }> = []
-    if (change.model !== undefined && !agent.models.includes(change.model)) issues.push({ field: 'model', message: `not offered by ${agent.id}: ${change.model}` })
+    if (!model || ((change.model !== undefined || switching) && !target.models.includes(model)))
+      issues.push({ field: 'model', message: `not offered by ${agent.id} on ${provider}: ${model ?? '(none)'}` })
+
+    const protocol = switching ? this.protocolOf(provider) : record.protocol
+    if (switching) {
+      if (!lanesOf(protocol).includes(record.mode)) issues.push({ field: 'provider', message: `${provider} does not run the ${record.mode} lane` })
+      if (!isSubscription(protocol) && this.providers && !this.providers.connection(provider)?.key) issues.push({ field: 'provider', message: `${provider} has no API key` })
+    }
+
+    const levels = REASONING_LEVELS[protocol]
     if (change.reasoning && !levels.includes(change.reasoning))
       issues.push({
         field: 'reasoning',
-        message: levels.length ? `not a ${record.protocol} reasoning level: ${change.reasoning}` : `${record.protocol} has no reasoning control here`,
+        message: levels.length ? `not a ${protocol} reasoning level: ${change.reasoning}` : `${protocol} has no reasoning control here`,
       })
     if (issues.length) throw new InvalidSessionChangeError(issues)
+    if (switching) {
+      // A assinatura é pessoal: só a sessão aberta por admin vai para ela (a mesma regra da criação).
+      if (isSubscription(protocol) && subscriptionAdminOnly() && !this.adminSessions.has(sessionId)) throw new SubscriptionRestrictedError(provider)
+      this.getAdapter(protocol, record.mode)
+    }
 
-    if (change.model !== undefined) record.model = change.model
+    record.model = model!
     if (change.reasoning !== undefined) record.reasoning = change.reasoning || undefined
+    // O nível que o protocolo novo não aceita cai: o adapter o descartaria em silêncio.
+    else if (record.reasoning && !levels.includes(record.reasoning)) record.reasoning = undefined
+    if (switching) {
+      record.provider = provider
+      record.protocol = protocol
+      record.native = undefined
+      record.handoff = handoffText(record.transcript ?? [])
+    }
     return toSession(record)
+  }
+
+  /**
+   * O provider e o modelo com que a sessão nasce.
+   *
+   * ⛔ Pedido explícito que o agente não oferece é erro, não troca muda. Sem pedido, valem as
+   * configurações e, depois, o padrão do agente — sempre entre os providers que PODEM rodar agora, para
+   * um provider desligado no topo da lista não derrubar toda conversa nova.
+   */
+  private chooseTarget(agent: IAgent, input: ICreateSessionInput, settings: IAgentSettings): { provider: string; model: string } {
+    if (input.provider && !agent.providers.some((target) => target.provider === input.provider)) throw new ProviderNotOfferedError(agent.id, input.provider)
+    if (input.model && !(input.provider ? offers(agent, input.provider, input.model) : agent.providers.some((target) => target.models.includes(input.model!))))
+      throw new ModelDisabledError(input.provider ?? agent.providers[0]?.provider ?? '', input.model)
+
+    const asked = input.provider || input.model
+    const runnable = (target: IAgentTarget) => this.agents.isTargetRunnable?.(agent, target) ?? true
+    const choice = asked
+      ? targetFor(agent, input.provider, input.model)
+      : (targetFor(agent, settings.provider, settings.model, runnable) ?? targetFor(agent, settings.provider, settings.model))
+    // Os modelos do agente já vêm filtrados pelo catálogo: sem nenhum ativado, não há com o que conversar.
+    if (!choice) throw new AgentWithoutModelError(agent.id)
+    return choice
   }
 
   private requireSession(sessionId: string): ISessionRecord {
@@ -296,6 +373,7 @@ function toSession(record: ISessionRecord): ISession {
     turns: record.turns,
     usage: record.usage,
     usageByModel: record.usageByModel,
+    ...(record.handoff ? { handoff: true } : {}),
     createdAt: record.createdAt,
     lastActivityAt: new Date(record.lastActivityAt),
     metadata: record.metadata,

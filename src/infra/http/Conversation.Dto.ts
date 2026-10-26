@@ -1,3 +1,4 @@
+import { parseUsageKey } from '@domain/models/Session.Model'
 import { TClassification } from '@domain/models/Classification.Model'
 import { IConversationPreview, IConversationSession, IConversationStats, IConversationTurn, IStoredUsage } from '@domain/models/Conversation.Model'
 import { costOf, TModelPricing } from '@domain/models/Model.Pricing'
@@ -64,20 +65,28 @@ export function toConversationDto(session: IConversationSession, view: IConversa
 
   if (!view.admin) return dto
 
-  const { costUsd, costIsFloor } = conversationCost(session, view.pricingOf(session.provider))
+  const { costUsd, costIsFloor } = conversationCost(session, view.pricingOf)
 
   return { ...dto, classification: session.classification, ...(costUsd === undefined ? {} : { costUsd }), ...(costIsFloor ? { costIsFloor } : {}) }
 }
 
 /**
- * O custo da conversa: modelo a modelo quando ela registra o consumo por modelo (trocou de modelo, ou
- * é recente), senão o modelo da conversa com o consumo inteiro — o cálculo de sempre.
+ * O custo da conversa: provider + modelo a provider + modelo quando ela registra o consumo assim (trocou
+ * no meio, ou é recente), senão o modelo da conversa com o consumo inteiro — o cálculo de sempre. Cada
+ * entrada é precificada pela tabela DO SEU provider (`parseUsageKey`): a chave antiga, só com o modelo, é
+ * do provider da conversa.
  *
  * ⚠️ Modelo sem preço não vira zero: fica de fora e marca o total como piso.
  */
-export function conversationCost(session: Pick<IConversationSession, 'model' | 'usage' | 'usageByModel'>, pricing: TModelPricing): { costUsd?: number; costIsFloor?: boolean } {
+export function conversationCost(
+  session: Pick<IConversationSession, 'provider' | 'model' | 'usage' | 'usageByModel'>,
+  pricingOf: (provider: string) => TModelPricing,
+): { costUsd?: number; costIsFloor?: boolean } {
   const entries = session.usageByModel && Object.keys(session.usageByModel).length ? Object.entries(session.usageByModel) : [[session.model, session.usage] as const]
-  const costs = entries.map(([model, usage]) => costOf(model, usage, pricing))
+  const costs = entries.map(([key, usage]) => {
+    const { provider, model } = parseUsageKey(key, session.provider)
+    return costOf(model, usage, pricingOf(provider))
+  })
   const priced = costs.filter((cost): cost is number => cost !== undefined)
   if (!priced.length) return {}
 
@@ -95,8 +104,9 @@ export function toTurnDto(turn: IConversationTurn, conversation: { provider: str
   const { classification, ...rest } = turn
   if (!view.admin) return rest
 
+  // O provider e o modelo do turno; nos antigos, os da conversa.
   const model = turn.model ?? conversation.model
-  const costUsd = model && turn.usage ? costOf(model, turn.usage, view.pricingOf(conversation.provider)) : undefined
+  const costUsd = model && turn.usage ? costOf(model, turn.usage, view.pricingOf(turn.provider ?? conversation.provider)) : undefined
 
   return { ...rest, classification, ...(costUsd === undefined ? {} : { costUsd }) }
 }

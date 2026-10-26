@@ -282,6 +282,13 @@ gateway's own tools (`save_agent`, `list_models`, …). No model is enabled at b
 active once its provider is on, one of its models is enabled in Providers → Models and there is a
 key (or a subscription login).
 
+An agent can run on **several providers**, each with its own models (`providers: [{ provider, models }]`;
+the first is the default). A live conversation switches between them like it switches models
+(`PATCH /v1/sessions/:id { provider, model }`): each provider keeps its history inside its own SDK, so
+the new one receives a **transcript** of the previous turns — requests, answers and the tools that ran —
+and its internal state (tool ids, encrypted reasoning, cache) stays behind. Usage and cost are kept per
+provider and model.
+
 Who the agent serves, which agent answers and with which model are *operating* decisions, so
 they live in settings you change at runtime (`GET`/`PUT /v1/settings`) instead of in `.env`. They
 are stored in the same SQLite file as the conversations (`CONVERSATIONS_DB`; `off` keeps them in
@@ -291,6 +298,7 @@ memory, lost on restart) and apply on the next session, in the same instant they
 | --- | --- |
 | `audience` | `off`: nobody opens a new session. `restricted`: only callers whose **proven** role is in `AUDIENCE_ROLES`. `all` (default): every caller the gateway already lets through. |
 | `agentId` | Agent that answers when the caller sends none. Empty = the first active agent that is not a subagent. Must be active to be saved. |
+| `provider` | Provider used when the caller sends none: one of the chosen agent's providers. Empty = the first that offers `model`, else the agent's default. |
 | `model` | Model used when the caller sends none. Must be one of the chosen agent's enabled models (`422` otherwise); a model asked for explicitly that the agent does not offer is `409 model_disabled`, never silently swapped. |
 | `classifyTurns` | Turn on the [turn classifier](#turn-classification). Absent = off. |
 | `classifierProvider` | Provider that classifies: enabled, with an API key (subscriptions do not classify). |
@@ -479,9 +487,10 @@ the build if it drifts from the routes the server actually registers.
 | `PUT /v1/conversations/:id/share` | `{ shared }`: open or close the read-only link. Owner or administrator. |
 | `DELETE /v1/conversations/:id` | Deletes the persisted record. Owner or administrator. |
 | `GET /v1/shared/:id` | A shared conversation, read-only and stripped to question and answer. **Public.** |
-| `POST /v1/sessions` | `{ agentId?, mode, model, reasoning, language }` → a session. `403 agent_unavailable` when the audience refuses you. |
+| `POST /v1/sessions` | `{ agentId?, mode, provider?, model, reasoning, language }` → a session. `403 agent_unavailable` when the audience refuses you. |
 | `GET /v1/sessions` | Your live sessions, most recently active first. |
-| `GET /v1/sessions/:id` | Lane, model, turns and accumulated usage. |
+| `GET /v1/sessions/:id` | Lane, provider, model, turns and accumulated usage. |
+| `PATCH /v1/sessions/:id` | `{ provider?, model?, reasoning? }`: switch from the next turn on. Another provider of the agent receives the transcript. |
 | `DELETE /v1/sessions/:id` | Ends the session, aborting anything in flight. |
 | `POST /v1/sessions/:id/messages` | The turn. |
 | `POST /v1/sessions/:id/cancel` | Aborts the generation, keeping the session. |

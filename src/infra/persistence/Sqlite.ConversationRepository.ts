@@ -1,3 +1,4 @@
+import { parseUsageKey } from '@domain/models/Session.Model'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
@@ -113,6 +114,7 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: 'conversation_turns', column: 'model', definition: 'TEXT' },
   { table: 'conversation_turns', column: 'effort', definition: 'TEXT' },
   { table: 'conversations', column: 'usage_by_model', definition: 'TEXT' },
+  { table: 'conversation_turns', column: 'provider', definition: 'TEXT' },
 ]
 
 /**
@@ -318,11 +320,11 @@ export class SqliteConversationRepository implements IConversationRepository {
       const stored = this.db
         .prepare(
           `INSERT INTO conversation_turns
-             (conversation_id, idx, at, request, files, response, reasoning, tool_calls, warnings, input_tokens, output_tokens, reasoning_tokens, total_tokens, cache_read_tokens, cache_write_tokens, duration_ms, first_text_ms, aborted, error, classification, model, effort)
+             (conversation_id, idx, at, request, files, response, reasoning, tool_calls, warnings, input_tokens, output_tokens, reasoning_tokens, total_tokens, cache_read_tokens, cache_write_tokens, duration_ms, first_text_ms, aborted, error, classification, model, effort, provider)
            VALUES (?, CASE WHEN EXISTS (SELECT 1 FROM conversation_turns WHERE conversation_id = ? AND idx = ?)
                         THEN (SELECT MAX(idx) + 1 FROM conversation_turns WHERE conversation_id = ?)
                         ELSE ? END,
-                   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            RETURNING idx`,
         )
         .get(
@@ -353,6 +355,7 @@ export class SqliteConversationRepository implements IConversationRepository {
           turn.classification ?? null,
           turn.model ?? null,
           turn.effort ?? null,
+          turn.provider ?? null,
         ) as TRow
       return Number(stored.idx)
     })
@@ -578,12 +581,12 @@ export class SqliteConversationRepository implements IConversationRepository {
           .prepare(
             `SELECT date(datetime(t.at, ?)) AS day, t.conversation_id AS conversation_id, c.title AS title, ${group}
                     json_extract(c.metadata, '$.owner.id') AS owner_id, json_extract(c.metadata, '$.owner.email') AS owner_email,
-                    c.agent_id AS agent_id, c.provider AS provider, COALESCE(t.model, c.model) AS model, COUNT(*) AS turns,
+                    c.agent_id AS agent_id, COALESCE(t.provider, c.provider) AS provider, COALESCE(t.model, c.model) AS model, COUNT(*) AS turns,
                     SUM(t.input_tokens) AS input_tokens, SUM(t.output_tokens) AS output_tokens, SUM(t.reasoning_tokens) AS reasoning_tokens,
                     SUM(t.total_tokens) AS total_tokens, SUM(t.cache_read_tokens) AS cache_read_tokens, SUM(t.cache_write_tokens) AS cache_write_tokens
              FROM conversation_turns t JOIN conversations c ON c.id = t.conversation_id
              WHERE ${where.join(' AND ')}
-             GROUP BY day, t.conversation_id, COALESCE(t.model, c.model)
+             GROUP BY day, t.conversation_id, COALESCE(t.provider, c.provider), COALESCE(t.model, c.model)
              ORDER BY day ASC`,
           )
           .all(...params) as TRow[]
@@ -631,9 +634,11 @@ export class SqliteConversationRepository implements IConversationRepository {
         for (const row of rows) {
           const byModel = json<Record<string, IStoredUsage> | undefined>(row.usage_by_model, undefined)
           const entries = byModel && Object.keys(byModel).length ? Object.entries(byModel) : [[text(row.model), usageOf(row)] as const]
-          for (const [model, usage] of entries) {
-            const key = `${text(row.provider)}\u0000${model}`
-            const entry = models.get(key) ?? models.set(key, { provider: text(row.provider), model, conversations: 0, usage: usageOf({}) as Required<IStoredUsage> }).get(key)!
+          for (const [usageKey, usage] of entries) {
+            // A chave é `provider|modelo` (a conversa pode ter trocado de provider); a antiga, só o modelo.
+            const { provider, model } = parseUsageKey(usageKey, text(row.provider))
+            const key = `${provider}\u0000${model}`
+            const entry = models.get(key) ?? models.set(key, { provider, model, conversations: 0, usage: usageOf({}) as Required<IStoredUsage> }).get(key)!
             entry.conversations += 1
             for (const field of Object.keys(entry.usage) as Array<keyof IStoredUsage>) entry.usage[field] += usage[field] ?? 0
           }
@@ -692,6 +697,7 @@ export class SqliteConversationRepository implements IConversationRepository {
       text: text(row.response),
       reasoning: typeof row.reasoning === 'string' ? row.reasoning : undefined,
       model: typeof row.model === 'string' ? row.model : undefined,
+      ...(typeof row.provider === 'string' ? { provider: row.provider } : {}),
       effort: typeof row.effort === 'string' ? row.effort : undefined,
       toolCalls: json<IConversationTurn['toolCalls']>(row.tool_calls, []),
       usage: usageOf(row),

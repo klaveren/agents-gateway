@@ -1,6 +1,6 @@
 import { agentIssues, IAgentRules } from '@domain/Agent.Policy'
 import { AgentInUseError, AgentNotFoundError, InvalidAgentError } from '@domain/errors/Domain.Error'
-import { IAgent } from '@domain/models/Agent.Model'
+import { IAgent, IAgentTarget } from '@domain/models/Agent.Model'
 import { IAgentDirectory, IAgentRepository, IStoredAgent } from '@domain/ports/AgentRepository.Port'
 
 /** Um agente na lista da tela, com quem mexeu por último. */
@@ -34,10 +34,11 @@ export class AgentCatalog implements IAgentDirectory {
      */
     private readonly usable?: (providerId: string, modelId: string) => boolean,
     /**
-     * O agente pode abrir conversa agora (ver `agentUnavailable`) — provider ligado, modelo ativo, chave.
-     * Ausente: todo agente com modelo conta. É o que escolhe o PADRÃO e os alvos de delegação.
+     * Um provider do agente pode rodar agora (ver `targetUnavailable`) — ligado, modelo ativo, chave.
+     * Ausente: todo provider com modelo conta. O agente roda se algum provider roda: é o que escolhe o
+     * PADRÃO, os alvos de delegação e o provider com que a sessão nasce.
      */
-    private readonly runnable?: (agent: IAgent) => boolean,
+    private readonly runnable?: (agent: IAgent, target: IAgentTarget) => boolean,
   ) {}
 
   /** Os agentes com os modelos que podem ser usados agora. */
@@ -60,12 +61,16 @@ export class AgentCatalog implements IAgentDirectory {
   }
 
   /** Os modelos declarados que estão DESLIGADOS no catálogo — a tela de edição os mostra marcados. */
-  unusableModels(agent: IAgent): string[] {
-    return this.usable ? agent.models.filter((model) => !this.usable!(agent.provider, model)) : []
+  unusableModels(agent: IAgent): Record<string, string[]> {
+    if (!this.usable) return {}
+    return Object.fromEntries(
+      agent.providers.map((target) => [target.provider, target.models.filter((model) => !this.usable!(target.provider, model))] as const).filter(([, models]) => models.length),
+    )
   }
 
   private effective(agent: IAgent): IAgent {
-    return this.usable ? { ...agent, models: agent.models.filter((model) => this.usable!(agent.provider, model)) } : agent
+    if (!this.usable) return agent
+    return { ...agent, providers: agent.providers.map((target) => ({ ...target, models: target.models.filter((model) => this.usable!(target.provider, model)) })) }
   }
 
   /** O agente como gravado, para editar: os modelos desligados aparecem (ver `unusableModels`). */
@@ -82,9 +87,14 @@ export class AgentCatalog implements IAgentDirectory {
     return this.list().find((agent) => agent.role !== 'subagent' && this.isRunnable(agent))
   }
 
-  /** O agente (já com os modelos utilizáveis) pode abrir conversa agora. */
+  /** O agente (já com os modelos utilizáveis) pode abrir conversa agora: algum provider dele roda. */
   isRunnable(agent: IAgent): boolean {
-    return this.runnable ? this.runnable(agent) : agent.models.length > 0
+    return agent.providers.some((target) => this.isTargetRunnable(agent, target))
+  }
+
+  /** Este provider do agente (já com os modelos utilizáveis) pode rodar agora. */
+  isTargetRunnable(agent: IAgent, target: IAgentTarget): boolean {
+    return target.models.length > 0 && (this.runnable ? this.runnable(agent, target) : true)
   }
 
   save(agent: IAgent, options: ISaveAgentOptions): IStoredAgent {
@@ -118,10 +128,9 @@ function toAgent(stored: IStoredAgent): IAgent {
   return {
     id: stored.id,
     name: stored.name,
-    provider: stored.provider,
+    providers: stored.providers.map((target) => ({ provider: target.provider, models: [...target.models] })),
     systemPrompt: stored.systemPrompt,
     ...(stored.soul ? { soul: stored.soul } : {}),
-    models: stored.models,
     reasoningEfforts: stored.reasoningEfforts,
     modes: stored.modes,
     allowedTools: stored.allowedTools,

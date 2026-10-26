@@ -148,6 +148,16 @@ export class ProviderUnavailableError extends DomainError {
   }
 }
 
+/** O agente não roda neste provider: ele não está entre os `providers` do agente. */
+export class ProviderNotOfferedError extends DomainError {
+  constructor(
+    public readonly agentId: string,
+    public readonly providerId: string,
+  ) {
+    super(`Agent ${agentId} does not run on provider ${providerId}: add it to the agent's providers.`)
+  }
+}
+
 /** ⛔ Agente que outro usa (delegação) ou que é o padrão das configurações: apagar quebraria quem depende dele. */
 export class AgentInUseError extends DomainError {
   constructor(

@@ -6,19 +6,32 @@ export interface INativeRef {
   protocol: string
 }
 
-/** Trocou o provider: ficam os modelos que o novo oferece; sem nenhum, o primeiro ativado vira o padrão. */
+/** O catálogo de um provider chegou: ficam os modelos que ele oferece; sem nenhum, o primeiro ativado vira o padrão. */
 export function pruneModels(current: readonly string[], offered: readonly string[]): string[] {
   const kept = current.filter((model) => offered.includes(model))
   return kept.length ? kept : offered.slice(0, 1)
 }
 
 /**
- * ⚠️ As nativas `sdk:` são da família do protocolo (claude-sub usa as do claude). Trocou o provider: as de
- * outra família saem, senão o servidor recusa o salvamento. Sem a família (protocolos não carregados), nada muda.
+ * ⚠️ As nativas `sdk:` são da família do protocolo (claude-sub usa as do claude). Saiu um provider: as de
+ * uma família que nenhum provider restante tem saem, senão o servidor recusa o salvamento. Sem as famílias
+ * (protocolos não carregados), nada muda.
  */
-export function pruneNatives(allowed: readonly string[], natives: readonly INativeRef[], family: string | undefined): string[] {
-  if (!family) return [...allowed]
-  return allowed.filter((entry) => !entry.startsWith('sdk:') || natives.some((tool) => tool.id === entry && tool.protocol === family))
+export function pruneNatives(allowed: readonly string[], natives: readonly INativeRef[], families: readonly string[] | undefined): string[] {
+  if (!families) return [...allowed]
+  return allowed.filter((entry) => !entry.startsWith('sdk:') || natives.some((tool) => tool.id === entry && families.includes(tool.protocol)))
+}
+
+/** As lanes que ALGUM dos protocolos roda (assinatura só a agent). Sem protocolo conhecido, as duas. */
+export function unionLanes(infos: ReadonlyArray<Pick<IProtocolInfo, 'lanes'> | undefined>): TMode[] {
+  const known = infos.filter((info): info is Pick<IProtocolInfo, 'lanes'> => !!info)
+  if (!known.length) return ['chat', 'agent']
+  return (['chat', 'agent'] as TMode[]).filter((mode) => known.some((info) => info.lanes.includes(mode)))
+}
+
+/** Os níveis de raciocínio de todos os protocolos, sem repetir, na ordem em que aparecem. */
+export function unionLevels(infos: ReadonlyArray<Pick<IProtocolInfo, 'reasoningLevels'> | undefined>): string[] {
+  return [...new Set(infos.flatMap((info) => info?.reasoningLevels ?? []))]
 }
 
 /** As lanes de partida de um protocolo: as que ele aceita; assinatura, só `agent`. */

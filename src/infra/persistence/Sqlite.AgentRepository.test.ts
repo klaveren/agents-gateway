@@ -3,15 +3,14 @@ import { describe, it } from 'node:test'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
-import { SqliteAgentRepository } from './Sqlite.AgentRepository'
+import { SqliteAgentRepository, withProviders } from './Sqlite.AgentRepository'
 
 describe('SqliteAgentRepository', () => {
   const agent: IAgent = {
     id: 'juridico',
     name: 'Jurídico',
-    provider: EProvider.CLAUDE,
+    providers: [{ provider: EProvider.CLAUDE, models: ['claude-sonnet-5'] }],
     systemPrompt: 'pesquise',
-    models: ['claude-sonnet-5'],
     reasoningEfforts: ['low'],
     modes: [EMode.CHAT, EMode.AGENT],
     allowedTools: [],
@@ -95,5 +94,16 @@ describe('SqliteAgentRepository', () => {
       repo.list().map((item) => item.id),
       ['operador'],
     )
+  })
+
+  it('⚖️ o documento de antes (`provider` + `models`) é lido como um `providers` de um item, sem migração', () => {
+    const repo = new SqliteAgentRepository(':memory:')
+    const legacy = { id: 'velho', name: 'Velho', provider: 'claude', models: ['claude-sonnet-5'], systemPrompt: 'p', modes: [EMode.CHAT], allowedTools: [] }
+    repo.seedOnce([legacy as unknown as IAgent], 'seed')
+
+    const [read] = repo.list()
+    assert.deepStrictEqual(read.providers, [{ provider: 'claude', models: ['claude-sonnet-5'] }])
+    assert.ok(!('provider' in read) && !('models' in read))
+    assert.deepStrictEqual(withProviders({ ...agent }), agent)
   })
 })

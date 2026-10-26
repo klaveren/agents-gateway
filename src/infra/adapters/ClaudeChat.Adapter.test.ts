@@ -17,7 +17,7 @@ interface IRequestOptions {
 type TCreate = (params: Anthropic.MessageCreateParamsStreaming, options?: IRequestOptions) => Promise<unknown>
 
 describe('ClaudeChatAdapter', () => {
-  const getAgent = (): IAgent => ({ ...CLAUDE_TEST_AGENT, models: ['claude-sonnet-5'], allowedTools: ['run_bash'] })
+  const getAgent = (): IAgent => ({ ...CLAUDE_TEST_AGENT, providers: [{ provider: EProvider.CLAUDE, models: ['claude-sonnet-5'] }], allowedTools: ['run_bash'] })
 
   const clientWith = (create: TCreate): Anthropic => ({ messages: { create } }) as unknown as Anthropic
 

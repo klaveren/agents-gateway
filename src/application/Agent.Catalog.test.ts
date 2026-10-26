@@ -11,9 +11,8 @@ describe('AgentCatalog', () => {
   const base: IAgent = {
     id: 'pesquisa',
     name: 'Pesquisa',
-    provider: EProvider.GOOGLE,
+    providers: [{ provider: EProvider.GOOGLE, models: ['gemini-3.7-flash'] }],
     systemPrompt: 'pesquise',
-    models: ['gemini-3.7-flash'],
     modes: [EMode.CHAT],
     allowedTools: ['search_web'],
   }
@@ -85,15 +84,15 @@ describe('AgentCatalog', () => {
   it('⚖️ só oferece os modelos ATIVADOS no catálogo; desligar tira de todos sem reescrever o agente', () => {
     const enabled = new Set(['claude-sonnet-5'])
     const repository = new NullAgentRepository()
-    repository.save({ ...custom, provider: 'claude', models: ['claude-sonnet-5', 'claude-opus-5'] }, 'x')
+    repository.save({ ...custom, providers: [{ provider: 'claude', models: ['claude-sonnet-5', 'claude-opus-5'] }] }, 'x')
     const catalog = new AgentCatalog(repository, (_provider, model) => enabled.has(model))
 
-    assert.deepStrictEqual(catalog.get('juridico')?.models, ['claude-sonnet-5'])
-    assert.deepStrictEqual(catalog.unusableModels(repository.list()[0]), ['claude-opus-5'])
+    assert.deepStrictEqual(catalog.get('juridico')?.providers[0].models, ['claude-sonnet-5'])
+    assert.deepStrictEqual(catalog.unusableModels(repository.list()[0]), { claude: ['claude-opus-5'] })
 
     enabled.delete('claude-sonnet-5')
-    assert.deepStrictEqual(catalog.get('juridico')?.models, [])
-    assert.deepStrictEqual(repository.list()[0].models, ['claude-sonnet-5', 'claude-opus-5'])
+    assert.deepStrictEqual(catalog.get('juridico')?.providers[0].models, [])
+    assert.deepStrictEqual(repository.list()[0].providers[0].models, ['claude-sonnet-5', 'claude-opus-5'])
   })
   it('o padrão é o primeiro que pode rodar e não é subagente', () => {
     const repository = new NullAgentRepository()

@@ -21,7 +21,7 @@ interface ICall {
 }
 
 describe('OpenAIAgentAdapter', () => {
-  const getAgent = (): IAgent => ({ ...OPENAI_TEST_AGENT, models: ['gpt-5.6-sol'], allowedTools: ['search_web', 'mcp:crm/*'] })
+  const getAgent = (): IAgent => ({ ...OPENAI_TEST_AGENT, providers: [{ provider: EProvider.OPENAI, models: ['gpt-5.6-sol'] }], allowedTools: ['search_web', 'mcp:crm/*'] })
 
   const turn = () => [
     { type: 'raw_model_stream_event', data: { type: 'output_text_delta', delta: 'Searching' } },
@@ -166,7 +166,7 @@ describe('OpenAIAgentAdapter', () => {
       catalog,
       connections: { connection: (id) => ({ providerId: id, name: 'Compatível', protocol: EProvider.OPENAI, baseUrl: 'https://api.compativel.example/v1', key: 'k' }) },
     })
-    const other = await compatible.createSession({ ...agent, provider: 'compat' }, { agentId: OPENAI_TEST_AGENT.id })
+    const other = await compatible.createSession({ ...agent, providers: [{ provider: 'compat', models: ['gpt-5.6-sol'] }] }, { agentId: OPENAI_TEST_AGENT.id })
     const events = await drain(compatible.sendMessage(agent, other.id, { text: 'hi' }, {}))
     assert.deepStrictEqual(
       viaCompatible[0].agent.tools.map((tool) => tool.name),

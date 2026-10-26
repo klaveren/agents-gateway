@@ -19,6 +19,7 @@ import {
   AgentInUseError,
   DangerousToolsRestrictedError,
   ModelDisabledError,
+  ProviderNotOfferedError,
   NoAgentAvailableError,
   SubagentOnlyError,
   SubscriptionRestrictedError,
@@ -49,6 +50,7 @@ export type TErrorCode =
   | 'agent_in_use'
   | 'no_agent_available'
   | 'model_disabled'
+  | 'provider_not_offered'
   | 'upstream_error'
   | 'agent_without_model'
   | 'invalid_credentials'
@@ -170,6 +172,9 @@ export function toHttpFailure(error: unknown): IHttpFailure {
     return { status: 503, code: 'no_agent_available', message: error.message }
   }
 
+  if (error instanceof ProviderNotOfferedError) {
+    return { status: 409, code: 'provider_not_offered', message: error.message, details: { agentId: error.agentId, providerId: error.providerId } }
+  }
   if (error instanceof ModelDisabledError) {
     return { status: 409, code: 'model_disabled', message: error.message, details: { providerId: error.providerId, modelId: error.modelId } }
   }

@@ -9,9 +9,8 @@ import { resolveSessionMode } from './Session.Policy'
 const agentWith = (modes: EMode[]): IAgent => ({
   id: 'operador-teste',
   name: 'Operador (teste)',
-  provider: EProvider.CLAUDE,
+  providers: [{ provider: EProvider.CLAUDE, models: ['claude-sonnet-5'] }],
   systemPrompt: 'prompt',
-  models: ['claude-sonnet-5'],
   modes,
   allowedTools: ['run_bash'],
 })

@@ -6,6 +6,8 @@ export interface ICreateSessionInput {
    * direto para comparar dois providers continua podendo escolher, e aí a escolha dele ganha.
    */
   agentId?: string
+  /** Um dos providers do agente. Ausente: o primeiro que oferece o `model` (ou o padrão do agente). */
+  provider?: string
   model?: string
   systemPrompt?: string
   reasoning?: string

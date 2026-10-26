@@ -111,13 +111,19 @@ watch(
     if (!current) return
     audience.value = current.audience
     agentId.value = current.agentId ?? ''
-    model.value = current.model ?? ''
+    // Provider e modelo num valor só (`provider|modelo`); gravado antes do provider, só o modelo — no primeiro provider que o oferece.
+    model.value = current.model ? `${current.provider ?? providerOfModel(current.model)}|${current.model}` : ''
     classifier.value = current.classifierModel ? `${current.classifierProvider ?? ''}::${current.classifierModel}` : ''
     classifyTurns.value = current.classifyTurns ?? false
     limitDrafts.value = Object.fromEntries(LIMITS.map(({ name }) => [name, current.limits?.[name] ?? ''])) as Partial<Record<TLimitName, number | ''>>
   },
   { immediate: true },
 )
+
+/** O provider do agente escolhido que oferece este modelo (configuração gravada antes de haver provider). */
+function providerOfModel(id: string): string {
+  return agent.value?.providers.find((provider) => provider.models.includes(id))?.id ?? ''
+}
 
 /** ⚠️ O modelo é do agente: trocar o agente larga o modelo (volta a "Padrão do agente") em vez de mandar um que ele não tem. */
 function onAgentChange() {
@@ -148,7 +154,8 @@ async function saveSettings() {
     await settings.save({
       audience: audience.value,
       agentId: agentId.value || null,
-      model: model.value || null,
+      provider: model.value ? model.value.slice(0, model.value.indexOf('|')) : null,
+      model: model.value ? model.value.slice(model.value.indexOf('|') + 1) : null,
       classifierModel: classifierModel || null,
       classifierProvider: classifierProvider || null,
       classifyTurns: classifyTurns.value,
@@ -197,7 +204,9 @@ async function saveSettings() {
             Modelo padrão
             <select v-model="model" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2">
               <option value="">Padrão do agente</option>
-              <option v-for="option in agent?.models ?? []" :key="option" :value="option">{{ option }}</option>
+              <optgroup v-for="provider in agent?.providers ?? []" :key="provider.id" :label="provider.name">
+                <option v-for="option in provider.models" :key="option" :value="`${provider.id}|${option}`" :disabled="!!provider.unavailable">{{ option }}{{ provider.unavailable ? ` (${provider.unavailable.label})` : '' }}</option>
+              </optgroup>
             </select>
           </label>
           <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">

@@ -10,9 +10,8 @@ describe('toAgentDto — raciocínio', () => {
   const agent = (over: Partial<IAgent> = {}): IAgent => ({
     id: 'a',
     name: 'A',
-    provider: EProvider.CLAUDE,
+    providers: [{ provider: EProvider.CLAUDE, models: ['raciocina', 'parcial', 'nao-raciocina', 'desconhecido'] }],
     systemPrompt: 'x',
-    models: ['raciocina', 'parcial', 'nao-raciocina', 'desconhecido'],
     reasoningEfforts: ['high', 'low', 'max'],
     modes: [EMode.CHAT],
     allowedTools: [],
@@ -26,16 +25,16 @@ describe('toAgentDto — raciocínio', () => {
   }
 
   it('cruza os níveis do agente (na ordem do protocolo) com o que o catálogo sabe de cada modelo', () => {
-    const dto = toAgentDto(agent(), {}, { protocol: EProvider.CLAUDE, reasoningOf: (model) => catalog[model] })
+    const dto = toAgentDto(agent(), () => ({ protocol: EProvider.CLAUDE, reasoningOf: (model: string) => catalog[model] }))
 
-    assert.deepStrictEqual(dto.reasoningEfforts, ['low', 'high', 'max'])
-    assert.deepStrictEqual(dto.modelReasoning, { raciocina: ['low', 'high', 'max'], parcial: ['low'], 'nao-raciocina': [], desconhecido: null })
+    assert.deepStrictEqual(dto.providers[0].reasoningEfforts, ['low', 'high', 'max'])
+    assert.deepStrictEqual(dto.providers[0].modelReasoning, { raciocina: ['low', 'high', 'max'], parcial: ['low'], 'nao-raciocina': [], desconhecido: null })
   })
 
   it('nível gravado que o protocolo não aceita some (um agente Google antigo não oferece raciocínio)', () => {
-    const dto = toAgentDto(agent({ provider: EProvider.GOOGLE, models: ['gemini'], reasoningEfforts: ['low'] }), {}, { protocol: EProvider.GOOGLE })
+    const dto = toAgentDto(agent({ providers: [{ provider: EProvider.GOOGLE, models: ['gemini'] }], reasoningEfforts: ['low'] }), () => ({ protocol: EProvider.GOOGLE }))
 
-    assert.strictEqual(dto.reasoningEfforts, undefined)
-    assert.deepStrictEqual(dto.modelReasoning, { gemini: [] })
+    assert.strictEqual(dto.providers[0].reasoningEfforts, undefined)
+    assert.deepStrictEqual(dto.providers[0].modelReasoning, { gemini: [] })
   })
 })

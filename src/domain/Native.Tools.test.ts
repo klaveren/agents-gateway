@@ -42,9 +42,8 @@ describe('Native.Tools', () => {
     const agent = (over: Partial<IAgent> = {}): IAgent => ({
       id: 'pesquisa',
       name: 'Pesquisa',
-      provider: 'claude',
+      providers: [{ provider: 'claude', models: ['claude-sonnet-5'] }],
       systemPrompt: 'p',
-      models: ['claude-sonnet-5'],
       modes: [EMode.AGENT],
       allowedTools: [],
       ...over,

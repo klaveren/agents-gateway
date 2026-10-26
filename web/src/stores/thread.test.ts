@@ -265,29 +265,55 @@ describe('open: sessão viva', () => {
 })
 
 describe('reconcileDraft', () => {
+  const provider = (id: string, models: string[], modelReasoning: Record<string, string[] | null>, extra = {}) => ({
+    id,
+    name: id,
+    models,
+    pricing: {},
+    modelReasoning,
+    reasoningEfforts: ['low'],
+    ...extra,
+  })
   const agent = {
-    models: ['m1', 'm2'],
+    providers: [provider('p1', ['m1', 'm2'], { m1: ['low', 'high'], m2: [] })],
     modes: ['chat' as const, 'agent' as const],
     allowedTools: ['Read'],
-    modelReasoning: { m1: ['low', 'high'], m2: [] },
     reasoningEfforts: ['low'],
   }
+  const two = { ...agent, providers: [...agent.providers, provider('sub', ['m3', 'm1'], { m3: null, m1: ['low'] })] }
 
   it('mantém o que ainda vale', () => {
-    const draft = { agentId: 'a', mode: 'agent' as const, tools: false, model: 'm2' }
+    const draft = { agentId: 'a', mode: 'agent' as const, tools: false, provider: 'p1', model: 'm2' }
 
-    expect(reconcileDraft(draft, agent)).toEqual(draft)
+    expect(reconcileDraft(draft, agent)).toEqual({ ...draft, reasoning: undefined })
   })
 
-  it('modelo que saiu do agente volta ao primeiro', () => {
-    expect(reconcileDraft({ agentId: 'a', mode: 'chat', tools: false, model: 'velho' }, agent).model).toBe('m1')
-    expect(reconcileDraft({ agentId: 'a', mode: 'chat', tools: false }, agent).model).toBe('m1')
+  it('provider + modelo que saíram do agente voltam ao padrão', () => {
+    expect(reconcileDraft({ agentId: 'a', mode: 'chat', tools: false, provider: 'p1', model: 'velho' }, agent)).toMatchObject({ provider: 'p1', model: 'm1' })
+    expect(reconcileDraft({ agentId: 'a', mode: 'chat', tools: false }, agent)).toMatchObject({ provider: 'p1', model: 'm1' })
+    expect(reconcileDraft({ agentId: 'a', mode: 'chat', tools: false, provider: 'sumiu', model: 'm3' }, two)).toMatchObject({ provider: 'p1', model: 'm1' })
+  })
+
+  it('o mesmo modelo em dois providers: vale o provider pedido; sem provider, o primeiro que o oferece', () => {
+    expect(reconcileDraft({ agentId: 'a', mode: 'agent', tools: false, provider: 'sub', model: 'm1' }, two)).toMatchObject({ provider: 'sub', model: 'm1' })
+    expect(reconcileDraft({ agentId: 'a', mode: 'agent', tools: false, model: 'm3' }, two)).toMatchObject({ provider: 'sub', model: 'm3' })
+  })
+
+  it('o padrão pula o provider que não roda agora', () => {
+    const off = { ...two, providers: [{ ...two.providers[0], unavailable: { reason: 'no_key', label: 'sem chave' } }, two.providers[1]] }
+    expect(reconcileDraft({ agentId: 'a', mode: 'agent', tools: false }, off)).toMatchObject({ provider: 'sub', model: 'm3' })
   })
 
   it('lane que saiu volta à primeira, sem tools', () => {
     const only = { ...agent, modes: ['agent' as const] }
 
     expect(reconcileDraft({ agentId: 'a', mode: 'chat', tools: true, model: 'm1' }, only)).toMatchObject({ mode: 'agent', tools: false })
+  })
+
+  it('provider que não roda a lane (assinatura) leva a lane que ele roda', () => {
+    const lanes = (id: string) => (id === 'sub' ? (['agent'] as const) : (['chat', 'agent'] as const))
+    expect(reconcileDraft({ agentId: 'a', mode: 'chat', tools: true, provider: 'sub', model: 'm3' }, two, lanes)).toMatchObject({ mode: 'agent', tools: false })
+    expect(reconcileDraft({ agentId: 'a', mode: 'chat', tools: false, provider: 'p1', model: 'm1' }, two, lanes)).toMatchObject({ mode: 'chat' })
   })
 
   it('tools só valem no chat e com ferramentas liberadas', () => {
@@ -298,7 +324,9 @@ describe('reconcileDraft', () => {
   it('nível de raciocínio que o modelo não aceita volta ao padrão', () => {
     expect(reconcileDraft({ agentId: 'a', mode: 'chat', tools: false, model: 'm1', reasoning: 'high' }, agent).reasoning).toBe('high')
     expect(reconcileDraft({ agentId: 'a', mode: 'chat', tools: false, model: 'm2', reasoning: 'high' }, agent).reasoning).toBeUndefined()
-    // Modelo trocado por revalidação: o nível é conferido contra o modelo novo.
-    expect(reconcileDraft({ agentId: 'a', mode: 'chat', tools: false, model: 'velho', reasoning: 'high' }, { ...agent, modelReasoning: undefined }).reasoning).toBeUndefined()
+    // O mesmo modelo noutro provider aceita outros níveis: conferido contra o provider escolhido.
+    expect(reconcileDraft({ agentId: 'a', mode: 'agent', tools: false, provider: 'sub', model: 'm1', reasoning: 'high' }, two).reasoning).toBeUndefined()
+    // Catálogo que não sabe (`null`): valem os do provider.
+    expect(reconcileDraft({ agentId: 'a', mode: 'agent', tools: false, provider: 'sub', model: 'm3', reasoning: 'low' }, two).reasoning).toBe('low')
   })
 })

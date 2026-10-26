@@ -1,56 +1,75 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import type { IAgent } from '@/lib/types'
+import { computed, ref, watch } from 'vue'
+import { levelsOf, resolveChoice, type IChoice } from '@/lib/agentChoice'
+import type { IAgent, IAgentProvider, TMode } from '@/lib/types'
+import { useProtocolsStore } from '@/stores/protocols'
 import { useThreadStore } from '@/stores/thread'
+import ModelPicker from './ModelPicker.vue'
 
 /**
- * Modelo e raciocínio da sessão VIVA, trocáveis entre uma mensagem e outra. Só os modelos do agente
- * (mesmo provider: outro provider é conversa nova) e só os níveis que o modelo escolhido aceita.
+ * Provider, modelo e raciocínio da sessão VIVA, trocáveis entre uma mensagem e outra. Só o que o agente
+ * oferece, e só os níveis que o modelo escolhido aceita. Outro provider recebe a transcrição dos turnos
+ * (o estado interno do anterior — ids de tool, raciocínio cifrado, cache — não atravessa).
  */
-const props = defineProps<{ agent: IAgent; fallbackModel?: string }>()
+const props = defineProps<{ agent: IAgent; mode?: TMode; fallback?: Partial<IChoice> }>()
 const thread = useThreadStore()
+const protocols = useProtocolsStore()
 
 const saving = ref(false)
 const failure = ref<string>()
+const switched = ref<string>()
 
-const model = computed(() => thread.session?.model ?? props.fallbackModel ?? props.agent.models[0] ?? '')
-const levelsOf = (id: string) => props.agent.modelReasoning?.[id] ?? props.agent.reasoningEfforts ?? []
-const levels = computed(() => levelsOf(model.value))
-/**
- * Os modelos do select. ⚠️ O da sessão pode ter saído do agente (desativado no meio da conversa): sem ele
- * na lista o select mostraria OUTRO modelo, e a tela mentiria sobre o que a sessão está usando.
- */
-const options = computed(() => {
-  const active = props.agent.models
-  return model.value && !active.includes(model.value) ? [model.value, ...active] : active
+const current = computed<IChoice | undefined>(() => {
+  const session = thread.session
+  if (session?.model) return { provider: session.provider ?? props.fallback?.provider ?? props.agent.providers[0]?.id ?? '', model: session.model }
+  return resolveChoice(props.agent, props.fallback)
 })
+const levels = computed(() => levelsOf(props.agent, current.value))
 const busy = computed(() => thread.sending || saving.value)
+// O aviso da troca de provider vale até a mensagem seguinte sair (é ela que leva a transcrição).
+watch(
+  () => thread.sending,
+  (sending) => {
+    if (sending) switched.value = undefined
+  },
+)
+
+/** Provider que não roda a lane desta conversa (assinatura só tem a agent) não é escolha aqui. */
+function blocked(provider: IAgentProvider): string | undefined {
+  if (!props.mode || !provider.protocol) return undefined
+  const lanes = protocols.get(provider.protocol)?.lanes
+  return lanes && !lanes.includes(props.mode) ? `não roda a lane ${props.mode}` : undefined
+}
 
 /** Falhou? O select já mostra a escolha nova (o DOM guarda o que o usuário clicou): volta ao valor real da sessão. */
-async function apply(change: { model?: string; reasoning?: string | null }, select: HTMLSelectElement) {
+async function apply(change: { provider?: string; model?: string; reasoning?: string | null }, select: HTMLSelectElement, restore: string) {
   saving.value = true
   failure.value = undefined
   try {
     await thread.reconfigure(change)
+    switched.value = change.provider ? protocols.providerName(change.provider) : undefined
   } catch (error) {
     failure.value = error instanceof Error ? error.message : String(error)
-    select.value = change.model !== undefined ? model.value : (thread.session?.reasoning ?? '')
+    select.value = restore
   } finally {
     saving.value = false
   }
 }
 
-function pickModel(event: Event) {
-  const select = event.target as HTMLSelectElement
-  const next = select.value
+function pickModel(next: IChoice, select: HTMLSelectElement) {
+  const before = current.value
+  const restore = before ? `${before.provider}|${before.model}` : ''
+  const change: { provider?: string; model: string; reasoning?: null } = { model: next.model }
+  if (next.provider !== before?.provider) change.provider = next.provider
   // O nível que o modelo novo não aceita volta ao padrão, na mesma troca.
-  const current = thread.session?.reasoning
-  void apply(current && !levelsOf(next).includes(current) ? { model: next, reasoning: null } : { model: next }, select)
+  const reasoning = thread.session?.reasoning
+  if (reasoning && !levelsOf(props.agent, next).includes(reasoning)) change.reasoning = null
+  void apply(change, select, restore)
 }
 
 function pickReasoning(event: Event) {
   const select = event.target as HTMLSelectElement
-  void apply({ reasoning: select.value || null }, select)
+  void apply({ reasoning: select.value || null }, select, thread.session?.reasoning ?? '')
 }
 </script>
 
@@ -58,9 +77,14 @@ function pickReasoning(event: Event) {
   <div class="flex flex-wrap items-center gap-2 border-t border-zinc-800/80 bg-zinc-900/40 px-4 py-1.5 text-xs text-zinc-400">
     <label class="flex items-center gap-1.5">
       Modelo
-      <select :value="model" :disabled="busy || options.length < 2" class="rounded-md bg-zinc-800 px-1.5 py-0.5 font-mono text-zinc-100 disabled:opacity-60" @change="pickModel">
-        <option v-for="id in options" :key="id" :value="id" :disabled="!agent.models.includes(id)">{{ id }}{{ agent.models.includes(id) ? (agent.pricing[id] ? ` — $${agent.pricing[id].output}/1M saída` : '') : ' (desativado)' }}</option>
-      </select>
+      <ModelPicker
+        :agent="agent"
+        :value="current"
+        :disabled="busy"
+        :blocked="blocked"
+        select-class="rounded-md bg-zinc-800 px-1.5 py-0.5 font-mono text-zinc-100 disabled:opacity-60"
+        @pick="pickModel"
+      />
     </label>
     <label v-if="levels.length" class="flex items-center gap-1.5">
       Raciocínio
@@ -71,6 +95,7 @@ function pickReasoning(event: Event) {
     </label>
     <span v-if="saving" class="text-zinc-500">trocando…</span>
     <span v-else-if="failure" class="text-rose-300">{{ failure }}</span>
+    <span v-else-if="switched" class="text-amber-300/90">agora em {{ switched }}: o histórico vai como transcrição na próxima mensagem</span>
     <span v-else class="hidden text-zinc-600 sm:inline">vale a partir da próxima mensagem</span>
   </div>
 </template>
