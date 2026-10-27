@@ -6,6 +6,9 @@ import { UsageController } from './Usage.Controller'
 import { McpServersController } from './McpServers.Controller'
 import { McpProxyController } from './McpProxy.Controller'
 import { PackagesController } from './Packages.Controller'
+import { HOOK_PATH, HooksController } from './Hooks.Controller'
+import { AgentHooksService } from '@application/AgentHooks.Service'
+import { SqliteAgentHookRepository } from '@infra/persistence/Sqlite.AgentHookRepository'
 import { randomBytes } from 'node:crypto'
 import { McpServersService } from '@application/McpServers.Service'
 import { ProvidersService } from '@application/Providers.Service'
@@ -44,10 +47,12 @@ export const API_PREFIX = '/v1'
  */
 /** A mensagem de uma conversa: a única rota com o teto de corpo grande (anexos). */
 const MESSAGE_ROUTE = /^\/v1\/sessions\/[^/]+\/messages\/?$/
+const HOOK_ROUTE = /^\/v1\/hook\/[^/]+\/[^/]+\/?$/
 /** As rotas com limite por origem (ver `rateLimit`). */
 export const THROTTLED_PATHS = ['/auth/login', '/auth/setup']
 
-export const PUBLIC_PATHS: readonly string[] = ['/health', '/shared/:id', '/auth/status', '/auth/setup', '/auth/login']
+/** ⚠️ O hook é público: a credencial dele é a chave do hook (ver `Hooks.Controller`), não uma conta. */
+export const PUBLIC_PATHS: readonly string[] = ['/health', '/shared/:id', '/auth/status', '/auth/setup', '/auth/login', HOOK_PATH]
 
 export type TRouteMethod = 'get' | 'post' | 'put' | 'patch' | 'delete'
 
@@ -70,6 +75,7 @@ export class HttpServer {
     mcpServers: McpServersController = defaultMcpServersController(),
     mcpProxy?: McpProxyController,
     packages: PackagesController = new PackagesController(),
+    hooks?: HooksController,
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
@@ -82,7 +88,9 @@ export class HttpServer {
     // mensagem de uma conversa, que leva anexo.
     const small = express.json({ limit: jsonLimit() })
     const large = express.json({ limit: messageJsonLimit() })
-    this.app.use((req, res, next) => (MESSAGE_ROUTE.test(req.path) ? large(req, res, next) : small(req, res, next)))
+    // ⚖️ O hook lê o corpo CRU: a assinatura HMAC é dos bytes exatos, e o serviço que chama manda o que quiser.
+    const raw = express.raw({ type: () => true, limit: '256kb' })
+    this.app.use((req, res, next) => (HOOK_ROUTE.test(req.path) ? raw(req, res, next) : MESSAGE_ROUTE.test(req.path) ? large(req, res, next) : small(req, res, next)))
     // A sessão da tela chega no cookie HttpOnly; daqui em diante é a mesma credencial do cabeçalho.
     this.app.use(cookieCredential())
 
@@ -95,6 +103,7 @@ export class HttpServer {
       mcpProxy ??
         new McpProxyController({ registry: new McpRegistry(new SqliteMcpServerRepository(), { get: () => undefined }), session: () => undefined, agentTools: () => undefined }),
       packages,
+      hooks ?? new HooksController({ hooks: defaultHooks(), sessionFor: () => undefined }),
     )
     this.setupRoutes()
     this.setupFrontend()
@@ -164,9 +173,11 @@ export class HttpServer {
 
     // ⛔ Login e setup: 20 por minuto por origem. A trava por e-mail não segura quem troca de e-mail.
     const throttled = rateLimit({ windowMs: 60_000, max: Number(process.env.AUTH_RATE_LIMIT) || 20 })
+    // ⛔ Hook: 60 por minuto POR HOOK (`HOOK_RATE_LIMIT`) — cada chamada é um turno de modelo, e a URL é pública.
+    const hookThrottle = rateLimit({ windowMs: 60_000, max: Number(process.env.HOOK_RATE_LIMIT) || 60, key: (req) => `${req.params.agentId}/${req.params.hookName}` })
     for (const { method, path: routePath, handler } of this.routes) {
       const open = PUBLIC_PATHS.includes(routePath) ? [exchange, callerScope, handler] : [exchange, identity, callerScope, handler]
-      const chain = THROTTLED_PATHS.includes(routePath) ? [throttled, ...open] : open
+      const chain = THROTTLED_PATHS.includes(routePath) ? [throttled, ...open] : routePath === HOOK_PATH ? [hookThrottle, ...open] : open
       this.app[method](`${API_PREFIX}${routePath}`, ...chain)
     }
 
@@ -195,8 +206,16 @@ function buildRoutes(
   mcpServers: McpServersController,
   mcpProxy: McpProxyController,
   packages: PackagesController,
+  hooks: HooksController,
 ): IRoute[] {
   return [
+    { method: 'post', path: HOOK_PATH, handler: hooks.receive },
+    { method: 'get', path: '/agents/:agentId/hooks', handler: hooks.list },
+    { method: 'post', path: '/agents/:agentId/hooks', handler: hooks.create },
+    { method: 'put', path: '/agents/:agentId/hooks/:hookName', handler: hooks.update },
+    { method: 'delete', path: '/agents/:agentId/hooks/:hookName', handler: hooks.remove },
+    { method: 'post', path: '/agents/:agentId/hooks/:hookName/rotate', handler: hooks.rotate },
+    { method: 'get', path: '/agents/:agentId/hooks/:hookName/deliveries', handler: hooks.deliveries },
     { method: 'get', path: '/packages', handler: packages.list },
     { method: 'get', path: '/packages/search', handler: packages.search },
     { method: 'post', path: '/packages', handler: packages.install },
@@ -304,4 +323,9 @@ function defaultMcpServersController(): McpServersController {
 function defaultProvidersController(): ProvidersController {
   const credentials = new SqliteCredentialStore(new SecretBox(randomBytes(32)))
   return new ProvidersController({ providers: new ProvidersService(new SqliteProviderRepository(), credentials), credentials, agents: { list: () => [], get: () => undefined } })
+}
+
+/** Sem composição (testes que sobem só o servidor): hooks em memória, sem agentes. */
+function defaultHooks(): AgentHooksService {
+  return new AgentHooksService(new SqliteAgentHookRepository(), new SqliteCredentialStore(new SecretBox(randomBytes(32))), () => false)
 }

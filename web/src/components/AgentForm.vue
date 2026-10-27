@@ -7,6 +7,7 @@ import { useProtocolsStore } from '@/stores/protocols'
 import type { IAgentDetail, IAgentInput, ICatalogModel, INativeTool, TMode, TSandboxLevel } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import { useMcpStore } from '@/stores/mcp'
+import AgentHooks from './AgentHooks.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 
 const props = defineProps<{ agent?: IAgentDetail; creating: boolean }>()
@@ -242,7 +243,7 @@ const deleting = ref(false)
  * As guias do formulário: o texto do agente na primeira, e cada grupo de capacidades na sua. A contagem diz
  * quanto está escolhido sem abrir a guia; o ponto vermelho, que o servidor recusou algo ali.
  */
-type TTab = 'agente' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk'
+type TTab = 'agente' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'hooks'
 const tab = ref<TTab>('agente')
 const TAB_FIELDS: Record<TTab, string[]> = {
   agente: ['id', 'name', 'soul', 'systemPrompt', 'role', 'adminOnly'],
@@ -250,6 +251,7 @@ const TAB_FIELDS: Record<TTab, string[]> = {
   ferramentas: ['allowedTools'],
   mcps: [],
   sdk: [],
+  hooks: [],
 }
 const tabs = computed(() => {
   const tools = form.value.allowedTools
@@ -265,6 +267,7 @@ const tabs = computed(() => {
     },
     { id: 'mcps', label: 'MCPs', count: tools.filter((entry) => entry.startsWith('mcp:')).length },
     { id: 'sdk', label: 'SDK', count: tools.filter((entry) => entry.startsWith('sdk:')).length },
+    { id: 'hooks', label: 'Hooks' },
   ]
   // Sem nativa nem sandbox nos providers escolhidos, a guia do SDK não tem o que mostrar.
   const sdkEmpty = sdkSections.value.every((section) => !section.tools.length && !section.levels.length)
@@ -724,6 +727,12 @@ async function remove() {
     <p v-else-if="Object.keys(issues).length" class="text-sm text-rose-300">
       Não salvou — corrija: {{ summarizeIssues(issues, FIELD_LABEL) }}
     </p>
+    <!-- ⚖️ Os hooks têm o próprio cadastro (não vão no Salvar do agente): só existem para um agente já gravado. -->
+    <section v-if="tab === 'hooks'">
+      <AgentHooks v-if="agent && !creating" :agent-id="agent.id" />
+      <p v-else class="text-sm text-zinc-400">Crie o agente primeiro: o hook é dele, e a URL leva o id.</p>
+    </section>
+
     <p v-if="agent?.updatedBy" class="text-xs text-zinc-500">Alterado por {{ agent.updatedBy }} em {{ agent.updatedAt ? new Date(agent.updatedAt).toLocaleString('pt-BR') : '' }}</p>
 
     <p v-if="loadError" class="text-sm text-rose-300">
@@ -732,7 +741,7 @@ async function remove() {
     </p>
     <p v-else-if="!ready" class="text-xs text-zinc-500">Carregando providers…</p>
 
-    <div class="flex gap-2">
+    <div v-show="tab !== 'hooks'" class="flex gap-2">
       <button type="submit" :disabled="saving || !ready || !!loadError || !form.providers.length" class="rounded-full bg-emerald-500 px-5 py-2 font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50">{{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar' }}</button>
       <button v-if="!creating && agent" type="button" class="rounded-full bg-zinc-800 px-4 py-2 hover:bg-zinc-700" @click="emit('duplicate', agent)">Duplicar</button>
       <button v-if="!creating && agent" type="button" class="ml-auto rounded-full px-4 py-2 text-rose-300 hover:bg-rose-500/10" @click="confirming = true">Apagar</button>

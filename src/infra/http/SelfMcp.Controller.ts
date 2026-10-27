@@ -2,51 +2,20 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { Request, Response } from 'express'
 import { z } from 'zod'
+import { ISelfReply, selfApi, selfBase, TSelfApi } from './Self.Api'
 
 /** O que a própria API devolveu: o envelope `{ ok, result, message, code, details }` mais o status. */
-interface ISelfReply {
-  ok: boolean
-  status: number
-  result?: unknown
-  message?: string
-  code?: string
-  details?: unknown
-}
-
-type TSelfApi = (method: string, path: string, options?: { body?: unknown; query?: Record<string, string | number | undefined> }) => Promise<ISelfReply>
-
 /**
- * A API do gateway chamada DE DENTRO dele, com os headers de quem chamou o MCP.
- *
- * ⚖️ AS REGRAS MORAM NOS CONTROLLERS — dono da conversa, audiência, carimbo do `owner`, DTO sem prompt e sem
- * custo para quem não administra. Passar pela API é o que garante que o MCP segue as MESMAS regras, sem uma
- * segunda cópia que um dia divergiria. O preço é um salto local por ferramenta.
- *
- * ⛔ Só o header da credencial (`X-Tool-Authorization`, a conta) segue adiante. Nada do corpo do MCP vira
- * identidade.
+ * ⛔ Só o header da credencial (`X-Tool-Authorization`, a conta) de quem chamou o MCP segue adiante. Nada do
+ * corpo do MCP vira identidade.
  */
-function selfApi(req: Request): TSelfApi {
-  const address = req.socket.localAddress?.replace(/^::ffff:/, '') || '127.0.0.1'
-  const base = `http://${address.includes(':') ? `[${address}]` : address}:${req.socket.localPort}/v1`
+function callerApi(req: Request): TSelfApi {
   const credentials: Record<string, string> = {}
   for (const name of ['x-tool-authorization']) {
     const value = req.headers[name]
     if (typeof value === 'string') credentials[name] = value
   }
-
-  return async (method, path, options = {}) => {
-    const query = new URLSearchParams()
-    for (const [key, value] of Object.entries(options.query ?? {})) if (value !== undefined && value !== '') query.set(key, String(value))
-    const url = `${base}${path}${query.size ? `?${query}` : ''}`
-
-    const response = await fetch(url, {
-      method,
-      headers: { ...credentials, Accept: 'application/json', ...(options.body === undefined ? {} : { 'Content-Type': 'application/json' }) },
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    })
-    const envelope = (await response.json().catch(() => ({}))) as Omit<ISelfReply, 'status'>
-    return { ...envelope, ok: response.ok && envelope.ok !== false, status: response.status }
-  }
+  return selfApi(selfBase(req), credentials)
 }
 
 const text = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }] })
@@ -388,7 +357,7 @@ export async function handleSelfMcp(req: Request, res: Response): Promise<void> 
 }
 
 async function serve(req: Request, res: Response): Promise<void> {
-  const api = selfApi(req)
+  const api = callerApi(req)
   // A mesma regra da tela: só quem administra lê `/settings`.
   const admin = (await api('GET', '/settings')).ok
   const server = new McpServer({ name: 'agents-gateway', version: '1.0.0' })

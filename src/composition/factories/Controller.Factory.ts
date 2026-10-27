@@ -3,6 +3,8 @@ import { McpProxyController } from '@infra/http/McpProxy.Controller'
 import { McpServersService } from '@application/McpServers.Service'
 import { McpServersController } from '@infra/http/McpServers.Controller'
 import { PackagesController } from '@infra/http/Packages.Controller'
+import { HooksController } from '@infra/http/Hooks.Controller'
+import { makeHooks } from './Hooks.Factory'
 import { AgentController } from '@infra/http/Agent.Controller'
 import { AuthController } from '@infra/http/Auth.Controller'
 import { ProvidersController } from '@infra/http/Providers.Controller'
@@ -40,6 +42,7 @@ export function makeController(): AgentController {
     deleteSession: usecases.deleteSessionUseCase,
     getSession: usecases.getSessionUseCase,
     listSessions: usecases.listSessionsUseCase,
+    agentRemoved: (agentId) => makeHooks().removeAgent(agentId),
   })
 }
 
@@ -83,4 +86,8 @@ export function makeMcpProxyController(): McpProxyController {
 
 export function makePackagesController(): PackagesController {
   return new PackagesController({ proof: makeAuth().proof })
+}
+
+export function makeHooksController(): HooksController {
+  return new HooksController({ hooks: makeHooks(), proof: makeAuth().proof, sessionFor: (userId) => makeAuth().accounts?.sessionForHook(userId) })
 }

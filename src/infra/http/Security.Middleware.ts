@@ -49,10 +49,11 @@ export function securityHeaders(): RequestHandler {
  * Em memória, com teto de origens rastreadas. É o que segura quem troca de e-mail a cada tentativa de
  * login, e quem martela o setup.
  */
-export function rateLimit(options: { windowMs: number; max: number }, now: () => number = Date.now): RequestHandler {
+export function rateLimit(options: { windowMs: number; max: number; key?: (req: Request) => string }, now: () => number = Date.now): RequestHandler {
   const hits = new Map<string, { count: number; resetAt: number }>()
   return (req, res, next) => {
-    const origin = clientIp(req)
+    // Padrão: por origem (IP). `key` troca o balde — o hook conta por hook, venha de onde vier.
+    const origin = options.key ? options.key(req) : clientIp(req)
     const at = now()
     const current = hits.get(origin)
     const entry = current && current.resetAt > at ? current : { count: 0, resetAt: at + options.windowMs }

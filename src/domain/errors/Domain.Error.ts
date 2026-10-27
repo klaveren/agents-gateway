@@ -261,6 +261,22 @@ export class InvalidMcpServerError extends DomainError {
   }
 }
 
+/** O hook pedido não vale (nome, prompt, verificação). Todos os problemas de uma vez. */
+export class InvalidHookError extends DomainError {
+  constructor(public readonly issues: Array<{ field: string; message: string }>) {
+    super(`Hook is invalid: ${issues.map((issue) => `${issue.field} (${issue.message})`).join('; ')}`)
+  }
+}
+
+export class HookNotFoundError extends DomainError {
+  constructor(
+    public readonly agentId: string,
+    public readonly hookName: string,
+  ) {
+    super(`Hook not found: ${agentId}/${hookName}`)
+  }
+}
+
 export class McpServerNotFoundError extends DomainError {
   constructor(public readonly serverId: string) {
     super(`MCP server not found: ${serverId}`)

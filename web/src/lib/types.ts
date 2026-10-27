@@ -387,6 +387,41 @@ export interface IMcpServer {
   updatedBy?: string
 }
 
+/** Uma chamada recebida por um hook. */
+export interface IHookDelivery {
+  id: string
+  receivedAt: string
+  status: 'running' | 'ok' | 'error'
+  sessionId?: string
+  error?: string
+}
+
+/** Um hook de agente: `POST /v1/hook/<agente>/<hook>` executa o `prompt` com o evento recebido. */
+export interface IAgentHook {
+  agentId: string
+  name: string
+  /** `/v1/hook/<agente>/<hook>` — a tela completa com a origem. */
+  path: string
+  prompt: string
+  enabled: boolean
+  verify: 'key' | 'hmac'
+  signatureHeader: string
+  signaturePrefix: string
+  signatureEncoding: 'hex' | 'base64'
+  session: 'new' | 'continuous'
+  sessionId?: string
+  runAs: string
+  secretLast4?: string
+  lastDelivery?: IHookDelivery
+  /** Só ao criar e ao trocar a chave. */
+  secret?: string
+  createdAt: string
+  updatedAt: string
+  updatedBy?: string
+}
+
+export type THookInput = Pick<IAgentHook, 'prompt' | 'enabled' | 'verify' | 'signatureHeader' | 'signaturePrefix' | 'signatureEncoding' | 'session'>
+
 /** Uma ferramenta do servidor instalada pela guia Pacotes (micromamba, conda-forge). */
 export interface IInstalledPackage {
   name: string

@@ -99,6 +99,8 @@ export interface IAgentControllerDeps {
   pricing?: TModelPricing
   /** Por onde chegam as mudanças nas conversas gravadas. Ausente = `/conversations/events` só mantém a conexão. */
   events?: IConversationEvents
+  /** O agente foi apagado: o que é dele e mora fora do cadastro (os hooks) vai junto. */
+  agentRemoved?: (agentId: string) => void
   /** Os providers configurados — para o agente apontar para um que existe. Ausente = só os oficiais. */
   providers?: IProviderDirectory
   /** O catálogo de modelos: preços por provider, e os modelos que um agente pode oferecer. */
@@ -368,6 +370,7 @@ export class AgentController {
       async () => {
         await this.requireAdmin('deleteAgent')
         this.agents.remove(req.params.agentId as string, { defaultAgentId: (await this.usecases.settings.read()).agentId })
+        this.usecases.agentRemoved?.(req.params.agentId as string)
 
         return null
       },

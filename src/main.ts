@@ -8,6 +8,7 @@ import {
   makeController,
   makeMcpProxyController,
   makePackagesController,
+  makeHooksController,
   makeMcpServersController,
   makeProvidersController,
   makeUsageController,
@@ -75,6 +76,7 @@ async function bootstrap() {
     makeMcpServersController(),
     makeMcpProxyController(),
     makePackagesController(),
+    makeHooksController(),
   )
   server.start(Number.parseInt(process.env.PORT || '3000', 10))
 }

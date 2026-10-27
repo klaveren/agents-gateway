@@ -407,6 +407,44 @@ const mcpServerSchema = {
   },
 }
 
+const agentHookSchema = {
+  type: 'object',
+  properties: {
+    agentId: { type: 'string' },
+    name: { type: 'string' },
+    path: { type: 'string', description: 'POST here to fire the hook: /v1/hook/<agentId>/<name>' },
+    prompt: { type: 'string' },
+    enabled: { type: 'boolean' },
+    verify: { type: 'string', enum: ['key', 'hmac'] },
+    signatureHeader: { type: 'string' },
+    signaturePrefix: { type: 'string' },
+    signatureEncoding: { type: 'string', enum: ['hex', 'base64'] },
+    session: { type: 'string', enum: ['new', 'continuous'] },
+    sessionId: { type: 'string' },
+    runAs: { type: 'string', description: 'The account the agent runs as (whoever created the hook).' },
+    secretLast4: { type: 'string' },
+    secret: { type: 'string', description: 'Only on create and rotate. Never again.' },
+  },
+}
+
+const agentHookBody = {
+  type: 'object',
+  properties: {
+    name: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{1,47}$', description: 'Only on create.' },
+    prompt: { type: 'string', description: 'What the agent does when the event arrives; the event (body, useful headers, query) is appended.' },
+    enabled: { type: 'boolean' },
+    verify: {
+      type: 'string',
+      enum: ['key', 'hmac'],
+      description: 'key = the hook key in Authorization: Bearer or X-Hook-Key; hmac = signature of the raw body with the key (GitHub style).',
+    },
+    signatureHeader: { type: 'string', description: 'hmac: default X-Hub-Signature-256' },
+    signaturePrefix: { type: 'string', description: 'hmac: default sha256=' },
+    signatureEncoding: { type: 'string', enum: ['hex', 'base64'] },
+    session: { type: 'string', enum: ['new', 'continuous'], description: 'new = one conversation per call; continuous = all calls in one conversation, queued.' },
+  },
+}
+
 const failures = {
   '401': {
     description:
@@ -1002,6 +1040,98 @@ export const OPENAPI_DOCUMENT = {
         ],
         requestBody: { required: true, ...json({ type: 'object', properties: { value: { type: 'string' } }, required: ['value'] }) },
         responses: { '200': { description: 'Saved', ...json(envelope(mcpServerSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/hook/{agentId}/{hookName}': {
+      post: {
+        summary:
+          'Fire an agent hook (public: the hook key is the credential). Any body; the agent runs the hook prompt with the event, as the account that created the hook. Answers 202 at once; the turn runs in the background',
+        security: [],
+        parameters: [
+          ...[
+            { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'hookName', in: 'path', required: true, schema: { type: 'string' } },
+          ],
+          { name: 'X-Hook-Key', in: 'header', required: false, schema: { type: 'string' } },
+        ],
+        requestBody: { required: false, content: { '*/*': { schema: {} } } },
+        responses: {
+          '202': {
+            description: 'Accepted',
+            ...json(envelope({ type: 'object', properties: { conversationId: { type: 'string' }, hook: { type: 'string' }, queued: { type: 'boolean' } } })),
+          },
+          '401': { description: 'Code hook_unauthorized: missing or wrong key or signature', content: { 'application/json': { schema: failureEnvelope } } },
+          '404': failures['404'],
+          '409': { description: 'Code hook_owner_inactive: the account the hook runs as is disabled or gone', content: { 'application/json': { schema: failureEnvelope } } },
+          '429': { description: 'Too many calls to this hook (HOOK_RATE_LIMIT per minute)', content: { 'application/json': { schema: failureEnvelope } } },
+        },
+      },
+    },
+    '/agents/{agentId}/hooks': {
+      get: {
+        summary: "An agent's hooks. Administrators only",
+        parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: agentHookSchema })) }, '401': failures['401'], '404': failures['404'] },
+      },
+      post: {
+        summary: 'Create a hook: it runs as you. The key comes back ONCE. Administrators only',
+        parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json(agentHookBody) },
+        responses: { '201': { description: 'Created', ...json(envelope(agentHookSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/agents/{agentId}/hooks/{hookName}': {
+      put: {
+        summary: 'Change a hook (not its name). Administrators only',
+        parameters: [
+          { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'hookName', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        requestBody: { required: true, ...json(agentHookBody) },
+        responses: { '200': { description: 'OK', ...json(envelope(agentHookSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+      delete: {
+        summary: 'Delete a hook and its key. Administrators only',
+        parameters: [
+          { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'hookName', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: 'Deleted' }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/agents/{agentId}/hooks/{hookName}/rotate': {
+      post: {
+        summary: 'A new key for the hook; the old one stops working at once. The key comes back ONCE. Administrators only',
+        parameters: [
+          { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'hookName', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: 'OK', ...json(envelope(agentHookSchema)) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/agents/{agentId}/hooks/{hookName}/deliveries': {
+      get: {
+        summary: 'The last 20 calls of a hook: when, status (running, ok, error) and the conversation. Administrators only',
+        parameters: [
+          { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'hookName', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: { receivedAt: { type: 'string', format: 'date-time' }, status: { type: 'string' }, sessionId: { type: 'string' }, error: { type: 'string' } },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
       },
     },
     '/packages': {

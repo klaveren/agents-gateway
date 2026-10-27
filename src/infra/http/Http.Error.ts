@@ -12,6 +12,8 @@ import {
   InvalidProviderError,
   ProviderInUseError,
   InvalidMcpServerError,
+  InvalidHookError,
+  HookNotFoundError,
   McpServerNotFoundError,
   McpServerInUseError,
   ProviderNotFoundError,
@@ -56,6 +58,8 @@ export type TErrorCode =
   | 'session_not_found'
   | 'session_busy'
   | 'package_busy'
+  | 'hook_unauthorized'
+  | 'hook_owner_inactive'
   | 'mode_not_supported'
   | 'tools_not_supported'
   | 'adapter_not_found'
@@ -149,6 +153,14 @@ export function toHttpFailure(error: unknown): IHttpFailure {
 
   if (error instanceof InvalidMcpServerError) {
     return { status: 422, code: 'validation_error', message: 'MCP server is invalid', details: error.issues }
+  }
+
+  if (error instanceof InvalidHookError) {
+    return { status: 422, code: 'validation_error', message: 'Hook is invalid', details: error.issues }
+  }
+
+  if (error instanceof HookNotFoundError) {
+    return { status: 404, code: 'not_found', message: error.message }
   }
 
   if (error instanceof McpServerNotFoundError) {
