@@ -48,7 +48,10 @@ export function makeController(): AgentController {
     deleteSession: usecases.deleteSessionUseCase,
     getSession: usecases.getSessionUseCase,
     listSessions: usecases.listSessionsUseCase,
-    agentRemoved: (agentId) => makeHooks().removeAgent(agentId),
+    agentRemoved: (agentId) => {
+      makeHooks().removeAgent(agentId)
+      makeGuidance().removeAgent(agentId)
+    },
     projects: makeProjects(),
     sandbox: projectSandbox(),
     docker: () => dockerStatus(),

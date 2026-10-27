@@ -39,6 +39,15 @@ const SCHEMA = `
     PRIMARY KEY (project_id, doc_id)
   );
   CREATE INDEX IF NOT EXISTS project_context_docs_doc ON project_context_docs (doc_id);
+  CREATE TABLE IF NOT EXISTS agent_context_docs (
+    agent_id  TEXT    NOT NULL,
+    doc_id    TEXT    NOT NULL,
+    position  INTEGER NOT NULL,
+    added_at  TEXT    NOT NULL,
+    added_by  TEXT,
+    PRIMARY KEY (agent_id, doc_id)
+  );
+  CREATE INDEX IF NOT EXISTS agent_context_docs_doc ON agent_context_docs (doc_id);
 `
 
 type TRow = Record<string, unknown>
@@ -135,6 +144,7 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
 
   deleteDoc(id: string): boolean {
     this.db.prepare('DELETE FROM project_context_docs WHERE doc_id = ?').run(id)
+    this.db.prepare('DELETE FROM agent_context_docs WHERE doc_id = ?').run(id)
     return this.db.prepare('DELETE FROM project_docs WHERE id = ?').run(id).changes > 0
   }
 
@@ -147,12 +157,33 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
   }
 
   setContextDocs(projectId: string, docIds: readonly string[], by: string): void {
+    this.replaceList('project_context_docs', 'project_id', projectId, docIds, by)
+  }
+
+  agentContextDocs(agentId: string): string[] {
+    return (this.db.prepare('SELECT doc_id FROM agent_context_docs WHERE agent_id = ? ORDER BY position').all(agentId) as TRow[]).map((row) => row.doc_id as string)
+  }
+
+  agentContextOf(docId: string): string[] {
+    return (this.db.prepare('SELECT agent_id FROM agent_context_docs WHERE doc_id = ? ORDER BY agent_id').all(docId) as TRow[]).map((row) => row.agent_id as string)
+  }
+
+  setAgentContextDocs(agentId: string, docIds: readonly string[], by: string): void {
+    this.replaceList('agent_context_docs', 'agent_id', agentId, docIds, by)
+  }
+
+  deleteAgentContext(agentId: string): void {
+    this.db.prepare('DELETE FROM agent_context_docs WHERE agent_id = ?').run(agentId)
+  }
+
+  /** Troca a lista inteira de um dono (projeto ou agente), numa transação. */
+  private replaceList(table: 'project_context_docs' | 'agent_context_docs', owner: 'project_id' | 'agent_id', id: string, docIds: readonly string[], by: string): void {
     const now = new Date().toISOString()
     this.db.exec('BEGIN')
     try {
-      this.db.prepare('DELETE FROM project_context_docs WHERE project_id = ?').run(projectId)
-      const insert = this.db.prepare('INSERT INTO project_context_docs (project_id, doc_id, position, added_at, added_by) VALUES (?, ?, ?, ?, ?)')
-      docIds.forEach((docId, index) => insert.run(projectId, docId, index + 1, now, by))
+      this.db.prepare(`DELETE FROM ${table} WHERE ${owner} = ?`).run(id)
+      const insert = this.db.prepare(`INSERT INTO ${table} (${owner}, doc_id, position, added_at, added_by) VALUES (?, ?, ?, ?, ?)`)
+      docIds.forEach((docId, index) => insert.run(id, docId, index + 1, now, by))
       this.db.exec('COMMIT')
     } catch (error) {
       this.db.exec('ROLLBACK')

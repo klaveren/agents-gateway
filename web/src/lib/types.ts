@@ -438,8 +438,8 @@ export interface IProjectDoc {
   title: string
   summary: string
   body?: string
-  /** Só na lista: os projetos que carregam a spec inteira (o contexto inicial deles). */
-  loadedIn?: string[]
+  /** Só na lista: quem carrega a spec inteira (o contexto inicial dos projetos e dos agentes). */
+  loadedIn?: { projects: string[]; agents: string[] }
   /** Só na lista: o peso estimado do corpo. */
   tokens?: number
   createdAt: string

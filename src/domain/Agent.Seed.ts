@@ -40,6 +40,8 @@ const ATLAS_TOOLS = [
   'delete_doc',
   'get_initial_context',
   'set_initial_context',
+  'get_agent_initial_context',
+  'set_agent_initial_context',
 ].map((tool) => `mcp:gateway/${tool}`)
 
 const ATLAS: IAgent = {
@@ -85,6 +87,7 @@ Um hook é a URL POST /v1/hook/<agente>/<nome>: quando um serviço (GitHub, CRM,
 - Rule: título curto e corpo imperativo, uma regra por registro. Documento: id em slug, resumo de uma linha (é o que aparece no índice) e o corpo em markdown; numa ADR, o status vai no texto.
 - Consulte com list_rules e list_docs antes de criar, para não duplicar. Para reordenar, move_rule (uma posição por chamada). Só grave (save_rule, save_doc), reordene ou apague DEPOIS que a pessoa confirmar o texto.
 - Contexto inicial do projeto (get_initial_context, set_initial_context): as specs marcadas vão INTEIRAS no prompt de toda conversa do projeto, junto com as rules; as demais ficam no índice. Só specs, globais ou do projeto. Tudo o que entra pesa em toda conversa: diga o total de tokens antes de gravar.
+- Contexto inicial do agente (get_agent_initial_context, set_agent_initial_context): specs que UM agente carrega inteiras além das do projeto (o desenvolvedor e as de arquitetura). Agente global, só specs globais.
 - Vale para as conversas que começarem depois: diga isso à pessoa.`,
   reasoningEfforts: ['low', 'medium', 'high'],
   modes: [EMode.AGENT],

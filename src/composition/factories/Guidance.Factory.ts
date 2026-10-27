@@ -1,6 +1,7 @@
 import { GuidanceService } from '@application/Guidance.Service'
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
 import { SqliteGuidanceRepository } from '@infra/persistence/Sqlite.GuidanceRepository'
+import { makeAgents } from './Agents.Factory'
 import { makeProjects } from './Projects.Factory'
 
 let instance: GuidanceService | undefined
@@ -9,6 +10,13 @@ let instance: GuidanceService | undefined
 export function makeGuidance(): GuidanceService {
   if (instance) return instance
   const configured = process.env.CONVERSATIONS_DB?.trim()
-  instance = new GuidanceService(new SqliteGuidanceRepository(configured === 'off' ? ':memory:' : configured || DEFAULT_DB_PATH), (projectId) => makeProjects().exists(projectId))
+  instance = new GuidanceService(
+    new SqliteGuidanceRepository(configured === 'off' ? ':memory:' : configured || DEFAULT_DB_PATH),
+    (projectId) => makeProjects().exists(projectId),
+    (agentId) => {
+      const agent = makeAgents().get(agentId)
+      return agent ? { id: agent.id, ...(agent.projectId ? { projectId: agent.projectId } : {}) } : undefined
+    },
+  )
   return instance
 }
