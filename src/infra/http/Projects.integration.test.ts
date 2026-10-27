@@ -131,7 +131,7 @@ describe('Projetos (integração)', () => {
     const conversations = new SqliteConversationRepository(':memory:')
     const controller = new AgentController({
       agents,
-      catalog: { mcpConnected: false, list: async () => [], mcp: { list: () => [] } } as unknown as ToolCatalog,
+      catalog: { mcpConnected: false, list: async () => [], localFor: () => [], mcp: { list: () => [], probeTools: async () => [] } } as unknown as ToolCatalog,
       createSession: new CreateSessionUseCase(provider),
       sendMessage: new SendMessageUseCase(provider, conversations),
       cancelSession: new CancelSessionUseCase(provider),
@@ -314,5 +314,14 @@ describe('Projetos (integração)', () => {
       turns.map((turn) => turn.request),
       ['primeira', 'segunda'],
     )
+  })
+
+  it('⛔ o tamanho do agente é do admin: as partes e o total; para o membro, 404', async () => {
+    const result = await call(ADMIN, 'GET', `/agents/${CLAUDE_TEST_AGENT.id}/footprint`)
+    assert.strictEqual(result.status, 200)
+    assert.ok(result.body.result.sections.some((section: { key: string }) => section.key === 'instructions'))
+    assert.ok(result.body.result.total > 0)
+    assert.strictEqual((await call(ANA, 'GET', `/agents/${CLAUDE_TEST_AGENT.id}/footprint`)).status, 404)
+    assert.strictEqual((await call(ADMIN, 'GET', '/agents/nao-existe/footprint')).status, 404)
   })
 })

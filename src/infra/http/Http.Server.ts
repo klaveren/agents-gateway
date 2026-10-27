@@ -309,6 +309,7 @@ function buildRoutes(
     { method: 'get', path: '/agents', handler: controller.getAgents },
     { method: 'post', path: '/agents', handler: controller.createAgent },
     { method: 'get', path: '/agents/:agentId', handler: controller.getAgent },
+    { method: 'get', path: '/agents/:agentId/footprint', handler: controller.getAgentFootprint },
     { method: 'put', path: '/agents/:agentId', handler: controller.updateAgent },
     { method: 'delete', path: '/agents/:agentId', handler: controller.deleteAgent },
     { method: 'get', path: '/agents/:agentId/tools', handler: controller.getAgentTools },

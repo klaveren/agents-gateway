@@ -447,6 +447,22 @@ export interface IProjectDoc {
   updatedBy?: string
 }
 
+/** O tamanho de um agente: o que ele carrega antes da primeira mensagem, parte a parte (`GET /agents/:id/footprint`). */
+export interface IFootprintSection {
+  key: string
+  label: string
+  /** `null`: está no prompt, mas não se mede daqui (as ferramentas nativas do SDK, um MCP fora do ar). */
+  tokens: number | null
+  items?: Array<{ name: string; tokens: number }>
+  note?: string
+}
+
+export interface IAgentFootprint {
+  total: number
+  project?: string
+  sections: IFootprintSection[]
+}
+
 /** O contexto inicial de um projeto: as specs que vão inteiras no prompt, na ordem. */
 export interface IInitialContext {
   docs: Array<{ id: string; title: string; summary: string; projectId?: string; tokens: number }>
