@@ -9,6 +9,8 @@ export interface IFakeMcpServer {
   id?: string
   /** Função = o estado muda durante o teste (o servidor sobe). */
   connected?: boolean | (() => boolean)
+  /** Servidor `caller` que só aceita a conexão com esta credencial (como o MCP do próprio gateway). */
+  acceptsToken?: string
   auth?: TMcpAuth
   tools?: IToolDefinition[]
   secret?: string
@@ -49,6 +51,7 @@ export function fakeMcpRegistry(servers: IFakeMcpServer[] = []): McpRegistry {
       isConnected: connected,
       connect: async () => connected(),
       ensureConnected: async () => connected(),
+      ensureConnectedAs: async (token?: string) => connected() || (!!token && token === fake.acceptsToken),
       close: async () => undefined,
       listTools: async () => (connected() ? (fake.tools ?? []) : []),
       callTool: async (name: string, args: Record<string, unknown>, context?: IExecutionContext) =>

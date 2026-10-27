@@ -1,7 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import AccessTokens from '@/components/AccessTokens.vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ApiError } from '@/lib/api'
 import type { ISettings, TAudience, TLimitName } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
@@ -15,33 +13,8 @@ const agents = useAgentsStore()
 const settings = useSettingsStore()
 const providers = useProvidersStore()
 const protocols = useProtocolsStore()
-const route = useRoute()
 
-/**
- * `/settings#conta` (o "Perfil" do menu da conta) leva direto ao cartão da conta. ⚠️ Tenta por um
- * instante: os cartões de cima aparecem quando as configurações chegam, e rolar antes erra o lugar.
- */
-function scrollToSection(id: string, tries = 10) {
-  const target = document.getElementById(id)
-  if (target && settings.current) return target.scrollIntoView({ block: 'start' })
-  if (tries > 0) setTimeout(() => scrollToSection(id, tries - 1), 100)
-  else target?.scrollIntoView({ block: 'start' })
-}
-
-watch(
-  () => route.hash,
-  (hash) => {
-    if (hash) void nextTick(() => scrollToSection(hash.slice(1)))
-  },
-  { immediate: true },
-)
-
-
-const currentPassword = ref('')
-const nextPassword = ref('')
-const passwordNote = ref<string>()
-const passwordError = ref<string>()
-
+/** A configuração do SISTEMA (só admin). O que é da pessoa — conta, senha, tokens — mora em Perfil. */
 const audience = ref<TAudience>('all')
 const agentId = ref('')
 const model = ref('')
@@ -125,20 +98,6 @@ function providerOfModel(id: string): string {
 /** ⚠️ O modelo é do agente: trocar o agente larga o modelo (volta a "Padrão do agente") em vez de mandar um que ele não tem. */
 function onAgentChange() {
   model.value = ''
-}
-
-async function changePassword() {
-  passwordNote.value = undefined
-  passwordError.value = undefined
-  try {
-    await auth.changePassword(currentPassword.value, nextPassword.value)
-    currentPassword.value = ''
-    nextPassword.value = ''
-    passwordNote.value = 'Senha trocada. As outras sessões desta conta foram encerradas.'
-  } catch (error) {
-    const issues = error instanceof ApiError ? error.fieldIssues : {}
-    passwordError.value = issues.current ? 'A senha atual não confere.' : issues.password ? 'A nova senha precisa ter pelo menos 10 caracteres.' : String(error)
-  }
 }
 
 async function saveSettings() {
@@ -263,31 +222,10 @@ async function saveSettings() {
       </section>
 
       <p v-if="!auth.isAdmin" class="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5 text-sm text-zinc-400">
-        As configurações de operação são só de quem administra.
-        <RouterLink v-if="!auth.signedIn && auth.localAccounts" :to="{ path: '/login', query: { next: '/settings' } }" class="text-emerald-300 underline">Entrar</RouterLink>
+        A configuração do sistema é só de quem administra.
+        <RouterLink v-if="auth.user" to="/profile" class="text-emerald-300 underline">Ver meu perfil</RouterLink>
+        <RouterLink v-else-if="auth.localAccounts" :to="{ path: '/login', query: { next: '/settings' } }" class="text-emerald-300 underline">Entrar</RouterLink>
       </p>
-
-      <section v-if="auth.user" id="conta" class="flex scroll-mt-4 flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
-        <h2 class="font-medium">Minha conta</h2>
-        <p class="text-sm text-zinc-400">{{ auth.user.name }} · {{ auth.user.email }} · {{ auth.user.role === 'admin' ? 'administrador' : 'membro' }}</p>
-        <form class="grid gap-3 sm:grid-cols-2" @submit.prevent="changePassword">
-          <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
-            Senha atual
-            <input v-model="currentPassword" type="password" required autocomplete="current-password" class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm" />
-          </label>
-          <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
-            Nova senha
-            <input v-model="nextPassword" type="password" required autocomplete="new-password" class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm" />
-          </label>
-          <div class="flex items-center gap-3 sm:col-span-2">
-            <button type="submit" class="rounded-full bg-zinc-800 px-4 py-2 text-sm hover:bg-zinc-700">Trocar senha</button>
-            <span v-if="passwordNote" class="text-sm text-emerald-300">{{ passwordNote }}</span>
-            <span v-if="passwordError" class="text-sm text-rose-300">{{ passwordError }}</span>
-          </div>
-        </form>
-      </section>
-
-      <AccessTokens v-if="auth.user" />
     </div>
   </div>
 </template>

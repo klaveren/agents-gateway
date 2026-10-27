@@ -5,7 +5,24 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { makeAuth } from '@composition/factories/Auth.Factory'
 import { makeAuthController, makeController, makeProvidersController, makeUsageController } from '@composition/factories/Controller.Factory'
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { MicromambaAdapter } from '@infra/packages/Micromamba.Adapter'
 import { HttpServer } from './Http.Server'
+import { PackagesController } from './Packages.Controller'
+
+/** Um micromamba falso: instala `jq` (cria o ambiente) e lista o que está lá. */
+const FAKE_MAMBA = `#!/usr/bin/env node
+const fs = require('fs')
+const args = process.argv.slice(2)
+const out = (value) => process.stdout.write(JSON.stringify(value))
+const prefix = args[args.indexOf('-p') + 1]
+if (args[0] === '--version') out('2.9.0')
+else if (args[0] === 'create' || args[0] === 'install') { fs.mkdirSync(prefix + '/conda-meta', { recursive: true }); fs.writeFileSync(prefix + '/installed', args.at(-1)) }
+else if (args[0] === 'list') out({ packages: fs.existsSync(prefix + '/installed') ? [{ name: fs.readFileSync(prefix + '/installed', 'utf8'), version: '1.8.2' }] : [] })
+else if (args[0] === 'env') out({ dependencies: fs.existsSync(prefix + '/installed') ? [fs.readFileSync(prefix + '/installed', 'utf8')] : [] })
+`
 
 const PASSWORD = 'frase longa o bastante'
 
@@ -30,6 +47,7 @@ describe('MCP do próprio gateway (integração)', () => {
     await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { 'X-Tool-Authorization': `Bearer ${token}` } } }))
     return client
   }
+  let mambaDir: string
   const names = async (token: string) => (await (await connect(token)).listTools()).tools.map((tool) => tool.name).sort()
   const json = (result: unknown) => JSON.parse((result as { content: Array<{ text: string }> }).content[0].text)
 
@@ -37,7 +55,16 @@ describe('MCP do próprio gateway (integração)', () => {
     process.env.MCP_SERVER_URL = 'http://127.0.0.1:1/mcp'
     delete process.env.SELF_MCP_WRITE
     const controller = makeController()
-    const server = new HttpServer(controller, makeAuthController(), makeProvidersController(), makeUsageController(controller.conversations)).start(0)
+    mambaDir = mkdtempSync(join(tmpdir(), 'gw-selfmcp-mamba-'))
+    writeFileSync(join(mambaDir, 'micromamba'), FAKE_MAMBA)
+    chmodSync(join(mambaDir, 'micromamba'), 0o755)
+    const packages = new PackagesController({
+      packages: new MicromambaAdapter(join(mambaDir, 'micromamba'), join(mambaDir, 'tools'), join(mambaDir, 'root')),
+      proof: makeAuth().proof,
+    })
+    const server = new HttpServer(controller, makeAuthController(), makeProvidersController(), makeUsageController(controller.conversations), undefined, undefined, packages).start(
+      0,
+    )
     await new Promise((resolve) => server.once('listening', resolve))
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`
     server.unref()
@@ -57,6 +84,7 @@ describe('MCP do próprio gateway (integração)', () => {
 
   after(() => {
     delete process.env.SELF_MCP_WRITE
+    rmSync(mambaDir, { recursive: true, force: true })
     stop()
   })
 
@@ -68,8 +96,8 @@ describe('MCP do próprio gateway (integração)', () => {
 
   it('⛔ o membro só vê as ferramentas comuns; o admin vê as de admin e as de escrita (SELF_MCP_WRITE=0 desliga a escrita)', async () => {
     const common = ['get_conversation', 'list_agents', 'list_conversations', 'my_usage', 'send_message', 'start_conversation', 'switch_model']
-    const adminRead = ['get_agent', 'list_models', 'list_providers', 'list_tools', 'usage_by_key']
-    const write = ['save_agent', 'set_model_enabled', 'set_model_price']
+    const adminRead = ['get_agent', 'list_models', 'list_packages', 'list_providers', 'list_tools', 'search_packages', 'usage_by_key']
+    const write = ['install_package', 'remove_package', 'save_agent', 'set_model_enabled', 'set_model_price']
     assert.deepStrictEqual(await names(member), common)
     assert.deepStrictEqual(await names(admin), [...common, ...adminRead, ...write].sort())
 
@@ -131,5 +159,15 @@ describe('MCP do próprio gateway (integração)', () => {
     const result = (await (await connect(member)).callTool({ name: 'start_conversation', arguments: { agentId: 'nao-existe' } })) as { isError?: boolean }
     assert.strictEqual(result.isError, true)
     assert.match(json(result).message, /nao-existe/)
+  })
+
+  it('install_package instala pela mesma rota da guia Pacotes, e list_packages mostra', async () => {
+    const client = await connect(admin)
+    const installed = json(await client.callTool({ name: 'install_package', arguments: { name: 'jq' } }))
+    assert.strictEqual(installed.ok, true)
+    const listed = json(await client.callTool({ name: 'list_packages', arguments: {} }))
+    assert.deepStrictEqual(listed.packages, [{ name: 'jq', version: '1.8.2', explicit: true }])
+    const refused = await client.callTool({ name: 'install_package', arguments: { name: 'jq; rm -rf /' } })
+    assert.strictEqual(refused.isError, true)
   })
 })

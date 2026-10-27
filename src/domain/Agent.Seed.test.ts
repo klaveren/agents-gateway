@@ -23,6 +23,14 @@ describe('AGENT_SEED', () => {
     assert.ok(atlas.allowedTools.every((tool) => admin.allowedTools.includes(tool)))
   })
 
+  it('o Atlas Admin instala o que falta pela guia Pacotes; o Atlas dos usuários não', () => {
+    const [atlas, admin] = AGENT_SEED
+    const packages = ['list_packages', 'search_packages', 'install_package', 'remove_package'].map((tool) => `mcp:gateway/${tool}`)
+    for (const tool of packages) assert.ok(admin.allowedTools.includes(tool), tool)
+    assert.ok(packages.every((tool) => !atlas.allowedTools.includes(tool)))
+    assert.match(admin.systemPrompt, /search_packages/)
+  })
+
   it('o Atlas é um agente Claude da lane agent, com raciocínio e a WebSearch nativa', () => {
     const [atlas] = AGENT_SEED
 

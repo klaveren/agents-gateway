@@ -7,11 +7,13 @@ import {
   makeAuthController,
   makeController,
   makeMcpProxyController,
+  makePackagesController,
   makeMcpServersController,
   makeProvidersController,
   makeUsageController,
 } from '@composition/factories/Controller.Factory'
 import { cleanupOrphans } from '@infra/sandbox/Docker.Sandbox'
+import { persistInstalls } from '@infra/packages/Persistent.Installs'
 import { bootIssues, bootWarnings } from '@infra/http/Boot.Checks'
 import { clearSessionWorkspaces } from '@infra/adapters/support/Subscription.Workspace'
 import { makeTools } from '@composition/factories/Tools.Factory'
@@ -46,6 +48,9 @@ async function bootstrap() {
   }
   for (const warning of bootWarnings()) console.warn(`[security] ${warning}`)
   bridgeGoogleApiKey()
+  // O que a guia Pacotes e os gerenciadores (npm -g, pip --user, uv, cargo, go, gem) instalam vai para o PVC
+  // e entra no PATH de tudo que este processo lança.
+  persistInstalls()
 
   // Conecta os servidores MCP cadastrados sem esperar: nenhum `connect()` lança, e servidor fora do ar
   // tenta de novo sozinho (com backoff) na primeira vez que uma ferramenta dele for pedida.
@@ -69,6 +74,7 @@ async function bootstrap() {
     makeUsageController(controller.conversations),
     makeMcpServersController(),
     makeMcpProxyController(),
+    makePackagesController(),
   )
   server.start(Number.parseInt(process.env.PORT || '3000', 10))
 }

@@ -5,6 +5,7 @@ import { ProvidersController } from './Providers.Controller'
 import { UsageController } from './Usage.Controller'
 import { McpServersController } from './McpServers.Controller'
 import { McpProxyController } from './McpProxy.Controller'
+import { PackagesController } from './Packages.Controller'
 import { randomBytes } from 'node:crypto'
 import { McpServersService } from '@application/McpServers.Service'
 import { ProvidersService } from '@application/Providers.Service'
@@ -68,6 +69,7 @@ export class HttpServer {
     usage?: UsageController,
     mcpServers: McpServersController = defaultMcpServersController(),
     mcpProxy?: McpProxyController,
+    packages: PackagesController = new PackagesController(),
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
@@ -92,6 +94,7 @@ export class HttpServer {
       mcpServers,
       mcpProxy ??
         new McpProxyController({ registry: new McpRegistry(new SqliteMcpServerRepository(), { get: () => undefined }), session: () => undefined, agentTools: () => undefined }),
+      packages,
     )
     this.setupRoutes()
     this.setupFrontend()
@@ -191,8 +194,13 @@ function buildRoutes(
   usage: UsageController,
   mcpServers: McpServersController,
   mcpProxy: McpProxyController,
+  packages: PackagesController,
 ): IRoute[] {
   return [
+    { method: 'get', path: '/packages', handler: packages.list },
+    { method: 'get', path: '/packages/search', handler: packages.search },
+    { method: 'post', path: '/packages', handler: packages.install },
+    { method: 'delete', path: '/packages/:name', handler: packages.remove },
     // A ponte dos SDKs agênticos até os MCPs em contêiner (ver `McpProxy.Controller`).
     { method: 'post', path: '/mcp-proxy/:serverId', handler: mcpProxy.handle },
     { method: 'get', path: '/mcp-servers', handler: mcpServers.list },
@@ -205,6 +213,7 @@ function buildRoutes(
     { method: 'get', path: '/mcp-servers/:id/tools', handler: mcpServers.tools },
     { method: 'put', path: '/mcp-servers/:id/env/:name', handler: mcpServers.saveEnv },
     { method: 'post', path: '/mcp-servers/:id/stop', handler: mcpServers.stopInstances },
+    { method: 'post', path: '/mcp-servers/:id/install', handler: mcpServers.install },
     // O gateway como servidor MCP (ver `SelfMcp.Controller`): só POST; sem estado, GET e DELETE são 405.
     { method: 'post', path: '/mcp', handler: handleSelfMcp },
     { method: 'get', path: '/mcp', handler: rejectSelfMcp },

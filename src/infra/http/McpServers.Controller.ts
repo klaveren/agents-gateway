@@ -1,5 +1,6 @@
 import { IMcpServerInput, McpServersService } from '@application/McpServers.Service'
-import { IMcpServerConfig } from '@domain/models/McpServer.Model'
+import { IMcpServerConfig, isLaunchedMcp } from '@domain/models/McpServer.Model'
+import { installPackage, installStatus, removeInstall } from '@infra/mcp/Mcp.Install'
 import { McpRegistry } from '@infra/mcp/Mcp.Registry'
 import { Request, Response } from 'express'
 import { z } from 'zod'
@@ -27,11 +28,19 @@ const containerSchema = z.object({
   allowedHosts: z.array(z.string().max(200)).max(50).optional(),
   env: z.array(z.string().max(64)).max(20).optional(),
 })
+const processSchema = z.object({
+  package: z.string().max(300).optional(),
+  command: z.string().max(300).optional(),
+  args: z.array(z.string().max(300)).max(32).optional(),
+  env: z.array(z.string().max(64)).max(20).optional(),
+  scope: z.enum(['conversation', 'shared']).optional(),
+})
 const createSchema = z.object({
   id: z.string().max(64),
   name: z.string().max(200),
-  kind: z.enum(['remote', 'container']).optional(),
+  kind: z.enum(['remote', 'container', 'process']).optional(),
   container: containerSchema.optional(),
+  process: processSchema.optional(),
   url: z.string().max(2000).optional(),
   transport: transport.optional(),
   auth: auth.optional(),
@@ -41,6 +50,7 @@ const createSchema = z.object({
 const updateSchema = z.object({
   name: z.string().max(200).optional(),
   container: containerSchema.optional(),
+  process: processSchema.optional(),
   url: z.string().max(2000).optional(),
   transport: transport.optional(),
   auth: auth.optional(),
@@ -58,7 +68,8 @@ const envSchema = z.object({ value: z.string().max(8000) })
  */
 export class McpServersController {
   constructor(private readonly deps: IMcpServersControllerDeps) {
-    for (const name of ['list', 'create', 'update', 'remove', 'saveSecret', 'clearSecret', 'test', 'tools', 'saveEnv', 'stopInstances'] as const) this[name] = this[name].bind(this)
+    for (const name of ['list', 'create', 'update', 'remove', 'saveSecret', 'clearSecret', 'test', 'tools', 'saveEnv', 'stopInstances', 'install'] as const)
+      this[name] = this[name].bind(this)
   }
 
   async list(_req: Request, res: Response) {
@@ -85,7 +96,10 @@ export class McpServersController {
       res,
       async () => {
         const by = await this.requireAdmin('updateMcpServer')
-        const updated = this.deps.service.update(this.idOf(req), parseBody(updateSchema, req.body), by)
+        const id = this.idOf(req)
+        const updated = this.deps.service.update(id, parseBody(updateSchema, req.body), by)
+        // Instância de pé roda o cadastro de antes: a próxima ferramenta sobe com o novo.
+        if (isLaunchedMcp(updated)) await this.deps.registry.closeInstances({ serverId: id })
         return this.toDto(updated)
       },
       { message: 'MCP server updated' },
@@ -98,8 +112,11 @@ export class McpServersController {
       async () => {
         await this.requireAdmin('deleteMcpServer')
         const id = this.idOf(req)
+        const kind = this.deps.service.get(id).kind
         this.deps.service.remove(id)
         this.deps.registry.forget(id)
+        await this.deps.registry.closeInstances({ serverId: id })
+        if (kind === 'process') removeInstall(id)
         return null
       },
       { message: 'MCP server deleted' },
@@ -156,6 +173,22 @@ export class McpServersController {
     })
   }
 
+  /**
+   * O botão Instalar de um MCP `process`: `npm install` do pacote do cadastro, ao lado do anterior (que fica
+   * de pé se este falhar). As instâncias abertas morrem: a próxima ferramenta sobe com o pacote novo.
+   */
+  async install(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      await this.requireAdmin('installMcpServer')
+      const id = this.idOf(req)
+      const server = this.deps.service.get(id)
+      if (server.kind !== 'process' || !server.process?.package) throw new HttpError(422, 'validation_error', 'Only a local process MCP with an npm package can be installed')
+      const result = await installPackage(id, server.process.package)
+      if (result.ok) await this.deps.registry.closeInstances({ serverId: id })
+      return { ok: result.ok, ...(result.version ? { version: result.version } : {}), log: result.log, server: this.toDto(this.deps.service.get(id)) }
+    })
+  }
+
   /** Conecta AGORA (ignorando o backoff) e lista as ferramentas — o botão "Testar conexão". */
   async test(req: Request, res: Response) {
     await this.respond(res, async () => {
@@ -184,6 +217,7 @@ export class McpServersController {
       name: server.name,
       kind: server.kind ?? 'remote',
       ...(server.container ? { container: server.container, env: this.deps.service.envStatus(server.id) } : {}),
+      ...(server.process ? { process: server.process, env: this.deps.service.envStatus(server.id), install: installStatus(server.id, server.process.package) } : {}),
       url: server.url,
       transport: server.transport,
       auth: server.auth,
@@ -203,7 +237,7 @@ export class McpServersController {
       },
       agents: this.deps.service.usedBy(server.id).map((agent) => ({ id: agent.id, name: agent.name })),
       /** A URL é o MCP do próprio gateway: agente que conversa com agentes pode entrar em recursão. */
-      selfReference: server.kind !== 'container' && /\/v1\/mcp\/?$/.test(safePath(server.url)),
+      selfReference: !isLaunchedMcp(server) && /\/v1\/mcp\/?$/.test(safePath(server.url)),
       createdAt: server.createdAt,
       updatedAt: server.updatedAt,
       updatedBy: server.updatedBy,

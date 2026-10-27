@@ -1,13 +1,14 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { api } from '@/lib/api'
-import type { IMcpContainer, IMcpServer, IMcpTool, TMcpAuth, TMcpTransport } from '@/lib/types'
+import type { IMcpContainer, IMcpProcess, IMcpServer, IMcpTool, TMcpAuth, TMcpKind, TMcpTransport } from '@/lib/types'
 
 export interface INewMcpServer {
   id: string
   name: string
-  kind: 'remote' | 'container'
+  kind: TMcpKind
   container?: IMcpContainer
+  process?: IMcpProcess
   url: string
   transport: TMcpTransport
   auth: TMcpAuth
@@ -30,7 +31,7 @@ export const useMcpStore = defineStore('mcp', () => {
     return created
   }
 
-  async function update(id: string, change: Partial<Pick<IMcpServer, 'name' | 'url' | 'transport' | 'auth' | 'headerName' | 'enabled' | 'container'>>): Promise<void> {
+  async function update(id: string, change: Partial<Pick<IMcpServer, 'name' | 'url' | 'transport' | 'auth' | 'headerName' | 'enabled' | 'container' | 'process'>>): Promise<void> {
     await api(`/mcp-servers/${encodeURIComponent(id)}`, { method: 'PUT', body: change })
     await load()
   }
@@ -67,11 +68,18 @@ export const useMcpStore = defineStore('mcp', () => {
     return result.stopped
   }
 
+  /** `npm install` do pacote (pode levar minutos). `ok: false` traz o log do npm. */
+  async function install(id: string): Promise<{ ok: boolean; version?: string; log: string }> {
+    const result = await api<{ ok: boolean; version?: string; log: string }>(`/mcp-servers/${encodeURIComponent(id)}/install`, { method: 'POST' })
+    await load()
+    return result
+  }
+
   async function loadTools(id: string): Promise<IMcpTool[]> {
     const result = await api<IMcpTool[]>(`/mcp-servers/${encodeURIComponent(id)}/tools`)
     tools.value = { ...tools.value, [id]: result }
     return result
   }
 
-  return { list, tools, load, create, update, remove, saveSecret, clearSecret, saveEnv, stop, test, loadTools }
+  return { list, tools, load, create, update, remove, saveSecret, clearSecret, saveEnv, stop, install, test, loadTools }
 })

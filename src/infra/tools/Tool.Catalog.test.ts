@@ -81,6 +81,15 @@ describe('ToolCatalog', () => {
     )
   })
 
+  it('⚖️ servidor `caller` que recusa a conexão anônima (o MCP do gateway) chega ao SDK com a credencial de quem conversa', async () => {
+    const withSelf = new ToolCatalog(fakeMcpRegistry([{ id: 'gateway', connected: false, acceptsToken: 'tok-admin', tools: [mcpTool('save_agent')] }]), [])
+    assert.deepStrictEqual(
+      (await withSelf.mcpServersFor(['mcp:gateway/*'], { token: 'tok-admin' } as IExecutionContext)).map((server) => server.config.id),
+      ['gateway'],
+    )
+    assert.deepStrictEqual(await withSelf.mcpServersFor(['mcp:gateway/*']), [])
+  })
+
   it('leva a credencial da chamada até o cliente MCP', async () => {
     contexts.length = 0
     const box = await catalog().toolbox(['mcp:crm/stats'])

@@ -2,6 +2,7 @@ import { SubscriptionLogins } from '@infra/providers/Subscription.Client'
 import { McpProxyController } from '@infra/http/McpProxy.Controller'
 import { McpServersService } from '@application/McpServers.Service'
 import { McpServersController } from '@infra/http/McpServers.Controller'
+import { PackagesController } from '@infra/http/Packages.Controller'
 import { AgentController } from '@infra/http/Agent.Controller'
 import { AuthController } from '@infra/http/Auth.Controller'
 import { ProvidersController } from '@infra/http/Providers.Controller'
@@ -78,4 +79,8 @@ export function makeMcpServersController(): McpServersController {
 export function makeMcpProxyController(): McpProxyController {
   const { mcp } = makeTools()
   return new McpProxyController({ registry: mcp, proof: makeAuth().proof, session: (id) => mcp.session(id), agentTools: (id) => makeAgents().entry(id)?.agent.allowedTools })
+}
+
+export function makePackagesController(): PackagesController {
+  return new PackagesController({ proof: makeAuth().proof })
 }

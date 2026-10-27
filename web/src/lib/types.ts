@@ -351,13 +351,27 @@ export interface IMcpContainer {
   env: string[]
 }
 
+/** Um MCP que roda como processo do próprio gateway (pacote npm ou comando), sem isolamento. */
+export interface IMcpProcess {
+  package?: string
+  command?: string
+  args: string[]
+  env: string[]
+  scope: 'conversation' | 'shared'
+}
+
+export type TMcpKind = 'remote' | 'container' | 'process'
+
 export interface IMcpServer {
   id: string
   name: string
-  kind: 'remote' | 'container'
+  kind: TMcpKind
   container?: IMcpContainer
-  /** Só em contêiner: as variáveis secretas declaradas e se têm valor (⛔ nunca o valor). */
+  process?: IMcpProcess
+  /** Só em contêiner e processo: as variáveis secretas declaradas e se têm valor (⛔ nunca o valor). */
   env?: Array<{ name: string; configured: boolean }>
+  /** Só em processo: o que está instalado e se ainda é o pacote do cadastro. */
+  install?: { installed: boolean; version?: string; spec?: string; installedAt?: string; stale?: boolean }
   url: string
   transport: TMcpTransport
   auth: TMcpAuth
@@ -371,6 +385,29 @@ export interface IMcpServer {
   createdAt: string
   updatedAt: string
   updatedBy?: string
+}
+
+/** Uma ferramenta do servidor instalada pela guia Pacotes (micromamba, conda-forge). */
+export interface IInstalledPackage {
+  name: string
+  version: string
+  /** Pedido por quem administra; `false` = veio como dependência. */
+  explicit: boolean
+}
+
+export interface IPackagesState {
+  /** O micromamba existe no servidor. */
+  available: boolean
+  version?: string
+  /** Onde as ferramentas moram (persistente). */
+  prefix: string
+  packages: IInstalledPackage[]
+}
+
+export interface IPackageHit {
+  name: string
+  version: string
+  license?: string
 }
 
 export interface IMcpTool {

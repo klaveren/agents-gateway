@@ -26,30 +26,30 @@ that runs the tool loop for you. It is tempting to treat the second as a wrapper
 have written in an afternoon. This project exists to check that, by running the same agent,
 on the same prompt, against the same tool, three ways:
 
-| | `chat` | `chat` + `tools` | `agent` |
-| --- | --- | --- | --- |
-| SDK | plain | plain | Agents SDK |
-| Who runs the tool loop | nobody | **you do, by hand** | the SDK |
-| Tool-loop code you maintain | none | 109 shared + 89–137 per provider | **none** |
+|                             | `chat` | `chat` + `tools`                 | `agent`    |
+| --------------------------- | ------ | -------------------------------- | ---------- |
+| SDK                         | plain  | plain                            | Agents SDK |
+| Who runs the tool loop      | nobody | **you do, by hand**              | the SDK    |
+| Tool-loop code you maintain | none   | 109 shared + 89–137 per provider | **none**   |
 
 To be fair about that last row: the agent adapters in this repo are ~280 lines each, and the
 chat ones are not much smaller. Both lanes need translation code — mapping a provider's
 stream onto one event shape, carrying history, wiring MCP. What the last column is missing
-is the *loop and its bookkeeping*, and that is the part that is easy to get subtly wrong.
+is the _loop and its bookkeeping_, and that is the part that is easy to get subtly wrong.
 
 The plain SDKs are `@anthropic-ai/sdk`, `openai` and `@google/generative-ai`; the agentic
 ones are `@anthropic-ai/claude-agent-sdk`, `@openai/agents` and `@google/adk`.
 
 ### What it looks like when you run it
 
-Same agent, same question — *run `whoami; pwd` and answer with the output* — inside the
+Same agent, same question — _run `whoami; pwd` and answer with the output_ — inside the
 container, where the true answer is `gateway` and `/workspace`:
 
-| Lane | Tools called | Answer |
-| --- | --- | --- |
-| `chat` | none | **`root` / `/home/user`** — invented |
-| `chat` + `tools` | `run_bash` | `gateway` / `/workspace` |
-| `agent` | `mcp__gateway__run_bash` | `gateway` / `/workspace` |
+| Lane             | Tools called             | Answer                               |
+| ---------------- | ------------------------ | ------------------------------------ |
+| `chat`           | none                     | **`root` / `/home/user`** — invented |
+| `chat` + `tools` | `run_bash`               | `gateway` / `/workspace`             |
+| `agent`          | `mcp__gateway__run_bash` | `gateway` / `/workspace`             |
 
 The first row is the part worth sitting with. Asked a question about the world with no way
 to look, the model did not say "I can't check that" — it produced a confident, plausible,
@@ -76,7 +76,7 @@ writing, and keeping correct, all of this:
   poisons **every subsequent turn** of that conversation, so a failed turn has to roll the
   history back rather than leave it half-written.
 - A turn cap, so a model that keeps asking for tools stops instead of billing you forever.
-- Feeding tool *failures* back to the model, so it can correct course instead of stalling.
+- Feeding tool _failures_ back to the model, so it can correct course instead of stalling.
 
 Every one of those is a place to be subtly wrong, and being subtly wrong shows up as "the
 model got weird on turn three", not as a stack trace.
@@ -91,7 +91,7 @@ SDK and stop thinking":
   where you put your policy — they are not a policy.
 - **Observability is still yours.** Normalising three event streams into one shape so you
   can compare them is this gateway's job.
-- **Each SDK has real surface area.** It is not free; it is *different* work.
+- **Each SDK has real surface area.** It is not free; it is _different_ work.
 
 ### What the comparison surfaced
 
@@ -107,7 +107,7 @@ each if you meet them alone:
   subprocess, delivered as a per-platform optional dependency. `npm install --omit=optional`
   breaks it in a way that only appears on the first turn.
 - **Its `resume` wants a session id the CLI itself minted**, not one you invented. Hand it
-  your own and the subprocess exits with *"No conversation found"*.
+  your own and the subprocess exits with _"No conversation found"_.
 - **The ADK streams partial text and then repeats the whole thing** in a final aggregate
   event. Forward both and every answer is duplicated on screen.
 
@@ -118,7 +118,7 @@ comparison was worth building rather than reasoning about.
 
 One prompt, one tool, one run per lane. It demonstrates the shape of the difference; it is
 not a benchmark, and it says nothing about which provider is better. The value here is that
-the three states are *reproducible on your machine, with your keys* — flip the lane in the
+the three states are _reproducible on your machine, with your keys_ — flip the lane in the
 UI and watch it happen, rather than taking anyone's word for it.
 
 ---
@@ -179,23 +179,23 @@ the built-in `search_web` and `run_bash` keep it useful on their own. Point it a
 `GET /v1/tools` shows the merged view and whether MCP is connected. Writing your own server?
 See the [MCP server guide](docs/MCP-SERVER-GUIDE.md).
 
-The connection heals itself. A server that comes up *after* the gateway is picked up on the
+The connection heals itself. A server that comes up _after_ the gateway is picked up on the
 next tool listing or health check; one that dies mid-run drops the gateway back to local
 tools and is retried with exponential backoff (1s up to 60s). No restart either way.
 
 ### Other environment variables
 
-| Env | Default | What it does |
-| --- | --- | --- |
-| `PORT` | `3000` | Port to listen on. |
-| `MCP_SERVER_URL` | `http://localhost:8000/mcp` | MCP server whose tools join the catalog. |
-| `MAX_OUTPUT_TOKENS` | `4096` | Output cap per model call in the chat lane. |
-| `MAX_TOOL_TURNS` | `12` | Tool round-trips allowed in one turn. |
-| `BASH_CWD` | *(process cwd)* | Working directory of `run_bash`. |
-| `BASH_TIMEOUT_MS` | `20000` | `run_bash` timeout. |
-| `BASH_MAX_OUTPUT_CHARS` | `4000` | `run_bash` output cap. |
-| `CONVERSATIONS_DB` | `data/gateway.db` | SQLite file for conversations **and** settings. `off` disables recording and keeps settings in memory. |
-| `GEMINI_API_KEY` | *(none)* | Alternative to `GOOGLE_GENAI_API_KEY` for the agent lane (`@google/adk`). |
+| Env                     | Default                     | What it does                                                                                           |
+| ----------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `PORT`                  | `3000`                      | Port to listen on.                                                                                     |
+| `MCP_SERVER_URL`        | `http://localhost:8000/mcp` | MCP server whose tools join the catalog.                                                               |
+| `MAX_OUTPUT_TOKENS`     | `4096`                      | Output cap per model call in the chat lane.                                                            |
+| `MAX_TOOL_TURNS`        | `12`                        | Tool round-trips allowed in one turn.                                                                  |
+| `BASH_CWD`              | _(process cwd)_             | Working directory of `run_bash`.                                                                       |
+| `BASH_TIMEOUT_MS`       | `20000`                     | `run_bash` timeout.                                                                                    |
+| `BASH_MAX_OUTPUT_CHARS` | `4000`                      | `run_bash` output cap.                                                                                 |
+| `CONVERSATIONS_DB`      | `data/gateway.db`           | SQLite file for conversations **and** settings. `off` disables recording and keeps settings in memory. |
+| `GEMINI_API_KEY`        | _(none)_                    | Alternative to `GOOGLE_GENAI_API_KEY` for the agent lane (`@google/adk`).                              |
 
 ### Before you run it
 
@@ -216,16 +216,16 @@ get right yourself:
 The gateway executes `run_bash`, so it is closed by default: it binds to `127.0.0.1` and
 rejects every cross-origin request. The bundled UI is same-origin and unaffected.
 
-| Env | Default | What it does |
-| --- | --- | --- |
-| `HOST` | `127.0.0.1` | Interface to bind. Change it only if you know who else is on the network. |
-| `CORS_ORIGINS` | *(none)* | Comma-separated allowlist. Needed if you serve a frontend from another port. |
-| `ALLOW_ANONYMOUS` | *(off)* | Needed to use the bundled UI and plain `curl`, which send no caller credential. See [Caller identity](#caller-identity). |
-| `JSON_LIMIT` | `25mb` | Request body cap. Base64 attachments inflate ~33%. |
+| Env               | Default     | What it does                                                                                                             |
+| ----------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `HOST`            | `127.0.0.1` | Interface to bind. Change it only if you know who else is on the network.                                                |
+| `CORS_ORIGINS`    | _(none)_    | Comma-separated allowlist. Needed if you serve a frontend from another port.                                             |
+| `ALLOW_ANONYMOUS` | _(off)_     | Needed to use the bundled UI and plain `curl`, which send no caller credential. See [Caller identity](#caller-identity). |
+| `JSON_LIMIT`      | `25mb`      | Request body cap. Base64 attachments inflate ~33%.                                                                       |
 
 ### Caller identity
 
-The perimeter above is the *service's* gate. This section is about *who is calling*: the
+The perimeter above is the _service's_ gate. This section is about _who is calling_: the
 gateway forwards the caller's own credential to the MCP tools (header `X-Tool-Authorization`,
 kept apart from `Authorization` on purpose) and uses it to keep one caller's sessions away from
 another's.
@@ -238,7 +238,7 @@ local `curl` without an account, open it explicitly with `ALLOW_ANONYMOUS=1` (an
 one "no owner" scope and cannot see sessions that have an owner). There is no service-wide shared
 secret: a leftover `GATEWAY_TOKEN` only logs a warning at boot.
 
-The token payload is read **without verifying the signature**, only to *label* who is calling.
+The token payload is read **without verifying the signature**, only to _label_ who is calling.
 A forged token claims anything, so identity that decides access has to be **proven**: the
 gateway spends the token on a probe MCP tool and believes the payload only if the tool confirms
 it. Proofs (and denials) are cached for 60 s by `sha256(token)`, up to 500 entries. The
@@ -246,16 +246,16 @@ strategy sits behind a small port (`ICallerProof` in `src/infra/http/Caller.Proo
 another one — verifying against a JWKS, for example — can be plugged in without touching a
 route.
 
-| Env | Default | What it does |
-| --- | --- | --- |
-| `ALLOW_ANONYMOUS` | *(off)* | `1` lets requests without `X-Tool-Authorization` through. |
-| `CALLER_ID_CLAIM` | `sub` | Where the caller's id lives in the token payload. Dot paths work (`user.id`). |
-| `CALLER_EMAIL_CLAIM` | `email` | Same, for the e-mail label. |
-| `CALLER_ROLE_CLAIM` | `role` | Same, for the role label. |
-| `CALLER_ACCOUNT_CLAIM` | *(none)* | Same, for an account/tenant (`account.alias`). Optional; when set, a session is also bound to the account. |
-| `CALLER_PROOF_TOOL` | *(none)* | MCP tool the token is spent on. **Unset disables proof.** |
-| `CALLER_PROOF_FIELD` | `authenticated` | Field of the tool's JSON result that must be exactly `true`. Dot paths work. |
-| `REQUIRE_PROVEN_OWNER` | **on** | Only a proven identity counts as owner. `0`/`false`/`off`/`no` accepts the *claimed* identity when proof is disabled. |
+| Env                    | Default         | What it does                                                                                                          |
+| ---------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `ALLOW_ANONYMOUS`      | _(off)_         | `1` lets requests without `X-Tool-Authorization` through.                                                             |
+| `CALLER_ID_CLAIM`      | `sub`           | Where the caller's id lives in the token payload. Dot paths work (`user.id`).                                         |
+| `CALLER_EMAIL_CLAIM`   | `email`         | Same, for the e-mail label.                                                                                           |
+| `CALLER_ROLE_CLAIM`    | `role`          | Same, for the role label.                                                                                             |
+| `CALLER_ACCOUNT_CLAIM` | _(none)_        | Same, for an account/tenant (`account.alias`). Optional; when set, a session is also bound to the account.            |
+| `CALLER_PROOF_TOOL`    | _(none)_        | MCP tool the token is spent on. **Unset disables proof.**                                                             |
+| `CALLER_PROOF_FIELD`   | `authenticated` | Field of the tool's JSON result that must be exactly `true`. Dot paths work.                                          |
+| `REQUIRE_PROVEN_OWNER` | **on**          | Only a proven identity counts as owner. `0`/`false`/`off`/`no` accepts the _claimed_ identity when proof is disabled. |
 
 Sessions are stamped with `metadata.owner` (`id`, `email`, `account`) from the proven caller;
 an `owner` sent in the request body is discarded. `GET /sessions` lists only your own, and
@@ -264,7 +264,7 @@ exactly like a session that does not exist. `GET /agents`, `/agents/:id/tools`, 
 `/openapi.json` also need a proven caller, and `/agents` never includes the system prompt.
 
 **Why `REQUIRE_PROVEN_OWNER` is on by default.** With no `CALLER_PROOF_TOOL`, the identity is
-only what the token *says*, and anyone who knows another user's id can forge a token with it and
+only what the token _says_, and anyone who knows another user's id can forge a token with it and
 list, read and drive that user's sessions — spending model budget on their behalf. So by default
 a credential that cannot be proven is **refused** (`401`) on the identity routes, and the boot
 log warns once. The cost is that a fresh install with real tokens needs either
@@ -289,58 +289,58 @@ the new one receives a **transcript** of the previous turns — requests, answer
 and its internal state (tool ids, encrypted reasoning, cache) stays behind. Usage and cost are kept per
 provider and model.
 
-Who the agent serves, which agent answers and with which model are *operating* decisions, so
+Who the agent serves, which agent answers and with which model are _operating_ decisions, so
 they live in settings you change at runtime (`GET`/`PUT /v1/settings`) instead of in `.env`. They
 are stored in the same SQLite file as the conversations (`CONVERSATIONS_DB`; `off` keeps them in
 memory, lost on restart) and apply on the next session, in the same instant they are saved.
 
-| Setting | Meaning |
-| --- | --- |
-| `audience` | `off`: nobody opens a new session. `restricted`: only callers whose **proven** role is in `AUDIENCE_ROLES`. `all` (default): every caller the gateway already lets through. |
-| `agentId` | Agent that answers when the caller sends none. Empty = the first active agent that is not a subagent. Must be active to be saved. |
-| `provider` | Provider used when the caller sends none: one of the chosen agent's providers. Empty = the first that offers `model`, else the agent's default. |
-| `model` | Model used when the caller sends none. Must be one of the chosen agent's enabled models (`422` otherwise); a model asked for explicitly that the agent does not offer is `409 model_disabled`, never silently swapped. |
-| `classifyTurns` | Turn on the [turn classifier](#turn-classification). Absent = off. |
-| `classifierProvider` | Provider that classifies: enabled, with an API key (subscriptions do not classify). |
-| `classifierModel` | Model that classifies, enabled in that provider's catalog. Without both, no classification. |
-| `limits` | Live caps: `maxToolTurns`, `maxOutputTokens`, `delegationMaxDepth`, `bashTimeoutMs`, `bashMaxOutputChars`, `sessionsPerOwner`, `streamsPerOwner`. Each has a range (`GET /settings` returns `limitBounds` and `limitsInEffect`); `null` on one falls back to its env variable, which is now only the initial value. |
+| Setting              | Meaning                                                                                                                                                                                                                                                                                                             |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `audience`           | `off`: nobody opens a new session. `restricted`: only callers whose **proven** role is in `AUDIENCE_ROLES`. `all` (default): every caller the gateway already lets through.                                                                                                                                         |
+| `agentId`            | Agent that answers when the caller sends none. Empty = the first active agent that is not a subagent. Must be active to be saved.                                                                                                                                                                                   |
+| `provider`           | Provider used when the caller sends none: one of the chosen agent's providers. Empty = the first that offers `model`, else the agent's default.                                                                                                                                                                     |
+| `model`              | Model used when the caller sends none. Must be one of the chosen agent's enabled models (`422` otherwise); a model asked for explicitly that the agent does not offer is `409 model_disabled`, never silently swapped.                                                                                              |
+| `classifyTurns`      | Turn on the [turn classifier](#turn-classification). Absent = off.                                                                                                                                                                                                                                                  |
+| `classifierProvider` | Provider that classifies: enabled, with an API key (subscriptions do not classify).                                                                                                                                                                                                                                 |
+| `classifierModel`    | Model that classifies, enabled in that provider's catalog. Without both, no classification.                                                                                                                                                                                                                         |
+| `limits`             | Live caps: `maxToolTurns`, `maxOutputTokens`, `delegationMaxDepth`, `bashTimeoutMs`, `bashMaxOutputChars`, `sessionsPerOwner`, `streamsPerOwner`. Each has a range (`GET /settings` returns `limitBounds` and `limitsInEffect`); `null` on one falls back to its env variable, which is now only the initial value. |
 
 `PUT /settings` takes a partial body: an absent field is untouched, and `null` (or `""`) on an
 optional field deletes it and reverts to the default. `audience` cannot be cleared. `GET`
 returns what is stored plus `defaults`, the values that apply to empty fields. Both routes answer
 `404` (not `403`) to anyone who is not an administrator, so the route's existence is not
-revealed. Closing the audience only blocks *new* sessions; a turn already running finishes. A
+revealed. Closing the audience only blocks _new_ sessions; a turn already running finishes. A
 refusal is `403` with code `agent_unavailable`.
 
 Access rules, in order: a role in `DENIED_ROLES` is refused under **any** audience, `all`
-included; `off` refuses everyone; `restricted` needs a *proven* identity whose role is in
-`AUDIENCE_ROLES`; `all` admits anyone with a proven identity, and one that is only *claimed* is
+included; `off` refuses everyone; `restricted` needs a _proven_ identity whose role is in
+`AUDIENCE_ROLES`; `all` admits anyone with a proven identity, and one that is only _claimed_ is
 admitted solely when `REQUIRE_PROVEN_OWNER` is off (an anonymous call, which exists only with
 `ALLOW_ANONYMOUS=1`, is admitted under `all`: there is no identity to forge). The role comes from
 `CALLER_ROLE_CLAIM`. For a caller that is not proven, `DENIED_ROLES` only sees what the token
-*says*: refusing on a claim is the safe direction, but configure proof if you need it airtight.
+_says_: refusing on a claim is the safe direction, but configure proof if you need it airtight.
 `GET /v1/availability` answers `{ "available": true|false }` for the current caller; the bundled
 UI can use it to decide whether to show the assistant.
 
 Settings administrators are callers with a **proven** identity whose role is in `ADMIN_ROLES` or
 whose id/e-mail is in `ADMIN_USERS`. Without `CALLER_PROOF_TOOL` nobody is an administrator.
 
-| Env | Default | What it does |
-| --- | --- | --- |
-| `AUDIENCE_ROLES` | `admin` | Comma list of roles admitted under `audience: restricted`. |
-| `DENIED_ROLES` | *(empty)* | Comma list of roles refused under every audience. |
-| `ADMIN_ROLES` | `admin` | Comma list of roles that may read and write settings. |
-| `ADMIN_USERS` | *(empty)* | Comma list of ids or e-mails that may read and write settings. |
-| `SESSION_CONTEXT_TEMPLATE` | *(none)* | Text sent to the model before the **first** message of a session, never stored in the turn. Placeholders: `{id}` `{email}` `{role}` `{account}` `{date}`. If it cites an identity field the token lacks, no context is sent. Unset = none. |
-| `SESSION_TIMEZONE` | `UTC` | Time zone of `{date}` (IANA name; an invalid one falls back to UTC). |
-| `CLASSIFIER_PROMPT_FILE` | *(none)* | Path to a text file that replaces the classifier prompt. A missing, unreadable or empty file is refused with a boot warning. |
-| `MODEL_PRICING_FILE` | *(none)* | Path to a JSON file of model prices, merged over the built-in table (see [Monitor, sharing and cost](#monitor-sharing-and-cost)). An invalid file is refused whole, with a boot warning. |
+| Env                        | Default   | What it does                                                                                                                                                                                                                               |
+| -------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `AUDIENCE_ROLES`           | `admin`   | Comma list of roles admitted under `audience: restricted`.                                                                                                                                                                                 |
+| `DENIED_ROLES`             | _(empty)_ | Comma list of roles refused under every audience.                                                                                                                                                                                          |
+| `ADMIN_ROLES`              | `admin`   | Comma list of roles that may read and write settings.                                                                                                                                                                                      |
+| `ADMIN_USERS`              | _(empty)_ | Comma list of ids or e-mails that may read and write settings.                                                                                                                                                                             |
+| `SESSION_CONTEXT_TEMPLATE` | _(none)_  | Text sent to the model before the **first** message of a session, never stored in the turn. Placeholders: `{id}` `{email}` `{role}` `{account}` `{date}`. If it cites an identity field the token lacks, no context is sent. Unset = none. |
+| `SESSION_TIMEZONE`         | `UTC`     | Time zone of `{date}` (IANA name; an invalid one falls back to UTC).                                                                                                                                                                       |
+| `CLASSIFIER_PROMPT_FILE`   | _(none)_  | Path to a text file that replaces the classifier prompt. A missing, unreadable or empty file is refused with a boot warning.                                                                                                               |
+| `MODEL_PRICING_FILE`       | _(none)_  | Path to a JSON file of model prices, merged over the built-in table (see [Monitor, sharing and cost](#monitor-sharing-and-cost)). An invalid file is refused whole, with a boot warning.                                                   |
 
 Sessions expire after **8 hours** without activity.
 
 ### Monitor, sharing and cost
 
-Every turn is recorded (SQLite, see `CONVERSATIONS_DB`), and the *persisted* conversation is a
+Every turn is recorded (SQLite, see `CONVERSATIONS_DB`), and the _persisted_ conversation is a
 different thing from the live session behind `/v1/sessions`: it survives restarts, and it is what a
 history screen reads.
 
@@ -353,20 +353,20 @@ history screen reads.
 - **Monitor (administrators only).** `GET /v1/conversations?scope=all` lists everyone's. With
   `page=` the server paginates (`pageSize` 1–50, default 10), searches `q` (≤100 chars: title and
   owner e-mail, id and account) and filters by `classification` and `provider`, returning
-  `{ sessions, total, page, pageSize, facets, scope }`. `facets` counts over the *search*, not the
+  `{ sessions, total, page, pageSize, facets, scope }`. `facets` counts over the _search_, not the
   active tab, so the other tabs keep their numbers. `GET /v1/conversations/stats` returns totals,
   `byModel`, `byClassification` and the estimated cost. Everyone else gets `404`.
 - **Classification** (`green`, `blue`, `amber`, `red`) is stored per turn and per conversation, where the
-  conversation carries the *worst* of its turns. See [Turn classification](#turn-classification)
+  conversation carries the _worst_ of its turns. See [Turn classification](#turn-classification)
   for what produces it.
 - **Sharing.** `PUT /v1/conversations/:id/share { "shared": true }` (owner or administrator) opens a
   read-only link. The `shareId` (12 random bytes, base64url) is created once and reused: closing
   keeps it and only stops it from answering, so reopening returns the same link. `GET /v1/shared/:id`
   is **public** (the only route besides `/health`) and returns just `{ id, title, createdAt, turns:
-  [{ at, request, text }] }` — no tool calls, reasoning, attachments, classification, usage or
+[{ at, request, text }] }` — no tool calls, reasoning, attachments, classification, usage or
   metadata. A conversation that does not exist and one that is not shared both answer `404`. Anyone
   holding the link can read the text of the answers, so share deliberately.
-- **Cost.** `costUsd` is an *estimate* from a price table ($ per 1M tokens): fresh input
+- **Cost.** `costUsd` is an _estimate_ from a price table ($ per 1M tokens): fresh input
   (`input − cacheRead − cacheWrite`) at the input price, cache reads and writes at theirs, and
   output **plus reasoning** at the output price. A model with no price has no `costUsd` — never
   zero. It appears only in administrator responses (monitor listing, turns read by an
@@ -374,7 +374,7 @@ history screen reads.
   so a selector can show it and sort cheapest first.
 
 Prices live in each provider's model catalog (Providers → Models), and that is what usage and cost read.
-The built-in table is only the *suggested* price for a model when it enters the catalog (sync or
+The built-in table is only the _suggested_ price for a model when it enters the catalog (sync or
 "add by id"). Add or correct suggestions with `MODEL_PRICING_FILE`:
 
 ```json
@@ -389,12 +389,12 @@ invalid the whole file is refused and the built-in table stays, with a warning i
 An optional small model labels each turn, so you can find patterns without reading every
 conversation:
 
-| Label | Meaning | Action |
-| --- | --- | --- |
-| `green` | Answered within the agent's capabilities. | none |
-| `blue` | The agent failed to deliver, or a capability is missing. | product gap |
-| `amber` | A legitimate request the system does not do, or that is out of scope. | product decision |
-| `red` | Abuse: jailbreak, prompt injection, an attempt to reach another user's or account's data. | investigate today |
+| Label   | Meaning                                                                                   | Action            |
+| ------- | ----------------------------------------------------------------------------------------- | ----------------- |
+| `green` | Answered within the agent's capabilities.                                                 | none              |
+| `blue`  | The agent failed to deliver, or a capability is missing.                                  | product gap       |
+| `amber` | A legitimate request the system does not do, or that is out of scope.                     | product decision  |
+| `red`   | Abuse: jailbreak, prompt injection, an attempt to reach another user's or account's data. | investigate today |
 
 Severity is `green` < `blue` < `amber` < `red`; a conversation carries the worst label of its turns.
 
@@ -439,30 +439,70 @@ cp .env.example .env   # preencha as chaves
 docker compose up -d   # http://127.0.0.1:3000/v1
 ```
 
-| What the container buys you | What it does **not** |
-| --- | --- |
-| `run_bash` runs as an unprivileged user (uid 10001), never as you | the model still has a shell |
-| your `$HOME`, your keys and your files are not there at all | it still reads the container's own filesystem |
-| writes land in `/workspace`; the rest of the rootfs is read-only | `/workspace` is genuinely writable |
-| `cap_drop: ALL` + `no-new-privileges` — no route to root | — |
-| `pids_limit` and `mem_limit` cap a fork bomb at the container | — |
-| the port is published on `127.0.0.1` only | it still reaches the network |
+| What the container buys you                                       | What it does **not**                          |
+| ----------------------------------------------------------------- | --------------------------------------------- |
+| `run_bash` runs as an unprivileged user (uid 10001), never as you | the model still has a shell                   |
+| your `$HOME`, your keys and your files are not there at all       | it still reads the container's own filesystem |
+| writes land in `/workspace`; the rest of the rootfs is read-only  | `/workspace` is genuinely writable            |
+| `cap_drop: ALL` + `no-new-privileges` — no route to root          | —                                             |
+| `pids_limit` and `mem_limit` cap a fork bomb at the container     | —                                             |
+| the port is published on `127.0.0.1` only                         | it still reaches the network                  |
 
 Verified by asking the agent lane to run `whoami` inside it: `gateway`, in `/workspace`,
 with no `/Users` in sight.
+
+### MCP servers: remote, container, or local process
+
+The MCP screen registers three kinds of server, and each agent picks its tools from them:
+
+| Kind        | Runs                                                                  | Isolation                                                             |
+| ----------- | --------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `remote`    | an MCP already up, over HTTP/SSE                                      | whatever that server has                                              |
+| `container` | `docker run` of an image, one per conversation                        | read-only, no capabilities, no volumes, egress only to listed domains |
+| `process`   | an npm package (or any command) as a child of the gateway, over stdio | **none** — the gateway's user, disk and network                       |
+
+`process` is the admin's call, the same way picking `sdk:Bash` for an agent is: it is how
+you run something like Playwright without Docker. **Install** runs
+`npm install --prefix <data>/mcp/<id>` (on the pod, the PVC — it survives restarts; a failed
+reinstall keeps the previous one). Each conversation gets its own process and an empty work
+folder, unless the server is set to `shared`. The process does **not** inherit the gateway's
+environment: only `PATH`, `HOME` and the basics, plus the secret variables declared for it.
+
+The image ships Debian's `chromium` for Playwright: the screen's preset is
+`@playwright/mcp@latest --headless --isolated --no-sandbox --executable-path=/usr/bin/chromium`.
+Outside Linux, drop `--executable-path` and it uses the installed Chrome.
+
+### Server tools that survive a reboot: the Packages tab
+
+On the pod there is no root and the rootfs is read-only, so `apt install` is not an option and
+anything installed by hand is gone on the next restart. The **Packages** tab (admins only)
+searches conda-forge and installs with `micromamba` — a static binary shipped in the image —
+into `<data>/tools` (on the pod, the PVC). The gateway puts `<data>/tools/bin` first on its own
+`PATH` at boot, so the agents' Bash, `run_bash` and local MCP processes all see git, curl, jq,
+ffmpeg or whatever was installed. Outside the image, point `MICROMAMBA_BIN` at a micromamba
+(`brew install micromamba` on a Mac).
+
+Language package managers persist too: at boot the gateway points each one's global install
+location at `<data>/tools/<manager>` and puts its `bin` on the `PATH` — `NPM_CONFIG_PREFIX`,
+`PYTHONUSERBASE`, `UV_TOOL_DIR`, `PIPX_HOME`, `CARGO_HOME`, `GOPATH`, `GEM_HOME` (caches in
+`<data>/cache`). So `npm i -g`, `pip install --user`, `uv tool install`, `cargo install`,
+`go install` and `gem install` survive a restart with no extra step; a variable already set by the
+operator wins. Not the whole `HOME` on purpose: a shared `HOME` would leak one conversation's
+history and credentials into the next. A project-local `npm install` in a conversation's folder
+stays temporary, as that folder is.
 
 ---
 
 ## Architecture
 
-| Layer | Responsibility |
-| --- | --- |
-| **Domain** | `Agent.Seed` (Atlas), `Agent.Policy`, `EMode`, and the `IAgentEvent` union every lane speaks. |
-| **Application** | Three thin use cases and the controller that turns events into SSE. |
-| **Infra (adapters)** | `*Chat.Adapter` on the plain SDKs, `*Agent.Adapter` on the Agents SDKs. |
-| **Infra (tools)** | `ToolCatalog` merging MCP discovery with the built-in toolset, plus one bridge per SDK. |
-| **Infra (session)** | `SessionStore` with TTL, and the session id that carries the route. |
-| **Composition** | Factories wiring six adapters — three providers × two lanes. |
+| Layer                | Responsibility                                                                                |
+| -------------------- | --------------------------------------------------------------------------------------------- |
+| **Domain**           | `Agent.Seed` (Atlas), `Agent.Policy`, `EMode`, and the `IAgentEvent` union every lane speaks. |
+| **Application**      | Three thin use cases and the controller that turns events into SSE.                           |
+| **Infra (adapters)** | `*Chat.Adapter` on the plain SDKs, `*Agent.Adapter` on the Agents SDKs.                       |
+| **Infra (tools)**    | `ToolCatalog` merging MCP discovery with the built-in toolset, plus one bridge per SDK.       |
+| **Infra (session)**  | `SessionStore` with TTL, and the session id that carries the route.                           |
+| **Composition**      | Factories wiring six adapters — three providers × two lanes.                                  |
 
 Files are named `<What>.<Kind>.ts` — `ClaudeChat.Adapter.ts`, `Agent.Provider.ts`,
 `AgentEvent.Model.ts`, `EMode.Enum.ts`.
@@ -472,28 +512,28 @@ Files are named `<What>.<Kind>.ts` — `ClaudeChat.Adapter.ts`, `Agent.Provider.
 Versioned under `/v1`. Everything but `/health` and `/shared/:id` needs the caller's credential — see [Caller identity](#caller-identity). The full contract is served at `/v1/openapi.json`, and a test fails
 the build if it drifts from the routes the server actually registers.
 
-| Route | What it does |
-| --- | --- |
-| `GET /v1/health` | Liveness, MCP status, live session count. Public. |
-| `GET /v1/agents` | The agents in the database (never the system prompt): lanes, enabled models and per-model `pricing`. Members see only the active ones; admins see all, each inactive one with `unavailable`. |
-| `GET /v1/agents/:agentId/tools` | Tool catalog filtered by what that agent declares. |
-| `GET /v1/tools` | Full catalog: built-in tools merged with whatever MCP exposes. |
-| `GET /v1/availability` | `{ available }`: does the agent serve you right now? |
-| `GET /v1/settings` | Operating settings plus `defaults`. Administrators only (404 otherwise). |
-| `PUT /v1/settings` | Partial update; `null` reverts an optional field. Administrators only. |
-| `GET /v1/conversations` | Your persisted conversations; `?scope=all` (+ `page`, `pageSize`, `q`, `classification`, `provider`) lists everyone's, administrators only. |
-| `GET /v1/conversations/stats` | Totals, by model, by classification, estimated cost. Administrators only (404 otherwise). |
-| `GET /v1/conversations/:id/turns` | The turns. Owner or administrator (404 otherwise); `costUsd` for administrators only. |
-| `PUT /v1/conversations/:id/share` | `{ shared }`: open or close the read-only link. Owner or administrator. |
-| `DELETE /v1/conversations/:id` | Deletes the persisted record. Owner or administrator. |
-| `GET /v1/shared/:id` | A shared conversation, read-only and stripped to question and answer. **Public.** |
-| `POST /v1/sessions` | `{ agentId?, mode, provider?, model, reasoning, language }` → a session. `403 agent_unavailable` when the audience refuses you. |
-| `GET /v1/sessions` | Your live sessions, most recently active first. |
-| `GET /v1/sessions/:id` | Lane, provider, model, turns and accumulated usage. |
-| `PATCH /v1/sessions/:id` | `{ provider?, model?, reasoning? }`: switch from the next turn on. Another provider of the agent receives the transcript. |
-| `DELETE /v1/sessions/:id` | Ends the session, aborting anything in flight. |
-| `POST /v1/sessions/:id/messages` | The turn. |
-| `POST /v1/sessions/:id/cancel` | Aborts the generation, keeping the session. |
+| Route                             | What it does                                                                                                                                                                                 |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /v1/health`                  | Liveness, MCP status, live session count. Public.                                                                                                                                            |
+| `GET /v1/agents`                  | The agents in the database (never the system prompt): lanes, enabled models and per-model `pricing`. Members see only the active ones; admins see all, each inactive one with `unavailable`. |
+| `GET /v1/agents/:agentId/tools`   | Tool catalog filtered by what that agent declares.                                                                                                                                           |
+| `GET /v1/tools`                   | Full catalog: built-in tools merged with whatever MCP exposes.                                                                                                                               |
+| `GET /v1/availability`            | `{ available }`: does the agent serve you right now?                                                                                                                                         |
+| `GET /v1/settings`                | Operating settings plus `defaults`. Administrators only (404 otherwise).                                                                                                                     |
+| `PUT /v1/settings`                | Partial update; `null` reverts an optional field. Administrators only.                                                                                                                       |
+| `GET /v1/conversations`           | Your persisted conversations; `?scope=all` (+ `page`, `pageSize`, `q`, `classification`, `provider`) lists everyone's, administrators only.                                                  |
+| `GET /v1/conversations/stats`     | Totals, by model, by classification, estimated cost. Administrators only (404 otherwise).                                                                                                    |
+| `GET /v1/conversations/:id/turns` | The turns. Owner or administrator (404 otherwise); `costUsd` for administrators only.                                                                                                        |
+| `PUT /v1/conversations/:id/share` | `{ shared }`: open or close the read-only link. Owner or administrator.                                                                                                                      |
+| `DELETE /v1/conversations/:id`    | Deletes the persisted record. Owner or administrator.                                                                                                                                        |
+| `GET /v1/shared/:id`              | A shared conversation, read-only and stripped to question and answer. **Public.**                                                                                                            |
+| `POST /v1/sessions`               | `{ agentId?, mode, provider?, model, reasoning, language }` → a session. `403 agent_unavailable` when the audience refuses you.                                                              |
+| `GET /v1/sessions`                | Your live sessions, most recently active first.                                                                                                                                              |
+| `GET /v1/sessions/:id`            | Lane, provider, model, turns and accumulated usage.                                                                                                                                          |
+| `PATCH /v1/sessions/:id`          | `{ provider?, model?, reasoning? }`: switch from the next turn on. Another provider of the agent receives the transcript.                                                                    |
+| `DELETE /v1/sessions/:id`         | Ends the session, aborting anything in flight.                                                                                                                                               |
+| `POST /v1/sessions/:id/messages`  | The turn.                                                                                                                                                                                    |
+| `POST /v1/sessions/:id/cancel`    | Aborts the generation, keeping the session.                                                                                                                                                  |
 
 `Accept` decides the shape of a turn: `text/event-stream` (the default) streams events;
 `application/json` returns the whole turn at once — final text, every tool call with its

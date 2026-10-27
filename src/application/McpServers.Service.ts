@@ -2,9 +2,12 @@ import { InvalidMcpServerError, McpServerInUseError, McpServerNotFoundError } fr
 import { IAgent } from '@domain/models/Agent.Model'
 import {
   IMcpContainer,
+  IMcpProcess,
   IMcpServerConfig,
   MCP_CONTAINER_DEFAULTS,
+  MCP_PROCESS_DEFAULTS,
   MCP_SERVER_ID_PATTERN,
+  mcpEnvNames,
   mcpEnvSecretKey,
   mcpSecretKey,
   mcpSelection,
@@ -21,6 +24,7 @@ export interface IMcpServerInput {
   name: string
   kind?: TMcpKind
   container?: Partial<IMcpContainer>
+  process?: Partial<IMcpProcess>
   url?: string
   transport?: TMcpTransport
   auth?: TMcpAuth
@@ -29,7 +33,10 @@ export interface IMcpServerInput {
   secret?: string
 }
 
-export type TMcpServerChange = Partial<Pick<IMcpServerConfig, 'name' | 'url' | 'transport' | 'auth' | 'headerName' | 'enabled'>> & { container?: Partial<IMcpContainer> }
+export type TMcpServerChange = Partial<Pick<IMcpServerConfig, 'name' | 'url' | 'transport' | 'auth' | 'headerName' | 'enabled'>> & {
+  container?: Partial<IMcpContainer>
+  process?: Partial<IMcpProcess>
+}
 
 const NAME_MAX = 80
 const HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/
@@ -80,7 +87,8 @@ export class McpServersService {
       name: input.name.trim(),
       kind,
       ...(kind === 'container' ? { container: containerOf(input.container) } : {}),
-      url: kind === 'container' ? '' : (input.url ?? '').trim(),
+      ...(kind === 'process' ? { process: processOf(input.process) } : {}),
+      url: kind === 'remote' ? (input.url ?? '').trim() : '',
       transport: input.transport ?? 'auto',
       // ⛔ `none` por padrão: `caller` manda a sessão de quem conversa (o JWT do gateway) para o servidor,
       // e isso é escolha consciente de quem o cadastra, nunca o default.
@@ -103,11 +111,12 @@ export class McpServersService {
 
   update(id: string, change: TMcpServerChange, by: string): IMcpServerConfig {
     const current = this.get(id)
-    const { container, ...rest } = change
+    const { container, process: proc, ...rest } = change
     const next: IMcpServerConfig = {
       ...current,
       ...definedOnly(rest),
       ...(current.kind === 'container' ? { container: containerOf({ ...current.container, ...definedOnly(container ?? {}) }) } : {}),
+      ...(current.kind === 'process' ? { process: processOf({ ...current.process, ...definedOnly(proc ?? {}) }) } : {}),
     }
     next.headerName = next.auth === 'none' ? undefined : next.headerName?.trim() || undefined
     const issues = issuesOf(next)
@@ -123,6 +132,7 @@ export class McpServersService {
       headerName: next.headerName,
       enabled: next.enabled,
       ...(next.container ? { container: next.container } : {}),
+      ...(next.process ? { process: next.process } : {}),
       updatedAt: this.now(),
       updatedBy: by,
     })!
@@ -139,15 +149,15 @@ export class McpServersService {
     this.secrets.clear(mcpSecretKey(id))
   }
 
-  /** As variáveis secretas do contêiner: o NOME e se há valor — ⛔ nunca o valor. */
+  /** As variáveis secretas do contêiner ou do processo: o NOME e se há valor — ⛔ nunca o valor. */
   envStatus(id: string): Array<{ name: string; configured: boolean }> {
     const server = this.get(id)
-    return (server.container?.env ?? []).map((name) => ({ name, configured: this.secrets.status([mcpEnvSecretKey(id, name)])[0].configured }))
+    return mcpEnvNames(server).map((name) => ({ name, configured: this.secrets.status([mcpEnvSecretKey(id, name)])[0].configured }))
   }
 
   saveEnv(id: string, name: string, value: string, by: string): void {
     const server = this.get(id)
-    if (!server.container?.env.includes(name)) throw new InvalidMcpServerError([{ field: 'env', message: `not a declared variable: ${name}` }])
+    if (!mcpEnvNames(server).includes(name)) throw new InvalidMcpServerError([{ field: 'env', message: `not a declared variable: ${name}` }])
     if (!value) throw new InvalidMcpServerError([{ field: 'env', message: 'required' }])
     this.secrets.save(mcpEnvSecretKey(id, name), value, by)
   }
@@ -164,7 +174,7 @@ export class McpServersService {
     const server = this.servers.get(id)
     this.servers.delete(id)
     this.secrets.clear(mcpSecretKey(id))
-    for (const name of server?.container?.env ?? []) this.secrets.clear(mcpEnvSecretKey(id, name))
+    for (const name of server ? mcpEnvNames(server) : []) this.secrets.clear(mcpEnvSecretKey(id, name))
   }
 }
 
@@ -213,11 +223,43 @@ function containerIssues(container: IMcpContainer): Array<{ field: string; messa
   return issues
 }
 
+/** Spec npm: `nome`, `@escopo/nome`, com versão/tag opcional; ou `file:`/caminho absoluto de um pacote local. */
+const NPM_SPEC = /^(?:(?:@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*(?:@[\w.^~<>=*|+-]+)?|file:\S+|\/\S+)$/
+
+function processOf(input: Partial<IMcpProcess> = {}): IMcpProcess {
+  const clean = (list: unknown) => (Array.isArray(list) ? list.map((entry) => String(entry).trim()).filter(Boolean) : [])
+  const pkg = String(input.package ?? '').trim()
+  const command = String(input.command ?? '').trim()
+  return {
+    ...(pkg ? { package: pkg } : {}),
+    ...(command ? { command } : {}),
+    args: Array.isArray(input.args) ? input.args.map(String) : MCP_PROCESS_DEFAULTS.args,
+    env: clean(input.env),
+    scope: input.scope === 'shared' ? 'shared' : MCP_PROCESS_DEFAULTS.scope,
+  }
+}
+
+/**
+ * ⚖️ SÓ O FORMATO: o processo roda com o alcance do gateway por escolha de quem administra, então não há
+ * lista de comandos nem de variáveis proibidas — o `RESERVED_ENV` é do contêiner (protege o `docker` do host).
+ */
+function processIssues(proc: IMcpProcess): Array<{ field: string; message: string }> {
+  const issues: Array<{ field: string; message: string }> = []
+  if (!proc.package && !proc.command) issues.push({ field: 'package', message: 'set an npm package or a command' })
+  if (proc.package && (proc.package.length > 300 || !NPM_SPEC.test(proc.package))) issues.push({ field: 'package', message: 'an npm package like @scope/name@version' })
+  if (proc.command && (proc.command.length > 300 || /[\n\r\0]/.test(proc.command))) issues.push({ field: 'command', message: 'one line, up to 300 characters' })
+  if (proc.args.length > 32 || proc.args.some((arg) => arg.length > 300 || /[\n\r\0]/.test(arg))) issues.push({ field: 'args', message: 'up to 32 arguments, one line each' })
+  for (const name of proc.env) if (!ENV_NAME.test(name)) issues.push({ field: 'env', message: `use UPPER_CASE names: ${name}` })
+  if (proc.env.length > 20) issues.push({ field: 'env', message: 'up to 20 variables' })
+  return issues
+}
+
 function issuesOf(config: IMcpServerConfig): Array<{ field: string; message: string }> {
   const issues: Array<{ field: string; message: string }> = []
   if (!config.name) issues.push({ field: 'name', message: 'required' })
   else if (config.name.length > NAME_MAX) issues.push({ field: 'name', message: `at most ${NAME_MAX} characters` })
   if (config.kind === 'container') return [...issues, ...containerIssues(config.container ?? containerOf())]
+  if (config.kind === 'process') return [...issues, ...processIssues(config.process ?? processOf())]
   const urlIssue = mcpUrlIssue(config.url)
   if (urlIssue) issues.push({ field: 'url', message: urlIssue })
   if (!TRANSPORTS.includes(config.transport)) issues.push({ field: 'transport', message: `one of ${TRANSPORTS.join(', ')}` })

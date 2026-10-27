@@ -55,6 +55,7 @@ export type TErrorCode =
   | 'login_locked'
   | 'session_not_found'
   | 'session_busy'
+  | 'package_busy'
   | 'mode_not_supported'
   | 'tools_not_supported'
   | 'adapter_not_found'
