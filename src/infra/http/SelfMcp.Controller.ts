@@ -279,7 +279,68 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     async ({ query }) => reply(await api('GET', '/packages/search', { query: { q: query } })),
   )
 
+  server.registerTool(
+    'list_hooks',
+    {
+      description:
+        "An agent's hooks: POST /v1/hook/<agentId>/<name> runs the hook prompt with the received event, as the account that created it. Shows the path, verification, conversation mode, the key's last 4 characters and the last delivery — never the key.",
+      inputSchema: { agentId: z.string() },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ agentId }) => reply(await api('GET', `/agents/${encodeURIComponent(agentId)}/hooks`)),
+  )
+
+  server.registerTool(
+    'hook_deliveries',
+    {
+      description: 'The last 20 calls of a hook: when, status (running, ok, error), the error and the conversation it opened.',
+      inputSchema: { agentId: z.string(), name: z.string() },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ agentId, name }) => reply(await api('GET', `/agents/${encodeURIComponent(agentId)}/hooks/${encodeURIComponent(name)}/deliveries`)),
+  )
+
   if (!access.write) return
+
+  server.registerTool(
+    'save_hook',
+    {
+      description:
+        'Create a hook on an agent, or change the one with the same name (the name can\'t change). It runs as YOU, the person in this conversation. The key is NOT returned here on purpose — it would be stored in the conversation. The person gets it in the screen: /agents/<agentId>, tab Hooks, "Trocar chave" generates a NEW key and shows it once (the one generated now is replaced; do not mention its last characters). verify: key (Authorization: Bearer / X-Hook-Key) or hmac (signature of the raw body, GitHub style). session: new (one conversation per call) or continuous (one conversation, calls queued).',
+      inputSchema: {
+        agentId: z.string(),
+        name: z.string().describe('2–48 lowercase letters, digits or hyphens; the end of the URL'),
+        prompt: z.string().describe('What the agent does when the event arrives; the event is appended'),
+        enabled: z.boolean().optional(),
+        verify: z.enum(['key', 'hmac']).optional(),
+        signatureHeader: z.string().optional().describe('hmac: default X-Hub-Signature-256'),
+        signaturePrefix: z.string().optional().describe('hmac: default sha256='),
+        signatureEncoding: z.enum(['hex', 'base64']).optional(),
+        session: z.enum(['new', 'continuous']).optional(),
+      },
+    },
+    async ({ agentId, name, ...fields }) => {
+      const path = `/agents/${encodeURIComponent(agentId)}/hooks`
+      const exists = ((await api('GET', path)).result as Array<{ name: string }> | undefined)?.some((hook) => hook.name === name)
+      const saved = exists ? await api('PUT', `${path}/${encodeURIComponent(name)}`, { body: fields }) : await api('POST', path, { body: { name, ...fields } })
+      // ⛔ A chave não entra na conversa (ficaria gravada nela): a pessoa a vê na tela, ao trocar.
+      return reply(saved, (result) => {
+        const { secret, ...hook } = result as { secret?: string } & Record<string, unknown>
+        const { secretLast4: _last4, ...shown } = hook
+        void _last4
+        return { ...shown, ...(secret ? { key: `not shown here: open /agents/${agentId} → Hooks → "Trocar chave" to get a new key, shown once` } : {}) }
+      })
+    },
+  )
+
+  server.registerTool(
+    'delete_hook',
+    {
+      description: 'Delete a hook and its key: the URL stops answering. Conversations it opened stay. Confirm with the person first.',
+      inputSchema: { agentId: z.string(), name: z.string() },
+    },
+    async ({ agentId, name }) => reply(await api('DELETE', `/agents/${encodeURIComponent(agentId)}/hooks/${encodeURIComponent(name)}`)),
+  )
 
   server.registerTool(
     'install_package',
