@@ -3,7 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api'
 import { useProjectsStore } from './projects'
 
-vi.mock('@/lib/api', () => ({ api: vi.fn(), openStream: vi.fn(), ApiError: class extends Error {}, authHeaders: () => ({}), setUnauthorizedHandler: vi.fn(), CALLER_TOKEN_KEY: 'k' }))
+vi.mock('@/lib/api', () => ({
+  api: vi.fn(),
+  openStream: vi.fn(),
+  ApiError: class extends Error {},
+  authHeaders: () => ({}),
+  setUnauthorizedHandler: vi.fn(),
+  CALLER_TOKEN_KEY: 'k',
+}))
 
 describe('useProjectsStore', () => {
   beforeEach(() => {

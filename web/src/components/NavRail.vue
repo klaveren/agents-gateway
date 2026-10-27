@@ -6,6 +6,7 @@ import { useConversationsStore } from '@/stores/conversations'
 import AccountMenu from './AccountMenu.vue'
 import Icon from './Icon.vue'
 import ProjectSwitcher from './ProjectSwitcher.vue'
+import DocsMenu from './DocsMenu.vue'
 import SystemMenu from './SystemMenu.vue'
 
 const route = useRoute()
@@ -20,7 +21,8 @@ const section = computed(() => {
   if (name.startsWith('mcp')) return 'mcp'
   if (name === 'user' || name.startsWith('user-')) return 'users'
   if (name === 'rules') return 'rules'
-  if (name.startsWith('doc')) return 'docs'
+  if (name.startsWith('spec')) return 'specs'
+  if (name.startsWith('adr')) return 'adrs'
   // Perfil não tem item no trilho (mora no menu da conta): nada fica aceso.
   if (name === 'packages' || name === 'profile' || name.startsWith('project')) return name.startsWith('project') ? 'projects' : name
   return ['settings', 'users', 'usage'].includes(name) ? name : 'inbox'
@@ -64,6 +66,8 @@ const links = computed<Array<{ to: string; key: string; label: string; short?: s
       <span v-if="link.badge" class="absolute top-0.5 right-[calc(50%-20px)] md:top-1 md:right-2 min-w-[18px] rounded-full bg-emerald-500 px-1 text-center text-[10px] leading-[18px] font-semibold text-zinc-950">{{ link.badge > 99 ? '99+' : link.badge }}</span>
     </RouterLink>
     <!-- Duas instâncias (barra do celular abre para cima; trilho, para o lado), cada uma só no seu tamanho. -->
+    <div v-if="auth.isAdmin" class="flex min-w-0 flex-1 md:hidden"><DocsMenu placement="up" :active="section" /></div>
+    <div v-if="auth.isAdmin" class="hidden md:block"><DocsMenu placement="side" :active="section" /></div>
     <div v-if="auth.isAdmin" class="flex min-w-0 flex-1 md:hidden"><SystemMenu placement="up" :active="section" /></div>
     <div v-if="auth.isAdmin" class="hidden md:block"><SystemMenu placement="side" :active="section" /></div>
     <AccountMenu v-if="auth.user" placement="up" class="md:hidden" />
