@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useConversationsStore } from '@/stores/conversations'
 import AccountMenu from './AccountMenu.vue'
 import Icon from './Icon.vue'
+import SystemMenu from './SystemMenu.vue'
 
 const route = useRoute()
 const auth = useAuthStore()
@@ -24,20 +25,15 @@ const section = computed(() => {
 
 /**
  * ⚖️ Abaixo de `md` o trilho vira uma BARRA INFERIOR: no celular, 68px de coluna fixa eram quase um
- * quinto da tela. Os mesmos links; Perfil e Sair ficam no menu da conta.
+ * quinto da tela. Os mesmos links; Perfil e Sair ficam no menu da conta, e o que é do sistema (Usuários,
+ * Modelos, MCPs, Pacotes, Configuração), no menu Sistema.
  */
-const links = computed<Array<{ to: string; key: string; label: string; short?: string; icon: 'inbox' | 'chart' | 'agents' | 'key' | 'users' | 'settings' | 'plug' | 'box'; badge: number }>>(() => [
+const links = computed<Array<{ to: string; key: string; label: string; short?: string; icon: 'inbox' | 'chart' | 'agents'; badge: number }>>(() => [
   { to: '/', key: 'inbox', label: 'Conversas', short: 'Chats', icon: 'inbox' as const, badge: conversations.unread.size },
   ...(auth.signedIn ? [{ to: '/usage', key: 'usage', label: 'Uso', icon: 'chart' as const, badge: 0 }] : []),
   ...(auth.isAdmin
     ? [
         { to: '/agents', key: 'agents', label: 'Agentes', icon: 'agents' as const, badge: 0 },
-        { to: '/providers', key: 'providers', label: 'Providers', short: 'APIs', icon: 'key' as const, badge: 0 },
-        { to: '/mcp', key: 'mcp', label: 'MCPs', icon: 'plug' as const, badge: 0 },
-        { to: '/packages', key: 'packages', label: 'Pacotes', icon: 'box' as const, badge: 0 },
-        { to: '/users', key: 'users', label: 'Usuários', short: 'Equipe', icon: 'users' as const, badge: 0 },
-        // Configuração é do SISTEMA: só admin. O que é da pessoa fica em Perfil, no menu da conta.
-        { to: '/settings', key: 'settings', label: 'Configuração', short: 'Ajustes', icon: 'settings' as const, badge: 0 },
       ]
     : []),
 ])
@@ -61,6 +57,9 @@ const links = computed<Array<{ to: string; key: string; label: string; short?: s
       <span class="hidden md:inline">{{ link.label }}</span>
       <span v-if="link.badge" class="absolute top-0.5 right-[calc(50%-20px)] md:top-1 md:right-2 min-w-[18px] rounded-full bg-emerald-500 px-1 text-center text-[10px] leading-[18px] font-semibold text-zinc-950">{{ link.badge > 99 ? '99+' : link.badge }}</span>
     </RouterLink>
+    <!-- Duas instâncias (barra do celular abre para cima; trilho, para o lado), cada uma só no seu tamanho. -->
+    <div v-if="auth.isAdmin" class="flex min-w-0 flex-1 md:hidden"><SystemMenu placement="up" :active="section" /></div>
+    <div v-if="auth.isAdmin" class="hidden md:block"><SystemMenu placement="side" :active="section" /></div>
     <AccountMenu v-if="auth.user" placement="up" class="md:hidden" />
     <RouterLink v-else-if="auth.localAccounts" to="/login" class="flex flex-1 flex-col items-center justify-center py-1.5 text-[10px] font-medium text-zinc-300 md:hidden">Entrar</RouterLink>
     <div class="mt-auto hidden flex-col items-center gap-2 pb-1 text-[10px] text-zinc-500 md:flex">

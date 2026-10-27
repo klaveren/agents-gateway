@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
 import { initials } from '@/lib/format'
+import { usePopover } from '@/lib/popover'
 import { useAuthStore } from '@/stores/auth'
 import Icon from './Icon.vue'
 
@@ -12,27 +12,8 @@ import Icon from './Icon.vue'
 defineProps<{ placement: 'side' | 'up' }>()
 
 const auth = useAuthStore()
-const route = useRoute()
 const router = useRouter()
-
-const open = ref(false)
-const root = ref<HTMLElement>()
-
-function onDocument(event: MouseEvent) {
-  if (open.value && root.value && !root.value.contains(event.target as Node)) open.value = false
-}
-function onKey(event: KeyboardEvent) {
-  if (event.key === 'Escape') open.value = false
-}
-onMounted(() => {
-  document.addEventListener('mousedown', onDocument)
-  document.addEventListener('keydown', onKey)
-})
-onBeforeUnmount(() => {
-  document.removeEventListener('mousedown', onDocument)
-  document.removeEventListener('keydown', onKey)
-})
-watch(() => route.fullPath, () => (open.value = false))
+const { open, root } = usePopover()
 
 async function logout() {
   open.value = false
