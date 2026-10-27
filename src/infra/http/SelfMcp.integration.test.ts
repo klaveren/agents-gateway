@@ -110,10 +110,14 @@ describe('MCP do próprio gateway (integração)', () => {
     assert.ok(allModels.length >= models.length)
   })
 
-  it('as ferramentas seguem as regras da API: agentes sem prompt, uso do membro sem custo, uso por chave para o admin', async () => {
+  it('as ferramentas seguem as regras da API: Atlas Admin só do admin, agentes sem prompt, uso do membro sem custo, uso por chave para o admin', async () => {
     const asMember = await connect(member)
+    // O Atlas Admin (`adminOnly`) não aparece para o membro; o Atlas, sim.
     const agents = json(await asMember.callTool({ name: 'list_agents', arguments: {} }))
-    assert.ok(agents.length > 0)
+    assert.deepStrictEqual(
+      agents.map((agent: { id: string }) => agent.id),
+      ['atlas'],
+    )
     assert.ok(agents.every((agent: Record<string, unknown>) => !('systemPrompt' in agent)))
 
     const mine = await asMember.callTool({ name: 'my_usage', arguments: { days: 7 } })

@@ -45,8 +45,32 @@ Quando não sabe, diz que não sabe e propõe como descobrir.`,
   allowedTools: ['sdk:WebSearch', ...ATLAS_TOOLS],
 }
 
+/** O que o Atlas Admin tem a mais: o sistema operacional desta máquina, pelas nativas do Claude Agent SDK. */
+const HOST_TOOLS = ['sdk:TodoWrite', 'sdk:WebFetch', 'sdk:Read', 'sdk:Glob', 'sdk:Grep', 'sdk:Write', 'sdk:Edit', 'sdk:Bash']
+
 /**
- * A semente: só o Atlas. ⚖️ Os outros agentes nascem conversando com ele (`save_agent`), com o provider e os
+ * O Atlas Admin: o Atlas com acesso ao sistema operacional, para quem administra (`adminOnly`).
+ *
+ * ⚖️ DOIS AGENTES, e não um com trava: o Atlas dos usuários fica só no MCP do gateway, e o alcance da máquina
+ * mora num agente que só o admin abre. Os agentes que os usuários usam nascem conversando com um dos dois.
+ */
+const ATLAS_ADMIN: IAgent = {
+  ...ATLAS,
+  id: 'atlas-admin',
+  name: 'Atlas Admin',
+  systemPrompt: `${ATLAS.systemPrompt}
+
+## Sistema operacional
+Você também tem o terminal e os arquivos desta máquina (Bash, Read, Write, Edit, Glob, Grep, WebFetch), com o acesso do processo do gateway. Cada conversa começa num diretório vazio; caminhos fora dele, só os que a pessoa indicar.
+1. Antes de um comando que altera, apaga ou instala algo, diga o comando e o efeito, e espere a confirmação.
+2. Nunca mostre o conteúdo de segredos (.env, secrets.key, chaves, senhas) na conversa: diga que existem e onde, não o valor.
+3. Relate o que rodou e o resultado, inclusive o que falhou.`,
+  allowedTools: ['sdk:WebSearch', ...HOST_TOOLS, ...ATLAS_TOOLS],
+  adminOnly: true,
+}
+
+/**
+ * A semente: o Atlas e o Atlas Admin. ⚖️ Os outros agentes nascem conversando com ele (`save_agent`), com o provider e os
  * modelos que quem administra ativou — e não de uma lista no código.
  */
-export const AGENT_SEED: readonly IAgent[] = [ATLAS]
+export const AGENT_SEED: readonly IAgent[] = [ATLAS, ATLAS_ADMIN]

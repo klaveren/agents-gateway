@@ -1,4 +1,3 @@
-import { dangerousToolsOf } from '@domain/Tool.Policy'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { Request, Response } from 'express'
@@ -86,9 +85,10 @@ const agentShape = {
         provider: z.string().describe('A configured provider id (claude, openai, google, a subscription or a compatible one).'),
         models: z.array(z.string()).describe('Models ENABLED in that provider catalog; the first is the default.'),
         sandbox: z
-          .enum(['read-only', 'workspace-write'])
+          .enum(['read-only', 'workspace-write', 'full'])
           .optional()
-          .describe('Codex/Antigravity sandbox (see list_protocols sandboxLevels). `full` (no sandbox) is only set on the Agents screen.'),
+          .describe('Codex/Antigravity sandbox; the protocol sandboxLevels say which apply. Absent = read-only. `full` = no sandbox, runs as the gateway process.'),
+        network: z.boolean().optional().describe('Codex: open the network inside the sandbox. Absent = no network.'),
       }),
     )
     .describe('Where the agent runs: one or more providers, each with its models. The first is the default; a conversation can switch between them.'),
@@ -320,32 +320,14 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   server.registerTool(
     'save_agent',
     {
-      description: 'Create an agent, or replace the one with the same id. Every problem comes back at once, field by field.',
+      description:
+        'Create an agent, or replace the one with the same id: send every field, since an omitted adminOnly, sandbox or network falls back to its default (open to everyone, read-only, no network). Every problem comes back at once, field by field.',
       inputSchema: agentShape,
     },
     async (agent) => {
-      // ⛔ Pelo MCP, nunca ferramenta que alcança este servidor: um prompt injection (de uma busca, de outro
-      // MCP) num agente com estas ferramentas de escrita criaria um com `run_bash` e conversaria com ele.
-      const dangerous = dangerousToolsOf(agent.allowedTools ?? [])
-      if (dangerous.length) {
-        return reply({
-          ok: false,
-          status: 422,
-          code: 'validation_error',
-          message: `Tools that reach this server cannot be granted through MCP: ${dangerous.join(', ')}. Use the Agents screen.`,
-        })
-      }
-      const current = await api('GET', `/agents/${encodeURIComponent(agent.id)}`)
-      // ⛔ O MCP não abre sandbox (`full` nem existe no schema dele) nem rede: sem dizer, ficam os do agente gravado.
-      const stored = current.ok ? ((current.result as { providers?: Array<{ id: string; sandbox?: string; network?: boolean }> }).providers ?? []) : []
-      agent.providers = agent.providers.map((target) => {
-        const before = stored.find((entry) => entry.id === target.provider)
-        const sandbox = target.sandbox ?? before?.sandbox
-        return { ...target, ...(sandbox ? { sandbox } : {}), ...(before?.network ? { network: true } : {}) }
-      }) as typeof agent.providers
-      // Substituir sem dizer `adminOnly` não abre o agente: a marca só sai com `adminOnly: false`.
-      const body = agent.adminOnly === undefined && current.ok && (current.result as { adminOnly?: boolean }).adminOnly ? { ...agent, adminOnly: true } : agent
-      return reply(current.ok ? await api('PUT', `/agents/${encodeURIComponent(agent.id)}`, { body }) : await api('POST', '/agents', { body }))
+      // ⚖️ Sem trava própria: o MCP grava o que a tela grava, e quem decide o alcance do agente é o admin.
+      const exists = (await api('GET', `/agents/${encodeURIComponent(agent.id)}`)).ok
+      return reply(exists ? await api('PUT', `/agents/${encodeURIComponent(agent.id)}`, { body: agent }) : await api('POST', '/agents', { body: agent }))
     },
   )
 }
