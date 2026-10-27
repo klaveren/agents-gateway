@@ -42,7 +42,7 @@ const thinking = computed(() => !!props.pending && !text.value && !props.pending
 
 <template>
   <div class="flex flex-col gap-2">
-    <div v-if="request || files" class="ml-auto max-w-[78%] rounded-2xl rounded-br-md bg-emerald-600/90 px-3.5 py-2 text-[15px] whitespace-pre-wrap text-white shadow">
+    <div v-if="request || files" class="ml-auto max-w-[78%] rounded-2xl rounded-br-md bg-emerald-600/90 px-3.5 py-2 text-sm whitespace-pre-wrap text-white shadow">
       {{ request }}
       <div v-if="files" class="mt-1 text-xs text-emerald-100/80">📎 {{ files }} anexo(s)</div>
       <div v-if="turn" class="mt-0.5 text-right text-[11px] text-emerald-100/70">{{ shortTime(turn.at) }}</div>
@@ -75,7 +75,7 @@ const thinking = computed(() => !!props.pending && !text.value && !props.pending
         </span>
       </div>
 
-      <div v-if="text || thinking || error || aborted" class="rounded-2xl rounded-bl-md bg-zinc-800/90 px-3.5 py-2 text-[15px] leading-relaxed shadow">
+      <div v-if="text || thinking || error || aborted" class="rounded-2xl rounded-bl-md bg-zinc-800/90 px-3.5 py-2 text-sm leading-relaxed shadow">
         <div v-if="thinking" class="flex h-5 items-center gap-1">
           <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400 [animation-delay:-0.3s]" />
           <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400 [animation-delay:-0.15s]" />
