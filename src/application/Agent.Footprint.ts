@@ -1,0 +1,92 @@
+import { IAgent } from '@domain/models/Agent.Model'
+import { mcpSelection } from '@domain/models/McpServer.Model'
+import { READ_DOC_TOOL } from '@domain/models/ProjectDoc.Model'
+import { estimateTokens, toolTokens } from '@domain/Token.Estimate'
+import { IEnvironmentParts } from './Guidance.Service'
+
+type TToolShape = { name: string; description?: string; inputSchema?: unknown }
+
+export interface IFootprintItem {
+  name: string
+  tokens: number
+}
+
+export interface IFootprintSection {
+  key: string
+  label: string
+  /** `null`: está no prompt, mas daqui não se mede (as ferramentas nativas do SDK). */
+  tokens: number | null
+  items?: IFootprintItem[]
+  note?: string
+}
+
+export interface IAgentFootprint {
+  /** O que se mediu (as seções com `tokens: null` ficam de fora). */
+  total: number
+  /** O projeto em que se mediu: o do agente ou, num global, o pedido. */
+  project?: string
+  sections: IFootprintSection[]
+}
+
+export interface IFootprintDeps {
+  guidance?: { environmentParts(projectId?: string, agentId?: string): IEnvironmentParts; hasDocs(projectId?: string, agentId?: string): boolean }
+  /** As ferramentas locais que o agente tem (com a de delegação), como a conversa as recebe. */
+  localFor(allowed: readonly string[]): TToolShape[]
+  /** As ferramentas de um servidor MCP, pedidas com a credencial de quem está na tela. `undefined` = fora do ar. */
+  mcpTools(server: string): Promise<TToolShape[] | undefined>
+}
+
+/**
+ * O TAMANHO do agente: o que ele carrega antes da primeira mensagem, parte a parte, em tokens estimados.
+ * ⚖️ Monta as MESMAS peças da conversa — o soul e a instrução como o `composeSystemPrompt` junta, as seções do
+ * ambiente do `GuidanceService`, as ferramentas locais e as dos MCPs (com o `read_doc` quando há índice, como o
+ * `AgentProvider`) —, para o número bater com o que vai ao modelo, e não com uma reconstrução da tela.
+ */
+export async function agentFootprint(agent: IAgent, projectId: string | undefined, deps: IFootprintDeps): Promise<IAgentFootprint> {
+  const sections: IFootprintSection[] = []
+  const add = (key: string, label: string, text: string | undefined) => {
+    if (text?.trim()) sections.push({ key, label, tokens: estimateTokens(text) })
+  }
+
+  const soul = agent.soul?.trim()
+  add('soul', 'Soul', soul ? `## Quem você é\n${soul}\n\n## Como você trabalha\n` : undefined)
+  add('instructions', 'Instrução do sistema', agent.systemPrompt)
+
+  const parts = deps.guidance?.environmentParts(projectId, agent.id) ?? {}
+  add('rules', 'Rules', parts.rules)
+  add('projectSpecs', 'Contexto inicial do projeto', parts.projectSpecs)
+  add('agentSpecs', 'Contexto inicial do agente', parts.agentSpecs)
+  add('index', 'Índice de documentos', parts.index)
+
+  const allowed = deps.guidance?.hasDocs(projectId, agent.id) && !agent.allowedTools.includes(READ_DOC_TOOL) ? [...agent.allowedTools, READ_DOC_TOOL] : agent.allowedTools
+  const local = deps.localFor(allowed)
+  if (local.length) sections.push(toolSection('local', 'Ferramentas locais', local))
+
+  for (const [server, choice] of mcpSelection(allowed)) {
+    const tools = await deps.mcpTools(server)
+    if (!tools) {
+      sections.push({ key: `mcp:${server}`, label: `MCP ${server}`, tokens: null, note: 'fora do ar: não medido' })
+      continue
+    }
+    const chosen = tools.filter((tool) => choice.all || choice.tools.has(tool.name))
+    sections.push(toolSection(`mcp:${server}`, `MCP ${server}`, chosen))
+  }
+
+  const natives = allowed.filter((tool) => tool.startsWith('sdk:'))
+  if (natives.length) {
+    sections.push({
+      key: 'sdk',
+      label: 'Ferramentas do SDK',
+      tokens: null,
+      items: natives.map((name) => ({ name, tokens: 0 })),
+      note: 'o SDK do provider manda a definição delas; daqui não dá para medir',
+    })
+  }
+
+  return { total: sections.reduce((sum, section) => sum + (section.tokens ?? 0), 0), ...(projectId ? { project: projectId } : {}), sections }
+}
+
+function toolSection(key: string, label: string, tools: readonly TToolShape[]): IFootprintSection {
+  const items = tools.map((tool) => ({ name: tool.name, tokens: toolTokens(tool) })).sort((a, b) => b.tokens - a.tokens)
+  return { key, label, tokens: items.reduce((sum, item) => sum + item.tokens, 0), items }
+}

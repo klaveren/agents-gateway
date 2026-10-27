@@ -9,6 +9,7 @@ import { useAgentsStore } from '@/stores/agents'
 import { useMcpStore } from '@/stores/mcp'
 import { useProjectsStore } from '@/stores/projects'
 import { toolsTokens, toolTokens } from '@/lib/toolTokens'
+import AgentFootprint from './AgentFootprint.vue'
 import AgentHooks from './AgentHooks.vue'
 import AgentInitialContext from './AgentInitialContext.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
@@ -267,7 +268,7 @@ const deleting = ref(false)
  * As guias do formulário: o texto do agente na primeira, e cada grupo de capacidades na sua. A contagem diz
  * quanto está escolhido sem abrir a guia; o ponto vermelho, que o servidor recusou algo ali.
  */
-type TTab = 'agente' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'contexto' | 'hooks'
+type TTab = 'agente' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'contexto' | 'tamanho' | 'hooks'
 const tab = ref<TTab>('agente')
 const TAB_FIELDS: Record<TTab, string[]> = {
   agente: ['id', 'name', 'soul', 'systemPrompt', 'role', 'adminOnly', 'projectId'],
@@ -276,6 +277,7 @@ const TAB_FIELDS: Record<TTab, string[]> = {
   mcps: [],
   sdk: [],
   contexto: [],
+  tamanho: [],
   hooks: [],
 }
 const tabs = computed(() => {
@@ -293,6 +295,7 @@ const tabs = computed(() => {
     { id: 'mcps', label: 'MCPs', count: tools.filter((entry) => entry.startsWith('mcp:')).length },
     { id: 'sdk', label: 'SDK', count: tools.filter((entry) => entry.startsWith('sdk:')).length },
     { id: 'contexto', label: 'Contexto inicial' },
+    { id: 'tamanho', label: 'Tamanho' },
     { id: 'hooks', label: 'Hooks' },
   ]
   // Sem nativa nem sandbox nos providers escolhidos, a guia do SDK não tem o que mostrar.
@@ -768,6 +771,12 @@ async function remove() {
     <section v-if="tab === 'contexto'">
       <AgentInitialContext v-if="agent && !creating" :agent-id="agent.id" :project-id="agent.projectId" :project-name="projects.list.find((item) => item.id === agent?.projectId)?.name" />
       <p v-else class="text-sm text-zinc-400">Crie o agente primeiro: o contexto inicial é dele.</p>
+    </section>
+
+    <!-- O tamanho é medido no servidor, sobre o agente salvo: só para agente já gravado. -->
+    <section v-if="tab === 'tamanho'">
+      <AgentFootprint v-if="agent && !creating" :agent-id="agent.id" :project-id="agent.projectId" />
+      <p v-else class="text-sm text-zinc-400">Crie o agente primeiro: o tamanho é medido sobre o que está salvo.</p>
     </section>
 
     <!-- ⚖️ Os hooks têm o próprio cadastro (não vão no Salvar do agente): só existem para um agente já gravado. -->
