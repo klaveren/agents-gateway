@@ -13,6 +13,8 @@ export interface IUsageTarget {
   user?: string
   key?: string
   value?: string
+  /** Só as conversas deste projeto. Ausente = todos. */
+  project?: string
 }
 
 export const useUsageStore = defineStore('usage', () => {
@@ -27,26 +29,26 @@ export const useUsageStore = defineStore('usage', () => {
   /** ⚠️ Cada carga ganha um número; resposta de carga antiga (troca rápida de usuário, chave ou período) é descartada. */
   let generation = 0
 
-  function fetchMine(days: number): Promise<IUsageSummary> {
-    return api<IUsageSummary>('/usage/me', { query: { days, tz: tz() } })
+  function fetchMine(days: number, scope: Record<string, string> = {}): Promise<IUsageSummary> {
+    return api<IUsageSummary>('/usage/me', { query: { days, tz: tz(), ...scope } })
   }
 
-  function fetchUsers(days: number): Promise<{ totals: IUsageFigure; users: IUserUsage[] }> {
-    return api('/usage/users', { query: { days, tz: tz() } })
+  function fetchUsers(days: number, scope: Record<string, string> = {}): Promise<{ totals: IUsageFigure; users: IUserUsage[] }> {
+    return api('/usage/users', { query: { days, tz: tz(), ...scope } })
   }
 
-  function fetchUser(ownerId: string, days: number): Promise<IUsageSummary & { ownerId: string; name?: string; email?: string }> {
-    return api(`/usage/users/${encodeURIComponent(ownerId)}`, { query: { days, tz: tz() } })
+  function fetchUser(ownerId: string, days: number, scope: Record<string, string> = {}): Promise<IUsageSummary & { ownerId: string; name?: string; email?: string }> {
+    return api(`/usage/users/${encodeURIComponent(ownerId)}`, { query: { days, tz: tz(), ...scope } })
   }
 
   /** Os valores de uma chave do `metadata`, com custo. Só admin. */
-  function fetchByKey(key: string, days: number): Promise<{ key: string; totals: IUsageFigure; groups: IGroupUsage[] }> {
-    return api(`/usage/by/${encodeURIComponent(key)}`, { query: { days, tz: tz() } })
+  function fetchByKey(key: string, days: number, scope: Record<string, string> = {}): Promise<{ key: string; totals: IUsageFigure; groups: IGroupUsage[] }> {
+    return api(`/usage/by/${encodeURIComponent(key)}`, { query: { days, tz: tz(), ...scope } })
   }
 
   /** O detalhe de um valor; `~none` = as conversas sem a chave. */
-  function fetchByKeyValue(key: string, value: string, days: number): Promise<IUsageSummary & { key: string; value?: string }> {
-    return api(`/usage/by/${encodeURIComponent(key)}/${encodeURIComponent(value)}`, { query: { days, tz: tz() } })
+  function fetchByKeyValue(key: string, value: string, days: number, scope: Record<string, string> = {}): Promise<IUsageSummary & { key: string; value?: string }> {
+    return api(`/usage/by/${encodeURIComponent(key)}/${encodeURIComponent(value)}`, { query: { days, tz: tz(), ...scope } })
   }
 
   function clear(): void {
@@ -76,23 +78,25 @@ export const useUsageStore = defineStore('usage', () => {
     loading.value = true
     try {
       const { tab, days } = target
+      // O projeto escolhido recorta tudo (o `metadata.project` da conversa).
+      const scope: Record<string, string> = target.project ? { project: target.project } : {}
       if (tab === 'mine') {
-        const result = await fetchMine(days)
+        const result = await fetchMine(days, scope)
         if (mineGeneration === generation) mine.value = result
       } else if (tab === 'keys') {
         const key = target.key ?? ''
         if (target.value) {
-          const result = await fetchByKeyValue(key, target.value, days)
+          const result = await fetchByKeyValue(key, target.value, days, scope)
           if (mineGeneration === generation) valueDetail.value = result
         } else {
-          const result = await fetchByKey(key, days)
+          const result = await fetchByKey(key, days, scope)
           if (mineGeneration === generation) groups.value = result
         }
       } else if (target.user) {
-        const result = await fetchUser(target.user, days)
+        const result = await fetchUser(target.user, days, scope)
         if (mineGeneration === generation) detail.value = result
       } else {
-        const result = await fetchUsers(days)
+        const result = await fetchUsers(days, scope)
         if (mineGeneration === generation) users.value = result
       }
     } catch (failure) {

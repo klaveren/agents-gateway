@@ -47,8 +47,8 @@ describe('uso (integração)', () => {
     const now = new Date()
     // O `metadata` de cobrança: a conta da Ana é texto; a do outro, número (vira texto no agrupamento).
     for (const [id, owner, billing] of [
-      ['da-ana', { id: memberId, email: 'ana@x.test' }, { accountId: 'acme', userId: 'u1' }],
-      ['de-outro', { id: 'outro', email: 'outro@x.test' }, { accountId: 42, userId: 'u2' }],
+      ['da-ana', { id: memberId, email: 'ana@x.test' }, { accountId: 'acme', userId: 'u1', project: 'alfa' }],
+      ['de-outro', { id: 'outro', email: 'outro@x.test' }, { accountId: 42, userId: 'u2', project: 'beta' }],
     ] as const) {
       await controller.conversations.saveSession({
         id,
@@ -87,6 +87,13 @@ describe('uso (integração)', () => {
     assert.deepStrictEqual([mine.body.result.totals.conversations, mine.body.result.totals.usage.totalTokens], [1, 1_100_000])
     assert.strictEqual(mine.body.result.daily.length, 7)
     assert.ok(!/cost/i.test(mine.text))
+  })
+
+  it('?project= recorta pelo projeto da conversa — no meu uso e no do admin', async () => {
+    assert.strictEqual((await call('/usage/me?project=alfa', { token: member })).body.result.totals.conversations, 1)
+    assert.strictEqual((await call('/usage/me?project=beta', { token: member })).body.result.totals.conversations, 0)
+    assert.strictEqual((await call('/usage/users?project=beta', { token: admin })).body.result.totals.costUsd, 3)
+    assert.strictEqual((await call('/usage/users?project=PROJETO%20INVALIDO', { token: admin })).body.result.totals.costUsd, 6, 'id inválido é ignorado')
   })
 
   it('⛔ uso por usuário: 404 para membro; para o admin, cada um com custo', async () => {

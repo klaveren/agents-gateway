@@ -622,6 +622,7 @@ const usageSummary = (withCost: boolean) => ({
 })
 const usageParams = [
   { name: 'days', in: 'query', schema: { type: 'integer', enum: [7, 30, 90], default: 30 }, description: 'Period, counting today.' },
+  { name: 'project', in: 'query', schema: { type: 'string' }, description: 'Only the conversations of this project (absent = all).' },
   { name: 'tz', in: 'query', schema: { type: 'integer' }, description: 'Minutes to add to UTC for local time (São Paulo: -180). Days are cut in this time zone.' },
 ]
 
