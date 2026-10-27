@@ -14,14 +14,15 @@ fi
 
 VERSION="$(node -p "require('./package.json').version")"
 REVISION="$(git rev-parse --short HEAD)"
-TAG="${DOCKER_TAG:-$VERSION-$REVISION}"
+# ⚖️ SÓ `latest` em desenvolvimento: uma tag por publicação enchia o registry de versões que ninguém usa. O que
+# está rodando se identifica pelo digest (e pelo `BUILD_REVISION` dentro da imagem). `DOCKER_TAG=x` publica `x`.
+TAG="${DOCKER_TAG:-latest}"
 NAME="${DOCKER_IMAGE_NAME:-agents-gateway}"
 
-echo "🚀 $NAME:$TAG (e latest) — versão $VERSION, commit $REVISION, plataformas amd64 + arm64"
+echo "🚀 $NAME:$TAG — versão $VERSION, commit $REVISION, plataformas amd64 + arm64"
 
 # `--skip-deps`: o gateway não tem dependência `workspace:*` para converter (é o que o CLI faz no package.json).
 # `--ignore-package`: pula o gate de frescor dos pacotes `@logiccus/*`, que o gateway não usa.
-# O `latest` sai do mesmo build, do cache: limpeza só no primeiro.
 build() {
   logiccus docker-build-push --name "$NAME" \
     --file "$ROOT/Dockerfile" \
@@ -36,4 +37,3 @@ build() {
 }
 
 build "$TAG" aggressive
-build latest none
