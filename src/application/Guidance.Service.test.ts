@@ -247,4 +247,83 @@ describe('GuidanceService', () => {
     assert.deepStrictEqual(Object.keys(parts), ['rules', 'index'])
     assert.strictEqual(service.environmentFor('xpto'), `${parts.rules}\n\n${parts.index}`)
   })
+
+  describe('skills e commands', () => {
+    const agents: Record<string, { id: string; projectId?: string }> = {
+      dev: { id: 'dev', projectId: 'xpto' },
+      resumo: { id: 'resumo', projectId: 'xpto' },
+      atlas: { id: 'atlas' },
+    }
+    const seeded = () => {
+      const service = new GuidanceService(
+        new SqliteGuidanceRepository(':memory:'),
+        (id) => ['xpto', 'crm'].includes(id),
+        (id) => agents[id],
+      )
+      service.createDoc({ ...doc('padrao'), title: 'Padrão', body: 'Use tabelas.' }, 'root')
+      service.createResource({ id: 'tabela', kind: 'skill', description: 'Montar tabelas em markdown', body: 'Sempre com cabeçalho.', docIds: ['padrao'] }, 'root')
+      service.createResource({ id: 'resumir', kind: 'command', projectId: 'xpto', description: 'Resume um arquivo', body: 'Resuma $ARGUMENTS em 3 linhas.' }, 'root')
+      service.createResource({ id: 'do-crm', kind: 'command', projectId: 'crm', description: 'Do CRM', body: 'x' }, 'root')
+      return service
+    }
+
+    it('⛔ valida: descrição obrigatória, id único, doc de outro projeto; agente global só libera os globais', () => {
+      const service = seeded()
+      assert.throws(
+        () => service.createResource({ id: 'tabela', kind: 'skill', description: '', body: '' }, 'root'),
+        (error: unknown) => error instanceof InvalidGuidanceError && error.issues.map((issue) => issue.field).join() === 'id,description,body',
+      )
+      assert.throws(() => service.setAgentResources('dev', { commands: ['do-crm'] }, 'root'), InvalidGuidanceError)
+      assert.throws(() => service.setAgentResources('atlas', { commands: ['resumir'] }, 'root'), /global agent uses only global resources/)
+      assert.throws(() => service.setAgentResources('dev', { skills: ['*', 'tabela'] }, 'root'), /goes alone/)
+    })
+
+    it('⚖️ sem liberação, nada; com `*`, os globais e os do projeto do agente; o índice entra no prompt', () => {
+      const service = seeded()
+      assert.deepStrictEqual(service.usableResources('skill', 'dev'), [])
+      assert.strictEqual(service.environmentFor('xpto', 'dev'), service.environmentFor('xpto', 'resumo'))
+
+      service.setAgentResources('dev', { skills: ['tabela'], commands: ['*'] }, 'root')
+      assert.deepStrictEqual(
+        service.usableResources('command', 'dev').map((item) => item.id),
+        ['resumir'],
+      )
+      const prompt = service.environmentFor('xpto', 'dev')!
+      assert.match(prompt, /## Skills[\s\S]*- tabela — Montar tabelas em markdown/)
+      assert.match(prompt, /## Commands[\s\S]*- \/resumir — Resume um arquivo/)
+      assert.doesNotMatch(service.environmentFor('xpto', 'resumo') ?? '', /## Skills|## Commands/)
+      assert.deepStrictEqual([service.hasSkills('dev'), service.hasSkills('resumo')], [true, false])
+    })
+
+    it('use_skill: a skill inteira com os docs anexados, só para o agente liberado', () => {
+      const service = seeded()
+      service.setAgentResources('dev', { skills: ['tabela'], commands: [] }, 'root')
+      assert.match(service.loadSkill('tabela', 'dev')!, /# Skill: tabela\n\nSempre com cabeçalho\.\n\n## Documentos anexados\n\n### Padrão \[spec\]\nUse tabelas\./)
+      assert.strictEqual(service.loadSkill('tabela', 'resumo'), undefined)
+    })
+
+    it('/command: $ARGUMENTS e os docs; desconhecido segue como texto; ⛔ não liberado é recusado', () => {
+      const service = seeded()
+      service.setAgentResources('dev', { skills: [], commands: ['resumir'] }, 'root')
+      assert.deepStrictEqual(service.expandCommand('/resumir o relatório.md', 'dev'), {
+        text: 'Resuma o relatório.md em 3 linhas.',
+        label: '/resumir o relatório.md',
+        command: 'resumir',
+      })
+      assert.strictEqual(service.expandCommand('/nao-existe x', 'dev'), undefined)
+      assert.strictEqual(service.expandCommand('oi /resumir', 'dev'), undefined)
+      assert.throws(() => service.expandCommand('/resumir x', 'resumo'), /not enabled for this agent/)
+    })
+
+    it('apagar o doc tira ele dos recursos; apagar o agente ou o projeto limpa', () => {
+      const service = seeded()
+      service.setAgentResources('dev', { skills: ['tabela'], commands: ['resumir'] }, 'root')
+      service.deleteDoc('padrao')
+      assert.deepStrictEqual(service.resource('tabela').docIds, [])
+      service.removeProject('xpto')
+      assert.throws(() => service.resource('resumir'), GuidanceNotFoundError)
+      service.removeAgent('dev')
+      assert.deepStrictEqual(service.agentResources('dev'), { skills: [], commands: [] })
+    })
+  })
 })

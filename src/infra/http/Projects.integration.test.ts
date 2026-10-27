@@ -144,6 +144,7 @@ describe('Projetos (integração)', () => {
       settings: new NullSettingsRepository(),
       conversations,
       projects,
+      guidance,
     })
     const server = new HttpServer(
       controller,
@@ -323,5 +324,23 @@ describe('Projetos (integração)', () => {
     assert.ok(result.body.result.total > 0)
     assert.strictEqual((await call(ANA, 'GET', `/agents/${CLAUDE_TEST_AGENT.id}/footprint`)).status, 404)
     assert.strictEqual((await call(ADMIN, 'GET', '/agents/nao-existe/footprint')).status, 404)
+  })
+
+  it('skills e commands: o cadastro é do admin; o membro vê os commands do agente e o /command chega expandido, gravado como digitado', async () => {
+    const created = await call(ADMIN, 'POST', '/resources', { id: 'saudar', kind: 'command', description: 'Cumprimenta alguém', body: 'Diga olá para $ARGUMENTS.' })
+    assert.strictEqual(created.status, 201)
+    assert.strictEqual((await call(ANA, 'POST', '/resources', { id: 'x', kind: 'skill', description: 'x', body: 'x' })).status, 404)
+    assert.strictEqual((await call(ANA, 'GET', '/resources')).status, 404)
+    assert.strictEqual((await call(ADMIN, 'PUT', `/agents/${GOOGLE_TEST_AGENT.id}/resources`, { skills: [], commands: ['saudar'] })).status, 200)
+
+    const listed = await call(ANA, 'GET', `/agents/${GOOGLE_TEST_AGENT.id}/commands`)
+    assert.deepStrictEqual([listed.status, listed.body.result], [200, [{ id: 'saudar', description: 'Cumprimenta alguém' }]])
+
+    const opened = await call(ANA, 'POST', '/sessions', { agentId: GOOGLE_TEST_AGENT.id, projectId: 'alfa' })
+    const id = opened.body.result.id as string
+    assert.strictEqual((await call(ANA, 'POST', `/sessions/${id}/messages`, { message: '/saudar Maria' })).status, 200)
+    assert.match(received.at(-1)!.text, /Diga olá para Maria\.$/)
+    const turns = (await call(ANA, 'GET', `/conversations/${id}/turns`)).body.result.turns as Array<{ request: string }>
+    assert.strictEqual(turns.at(-1)!.request, '/saudar Maria')
   })
 })

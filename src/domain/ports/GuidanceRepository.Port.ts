@@ -1,4 +1,5 @@
 import { IProjectDoc, TDocKind } from '@domain/models/ProjectDoc.Model'
+import { IAgentResources, IResource, TResourceKind } from '@domain/models/Resource.Model'
 import { IRule } from '@domain/models/Rule.Model'
 
 /** Um escopo: `null` = global; texto = o id do projeto. */
@@ -38,6 +39,17 @@ export interface IGuidanceRepository {
   setAgentContextDocs(agentId: string, docIds: readonly string[], by: string): void
   /** O agente foi apagado: a lista dele vai junto. */
   deleteAgentContext(agentId: string): void
+
+  /** Os recursos (skills e commands) do escopo, pelo id. */
+  resources(scope: TGuidanceScope, kind?: TResourceKind): IResource[]
+  resource(id: string): IResource | undefined
+  /** Grava (cria ou substitui) o recurso inteiro. */
+  saveResource(resource: IResource): void
+  deleteResource(id: string): boolean
+  /** O que o agente pode usar, por tipo (`*` = todos). */
+  agentResources(agentId: string): IAgentResources
+  setAgentResources(agentId: string, resources: IAgentResources, by: string): void
+  deleteAgentResources(agentId: string): void
 
   /** O projeto foi apagado: as rules, os documentos e o contexto inicial dele vão junto. */
   deleteProject(projectId: string): void

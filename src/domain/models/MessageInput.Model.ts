@@ -16,4 +16,9 @@ export interface IMessageInput {
    * título da conversa sai dele. Quem aplica isto é o `SendMessageUseCase`; o adapter nunca o vê.
    */
   context?: string
+  /**
+   * O que a pessoa DIGITOU, quando é outro que o `text` que vai ao modelo: um `/command` expandido. É o que o turno
+   * grava e o título usa. Ausente = o próprio `text`.
+   */
+  recordAs?: string
 }

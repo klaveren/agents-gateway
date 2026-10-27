@@ -2,6 +2,17 @@ import { randomUUID } from 'node:crypto'
 import { estimateTokens } from '@domain/Token.Estimate'
 import { AgentNotFoundError, GuidanceNotFoundError, InvalidGuidanceError, ProjectNotFoundError } from '@domain/errors/Domain.Error'
 import { DOC_BODY_MAX, DOC_ID_PATTERN, DOC_KINDS, DOC_SUMMARY_MAX, DOC_TITLE_MAX, IProjectDoc, READ_DOC_TOOL, TDocKind } from '@domain/models/ProjectDoc.Model'
+import {
+  ALL_RESOURCES,
+  IAgentResources,
+  IResource,
+  RESOURCE_BODY_MAX,
+  RESOURCE_DESCRIPTION_MAX,
+  RESOURCE_ID_PATTERN,
+  RESOURCE_KINDS,
+  TResourceKind,
+  USE_SKILL_TOOL,
+} from '@domain/models/Resource.Model'
 import { IRule, RULE_BODY_MAX, RULE_TITLE_MAX } from '@domain/models/Rule.Model'
 import { IGuidanceRepository, TGuidanceScope } from '@domain/ports/GuidanceRepository.Port'
 
@@ -41,6 +52,24 @@ export interface IEnvironmentParts {
   projectSpecs?: string
   agentSpecs?: string
   index?: string
+  skills?: string
+  commands?: string
+}
+
+export interface IResourceInput {
+  id?: string
+  kind?: TResourceKind
+  projectId?: string | null
+  description?: string
+  body?: string
+  docIds?: string[]
+}
+
+/** Um `/command` expandido: o que vai ao modelo e o que a conversa grava (o que a pessoa digitou). */
+export interface IExpandedCommand {
+  text: string
+  label: string
+  command: string
 }
 
 export { estimateTokens }
@@ -254,9 +283,10 @@ export class GuidanceService {
     return this.agentContextView(agentId)
   }
 
-  /** O agente foi apagado: a lista dele vai junto. */
+  /** O agente foi apagado: o contexto inicial e os recursos liberados dele vão junto. */
   removeAgent(agentId: string): void {
     this.repository.deleteAgentContext(agentId)
+    this.repository.deleteAgentResources(agentId)
   }
 
   /** Quem carrega o documento inteiro, projetos e agentes (o selo da página Specs). */
@@ -279,7 +309,7 @@ export class GuidanceService {
    */
   environmentFor(projectId?: string, agentId?: string): string | undefined {
     const parts = this.environmentParts(projectId, agentId)
-    const sections = [parts.rules, parts.projectSpecs, parts.agentSpecs, parts.index].filter((part): part is string => !!part)
+    const sections = [parts.rules, parts.projectSpecs, parts.agentSpecs, parts.skills, parts.commands, parts.index].filter((part): part is string => !!part)
     return sections.length ? sections.join('\n\n') : undefined
   }
 
@@ -310,6 +340,22 @@ export class GuidanceService {
         ...own.map((doc) => `### ${doc.title}\n${doc.body.trim()}`),
       ].join('\n\n')
     }
+    const skills = this.usableResources('skill', agentId)
+    if (skills.length) {
+      parts.skills = [
+        '## Skills',
+        `Modos de fazer prontos para o seu trabalho. Antes de fazer algo que uma delas cobre, carregue-a inteira com ${USE_SKILL_TOOL} (pelo id) e siga o que ela diz.`,
+        ...skills.map((skill) => `- ${skill.id} — ${skill.description}`),
+      ].join('\n')
+    }
+    const commands = this.usableResources('command', agentId)
+    if (commands.length) {
+      parts.commands = [
+        '## Commands',
+        'Pedidos prontos que a pessoa dispara com /nome. Quando ela mandar um, a mensagem chega já expandida; se perguntar o que dá para pedir, são estes.',
+        ...commands.map((command) => `- /${command.id} — ${command.description}`),
+      ].join('\n')
+    }
     if (docs.length) {
       parts.index = [
         '## Documentos de referência',
@@ -318,6 +364,137 @@ export class GuidanceService {
       ].join('\n')
     }
     return parts
+  }
+
+  resources(scope: TGuidanceScope, kind?: TResourceKind): IResource[] {
+    return this.repository.resources(scope, kind)
+  }
+
+  resource(id: string): IResource {
+    const resource = this.repository.resource(id)
+    if (!resource) throw new GuidanceNotFoundError('resource', id)
+    return resource
+  }
+
+  createResource(input: IResourceInput, by: string): IResource {
+    const resource: IResource = {
+      id: input.id?.trim() ?? '',
+      kind: input.kind ?? 'skill',
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+      description: input.description?.trim() ?? '',
+      body: input.body ?? '',
+      docIds: input.docIds ?? [],
+      createdAt: this.now(),
+      updatedAt: this.now(),
+      updatedBy: by,
+    }
+    const issues = this.resourceIssues(resource)
+    if (!RESOURCE_ID_PATTERN.test(resource.id)) issues.unshift({ field: 'id', message: 'use 2–48 lowercase letters, digits or hyphens' })
+    else if (this.repository.resource(resource.id)) issues.unshift({ field: 'id', message: `already exists: ${resource.id}` })
+    this.check(issues, resource.projectId)
+    this.repository.saveResource(resource)
+    return resource
+  }
+
+  /** O id e o tipo ficam; o escopo pode mudar (e os docs anexados têm de caber no novo). */
+  updateResource(id: string, input: IResourceInput, by: string): IResource {
+    const current = this.resource(id)
+    const scope = input.projectId === undefined ? current.projectId : input.projectId || undefined
+    const next: IResource = {
+      ...current,
+      ...(scope ? { projectId: scope } : { projectId: undefined }),
+      ...(input.description !== undefined ? { description: input.description.trim() } : {}),
+      ...(input.body !== undefined ? { body: input.body } : {}),
+      ...(input.docIds !== undefined ? { docIds: input.docIds } : {}),
+      updatedAt: this.now(),
+      updatedBy: by,
+    }
+    if (!next.projectId) delete next.projectId
+    this.check(this.resourceIssues(next), next.projectId)
+    this.repository.saveResource(next)
+    return next
+  }
+
+  deleteResource(id: string): void {
+    this.resource(id)
+    this.repository.deleteResource(id)
+  }
+
+  /** O que o agente pode usar (a guia Recursos dele). */
+  agentResources(agentId: string): IAgentResources {
+    this.requireAgent(agentId)
+    return this.repository.agentResources(agentId)
+  }
+
+  /**
+   * ⛔ Agente de projeto: os recursos globais e os do projeto dele. Agente global: só os globais — ele roda em
+   * qualquer projeto. `*` sozinho = todos os que ele pode ver. Troca as duas listas inteiras.
+   */
+  setAgentResources(agentId: string, input: Partial<IAgentResources>, by: string): IAgentResources {
+    const agent = this.requireAgent(agentId)
+    const next: IAgentResources = { skills: input.skills ?? [], commands: input.commands ?? [] }
+    const issues: TIssues = []
+    for (const [field, kind] of [
+      ['skills', 'skill'],
+      ['commands', 'command'],
+    ] as const) {
+      const ids = next[field]
+      if (ids.includes(ALL_RESOURCES) && ids.length > 1) issues.push({ field, message: `"${ALL_RESOURCES}" goes alone` })
+      for (const id of ids.filter((item) => item !== ALL_RESOURCES)) {
+        const resource = this.repository.resource(id)
+        if (!resource || resource.kind !== kind) issues.push({ field, message: `no such ${kind}: ${id}` })
+        else if (resource.projectId && resource.projectId !== agent.projectId)
+          issues.push({
+            field,
+            message: agent.projectId ? `${id} belongs to another project (${resource.projectId})` : `${id} belongs to a project (a global agent uses only global resources)`,
+          })
+      }
+    }
+    if (issues.length) throw new InvalidGuidanceError(issues)
+    this.repository.setAgentResources(agentId, next, by)
+    return next
+  }
+
+  /**
+   * Os recursos que o agente pode usar AGORA: os que ele vê (globais e, num agente de projeto, os do projeto dele) e
+   * que a guia Recursos libera. Sem agente, nenhum.
+   */
+  usableResources(kind: TResourceKind, agentId?: string): IResource[] {
+    const agent = agentId ? this.agentOf(agentId) : undefined
+    if (!agent) return []
+    const granted = this.repository.agentResources(agent.id)[kind === 'skill' ? 'skills' : 'commands']
+    if (!granted.length) return []
+    const visible = [...this.repository.resources(null, kind), ...(agent.projectId ? this.repository.resources(agent.projectId, kind) : [])]
+    return granted.includes(ALL_RESOURCES) ? visible : visible.filter((resource) => granted.includes(resource.id))
+  }
+
+  /** Há skill para o `use_skill` carregar? É o que liga a ferramenta no agente. */
+  hasSkills(agentId?: string): boolean {
+    return this.usableResources('skill', agentId).length > 0
+  }
+
+  /** ⛔ A skill inteira, com os documentos anexados — só uma que o agente pode usar; outra responde como inexistente. */
+  loadSkill(id: string, agentId?: string): string | undefined {
+    const skill = this.usableResources('skill', agentId).find((resource) => resource.id === id)
+    return skill ? `# Skill: ${skill.id}\n\n${skill.body.trim()}${this.attachments(skill)}` : undefined
+  }
+
+  /**
+   * `/nome argumentos` → o texto do command, com `$ARGUMENTS` trocado e os documentos anexados. `undefined` quando
+   * a mensagem não é um command conhecido (segue como texto). ⛔ Command que existe mas não está liberado para este
+   * agente é recusado com o motivo.
+   */
+  expandCommand(text: string, agentId?: string): IExpandedCommand | undefined {
+    const match = /^\/([a-z0-9][a-z0-9-]{1,47})(?:\s+([\s\S]*))?$/.exec(text.trim())
+    if (!match) return undefined
+    const [, id, rawArgs] = match
+    const existing = this.repository.resource(id)
+    if (!existing || existing.kind !== 'command') return undefined
+    const command = this.usableResources('command', agentId).find((resource) => resource.id === id)
+    if (!command) throw new InvalidGuidanceError([{ field: 'message', message: `command /${id} is not enabled for this agent` }])
+    const args = (rawArgs ?? '').trim()
+    const body = command.body.includes('$ARGUMENTS') ? command.body.replace(/\$ARGUMENTS/g, args) : `${command.body.trim()}${args ? `\n\nArgumentos: ${args}` : ''}`
+    return { text: `${body.trim()}${this.attachments(command)}`, label: text.trim(), command: id }
   }
 
   /** O projeto foi apagado: as rules e os documentos dele vão junto. */
@@ -357,6 +534,28 @@ export class GuidanceService {
       seen.add(id)
     }
     if (issues.length) throw new InvalidGuidanceError(issues)
+  }
+
+  /** Os documentos anexados a um recurso, inteiros (os que ainda existem). */
+  private attachments(resource: IResource): string {
+    const docs = resource.docIds.map((id) => this.repository.doc(id)).filter((doc): doc is IProjectDoc => !!doc)
+    if (!docs.length) return ''
+    return `\n\n## Documentos anexados\n\n${docs.map((doc) => `### ${doc.title} [${doc.kind}]\n${doc.body.trim()}`).join('\n\n')}`
+  }
+
+  private resourceIssues(resource: IResource): TIssues {
+    const issues: TIssues = []
+    if (!RESOURCE_KINDS.includes(resource.kind)) issues.push({ field: 'kind', message: `one of ${RESOURCE_KINDS.join(', ')}` })
+    if (!resource.description) issues.push({ field: 'description', message: 'required: it is what the agent reads to know when to use it' })
+    else if (resource.description.length > RESOURCE_DESCRIPTION_MAX) issues.push({ field: 'description', message: `at most ${RESOURCE_DESCRIPTION_MAX} characters` })
+    if (!resource.body.trim()) issues.push({ field: 'body', message: 'required' })
+    else if (resource.body.length > RESOURCE_BODY_MAX) issues.push({ field: 'body', message: `at most ${RESOURCE_BODY_MAX} characters` })
+    for (const id of resource.docIds) {
+      const doc = this.repository.doc(id)
+      if (!doc) issues.push({ field: 'docIds', message: `no such document: ${id}` })
+      else if (doc.projectId && doc.projectId !== resource.projectId) issues.push({ field: 'docIds', message: `${id} belongs to another project (${doc.projectId})` })
+    }
+    return issues
   }
 
   private requireProject(projectId: string): void {

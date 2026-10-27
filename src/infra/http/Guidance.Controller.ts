@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { z } from 'zod'
 import { estimateTokens, GuidanceService } from '@application/Guidance.Service'
 import { DOC_KINDS, TDocKind } from '@domain/models/ProjectDoc.Model'
+import { RESOURCE_KINDS, TResourceKind } from '@domain/models/Resource.Model'
 import { TGuidanceScope } from '@domain/ports/GuidanceRepository.Port'
 import { checkAdminAccess } from './Caller.Admin'
 import { ICallerProof } from './Caller.Proof'
@@ -18,6 +19,15 @@ const project = z.string().max(64).nullable().optional()
 const ruleSchema = z.object({ projectId: project, title: z.string().max(400).optional(), body: z.string().max(20_000).optional(), enabled: z.boolean().optional() })
 const moveSchema = z.object({ direction: z.enum(['up', 'down']) })
 const contextSchema = z.object({ docIds: z.array(z.string().max(80)).max(100) })
+const resourceSchema = z.object({
+  id: z.string().max(80).optional(),
+  kind: z.enum(RESOURCE_KINDS as [TResourceKind, ...TResourceKind[]]).optional(),
+  projectId: project,
+  description: z.string().max(1_000).optional(),
+  body: z.string().max(200_000).optional(),
+  docIds: z.array(z.string().max(80)).max(50).optional(),
+})
+const agentResourcesSchema = z.object({ skills: z.array(z.string().max(80)).max(200).optional(), commands: z.array(z.string().max(80)).max(200).optional() })
 const docSchema = z.object({
   id: z.string().max(80).optional(),
   kind: z.enum(DOC_KINDS as [TDocKind, ...TDocKind[]]).optional(),
@@ -48,6 +58,13 @@ export class GuidanceController {
       'setInitialContext',
       'getAgentContext',
       'setAgentContext',
+      'listResources',
+      'getResource',
+      'createResource',
+      'updateResource',
+      'deleteResource',
+      'getAgentResources',
+      'setAgentResources',
     ] as const)
       this[name] = this[name].bind(this)
   }
@@ -161,6 +178,63 @@ export class GuidanceController {
     await this.respond(res, async () => {
       const by = await this.requireAdmin('setAgentContext')
       return this.deps.guidance.setAgentContext(req.params.agentId as string, parseBody(contextSchema, req.body).docIds, by)
+    })
+  }
+
+  /** As skills e os commands de um escopo (`?kind=skill|command`). */
+  async listResources(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      await this.requireAdmin('listResources')
+      const kind = typeof req.query.kind === 'string' && (RESOURCE_KINDS as readonly string[]).includes(req.query.kind) ? (req.query.kind as TResourceKind) : undefined
+      return this.deps.guidance.resources(scopeOf(req), kind)
+    })
+  }
+
+  async getResource(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      await this.requireAdmin('getResource')
+      return this.deps.guidance.resource(req.params.id as string)
+    })
+  }
+
+  async createResource(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => this.deps.guidance.createResource(parseBody(resourceSchema, req.body), await this.requireAdmin('createResource')), {
+      status: 201,
+      message: 'Resource created',
+    })
+  }
+
+  async updateResource(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const { id: _id, kind: _kind, ...change } = parseBody(resourceSchema, req.body)
+      return this.deps.guidance.updateResource(req.params.id as string, change, await this.requireAdmin('updateResource'))
+    })
+  }
+
+  async deleteResource(req: Request, res: Response): Promise<void> {
+    await this.respond(
+      res,
+      async () => {
+        await this.requireAdmin('deleteResource')
+        this.deps.guidance.deleteResource(req.params.id as string)
+        return null
+      },
+      { message: 'Resource deleted' },
+    )
+  }
+
+  /** As skills e os commands liberados ao agente (`*` = todos os que ele vê). */
+  async getAgentResources(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      await this.requireAdmin('getAgentResources')
+      return this.deps.guidance.agentResources(req.params.agentId as string)
+    })
+  }
+
+  async setAgentResources(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const by = await this.requireAdmin('setAgentResources')
+      return this.deps.guidance.setAgentResources(req.params.agentId as string, parseBody(agentResourcesSchema, req.body), by)
     })
   }
 

@@ -544,6 +544,25 @@ const docBody = {
   },
 }
 const idParam = [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }]
+const resourceSchema = {
+  type: 'object',
+  properties: {
+    id: { type: 'string', description: 'Slug: the skill name in the index, the /name of a command.' },
+    kind: { type: 'string', enum: ['skill', 'command'] },
+    projectId: { type: 'string', description: 'Absent = global.' },
+    description: { type: 'string', description: 'One line: what the agent (and the autocomplete) reads to know when to use it.' },
+    body: { type: 'string', description: 'Skill: markdown. Command: the request sent to the agent; $ARGUMENTS takes what follows /name.' },
+    docIds: { type: 'array', items: { type: 'string' }, description: 'Specs/ADRs that go along in full.' },
+    createdAt: { type: 'string', format: 'date-time' },
+    updatedAt: { type: 'string', format: 'date-time' },
+    updatedBy: { type: 'string' },
+  },
+}
+const agentResources = {
+  type: 'object',
+  properties: { skills: { type: 'array', items: { type: 'string' } }, commands: { type: 'array', items: { type: 'string' } } },
+  description: 'Ids, or ["*"] = every global one plus those of the agent project (a global agent: only global ones).',
+}
 const initialContext = {
   type: 'object',
   properties: {
@@ -1296,6 +1315,60 @@ export const OPENAPI_DOCUMENT = {
               }),
             ),
           },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+    },
+    '/resources': {
+      get: {
+        summary: 'The skills and commands of one scope (`kind`, `project`; absent project or `global` = the global ones). Administrators only',
+        parameters: [guidanceScope, { name: 'kind', in: 'query', required: false, schema: { type: 'string', enum: ['skill', 'command'] } }],
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: resourceSchema })) }, '401': failures['401'], '404': failures['404'] },
+      },
+      post: {
+        summary: 'Create a skill or a command. Administrators only',
+        requestBody: { required: true, ...json({ ...resourceSchema, required: ['id', 'kind', 'description', 'body'] }) },
+        responses: { '201': { description: 'Created', ...json(envelope(resourceSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/resources/{id}': {
+      get: {
+        summary: 'One skill or command. Administrators only',
+        parameters: idParam,
+        responses: { '200': { description: 'OK', ...json(envelope(resourceSchema)) }, '401': failures['401'], '404': failures['404'] },
+      },
+      put: {
+        summary: 'Change a skill or command (id and kind stay). Administrators only',
+        parameters: idParam,
+        requestBody: { required: true, ...json(resourceSchema) },
+        responses: { '200': { description: 'OK', ...json(envelope(resourceSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+      delete: {
+        summary: 'Delete a skill or command. Administrators only',
+        parameters: idParam,
+        responses: { '200': { description: 'OK' }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/agents/{agentId}/resources': {
+      get: {
+        summary: 'The skills and commands an agent may use. Administrators only',
+        parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'OK', ...json(envelope(agentResources)) }, '401': failures['401'], '404': failures['404'] },
+      },
+      put: {
+        summary: 'Replace the skills and commands an agent may use. Administrators only',
+        parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json(agentResources) },
+        responses: { '200': { description: 'OK', ...json(envelope(agentResources)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/agents/{agentId}/commands': {
+      get: {
+        summary: 'The /commands the caller may use with this agent — id and description only (the composer autocomplete). Anyone who can talk to the agent',
+        parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, description: { type: 'string' } } } })) },
           '401': failures['401'],
           '404': failures['404'],
         },

@@ -12,6 +12,7 @@ import { toolsTokens, toolTokens } from '@/lib/toolTokens'
 import AgentFootprint from './AgentFootprint.vue'
 import AgentHooks from './AgentHooks.vue'
 import AgentInitialContext from './AgentInitialContext.vue'
+import AgentResources from './AgentResources.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 
 const props = defineProps<{ agent?: IAgentDetail; creating: boolean }>()
@@ -268,7 +269,7 @@ const deleting = ref(false)
  * As guias do formulário: o texto do agente na primeira, e cada grupo de capacidades na sua. A contagem diz
  * quanto está escolhido sem abrir a guia; o ponto vermelho, que o servidor recusou algo ali.
  */
-type TTab = 'agente' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'contexto' | 'tamanho' | 'hooks'
+type TTab = 'agente' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'contexto' | 'tamanho' | 'hooks'
 const tab = ref<TTab>('agente')
 const TAB_FIELDS: Record<TTab, string[]> = {
   agente: ['id', 'name', 'soul', 'systemPrompt', 'role', 'adminOnly', 'projectId'],
@@ -276,6 +277,7 @@ const TAB_FIELDS: Record<TTab, string[]> = {
   ferramentas: ['allowedTools'],
   mcps: [],
   sdk: [],
+  recursos: [],
   contexto: [],
   tamanho: [],
   hooks: [],
@@ -294,6 +296,7 @@ const tabs = computed(() => {
     },
     { id: 'mcps', label: 'MCPs', count: tools.filter((entry) => entry.startsWith('mcp:')).length },
     { id: 'sdk', label: 'SDK', count: tools.filter((entry) => entry.startsWith('sdk:')).length },
+    { id: 'recursos', label: 'Recursos' },
     { id: 'contexto', label: 'Contexto inicial' },
     { id: 'tamanho', label: 'Tamanho' },
     { id: 'hooks', label: 'Hooks' },
@@ -767,6 +770,12 @@ async function remove() {
     <p v-else-if="Object.keys(issues).length" class="text-sm text-rose-300">
       Não salvou — corrija: {{ summarizeIssues(issues, FIELD_LABEL) }}
     </p>
+    <!-- ⚖️ Os recursos (skills e commands) têm o próprio cadastro (fora do Salvar do agente): só para agente já gravado. -->
+    <section v-if="tab === 'recursos'">
+      <AgentResources v-if="agent && !creating" :agent-id="agent.id" :project-id="agent.projectId" :project-name="projects.list.find((item) => item.id === agent?.projectId)?.name" />
+      <p v-else class="text-sm text-zinc-400">Crie o agente primeiro: os recursos são liberados para ele.</p>
+    </section>
+
     <!-- ⚖️ O contexto inicial também tem o próprio cadastro (fora do Salvar do agente): só para agente já gravado. -->
     <section v-if="tab === 'contexto'">
       <AgentInitialContext v-if="agent && !creating" :agent-id="agent.id" :project-id="agent.projectId" :project-name="projects.list.find((item) => item.id === agent?.projectId)?.name" />

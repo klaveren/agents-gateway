@@ -153,6 +153,7 @@ export class AgentController {
     this.getAgents = this.getAgents.bind(this)
     this.getAgentTools = this.getAgentTools.bind(this)
     this.getAgentFootprint = this.getAgentFootprint.bind(this)
+    this.getAgentCommands = this.getAgentCommands.bind(this)
     this.getTools = this.getTools.bind(this)
     this.createSession = this.createSession.bind(this)
     this.listSessions = this.listSessions.bind(this)
@@ -415,6 +416,20 @@ export class AgentController {
    * O TAMANHO do agente (`?project=` para um global): o que ele carrega antes da primeira mensagem, parte a parte.
    * As ferramentas do MCP `caller` (o do gateway) são pedidas com a credencial de quem está na tela.
    */
+  /**
+   * Os `/commands` que a pessoa pode usar com este agente — o autocompletar da caixa de mensagem. ⚖️ De quem pode
+   * conversar com o agente, não só admin: só o nome e a descrição, nunca o texto do command.
+   */
+  async getAgentCommands(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const resolved = await this.requireCaller()
+      const admin = (await checkAdminAccess(this.usecases.proof)).allowed
+      const agent = this.agents.get(req.params.agentId as string)
+      if (!agent || !this.agentVisible(agent, { userId: resolved.identity?.id, admin })) throw new AgentNotFoundError(req.params.agentId as string)
+      return (this.usecases.guidance?.usableResources('command', agent.id) ?? []).map((command) => ({ id: command.id, description: command.description }))
+    })
+  }
+
   async getAgentFootprint(req: Request, res: Response) {
     await this.respond(res, async () => {
       await this.requireAdmin('getAgentFootprint')
@@ -1016,7 +1031,15 @@ export class AgentController {
 
     // O contexto sai da identidade já resolvida e é aplicado pelo use case, só na primeira mensagem.
     const context = [this.usecases.sessionContext?.({ ...resolved.identity }), await this.projectContext(sessionId)].filter(Boolean).join('\n\n') || undefined
-    const input: IMessageInput = { text: body.message, files: body.files, context }
+    // `/nome argumentos`: o command liberado ao agente vira o texto dele (com os documentos anexados); o turno grava o
+    // que a pessoa digitou. ⛔ Command que existe mas não está liberado para este agente é recusado (422).
+    let expanded
+    try {
+      expanded = this.usecases.guidance?.expandCommand(body.message, (await this.usecases.getSession.execute(sessionId)).agentId)
+    } catch (error: unknown) {
+      return this.sendFailure(res, error, '[AgentController.sendMessage]')
+    }
+    const input: IMessageInput = { text: expanded?.text ?? body.message, files: body.files, context, ...(expanded ? { recordAs: expanded.label } : {}) }
     const wantsJson = req.accepts(['text/event-stream', 'application/json']) === 'application/json'
 
     return wantsJson ? this.sendMessageAsJson(res, sessionId, input) : this.sendMessageAsStream(res, sessionId, input)
