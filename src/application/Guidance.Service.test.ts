@@ -238,4 +238,13 @@ describe('GuidanceService', () => {
       assert.deepStrictEqual(service.agentContext('dev'), [])
     })
   })
+
+  it('environmentParts: cada seção separada; environmentFor é a junção delas', () => {
+    const service = build()
+    service.createRule(rule('Idioma'), 'root')
+    service.createDoc(doc('global-doc'), 'root')
+    const parts = service.environmentParts('xpto')
+    assert.deepStrictEqual(Object.keys(parts), ['rules', 'index'])
+    assert.strictEqual(service.environmentFor('xpto'), `${parts.rules}\n\n${parts.index}`)
+  })
 })

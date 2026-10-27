@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { estimateTokens } from '@domain/Token.Estimate'
 import { AgentNotFoundError, GuidanceNotFoundError, InvalidGuidanceError, ProjectNotFoundError } from '@domain/errors/Domain.Error'
 import { DOC_BODY_MAX, DOC_ID_PATTERN, DOC_KINDS, DOC_SUMMARY_MAX, DOC_TITLE_MAX, IProjectDoc, READ_DOC_TOOL, TDocKind } from '@domain/models/ProjectDoc.Model'
 import { IRule, RULE_BODY_MAX, RULE_TITLE_MAX } from '@domain/models/Rule.Model'
@@ -34,8 +35,15 @@ export interface ILoadedIn {
   agents: string[]
 }
 
-/** Tokens estimados de um texto (≈ 4 caracteres por token): só para a tela avisar do peso. */
-export const estimateTokens = (text: string) => Math.ceil(text.length / 4)
+/** As seções que o ambiente põe no prompt, cada uma o texto dela (ausente = não entra). */
+export interface IEnvironmentParts {
+  rules?: string
+  projectSpecs?: string
+  agentSpecs?: string
+  index?: string
+}
+
+export { estimateTokens }
 
 export interface IDocInput {
   id?: string
@@ -270,47 +278,46 @@ export class GuidanceService {
    * aparece.
    */
   environmentFor(projectId?: string, agentId?: string): string | undefined {
+    const parts = this.environmentParts(projectId, agentId)
+    const sections = [parts.rules, parts.projectSpecs, parts.agentSpecs, parts.index].filter((part): part is string => !!part)
+    return sections.length ? sections.join('\n\n') : undefined
+  }
+
+  /** As seções do ambiente separadas (a guia Tamanho do agente pesa cada uma). */
+  environmentParts(projectId?: string, agentId?: string): IEnvironmentParts {
     const rules = [...this.repository.rules(null), ...(projectId ? this.repository.rules(projectId) : [])].filter((rule) => rule.enabled)
     const { project: loaded, agent: own } = this.loadedFor(projectId, agentId)
     const docs = this.visibleDocs(projectId, agentId)
-    const sections: string[] = []
+    const parts: IEnvironmentParts = {}
     if (rules.length) {
-      sections.push(
-        [
-          '## Regras do ambiente',
-          'Valem em toda resposta e em toda ferramenta que você usar. Em conflito com um pedido, a regra vence: diga qual regra impede.',
-          ...rules.map((rule, index) => `${index + 1}. **${rule.title}** — ${rule.body}`),
-        ].join('\n'),
-      )
+      parts.rules = [
+        '## Regras do ambiente',
+        'Valem em toda resposta e em toda ferramenta que você usar. Em conflito com um pedido, a regra vence: diga qual regra impede.',
+        ...rules.map((rule, index) => `${index + 1}. **${rule.title}** — ${rule.body}`),
+      ].join('\n')
     }
     if (loaded.length) {
-      sections.push(
-        [
-          '## Specs do projeto',
-          'Carregadas inteiras: valem como as regras do ambiente. Siga-as em toda resposta e em toda ferramenta que você usar.',
-          ...loaded.map((doc) => `### ${doc.title}\n${doc.body.trim()}`),
-        ].join('\n\n'),
-      )
+      parts.projectSpecs = [
+        '## Specs do projeto',
+        'Carregadas inteiras: valem como as regras do ambiente. Siga-as em toda resposta e em toda ferramenta que você usar.',
+        ...loaded.map((doc) => `### ${doc.title}\n${doc.body.trim()}`),
+      ].join('\n\n')
     }
     if (own.length) {
-      sections.push(
-        [
-          '## Specs do agente',
-          'Carregadas inteiras para o seu papel, além das do projeto: valem como as regras do ambiente.',
-          ...own.map((doc) => `### ${doc.title}\n${doc.body.trim()}`),
-        ].join('\n\n'),
-      )
+      parts.agentSpecs = [
+        '## Specs do agente',
+        'Carregadas inteiras para o seu papel, além das do projeto: valem como as regras do ambiente.',
+        ...own.map((doc) => `### ${doc.title}\n${doc.body.trim()}`),
+      ].join('\n\n')
     }
     if (docs.length) {
-      sections.push(
-        [
-          '## Documentos de referência',
-          `Specs (como algo deve ser) e ADRs (decisões e o porquê). Antes de decidir algo que um deles cobre, leia-o inteiro com ${READ_DOC_TOOL} (pelo id).`,
-          ...docs.map((doc) => `- [${doc.kind}] ${doc.id} — ${doc.title}${doc.summary ? `: ${doc.summary}` : ''}`),
-        ].join('\n'),
-      )
+      parts.index = [
+        '## Documentos de referência',
+        `Specs (como algo deve ser) e ADRs (decisões e o porquê). Antes de decidir algo que um deles cobre, leia-o inteiro com ${READ_DOC_TOOL} (pelo id).`,
+        ...docs.map((doc) => `- [${doc.kind}] ${doc.id} — ${doc.title}${doc.summary ? `: ${doc.summary}` : ''}`),
+      ].join('\n')
     }
-    return sections.length ? sections.join('\n\n') : undefined
+    return parts
   }
 
   /** O projeto foi apagado: as rules e os documentos dele vão junto. */

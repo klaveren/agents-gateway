@@ -1262,6 +1262,45 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'OK' }, '401': failures['401'], '404': failures['404'] },
       },
     },
+    '/agents/{agentId}/footprint': {
+      get: {
+        summary:
+          'The size of an agent: what it carries before the first message, part by part, in estimated tokens (≈ 4 characters per token) — soul, instructions, rules, initial contexts, document index, local and MCP tools. SDK native tools are listed but not measured. For a global agent, `project` picks the conversation project. Administrators only',
+        parameters: [
+          { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'project', in: 'query', required: false, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  total: { type: 'integer' },
+                  project: { type: 'string' },
+                  sections: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        key: { type: 'string' },
+                        label: { type: 'string' },
+                        tokens: { type: 'integer', nullable: true, description: 'null = in the prompt, but not measurable here.' },
+                        items: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, tokens: { type: 'integer' } } } },
+                        note: { type: 'string' },
+                      },
+                    },
+                  },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+    },
     '/agents/{agentId}/initial-context': {
       get: {
         summary: "The initial context of an agent: the specs it loads in full on top of its project's, in order. Administrators only",
