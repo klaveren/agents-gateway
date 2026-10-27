@@ -289,7 +289,47 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     async ({ agentId }) => reply(await api('GET', `/agents/${encodeURIComponent(agentId)}`)),
   )
 
+  server.registerTool(
+    'list_packages',
+    {
+      description:
+        'The server tools installed from the Packages tab (micromamba, conda-forge) into a persistent folder on the PATH of every agent Bash, run_bash and local MCP. `explicit` = asked for; the rest came as dependencies.',
+      annotations: { readOnlyHint: true },
+    },
+    async () => reply(await api('GET', '/packages')),
+  )
+
+  server.registerTool(
+    'search_packages',
+    {
+      description:
+        'Search conda-forge for a server tool by name (git, curl, jq, ffmpeg, ripgrep…): one hit per package, newest version, exact name first. The first search on a fresh server takes ~15s.',
+      inputSchema: { query: z.string().min(2).max(100) },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ query }) => reply(await api('GET', '/packages/search', { query: { q: query } })),
+  )
+
   if (!access.write) return
+
+  server.registerTool(
+    'install_package',
+    {
+      description:
+        'Install a conda-forge package into the persistent server tools folder (survives restarts; no root needed). Once installed, its commands work right away in every agent Bash, run_bash and local MCP (the folder is on the gateway PATH). One install at a time: a busy error means wait and retry. Confirm with the person before installing.',
+      inputSchema: { name: z.string().describe('Exact conda-forge name, from search_packages'), version: z.string().optional().describe('e.g. 2.45 or 2.*; absent = newest') },
+    },
+    async ({ name, version }) => reply(await api('POST', '/packages', { body: { name, ...(version ? { version } : {}) } })),
+  )
+
+  server.registerTool(
+    'remove_package',
+    {
+      description: 'Uninstall a package from the server tools folder. Agents and local MCPs that call its commands stop finding them. Confirm with the person before removing.',
+      inputSchema: { name: z.string() },
+    },
+    async ({ name }) => reply(await api('DELETE', `/packages/${encodeURIComponent(name)}`)),
+  )
 
   server.registerTool(
     'set_model_enabled',

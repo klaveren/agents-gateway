@@ -96,8 +96,8 @@ async function confirmRemove() {
         <span v-if="packages.state?.version" class="ml-auto text-xs text-zinc-500">micromamba {{ packages.state.version }}</span>
       </header>
       <p class="text-xs text-zinc-500">
-        Ferramentas do servidor (git, curl, jq, ffmpeg…) do conda-forge, sem root. Ficam em <code>{{ packages.state?.prefix ?? '<dados>/tools' }}</code> — persistente: sobrevivem ao reboot. Valem para o Bash dos agentes, o run_bash e
-        os MCPs locais, a partir das próximas conversas.
+        Ferramentas do servidor (git, curl, jq, ffmpeg…) do conda-forge, sem root. Ficam em <code>{{ packages.state?.prefix ?? '<dados>/tools' }}</code> — persistente: sobrevivem ao reboot. Valem na hora para o Bash dos agentes, o
+        run_bash e os MCPs locais.
       </p>
       <p v-if="loadError" class="text-sm text-rose-300">{{ loadError }}</p>
 

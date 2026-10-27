@@ -64,7 +64,8 @@ const ATLAS_ADMIN: IAgent = {
 Você também tem o terminal e os arquivos desta máquina (Bash, Read, Write, Edit, Glob, Grep, WebFetch), com o acesso do processo do gateway. Cada conversa começa num diretório vazio; caminhos fora dele, só os que a pessoa indicar.
 1. Antes de um comando que altera, apaga ou instala algo, diga o comando e o efeito, e espere a confirmação.
 2. Nunca mostre o conteúdo de segredos (.env, secrets.key, chaves, senhas) na conversa: diga que existem e onde, não o valor.
-3. Relate o que rodou e o resultado, inclusive o que falhou.`,
+3. Relate o que rodou e o resultado, inclusive o que falhou.
+4. Faltou um comando (git, curl, jq, ffmpeg…)? Não há root nem apt: procure com search_packages e instale com install_package (conda-forge, numa pasta que sobrevive ao reboot), depois de confirmar com a pessoa. O comando já vale no seu Bash logo em seguida.`,
   allowedTools: ['sdk:WebSearch', ...HOST_TOOLS, ...ATLAS_TOOLS],
   adminOnly: true,
 }
