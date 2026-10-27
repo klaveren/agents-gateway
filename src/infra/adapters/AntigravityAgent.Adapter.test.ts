@@ -34,10 +34,9 @@ function fakeSpawn(calls: ISpawned[], lines: (turn: number) => string[], code = 
 const agent: IAgent = {
   id: 'gema',
   name: 'Gema',
-  provider: 'antigravity',
+  providers: [{ provider: 'antigravity', models: ['gemini-3.8-flash-medium'] }],
   soul: 'Você é a Gema.',
   systemPrompt: 'Seja breve.',
-  models: ['gemini-3.8-flash-medium'],
   modes: [EMode.AGENT],
   allowedTools: [],
 }
@@ -78,6 +77,11 @@ describe('AntigravityAgentAdapter', () => {
     assert.ok(args.includes('--disable-slash-commands'))
     assert.ok(!args.slice(1).some((arg) => arg.includes('dangerously')))
     assert.deepStrictEqual(args.slice(-4), ['--model', 'gemini-4-argon-high', '--conversation', 'conv-9'])
+  })
+
+  it('⚖️ sem `--sandbox` só com `full`, escolha de quem criou o agente', () => {
+    assert.ok(antigravityArgs('oi', 'm', undefined, 'read-only').includes('--sandbox'))
+    assert.ok(!antigravityArgs('oi', 'm', undefined, 'full').includes('--sandbox'))
   })
 
   it('primeiro turno leva as instruções; o segundo retoma a conversa, sem repeti-las; ambiente mínimo', async () => {

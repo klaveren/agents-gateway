@@ -6,8 +6,8 @@ import { EProvider } from './enums/EProvider.Enum'
  * oficial de cada um e com o login feito no host — sem chave de API.
  *
  * ⛔ SÓ A LANE AGENT: as APIs de chat (Messages, Responses, Gemini) exigem chave; a assinatura só vale
- * nos clientes agênticos. ⛔ USO PESSOAL: a conta é de quem fez o login, e por padrão só admin conversa
- * com esses agentes (`SUBSCRIPTION_ADMIN_ONLY`).
+ * nos clientes agênticos. A conta é de quem fez o login; quem conversa com esses agentes é decisão de
+ * quem cria o agente (`IAgent.adminOnly`).
  */
 export const SUBSCRIPTION_PROTOCOLS: readonly EProvider[] = [EProvider.CLAUDE_SUB, EProvider.CODEX, EProvider.ANTIGRAVITY]
 
@@ -26,9 +26,4 @@ export function lanesOf(protocol: EProvider): readonly EMode[] {
  */
 export function nativeFamily(protocol: EProvider): EProvider {
   return protocol === EProvider.CLAUDE_SUB ? EProvider.CLAUDE : protocol
-}
-
-/** ⚖️ Ligado por padrão; `SUBSCRIPTION_ADMIN_ONLY=0` abre para qualquer conta. */
-export function subscriptionAdminOnly(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.SUBSCRIPTION_ADMIN_ONLY?.trim() !== '0'
 }

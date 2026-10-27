@@ -12,9 +12,8 @@ import { NullAgentRepository } from '../infra/persistence/Null.AgentRepository'
 export const GOOGLE_TEST_AGENT: IAgent = {
   id: 'pesquisa-teste',
   name: 'Pesquisa (teste)',
-  provider: EProvider.GOOGLE,
+  providers: [{ provider: EProvider.GOOGLE, models: ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.1-pro-preview'] }],
   systemPrompt: 'Você pesquisa na web com search_web e responde com as fontes.',
-  models: ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.1-pro-preview'],
   modes: [EMode.CHAT, EMode.AGENT],
   allowedTools: ['search_web'],
 }
@@ -22,9 +21,8 @@ export const GOOGLE_TEST_AGENT: IAgent = {
 export const CLAUDE_TEST_AGENT: IAgent = {
   id: 'operador-teste',
   name: 'Operador (teste)',
-  provider: EProvider.CLAUDE,
+  providers: [{ provider: EProvider.CLAUDE, models: ['claude-sonnet-5', 'claude-opus-5', 'claude-fable-5'] }],
   systemPrompt: 'Você opera o sistema com run_bash, com cuidado.',
-  models: ['claude-sonnet-5', 'claude-opus-5', 'claude-fable-5'],
   reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
   modes: [EMode.CHAT, EMode.AGENT],
   allowedTools: ['run_bash'],
@@ -33,9 +31,8 @@ export const CLAUDE_TEST_AGENT: IAgent = {
 export const OPENAI_TEST_AGENT: IAgent = {
   id: 'analista-teste',
   name: 'Analista (teste)',
-  provider: EProvider.OPENAI,
+  providers: [{ provider: EProvider.OPENAI, models: ['gpt-5.6-sol', 'gpt-5.6-terra', 'o4-mini', 'o3-pro'] }],
   systemPrompt: 'Você analisa dados e responde de forma concisa.',
-  models: ['gpt-5.6-sol', 'gpt-5.6-terra', 'o4-mini', 'o3-pro'],
   reasoningEfforts: ['none', 'low', 'medium', 'high'],
   modes: [EMode.CHAT, EMode.AGENT],
   allowedTools: ['search_web', 'run_bash'],

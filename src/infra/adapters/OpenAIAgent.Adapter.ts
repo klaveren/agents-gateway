@@ -1,3 +1,4 @@
+import { sessionChoice } from '@domain/Agent.Policy'
 import {
   Agent,
   codeInterpreterTool,
@@ -74,13 +75,14 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
   }
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
+    const choice = sessionChoice(agent, input)
     const record = this.store.create(sessionPrefix(EProvider.OPENAI, EMode.AGENT), {
       agentId: agent.id,
-      provider: agent.provider,
+      provider: choice.provider,
       protocol: EProvider.OPENAI,
       mode: EMode.AGENT,
       // O modelo vem resolvido pelo provider de sessões (o pedido, ou o padrão do agente).
-      model: input.model || agent.models[0] || '',
+      model: choice.model,
       reasoning: input.reasoning,
       language: input.language,
       tools: false,

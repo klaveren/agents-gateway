@@ -138,7 +138,7 @@ export class ProvidersController {
         this.deps.providers.remove(id, (providerId) =>
           this.deps.agents
             .list()
-            .filter((agent) => agent.provider === providerId)
+            .filter((agent) => agent.providers.some((target) => target.provider === providerId))
             .map((agent) => agent.name),
         )
         // Desliga, não apaga: as conversas antigas com esse provider continuam com preço.
@@ -327,7 +327,7 @@ export class ProvidersController {
 
   /** O provider como a tela o vê: sem chave nenhuma, com o que ela libera. */
   private view(provider: IProviderConfig) {
-    const agents = this.deps.agents.list().filter((agent) => agent.provider === provider.id)
+    const agents = this.deps.agents.list().filter((agent) => agent.providers.some((target) => target.provider === provider.id))
     const [credential] = this.deps.credentials.status([provider.id])
 
     return {
@@ -341,7 +341,7 @@ export class ProvidersController {
       updatedAt: provider.updatedAt,
       updatedBy: provider.updatedBy,
       credential,
-      models: [...new Set(agents.flatMap((agent) => agent.models))],
+      models: [...new Set(agents.flatMap((agent) => agent.providers.filter((target) => target.provider === provider.id).flatMap((target) => target.models)))],
       catalog: this.deps.models ? { total: this.deps.models.list(provider.id).length, enabled: this.deps.models.enabledIds(provider.id).length } : undefined,
       agents: agents.map((agent) => ({ id: agent.id, name: agent.name })),
     }

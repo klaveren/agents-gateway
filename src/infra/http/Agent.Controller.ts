@@ -1,4 +1,4 @@
-import { agentUnavailable, TAgentUnavailable, UNAVAILABLE_LABEL } from '@domain/Agent.Availability'
+import { agentUnavailable, IAvailabilityFacts, TAgentUnavailable, targetUnavailable, UNAVAILABLE_LABEL } from '@domain/Agent.Availability'
 import { clientMetadata } from '@domain/Session.Metadata'
 import { metaPlaceholderKeys } from '@infra/sandbox/Egress.Proxy'
 import { CancelSessionUseCase } from '@application/CancelSession.Usecase'
@@ -12,15 +12,15 @@ import { aggregateTurn } from '@application/Turn.Aggregator'
 import { randomBytes } from 'node:crypto'
 import { AgentCatalog } from '@application/Agent.Catalog'
 import { ModelCatalogService } from '@application/ModelCatalog.Service'
-import { IAgentRules } from '@domain/Agent.Policy'
-import { NATIVE_TOOLS, nativeToolAllowed } from '@domain/Native.Tools'
-import { dangerousToolsAdminOnly, dangerousToolsOf } from '@domain/Tool.Policy'
-import { isSubscription, subscriptionAdminOnly } from '@domain/Subscription.Policy'
+import { IAgentRules, offers, targetFor } from '@domain/Agent.Policy'
+import { NATIVE_TOOLS } from '@domain/Native.Tools'
+import { dangerousToolsOf } from '@domain/Tool.Policy'
+import { isSubscription } from '@domain/Subscription.Policy'
 import { delegationMaxDepth } from '@domain/models/Delegation.Model'
 import { maxOutputTokens, maxToolTurns } from '@infra/adapters/support/Prompt.Helper'
 import { bashPolicy } from '@infra/tools/Bash.Guard'
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { IAgent } from '@domain/models/Agent.Model'
+import { IAgent, IAgentTarget } from '@domain/models/Agent.Model'
 import { AgentUnavailableError } from '@domain/errors/Domain.Error'
 import { AgentNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
@@ -35,7 +35,7 @@ import { IConversationRepository } from '@domain/ports/ConversationRepository.Po
 import { ISettingsRepository } from '@domain/ports/SettingsRepository.Port'
 import { ISessionContextProvider } from '@domain/ports/SessionContextProvider.Port'
 import { SessionNotFoundError } from '@domain/errors/Domain.Error'
-import { IAgentReasoningFacts, toAgentDetailDto, toAgentDto } from './Agent.Dto'
+import { IAgentProviderFacts, toAgentDetailDto, toAgentDto } from './Agent.Dto'
 import { assertNoAdkTemplateCollision } from '@infra/adapters/GoogleAgent.Adapter'
 import { IConversationView, toConversationDto, toStatsDto, toTurnDto } from './Conversation.Dto'
 import { metadataFilter, parsePageQuery } from './Monitor.Query'
@@ -211,48 +211,94 @@ export class AgentController {
         .map((entry) => ({ entry, unavailable: this.unavailableOf(entry.agent, admin) }))
         .filter(({ unavailable }) => admin || !unavailable)
         .map(({ entry, unavailable }) => ({
-          ...toAgentDto(entry.agent, this.pricingOf(entry.agent.provider), this.reasoningFacts(entry.agent.provider)),
-          providerInfo: this.providerInfo(entry.agent.provider),
+          // ⛔ Quem não administra só vê os providers que rodam para ele: um desligado não é escolha.
+          ...this.listedAgent(entry.agent, admin),
           ...(unavailable ? { unavailable: { reason: unavailable, label: UNAVAILABLE_LABEL[unavailable] } } : {}),
         }))
     })
   }
 
   /** O que as configurações novas apontam e não está ativo: agente, modelo do agente, classificador. */
-  private async settingsIssues(body: { agentId?: string | null; model?: string | null; classifierModel?: string | null; classifierProvider?: string | null }) {
+  private async settingsIssues(body: {
+    agentId?: string | null
+    provider?: string | null
+    model?: string | null
+    classifierModel?: string | null
+    classifierProvider?: string | null
+  }) {
     const issues: Array<{ field: string; message: string }> = []
     const current = await this.usecases.settings.read()
     const agentId = body.agentId === undefined ? current.agentId : body.agentId || undefined
     const agent = agentId ? this.agents.get(agentId) : this.agents.fallback()
     if (body.agentId && agent && !this.agents.isRunnable(agent))
       issues.push({ field: 'agentId', message: `${agent.id} is not available (${UNAVAILABLE_LABEL[this.unavailableOf(agent, true) ?? 'no_model']})` })
-    if (body.model && agent && !agent.models.includes(body.model)) issues.push({ field: 'model', message: `${body.model} is not an enabled model of ${agent.id}` })
+    const provider = body.provider === undefined ? current.provider : body.provider || undefined
+    if (body.provider && agent && !agent.providers.some((target) => target.provider === body.provider))
+      issues.push({ field: 'provider', message: `${agent.id} does not run on ${body.provider}` })
+    if (body.model && agent && !(provider ? offers(agent, provider, body.model) : agent.providers.some((target) => target.models.includes(body.model!))))
+      issues.push({ field: 'model', message: `${body.model} is not an enabled model of ${agent.id}${provider ? ` on ${provider}` : ''}` })
 
-    const provider = body.classifierProvider === undefined ? current.classifierProvider : body.classifierProvider || undefined
-    const model = body.classifierModel === undefined ? current.classifierModel : body.classifierModel || undefined
+    const classifierProvider = body.classifierProvider === undefined ? current.classifierProvider : body.classifierProvider || undefined
+    const classifierModel = body.classifierModel === undefined ? current.classifierModel : body.classifierModel || undefined
     const classifier = body.classifierProvider ? this.usecases.providers?.connection(body.classifierProvider) : undefined
     if (body.classifierProvider && !classifier) issues.push({ field: 'classifierProvider', message: `${body.classifierProvider} is disabled or does not exist` })
     // O classificador fala o SDK plano com chave de API: assinatura não serve, e sem chave nada classifica.
     else if (classifier && isSubscription(classifier.protocol))
       issues.push({ field: 'classifierProvider', message: `${classifier.providerId} is a subscription: the classifier needs an API key` })
     else if (classifier && !classifier.key) issues.push({ field: 'classifierProvider', message: `${classifier.providerId} has no API key` })
-    if ((body.classifierModel || body.classifierProvider) && provider && model && this.usecases.models && !this.usecases.models.isEnabled(provider, model)) {
-      issues.push({ field: 'classifierModel', message: `${model} is not enabled in ${provider}` })
+    if (
+      (body.classifierModel || body.classifierProvider) &&
+      classifierProvider &&
+      classifierModel &&
+      this.usecases.models &&
+      !this.usecases.models.isEnabled(classifierProvider, classifierModel)
+    ) {
+      issues.push({ field: 'classifierModel', message: `${classifierModel} is not enabled in ${classifierProvider}` })
     }
     return issues
   }
 
   /** Por que o agente não abre conversa para este chamador agora (ver `agentUnavailable`). */
   private unavailableOf(agent: IAgent, admin: boolean): TAgentUnavailable | undefined {
-    const directory = this.usecases.providers
-    if (!directory) return agent.models.length ? undefined : 'no_model'
-    return agentUnavailable(agent, { provider: directory.get(agent.provider), hasKey: !!directory.connection(agent.provider)?.key, admin })
+    if (!this.usecases.providers) return agent.providers.some((target) => target.models.length) ? undefined : 'no_model'
+    return agentUnavailable(agent, (providerId) => this.availabilityFacts(providerId, admin))
   }
 
-  /** O provider como a tela mostra: o NOME do banco, não um rótulo fixo no código. */
-  private providerInfo(id: string): { id: string; name: string; protocol?: string } {
-    const provider = this.usecases.providers?.get(id)
-    return { id, name: provider?.name ?? id, protocol: provider?.protocol }
+  /** Por que ESTE provider do agente não roda para este chamador agora. */
+  private targetUnavailableOf(agent: IAgent, target: IAgentTarget, admin: boolean): TAgentUnavailable | undefined {
+    if (!this.usecases.providers) return target.models.length ? undefined : 'no_model'
+    return targetUnavailable(agent, target, this.availabilityFacts(target.provider, admin))
+  }
+
+  private availabilityFacts(providerId: string, admin: boolean): IAvailabilityFacts {
+    const directory = this.usecases.providers
+    return { provider: directory?.get(providerId), hasKey: !!directory?.connection(providerId)?.key, admin }
+  }
+
+  /**
+   * O agente na listagem. O admin vê todos os providers, cada inativo com o motivo; quem não administra
+   * só vê os que rodam para ele.
+   */
+  private listedAgent(agent: IAgent, admin: boolean) {
+    const unavailable = new Map(agent.providers.map((target) => [target.provider, this.targetUnavailableOf(agent, target, admin)]))
+    const visible = admin ? agent : { ...agent, providers: agent.providers.filter((target) => !unavailable.get(target.provider)) }
+    return toAgentDto(visible, (providerId) => {
+      const reason = unavailable.get(providerId)
+      return { ...this.providerFacts(providerId), ...(reason ? { unavailable: { reason, label: UNAVAILABLE_LABEL[reason] } } : {}) }
+    })
+  }
+
+  /** Nome e protocolo do banco (não um rótulo fixo no código), preços e raciocínio do catálogo. */
+  private providerFacts(providerId: string, disabled: Record<string, string[]> = {}): IAgentProviderFacts {
+    const models = this.usecases.models
+    const provider = this.usecases.providers?.get(providerId)
+    return {
+      name: provider?.name ?? providerId,
+      protocol: provider?.protocol ?? Object.values(EProvider).find((value) => value === providerId),
+      pricing: this.pricingOf(providerId),
+      reasoningOf: models ? (model) => models.reasoningOf(providerId, model) : undefined,
+      disabledModels: disabled[providerId],
+    }
   }
 
   /**
@@ -267,7 +313,8 @@ export class AgentController {
       const entry = this.agents.entry(req.params.agentId as string)
       if (!entry) throw new AgentNotFoundError(req.params.agentId as string)
 
-      return toAgentDetailDto(entry, this.pricingOf(entry.agent.provider), this.agents.unusableModels(entry.agent), this.reasoningFacts(entry.agent.provider))
+      const disabled = this.agents.unusableModels(entry.agent)
+      return toAgentDetailDto(entry, (providerId) => this.providerFacts(providerId, disabled))
     })
   }
 
@@ -285,7 +332,7 @@ export class AgentController {
 
         const saved = this.agents.save(toAgentInput(body.id ?? '', body), { rules: await this.agentRules(), by: admin.email ?? admin.id ?? 'admin', creating: true })
 
-        return toAgentDetailDto({ agent: saved, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy }, this.pricingOf(saved.provider), [], this.reasoningFacts(saved.provider))
+        return toAgentDetailDto({ agent: saved, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy }, (providerId) => this.providerFacts(providerId))
       },
       { status: 201, message: 'Agent created' },
     )
@@ -305,7 +352,7 @@ export class AgentController {
           creating: false,
         })
 
-        return toAgentDetailDto({ agent: saved, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy }, this.pricingOf(saved.provider), [], this.reasoningFacts(saved.provider))
+        return toAgentDetailDto({ agent: saved, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy }, (providerId) => this.providerFacts(providerId))
       },
       { message: 'Agent updated' },
     )
@@ -348,8 +395,8 @@ export class AgentController {
       modelEnabled: this.usecases.models ? (provider, model) => this.usecases.models!.isEnabled(provider, model) : undefined,
       protocolOf: (id) => this.usecases.providers?.get(id)?.protocol ?? Object.values(EProvider).find((value) => value === id),
       promptIssue: (agent) => {
-        const protocol = this.usecases.providers?.get(agent.provider)?.protocol ?? agent.provider
-        if (protocol !== EProvider.GOOGLE) return undefined
+        const protocols = agent.providers.map((target) => this.usecases.providers?.get(target.provider)?.protocol ?? target.provider)
+        if (!protocols.includes(EProvider.GOOGLE)) return undefined
         try {
           // O soul vai junto no prompt: as mesmas `{chaves}` quebrariam o ADK nele também.
           assertNoAdkTemplateCollision(`${agent.soul ?? ''}\n${agent.systemPrompt}`)
@@ -375,15 +422,9 @@ export class AgentController {
   async getTools(_req: Request, res: Response) {
     await this.respond(res, async () => {
       await this.requireCaller()
-      // As nativas vão junto, com o veredito do perímetro: a tela mostra as bloqueadas desabilitadas, com o porquê.
-      // `dangerous`: alcança este servidor; com `DANGEROUS_TOOLS_ADMIN_ONLY`, o agente que a tem só conversa com admin.
+      // As nativas vão junto, todas liberadas. `dangerous`: alcança este servidor — a tela avisa quem configura.
       const dangerous = (id: string) => dangerousToolsOf([id]).length > 0
-      const native = NATIVE_TOOLS.map((tool) => ({
-        ...tool,
-        dangerous: dangerous(tool.id),
-        allowed: nativeToolAllowed(tool),
-        reason: nativeToolAllowed(tool) ? undefined : 'blocked by NATIVE_TOOLS_ENABLED',
-      }))
+      const native = NATIVE_TOOLS.map((tool) => ({ ...tool, dangerous: dangerous(tool.id) }))
       const catalog = await this.catalogFor(this.localTools)
       return { ...catalog, tools: catalog.tools.map((tool) => ({ ...tool, dangerous: dangerous(tool.name) })), native, limits: { delegationMaxDepth: delegationMaxDepth() } }
     })
@@ -466,7 +507,7 @@ export class AgentController {
 
       return {
         ...(await this.usecases.settings.read()),
-        defaults: { agentId: fallback?.id, model: fallback?.models[0] },
+        defaults: { agentId: fallback?.id, ...(fallback ? targetFor(fallback, undefined, undefined, (target) => this.agents.isTargetRunnable(fallback, target)) : {}) },
         // O que vale AGORA (a tela, senão o `.env`, senão o padrão) e a faixa que a gravação aceita.
         limitsInEffect: {
           maxToolTurns: maxToolTurns(),
@@ -480,10 +521,7 @@ export class AgentController {
         limitBounds: LIMIT_BOUNDS,
         // ⛔ Decisões de implantação e de segurança: a tela MOSTRA, e só o deploy muda.
         deployment: {
-          dangerousToolsAdminOnly: dangerousToolsAdminOnly(),
-          subscriptionAdminOnly: subscriptionAdminOnly(),
           localToolsEnabled: process.env.LOCAL_TOOLS_ENABLED?.trim() || undefined,
-          nativeToolsEnabled: process.env.NATIVE_TOOLS_ENABLED?.trim() || undefined,
           allowAnonymous: process.env.ALLOW_ANONYMOUS === '1',
         },
       }
@@ -932,15 +970,6 @@ export class AgentController {
     return this.usecases.models?.pricing(provider) ?? this.pricing
   }
 
-  /** O protocolo do provider e o raciocínio de cada modelo segundo o catálogo — o que o DTO do agente cruza. */
-  private reasoningFacts(provider: string): IAgentReasoningFacts {
-    const models = this.usecases.models
-    return {
-      protocol: this.usecases.providers?.get(provider)?.protocol ?? Object.values(EProvider).find((value) => value === provider),
-      reasoningOf: models ? (model) => models.reasoningOf(provider, model) : undefined,
-    }
-  }
-
   private viewFor(admin: boolean): IConversationView {
     return { admin, pricingOf: (provider) => this.pricingOf(provider) }
   }
@@ -1028,14 +1057,19 @@ function toAgentInput(id: string, body: TAgentBody): IAgent {
   return {
     id,
     name: body.name,
-    provider: body.provider,
+    providers: body.providers.map((target) => ({
+      provider: target.provider,
+      models: [...new Set(target.models)],
+      ...(target.sandbox ? { sandbox: target.sandbox } : {}),
+      ...(target.network ? { network: true } : {}),
+    })),
     systemPrompt: body.systemPrompt,
     ...(body.soul?.trim() ? { soul: body.soul.trim() } : {}),
-    models: [...new Set(body.models)],
     reasoningEfforts: body.reasoningEfforts?.length ? [...new Set(body.reasoningEfforts)] : undefined,
     modes: [...new Set(body.modes)],
     allowedTools: [...new Set(body.allowedTools)],
     ...(body.role ? { role: body.role } : {}),
+    ...(body.adminOnly ? { adminOnly: true } : {}),
   }
 }
 

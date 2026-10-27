@@ -6,6 +6,8 @@ import { ISession } from '@domain/models/Session.Model'
 
 /** `reasoning: null` volta ao padrão do provider; campo ausente não muda. */
 export interface ISessionChange {
+  /** Outro provider do agente: a conversa segue nele, com a transcrição (ver `Handoff.Policy`). */
+  provider?: string
   model?: string
   reasoning?: string | null
 }

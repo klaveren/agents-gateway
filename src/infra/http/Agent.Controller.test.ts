@@ -635,11 +635,7 @@ describe('AgentController', () => {
         for (const agent of agents) {
           assert.strictEqual('systemPrompt' in agent, false)
           // O que sai é o JSON: `reasoningEfforts: undefined` não conta como campo.
-          assert.ok(
-            Object.keys(JSON.parse(JSON.stringify(agent))).every((key) =>
-              ['allowedTools', 'id', 'modes', 'models', 'name', 'modelReasoning', 'pricing', 'provider', 'providerInfo', 'reasoningEfforts', 'role', 'unavailable'].includes(key),
-            ),
-          )
+          assert.ok(Object.keys(JSON.parse(JSON.stringify(agent))).every((key) => ['allowedTools', 'id', 'modes', 'name', 'providers', 'reasoningEfforts', 'role'].includes(key)))
         }
         assert.ok(!JSON.stringify(agents).includes('systemPrompt'))
       })
@@ -845,7 +841,7 @@ describe('AgentController', () => {
       } as never
       const withRules = async (body: unknown, settings = new NullSettingsRepository()) => {
         const { res, locals } = mockResponse()
-        const agents = testAgentCatalog(undefined, (agent) => agent.provider === 'google')
+        const agents = testAgentCatalog(undefined, (agent, target) => target.provider === 'google')
         const controller = controllerWith({}, fakeCatalog(), proof, { settings, agents, providers })
         await withCaller(ADMIN, () => controller.updateSettings(mockRequest({ body }), res))
         return { locals, settings }
@@ -879,7 +875,7 @@ describe('AgentController', () => {
         const result = read.body?.result as { limitsInEffect: Record<string, number>; limitBounds: Record<string, { min: number }>; deployment: Record<string, unknown> }
         assert.strictEqual(typeof result.limitsInEffect.maxOutputTokens, 'number')
         assert.strictEqual(result.limitBounds.maxToolTurns.min, 1)
-        assert.strictEqual(result.deployment.dangerousToolsAdminOnly, true)
+        assert.strictEqual('dangerousToolsAdminOnly' in result.deployment, false)
       })
 
       it('a mudança vale na sessão seguinte, pelo mesmo repositório', async () => {
@@ -931,9 +927,8 @@ describe('AgentController', () => {
     const body = {
       id: 'juridico',
       name: 'Jurídico',
-      provider: 'google',
+      providers: [{ provider: 'google', models: ['gemini-3.7-flash'] }],
       systemPrompt: 'Você pesquisa jurisprudência.',
-      models: ['gemini-3.7-flash'],
       modes: ['chat', 'agent'],
       allowedTools: ['search_web'],
     }
@@ -965,9 +960,9 @@ describe('AgentController', () => {
         get: (id: string) => (id === 'google' ? { id, name: 'Gemini do banco', protocol: EProvider.GOOGLE, enabled: true } : undefined),
         connection: (id: string) => (id === 'google' ? { providerId: id, name: 'Gemini do banco', protocol: EProvider.GOOGLE, key: 'k' } : undefined),
       } as never
-      const agents = testAgentCatalog(undefined, (agent) => agent.provider === 'google')
+      const agents = testAgentCatalog(undefined, (agent, target) => target.provider === 'google')
       const controller = controllerWith({}, toolsCatalog(), proof, { agents, providers })
-      type TListed = Array<{ id: string; unavailable?: { reason: string }; providerInfo: { name: string } }>
+      type TListed = Array<{ id: string; providers: Array<{ name: string; unavailable?: { reason: string } }> }>
 
       const member = (await as(MEMBER, controller, (res) => controller.getAgents(mockRequest(), res))).body?.result as TListed
       assert.deepStrictEqual(
@@ -978,9 +973,9 @@ describe('AgentController', () => {
       const admin = (await as(ADMIN, controller, (res) => controller.getAgents(mockRequest(), res))).body?.result as TListed
       const byId = Object.fromEntries(admin.map((agent) => [agent.id, agent]))
       assert.strictEqual(admin.length, TEST_AGENTS.length)
-      assert.strictEqual(byId['pesquisa-teste'].unavailable, undefined)
-      assert.strictEqual(byId['pesquisa-teste'].providerInfo.name, 'Gemini do banco')
-      assert.strictEqual(byId['operador-teste'].unavailable?.reason, 'provider_disabled')
+      assert.strictEqual(byId['pesquisa-teste'].providers[0].unavailable, undefined)
+      assert.strictEqual(byId['pesquisa-teste'].providers[0].name, 'Gemini do banco')
+      assert.strictEqual(byId['operador-teste'].providers[0].unavailable?.reason, 'provider_disabled')
     })
 
     it('/tools: cada ferramenta diz se é perigosa, e vai o limite de delegação', async () => {
@@ -1016,7 +1011,9 @@ describe('AgentController', () => {
       const models = { isEnabled: (_provider: string, model: string) => model === 'gemini-3.7-flash' } as never
       const controller = controllerWith({}, toolsCatalog(), proof, { models })
 
-      const out = await as(ADMIN, controller, (res) => controller.createAgent(mockRequest({ body: { ...body, models: ['gpt-5.6-sol'], allowedTools: ['run_bash'] } }), res))
+      const out = await as(ADMIN, controller, (res) =>
+        controller.createAgent(mockRequest({ body: { ...body, providers: [{ provider: 'google', models: ['gpt-5.6-sol'] }], allowedTools: ['run_bash'] } }), res),
+      )
 
       assert.strictEqual(out.statusCode, 422)
       assert.deepStrictEqual(

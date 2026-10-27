@@ -2,6 +2,7 @@ import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import type OpenAI from 'openai'
 import { EMode } from '@domain/enums/EMode.Enum'
+import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { OPENAI_TEST_AGENT } from '../../testing/Agents.Fixture'
@@ -13,7 +14,7 @@ interface IRequestOptions {
 type TCreate = (params: OpenAI.Chat.ChatCompletionCreateParamsStreaming, options?: IRequestOptions) => Promise<unknown>
 
 describe('OpenAIChatAdapter', () => {
-  const getAgent = (): IAgent => ({ ...OPENAI_TEST_AGENT, models: ['gpt-5.6-sol'], allowedTools: ['search_web'] })
+  const getAgent = (): IAgent => ({ ...OPENAI_TEST_AGENT, providers: [{ provider: EProvider.OPENAI, models: ['gpt-5.6-sol'] }], allowedTools: ['search_web'] })
 
   const clientWith = (create: TCreate): OpenAI => ({ chat: { completions: { create } } }) as unknown as OpenAI
 

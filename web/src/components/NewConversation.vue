@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { levelsOf, type IChoice } from '@/lib/agentChoice'
 import type { TMode } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import { useProtocolsStore } from '@/stores/protocols'
@@ -8,6 +9,7 @@ import { reconcileDraft, useThreadStore, type IOutgoingFile } from '@/stores/thr
 import AgentAvatar from './AgentAvatar.vue'
 import Composer from './Composer.vue'
 import Icon from './Icon.vue'
+import ModelPicker from './ModelPicker.vue'
 import TurnBubbles from './TurnBubbles.vue'
 
 const route = useRoute()
@@ -31,12 +33,19 @@ const listed = computed(() => agents.conversable)
 const usable = computed(() => listed.value.filter((option) => !option.unavailable))
 const agent = computed(() => usable.value.find((option) => option.id === draft.value?.agentId))
 
-/** Os níveis que valem para o modelo escolhido: os dele no catálogo, ou os do agente quando o catálogo não sabe. */
-const reasoningLevels = computed(() => {
+/** As lanes do provider (assinatura só roda a agent); `undefined` = protocolos ainda não carregados. */
+const lanesOf = (providerId: string) => protocols.get(protocols.protocolOf(providerId))?.lanes
+const choice = computed<IChoice | undefined>(() => (draft.value?.provider && draft.value.model ? { provider: draft.value.provider, model: draft.value.model } : undefined))
+/** As lanes do agente que o provider escolhido roda. */
+const lanes = computed(() => {
   const current = agent.value
-  if (!current || !draft.value?.model) return []
-  return current.modelReasoning?.[draft.value.model] ?? current.reasoningEfforts ?? []
+  if (!current) return []
+  const allowed = choice.value ? lanesOf(choice.value.provider) : undefined
+  return allowed ? current.modes.filter((mode) => allowed.includes(mode)) : current.modes
 })
+
+/** Os níveis que valem para o modelo escolhido: os dele no catálogo, ou os do provider quando o catálogo não sabe. */
+const reasoningLevels = computed(() => (agent.value ? levelsOf(agent.value, choice.value) : []))
 
 // Trocar para um modelo que não aceita o nível escolhido volta ao padrão, em vez de mandar um nível que seria ignorado.
 watch(reasoningLevels, (levels) => {
@@ -58,25 +67,32 @@ function ensureDraft() {
 
   const current = thread.draft && !thread.sessionId ? usable.value.find((option) => option.id === thread.draft?.agentId) : undefined
   if (thread.draft && current) {
-    const next = reconcileDraft(thread.draft, current)
-    const { mode, tools, model, reasoning } = thread.draft
-    if (next.mode !== mode || next.tools !== tools || next.model !== model || next.reasoning !== reasoning) thread.draft = next
+    const next = reconcileDraft(thread.draft, current, lanesOf)
+    const { mode, tools, provider, model, reasoning } = thread.draft
+    if (next.mode !== mode || next.tools !== tools || next.provider !== provider || next.model !== model || next.reasoning !== reasoning) thread.draft = next
     return
   }
 
   const first = usable.value[0]
-  if (first) thread.startDraft(reconcileDraft({ agentId: first.id, mode: 'chat', tools: false }, first))
+  if (first) thread.startDraft(reconcileDraft({ agentId: first.id, mode: 'chat', tools: false }, first, lanesOf))
 }
 
 onMounted(ensureDraft)
-watch(() => agents.list, ensureDraft)
+watch(() => [agents.list, protocols.loaded], ensureDraft)
 
 function pick(id: string, fresh = false) {
   const next = usable.value.find((option) => option.id === id)
   if (!next) return
   const previous = fresh ? undefined : thread.draft
-  // O modelo volta ao primeiro do agente novo; a lane acompanha a anterior quando o agente também a tem.
-  thread.startDraft(reconcileDraft({ agentId: id, mode: previous?.mode ?? 'chat', tools: !!previous?.tools }, next))
+  // Provider e modelo voltam ao padrão do agente novo; a lane acompanha a anterior quando o agente também a tem.
+  thread.startDraft(reconcileDraft({ agentId: id, mode: previous?.mode ?? 'chat', tools: !!previous?.tools }, next, lanesOf))
+}
+
+/** Outro provider pode não rodar a lane escolhida (assinatura): o rascunho se ajusta na mesma troca. */
+function pickModel(next: IChoice) {
+  const current = agent.value
+  if (!thread.draft || !current) return
+  thread.draft = reconcileDraft({ ...thread.draft, provider: next.provider, model: next.model }, current, lanesOf)
 }
 
 function setMode(mode: TMode, tools: boolean) {
@@ -113,10 +129,10 @@ async function send(text: string, files: IOutgoingFile[], settle: (ok: boolean) 
               :class="option.id === draft?.agentId ? 'border-emerald-500/60 bg-emerald-500/10' : option.unavailable ? 'border-zinc-800' : 'border-zinc-800 hover:bg-zinc-900'"
               @click="pick(option.id)"
             >
-              <AgentAvatar :name="option.name" :provider="option.provider" size="sm" />
+              <AgentAvatar :name="option.name" :provider="option.providers[0]?.id ?? ''" size="sm" />
               <span class="min-w-0 flex-1">
                 <span class="block truncate text-sm font-medium">{{ option.name }}</span>
-                <span class="block truncate text-xs text-zinc-400">{{ protocols.providerName(option.provider) }} · {{ option.allowedTools.join(', ') || 'sem tools' }}</span>
+                <span class="block truncate text-xs text-zinc-400">{{ option.providers.map((provider) => provider.name).join(' / ') }} · {{ option.allowedTools.join(', ') || 'sem tools' }}</span>
                 <span v-if="option.unavailable" class="block truncate text-xs text-amber-300">{{ option.unavailable.label }}</span>
               </span>
             </button>
@@ -126,17 +142,15 @@ async function send(text: string, files: IOutgoingFile[], settle: (ok: boolean) 
             <div class="sm:col-span-2">
               <span class="mb-1.5 block text-xs font-medium text-zinc-400">Lane</span>
               <div class="flex flex-wrap gap-1.5">
-                <button v-if="agent.modes.includes('chat')" class="rounded-full border px-3 py-1 text-sm" :class="draft.mode === 'chat' && !draft.tools ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-200' : 'border-zinc-700'" @click="setMode('chat', false)">Chat</button>
-                <button v-if="agent.modes.includes('chat') && agent.allowedTools.length" class="rounded-full border px-3 py-1 text-sm" :class="draft.mode === 'chat' && draft.tools ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-200' : 'border-zinc-700'" @click="setMode('chat', true)">Chat + tools</button>
-                <button v-if="agent.modes.includes('agent')" class="rounded-full border px-3 py-1 text-sm" :class="draft.mode === 'agent' ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-200' : 'border-zinc-700'" @click="setMode('agent', false)">Agents SDK</button>
+                <button v-if="lanes.includes('chat')" class="rounded-full border px-3 py-1 text-sm" :class="draft.mode === 'chat' && !draft.tools ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-200' : 'border-zinc-700'" @click="setMode('chat', false)">Chat</button>
+                <button v-if="lanes.includes('chat') && agent.allowedTools.length" class="rounded-full border px-3 py-1 text-sm" :class="draft.mode === 'chat' && draft.tools ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-200' : 'border-zinc-700'" @click="setMode('chat', true)">Chat + tools</button>
+                <button v-if="lanes.includes('agent')" class="rounded-full border px-3 py-1 text-sm" :class="draft.mode === 'agent' ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-200' : 'border-zinc-700'" @click="setMode('agent', false)">Agents SDK</button>
               </div>
               <p class="mt-1.5 text-xs text-zinc-500">{{ MODE_HINT[draft.mode === 'chat' && draft.tools ? 'chatTools' : draft.mode] }}</p>
             </div>
             <label class="text-xs font-medium text-zinc-400">
               Modelo
-              <select v-model="draft.model" class="mt-1 w-full rounded-lg bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100">
-                <option v-for="model in agent.models" :key="model" :value="model">{{ model }}{{ agent.pricing[model] ? ` — $${agent.pricing[model].output}/1M saída` : '' }}</option>
-              </select>
+              <ModelPicker :agent="agent" :value="choice" select-class="mt-1 w-full rounded-lg bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100" @pick="pickModel" />
             </label>
             <label v-if="reasoningLevels.length" class="text-xs font-medium text-zinc-400">
               Raciocínio

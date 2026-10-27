@@ -5,7 +5,8 @@ import { EProvider } from './enums/EProvider.Enum'
  *
  * ⚖️ A LINHA É A MÁQUINA DO GATEWAY: `hosted` roda no fornecedor (busca, sandbox dele) e `session` só mexe
  * no estado da conversa; as `server-*` rodam NESTE servidor — saem para a rede dele, leem o disco dele
- * (`.env`, `secrets.key`, o banco), escrevem e executam nele.
+ * (`.env`, `secrets.key`, o banco), escrevem e executam nele. É informação para quem configura o agente,
+ * não trava: todas valem, e quem cria o agente decide se ele é só para admin (`IAgent.adminOnly`).
  */
 export type TNativeToolRisk = 'hosted' | 'session' | 'server-network' | 'server-read' | 'server-exec'
 
@@ -54,7 +55,8 @@ const hosted = (protocol: EProvider, sdkName: string, label: string, description
  * ⚖️ CURADA, não descoberta: nenhum SDK tem uma API que liste "o que existe", e boa parte do que o
  * Claude Agent SDK expõe é do Claude Code (worktree, cron, workflow) e não faz sentido aqui. Fora, por
  * ora: `fileSearchTool` (precisa de vector store), `computer`/`shell`/`applyPatch` (precisam de uma
- * implementação na máquina) e o `Task` do Claude (subagente que herda tudo).
+ * implementação na máquina) e o `Task` do Claude (subagente que herda tudo). Do Codex ficam travados os
+ * conectores da conta (`apps`), navegador, computer use, plugins, skills, hooks e subagentes.
  */
 export const NATIVE_TOOLS: readonly INativeTool[] = [
   claude('WebSearch', 'Busca na web', 'Busca na internet, feita pela Anthropic.', 'hosted'),
@@ -79,6 +81,15 @@ export const NATIVE_TOOLS: readonly INativeTool[] = [
   hosted(EProvider.GOOGLE, 'url_context', 'Contexto de URL', 'O Gemini lê páginas pela infraestrutura do Google.', true),
   hosted(EProvider.GOOGLE, 'code_execution', 'Execução de código', 'Roda código no sandbox do Gemini.', true),
   hosted(EProvider.CODEX, 'web_search', 'Busca na web', 'Busca na internet, feita pelo Codex na conta do ChatGPT.', false),
+  // As do Codex são `features` do CLI (`CODEX_LOCKED_FEATURES`): ligar a nativa destrava a feature, e o
+  // `sdkNames` diz quais. O alcance real depende do sandbox do agente naquele provider (`Sandbox.Policy`).
+  {
+    ...hosted(EProvider.CODEX, 'shell', 'Terminal', 'Executa comandos NESTE SERVIDOR, dentro do sandbox escolhido no provider (lê o disco já no read-only).', false),
+    risk: 'server-exec',
+    sdkNames: ['shell_tool', 'unified_exec'],
+  },
+  { ...hosted(EProvider.CODEX, 'view_image', 'Ver imagem', 'Abre imagens do disco deste servidor.', false), risk: 'server-read' },
+  hosted(EProvider.CODEX, 'image_generation', 'Gerar imagem', 'Gera imagens na conta do ChatGPT.', false),
 ]
 
 export function isNativeTool(id: string): boolean {
@@ -92,20 +103,4 @@ export function nativeTool(id: string): INativeTool | undefined {
 /** As ferramentas nativas ligadas de um agente, para um protocolo. */
 export function nativeToolsOf(allowedTools: readonly string[], protocol: EProvider): INativeTool[] {
   return NATIVE_TOOLS.filter((tool) => tool.protocol === protocol && allowedTools.includes(tool.id))
-}
-
-/**
- * ⛔ O PERÍMETRO DAS NATIVAS — decisão de deploy, que a tela não amplia.
- *
- * `hosted` e `session` valem por padrão. As `server-*` só com o id em `NATIVE_TOOLS_ENABLED` (lista
- * separada por vírgula; aceita `sdk:Read` ou só `Read`). Listar a variável RESTRINGE também as
- * hospedadas: valem só as listadas, para quem quer fechar tudo.
- */
-export function nativeToolAllowed(tool: INativeTool, env: NodeJS.ProcessEnv = process.env): boolean {
-  const declared = env.NATIVE_TOOLS_ENABLED?.split(',')
-    .map((name) => name.trim())
-    .filter(Boolean)
-  if (declared?.length) return declared.some((name) => name === tool.id || name === tool.sdkName)
-
-  return tool.risk === 'hosted' || tool.risk === 'session'
 }

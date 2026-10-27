@@ -37,6 +37,8 @@ export interface IConversation {
 
 /** O que a sessão viva usa AGORA — pode trocar no meio da conversa. */
 export interface ISessionState {
+  /** O provider que responde agora: um dos do agente. */
+  provider?: string
   model: string
   reasoning?: string
   status?: string
@@ -59,6 +61,8 @@ export interface ITurn {
   reasoning?: string
   /** O modelo que respondeu este turno. Ausente nos antigos: vale o da conversa. */
   model?: string
+  /** O provider que respondeu este turno. Ausente nos antigos: vale o da conversa. */
+  provider?: string
   /** O nível de raciocínio pedido neste turno. */
   effort?: string
   toolCalls: IToolCall[]
@@ -87,23 +91,43 @@ export interface IModelPrice {
   cacheWrite?: number
 }
 
+/** Um provider do agente, com o que vale NELE: modelos, preços e raciocínio. */
+export interface IAgentProvider {
+  /** O id do provider configurado (`claude`, `openai`, `google`, uma assinatura ou o id de um compatível). */
+  id: string
+  /** O nome como está no banco. */
+  name: string
+  protocol?: TProvider
+  models: string[]
+  pricing: Record<string, IModelPrice>
+  /** Os níveis do agente que o protocolo deste provider aceita. */
+  reasoningEfforts?: string[]
+  /** Por modelo: os níveis que ele aceita. `null` = desconhecido (valem os do provider); `[]` = não raciocina. */
+  modelReasoning?: Record<string, string[] | null>
+  /** O sandbox escolhido para este provider (Codex, Antigravity). Ausente = o padrão do protocolo. */
+  sandbox?: TSandboxLevel
+  /** Rede liberada no sandbox (Codex). */
+  network?: boolean
+  /** Só na edição: declarados pelo agente, mas desligados no catálogo do provider. */
+  disabledModels?: string[]
+  /** Só para admin: por que este provider não roda agora. */
+  unavailable?: { reason: string; label: string }
+}
+
 export interface IAgent {
   id: string
   name: string
-  /** O id do provider configurado (`claude`, `openai`, `google` ou o id de um compatível). */
-  provider: string
-  models: string[]
-  pricing: Record<string, IModelPrice>
+  /** Onde o agente roda. O PRIMEIRO é o padrão; a conversa troca entre eles no meio. */
+  providers: IAgentProvider[]
+  /** Os níveis que o agente oferece (cada provider usa os do seu protocolo). */
   reasoningEfforts?: string[]
-  /** Por modelo: os níveis que ele aceita. `null` = desconhecido (valem os do agente); `[]` = não raciocina. */
-  modelReasoning?: Record<string, string[] | null>
   modes: TMode[]
   allowedTools: string[]
   /** `subagent`: só é chamado por outro agente (delegação); não abre conversa. */
   role?: 'subagent'
-  /** O provider como está no banco: o nome que a tela mostra e o protocolo. */
-  providerInfo?: { id: string; name: string; protocol?: TProvider }
-  /** Só para admin: por que o agente não abre conversa agora. Ausente = ativo. */
+  /** Só administrador conversa com o agente — escolha de quem o criou. */
+  adminOnly?: boolean
+  /** Só para admin: por que o agente não abre conversa agora (nenhum provider roda). Ausente = ativo. */
   unavailable?: { reason: 'provider_disabled' | 'no_model' | 'no_key' | 'admin_only'; label: string }
 }
 
@@ -111,8 +135,6 @@ export interface IAgentDetail extends IAgent {
   /** Quem o agente é (personalidade). */
   soul?: string
   systemPrompt: string
-  /** Declarados pelo agente, mas desligados no catálogo do provider. */
-  disabledModels?: string[]
   updatedAt?: string
   updatedBy?: string
 }
@@ -120,23 +142,27 @@ export interface IAgentDetail extends IAgent {
 export interface IAgentInput {
   id?: string
   name: string
-  provider: string
+  /** Um ou mais; o primeiro é o padrão. */
+  providers: Array<{ provider: string; models: string[]; sandbox?: TSandboxLevel; network?: boolean }>
   /** Quem o agente é (personalidade). */
   soul?: string
   systemPrompt: string
-  models: string[]
   reasoningEfforts?: string[]
   modes: TMode[]
   allowedTools: string[]
   /** `null` volta a agente normal. */
   role?: 'subagent' | null
+  adminOnly?: boolean
 }
+
+/** O sandbox do cliente agêntico (`Sandbox.Policy` no servidor). */
+export type TSandboxLevel = 'read-only' | 'workspace-write' | 'full'
 
 export interface ITool {
   name: string
   description: string
   origin: 'local' | 'mcp'
-  /** Alcança este servidor: com `DANGEROUS_TOOLS_ADMIN_ONLY`, o agente que a tem só conversa com admin. */
+  /** Alcança este servidor: quem conversa com o agente ganha esse alcance (a tela avisa). */
   dangerous?: boolean
 }
 
@@ -148,6 +174,9 @@ export interface IProtocolInfo {
   lanes: TMode[]
   reasoningLevels: string[]
   nativeFamily: TProvider
+  /** Os níveis do sandbox, o padrão primeiro; vazio = nada a ajustar. */
+  sandboxLevels?: TSandboxLevel[]
+  sandboxNetwork?: boolean
   brand: 'claude' | 'openai' | 'google'
   consoleUrl?: string
   envName?: string
@@ -160,13 +189,14 @@ export type TAudience = 'off' | 'restricted' | 'all'
 export interface ISettings {
   audience: TAudience
   agentId?: string
+  provider?: string
   model?: string
   classifierModel?: string
   classifierProvider?: string
   classifyTurns?: boolean
   updatedAt?: string
   updatedBy?: string
-  defaults?: { agentId?: string; model?: string }
+  defaults?: { agentId?: string; provider?: string; model?: string }
   /** Os limites gravados na tela; o que falta vale pelo `.env` ou pelo padrão. */
   limits?: Partial<Record<TLimitName, number>>
   /** O que vale agora, limite a limite (só leitura). */
@@ -174,10 +204,7 @@ export interface ISettings {
   limitBounds?: Record<TLimitName, { min: number; max: number; env: string }>
   /** Decisões de implantação: a tela mostra, só o deploy muda. */
   deployment?: {
-    dangerousToolsAdminOnly: boolean
-    subscriptionAdminOnly: boolean
     localToolsEnabled?: string
-    nativeToolsEnabled?: string
     allowAnonymous: boolean
   }
 }
@@ -267,10 +294,7 @@ export interface INativeTool {
   description: string
   risk: TNativeRisk
   officialOnly: boolean
-  /** Dentro do perímetro do deploy (`NATIVE_TOOLS_ENABLED`). */
-  allowed: boolean
   dangerous?: boolean
-  reason?: string
 }
 
 export interface IUsageTokens {

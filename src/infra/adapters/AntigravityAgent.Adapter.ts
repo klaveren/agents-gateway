@@ -1,7 +1,9 @@
+import { sessionChoice } from '@domain/Agent.Policy'
 import { spawn as nodeSpawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
+import { sandboxOf, TSandboxLevel } from '@domain/Sandbox.Policy'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
@@ -40,12 +42,12 @@ const TURN_TIMEOUT_S = 600
 /**
  * Os argumentos de um turno.
  *
- * ⛔ SEMPRE `--sandbox` e NUNCA `--dangerously-skip-permissions`: em modo headless, o que pede
+ * ⛔ `--sandbox` por padrão e NUNCA `--dangerously-skip-permissions`: em modo headless, o que pede
  * permissão (comando, leitura de arquivo) é negado sozinho; sem `--sandbox`, o `agy` 0.65 deixou passar
- * um `ls` "inofensivo" — verificado. `--disable-slash-commands`: a mensagem de quem conversa nunca vira
+ * um `ls` "inofensivo" — verificado. Sai só com `sandbox: 'full'` no provider do agente, escolha de quem o criou. `--disable-slash-commands`: a mensagem de quem conversa nunca vira
  * comando do CLI.
  */
-export function antigravityArgs(prompt: string, model: string, conversationId?: string): string[] {
+export function antigravityArgs(prompt: string, model: string, conversationId?: string, sandbox: TSandboxLevel = 'read-only'): string[] {
   return [
     // ⛔ `-p=<texto>` e não `-p <texto>`: separado, um texto que começa com `--` vira flag do CLI
     // (verificado: `-p "--help"` imprimia a ajuda). Colado, é sempre o valor.
@@ -54,7 +56,7 @@ export function antigravityArgs(prompt: string, model: string, conversationId?: 
     'stream-json',
     '--print-timeout',
     `${TURN_TIMEOUT_S}s`,
-    '--sandbox',
+    ...(sandbox === 'full' ? [] : ['--sandbox']),
     '--disable-slash-commands',
     ...(model ? ['--model', model] : []),
     ...(conversationId ? ['--conversation', conversationId] : []),
@@ -85,12 +87,13 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
   }
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
+    const choice = sessionChoice(agent, input)
     const record = this.store.create(sessionPrefix(EProvider.ANTIGRAVITY, EMode.AGENT), {
       agentId: agent.id,
-      provider: agent.provider,
+      provider: choice.provider,
       protocol: EProvider.ANTIGRAVITY,
       mode: EMode.AGENT,
-      model: input.model || agent.models[0] || '',
+      model: choice.model,
       reasoning: input.reasoning,
       language: input.language,
       tools: false,
@@ -101,7 +104,7 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
     return { id: record.id, provider: record.provider, mode: record.mode, createdAt: record.createdAt, metadata: record.metadata }
   }
 
-  async *sendMessage(_agent: IAgent, sessionId: string, input: IMessageInput, _context: IExecutionContext): AsyncIterable<IAgentEvent> {
+  async *sendMessage(agent: IAgent, sessionId: string, input: IMessageInput, _context: IExecutionContext): AsyncIterable<IAgentEvent> {
     const now = () => new Date()
     const record = this.store.get(sessionId)
     if (!record) {
@@ -121,7 +124,9 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
 
     const prompt = native.conversationId ? input.text : `${record.systemPrompt}\n\n---\n\n${input.text}`
     const home = this.home()
-    const child = this.spawn(antigravityBin(), antigravityArgs(prompt, record.model, native.conversationId), {
+    const target = agent.providers.find((candidate) => candidate.provider === record.provider)
+    const sandbox = sandboxOf(EProvider.ANTIGRAVITY, target?.sandbox)
+    const child = this.spawn(antigravityBin(), antigravityArgs(prompt, record.model, native.conversationId, sandbox), {
       cwd: sessionWorkspace(sessionId),
       env: subscriptionEnv({ HOME: home }),
       stdio: ['ignore', 'pipe', 'pipe'],

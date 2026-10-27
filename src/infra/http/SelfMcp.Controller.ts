@@ -1,4 +1,3 @@
-import { dangerousToolsOf } from '@domain/Tool.Policy'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { Request, Response } from 'express'
@@ -80,9 +79,20 @@ const agentShape = {
   id: z.string().describe('2–48 lowercase letters, digits or hyphens.'),
   name: z.string(),
   soul: z.string().optional().describe('Who the agent is: identity, tone, values, way of speaking. The system prompt says what it does.'),
-  provider: z.string().describe('A configured provider id (claude, openai, google or a compatible one).'),
+  providers: z
+    .array(
+      z.object({
+        provider: z.string().describe('A configured provider id (claude, openai, google, a subscription or a compatible one).'),
+        models: z.array(z.string()).describe('Models ENABLED in that provider catalog; the first is the default.'),
+        sandbox: z
+          .enum(['read-only', 'workspace-write', 'full'])
+          .optional()
+          .describe('Codex/Antigravity sandbox; the protocol sandboxLevels say which apply. Absent = read-only. `full` = no sandbox, runs as the gateway process.'),
+        network: z.boolean().optional().describe('Codex: open the network inside the sandbox. Absent = no network.'),
+      }),
+    )
+    .describe('Where the agent runs: one or more providers, each with its models. The first is the default; a conversation can switch between them.'),
   systemPrompt: z.string(),
-  models: z.array(z.string()).describe('Models ENABLED in that provider catalog; the first is the default.'),
   reasoningEfforts: z.array(z.string()).optional(),
   modes: z.array(z.enum(['chat', 'agent'])),
   allowedTools: z.array(z.string()).default([]).describe('Local names, `sdk:…` natives and `mcp:<server>/<tool>`; see list_tools.'),
@@ -91,6 +101,7 @@ const agentShape = {
     .nullable()
     .optional()
     .describe('`subagent`: only called by another agent through delegation (`agent:<id>`), never in a direct conversation. `null` makes it a regular agent.'),
+  adminOnly: z.boolean().optional().describe('Only administrators can talk to the agent. Absent or false = open to every account.'),
 }
 
 /**
@@ -105,7 +116,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'list_agents',
     {
       description:
-        'List the agents: provider, models (with price), reasoning levels per model, lanes and tools. Never includes the system prompt. Agents with `role: subagent` are only called by other agents and cannot start a conversation.',
+        'List the agents: providers, each with its models (with price) and reasoning levels per model, lanes and tools. Never includes the system prompt. Agents with `role: subagent` are only called by other agents and cannot start a conversation.',
       annotations: { readOnlyHint: true },
     },
     async () => reply(await api('GET', '/agents')),
@@ -119,6 +130,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
       inputSchema: {
         agentId: z.string(),
         mode: z.enum(['chat', 'agent']).optional().describe('chat = plain SDK; agent = the provider Agents SDK.'),
+        provider: z.string().optional().describe('One of the agent providers; default: the first that offers `model`.'),
         model: z.string().optional(),
         reasoning: z.string().optional(),
         metadata: z.record(z.string(), z.unknown()).optional(),
@@ -143,8 +155,9 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   server.registerTool(
     'switch_model',
     {
-      description: 'Switch the model and/or the reasoning level of a live conversation, from the next message on. Same provider only; `reasoning: null` = provider default.',
-      inputSchema: { sessionId: z.string(), model: z.string().optional(), reasoning: z.string().nullable().optional() },
+      description:
+        'Switch the provider, model and/or reasoning level of a live conversation, from the next message on. Another provider of the agent receives a transcript of the previous turns (its internal state does not carry over); `reasoning: null` = provider default.',
+      inputSchema: { sessionId: z.string(), provider: z.string().optional(), model: z.string().optional(), reasoning: z.string().nullable().optional() },
     },
     async ({ sessionId, ...change }) => reply(await api('PATCH', `/sessions/${encodeURIComponent(sessionId)}`, { body: change })),
   )
@@ -307,21 +320,12 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   server.registerTool(
     'save_agent',
     {
-      description: 'Create an agent, or replace the one with the same id. Every problem comes back at once, field by field.',
+      description:
+        'Create an agent, or replace the one with the same id: send every field, since an omitted adminOnly, sandbox or network falls back to its default (open to everyone, read-only, no network). Every problem comes back at once, field by field.',
       inputSchema: agentShape,
     },
     async (agent) => {
-      // ⛔ Pelo MCP, nunca ferramenta que alcança este servidor: um prompt injection (de uma busca, de outro
-      // MCP) num agente com estas ferramentas de escrita criaria um com `run_bash` e conversaria com ele.
-      const dangerous = dangerousToolsOf(agent.allowedTools ?? [])
-      if (dangerous.length) {
-        return reply({
-          ok: false,
-          status: 422,
-          code: 'validation_error',
-          message: `Tools that reach this server cannot be granted through MCP: ${dangerous.join(', ')}. Use the Agents screen.`,
-        })
-      }
+      // ⚖️ Sem trava própria: o MCP grava o que a tela grava, e quem decide o alcance do agente é o admin.
       const exists = (await api('GET', `/agents/${encodeURIComponent(agent.id)}`)).ok
       return reply(exists ? await api('PUT', `/agents/${encodeURIComponent(agent.id)}`, { body: agent }) : await api('POST', '/agents', { body: agent }))
     },

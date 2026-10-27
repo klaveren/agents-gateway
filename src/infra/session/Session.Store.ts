@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { addUsage, IUsage } from '@domain/models/AgentEvent.Model'
-import { TSessionStatus } from '@domain/models/Session.Model'
+import { ITranscriptTurn } from '@domain/Handoff.Policy'
+import { TSessionStatus, usageKey } from '@domain/models/Session.Model'
 
 /**
  * Tudo que uma sessão carrega, num lugar só.
@@ -33,14 +34,18 @@ export interface ISessionRecord {
   turns: number
   /** Acumulado da sessão inteira. Quem soma é o AgentProvider, ao repassar o stream. */
   usage: IUsage
-  /** O acumulado por modelo — o modelo pode trocar no meio da sessão (ver `AgentProvider.reconfigure`). */
+  /** O acumulado por provider + modelo (`usageKey`) — os dois podem trocar no meio da sessão (ver `AgentProvider.reconfigure`). */
   usageByModel?: Record<string, IUsage>
+  /** Os turnos em texto, para repassar a outro provider (ver `Handoff.Policy`). Quem mantém é o AgentProvider. */
+  transcript?: ITranscriptTurn[]
+  /** A transcrição que o PRÓXIMO turno leva: a sessão acabou de trocar de provider. */
+  handoff?: string
   metadata?: Record<string, unknown>
   abort?: AbortController
   native?: unknown
 }
 
-export type TSessionSeed = Omit<ISessionRecord, 'id' | 'createdAt' | 'lastActivityAt' | 'status' | 'turns' | 'usage'>
+export type TSessionSeed = Omit<ISessionRecord, 'id' | 'createdAt' | 'lastActivityAt' | 'status' | 'turns' | 'usage' | 'transcript' | 'handoff'>
 
 export interface ISessionStoreOptions {
   /** Tempo sem atividade após o qual a sessão é descartada. Default: 8h (ver `DEFAULT_TTL_MS`). */
@@ -130,7 +135,8 @@ export class SessionStore {
   /** Soma o usage de um turno ao acumulado da sessão. */
   addUsage(record: ISessionRecord, usage: IUsage): void {
     record.usage = addUsage(record.usage, usage)
-    record.usageByModel = { ...record.usageByModel, [record.model]: addUsage(record.usageByModel?.[record.model] ?? {}, usage) }
+    const key = usageKey(record.provider, record.model)
+    record.usageByModel = { ...record.usageByModel, [key]: addUsage(record.usageByModel?.[key] ?? {}, usage) }
   }
 
   get size(): number {

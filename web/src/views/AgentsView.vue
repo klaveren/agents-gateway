@@ -5,7 +5,7 @@ import AgentAvatar from '@/components/AgentAvatar.vue'
 import AgentForm from '@/components/AgentForm.vue'
 import Icon from '@/components/Icon.vue'
 import MasterDetail from '@/components/MasterDetail.vue'
-import type { IAgentDetail } from '@/lib/types'
+import type { IAgent, IAgentDetail } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import { useAuthStore } from '@/stores/auth'
 import { useProvidersStore } from '@/stores/providers'
@@ -19,6 +19,13 @@ const auth = useAuthStore()
 const agents = useAgentsStore()
 const providers = useProvidersStore()
 const protocols = useProtocolsStore()
+
+/** "Claude (assinatura) · claude-opus-5 +2": o padrão com o modelo dele, e quantos providers mais o agente tem. */
+function providersLine(agent: IAgent): string {
+  const [first, ...rest] = agent.providers
+  if (!first) return 'sem provider'
+  return `${protocols.providerName(first.id)} · ${first.models[0] ?? 'sem modelo'}${rest.length ? ` +${rest.length}` : ''}`
+}
 
 const detail = ref<IAgentDetail>()
 const template = ref<IAgentDetail>()
@@ -96,12 +103,13 @@ watch(creating, (value) => {
           class="mx-2 flex items-center gap-3 rounded-xl px-3 py-2"
           :class="agent.id === id ? 'bg-emerald-500/15' : 'hover:bg-zinc-800/60'"
         >
-          <AgentAvatar :name="agent.name" :provider="agent.provider" size="sm" />
+          <AgentAvatar :name="agent.name" :provider="agent.providers[0]?.id ?? ''" size="sm" />
           <span class="min-w-0 flex-1">
             <span class="block truncate text-sm font-medium">{{ agent.name }}</span>
-            <span class="block truncate text-xs text-zinc-500">{{ protocols.providerName(agent.provider) }} · {{ agent.models[0] }}</span>
+            <span class="block truncate text-xs text-zinc-500">{{ providersLine(agent) }}</span>
           </span>
           <span v-if="agent.unavailable" class="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-300" :title="`Não abre conversa agora: ${agent.unavailable.label}`">{{ agent.unavailable.label }}</span>
+          <span v-if="agent.adminOnly" class="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300" title="Só administradores conversam com este agente">só admin</span>
         </RouterLink>
       </template>
       <p v-if="!created.length && !subagents.length" class="px-4 py-2 text-sm text-zinc-500">Nenhum agente criado ainda.</p>
@@ -114,7 +122,7 @@ watch(creating, (value) => {
       </template>
       <template v-else-if="detail">
         <div class="mx-auto mb-4 flex max-w-3xl items-center gap-3">
-          <AgentAvatar :name="detail.name" :provider="detail.provider" size="lg" />
+          <AgentAvatar :name="detail.name" :provider="detail.providers[0]?.id ?? ''" size="lg" />
           <div class="min-w-0">
             <h2 class="truncate text-lg font-semibold">{{ detail.name }}</h2>
             <p class="truncate font-mono text-xs text-zinc-500">{{ detail.id }}</p>

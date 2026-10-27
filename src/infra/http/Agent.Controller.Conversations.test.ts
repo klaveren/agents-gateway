@@ -501,24 +501,24 @@ describe('AgentController — conversas, monitor e compartilhamento', () => {
       const { controller } = build()
 
       const agents = (await call(ALICE, (res) => controller.getAgents(request(), res))).body?.result as Array<{
-        models: string[]
-        pricing: Record<string, { input: number; output: number }>
+        providers: Array<{ models: string[]; pricing: Record<string, { input: number; output: number }> }>
       }>
+      const providers = agents.flatMap((agent) => agent.providers)
 
-      assert.ok(agents.length > 0)
-      for (const agent of agents) {
-        assert.ok(Object.keys(agent.pricing).every((model) => agent.models.includes(model)))
-        assert.ok(Object.values(agent.pricing).every((price) => price.input > 0 && price.output > 0))
+      assert.ok(providers.length > 0)
+      for (const provider of providers) {
+        assert.ok(Object.keys(provider.pricing).every((model) => provider.models.includes(model)))
+        assert.ok(Object.values(provider.pricing).every((price) => price.input > 0 && price.output > 0))
       }
-      assert.ok(agents.some((agent) => Object.keys(agent.pricing).length > 0))
-      assert.ok(agents.every((agent) => !('o4-mini' in agent.pricing) && !('o3-pro' in agent.pricing)))
+      assert.ok(providers.some((provider) => Object.keys(provider.pricing).length > 0))
+      assert.ok(providers.every((provider) => !('o4-mini' in provider.pricing) && !('o3-pro' in provider.pricing)))
     })
 
     it('usa a tabela injetada (MODEL_PRICING_FILE) no lugar da de fábrica', async () => {
       const { controller } = build({ pricing: { 'claude-sonnet-5': { input: 7, output: 8 } } })
 
-      const agents = (await call(ALICE, (res) => controller.getAgents(request(), res))).body?.result as Array<{ pricing: Record<string, unknown> }>
-      const merged = Object.assign({}, ...agents.map((agent) => agent.pricing))
+      const agents = (await call(ALICE, (res) => controller.getAgents(request(), res))).body?.result as Array<{ providers: Array<{ pricing: Record<string, unknown> }> }>
+      const merged = Object.assign({}, ...agents.flatMap((agent) => agent.providers.map((provider) => provider.pricing)))
 
       assert.deepStrictEqual(merged['claude-sonnet-5'], { input: 7, output: 8 })
       assert.strictEqual(merged['gemini-3.7-flash'], undefined)

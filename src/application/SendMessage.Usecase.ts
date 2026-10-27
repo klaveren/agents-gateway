@@ -120,6 +120,9 @@ export class SendMessageUseCase {
    * O contexto do sistema vai na PRIMEIRA mensagem só: dali em diante ele já está no histórico do
    * modelo, e repeti-lo pagaria os mesmos tokens a cada turno para dizer a mesma coisa.
    *
+   * A exceção é a troca de provider (`session.handoff`): o modelo novo começa sem histórico, e o
+   * contexto vai de novo, junto da transcrição.
+   *
    * ⚠️ Sessão que não se consegue descrever (saiu do store) conta como "já tem turno": na dúvida não
    * se injeta nada — o provider vai recusar a sessão de qualquer forma.
    */
@@ -128,7 +131,7 @@ export class SendMessageUseCase {
     if (!context) return rest
 
     const session = this.describeQuietly(sessionId)
-    if (!session || session.turns > 0) return rest
+    if (!session || (session.turns > 0 && !session.handoff)) return rest
 
     return { ...rest, text: rest.text.trim() ? `${context}\n\n${rest.text}` : context }
   }
@@ -175,7 +178,8 @@ export class SendMessageUseCase {
       files: filesOf(input),
       text: turn.text,
       reasoning: turn.reasoning || undefined,
-      // O modelo e o nível em vigor NESTE turno: a sessão pode trocar entre um turno e outro.
+      // O provider, o modelo e o nível em vigor NESTE turno: a sessão pode trocar entre um turno e outro.
+      provider: session ? String(session.provider) : undefined,
       model: session?.model,
       effort: session?.reasoning,
       toolCalls: turn.toolCalls,

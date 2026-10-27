@@ -41,7 +41,7 @@ function fakeCodex(calls: ICall[], events: (turn: number) => ThreadEvent[]) {
   }
 }
 
-const agent: IAgent = { id: 'cx', name: 'Cx', provider: 'codex', systemPrompt: 'Seja breve.', models: ['gpt-6.1-sol'], modes: [EMode.AGENT], allowedTools: [] }
+const agent: IAgent = { id: 'cx', name: 'Cx', providers: [{ provider: 'codex', models: ['gpt-6.1-sol'] }], systemPrompt: 'Seja breve.', modes: [EMode.AGENT], allowedTools: [] }
 
 async function collect(stream: AsyncIterable<IAgentEvent>): Promise<IAgentEvent[]> {
   const out: IAgentEvent[] = []
@@ -85,6 +85,30 @@ describe('CodexAgentAdapter', () => {
       if (previous === undefined) delete process.env.ANTHROPIC_API_KEY
       else process.env.ANTHROPIC_API_KEY = previous
     }
+  })
+
+  it('⚖️ o agente escolhe: sandbox e rede do provider, e a nativa do terminal destrava só o terminal', async () => {
+    const calls: ICall[] = []
+    const open: IAgent = {
+      ...agent,
+      providers: agent.providers.map((target) => ({ ...target, sandbox: 'workspace-write' as const, network: true })),
+      allowedTools: ['sdk:codex:shell'],
+    }
+    const adapter = new CodexAgentAdapter({ store: new SessionStore(), load: async () => fakeCodex(calls, turnEvents) as never, home: () => '/gw' })
+    const session = await adapter.createSession(open, {})
+    await collect(adapter.sendMessage(open, session.id, { text: 'oi' }, {}))
+
+    const [call] = calls
+    assert.strictEqual(call.thread.sandboxMode, 'workspace-write')
+    assert.strictEqual(call.thread.networkAccessEnabled, true)
+    const { features } = call.options.config as { features: Record<string, boolean> }
+    assert.deepStrictEqual(features, { ...CODEX_LOCKED_FEATURES, shell_tool: true, unified_exec: true })
+
+    const full: IAgent = { ...open, providers: agent.providers.map((target) => ({ ...target, sandbox: 'full' as const })) }
+    const other = await adapter.createSession(full, {})
+    await collect(adapter.sendMessage(full, other.id, { text: 'oi' }, {}))
+    assert.strictEqual(calls[1].thread.sandboxMode, 'danger-full-access')
+    assert.strictEqual(calls[1].thread.networkAccessEnabled, false)
   })
 
   it('retoma a thread no segundo turno e mapeia texto, uso (cache como parcela) e aviso não fatal', async () => {

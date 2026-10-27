@@ -1,4 +1,4 @@
-import { IAgent } from '@domain/models/Agent.Model'
+import { IAgent, IAgentTarget } from '@domain/models/Agent.Model'
 
 /** Um agente criado pela tela, com quem e quando mexeu por último. */
 export interface IStoredAgent extends IAgent {
@@ -36,4 +36,6 @@ export interface IAgentDirectory {
   get(id: string): IAgent | undefined
   /** O agente quando ninguém escolheu: o primeiro que pode abrir conversa e não é subagente. */
   fallback?(): IAgent | undefined
+  /** Este provider do agente pode rodar agora (ligado, modelo ativo, chave). Ausente: basta ter modelo. */
+  isTargetRunnable?(agent: IAgent, target: IAgentTarget): boolean
 }

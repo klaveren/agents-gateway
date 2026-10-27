@@ -26,9 +26,28 @@ export interface ISession {
   turns: number
   /** Acumulado da sessão inteira. */
   usage: IUsage
-  /** O mesmo acumulado, por modelo: com troca no meio da conversa, é o que deixa o custo certo. */
+  /**
+   * O mesmo acumulado, por provider + modelo (`usageKey`): com troca no meio da conversa, é o que deixa
+   * o custo certo — o mesmo modelo custa diferente na API e na assinatura.
+   */
   usageByModel?: Record<string, IUsage>
+  /** A sessão trocou de provider e o próximo turno leva a transcrição (ver `Handoff.Policy`). */
+  handoff?: boolean
   createdAt: Date
   lastActivityAt: Date
   metadata?: Record<string, unknown>
+}
+
+/**
+ * A chave do uso por modelo: `provider|modelo`. ⚖️ `|`, e não `/`: id de modelo de compatível tem barra
+ * (`anthropic/claude-…` no OpenRouter). Chave sem `|` é do formato de antes — só o modelo, do provider
+ * da conversa.
+ */
+export function usageKey(provider: string, model: string): string {
+  return `${provider}|${model}`
+}
+
+export function parseUsageKey(key: string, fallbackProvider: string): { provider: string; model: string } {
+  const at = key.indexOf('|')
+  return at < 0 ? { provider: fallbackProvider, model: key } : { provider: key.slice(0, at), model: key.slice(at + 1) }
 }

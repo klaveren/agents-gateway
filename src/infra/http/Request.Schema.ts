@@ -20,6 +20,8 @@ export const createSessionSchema = z.object({
   agentId: z.string().min(1).optional(),
   mode: z.enum(EMode).optional(),
   tools: z.boolean().optional(),
+  /** Um dos providers do agente. Ausente: o primeiro que oferece o `model`, ou o padrão. */
+  provider: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
   reasoning: z.string().min(1).optional(),
   language: z.string().min(1).optional(),
@@ -27,10 +29,17 @@ export const createSessionSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 })
 
-/** A troca no meio da conversa: `reasoning: null` volta ao padrão; campo ausente não muda. */
+/**
+ * A troca no meio da conversa: `reasoning: null` volta ao padrão; campo ausente não muda. `provider`
+ * leva a conversa a outro provider do agente, com a transcrição (sem `model`, o primeiro dele).
+ */
 export const reconfigureSessionSchema = z
-  .object({ model: z.string().trim().min(1).max(200).optional(), reasoning: z.string().trim().min(1).max(40).nullable().optional() })
-  .refine((body) => body.model !== undefined || body.reasoning !== undefined, 'send model and/or reasoning')
+  .object({
+    provider: z.string().trim().min(1).max(32).optional(),
+    model: z.string().trim().min(1).max(200).optional(),
+    reasoning: z.string().trim().min(1).max(40).nullable().optional(),
+  })
+  .refine((body) => body.provider !== undefined || body.model !== undefined || body.reasoning !== undefined, 'send provider, model and/or reasoning')
 
 const fileSchema = z.object({
   name: z.string().min(1),
@@ -68,6 +77,7 @@ const clearable = z.string().trim().nullable().optional()
 export const updateSettingsSchema = z.object({
   audience: z.enum(AUDIENCES).optional(),
   agentId: clearable,
+  provider: clearable,
   model: clearable,
   // ⚠️ Só gravados por enquanto: o classificador de turno chega numa fase posterior.
   classifierModel: clearable,
@@ -96,16 +106,31 @@ export const updateSettingsSchema = z.object({
 export const agentBodySchema = z.object({
   id: z.string().trim().min(1).max(64).optional(),
   name: z.string().trim().min(1).max(200),
-  // O id de um provider configurado; se ele existe, quem diz é a regra (`protocolOf`), com o resto.
-  provider: z.string().trim().min(1).max(32),
+  /**
+   * Onde o agente roda — o primeiro é o padrão. O id de cada um é de um provider configurado; se ele
+   * existe, quem diz é a regra (`protocolOf`), com o resto.
+   */
+  providers: z
+    .array(
+      z.object({
+        provider: z.string().trim().min(1).max(32),
+        models: z.array(z.string().trim().min(1)).min(1).max(20),
+        /** Só nos protocolos que têm sandbox (`SANDBOX_LEVELS`); quem confere é a regra do agente. */
+        sandbox: z.enum(['read-only', 'workspace-write', 'full']).optional(),
+        network: z.boolean().optional(),
+      }),
+    )
+    .min(1)
+    .max(10),
   systemPrompt: z.string().min(1),
   soul: z.string().max(20_000).optional(),
-  models: z.array(z.string().trim().min(1)).min(1).max(20),
   reasoningEfforts: z.array(z.string().trim().min(1)).max(10).optional(),
   modes: z.array(z.enum(EMode)).min(1),
   allowedTools: z.array(z.string().trim().min(1)).max(100).default([]),
   /** `subagent`: só chamado por outro agente; `null` volta a agente normal. */
   role: z.enum(['subagent']).nullable().optional(),
+  /** Só administrador conversa com o agente. Decisão de quem o cria; ausente ou `false` = aberto a todos. */
+  adminOnly: z.boolean().optional(),
 })
 
 /**

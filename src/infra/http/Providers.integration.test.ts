@@ -102,9 +102,8 @@ describe('Providers (integração)', () => {
     const agent = {
       id: 'roteado',
       name: 'Roteado',
-      provider: 'openrouter',
+      providers: [{ provider: 'openrouter', models: ['meta-llama/llama-4-maverick'] }],
       systemPrompt: 'Responda curto.',
-      models: ['meta-llama/llama-4-maverick'],
       modes: ['chat'],
       allowedTools: [],
     }
@@ -116,7 +115,16 @@ describe('Providers (integração)', () => {
     const { makeModelCatalog } = await import('@composition/factories/Catalog.Factory')
     makeModelCatalog().ensureEnabled('openrouter', 'meta-llama/llama-4-maverick', 'test')
     assert.strictEqual((await call('/agents', { method: 'POST', token: admin, body: agent })).status, 201)
-    assert.strictEqual((await call('/agents', { method: 'POST', token: admin, body: { ...agent, id: 'fantasma', provider: 'nao-existe' } })).status, 422)
+    assert.strictEqual(
+      (
+        await call('/agents', {
+          method: 'POST',
+          token: admin,
+          body: { ...agent, id: 'fantasma', providers: [{ provider: 'nao-existe', models: ['meta-llama/llama-4-maverick'] }] },
+        })
+      ).status,
+      422,
+    )
 
     const blocked = await call('/providers/openrouter', { method: 'DELETE', token: admin })
     assert.strictEqual(blocked.status, 409)
@@ -279,14 +287,21 @@ describe('catálogo de modelos (integração)', () => {
 
   it('⚖️ desligar o modelo tira ele do agente na hora; sem nenhum ativo, a sessão é recusada (422 agent_without_model)', async () => {
     await call('/providers/agregador/models', { method: 'PUT', token: admin, body: { modelId: 'vendor/b', enabled: true } })
-    const agent = { id: 'do-catalogo', name: 'Do catálogo', provider: 'agregador', systemPrompt: 'curto', models: ['vendor/a', 'vendor/b'], modes: ['chat'], allowedTools: [] }
+    const agent = {
+      id: 'do-catalogo',
+      name: 'Do catálogo',
+      providers: [{ provider: 'agregador', models: ['vendor/a', 'vendor/b'] }],
+      systemPrompt: 'curto',
+      modes: ['chat'],
+      allowedTools: [],
+    }
     assert.strictEqual((await call('/agents', { method: 'POST', token: admin, body: agent })).status, 201)
 
     await call('/providers/agregador/models', { method: 'PUT', token: admin, body: { modelId: 'vendor/b', enabled: false } })
     const listed = (await call('/agents', { token: admin })).body.result.find((item: { id: string }) => item.id === 'do-catalogo')
-    assert.deepStrictEqual(listed.models, ['vendor/a'])
+    assert.deepStrictEqual(listed.providers[0].models, ['vendor/a'])
     const detail = (await call('/agents/do-catalogo', { token: admin })).body.result
-    assert.deepStrictEqual(detail.disabledModels, ['vendor/b'])
+    assert.deepStrictEqual(detail.providers[0].disabledModels, ['vendor/b'])
 
     await call('/providers/agregador/models', { method: 'PUT', token: admin, body: { modelId: 'vendor/a', enabled: false } })
     const refused = await call('/sessions', { method: 'POST', token: admin, body: { agentId: 'do-catalogo' } })

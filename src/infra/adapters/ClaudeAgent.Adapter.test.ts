@@ -17,7 +17,11 @@ type TQueryParams = Parameters<TQuery>[0]
 const CLI_SESSION_ID = '11111111-2222-4333-8444-555555555555'
 
 describe('ClaudeAgentAdapter', () => {
-  const getAgent = (): IAgent => ({ ...CLAUDE_TEST_AGENT, models: ['claude-sonnet-5'], allowedTools: ['run_bash', 'mcp:crm/read_file'] })
+  const getAgent = (): IAgent => ({
+    ...CLAUDE_TEST_AGENT,
+    providers: [{ provider: EProvider.CLAUDE, models: ['claude-sonnet-5'] }],
+    allowedTools: ['run_bash', 'mcp:crm/read_file'],
+  })
 
   const turn = () => [
     { type: 'system', subtype: 'init', session_id: CLI_SESSION_ID },
@@ -126,7 +130,7 @@ describe('ClaudeAgentAdapter', () => {
       query: queryWith(turn, seen),
       connections: { connection: (id) => ({ providerId: id, name: 'OpenRouter', protocol: EProvider.CLAUDE, baseUrl: 'https://openrouter.ai/api', key: 'sk-or-123' }) },
     })
-    const session = await adapter.createSession({ ...getAgent(), provider: 'openrouter' }, { agentId: CLAUDE_TEST_AGENT.id })
+    const session = await adapter.createSession({ ...getAgent(), providers: [{ provider: 'openrouter', models: ['claude-sonnet-5'] }] }, { agentId: CLAUDE_TEST_AGENT.id })
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     assert.strictEqual(seen[0].options?.env?.ANTHROPIC_BASE_URL, 'https://openrouter.ai/api')

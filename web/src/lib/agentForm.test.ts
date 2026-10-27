@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { defaultLanes, findOrphans, isUsableProvider, pruneModels, pruneNatives, summarizeIssues } from './agentForm'
+import { defaultLanes, findOrphans, isUsableProvider, pruneModels, pruneNatives, summarizeIssues, unionLanes, unionLevels } from './agentForm'
 
 const natives = [
   { id: 'sdk:Read', protocol: 'claude' },
@@ -17,9 +17,11 @@ describe('pruneModels', () => {
 })
 
 describe('pruneNatives', () => {
-  it('tira as sdk: de outra família e mantém locais, agent: e mcp:', () => {
+  it('tira as sdk: de família que nenhum provider tem e mantém locais, agent: e mcp:', () => {
     const allowed = ['run_bash', 'sdk:Read', 'sdk:web_search', 'agent:x', 'mcp:s/*', 'sdk:fantasma']
-    expect(pruneNatives(allowed, natives, 'claude')).toEqual(['run_bash', 'sdk:Read', 'agent:x', 'mcp:s/*'])
+    expect(pruneNatives(allowed, natives, ['claude'])).toEqual(['run_bash', 'sdk:Read', 'agent:x', 'mcp:s/*'])
+    // Com dois providers de famílias diferentes, as duas ficam.
+    expect(pruneNatives(allowed, natives, ['claude', 'openai'])).toEqual(['run_bash', 'sdk:Read', 'sdk:web_search', 'agent:x', 'mcp:s/*'])
   })
   it('sem a família, não mexe', () => {
     expect(pruneNatives(['sdk:Read'], natives, undefined)).toEqual(['sdk:Read'])
@@ -64,5 +66,16 @@ describe('isUsableProvider', () => {
 describe('summarizeIssues', () => {
   it('rotula os campos e deixa sem rótulo o problema geral', () => {
     expect(summarizeIssues({ name: ['curto'], role: ['x', 'y'], _: ['geral'] }, { name: 'Nome' })).toBe('Nome (curto) · role (x; y) · geral')
+  })
+})
+
+describe('unionLanes e unionLevels', () => {
+  it('a lane vale se algum protocolo a roda; sem protocolo conhecido, as duas', () => {
+    expect(unionLanes([{ lanes: ['agent'] }])).toEqual(['agent'])
+    expect(unionLanes([{ lanes: ['agent'] }, { lanes: ['chat', 'agent'] }])).toEqual(['chat', 'agent'])
+    expect(unionLanes([undefined])).toEqual(['chat', 'agent'])
+  })
+  it('os níveis de todos os protocolos, sem repetir', () => {
+    expect(unionLevels([{ reasoningLevels: ['low', 'high'] }, { reasoningLevels: [] }, { reasoningLevels: ['none', 'low'] }])).toEqual(['low', 'high', 'none'])
   })
 })

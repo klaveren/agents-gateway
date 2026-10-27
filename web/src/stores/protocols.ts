@@ -31,18 +31,23 @@ export const useProtocolsStore = defineStore('protocols', () => {
     return (get(protocol)?.reasoningLevels ?? []).filter((level) => chosen.includes(level))
   }
 
+  /** O provider como vem nos agentes — a fonte de quem não administra (membro não lê `/providers`). */
+  function fromAgents(providerId: string) {
+    for (const agent of useAgentsStore().list) {
+      const found = agent.providers.find((provider) => provider.id === providerId)
+      if (found) return found
+    }
+    return undefined
+  }
+
   /** O protocolo de um provider configurado: o do banco (admin), senão o que vem no agente. */
   function protocolOf(providerId: string): string | undefined {
-    const providers = useProvidersStore()
-    const agents = useAgentsStore()
-    return providers.list.find((provider) => provider.id === providerId)?.protocol ?? agents.list.find((agent) => agent.provider === providerId)?.providerInfo?.protocol
+    return useProvidersStore().list.find((provider) => provider.id === providerId)?.protocol ?? fromAgents(providerId)?.protocol
   }
 
   /** O nome do provider como está no banco; sem ele (membro, que não lê `/providers`), o do agente, senão o id. */
   function providerName(providerId: string): string {
-    const providers = useProvidersStore()
-    const agents = useAgentsStore()
-    return providers.names.get(providerId) ?? agents.list.find((agent) => agent.provider === providerId)?.providerInfo?.name ?? providerId
+    return useProvidersStore().names.get(providerId) ?? fromAgents(providerId)?.name ?? providerId
   }
 
   /** A cor do avatar pela marca do protocolo; neutra quando não se sabe (compatível sem protocolo conhecido). */

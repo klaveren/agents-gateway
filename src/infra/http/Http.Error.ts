@@ -17,11 +17,11 @@ import {
   ProviderNotFoundError,
   ProviderUnavailableError,
   AgentInUseError,
-  DangerousToolsRestrictedError,
+  AgentAdminOnlyError,
   ModelDisabledError,
+  ProviderNotOfferedError,
   NoAgentAvailableError,
   SubagentOnlyError,
-  SubscriptionRestrictedError,
   InvalidCredentialsError,
   InvalidUserError,
   InvalidAccessTokenError,
@@ -41,14 +41,14 @@ export type TErrorCode =
   | 'provider_in_use'
   | 'mcp_server_in_use'
   | 'provider_unavailable'
-  | 'subscription_restricted'
   | 'payload_too_large'
   | 'rate_limited'
   | 'subagent_only'
-  | 'dangerous_tools_restricted'
+  | 'agent_admin_only'
   | 'agent_in_use'
   | 'no_agent_available'
   | 'model_disabled'
+  | 'provider_not_offered'
   | 'upstream_error'
   | 'agent_without_model'
   | 'invalid_credentials'
@@ -170,20 +170,19 @@ export function toHttpFailure(error: unknown): IHttpFailure {
     return { status: 503, code: 'no_agent_available', message: error.message }
   }
 
+  if (error instanceof ProviderNotOfferedError) {
+    return { status: 409, code: 'provider_not_offered', message: error.message, details: { agentId: error.agentId, providerId: error.providerId } }
+  }
   if (error instanceof ModelDisabledError) {
     return { status: 409, code: 'model_disabled', message: error.message, details: { providerId: error.providerId, modelId: error.modelId } }
   }
 
-  if (error instanceof DangerousToolsRestrictedError) {
-    return { status: 403, code: 'dangerous_tools_restricted', message: error.message }
+  if (error instanceof AgentAdminOnlyError) {
+    return { status: 403, code: 'agent_admin_only', message: error.message }
   }
 
   if (error instanceof SubagentOnlyError) {
     return { status: 422, code: 'subagent_only', message: error.message }
-  }
-
-  if (error instanceof SubscriptionRestrictedError) {
-    return { status: 403, code: 'subscription_restricted', message: error.message }
   }
 
   if (error instanceof ProviderUnavailableError) {

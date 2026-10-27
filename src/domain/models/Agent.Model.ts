@@ -1,17 +1,23 @@
 import { EMode } from '../enums/EMode.Enum'
+import type { TSandboxLevel } from '../Sandbox.Policy'
 
 export interface IAgent {
   id: string
   name: string
-  /** O id do provider configurado. Os oficiais têm id igual ao protocolo (`claude`, `openai`, `google`). */
-  provider: string
+  /**
+   * Onde o agente roda: um ou mais providers, cada um com os seus modelos. O PRIMEIRO é o padrão.
+   *
+   * ⚖️ Vários, e não um: com API e assinatura configuradas, trocar de provider é trocar de modelo — a
+   * conversa troca no meio (ver `AgentProvider.reconfigure`), sem editar o agente e voltar.
+   */
+  providers: IAgentTarget[]
   /**
    * QUEM o agente é: identidade, tom, valores, jeito de falar. ⚖️ Separado do `systemPrompt`, que diz O QUE
    * ele faz (função, regras): dá para ajustar a personalidade sem mexer nas regras, e vice-versa.
    */
   soul?: string
   systemPrompt: string
-  models: string[]
+  /** Os níveis de raciocínio que o agente oferece. Cada provider usa os que o protocolo dele aceita. */
   reasoningEfforts?: string[]
   /** Lanes de execução suportadas por este agente. */
   modes: EMode[]
@@ -21,6 +27,23 @@ export interface IAgent {
    * conversa direta — nem pela tela, nem pela API, nem pelo MCP. Ausente = agente normal.
    */
   role?: TAgentRole
+  /**
+   * Só administrador provado conversa com o agente (e a delegação de uma conversa que não é de admin
+   * não chega nele). ⚖️ Decisão de quem cria o agente, nunca inferida: assinatura e ferramenta que
+   * alcança o servidor não fecham o agente sozinhas. Ausente = aberto a todos.
+   */
+  adminOnly?: boolean
+}
+
+/** Um provider do agente e os modelos que ele usa ali. */
+export interface IAgentTarget {
+  /** O id do provider configurado. Os oficiais têm id igual ao protocolo (`claude`, `openai`, `google`). */
+  provider: string
+  models: string[]
+  /** O sandbox do cliente agêntico, nos protocolos que o têm (`SANDBOX_LEVELS`). Ausente = o padrão. */
+  sandbox?: TSandboxLevel
+  /** Rede liberada dentro do sandbox (`SANDBOX_NETWORK`). Ausente = sem rede. */
+  network?: boolean
 }
 
 export type TAgentRole = 'subagent'

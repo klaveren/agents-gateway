@@ -6,7 +6,14 @@ import { IAgent } from '@domain/models/Agent.Model'
 import { composeSystemPrompt } from './Prompt.Helper'
 
 describe('composeSystemPrompt — soul', () => {
-  const agent: IAgent = { id: 'a', name: 'A', provider: EProvider.CLAUDE, systemPrompt: 'Responda sobre o CRM.', models: ['m'], modes: [EMode.CHAT], allowedTools: [] }
+  const agent: IAgent = {
+    id: 'a',
+    name: 'A',
+    providers: [{ provider: EProvider.CLAUDE, models: ['m'] }],
+    systemPrompt: 'Responda sobre o CRM.',
+    modes: [EMode.CHAT],
+    allowedTools: [],
+  }
 
   it('sem soul, o prompt de sempre', () => {
     assert.strictEqual(composeSystemPrompt(agent, {}), 'Responda sobre o CRM.')

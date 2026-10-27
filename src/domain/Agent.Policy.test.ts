@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { agentIssues, IAgentRules, modelFor } from './Agent.Policy'
+import { agentIssues, IAgentRules, targetFor } from './Agent.Policy'
 import { EMode } from './enums/EMode.Enum'
 import { EProvider } from './enums/EProvider.Enum'
 import { IAgent } from './models/Agent.Model'
@@ -15,9 +15,8 @@ describe('agentIssues', () => {
   const agent = (over: Partial<IAgent> = {}): IAgent => ({
     id: 'pesquisa-juridica',
     name: 'Pesquisa jurídica',
-    provider: EProvider.GOOGLE,
+    providers: [{ provider: EProvider.GOOGLE, models: ['gemini-3.7-flash'] }],
     systemPrompt: 'Você pesquisa jurisprudência.',
-    models: ['gemini-3.7-flash'],
     modes: [EMode.CHAT, EMode.AGENT],
     allowedTools: ['search_web'],
     ...over,
@@ -29,20 +28,34 @@ describe('agentIssues', () => {
     assert.deepStrictEqual(agentIssues(agent(), rules), [])
   })
 
+  it('⛔ sandbox só no protocolo que o tem, e só nos níveis dele; rede só onde o sandbox a separa', () => {
+    const on = (target: Partial<IAgent['providers'][number]>, protocol: EProvider) =>
+      agentIssues(agent({ providers: [{ provider: 'p', models: ['m'], ...target }], modes: [EMode.AGENT], allowedTools: [] }), {
+        ...rules,
+        protocolOf: () => protocol,
+        modelEnabled: () => true,
+      }).map((issue) => issue.message)
+
+    assert.deepStrictEqual(on({ sandbox: 'full', network: true }, EProvider.CODEX), [])
+    assert.deepStrictEqual(on({ sandbox: 'workspace-write' }, EProvider.ANTIGRAVITY), ['p: not a sandbox level here: workspace-write'])
+    assert.deepStrictEqual(on({ network: true }, EProvider.ANTIGRAVITY), ['p: has no sandbox network to open'])
+    assert.deepStrictEqual(on({ sandbox: 'read-only' }, EProvider.CLAUDE), ['p: has no sandbox to set'])
+  })
+
   it('devolve TODOS os problemas de uma vez, campo a campo', () => {
-    const issues = agentIssues(agent({ id: 'X', name: ' ', models: [], modes: [], systemPrompt: '' }), rules)
+    const issues = agentIssues(agent({ id: 'X', name: ' ', providers: [{ provider: EProvider.GOOGLE, models: [] }], modes: [], systemPrompt: '' }), rules)
 
     assert.deepStrictEqual(fields(issues), ['id', 'name', 'models', 'modes', 'systemPrompt'])
   })
 
   it('⚠️ nível de raciocínio tem de ser do protocolo; o Google não tem nenhum', () => {
-    const claude = agent({ provider: EProvider.CLAUDE, models: ['claude-x'], allowedTools: [], reasoningEfforts: ['low', 'minimal'] })
+    const claude = agent({ providers: [{ provider: EProvider.CLAUDE, models: ['claude-x'] }], allowedTools: [], reasoningEfforts: ['low', 'minimal'] })
     assert.deepStrictEqual(
       agentIssues(claude, { ...rules, modelEnabled: () => true }).map((issue) => [issue.field, issue.message]),
-      [['reasoningEfforts', 'minimal is not a claude reasoning level']],
+      [['reasoningEfforts', 'minimal is not a reasoning level of claude']],
     )
     assert.deepStrictEqual(fields(agentIssues(agent({ reasoningEfforts: ['low'] }), rules)), ['reasoningEfforts'])
-    assert.deepStrictEqual(agentIssues(agent({ provider: EProvider.OPENAI, models: ['gpt-5'], reasoningEfforts: ['none', 'xhigh'] }), rules), [])
+    assert.deepStrictEqual(agentIssues(agent({ providers: [{ provider: EProvider.OPENAI, models: ['gpt-5'] }], reasoningEfforts: ['none', 'xhigh'] }), rules), [])
   })
 
   it('⛔ MCP: formato mcp:<servidor>/<ferramenta> e servidor existente (a ferramenta não é exigida)', () => {
@@ -70,7 +83,7 @@ describe('agentIssues', () => {
   })
 
   it('⚠️ recusa modelo de outro provider, e modelo que ninguém reconhece', () => {
-    const issues = agentIssues(agent({ models: ['gpt-5.6-sol', 'llama-9'] }), rules)
+    const issues = agentIssues(agent({ providers: [{ provider: EProvider.GOOGLE, models: ['gpt-5.6-sol', 'llama-9'] }] }), rules)
 
     assert.deepStrictEqual(
       issues.map((issue) => issue.message),
@@ -92,44 +105,129 @@ describe('agentIssues', () => {
 
     assert.deepStrictEqual(agentIssues(agent(), withCatalog), [])
     assert.deepStrictEqual(
-      agentIssues(agent({ models: ['gemini-3.7-flash', 'gemini-desligado'] }), withCatalog).map((item) => item.message),
-      ['not enabled in Providers → Models: gemini-desligado'],
+      agentIssues(agent({ providers: [{ provider: EProvider.GOOGLE, models: ['gemini-3.7-flash', 'gemini-desligado'] }] }), withCatalog).map((item) => item.message),
+      ['google: not enabled in Providers → Models: gemini-desligado'],
     )
   })
 
   it('⛔ assinatura só na lane agent; o Claude da assinatura usa as nativas do Claude', () => {
-    const codex = agent({ provider: 'codex', models: ['gpt-6.1-sol'], modes: [EMode.CHAT, EMode.AGENT], allowedTools: [] })
+    const codex = agent({ providers: [{ provider: 'codex', models: ['gpt-6.1-sol'] }], modes: [EMode.CHAT, EMode.AGENT], allowedTools: [] })
     assert.deepStrictEqual(
       agentIssues(codex, { ...rules, modelEnabled: () => true }).map((issue) => [issue.field, issue.message]),
       [['modes', 'codex runs only in the agent lane']],
     )
-    const claudeSub = agent({ provider: 'claude-sub', models: ['claude-opus-5-5'], modes: [EMode.AGENT], allowedTools: ['sdk:WebSearch'] })
+    const claudeSub = agent({ providers: [{ provider: 'claude-sub', models: ['claude-opus-5-5'] }], modes: [EMode.AGENT], allowedTools: ['sdk:WebSearch'] })
     assert.deepStrictEqual(agentIssues(claudeSub, { ...rules, modelEnabled: () => true }), [])
   })
 })
 
-describe('modelFor', () => {
+describe('agentIssues — vários providers', () => {
+  const rules: IAgentRules = { takenIds: [], knownTools: [], modelEnabled: () => true }
+  const agent = (over: Partial<IAgent> = {}): IAgent => ({
+    id: 'hibrido',
+    name: 'Híbrido',
+    providers: [
+      { provider: EProvider.CLAUDE, models: ['claude-sonnet-5'] },
+      { provider: 'codex', models: ['gpt-6.1-sol'] },
+    ],
+    systemPrompt: 'p',
+    modes: [EMode.CHAT, EMode.AGENT],
+    allowedTools: [],
+    ...over,
+  })
+
+  it('a lane vale se ALGUM provider a roda: chat com Claude + assinatura passa; só assinatura, não', () => {
+    assert.deepStrictEqual(agentIssues(agent(), rules), [])
+    assert.deepStrictEqual(
+      agentIssues(agent({ providers: [{ provider: 'codex', models: ['gpt-6.1-sol'] }] }), rules).map((issue) => issue.field),
+      ['modes'],
+    )
+  })
+
+  it('nível e nativa valem se algum provider os aceita; nenhum provider, provider repetido e provider sem modelo são recusados', () => {
+    // `minimal` é só do Codex, `max` só do Claude; `sdk:WebSearch` é da família Claude. `none` não é de nenhum dos dois.
+    assert.deepStrictEqual(agentIssues(agent({ reasoningEfforts: ['minimal', 'max'], allowedTools: ['sdk:WebSearch'] }), rules), [])
+    assert.deepStrictEqual(
+      agentIssues(agent({ reasoningEfforts: ['none'] }), rules).map((issue) => issue.message),
+      ['none is not a reasoning level of claude, codex'],
+    )
+    assert.deepStrictEqual(
+      agentIssues(agent({ providers: [] }), rules).map((issue) => [issue.field, issue.message]),
+      [['providers', 'at least one provider']],
+    )
+    assert.deepStrictEqual(
+      agentIssues(
+        agent({
+          providers: [
+            { provider: EProvider.CLAUDE, models: ['claude-sonnet-5'] },
+            { provider: EProvider.CLAUDE, models: [] },
+          ],
+        }),
+        rules,
+      ).map((issue) => issue.message),
+      ['listed twice: claude', 'claude: at least one model'],
+    )
+  })
+
+  it('o modelo é conferido no catálogo DO SEU provider', () => {
+    const enabled = (provider: string, model: string) => (provider === 'codex' ? model === 'gpt-6.1-sol' : model === 'claude-sonnet-5')
+    assert.deepStrictEqual(
+      agentIssues(
+        agent({
+          providers: [
+            { provider: EProvider.CLAUDE, models: ['gpt-6.1-sol'] },
+            { provider: 'codex', models: ['gpt-6.1-sol'] },
+          ],
+        }),
+        { ...rules, modelEnabled: enabled },
+      ).map((issue) => issue.message),
+      ['claude: not enabled in Providers → Models: gpt-6.1-sol'],
+    )
+  })
+})
+
+describe('targetFor', () => {
   const agent: IAgent = {
     id: 'pesquisa-teste',
     name: 'Pesquisa (teste)',
-    provider: EProvider.GOOGLE,
+    providers: [{ provider: EProvider.GOOGLE, models: ['gemini-3.7-flash', 'gemini-3.6-flash'] }],
     systemPrompt: 'Você pesquisa.',
-    models: ['gemini-3.7-flash', 'gemini-3.6-flash'],
     modes: [EMode.CHAT],
     allowedTools: [],
   }
+  const models = agent.providers[0].models
 
   it('mantém o modelo que o agente declara', () => {
-    assert.strictEqual(modelFor(agent, agent.models[1]), agent.models[1])
+    assert.strictEqual(targetFor(agent, undefined, models[1])?.model, models[1])
   })
 
   it('cai no primeiro do agente quando o modelo é de outro provider', () => {
-    assert.strictEqual(modelFor(agent, 'um-modelo-de-outro-provider'), agent.models[0])
+    assert.strictEqual(targetFor(agent, undefined, 'um-modelo-de-outro-provider')?.model, models[0])
   })
 
   it('sem modelo pedido vale o padrão do agente (o primeiro): não há mais padrão no adapter', () => {
-    assert.strictEqual(modelFor(agent, undefined), agent.models[0])
-    assert.strictEqual(modelFor(agent, ''), agent.models[0])
-    assert.strictEqual(modelFor({ ...agent, models: [] }, undefined), undefined)
+    assert.strictEqual(targetFor(agent, undefined, undefined)?.model, models[0])
+    assert.strictEqual(targetFor(agent, undefined, '')?.model, models[0])
+    assert.strictEqual(targetFor({ ...agent, providers: [{ provider: EProvider.GOOGLE, models: [] }] }, undefined, undefined), undefined)
+  })
+
+  it('com vários providers: o par pedido; só o modelo, o primeiro provider que o tem; o padrão pula o que não pode rodar', () => {
+    const hybrid: IAgent = {
+      ...agent,
+      providers: [
+        { provider: 'claude', models: ['opus', 'sonnet'] },
+        { provider: 'claude-sub', models: ['opus'] },
+      ],
+    }
+
+    assert.deepStrictEqual(targetFor(hybrid, 'claude-sub', 'opus'), { provider: 'claude-sub', model: 'opus' })
+    assert.deepStrictEqual(targetFor(hybrid, undefined, 'opus'), { provider: 'claude', model: 'opus' })
+    assert.deepStrictEqual(targetFor(hybrid, 'claude-sub'), { provider: 'claude-sub', model: 'opus' })
+    assert.deepStrictEqual(targetFor(hybrid, 'claude-sub', 'sonnet'), { provider: 'claude', model: 'opus' })
+    assert.deepStrictEqual(
+      targetFor(hybrid, undefined, undefined, (target) => target.provider !== 'claude'),
+      { provider: 'claude-sub', model: 'opus' },
+    )
+    assert.strictEqual(targetFor({ ...hybrid, providers: [] }), undefined)
   })
 })

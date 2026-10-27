@@ -31,6 +31,7 @@ const failureEnvelope = {
         'tools_not_supported',
         'adapter_not_found',
         'agent_unavailable',
+        'agent_admin_only',
         'unauthorized',
         'not_found',
         'internal_error',
@@ -46,7 +47,7 @@ const sessionSchema = {
   properties: {
     id: { type: 'string' },
     agentId: { type: 'string' },
-    provider: { type: 'string', enum: ['claude', 'openai', 'google'] },
+    provider: { type: 'string', description: 'The provider answering now: one of the agent providers (it can switch mid-conversation).' },
     mode: { type: 'string', enum: ['chat', 'agent'] },
     model: { type: 'string' },
     reasoning: { type: 'string' },
@@ -191,7 +192,7 @@ const toolsResult = {
     native: {
       type: 'array',
       description:
-        'SDK-native tools (Agents SDK lane only), by protocol. Store `id` in `allowedTools`. `server-*` risks run ON the gateway host and are blocked unless listed in `NATIVE_TOOLS_ENABLED`.',
+        'SDK-native tools (Agents SDK lane only), by protocol. Store `id` in `allowedTools`. `server-*` risks run ON the gateway host (`dangerous: true`): whoever talks to the agent gets that reach, so mark the agent `adminOnly` when it is not for everyone.',
       items: {
         type: 'object',
         properties: {
@@ -202,8 +203,7 @@ const toolsResult = {
           description: { type: 'string' },
           risk: { type: 'string', enum: ['hosted', 'session', 'server-network', 'server-read', 'server-exec'] },
           officialOnly: { type: 'boolean' },
-          allowed: { type: 'boolean' },
-          reason: { type: 'string' },
+          dangerous: { type: 'boolean', description: 'Reaches the gateway host (disk, network, shell).' },
         },
       },
     },
@@ -216,33 +216,47 @@ const agentSchema = {
   properties: {
     id: { type: 'string' },
     name: { type: 'string' },
-    provider: { type: 'string', enum: ['claude', 'openai', 'google'] },
-    models: { type: 'array', items: { type: 'string' } },
-    pricing: {
-      type: 'object',
-      description:
-        'Price per 1M tokens of each model this agent offers that has a known price, keyed by model id. A model absent here has no known price (not zero); sort it last. Extend with `MODEL_PRICING_FILE`.',
-      additionalProperties: {
+    providers: {
+      type: 'array',
+      description: 'Where the agent runs. The first is the default; a live conversation can switch between them (`PATCH /sessions/{id}`).',
+      items: {
         type: 'object',
         properties: {
-          input: { type: 'number', description: 'USD per 1M fresh input tokens.' },
-          output: { type: 'number', description: 'USD per 1M output tokens; reasoning is billed at this price.' },
-          cacheRead: { type: 'number' },
-          cacheWrite: { type: 'number' },
-          introductoryUntil: { type: 'string', description: 'YYYY-MM-DD: the price is promotional until then.' },
+          id: { type: 'string' },
+          name: { type: 'string', description: 'The provider name as configured.' },
+          protocol: { type: 'string' },
+          models: { type: 'array', items: { type: 'string' } },
+          pricing: {
+            type: 'object',
+            description:
+              'Price per 1M tokens of each model this provider offers the agent that has a known price, keyed by model id. A model absent here has no known price (not zero); sort it last. Extend with `MODEL_PRICING_FILE`.',
+            additionalProperties: {
+              type: 'object',
+              properties: {
+                input: { type: 'number', description: 'USD per 1M fresh input tokens.' },
+                output: { type: 'number', description: 'USD per 1M output tokens; reasoning is billed at this price.' },
+                cacheRead: { type: 'number' },
+                cacheWrite: { type: 'number' },
+                introductoryUntil: { type: 'string', description: 'YYYY-MM-DD: the price is promotional until then.' },
+              },
+              required: ['input', 'output'],
+            },
+          },
+          reasoningEfforts: { type: 'array', items: { type: 'string' }, description: 'The agent levels this provider protocol accepts, in its order.' },
+          modelReasoning: {
+            type: 'object',
+            additionalProperties: { type: 'array', items: { type: 'string' }, nullable: true },
+            description: 'Per model: the agent levels that model accepts. null = unknown (the provider levels apply); [] = the model does not reason.',
+          },
+          unavailable: { type: 'object', description: 'Admin only: why this provider does not run now.' },
         },
-        required: ['input', 'output'],
       },
     },
-    reasoningEfforts: { type: 'array', items: { type: 'string' }, description: 'The levels the provider protocol accepts, in its order.' },
-    modelReasoning: {
-      type: 'object',
-      additionalProperties: { type: 'array', items: { type: 'string' }, nullable: true },
-      description: 'Per model: the agent levels that model accepts. null = unknown (the agent levels apply); [] = the model does not reason.',
-    },
+    reasoningEfforts: { type: 'array', items: { type: 'string' }, description: 'The levels the agent offers; each provider uses the ones its protocol accepts.' },
     modes: { type: 'array', items: { type: 'string', enum: ['chat', 'agent'] } },
     allowedTools: { type: 'array', items: { type: 'string' } },
     role: { type: 'string', enum: ['subagent'], description: 'Present on subagents: only called by another agent.' },
+    adminOnly: { type: 'boolean', description: 'Present when only administrators can talk to the agent.' },
   },
 }
 
@@ -267,11 +281,24 @@ const agentBody = {
   properties: {
     id: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{1,47}$', description: 'Creation only; on update the id comes from the path.' },
     name: { type: 'string' },
-    provider: { type: 'string', enum: ['claude', 'openai', 'google'] },
+    providers: {
+      type: 'array',
+      minItems: 1,
+      description: 'One or more configured providers, each with models ENABLED in its catalog. The first provider (and its first model) is the default.',
+      items: {
+        type: 'object',
+        properties: { provider: { type: 'string' }, models: { type: 'array', items: { type: 'string' }, minItems: 1 } },
+        required: ['provider', 'models'],
+      },
+    },
     systemPrompt: { type: 'string' },
     soul: { type: 'string', maxLength: 8000, description: 'Who the agent is (identity, tone, values); the system prompt says what it does.' },
     role: { type: ['string', 'null'], enum: ['subagent', null], description: '`subagent`: only called by another agent (delegation), never in a direct conversation.' },
-    models: { type: 'array', items: { type: 'string' }, description: 'Every model must belong to `provider`.' },
+    adminOnly: {
+      type: 'boolean',
+      description:
+        'Only administrators can talk to the agent (and a delegation from a non-admin conversation cannot reach it). Absent or false = open to every account: subscriptions and server-reaching tools never close an agent on their own.',
+    },
     reasoningEfforts: { type: 'array', items: { type: 'string' } },
     modes: { type: 'array', items: { type: 'string', enum: ['chat', 'agent'] } },
     allowedTools: {
@@ -280,7 +307,7 @@ const agentBody = {
       description: 'MCP tools, plus the local tools inside the `LOCAL_TOOLS_ENABLED` perimeter.',
     },
   },
-  required: ['name', 'provider', 'systemPrompt', 'models', 'modes'],
+  required: ['name', 'providers', 'systemPrompt', 'modes'],
 }
 
 const settingsSchema = {
@@ -293,7 +320,8 @@ const settingsSchema = {
         '`off`: nobody opens a new session. `restricted`: only callers whose PROVEN role is in `AUDIENCE_ROLES`. `all`: every caller the gateway lets through. Roles in `DENIED_ROLES` are refused under every value.',
     },
     agentId: { type: 'string', description: 'Agent that answers when the caller does not pick one (must be active). Absent = the first active agent that is not a subagent.' },
-    model: { type: 'string', description: "Model used when the caller sends none. A model the chosen agent does not declare falls back to the agent's first." },
+    provider: { type: 'string', description: 'Provider used when the caller sends none: one of the agent providers. Absent = the first that offers `model`.' },
+    model: { type: 'string', description: "Model used when the caller sends none. A model the chosen agent does not declare falls back to the agent's default." },
     classifierModel: { type: 'string', description: 'Model that labels each turn — an enabled model of `classifierProvider`.' },
     classifierProvider: { type: 'string', description: 'Provider of the classifier model. Absent: inferred from the model id (official providers only).' },
     classifyTurns: { type: 'boolean', description: 'Stored only for now: the turn classifier arrives in a later phase.' },
@@ -376,7 +404,7 @@ const failures = {
   },
   '403': {
     description:
-      'Code `agent_unavailable`: the agent is not serving this caller right now (audience `off`, a role outside `AUDIENCE_ROLES` under `restricted`, or a role in `DENIED_ROLES`). An operating decision, not a missing permission to ask for.',
+      'Code `agent_unavailable`: the agent is not serving this caller right now (audience `off`, a role outside `AUDIENCE_ROLES` under `restricted`, or a role in `DENIED_ROLES`). An operating decision, not a missing permission to ask for. Code `agent_admin_only`: the agent was marked `adminOnly` by whoever created it.',
     content: { 'application/json': { schema: failureEnvelope } },
   },
   '404': {
@@ -728,6 +756,12 @@ export const OPENAPI_DOCUMENT = {
                     lanes: { type: 'array', items: { type: 'string', enum: ['chat', 'agent'] } },
                     reasoningLevels: { type: 'array', items: { type: 'string' } },
                     nativeFamily: { type: 'string' },
+                    sandboxLevels: {
+                      type: 'array',
+                      items: { type: 'string', enum: ['read-only', 'workspace-write', 'full'] },
+                      description: 'Sandbox levels an agent can pick, default first; empty = nothing to set.',
+                    },
+                    sandboxNetwork: { type: 'boolean', description: 'The sandbox opens the network apart (`network` on the agent provider).' },
                     brand: { type: 'string', enum: ['claude', 'openai', 'google'] },
                     consoleUrl: { type: 'string' },
                     envName: { type: 'string' },
@@ -1316,7 +1350,8 @@ export const OPENAPI_DOCUMENT = {
                     default: false,
                     description: 'Chat lane only: run the hand-rolled tool loop. On the agent lane the SDK owns the loop.',
                   },
-                  model: { type: 'string', description: "Falls back to the configured model; a model the agent does not declare falls back to the agent's first." },
+                  provider: { type: 'string', description: 'One of the agent providers (409 `provider_not_offered` otherwise). Absent: the first that offers `model`.' },
+                  model: { type: 'string', description: "Falls back to the configured model; a model the agent does not declare falls back to the agent's default." },
                   reasoning: { type: 'string' },
                   language: { type: 'string' },
                   systemPrompt: { type: 'string' },
@@ -1349,7 +1384,8 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'OK', ...json(envelope(sessionSchema)) }, '401': failures['401'], '404': failures['404'] },
       },
       patch: {
-        summary: 'Switch the model and/or the reasoning level of a live session, from the next turn on',
+        summary:
+          'Switch the provider, model and/or reasoning level of a live session, from the next turn on. Another provider of the agent receives a transcript of the previous turns; its internal state (tool ids, encrypted reasoning, cache) does not carry over',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: {
           required: true,
@@ -1358,7 +1394,8 @@ export const OPENAPI_DOCUMENT = {
               schema: {
                 type: 'object',
                 properties: {
-                  model: { type: 'string', description: 'One of the models the agent offers now (same provider).' },
+                  provider: { type: 'string', description: 'One of the agent providers. Absent = the current one.' },
+                  model: { type: 'string', description: 'One of the models the agent offers now on that provider. Absent with a new provider = its first model.' },
                   reasoning: { type: 'string', nullable: true, description: 'A level of the provider protocol; null = provider default.' },
                 },
               },

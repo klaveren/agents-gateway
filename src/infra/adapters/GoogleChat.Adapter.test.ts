@@ -2,6 +2,7 @@ import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import type { GenerateContentRequest, GoogleGenerativeAI, ModelParams } from '@google/generative-ai'
 import { EMode } from '@domain/enums/EMode.Enum'
+import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { GOOGLE_TEST_AGENT } from '../../testing/Agents.Fixture'
@@ -13,7 +14,7 @@ interface ISingleRequestOptions {
 type TStream = (request: GenerateContentRequest, options?: ISingleRequestOptions) => Promise<unknown>
 
 describe('GoogleChatAdapter', () => {
-  const getAgent = (): IAgent => ({ ...GOOGLE_TEST_AGENT, models: ['gemini-3.7-flash'] })
+  const getAgent = (): IAgent => ({ ...GOOGLE_TEST_AGENT, providers: [{ provider: EProvider.GOOGLE, models: ['gemini-3.7-flash'] }] })
 
   const clientWith = (generateContentStream: TStream, onModel?: (params: ModelParams) => void): GoogleGenerativeAI =>
     ({

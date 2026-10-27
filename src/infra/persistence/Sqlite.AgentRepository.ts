@@ -104,7 +104,7 @@ export class SqliteAgentRepository implements IAgentRepository {
    */
   private toAgent(row: TRow): IStoredAgent | undefined {
     try {
-      const document = JSON.parse(String(row.document)) as IAgent
+      const document = withProviders(JSON.parse(String(row.document)) as TStoredDocument)
 
       return {
         ...document,
@@ -118,4 +118,18 @@ export class SqliteAgentRepository implements IAgentRepository {
       return undefined
     }
   }
+}
+
+/** O documento como pode estar gravado: no formato atual ou no de antes de `providers`. */
+type TStoredDocument = IAgent & { provider?: string; models?: string[] }
+
+/**
+ * ⚖️ O formato de antes (`provider` + `models`, um provider só) vira um `providers` de um item NA
+ * LEITURA: os bancos que já existem (o do pod inclusive) seguem sem migração, e o próximo salvamento
+ * grava no formato novo.
+ */
+export function withProviders(document: TStoredDocument): IAgent {
+  const { provider, models, ...agent } = document
+  if (Array.isArray(agent.providers)) return agent
+  return { ...agent, providers: provider ? [{ provider, models: models ?? [] }] : [] }
 }

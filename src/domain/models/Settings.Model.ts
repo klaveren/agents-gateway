@@ -46,6 +46,9 @@ export interface IAgentSettings {
   /** Qual agente do registry atende. Vazio = o que o chamador pedir, ou o padrão do registry. */
   agentId?: string
 
+  /** O provider do agente em que a conversa nasce. Vazio = o primeiro que oferece o `model` (ou o padrão do agente). */
+  provider?: string
+
   /** Modelo do agente. Vazio = o primeiro que o agente declara. */
   model?: string
 
@@ -105,6 +108,7 @@ export function normalizeSettings(raw: unknown): IAgentSettings {
   const settings: IAgentSettings = {
     audience: isAudience(stored.audience) ? stored.audience : stored.enabled === false ? 'off' : DEFAULT_SETTINGS.audience,
     agentId: text(stored.agentId),
+    provider: text(stored.provider),
     model: text(stored.model),
     classifierModel: text(stored.classifierModel),
     classifierProvider: text(stored.classifierProvider),
@@ -132,7 +136,7 @@ export type TSettingsChange = {
 } & { limits?: { [K in keyof ILimits]?: number | null } | null }
 
 /** Os campos que quem salva controla. `updatedAt`/`updatedBy` são carimbo, não escolha. */
-const EDITABLE = ['audience', 'agentId', 'model', 'classifierModel', 'classifierProvider', 'classifyTurns', 'limits'] as const
+const EDITABLE = ['audience', 'agentId', 'provider', 'model', 'classifierModel', 'classifierProvider', 'classifyTurns', 'limits'] as const
 const REQUIRED = ['audience'] as const
 
 /**

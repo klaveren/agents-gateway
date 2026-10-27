@@ -26,19 +26,19 @@ describe('protocols', () => {
     expect(protocols.levelsFor('desconhecido', ['low'])).toEqual([])
   })
 
-  it('nome e cor do provider pelo que vem do servidor: o nome do banco no agente, a cor pela marca', () => {
+  it('nome e cor do provider pelo que vem do servidor: o nome do banco no agente (qualquer provider dele), a cor pela marca', () => {
     const protocols = useProtocolsStore()
     protocols.list = [{ id: 'codex', label: 'Codex', subscription: true, lanes: ['agent'], reasoningLevels: [], nativeFamily: 'codex', brand: 'openai' }]
     useAgentsStore().list = [
       {
         id: 'a',
         name: 'A',
-        provider: 'chatgpt',
-        models: [],
-        pricing: {},
+        providers: [
+          { id: 'claude', name: 'Claude', protocol: 'claude', models: [], pricing: {} },
+          { id: 'chatgpt', name: 'ChatGPT da Ana', protocol: 'codex', models: [], pricing: {} },
+        ],
         modes: ['agent'],
         allowedTools: [],
-        providerInfo: { id: 'chatgpt', name: 'ChatGPT da Ana', protocol: 'codex' },
       },
     ]
 
