@@ -69,8 +69,10 @@ ENV NODE_ENV=production \
 # ⚠️ `ca-certificates`: o `node:24-slim` não traz os certificados do sistema. O Node não sente (tem os dele),
 # mas o Codex (Rust) e o Antigravity (Go) usam os do sistema — sem eles, todo login e toda conversa por
 # assinatura falhava com "error sending request".
+# `chromium` + `fonts-liberation`: o navegador dos MCPs `process` como o Playwright (`--executable-path=/usr/bin/chromium`).
+# O pod não tem root para instalar as bibliotecas dele depois; o pacote npm do MCP o gateway instala na tela.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates chromium fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin gateway \

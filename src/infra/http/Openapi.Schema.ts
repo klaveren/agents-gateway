@@ -364,7 +364,17 @@ const mcpServerBody = {
   properties: {
     id: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{1,31}$', description: 'Only on create.' },
     name: { type: 'string' },
-    kind: { type: 'string', enum: ['remote', 'container'], description: 'container = the gateway runs the image in an isolated container, one per conversation. Only on create.' },
+    kind: {
+      type: 'string',
+      enum: ['remote', 'container', 'process'],
+      description:
+        'container = the gateway runs the image in an isolated container, one per conversation. process = a process of the gateway itself (npm package or command), with its reach, no isolation. Only on create.',
+    },
+    process: {
+      type: 'object',
+      description:
+        'package (npm spec, installed by /install into <data>/mcp/<id>), command (the bin name, or without package a command on the PATH), args, env (secret variable names) and scope (conversation | shared).',
+    },
     container: {
       type: 'object',
       description:
@@ -393,6 +403,7 @@ const mcpServerSchema = {
     status: { type: 'object', properties: { connected: { type: 'boolean' }, lastError: { type: 'string' } } },
     agents: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' } } } },
     selfReference: { type: 'boolean', description: 'The URL is this gateway own /v1/mcp.' },
+    install: { type: 'object', description: 'process only', properties: { installed: { type: 'boolean' }, version: { type: 'string' }, stale: { type: 'boolean' } } },
   },
 }
 
@@ -993,9 +1004,24 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'Saved', ...json(envelope(mcpServerSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
     },
+    '/mcp-servers/{id}/install': {
+      post: {
+        summary: 'npm install the package of a process MCP into its own folder, next to the previous install (kept if this one fails). Administrators only',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'OK (ok false = npm failed; see log)',
+            ...json(envelope({ type: 'object', properties: { ok: { type: 'boolean' }, version: { type: 'string' }, log: { type: 'string' }, server: mcpServerSchema } })),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
     '/mcp-servers/{id}/stop': {
       post: {
-        summary: 'Stop every running instance (one per conversation) of a container MCP. Administrators only',
+        summary: 'Stop every running instance (one per conversation, or the shared one) of a container or process MCP. Administrators only',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: {
           '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { stopped: { type: 'integer' } } })) },

@@ -351,13 +351,27 @@ export interface IMcpContainer {
   env: string[]
 }
 
+/** Um MCP que roda como processo do próprio gateway (pacote npm ou comando), sem isolamento. */
+export interface IMcpProcess {
+  package?: string
+  command?: string
+  args: string[]
+  env: string[]
+  scope: 'conversation' | 'shared'
+}
+
+export type TMcpKind = 'remote' | 'container' | 'process'
+
 export interface IMcpServer {
   id: string
   name: string
-  kind: 'remote' | 'container'
+  kind: TMcpKind
   container?: IMcpContainer
-  /** Só em contêiner: as variáveis secretas declaradas e se têm valor (⛔ nunca o valor). */
+  process?: IMcpProcess
+  /** Só em contêiner e processo: as variáveis secretas declaradas e se têm valor (⛔ nunca o valor). */
   env?: Array<{ name: string; configured: boolean }>
+  /** Só em processo: o que está instalado e se ainda é o pacote do cadastro. */
+  install?: { installed: boolean; version?: string; spec?: string; installedAt?: string; stale?: boolean }
   url: string
   transport: TMcpTransport
   auth: TMcpAuth

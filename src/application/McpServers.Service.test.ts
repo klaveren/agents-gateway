@@ -105,4 +105,38 @@ describe('McpServersService', () => {
     service.remove('pw')
     assert.strictEqual(secrets.get('mcp:pw:env:API_TOKEN'), undefined)
   })
+
+  it('processo: pacote npm ou comando; variável sem lista proibida (o alcance é escolha do admin); escopo', () => {
+    const { service, secrets } = build()
+    const created = service.create(
+      { id: 'pw', name: 'Playwright', kind: 'process', process: { package: '@playwright/mcp@0.0.41', args: ['--headless'], env: ['NODE_OPTIONS'] } },
+      'root',
+    )
+    assert.deepStrictEqual([created.kind, created.url, created.process?.scope, created.process?.command], ['process', '', 'conversation', undefined])
+
+    assert.throws(
+      () => service.create({ id: 'nada', name: 'x', kind: 'process', process: {} }, 'root'),
+      (error: InvalidMcpServerError) => error.issues.some((issue) => issue.field === 'package'),
+    )
+    assert.throws(
+      () => service.create({ id: 'ruim', name: 'x', kind: 'process', process: { package: 'Não É Pacote', command: 'a\nb', env: ['minusculo'] } }, 'root'),
+      (error: InvalidMcpServerError) => ['package', 'command', 'env'].every((field) => error.issues.some((issue) => issue.field === field)),
+    )
+    assert.strictEqual(
+      service.create({ id: 'livre', name: 'x', kind: 'process', process: { command: 'uvx', args: ['mcp-server-fetch'], scope: 'shared' } }, 'root').process?.scope,
+      'shared',
+    )
+
+    assert.deepStrictEqual(service.update('pw', { process: { scope: 'shared', args: ['--headless', '--isolated'] } }, 'root').process, {
+      package: '@playwright/mcp@0.0.41',
+      args: ['--headless', '--isolated'],
+      env: ['NODE_OPTIONS'],
+      scope: 'shared',
+    })
+
+    service.saveEnv('pw', 'NODE_OPTIONS', '--max-old-space-size=512', 'root')
+    assert.deepStrictEqual(service.envStatus('pw'), [{ name: 'NODE_OPTIONS', configured: true }])
+    service.remove('pw')
+    assert.strictEqual(secrets.get('mcp:pw:env:NODE_OPTIONS'), undefined)
+  })
 })

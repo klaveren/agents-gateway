@@ -1,10 +1,14 @@
+import { accessSync, constants, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { IMcpServerConfig, mcpEnvSecretKey, mcpSecretKey } from '@domain/models/McpServer.Model'
+import { IMcpServerConfig, isLaunchedMcp, mcpEnvSecretKey, mcpSecretKey } from '@domain/models/McpServer.Model'
 import { containerArgs, instanceName, openEgress } from '@infra/sandbox/Docker.Sandbox'
 import { resolveAllowedHosts } from '@infra/sandbox/Egress.Proxy'
 import { ICredentialSource } from '@domain/ports/CredentialStore.Port'
 import { IMcpServerRepository } from '@domain/ports/McpServerRepository.Port'
 import { IToolDefinition } from '@infra/tools/Tool.Types'
+import { installDir, resolveCommand } from './Mcp.Install'
 import { IMcpClientOptions, McpServerClient } from './McpServer.Client'
 
 export interface IMcpServerStatus {
@@ -13,7 +17,7 @@ export interface IMcpServerStatus {
   enabled: boolean
   connected: boolean
   lastError?: string
-  /** Só em contêiner: quantas instâncias (conversas) estão de pé agora. */
+  /** Só em contêiner e processo: quantas instâncias (conversas) estão de pé agora. */
   instances?: number
 }
 
@@ -25,10 +29,22 @@ interface IInstance {
 }
 
 const MINUTE = 60_000
+/** A chave da instância única de um processo `shared`. */
+const SHARED = '*'
 const maxInstances = () => Number.parseInt(process.env.MCP_CONTAINER_MAX ?? '', 10) || 10
 const idleMs = () => (Number.parseInt(process.env.MCP_CONTAINER_IDLE_MINUTES ?? '', 10) || 15) * MINUTE
 
 /** Só o que o `docker` precisa para falar com o daemon — ⛔ nada do ambiente do gateway (chaves, `.env`). */
+function writable(dir: string | undefined): boolean {
+  if (!dir) return false
+  try {
+    accessSync(dir, constants.W_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
 function dockerEnv(): Record<string, string> {
   const env: Record<string, string> = { ...getDefaultEnvironment() }
   for (const name of ['DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG', 'DOCKER_CERT_PATH', 'DOCKER_TLS_VERIFY']) {
@@ -51,8 +67,9 @@ export class McpRegistry {
   private readonly clients = new Map<string, { fingerprint: string; client: McpServerClient }>()
 
   /**
-   * ⛔ CONTÊINER: UMA INSTÂNCIA POR CONVERSA (chave `servidor + sessão`). Navegador, cookies e arquivos de
-   * uma conversa nunca são vistos por outra; a instância morre por ociosidade.
+   * ⛔ CONTÊINER E PROCESSO: UMA INSTÂNCIA POR CONVERSA (chave `servidor + sessão`). Navegador, cookies e
+   * arquivos de uma conversa nunca são vistos por outra; a instância morre por ociosidade. O processo em
+   * `shared` é a exceção escolhida no cadastro: uma instância só (`servidor + *`).
    */
   private readonly instances = new Map<string, IInstance>()
   private readonly starting = new Map<string, Promise<IInstance | undefined>>()
@@ -76,12 +93,13 @@ export class McpRegistry {
     return this.sessionLookup(sessionId)
   }
 
-  /** O cliente certo: o compartilhado (remoto) ou a instância DESTA conversa (contêiner). */
+  /** O cliente certo: o compartilhado (remoto) ou a instância DESTA conversa (contêiner, processo). */
   async clientFor(id: string, sessionId?: string): Promise<McpServerClient | undefined> {
     const config = this.servers.get(id)
-    if (config?.kind !== 'container') return this.client(id)
-    if (!config.enabled || !sessionId) return undefined
-    return (await this.instance(config, sessionId))?.client
+    if (!config || !isLaunchedMcp(config)) return this.client(id)
+    const key = config.kind === 'process' && config.process?.scope === 'shared' ? SHARED : sessionId
+    if (!config.enabled || !key) return undefined
+    return (await this.instance(config, key))?.client
   }
 
   private async instance(config: IMcpServerConfig, sessionId: string): Promise<IInstance | undefined> {
@@ -100,7 +118,30 @@ export class McpRegistry {
   }
 
   private async startInstance(config: IMcpServerConfig, sessionId: string, key: string): Promise<IInstance | undefined> {
-    if (this.instances.size + this.starting.size > maxInstances()) throw new Error(`too many isolated MCP instances running (MCP_CONTAINER_MAX=${maxInstances()}); try again later`)
+    if (this.instances.size + this.starting.size > maxInstances()) throw new Error(`too many MCP instances running (MCP_CONTAINER_MAX=${maxInstances()}); try again later`)
+    const { client, cleanup } = config.kind === 'process' ? this.launchProcess(config, sessionId) : await this.launchContainer(config, sessionId)
+    if (!(await client.connect())) {
+      await client.close()
+      await cleanup()
+      throw new Error(client.lastError ?? `could not start the ${config.id} MCP`)
+    }
+
+    const entry: IInstance = {
+      client,
+      sessionId,
+      lastUsed: Date.now(),
+      close: async () => {
+        this.instances.delete(key)
+        await client.close()
+        await cleanup()
+      },
+    }
+    this.instances.set(key, entry)
+    this.startReaper()
+    return entry
+  }
+
+  private async launchContainer(config: IMcpServerConfig, sessionId: string): Promise<{ client: McpServerClient; cleanup: () => Promise<void> }> {
     const container = config.container!
     const instance = instanceName()
     const egress =
@@ -123,25 +164,30 @@ export class McpRegistry {
       instance,
     })
     const client = new McpServerClient(`container://${config.id}`, {}, { auth: 'none', label: config.id, stdio: { command: 'docker', args, env } })
-    if (!(await client.connect())) {
-      await client.close()
-      await egress?.close()
-      throw new Error(client.lastError ?? `could not start the ${config.id} container`)
-    }
+    return { client, cleanup: async () => void (await egress?.close()) }
+  }
 
-    const entry: IInstance = {
-      client,
-      sessionId,
-      lastUsed: Date.now(),
-      close: async () => {
-        this.instances.delete(key)
-        await client.close()
-        await egress?.close()
-      },
+  /**
+   * ⚖️ PROCESSO DO GATEWAY, SEM TRAVA: quem cadastrou escolheu o alcance. ⛔ Só o ambiente: o básico
+   * (`PATH`, `HOME`…) e as variáveis declaradas — o `.env` do gateway (chaves de API, segredo do JWT) não vai.
+   * Por conversa, uma pasta de trabalho vazia, apagada junto com a instância; em `shared`, a do servidor.
+   */
+  private launchProcess(config: IMcpServerConfig, sessionId: string): { client: McpServerClient; cleanup: () => Promise<void> } {
+    const proc = config.process!
+    const command = resolveCommand(config.id, proc)
+    const env: Record<string, string> = { ...getDefaultEnvironment() }
+    for (const name of proc.env) {
+      const value = this.secrets.get(mcpEnvSecretKey(config.id, name))
+      if (value) env[name] = value
     }
-    this.instances.set(key, entry)
-    this.startReaper()
-    return entry
+    const shared = sessionId === SHARED
+    const cwd = shared ? join(installDir(config.id), 'work') : mkdtempSync(join(tmpdir(), `gw-mcp-${config.id}-`))
+    mkdirSync(cwd, { recursive: true, mode: 0o700 })
+    // ⚠️ No pod o HOME é só leitura (`readOnlyRootFilesystem`), e MCP grava nele (o Playwright, em `~/.cache`).
+    // Sem HOME gravável, o processo ganha um próprio: a pasta de trabalho dele.
+    if (!writable(env.HOME)) env.HOME = cwd
+    const client = new McpServerClient(`process://${config.id}`, {}, { auth: 'none', label: config.id, stdio: { command, args: proc.args, env, cwd } })
+    return { client, cleanup: async () => (shared ? undefined : rmSync(cwd, { recursive: true, force: true })) }
   }
 
   /** Encerra as instâncias ociosas (ou todas, de um servidor). */
@@ -171,8 +217,8 @@ export class McpRegistry {
   /** O cliente de um servidor LIGADO; `undefined` se não existe ou está desligado. */
   client(id: string): McpServerClient | undefined {
     const config = this.servers.get(id)
-    // Contêiner não tem cliente compartilhado: é uma instância por conversa (`clientFor`).
-    if (!config?.enabled || config.kind === 'container') {
+    // Contêiner e processo não têm cliente compartilhado: sobem instâncias (`clientFor`).
+    if (!config?.enabled || isLaunchedMcp(config)) {
       this.forget(id)
       return undefined
     }
@@ -212,10 +258,10 @@ export class McpRegistry {
     return (await this.connected(id, sessionId))?.listTools() ?? []
   }
 
-  /** Para a tela: as ferramentas de um contêiner numa instância DESCARTÁVEL (aberta e fechada aqui). */
+  /** Para a tela: as ferramentas de um contêiner ou processo numa instância DESCARTÁVEL (aberta e fechada aqui). */
   async probeTools(id: string): Promise<IToolDefinition[]> {
     const config = this.servers.get(id)
-    if (config?.kind !== 'container') return this.tools(id)
+    if (!isLaunchedMcp(config)) return this.tools(id)
     const result = await this.test(id)
     return result.tools
   }
@@ -223,7 +269,7 @@ export class McpRegistry {
   /** "Testar conexão": tenta AGORA, ignorando o backoff, e lista as ferramentas. */
   async test(id: string): Promise<{ ok: boolean; tools: IToolDefinition[]; message?: string }> {
     const config = this.servers.get(id)
-    if (config?.kind === 'container') {
+    if (config && isLaunchedMcp(config)) {
       if (!config.enabled) return { ok: false, tools: [], message: 'server is disabled' }
       const probe = `probe:${instanceName()}`
       try {
@@ -244,18 +290,18 @@ export class McpRegistry {
 
   /** Conecta os ligados, sem bloquear quem chamou por um servidor fora do ar. */
   async connectAll(): Promise<void> {
-    // Contêiner não conecta no boot: a instância nasce na primeira ferramenta de cada conversa.
+    // Contêiner e processo não conectam no boot: a instância nasce na primeira ferramenta de cada conversa.
     await Promise.all(
       this.servers
         .list()
-        .filter((config) => config.kind !== 'container')
+        .filter((config) => !isLaunchedMcp(config))
         .map((config) => this.client(config.id)?.connect()),
     )
   }
 
   status(): IMcpServerStatus[] {
     return this.servers.list().map((config) => {
-      if (config.kind === 'container') {
+      if (isLaunchedMcp(config)) {
         const instances = [...this.instances.keys()].filter((key) => key.startsWith(`${config.id}\u0000`)).length
         return { id: config.id, name: config.name, enabled: config.enabled, connected: config.enabled, instances }
       }

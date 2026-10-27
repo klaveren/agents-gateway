@@ -12,9 +12,10 @@ export type TMcpTransport = 'auto' | 'http' | 'sse'
 
 /**
  * `remote`: um MCP que já está no ar, por HTTP/SSE. `container`: o gateway sobe a imagem num contêiner
- * ISOLADO, um por conversa (ver `IMcpContainer`).
+ * ISOLADO, um por conversa (ver `IMcpContainer`). `process`: um processo do PRÓPRIO gateway (pacote npm ou
+ * comando), sem isolamento — ver `IMcpProcess`.
  */
-export type TMcpKind = 'remote' | 'container'
+export type TMcpKind = 'remote' | 'container' | 'process'
 
 /**
  * Um MCP em contêiner. ⛔ O que NÃO está aqui não é configurável: disco só leitura, sem capacidades, sem
@@ -45,6 +46,33 @@ export const MCP_CONTAINER_DEFAULTS: Pick<IMcpContainer, 'writable' | 'memoryMb'
   env: [],
 }
 
+/**
+ * Um MCP que roda como processo do gateway, falando MCP pelo stdio.
+ *
+ * ⚖️ SEM TRAVA, DE PROPÓSITO: o processo tem o usuário, o disco e a rede do gateway. É escolha de quem
+ * administra (o Playwright precisa de navegador e rede de verdade); o isolamento, quando importa, é o
+ * `container`. ⛔ O ambiente não herda o `.env` do gateway: só o básico e as variáveis declaradas.
+ */
+export interface IMcpProcess {
+  /** Spec npm (`@playwright/mcp@0.0.41`), instalado em `<dados>/mcp/<id>` pelo botão Instalar. */
+  package?: string
+  /** Com pacote: o nome do bin, quando ele tem vários. Sem pacote: o comando, no PATH (`npx`, `uvx`, caminho absoluto). */
+  command?: string
+  args: string[]
+  /** Nomes das variáveis secretas (os valores ficam cifrados no cofre, `mcp:<id>:env:<NOME>`). */
+  env: string[]
+  /** `conversation`: um processo por conversa (navegador, cookies e arquivos separados). `shared`: um só para todas. */
+  scope: 'conversation' | 'shared'
+}
+
+export const MCP_PROCESS_DEFAULTS: Pick<IMcpProcess, 'args' | 'env' | 'scope'> = { args: [], env: [], scope: 'conversation' }
+
+/** As variáveis secretas declaradas, do contêiner ou do processo. */
+export const mcpEnvNames = (server: Pick<IMcpServerConfig, 'container' | 'process'>): string[] => server.container?.env ?? server.process?.env ?? []
+
+/** Contêiner e processo não têm cliente compartilhado: sobem instâncias (por conversa, ou uma só em `shared`). */
+export const isLaunchedMcp = (server: Pick<IMcpServerConfig, 'kind'> | undefined): boolean => server?.kind === 'container' || server?.kind === 'process'
+
 export const mcpEnvSecretKey = (serverId: string, name: string) => `mcp:${serverId}:env:${name}`
 
 export interface IMcpServerConfig {
@@ -54,7 +82,9 @@ export interface IMcpServerConfig {
   kind?: TMcpKind
   /** Só em `container`. */
   container?: IMcpContainer
-  /** Em `remote`, a URL do MCP. Em `container`, vazia. */
+  /** Só em `process`. */
+  process?: IMcpProcess
+  /** Em `remote`, a URL do MCP. Em `container` e `process`, vazia. */
   url: string
   transport: TMcpTransport
   auth: TMcpAuth

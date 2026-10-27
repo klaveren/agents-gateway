@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { IMcpContainer, IMcpServerConfig, TMcpAuth, TMcpKind, TMcpTransport } from '@domain/models/McpServer.Model'
+import { IMcpContainer, IMcpProcess, IMcpServerConfig, TMcpAuth, TMcpKind, TMcpTransport } from '@domain/models/McpServer.Model'
 import { IMcpServerRepository, TMcpServerPatch } from '@domain/ports/McpServerRepository.Port'
 
 const SCHEMA = `
@@ -29,12 +29,14 @@ type TRow = Record<string, unknown>
 const ADDED_COLUMNS: Array<{ column: string; definition: string }> = [
   { column: 'kind', definition: "TEXT NOT NULL DEFAULT 'remote'" },
   { column: 'container', definition: 'TEXT' },
+  { column: 'process', definition: 'TEXT' },
 ]
 
 const COLUMNS: Record<keyof TMcpServerPatch, string> = {
   name: 'name',
   url: 'url',
   container: 'container',
+  process: 'process',
   transport: 'transport',
   auth: 'auth',
   headerName: 'header_name',
@@ -70,13 +72,14 @@ export class SqliteMcpServerRepository implements IMcpServerRepository {
   insert(server: IMcpServerConfig): void {
     this.db
       .prepare(
-        'INSERT INTO mcp_servers (id, name, kind, container, url, transport, auth, header_name, enabled, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO mcp_servers (id, name, kind, container, process, url, transport, auth, header_name, enabled, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         server.id,
         server.name,
         server.kind ?? 'remote',
         server.container ? JSON.stringify(server.container) : null,
+        server.process ? JSON.stringify(server.process) : null,
         server.url,
         server.transport,
         server.auth,
@@ -129,6 +132,7 @@ function toServer(row: TRow): IMcpServerConfig {
     name: String(row.name),
     kind: (typeof row.kind === 'string' ? row.kind : 'remote') as TMcpKind,
     ...(typeof row.container === 'string' ? { container: JSON.parse(row.container) as IMcpContainer } : {}),
+    ...(typeof row.process === 'string' ? { process: JSON.parse(row.process) as IMcpProcess } : {}),
     url: String(row.url),
     transport: String(row.transport) as TMcpTransport,
     auth: String(row.auth) as TMcpAuth,

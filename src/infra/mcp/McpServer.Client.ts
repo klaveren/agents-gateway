@@ -11,6 +11,7 @@ const CLIENT_INFO = { name: 'agents-gateway', version: '1.0.0-alpha' }
 
 export const BASE_RETRY_MS = 1_000
 export const MAX_RETRY_MS = 60_000
+const STDERR_TAIL = 600
 
 export interface IMcpClientDeps {
   createClient?: () => Client
@@ -35,8 +36,8 @@ export interface IMcpClientOptions {
   fixedHeaders?: () => Record<string, string> | undefined
   /** O nome no log (o id do servidor). */
   label?: string
-  /** Em vez de HTTP: um processo (o `docker run` de um MCP em contêiner) falando MCP pelo stdio. */
-  stdio?: { command: string; args: string[]; env: Record<string, string> }
+  /** Em vez de HTTP: um processo (o `docker run` de um MCP em contêiner, ou o próprio MCP) falando MCP pelo stdio. */
+  stdio?: { command: string; args: string[]; env: Record<string, string>; cwd?: string }
 }
 
 /**
@@ -62,6 +63,7 @@ export class McpServerClient {
   private readonly baseFetch: typeof fetch
   /** O último erro de conexão ou de chamada, para a tela de MCPs. */
   lastError?: string
+  private stderrTail = ''
 
   constructor(
     public readonly serverUrl: string,
@@ -207,7 +209,7 @@ export class McpServerClient {
     const transport = this.options.transport ?? 'auto'
     const stdio = this.options.stdio
     const makers = stdio
-      ? [() => new StdioClientTransport({ command: stdio.command, args: stdio.args, env: stdio.env, stderr: 'ignore' })]
+      ? [() => this.stdioTransport(stdio)]
       : [
           ...(transport === 'sse' ? [] : [() => new StreamableHTTPClientTransport(url, { fetch: fetchWithCredential })]),
           ...(transport === 'http' ? [] : [() => new SSEClientTransport(url, { fetch: fetchWithCredential })]),
@@ -231,7 +233,7 @@ export class McpServerClient {
         console.log(`[mcp] Conectado em ${this.serverUrl}`)
         return true
       } catch (error: unknown) {
-        this.lastError = withoutRemoteBody(toMessage(error))
+        this.lastError = withoutRemoteBody(toMessage(error)) + (this.stderrTail ? ` — ${this.stderrTail}` : '')
         // Transporte que falhou continua segurando timer de reconexão e socket. Sem fechar,
         // cada tentativa do backoff vaza um handle — e o backoff tenta para sempre.
         await transport.close().catch(() => undefined)
@@ -241,6 +243,19 @@ export class McpServerClient {
 
     this.scheduleRetry()
     return false
+  }
+
+  /**
+   * ⚖️ O STDERR DO PROCESSO VAI PARA O ERRO: um MCP local que não sobe (pacote sem navegador, flag errada)
+   * só explica o porquê no stderr. Guarda o fim dele, e só isso — lido sempre, para o pipe não encher.
+   */
+  private stdioTransport(stdio: NonNullable<IMcpClientOptions['stdio']>): StdioClientTransport {
+    this.stderrTail = ''
+    const transport = new StdioClientTransport({ command: stdio.command, args: stdio.args, env: stdio.env, ...(stdio.cwd ? { cwd: stdio.cwd } : {}), stderr: 'pipe' })
+    transport.stderr?.on('data', (chunk: Buffer) => {
+      this.stderrTail = (this.stderrTail + chunk.toString('utf8')).slice(-STDERR_TAIL).trim()
+    })
+    return transport
   }
 
   /**

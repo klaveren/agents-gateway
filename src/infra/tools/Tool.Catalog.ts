@@ -1,5 +1,5 @@
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
-import { IMcpServerConfig, MCP_ALL_TOOLS, mcpSelection, parseMcpToolRef } from '@domain/models/McpServer.Model'
+import { IMcpServerConfig, isLaunchedMcp, MCP_ALL_TOOLS, mcpSelection, parseMcpToolRef } from '@domain/models/McpServer.Model'
 import { McpRegistry } from '@infra/mcp/Mcp.Registry'
 import { delegatesOf } from '@domain/models/Delegation.Model'
 import { ILocalTool, IToolDefinition, IToolResult } from './Tool.Types'
@@ -110,7 +110,7 @@ export class ToolCatalog {
     }
   }
 
-  /** O servidor de um contêiner, visto por um SDK agêntico: o proxy do gateway, preso à conversa. */
+  /** O servidor de um contêiner ou processo, visto por um SDK agêntico: o proxy do gateway, preso à conversa. */
   private viaProxy(config: IMcpServerConfig): IMcpServerConfig | undefined {
     if (!this.containerProxy) return undefined
     return { ...config, kind: 'remote', url: `${this.containerProxy.base}/${config.id}`, transport: 'http', auth: 'caller', headerName: 'X-Tool-Authorization' }
@@ -121,7 +121,7 @@ export class ToolCatalog {
     const servers: IAgentMcpServer[] = []
     for (const [id, choice] of mcpSelection(allowed)) {
       const stored = this.mcp.get(id)
-      if (stored?.kind === 'container') {
+      if (stored && isLaunchedMcp(stored)) {
         const proxied = stored.enabled && context?.sessionId ? this.viaProxy(stored) : undefined
         if (!proxied || !context?.sessionId) continue
         servers.push({

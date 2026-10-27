@@ -52,7 +52,8 @@ export function subscriptionHome(kind: 'codex' | 'antigravity' | 'claude', env: 
   return dir
 }
 
-function dataDir(env: NodeJS.ProcessEnv): string {
+/** A pasta dos dados do gateway: a do banco (no pod, `/app/data`, o PVC). */
+export function dataDir(env: NodeJS.ProcessEnv = process.env): string {
   const db = env.CONVERSATIONS_DB?.trim()
   return dirname(resolve(db && db !== 'off' ? db : DEFAULT_DB_PATH))
 }

@@ -205,6 +205,7 @@ function buildRoutes(
     { method: 'get', path: '/mcp-servers/:id/tools', handler: mcpServers.tools },
     { method: 'put', path: '/mcp-servers/:id/env/:name', handler: mcpServers.saveEnv },
     { method: 'post', path: '/mcp-servers/:id/stop', handler: mcpServers.stopInstances },
+    { method: 'post', path: '/mcp-servers/:id/install', handler: mcpServers.install },
     // O gateway como servidor MCP (ver `SelfMcp.Controller`): só POST; sem estado, GET e DELETE são 405.
     { method: 'post', path: '/mcp', handler: handleSelfMcp },
     { method: 'get', path: '/mcp', handler: rejectSelfMcp },
