@@ -491,6 +491,16 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   )
 
   server.registerTool(
+    'move_rule',
+    {
+      description:
+        'Move an environment rule one position up or down within its scope (it swaps with its neighbour; at the end of the list it stays). Returns the scope in the new order. Call it once per step to move a rule further. Confirm the new order with the person first.',
+      inputSchema: { id: z.string().describe('From list_rules'), direction: z.enum(['up', 'down']) },
+    },
+    async ({ id, direction }) => reply(await api('POST', `/rules/${encodeURIComponent(id)}/move`, { body: { direction } })),
+  )
+
+  server.registerTool(
     'delete_rule',
     { description: 'Delete an environment rule; the others of its scope are renumbered. Confirm with the person first.', inputSchema: { id: z.string() } },
     async ({ id }) => reply(await api('DELETE', `/rules/${encodeURIComponent(id)}`)),

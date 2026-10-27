@@ -17,6 +17,9 @@ import { SqliteAgentHookRepository } from '@infra/persistence/Sqlite.AgentHookRe
 import { SqliteCredentialStore } from '@infra/persistence/Sqlite.CredentialStore'
 import { SecretBox } from '@infra/secrets/Aes.SecretBox'
 import { HooksController } from './Hooks.Controller'
+import { GuidanceController } from './Guidance.Controller'
+import { GuidanceService } from '@application/Guidance.Service'
+import { SqliteGuidanceRepository } from '@infra/persistence/Sqlite.GuidanceRepository'
 import { PackagesController } from './Packages.Controller'
 
 /** Um micromamba falso: instala `jq` (cria o ambiente) e lista o que está lá. */
@@ -83,6 +86,8 @@ describe('MCP do próprio gateway (integração)', () => {
       undefined,
       packages,
       hooks,
+      undefined,
+      new GuidanceController({ guidance: new GuidanceService(new SqliteGuidanceRepository(), () => false), proof: makeAuth().proof }),
     ).start(0)
     await new Promise((resolve) => server.once('listening', resolve))
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`
@@ -134,6 +139,7 @@ describe('MCP do próprio gateway (integração)', () => {
       'delete_hook',
       'delete_rule',
       'install_package',
+      'move_rule',
       'remove_package',
       'save_agent',
       'save_doc',
@@ -234,5 +240,23 @@ describe('MCP do próprio gateway (integração)', () => {
     assert.deepStrictEqual(json(await client.callTool({ name: 'hook_deliveries', arguments: { agentId: 'atlas', name: 'deploy' } })), [])
     await client.callTool({ name: 'delete_hook', arguments: { agentId: 'atlas', name: 'deploy' } })
     assert.deepStrictEqual(json(await client.callTool({ name: 'list_hooks', arguments: { agentId: 'atlas' } })), [])
+  })
+
+  it('save_rule numera, move_rule reordena (uma posição por chamada) e delete_rule renumera', async () => {
+    const client = await connect(admin)
+    const titles = async () =>
+      json(await client.callTool({ name: 'list_rules', arguments: {} })).map((rule: { position: number; title: string }) => `${rule.position}:${rule.title}`)
+    const first = json(await client.callTool({ name: 'save_rule', arguments: { title: 'Idioma', body: 'Português.' } }))
+    const second = json(await client.callTool({ name: 'save_rule', arguments: { title: 'Fontes', body: 'Cite a fonte.' } }))
+    assert.deepStrictEqual(await titles(), ['1:Idioma', '2:Fontes'])
+
+    const moved = json(await client.callTool({ name: 'move_rule', arguments: { id: second.id, direction: 'up' } }))
+    assert.deepStrictEqual(
+      moved.map((rule: { title: string }) => rule.title),
+      ['Fontes', 'Idioma'],
+    )
+    await client.callTool({ name: 'delete_rule', arguments: { id: second.id } })
+    assert.deepStrictEqual(await titles(), ['1:Idioma'])
+    await client.callTool({ name: 'delete_rule', arguments: { id: first.id } })
   })
 })

@@ -32,6 +32,7 @@ const ATLAS_TOOLS = [
   'delete_hook',
   'list_rules',
   'save_rule',
+  'move_rule',
   'delete_rule',
   'list_docs',
   'get_doc',
@@ -80,7 +81,7 @@ Um hook é a URL POST /v1/hook/<agente>/<nome>: quando um serviço (GitHub, CRM,
 - Rules são as regras do ambiente (Rule 1, Rule 2…): todo agente recebe as ligadas no system prompt quando a conversa começa — as globais e depois as do projeto da conversa. Specs (como algo deve ser) e ADRs (uma decisão e o porquê) são documentos em markdown: a conversa recebe só o índice e o agente lê o inteiro com read_doc.
 - Nasce no projeto da conversa (o projectId dela). Global (projectId null) só se a pessoa pedir.
 - Rule: título curto e corpo imperativo, uma regra por registro. Documento: id em slug, resumo de uma linha (é o que aparece no índice) e o corpo em markdown; numa ADR, o status vai no texto.
-- Consulte com list_rules e list_docs antes de criar, para não duplicar. Só grave (save_rule, save_doc) ou apague DEPOIS que a pessoa confirmar o texto.
+- Consulte com list_rules e list_docs antes de criar, para não duplicar. Para reordenar, move_rule (uma posição por chamada). Só grave (save_rule, save_doc), reordene ou apague DEPOIS que a pessoa confirmar o texto.
 - Vale para as conversas que começarem depois: diga isso à pessoa.`,
   reasoningEfforts: ['low', 'medium', 'high'],
   modes: [EMode.AGENT],
