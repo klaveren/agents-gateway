@@ -163,11 +163,12 @@ async function continueFresh() {
         </div>
       </div>
       <div v-if="header || context" class="ml-auto flex items-center gap-1">
-        <div v-if="context" class="mr-2 flex flex-col items-end gap-1" :title="`Contexto em uso na última chamada ao modelo${context.percent !== undefined ? ` — ${context.percent}% da janela` : ''}`">
-          <span class="text-[11px] tabular-nums" :class="context.warn ? 'text-amber-300' : 'text-zinc-400'">Contexto {{ context.label }}</span>
-          <span v-if="context.percent !== undefined" class="h-1 w-24 overflow-hidden rounded-full bg-zinc-800">
-            <span class="block h-full rounded-full" :class="context.warn ? 'bg-amber-400' : 'bg-emerald-500/70'" :style="{ width: `${context.percent}%` }" />
-          </span>
+        <div v-if="context" class="mr-2 grid h-8 w-8 place-items-center" :title="`Contexto ${context.label}`">
+          <svg v-if="context.percent !== undefined" viewBox="0 0 32 32" class="col-start-1 row-start-1 h-8 w-8 -rotate-90">
+            <circle cx="16" cy="16" r="13" fill="none" stroke-width="3" class="stroke-zinc-800" />
+            <circle cx="16" cy="16" r="13" fill="none" stroke-width="3" stroke-linecap="round" pathLength="100" :stroke-dasharray="`${context.percent} 100`" :class="context.warn ? 'stroke-amber-400' : 'stroke-emerald-500'" />
+          </svg>
+          <span class="col-start-1 row-start-1 text-[9px] tabular-nums" :class="context.warn ? 'text-amber-300' : 'text-zinc-400'">{{ context.short }}</span>
         </div>
         <template v-if="header">
           <span v-if="auth.isAdmin && header.costUsd !== undefined" class="mr-2 hidden text-xs text-zinc-400 sm:inline">{{ tokens(header.usage.totalTokens) }} tokens · {{ header.costIsFloor ? '≥ ' : '' }}{{ usd(header.costUsd) }}</span>
