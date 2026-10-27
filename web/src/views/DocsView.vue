@@ -12,27 +12,49 @@ import { useAuthStore } from '@/stores/auth'
 import { useProjectsStore } from '@/stores/projects'
 
 /**
- * SPECS E ADRs (só admin): documentos em markdown que os agentes consultam.
+ * SPECS ou ADRs (só admin), uma página para cada (`kind`): documentos em markdown que os agentes consultam.
  * ⚖️ A conversa recebe só o índice (id, título, resumo) — os globais e os do projeto dela — e o agente lê o
  * documento inteiro com `read_doc` quando precisa. O status de uma ADR fica no próprio texto.
  */
-const props = defineProps<{ id?: string }>()
+const props = defineProps<{ kind: TDocKind; id?: string }>()
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const projects = useProjectsStore()
 
-const KIND_LABEL: Record<TDocKind, string> = { spec: 'Specs', adr: 'ADRs' }
+/** O que é cada tipo, para quem cadastra: a página explica antes de pedir o texto. */
+const KIND: Record<TDocKind, { title: string; one: string; base: string; short: string; lead: string; when: string[]; example: string; placeholder: string }> = {
+  spec: {
+    title: 'Specs',
+    one: 'spec',
+    base: '/specs',
+    short: 'Como algo deve ser: o que o agente segue. Globais e do projeto da conversa.',
+    lead: 'Uma spec diz COMO algo deve ser: requisitos, formatos, contratos e critérios de aceite. É o que o agente segue quando constrói ou responde.',
+    when: ['Formato de um arquivo, relatório ou resposta', 'Contrato de uma API ou de uma integração', 'Critérios para dar uma tarefa por pronta'],
+    example: 'Ex.: "Nomes de arquivo — todo arquivo novo usa AAAA-MM-DD-assunto.md".',
+    placeholder: 'Nomes de arquivo',
+  },
+  adr: {
+    title: 'ADRs',
+    one: 'ADR',
+    base: '/adrs',
+    short: 'Decisões tomadas e o porquê: o que o agente não desfaz. Globais e do projeto da conversa.',
+    lead: 'Uma ADR (Architecture Decision Record) registra UMA decisão: o contexto, o que se decidiu, as alternativas e as consequências. É o que impede o agente de desfazer, sem saber, algo que foi escolhido de propósito.',
+    when: ['Uma escolha de tecnologia ou de arquitetura', 'Um caminho descartado, e por quê', 'Uma decisão que troca outra (diga qual no texto)'],
+    example: 'O status vai no próprio texto: Proposta, Aceita, Substituída por…',
+    placeholder: 'Autenticação por sessão',
+  },
+}
 const TEMPLATE: Record<TDocKind, string> = {
   spec: '# Objetivo\n\n# Requisitos\n- \n\n# Fora do escopo\n- ',
   adr: '**Status:** Proposta\n\n# Contexto\n\n# Decisão\n\n# Consequências\n- ',
 }
 
 const scope = ref<string>(projects.current ?? GLOBAL_SCOPE)
-const kind = ref<TDocKind>('spec')
 const list = ref<IProjectDoc[]>([])
 const loadError = ref<string>()
-const adding = computed(() => route.name === 'doc-new')
+const adding = computed(() => route.name === `${props.kind}-new`)
+const info = computed(() => KIND[props.kind])
 
 const form = ref({ id: '', kind: 'spec' as TDocKind, title: '', summary: '', body: '', global: true, project: '' })
 const loaded = ref<IProjectDoc>()
@@ -44,14 +66,12 @@ const busy = ref(false)
 const removing = ref(false)
 
 const scopes = computed(() => [{ id: GLOBAL_SCOPE, name: 'Global — todos os projetos' }, ...projects.list.map((project) => ({ id: project.id, name: project.name }))])
-const shown = computed(() => list.value.filter((doc) => doc.kind === kind.value))
-const counts = computed(() => ({ spec: list.value.filter((doc) => doc.kind === 'spec').length, adr: list.value.filter((doc) => doc.kind === 'adr').length }))
+const shown = computed(() => list.value.filter((doc) => doc.kind === props.kind))
 const formScope = computed(() => (form.value.global ? GLOBAL_SCOPE : form.value.project))
 const dirty = computed(() => {
   const doc = loaded.value
   if (!doc) return true
   return (
-    form.value.kind !== doc.kind ||
     form.value.title !== doc.title ||
     form.value.summary !== doc.summary ||
     form.value.body !== (doc.body ?? '') ||
@@ -67,20 +87,22 @@ onMounted(async () => {
 watch(scope, () => void loadList())
 
 watch(
-  () => [props.id, adding.value] as const,
-  async ([id, isNew]) => {
+  () => [props.id, adding.value, props.kind] as const,
+  async ([id, isNew, kind]) => {
     issues.value = {}
     error.value = undefined
     note.value = undefined
     preview.value = false
     if (isNew) {
       loaded.value = undefined
-      form.value = { id: '', kind: kind.value, title: '', summary: '', body: TEMPLATE[kind.value], global: scope.value === GLOBAL_SCOPE, project: scope.value === GLOBAL_SCOPE ? (projects.current ?? '') : scope.value }
+      form.value = { id: '', kind, title: '', summary: '', body: TEMPLATE[kind], global: scope.value === GLOBAL_SCOPE, project: scope.value === GLOBAL_SCOPE ? (projects.current ?? '') : scope.value }
       return
     }
     if (!id) return
     try {
       const doc = await api<IProjectDoc>(`/docs/${encodeURIComponent(id)}`)
+      // O endereço é da outra página (uma ADR aberta em /specs): vai para a certa.
+      if (doc.kind !== kind) return void router.replace(`${KIND[doc.kind].base}/${doc.id}`)
       loaded.value = doc
       form.value = { id: doc.id, kind: doc.kind, title: doc.title, summary: doc.summary, body: doc.body ?? '', global: !doc.projectId, project: doc.projectId ?? projects.current ?? '' }
     } catch (failure) {
@@ -114,9 +136,8 @@ async function save() {
     if (adding.value) {
       const created = await api<IProjectDoc>('/docs', { method: 'POST', body: { id: form.value.id, ...body } })
       scope.value = created.projectId ?? GLOBAL_SCOPE
-      kind.value = created.kind
       await loadList()
-      await router.push(`/docs/${created.id}`)
+      await router.push(`${info.value.base}/${created.id}`)
     } else {
       loaded.value = await api<IProjectDoc>(`/docs/${encodeURIComponent(form.value.id)}`, { method: 'PUT', body })
       note.value = 'Documento salvo. Vale para as conversas que começarem agora.'
@@ -136,7 +157,7 @@ async function confirmRemove() {
     await api(`/docs/${encodeURIComponent(form.value.id)}`, { method: 'DELETE' })
     removing.value = false
     await loadList()
-    await router.push('/docs')
+    await router.push(info.value.base)
   } catch (failure) {
     error.value = describe(failure)
   } finally {
@@ -151,36 +172,24 @@ function describe(failure: unknown): string {
 
 <template>
   <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
-    <p class="font-medium text-zinc-200">Só quem administra cadastra specs e ADRs.</p>
+    <p class="font-medium text-zinc-200">Só quem administra cadastra {{ info.title }}.</p>
   </div>
 
-  <MasterDetail v-else :open="!!id || adding" back-to="/docs" back-label="Specs e ADRs" :title="adding ? 'Novo documento' : loaded?.title">
+  <MasterDetail v-else :open="!!id || adding" :back-to="info.base" :back-label="info.title" :title="adding ? `Nova ${info.one}` : loaded?.title">
     <template #list>
       <header class="flex items-center gap-2 px-4 pt-4 pb-1">
-        <h1 class="text-xl font-semibold">Specs e ADRs</h1>
-        <RouterLink to="/docs/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Novo documento"><Icon name="plus" class="h-5 w-5" /></RouterLink>
+        <h1 class="text-xl font-semibold">{{ info.title }}</h1>
+        <RouterLink :to="`${info.base}/new`" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" :title="`Nova ${info.one}`"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
-      <p class="px-4 pb-2 text-xs text-zinc-500">A conversa recebe o índice (título e resumo) dos globais e dos do projeto dela; o agente lê o documento inteiro quando precisa.</p>
+      <p class="px-4 pb-2 text-xs text-zinc-500">{{ info.short }}</p>
       <div class="px-4 pb-2">
         <select v-model="scope" class="input py-1.5 text-sm" aria-label="Escopo">
           <option v-for="item in scopes" :key="item.id" :value="item.id">{{ item.name }}</option>
         </select>
       </div>
-      <div class="flex gap-1.5 px-4 pb-2">
-        <button
-          v-for="value in ['spec', 'adr'] as const"
-          :key="value"
-          type="button"
-          class="rounded-full border px-3 py-1 text-xs"
-          :class="kind === value ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-300' : 'border-zinc-700 text-zinc-300 hover:bg-zinc-800'"
-          @click="kind = value"
-        >
-          {{ KIND_LABEL[value] }} <span class="text-zinc-500">{{ counts[value] }}</span>
-        </button>
-      </div>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
-      <p v-else-if="!shown.length" class="px-4 py-2 text-sm text-zinc-500">Nenhuma {{ kind === 'spec' ? 'spec' : 'ADR' }} em {{ scopeLabel(scope, projects.list) }}.</p>
-      <RouterLink v-for="doc in shown" :key="doc.id" :to="`/docs/${doc.id}`" class="mx-2 block rounded-xl px-3 py-2" :class="doc.id === id ? 'bg-emerald-500/15' : 'hover:bg-zinc-800/60'">
+      <p v-else-if="!shown.length" class="px-4 py-2 text-sm text-zinc-500">Nenhuma {{ info.one }} em {{ scopeLabel(scope, projects.list) }}.</p>
+      <RouterLink v-for="doc in shown" :key="doc.id" :to="`${info.base}/${doc.id}`" class="mx-2 block rounded-xl px-3 py-2" :class="doc.id === id ? 'bg-emerald-500/15' : 'hover:bg-zinc-800/60'">
         <span class="block truncate text-sm font-medium">{{ doc.title }}</span>
         <span class="block truncate text-xs text-zinc-500">{{ doc.id }}<template v-if="doc.summary"> · {{ doc.summary }}</template></span>
       </RouterLink>
@@ -188,17 +197,8 @@ function describe(failure: unknown): string {
 
     <template #detail>
       <form v-if="adding || loaded" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save">
-        <h2 class="text-lg font-semibold">{{ adding ? 'Novo documento' : loaded?.title }}</h2>
-        <div class="grid gap-3 sm:grid-cols-[1fr_auto]">
-          <label class="field">Título<input v-model="form.title" required maxlength="160" class="input" placeholder="Autenticação por sessão" @blur="slug" /><small v-for="m in issues.title" :key="m" class="error">{{ m }}</small></label>
-          <label class="field">
-            Tipo
-            <select v-model="form.kind" class="input">
-              <option value="spec">Spec</option>
-              <option value="adr">ADR</option>
-            </select>
-          </label>
-        </div>
+        <h2 class="text-lg font-semibold">{{ adding ? `Nova ${info.one}` : loaded?.title }}</h2>
+        <label class="field">Título<input v-model="form.title" required maxlength="160" class="input" :placeholder="info.placeholder" @blur="slug" /><small v-for="m in issues.title" :key="m" class="error">{{ m }}</small></label>
         <label class="field">
           Id
           <input v-model="form.id" :disabled="!adding" required pattern="[a-z0-9][a-z0-9-]{1,63}" class="input font-mono disabled:opacity-60" placeholder="autenticacao-por-sessao" />
@@ -234,18 +234,32 @@ function describe(failure: unknown): string {
         <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
         <div class="flex gap-2">
           <button type="submit" :disabled="busy || !dirty" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50">{{ adding ? 'Criar' : 'Salvar' }}</button>
-          <RouterLink v-if="adding" to="/docs" class="rounded-full px-4 py-2 text-sm hover:bg-zinc-800">Cancelar</RouterLink>
+          <RouterLink v-if="adding" :to="info.base" class="rounded-full px-4 py-2 text-sm hover:bg-zinc-800">Cancelar</RouterLink>
           <button v-else type="button" class="ml-auto rounded-full px-4 py-2 text-sm text-rose-300 hover:bg-rose-500/10" @click="removing = true">Apagar</button>
         </div>
       </form>
       <p v-else-if="error" class="mx-auto max-w-3xl text-sm text-rose-300">{{ error }}</p>
-      <div v-else class="grid h-full place-items-center text-center text-sm text-zinc-500">Escolha um documento ou crie um novo.</div>
+      <section v-else class="mx-auto flex max-w-2xl flex-col gap-3 text-sm text-zinc-300">
+        <h2 class="text-lg font-semibold text-zinc-100">O que é uma {{ info.one }}</h2>
+        <p>{{ info.lead }}</p>
+        <div>
+          <p class="mb-1 font-medium text-zinc-200">Quando escrever uma</p>
+          <ul class="list-disc pl-5 text-zinc-400">
+            <li v-for="item in info.when" :key="item">{{ item }}</li>
+          </ul>
+        </div>
+        <p class="text-zinc-400">{{ info.example }}</p>
+        <p class="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3 text-xs text-zinc-400">
+          Como o agente usa: cada conversa nova recebe o índice — id, título e resumo — das {{ info.title.toLowerCase() }} globais e das do projeto dela. Quando o assunto aparece, o agente lê a {{ info.one }} inteira com <code>read_doc</code>. Por isso o resumo importa: é ele que faz o agente saber quando ler.
+        </p>
+        <div><RouterLink :to="`${info.base}/new`" class="inline-block rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400">Nova {{ info.one }}</RouterLink></div>
+      </section>
     </template>
   </MasterDetail>
 
   <ConfirmDialog
     :open="removing"
-    title="Apagar o documento?"
+    :title="`Apagar a ${info.one}?`"
     :message="`${form.title} sai do índice das conversas novas.`"
     :busy="busy"
     @confirm="confirmRemove"
