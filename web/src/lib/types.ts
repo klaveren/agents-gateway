@@ -11,6 +11,8 @@ export interface IUsage {
   totalTokens?: number
   cacheReadTokens?: number
   cacheWriteTokens?: number
+  /** O contexto em uso na última chamada ao modelo. Não se soma; ausente = o provider não informa. */
+  contextTokens?: number
 }
 
 export interface IConversation {
@@ -100,6 +102,8 @@ export interface IAgentProvider {
   protocol?: TProvider
   models: string[]
   pricing: Record<string, IModelPrice>
+  /** A janela de contexto de cada modelo que o provider informou. */
+  contextLength?: Record<string, number>
   /** Os níveis do agente que o protocolo deste provider aceita. */
   reasoningEfforts?: string[]
   /** Por modelo: os níveis que ele aceita. `null` = desconhecido (valem os do provider); `[]` = não raciocina. */

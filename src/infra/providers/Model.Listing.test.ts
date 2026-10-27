@@ -121,4 +121,9 @@ describe('listModels', () => {
     assert.strictEqual(priceOf({ prompt: 'grátis', completion: '0' }), undefined)
     assert.deepStrictEqual(priceOf({ prompt: '0', completion: '0' }), { input: 0, output: 0 })
   })
+
+  it('Anthropic: a janela de contexto vem em `max_input_tokens`', async () => {
+    const fetcher = (async () => reply({ data: [{ id: 'claude-sonnet-5', display_name: 'Sonnet', max_input_tokens: 200000 }], has_more: false })) as unknown as typeof fetch
+    assert.strictEqual((await listModels({ protocol: EProvider.CLAUDE }, 'k', fetcher))[0].contextLength, 200000)
+  })
 })

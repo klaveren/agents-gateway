@@ -447,7 +447,15 @@ export class GoogleAgentAdapter implements IAgentAdapter {
 
     // Cache implícito: a parte lida vem em `cachedContentTokenCount`, já DENTRO de
     // `promptTokenCount`. Gravação de cache não existe nesse modo — não é cobrada à parte.
-    return { inputTokens, outputTokens, reasoningTokens, cacheReadTokens: raw.cachedContentTokenCount ?? 0, cacheWriteTokens: 0 }
+    // Um evento por resposta do modelo: a entrada dela é o contexto em uso.
+    return {
+      inputTokens,
+      outputTokens,
+      reasoningTokens,
+      cacheReadTokens: raw.cachedContentTokenCount ?? 0,
+      cacheWriteTokens: 0,
+      ...(inputTokens ? { contextTokens: inputTokens } : {}),
+    }
   }
 
   private toAgentEvent(event: ReturnType<typeof toStructuredEvents>[number], sessionId: string): IAgentEvent | undefined {

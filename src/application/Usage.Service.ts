@@ -6,7 +6,7 @@ import { IUsageRow } from '@domain/models/Usage.Model'
 export interface IUsageFigure {
   conversations: number
   turns: number
-  usage: Required<IStoredUsage>
+  usage: Required<Omit<IStoredUsage, 'contextTokens'>>
   /** Ausente sem tabela de preços (a visão de quem não administra). */
   costUsd?: number
   /** Algum modelo do bloco não tem preço: o custo é um PISO, não o valor exato. */
@@ -126,14 +126,15 @@ export function usageDays(since: Date, now: Date, tzOffsetMinutes: number): stri
 class Figure {
   private readonly conversationIds = new Set<string>()
   turns = 0
-  usage: Required<IStoredUsage> = { inputTokens: 0, outputTokens: 0, reasoningTokens: 0, totalTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }
+  // O contexto em uso não entra no relatório de consumo: ele não se soma.
+  usage: Required<Omit<IStoredUsage, 'contextTokens'>> = { inputTokens: 0, outputTokens: 0, reasoningTokens: 0, totalTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }
   private cost?: number
   private floor = false
 
   add(row: IUsageRow, cost: number | undefined, priced: boolean): void {
     this.conversationIds.add(row.conversationId)
     this.turns += row.turns
-    for (const key of Object.keys(this.usage) as Array<keyof IStoredUsage>) this.usage[key] += row.usage[key] ?? 0
+    for (const key of Object.keys(this.usage) as Array<keyof typeof this.usage>) this.usage[key] += row.usage[key] ?? 0
 
     if (!priced) return
     this.cost = (this.cost ?? 0) + (cost ?? 0)

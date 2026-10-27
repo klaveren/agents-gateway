@@ -63,6 +63,10 @@ const sessionSchema = {
         reasoningTokens: { type: 'integer' },
         cacheReadTokens: { type: 'integer', description: 'Part of inputTokens read from the cache.' },
         cacheWriteTokens: { type: 'integer', description: 'Part of inputTokens written to the cache.' },
+        contextTokens: {
+          type: 'integer',
+          description: 'Context in use: the input (cache included) of the LAST model call, not a sum. Absent when the provider does not report it (Codex, Antigravity).',
+        },
       },
     },
     createdAt: { type: 'string', format: 'date-time' },
@@ -226,6 +230,11 @@ const agentSchema = {
           name: { type: 'string', description: 'The provider name as configured.' },
           protocol: { type: 'string' },
           models: { type: 'array', items: { type: 'string' } },
+          contextLength: {
+            type: 'object',
+            description: 'Context window (tokens) of each model the provider reported one for, keyed by model id. Filled by refreshing the model list.',
+            additionalProperties: { type: 'integer' },
+          },
           pricing: {
             type: 'object',
             description:

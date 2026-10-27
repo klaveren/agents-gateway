@@ -23,6 +23,8 @@ import { TClassification } from './Classification.Model'
  * Somado, o número fica certo e a informação se perde.
  */
 export interface IStoredUsage {
+  /** O contexto em uso na última chamada ao modelo (ver `IUsage.contextTokens`). Não se soma. */
+  contextTokens?: number
   inputTokens?: number
   outputTokens?: number
   reasoningTokens?: number

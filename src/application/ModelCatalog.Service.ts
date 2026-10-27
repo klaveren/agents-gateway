@@ -48,6 +48,11 @@ export class ModelCatalogService {
    * O modelo pode ser usado: ATIVADO e DISPONÍVEL. ⚠️ Modelo que sumiu da listagem do provider fica
    * `available: false` na sincronização — e seguia oferecido nos agentes e na conversa, para falhar na hora.
    */
+  /** A janela de contexto do modelo, como a listagem do provider informou. `undefined` = não informou. */
+  contextOf(providerId: string, modelId: string): number | undefined {
+    return this.catalog.get(providerId, modelId)?.contextLength
+  }
+
   isEnabled(providerId: string, modelId: string): boolean {
     const model = this.catalog.get(providerId, modelId)
     return model?.enabled === true && model.available

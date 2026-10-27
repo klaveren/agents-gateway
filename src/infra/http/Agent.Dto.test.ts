@@ -37,4 +37,10 @@ describe('toAgentDto — raciocínio', () => {
     assert.strictEqual(dto.providers[0].reasoningEfforts, undefined)
     assert.deepStrictEqual(dto.providers[0].modelReasoning, { gemini: [] })
   })
+
+  it('a janela de contexto de cada modelo vai junto, só a dos que o catálogo conhece', () => {
+    const sizes: Record<string, number> = { raciocina: 200_000, parcial: 1_000_000 }
+    const dto = toAgentDto(agent(), () => ({ protocol: EProvider.CLAUDE, contextOf: (model: string) => sizes[model] }))
+    assert.deepStrictEqual(dto.providers[0].contextLength, { raciocina: 200_000, parcial: 1_000_000 })
+  })
 })

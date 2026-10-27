@@ -315,7 +315,7 @@ describe('ClaudeChatAdapter', () => {
     const usage = events.filter((e) => e.type === 'usage').map((e) => e.type === 'usage' && e.payload)
 
     assert.deepStrictEqual(usage, [
-      { inputTokens: 1000, cacheReadTokens: 800, cacheWriteTokens: 190 },
+      { inputTokens: 1000, cacheReadTokens: 800, cacheWriteTokens: 190, contextTokens: 1000 },
       { outputTokens: 18, reasoningTokens: 12 },
     ])
   })

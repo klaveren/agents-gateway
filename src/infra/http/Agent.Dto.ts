@@ -10,6 +10,8 @@ export interface IAgentProviderFacts {
   protocol?: EProvider
   pricing?: TModelPricing
   reasoningOf?(model: string): IModelReasoning | undefined
+  /** A janela de contexto de cada modelo, do catálogo. */
+  contextOf?(model: string): number | undefined
   /** Só para admin: por que este provider não roda agora. */
   unavailable?: { reason: string; label: string }
   /** Só na tela de edição: os modelos declarados que estão desligados no catálogo. */
@@ -32,6 +34,8 @@ export interface IAgentProviderDto {
    * fica de fora (não vira zero): quem ordena do mais barato usa `outputPriceOf`, que o manda para o fim.
    */
   pricing: Record<string, IModelPrice>
+  /** A janela de contexto (tokens de entrada) de cada modelo que o provider informou. Sem o dado, fica de fora. */
+  contextLength: Record<string, number>
   /** Os níveis do agente que o protocolo deste provider aceita, na ordem dele. */
   reasoningEfforts?: string[]
   /**
@@ -105,6 +109,12 @@ export function toAgentDto(agent: IAgent, factsOf: (providerId: string) => IAgen
         ...(facts.protocol ? { protocol: facts.protocol } : {}),
         models: target.models,
         pricing: Object.fromEntries(target.models.filter((model) => Object.hasOwn(pricing, model)).map((model) => [model, pricing[model]])),
+        contextLength: Object.fromEntries(
+          target.models.flatMap((model) => {
+            const size = facts.contextOf?.(model)
+            return size ? [[model, size]] : []
+          }),
+        ),
         reasoningEfforts: efforts.length ? efforts : undefined,
         modelReasoning: Object.fromEntries(target.models.map((model) => [model, efforts.length ? modelReasoningLevels(efforts, facts.reasoningOf?.(model)) : []])),
         ...(target.sandbox ? { sandbox: target.sandbox } : {}),

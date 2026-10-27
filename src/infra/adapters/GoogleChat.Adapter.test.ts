@@ -177,7 +177,7 @@ describe('GoogleChatAdapter', () => {
     const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id })
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
 
-    assert.deepStrictEqual(events.find((e) => e.type === 'usage')?.payload, { inputTokens: 1000, outputTokens: 4, cacheReadTokens: 700, cacheWriteTokens: 0 })
+    assert.deepStrictEqual(events.find((e) => e.type === 'usage')?.payload, { inputTokens: 1000, contextTokens: 1000, outputTokens: 4, cacheReadTokens: 700, cacheWriteTokens: 0 })
   })
 
   it('sends an attachment with no text without an empty text part', async () => {
