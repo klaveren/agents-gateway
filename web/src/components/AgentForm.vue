@@ -7,6 +7,7 @@ import { useProtocolsStore } from '@/stores/protocols'
 import type { IAgentDetail, IAgentInput, ICatalogModel, INativeTool, TMode, TSandboxLevel } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import { useMcpStore } from '@/stores/mcp'
+import { useProjectsStore } from '@/stores/projects'
 import AgentHooks from './AgentHooks.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 
@@ -14,6 +15,7 @@ const props = defineProps<{ agent?: IAgentDetail; creating: boolean }>()
 const emit = defineEmits<{ saved: [id: string]; duplicate: [agent: IAgentDetail]; removed: [] }>()
 
 const agents = useAgentsStore()
+const projects = useProjectsStore()
 const providers = useProvidersStore()
 const protocols = useProtocolsStore()
 const mcp = useMcpStore()
@@ -215,9 +217,23 @@ const FIELD_LABEL: Record<string, string> = {
   systemPrompt: 'Prompt',
   role: 'Só subagente',
   adminOnly: 'Só administradores',
+  projectId: 'Projeto',
 }
 
-const blank = (): IAgentInput => ({ id: '', name: '', providers: [], soul: '', systemPrompt: '', reasoningEfforts: [], modes: ['chat', 'agent'], allowedTools: [], role: null, adminOnly: false })
+// Agente novo nasce no projeto atual (o seletor do trilho); global só se alguém escolher.
+const blank = (): IAgentInput => ({
+  id: '',
+  name: '',
+  providers: [],
+  soul: '',
+  systemPrompt: '',
+  reasoningEfforts: [],
+  modes: ['chat', 'agent'],
+  allowedTools: [],
+  role: null,
+  adminOnly: false,
+  projectId: projects.current ?? null,
+})
 const form = ref<IAgentInput>(blank())
 
 /** Entradas `sdk:`/`agent:`/`mcp:` que nenhuma lista oferece: sem checkbox, mas o servidor recusa o salvamento. */
@@ -246,7 +262,7 @@ const deleting = ref(false)
 type TTab = 'agente' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'hooks'
 const tab = ref<TTab>('agente')
 const TAB_FIELDS: Record<TTab, string[]> = {
-  agente: ['id', 'name', 'soul', 'systemPrompt', 'role', 'adminOnly'],
+  agente: ['id', 'name', 'soul', 'systemPrompt', 'role', 'adminOnly', 'projectId'],
   modelos: ['providers', 'models', 'modes', 'reasoningEfforts'],
   ferramentas: ['allowedTools'],
   mcps: [],
@@ -386,6 +402,7 @@ watch(
           allowedTools: [...agent.allowedTools],
           role: agent.role ?? null,
           adminOnly: !!agent.adminOnly,
+          projectId: agent.projectId ?? null,
         }
       : blank()
     issues.value = {}
@@ -492,6 +509,15 @@ async function remove() {
         </label>
         <small class="hint">Só é chamado por outro agente (delegação, em "Pode delegar a"). Não aparece em Nova conversa e não abre conversa direta, nem pela API.</small>
       </div>
+      <label class="field sm:col-span-2">
+        <span>Projeto</span>
+        <select v-model="form.projectId" class="input">
+          <option :value="null">Global — aparece em todos os projetos</option>
+          <option v-for="project in projects.list" :key="project.id" :value="project.id">{{ project.name }}</option>
+        </select>
+        <small class="hint">{{ form.projectId ? 'Só os membros do projeto veem o agente, e ele trabalha na pasta do projeto.' : 'Global, como o Atlas: qualquer projeto o vê, e cada conversa dele começa numa pasta vazia.' }}</small>
+        <small v-for="message in issues.projectId" :key="message" class="error">{{ message }}</small>
+      </label>
       <div class="field sm:col-span-2">
         <label class="flex items-center gap-3">
           <button type="button" role="switch" :aria-checked="!!form.adminOnly" class="switch" :class="{ on: form.adminOnly }" @click="form.adminOnly = !form.adminOnly"><span /></button>

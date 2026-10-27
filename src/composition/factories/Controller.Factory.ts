@@ -5,6 +5,8 @@ import { McpServersController } from '@infra/http/McpServers.Controller'
 import { PackagesController } from '@infra/http/Packages.Controller'
 import { HooksController } from '@infra/http/Hooks.Controller'
 import { makeHooks } from './Hooks.Factory'
+import { makeProjects } from './Projects.Factory'
+import { ProjectsController } from '@infra/http/Projects.Controller'
 import { AgentController } from '@infra/http/Agent.Controller'
 import { AuthController } from '@infra/http/Auth.Controller'
 import { ProvidersController } from '@infra/http/Providers.Controller'
@@ -43,6 +45,7 @@ export function makeController(): AgentController {
     getSession: usecases.getSessionUseCase,
     listSessions: usecases.listSessionsUseCase,
     agentRemoved: (agentId) => makeHooks().removeAgent(agentId),
+    projects: makeProjects(),
   })
 }
 
@@ -90,4 +93,8 @@ export function makePackagesController(): PackagesController {
 
 export function makeHooksController(): HooksController {
   return new HooksController({ hooks: makeHooks(), proof: makeAuth().proof, sessionFor: (userId) => makeAuth().accounts?.sessionForHook(userId) })
+}
+
+export function makeProjectsController(): ProjectsController {
+  return new ProjectsController({ projects: makeProjects(), proof: makeAuth().proof })
 }

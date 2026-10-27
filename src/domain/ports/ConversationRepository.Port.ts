@@ -50,6 +50,9 @@ export interface IConversationRepository {
    */
   listSessions(options?: { limit?: number; filter?: Record<string, unknown>; owner?: IOwnerFilter | null }): Promise<IConversationSession[]>
 
+  /** Põe as conversas destes agentes no projeto (a migração para projetos). Devolve quantas mudaram. */
+  assignProject(agentIds: readonly string[], projectId: string): Promise<number>
+
   /**
    * Uma página de TODAS as conversas, para o monitor: busca, filtro e paginação no banco.
    *

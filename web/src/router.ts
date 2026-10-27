@@ -5,6 +5,7 @@ import AuthView from './views/AuthView.vue'
 import McpView from './views/McpView.vue'
 import PackagesView from './views/PackagesView.vue'
 import ProfileView from './views/ProfileView.vue'
+import ProjectsView from './views/ProjectsView.vue'
 import ProvidersView from './views/ProvidersView.vue'
 import SettingsView from './views/SettingsView.vue'
 import UsageView from './views/UsageView.vue'
@@ -32,6 +33,9 @@ export const router = createRouter({
     { path: '/usage', name: 'usage', component: UsageView },
     { path: '/mcp', name: 'mcp', component: McpView },
     { path: '/packages', name: 'packages', component: PackagesView },
+    { path: '/projects', name: 'projects', component: ProjectsView },
+    { path: '/projects/new', name: 'project-new', component: ProjectsView },
+    { path: '/projects/:id', name: 'project', component: ProjectsView, props: true },
     { path: '/mcp/new', name: 'mcp-new', component: McpView },
     { path: '/mcp/:id', name: 'mcp-server', component: McpView, props: true },
     // A página chama "Modelos" (o termo que todo mundo conhece); `/providers` era o endereço antigo e redireciona.

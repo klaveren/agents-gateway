@@ -33,6 +33,11 @@ export interface IAgent {
    * alcança o servidor não fecham o agente sozinhas. Ausente = aberto a todos.
    */
   adminOnly?: boolean
+  /**
+   * O projeto do agente: ele só trabalha na pasta do projeto, e só os membros do projeto o veem. Ausente =
+   * agente GLOBAL (o Atlas): aparece em todos os projetos.
+   */
+  projectId?: string
 }
 
 /** Um provider do agente e os modelos que ele usa ali. */

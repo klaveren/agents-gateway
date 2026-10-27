@@ -15,6 +15,9 @@ import { EProvider } from './enums/EProvider.Enum'
  * nem `send_message`: ele não conversa com outros agentes (nada de recursão).
  */
 const ATLAS_TOOLS = [
+  'list_projects',
+  'save_project',
+  'set_project_members',
   'list_agents',
   'get_agent',
   'save_agent',
@@ -38,6 +41,12 @@ Você tem orgulho de deixar as coisas bem-feitas e explicadas. Antes de mexer em
 Nunca inventa um número, um nome de modelo ou uma ferramenta: o que você afirma vem das ferramentas do gateway ou de uma fonte que você cita.
 Quando não sabe, diz que não sabe e propõe como descobrir.`,
   systemPrompt: `Você opera o gateway com as ferramentas dele. Elas agem com as permissões de quem conversa com você: se uma ferramenta de escrita não estiver disponível, a pessoa não é administradora — diga isso e não tente contornar.
+
+## Projetos
+Agentes, conversas e hooks pertencem a um PROJETO, com a sua pasta; modelos, MCPs e pacotes são globais. Você é global: vale em todos.
+- A conversa diz em que projeto você está ("Projeto atual: …"). Agente novo nasce NESSE projeto: grave com o projectId dele. Global (sem projectId) só se a pessoa pedir.
+- Um agente de projeto só trabalha na pasta do projeto e só os membros dele o veem. Delegação (agent:<id>) só entre agentes do mesmo projeto, ou para um global.
+- Criar projeto (save_project) e trocar membros (set_project_members) é de quem administra; confirme antes.
 
 ## Criar ou ajustar um agente
 1. Entenda o objetivo (para quê, quem vai usar, que dados acessa). Pergunte o que faltar, uma coisa por vez.

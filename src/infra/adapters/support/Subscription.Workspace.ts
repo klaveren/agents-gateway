@@ -52,6 +52,36 @@ export function subscriptionHome(kind: 'codex' | 'antigravity' | 'claude', env: 
   return dir
 }
 
+/**
+ * A pasta de um PROJETO: `<dados>/projects/<id>/` (no pod, no PVC). ⚖️ Persistente e compartilhada pelas
+ * conversas do projeto — é onde os agentes dele trabalham, e onde depois moram specs, rules e skills.
+ */
+export function projectWorkspace(projectId: string, env: NodeJS.ProcessEnv = process.env): string {
+  const dir = join(dataDir(env), 'projects', projectId.replace(/[^a-z0-9-]/g, '_'))
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  return dir
+}
+
+/**
+ * ⚖️ ONDE O AGENTE TRABALHA: o agente de projeto, na pasta do projeto (persistente, a mesma em todas as
+ * conversas dele); o global, numa pasta vazia por conversa.
+ */
+export function workspaceFor(projectId: string | undefined, sessionId: string): string {
+  return projectId ? projectWorkspace(projectId) : sessionWorkspace(sessionId)
+}
+
+/** O HOME de um cliente que espalha dotfiles (o Codex) num projeto: `<projeto>/.home`, e não a raiz da pasta. */
+export function projectHome(projectId: string): string {
+  const dir = join(projectWorkspace(projectId), '.home')
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  return dir
+}
+
+/** Apaga a pasta do projeto (o projeto foi apagado). */
+export function removeProjectWorkspace(projectId: string, env: NodeJS.ProcessEnv = process.env): void {
+  rmSync(join(dataDir(env), 'projects', projectId.replace(/[^a-z0-9-]/g, '_')), { recursive: true, force: true })
+}
+
 /** Dá para gravar na pasta? (No pod, o HOME não dá: `readOnlyRootFilesystem`.) */
 export function isWritable(dir: string | undefined): boolean {
   if (!dir) return false

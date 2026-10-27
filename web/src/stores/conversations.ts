@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { api, openStream } from '@/lib/api'
 import { readSse } from '@/lib/sse'
 import type { IConversation, IConversationPage } from '@/lib/types'
+import { useProjectsStore } from './projects'
 
 export interface IConversationFilters {
   q: string
@@ -86,7 +87,7 @@ export const useConversationsStore = defineStore('conversations', () => {
         total.value = result.total ?? result.sessions.length
         facets.value = result.facets
       } else {
-        const result = await api<IConversationPage>('/conversations', { query: { limit: 500 } })
+        const result = await api<IConversationPage>('/conversations', { query: { limit: 500, ...useProjectsStore().query } })
         if (current !== generation) return
         all = result.sessions
         refilter()
@@ -122,7 +123,7 @@ export const useConversationsStore = defineStore('conversations', () => {
 
   function fetchPage(number: number): Promise<IConversationPage> {
     const { q, agentId, classification } = filters.value
-    return api<IConversationPage>('/conversations', { query: { scope: 'all', page: number, pageSize: PAGE_SIZE, q, agentId, classification } })
+    return api<IConversationPage>('/conversations', { query: { scope: 'all', page: number, pageSize: PAGE_SIZE, q, agentId, classification, ...useProjectsStore().query } })
   }
 
   /** Sem paginação no servidor, o filtro é aplicado aqui sobre a lista inteira. */
@@ -188,7 +189,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     const run = async (first: boolean) => {
       while (!controller.signal.aborted) {
         try {
-          const body = await openStream('/conversations/events', { signal: controller.signal })
+          const body = await openStream('/conversations/events', { signal: controller.signal, query: useProjectsStore().query })
           live.value = true
           if (!first) void load(admin)
           first = false

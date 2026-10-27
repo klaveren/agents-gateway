@@ -16,6 +16,9 @@ import {
   HookNotFoundError,
   McpServerNotFoundError,
   McpServerInUseError,
+  InvalidProjectError,
+  ProjectNotFoundError,
+  ProjectInUseError,
   ProviderNotFoundError,
   ProviderUnavailableError,
   AgentInUseError,
@@ -42,6 +45,7 @@ export type TErrorCode =
   | 'agent_not_found'
   | 'provider_in_use'
   | 'mcp_server_in_use'
+  | 'project_in_use'
   | 'provider_unavailable'
   | 'payload_too_large'
   | 'rate_limited'
@@ -165,6 +169,18 @@ export function toHttpFailure(error: unknown): IHttpFailure {
 
   if (error instanceof McpServerNotFoundError) {
     return { status: 404, code: 'not_found', message: error.message }
+  }
+
+  if (error instanceof InvalidProjectError) {
+    return { status: 422, code: 'validation_error', message: 'Project is invalid', details: error.issues }
+  }
+
+  if (error instanceof ProjectNotFoundError) {
+    return { status: 404, code: 'not_found', message: error.message }
+  }
+
+  if (error instanceof ProjectInUseError) {
+    return { status: 409, code: 'project_in_use', message: error.message, details: { agents: error.agents } }
   }
 
   if (error instanceof McpServerInUseError) {

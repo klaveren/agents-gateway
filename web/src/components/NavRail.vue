@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useConversationsStore } from '@/stores/conversations'
 import AccountMenu from './AccountMenu.vue'
 import Icon from './Icon.vue'
+import ProjectSwitcher from './ProjectSwitcher.vue'
 import SystemMenu from './SystemMenu.vue'
 
 const route = useRoute()
@@ -19,7 +20,7 @@ const section = computed(() => {
   if (name.startsWith('mcp')) return 'mcp'
   if (name === 'user' || name.startsWith('user-')) return 'users'
   // Perfil não tem item no trilho (mora no menu da conta): nada fica aceso.
-  if (name === 'packages' || name === 'profile') return name
+  if (name === 'packages' || name === 'profile' || name.startsWith('project')) return name.startsWith('project') ? 'projects' : name
   return ['settings', 'users', 'usage'].includes(name) ? name : 'inbox'
 })
 
@@ -43,7 +44,10 @@ const links = computed<Array<{ to: string; key: string; label: string; short?: s
   <nav
     class="fixed inset-x-0 bottom-0 z-30 flex shrink-0 items-stretch border-t border-zinc-800/80 bg-zinc-900/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:static md:w-[68px] md:flex-col md:items-center md:gap-1 md:border-t-0 md:border-r md:bg-zinc-900/60 md:py-3 md:pb-3 md:backdrop-blur-none"
   >
-    <div class="mb-3 hidden h-10 w-10 place-items-center rounded-xl md:grid bg-gradient-to-br from-emerald-400 to-teal-600 text-sm font-bold text-zinc-950" title="Agents Gateway">AG</div>
+    <!-- O seletor de projeto no lugar do logo: o projeto atual recorta o resto da tela. -->
+    <div v-if="auth.user" class="flex min-w-0 flex-1 md:hidden"><ProjectSwitcher placement="up" /></div>
+    <div v-if="auth.user" class="mb-3 hidden md:block"><ProjectSwitcher placement="side" /></div>
+    <div v-else class="mb-3 hidden h-10 w-10 place-items-center rounded-xl md:grid bg-gradient-to-br from-emerald-400 to-teal-600 text-sm font-bold text-zinc-950" title="Agents Gateway">AG</div>
     <RouterLink
       v-for="link in links"
       :key="link.key"

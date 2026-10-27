@@ -27,6 +27,8 @@ export const createSessionSchema = z.object({
   language: z.string().min(1).optional(),
   systemPrompt: z.string().min(1).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
+  /** O projeto em que a conversa nasce (o seletor da tela). Num agente de projeto vale o dele; num global, este, se quem abre for membro. */
+  projectId: z.string().trim().max(32).optional(),
 })
 
 /**
@@ -131,6 +133,8 @@ export const agentBodySchema = z.object({
   role: z.enum(['subagent']).nullable().optional(),
   /** Só administrador conversa com o agente. Decisão de quem o cria; ausente ou `false` = aberto a todos. */
   adminOnly: z.boolean().optional(),
+  /** O projeto do agente. Ausente (ou `null`) = global, em todos os projetos. */
+  projectId: z.string().trim().max(32).nullable().optional(),
 })
 
 /**

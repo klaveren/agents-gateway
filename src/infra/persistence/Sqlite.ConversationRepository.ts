@@ -129,6 +129,8 @@ const ADDED_INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_conversations_classification ON conversations (classification)',
   // O uso recorta os turnos por período: sem índice em `at`, cada consulta leria a tabela inteira.
   'CREATE INDEX IF NOT EXISTS idx_turns_at ON conversation_turns (at)',
+  // A caixa de entrada e o monitor recortam por projeto (a chave `project` do metadata).
+  "CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations (json_extract(metadata, '$.project'))",
   // Substituído por `idx_conversations_recent`, que cobre o desempate por `id`.
   'DROP INDEX IF EXISTS idx_conversations_updated',
 ]
@@ -361,6 +363,19 @@ export class SqliteConversationRepository implements IConversationRepository {
     })
   }
 
+  async assignProject(agentIds: readonly string[], projectId: string): Promise<number> {
+    if (!agentIds.length) return 0
+    return (
+      this.guard('assignProject', () =>
+        Number(
+          this.db
+            .prepare(`UPDATE conversations SET metadata = json_set(COALESCE(metadata, '{}'), '$.project', ?) WHERE agent_id IN (${agentIds.map(() => '?').join(', ')})`)
+            .run(projectId, ...agentIds).changes,
+        ),
+      ) ?? 0
+    )
+  }
+
   async listSessions(options: { limit?: number; filter?: Record<string, unknown>; owner?: IOwnerFilter | null } = {}): Promise<IConversationSession[]> {
     return (
       this.guard('listSessions', () => {
@@ -419,6 +434,12 @@ export class SqliteConversationRepository implements IConversationRepository {
       this.guard('pageSessions', () => {
         const search: string[] = []
         const searchParams: string[] = []
+
+        // O projeto recorta TUDO (a lista e as contagens das abas): é o espaço em que o monitor está.
+        if (query.project) {
+          search.push(`json_extract(metadata, '$.project') = ?`)
+          searchParams.push(query.project)
+        }
 
         const term = query.q?.trim().toLowerCase()
         if (term) {

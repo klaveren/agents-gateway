@@ -64,6 +64,10 @@ export class NotifyingConversationRepository implements IConversationRepository 
     return this.inner.listSessions(options)
   }
 
+  assignProject(agentIds: readonly string[], projectId: string): Promise<number> {
+    return this.inner.assignProject(agentIds, projectId)
+  }
+
   pageSessions(query: IConversationPageQuery): Promise<IConversationPage> {
     return this.inner.pageSessions(query)
   }

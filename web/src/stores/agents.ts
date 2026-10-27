@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api } from '@/lib/api'
 import type { IAgent, IAgentDetail, IAgentInput, INativeTool, ITool } from '@/lib/types'
+import { useProjectsStore } from './projects'
 
 export const useAgentsStore = defineStore('agents', () => {
   const list = ref<IAgent[]>([])
@@ -18,7 +19,8 @@ export const useAgentsStore = defineStore('agents', () => {
   const conversable = computed(() => list.value.filter((agent) => agent.role !== 'subagent'))
 
   async function load(): Promise<void> {
-    list.value = await api<IAgent[]>('/agents')
+    // Os do projeto atual e os globais (o Atlas).
+    list.value = await api<IAgent[]>('/agents', { query: useProjectsStore().query })
     loaded.value = true
   }
 

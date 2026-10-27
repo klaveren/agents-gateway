@@ -23,6 +23,9 @@ export class NullConversationRepository implements IConversationRepository {
   async listSessions(): Promise<IConversationSession[]> {
     return []
   }
+  async assignProject(): Promise<number> {
+    return 0
+  }
   async pageSessions(): Promise<IConversationPage> {
     return { sessions: [], total: 0, facets: { classification: {}, provider: {}, agent: {} } }
   }

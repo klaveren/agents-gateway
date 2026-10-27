@@ -178,6 +178,8 @@ export interface IConversationPageQuery {
   classification?: TClassification
   provider?: string
   agentId?: string
+  /** Só as do projeto (a chave `project` do metadata, escrita pelo servidor). Vale também para as contagens. */
+  project?: string
 }
 
 /**

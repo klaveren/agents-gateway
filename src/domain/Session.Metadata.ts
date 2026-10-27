@@ -4,7 +4,9 @@ import { DELEGATED_BY, DELEGATED_FROM, DELEGATION_CHAIN, DELEGATION_DEPTH } from
  * As chaves da `metadata` que SÓ O SERVIDOR escreve: dono e delegação. Vindas do corpo, saem — com elas o
  * cliente se declararia dono de outro ou zeraria o limite de profundidade da delegação.
  */
-export const RESERVED_METADATA_KEYS: readonly string[] = ['owner', DELEGATED_BY, DELEGATED_FROM, DELEGATION_DEPTH, DELEGATION_CHAIN]
+/** ⛔ Só o servidor escreve: quem é o dono, a cadeia de delegação e o projeto da conversa (`PROJECT_METADATA_KEY`). */
+export const PROJECT_METADATA_KEY = 'project'
+export const RESERVED_METADATA_KEYS: readonly string[] = ['owner', DELEGATED_BY, DELEGATED_FROM, DELEGATION_DEPTH, DELEGATION_CHAIN, PROJECT_METADATA_KEY]
 
 export const METADATA_MAX_KEYS = 32
 export const METADATA_MAX_BYTES = 8 * 1024

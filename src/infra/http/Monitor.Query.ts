@@ -24,6 +24,7 @@ export function parsePageQuery(query: Record<string, unknown>): IConversationPag
   const classification = CLASSIFICATIONS.includes(query.classification as TClassification) ? (query.classification as TClassification) : undefined
   const provider = typeof query.provider === 'string' && /^[a-z0-9_-]{1,40}$/i.test(query.provider) ? query.provider : undefined
   const agentId = typeof query.agentId === 'string' && /^[a-z0-9_-]{1,64}$/i.test(query.agentId) ? query.agentId : undefined
+  const project = typeof query.project === 'string' && /^[a-z0-9-]{1,32}$/.test(query.project) ? query.project : undefined
 
   return {
     page: Number.isFinite(page) && page >= 1 ? page : 1,
@@ -32,6 +33,7 @@ export function parsePageQuery(query: Record<string, unknown>): IConversationPag
     classification,
     provider,
     agentId,
+    ...(project ? { project } : {}),
   }
 }
 

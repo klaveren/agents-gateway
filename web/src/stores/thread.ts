@@ -5,6 +5,7 @@ import { readSse } from '@/lib/sse'
 import type { IAgent, IAgentEvent, IConversation, ISessionState, ITurn, IUsage, TMode } from '@/lib/types'
 import { levelsOf, resolveChoice } from '@/lib/agentChoice'
 import { useAgentsStore } from './agents'
+import { useProjectsStore } from './projects'
 
 export interface IDraft {
   agentId: string
@@ -199,7 +200,8 @@ export const useThreadStore = defineStore('thread', () => {
         const born = (
           await api<{ id: string }>('/sessions', {
             method: 'POST',
-            body: { agentId, mode, tools: mode === 'chat' && tools, provider, model, reasoning },
+            // O projeto atual: num agente global (o Atlas), é nele que a conversa nasce.
+            body: { agentId, mode, tools: mode === 'chat' && tools, provider, model, reasoning, projectId: useProjectsStore().current },
             signal: controller.signal,
           })
         ).id

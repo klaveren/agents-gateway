@@ -284,6 +284,29 @@ export class McpServerNotFoundError extends DomainError {
 }
 
 /** Ainda há agente usando o servidor: tirar dele primeiro (como `ProviderInUseError`). */
+/** O projeto pedido não vale (id, nome, membros). Todos os problemas de uma vez. */
+export class InvalidProjectError extends DomainError {
+  constructor(public readonly issues: Array<{ field: string; message: string }>) {
+    super(`Project is invalid: ${issues.map((issue) => `${issue.field} (${issue.message})`).join('; ')}`)
+  }
+}
+
+export class ProjectNotFoundError extends DomainError {
+  constructor(public readonly projectId: string) {
+    super(`Project not found: ${projectId}`)
+  }
+}
+
+/** ⛔ Projeto com agente não se apaga: os agentes ficariam apontando para o nada. */
+export class ProjectInUseError extends DomainError {
+  constructor(
+    public readonly projectId: string,
+    public readonly agents: string[],
+  ) {
+    super(`Project ${projectId} still has agents: ${agents.join(', ')}`)
+  }
+}
+
 export class McpServerInUseError extends DomainError {
   constructor(
     public readonly serverId: string,

@@ -35,6 +35,8 @@ import { IConversationRepository } from '@domain/ports/ConversationRepository.Po
 import { ISettingsRepository } from '@domain/ports/SettingsRepository.Port'
 import { ISessionContextProvider } from '@domain/ports/SessionContextProvider.Port'
 import { SessionNotFoundError } from '@domain/errors/Domain.Error'
+import { IProjectCaller, ProjectsService } from '@application/Projects.Service'
+import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
 import { IAgentProviderFacts, toAgentDetailDto, toAgentDto } from './Agent.Dto'
 import { assertNoAdkTemplateCollision } from '@infra/adapters/GoogleAgent.Adapter'
 import { IConversationView, toConversationDto, toStatsDto, toTurnDto } from './Conversation.Dto'
@@ -101,6 +103,8 @@ export interface IAgentControllerDeps {
   events?: IConversationEvents
   /** O agente foi apagado: o que é dele e mora fora do cadastro (os hooks) vai junto. */
   agentRemoved?: (agentId: string) => void
+  /** Os projetos e quem é membro. Ausente = sem projetos (tudo como antes: um espaço só). */
+  projects?: ProjectsService
   /** Os providers configurados — para o agente apontar para um que existe. Ausente = só os oficiais. */
   providers?: IProviderDirectory
   /** O catálogo de modelos: preços por provider, e os modelos que um agente pode oferecer. */
@@ -204,19 +208,26 @@ export class AgentController {
    * ou que exige admin não aparece — antes aparecia, e falhava só ao abrir a conversa. O admin vê todos,
    * cada inativo com o motivo (`unavailable`), para saber o que ligar.
    */
-  async getAgents(_req: Request, res: Response) {
+  async getAgents(req: Request, res: Response) {
     await this.respond(res, async () => {
-      await this.requireCaller()
+      const resolved = await this.requireCaller()
       const admin = (await checkAdminAccess(this.usecases.proof)).allowed
-      return this.agents
-        .entries()
-        .map((entry) => ({ entry, unavailable: this.unavailableOf(entry.agent, admin) }))
-        .filter(({ unavailable }) => admin || !unavailable)
-        .map(({ entry, unavailable }) => ({
-          // ⛔ Quem não administra só vê os providers que rodam para ele: um desligado não é escolha.
-          ...this.listedAgent(entry.agent, admin),
-          ...(unavailable ? { unavailable: { reason: unavailable, label: UNAVAILABLE_LABEL[unavailable] } } : {}),
-        }))
+      const caller = { userId: resolved.identity?.id, admin }
+      const project = typeof req.query.project === 'string' && req.query.project ? req.query.project : undefined
+      if (project) this.requireProject(caller, project)
+      return (
+        this.agents
+          .entries()
+          // ⛔ Com `?project`, os dele e os globais. Sem, tudo o que a pessoa pode usar (os globais e os dos projetos dela).
+          .filter((entry) => this.agentVisible(entry.agent, caller, project))
+          .map((entry) => ({ entry, unavailable: this.unavailableOf(entry.agent, admin) }))
+          .filter(({ unavailable }) => admin || !unavailable)
+          .map(({ entry, unavailable }) => ({
+            // ⛔ Quem não administra só vê os providers que rodam para ele: um desligado não é escolha.
+            ...this.listedAgent(entry.agent, admin),
+            ...(unavailable ? { unavailable: { reason: unavailable, label: UNAVAILABLE_LABEL[unavailable] } } : {}),
+          }))
+      )
     })
   }
 
@@ -256,6 +267,66 @@ export class AgentController {
       !this.usecases.models.isEnabled(classifierProvider, classifierModel)
     ) {
       issues.push({ field: 'classifierModel', message: `${classifierModel} is not enabled in ${classifierProvider}` })
+    }
+    return issues
+  }
+
+  /**
+   * O projeto da conversa — ⛔ escrito SÓ pelo servidor. Agente de projeto: o dele, e quem não pode usar o
+   * projeto recebe 404 como de agente inexistente. Agente global: o do corpo (o seletor da tela), se a
+   * pessoa puder usá-lo.
+   */
+  private async sessionProject(caller: IProjectCaller, agentId: string | undefined, requested: string | undefined): Promise<string | undefined> {
+    if (!this.usecases.projects) return undefined
+    const configured = agentId || (await this.usecases.settings.read()).agentId
+    const agent = configured ? this.agents.get(configured) : this.agents.fallback()
+    if (agent?.projectId) {
+      if (!this.usecases.projects.canUse(caller, agent.projectId)) throw new AgentNotFoundError(agent.id)
+      return agent.projectId
+    }
+    if (!requested) return undefined
+    this.requireProject(caller, requested)
+    return requested
+  }
+
+  /**
+   * A linha de contexto do projeto, na primeira mensagem: em que projeto a conversa está e, para o agente
+   * de projeto, onde fica a pasta dele. ⚖️ É o que deixa o Atlas (global) criar agentes no projeto certo.
+   * Só texto do servidor (id, nome do cadastro, caminho), nada de quem chama.
+   */
+  private async projectContext(sessionId: string): Promise<string | undefined> {
+    const projects = this.usecases.projects
+    if (!projects) return undefined
+    const session = await this.usecases.getSession.execute(sessionId).catch(() => undefined)
+    const projectId = session?.metadata?.[PROJECT_METADATA_KEY]
+    if (typeof projectId !== 'string' || !projects.exists(projectId)) return undefined
+    const project = projects.get(projectId)
+    const agent = session ? this.agents.get(session.agentId) : undefined
+    return agent?.projectId === projectId
+      ? `Projeto: ${project.name} (${project.id}). Sua pasta de trabalho é ${projects.folderOf(projectId)} — persistente e compartilhada pelas conversas do projeto.`
+      : `Projeto atual: ${project.name} (projectId "${project.id}"). Agentes, hooks e conversas que você criar aqui pertencem a este projeto.`
+  }
+
+  /** O agente aparece para esta pessoa (neste projeto, se pedido)? O global aparece em todos. */
+  private agentVisible(agent: IAgent, caller: IProjectCaller, project?: string): boolean {
+    if (!agent.projectId) return true
+    if (project) return agent.projectId === project
+    return !this.usecases.projects || this.usecases.projects.canUse(caller, agent.projectId)
+  }
+
+  /** ⛔ Projeto que a pessoa não pode usar responde como inexistente (404): a lista diz que projetos existem. */
+  private requireProject(caller: IProjectCaller, projectId: string): void {
+    if (this.usecases.projects && !this.usecases.projects.canUse(caller, projectId)) throw new HttpError(404, 'not_found', `Project not found: ${projectId}`)
+  }
+
+  /** O projeto do agente existe e as delegações dele ficam no mesmo projeto (ou vão a um global). */
+  private projectIssues(agent: IAgent): Array<{ field: string; message: string }> {
+    const issues: Array<{ field: string; message: string }> = []
+    if (agent.projectId && this.usecases.projects && !this.usecases.projects.exists(agent.projectId))
+      issues.push({ field: 'projectId', message: `no such project: ${agent.projectId}` })
+    for (const entry of agent.allowedTools.filter((tool) => tool.startsWith('agent:'))) {
+      const target = this.agents.get(entry.slice('agent:'.length))
+      if (target?.projectId && target.projectId !== agent.projectId) issues.push({ field: 'allowedTools', message: `${entry} is in another project (${target.projectId})` })
     }
     return issues
   }
@@ -331,8 +402,11 @@ export class AgentController {
       async () => {
         const admin = await this.requireAdmin('createAgent')
         const body = parseBody(agentBodySchema, req.body)
+        const input = toAgentInput(body.id ?? '', body)
+        const issues = this.projectIssues(input)
+        if (issues.length) throw new HttpError(422, 'validation_error', 'Request body is invalid', issues)
 
-        const saved = this.agents.save(toAgentInput(body.id ?? '', body), { rules: await this.agentRules(), by: admin.email ?? admin.id ?? 'admin', creating: true })
+        const saved = this.agents.save(input, { rules: await this.agentRules(), by: admin.email ?? admin.id ?? 'admin', creating: true })
 
         return toAgentDetailDto({ agent: saved, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy }, (providerId) => this.providerFacts(providerId))
       },
@@ -347,8 +421,11 @@ export class AgentController {
       async () => {
         const admin = await this.requireAdmin('updateAgent')
         const body = parseBody(agentBodySchema, req.body)
+        const input = toAgentInput(req.params.agentId as string, body)
+        const issues = this.projectIssues(input)
+        if (issues.length) throw new HttpError(422, 'validation_error', 'Request body is invalid', issues)
 
-        const saved = this.agents.save(toAgentInput(req.params.agentId as string, body), {
+        const saved = this.agents.save(input, {
           rules: await this.agentRules(),
           by: admin.email ?? admin.id ?? 'admin',
           creating: false,
@@ -463,7 +540,10 @@ export class AgentController {
         const mine = (await this.usecases.listSessions.execute()).filter((session) => (session.metadata?.owner as { id?: string } | undefined)?.id === owner?.id).length
         if (mine >= sessionsPerOwner()) throw new HttpError(429, 'rate_limited', `At most ${sessionsPerOwner()} live conversations per account: close one first`)
 
-        return this.usecases.createSession.execute({ ...body, metadata: owner ? { ...metadata, owner } : metadata, adminAccess })
+        const { projectId: requested, ...session } = body
+        const project = await this.sessionProject({ userId: resolved.identity?.id, admin: adminAccess }, body.agentId, requested)
+        const stamped = { ...metadata, ...(owner ? { owner } : {}), ...(project ? { [PROJECT_METADATA_KEY]: project } : {}) }
+        return this.usecases.createSession.execute({ ...session, metadata: stamped, adminAccess })
       },
       { status: 201, message: 'Session created successfully' },
     )
@@ -583,6 +663,9 @@ export class AgentController {
 
         const resolved = await this.requireCaller()
         const identity = resolved.identity
+        // `?project=` filtra pela chave `project` do metadata (escrita só pelo servidor); quem não pode usar o projeto, 404.
+        if (typeof query.project === 'string' && query.project)
+          this.requireProject({ userId: identity?.id, admin: (await checkAdminAccess(this.usecases.proof)).allowed }, query.project)
 
         const limit = Number.parseInt(String(query.limit ?? ''), 10)
         const sessions = await this.usecases.conversations.listSessions({
@@ -637,12 +720,15 @@ export class AgentController {
    * ⚠️ `conversation.updated` sai na projeção de quem LÊ (`toConversationDto`): o não administrador
    * não recebe rótulo nem custo por aqui, do mesmo jeito que não recebe pela listagem.
    */
-  async conversationEvents(_req: Request, res: Response) {
+  async conversationEvents(req: Request, res: Response) {
     let resolved: IResolvedCaller
     let admin: boolean
+    const requested = (req.query as Record<string, unknown> | undefined)?.project
+    const project = typeof requested === 'string' && requested ? requested : undefined
     try {
       resolved = await this.requireCaller()
       admin = (await checkAdminAccess(this.usecases.proof)).allowed
+      if (project) this.requireProject({ userId: resolved.identity?.id, admin }, project)
     } catch (error: unknown) {
       return this.sendFailure(res, error, '[AgentController.conversationEvents]')
     }
@@ -662,6 +748,8 @@ export class AgentController {
       this.usecases.events?.subscribe((event: TConversationEvent) => {
         const metadata = event.type === 'conversation.updated' ? event.session.metadata : event.metadata
         if (!admin && !ownsSession(resolved, metadata)) return
+        // Com `?project`, só as conversas daquele projeto.
+        if (project && metadata?.[PROJECT_METADATA_KEY] !== project) return
 
         if (event.type === 'conversation.updated') stream.emit(event.type, { session: toConversationDto(event.session, view) })
         else stream.emit(event.type, { sessionId: event.sessionId })
@@ -879,7 +967,7 @@ export class AgentController {
     }
 
     // O contexto sai da identidade já resolvida e é aplicado pelo use case, só na primeira mensagem.
-    const context = this.usecases.sessionContext?.({ ...resolved.identity })
+    const context = [this.usecases.sessionContext?.({ ...resolved.identity }), await this.projectContext(sessionId)].filter(Boolean).join('\n\n') || undefined
     const input: IMessageInput = { text: body.message, files: body.files, context }
     const wantsJson = req.accepts(['text/event-stream', 'application/json']) === 'application/json'
 
@@ -1073,6 +1161,7 @@ function toAgentInput(id: string, body: TAgentBody): IAgent {
     allowedTools: [...new Set(body.allowedTools)],
     ...(body.role ? { role: body.role } : {}),
     ...(body.adminOnly ? { adminOnly: true } : {}),
+    ...(body.projectId ? { projectId: body.projectId } : {}),
   }
 }
 
