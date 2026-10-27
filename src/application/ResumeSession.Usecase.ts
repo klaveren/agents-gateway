@@ -9,12 +9,12 @@ import { IConversationRepository } from '@domain/ports/ConversationRepository.Po
 export class ResumeSessionUseCase {
   constructor(
     private readonly agentProvider: IAgentProvider,
-    private readonly conversations: Pick<IConversationRepository, 'listTurns'>,
+    private readonly conversations: Pick<IConversationRepository, 'listTurns' | 'findNative'>,
   ) {}
 
   async execute(session: IConversationSession, adminAccess: boolean): Promise<void> {
     if (!this.agentProvider.resume) return
-    const turns = await this.conversations.listTurns(session.id)
-    await this.agentProvider.resume({ session, turns, adminAccess })
+    const [turns, native] = await Promise.all([this.conversations.listTurns(session.id), this.conversations.findNative?.(session.id)])
+    await this.agentProvider.resume({ session, turns, adminAccess, ...(native ? { native } : {}) })
   }
 }

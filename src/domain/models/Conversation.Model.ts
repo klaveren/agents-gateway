@@ -216,3 +216,10 @@ export interface IConversationStats {
   /** Quantas conversas em cada sinal. Chave ausente = nenhuma. */
   byClassification: Record<string, number>
 }
+
+/** O estado do SDK guardado com a conversa: de que lane é, e o que o adapter dela exportou (ver `IAgentAdapter.exportNative`). */
+export interface INativeSnapshot {
+  protocol: string
+  mode: string
+  data: unknown
+}

@@ -825,3 +825,70 @@ describe('AgentProvider — retomar a conversa gravada', () => {
     await assert.rejects(() => provider.resume({ session: { ...stored, id: 'orfa', agentId: 'nao-existe' }, turns }), AgentNotFoundError)
   })
 })
+
+describe('AgentProvider — retomar com a memória do SDK', () => {
+  const agentId = SEED.list()[0].id
+  const stored = {
+    id: 'google-chat-com-memoria',
+    agentId,
+    provider: EProvider.GOOGLE,
+    mode: EMode.CHAT,
+    model: 'gemini-3.7-flash',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    turns: 1,
+    usage: { inputTokens: 10, outputTokens: 1 },
+  }
+  const turns = [{ sessionId: stored.id, index: 0, at: new Date(), request: 'Guarde o número 42.', text: 'Guardado.', toolCalls: [] }]
+
+  function build(restores: boolean) {
+    const store = new SessionStore()
+    const sent: string[] = []
+    const restored: unknown[] = []
+    const adapter: IAgentAdapter = {
+      async createSession(agent, input) {
+        const record = store.create('google-chat', {
+          agentId: agent.id,
+          provider: EProvider.GOOGLE,
+          protocol: EProvider.GOOGLE,
+          mode: EMode.CHAT,
+          model: input.model ?? 'm',
+          tools: false,
+          systemPrompt: '',
+        })
+        return { id: record.id, provider: EProvider.GOOGLE, mode: record.mode, createdAt: record.createdAt }
+      },
+      async *sendMessage(_agent, sessionId, input) {
+        sent.push(input.text)
+        store.get(sessionId)!.native = { memoria: 'viva' }
+        yield { type: 'message.completed', sessionId, timestamp: new Date() } as IAgentEvent
+      },
+      async cancel() {},
+      exportNative: (sessionId) => store.get(sessionId)?.native,
+      restoreNative: (_sessionId, data) => (restored.push(data), restores),
+    }
+    const provider = new AgentProvider(new Map([[adapterKey(EProvider.GOOGLE, EMode.CHAT), adapter]]), store, undefined, SEED)
+    return { provider, sent, restored }
+  }
+
+  it('⚖️ estado da mesma lane, e o adapter confirma: segue com a memória do SDK, SEM a transcrição', async () => {
+    const { provider, sent, restored } = build(true)
+    await provider.resume({ session: stored, turns, native: { protocol: EProvider.GOOGLE, mode: EMode.CHAT, data: { id: 'x' } } })
+    for await (const _event of provider.sendMessage(stored.id, { text: 'Qual número?' })) void _event
+    assert.deepStrictEqual([restored, sent], [[{ id: 'x' }], ['Qual número?']])
+    assert.deepStrictEqual(provider.nativeSnapshot(stored.id), { protocol: EProvider.GOOGLE, mode: EMode.CHAT, data: { memoria: 'viva' } })
+  })
+
+  it('estado de outra lane, ou que não serve mais: a transcrição entra', async () => {
+    const other = build(true)
+    await other.provider.resume({ session: stored, turns, native: { protocol: EProvider.CLAUDE, mode: EMode.AGENT, data: {} } })
+    for await (const _event of other.provider.sendMessage(stored.id, { text: 'Qual número?' })) void _event
+    assert.deepStrictEqual(other.restored, [], 'de outra lane, nem se pergunta ao adapter')
+    assert.match(other.sent[0], /esta conversa foi retomada[\s\S]*Guarde o número 42/)
+
+    const stale = build(false)
+    await stale.provider.resume({ session: stored, turns, native: { protocol: EProvider.GOOGLE, mode: EMode.CHAT, data: {} } })
+    for await (const _event of stale.provider.sendMessage(stored.id, { text: 'Qual número?' })) void _event
+    assert.match(stale.sent[0], /esta conversa foi retomada/)
+  })
+})

@@ -169,6 +169,9 @@ export class SendMessageUseCase {
         usageByModel: session.usageByModel ? Object.fromEntries(Object.entries(session.usageByModel).map(([model, usage]) => [model, usageOf(usage)])) : undefined,
         metadata: session.metadata,
       })
+      // O estado do SDK (o id da sessão do CLI do Claude), para a retomada continuar com a memória dele. `null` limpa:
+      // a conversa trocou para uma lane que não exporta.
+      await this.conversations.saveNative?.(sessionId, this.agentProvider.nativeSnapshot?.(sessionId) ?? null)
     }
 
     const stored = await this.conversations.appendTurn({

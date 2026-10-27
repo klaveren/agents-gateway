@@ -1,5 +1,13 @@
 import { TClassification } from '@domain/models/Classification.Model'
-import { IConversationPage, IConversationPageQuery, IConversationSession, IConversationStats, IConversationTurn, IOwnerFilter } from '@domain/models/Conversation.Model'
+import {
+  IConversationPage,
+  IConversationPageQuery,
+  IConversationSession,
+  IConversationStats,
+  IConversationTurn,
+  IOwnerFilter,
+  INativeSnapshot,
+} from '@domain/models/Conversation.Model'
 import { IUsageQuery, IUsageRow } from '@domain/models/Usage.Model'
 import { IConversationEvents } from '@domain/ports/ConversationEvents.Port'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
@@ -78,6 +86,14 @@ export class NotifyingConversationRepository implements IConversationRepository 
 
   findSession(sessionId: string): Promise<IConversationSession | undefined> {
     return this.inner.findSession(sessionId)
+  }
+
+  async saveNative(sessionId: string, snapshot: INativeSnapshot | null): Promise<void> {
+    await this.inner.saveNative?.(sessionId, snapshot)
+  }
+
+  async findNative(sessionId: string): Promise<INativeSnapshot | undefined> {
+    return this.inner.findNative?.(sessionId)
   }
 
   findByShareId(shareId: string): Promise<IConversationSession | undefined> {

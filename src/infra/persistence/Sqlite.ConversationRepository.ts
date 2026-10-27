@@ -7,6 +7,7 @@ import {
   IConversationPage,
   IConversationPageQuery,
   IConversationSession,
+  INativeSnapshot,
   IConversationStats,
   IConversationTurn,
   IOwnerFilter,
@@ -101,6 +102,8 @@ const SCHEMA = `
  */
 const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }> = [
   { table: 'conversations', column: 'cache_read_tokens', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  // O estado do SDK (JSON: `{ protocol, mode, data }`) para a retomada continuar com a memória dele.
+  { table: 'conversations', column: 'native', definition: 'TEXT' },
   { table: 'conversations', column: 'cache_write_tokens', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'conversation_turns', column: 'cache_read_tokens', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'conversation_turns', column: 'cache_write_tokens', definition: 'INTEGER NOT NULL DEFAULT 0' },
@@ -527,6 +530,21 @@ export class SqliteConversationRepository implements IConversationRepository {
         return rows.map((row) => this.toTurn(row))
       }) ?? []
     )
+  }
+
+  /** O estado do SDK da conversa (ver `INativeSnapshot`); `null` limpa. A conversa já tem de existir. */
+  async saveNative(sessionId: string, snapshot: INativeSnapshot | null): Promise<void> {
+    this.db.prepare('UPDATE conversations SET native = ? WHERE id = ?').run(snapshot ? JSON.stringify(snapshot) : null, sessionId)
+  }
+
+  async findNative(sessionId: string): Promise<INativeSnapshot | undefined> {
+    const row = this.db.prepare('SELECT native FROM conversations WHERE id = ?').get(sessionId) as { native?: string | null } | undefined
+    if (!row?.native) return undefined
+    try {
+      return JSON.parse(row.native) as INativeSnapshot
+    } catch {
+      return undefined
+    }
   }
 
   async findSession(sessionId: string): Promise<IConversationSession | undefined> {
