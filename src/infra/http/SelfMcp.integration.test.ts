@@ -17,6 +17,9 @@ import { SqliteAgentHookRepository } from '@infra/persistence/Sqlite.AgentHookRe
 import { SqliteCredentialStore } from '@infra/persistence/Sqlite.CredentialStore'
 import { SecretBox } from '@infra/secrets/Aes.SecretBox'
 import { HooksController } from './Hooks.Controller'
+import { GuidanceController } from './Guidance.Controller'
+import { GuidanceService } from '@application/Guidance.Service'
+import { SqliteGuidanceRepository } from '@infra/persistence/Sqlite.GuidanceRepository'
 import { PackagesController } from './Packages.Controller'
 
 /** Um micromamba falso: instala `jq` (cria o ambiente) e lista o que está lá. */
@@ -83,6 +86,8 @@ describe('MCP do próprio gateway (integração)', () => {
       undefined,
       packages,
       hooks,
+      undefined,
+      new GuidanceController({ guidance: new GuidanceService(new SqliteGuidanceRepository(), () => false), proof: makeAuth().proof }),
     ).start(0)
     await new Promise((resolve) => server.once('listening', resolve))
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`
@@ -115,8 +120,36 @@ describe('MCP do próprio gateway (integração)', () => {
 
   it('⛔ o membro só vê as ferramentas comuns; o admin vê as de admin e as de escrita (SELF_MCP_WRITE=0 desliga a escrita)', async () => {
     const common = ['get_conversation', 'list_agents', 'list_conversations', 'list_projects', 'my_usage', 'send_message', 'start_conversation', 'switch_model']
-    const adminRead = ['get_agent', 'hook_deliveries', 'list_hooks', 'list_models', 'list_packages', 'list_providers', 'list_tools', 'search_packages', 'usage_by_key']
-    const write = ['delete_hook', 'install_package', 'remove_package', 'save_agent', 'save_hook', 'save_project', 'set_model_enabled', 'set_model_price', 'set_project_members']
+    const adminRead = [
+      'get_agent',
+      'get_doc',
+      'hook_deliveries',
+      'list_docs',
+      'list_hooks',
+      'list_models',
+      'list_packages',
+      'list_providers',
+      'list_rules',
+      'list_tools',
+      'search_packages',
+      'usage_by_key',
+    ]
+    const write = [
+      'delete_doc',
+      'delete_hook',
+      'delete_rule',
+      'install_package',
+      'move_rule',
+      'remove_package',
+      'save_agent',
+      'save_doc',
+      'save_hook',
+      'save_project',
+      'save_rule',
+      'set_model_enabled',
+      'set_model_price',
+      'set_project_members',
+    ]
     assert.deepStrictEqual(await names(member), common)
     assert.deepStrictEqual(await names(admin), [...common, ...adminRead, ...write].sort())
 
@@ -207,5 +240,23 @@ describe('MCP do próprio gateway (integração)', () => {
     assert.deepStrictEqual(json(await client.callTool({ name: 'hook_deliveries', arguments: { agentId: 'atlas', name: 'deploy' } })), [])
     await client.callTool({ name: 'delete_hook', arguments: { agentId: 'atlas', name: 'deploy' } })
     assert.deepStrictEqual(json(await client.callTool({ name: 'list_hooks', arguments: { agentId: 'atlas' } })), [])
+  })
+
+  it('save_rule numera, move_rule reordena (uma posição por chamada) e delete_rule renumera', async () => {
+    const client = await connect(admin)
+    const titles = async () =>
+      json(await client.callTool({ name: 'list_rules', arguments: {} })).map((rule: { position: number; title: string }) => `${rule.position}:${rule.title}`)
+    const first = json(await client.callTool({ name: 'save_rule', arguments: { title: 'Idioma', body: 'Português.' } }))
+    const second = json(await client.callTool({ name: 'save_rule', arguments: { title: 'Fontes', body: 'Cite a fonte.' } }))
+    assert.deepStrictEqual(await titles(), ['1:Idioma', '2:Fontes'])
+
+    const moved = json(await client.callTool({ name: 'move_rule', arguments: { id: second.id, direction: 'up' } }))
+    assert.deepStrictEqual(
+      moved.map((rule: { title: string }) => rule.title),
+      ['Fontes', 'Idioma'],
+    )
+    await client.callTool({ name: 'delete_rule', arguments: { id: second.id } })
+    assert.deepStrictEqual(await titles(), ['1:Idioma'])
+    await client.callTool({ name: 'delete_rule', arguments: { id: first.id } })
   })
 })

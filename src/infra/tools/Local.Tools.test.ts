@@ -173,3 +173,19 @@ describe('LocalTools', () => {
     })
   })
 })
+
+describe('LocalTools — read_doc', () => {
+  const doc = { id: 'api', kind: 'adr' as const, projectId: 'xpto', title: 'API', summary: 'REST', body: '# Decisão', createdAt: new Date(), updatedAt: new Date() }
+
+  it('só existe com o leitor de documentos; lê pelo projeto DA CONVERSA', async () => {
+    assert.ok(!makeLocalTools().some((tool) => tool.name === 'read_doc'))
+    const asked: Array<string | undefined> = []
+    const tool = makeLocalTools({ docs: { readDoc: (id, projectId) => (asked.push(projectId), id === 'api' && projectId === 'xpto' ? doc : undefined) } }).find(
+      (item) => item.name === 'read_doc',
+    )!
+
+    assert.deepStrictEqual(await tool.execute({ id: 'api' }, { conversationProjectId: 'xpto', projectId: 'outro' }), { status: 'success', result: '# API [adr]\n\n# Decisão' })
+    assert.deepStrictEqual(await tool.execute({ id: 'api' }, {}), { status: 'error', result: 'Document not found: api' })
+    assert.deepStrictEqual(asked, ['xpto', undefined])
+  })
+})

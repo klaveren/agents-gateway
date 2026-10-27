@@ -17,6 +17,8 @@ import {
   McpServerNotFoundError,
   McpServerInUseError,
   InvalidProjectError,
+  InvalidGuidanceError,
+  GuidanceNotFoundError,
   ProjectNotFoundError,
   ProjectInUseError,
   ProviderNotFoundError,
@@ -168,6 +170,14 @@ export function toHttpFailure(error: unknown): IHttpFailure {
   }
 
   if (error instanceof McpServerNotFoundError) {
+    return { status: 404, code: 'not_found', message: error.message }
+  }
+
+  if (error instanceof InvalidGuidanceError) {
+    return { status: 422, code: 'validation_error', message: 'Guidance is invalid', details: error.issues }
+  }
+
+  if (error instanceof GuidanceNotFoundError) {
     return { status: 404, code: 'not_found', message: error.message }
   }
 

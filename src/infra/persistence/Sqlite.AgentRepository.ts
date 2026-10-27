@@ -84,10 +84,38 @@ export class SqliteAgentRepository implements IAgentRepository {
 
     for (const agent of agents) {
       const key = `seeded:${agent.id}`
-      if (marked.get(key)) continue
+      if (marked.get(key)) {
+        this.grantSeedTools(agent, now, by)
+        continue
+      }
       insert.run(agent.id, JSON.stringify(agent), now, now, by)
       mark.run(key, now)
+      for (const tool of agent.allowedTools) mark.run(`seed-tool:${agent.id}:${tool}`, now)
     }
+  }
+
+  /**
+   * ⚖️ A FERRAMENTA NOVA DA SEMENTE chega ao agente que já existe (o Atlas de um banco antigo ganha as de rules e
+   * documentos), UMA VEZ cada (`seed-tool:<agente>:<ferramenta>`): tirada depois pela tela, não volta. O resto do
+   * agente (prompt, modelos) é de quem administra e não se toca.
+   */
+  private grantSeedTools(agent: IAgent, now: string, by: string): void {
+    const marked = this.db.prepare('SELECT 1 FROM agent_meta WHERE key = ?')
+    const mark = this.db.prepare('INSERT OR IGNORE INTO agent_meta (key, value) VALUES (?, ?)')
+    const fresh = agent.allowedTools.filter((tool) => !marked.get(`seed-tool:${agent.id}:${tool}`))
+    if (!fresh.length) return
+    const row = this.db.prepare('SELECT document FROM agents WHERE id = ?').get(agent.id) as { document: string } | undefined
+    if (row) {
+      const document = JSON.parse(row.document) as { allowedTools?: string[] }
+      const current = document.allowedTools ?? []
+      const added = fresh.filter((tool) => !current.includes(tool))
+      if (added.length) {
+        document.allowedTools = [...current, ...added]
+        this.db.prepare('UPDATE agents SET document = ?, updated_at = ?, updated_by = ? WHERE id = ?').run(JSON.stringify(document), now, by, agent.id)
+        console.log(`[agentes] ${agent.id} ganhou ${added.length} ferramenta(s) da semente: ${added.join(', ')}`)
+      }
+    }
+    for (const tool of fresh) mark.run(`seed-tool:${agent.id}:${tool}`, now)
   }
 
   delete(id: string): boolean {

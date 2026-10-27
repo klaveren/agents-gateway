@@ -24,4 +24,9 @@ export interface IExecutionContext {
   agentId?: string
   /** O projeto do agente: é na pasta dele que as ferramentas locais (`run_bash`) trabalham. Ausente = global. */
   projectId?: string
+  /**
+   * O projeto da CONVERSA, que pode ser outro que o do agente (o Atlas, global, numa conversa do projeto XPTO).
+   * É por ele que o `read_doc` sabe que documentos a conversa pode ler.
+   */
+  conversationProjectId?: string
 }

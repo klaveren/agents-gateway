@@ -3,6 +3,7 @@ import { promisify } from 'node:util'
 import { bashPolicy, denyReason, truncate, type IBashPolicy } from './Bash.Guard'
 import { subscriptionEnv, workspaceFor } from '@infra/adapters/support/Subscription.Workspace'
 import { IProjectSandbox, projectSandbox, SANDBOX_SHELL } from '@infra/sandbox/Project.Sandbox'
+import { IProjectDoc, READ_DOC_TOOL } from '@domain/models/ProjectDoc.Model'
 import { ILocalTool, IToolResult } from './Tool.Types'
 
 export interface IExecOptions {
@@ -17,12 +18,19 @@ export interface IExecOptions {
 export type TExec = (command: string, options: IExecOptions) => Promise<{ stdout: string; stderr: string }>
 export type TFetchHtml = (query: string) => Promise<string>
 
+/** Quem lê um documento para a conversa (o `GuidanceService`). */
+export interface IDocReader {
+  readDoc(id: string, projectId?: string): IProjectDoc | undefined
+}
+
 export interface ILocalToolDeps {
   exec?: TExec
   fetchHtml?: TFetchHtml
   policy?: IBashPolicy
   /** O cerco do agente de projeto (ver `Project.Sandbox`). Ausente = o do processo. */
   sandbox?: IProjectSandbox
+  /** Os documentos (specs e ADRs). Ausente = sem `read_doc`. */
+  docs?: IDocReader
 }
 
 const EXEC_BUFFER_BYTES = 1024 * 1024
@@ -122,7 +130,32 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
         }
       },
     },
+    ...(deps.docs ? [readDocTool(deps.docs)] : []),
   ]
+}
+
+/**
+ * `read_doc`: o documento inteiro (markdown) de uma spec ou ADR do índice que a conversa recebeu no prompt.
+ * ⛔ Só o global ou o do projeto da conversa; o de outro projeto responde como inexistente.
+ */
+function readDocTool(docs: IDocReader): ILocalTool {
+  return {
+    origin: 'local',
+    name: READ_DOC_TOOL,
+    description: 'Reads the full markdown of a spec or ADR listed under "Documentos de referência" in your instructions, by its id.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: 'The document id, as listed' } },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    execute: async (args, context) => {
+      const id = typeof args.id === 'string' ? args.id.trim() : ''
+      const doc = id ? docs.readDoc(id, context?.conversationProjectId) : undefined
+      if (!doc) return { status: 'error', result: `Document not found: ${id || '(no id)'}` }
+      return { status: 'success', result: `# ${doc.title} [${doc.kind}]\n\n${doc.body}` }
+    },
+  }
 }
 
 /** O HTML do DuckDuckGo é estável o bastante para os cinco primeiros resultados. */

@@ -322,6 +322,34 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     async ({ agentId, name }) => reply(await api('GET', `/agents/${encodeURIComponent(agentId)}/hooks/${encodeURIComponent(name)}/deliveries`)),
   )
 
+  server.registerTool(
+    'list_rules',
+    {
+      description:
+        'The environment rules (Rule 1, Rule 2…) of one scope, in order: every agent gets the enabled ones in its system prompt when a conversation starts — the global ones first, then those of the conversation project. Absent projectId = the global rules.',
+      inputSchema: { projectId: z.string().optional().describe('A project id (see list_projects); absent = global') },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ projectId }) => reply(await api('GET', '/rules', { query: { project: projectId ?? 'global' } })),
+  )
+
+  server.registerTool(
+    'list_docs',
+    {
+      description:
+        'The reference documents (specs and ADRs) of one scope, without the body. Conversations get an index (id, title, summary) of the global ones plus those of their project, and agents read one in full with read_doc. Absent projectId = the global ones.',
+      inputSchema: { projectId: z.string().optional(), kind: z.enum(['spec', 'adr']).optional() },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ projectId, kind }) => reply(await api('GET', '/docs', { query: { project: projectId ?? 'global', kind } })),
+  )
+
+  server.registerTool(
+    'get_doc',
+    { description: 'One spec or ADR in full, markdown body included.', inputSchema: { id: z.string() }, annotations: { readOnlyHint: true } },
+    async ({ id }) => reply(await api('GET', `/docs/${encodeURIComponent(id)}`)),
+  )
+
   if (!access.write) return
 
   server.registerTool(
@@ -444,6 +472,64 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
       const exists = (await api('GET', `/agents/${encodeURIComponent(agent.id)}`)).ok
       return reply(exists ? await api('PUT', `/agents/${encodeURIComponent(agent.id)}`, { body: agent }) : await api('POST', '/agents', { body: agent }))
     },
+  )
+
+  server.registerTool(
+    'save_rule',
+    {
+      description:
+        'Create an environment rule (without id: it goes to the end of its scope as the next Rule N), or change one (with id). It applies to conversations started from now on. Confirm the text with the person before saving.',
+      inputSchema: {
+        id: z.string().optional().describe('From list_rules; absent = a new rule'),
+        projectId: z.string().nullable().optional().describe('The project it belongs to; null = global (every project). New rule: absent = global'),
+        title: z.string().optional(),
+        body: z.string().optional().describe('The rule itself, imperative and short'),
+        enabled: z.boolean().optional(),
+      },
+    },
+    async ({ id, ...rule }) => reply(id ? await api('PUT', `/rules/${encodeURIComponent(id)}`, { body: rule }) : await api('POST', '/rules', { body: rule })),
+  )
+
+  server.registerTool(
+    'move_rule',
+    {
+      description:
+        'Move an environment rule one position up or down within its scope (it swaps with its neighbour; at the end of the list it stays). Returns the scope in the new order. Call it once per step to move a rule further. Confirm the new order with the person first.',
+      inputSchema: { id: z.string().describe('From list_rules'), direction: z.enum(['up', 'down']) },
+    },
+    async ({ id, direction }) => reply(await api('POST', `/rules/${encodeURIComponent(id)}/move`, { body: { direction } })),
+  )
+
+  server.registerTool(
+    'delete_rule',
+    { description: 'Delete an environment rule; the others of its scope are renumbered. Confirm with the person first.', inputSchema: { id: z.string() } },
+    async ({ id }) => reply(await api('DELETE', `/rules/${encodeURIComponent(id)}`)),
+  )
+
+  server.registerTool(
+    'save_doc',
+    {
+      description:
+        'Create or replace a spec or ADR (markdown). The id is a slug (2–64 lowercase letters, digits or hyphens) that agents pass to read_doc; the summary is the one line shown in the conversation index. For an ADR, write the status (Proposed, Accepted…) in the body. Confirm with the person before saving.',
+      inputSchema: {
+        id: z.string(),
+        kind: z.enum(['spec', 'adr']),
+        projectId: z.string().nullable().optional().describe('The project it belongs to; null or absent on a new one = global'),
+        title: z.string(),
+        summary: z.string(),
+        body: z.string().describe('Markdown'),
+      },
+    },
+    async ({ id, ...doc }) => {
+      const exists = (await api('GET', `/docs/${encodeURIComponent(id)}`)).ok
+      return reply(exists ? await api('PUT', `/docs/${encodeURIComponent(id)}`, { body: doc }) : await api('POST', '/docs', { body: { id, ...doc } }))
+    },
+  )
+
+  server.registerTool(
+    'delete_doc',
+    { description: 'Delete a spec or ADR: it leaves the index of new conversations. Confirm with the person first.', inputSchema: { id: z.string() } },
+    async ({ id }) => reply(await api('DELETE', `/docs/${encodeURIComponent(id)}`)),
   )
 }
 

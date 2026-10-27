@@ -28,6 +28,8 @@ import { IAgent, IAgentTarget } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
+import { READ_DOC_TOOL } from '@domain/models/ProjectDoc.Model'
+import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { caller } from '@infra/mcp/Caller.Identity'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
@@ -69,6 +71,12 @@ export class AgentProvider implements IAgentProvider {
      * (um `openrouter` que fala OpenAI vai para os adapters da OpenAI). Ausente, só os oficiais.
      */
     private readonly providers?: IProviderDirectory,
+
+    /**
+     * As rules e os documentos do ambiente (ver `GuidanceService`): o texto que vai no system prompt da conversa
+     * e se ela tem documento para o `read_doc`. Ausente = sem nada disso.
+     */
+    private readonly guidance?: { environmentFor(projectId?: string): string | undefined; hasDocs(projectId?: string): boolean },
   ) {
     /**
      * Uma leitura no boot, e depois só quando muda.
@@ -125,9 +133,12 @@ export class AgentProvider implements IAgentProvider {
     // ⛔ Subagente: só pela delegação. Aqui, e não na tela, porque é por aqui que todo caminho passa.
     if (agent.role === 'subagent' && !input.delegated) throw new SubagentOnlyError(agent.id)
 
-    const { adminAccess: _access, delegated: _delegated, parentSessionId: _parent, ...rest } = input
-    const created = await this.getAdapter(protocol, mode).createSession(agent, {
+    const { adminAccess: _access, delegated: _delegated, parentSessionId: _parent, environment: _environment, ...rest } = input
+    // ⚖️ O projeto da CONVERSA (o controller o carimba), não o do agente: o Atlas no XPTO recebe as do XPTO.
+    const environment = this.guidance?.environmentFor(projectOf(input.metadata))
+    const created = await this.getAdapter(protocol, mode).createSession(this.withDocs(agent, projectOf(input.metadata)), {
       ...rest,
+      ...(environment ? { environment } : {}),
       agentId: agent.id,
       provider: choice.provider,
       model: choice.model,
@@ -148,7 +159,8 @@ export class AgentProvider implements IAgentProvider {
    */
   async *sendMessage(sessionId: string, input: IMessageInput): AsyncIterable<IAgentEvent> {
     const record = this.requireSession(sessionId)
-    const agent = this.getAgent(record.agentId)
+    const conversationProject = projectOf(record.metadata)
+    const agent = this.withDocs(this.getAgent(record.agentId), conversationProject)
     // ⛔ O modelo da conversa foi desativado (ou sumiu do provider) depois que ela começou: erro claro, em
     // vez de seguir usando um modelo que quem administra tirou. `agent.models` já vem só com os utilizáveis.
     if (record.model && !offers(agent, record.provider, record.model)) throw new ModelDisabledError(record.provider, record.model)
@@ -171,7 +183,13 @@ export class AgentProvider implements IAgentProvider {
        * outros não — e os que não resolviam falavam com o MCP sem identidade, o que aparece como
        * "não consegui consultar" e parece problema do provider.
        */
-      const context: IExecutionContext = { token: caller()?.token, sessionId, agentId: record.agentId, ...(agent.projectId ? { projectId: agent.projectId } : {}) }
+      const context: IExecutionContext = {
+        token: caller()?.token,
+        sessionId,
+        agentId: record.agentId,
+        ...(agent.projectId ? { projectId: agent.projectId } : {}),
+        ...(conversationProject ? { conversationProjectId: conversationProject } : {}),
+      }
 
       for await (const event of adapter.sendMessage(agent, sessionId, sent, context)) {
         // Somar o usage aqui vale para as seis implementações de uma vez.
@@ -198,6 +216,15 @@ export class AgentProvider implements IAgentProvider {
         }
       }
     }
+  }
+
+  /**
+   * O agente com o `read_doc` quando a conversa tem documento no índice: o prompt manda ler, então a
+   * ferramenta vem junto, sem ninguém ter de escolhê-la no cadastro do agente.
+   */
+  private withDocs(agent: IAgent, projectId: string | undefined): IAgent {
+    if (!this.guidance?.hasDocs(projectId) || agent.allowedTools.includes(READ_DOC_TOOL)) return agent
+    return { ...agent, allowedTools: [...agent.allowedTools, READ_DOC_TOOL] }
   }
 
   async cancel(sessionId: string): Promise<void> {
@@ -370,4 +397,10 @@ function toSession(record: ISessionRecord): ISession {
     lastActivityAt: new Date(record.lastActivityAt),
     metadata: record.metadata,
   }
+}
+
+/** O projeto que o controller carimbou na conversa. */
+function projectOf(metadata: Record<string, unknown> | undefined): string | undefined {
+  const value = metadata?.[PROJECT_METADATA_KEY]
+  return typeof value === 'string' && value ? value : undefined
 }

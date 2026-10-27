@@ -34,4 +34,9 @@ export interface ICreateSessionInput {
    */
   delegated?: boolean
   parentSessionId?: string
+  /**
+   * As rules e o índice de documentos da conversa (ver `GuidanceService.environmentFor`), que vão no system
+   * prompt. ⛔ Interno: quem preenche é o `AgentProvider`, nunca o corpo da requisição.
+   */
+  environment?: string
 }

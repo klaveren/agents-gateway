@@ -413,6 +413,34 @@ export interface ISandboxStatus {
 }
 
 /** Um projeto: agentes e conversas vivem dentro de um, com a sua pasta. `folder` e `members` só para admin. */
+/** Uma regra do ambiente (Rule N). Sem `projectId` = global. */
+export interface IRule {
+  id: string
+  projectId?: string
+  position: number
+  title: string
+  body: string
+  enabled: boolean
+  createdAt: string
+  updatedAt: string
+  updatedBy?: string
+}
+
+export type TDocKind = 'spec' | 'adr'
+
+/** Uma spec ou ADR em markdown. A lista vem sem o `body`. */
+export interface IProjectDoc {
+  id: string
+  kind: TDocKind
+  projectId?: string
+  title: string
+  summary: string
+  body?: string
+  createdAt: string
+  updatedAt: string
+  updatedBy?: string
+}
+
 export interface IProject {
   id: string
   name: string

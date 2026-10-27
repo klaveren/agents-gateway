@@ -488,6 +488,57 @@ const failures = {
 
 const json = (schema: object) => ({ content: { 'application/json': { schema } } })
 
+const guidanceScope = { name: 'project', in: 'query', required: false, schema: { type: 'string' }, description: 'A project id; absent or `global` = the global scope.' }
+const ruleSchema = {
+  type: 'object',
+  properties: {
+    id: { type: 'string' },
+    projectId: { type: 'string', description: 'Absent = global.' },
+    position: { type: 'integer', description: 'The N of "Rule N" within its scope.' },
+    title: { type: 'string' },
+    body: { type: 'string' },
+    enabled: { type: 'boolean' },
+    createdAt: { type: 'string', format: 'date-time' },
+    updatedAt: { type: 'string', format: 'date-time' },
+    updatedBy: { type: 'string' },
+  },
+}
+const ruleBody = {
+  type: 'object',
+  properties: {
+    projectId: { type: 'string', nullable: true, description: 'The project; null = global. Changing it moves the rule to the end of the new scope.' },
+    title: { type: 'string' },
+    body: { type: 'string' },
+    enabled: { type: 'boolean' },
+  },
+}
+const docSchema = {
+  type: 'object',
+  properties: {
+    id: { type: 'string', description: 'Slug; what agents pass to read_doc.' },
+    kind: { type: 'string', enum: ['spec', 'adr'] },
+    projectId: { type: 'string', description: 'Absent = global.' },
+    title: { type: 'string' },
+    summary: { type: 'string', description: 'One line: what the conversation index shows.' },
+    body: { type: 'string', description: 'Markdown. Absent in the list.' },
+    createdAt: { type: 'string', format: 'date-time' },
+    updatedAt: { type: 'string', format: 'date-time' },
+    updatedBy: { type: 'string' },
+  },
+}
+const docBody = {
+  type: 'object',
+  properties: {
+    id: { type: 'string', description: 'Only on create.' },
+    kind: { type: 'string', enum: ['spec', 'adr'] },
+    projectId: { type: 'string', nullable: true, description: 'The project; null = global.' },
+    title: { type: 'string' },
+    summary: { type: 'string' },
+    body: { type: 'string' },
+  },
+}
+const idParam = [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }]
+
 const usageTokens = {
   type: 'object',
   properties: {
@@ -1119,6 +1170,71 @@ export const OPENAPI_DOCUMENT = {
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: { required: true, ...json({ type: 'object', properties: { userIds: { type: 'array', items: { type: 'string' } } }, required: ['userIds'] }) },
         responses: { '200': { description: 'OK' }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/rules': {
+      get: {
+        summary:
+          'The environment rules of one scope, in order. Every conversation gets the enabled ones in its system prompt when it starts: the global ones, then those of its project. Administrators only (404 for others)',
+        parameters: [guidanceScope],
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: ruleSchema })) }, '401': failures['401'], '404': failures['404'] },
+      },
+      post: {
+        summary: 'Create a rule at the end of its scope (the next Rule N). Administrators only',
+        requestBody: { required: true, ...json({ ...ruleBody, required: ['title', 'body'] }) },
+        responses: { '201': { description: 'Created', ...json(envelope(ruleSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/rules/{id}': {
+      put: {
+        summary: 'Change a rule; it applies to conversations started from now on. Administrators only',
+        parameters: idParam,
+        requestBody: { required: true, ...json(ruleBody) },
+        responses: { '200': { description: 'OK', ...json(envelope(ruleSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+      delete: {
+        summary: 'Delete a rule; the rest of its scope is renumbered. Administrators only',
+        parameters: idParam,
+        responses: { '200': { description: 'OK' }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/rules/{id}/move': {
+      post: {
+        summary: 'Move a rule one position up or down in its scope; returns the scope in the new order. Administrators only',
+        parameters: idParam,
+        requestBody: { required: true, ...json({ type: 'object', properties: { direction: { type: 'string', enum: ['up', 'down'] } }, required: ['direction'] }) },
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: ruleSchema })) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/docs': {
+      get: {
+        summary:
+          'The specs and ADRs of one scope, without the body. Conversations get an index (id, title, summary) of the global ones plus those of their project; agents read one with read_doc. Administrators only',
+        parameters: [guidanceScope, { name: 'kind', in: 'query', required: false, schema: { type: 'string', enum: ['spec', 'adr'] } }],
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: docSchema })) }, '401': failures['401'], '404': failures['404'] },
+      },
+      post: {
+        summary: 'Create a spec or ADR (markdown). Administrators only',
+        requestBody: { required: true, ...json({ ...docBody, required: ['id', 'kind', 'title', 'body'] }) },
+        responses: { '201': { description: 'Created', ...json(envelope(docSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/docs/{id}': {
+      get: {
+        summary: 'One spec or ADR, body included. Administrators only',
+        parameters: idParam,
+        responses: { '200': { description: 'OK', ...json(envelope(docSchema)) }, '401': failures['401'], '404': failures['404'] },
+      },
+      put: {
+        summary: 'Change a spec or ADR (the id stays). Administrators only',
+        parameters: idParam,
+        requestBody: { required: true, ...json(docBody) },
+        responses: { '200': { description: 'OK', ...json(envelope(docSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+      delete: {
+        summary: 'Delete a spec or ADR. Administrators only',
+        parameters: idParam,
+        responses: { '200': { description: 'OK' }, '401': failures['401'], '404': failures['404'] },
       },
     },
     '/hook/{agentId}/{hookName}': {

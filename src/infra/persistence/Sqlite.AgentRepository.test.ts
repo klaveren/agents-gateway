@@ -107,3 +107,20 @@ describe('SqliteAgentRepository', () => {
     assert.deepStrictEqual(withProviders({ ...agent }), agent)
   })
 })
+
+describe('SqliteAgentRepository — ferramentas novas da semente', () => {
+  it('⚖️ a ferramenta nova da semente chega ao agente que já existe, uma vez: tirada depois, não volta', () => {
+    const repo = new SqliteAgentRepository(':memory:')
+    const seed: IAgent = { id: 'atlas', name: 'Atlas', providers: [{ provider: EProvider.GOOGLE, models: ['m'] }], systemPrompt: 'p', modes: [EMode.CHAT], allowedTools: ['a'] }
+    repo.seedOnce([seed], 'seed')
+    repo.save({ ...seed, systemPrompt: 'editado', allowedTools: [] }, 'root')
+
+    repo.seedOnce([{ ...seed, allowedTools: ['a', 'b'] }], 'seed')
+    const atlas = repo.list().find((item) => item.id === 'atlas')!
+    assert.deepStrictEqual([atlas.allowedTools, atlas.systemPrompt], [['b'], 'editado'])
+
+    repo.save({ ...atlas, allowedTools: [] }, 'root')
+    repo.seedOnce([{ ...seed, allowedTools: ['a', 'b'] }], 'seed')
+    assert.deepStrictEqual(repo.list().find((item) => item.id === 'atlas')!.allowedTools, [])
+  })
+})

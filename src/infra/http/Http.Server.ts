@@ -8,6 +8,9 @@ import { McpProxyController } from './McpProxy.Controller'
 import { PackagesController } from './Packages.Controller'
 import { HOOK_PATH, HooksController } from './Hooks.Controller'
 import { ProjectsController } from './Projects.Controller'
+import { GuidanceController } from './Guidance.Controller'
+import { GuidanceService } from '@application/Guidance.Service'
+import { SqliteGuidanceRepository } from '@infra/persistence/Sqlite.GuidanceRepository'
 import { ProjectsService } from '@application/Projects.Service'
 import { SqliteProjectRepository } from '@infra/persistence/Sqlite.ProjectRepository'
 import { AgentHooksService } from '@application/AgentHooks.Service'
@@ -80,6 +83,7 @@ export class HttpServer {
     packages: PackagesController = new PackagesController(),
     hooks?: HooksController,
     projects?: ProjectsController,
+    guidance?: GuidanceController,
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
@@ -109,6 +113,7 @@ export class HttpServer {
       packages,
       hooks ?? new HooksController({ hooks: defaultHooks(), sessionFor: () => undefined }),
       projects ?? new ProjectsController({ projects: defaultProjects() }),
+      guidance ?? new GuidanceController({ guidance: new GuidanceService(new SqliteGuidanceRepository(), () => false) }),
     )
     this.setupRoutes()
     this.setupFrontend()
@@ -213,8 +218,19 @@ function buildRoutes(
   packages: PackagesController,
   hooks: HooksController,
   projects: ProjectsController,
+  guidance: GuidanceController,
 ): IRoute[] {
   return [
+    { method: 'get', path: '/rules', handler: guidance.listRules },
+    { method: 'post', path: '/rules', handler: guidance.createRule },
+    { method: 'put', path: '/rules/:id', handler: guidance.updateRule },
+    { method: 'delete', path: '/rules/:id', handler: guidance.deleteRule },
+    { method: 'post', path: '/rules/:id/move', handler: guidance.moveRule },
+    { method: 'get', path: '/docs', handler: guidance.listDocs },
+    { method: 'post', path: '/docs', handler: guidance.createDoc },
+    { method: 'get', path: '/docs/:id', handler: guidance.getDoc },
+    { method: 'put', path: '/docs/:id', handler: guidance.updateDoc },
+    { method: 'delete', path: '/docs/:id', handler: guidance.deleteDoc },
     { method: 'get', path: '/projects', handler: projects.list },
     { method: 'post', path: '/projects', handler: projects.create },
     { method: 'put', path: '/projects/:id', handler: projects.update },
