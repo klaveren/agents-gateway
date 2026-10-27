@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from 'node:fs'
+import { accessSync, constants, mkdirSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
@@ -50,6 +50,17 @@ export function subscriptionHome(kind: 'codex' | 'antigravity' | 'claude', env: 
   const dir = join(dataDir(env), `${kind}-home`)
   mkdirSync(dir, { recursive: true })
   return dir
+}
+
+/** Dá para gravar na pasta? (No pod, o HOME não dá: `readOnlyRootFilesystem`.) */
+export function isWritable(dir: string | undefined): boolean {
+  if (!dir) return false
+  try {
+    accessSync(dir, constants.W_OK)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** A pasta dos dados do gateway: a do banco (no pod, `/app/data`, o PVC). */

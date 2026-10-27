@@ -387,6 +387,29 @@ export interface IMcpServer {
   updatedBy?: string
 }
 
+/** Uma ferramenta do servidor instalada pela guia Pacotes (micromamba, conda-forge). */
+export interface IInstalledPackage {
+  name: string
+  version: string
+  /** Pedido por quem administra; `false` = veio como dependência. */
+  explicit: boolean
+}
+
+export interface IPackagesState {
+  /** O micromamba existe no servidor. */
+  available: boolean
+  version?: string
+  /** Onde as ferramentas moram (persistente). */
+  prefix: string
+  packages: IInstalledPackage[]
+}
+
+export interface IPackageHit {
+  name: string
+  version: string
+  license?: string
+}
+
 export interface IMcpTool {
   name: string
   description: string

@@ -1004,6 +1004,65 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'Saved', ...json(envelope(mcpServerSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
     },
+    '/packages': {
+      get: {
+        summary: 'Server tools installed by micromamba (conda-forge) into <data>/tools, which is on the PATH of everything the gateway runs. Administrators only',
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  available: { type: 'boolean', description: 'micromamba was found (MICROMAMBA_BIN or PATH)' },
+                  version: { type: 'string' },
+                  prefix: { type: 'string' },
+                  packages: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, version: { type: 'string' }, explicit: { type: 'boolean' } } } },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+      post: {
+        summary: 'Install a conda-forge package into <data>/tools (persistent). One operation at a time (409 package_busy). Administrators only',
+        requestBody: { required: true, ...json({ type: 'object', properties: { name: { type: 'string' }, version: { type: 'string' } }, required: ['name'] }) },
+        responses: {
+          '200': { description: 'ok false = micromamba failed; see log', ...json(envelope({ type: 'object', properties: { ok: { type: 'boolean' }, log: { type: 'string' } } })) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
+    '/packages/search': {
+      get: {
+        summary: 'Search conda-forge (`*q*`): one hit per name, newest version, exact name first, at most 30. Administrators only',
+        parameters: [{ name: 'q', in: 'query', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(envelope({ type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, version: { type: 'string' }, license: { type: 'string' } } } })),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+    },
+    '/packages/{name}': {
+      delete: {
+        summary: 'Uninstall a package from <data>/tools. Administrators only',
+        parameters: [{ name: 'name', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'ok false = micromamba failed; see log', ...json(envelope({ type: 'object', properties: { ok: { type: 'boolean' }, log: { type: 'string' } } })) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
     '/mcp-servers/{id}/install': {
       post: {
         summary: 'npm install the package of a process MCP into its own folder, next to the previous install (kept if this one fails). Administrators only',

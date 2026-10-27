@@ -5,6 +5,7 @@
 
 # Globais: valem nas linhas `FROM` (o estágio do Antigravity escolhe o download pela arquitetura).
 ARG AGY_VERSION=1.4.6
+ARG MICROMAMBA_VERSION=2.9.0-0
 ARG TARGETARCH
 
 FROM node:24-slim AS build
@@ -49,6 +50,18 @@ FROM node:24-slim AS agy
 COPY --from=agy-download /agy.tar.gz /tmp/agy.tar.gz
 RUN mkdir -p /opt/agy && tar -xzf /tmp/agy.tar.gz -C /opt/agy && chmod 0755 /opt/agy/antigravity
 
+# O micromamba oficial (github.com/mamba-org/micromamba-releases), binário estático: a guia Pacotes instala
+# ferramentas do conda-forge sem root, em /app/data/tools (o PVC). Versão FIXA e sha256 CONFERIDO, como o agy.
+FROM scratch AS mamba-arm64
+ARG MICROMAMBA_VERSION
+ADD --checksum=sha256:9f93b974adcb4d166996af969b6cd371287d1a3e52733704727884d9b74cb7a7 \
+    https://github.com/mamba-org/micromamba-releases/releases/download/${MICROMAMBA_VERSION}/micromamba-linux-aarch64 /micromamba
+FROM scratch AS mamba-amd64
+ARG MICROMAMBA_VERSION
+ADD --checksum=sha256:366cd9cd8be14df1ab8ed50352a82111082a36686b2d389fdb79a92c3fafb3e3 \
+    https://github.com/mamba-org/micromamba-releases/releases/download/${MICROMAMBA_VERSION}/micromamba-linux-64 /micromamba
+FROM mamba-${TARGETARCH} AS mamba
+
 FROM node:24-slim AS runtime
 ARG BUILD_VERSION=dev
 ARG BUILD_REVISION=unknown
@@ -86,6 +99,7 @@ COPY package.json ./
 COPY --from=web /web/dist ./web/dist
 # O Antigravity no PATH como `agy` (o nome que o gateway procura; `ANTIGRAVITY_BIN` troca).
 COPY --from=agy /opt/agy/antigravity /usr/local/bin/agy
+COPY --from=mamba --chmod=0755 /micromamba /usr/local/bin/micromamba
 
 USER gateway
 VOLUME ["/app/data"]

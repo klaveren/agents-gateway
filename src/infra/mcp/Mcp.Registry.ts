@@ -1,4 +1,4 @@
-import { accessSync, constants, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js'
@@ -8,6 +8,7 @@ import { resolveAllowedHosts } from '@infra/sandbox/Egress.Proxy'
 import { ICredentialSource } from '@domain/ports/CredentialStore.Port'
 import { IMcpServerRepository } from '@domain/ports/McpServerRepository.Port'
 import { IToolDefinition } from '@infra/tools/Tool.Types'
+import { isWritable } from '@infra/adapters/support/Subscription.Workspace'
 import { installDir, resolveCommand } from './Mcp.Install'
 import { IMcpClientOptions, McpServerClient } from './McpServer.Client'
 
@@ -35,16 +36,6 @@ const maxInstances = () => Number.parseInt(process.env.MCP_CONTAINER_MAX ?? '', 
 const idleMs = () => (Number.parseInt(process.env.MCP_CONTAINER_IDLE_MINUTES ?? '', 10) || 15) * MINUTE
 
 /** Só o que o `docker` precisa para falar com o daemon — ⛔ nada do ambiente do gateway (chaves, `.env`). */
-function writable(dir: string | undefined): boolean {
-  if (!dir) return false
-  try {
-    accessSync(dir, constants.W_OK)
-    return true
-  } catch {
-    return false
-  }
-}
-
 function dockerEnv(): Record<string, string> {
   const env: Record<string, string> = { ...getDefaultEnvironment() }
   for (const name of ['DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG', 'DOCKER_CERT_PATH', 'DOCKER_TLS_VERIFY']) {
@@ -185,7 +176,7 @@ export class McpRegistry {
     mkdirSync(cwd, { recursive: true, mode: 0o700 })
     // ⚠️ No pod o HOME é só leitura (`readOnlyRootFilesystem`), e MCP grava nele (o Playwright, em `~/.cache`).
     // Sem HOME gravável, o processo ganha um próprio: a pasta de trabalho dele.
-    if (!writable(env.HOME)) env.HOME = cwd
+    if (!isWritable(env.HOME)) env.HOME = cwd
     const client = new McpServerClient(`process://${config.id}`, {}, { auth: 'none', label: config.id, stdio: { command, args: proc.args, env, cwd } })
     return { client, cleanup: async () => (shared ? undefined : rmSync(cwd, { recursive: true, force: true })) }
   }

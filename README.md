@@ -472,6 +472,16 @@ The image ships Debian's `chromium` for Playwright: the screen's preset is
 `@playwright/mcp@latest --headless --isolated --no-sandbox --executable-path=/usr/bin/chromium`.
 Outside Linux, drop `--executable-path` and it uses the installed Chrome.
 
+### Server tools that survive a reboot: the Packages tab
+
+On the pod there is no root and the rootfs is read-only, so `apt install` is not an option and
+anything installed by hand is gone on the next restart. The **Packages** tab (admins only)
+searches conda-forge and installs with `micromamba` — a static binary shipped in the image —
+into `<data>/tools` (on the pod, the PVC). The gateway puts `<data>/tools/bin` first on its own
+`PATH` at boot, so the agents' Bash, `run_bash` and local MCP processes all see git, curl, jq,
+ffmpeg or whatever was installed. Outside the image, point `MICROMAMBA_BIN` at a micromamba
+(`brew install micromamba` on a Mac).
+
 ---
 
 ## Architecture
