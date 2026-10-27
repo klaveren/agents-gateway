@@ -164,10 +164,34 @@ export async function cleanupOrphans(): Promise<void> {
   if (nets.length) await run('docker', ['network', 'rm', ...nets]).catch(() => undefined)
 }
 
-/** O Docker responde? A tela avisa quando não. */
-export async function dockerAvailable(): Promise<boolean> {
-  return run('docker', ['version', '--format', '{{.Server.Version}}']).then(
-    () => true,
-    () => false,
+export interface IDockerStatus {
+  available: boolean
+  /** Sem Docker: o motivo, para a tela dizer (ex.: "cliente docker não instalado neste servidor"). */
+  reason?: string
+}
+
+const DOCKER_CHECK_TTL_MS = 30_000
+let lastCheck: { at: number; status: Promise<IDockerStatus> } | undefined
+
+/**
+ * O Docker responde AQUI? É do que o MCP "Contêiner isolado" precisa; a tela desliga a opção quando não.
+ * ⚖️ Guardado por 30s: a página de configurações e a de MCPs perguntam a cada abertura, e o Docker do Mac pode
+ * subir depois do gateway. No pod não há cliente nem socket — e dar o socket ao pod seria dar root no nó.
+ */
+export function dockerStatus(now = Date.now()): Promise<IDockerStatus> {
+  if (lastCheck && now - lastCheck.at < DOCKER_CHECK_TTL_MS) return lastCheck.status
+  const status = run('docker', ['version', '--format', '{{.Server.Version}}'], { timeout: 5_000 }).then(
+    (): IDockerStatus => ({ available: true }),
+    (error: NodeJS.ErrnoException & { stderr?: string }): IDockerStatus => ({
+      available: false,
+      reason:
+        error.code === 'ENOENT'
+          ? 'cliente docker não instalado neste servidor'
+          : /connect|daemon|socket/i.test(`${error.stderr ?? ''}${error.message}`)
+            ? 'o Docker não responde neste servidor (sem daemon ou sem acesso ao socket)'
+            : (error.stderr || error.message).trim().split('\n').pop()?.slice(0, 200),
+    }),
   )
+  lastCheck = { at: now, status }
+  return status
 }

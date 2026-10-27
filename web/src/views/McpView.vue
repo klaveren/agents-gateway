@@ -11,6 +11,7 @@ import { fullTime, initials } from '@/lib/format'
 import type { IMcpContainer, IMcpProcess, IMcpServer, TMcpAuth, TMcpKind, TMcpTransport } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
 import { useMcpStore, type INewMcpServer } from '@/stores/mcp'
+import { useSettingsStore } from '@/stores/settings'
 
 /**
  * A guia MCPs: os servidores de onde os agentes tiram ferramentas. Cada agente escolhe, no formulário
@@ -22,6 +23,12 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const mcp = useMcpStore()
+const settings = useSettingsStore()
+/** Sem Docker neste servidor (o pod do k3s não tem): o "Contêiner isolado" não sobe. `undefined` = não se sabe. */
+const dockerDown = computed(() => {
+  const docker = settings.current?.deployment?.docker
+  return docker && !docker.available ? (docker.reason ?? 'o Docker não responde') : undefined
+})
 
 const AUTH_LABEL: Record<TMcpAuth, { label: string; hint: string }> = {
   caller: { label: 'Credencial de quem conversa', hint: 'O gateway repassa o token da pessoa (Authorization: Bearer …): o MCP decide o que cada uma vê.' },
@@ -36,11 +43,11 @@ const selected = computed(() => (props.id ? mcp.list.find((server) => server.id 
 const loadError = ref<string>()
 const blankContainer = (): IMcpContainer => ({ image: '', args: [], writable: [], memoryMb: 1024, cpus: 1, network: 'none', allowedHosts: [], env: [] })
 const blankProcess = (): IMcpProcess => ({ package: '', command: '', args: [], env: [], scope: 'conversation' })
-const blank = (): INewMcpServer => ({ id: '', name: '', kind: 'remote', container: blankContainer(), process: blankProcess(), url: '', transport: 'auto', auth: 'none', headerName: 'Authorization', secret: '' })
+const blank = (): INewMcpServer => ({ id: '', name: '', kind: 'process', container: blankContainer(), process: blankProcess(), url: '', transport: 'auto', auth: 'none', headerName: 'Authorization', secret: '' })
 const KIND_LABEL: Record<TMcpKind, { label: string; hint: string }> = {
+  process: { label: 'Local (npm)', hint: 'O gateway instala o pacote e roda como processo dele, sem contêiner — com o alcance do servidor.' },
   remote: { label: 'Remoto (URL)', hint: 'Um MCP que já está no ar, por HTTP/SSE.' },
   container: { label: 'Contêiner isolado', hint: 'O gateway sobe a imagem num contêiner trancado — um por conversa. Precisa de Docker no servidor.' },
-  process: { label: 'Processo local (npm)', hint: 'O gateway instala o pacote e roda como processo dele, sem contêiner — com o alcance do servidor.' },
 }
 /** O rascunho do contêiner na edição (a cópia do que está gravado). */
 const containerDraft = ref<IMcpContainer>(blankContainer())
@@ -69,7 +76,7 @@ const removing = ref<IMcpServer>()
 const removeError = ref<string>()
 
 onMounted(async () => {
-  if (auth.isAdmin) await mcp.load().catch((error) => (loadError.value = describe(error)))
+  if (auth.isAdmin) await Promise.all([mcp.load().catch((error) => (loadError.value = describe(error))), settings.load().catch(() => undefined)])
 })
 
 const editOf = (server: IMcpServer): IEdit => ({ name: server.name, url: server.url, transport: server.transport, auth: server.auth, headerName: server.headerName ?? 'Authorization' })
@@ -257,7 +264,7 @@ async function confirmRemove() {
         <span class="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-violet-500/20 text-xs font-semibold text-violet-200">{{ initials(server.name) }}</span>
         <span class="min-w-0 flex-1">
           <span class="block truncate text-sm font-medium">{{ server.name }}</span>
-          <span class="block truncate text-xs text-zinc-500">{{ !server.enabled ? 'desligado' : server.kind === 'container' ? `contêiner · ${server.status.instances ?? 0} ativa(s)` : server.kind === 'process' ? `processo · ${server.status.instances ?? 0} ativa(s)` : server.status.connected ? 'conectado' : 'sem conexão' }} · {{ server.agents.length }} agente(s)</span>
+          <span class="block truncate text-xs text-zinc-500">{{ !server.enabled ? 'desligado' : server.kind === 'container' ? `contêiner · ${server.status.instances ?? 0} ativa(s)` : server.kind === 'process' ? `local · ${server.status.instances ?? 0} ativa(s)` : server.status.connected ? 'conectado' : 'sem conexão' }} · {{ server.agents.length }} agente(s)</span>
         </span>
         <span class="h-2 w-2 shrink-0 rounded-full" :class="server.enabled && server.status.connected ? 'bg-emerald-400' : 'bg-zinc-600'" />
       </RouterLink>
@@ -270,9 +277,21 @@ async function confirmRemove() {
           <div class="field">
             Tipo
             <div class="flex flex-wrap gap-1.5">
-              <button v-for="(option, value) in KIND_LABEL" :key="value" type="button" class="chip" :class="{ on: form.kind === value }" @click="form.kind = value">{{ option.label }}</button>
+              <button
+                v-for="(option, value) in KIND_LABEL"
+                :key="value"
+                type="button"
+                class="chip disabled:cursor-not-allowed disabled:opacity-40"
+                :class="{ on: form.kind === value }"
+                :disabled="value === 'container' && !!dockerDown && form.kind !== 'container'"
+                :title="value === 'container' && dockerDown ? `Indisponível: ${dockerDown}` : undefined"
+                @click="form.kind = value"
+              >
+                {{ option.label }}
+              </button>
             </div>
             <small class="hint">{{ KIND_LABEL[form.kind].hint }}</small>
+            <small v-if="dockerDown" class="hint text-amber-300/80">Contêiner isolado indisponível aqui: {{ dockerDown }}. Use o Local (npm).</small>
           </div>
           <div class="grid gap-3 sm:grid-cols-2">
             <label class="field">Nome<input v-model="form.name" required class="input" placeholder="CRM interno" @blur="slug" /><small v-for="m in formIssues.name" :key="m" class="error">{{ m }}</small></label>
@@ -336,6 +355,9 @@ async function confirmRemove() {
         </p>
 
         <template v-if="selected.kind === 'container'">
+          <p v-if="dockerDown" class="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+            Este MCP não sobe neste servidor: {{ dockerDown }}. Recrie-o como Local (npm), se o pacote existir.
+          </p>
           <div class="flex flex-wrap items-center gap-2 text-xs text-zinc-400">
             <span class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-emerald-300">contêiner isolado</span>
             <span>{{ selected.status.instances ?? 0 }} instância(s) ativa(s) — uma por conversa</span>
@@ -359,7 +381,7 @@ async function confirmRemove() {
 
         <template v-if="selected.kind === 'process'">
           <div class="flex flex-wrap items-center gap-2 text-xs text-zinc-400">
-            <span class="rounded-full bg-amber-500/15 px-2 py-0.5 text-amber-300">processo local</span>
+            <span class="rounded-full bg-amber-500/15 px-2 py-0.5 text-amber-300">local (npm)</span>
             <span>{{ selected.status.instances ?? 0 }} instância(s) ativa(s) — {{ selected.process?.scope === 'shared' ? 'compartilhada' : 'uma por conversa' }}</span>
             <button v-if="selected.status.instances" type="button" class="ml-auto rounded-full px-3 py-1 text-rose-300 hover:bg-rose-500/10" :disabled="busy" @click="stopAll">Encerrar todas</button>
           </div>
