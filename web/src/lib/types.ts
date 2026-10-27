@@ -210,6 +210,8 @@ export interface ISettings {
   deployment?: {
     localToolsEnabled?: string
     allowAnonymous: boolean
+    /** O cerco dos agentes de projeto neste servidor. Sem ele, o Bash deles fica bloqueado. */
+    sandbox?: ISandboxStatus
   }
 }
 
@@ -398,6 +400,12 @@ export interface IHookDelivery {
   status: 'running' | 'ok' | 'error'
   sessionId?: string
   error?: string
+}
+
+export interface ISandboxStatus {
+  available: boolean
+  mechanism: 'seatbelt' | 'bubblewrap' | 'none'
+  reason?: string
 }
 
 /** Um projeto: agentes e conversas vivem dentro de um, com a sua pasta. `folder` e `members` só para admin. */

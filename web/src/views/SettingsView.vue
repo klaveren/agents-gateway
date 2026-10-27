@@ -39,7 +39,7 @@ const LIMITS: Array<{ name: TLimitName; label: string }> = [
   { name: 'streamsPerOwner', label: 'Streams simultâneos por dono' },
 ]
 
-const DEPLOYMENT: Array<{ key: keyof NonNullable<ISettings['deployment']>; label: string }> = [
+const DEPLOYMENT: Array<{ key: 'localToolsEnabled' | 'allowAnonymous'; label: string }> = [
   { key: 'allowAnonymous', label: 'Aceita chamador anônimo' },
   { key: 'localToolsEnabled', label: 'Ferramentas locais' },
 ]
@@ -219,6 +219,10 @@ async function saveSettings() {
             <dd class="min-w-0 truncate font-mono text-xs text-zinc-200" :title="deploymentValue(settings.current.deployment[item.key])">{{ deploymentValue(settings.current.deployment[item.key]) }}</dd>
           </div>
         </dl>
+        <p v-if="settings.current.deployment.sandbox" class="text-xs" :class="settings.current.deployment.sandbox.available ? 'text-emerald-300' : 'text-amber-300'">
+          Cerco dos agentes de projeto:
+          {{ settings.current.deployment.sandbox.available ? `ativo (${settings.current.deployment.sandbox.mechanism})` : `indisponível — ${settings.current.deployment.sandbox.reason ?? 'sem motivo'}. O Bash deles fica bloqueado.` }}
+        </p>
       </section>
 
       <p v-if="!auth.isAdmin" class="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5 text-sm text-zinc-400">

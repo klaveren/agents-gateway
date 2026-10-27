@@ -2,6 +2,7 @@ import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
 import { bashPolicy, denyReason, truncate, type IBashPolicy } from './Bash.Guard'
 import { subscriptionEnv, workspaceFor } from '@infra/adapters/support/Subscription.Workspace'
+import { IProjectSandbox, projectSandbox, SANDBOX_SHELL } from '@infra/sandbox/Project.Sandbox'
 import { ILocalTool, IToolResult } from './Tool.Types'
 
 export interface IExecOptions {
@@ -9,6 +10,8 @@ export interface IExecOptions {
   timeout: number
   maxBuffer: number
   env: Record<string, string>
+  /** O shell da linha; o comando cercado (`Project.Sandbox`) é montado para o bash. */
+  shell?: string
 }
 
 export type TExec = (command: string, options: IExecOptions) => Promise<{ stdout: string; stderr: string }>
@@ -18,6 +21,8 @@ export interface ILocalToolDeps {
   exec?: TExec
   fetchHtml?: TFetchHtml
   policy?: IBashPolicy
+  /** O cerco do agente de projeto (ver `Project.Sandbox`). Ausente = o do processo. */
+  sandbox?: IProjectSandbox
 }
 
 const EXEC_BUFFER_BYTES = 1024 * 1024
@@ -43,6 +48,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
   const run = deps.exec ?? defaultExec
   const fetchHtml = deps.fetchHtml ?? defaultFetchHtml
   const policy = deps.policy ?? bashPolicy()
+  const sandbox = deps.sandbox ?? projectSandbox()
 
   return [
     {
@@ -84,18 +90,34 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
           return { status: 'error', result: `Refused by the gateway tool policy: ${denied}.` }
         }
 
+        // ⛔ Agente de projeto: o comando roda PRESO à pasta do projeto, ou não roda (sem cerco, recusa).
+        let line = command
+        if (context?.projectId) {
+          try {
+            line = await sandbox.wrap(command, context.projectId)
+          } catch (error: unknown) {
+            return { status: 'error', result: `${toMessage(error)}. O run_bash de agente de projeto fica bloqueado até o cerco funcionar.` }
+          }
+        }
+
         try {
           // ⛔ Ambiente MÍNIMO: o shell herdava o `process.env` inteiro — chaves de API, `AUTH_SECRET`,
-          // `SECRETS_KEY` —, e um `env` bastava para levar tudo. E o `cwd` é o diretório vazio da conversa.
-          const { stdout, stderr } = await run(command, {
-            cwd: policy.cwd || workspaceFor(context?.projectId, context?.sessionId ?? 'run_bash'),
+          // `SECRETS_KEY` —, e um `env` bastava para levar tudo. E o `cwd` é o diretório vazio da conversa —
+          // ou, no agente de projeto, a pasta do projeto (que vence o `BASH_CWD`: é nela que o cerco deixa gravar).
+          const cwd = context?.projectId ? workspaceFor(context.projectId, '') : policy.cwd || workspaceFor(undefined, context?.sessionId ?? 'run_bash')
+          const { stdout, stderr } = await run(line, {
+            cwd,
             timeout: policy.timeoutMs,
             maxBuffer: EXEC_BUFFER_BYTES,
-            env: subscriptionEnv({ HOME: policy.cwd || workspaceFor(context?.projectId, context?.sessionId ?? 'run_bash') }),
+            env: subscriptionEnv({ HOME: cwd }),
+            ...(context?.projectId ? { shell: SANDBOX_SHELL } : {}),
           })
           const output = stdout || stderr || 'Command executed successfully with no output.'
           return { status: 'success', result: truncate(output, policy.maxOutputChars) }
         } catch (error: unknown) {
+          // Comando cercado: a linha embrulhada (a política do cerco) não interessa a quem lê; a saída de erro, sim.
+          const failure = error as { stderr?: string; code?: number }
+          if (context?.projectId && failure.stderr) return { status: 'error', result: truncate(`Exit code ${failure.code ?? 1}: ${failure.stderr.trim()}`, policy.maxOutputChars) }
           return { status: 'error', result: `Execution failed: ${toMessage(error)}` }
         }
       },

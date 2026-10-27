@@ -10,6 +10,7 @@ import type { IProject } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectsStore } from '@/stores/projects'
 import { useUsersStore } from '@/stores/users'
+import { useSettingsStore } from '@/stores/settings'
 
 /**
  * A guia Projetos (só admin): cada projeto tem a sua pasta, os seus agentes e conversas, e os seus membros.
@@ -21,6 +22,8 @@ const router = useRouter()
 const auth = useAuthStore()
 const projects = useProjectsStore()
 const users = useUsersStore()
+const settings = useSettingsStore()
+const sandbox = computed(() => settings.current?.deployment?.sandbox)
 
 const adding = computed(() => route.name === 'project-new')
 const selected = computed(() => (props.id ? projects.list.find((project) => project.id === props.id) : undefined))
@@ -40,7 +43,7 @@ const removeError = ref<string>()
 
 onMounted(async () => {
   if (!auth.isAdmin) return
-  await Promise.all([projects.load(), users.load()]).catch((failure) => (loadError.value = describe(failure)))
+  await Promise.all([projects.load(), users.load(), settings.current ? undefined : settings.load()]).catch((failure) => (loadError.value = describe(failure)))
 })
 
 watch(
@@ -198,10 +201,15 @@ async function confirmRemove() {
         <div class="rounded-xl border border-zinc-800 p-3 text-xs text-zinc-400">
           <div class="mb-1 font-medium text-zinc-300">Pasta</div>
           <code class="block truncate text-zinc-200">{{ selected.folder }}</code>
-          <p class="mt-2 text-amber-300/90">
-            Os agentes do projeto trabalham nesta pasta, persistente e compartilhada pelas conversas dele. Por enquanto ela organiza, mas ainda não prende: o cerco pelo sistema operacional (o agente não ler nem gravar fora
-            dela) chega na próxima etapa.
+          <p class="mt-2 text-zinc-400">Os agentes do projeto trabalham nesta pasta, persistente e compartilhada pelas conversas dele.</p>
+          <p v-if="sandbox?.available" class="mt-2 text-emerald-300">
+            ✓ Cerco ativo ({{ sandbox.mechanism }}): o Bash e o run_bash dos agentes do projeto só leem e gravam nesta pasta, com a rede liberada. As ferramentas de arquivo do Claude (Read, Write, Edit, Glob, Grep) também ficam presas a ela.
           </p>
+          <p v-else-if="sandbox" class="mt-2 text-amber-300">
+            ⚠ Cerco indisponível neste servidor{{ sandbox.reason ? `: ${sandbox.reason}` : '' }}. O Bash e o run_bash dos agentes de projeto ficam bloqueados; as ferramentas de arquivo do Claude continuam presas à pasta. No Linux em
+            contêiner, o seccomp do pod precisa liberar user namespaces.
+          </p>
+          <p class="mt-2 text-zinc-500">Codex: grava só na pasta (workspace-write), mas lê fora. Antigravity: sem o sandbox "full". O agente global (Atlas) não passa pelo cerco.</p>
         </div>
 
         <div class="grid gap-3 sm:grid-cols-2">

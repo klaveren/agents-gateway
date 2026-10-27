@@ -1,5 +1,8 @@
 import assert from 'node:assert'
-import { describe, it } from 'node:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { after, before, describe, it } from 'node:test'
 import { makeLocalTools, type IExecOptions, type TExec } from './Local.Tools'
 import { ILocalTool } from './Tool.Types'
 
@@ -130,5 +133,43 @@ describe('LocalTools', () => {
 
     assert.strictEqual((await find(tools, 'search_web').execute({ query: '  ' })).status, 'error')
     assert.match((await find(tools, 'search_web').execute({ query: 'x' })).result, /Search failed: offline/)
+  })
+
+  describe('agente de projeto: o cerco', () => {
+    const dataRoot = mkdtempSync(join(tmpdir(), 'gw-local-project-'))
+    const previousDb = process.env.CONVERSATIONS_DB
+    before(() => (process.env.CONVERSATIONS_DB = join(dataRoot, 'gateway.db')))
+    after(() => {
+      process.env.CONVERSATIONS_DB = previousDb
+      rmSync(dataRoot, { recursive: true, force: true })
+    })
+    const sandbox = (available: boolean) => ({
+      status: async () => ({ available, mechanism: 'seatbelt' as const }),
+      wrap: async (command: string) => {
+        if (!available) throw new Error('cerco indisponível neste servidor: bwrap: No permissions to create new namespace')
+        return `cercado(${command})`
+      },
+    })
+
+    it('⛔ o comando sai embrulhado, no bash, na pasta do projeto — que vence o BASH_CWD', async () => {
+      let seen: { command: string; options: IExecOptions } | undefined
+      const tools = makeLocalTools({
+        exec: async (command, options) => ((seen = { command, options }), { stdout: 'ok', stderr: '' }),
+        fetchHtml: async () => '',
+        policy,
+        sandbox: sandbox(true),
+      })
+      const outcome = await find(tools, 'run_bash').execute({ command: 'ls' }, { sessionId: 's1', projectId: 'xpto' })
+      assert.strictEqual(outcome.status, 'success')
+      assert.deepStrictEqual([seen?.command, seen?.options.shell, seen?.options.cwd], ['cercado(ls)', '/bin/bash', join(dataRoot, 'projects', 'xpto')])
+    })
+
+    it('⛔ sem cerco, recusa e não roda nada', async () => {
+      let ran = false
+      const tools = makeLocalTools({ exec: async () => ((ran = true), { stdout: '', stderr: '' }), fetchHtml: async () => '', policy, sandbox: sandbox(false) })
+      const outcome = await find(tools, 'run_bash').execute({ command: 'ls' }, { projectId: 'xpto' })
+      assert.deepStrictEqual([outcome.status, ran], ['error', false])
+      assert.match(String(outcome.result), /No permissions.*bloqueado/)
+    })
   })
 })
