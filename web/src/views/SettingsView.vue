@@ -172,7 +172,7 @@ async function saveSettings() {
               <option v-if="classifier && !classifierOptions.some((option) => option.value === classifier)" :value="classifier">{{ classifier.replace('::', ' · ') }} (não ativado)</option>
               <option v-for="option in classifierOptions" :key="option.value" :value="option.value">{{ protocols.providerName(option.provider) }} · {{ option.model }}</option>
             </select>
-            <small class="text-xs text-zinc-500">Os modelos ativados em Providers (com chave, não assinatura). Sem escolha, nada é classificado. Prefira um pequeno: ele roda a cada turno.</small>
+            <small class="text-xs text-zinc-500">Os modelos ativados em Modelos (com chave, não assinatura). Sem escolha, nada é classificado. Prefira um pequeno: ele roda a cada turno.</small>
           </label>
           <label class="flex items-center gap-2 self-end pb-2 text-sm text-zinc-300">
             <input v-model="classifyTurns" type="checkbox" class="accent-emerald-500" /> Classificar cada turno

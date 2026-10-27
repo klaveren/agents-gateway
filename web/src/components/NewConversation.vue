@@ -19,7 +19,7 @@ const protocols = useProtocolsStore()
 const thread = useThreadStore()
 
 const MODE_HINT: Record<string, string> = {
-  chat: 'SDK normal do provider. Conversa, anexos e raciocínio.',
+  chat: 'SDK normal do provedor. Conversa, anexos e raciocínio.',
   chatTools: 'SDK normal + o loop de tools escrito à mão.',
   agent: 'Agents SDK oficial: o loop de tools é do SDK.',
 }

@@ -159,7 +159,7 @@ const go = (query: Record<string, string | undefined>) => router.replace({ query
             </tr>
           </tbody>
         </table>
-        <p class="text-xs text-zinc-500">Custo estimado pelos preços do catálogo (Providers → Modelos). "≥" = algum modelo sem preço: o valor é um piso.</p>
+        <p class="text-xs text-zinc-500">Custo estimado pelos preços do catálogo (Modelos). "≥" = algum modelo sem preço: o valor é um piso.</p>
       </template>
     </div>
   </div>

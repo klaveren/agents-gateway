@@ -22,7 +22,7 @@ const auth = useAuthStore()
 const providers = useProvidersStore()
 const protocols = useProtocolsStore()
 
-/** `/providers/new` abre o formulário no lugar do detalhe. */
+/** `/models/new` abre o formulário no lugar do detalhe. */
 const adding = computed(() => route.name === 'provider-new')
 const selected = computed(() => (props.id ? providers.list.find((provider) => provider.id === props.id) : undefined))
 
@@ -58,7 +58,7 @@ function issuesSummary(error: ApiError): string {
 }
 
 function describe(error: unknown): string {
-  if (error instanceof ApiError && error.code === 'provider_in_use') return `${error.message}. Troque o provider desses agentes antes.`
+  if (error instanceof ApiError && error.code === 'provider_in_use') return `${error.message}. Troque o provedor desses agentes antes.`
   if (error instanceof ApiError && error.status === 422) return issuesSummary(error)
   return error instanceof Error ? error.message : String(error)
 }
@@ -121,7 +121,7 @@ async function confirmRemoveProvider() {
   if (!target) return
   await run(target.id, () => providers.remove(target.id))
   removingProvider.value = undefined
-  if (!providers.list.some((provider) => provider.id === target.id)) await router.push('/providers')
+  if (!providers.list.some((provider) => provider.id === target.id)) await router.push('/models')
 }
 
 async function create() {
@@ -131,7 +131,7 @@ async function create() {
     const id = form.value.id
     await providers.create({ ...form.value, key: form.value.key?.trim() || undefined })
     form.value = { id: '', name: '', protocol: 'openai', baseUrl: '', key: '' }
-    await router.push(`/providers/${id}`)
+    await router.push(`/models/${id}`)
   } catch (error) {
     if (error instanceof ApiError && error.status === 422) formIssues.value = error.fieldIssues
     formError.value = describe(error)
@@ -158,23 +158,23 @@ function sourceLabel(provider: IProviderStatus): string {
 <template>
   <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
     <div>
-      <p class="font-medium text-zinc-200">Só quem administra configura os providers.</p>
-      <RouterLink v-if="!auth.signedIn && auth.localAccounts" :to="{ path: '/login', query: { next: '/providers' } }" class="mt-3 inline-block rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950">Entrar</RouterLink>
+      <p class="font-medium text-zinc-200">Só quem administra configura os modelos.</p>
+      <RouterLink v-if="!auth.signedIn && auth.localAccounts" :to="{ path: '/login', query: { next: '/models' } }" class="mt-3 inline-block rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950">Entrar</RouterLink>
     </div>
   </div>
 
-  <MasterDetail v-else :open="!!id || adding" back-to="/providers" back-label="Providers" :title="adding ? 'Novo provider' : selected?.name">
+  <MasterDetail v-else :open="!!id || adding" back-to="/models" back-label="Modelos" :title="adding ? 'Novo provedor' : selected?.name">
     <template #list>
       <header class="flex items-center gap-2 px-4 pt-4 pb-1">
-        <h1 class="text-xl font-semibold">Providers</h1>
-        <RouterLink to="/providers/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Adicionar provider"><Icon name="plus" class="h-5 w-5" /></RouterLink>
+        <h1 class="text-xl font-semibold">Modelos</h1>
+        <RouterLink to="/models/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Adicionar provedor"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
       <p class="px-4 pb-3 text-xs text-zinc-500">Os oficiais e qualquer API compatível com OpenAI ou Anthropic. As chaves ficam criptografadas e nunca voltam para a tela.</p>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
       <RouterLink
         v-for="provider in providers.list"
         :key="provider.id"
-        :to="`/providers/${provider.id}`"
+        :to="`/models/${provider.id}`"
         class="mx-2 flex items-center gap-3 rounded-xl px-3 py-2"
         :class="[provider.id === id ? 'bg-emerald-500/15' : 'hover:bg-zinc-800/60', { 'opacity-60': !provider.enabled }]"
       >
@@ -189,7 +189,7 @@ function sourceLabel(provider: IProviderStatus): string {
 
     <template #detail>
       <template v-if="adding">
-        <h2 class="mx-auto mb-4 max-w-3xl text-lg font-semibold">Novo provider</h2>
+        <h2 class="mx-auto mb-4 max-w-3xl text-lg font-semibold">Novo provedor</h2>
         <form class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="create">
           <div class="flex flex-wrap gap-1.5">
             <span class="text-xs text-zinc-400">Qualquer API que imite a da OpenAI ou a da Anthropic — um agregador, um servidor local, um gateway da empresa.</span>
@@ -202,7 +202,7 @@ function sourceLabel(provider: IProviderStatus): string {
               <div class="flex flex-wrap gap-1.5">
                 <button v-for="protocol in (['openai', 'claude'] as TProvider[])" :key="protocol" type="button" class="chip" :class="{ on: form.protocol === protocol }" @click="form.protocol = protocol">{{ protocolLabel(protocol) }}</button>
               </div>
-              <small class="hint">Qual API o provider imita — é o que decide o formato da URL abaixo. Alguns falam as duas: cadastre um de cada, se quiser usar as duas lanes de SDK.</small>
+              <small class="hint">Qual API o provedor imita — é o que decide o formato da URL abaixo. Alguns falam as duas: cadastre um de cada, se quiser usar as duas lanes de SDK.</small>
             </div>
             <label class="field">
               URL base
@@ -216,7 +216,7 @@ function sourceLabel(provider: IProviderStatus): string {
           <p v-if="formError" class="text-sm text-rose-300">{{ formError }}</p>
           <div class="flex gap-2">
             <button type="submit" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400">Adicionar</button>
-            <RouterLink to="/providers" class="rounded-full px-4 py-2 text-sm hover:bg-zinc-800">Cancelar</RouterLink>
+            <RouterLink to="/models" class="rounded-full px-4 py-2 text-sm hover:bg-zinc-800">Cancelar</RouterLink>
           </div>
         </form>
       </template>
@@ -281,10 +281,10 @@ function sourceLabel(provider: IProviderStatus): string {
           <span v-for="agent in selected.agents" :key="agent.id" class="rounded-full bg-zinc-800 px-2 py-0.5 text-zinc-300">{{ agent.name }}</span>
           <span v-if="!selected.agents.length">nenhum ainda</span>
           <a v-if="selected.official && protocols.get(selected.protocol)?.consoleUrl && !selected.subscription" :href="protocols.get(selected.protocol)?.consoleUrl" target="_blank" rel="noopener noreferrer" class="ml-auto text-emerald-400 hover:underline">Gerar chave ↗</a>
-          <button v-if="!selected.official" type="button" class="ml-auto text-rose-300 hover:underline" @click="removingProvider = selected">Remover provider</button>
+          <button v-if="!selected.official" type="button" class="ml-auto text-rose-300 hover:underline" @click="removingProvider = selected">Remover provedor</button>
         </div>
       </section>
-      <div v-else class="grid h-full place-items-center text-zinc-500">Escolha um provider ou adicione um novo.</div>
+      <div v-else class="grid h-full place-items-center text-zinc-500">Escolha um provedor ou adicione um novo.</div>
       <ConfirmDialog
         :open="!!removingKey"
         :title="`Remover a chave salva de ${removingKey?.name ?? ''}?`"
@@ -295,7 +295,7 @@ function sourceLabel(provider: IProviderStatus): string {
       />
       <ConfirmDialog
         :open="!!removingProvider"
-        :title="`Remover o provider ${removingProvider?.name ?? ''}?`"
+        :title="`Remover o provedor ${removingProvider?.name ?? ''}?`"
         message="O provider e a chave dele somem; os modelos dele ficam desligados, não apagados. Se algum agente ainda o usa, o gateway recusa e diz quais."
         action="Remover"
         @confirm="confirmRemoveProvider"

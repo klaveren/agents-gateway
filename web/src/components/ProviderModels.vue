@@ -158,7 +158,7 @@ function context(tokens?: number): string {
     </div>
 
     <p v-if="loading" class="text-xs text-zinc-500">Carregando…</p>
-    <p v-else-if="!models.length" class="text-xs text-zinc-500">Nenhum modelo ainda. {{ provider.credential.configured || provider.subscription ? 'Clique em "Atualizar lista" para buscar os do provider.' : 'Salve uma chave e atualize a lista.' }}</p>
+    <p v-else-if="!models.length" class="text-xs text-zinc-500">Nenhum modelo ainda. {{ provider.credential.configured || provider.subscription ? 'Clique em "Atualizar lista" para buscar os do provedor.' : 'Salve uma chave e atualize a lista.' }}</p>
 
     <ul v-if="visible.length" class="scroll-thin max-h-96 divide-y divide-zinc-800/70 overflow-y-auto">
       <li v-for="model in visible" :key="model.modelId" class="flex flex-wrap items-center gap-x-3 gap-y-1 py-2" :class="{ 'opacity-50': !model.available }">
@@ -171,7 +171,7 @@ function context(tokens?: number): string {
             <span
               v-if="model.reasoning?.supported"
               class="ml-1 rounded-full bg-violet-500/15 px-1.5 text-[10px] text-violet-300"
-              :title="model.reasoning.levels ? `Níveis: ${model.reasoning.levels.join(', ')}` : model.reasoning.source === 'heuristic' ? 'Estimado pelo id: a listagem deste provider não diz' : 'Segundo a listagem do provider'"
+              :title="model.reasoning.levels ? `Níveis: ${model.reasoning.levels.join(', ')}` : model.reasoning.source === 'heuristic' ? 'Estimado pelo id: a listagem deste provedor não diz' : 'Segundo a listagem do provedor'"
               >raciocina{{ model.reasoning.source === 'heuristic' ? ' (estimado)' : '' }}</span
             >
             <span v-if="!model.available" class="ml-1 rounded-full bg-zinc-800 px-1.5 text-[10px] text-zinc-400">sumiu da listagem</span>

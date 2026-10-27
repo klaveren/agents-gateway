@@ -2,7 +2,7 @@
 import Icon from './Icon.vue'
 
 /**
- * Lista ao lado, detalhe à direita — o desenho das Conversas, usado também em Agentes, Providers e Usuários.
+ * Lista ao lado, detalhe à direita — o desenho das Conversas, usado também em Agentes, Modelos e Usuários.
  *
  * ⚖️ Telas largas (`lg`): as duas colunas. Média: uma de cada vez. Celular (< `md`): o detalhe abre por
  * cima de TUDO, em tela cheia (inclusive da barra de navegação), com a volta no topo — como num app de mensagens.

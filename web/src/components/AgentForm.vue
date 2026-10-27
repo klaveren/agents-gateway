@@ -137,7 +137,7 @@ const sdkSections = computed(() =>
 
 /** Por que uma nativa não roda neste provider — ou nada, se roda. */
 function nativeBlock(tool: INativeTool, entry: TSelected): string | undefined {
-  return tool.officialOnly && !entry.official ? 'só no provider oficial' : undefined
+  return tool.officialOnly && !entry.official ? 'só no provedor oficial' : undefined
 }
 
 const SANDBOX_LABEL: Record<TSandboxLevel, string> = {
@@ -164,7 +164,7 @@ function setSandbox(entry: TSelected, levels: TSandboxLevel[], level: TSandboxLe
 
 /**
  * Os modelos que cada provider PODE oferecer ao agente: os ativados no catálogo dele. Sem nenhum ativado,
- * o formulário manda para Providers → Modelos.
+ * o formulário manda para Modelos.
  */
 const catalogs = ref<Record<string, ICatalogModel[] | undefined>>({})
 /** Os catálogos a caminho: o watcher dispara de novo antes de a resposta chegar. */
@@ -206,7 +206,7 @@ const openSandboxes = computed(() =>
 const FIELD_LABEL: Record<string, string> = {
   id: 'Id',
   name: 'Nome',
-  providers: 'Providers',
+  providers: 'Provedores',
   models: 'Modelos',
   modes: 'Lanes',
   reasoningEfforts: 'Raciocínio',
@@ -416,7 +416,7 @@ function slugify() {
 const saveSummary = computed(() => {
   const { providers: targets, modes, allowedTools } = form.value
   const list = targets.map((target, index) => `${protocols.providerName(target.provider)} (${target.models.length} modelo(s)${index === 0 && target.models[0] ? `, padrão ${target.models[0]}` : ''})`)
-  return `${targets.length > 1 ? 'Providers' : 'Provider'} ${list.join(', ') || 'nenhum'}; lanes ${modes.join(' + ') || 'nenhuma'}; ${allowedTools.length} ferramenta(s).`
+  return `${targets.length > 1 ? 'Provedores' : 'Provedor'} ${list.join(', ') || 'nenhum'}; lanes ${modes.join(' + ') || 'nenhuma'}; ${allowedTools.length} ferramenta(s).`
 })
 
 async function save() {
@@ -497,7 +497,7 @@ async function remove() {
           <button type="button" role="switch" :aria-checked="!!form.adminOnly" class="switch" :class="{ on: form.adminOnly }" @click="form.adminOnly = !form.adminOnly"><span /></button>
           <span>Só administradores</span>
         </label>
-        <small class="hint">Desligado, qualquer conta conversa com o agente do jeito que ele está configurado aqui: providers, assinaturas, ferramentas e sandbox.</small>
+        <small class="hint">Desligado, qualquer conta conversa com o agente do jeito que ele está configurado aqui: provedores, assinaturas, ferramentas e sandbox.</small>
       </div>
 
       <label class="field sm:col-span-2">
@@ -514,32 +514,32 @@ async function remove() {
     </fieldset>
     <fieldset v-show="tab === 'modelos'" class="grid gap-4 sm:grid-cols-2">
       <div class="field sm:col-span-2">
-        <span>Providers <em class="font-normal text-zinc-500">— onde o agente roda; a conversa troca entre eles no meio. O primeiro é o padrão.</em></span>
+        <span>Provedores <em class="font-normal text-zinc-500">— onde o agente roda; a conversa troca entre eles no meio. O primeiro é o padrão.</em></span>
         <div class="flex flex-wrap gap-1.5">
           <button v-for="provider in providerOptions" :key="provider.id" type="button" class="chip" :class="{ on: chosen.includes(provider.id) }" @click="toggleProvider(provider.id)">
             {{ provider.name }}<span v-if="chosen[0] === provider.id" class="ml-1 text-[10px] text-emerald-300">padrão</span><span v-if="!provider.enabled" class="text-[10px] text-zinc-500"> desligado</span>
           </button>
-          <span v-if="!providerOptions.length" class="text-sm text-zinc-500">{{ chosen.length ? chosen.map((id) => protocols.providerName(id)).join(', ') : 'Nenhum provider pronto — configure em Providers.' }}</span>
+          <span v-if="!providerOptions.length" class="text-sm text-zinc-500">{{ chosen.length ? chosen.map((id) => protocols.providerName(id)).join(', ') : 'Nenhum provedor pronto — configure em Modelos.' }}</span>
         </div>
         <small v-for="message in issues.providers" :key="message" class="error">{{ message }}</small>
       </div>
 
       <div v-if="form.providers.length" class="field sm:col-span-2">
-        <span>Modelos <em class="font-normal text-zinc-500">— os ativados em Providers; o padrão é o que a conversa usa quando ninguém escolhe</em></span>
+        <span>Modelos <em class="font-normal text-zinc-500">— os ativados em Modelos; o padrão é o que a conversa usa quando ninguém escolhe</em></span>
         <p v-if="dropped.length" class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-normal text-amber-200">
           Desligados no catálogo, saem ao salvar:
-          <template v-for="([providerId, models], index) in dropped" :key="providerId">{{ index ? '; ' : '' }}{{ protocols.providerName(providerId) }}: <code>{{ models.join(', ') }}</code></template>. Para manter, ative em Providers → Modelos.
+          <template v-for="([providerId, models], index) in dropped" :key="providerId">{{ index ? '; ' : '' }}{{ protocols.providerName(providerId) }}: <code>{{ models.join(', ') }}</code></template>. Para manter, ative em Modelos.
         </p>
         <input v-if="manyModels" v-model="modelSearch" type="search" placeholder="Buscar modelo…" class="input text-sm" />
         <div v-for="(target, index) in form.providers" :key="target.provider" class="flex flex-col gap-1.5">
           <div class="flex items-center gap-2 text-xs font-normal">
             <span class="font-medium text-zinc-200">{{ protocols.providerName(target.provider) }}</span>
-            <span v-if="index === 0" class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-300">provider padrão</span>
+            <span v-if="index === 0" class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-300">provedor padrão</span>
             <button v-else type="button" class="text-zinc-400 hover:text-zinc-100" @click="makeDefaultProvider(target.provider)">tornar padrão</button>
           </div>
           <p v-if="catalogs[target.provider] === undefined" class="text-xs font-normal text-zinc-500">Carregando modelos…</p>
           <p v-else-if="!catalogs[target.provider]?.length" class="text-sm font-normal text-amber-300">
-            Nenhum modelo ativado neste provider. <RouterLink to="/providers" class="underline">Ative em Providers → Modelos</RouterLink>.
+            Nenhum modelo ativado neste provedor. <RouterLink to="/models" class="underline">Ative em Modelos</RouterLink>.
           </p>
           <ul v-else class="scroll-thin max-h-64 divide-y divide-zinc-800/70 overflow-y-auto rounded-lg border border-zinc-800">
             <li v-for="model in visibleModels(target.provider)" :key="model.modelId" class="flex items-center gap-3 px-3 py-2 font-normal">
@@ -553,8 +553,8 @@ async function remove() {
             </li>
           </ul>
         </div>
-        <small v-if="anyCompatible" class="hint">Provider compatível: tool use e raciocínio variam por modelo.</small>
-        <small v-if="form.providers.length > 1" class="hint">Ao trocar de provider no meio da conversa, o novo recebe a transcrição dos turnos (o estado interno do anterior não vai junto).</small>
+        <small v-if="anyCompatible" class="hint">Provedor compatível: tool use e raciocínio variam por modelo.</small>
+        <small v-if="form.providers.length > 1" class="hint">Ao trocar de provedor no meio da conversa, o novo recebe a transcrição dos turnos (o estado interno do anterior não vai junto).</small>
         <small v-for="message in issues.models" :key="message" class="error">{{ message }}</small>
       </div>
 
@@ -628,7 +628,7 @@ async function remove() {
       </div>
 
       <div v-if="orphans.length" class="field sm:col-span-2">
-        <span>Órfãs <em class="font-normal text-zinc-500">— escolhidas, mas que os providers do agente ou o servidor não oferecem; o servidor recusa o salvamento com elas</em></span>
+        <span>Órfãs <em class="font-normal text-zinc-500">— escolhidas, mas que os provedores do agente ou o servidor não oferecem; o servidor recusa o salvamento com elas</em></span>
         <div class="flex flex-wrap gap-1.5">
           <button v-for="entry in orphans" :key="entry" type="button" class="chip on danger font-mono text-xs" title="Clique para tirar do agente" @click="toggle(form.allowedTools, entry)">
             <span class="mr-1 rounded-full bg-amber-500/20 px-1.5 text-[10px] text-amber-200">órfão</span>{{ entry }} ✕
@@ -672,7 +672,7 @@ async function remove() {
 
     </fieldset>
     <fieldset v-show="tab === 'sdk'" class="flex flex-col gap-4">
-      <p class="text-xs text-zinc-500">Só na lane Agents SDK. Cada provider tem o seu nível de acesso: as ferramentas do SDK dele e, no Codex e no Antigravity, o sandbox.</p>
+      <p class="text-xs text-zinc-500">Só na lane Agents SDK. Cada provedor tem o seu nível de acesso: as ferramentas do SDK dele e, no Codex e no Antigravity, o sandbox.</p>
       <p v-if="!form.modes.includes('agent')" class="text-xs text-amber-300">Este agente não tem a lane Agents SDK ligada: nada daqui é usado.</p>
       <section v-for="section in sdkSections" :key="section.entry.target.provider" class="flex flex-col gap-2 rounded-xl border border-zinc-800 px-3 py-3">
         <div class="flex flex-wrap items-center gap-2 text-sm">
@@ -714,7 +714,7 @@ async function remove() {
             <span class="shrink-0 rounded-full px-2 py-0.5 text-[10px]" :class="RISK_CLASS[tool.risk]">{{ RISK_LABEL[tool.risk] }}</span>
           </li>
         </ul>
-        <p v-else-if="!section.levels.length" class="text-xs text-zinc-500">Este provider não tem ferramentas de SDK para ligar aqui.</p>
+        <p v-else-if="!section.levels.length" class="text-xs text-zinc-500">Este provedor não tem ferramentas de SDK para ligar aqui.</p>
       </section>
       <small v-if="dangerousNatives.length || openSandboxes.length" class="text-amber-300">
         ⚠ <template v-if="dangerousNatives.length">{{ dangerousNatives.join(', ') }} alcança o disco, a rede ou os comandos deste servidor. </template>
@@ -739,7 +739,7 @@ async function remove() {
       Não consegui carregar os providers ({{ loadError }}), então não dá para salvar.
       <button type="button" class="underline hover:text-rose-200" @click="loadBase">Tentar de novo</button>
     </p>
-    <p v-else-if="!ready" class="text-xs text-zinc-500">Carregando providers…</p>
+    <p v-else-if="!ready" class="text-xs text-zinc-500">Carregando provedores…</p>
 
     <div v-show="tab !== 'hooks'" class="flex gap-2">
       <button type="submit" :disabled="saving || !ready || !!loadError || !form.providers.length" class="rounded-full bg-emerald-500 px-5 py-2 font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50">{{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar' }}</button>

@@ -26,7 +26,7 @@ const section = computed(() => {
 /**
  * ⚖️ Abaixo de `md` o trilho vira uma BARRA INFERIOR: no celular, 68px de coluna fixa eram quase um
  * quinto da tela. Os mesmos links; Perfil e Sair ficam no menu da conta, e o que é do sistema (Usuários,
- * Providers, MCPs, Pacotes, Configuração), no menu Sistema.
+ * Modelos, MCPs, Pacotes, Configuração), no menu Sistema.
  */
 const links = computed<Array<{ to: string; key: string; label: string; short?: string; icon: 'inbox' | 'chart' | 'agents'; badge: number }>>(() => [
   { to: '/', key: 'inbox', label: 'Conversas', short: 'Chats', icon: 'inbox' as const, badge: conversations.unread.size },

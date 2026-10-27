@@ -23,7 +23,7 @@ const protocols = useProtocolsStore()
 /** "Claude (assinatura) · claude-opus-5 +2": o padrão com o modelo dele, e quantos providers mais o agente tem. */
 function providersLine(agent: IAgent): string {
   const [first, ...rest] = agent.providers
-  if (!first) return 'sem provider'
+  if (!first) return 'sem provedor'
   return `${protocols.providerName(first.id)} · ${first.models[0] ?? 'sem modelo'}${rest.length ? ` +${rest.length}` : ''}`
 }
 
