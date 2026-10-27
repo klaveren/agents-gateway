@@ -55,6 +55,7 @@ export function makeController(): AgentController {
     projects: makeProjects(),
     sandbox: projectSandbox(),
     docker: () => dockerStatus(),
+    guidance: makeGuidance(),
   })
 }
 

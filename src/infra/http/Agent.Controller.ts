@@ -36,6 +36,9 @@ import { ISettingsRepository } from '@domain/ports/SettingsRepository.Port'
 import { ISessionContextProvider } from '@domain/ports/SessionContextProvider.Port'
 import { SessionNotFoundError } from '@domain/errors/Domain.Error'
 import { IProjectCaller, ProjectsService } from '@application/Projects.Service'
+import { agentFootprint } from '@application/Agent.Footprint'
+import { caller as currentCaller } from '@infra/mcp/Caller.Identity'
+import { GuidanceService } from '@application/Guidance.Service'
 import { IDockerStatus } from '@infra/sandbox/Docker.Sandbox'
 import { IProjectSandbox } from '@infra/sandbox/Project.Sandbox'
 import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
@@ -111,6 +114,8 @@ export interface IAgentControllerDeps {
   sandbox?: IProjectSandbox
   /** O Docker responde aqui? (o MCP "Contêiner isolado" precisa dele). Ausente = não se informa. */
   docker?: () => Promise<IDockerStatus>
+  /** As rules e os documentos — o que o ambiente põe no prompt (a guia Tamanho do agente pesa). Ausente = nada. */
+  guidance?: GuidanceService
   /** Os providers configurados — para o agente apontar para um que existe. Ausente = só os oficiais. */
   providers?: IProviderDirectory
   /** O catálogo de modelos: preços por provider, e os modelos que um agente pode oferecer. */
@@ -144,6 +149,7 @@ export class AgentController {
     this.health = this.health.bind(this)
     this.getAgents = this.getAgents.bind(this)
     this.getAgentTools = this.getAgentTools.bind(this)
+    this.getAgentFootprint = this.getAgentFootprint.bind(this)
     this.getTools = this.getTools.bind(this)
     this.createSession = this.createSession.bind(this)
     this.listSessions = this.listSessions.bind(this)
@@ -399,6 +405,30 @@ export class AgentController {
 
       const disabled = this.agents.unusableModels(entry.agent)
       return toAgentDetailDto(entry, (providerId) => this.providerFacts(providerId, disabled))
+    })
+  }
+
+  /**
+   * O TAMANHO do agente (`?project=` para um global): o que ele carrega antes da primeira mensagem, parte a parte.
+   * As ferramentas do MCP `caller` (o do gateway) são pedidas com a credencial de quem está na tela.
+   */
+  async getAgentFootprint(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      await this.requireAdmin('getAgentFootprint')
+      const entry = this.agents.entry(req.params.agentId as string)
+      if (!entry) throw new AgentNotFoundError(req.params.agentId as string)
+      const requested = typeof req.query.project === 'string' && req.query.project ? req.query.project : undefined
+      const projectId = entry.agent.projectId ?? (requested && this.usecases.projects?.exists(requested) ? requested : undefined)
+      const token = currentCaller()?.token
+      const catalog = this.usecases.catalog
+      return agentFootprint(entry.agent, projectId, {
+        guidance: this.usecases.guidance,
+        localFor: (allowed) => catalog.localFor(allowed),
+        mcpTools: async (server) => {
+          const tools = await catalog.mcp.probeTools(server, token).catch(() => [])
+          return tools.length ? tools : undefined
+        },
+      })
     })
   }
 
