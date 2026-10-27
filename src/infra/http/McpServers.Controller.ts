@@ -1,6 +1,7 @@
 import { IMcpServerInput, McpServersService } from '@application/McpServers.Service'
 import { IMcpServerConfig, isLaunchedMcp } from '@domain/models/McpServer.Model'
 import { installPackage, installStatus, removeInstall } from '@infra/mcp/Mcp.Install'
+import { caller } from '@infra/mcp/Caller.Identity'
 import { McpRegistry } from '@infra/mcp/Mcp.Registry'
 import { Request, Response } from 'express'
 import { z } from 'zod'
@@ -195,7 +196,8 @@ export class McpServersController {
       await this.requireAdmin('testMcpServer')
       const id = this.idOf(req)
       this.deps.service.get(id)
-      const result = await this.deps.registry.test(id)
+      // O teste conecta como quem está na tela: um MCP `caller` recusa a conexão anônima.
+      const result = await this.deps.registry.test(id, caller()?.token)
       return { ok: result.ok, tools: result.tools.length, ...(result.message ? { message: result.message } : {}) }
     })
   }
@@ -205,7 +207,7 @@ export class McpServersController {
       await this.requireAdmin('listMcpTools')
       const id = this.idOf(req)
       this.deps.service.get(id)
-      return (await this.deps.registry.probeTools(id)).map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }))
+      return (await this.deps.registry.probeTools(id, caller()?.token)).map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }))
     })
   }
 

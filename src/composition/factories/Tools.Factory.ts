@@ -90,12 +90,17 @@ function selfServer(): IMcpServerConfig {
   }
 }
 
-/** A porta pode mudar entre um boot e outro: o servidor do sistema acompanha (o editado pela tela, não). */
+/**
+ * A porta pode mudar entre um boot e outro: o servidor do sistema acompanha. ⛔ E a credencial dele é sempre a de
+ * quem conversa, no header que o gateway lê (`X-Tool-Authorization`): gravado com outra (pela tela, num banco
+ * antigo), o MCP do gateway recusava toda chamada — "Missing caller credential" — e o Atlas ficava sem ferramenta.
+ */
 function keepSelfUrl(servers: IMcpServerRepository): void {
   const current = servers.get(SELF_MCP_SERVER)
-  const url = selfUrl()
-  // ⛔ Sempre a URL deste processo: o servidor `gateway` é este gateway, e não um endereço que se edita.
-  if (current && current.url !== url) servers.update(SELF_MCP_SERVER, { url, updatedAt: new Date(), updatedBy: SYSTEM })
+  if (!current) return
+  const expected = selfServer()
+  const drift = current.url !== expected.url || current.auth !== expected.auth || current.headerName !== expected.headerName
+  if (drift) servers.update(SELF_MCP_SERVER, { url: expected.url, auth: expected.auth, headerName: expected.headerName, updatedAt: new Date(), updatedBy: SYSTEM })
 }
 
 function seedFromEnv(env: NodeJS.ProcessEnv = process.env): IMcpServerConfig[] {

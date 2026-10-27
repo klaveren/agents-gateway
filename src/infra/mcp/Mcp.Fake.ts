@@ -54,6 +54,7 @@ export function fakeMcpRegistry(servers: IFakeMcpServer[] = []): McpRegistry {
       ensureConnectedAs: async (token?: string) => connected() || (!!token && token === fake.acceptsToken),
       close: async () => undefined,
       listTools: async () => (connected() ? (fake.tools ?? []) : []),
+      listToolsAs: async (token?: string) => (connected() || (!!token && token === fake.acceptsToken) ? (fake.tools ?? []) : []),
       callTool: async (name: string, args: Record<string, unknown>, context?: IExecutionContext) =>
         fake.onCall?.(name, args, context) ?? { status: 'success' as const, result: `${config.id}:${name}` },
     } as unknown as McpServerClient

@@ -248,20 +248,26 @@ export class McpRegistry {
     return client && (await client.ensureConnectedAs(auth === 'caller' ? token : undefined)) ? client : undefined
   }
 
-  async tools(id: string, sessionId?: string): Promise<IToolDefinition[]> {
-    return (await this.connected(id, sessionId))?.listTools() ?? []
+  /** As ferramentas do servidor. `token`: a credencial de quem pede, que um servidor `caller` exige até para listar. */
+  async tools(id: string, sessionId?: string, token?: string): Promise<IToolDefinition[]> {
+    const caller = this.servers.get(id)?.auth === 'caller' ? token : undefined
+    return (await this.connected(id, sessionId, caller))?.listToolsAs(caller) ?? []
   }
 
   /** Para a tela: as ferramentas de um contêiner ou processo numa instância DESCARTÁVEL (aberta e fechada aqui). */
-  async probeTools(id: string): Promise<IToolDefinition[]> {
+  async probeTools(id: string, token?: string): Promise<IToolDefinition[]> {
     const config = this.servers.get(id)
-    if (!isLaunchedMcp(config)) return this.tools(id)
-    const result = await this.test(id)
+    if (!isLaunchedMcp(config)) return this.tools(id, undefined, token)
+    const result = await this.test(id, token)
     return result.tools
   }
 
-  /** "Testar conexão": tenta AGORA, ignorando o backoff, e lista as ferramentas. */
-  async test(id: string): Promise<{ ok: boolean; tools: IToolDefinition[]; message?: string }> {
+  /**
+   * "Testar conexão": tenta AGORA, ignorando o backoff, e lista as ferramentas.
+   * ⚖️ `token`: a credencial de quem está na tela. Um servidor `caller` (o MCP do próprio gateway) recusa a conexão
+   * anônima — sem ela, o teste dava sempre "Error POSTing to endpoint", embora nas conversas funcionasse.
+   */
+  async test(id: string, token?: string): Promise<{ ok: boolean; tools: IToolDefinition[]; message?: string }> {
     const config = this.servers.get(id)
     if (config && isLaunchedMcp(config)) {
       if (!config.enabled) return { ok: false, tools: [], message: 'server is disabled' }
@@ -277,9 +283,11 @@ export class McpRegistry {
     }
     const client = this.client(id)
     if (!client) return { ok: false, tools: [], message: 'server is disabled or does not exist' }
+    const caller = config?.auth === 'caller' ? token : undefined
     await client.close()
-    if (!(await client.connect())) return { ok: false, tools: [], message: client.lastError ?? 'could not connect' }
-    return { ok: true, tools: await client.listTools() }
+    // Sem credencial, `connect` (ignora o backoff, como o botão promete); com ela, a conexão como quem chama.
+    if (!(caller ? await client.ensureConnectedAs(caller) : await client.connect())) return { ok: false, tools: [], message: client.lastError ?? 'could not connect' }
+    return { ok: true, tools: await client.listToolsAs(caller) }
   }
 
   /** Conecta os ligados, sem bloquear quem chamou por um servidor fora do ar. */

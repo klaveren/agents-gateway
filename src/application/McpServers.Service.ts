@@ -120,8 +120,11 @@ export class McpServersService {
     }
     next.headerName = next.auth === 'none' ? undefined : next.headerName?.trim() || undefined
     const issues = issuesOf(next)
-    // ⛔ O servidor do próprio gateway é este processo: a URL dele não se edita.
+    // ⛔ O servidor do próprio gateway é este processo: a URL dele não se edita, e a credencial é sempre a de quem
+    // conversa (com outra, o MCP do gateway recusa toda chamada e o Atlas fica sem ferramenta).
     if (id === SELF_MCP_SERVER_ID && next.url !== current.url) issues.push({ field: 'url', message: 'the gateway server URL is fixed' })
+    if (id === SELF_MCP_SERVER_ID && (next.auth !== current.auth || next.headerName !== current.headerName))
+      issues.push({ field: 'auth', message: "the gateway server always uses the caller's credential" })
     if (issues.length) throw new InvalidMcpServerError(issues)
 
     return this.servers.update(id, {

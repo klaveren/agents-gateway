@@ -130,3 +130,23 @@ describe('McpRegistry', () => {
     assert.deepStrictEqual(repository.list(), [])
   })
 })
+
+describe('McpServerClient — listar como quem chama', () => {
+  it('⚖️ `caller`: listToolsAs leva a credencial de quem pede (o botão "Testar conexão"); sem token, vai sem', async () => {
+    const seen: Headers[] = []
+    const fakeFetch = (async (_input: unknown, init?: RequestInit) => {
+      seen.push(new Headers(init?.headers))
+      return new Response('nope', { status: 401 })
+    }) as typeof fetch
+    const client = new McpServerClient('http://127.0.0.1:1/mcp', { fetch: fakeFetch }, { auth: 'caller', callerHeader: 'X-Tool-Authorization' })
+
+    await client.listToolsAs('tok-da-tela')
+    assert.ok(seen.length > 0)
+    assert.ok(seen.every((headers) => headers.get('x-tool-authorization') === 'Bearer tok-da-tela'))
+
+    seen.length = 0
+    await client.close()
+    await client.connect()
+    assert.ok(seen.every((headers) => !headers.has('x-tool-authorization')))
+  })
+})
