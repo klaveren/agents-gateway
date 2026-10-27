@@ -17,12 +17,14 @@ const section = computed(() => {
   if (name.startsWith('provider')) return 'providers'
   if (name.startsWith('mcp')) return 'mcp'
   if (name === 'user' || name.startsWith('user-')) return 'users'
+  // Perfil não tem item no trilho (mora no menu da conta): nada fica aceso.
+  if (name === 'packages' || name === 'profile') return name
   return ['settings', 'users', 'usage'].includes(name) ? name : 'inbox'
 })
 
 /**
  * ⚖️ Abaixo de `md` o trilho vira uma BARRA INFERIOR: no celular, 68px de coluna fixa eram quase um
- * quinto da tela. Os mesmos links; o "Sair" passa para o topo da Configuração.
+ * quinto da tela. Os mesmos links; Perfil e Sair ficam no menu da conta.
  */
 const links = computed<Array<{ to: string; key: string; label: string; short?: string; icon: 'inbox' | 'chart' | 'agents' | 'key' | 'users' | 'settings' | 'plug' | 'box'; badge: number }>>(() => [
   { to: '/', key: 'inbox', label: 'Conversas', short: 'Chats', icon: 'inbox' as const, badge: conversations.unread.size },
@@ -34,9 +36,10 @@ const links = computed<Array<{ to: string; key: string; label: string; short?: s
         { to: '/mcp', key: 'mcp', label: 'MCPs', icon: 'plug' as const, badge: 0 },
         { to: '/packages', key: 'packages', label: 'Pacotes', icon: 'box' as const, badge: 0 },
         { to: '/users', key: 'users', label: 'Usuários', short: 'Equipe', icon: 'users' as const, badge: 0 },
+        // Configuração é do SISTEMA: só admin. O que é da pessoa fica em Perfil, no menu da conta.
+        { to: '/settings', key: 'settings', label: 'Configuração', short: 'Ajustes', icon: 'settings' as const, badge: 0 },
       ]
     : []),
-  { to: '/settings', key: 'settings', label: 'Configuração', short: 'Ajustes', icon: 'settings' as const, badge: 0 },
 ])
 </script>
 
@@ -59,6 +62,7 @@ const links = computed<Array<{ to: string; key: string; label: string; short?: s
       <span v-if="link.badge" class="absolute top-0.5 right-[calc(50%-20px)] md:top-1 md:right-2 min-w-[18px] rounded-full bg-emerald-500 px-1 text-center text-[10px] leading-[18px] font-semibold text-zinc-950">{{ link.badge > 99 ? '99+' : link.badge }}</span>
     </RouterLink>
     <AccountMenu v-if="auth.user" placement="up" class="md:hidden" />
+    <RouterLink v-else-if="auth.localAccounts" to="/login" class="flex flex-1 flex-col items-center justify-center py-1.5 text-[10px] font-medium text-zinc-300 md:hidden">Entrar</RouterLink>
     <div class="mt-auto hidden flex-col items-center gap-2 pb-1 text-[10px] text-zinc-500 md:flex">
       <span class="h-2 w-2 rounded-full" :class="conversations.live ? 'bg-emerald-400' : 'bg-zinc-600'" :title="conversations.live ? 'Ao vivo' : 'Sem conexão ao vivo'" />
       <AccountMenu v-if="auth.user" placement="side" />

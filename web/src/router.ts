@@ -4,6 +4,7 @@ import InboxView from './views/InboxView.vue'
 import AuthView from './views/AuthView.vue'
 import McpView from './views/McpView.vue'
 import PackagesView from './views/PackagesView.vue'
+import ProfileView from './views/ProfileView.vue'
 import ProvidersView from './views/ProvidersView.vue'
 import SettingsView from './views/SettingsView.vue'
 import UsageView from './views/UsageView.vue'
@@ -22,7 +23,9 @@ export const router = createRouter({
     { path: '/agents', name: 'agents', component: AgentsView },
     { path: '/agents/new', name: 'agent-new', component: AgentsView },
     { path: '/agents/:id', name: 'agent', component: AgentsView, props: true },
-    { path: '/settings', name: 'settings', component: SettingsView },
+    // ⚠️ `/settings#conta` era o "Perfil" antes de ele ter página: o link antigo (favorito) cai no lugar certo.
+    { path: '/settings', name: 'settings', component: SettingsView, beforeEnter: (to) => (to.hash === '#conta' ? { path: '/profile', replace: true } : true) },
+    { path: '/profile', name: 'profile', component: ProfileView },
     { path: '/users', name: 'users', component: UsersView },
     { path: '/users/new', name: 'user-new', component: UsersView },
     { path: '/users/:id', name: 'user', component: UsersView, props: true },
