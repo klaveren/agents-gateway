@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { renderMarkdown } from './markdown'
-import { docSlug, scopeLabel, scopeToProjectId } from './guidance'
+import { contextWeight, docSlug, scopeLabel, scopeToProjectId } from './guidance'
 
 describe('guidance', () => {
   const projects = [{ id: 'xpto', name: 'Loja XPTO', createdAt: '', updatedAt: '' }]
@@ -17,5 +17,11 @@ describe('guidance', () => {
   it('o markdown da prévia ganha títulos, sem quebra de linha a mais', () => {
     expect(renderMarkdown('# Contexto\ntexto\n## Decisão')).toBe('<h2>Contexto</h2>texto<br><h3>Decisão</h3>')
     expect(renderMarkdown('#semtitulo')).toBe('#semtitulo')
+  })
+
+  it('o peso do contexto inicial soma as marcadas e avisa acima de 20k', () => {
+    const tokens: Record<string, number> = { a: 15_000, b: 6_000 }
+    expect(contextWeight(['a'], (id) => tokens[id])).toEqual({ total: 15_000, warn: false })
+    expect(contextWeight(['a', 'b', 'sumiu'], (id) => tokens[id])).toEqual({ total: 21_000, warn: true })
   })
 })

@@ -30,6 +30,15 @@ const SCHEMA = `
     updated_by  TEXT
   );
   CREATE INDEX IF NOT EXISTS project_docs_scope ON project_docs (project_id, kind);
+  CREATE TABLE IF NOT EXISTS project_context_docs (
+    project_id  TEXT    NOT NULL,
+    doc_id      TEXT    NOT NULL,
+    position    INTEGER NOT NULL,
+    added_at    TEXT    NOT NULL,
+    added_by    TEXT,
+    PRIMARY KEY (project_id, doc_id)
+  );
+  CREATE INDEX IF NOT EXISTS project_context_docs_doc ON project_context_docs (doc_id);
 `
 
 type TRow = Record<string, unknown>
@@ -125,12 +134,36 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
   }
 
   deleteDoc(id: string): boolean {
+    this.db.prepare('DELETE FROM project_context_docs WHERE doc_id = ?').run(id)
     return this.db.prepare('DELETE FROM project_docs WHERE id = ?').run(id).changes > 0
+  }
+
+  contextDocs(projectId: string): string[] {
+    return (this.db.prepare('SELECT doc_id FROM project_context_docs WHERE project_id = ? ORDER BY position').all(projectId) as TRow[]).map((row) => row.doc_id as string)
+  }
+
+  contextProjectsOf(docId: string): string[] {
+    return (this.db.prepare('SELECT project_id FROM project_context_docs WHERE doc_id = ? ORDER BY project_id').all(docId) as TRow[]).map((row) => row.project_id as string)
+  }
+
+  setContextDocs(projectId: string, docIds: readonly string[], by: string): void {
+    const now = new Date().toISOString()
+    this.db.exec('BEGIN')
+    try {
+      this.db.prepare('DELETE FROM project_context_docs WHERE project_id = ?').run(projectId)
+      const insert = this.db.prepare('INSERT INTO project_context_docs (project_id, doc_id, position, added_at, added_by) VALUES (?, ?, ?, ?, ?)')
+      docIds.forEach((docId, index) => insert.run(projectId, docId, index + 1, now, by))
+      this.db.exec('COMMIT')
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
   }
 
   deleteProject(projectId: string): void {
     this.db.prepare('DELETE FROM rules WHERE project_id = ?').run(projectId)
     this.db.prepare('DELETE FROM project_docs WHERE project_id = ?').run(projectId)
+    this.db.prepare('DELETE FROM project_context_docs WHERE project_id = ?').run(projectId)
   }
 
   private patch<T extends object>(table: string, columns: Record<keyof T, string>, id: string, patch: T): void {

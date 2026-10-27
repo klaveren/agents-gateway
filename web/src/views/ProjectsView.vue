@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import Icon from '@/components/Icon.vue'
 import MasterDetail from '@/components/MasterDetail.vue'
+import ProjectInitialContext from '@/components/ProjectInitialContext.vue'
 import { ApiError } from '@/lib/api'
 import { initials } from '@/lib/format'
 import type { IProject } from '@/lib/types'
@@ -40,6 +41,12 @@ const error = ref<string>()
 const note = ref<string>()
 const removing = ref<IProject>()
 const removeError = ref<string>()
+/** As abas do projeto: o cadastro e o contexto inicial (as specs que todo agente dele carrega inteiras). */
+const TABS = [
+  { id: 'geral', label: 'Geral' },
+  { id: 'contexto', label: 'Contexto inicial' },
+] as const
+const tab = ref<(typeof TABS)[number]['id']>('geral')
 
 onMounted(async () => {
   if (!auth.isAdmin) return
@@ -198,6 +205,24 @@ async function confirmRemove() {
           <button v-if="selected.id !== projects.current" type="button" class="ml-auto rounded-full bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700" @click="projects.select(selected.id)">Usar este projeto</button>
         </div>
 
+        <nav class="flex flex-wrap gap-1 border-b border-zinc-800" role="tablist">
+          <button
+            v-for="item in TABS"
+            :key="item.id"
+            type="button"
+            role="tab"
+            :aria-selected="tab === item.id"
+            class="-mb-px border-b-2 px-3 py-2 text-sm"
+            :class="tab === item.id ? 'border-emerald-500 text-zinc-100' : 'border-transparent text-zinc-400 hover:text-zinc-200'"
+            @click="tab = item.id"
+          >
+            {{ item.label }}
+          </button>
+        </nav>
+
+        <ProjectInitialContext v-if="tab === 'contexto'" :project-id="selected.id" />
+        <template v-else>
+
         <div class="rounded-xl border border-zinc-800 p-3 text-xs text-zinc-400">
           <div class="mb-1 font-medium text-zinc-300">Pasta</div>
           <code class="block truncate text-zinc-200">{{ selected.folder }}</code>
@@ -244,6 +269,7 @@ async function confirmRemove() {
         <div class="flex justify-end text-xs">
           <button type="button" class="text-rose-300 hover:underline" @click="(removing = selected), (removeError = undefined)">Apagar projeto</button>
         </div>
+        </template>
       </section>
       <div v-else class="grid h-full place-items-center text-zinc-500">Escolha um projeto ou crie um novo.</div>
 

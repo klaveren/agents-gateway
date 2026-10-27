@@ -521,6 +521,8 @@ const docSchema = {
     title: { type: 'string' },
     summary: { type: 'string', description: 'One line: what the conversation index shows.' },
     body: { type: 'string', description: 'Markdown. Absent in the list.' },
+    loadedIn: { type: 'array', items: { type: 'string' }, description: 'List only: the projects that load this spec in full (their initial context).' },
+    tokens: { type: 'integer', description: 'List only: estimated tokens of the body (≈ 4 characters per token).' },
     createdAt: { type: 'string', format: 'date-time' },
     updatedAt: { type: 'string', format: 'date-time' },
     updatedBy: { type: 'string' },
@@ -538,6 +540,25 @@ const docBody = {
   },
 }
 const idParam = [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }]
+const initialContext = {
+  type: 'object',
+  properties: {
+    docs: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          title: { type: 'string' },
+          summary: { type: 'string' },
+          projectId: { type: 'string', description: 'Absent = global.' },
+          tokens: { type: 'integer', description: 'Estimated (≈ 4 characters per token).' },
+        },
+      },
+    },
+    totalTokens: { type: 'integer' },
+  },
+}
 
 const usageTokens = {
   type: 'object',
@@ -1235,6 +1256,20 @@ export const OPENAPI_DOCUMENT = {
         summary: 'Delete a spec or ADR. Administrators only',
         parameters: idParam,
         responses: { '200': { description: 'OK' }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/projects/{id}/initial-context': {
+      get: {
+        summary:
+          'The initial context of a project: the specs that go in full into the system prompt of every new conversation of it, next to the rules, in order. Specs not listed stay in the index (read_doc). Administrators only',
+        parameters: idParam,
+        responses: { '200': { description: 'OK', ...json(envelope(initialContext)) }, '401': failures['401'], '404': failures['404'] },
+      },
+      put: {
+        summary: 'Replace the initial context (the whole list, in prompt order). Only specs, global or of this project. Administrators only',
+        parameters: idParam,
+        requestBody: { required: true, ...json({ type: 'object', properties: { docIds: { type: 'array', items: { type: 'string' } } }, required: ['docIds'] }) },
+        responses: { '200': { description: 'OK', ...json(envelope(initialContext)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
     },
     '/hook/{agentId}/{hookName}': {

@@ -24,6 +24,13 @@ export interface IGuidanceRepository {
   updateDoc(id: string, patch: TDocPatch): IProjectDoc | undefined
   deleteDoc(id: string): boolean
 
-  /** O projeto foi apagado: as rules e os documentos dele vão junto. */
+  /** O CONTEXTO INICIAL do projeto: as specs que vão inteiras no prompt, na ordem. */
+  contextDocs(projectId: string): string[]
+  /** Os projetos que carregam este documento no contexto inicial. */
+  contextProjectsOf(docId: string): string[]
+  /** Troca a lista inteira. */
+  setContextDocs(projectId: string, docIds: readonly string[], by: string): void
+
+  /** O projeto foi apagado: as rules, os documentos e o contexto inicial dele vão junto. */
   deleteProject(projectId: string): void
 }

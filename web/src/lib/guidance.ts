@@ -23,3 +23,12 @@ export function docSlug(title: string): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 64)
 }
+
+/** Acima disto, a tela avisa: o contexto inicial pesa em TODA conversa do projeto. */
+export const CONTEXT_WARN_TOKENS = 20_000
+
+/** O peso do contexto inicial: a soma dos tokens estimados das specs marcadas. */
+export function contextWeight(selected: readonly string[], tokensOf: (id: string) => number | undefined): { total: number; warn: boolean } {
+  const total = selected.reduce((sum, id) => sum + (tokensOf(id) ?? 0), 0)
+  return { total, warn: total > CONTEXT_WARN_TOKENS }
+}

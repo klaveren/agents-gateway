@@ -438,9 +438,19 @@ export interface IProjectDoc {
   title: string
   summary: string
   body?: string
+  /** Só na lista: os projetos que carregam a spec inteira (o contexto inicial deles). */
+  loadedIn?: string[]
+  /** Só na lista: o peso estimado do corpo. */
+  tokens?: number
   createdAt: string
   updatedAt: string
   updatedBy?: string
+}
+
+/** O contexto inicial de um projeto: as specs que vão inteiras no prompt, na ordem. */
+export interface IInitialContext {
+  docs: Array<{ id: string; title: string; summary: string; projectId?: string; tokens: number }>
+  totalTokens: number
 }
 
 export interface IProject {
