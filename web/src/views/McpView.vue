@@ -24,6 +24,8 @@ const router = useRouter()
 const auth = useAuthStore()
 const mcp = useMcpStore()
 const settings = useSettingsStore()
+/** O MCP do próprio gateway: a URL e a credencial são do sistema, não se editam. */
+const isSelf = computed(() => selected.value?.id === 'gateway')
 /** Sem Docker neste servidor (o pod do k3s não tem): o "Contêiner isolado" não sobe. `undefined` = não se sabe. */
 const dockerDown = computed(() => {
   const docker = settings.current?.deployment?.docker
@@ -420,7 +422,7 @@ async function confirmRemove() {
         <form v-if="selected.kind === 'remote'" class="flex flex-col gap-3" @submit.prevent="save">
           <div class="grid gap-3 sm:grid-cols-2">
             <label class="field">Nome<input v-model="edit.name" required class="input" /></label>
-            <label class="field">URL<input v-model="edit.url" required class="input font-mono" /></label>
+            <label class="field">URL<input v-model="edit.url" required :readonly="isSelf" class="input font-mono read-only:opacity-60" /></label>
           </div>
           <div class="field">
             Transporte
@@ -431,9 +433,20 @@ async function confirmRemove() {
           <div class="field">
             Autenticação
             <div class="flex flex-wrap gap-1.5">
-              <button v-for="(option, value) in AUTH_LABEL" :key="value" type="button" class="chip" :class="{ on: edit.auth === value }" @click="edit.auth = value">{{ option.label }}</button>
+              <button
+                v-for="(option, value) in AUTH_LABEL"
+                :key="value"
+                type="button"
+                class="chip disabled:cursor-not-allowed disabled:opacity-40"
+                :class="{ on: edit.auth === value }"
+                :disabled="isSelf && edit.auth !== value"
+                @click="edit.auth = value"
+              >
+                {{ option.label }}
+              </button>
             </div>
             <small class="hint">{{ AUTH_LABEL[edit.auth].hint }}</small>
+            <small v-if="isSelf" class="hint">Fixo no MCP do próprio gateway: ele sempre age com a credencial de quem conversa (o seu login, numa conversa sua).</small>
             <small v-if="edit.auth === 'caller' && selected?.id !== 'gateway'" class="text-xs text-amber-300">⚠ Este servidor recebe a sessão de quem conversa (o token do gateway) e pode usá-la como essa pessoa. Só para um servidor seu, de confiança.</small>
           </div>
           <label v-if="edit.auth === 'header'" class="field sm:w-1/2">Header<input v-model="edit.headerName" class="input font-mono" /></label>

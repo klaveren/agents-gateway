@@ -85,7 +85,8 @@ export class ToolCatalog {
 
     for (const [server, choice] of mcpSelection(allowed)) {
       // Contêiner: a instância DESTA conversa (o `sessionId` do contexto); sem conversa, não há instância.
-      const tools = await this.mcp.tools(server, context?.sessionId).catch(() => [])
+      // A credencial de quem conversa: um MCP `caller` (o do próprio gateway) recusa até a listagem sem ela.
+      const tools = await this.mcp.tools(server, context?.sessionId, context?.token).catch(() => [])
       for (const tool of tools) if (choice.all || choice.tools.has(tool.name)) remote.push({ server, tool })
     }
 

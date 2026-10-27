@@ -121,6 +121,15 @@ export class McpServerClient {
     return this.tokenScope.run(token, () => this.connect())
   }
 
+  /**
+   * As ferramentas, pedidas com a credencial de QUEM CHAMA — num servidor `caller`, a listagem também precisa dela
+   * (sem token o MCP responde 401). Sem token, igual a `listTools`.
+   */
+  async listToolsAs(token?: string): Promise<IToolDefinition[]> {
+    if (!token) return this.listTools()
+    return this.tokenScope.run(token, async () => ((await this.ensureConnectedAs(token)) ? this.listTools() : []))
+  }
+
   async listTools(): Promise<IToolDefinition[]> {
     if (!(await this.ensureConnected()) || !this.client) return []
 

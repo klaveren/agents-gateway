@@ -139,4 +139,27 @@ describe('McpServersService', () => {
     service.remove('pw')
     assert.strictEqual(secrets.get('mcp:pw:env:NODE_OPTIONS'), undefined)
   })
+
+  it('⛔ o MCP do próprio gateway não troca a credencial: sempre a de quem conversa', () => {
+    const repository = new SqliteMcpServerRepository(':memory:')
+    const now = new Date()
+    repository.insert({
+      id: 'gateway',
+      name: 'Gateway (este)',
+      url: 'http://127.0.0.1:3000/v1/mcp',
+      transport: 'http',
+      auth: 'caller',
+      headerName: 'X-Tool-Authorization',
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    })
+    const service = new McpServersService(repository, new SqliteCredentialStore(new SecretBox(randomBytes(32)), ':memory:'), () => [])
+    assert.throws(
+      () => service.update('gateway', { auth: 'none' }, 'root'),
+      (error: InvalidMcpServerError) => error.issues.some((issue) => issue.field === 'auth'),
+    )
+    assert.throws(() => service.update('gateway', { headerName: 'Authorization' }, 'root'), InvalidMcpServerError)
+    assert.strictEqual(service.update('gateway', { name: 'Este gateway' }, 'root').auth, 'caller')
+  })
 })

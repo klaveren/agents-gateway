@@ -90,6 +90,15 @@ describe('ToolCatalog', () => {
     assert.deepStrictEqual(await withSelf.mcpServersFor(['mcp:gateway/*']), [])
   })
 
+  it('⚖️ na lane chat, a caixa lista as ferramentas do MCP `caller` com a credencial de quem conversa', async () => {
+    const withSelf = new ToolCatalog(fakeMcpRegistry([{ id: 'gateway', connected: false, acceptsToken: 'tok-admin', tools: [mcpTool('save_agent')] }]), [])
+    assert.deepStrictEqual(
+      (await withSelf.toolbox(['mcp:gateway/*'], { token: 'tok-admin' } as IExecutionContext)).tools.map((tool) => tool.name),
+      ['save_agent'],
+    )
+    assert.deepStrictEqual((await withSelf.toolbox(['mcp:gateway/*'])).tools, [])
+  })
+
   it('leva a credencial da chamada até o cliente MCP', async () => {
     contexts.length = 0
     const box = await catalog().toolbox(['mcp:crm/stats'])
