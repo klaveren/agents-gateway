@@ -123,6 +123,7 @@ describe('MCP do próprio gateway (integração)', () => {
     const adminRead = [
       'get_agent',
       'get_doc',
+      'get_initial_context',
       'hook_deliveries',
       'list_docs',
       'list_hooks',
@@ -146,6 +147,7 @@ describe('MCP do próprio gateway (integração)', () => {
       'save_hook',
       'save_project',
       'save_rule',
+      'set_initial_context',
       'set_model_enabled',
       'set_model_price',
       'set_project_members',

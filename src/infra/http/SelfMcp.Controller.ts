@@ -350,6 +350,17 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     async ({ id }) => reply(await api('GET', `/docs/${encodeURIComponent(id)}`)),
   )
 
+  server.registerTool(
+    'get_initial_context',
+    {
+      description:
+        'The initial context of a project: the specs that go IN FULL into the system prompt of every conversation of that project, next to the rules, in order (with estimated tokens). Specs not listed stay in the index and agents read them with read_doc.',
+      inputSchema: { projectId: z.string() },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ projectId }) => reply(await api('GET', `/projects/${encodeURIComponent(projectId)}/initial-context`)),
+  )
+
   if (!access.write) return
 
   server.registerTool(
@@ -524,6 +535,16 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
       const exists = (await api('GET', `/docs/${encodeURIComponent(id)}`)).ok
       return reply(exists ? await api('PUT', `/docs/${encodeURIComponent(id)}`, { body: doc }) : await api('POST', '/docs', { body: { id, ...doc } }))
     },
+  )
+
+  server.registerTool(
+    'set_initial_context',
+    {
+      description:
+        'Replace the initial context of a project: the specs (only specs; global ones or of that project) that load IN FULL into every new conversation of it, in this order. Send the whole list; an empty list loads none. Everything loaded weighs on every conversation: mention the total tokens. Confirm with the person first.',
+      inputSchema: { projectId: z.string(), docIds: z.array(z.string()).describe('Spec ids from list_docs, in prompt order') },
+    },
+    async ({ projectId, docIds }) => reply(await api('PUT', `/projects/${encodeURIComponent(projectId)}/initial-context`, { body: { docIds } })),
   )
 
   server.registerTool(

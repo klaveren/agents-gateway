@@ -190,7 +190,12 @@ function describe(failure: unknown): string {
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
       <p v-else-if="!shown.length" class="px-4 py-2 text-sm text-zinc-500">Nenhuma {{ info.one }} em {{ scopeLabel(scope, projects.list) }}.</p>
       <RouterLink v-for="doc in shown" :key="doc.id" :to="`${info.base}/${doc.id}`" class="mx-2 block rounded-xl px-3 py-2" :class="doc.id === id ? 'bg-emerald-500/15' : 'hover:bg-zinc-800/60'">
-        <span class="block truncate text-sm font-medium">{{ doc.title }}</span>
+        <span class="flex items-center gap-2">
+          <span class="truncate text-sm font-medium">{{ doc.title }}</span>
+          <span v-if="doc.loadedIn?.length" class="shrink-0 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-300" :title="`Vai inteira no prompt de: ${doc.loadedIn.map((id) => scopeLabel(id, projects.list)).join(', ')}`">
+            carregada em {{ doc.loadedIn.map((id) => scopeLabel(id, projects.list)).join(', ') }}
+          </span>
+        </span>
         <span class="block truncate text-xs text-zinc-500">{{ doc.id }}<template v-if="doc.summary"> · {{ doc.summary }}</template></span>
       </RouterLink>
     </template>

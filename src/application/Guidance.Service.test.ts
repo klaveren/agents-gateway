@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { GuidanceNotFoundError, InvalidGuidanceError } from '@domain/errors/Domain.Error'
+import { GuidanceNotFoundError, InvalidGuidanceError, ProjectNotFoundError } from '@domain/errors/Domain.Error'
 import { SqliteGuidanceRepository } from '@infra/persistence/Sqlite.GuidanceRepository'
 import { GuidanceService } from './Guidance.Service'
 
@@ -112,5 +112,68 @@ describe('GuidanceService', () => {
     service.createDoc(doc('do-xpto', 'xpto'), 'root')
     service.removeProject('xpto')
     assert.deepStrictEqual([service.rules('xpto').length, service.docs('xpto').length, service.rules(null).length], [0, 0, 1])
+  })
+
+  describe('contexto inicial', () => {
+    const seeded = () => {
+      const service = build()
+      service.createDoc({ ...doc('seguranca'), title: 'Segurança', body: 'Nunca exponha segredos.' }, 'root')
+      service.createDoc({ ...doc('comunicacao', 'xpto'), title: 'Comunicação', body: 'Tom formal.' }, 'root')
+      service.createDoc({ ...doc('do-crm', 'crm') }, 'root')
+      service.createDoc({ ...doc('decisao'), kind: 'adr' }, 'root')
+      return service
+    }
+
+    it('⛔ só spec, e só a global ou a do próprio projeto; sem repetir; projeto que não existe é 404', () => {
+      const service = seeded()
+      assert.throws(
+        () => service.setInitialContext('xpto', ['decisao', 'do-crm', 'nada', 'seguranca', 'seguranca'], 'root'),
+        (error: unknown) =>
+          error instanceof InvalidGuidanceError &&
+          error.issues.map((issue) => issue.message.split(':')[0]).join('|') === 'only specs load in full|do-crm belongs to another project (crm)|no such document|repeated',
+      )
+      assert.throws(() => service.setInitialContext('nada', [], 'root'), ProjectNotFoundError)
+    })
+
+    it('as marcadas vão inteiras, na ordem, depois das rules — e saem do índice; no outro projeto, a global fica no índice', () => {
+      const service = seeded()
+      service.createRule(rule('Idioma'), 'root')
+      const view = service.setInitialContext('xpto', ['comunicacao', 'seguranca'], 'root')
+      assert.deepStrictEqual(
+        view.docs.map((item) => [item.id, item.tokens]),
+        [
+          ['comunicacao', 3],
+          ['seguranca', 6],
+        ],
+      )
+      assert.strictEqual(view.totalTokens, 9)
+
+      const xpto = service.environmentFor('xpto')!
+      assert.match(xpto, /## Regras do ambiente[\s\S]*## Specs do projeto[\s\S]*### Comunicação\nTom formal\.\n\n### Segurança\nNunca exponha segredos\./)
+      assert.doesNotMatch(xpto.slice(xpto.indexOf('## Documentos')), /seguranca|comunicacao/)
+      assert.match(service.environmentFor('crm')!, /- \[spec\] seguranca — Segurança/)
+      assert.doesNotMatch(service.environmentFor('crm')!, /## Specs do projeto/)
+      assert.deepStrictEqual(service.loadedIn('seguranca'), ['xpto'])
+    })
+
+    it('o que deixa de valer sai sem apagar a marca; apagar o doc ou o projeto limpa', () => {
+      const service = seeded()
+      service.setInitialContext('xpto', ['seguranca', 'comunicacao'], 'root')
+      service.updateDoc('comunicacao', { kind: 'adr' }, 'root')
+      assert.deepStrictEqual(
+        service.initialContext('xpto').map((item) => item.id),
+        ['seguranca'],
+      )
+      service.updateDoc('comunicacao', { kind: 'spec' }, 'root')
+      assert.strictEqual(service.initialContext('xpto').length, 2)
+
+      service.deleteDoc('seguranca')
+      assert.deepStrictEqual(
+        service.initialContext('xpto').map((item) => item.id),
+        ['comunicacao'],
+      )
+      service.removeProject('xpto')
+      assert.deepStrictEqual(service.initialContext('xpto'), [])
+    })
   })
 })

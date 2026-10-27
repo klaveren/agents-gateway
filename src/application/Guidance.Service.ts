@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { GuidanceNotFoundError, InvalidGuidanceError } from '@domain/errors/Domain.Error'
+import { GuidanceNotFoundError, InvalidGuidanceError, ProjectNotFoundError } from '@domain/errors/Domain.Error'
 import { DOC_BODY_MAX, DOC_ID_PATTERN, DOC_KINDS, DOC_SUMMARY_MAX, DOC_TITLE_MAX, IProjectDoc, READ_DOC_TOOL, TDocKind } from '@domain/models/ProjectDoc.Model'
 import { IRule, RULE_BODY_MAX, RULE_TITLE_MAX } from '@domain/models/Rule.Model'
 import { IGuidanceRepository, TGuidanceScope } from '@domain/ports/GuidanceRepository.Port'
@@ -12,6 +12,18 @@ export interface IRuleInput {
   body?: string
   enabled?: boolean
 }
+
+/** Uma spec do contexto inicial, para a tela: sem o corpo, com o peso estimado. */
+export interface IContextDoc {
+  id: string
+  title: string
+  summary: string
+  projectId?: string
+  tokens: number
+}
+
+/** Tokens estimados de um texto (≈ 4 caracteres por token): só para a tela avisar do peso. */
+export const estimateTokens = (text: string) => Math.ceil(text.length / 4)
 
 export interface IDocInput {
   id?: string
@@ -175,6 +187,54 @@ export class GuidanceService {
     return !doc.projectId || doc.projectId === projectId ? doc : undefined
   }
 
+  /**
+   * O CONTEXTO INICIAL do projeto: as specs que vão INTEIRAS no prompt de toda conversa dele, na ordem marcada.
+   * ⚖️ O que deixou de valer (virou ADR, foi para outro projeto, sumiu) fica de fora sem apagar a marca: voltar a
+   * valer, volta a entrar.
+   */
+  initialContext(projectId: string): IProjectDoc[] {
+    return this.repository
+      .contextDocs(projectId)
+      .map((id) => this.repository.doc(id))
+      .filter((doc): doc is IProjectDoc => !!doc && doc.kind === 'spec' && (!doc.projectId || doc.projectId === projectId))
+  }
+
+  /** O contexto inicial como a tela o mostra: sem o corpo, com os tokens estimados. */
+  initialContextView(projectId: string): { docs: IContextDoc[]; totalTokens: number } {
+    this.requireProject(projectId)
+    const docs = this.initialContext(projectId).map((doc) => ({
+      id: doc.id,
+      title: doc.title,
+      summary: doc.summary,
+      ...(doc.projectId ? { projectId: doc.projectId } : {}),
+      tokens: estimateTokens(doc.body),
+    }))
+    return { docs, totalTokens: docs.reduce((sum, doc) => sum + doc.tokens, 0) }
+  }
+
+  /** ⛔ Só spec, e só a global ou a do próprio projeto. Troca a lista inteira, na ordem dada. */
+  setInitialContext(projectId: string, docIds: readonly string[], by: string): { docs: IContextDoc[]; totalTokens: number } {
+    this.requireProject(projectId)
+    const issues: TIssues = []
+    const seen = new Set<string>()
+    for (const id of docIds) {
+      const doc = this.repository.doc(id)
+      if (seen.has(id)) issues.push({ field: 'docIds', message: `repeated: ${id}` })
+      else if (!doc) issues.push({ field: 'docIds', message: `no such document: ${id}` })
+      else if (doc.kind !== 'spec') issues.push({ field: 'docIds', message: `only specs load in full: ${id} is an ${doc.kind}` })
+      else if (doc.projectId && doc.projectId !== projectId) issues.push({ field: 'docIds', message: `${id} belongs to another project (${doc.projectId})` })
+      seen.add(id)
+    }
+    if (issues.length) throw new InvalidGuidanceError(issues)
+    this.repository.setContextDocs(projectId, docIds, by)
+    return this.initialContextView(projectId)
+  }
+
+  /** Os projetos que carregam o documento inteiro (o selo da página Specs). */
+  loadedIn(docId: string): string[] {
+    return this.repository.contextProjectsOf(docId).filter((projectId) => this.initialContext(projectId).some((doc) => doc.id === docId))
+  }
+
   /** Há documento no índice desta conversa? É o que liga o `read_doc` nela. */
   hasDocs(projectId?: string): boolean {
     return this.visibleDocs(projectId).length > 0
@@ -186,6 +246,7 @@ export class GuidanceService {
    */
   environmentFor(projectId?: string): string | undefined {
     const rules = [...this.repository.rules(null), ...(projectId ? this.repository.rules(projectId) : [])].filter((rule) => rule.enabled)
+    const loaded = projectId ? this.initialContext(projectId) : []
     const docs = this.visibleDocs(projectId)
     const sections: string[] = []
     if (rules.length) {
@@ -195,6 +256,15 @@ export class GuidanceService {
           'Valem em toda resposta e em toda ferramenta que você usar. Em conflito com um pedido, a regra vence: diga qual regra impede.',
           ...rules.map((rule, index) => `${index + 1}. **${rule.title}** — ${rule.body}`),
         ].join('\n'),
+      )
+    }
+    if (loaded.length) {
+      sections.push(
+        [
+          '## Specs do projeto',
+          'Carregadas inteiras: valem como as regras do ambiente. Siga-as em toda resposta e em toda ferramenta que você usar.',
+          ...loaded.map((doc) => `### ${doc.title}\n${doc.body.trim()}`),
+        ].join('\n\n'),
       )
     }
     if (docs.length) {
@@ -214,8 +284,14 @@ export class GuidanceService {
     this.repository.deleteProject(projectId)
   }
 
+  /** O índice da conversa: os globais e os do projeto, menos os que já vão inteiros no prompt. */
   private visibleDocs(projectId?: string): IProjectDoc[] {
-    return [...this.repository.docs(null), ...(projectId ? this.repository.docs(projectId) : [])]
+    const loaded = new Set(projectId ? this.initialContext(projectId).map((doc) => doc.id) : [])
+    return [...this.repository.docs(null), ...(projectId ? this.repository.docs(projectId) : [])].filter((doc) => !loaded.has(doc.id))
+  }
+
+  private requireProject(projectId: string): void {
+    if (!this.projectExists(projectId)) throw new ProjectNotFoundError(projectId)
   }
 
   private nextPosition(scope: TGuidanceScope): number {

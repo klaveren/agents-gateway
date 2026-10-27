@@ -243,4 +243,19 @@ describe('Projetos (integração)', () => {
     ])
       assert.strictEqual((await call(ANA, method, path, method === 'POST' ? { title: 'x', body: 'y' } : undefined)).status, 404, `${method} ${path}`)
   })
+
+  it('⛔ o contexto inicial do projeto é do admin: grava e lê; para o membro, 404', async () => {
+    await call(ADMIN, 'POST', '/projects', { id: 'ctx', name: 'Ctx' })
+    await call(ADMIN, 'POST', '/docs', { id: 'seg', kind: 'spec', title: 'Segurança', summary: 's', body: 'Nunca exponha segredos.' })
+    const saved = await call(ADMIN, 'PUT', '/projects/ctx/initial-context', { docIds: ['seg'] })
+    assert.deepStrictEqual([saved.status, saved.body.result.totalTokens], [200, 6])
+    assert.deepStrictEqual(
+      (await call(ADMIN, 'GET', '/projects/ctx/initial-context')).body.result.docs.map((doc: { id: string }) => doc.id),
+      ['seg'],
+    )
+    assert.deepStrictEqual((await call(ADMIN, 'GET', '/docs')).body.result.find((doc: { id: string }) => doc.id === 'seg').loadedIn, ['ctx'])
+    assert.strictEqual((await call(ADMIN, 'PUT', '/projects/ctx/initial-context', { docIds: ['api'] })).status, 422)
+    assert.strictEqual((await call(ANA, 'GET', '/projects/ctx/initial-context')).status, 404)
+    assert.strictEqual((await call(ANA, 'PUT', '/projects/ctx/initial-context', { docIds: [] })).status, 404)
+  })
 })

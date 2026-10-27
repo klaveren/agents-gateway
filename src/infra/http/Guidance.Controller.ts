@@ -1,6 +1,6 @@
 import { Request, Response } from 'express'
 import { z } from 'zod'
-import { GuidanceService } from '@application/Guidance.Service'
+import { estimateTokens, GuidanceService } from '@application/Guidance.Service'
 import { DOC_KINDS, TDocKind } from '@domain/models/ProjectDoc.Model'
 import { TGuidanceScope } from '@domain/ports/GuidanceRepository.Port'
 import { checkAdminAccess } from './Caller.Admin'
@@ -17,6 +17,7 @@ export interface IGuidanceControllerDeps {
 const project = z.string().max(64).nullable().optional()
 const ruleSchema = z.object({ projectId: project, title: z.string().max(400).optional(), body: z.string().max(20_000).optional(), enabled: z.boolean().optional() })
 const moveSchema = z.object({ direction: z.enum(['up', 'down']) })
+const contextSchema = z.object({ docIds: z.array(z.string().max(80)).max(100) })
 const docSchema = z.object({
   id: z.string().max(80).optional(),
   kind: z.enum(DOC_KINDS as [TDocKind, ...TDocKind[]]).optional(),
@@ -32,7 +33,20 @@ const docSchema = z.object({
  */
 export class GuidanceController {
   constructor(private readonly deps: IGuidanceControllerDeps) {
-    for (const name of ['listRules', 'createRule', 'updateRule', 'deleteRule', 'moveRule', 'listDocs', 'getDoc', 'createDoc', 'updateDoc', 'deleteDoc'] as const)
+    for (const name of [
+      'listRules',
+      'createRule',
+      'updateRule',
+      'deleteRule',
+      'moveRule',
+      'listDocs',
+      'getDoc',
+      'createDoc',
+      'updateDoc',
+      'deleteDoc',
+      'getInitialContext',
+      'setInitialContext',
+    ] as const)
       this[name] = this[name].bind(this)
   }
 
@@ -79,7 +93,8 @@ export class GuidanceController {
     await this.respond(res, async () => {
       await this.requireAdmin('listDocs')
       const kind = typeof req.query.kind === 'string' && (DOC_KINDS as readonly string[]).includes(req.query.kind) ? (req.query.kind as TDocKind) : undefined
-      return this.deps.guidance.docs(scopeOf(req), kind).map(({ body: _body, ...doc }) => doc)
+      // `loadedIn`: os projetos que carregam a spec inteira (o contexto inicial deles). `tokens`: o peso estimado dela.
+      return this.deps.guidance.docs(scopeOf(req), kind).map(({ body, ...doc }) => ({ ...doc, tokens: estimateTokens(body), loadedIn: this.deps.guidance.loadedIn(doc.id) }))
     })
   }
 
@@ -114,6 +129,22 @@ export class GuidanceController {
       },
       { message: 'Document deleted' },
     )
+  }
+
+  /** O contexto inicial do projeto: as specs que vão inteiras no prompt, com os tokens estimados. */
+  async getInitialContext(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      await this.requireAdmin('getInitialContext')
+      return this.deps.guidance.initialContextView(req.params.id as string)
+    })
+  }
+
+  /** Troca a lista INTEIRA (a ordem dada é a do prompt). */
+  async setInitialContext(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const by = await this.requireAdmin('setInitialContext')
+      return this.deps.guidance.setInitialContext(req.params.id as string, parseBody(contextSchema, req.body).docIds, by)
+    })
   }
 
   private async requireAdmin(operation: string): Promise<string> {
