@@ -523,6 +523,8 @@ export interface IPackageHit {
 export interface IMcpTool {
   name: string
   description: string
+  /** O esquema dos parâmetros, como o servidor o descreve (é o que mais pesa na definição). */
+  inputSchema?: unknown
 }
 
 /** O login de uma assinatura em andamento (ver `/providers/:id/login`). */

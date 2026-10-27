@@ -8,6 +8,7 @@ import McpContainerFields from '@/components/McpContainerFields.vue'
 import McpProcessFields from '@/components/McpProcessFields.vue'
 import { ApiError } from '@/lib/api'
 import { fullTime, initials } from '@/lib/format'
+import { toolsTokens, toolTokens } from '@/lib/toolTokens'
 import type { IMcpContainer, IMcpProcess, IMcpServer, TMcpAuth, TMcpKind, TMcpTransport } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
 import { useMcpStore, type INewMcpServer } from '@/stores/mcp'
@@ -113,6 +114,8 @@ const dirty = computed(() => {
   return draft.name !== server.name || draft.url !== server.url || draft.transport !== server.transport || draft.auth !== server.auth || (draft.auth === 'header' && draft.headerName !== (server.headerName ?? 'Authorization'))
 })
 const tools = computed(() => (selected.value ? (mcp.tools[selected.value.id] ?? []) : []))
+/** As mais pesadas primeiro: é por elas que vale começar a cortar. */
+const toolsByWeight = computed(() => [...tools.value].sort((a, b) => toolTokens(b) - toolTokens(a)))
 const pointsToSelf = (url: string) => /\/v1\/mcp\/?$/.test(url.trim())
 
 /** ⚠️ Todos os problemas de um 422, com o campo — inclusive de campos que não têm input na tela (senão sumiriam). */
@@ -462,11 +465,19 @@ async function confirmRemove() {
         <p v-if="editError" class="text-sm text-rose-300">{{ editError }}</p>
 
         <div class="border-t border-zinc-800/80 pt-4">
-          <h3 class="mb-2 text-sm font-medium text-zinc-200">Ferramentas <span class="text-xs font-normal text-zinc-500">{{ tools.length }}</span></h3>
+          <h3 class="mb-1 text-sm font-medium text-zinc-200">
+            Ferramentas <span class="text-xs font-normal text-zinc-500">{{ tools.length }}<template v-if="tools.length"> · ≈ {{ toolsTokens(tools).toLocaleString('pt-BR') }} tokens todas juntas</template></span>
+          </h3>
+          <p v-if="tools.length" class="mb-2 text-xs text-zinc-500">
+            O peso de cada uma: a definição (nome, descrição, parâmetros) vai em toda chamada ao modelo de um agente que a tem, mesmo sem ser usada. Dê ao agente só as de que ele precisa.
+          </p>
           <ul v-if="tools.length" class="divide-y divide-zinc-800 rounded-xl border border-zinc-800">
-            <li v-for="tool in tools" :key="tool.name" class="px-3 py-2">
-              <div class="font-mono text-[13px] text-zinc-200">{{ tool.name }}</div>
-              <div v-if="tool.description" class="text-xs text-zinc-500">{{ tool.description }}</div>
+            <li v-for="tool in toolsByWeight" :key="tool.name" class="flex items-start gap-3 px-3 py-2">
+              <div class="min-w-0 flex-1">
+                <div class="font-mono text-[13px] text-zinc-200">{{ tool.name }}</div>
+                <div v-if="tool.description" class="text-xs text-zinc-500">{{ tool.description }}</div>
+              </div>
+              <span class="shrink-0 text-xs text-zinc-500 tabular-nums">≈ {{ toolTokens(tool).toLocaleString('pt-BR') }} tokens</span>
             </li>
           </ul>
           <p v-else-if="toolsError" class="text-xs text-rose-300">{{ toolsError }}</p>
