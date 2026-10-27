@@ -241,10 +241,11 @@ export class McpRegistry {
     return { name: config.headerName || 'Authorization', value }
   }
 
-  /** O cliente, conectado agora (respeitando o backoff), ou `undefined`. */
-  async connected(id: string, sessionId?: string): Promise<McpServerClient | undefined> {
+  /** O cliente, conectado agora (respeitando o backoff), ou `undefined`. Com `token`, conecta como quem chama (ver `ensureConnectedAs`). */
+  async connected(id: string, sessionId?: string, token?: string): Promise<McpServerClient | undefined> {
     const client = await this.clientFor(id, sessionId).catch(() => undefined)
-    return client && (await client.ensureConnected()) ? client : undefined
+    const auth = this.servers.get(id)?.auth
+    return client && (await client.ensureConnectedAs(auth === 'caller' ? token : undefined)) ? client : undefined
   }
 
   async tools(id: string, sessionId?: string): Promise<IToolDefinition[]> {

@@ -108,6 +108,19 @@ export class McpServerClient {
     return this.attempt()
   }
 
+  /**
+   * `ensureConnected` com a credencial de QUEM CHAMA.
+   *
+   * ⚖️ Um servidor `caller` (o MCP do próprio gateway é um) recusa a conexão anônima do boot: sem isto ele
+   * ficava "fora do ar" para sempre, e o agente perdia as ferramentas dele. Com credencial, tenta agora — o
+   * backoff da tentativa anônima não diz nada sobre esta.
+   */
+  async ensureConnectedAs(token?: string): Promise<boolean> {
+    if (this.connected) return true
+    if (!token) return this.ensureConnected()
+    return this.tokenScope.run(token, () => this.connect())
+  }
+
   async listTools(): Promise<IToolDefinition[]> {
     if (!(await this.ensureConnected()) || !this.client) return []
 

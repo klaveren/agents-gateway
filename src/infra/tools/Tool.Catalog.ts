@@ -132,7 +132,7 @@ export class ToolCatalog {
         })
         continue
       }
-      const client = await this.mcp.connected(id)
+      const client = await this.mcp.connected(id, undefined, context?.token)
       const config = stored
       if (!client || !config) continue
       const fixed = this.mcp.fixedHeaders(config)
