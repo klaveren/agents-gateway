@@ -23,15 +23,14 @@ describe('targetUnavailable', () => {
     assert.strictEqual(targetUnavailable(agent, agent.providers[0], { provider, hasKey: false, admin: true }), 'no_key')
   })
 
-  it('assinatura não precisa de chave, mas é só de admin (por padrão)', () => {
-    const subAgent = { ...agent, providers: [{ provider: 'claude-sub', models: ['gpt-x'] }] }
-    assert.strictEqual(targetUnavailable(subAgent, subAgent.providers[0], { provider: sub, hasKey: false, admin: true }), undefined)
-    assert.strictEqual(targetUnavailable(subAgent, subAgent.providers[0], { provider: sub, hasKey: false, admin: false }), 'admin_only')
+  it('⚖️ assinatura e ferramenta que alcança o servidor não fecham o agente sozinhas', () => {
+    const subAgent = { ...agent, providers: [{ provider: 'claude-sub', models: ['gpt-x'] }], allowedTools: ['run_bash', 'sdk:Bash'] }
+    assert.strictEqual(targetUnavailable(subAgent, subAgent.providers[0], { provider: sub, hasKey: false, admin: false }), undefined)
   })
 
-  it('⛔ ferramenta que alcança o servidor: só admin', () => {
-    const bash = { ...agent, allowedTools: ['run_bash'] }
-    assert.strictEqual(targetUnavailable(bash, bash.providers[0], { provider, hasKey: true, admin: false }), 'admin_only')
-    assert.strictEqual(targetUnavailable(bash, bash.providers[0], { provider, hasKey: true, admin: true }), undefined)
+  it('⛔ só admin quando quem criou o agente marcou', () => {
+    const closed = { ...agent, adminOnly: true }
+    assert.strictEqual(targetUnavailable(closed, closed.providers[0], { provider, hasKey: true, admin: false }), 'admin_only')
+    assert.strictEqual(targetUnavailable(closed, closed.providers[0], { provider, hasKey: true, admin: true }), undefined)
   })
 })

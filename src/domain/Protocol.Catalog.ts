@@ -2,6 +2,7 @@ import { EMode } from './enums/EMode.Enum'
 import { EProvider } from './enums/EProvider.Enum'
 import { ENV_KEY_NAME } from './ports/CredentialStore.Port'
 import { REASONING_LEVELS } from './Reasoning.Levels'
+import { SANDBOX_NETWORK, sandboxLevelsOf, TSandboxLevel } from './Sandbox.Policy'
 import { isSubscription, lanesOf, nativeFamily } from './Subscription.Policy'
 
 /** O que a tela precisa saber de um protocolo — e não copia mais. */
@@ -15,6 +16,10 @@ export interface IProtocolInfo {
   reasoningLevels: readonly string[]
   /** De quem são as nativas `sdk:…` que ele roda (o Claude da assinatura roda as do Claude). */
   nativeFamily: EProvider
+  /** Os níveis do sandbox que o agente escolhe, o padrão primeiro. Vazio = nada a ajustar. */
+  sandboxLevels: readonly TSandboxLevel[]
+  /** O sandbox libera a rede à parte. */
+  sandboxNetwork: boolean
   /** O fabricante, para a cor e o ícone: `claude`, `openai` ou `google`. */
   brand: EProvider.CLAUDE | EProvider.OPENAI | EProvider.GOOGLE
   /** Onde se cria a chave de API. Ausente nas assinaturas. */
@@ -56,6 +61,8 @@ export function protocolCatalog(): IProtocolInfo[] {
     lanes: lanesOf(id),
     reasoningLevels: REASONING_LEVELS[id],
     nativeFamily: nativeFamily(id),
+    sandboxLevels: sandboxLevelsOf(id),
+    sandboxNetwork: SANDBOX_NETWORK.includes(id),
     brand: BRAND[id],
     ...(CONSOLE_URL[id] ? { consoleUrl: CONSOLE_URL[id] } : {}),
     ...(ENV_KEY_NAME[id] ? { envName: ENV_KEY_NAME[id] } : {}),

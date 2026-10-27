@@ -1,8 +1,9 @@
 import { EMode } from './enums/EMode.Enum'
+import { SANDBOX_NETWORK, sandboxLevelsOf } from './Sandbox.Policy'
 import { isSubscription, lanesOf, nativeFamily } from './Subscription.Policy'
 import { EProvider } from './enums/EProvider.Enum'
 import { IAgent, IAgentTarget } from './models/Agent.Model'
-import { INativeTool, isNativeTool, nativeTool, nativeToolAllowed } from './Native.Tools'
+import { isNativeTool, nativeTool } from './Native.Tools'
 import { REASONING_LEVELS } from './Reasoning.Levels'
 import { isMcpToolRef, parseMcpToolRef } from './models/McpServer.Model'
 import { AGENT_TOOL_PREFIX, isAgentToolRef } from './models/Delegation.Model'
@@ -54,8 +55,6 @@ export interface IAgentRules {
   mcpServerExists?(serverId: string): boolean
   /** O agente existe? (`agent:<id>`, a quem este pode delegar). Ausente = nenhuma delegação vale. */
   agentExists?(agentId: string): boolean
-  /** O perímetro das nativas. Ausente = `nativeToolAllowed` com o ambiente do processo. */
-  nativeAllowed?(tool: INativeTool): boolean
   /** Problema do prompt para aquele provider (ex.: chaves que o ADK lê como variável). */
   promptIssue?(agent: IAgent): string | undefined
 }
@@ -94,6 +93,10 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
     if (seen.has(target.provider)) issue('providers', `listed twice: ${target.provider}`)
     seen.add(target.provider)
     if (!target.protocol) issue('providers', `unknown provider: ${String(target.provider)}`)
+
+    if (target.protocol && target.sandbox !== undefined && !sandboxLevelsOf(target.protocol).includes(target.sandbox))
+      issue('providers', sandboxLevelsOf(target.protocol).length ? `${target.provider}: not a sandbox level here: ${target.sandbox}` : `${target.provider}: has no sandbox to set`)
+    if (target.protocol && target.network && !SANDBOX_NETWORK.includes(target.protocol)) issue('providers', `${target.provider}: has no sandbox network to open`)
 
     if (!target.models.length) issue('models', `${target.provider}: at least one model`)
     if (target.protocol && rules.modelEnabled) {
@@ -146,13 +149,12 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
       continue
     }
 
-    // ⛔ Nativa: tem de ser do SDK de um provider do agente, estar no perímetro do deploy e, se exigir, haver
-    // um provider OFICIAL daquela família. Nos outros providers ela não vai (os adapters filtram pela família).
+    // ⛔ Nativa: tem de ser do SDK de um provider do agente e, se exigir, haver um provider OFICIAL daquela
+    // família. Nos outros providers ela não vai (os adapters filtram pela família).
     const native = nativeTool(tool)
     const family = native && targets.filter((target) => target.protocol && nativeFamily(target.protocol) === native.protocol)
     if (!native || !family) issue('allowedTools', `unknown SDK tool: ${tool}`)
     else if (!family.length) issue('allowedTools', `${native.label} is a ${native.protocol} SDK tool`)
-    else if (!(rules.nativeAllowed ?? nativeToolAllowed)(native)) issue('allowedTools', `blocked by NATIVE_TOOLS_ENABLED: ${tool}`)
     else if (native.officialOnly && !family.some((target) => target.official)) issue('allowedTools', `${native.label} works only with the official provider`)
   }
 

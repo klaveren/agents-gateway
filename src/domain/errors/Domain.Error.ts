@@ -191,13 +191,10 @@ export class ModelDisabledError extends DomainError {
   }
 }
 
-/** ⛔ Agente com ferramenta que alcança este servidor (run_bash, Bash/Read/Write do SDK), para quem não administra. */
-export class DangerousToolsRestrictedError extends DomainError {
-  constructor(
-    public readonly agentId: string,
-    public readonly tools: string[],
-  ) {
-    super(`Agent ${agentId} has tools that reach this server (${tools.join(', ')}): only administrators can use it (DANGEROUS_TOOLS_ADMIN_ONLY).`)
+/** ⛔ Agente que quem o criou marcou como só para admin (`IAgent.adminOnly`), para quem não administra. */
+export class AgentAdminOnlyError extends DomainError {
+  constructor(public readonly agentId: string) {
+    super(`Agent ${agentId} is for administrators only.`)
   }
 }
 
@@ -205,13 +202,6 @@ export class DangerousToolsRestrictedError extends DomainError {
 export class SubagentOnlyError extends DomainError {
   constructor(public readonly agentId: string) {
     super(`Agent ${agentId} is a subagent: it is only called by another agent (delegate_to_agent), never in a direct conversation.`)
-  }
-}
-
-/** ⛔ Agente de assinatura (conta pessoal de quem fez o login) para quem não administra. */
-export class SubscriptionRestrictedError extends DomainError {
-  constructor(public readonly providerId: string) {
-    super(`Provider ${providerId} runs on a personal subscription: only administrators can use it (SUBSCRIPTION_ADMIN_ONLY).`)
   }
 }
 

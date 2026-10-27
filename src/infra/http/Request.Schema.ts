@@ -111,7 +111,15 @@ export const agentBodySchema = z.object({
    * existe, quem diz é a regra (`protocolOf`), com o resto.
    */
   providers: z
-    .array(z.object({ provider: z.string().trim().min(1).max(32), models: z.array(z.string().trim().min(1)).min(1).max(20) }))
+    .array(
+      z.object({
+        provider: z.string().trim().min(1).max(32),
+        models: z.array(z.string().trim().min(1)).min(1).max(20),
+        /** Só nos protocolos que têm sandbox (`SANDBOX_LEVELS`); quem confere é a regra do agente. */
+        sandbox: z.enum(['read-only', 'workspace-write', 'full']).optional(),
+        network: z.boolean().optional(),
+      }),
+    )
     .min(1)
     .max(10),
   systemPrompt: z.string().min(1),
@@ -121,6 +129,8 @@ export const agentBodySchema = z.object({
   allowedTools: z.array(z.string().trim().min(1)).max(100).default([]),
   /** `subagent`: só chamado por outro agente; `null` volta a agente normal. */
   role: z.enum(['subagent']).nullable().optional(),
+  /** Só administrador conversa com o agente. Decisão de quem o cria; ausente ou `false` = aberto a todos. */
+  adminOnly: z.boolean().optional(),
 })
 
 /**

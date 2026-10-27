@@ -875,7 +875,7 @@ describe('AgentController', () => {
         const result = read.body?.result as { limitsInEffect: Record<string, number>; limitBounds: Record<string, { min: number }>; deployment: Record<string, unknown> }
         assert.strictEqual(typeof result.limitsInEffect.maxOutputTokens, 'number')
         assert.strictEqual(result.limitBounds.maxToolTurns.min, 1)
-        assert.strictEqual(result.deployment.dangerousToolsAdminOnly, true)
+        assert.strictEqual('dangerousToolsAdminOnly' in result.deployment, false)
       })
 
       it('a mudança vale na sessão seguinte, pelo mesmo repositório', async () => {

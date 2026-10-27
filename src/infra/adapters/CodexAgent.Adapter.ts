@@ -3,6 +3,7 @@ import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Codex, CodexOptions, ThreadEvent, ThreadItem, ThreadOptions, UserInput } from '@openai/codex-sdk'
 import { nativeToolsOf } from '@domain/Native.Tools'
+import { sandboxOf, TSandboxLevel } from '@domain/Sandbox.Policy'
 import { reasoningLevel } from '@domain/Reasoning.Levels'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -48,7 +49,8 @@ export interface ICodexAgentAdapterDeps {
 }
 
 /**
- * ⛔ O QUE O CODEX NÃO TEM AQUI, ligado por padrão no CLI e desligado à força: terminal (`shell_tool`,
+ * ⛔ O QUE O CODEX NÃO TEM AQUI, a não ser que o agente ligue a nativa (`sdk:codex:shell` destrava
+ * `shell_tool` e `unified_exec`; ver `codexFeatures`). Ligado por padrão no CLI e desligado à força: terminal (`shell_tool`,
  * `unified_exec`), conectores da conta ChatGPT (`apps`: Figma, Drive…), navegador, computer use,
  * plugins, skills, hooks, subagentes, geração de imagem. Verificado na 0.163: sem o `shell_tool` não há
  * comando; o `exec` do code mode sobra para chamar MCP, e nele `import 'node:fs'` falha
@@ -56,6 +58,18 @@ export interface ICodexAgentAdapterDeps {
  *
  * ⚠️ O `code_mode_host` FICA LIGADO de propósito: é por ele que as ferramentas de MCP chegam ao modelo.
  */
+/** As features do CLI para o agente: as travadas, menos as que as nativas dele destravam. */
+export function codexFeatures(allowedTools: readonly string[]): Record<string, boolean> {
+  const unlocked = nativeToolsOf(allowedTools, EProvider.CODEX).flatMap((tool) => tool.sdkNames ?? [tool.sdkName])
+  return Object.fromEntries(Object.entries(CODEX_LOCKED_FEATURES).map(([name, value]) => [name, unlocked.includes(name) || value]))
+}
+
+const CODEX_SANDBOX: Readonly<Record<TSandboxLevel, NonNullable<ThreadOptions['sandboxMode']>>> = {
+  'read-only': 'read-only',
+  'workspace-write': 'workspace-write',
+  full: 'danger-full-access',
+}
+
 export const CODEX_LOCKED_FEATURES: Readonly<Record<string, boolean>> = {
   shell_tool: false,
   unified_exec: false,
@@ -85,8 +99,8 @@ export const CODEX_LOCKED_FEATURES: Readonly<Record<string, boolean>> = {
 /**
  * Lane `agent` do ChatGPT pela ASSINATURA, sobre o `@openai/codex-sdk` (que roda o binário `codex`).
  *
- * ⛔ Cada conversa num diretório vazio, `sandboxMode: read-only`, `approvalPolicy: never`, sem rede no
- * sandbox, com o `CODEX_HOME` do gateway (nunca o `~/.codex` da pessoa, com os MCPs e conectores dela)
+ * ⛔ Cada conversa num diretório vazio, `approvalPolicy: never`, com o sandbox e a rede que o agente
+ * escolheu para este provider (padrão `read-only` e sem rede, ver `Sandbox.Policy`), com o `CODEX_HOME` do gateway (nunca o `~/.codex` da pessoa, com os MCPs e conectores dela)
  * e o ambiente mínimo. As ferramentas do agente chegam só por MCP (`mcp:<servidor>/…`); as locais
  * in-process (busca, delegação) não existem para o Codex.
  */
@@ -163,7 +177,7 @@ export class CodexAgentAdapter implements IAgentAdapter {
         env: subscriptionEnv({ HOME: workspace, CODEX_HOME: home }),
         config: {
           developer_instructions: withMcpHint(record.systemPrompt, remotes),
-          features: { ...CODEX_LOCKED_FEATURES },
+          features: codexFeatures(agent.allowedTools),
           // ⛔ Login em ARQUIVO no CODEX_HOME do gateway, nunca no Keychain da pessoa.
           cli_auth_credentials_store: 'file',
           mcp_servers: codexMcpServers(remotes, context.token),
@@ -171,13 +185,14 @@ export class CodexAgentAdapter implements IAgentAdapter {
       })
 
       const webSearch = nativeToolsOf(agent.allowedTools, EProvider.CODEX).some((tool) => tool.sdkName === 'web_search')
+      const target = agent.providers.find((candidate) => candidate.provider === record.provider)
       const options: ThreadOptions = {
         model: record.model || undefined,
         workingDirectory: workspace,
         skipGitRepoCheck: true,
-        sandboxMode: 'read-only',
+        sandboxMode: CODEX_SANDBOX[sandboxOf(EProvider.CODEX, target?.sandbox)],
         approvalPolicy: 'never',
-        networkAccessEnabled: false,
+        networkAccessEnabled: !!target?.network,
         webSearchMode: webSearch ? 'live' : 'disabled',
         modelReasoningEffort: reasoningLevel(EProvider.CODEX, record.reasoning) as ThreadOptions['modelReasoningEffort'],
       }

@@ -13,9 +13,9 @@ import { randomBytes } from 'node:crypto'
 import { AgentCatalog } from '@application/Agent.Catalog'
 import { ModelCatalogService } from '@application/ModelCatalog.Service'
 import { IAgentRules, offers, targetFor } from '@domain/Agent.Policy'
-import { NATIVE_TOOLS, nativeToolAllowed } from '@domain/Native.Tools'
-import { dangerousToolsAdminOnly, dangerousToolsOf } from '@domain/Tool.Policy'
-import { isSubscription, subscriptionAdminOnly } from '@domain/Subscription.Policy'
+import { NATIVE_TOOLS } from '@domain/Native.Tools'
+import { dangerousToolsOf } from '@domain/Tool.Policy'
+import { isSubscription } from '@domain/Subscription.Policy'
 import { delegationMaxDepth } from '@domain/models/Delegation.Model'
 import { maxOutputTokens, maxToolTurns } from '@infra/adapters/support/Prompt.Helper'
 import { bashPolicy } from '@infra/tools/Bash.Guard'
@@ -422,15 +422,9 @@ export class AgentController {
   async getTools(_req: Request, res: Response) {
     await this.respond(res, async () => {
       await this.requireCaller()
-      // As nativas vão junto, com o veredito do perímetro: a tela mostra as bloqueadas desabilitadas, com o porquê.
-      // `dangerous`: alcança este servidor; com `DANGEROUS_TOOLS_ADMIN_ONLY`, o agente que a tem só conversa com admin.
+      // As nativas vão junto, todas liberadas. `dangerous`: alcança este servidor — a tela avisa quem configura.
       const dangerous = (id: string) => dangerousToolsOf([id]).length > 0
-      const native = NATIVE_TOOLS.map((tool) => ({
-        ...tool,
-        dangerous: dangerous(tool.id),
-        allowed: nativeToolAllowed(tool),
-        reason: nativeToolAllowed(tool) ? undefined : 'blocked by NATIVE_TOOLS_ENABLED',
-      }))
+      const native = NATIVE_TOOLS.map((tool) => ({ ...tool, dangerous: dangerous(tool.id) }))
       const catalog = await this.catalogFor(this.localTools)
       return { ...catalog, tools: catalog.tools.map((tool) => ({ ...tool, dangerous: dangerous(tool.name) })), native, limits: { delegationMaxDepth: delegationMaxDepth() } }
     })
@@ -527,10 +521,7 @@ export class AgentController {
         limitBounds: LIMIT_BOUNDS,
         // ⛔ Decisões de implantação e de segurança: a tela MOSTRA, e só o deploy muda.
         deployment: {
-          dangerousToolsAdminOnly: dangerousToolsAdminOnly(),
-          subscriptionAdminOnly: subscriptionAdminOnly(),
           localToolsEnabled: process.env.LOCAL_TOOLS_ENABLED?.trim() || undefined,
-          nativeToolsEnabled: process.env.NATIVE_TOOLS_ENABLED?.trim() || undefined,
           allowAnonymous: process.env.ALLOW_ANONYMOUS === '1',
         },
       }
@@ -1066,13 +1057,19 @@ function toAgentInput(id: string, body: TAgentBody): IAgent {
   return {
     id,
     name: body.name,
-    providers: body.providers.map((target) => ({ provider: target.provider, models: [...new Set(target.models)] })),
+    providers: body.providers.map((target) => ({
+      provider: target.provider,
+      models: [...new Set(target.models)],
+      ...(target.sandbox ? { sandbox: target.sandbox } : {}),
+      ...(target.network ? { network: true } : {}),
+    })),
     systemPrompt: body.systemPrompt,
     ...(body.soul?.trim() ? { soul: body.soul.trim() } : {}),
     reasoningEfforts: body.reasoningEfforts?.length ? [...new Set(body.reasoningEfforts)] : undefined,
     modes: [...new Set(body.modes)],
     allowedTools: [...new Set(body.allowedTools)],
     ...(body.role ? { role: body.role } : {}),
+    ...(body.adminOnly ? { adminOnly: true } : {}),
   }
 }
 

@@ -7,9 +7,8 @@ import {
   AdapterNotFoundError,
   ModelDisabledError,
   NoAgentAvailableError,
-  DangerousToolsRestrictedError,
+  AgentAdminOnlyError,
   SubagentOnlyError,
-  SubscriptionRestrictedError,
   AgentNotFoundError,
   AgentUnavailableError,
   AgentWithoutModelError,
@@ -20,8 +19,7 @@ import {
   SessionNotFoundError,
 } from '@domain/errors/Domain.Error'
 import { REASONING_LEVELS } from '@domain/Reasoning.Levels'
-import { isSubscription, lanesOf, subscriptionAdminOnly } from '@domain/Subscription.Policy'
-import { dangerousToolsAdminOnly, dangerousToolsOf } from '@domain/Tool.Policy'
+import { isSubscription, lanesOf } from '@domain/Subscription.Policy'
 import { DEFAULT_SETTINGS, IAgentSettings } from '@domain/models/Settings.Model'
 import { IAgentDirectory } from '@domain/ports/AgentRepository.Port'
 import { IProviderDirectory } from '@domain/ports/ProviderRepository.Port'
@@ -122,10 +120,8 @@ export class AgentProvider implements IAgentProvider {
     const mode = resolveSessionMode(agent, input, lanesOf(protocol))
     // A filha de uma delegação vale o que a mãe vale: admin só se a mãe foi aberta por admin.
     const admin = !!input.adminAccess || (!!input.delegated && !!input.parentSessionId && this.adminSessions.has(input.parentSessionId))
-    if (isSubscription(protocol) && subscriptionAdminOnly() && !admin) throw new SubscriptionRestrictedError(choice.provider)
-    // ⛔ Ferramenta que alcança este servidor (run_bash, Bash/Read/Write… do SDK): só administrador.
-    const dangerous = dangerousToolsOf(agent.allowedTools)
-    if (dangerous.length && dangerousToolsAdminOnly() && !admin) throw new DangerousToolsRestrictedError(agent.id, dangerous)
+    // ⛔ Só admin quando QUEM CRIOU o agente marcou — nunca inferido do provider ou das ferramentas.
+    if (agent.adminOnly && !admin) throw new AgentAdminOnlyError(agent.id)
     // ⛔ Subagente: só pela delegação. Aqui, e não na tela, porque é por aqui que todo caminho passa.
     if (agent.role === 'subagent' && !input.delegated) throw new SubagentOnlyError(agent.id)
 
@@ -233,8 +229,8 @@ export class AgentProvider implements IAgentProvider {
    * (`Handoff.Policy`): o que foi pedido, respondido e que ferramentas rodaram.
    *
    * ⛔ Só provider e modelo que o agente oferece AGORA (os ativados no catálogo, que já vêm filtrados).
-   * ⛔ O provider novo passa pelas mesmas travas da criação: ligado, com chave, assinatura só para admin,
-   * e a lane da sessão (sessão chat não vai para assinatura, que só tem a lane agent).
+   * ⛔ O provider novo precisa estar ligado, com chave, e rodar a lane da sessão (sessão chat não vai para
+   * assinatura, que só tem a lane agent). Quem pode conversar já foi decidido na criação (`adminOnly`).
    * ⛔ Nunca no meio de um turno: metade da resposta sairia de um modelo e o custo de outro.
    */
   reconfigure(sessionId: string, change: ISessionChange): ISession {
@@ -265,11 +261,7 @@ export class AgentProvider implements IAgentProvider {
         message: levels.length ? `not a ${protocol} reasoning level: ${change.reasoning}` : `${protocol} has no reasoning control here`,
       })
     if (issues.length) throw new InvalidSessionChangeError(issues)
-    if (switching) {
-      // A assinatura é pessoal: só a sessão aberta por admin vai para ela (a mesma regra da criação).
-      if (isSubscription(protocol) && subscriptionAdminOnly() && !this.adminSessions.has(sessionId)) throw new SubscriptionRestrictedError(provider)
-      this.getAdapter(protocol, record.mode)
-    }
+    if (switching) this.getAdapter(protocol, record.mode)
 
     record.model = model!
     if (change.reasoning !== undefined) record.reasoning = change.reasoning || undefined

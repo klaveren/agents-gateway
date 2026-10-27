@@ -31,6 +31,7 @@ const failureEnvelope = {
         'tools_not_supported',
         'adapter_not_found',
         'agent_unavailable',
+        'agent_admin_only',
         'unauthorized',
         'not_found',
         'internal_error',
@@ -191,7 +192,7 @@ const toolsResult = {
     native: {
       type: 'array',
       description:
-        'SDK-native tools (Agents SDK lane only), by protocol. Store `id` in `allowedTools`. `server-*` risks run ON the gateway host and are blocked unless listed in `NATIVE_TOOLS_ENABLED`.',
+        'SDK-native tools (Agents SDK lane only), by protocol. Store `id` in `allowedTools`. `server-*` risks run ON the gateway host (`dangerous: true`): whoever talks to the agent gets that reach, so mark the agent `adminOnly` when it is not for everyone.',
       items: {
         type: 'object',
         properties: {
@@ -202,8 +203,7 @@ const toolsResult = {
           description: { type: 'string' },
           risk: { type: 'string', enum: ['hosted', 'session', 'server-network', 'server-read', 'server-exec'] },
           officialOnly: { type: 'boolean' },
-          allowed: { type: 'boolean' },
-          reason: { type: 'string' },
+          dangerous: { type: 'boolean', description: 'Reaches the gateway host (disk, network, shell).' },
         },
       },
     },
@@ -256,6 +256,7 @@ const agentSchema = {
     modes: { type: 'array', items: { type: 'string', enum: ['chat', 'agent'] } },
     allowedTools: { type: 'array', items: { type: 'string' } },
     role: { type: 'string', enum: ['subagent'], description: 'Present on subagents: only called by another agent.' },
+    adminOnly: { type: 'boolean', description: 'Present when only administrators can talk to the agent.' },
   },
 }
 
@@ -293,6 +294,11 @@ const agentBody = {
     systemPrompt: { type: 'string' },
     soul: { type: 'string', maxLength: 8000, description: 'Who the agent is (identity, tone, values); the system prompt says what it does.' },
     role: { type: ['string', 'null'], enum: ['subagent', null], description: '`subagent`: only called by another agent (delegation), never in a direct conversation.' },
+    adminOnly: {
+      type: 'boolean',
+      description:
+        'Only administrators can talk to the agent (and a delegation from a non-admin conversation cannot reach it). Absent or false = open to every account: subscriptions and server-reaching tools never close an agent on their own.',
+    },
     reasoningEfforts: { type: 'array', items: { type: 'string' } },
     modes: { type: 'array', items: { type: 'string', enum: ['chat', 'agent'] } },
     allowedTools: {
@@ -398,7 +404,7 @@ const failures = {
   },
   '403': {
     description:
-      'Code `agent_unavailable`: the agent is not serving this caller right now (audience `off`, a role outside `AUDIENCE_ROLES` under `restricted`, or a role in `DENIED_ROLES`). An operating decision, not a missing permission to ask for.',
+      'Code `agent_unavailable`: the agent is not serving this caller right now (audience `off`, a role outside `AUDIENCE_ROLES` under `restricted`, or a role in `DENIED_ROLES`). An operating decision, not a missing permission to ask for. Code `agent_admin_only`: the agent was marked `adminOnly` by whoever created it.',
     content: { 'application/json': { schema: failureEnvelope } },
   },
   '404': {
@@ -750,6 +756,12 @@ export const OPENAPI_DOCUMENT = {
                     lanes: { type: 'array', items: { type: 'string', enum: ['chat', 'agent'] } },
                     reasoningLevels: { type: 'array', items: { type: 'string' } },
                     nativeFamily: { type: 'string' },
+                    sandboxLevels: {
+                      type: 'array',
+                      items: { type: 'string', enum: ['read-only', 'workspace-write', 'full'] },
+                      description: 'Sandbox levels an agent can pick, default first; empty = nothing to set.',
+                    },
+                    sandboxNetwork: { type: 'boolean', description: 'The sandbox opens the network apart (`network` on the agent provider).' },
                     brand: { type: 'string', enum: ['claude', 'openai', 'google'] },
                     consoleUrl: { type: 'string' },
                     envName: { type: 'string' },

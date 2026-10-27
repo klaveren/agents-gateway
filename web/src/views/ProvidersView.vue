@@ -242,8 +242,8 @@ function sourceLabel(provider: IProviderStatus): string {
 
         <template v-if="selected.subscription">
           <p class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-            Conta pessoal: os agentes usam a SUA assinatura, então só quem administra conversa com eles (SUBSCRIPTION_ADMIN_ONLY). Cada conversa roda num diretório vazio, sem terminal nem acesso ao disco
-            deste servidor. Os preços dos modelos são os da API, para mostrar quanto a conversa custaria em tokens.
+            Conta pessoal: os agentes usam a SUA assinatura, inclusive nas conversas de quem não administra (para fechar um agente, marque "Só administradores" nele). Cada conversa roda num
+            diretório vazio; o sandbox e o terminal são escolhidos no agente, na guia SDK. Os preços dos modelos são os da API, para mostrar quanto a conversa custaria em tokens.
           </p>
           <p class="text-xs text-zinc-400">{{ SUBSCRIPTION_HINT[selected.protocol] }}</p>
           <SubscriptionLogin :provider="selected" @done="loginDone(selected.id)" />

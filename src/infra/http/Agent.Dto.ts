@@ -39,6 +39,10 @@ export interface IAgentProviderDto {
    * do provider); `[]` = o modelo não raciocina — a tela esconde o seletor.
    */
   modelReasoning: Record<string, string[] | null>
+  /** O sandbox escolhido para este provider (só nos que têm, ver `SANDBOX_LEVELS`). */
+  sandbox?: string
+  /** Rede liberada no sandbox. */
+  network?: boolean
   disabledModels?: string[]
   unavailable?: { reason: string; label: string }
 }
@@ -54,6 +58,8 @@ export interface IAgentDto {
   allowedTools: string[]
   /** `subagent`: só chamado por outro agente; não abre conversa direta. */
   role?: string
+  /** Só administrador conversa com o agente (marcado por quem o criou). */
+  adminOnly?: boolean
 }
 
 /**
@@ -99,6 +105,8 @@ export function toAgentDto(agent: IAgent, factsOf: (providerId: string) => IAgen
         pricing: Object.fromEntries(target.models.filter((model) => Object.hasOwn(pricing, model)).map((model) => [model, pricing[model]])),
         reasoningEfforts: efforts.length ? efforts : undefined,
         modelReasoning: Object.fromEntries(target.models.map((model) => [model, efforts.length ? modelReasoningLevels(efforts, facts.reasoningOf?.(model)) : []])),
+        ...(target.sandbox ? { sandbox: target.sandbox } : {}),
+        ...(target.network ? { network: true } : {}),
         ...(facts.disabledModels?.length ? { disabledModels: facts.disabledModels } : {}),
         ...(facts.unavailable ? { unavailable: facts.unavailable } : {}),
       }
@@ -107,6 +115,7 @@ export function toAgentDto(agent: IAgent, factsOf: (providerId: string) => IAgen
     modes: agent.modes.map(String),
     allowedTools: agent.allowedTools,
     ...(agent.role ? { role: agent.role } : {}),
+    ...(agent.adminOnly ? { adminOnly: true } : {}),
   }
 }
 

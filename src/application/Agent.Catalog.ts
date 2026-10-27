@@ -128,12 +128,18 @@ function toAgent(stored: IStoredAgent): IAgent {
   return {
     id: stored.id,
     name: stored.name,
-    providers: stored.providers.map((target) => ({ provider: target.provider, models: [...target.models] })),
+    providers: stored.providers.map((target) => ({
+      provider: target.provider,
+      models: [...target.models],
+      ...(target.sandbox ? { sandbox: target.sandbox } : {}),
+      ...(target.network ? { network: true } : {}),
+    })),
     systemPrompt: stored.systemPrompt,
     ...(stored.soul ? { soul: stored.soul } : {}),
     reasoningEfforts: stored.reasoningEfforts,
     modes: stored.modes,
     allowedTools: stored.allowedTools,
     ...(stored.role ? { role: stored.role } : {}),
+    ...(stored.adminOnly ? { adminOnly: true } : {}),
   }
 }

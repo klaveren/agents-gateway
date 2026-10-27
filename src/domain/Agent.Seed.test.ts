@@ -37,7 +37,6 @@ describe('AGENT_SEED', () => {
       knownTools: [],
       providerOf: (model) => (model.startsWith('claude') ? EProvider.CLAUDE : undefined),
       mcpServerExists: (server) => server === 'gateway',
-      nativeAllowed: () => true,
     })
 
     assert.deepStrictEqual(issues, [])

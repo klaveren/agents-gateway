@@ -67,11 +67,8 @@ const LIMITS: Array<{ name: TLimitName; label: string }> = [
 ]
 
 const DEPLOYMENT: Array<{ key: keyof NonNullable<ISettings['deployment']>; label: string }> = [
-  { key: 'dangerousToolsAdminOnly', label: 'Ferramentas perigosas só para admin' },
-  { key: 'subscriptionAdminOnly', label: 'Assinaturas só para admin' },
   { key: 'allowAnonymous', label: 'Aceita chamador anônimo' },
   { key: 'localToolsEnabled', label: 'Ferramentas locais' },
-  { key: 'nativeToolsEnabled', label: 'Ferramentas nativas' },
 ]
 
 /** Booleano vira sim/não; texto (lista do `.env`) aparece como veio; ausente é "—". */

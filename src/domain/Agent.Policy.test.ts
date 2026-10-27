@@ -28,6 +28,20 @@ describe('agentIssues', () => {
     assert.deepStrictEqual(agentIssues(agent(), rules), [])
   })
 
+  it('⛔ sandbox só no protocolo que o tem, e só nos níveis dele; rede só onde o sandbox a separa', () => {
+    const on = (target: Partial<IAgent['providers'][number]>, protocol: EProvider) =>
+      agentIssues(agent({ providers: [{ provider: 'p', models: ['m'], ...target }], modes: [EMode.AGENT], allowedTools: [] }), {
+        ...rules,
+        protocolOf: () => protocol,
+        modelEnabled: () => true,
+      }).map((issue) => issue.message)
+
+    assert.deepStrictEqual(on({ sandbox: 'full', network: true }, EProvider.CODEX), [])
+    assert.deepStrictEqual(on({ sandbox: 'workspace-write' }, EProvider.ANTIGRAVITY), ['p: not a sandbox level here: workspace-write'])
+    assert.deepStrictEqual(on({ network: true }, EProvider.ANTIGRAVITY), ['p: has no sandbox network to open'])
+    assert.deepStrictEqual(on({ sandbox: 'read-only' }, EProvider.CLAUDE), ['p: has no sandbox to set'])
+  })
+
   it('devolve TODOS os problemas de uma vez, campo a campo', () => {
     const issues = agentIssues(agent({ id: 'X', name: ' ', providers: [{ provider: EProvider.GOOGLE, models: [] }], modes: [], systemPrompt: '' }), rules)
 

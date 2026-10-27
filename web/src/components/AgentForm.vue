@@ -4,7 +4,7 @@ import { ApiError } from '@/lib/api'
 import { defaultLanes, findOrphans, isUsableProvider, pruneModels, pruneNatives, summarizeIssues, unionLanes, unionLevels } from '@/lib/agentForm'
 import { useProvidersStore } from '@/stores/providers'
 import { useProtocolsStore } from '@/stores/protocols'
-import type { IAgentDetail, IAgentInput, ICatalogModel, TMode } from '@/lib/types'
+import type { IAgentDetail, IAgentInput, ICatalogModel, INativeTool, TMode, TSandboxLevel } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import { useMcpStore } from '@/stores/mcp'
 import ConfirmDialog from './ConfirmDialog.vue'
@@ -117,18 +117,48 @@ const RISK_CLASS: Record<string, string> = {
   'server-exec': 'bg-rose-500/15 text-rose-300',
 }
 
-/** Por que uma nativa não pode ser ligada aqui — ou nada, se pode. Nos outros providers do agente ela não vai. */
-function nativeBlock(tool: { allowed: boolean; officialOnly: boolean; protocol: string }): string | undefined {
-  if (!tool.allowed) return 'bloqueada no deploy — liberar em NATIVE_TOOLS_ENABLED'
-  if (tool.officialOnly && !selected.value.some((entry) => entry.official && entry.protocol === tool.protocol)) return 'só no provider oficial'
-  return undefined
+type TSelected = (typeof selected.value)[number]
+
+/**
+ * A guia SDK, um bloco por provider do agente: cada um tem o seu nível de acesso. As nativas são as da
+ * família do protocolo (o Claude da assinatura roda as do Claude), e o sandbox, nos que o têm (Codex,
+ * Antigravity), é escolhido aqui, por agente.
+ */
+const sdkSections = computed(() =>
+  selected.value.map((entry) => {
+    const family = entry.info?.nativeFamily
+    const tools = family ? natives.value.filter((tool) => tool.protocol === family) : []
+    // A mesma nativa vale em todos os providers da família: marcar num marca no outro.
+    const shared = family ? selected.value.filter((other) => other !== entry && other.info?.nativeFamily === family).map((other) => protocols.providerName(other.target.provider)) : []
+    return { entry, tools, shared, levels: entry.info?.sandboxLevels ?? [], network: !!entry.info?.sandboxNetwork }
+  }),
+)
+
+/** Por que uma nativa não roda neste provider — ou nada, se roda. */
+function nativeBlock(tool: INativeTool, entry: TSelected): string | undefined {
+  return tool.officialOnly && !entry.official ? 'só no provider oficial' : undefined
 }
-/** Em que providers do agente a nativa roda (os da família dela). */
-function nativeWhere(tool: { protocol: string }): string {
-  return selected.value
-    .filter((entry) => entry.info?.nativeFamily === tool.protocol)
-    .map((entry) => protocols.providerName(entry.target.provider))
-    .join(', ')
+
+const SANDBOX_LABEL: Record<TSandboxLevel, string> = {
+  'read-only': 'Só leitura',
+  'workspace-write': 'Escreve na pasta da conversa',
+  full: 'Sem sandbox',
+}
+const SANDBOX_HINT: Record<TSandboxLevel, string> = {
+  'read-only': 'Lê o disco, não escreve.',
+  'workspace-write': 'Escreve só no diretório vazio da conversa.',
+  full: 'Lê, escreve e executa neste servidor como o gateway: .env, secrets.key, o banco.',
+}
+function sandboxLabel(protocol: string, level: TSandboxLevel): string {
+  // No Antigravity é ligado/desligado: com sandbox, nega o que pede permissão.
+  return protocol === 'antigravity' && level === 'read-only' ? 'Com sandbox' : SANDBOX_LABEL[level]
+}
+function sandboxHint(protocol: string, level: TSandboxLevel): string {
+  return protocol === 'antigravity' && level === 'read-only' ? 'Nega comando e leitura de arquivo.' : SANDBOX_HINT[level]
+}
+/** O padrão (o primeiro nível) não é gravado: o agente segue o padrão do protocolo. */
+function setSandbox(entry: TSelected, levels: TSandboxLevel[], level: TSandboxLevel) {
+  entry.target.sandbox = level === levels[0] ? undefined : level
 }
 
 /**
@@ -165,7 +195,11 @@ function makeDefaultProvider(id: string) {
 /** Ferramentas que mudam algo fora da conversa: quem diz é o servidor (`dangerous` em `GET /tools`). */
 const dangerousNames = computed(() => new Set(agents.tools.filter((tool) => tool.dangerous).map((tool) => tool.name)))
 const dangerousChosen = computed(() => form.value.allowedTools.filter((name) => dangerousNames.value.has(name)))
-const dangerousNative = computed(() => form.value.allowedTools.some((id) => natives.value.some((tool) => tool.id === id && tool.dangerous)))
+const dangerousNatives = computed(() => natives.value.filter((tool) => tool.dangerous && form.value.allowedTools.includes(tool.id)).map((tool) => tool.label))
+/** Os providers do agente sem sandbox ou com a rede dele aberta. */
+const openSandboxes = computed(() =>
+  form.value.providers.filter((target) => target.sandbox === 'full' || target.network).map((target) => protocols.providerName(target.provider)),
+)
 
 /** O nome que a pessoa vê de cada campo, para o resumo do erro perto do Salvar. */
 const FIELD_LABEL: Record<string, string> = {
@@ -179,9 +213,10 @@ const FIELD_LABEL: Record<string, string> = {
   soul: 'Soul',
   systemPrompt: 'Prompt',
   role: 'Só subagente',
+  adminOnly: 'Só administradores',
 }
 
-const blank = (): IAgentInput => ({ id: '', name: '', providers: [], soul: '', systemPrompt: '', reasoningEfforts: [], modes: ['chat', 'agent'], allowedTools: [], role: null })
+const blank = (): IAgentInput => ({ id: '', name: '', providers: [], soul: '', systemPrompt: '', reasoningEfforts: [], modes: ['chat', 'agent'], allowedTools: [], role: null, adminOnly: false })
 const form = ref<IAgentInput>(blank())
 
 /** Entradas `sdk:`/`agent:`/`mcp:` que nenhuma lista oferece: sem checkbox, mas o servidor recusa o salvamento. */
@@ -210,7 +245,7 @@ const deleting = ref(false)
 type TTab = 'agente' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk'
 const tab = ref<TTab>('agente')
 const TAB_FIELDS: Record<TTab, string[]> = {
-  agente: ['id', 'name', 'soul', 'systemPrompt', 'role'],
+  agente: ['id', 'name', 'soul', 'systemPrompt', 'role', 'adminOnly'],
   modelos: ['providers', 'models', 'modes', 'reasoningEfforts'],
   ferramentas: ['allowedTools'],
   mcps: [],
@@ -231,8 +266,9 @@ const tabs = computed(() => {
     { id: 'mcps', label: 'MCPs', count: tools.filter((entry) => entry.startsWith('mcp:')).length },
     { id: 'sdk', label: 'SDK', count: tools.filter((entry) => entry.startsWith('sdk:')).length },
   ]
-  // Sem nativa para os providers escolhidos, a guia do SDK não tem o que mostrar.
-  return all.filter((item) => item.id !== 'sdk' || natives.value.length || item.count)
+  // Sem nativa nem sandbox nos providers escolhidos, a guia do SDK não tem o que mostrar.
+  const sdkEmpty = sdkSections.value.every((section) => !section.tools.length && !section.levels.length)
+  return all.filter((item) => item.id !== 'sdk' || !sdkEmpty || item.count)
 })
 // A guia que sumiu (tirou o provider das nativas) não fica aberta vazia.
 watch(tabs, (list) => {
@@ -334,13 +370,19 @@ watch(
       ? {
           id: agent.id,
           name: agent.name,
-          providers: agent.providers.map((provider) => ({ provider: provider.id, models: provider.models.filter((model) => !provider.disabledModels?.includes(model)) })),
+          providers: agent.providers.map((provider) => ({
+            provider: provider.id,
+            models: provider.models.filter((model) => !provider.disabledModels?.includes(model)),
+            ...(provider.sandbox ? { sandbox: provider.sandbox } : {}),
+            ...(provider.network ? { network: true } : {}),
+          })),
           soul: agent.soul ?? '',
           systemPrompt: agent.systemPrompt,
           reasoningEfforts: [...(agent.reasoningEfforts ?? [])],
           modes: [...agent.modes],
           allowedTools: [...agent.allowedTools],
           role: agent.role ?? null,
+          adminOnly: !!agent.adminOnly,
         }
       : blank()
     issues.value = {}
@@ -447,6 +489,13 @@ async function remove() {
         </label>
         <small class="hint">Só é chamado por outro agente (delegação, em "Pode delegar a"). Não aparece em Nova conversa e não abre conversa direta, nem pela API.</small>
       </div>
+      <div class="field sm:col-span-2">
+        <label class="flex items-center gap-3">
+          <button type="button" role="switch" :aria-checked="!!form.adminOnly" class="switch" :class="{ on: form.adminOnly }" @click="form.adminOnly = !form.adminOnly"><span /></button>
+          <span>Só administradores</span>
+        </label>
+        <small class="hint">Desligado, qualquer conta conversa com o agente do jeito que ele está configurado aqui: providers, assinaturas, ferramentas e sandbox.</small>
+      </div>
 
       <label class="field sm:col-span-2">
         <span>Soul <em class="font-normal text-zinc-500">— quem o agente é: identidade, tom, valores, jeito de falar. Vai para o modelo antes do prompt.</em></span>
@@ -521,7 +570,7 @@ async function remove() {
             {{ mode === 'chat' ? 'Chat' : 'Agents SDK' }}
           </button>
         </div>
-        <small v-if="anySubscription" class="hint">Assinatura: só a lane Agents SDK, e só quem administra conversa nela (a conta é pessoal).</small>
+        <small v-if="anySubscription" class="hint">Assinatura: só a lane Agents SDK. A conta é pessoal: quem conversa com o agente usa a sua assinatura.</small>
         <small v-for="message in issues.modes" :key="message" class="error">{{ message }}</small>
       </div>
       <div class="field">
@@ -552,7 +601,9 @@ async function remove() {
           </button>
           <span v-if="!agents.tools.length" class="text-sm text-zinc-500">Nenhuma disponível.</span>
         </div>
-        <small v-if="dangerousChosen.length" class="text-amber-300">⚠ {{ dangerousChosen.join(', ') }} alcança o servidor do gateway. Por isso, só administradores conversam com este agente (DANGEROUS_TOOLS_ADMIN_ONLY).</small>
+        <small v-if="dangerousChosen.length" class="text-amber-300">
+          ⚠ {{ dangerousChosen.join(', ') }} alcança o servidor do gateway: quem conversar com este agente ganha esse alcance.<template v-if="!form.adminOnly"> Marque "Só administradores" na guia Agente se não for para todos.</template>
+        </small>
         <small v-for="message in issues.allowedTools" :key="message" class="error">{{ message }}</small>
       </div>
 
@@ -617,25 +668,55 @@ async function remove() {
       </div>
 
     </fieldset>
-    <fieldset v-show="tab === 'sdk'" class="grid gap-4 sm:grid-cols-2">
-      <div v-if="natives.length" class="field sm:col-span-2">
-        <span>Ferramentas do SDK <em class="font-normal text-zinc-500">— só na lane Agents SDK</em></span>
-        <p v-if="!form.modes.includes('agent')" class="text-xs font-normal text-amber-300">Este agente não tem a lane Agents SDK ligada: as ferramentas do SDK não serão usadas.</p>
-        <ul class="divide-y divide-zinc-800/70 rounded-lg border border-zinc-800">
-          <li v-for="tool in natives" :key="tool.id" class="flex items-center gap-3 px-3 py-2 font-normal" :class="{ 'opacity-50': nativeBlock(tool) && !form.allowedTools.includes(tool.id) }">
-            <input type="checkbox" class="accent-emerald-500" :checked="form.allowedTools.includes(tool.id)" :disabled="!!nativeBlock(tool) && !form.allowedTools.includes(tool.id)" @change="toggle(form.allowedTools, tool.id)" />
+    <fieldset v-show="tab === 'sdk'" class="flex flex-col gap-4">
+      <p class="text-xs text-zinc-500">Só na lane Agents SDK. Cada provider tem o seu nível de acesso: as ferramentas do SDK dele e, no Codex e no Antigravity, o sandbox.</p>
+      <p v-if="!form.modes.includes('agent')" class="text-xs text-amber-300">Este agente não tem a lane Agents SDK ligada: nada daqui é usado.</p>
+      <section v-for="section in sdkSections" :key="section.entry.target.provider" class="flex flex-col gap-2 rounded-xl border border-zinc-800 px-3 py-3">
+        <div class="flex flex-wrap items-center gap-2 text-sm">
+          <span class="font-medium text-zinc-200">{{ protocols.providerName(section.entry.target.provider) }}</span>
+          <span v-if="section.entry.info" class="text-[11px] text-zinc-500">{{ section.entry.info.label }}</span>
+          <span v-if="section.shared.length && section.tools.length" class="text-[11px] text-zinc-500">· mesmas ferramentas de {{ section.shared.join(', ') }}</span>
+        </div>
+
+        <div v-if="section.levels.length" class="flex flex-col gap-1.5">
+          <span class="text-xs text-zinc-400">Sandbox</span>
+          <div class="flex flex-wrap gap-1.5">
+            <button
+              v-for="level in section.levels"
+              :key="level"
+              type="button"
+              class="chip"
+              :class="{ on: (section.entry.target.sandbox ?? section.levels[0]) === level, danger: level === 'full' }"
+              :title="sandboxHint(section.entry.protocol, level)"
+              @click="setSandbox(section.entry, section.levels, level)"
+            >
+              {{ sandboxLabel(section.entry.protocol, level) }}<span v-if="level === section.levels[0]" class="ml-1 text-[10px] text-zinc-500">padrão</span>
+            </button>
+          </div>
+          <small class="hint">{{ sandboxHint(section.entry.protocol, section.entry.target.sandbox ?? section.levels[0]) }}</small>
+          <label v-if="section.network" class="flex items-center gap-2 text-xs text-zinc-300">
+            <input type="checkbox" class="accent-emerald-500" :checked="!!section.entry.target.network" @change="section.entry.target.network = !section.entry.target.network || undefined" />
+            Rede no sandbox <span class="text-zinc-500">— os comandos saem para a rede a partir deste servidor</span>
+          </label>
+        </div>
+
+        <ul v-if="section.tools.length" class="divide-y divide-zinc-800/70 rounded-lg border border-zinc-800">
+          <li v-for="tool in section.tools" :key="tool.id" class="flex items-center gap-3 px-3 py-2" :class="{ 'opacity-50': nativeBlock(tool, section.entry) }">
+            <input type="checkbox" class="accent-emerald-500" :checked="form.allowedTools.includes(tool.id)" :disabled="!!nativeBlock(tool, section.entry) && !form.allowedTools.includes(tool.id)" @change="toggle(form.allowedTools, tool.id)" />
             <span class="min-w-0 flex-1">
               <span class="block text-sm">{{ tool.label }} <code class="text-[11px] text-zinc-500">{{ tool.sdkName }}</code></span>
               <span class="block text-xs text-zinc-500">{{ tool.description }}</span>
-              <span v-if="nativeBlock(tool)" class="block text-xs text-zinc-500">{{ nativeBlock(tool) }}</span>
-              <span v-else-if="form.providers.length > 1" class="block text-xs text-zinc-500">roda em {{ nativeWhere(tool) }}</span>
+              <span v-if="nativeBlock(tool, section.entry)" class="block text-xs text-zinc-500">{{ nativeBlock(tool, section.entry) }}</span>
             </span>
             <span class="shrink-0 rounded-full px-2 py-0.5 text-[10px]" :class="RISK_CLASS[tool.risk]">{{ RISK_LABEL[tool.risk] }}</span>
           </li>
         </ul>
-        <small v-if="dangerousNative" class="text-amber-300">⚠ Ferramentas que tocam este servidor dão ao agente acesso ao disco, à rede ou a comandos daqui. Só administradores conversam com ele.</small>
-      </div>
-
+        <p v-else-if="!section.levels.length" class="text-xs text-zinc-500">Este provider não tem ferramentas de SDK para ligar aqui.</p>
+      </section>
+      <small v-if="dangerousNatives.length || openSandboxes.length" class="text-amber-300">
+        ⚠ <template v-if="dangerousNatives.length">{{ dangerousNatives.join(', ') }} alcança o disco, a rede ou os comandos deste servidor. </template>
+        <template v-if="openSandboxes.length">{{ openSandboxes.join(', ') }}: sandbox aberto. </template>Quem conversar com este agente ganha esse alcance.<template v-if="!form.adminOnly"> Marque "Só administradores" na guia Agente se não for para todos.</template>
+      </small>
     </fieldset>
 
     <p v-if="failure && !Object.keys(issues).length" class="text-sm whitespace-pre-line text-rose-300">{{ failure }}</p>

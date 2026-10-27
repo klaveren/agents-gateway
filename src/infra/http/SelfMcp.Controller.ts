@@ -85,6 +85,10 @@ const agentShape = {
       z.object({
         provider: z.string().describe('A configured provider id (claude, openai, google, a subscription or a compatible one).'),
         models: z.array(z.string()).describe('Models ENABLED in that provider catalog; the first is the default.'),
+        sandbox: z
+          .enum(['read-only', 'workspace-write'])
+          .optional()
+          .describe('Codex/Antigravity sandbox (see list_protocols sandboxLevels). `full` (no sandbox) is only set on the Agents screen.'),
       }),
     )
     .describe('Where the agent runs: one or more providers, each with its models. The first is the default; a conversation can switch between them.'),
@@ -97,6 +101,7 @@ const agentShape = {
     .nullable()
     .optional()
     .describe('`subagent`: only called by another agent through delegation (`agent:<id>`), never in a direct conversation. `null` makes it a regular agent.'),
+  adminOnly: z.boolean().optional().describe('Only administrators can talk to the agent. Absent or false = open to every account.'),
 }
 
 /**
@@ -330,8 +335,17 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
           message: `Tools that reach this server cannot be granted through MCP: ${dangerous.join(', ')}. Use the Agents screen.`,
         })
       }
-      const exists = (await api('GET', `/agents/${encodeURIComponent(agent.id)}`)).ok
-      return reply(exists ? await api('PUT', `/agents/${encodeURIComponent(agent.id)}`, { body: agent }) : await api('POST', '/agents', { body: agent }))
+      const current = await api('GET', `/agents/${encodeURIComponent(agent.id)}`)
+      // ⛔ O MCP não abre sandbox (`full` nem existe no schema dele) nem rede: sem dizer, ficam os do agente gravado.
+      const stored = current.ok ? ((current.result as { providers?: Array<{ id: string; sandbox?: string; network?: boolean }> }).providers ?? []) : []
+      agent.providers = agent.providers.map((target) => {
+        const before = stored.find((entry) => entry.id === target.provider)
+        const sandbox = target.sandbox ?? before?.sandbox
+        return { ...target, ...(sandbox ? { sandbox } : {}), ...(before?.network ? { network: true } : {}) }
+      }) as typeof agent.providers
+      // Substituir sem dizer `adminOnly` não abre o agente: a marca só sai com `adminOnly: false`.
+      const body = agent.adminOnly === undefined && current.ok && (current.result as { adminOnly?: boolean }).adminOnly ? { ...agent, adminOnly: true } : agent
+      return reply(current.ok ? await api('PUT', `/agents/${encodeURIComponent(agent.id)}`, { body }) : await api('POST', '/agents', { body }))
     },
   )
 }

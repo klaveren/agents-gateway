@@ -1,4 +1,5 @@
 import { EMode } from '../enums/EMode.Enum'
+import type { TSandboxLevel } from '../Sandbox.Policy'
 
 export interface IAgent {
   id: string
@@ -26,6 +27,12 @@ export interface IAgent {
    * conversa direta — nem pela tela, nem pela API, nem pelo MCP. Ausente = agente normal.
    */
   role?: TAgentRole
+  /**
+   * Só administrador provado conversa com o agente (e a delegação de uma conversa que não é de admin
+   * não chega nele). ⚖️ Decisão de quem cria o agente, nunca inferida: assinatura e ferramenta que
+   * alcança o servidor não fecham o agente sozinhas. Ausente = aberto a todos.
+   */
+  adminOnly?: boolean
 }
 
 /** Um provider do agente e os modelos que ele usa ali. */
@@ -33,6 +40,10 @@ export interface IAgentTarget {
   /** O id do provider configurado. Os oficiais têm id igual ao protocolo (`claude`, `openai`, `google`). */
   provider: string
   models: string[]
+  /** O sandbox do cliente agêntico, nos protocolos que o têm (`SANDBOX_LEVELS`). Ausente = o padrão. */
+  sandbox?: TSandboxLevel
+  /** Rede liberada dentro do sandbox (`SANDBOX_NETWORK`). Ausente = sem rede. */
+  network?: boolean
 }
 
 export type TAgentRole = 'subagent'

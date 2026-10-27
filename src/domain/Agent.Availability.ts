@@ -1,7 +1,6 @@
 import { IAgent, IAgentTarget } from './models/Agent.Model'
 import { IProviderConfig } from './models/Provider.Model'
-import { isSubscription, subscriptionAdminOnly } from './Subscription.Policy'
-import { dangerousToolsAdminOnly, dangerousToolsOf } from './Tool.Policy'
+import { isSubscription } from './Subscription.Policy'
 
 /** Por que um agente não pode abrir conversa AGORA — o que a tela mostra ao admin. */
 export type TAgentUnavailable = 'provider_disabled' | 'no_model' | 'no_key' | 'admin_only'
@@ -25,17 +24,15 @@ export interface IAvailabilityFacts {
 /**
  * ⛔ "ATIVO" NUM LUGAR SÓ: um provider do agente roda se está ligado, há um modelo utilizável
  * (`target.models` já vem filtrado pelo catálogo: ativado E disponível) e a credencial existe — e, para
- * quem não administra, se ele não exige admin (assinatura, ferramenta que alcança o servidor).
+ * quem não administra, se quem criou o agente não o marcou como só para admin. ⚖️ Só essa marca: nem
+ * assinatura nem ferramenta que alcança o servidor fecham o agente sozinhas.
  * `undefined` = pode.
  */
 export function targetUnavailable(agent: IAgent, target: IAgentTarget, facts: IAvailabilityFacts): TAgentUnavailable | undefined {
   if (!facts.provider?.enabled) return 'provider_disabled'
   if (!target.models.length) return 'no_model'
   if (!isSubscription(facts.provider.protocol) && !facts.hasKey) return 'no_key'
-  if (!facts.admin) {
-    if (isSubscription(facts.provider.protocol) && subscriptionAdminOnly()) return 'admin_only'
-    if (dangerousToolsOf(agent.allowedTools).length && dangerousToolsAdminOnly()) return 'admin_only'
-  }
+  if (agent.adminOnly && !facts.admin) return 'admin_only'
   return undefined
 }
 

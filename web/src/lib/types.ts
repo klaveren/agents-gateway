@@ -104,6 +104,10 @@ export interface IAgentProvider {
   reasoningEfforts?: string[]
   /** Por modelo: os níveis que ele aceita. `null` = desconhecido (valem os do provider); `[]` = não raciocina. */
   modelReasoning?: Record<string, string[] | null>
+  /** O sandbox escolhido para este provider (Codex, Antigravity). Ausente = o padrão do protocolo. */
+  sandbox?: TSandboxLevel
+  /** Rede liberada no sandbox (Codex). */
+  network?: boolean
   /** Só na edição: declarados pelo agente, mas desligados no catálogo do provider. */
   disabledModels?: string[]
   /** Só para admin: por que este provider não roda agora. */
@@ -121,6 +125,8 @@ export interface IAgent {
   allowedTools: string[]
   /** `subagent`: só é chamado por outro agente (delegação); não abre conversa. */
   role?: 'subagent'
+  /** Só administrador conversa com o agente — escolha de quem o criou. */
+  adminOnly?: boolean
   /** Só para admin: por que o agente não abre conversa agora (nenhum provider roda). Ausente = ativo. */
   unavailable?: { reason: 'provider_disabled' | 'no_model' | 'no_key' | 'admin_only'; label: string }
 }
@@ -137,7 +143,7 @@ export interface IAgentInput {
   id?: string
   name: string
   /** Um ou mais; o primeiro é o padrão. */
-  providers: Array<{ provider: string; models: string[] }>
+  providers: Array<{ provider: string; models: string[]; sandbox?: TSandboxLevel; network?: boolean }>
   /** Quem o agente é (personalidade). */
   soul?: string
   systemPrompt: string
@@ -146,13 +152,17 @@ export interface IAgentInput {
   allowedTools: string[]
   /** `null` volta a agente normal. */
   role?: 'subagent' | null
+  adminOnly?: boolean
 }
+
+/** O sandbox do cliente agêntico (`Sandbox.Policy` no servidor). */
+export type TSandboxLevel = 'read-only' | 'workspace-write' | 'full'
 
 export interface ITool {
   name: string
   description: string
   origin: 'local' | 'mcp'
-  /** Alcança este servidor: com `DANGEROUS_TOOLS_ADMIN_ONLY`, o agente que a tem só conversa com admin. */
+  /** Alcança este servidor: quem conversa com o agente ganha esse alcance (a tela avisa). */
   dangerous?: boolean
 }
 
@@ -164,6 +174,9 @@ export interface IProtocolInfo {
   lanes: TMode[]
   reasoningLevels: string[]
   nativeFamily: TProvider
+  /** Os níveis do sandbox, o padrão primeiro; vazio = nada a ajustar. */
+  sandboxLevels?: TSandboxLevel[]
+  sandboxNetwork?: boolean
   brand: 'claude' | 'openai' | 'google'
   consoleUrl?: string
   envName?: string
@@ -191,10 +204,7 @@ export interface ISettings {
   limitBounds?: Record<TLimitName, { min: number; max: number; env: string }>
   /** Decisões de implantação: a tela mostra, só o deploy muda. */
   deployment?: {
-    dangerousToolsAdminOnly: boolean
-    subscriptionAdminOnly: boolean
     localToolsEnabled?: string
-    nativeToolsEnabled?: string
     allowAnonymous: boolean
   }
 }
@@ -284,10 +294,7 @@ export interface INativeTool {
   description: string
   risk: TNativeRisk
   officialOnly: boolean
-  /** Dentro do perímetro do deploy (`NATIVE_TOOLS_ENABLED`). */
-  allowed: boolean
   dangerous?: boolean
-  reason?: string
 }
 
 export interface IUsageTokens {

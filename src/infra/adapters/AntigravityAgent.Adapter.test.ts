@@ -79,6 +79,11 @@ describe('AntigravityAgentAdapter', () => {
     assert.deepStrictEqual(args.slice(-4), ['--model', 'gemini-4-argon-high', '--conversation', 'conv-9'])
   })
 
+  it('⚖️ sem `--sandbox` só com `full`, escolha de quem criou o agente', () => {
+    assert.ok(antigravityArgs('oi', 'm', undefined, 'read-only').includes('--sandbox'))
+    assert.ok(!antigravityArgs('oi', 'm', undefined, 'full').includes('--sandbox'))
+  })
+
   it('primeiro turno leva as instruções; o segundo retoma a conversa, sem repeti-las; ambiente mínimo', async () => {
     const calls: ISpawned[] = []
     const previous = process.env.AUTH_SECRET

@@ -13,9 +13,8 @@ import {
   ProviderNotOfferedError,
   SessionBusyError,
   SessionNotFoundError,
-  DangerousToolsRestrictedError,
+  AgentAdminOnlyError,
   SubagentOnlyError,
-  SubscriptionRestrictedError,
   ToolsNotSupportedError,
 } from '@domain/errors/Domain.Error'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
@@ -237,10 +236,8 @@ describe('AgentProvider', () => {
       directory as never,
     )
 
-    await assert.rejects(provider.createSession({ agentId: 'cx' }), SubscriptionRestrictedError)
-    assert.deepStrictEqual(lane.calls, [])
-
-    const session = await provider.createSession({ agentId: 'cx', adminAccess: true })
+    // ⚖️ Assinatura não fecha o agente: quem não administra conversa com ele.
+    const session = await provider.createSession({ agentId: 'cx' })
     assert.strictEqual(session.mode, EMode.AGENT)
     assert.deepStrictEqual(lane.calls, ['createSession'])
   })
@@ -467,15 +464,34 @@ describe('AgentProvider', () => {
     assert.strictEqual(provider.describe(session.id).agentId, 'pesquisa-teste')
   })
 
-  it('⛔ agente com ferramenta que alcança o servidor (run_bash): só administrador; a filha herda da mãe', async () => {
+  it('⚖️ ferramenta que alcança o servidor (run_bash) não fecha o agente: quem decide é quem o criou', async () => {
     const { provider } = setupWithSettings(new NullSettingsRepository({ audience: 'all', agentId: 'pesquisa-teste' }))
 
-    await assert.rejects(provider.createSession({ agentId: 'operador-teste' }), DangerousToolsRestrictedError)
-    await assert.rejects(provider.createSession({ agentId: 'operador-teste', delegated: true, parentSessionId: 'qualquer' }), DangerousToolsRestrictedError)
+    const session = await provider.createSession({ agentId: 'operador-teste' })
+    assert.strictEqual(provider.describe(session.id).agentId, 'operador-teste')
+  })
 
-    const parent = await provider.createSession({ agentId: 'operador-teste', adminAccess: true })
-    const child = await provider.createSession({ agentId: 'operador-teste', delegated: true, parentSessionId: parent.id })
-    assert.strictEqual(provider.describe(child.id).agentId, 'operador-teste')
+  it('⛔ agente marcado só para admin: recusa quem não administra; a filha herda da mãe', async () => {
+    const store = new SessionStore()
+    const lane = spyAdapter(store, EProvider.CLAUDE, EMode.AGENT, [])
+    const closed = {
+      id: 'fechado',
+      name: 'F',
+      providers: [{ provider: 'claude', models: ['claude-sonnet-5'] }],
+      systemPrompt: 'p',
+      modes: [EMode.AGENT],
+      allowedTools: [],
+      adminOnly: true,
+    }
+    const provider = new AgentProvider(new Map([[adapterKey(EProvider.CLAUDE, EMode.AGENT), lane.adapter]]), store, undefined, { list: () => [closed], get: () => closed })
+
+    await assert.rejects(provider.createSession({ agentId: 'fechado' }), AgentAdminOnlyError)
+    await assert.rejects(provider.createSession({ agentId: 'fechado', delegated: true, parentSessionId: 'qualquer' }), AgentAdminOnlyError)
+    assert.deepStrictEqual(lane.calls, [])
+
+    const parent = await provider.createSession({ agentId: 'fechado', adminAccess: true })
+    const child = await provider.createSession({ agentId: 'fechado', delegated: true, parentSessionId: parent.id })
+    assert.strictEqual(provider.describe(child.id).agentId, 'fechado')
   })
 
   it('lets the caller override the configured agent', async () => {
@@ -664,7 +680,7 @@ describe('AgentProvider — agente com vários providers', () => {
     assert.strictEqual(seen[2].nativeBefore, undefined)
   })
 
-  it('⛔ recusa provider fora do agente, sem chave, que não roda a lane, e assinatura sem admin', async () => {
+  it('⛔ recusa provider fora do agente, sem chave ou que não roda a lane; assinatura vale para todos', async () => {
     const { provider } = setup()
     const chat = await provider.createSession({ agentId: 'hibrido', provider: 'claude' })
 
@@ -681,8 +697,6 @@ describe('AgentProvider — agente com vários providers', () => {
     assert.strictEqual(provider.describe(chat.id).provider, 'claude')
 
     const lane = await provider.createSession({ agentId: 'hibrido', provider: 'claude', mode: EMode.AGENT })
-    assert.throws(() => provider.reconfigure(lane.id, { provider: 'codex' }), SubscriptionRestrictedError)
-    const admin = await provider.createSession({ agentId: 'hibrido', provider: 'claude', mode: EMode.AGENT, adminAccess: true })
-    assert.strictEqual(provider.reconfigure(admin.id, { provider: 'codex' }).provider, 'codex')
+    assert.strictEqual(provider.reconfigure(lane.id, { provider: 'codex' }).provider, 'codex')
   })
 })
