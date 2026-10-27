@@ -8,6 +8,7 @@ import type { IAgentDetail, IAgentInput, ICatalogModel, INativeTool, TMode, TSan
 import { useAgentsStore } from '@/stores/agents'
 import { useMcpStore } from '@/stores/mcp'
 import { useProjectsStore } from '@/stores/projects'
+import { toolsTokens, toolTokens } from '@/lib/toolTokens'
 import AgentHooks from './AgentHooks.vue'
 import AgentInitialContext from './AgentInitialContext.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
@@ -64,13 +65,19 @@ function mcpOffered(entry: string): boolean {
   return enabledMcp.value.some((candidate) => candidate.id === server)
 }
 /** As ferramentas de um servidor na tela: as que ele lista agora e as escolhidas que ele não listou. */
-function mcpChips(server: string): Array<{ name: string; description?: string; unlisted?: boolean }> {
+function mcpChips(server: string): Array<{ name: string; description?: string; inputSchema?: unknown; unlisted?: boolean }> {
   const listed = mcp.tools[server] ?? []
   const chosen = form.value.allowedTools
     .filter((entry) => entry.startsWith(`mcp:${server}/`) && !entry.endsWith('/*'))
     .map((entry) => entry.slice(`mcp:${server}/`.length))
     .filter((name) => !listed.some((tool) => tool.name === name))
   return [...listed, ...chosen.map((name) => ({ name, unlisted: true }))]
+}
+/** O peso, por chamada ao modelo, das ferramentas deste servidor que o agente tem (todas, com `*`). */
+function mcpWeight(server: string): number {
+  const listed = mcp.tools[server] ?? []
+  if (form.value.allowedTools.includes(mcpRef(server, '*'))) return toolsTokens(listed)
+  return toolsTokens(listed.filter((tool) => form.value.allowedTools.includes(mcpRef(server, tool.name))))
 }
 function toggleAllMcp(server: string) {
   const all = mcpRef(server, '*')
@@ -675,6 +682,7 @@ async function remove() {
               <span class="text-sm text-zinc-200">{{ server.name }}</span>
               <code class="text-[11px] text-zinc-500">mcp:{{ server.id }}</code>
               <span v-if="!server.status.connected" class="text-[11px] text-amber-300">sem conexão</span>
+              <span v-if="mcpWeight(server.id)" class="text-[11px] text-zinc-500" title="A definição das ferramentas escolhidas vai em toda chamada ao modelo deste agente">≈ {{ mcpWeight(server.id).toLocaleString('pt-BR') }} tokens por chamada</span>
               <label class="ml-auto flex items-center gap-1.5 text-xs text-zinc-400">
                 <input type="checkbox" class="accent-emerald-500" :checked="form.allowedTools.includes(mcpRef(server.id, '*'))" @change="toggleAllMcp(server.id)" />
                 Todas as ferramentas
@@ -687,7 +695,7 @@ async function remove() {
                 type="button"
                 class="chip font-mono text-xs"
                 :class="{ on: form.allowedTools.includes(mcpRef(server.id, tool.name)) }"
-                :title="tool.unlisted ? 'Escolhida, mas o servidor não a listou agora (fora do ar, ou só aparece dentro de uma conversa)' : tool.description"
+                :title="tool.unlisted ? 'Escolhida, mas o servidor não a listou agora (fora do ar, ou só aparece dentro de uma conversa)' : `${tool.description ?? ''} (≈ ${toolTokens(tool)} tokens)`"
                 @click="toggle(form.allowedTools, mcpRef(server.id, tool.name))"
               >
                 {{ tool.name }}<span v-if="tool.unlisted" class="ml-1 text-[10px] text-zinc-500">não listada</span>
