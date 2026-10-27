@@ -36,7 +36,8 @@ const header = computed(() => thread.header)
 const agent = computed(() => agents.byId.get(header.value?.agentId ?? thread.draft?.agentId ?? ''))
 const owner = computed(() => header.value?.metadata?.owner)
 const shareUrl = computed(() => (header.value?.shared && header.value.shareId ? `${location.origin}/v1/shared/${header.value.shareId}` : ''))
-const readOnly = computed(() => thread.liveSession === false)
+/** A sessão não está viva, mas a conversa volta ao enviar (o gateway a retoma do histórico gravado). */
+const resumable = computed(() => thread.liveSession === false)
 
 /** De quem esta conversa é filha (delegada por outro agente) e as filhas que ela abriu. */
 const parentId = computed(() => (typeof header.value?.metadata?.delegatedBy === 'string' ? header.value.metadata.delegatedBy : undefined))
@@ -223,13 +224,14 @@ async function continueFresh() {
       @confirm="remove"
       @cancel="confirming = false"
     />
-    <div v-if="readOnly" class="flex flex-wrap items-center gap-3 border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-3 text-sm text-zinc-400">
-      <span>Esta sessão não está mais ativa no gateway (reinício ou expiração). O histórico fica, mas o agente já não tem o contexto.</span>
-      <button class="ml-auto flex items-center gap-1.5 rounded-full bg-zinc-800 px-3 py-1.5 text-zinc-100 hover:bg-zinc-700" @click="continueFresh">
-        <Icon name="refresh" class="h-4 w-4" /> Nova conversa com {{ agent?.name ?? 'o mesmo agente' }}
+    <!-- ⚖️ Sessão encerrada (expirou, ou o gateway reiniciou) não tranca a conversa: ao enviar, o gateway a retoma com o histórico. -->
+    <div v-if="resumable" class="flex flex-wrap items-center gap-3 border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-2 text-xs text-zinc-400">
+      <span>Sessão encerrada — ao enviar, a conversa continua de onde parou: o agente recebe o histórico (o texto e as ferramentas usadas; anexos não voltam).</span>
+      <button class="ml-auto flex items-center gap-1.5 rounded-full px-3 py-1 text-zinc-300 hover:bg-zinc-800" @click="continueFresh">
+        <Icon name="refresh" class="h-3.5 w-3.5" /> ou comece uma nova
       </button>
     </div>
-    <SessionTuner v-if="!readOnly && thread.liveSession && agent" :agent="agent" :mode="header?.mode" :fallback="{ provider: header?.provider, model: header?.model }" />
-    <Composer v-if="!readOnly" :sending="thread.sending" :disabled="thread.liveSession === undefined" @send="send" @stop="thread.stop" />
+    <SessionTuner v-if="thread.liveSession && agent" :agent="agent" :mode="header?.mode" :fallback="{ provider: header?.provider, model: header?.model }" />
+    <Composer :sending="thread.sending" :disabled="thread.liveSession === undefined" @send="send" @stop="thread.stop" />
   </section>
 </template>

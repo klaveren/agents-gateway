@@ -18,6 +18,7 @@ import {
   McpServerInUseError,
   InvalidProjectError,
   InvalidGuidanceError,
+  ConversationNotResumableError,
   GuidanceNotFoundError,
   ProjectNotFoundError,
   ProjectInUseError,
@@ -44,6 +45,7 @@ import {
 
 export type TErrorCode =
   | 'validation_error'
+  | 'not_resumable'
   | 'agent_not_found'
   | 'provider_in_use'
   | 'mcp_server_in_use'
@@ -171,6 +173,10 @@ export function toHttpFailure(error: unknown): IHttpFailure {
 
   if (error instanceof McpServerNotFoundError) {
     return { status: 404, code: 'not_found', message: error.message }
+  }
+
+  if (error instanceof ConversationNotResumableError) {
+    return { status: 409, code: 'not_resumable', message: error.message }
   }
 
   if (error instanceof InvalidGuidanceError) {

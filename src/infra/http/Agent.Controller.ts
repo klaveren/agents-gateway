@@ -3,6 +3,7 @@ import { clientMetadata } from '@domain/Session.Metadata'
 import { metaPlaceholderKeys } from '@infra/sandbox/Egress.Proxy'
 import { CancelSessionUseCase } from '@application/CancelSession.Usecase'
 import { ReconfigureSessionUseCase } from '@application/ReconfigureSession.Usecase'
+import { ResumeSessionUseCase } from '@application/ResumeSession.Usecase'
 import { CreateSessionUseCase } from '@application/CreateSession.Usecase'
 import { DeleteSessionUseCase } from '@application/DeleteSession.Usecase'
 import { GetSessionUseCase } from '@application/GetSession.Usecase'
@@ -82,6 +83,8 @@ export interface IAgentControllerDeps {
   deleteSession: DeleteSessionUseCase
   getSession: GetSessionUseCase
   listSessions: ListSessionsUseCase
+  /** Retoma a conversa gravada cuja sessão expirou ou caiu num reinício. Ausente = a sessão morta fica morta (404). */
+  resumeSession?: ResumeSessionUseCase
   /**
    * A estratégia que prova a credencial. Ausente = prova desligada: a identidade é só afirmada, e
    * o que exige identidade PROVADA recusa (ver `resolveCaller`).
@@ -969,7 +972,7 @@ export class AgentController {
     // nome de outra pessoa. O dono é conferido primeiro, e a resposta é a mesma de sessão inexistente.
     let resolved: IResolvedCaller
     try {
-      resolved = await this.requireOwnedSession(sessionId)
+      resolved = await this.requireOwnedSession(sessionId, { resume: true })
     } catch (error: unknown) {
       return this.sendFailure(res, error, '[AgentController.sendMessage]')
     }
@@ -1047,14 +1050,23 @@ export class AgentController {
    * ⚠️ 404 igual para "não existe" e "não é sua": distinguir contaria a quem sondasse quais ids
    * existem. O 401 de quem não tem identidade aceita não distingue nada — vale para qualquer id.
    */
-  private async requireOwnedSession(sessionId: string): Promise<IResolvedCaller> {
+  /**
+   * O dono da sessão, conferido. Com `resume` (mandar mensagem), a sessão que já não está na memória (expirou, ou o
+   * gateway reiniciou) é RETOMADA da conversa gravada.
+   * ⛔ O dono é conferido ANTES de reabrir, pela metadata gravada: ninguém retoma conversa alheia, e a resposta para
+   * uma conversa alheia é a mesma de uma inexistente.
+   */
+  private async requireOwnedSession(sessionId: string, options: { resume?: boolean } = {}): Promise<IResolvedCaller> {
     const resolved = await this.requireCaller()
 
     let metadata: Record<string, unknown> | undefined
     try {
       metadata = (await this.usecases.getSession.execute(sessionId)).metadata
     } catch {
-      throw new SessionNotFoundError(sessionId)
+      const stored = options.resume && this.usecases.resumeSession ? await this.usecases.conversations.findSession(sessionId).catch(() => undefined) : undefined
+      if (!stored || !ownsSession(resolved, stored.metadata)) throw new SessionNotFoundError(sessionId)
+      await this.usecases.resumeSession!.execute(stored, (await checkAdminAccess(this.usecases.proof)).allowed)
+      return resolved
     }
 
     if (!ownsSession(resolved, metadata)) throw new SessionNotFoundError(sessionId)

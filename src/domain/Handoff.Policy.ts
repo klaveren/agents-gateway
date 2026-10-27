@@ -28,7 +28,17 @@ export const HANDOFF_MAX_CHARS = 40_000
  * Os turnos mais RECENTES ficam; os mais antigos que não cabem saem, e o bloco diz quantos saíram.
  * Um turno sozinho maior que o teto entra cortado, para o mais recente nunca sumir.
  */
-export function handoffText(turns: readonly ITranscriptTurn[], maxChars = HANDOFF_MAX_CHARS): string | undefined {
+/** Por que a transcrição vai: a conversa trocou de provider no meio, ou foi RETOMADA (a sessão tinha expirado). */
+export type THandoffKind = 'switch' | 'resume'
+
+const HANDOFF_INTRO: Record<THandoffKind, string> = {
+  switch:
+    '[Contexto do sistema: esta conversa começou com outro modelo e continua com você. Abaixo, a transcrição dos turnos anteriores — use-a para manter a continuidade, sem respondê-la de novo. A mensagem nova da pessoa vem depois da transcrição.]',
+  resume:
+    '[Contexto do sistema: esta conversa foi retomada depois de uma pausa — o que você lembrava dela se perdeu. Abaixo, a transcrição dos turnos anteriores — use-a para continuar de onde parou, sem respondê-la de novo. A mensagem nova da pessoa vem depois da transcrição.]',
+}
+
+export function handoffText(turns: readonly ITranscriptTurn[], maxChars = HANDOFF_MAX_CHARS, kind: THandoffKind = 'switch'): string | undefined {
   if (!turns.length) return undefined
 
   const blocks = turns.map((turn, index) => turnBlock(turn, index + 1))
@@ -45,12 +55,7 @@ export function handoffText(turns: readonly ITranscriptTurn[], maxChars = HANDOF
   }
 
   const omitted = blocks.length - kept.length
-  return [
-    '[Contexto do sistema: esta conversa começou com outro modelo e continua com você. Abaixo, a transcrição dos turnos anteriores — use-a para manter a continuidade, sem respondê-la de novo. A mensagem nova da pessoa vem depois da transcrição.]',
-    ...(omitted ? [`[${omitted} turno(s) mais antigo(s) omitido(s).]`] : []),
-    ...kept,
-    '[Fim da transcrição. Mensagem nova:]',
-  ].join('\n\n')
+  return [HANDOFF_INTRO[kind], ...(omitted ? [`[${omitted} turno(s) mais antigo(s) omitido(s).]`] : []), ...kept, '[Fim da transcrição. Mensagem nova:]'].join('\n\n')
 }
 
 function turnBlock(turn: ITranscriptTurn, number: number): string {

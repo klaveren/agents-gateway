@@ -149,6 +149,33 @@ describe('send: geração', () => {
   })
 })
 
+describe('send: retomada', () => {
+  it('⚖️ sessão encerrada não tranca: o envio vai, o gateway a retoma, e ela volta a contar como viva', async () => {
+    routes({ '/sessions/': () => Promise.reject(new ApiError(404, 'not_found', 'Session not found')) })
+    const thread = useThreadStore()
+    await thread.open('A')
+    expect(thread.liveSession).toBe(false)
+
+    routes({ '/sessions/': () => ({ provider: 'claude', model: 'm2' }) })
+    const stream = channel()
+    vi.mocked(openStream).mockImplementation(async (_path, request) => {
+      stream.attach(request?.signal)
+      return new ReadableStream()
+    })
+    vi.mocked(readSse).mockImplementation(() => stream.iterate())
+    const sent = thread.send('de onde paramos?', [])
+    await tick()
+    stream.push('text.delta', { text: 'Da capital da Itália.' })
+    stream.end()
+    const result = await sent
+    await tick()
+
+    expect(result.ok).toBe(true)
+    expect(thread.liveSession).toBe(true)
+    expect(thread.session?.model).toBe('m2')
+  })
+})
+
 describe('send: falhas', () => {
   async function failWith(failure: unknown) {
     routes()
@@ -166,7 +193,7 @@ describe('send: falhas', () => {
     expect(thread.turns).toEqual([])
     expect(thread.pending).toBeUndefined()
     expect(thread.liveSession).toBe(false)
-    expect(thread.error).toContain('sessão encerrada')
+    expect(thread.error).toContain('não existe mais')
   })
 
   it('409 model_disabled mostra a mensagem do servidor', async () => {
