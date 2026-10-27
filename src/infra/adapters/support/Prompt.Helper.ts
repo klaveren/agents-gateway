@@ -20,7 +20,10 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 4096
 export function composeSystemPrompt(agent: IAgent, input: ICreateSessionInput): string {
   const instructions = input.systemPrompt?.trim() || agent.systemPrompt
   const soul = agent.soul?.trim()
-  const base = soul ? `## Quem você é\n${soul}\n\n## Como você trabalha\n${instructions}` : instructions
+  const identity = soul ? `## Quem você é\n${soul}\n\n## Como você trabalha\n${instructions}` : instructions
+  // As regras do ambiente e os documentos vêm depois do que o agente faz: valem para qualquer tarefa.
+  const environment = input.environment?.trim()
+  const base = environment ? `${identity}\n\n${environment}` : identity
   if (!input.language) return base
   return `${base}\n\nIMPORTANT: Please reply exclusively in ${input.language}.`
 }

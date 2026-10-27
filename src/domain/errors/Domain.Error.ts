@@ -268,6 +268,22 @@ export class InvalidHookError extends DomainError {
   }
 }
 
+/** A rule ou o documento pedido não vale. Todos os problemas de uma vez. */
+export class InvalidGuidanceError extends DomainError {
+  constructor(public readonly issues: Array<{ field: string; message: string }>) {
+    super(`Guidance is invalid: ${issues.map((issue) => `${issue.field} (${issue.message})`).join('; ')}`)
+  }
+}
+
+export class GuidanceNotFoundError extends DomainError {
+  constructor(
+    public readonly kind: 'rule' | 'doc',
+    public readonly id: string,
+  ) {
+    super(`${kind === 'rule' ? 'Rule' : 'Document'} not found: ${id}`)
+  }
+}
+
 export class HookNotFoundError extends DomainError {
   constructor(
     public readonly agentId: string,

@@ -30,6 +30,15 @@ body {
 .prose-agent :where(ul) {
   @apply my-1 list-disc pl-5;
 }
+.prose-agent :where(h2, h3) {
+  @apply mt-3 mb-1 font-semibold text-zinc-100;
+}
+.prose-agent :where(h2) {
+  @apply text-base;
+}
+.prose-agent :where(h4, h5) {
+  @apply mt-2 mb-0.5 font-semibold text-zinc-200;
+}
 .prose-agent :where(a) {
   @apply text-emerald-400 underline underline-offset-2;
 }

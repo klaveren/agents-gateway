@@ -6,6 +6,7 @@ import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepositor
 import { SqliteProjectRepository } from '@infra/persistence/Sqlite.ProjectRepository'
 import { makeAgents } from './Agents.Factory'
 import { makeAuth } from './Auth.Factory'
+import { makeGuidance } from './Guidance.Factory'
 
 let instance: { service: ProjectsService; repository: SqliteProjectRepository } | undefined
 
@@ -29,7 +30,14 @@ function build() {
       makeAuth()
         .accounts!.list()
         .some((user) => user.id === userId),
-    { create: (id) => projectWorkspace(id), remove: (id) => removeProjectWorkspace(id) },
+    {
+      create: (id) => projectWorkspace(id),
+      // As rules e os documentos do projeto vão junto com a pasta.
+      remove: (id) => {
+        removeProjectWorkspace(id)
+        makeGuidance().removeProject(id)
+      },
+    },
   )
   instance = { service, repository }
   return instance

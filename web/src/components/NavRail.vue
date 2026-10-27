@@ -19,6 +19,8 @@ const section = computed(() => {
   if (name.startsWith('provider')) return 'providers'
   if (name.startsWith('mcp')) return 'mcp'
   if (name === 'user' || name.startsWith('user-')) return 'users'
+  if (name === 'rules') return 'rules'
+  if (name.startsWith('doc')) return 'docs'
   // Perfil não tem item no trilho (mora no menu da conta): nada fica aceso.
   if (name === 'packages' || name === 'profile' || name.startsWith('project')) return name.startsWith('project') ? 'projects' : name
   return ['settings', 'users', 'usage'].includes(name) ? name : 'inbox'

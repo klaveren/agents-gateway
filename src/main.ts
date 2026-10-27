@@ -10,6 +10,7 @@ import {
   makePackagesController,
   makeHooksController,
   makeProjectsController,
+  makeGuidanceController,
   makeMcpServersController,
   makeProvidersController,
   makeUsageController,
@@ -85,6 +86,7 @@ async function bootstrap() {
     makePackagesController(),
     makeHooksController(),
     makeProjectsController(),
+    makeGuidanceController(),
   )
   server.start(Number.parseInt(process.env.PORT || '3000', 10))
 }

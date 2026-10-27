@@ -1,3 +1,4 @@
+import { makeGuidance } from './Guidance.Factory'
 import { IMcpServerConfig } from '@domain/models/McpServer.Model'
 import { IMcpServerRepository } from '@domain/ports/McpServerRepository.Port'
 import { McpRegistry } from '@infra/mcp/Mcp.Registry'
@@ -36,7 +37,12 @@ export function makeTools(): ITools {
     const delegation = new DelegationSlot()
     // Os SDKs agênticos chegam aos MCPs em contêiner pelo proxy do próprio gateway (`/v1/mcp-proxy/<id>`).
     const containerProxy = { base: selfUrl().replace(/\/v1\/mcp$/, '/v1/mcp-proxy') }
-    instance = { delegation, mcp, servers, catalog: new ToolCatalog(mcp, makeLocalTools(), (allowed) => makeDelegateTool(runnableTargets(allowed), delegation), containerProxy) }
+    instance = {
+      delegation,
+      mcp,
+      servers,
+      catalog: new ToolCatalog(mcp, makeLocalTools({ docs: makeGuidance() }), (allowed) => makeDelegateTool(runnableTargets(allowed), delegation), containerProxy),
+    }
   }
   return instance
 }

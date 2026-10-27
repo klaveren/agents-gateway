@@ -700,3 +700,50 @@ describe('AgentProvider — agente com vários providers', () => {
     assert.strictEqual(provider.reconfigure(lane.id, { provider: 'codex' }).provider, 'codex')
   })
 })
+
+describe('AgentProvider — rules e documentos', () => {
+  it('⚖️ o prompt recebe o ambiente do projeto DA CONVERSA, e o read_doc entra quando há documento', async () => {
+    const store = new SessionStore()
+    const seen: { environment?: string; created: string[]; turn: string[]; project?: string } = { created: [], turn: [] }
+    const adapter: IAgentAdapter = {
+      async createSession(agent, input) {
+        seen.environment = input.environment
+        seen.created = agent.allowedTools
+        const record = store.create('g', {
+          agentId: agent.id,
+          provider: EProvider.GOOGLE,
+          protocol: EProvider.GOOGLE,
+          mode: EMode.CHAT,
+          model: input.model ?? 'model-x',
+          tools: false,
+          systemPrompt: agent.systemPrompt,
+          metadata: input.metadata,
+        })
+        return { id: record.id, provider: EProvider.GOOGLE, mode: record.mode, createdAt: record.createdAt }
+      },
+      async *sendMessage(agent, sessionId, _input, context) {
+        seen.turn = agent.allowedTools
+        seen.project = context?.conversationProjectId
+        yield { type: 'message.completed', sessionId, timestamp: new Date() } as IAgentEvent
+      },
+      async cancel() {},
+    }
+    const asked: Array<string | undefined> = []
+    const guidance = {
+      environmentFor: (projectId?: string) => (asked.push(projectId), `## Regras do ambiente\n1. **de ${projectId}**`),
+      hasDocs: (projectId?: string) => projectId === 'xpto',
+    }
+    const provider = new AgentProvider(new Map([[adapterKey(EProvider.GOOGLE, EMode.CHAT), adapter]]), store, undefined, SEED, undefined, guidance)
+
+    const session = await provider.createSession({ agentId: SEED.list()[0].id, environment: 'forjado pelo corpo', metadata: { project: 'xpto' } })
+    for await (const _event of provider.sendMessage(session.id, { text: 'oi' })) void _event
+
+    assert.deepStrictEqual(asked, ['xpto'])
+    assert.strictEqual(seen.environment, '## Regras do ambiente\n1. **de xpto**')
+    assert.ok(seen.created.includes('read_doc') && seen.turn.includes('read_doc'))
+    assert.strictEqual(seen.project, 'xpto')
+
+    await provider.createSession({ agentId: SEED.list()[0].id, metadata: { project: 'crm' } })
+    assert.ok(!seen.created.includes('read_doc'))
+  })
+})

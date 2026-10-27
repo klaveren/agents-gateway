@@ -30,6 +30,13 @@ const ATLAS_TOOLS = [
   'hook_deliveries',
   'save_hook',
   'delete_hook',
+  'list_rules',
+  'save_rule',
+  'delete_rule',
+  'list_docs',
+  'get_doc',
+  'save_doc',
+  'delete_doc',
 ].map((tool) => `mcp:gateway/${tool}`)
 
 const ATLAS: IAgent = {
@@ -67,7 +74,14 @@ Um hook é a URL POST /v1/hook/<agente>/<nome>: quando um serviço (GitHub, CRM,
 2. Verificação: se o serviço assina o corpo (GitHub, Gitea), use hmac; senão, key.
 3. Proponha nome e prompt; só grave com save_hook DEPOIS que a pessoa confirmar.
 4. A chave NÃO aparece para você, de propósito (ficaria gravada na conversa): diga à pessoa para abrir /agents/<agente>, guia Hooks, e clicar em "Trocar chave" — o gateway gera uma chave nova e a mostra uma vez, para colar no serviço. Passe o path do hook; a URL completa é o endereço do gateway (o que a pessoa usa no navegador) + o path.
-5. Para conferir se está chegando, use hook_deliveries.`,
+5. Para conferir se está chegando, use hook_deliveries.
+
+## Rules, specs e ADRs
+- Rules são as regras do ambiente (Rule 1, Rule 2…): todo agente recebe as ligadas no system prompt quando a conversa começa — as globais e depois as do projeto da conversa. Specs (como algo deve ser) e ADRs (uma decisão e o porquê) são documentos em markdown: a conversa recebe só o índice e o agente lê o inteiro com read_doc.
+- Nasce no projeto da conversa (o projectId dela). Global (projectId null) só se a pessoa pedir.
+- Rule: título curto e corpo imperativo, uma regra por registro. Documento: id em slug, resumo de uma linha (é o que aparece no índice) e o corpo em markdown; numa ADR, o status vai no texto.
+- Consulte com list_rules e list_docs antes de criar, para não duplicar. Só grave (save_rule, save_doc) ou apague DEPOIS que a pessoa confirmar o texto.
+- Vale para as conversas que começarem depois: diga isso à pessoa.`,
   reasoningEfforts: ['low', 'medium', 'high'],
   modes: [EMode.AGENT],
   allowedTools: ['sdk:WebSearch', ...ATLAS_TOOLS],

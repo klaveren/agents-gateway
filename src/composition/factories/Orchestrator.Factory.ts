@@ -1,3 +1,4 @@
+import { makeGuidance } from './Guidance.Factory'
 import { setTracingDisabled } from '@openai/agents'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -62,5 +63,5 @@ export function makeOrchestrator(): AgentProvider {
    * A MESMA instância que o controller recebe (ver `makeSettings`): a tela salva num repositório e o
    * provider escuta o mesmo, e é isso que faz a mudança valer no instante em que é gravada.
    */
-  return new AgentProvider(adapters, sessions, makeSettings(), makeAgents(), connections)
+  return new AgentProvider(adapters, sessions, makeSettings(), makeAgents(), connections, makeGuidance())
 }

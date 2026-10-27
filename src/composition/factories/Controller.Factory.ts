@@ -1,3 +1,5 @@
+import { GuidanceController } from '@infra/http/Guidance.Controller'
+import { makeGuidance } from './Guidance.Factory'
 import { SubscriptionLogins } from '@infra/providers/Subscription.Client'
 import { McpProxyController } from '@infra/http/McpProxy.Controller'
 import { McpServersService } from '@application/McpServers.Service'
@@ -99,4 +101,8 @@ export function makeHooksController(): HooksController {
 
 export function makeProjectsController(): ProjectsController {
   return new ProjectsController({ projects: makeProjects(), proof: makeAuth().proof })
+}
+
+export function makeGuidanceController(): GuidanceController {
+  return new GuidanceController({ guidance: makeGuidance(), proof: makeAuth().proof })
 }

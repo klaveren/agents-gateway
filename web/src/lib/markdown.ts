@@ -22,10 +22,11 @@ export function renderMarkdown(text: string): string {
     .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
     .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+    .replace(/^(#{1,4})\s+(.+)$/gm, (_match, hashes: string, title: string) => `<h${hashes.length + 1}>${title}</h${hashes.length + 1}>`)
     .replace(/^\s*[-*]\s+(.+)$/gm, '<li>$1</li>')
 
   html = html.replace(/(<li>[\s\S]*?<\/li>)(?!\s*<li>)/g, '<ul>$1</ul>')
-  html = html.replace(/\n/g, '<br>').replace(/<\/li><br>/g, '</li>')
+  html = html.replace(/\n/g, '<br>').replace(/<\/(li|h\d)><br>/g, '</$1>')
   html = html.replace(/\[\[fence:(\d+)\]\]/g, (_match, index: string) => fences[Number(index)] ?? '')
 
   return html

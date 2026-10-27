@@ -24,4 +24,9 @@ describe('composeSystemPrompt — soul', () => {
     assert.strictEqual(composeSystemPrompt(withSoul, {}), '## Quem você é\nVocê é a Íris, gentil e direta.\n\n## Como você trabalha\nResponda sobre o CRM.')
     assert.match(composeSystemPrompt(withSoul, { systemPrompt: 'Outra tarefa.', language: 'English' }), /^## Quem você é\nVocê é a Íris[\s\S]*Outra tarefa\.[\s\S]*English/)
   })
+
+  it('as regras do ambiente e o índice vêm depois do que o agente faz, antes do idioma', () => {
+    const prompt = composeSystemPrompt({ ...agent, soul: 'Íris.' }, { environment: '## Regras do ambiente\n1. **A** — b', language: 'English' })
+    assert.match(prompt, /## Como você trabalha\nResponda sobre o CRM\.\n\n## Regras do ambiente\n1\. \*\*A\*\* — b\n\nIMPORTANT: Please reply exclusively in English\.$/)
+  })
 })

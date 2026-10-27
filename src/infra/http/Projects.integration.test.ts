@@ -29,6 +29,9 @@ import { CLAUDE_TEST_AGENT, GOOGLE_TEST_AGENT, OPENAI_TEST_AGENT, testAgentCatal
 import { AgentController } from './Agent.Controller'
 import { HttpServer } from './Http.Server'
 import { ProjectsController } from './Projects.Controller'
+import { GuidanceController } from './Guidance.Controller'
+import { GuidanceService } from '@application/Guidance.Service'
+import { SqliteGuidanceRepository } from '@infra/persistence/Sqlite.GuidanceRepository'
 
 /**
  * Projetos de ponta a ponta: o membro de um projeto não vê nada do outro, o agente global aparece nos dois,
@@ -92,6 +95,7 @@ describe('Projetos (integração)', () => {
     },
   )
   const proof = { prove: async (value: string) => !!tokens.verify(value) }
+  const guidance = new GuidanceService(new SqliteGuidanceRepository(':memory:'), (id) => projects.exists(id))
   let base = ''
   let stop = () => undefined as void
 
@@ -112,7 +116,18 @@ describe('Projetos (integração)', () => {
       conversations,
       projects,
     })
-    const server = new HttpServer(controller, undefined, undefined, undefined, undefined, undefined, undefined, undefined, new ProjectsController({ projects, proof })).start(0)
+    const server = new HttpServer(
+      controller,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      new ProjectsController({ projects, proof }),
+      new GuidanceController({ guidance, proof }),
+    ).start(0)
     await new Promise((resolve) => server.once('listening', resolve))
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`
     server.unref()
@@ -209,5 +224,23 @@ describe('Projetos (integração)', () => {
 
     const busy = await call(ADMIN, 'DELETE', '/projects/beta')
     assert.deepStrictEqual([busy.status, busy.body.code], [409, 'project_in_use'])
+  })
+
+  it('⛔ rules e documentos são só do admin: para o membro, nem existem (404)', async () => {
+    const rule = await call(ADMIN, 'POST', '/rules', { title: 'Português', body: 'Responda em português.' })
+    assert.deepStrictEqual([rule.status, rule.body.result.position], [201, 1])
+    const doc = await call(ADMIN, 'POST', '/docs', { id: 'api', kind: 'adr', title: 'API', summary: 'REST', body: '# API' })
+    assert.strictEqual(doc.status, 201)
+    assert.strictEqual((await call(ADMIN, 'GET', '/docs?project=global')).body.result[0].body, undefined)
+    assert.strictEqual((await call(ADMIN, 'GET', '/docs/api')).body.result.body, '# API')
+
+    for (const [method, path] of [
+      ['GET', '/rules'],
+      ['POST', '/rules'],
+      ['GET', '/docs'],
+      ['GET', '/docs/api'],
+      ['DELETE', `/rules/${rule.body.result.id}`],
+    ])
+      assert.strictEqual((await call(ANA, method, path, method === 'POST' ? { title: 'x', body: 'y' } : undefined)).status, 404, `${method} ${path}`)
   })
 })
