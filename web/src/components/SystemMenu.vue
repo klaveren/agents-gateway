@@ -4,14 +4,15 @@ import { usePopover } from '@/lib/popover'
 import Icon from './Icon.vue'
 
 /**
- * O menu do SISTEMA (só admin): Providers, MCPs, Pacotes e Configuração num botão só, como o da conta.
- * ⚖️ O trilho fica com o que se usa todo dia (conversas, agentes, pessoas); o que se configura de vez em
+ * O menu do SISTEMA (só admin): Usuários, Providers, MCPs, Pacotes e Configuração num botão só, como o da conta.
+ * ⚖️ O trilho fica com o que se usa todo dia (conversas, uso, agentes); o que se configura de vez em
  * quando mora aqui. `active`: a página aberta é uma destas — o botão fica aceso.
  */
 const props = defineProps<{ placement: 'side' | 'up'; active?: string }>()
 const { open, root } = usePopover()
 
-const ITEMS: Array<{ to: string; key: string; label: string; hint: string; icon: 'key' | 'plug' | 'box' | 'settings' }> = [
+const ITEMS: Array<{ to: string; key: string; label: string; hint: string; icon: 'users' | 'key' | 'plug' | 'box' | 'settings' }> = [
+  { to: '/users', key: 'users', label: 'Usuários', hint: 'Contas, papéis e acessos', icon: 'users' },
   { to: '/providers', key: 'providers', label: 'Providers', hint: 'Chaves, assinaturas e modelos', icon: 'key' },
   { to: '/mcp', key: 'mcp', label: 'MCPs', hint: 'Servidores de ferramentas', icon: 'plug' },
   { to: '/packages', key: 'packages', label: 'Pacotes', hint: 'Ferramentas do servidor', icon: 'box' },
