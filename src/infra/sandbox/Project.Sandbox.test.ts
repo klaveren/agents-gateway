@@ -33,7 +33,7 @@ describe('ProjectSandbox', () => {
     assert.deepStrictEqual(policy.filesystem.denyRead, [root, process.cwd(), homedir()])
     assert.deepStrictEqual(policy.filesystem.allowRead.slice(0, 2), [project, join(root, 'tools')])
     // E só o auxiliar de seccomp do srt, que mora em `node_modules` (dentro do app, que fica fechado).
-    assert.ok(policy.filesystem.allowRead.slice(2).every((path) => /sandbox-runtime[\/]vendor[\/]seccomp$/.test(path)))
+    assert.ok(policy.filesystem.allowRead.slice(2).every((path) => /sandbox-runtime[/\\]vendor[/\\]seccomp$/.test(path)))
     assert.strictEqual(policy.enableWeakerNestedSandbox, undefined)
     assert.strictEqual(
       (new ProjectSandbox({ ...env, SANDBOX_NESTED: '1' }, fakeSrt().load).policy('xpto') as { enableWeakerNestedSandbox?: boolean }).enableWeakerNestedSandbox,

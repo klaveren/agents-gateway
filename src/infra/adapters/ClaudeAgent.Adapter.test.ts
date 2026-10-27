@@ -329,6 +329,36 @@ describe('ClaudeAgentAdapter', () => {
     assert.deepStrictEqual(events.find((e) => e.type === 'usage')?.payload, { inputTokens: 1000, cacheReadTokens: 800, cacheWriteTokens: 190, outputTokens: 7 })
   })
 
+  it('⚖️ o contexto em uso é a entrada da ÚLTIMA chamada do turno, não a soma que o `result` traz', async () => {
+    const adapter = new ClaudeAgentAdapter({
+      query: queryWith(() => [
+        {
+          type: 'assistant',
+          message: {
+            usage: { input_tokens: 5, cache_read_input_tokens: 1000, cache_creation_input_tokens: 0, output_tokens: 20 },
+            content: [{ type: 'tool_use', id: 't1', name: 'run_bash', input: {} }],
+          },
+        },
+        { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } },
+        {
+          type: 'assistant',
+          message: { usage: { input_tokens: 40, cache_read_input_tokens: 1000, cache_creation_input_tokens: 25, output_tokens: 9 }, content: [{ type: 'text', text: 'pronto' }] },
+        },
+        {
+          type: 'result',
+          subtype: 'success',
+          is_error: false,
+          result: 'pronto',
+          usage: { input_tokens: 45, cache_read_input_tokens: 2000, cache_creation_input_tokens: 25, output_tokens: 29 },
+        },
+      ]),
+    })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
+    const usage = events.find((e) => e.type === 'usage')?.payload as { inputTokens: number; contextTokens: number }
+    assert.deepStrictEqual([usage.inputTokens, usage.contextTokens], [2070, 1065])
+  })
+
   it('emits the tool name without the SDK mcp prefix, and keeps it on the result', async () => {
     const adapter = new ClaudeAgentAdapter({
       query: queryWith(() => [

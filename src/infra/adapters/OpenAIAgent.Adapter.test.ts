@@ -314,7 +314,7 @@ describe('OpenAIAgentAdapter', () => {
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
     const usage = events.find((event) => event.type === 'usage')
 
-    assert.deepStrictEqual(usage?.payload, { inputTokens: 8, outputTokens: 20, reasoningTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0 })
+    assert.deepStrictEqual(usage?.payload, { inputTokens: 8, contextTokens: 8, outputTokens: 20, reasoningTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0 })
   })
 
   it('reads the cache parcels from an object, a list of objects, snake or camel case', async () => {
@@ -328,7 +328,7 @@ describe('OpenAIAgentAdapter', () => {
       return events.find((event) => event.type === 'usage')?.payload
     }
 
-    const expected = { inputTokens: 100, outputTokens: 5, reasoningTokens: undefined, cacheReadTokens: 60, cacheWriteTokens: 10 }
+    const expected = { inputTokens: 100, contextTokens: 100, outputTokens: 5, reasoningTokens: undefined, cacheReadTokens: 60, cacheWriteTokens: 10 }
 
     assert.deepStrictEqual(await usageOf({ cached_tokens: 60, cache_write_tokens: 10 }), expected)
     assert.deepStrictEqual(await usageOf([{ cached_tokens: 40, cache_write_tokens: 10 }, { cached_tokens: 20 }]), expected)

@@ -84,7 +84,8 @@ async function fetchPage(protocol: EProvider, base: string, key: string, cursor:
     return {
       id: String(model.id),
       label: text(model.display_name) ?? text(model.name),
-      contextLength: number(model.context_length),
+      // A Anthropic diz `max_input_tokens`; OpenRouter e compatíveis, `context_length`.
+      contextLength: number(model.max_input_tokens) ?? number(model.context_length),
       price: priceOf(model.pricing),
       ...(reasoning ? { reasoning } : {}),
     }

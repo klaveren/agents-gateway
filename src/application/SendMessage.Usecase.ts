@@ -25,6 +25,7 @@ function usageOf(usage?: IUsage): IStoredUsage {
     totalTokens: inputTokens + outputTokens + reasoningTokens,
     cacheReadTokens: usage?.cacheReadTokens ?? 0,
     cacheWriteTokens: usage?.cacheWriteTokens ?? 0,
+    ...(usage?.contextTokens !== undefined ? { contextTokens: usage.contextTokens } : {}),
   }
 }
 

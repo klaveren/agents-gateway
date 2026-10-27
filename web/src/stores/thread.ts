@@ -333,9 +333,13 @@ export const useThreadStore = defineStore('thread', () => {
         }
         break
       }
-      case 'usage':
-        turn.usage = payload as IUsage
+      case 'usage': {
+        // O contexto em uso fica até outra chamada informar um novo: o ClaudeChat manda a entrada e a saída
+        // em dois eventos, e o segundo não o traz.
+        const usage = payload as IUsage
+        turn.usage = { ...usage, ...((usage.contextTokens ?? turn.usage?.contextTokens) !== undefined ? { contextTokens: usage.contextTokens ?? turn.usage?.contextTokens } : {}) }
         break
+      }
       case 'warning':
         turn.warnings.push(String(payload.message ?? ''))
         break

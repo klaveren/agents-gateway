@@ -200,6 +200,8 @@ export class GoogleChatAdapter implements IAgentAdapter {
             timestamp: new Date(),
             payload: {
               inputTokens: aggregate.usageMetadata.promptTokenCount,
+              // Uma chamada: a entrada dela é o contexto em uso.
+              contextTokens: aggregate.usageMetadata.promptTokenCount,
               outputTokens: aggregate.usageMetadata.candidatesTokenCount,
               // Cache implícito do Gemini: parcela de `promptTokenCount`; não há gravação cobrada.
               cacheReadTokens: aggregate.usageMetadata.cachedContentTokenCount ?? 0,

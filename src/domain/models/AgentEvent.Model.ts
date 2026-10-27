@@ -23,6 +23,13 @@ export interface IUsage {
   cacheReadTokens?: number
   /** Parcela de `inputTokens` gravada no cache neste turno — em alguns providers, cobrada ACIMA da entrada. */
   cacheWriteTokens?: number
+  /**
+   * O CONTEXTO EM USO: a entrada (cache incluído) da chamada ao modelo que gerou este consumo.
+   *
+   * ⚠️ NÃO SE SOMA: um turno agêntico com cinco ferramentas faz cinco chamadas, e a soma das cinco entradas
+   * não é o tamanho de contexto nenhum. No turno e na sessão vale o da ÚLTIMA chamada (`addUsage`).
+   */
+  contextTokens?: number
 }
 
 const USAGE_FIELDS = ['inputTokens', 'outputTokens', 'reasoningTokens', 'cacheReadTokens', 'cacheWriteTokens'] as const
@@ -40,6 +47,9 @@ export function addUsage(current: IUsage, addition: IUsage): IUsage {
     if (current[field] === undefined && addition[field] === undefined) continue
     total[field] = (current[field] ?? 0) + (addition[field] ?? 0)
   }
+  // O contexto é o da chamada mais recente que o informou, nunca a soma.
+  const context = addition.contextTokens ?? current.contextTokens
+  if (context !== undefined) total.contextTokens = context
 
   return total
 }

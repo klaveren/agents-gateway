@@ -158,7 +158,7 @@ describe('OpenAIChatAdapter', () => {
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
     const usage = events.find((e) => e.type === 'usage')
 
-    assert.deepStrictEqual(usage?.payload, { inputTokens: 100, outputTokens: 20, reasoningTokens: 10, cacheReadTokens: 60, cacheWriteTokens: 10 })
+    assert.deepStrictEqual(usage?.payload, { inputTokens: 100, contextTokens: 100, outputTokens: 20, reasoningTokens: 10, cacheReadTokens: 60, cacheWriteTokens: 10 })
   })
 
   it('sends an attachment with no text without an empty text part', async () => {

@@ -202,6 +202,8 @@ export class OpenAIChatAdapter implements IAgentAdapter {
               timestamp: new Date(),
               payload: {
                 inputTokens: chunk.usage.prompt_tokens,
+                // Uma chamada: a entrada dela é o contexto em uso.
+                contextTokens: chunk.usage.prompt_tokens,
                 // `completion_tokens` já INCLUI o raciocínio: sai separado, e a saída fica só com o visível.
                 outputTokens: Math.max(chunk.usage.completion_tokens - (chunk.usage.completion_tokens_details?.reasoning_tokens ?? 0), 0),
                 // O cache é automático; leitura e gravação são parcelas de `prompt_tokens`, cada uma com preço próprio.

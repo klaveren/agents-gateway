@@ -186,6 +186,8 @@ export class ClaudeChatAdapter implements IAgentAdapter {
                 inputTokens: input_tokens + (cache_read_input_tokens ?? 0) + (cache_creation_input_tokens ?? 0),
                 cacheReadTokens: cache_read_input_tokens ?? 0,
                 cacheWriteTokens: cache_creation_input_tokens ?? 0,
+                // Uma chamada só: a entrada dela é o contexto em uso.
+                contextTokens: input_tokens + (cache_read_input_tokens ?? 0) + (cache_creation_input_tokens ?? 0),
               },
             }
           } else if (chunk.type === 'content_block_start' && chunk.content_block.type === 'tool_use') {

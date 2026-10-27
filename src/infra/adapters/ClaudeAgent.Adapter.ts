@@ -179,6 +179,8 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     // O bloco `tool_result` só traz o `tool_use_id`. Sem guardar o nome da chamada, o
     // evento de resultado sairia identificado por um id opaco.
     const toolNames = new Map<string, string>()
+    /** A entrada da última chamada ao modelo neste turno (ver `IUsage.contextTokens`). */
+    let lastContext: number | undefined
 
     try {
       for await (const message of stream) {
@@ -209,6 +211,10 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
 
         // O texto já saiu pelos deltas; da mensagem inteira só aproveitamos as tools.
         if (message.type === 'assistant') {
+          // O consumo DESTA chamada ao modelo: a entrada dela (com cache) é o contexto em uso agora. O `result`
+          // traz a soma do turno, que não serve para isso.
+          const call = message.message.usage
+          if (call) lastContext = call.input_tokens + (call.cache_creation_input_tokens ?? 0) + (call.cache_read_input_tokens ?? 0)
           for (const block of message.message.content) {
             if (block.type === 'tool_use') {
               const tool = this.bareToolName(block.name)
@@ -262,6 +268,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
               cacheReadTokens: message.usage.cache_read_input_tokens ?? 0,
               cacheWriteTokens: message.usage.cache_creation_input_tokens ?? 0,
               outputTokens: message.usage.output_tokens,
+              ...(lastContext !== undefined ? { contextTokens: lastContext } : {}),
             },
           }
 
