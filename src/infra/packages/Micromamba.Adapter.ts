@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
-import { delimiter, join } from 'node:path'
+import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { dataDir, isWritable } from '@infra/adapters/support/Subscription.Workspace'
@@ -36,17 +36,6 @@ export interface IPackageResult {
 /** Onde ficam as ferramentas: `<dados>/tools` (no pod, o PVC — sobrevive ao restart). O `bin` dele entra no PATH. */
 export const toolsPrefix = (env: NodeJS.ProcessEnv = process.env) => join(dataDir(env), 'tools')
 const mambaRoot = (env: NodeJS.ProcessEnv = process.env) => join(dataDir(env), 'mamba')
-
-/**
- * ⚖️ PÕE AS FERRAMENTAS NO PATH DO PRÓPRIO GATEWAY, no boot: o `run_bash`, os clientes de assinatura, o
- * Bash do SDK e os MCPs `process` derivam o PATH deste processo — todos passam a ver o que a guia Pacotes
- * instalou, sem cada um saber dela.
- */
-export function addToolsToPath(env: NodeJS.ProcessEnv = process.env): void {
-  const bin = join(toolsPrefix(env), 'bin')
-  const parts = (env.PATH ?? '').split(delimiter).filter(Boolean)
-  if (!parts.includes(bin)) env.PATH = [bin, ...parts].join(delimiter)
-}
 
 /**
  * Instala ferramentas (git, curl, jq, ffmpeg…) do conda-forge pelo micromamba, SEM ROOT, numa pasta do

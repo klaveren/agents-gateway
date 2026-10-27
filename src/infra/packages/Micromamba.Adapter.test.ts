@@ -3,8 +3,10 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
+import { subscriptionEnv } from '@infra/adapters/support/Subscription.Workspace'
 import { PackagesController } from '@infra/http/Packages.Controller'
-import { addToolsToPath, MicromambaAdapter, PackageBusyError, parseInstalled, parseSearch, rankHits } from './Micromamba.Adapter'
+import { MicromambaAdapter, PackageBusyError, parseInstalled, parseSearch, rankHits } from './Micromamba.Adapter'
+import { persistInstalls } from './Persistent.Installs'
 
 /**
  * Um `micromamba` falso: anota os argumentos e responde como o de verdade (formato da 2.9). ⚠️ O caminho do
@@ -99,11 +101,23 @@ describe('MicromambaAdapter', () => {
     assert.match(failed.log, /No package named nada/)
   })
 
-  it('o bin das ferramentas entra no PATH uma vez só', () => {
-    const env: NodeJS.ProcessEnv = { PATH: '/usr/bin', CONVERSATIONS_DB: join(root, 'gateway.db') }
-    addToolsToPath(env)
-    addToolsToPath(env)
-    assert.deepStrictEqual(env.PATH?.split(delimiter), [join(root, 'tools', 'bin'), '/usr/bin'])
+  it('instalações persistentes: cada gerenciador grava no PVC, os bins entram no PATH uma vez, e o operador manda', () => {
+    const env: NodeJS.ProcessEnv = { PATH: '/usr/bin', CONVERSATIONS_DB: join(root, 'gateway.db'), CARGO_HOME: '/opt/cargo' }
+    persistInstalls(env)
+    persistInstalls(env)
+    const tools = join(root, 'tools')
+    assert.deepStrictEqual(
+      [env.NPM_CONFIG_PREFIX, env.PYTHONUSERBASE, env.GOPATH, env.npm_config_cache],
+      [join(tools, 'npm'), join(tools, 'python'), join(tools, 'go'), join(root, 'cache', 'npm')],
+    )
+    assert.strictEqual(env.CARGO_HOME, '/opt/cargo', 'variável já definida vale mais que a nossa')
+    const path = env.PATH?.split(delimiter) ?? []
+    assert.deepStrictEqual(path.slice(0, 2), [join(tools, 'bin'), join(tools, 'npm', 'bin')])
+    assert.strictEqual(path.at(-1), '/usr/bin')
+    assert.strictEqual(new Set(path).size, path.length)
+    // E chegam ao subprocesso mínimo (run_bash, clientes de assinatura, Bash do SDK).
+    assert.strictEqual(subscriptionEnv({}, env).NPM_CONFIG_PREFIX, join(tools, 'npm'))
+    assert.strictEqual(subscriptionEnv({}, { ...env, OPENAI_API_KEY: 'sk-x' }).OPENAI_API_KEY, undefined)
   })
 
   it('parsers: versão mais nova pelo timestamp, ranking e specs do histórico', () => {

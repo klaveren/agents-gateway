@@ -8,7 +8,7 @@ import { resolveAllowedHosts } from '@infra/sandbox/Egress.Proxy'
 import { ICredentialSource } from '@domain/ports/CredentialStore.Port'
 import { IMcpServerRepository } from '@domain/ports/McpServerRepository.Port'
 import { IToolDefinition } from '@infra/tools/Tool.Types'
-import { isWritable } from '@infra/adapters/support/Subscription.Workspace'
+import { INSTALL_PASSTHROUGH, isWritable } from '@infra/adapters/support/Subscription.Workspace'
 import { installDir, resolveCommand } from './Mcp.Install'
 import { IMcpClientOptions, McpServerClient } from './McpServer.Client'
 
@@ -167,6 +167,8 @@ export class McpRegistry {
     const proc = config.process!
     const command = resolveCommand(config.id, proc)
     const env: Record<string, string> = { ...getDefaultEnvironment() }
+    // Onde os gerenciadores instalam (o PVC): um `npx` dentro do MCP acha o que o `npm i -g` deixou.
+    for (const name of INSTALL_PASSTHROUGH) if (process.env[name]) env[name] = process.env[name] as string
     for (const name of proc.env) {
       const value = this.secrets.get(mcpEnvSecretKey(config.id, name))
       if (value) env[name] = value

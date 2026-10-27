@@ -72,12 +72,35 @@ export function dataDir(env: NodeJS.ProcessEnv = process.env): string {
 const PASSTHROUGH = ['PATH', 'LANG', 'LC_ALL', 'TMPDIR', 'USER', 'LOGNAME', 'TERM'] as const
 
 /**
+ * Onde cada gerenciador de pacotes instala — apontado para o PVC no boot (ver `Persistent.Installs`). Passa
+ * para todo subprocesso: é o que faz `npm i -g` ou `cargo install` no Bash de um agente sobreviver ao reboot.
+ * Só caminhos, nenhum segredo.
+ */
+export const INSTALL_PASSTHROUGH = [
+  'NPM_CONFIG_PREFIX',
+  'npm_config_cache',
+  'PYTHONUSERBASE',
+  'PIP_CACHE_DIR',
+  'UV_TOOL_DIR',
+  'UV_TOOL_BIN_DIR',
+  'UV_PYTHON_INSTALL_DIR',
+  'UV_CACHE_DIR',
+  'PIPX_HOME',
+  'PIPX_BIN_DIR',
+  'CARGO_HOME',
+  'RUSTUP_HOME',
+  'GOPATH',
+  'GOCACHE',
+  'GEM_HOME',
+] as const
+
+/**
  * ⛔ O ambiente mínimo do subprocesso: nunca o `.env` do gateway (chaves de API, `AUTH_SECRET` — o
  * segredo do JWT —, `SECRETS_KEY`). Só o que um binário precisa para rodar, mais o que cada cliente pede.
  */
 export function subscriptionEnv(extra: Record<string, string | undefined>, env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const out: Record<string, string> = {}
-  for (const name of PASSTHROUGH) if (env[name]) out[name] = env[name] as string
+  for (const name of [...PASSTHROUGH, ...INSTALL_PASSTHROUGH]) if (env[name]) out[name] = env[name] as string
   for (const [name, value] of Object.entries(extra)) if (value !== undefined) out[name] = value
   return out
 }

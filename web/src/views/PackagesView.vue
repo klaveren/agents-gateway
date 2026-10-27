@@ -97,7 +97,8 @@ async function confirmRemove() {
       </header>
       <p class="text-xs text-zinc-500">
         Ferramentas do servidor (git, curl, jq, ffmpeg…) do conda-forge, sem root. Ficam em <code>{{ packages.state?.prefix ?? '<dados>/tools' }}</code> — persistente: sobrevivem ao reboot. Valem na hora para o Bash dos agentes, o
-        run_bash e os MCPs locais.
+        run_bash e os MCPs locais. Pacotes de linguagem instalados globalmente (<code>npm i -g</code>, <code>pip install --user</code>, <code>uv tool</code>, <code>cargo</code>, <code>go install</code>, <code>gem</code>) também
+        vão para o disco persistente.
       </p>
       <p v-if="loadError" class="text-sm text-rose-300">{{ loadError }}</p>
 

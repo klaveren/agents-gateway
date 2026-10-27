@@ -482,6 +482,15 @@ into `<data>/tools` (on the pod, the PVC). The gateway puts `<data>/tools/bin` f
 ffmpeg or whatever was installed. Outside the image, point `MICROMAMBA_BIN` at a micromamba
 (`brew install micromamba` on a Mac).
 
+Language package managers persist too: at boot the gateway points each one's global install
+location at `<data>/tools/<manager>` and puts its `bin` on the `PATH` — `NPM_CONFIG_PREFIX`,
+`PYTHONUSERBASE`, `UV_TOOL_DIR`, `PIPX_HOME`, `CARGO_HOME`, `GOPATH`, `GEM_HOME` (caches in
+`<data>/cache`). So `npm i -g`, `pip install --user`, `uv tool install`, `cargo install`,
+`go install` and `gem install` survive a restart with no extra step; a variable already set by the
+operator wins. Not the whole `HOME` on purpose: a shared `HOME` would leak one conversation's
+history and credentials into the next. A project-local `npm install` in a conversation's folder
+stays temporary, as that folder is.
+
 ---
 
 ## Architecture

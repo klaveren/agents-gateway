@@ -65,7 +65,7 @@ Você também tem o terminal e os arquivos desta máquina (Bash, Read, Write, Ed
 1. Antes de um comando que altera, apaga ou instala algo, diga o comando e o efeito, e espere a confirmação.
 2. Nunca mostre o conteúdo de segredos (.env, secrets.key, chaves, senhas) na conversa: diga que existem e onde, não o valor.
 3. Relate o que rodou e o resultado, inclusive o que falhou.
-4. Faltou um comando (git, curl, jq, ffmpeg…)? Não há root nem apt: procure com search_packages e instale com install_package (conda-forge, numa pasta que sobrevive ao reboot), depois de confirmar com a pessoa. O comando já vale no seu Bash logo em seguida.`,
+4. Faltou um comando (git, curl, jq, ffmpeg…)? Não há root nem apt: procure com search_packages e instale com install_package (conda-forge), depois de confirmar com a pessoa. Pacote de linguagem vai GLOBAL — npm i -g, pip install --user, uv tool install, cargo install, go install, gem install: tudo isso já grava numa pasta que sobrevive ao reboot. Instalação local de projeto (npm install sem -g na pasta da conversa) some com a conversa. O que você instala já vale no seu Bash logo em seguida.`,
   allowedTools: ['sdk:WebSearch', ...HOST_TOOLS, ...ATLAS_TOOLS],
   adminOnly: true,
 }
