@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { usePopover } from '@/lib/popover'
 import Icon from './Icon.vue'
 
@@ -22,6 +22,17 @@ const ITEMS: Array<{ to: string; key: string; label: string; hint: string; icon:
   { to: '/settings', key: 'settings', label: 'Configuração', hint: 'Operação, limites e implantação', icon: 'settings' },
 ]
 const lit = computed(() => ITEMS.some((item) => item.key === props.active))
+
+/**
+ * ⚠️ O menu cresce para baixo (no trilho) ou para cima (na barra do celular) a partir do botão: em tela baixa ele
+ * passava da borda, sem rolagem. A altura máxima é o espaço que sobra até a borda, medido ao abrir.
+ */
+const room = ref<number>()
+watch(open, (isOpen) => {
+  const rect = root.value?.getBoundingClientRect()
+  if (!isOpen || !rect) return
+  room.value = Math.max(160, (props.placement === 'side' ? window.innerHeight - rect.top : rect.top) - 12)
+})
 </script>
 
 <template>
@@ -42,8 +53,9 @@ const lit = computed(() => ITEMS.some((item) => item.key === props.active))
     <div
       v-if="open"
       role="menu"
-      class="absolute z-50 w-64 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-xl shadow-black/40"
+      class="scroll-thin absolute z-50 w-64 overflow-y-auto overscroll-contain rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-xl shadow-black/40"
       :class="placement === 'side' ? 'top-0 left-full ml-3' : 'right-1 bottom-full mb-2'"
+      :style="room ? { maxHeight: `${room}px` } : undefined"
     >
       <div class="border-b border-zinc-800 px-3 py-2 text-xs font-medium text-zinc-500">Sistema</div>
       <RouterLink
