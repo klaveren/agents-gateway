@@ -23,8 +23,14 @@ class RecordingRepository extends NullConversationRepository {
     })
   }
 
+  readonly natives: unknown[] = []
+
   async saveSession(session: IConversationSession): Promise<void> {
     this.sessions.push(session)
+  }
+
+  async saveNative(_sessionId: string, snapshot: unknown): Promise<void> {
+    this.natives.push(snapshot)
   }
 
   async appendTurn(turn: IConversationTurn): Promise<number | undefined> {
@@ -110,6 +116,29 @@ describe('SendMessageUseCase', () => {
 
     assert.deepStrictEqual(repository.turns[0].usage, { inputTokens: 100, outputTokens: 20, reasoningTokens: 5, totalTokens: 125, cacheReadTokens: 0, cacheWriteTokens: 0 })
     assert.strictEqual(repository.turns[0].request, 'quanto custou?')
+  })
+
+  it('guarda o estado do SDK da sessão depois do turno (para a retomada); sem estado, limpa', async () => {
+    const repository = new RecordingRepository()
+    let snapshot: unknown = { protocol: 'claude', mode: 'agent', data: { sdkSessionId: 'abc' } }
+    const usecase = new SendMessageUseCase(
+      stubProvider({
+        describe: () => session(),
+        nativeSnapshot: () => snapshot as never,
+        sendMessage: async function* () {
+          yield { type: 'message.completed' as const, sessionId: 's', timestamp: new Date() }
+        },
+      }),
+      repository,
+    )
+    let done = repository.recorded()
+    for await (const _event of usecase.execute('s', { text: 'oi' })) void _event
+    await done
+    snapshot = null
+    done = repository.recorded()
+    for await (const _event of usecase.execute('s', { text: 'de novo' })) void _event
+    await done
+    assert.deepStrictEqual(repository.natives, [{ protocol: 'claude', mode: 'agent', data: { sdkSessionId: 'abc' } }, null])
   })
 
   it('records how long the turn took and the cache apart from the input', async () => {

@@ -14,4 +14,12 @@ export interface IAgentAdapter {
    */
   sendMessage(agent: IAgent, sessionId: string, input: IMessageInput, context: IExecutionContext): AsyncIterable<IAgentEvent>
   cancel(sessionId: string): Promise<void>
+  /**
+   * O estado do SDK que vale guardar com a conversa (o id da sessão do CLI do Claude), para a retomada continuar com
+   * a MEMÓRIA dele, e não só com a transcrição. `undefined` = nada a guardar ainda. Opcional: o adapter que não tem
+   * fica na transcrição.
+   */
+  exportNative?(sessionId: string): unknown
+  /** Planta o estado guardado na sessão reaberta. `false` = não serve mais (o arquivo do SDK sumiu): vale a transcrição. */
+  restoreNative?(sessionId: string, data: unknown): boolean
 }

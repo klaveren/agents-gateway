@@ -723,4 +723,17 @@ describe('SqliteConversationRepository — monitor, rótulos e compartilhamento'
     await repo.saveSession(session({ usage: { inputTokens: 1500, totalTokens: 1500 } }))
     assert.strictEqual((await repo.findSession('s1'))?.usage.contextTokens, 600)
   })
+
+  it('guarda, lê e limpa o estado do SDK da conversa', async () => {
+    const repo = new SqliteConversationRepository(':memory:')
+    const now = new Date()
+    await repo.saveSession({ id: 'c1', agentId: 'a', provider: 'claude', mode: 'agent', model: 'm', createdAt: now, updatedAt: now, turns: 1, usage: {} })
+    assert.strictEqual(await repo.findNative('c1'), undefined)
+    await repo.saveNative('c1', { protocol: 'claude', mode: 'agent', data: { sdkSessionId: 'abc' } })
+    assert.deepStrictEqual(await repo.findNative('c1'), { protocol: 'claude', mode: 'agent', data: { sdkSessionId: 'abc' } })
+    await repo.saveSession({ id: 'c1', agentId: 'a', provider: 'claude', mode: 'agent', model: 'm', createdAt: now, updatedAt: now, turns: 2, usage: {} })
+    assert.ok(await repo.findNative('c1'), 'regravar o cabeçalho não apaga o estado')
+    await repo.saveNative('c1', null)
+    assert.strictEqual(await repo.findNative('c1'), undefined)
+  })
 })

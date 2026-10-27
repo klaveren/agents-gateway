@@ -1,5 +1,5 @@
 import assert from 'node:assert'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
@@ -463,5 +463,57 @@ describe('ClaudeAgentAdapter', () => {
       const decision = (await seen[0].options!.canUseTool!('Bash', { command: 'ls' }, options)) as { behavior: string; updatedInput?: unknown }
       assert.deepStrictEqual([decision.behavior, decision.updatedInput, fake.calls], ['allow', undefined, []])
     })
+  })
+})
+
+describe('ClaudeAgentAdapter — a memória do CLI na retomada', () => {
+  const SDK_ID = '11111111-2222-4333-8444-555555555555'
+  const agent: IAgent = { ...CLAUDE_TEST_AGENT, providers: [{ provider: EProvider.CLAUDE, models: ['claude-sonnet-5'] }], allowedTools: [] }
+  const queryWith = (seen: TQueryParams[]): TQuery =>
+    ((params: TQueryParams) => {
+      seen.push(params)
+      return (async function* () {
+        yield { type: 'system', subtype: 'init', session_id: SDK_ID }
+        yield { type: 'result', subtype: 'success', is_error: false, result: 'ok', usage: { input_tokens: 1, output_tokens: 1 } }
+      })()
+    }) as unknown as TQuery
+  let dir = ''
+  let previous: string | undefined
+  before(() => {
+    dir = mkdtempSync(join(tmpdir(), 'gw-claude-cli-'))
+    previous = process.env.CONVERSATIONS_DB
+    process.env.CONVERSATIONS_DB = join(dir, 'gateway.db')
+  })
+  after(() => {
+    if (previous === undefined) delete process.env.CONVERSATIONS_DB
+    else process.env.CONVERSATIONS_DB = previous
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('o CLI guarda as conversas no volume de dados (CLAUDE_CONFIG_DIR), não no HOME de quem roda', () => {
+    assert.strictEqual(cliEnv({ key: 'k', compatible: false }).CLAUDE_CONFIG_DIR, join(dir, 'claude-cli'))
+  })
+
+  it('exporta o id do CLI só depois que ele começou', async () => {
+    const adapter = new ClaudeAgentAdapter({ query: queryWith([]) })
+    const session = await adapter.createSession(agent, { agentId: agent.id })
+    assert.strictEqual(adapter.exportNative(session.id), undefined)
+    for await (const _event of adapter.sendMessage(agent, session.id, { text: 'oi' }, {})) void _event
+    assert.deepStrictEqual(adapter.exportNative(session.id), { sdkSessionId: SDK_ID })
+  })
+
+  it('⚖️ planta o id só se o CLI ainda tem a conversa; aí o próximo turno a reabre com `resume`', async () => {
+    const seen: TQueryParams[] = []
+    const adapter = new ClaudeAgentAdapter({ query: queryWith(seen) })
+    const session = await adapter.createSession(agent, { agentId: agent.id })
+    assert.strictEqual(adapter.restoreNative(session.id, { sdkSessionId: SDK_ID }), false, 'sem o arquivo do CLI, vale a transcrição')
+    assert.strictEqual(adapter.restoreNative(session.id, { sdkSessionId: '../../etc/passwd' }), false)
+
+    mkdirSync(join(dir, 'claude-cli', 'projects', '-qualquer-pasta'), { recursive: true })
+    writeFileSync(join(dir, 'claude-cli', 'projects', '-qualquer-pasta', `${SDK_ID}.jsonl`), '{}\n')
+    assert.strictEqual(adapter.restoreNative(session.id, { sdkSessionId: SDK_ID }), true)
+
+    for await (const _event of adapter.sendMessage(agent, session.id, { text: 'continua' }, {})) void _event
+    assert.strictEqual(seen[0].options?.resume, SDK_ID)
   })
 })

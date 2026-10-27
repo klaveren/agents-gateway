@@ -34,7 +34,7 @@ import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { caller } from '@infra/mcp/Caller.Identity'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
-import { IStoredUsage } from '@domain/models/Conversation.Model'
+import { INativeSnapshot, IStoredUsage } from '@domain/models/Conversation.Model'
 import { ISession, usageKey } from '@domain/models/Session.Model'
 import { IAgentProvider, IResumeInput, ISessionChange } from '@domain/ports/AgentProvider.Port'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
@@ -268,8 +268,21 @@ export class AgentProvider implements IAgentProvider {
       ? Object.fromEntries(Object.entries(stored.usageByModel).map(([key, usage]) => [key, liveUsage(usage)]))
       : { [usageKey(stored.provider, stored.model)]: liveUsage(stored.usage) }
     record.transcript = transcript
+    // ⚖️ A MEMÓRIA DO SDK, quando ainda serve (mesma lane, e o adapter confirma que o estado existe): a conversa segue
+    // inteira, com o que as ferramentas devolveram e o raciocínio — sem a transcrição. Senão, a transcrição.
+    const native = input.native
+    const adapter = this.getAdapter(record.protocol, record.mode)
+    if (native && native.protocol === record.protocol && native.mode === record.mode && adapter.restoreNative?.(stored.id, native.data)) return
     record.handoff = handoffText(transcript, HANDOFF_MAX_CHARS, 'resume')
     record.handoffKind = 'resume'
+  }
+
+  /** O estado do SDK da sessão para guardar com a conversa (só a lane que exporta, e depois que começou). */
+  nativeSnapshot(sessionId: string): INativeSnapshot | null {
+    const record = this.sessions.get(sessionId)
+    if (!record) return null
+    const data = this.getAdapter(record.protocol, record.mode).exportNative?.(sessionId)
+    return data === undefined ? null : { protocol: record.protocol, mode: record.mode, data }
   }
 
   async cancel(sessionId: string): Promise<void> {

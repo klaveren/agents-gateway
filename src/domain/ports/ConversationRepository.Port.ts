@@ -1,6 +1,14 @@
 import { TClassification } from '@domain/models/Classification.Model'
 import { IUsageQuery, IUsageRow } from '@domain/models/Usage.Model'
-import { IConversationPage, IConversationPageQuery, IConversationSession, IConversationStats, IConversationTurn, IOwnerFilter } from '@domain/models/Conversation.Model'
+import {
+  IConversationPage,
+  IConversationPageQuery,
+  IConversationSession,
+  IConversationStats,
+  IConversationTurn,
+  IOwnerFilter,
+  INativeSnapshot,
+} from '@domain/models/Conversation.Model'
 
 /**
  * Onde a conversa fica guardada. O domínio não sabe qual é o banco — nem se existe um.
@@ -69,6 +77,10 @@ export interface IConversationRepository {
    * conteúdo — filtrar a listagem não protege nada se o detalhe abre por id.
    */
   findSession(sessionId: string): Promise<IConversationSession | undefined>
+
+  /** Guarda (ou, com `null`, limpa) o estado do SDK da conversa, para a retomada. Opcional: sem ele, só a transcrição. */
+  saveNative?(sessionId: string, snapshot: INativeSnapshot | null): Promise<void>
+  findNative?(sessionId: string): Promise<INativeSnapshot | undefined>
 
   /**
    * Abre ou fecha a conversa por link. `shareId` só entra quando vem: fechar não o apaga, para

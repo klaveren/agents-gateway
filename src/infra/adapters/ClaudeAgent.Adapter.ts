@@ -1,8 +1,10 @@
 import { sessionChoice } from '@domain/Agent.Policy'
 import { randomUUID } from 'node:crypto'
+import { existsSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { nativeToolsOf } from '@domain/Native.Tools'
 import { IConnectionSource, requireConnection, UnavailableProviderError } from './support/Keyed.Client'
-import { workspaceFor, subscriptionEnv } from './support/Subscription.Workspace'
+import { dataDir, workspaceFor, subscriptionEnv } from './support/Subscription.Workspace'
 import { query, type CanUseTool, type EffortLevel, type Options, type HookCallback, type PermissionResult, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { IProjectSandbox, projectPathIssue, projectSandbox } from '@infra/sandbox/Project.Sandbox'
 import { EMode } from '@domain/enums/EMode.Enum'
@@ -309,6 +311,25 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
    * O store é compartilhado pelos seis adapters, então o slot nativo é `unknown`. Este é o
    * único ponto do adapter que sabe o formato do que ele guardou lá.
    */
+  /** O id do CLI, depois que ele começou: é o que a retomada reapresenta com `options.resume`. */
+  exportNative(sessionId: string): unknown {
+    const native = this.store.get(sessionId)?.native as IClaudeAgentNative | undefined
+    return native?.started ? { sdkSessionId: native.sdkSessionId } : undefined
+  }
+
+  /**
+   * ⚖️ Planta o id guardado SÓ se o CLI ainda tem a conversa (`<config>/projects/<pasta>/<id>.jsonl`): sem o arquivo,
+   * o `resume` falharia no meio do turno — e a transcrição é o que vale. A pasta é procurada em todas, sem depender de
+   * como o CLI codifica o `cwd`.
+   */
+  restoreNative(sessionId: string, data: unknown): boolean {
+    const record = this.store.get(sessionId)
+    const id = (data as { sdkSessionId?: unknown } | undefined)?.sdkSessionId
+    if (!record || typeof id !== 'string' || !/^[0-9a-f-]{36}$/i.test(id) || !cliSessionExists(id)) return false
+    record.native = { sdkSessionId: id, started: true } satisfies IClaudeAgentNative
+    return true
+  }
+
   private nativeOf(record: ISessionRecord): IClaudeAgentNative {
     if (!record.native) record.native = { sdkSessionId: randomUUID(), started: false }
     return record.native as IClaudeAgentNative
@@ -444,8 +465,11 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
  */
 export function cliEnv(connection: { key: string; baseUrl?: string; compatible: boolean }): Record<string, string | undefined> {
   // ⛔ Ambiente MÍNIMO, nunca `{ ...process.env }`: com `sdk:Bash`/`sdk:Read` o CLI levaria as outras chaves,
-  // o `AUTH_SECRET` e o `SECRETS_KEY`. O HOME fica (o CLI guarda estado nele); o `cwd` é o da conversa.
-  const base = subscriptionEnv({ HOME: process.env.HOME, ENABLE_CLAUDEAI_MCP_SERVERS: 'false' })
+  // o `AUTH_SECRET` e o `SECRETS_KEY`. O `cwd` é o da conversa.
+  // ⚖️ `CLAUDE_CONFIG_DIR` no volume de dados: as conversas do CLI sobrevivem ao reinício (no pod o HOME é só
+  // leitura) — é o que deixa a retomada continuar com a memória dele —, e ele não lê a configuração pessoal do
+  // `~/.claude` de quem roda o gateway (MCPs, CLAUDE.md).
+  const base = subscriptionEnv({ HOME: process.env.HOME, CLAUDE_CONFIG_DIR: claudeConfigDir(), ENABLE_CLAUDEAI_MCP_SERVERS: 'false' })
   if (!connection.compatible) return { ...base, ANTHROPIC_API_KEY: connection.key }
 
   return { ...base, ANTHROPIC_BASE_URL: connection.baseUrl, ANTHROPIC_AUTH_TOKEN: connection.key, ANTHROPIC_API_KEY: '' }
@@ -462,4 +486,16 @@ function preToolUse(gate: CanUseTool): HookCallback {
       hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: decision && 'message' in decision ? decision.message : 'denied' },
     }
   }
+}
+
+/** Onde o CLI do Claude guarda configuração e conversas: `<dados>/claude-cli` (no pod, o PVC). O CLI cria a pasta. */
+export function claudeConfigDir(env: NodeJS.ProcessEnv = process.env): string {
+  return join(dataDir(env), 'claude-cli')
+}
+
+/** O CLI ainda tem a conversa `id`? (`<config>/projects/<qualquer pasta>/<id>.jsonl`). */
+export function cliSessionExists(id: string, root = claudeConfigDir()): boolean {
+  const projects = join(root, 'projects')
+  if (!existsSync(projects)) return false
+  return readdirSync(projects).some((dir) => existsSync(join(projects, dir, `${id}.jsonl`)))
 }
