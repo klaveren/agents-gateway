@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { GuidanceNotFoundError, InvalidGuidanceError, ProjectNotFoundError } from '@domain/errors/Domain.Error'
+import { AgentNotFoundError, GuidanceNotFoundError, InvalidGuidanceError, ProjectNotFoundError } from '@domain/errors/Domain.Error'
 import { SqliteGuidanceRepository } from '@infra/persistence/Sqlite.GuidanceRepository'
 import { GuidanceService } from './Guidance.Service'
 
@@ -153,7 +153,7 @@ describe('GuidanceService', () => {
       assert.doesNotMatch(xpto.slice(xpto.indexOf('## Documentos')), /seguranca|comunicacao/)
       assert.match(service.environmentFor('crm')!, /- \[spec\] seguranca — Segurança/)
       assert.doesNotMatch(service.environmentFor('crm')!, /## Specs do projeto/)
-      assert.deepStrictEqual(service.loadedIn('seguranca'), ['xpto'])
+      assert.deepStrictEqual(service.loadedIn('seguranca'), { projects: ['xpto'], agents: [] })
     })
 
     it('o que deixa de valer sai sem apagar a marca; apagar o doc ou o projeto limpa', () => {
@@ -174,6 +174,68 @@ describe('GuidanceService', () => {
       )
       service.removeProject('xpto')
       assert.deepStrictEqual(service.initialContext('xpto'), [])
+    })
+  })
+
+  describe('contexto inicial do agente', () => {
+    const agents: Record<string, { id: string; projectId?: string }> = {
+      dev: { id: 'dev', projectId: 'xpto' },
+      resumo: { id: 'resumo', projectId: 'xpto' },
+      atlas: { id: 'atlas' },
+    }
+    const seeded = () => {
+      const service = new GuidanceService(
+        new SqliteGuidanceRepository(':memory:'),
+        (id) => ['xpto', 'crm'].includes(id),
+        (id) => agents[id],
+      )
+      service.createDoc({ ...doc('seguranca'), title: 'Segurança', body: 'Nunca exponha segredos.' }, 'root')
+      service.createDoc({ ...doc('arquitetura', 'xpto'), title: 'Arquitetura', body: 'Hexagonal.' }, 'root')
+      service.createDoc({ ...doc('do-crm', 'crm') }, 'root')
+      service.createDoc({ ...doc('decisao'), kind: 'adr' }, 'root')
+      return service
+    }
+
+    it('⛔ agente de projeto: globais e do projeto dele; agente global: só globais; agente que não existe é 404', () => {
+      const service = seeded()
+      assert.throws(
+        () => service.setAgentContext('dev', ['decisao', 'do-crm'], 'root'),
+        (error: unknown) => error instanceof InvalidGuidanceError && error.issues.length === 2,
+      )
+      assert.throws(
+        () => service.setAgentContext('atlas', ['arquitetura'], 'root'),
+        (error: unknown) => error instanceof InvalidGuidanceError && /global agent loads only global specs/.test(error.issues[0].message),
+      )
+      assert.strictEqual(service.setAgentContext('atlas', ['seguranca'], 'root').docs.length, 1)
+      assert.throws(() => service.agentContextView('nada'), AgentNotFoundError)
+    })
+
+    it('depois das specs do projeto, só para o agente marcado; a que está nas duas entra uma vez', () => {
+      const service = seeded()
+      service.setInitialContext('xpto', ['seguranca'], 'root')
+      service.setAgentContext('dev', ['arquitetura', 'seguranca'], 'root')
+
+      const dev = service.environmentFor('xpto', 'dev')!
+      assert.match(dev, /## Specs do projeto[\s\S]*### Segurança[\s\S]*## Specs do agente\n\nCarregadas[^\n]*\n\n### Arquitetura\nHexagonal\.$/m)
+      assert.strictEqual(dev.match(/### Segurança/g)?.length, 1)
+      assert.doesNotMatch(dev, /\[spec\] arquitetura/)
+
+      const resumo = service.environmentFor('xpto', 'resumo')!
+      assert.doesNotMatch(resumo, /## Specs do agente/)
+      assert.match(resumo, /- \[spec\] arquitetura — Arquitetura/)
+      assert.deepStrictEqual(service.loadedIn('arquitetura'), { projects: [], agents: ['dev'] })
+    })
+
+    it('apagar o agente ou a spec limpa a lista', () => {
+      const service = seeded()
+      service.setAgentContext('dev', ['arquitetura', 'seguranca'], 'root')
+      service.deleteDoc('seguranca')
+      assert.deepStrictEqual(
+        service.agentContext('dev').map((item) => item.id),
+        ['arquitetura'],
+      )
+      service.removeAgent('dev')
+      assert.deepStrictEqual(service.agentContext('dev'), [])
     })
   })
 })

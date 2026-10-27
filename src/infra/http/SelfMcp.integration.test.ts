@@ -122,6 +122,7 @@ describe('MCP do próprio gateway (integração)', () => {
     const common = ['get_conversation', 'list_agents', 'list_conversations', 'list_projects', 'my_usage', 'send_message', 'start_conversation', 'switch_model']
     const adminRead = [
       'get_agent',
+      'get_agent_initial_context',
       'get_doc',
       'get_initial_context',
       'hook_deliveries',
@@ -147,6 +148,7 @@ describe('MCP do próprio gateway (integração)', () => {
       'save_hook',
       'save_project',
       'save_rule',
+      'set_agent_initial_context',
       'set_initial_context',
       'set_model_enabled',
       'set_model_price',

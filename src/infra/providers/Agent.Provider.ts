@@ -76,7 +76,7 @@ export class AgentProvider implements IAgentProvider {
      * As rules e os documentos do ambiente (ver `GuidanceService`): o texto que vai no system prompt da conversa
      * e se ela tem documento para o `read_doc`. Ausente = sem nada disso.
      */
-    private readonly guidance?: { environmentFor(projectId?: string): string | undefined; hasDocs(projectId?: string): boolean },
+    private readonly guidance?: { environmentFor(projectId?: string, agentId?: string): string | undefined; hasDocs(projectId?: string, agentId?: string): boolean },
   ) {
     /**
      * Uma leitura no boot, e depois só quando muda.
@@ -135,7 +135,7 @@ export class AgentProvider implements IAgentProvider {
 
     const { adminAccess: _access, delegated: _delegated, parentSessionId: _parent, environment: _environment, ...rest } = input
     // ⚖️ O projeto da CONVERSA (o controller o carimba), não o do agente: o Atlas no XPTO recebe as do XPTO.
-    const environment = this.guidance?.environmentFor(projectOf(input.metadata))
+    const environment = this.guidance?.environmentFor(projectOf(input.metadata), agent.id)
     const created = await this.getAdapter(protocol, mode).createSession(this.withDocs(agent, projectOf(input.metadata)), {
       ...rest,
       ...(environment ? { environment } : {}),
@@ -223,7 +223,7 @@ export class AgentProvider implements IAgentProvider {
    * ferramenta vem junto, sem ninguém ter de escolhê-la no cadastro do agente.
    */
   private withDocs(agent: IAgent, projectId: string | undefined): IAgent {
-    if (!this.guidance?.hasDocs(projectId) || agent.allowedTools.includes(READ_DOC_TOOL)) return agent
+    if (!this.guidance?.hasDocs(projectId, agent.id) || agent.allowedTools.includes(READ_DOC_TOOL)) return agent
     return { ...agent, allowedTools: [...agent.allowedTools, READ_DOC_TOOL] }
   }
 

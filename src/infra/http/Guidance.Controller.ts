@@ -46,6 +46,8 @@ export class GuidanceController {
       'deleteDoc',
       'getInitialContext',
       'setInitialContext',
+      'getAgentContext',
+      'setAgentContext',
     ] as const)
       this[name] = this[name].bind(this)
   }
@@ -144,6 +146,21 @@ export class GuidanceController {
     await this.respond(res, async () => {
       const by = await this.requireAdmin('setInitialContext')
       return this.deps.guidance.setInitialContext(req.params.id as string, parseBody(contextSchema, req.body).docIds, by)
+    })
+  }
+
+  /** O contexto inicial do agente: as specs que ele carrega inteiras além das do projeto. */
+  async getAgentContext(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      await this.requireAdmin('getAgentContext')
+      return this.deps.guidance.agentContextView(req.params.agentId as string)
+    })
+  }
+
+  async setAgentContext(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const by = await this.requireAdmin('setAgentContext')
+      return this.deps.guidance.setAgentContext(req.params.agentId as string, parseBody(contextSchema, req.body).docIds, by)
     })
   }
 

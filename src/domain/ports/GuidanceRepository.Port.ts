@@ -31,6 +31,14 @@ export interface IGuidanceRepository {
   /** Troca a lista inteira. */
   setContextDocs(projectId: string, docIds: readonly string[], by: string): void
 
+  /** O CONTEXTO INICIAL do agente: as specs que ele carrega inteiras além das do projeto, na ordem. */
+  agentContextDocs(agentId: string): string[]
+  /** Os agentes que carregam este documento no contexto inicial deles. */
+  agentContextOf(docId: string): string[]
+  setAgentContextDocs(agentId: string, docIds: readonly string[], by: string): void
+  /** O agente foi apagado: a lista dele vai junto. */
+  deleteAgentContext(agentId: string): void
+
   /** O projeto foi apagado: as rules, os documentos e o contexto inicial dele vão junto. */
   deleteProject(projectId: string): void
 }

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { GuidanceNotFoundError, InvalidGuidanceError, ProjectNotFoundError } from '@domain/errors/Domain.Error'
+import { AgentNotFoundError, GuidanceNotFoundError, InvalidGuidanceError, ProjectNotFoundError } from '@domain/errors/Domain.Error'
 import { DOC_BODY_MAX, DOC_ID_PATTERN, DOC_KINDS, DOC_SUMMARY_MAX, DOC_TITLE_MAX, IProjectDoc, READ_DOC_TOOL, TDocKind } from '@domain/models/ProjectDoc.Model'
 import { IRule, RULE_BODY_MAX, RULE_TITLE_MAX } from '@domain/models/Rule.Model'
 import { IGuidanceRepository, TGuidanceScope } from '@domain/ports/GuidanceRepository.Port'
@@ -20,6 +20,18 @@ export interface IContextDoc {
   summary: string
   projectId?: string
   tokens: number
+}
+
+/** O que o serviço precisa saber de um agente: o projeto dele decide que specs ele pode carregar. */
+export interface IContextAgent {
+  id: string
+  projectId?: string
+}
+
+/** Quem carrega uma spec inteira: os projetos e os agentes (o selo da página Specs). */
+export interface ILoadedIn {
+  projects: string[]
+  agents: string[]
 }
 
 /** Tokens estimados de um texto (≈ 4 caracteres por token): só para a tela avisar do peso. */
@@ -45,6 +57,8 @@ export class GuidanceService {
     private readonly repository: IGuidanceRepository,
     /** O projeto existe? (rule e documento de projeto apontam para um que exista). */
     private readonly projectExists: (projectId: string) => boolean,
+    /** O agente existe, e de que projeto é? (o contexto inicial do agente). Ausente = nenhum agente. */
+    private readonly agentOf: (agentId: string) => IContextAgent | undefined = () => undefined,
     private readonly now: () => Date = () => new Date(),
   ) {}
 
@@ -193,61 +207,72 @@ export class GuidanceService {
    * valer, volta a entrar.
    */
   initialContext(projectId: string): IProjectDoc[] {
-    return this.repository
-      .contextDocs(projectId)
-      .map((id) => this.repository.doc(id))
-      .filter((doc): doc is IProjectDoc => !!doc && doc.kind === 'spec' && (!doc.projectId || doc.projectId === projectId))
+    return this.validSpecs(this.repository.contextDocs(projectId), projectId)
   }
 
   /** O contexto inicial como a tela o mostra: sem o corpo, com os tokens estimados. */
   initialContextView(projectId: string): { docs: IContextDoc[]; totalTokens: number } {
     this.requireProject(projectId)
-    const docs = this.initialContext(projectId).map((doc) => ({
-      id: doc.id,
-      title: doc.title,
-      summary: doc.summary,
-      ...(doc.projectId ? { projectId: doc.projectId } : {}),
-      tokens: estimateTokens(doc.body),
-    }))
-    return { docs, totalTokens: docs.reduce((sum, doc) => sum + doc.tokens, 0) }
+    return contextView(this.initialContext(projectId))
   }
 
   /** ⛔ Só spec, e só a global ou a do próprio projeto. Troca a lista inteira, na ordem dada. */
   setInitialContext(projectId: string, docIds: readonly string[], by: string): { docs: IContextDoc[]; totalTokens: number } {
     this.requireProject(projectId)
-    const issues: TIssues = []
-    const seen = new Set<string>()
-    for (const id of docIds) {
-      const doc = this.repository.doc(id)
-      if (seen.has(id)) issues.push({ field: 'docIds', message: `repeated: ${id}` })
-      else if (!doc) issues.push({ field: 'docIds', message: `no such document: ${id}` })
-      else if (doc.kind !== 'spec') issues.push({ field: 'docIds', message: `only specs load in full: ${id} is an ${doc.kind}` })
-      else if (doc.projectId && doc.projectId !== projectId) issues.push({ field: 'docIds', message: `${id} belongs to another project (${doc.projectId})` })
-      seen.add(id)
-    }
-    if (issues.length) throw new InvalidGuidanceError(issues)
+    this.checkSpecs(docIds, projectId, 'another project')
     this.repository.setContextDocs(projectId, docIds, by)
     return this.initialContextView(projectId)
   }
 
-  /** Os projetos que carregam o documento inteiro (o selo da página Specs). */
-  loadedIn(docId: string): string[] {
-    return this.repository.contextProjectsOf(docId).filter((projectId) => this.initialContext(projectId).some((doc) => doc.id === docId))
+  /**
+   * O CONTEXTO INICIAL do AGENTE: as specs que ele carrega inteiras ALÉM das do projeto (o agente desenvolvedor e as
+   * de arquitetura). ⛔ Agente de projeto: as globais e as do projeto dele. Agente global: só as globais — ele roda
+   * em qualquer projeto, e uma spec de um projeto vazaria para os outros.
+   */
+  agentContext(agentId: string): IProjectDoc[] {
+    const agent = this.agentOf(agentId)
+    return agent ? this.validSpecs(this.repository.agentContextDocs(agentId), agent.projectId) : []
+  }
+
+  agentContextView(agentId: string): { docs: IContextDoc[]; totalTokens: number } {
+    this.requireAgent(agentId)
+    return contextView(this.agentContext(agentId))
+  }
+
+  setAgentContext(agentId: string, docIds: readonly string[], by: string): { docs: IContextDoc[]; totalTokens: number } {
+    const agent = this.requireAgent(agentId)
+    this.checkSpecs(docIds, agent.projectId, agent.projectId ? 'another project' : 'a project (a global agent loads only global specs)')
+    this.repository.setAgentContextDocs(agentId, docIds, by)
+    return this.agentContextView(agentId)
+  }
+
+  /** O agente foi apagado: a lista dele vai junto. */
+  removeAgent(agentId: string): void {
+    this.repository.deleteAgentContext(agentId)
+  }
+
+  /** Quem carrega o documento inteiro, projetos e agentes (o selo da página Specs). */
+  loadedIn(docId: string): ILoadedIn {
+    return {
+      projects: this.repository.contextProjectsOf(docId).filter((projectId) => this.initialContext(projectId).some((doc) => doc.id === docId)),
+      agents: this.repository.agentContextOf(docId).filter((agentId) => this.agentContext(agentId).some((doc) => doc.id === docId)),
+    }
   }
 
   /** Há documento no índice desta conversa? É o que liga o `read_doc` nela. */
-  hasDocs(projectId?: string): boolean {
-    return this.visibleDocs(projectId).length > 0
+  hasDocs(projectId?: string, agentId?: string): boolean {
+    return this.visibleDocs(projectId, agentId).length > 0
   }
 
   /**
-   * O que vai no system prompt da conversa: as rules ligadas (globais, depois as do projeto, numeradas) e o
-   * índice dos documentos. `undefined` sem nada cadastrado — a seção nem aparece.
+   * O que vai no system prompt da conversa: as rules ligadas (globais, depois as do projeto, numeradas), as specs
+   * inteiras do projeto e as do agente, e o índice dos documentos. `undefined` sem nada cadastrado — a seção nem
+   * aparece.
    */
-  environmentFor(projectId?: string): string | undefined {
+  environmentFor(projectId?: string, agentId?: string): string | undefined {
     const rules = [...this.repository.rules(null), ...(projectId ? this.repository.rules(projectId) : [])].filter((rule) => rule.enabled)
-    const loaded = projectId ? this.initialContext(projectId) : []
-    const docs = this.visibleDocs(projectId)
+    const { project: loaded, agent: own } = this.loadedFor(projectId, agentId)
+    const docs = this.visibleDocs(projectId, agentId)
     const sections: string[] = []
     if (rules.length) {
       sections.push(
@@ -264,6 +289,15 @@ export class GuidanceService {
           '## Specs do projeto',
           'Carregadas inteiras: valem como as regras do ambiente. Siga-as em toda resposta e em toda ferramenta que você usar.',
           ...loaded.map((doc) => `### ${doc.title}\n${doc.body.trim()}`),
+        ].join('\n\n'),
+      )
+    }
+    if (own.length) {
+      sections.push(
+        [
+          '## Specs do agente',
+          'Carregadas inteiras para o seu papel, além das do projeto: valem como as regras do ambiente.',
+          ...own.map((doc) => `### ${doc.title}\n${doc.body.trim()}`),
         ].join('\n\n'),
       )
     }
@@ -284,14 +318,48 @@ export class GuidanceService {
     this.repository.deleteProject(projectId)
   }
 
+  /** As specs inteiras da conversa: as do projeto e as do agente — a que está nas duas fica só na do projeto. */
+  private loadedFor(projectId?: string, agentId?: string): { project: IProjectDoc[]; agent: IProjectDoc[] } {
+    const project = projectId ? this.initialContext(projectId) : []
+    const taken = new Set(project.map((doc) => doc.id))
+    return { project, agent: agentId ? this.agentContext(agentId).filter((doc) => !taken.has(doc.id)) : [] }
+  }
+
   /** O índice da conversa: os globais e os do projeto, menos os que já vão inteiros no prompt. */
-  private visibleDocs(projectId?: string): IProjectDoc[] {
-    const loaded = new Set(projectId ? this.initialContext(projectId).map((doc) => doc.id) : [])
+  private visibleDocs(projectId?: string, agentId?: string): IProjectDoc[] {
+    const { project, agent } = this.loadedFor(projectId, agentId)
+    const loaded = new Set([...project, ...agent].map((doc) => doc.id))
     return [...this.repository.docs(null), ...(projectId ? this.repository.docs(projectId) : [])].filter((doc) => !loaded.has(doc.id))
+  }
+
+  /** As marcadas que ainda valem: spec, e global ou do escopo dado. ⚖️ A marca do que deixou de valer fica. */
+  private validSpecs(docIds: readonly string[], projectId: string | undefined): IProjectDoc[] {
+    return docIds.map((id) => this.repository.doc(id)).filter((doc): doc is IProjectDoc => !!doc && doc.kind === 'spec' && (!doc.projectId || doc.projectId === projectId))
+  }
+
+  /** ⛔ Só spec, global ou do escopo dado, sem repetir. Todos os problemas de uma vez. */
+  private checkSpecs(docIds: readonly string[], projectId: string | undefined, outside: string): void {
+    const issues: TIssues = []
+    const seen = new Set<string>()
+    for (const id of docIds) {
+      const doc = this.repository.doc(id)
+      if (seen.has(id)) issues.push({ field: 'docIds', message: `repeated: ${id}` })
+      else if (!doc) issues.push({ field: 'docIds', message: `no such document: ${id}` })
+      else if (doc.kind !== 'spec') issues.push({ field: 'docIds', message: `only specs load in full: ${id} is an ${doc.kind}` })
+      else if (doc.projectId && doc.projectId !== projectId) issues.push({ field: 'docIds', message: `${id} belongs to ${outside} (${doc.projectId})` })
+      seen.add(id)
+    }
+    if (issues.length) throw new InvalidGuidanceError(issues)
   }
 
   private requireProject(projectId: string): void {
     if (!this.projectExists(projectId)) throw new ProjectNotFoundError(projectId)
+  }
+
+  private requireAgent(agentId: string): IContextAgent {
+    const agent = this.agentOf(agentId)
+    if (!agent) throw new AgentNotFoundError(agentId)
+    return agent
   }
 
   private nextPosition(scope: TGuidanceScope): number {
@@ -329,4 +397,15 @@ function docIssues(doc: IProjectDoc): TIssues {
   if (!doc.body.trim()) issues.push({ field: 'body', message: 'required' })
   else if (doc.body.length > DOC_BODY_MAX) issues.push({ field: 'body', message: `at most ${DOC_BODY_MAX} characters` })
   return issues
+}
+
+function contextView(docs: readonly IProjectDoc[]): { docs: IContextDoc[]; totalTokens: number } {
+  const view = docs.map((doc) => ({
+    id: doc.id,
+    title: doc.title,
+    summary: doc.summary,
+    ...(doc.projectId ? { projectId: doc.projectId } : {}),
+    tokens: estimateTokens(doc.body),
+  }))
+  return { docs: view, totalTokens: view.reduce((sum, doc) => sum + doc.tokens, 0) }
 }

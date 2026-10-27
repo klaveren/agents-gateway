@@ -95,7 +95,14 @@ describe('Projetos (integração)', () => {
     },
   )
   const proof = { prove: async (value: string) => !!tokens.verify(value) }
-  const guidance = new GuidanceService(new SqliteGuidanceRepository(':memory:'), (id) => projects.exists(id))
+  const guidance = new GuidanceService(
+    new SqliteGuidanceRepository(':memory:'),
+    (id) => projects.exists(id),
+    (id) => {
+      const agent = agents.get(id)
+      return agent ? { id: agent.id, ...(agent.projectId ? { projectId: agent.projectId } : {}) } : undefined
+    },
+  )
   let base = ''
   let stop = () => undefined as void
 
@@ -253,9 +260,18 @@ describe('Projetos (integração)', () => {
       (await call(ADMIN, 'GET', '/projects/ctx/initial-context')).body.result.docs.map((doc: { id: string }) => doc.id),
       ['seg'],
     )
-    assert.deepStrictEqual((await call(ADMIN, 'GET', '/docs')).body.result.find((doc: { id: string }) => doc.id === 'seg').loadedIn, ['ctx'])
+    assert.deepStrictEqual((await call(ADMIN, 'GET', '/docs')).body.result.find((doc: { id: string }) => doc.id === 'seg').loadedIn.projects, ['ctx'])
     assert.strictEqual((await call(ADMIN, 'PUT', '/projects/ctx/initial-context', { docIds: ['api'] })).status, 422)
     assert.strictEqual((await call(ANA, 'GET', '/projects/ctx/initial-context')).status, 404)
     assert.strictEqual((await call(ANA, 'PUT', '/projects/ctx/initial-context', { docIds: [] })).status, 404)
+  })
+
+  it('⛔ o contexto inicial do agente é do admin; agente que não existe é 404', async () => {
+    await call(ADMIN, 'POST', '/docs', { id: 'arq', kind: 'spec', title: 'Arquitetura', summary: 'a', body: 'Hexagonal.' })
+    const saved = await call(ADMIN, 'PUT', `/agents/${CLAUDE_TEST_AGENT.id}/initial-context`, { docIds: ['arq'] })
+    assert.deepStrictEqual([saved.status, saved.body.result.docs.map((doc: { id: string }) => doc.id)], [200, ['arq']])
+    assert.deepStrictEqual((await call(ADMIN, 'GET', '/docs')).body.result.find((doc: { id: string }) => doc.id === 'arq').loadedIn.agents, [CLAUDE_TEST_AGENT.id])
+    assert.strictEqual((await call(ADMIN, 'GET', '/agents/nao-existe/initial-context')).status, 404)
+    assert.strictEqual((await call(ANA, 'GET', `/agents/${CLAUDE_TEST_AGENT.id}/initial-context`)).status, 404)
   })
 })

@@ -728,9 +728,9 @@ describe('AgentProvider — rules e documentos', () => {
       },
       async cancel() {},
     }
-    const asked: Array<string | undefined> = []
+    const asked: string[] = []
     const guidance = {
-      environmentFor: (projectId?: string) => (asked.push(projectId), `## Regras do ambiente\n1. **de ${projectId}**`),
+      environmentFor: (projectId?: string, agentId?: string) => (asked.push(`${projectId}/${agentId}`), `## Regras do ambiente\n1. **de ${projectId}**`),
       hasDocs: (projectId?: string) => projectId === 'xpto',
     }
     const provider = new AgentProvider(new Map([[adapterKey(EProvider.GOOGLE, EMode.CHAT), adapter]]), store, undefined, SEED, undefined, guidance)
@@ -738,7 +738,7 @@ describe('AgentProvider — rules e documentos', () => {
     const session = await provider.createSession({ agentId: SEED.list()[0].id, environment: 'forjado pelo corpo', metadata: { project: 'xpto' } })
     for await (const _event of provider.sendMessage(session.id, { text: 'oi' })) void _event
 
-    assert.deepStrictEqual(asked, ['xpto'])
+    assert.deepStrictEqual(asked, [`xpto/${SEED.list()[0].id}`])
     assert.strictEqual(seen.environment, '## Regras do ambiente\n1. **de xpto**')
     assert.ok(seen.created.includes('read_doc') && seen.turn.includes('read_doc'))
     assert.strictEqual(seen.project, 'xpto')

@@ -9,6 +9,7 @@ import { docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId } from '@/lib/guida
 import { renderMarkdown } from '@/lib/markdown'
 import type { IProjectDoc, TDocKind } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
+import { useAgentsStore } from '@/stores/agents'
 import { useProjectsStore } from '@/stores/projects'
 
 /**
@@ -21,6 +22,7 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const projects = useProjectsStore()
+const agents = useAgentsStore()
 
 /** O que é cada tipo, para quem cadastra: a página explica antes de pedir o texto. */
 const KIND: Record<TDocKind, { title: string; one: string; base: string; short: string; lead: string; when: string[]; example: string; placeholder: string }> = {
@@ -82,6 +84,8 @@ const dirty = computed(() => {
 onMounted(async () => {
   if (!auth.isAdmin) return
   if (!projects.loaded) await projects.load().catch(() => undefined)
+  // Os nomes dos agentes do selo "carregada em".
+  if (!agents.loaded) void agents.load().catch(() => undefined)
   await loadList()
 })
 watch(scope, () => void loadList())
@@ -165,6 +169,13 @@ async function confirmRemove() {
   }
 }
 
+/** Quem carrega a spec inteira, para o selo: "XPTO, agente Dev". */
+function loadedLabel(doc: IProjectDoc): string {
+  const projectsIn = (doc.loadedIn?.projects ?? []).map((id) => scopeLabel(id, projects.list))
+  const agentsIn = (doc.loadedIn?.agents ?? []).map((id) => `agente ${agents.byId.get(id)?.name ?? id}`)
+  return [...projectsIn, ...agentsIn].join(', ')
+}
+
 function describe(failure: unknown): string {
   return failure instanceof Error ? failure.message : String(failure)
 }
@@ -192,9 +203,7 @@ function describe(failure: unknown): string {
       <RouterLink v-for="doc in shown" :key="doc.id" :to="`${info.base}/${doc.id}`" class="mx-2 block rounded-xl px-3 py-2" :class="doc.id === id ? 'bg-emerald-500/15' : 'hover:bg-zinc-800/60'">
         <span class="flex items-center gap-2">
           <span class="truncate text-sm font-medium">{{ doc.title }}</span>
-          <span v-if="doc.loadedIn?.length" class="shrink-0 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-300" :title="`Vai inteira no prompt de: ${doc.loadedIn.map((id) => scopeLabel(id, projects.list)).join(', ')}`">
-            carregada em {{ doc.loadedIn.map((id) => scopeLabel(id, projects.list)).join(', ') }}
-          </span>
+          <span v-if="loadedLabel(doc)" class="shrink-0 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-300" :title="`Vai inteira no prompt de: ${loadedLabel(doc)}`">carregada em {{ loadedLabel(doc) }}</span>
         </span>
         <span class="block truncate text-xs text-zinc-500">{{ doc.id }}<template v-if="doc.summary"> · {{ doc.summary }}</template></span>
       </RouterLink>

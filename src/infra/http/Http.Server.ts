@@ -233,6 +233,8 @@ function buildRoutes(
     { method: 'delete', path: '/docs/:id', handler: guidance.deleteDoc },
     { method: 'get', path: '/projects/:id/initial-context', handler: guidance.getInitialContext },
     { method: 'put', path: '/projects/:id/initial-context', handler: guidance.setInitialContext },
+    { method: 'get', path: '/agents/:agentId/initial-context', handler: guidance.getAgentContext },
+    { method: 'put', path: '/agents/:agentId/initial-context', handler: guidance.setAgentContext },
     { method: 'get', path: '/projects', handler: projects.list },
     { method: 'post', path: '/projects', handler: projects.create },
     { method: 'put', path: '/projects/:id', handler: projects.update },

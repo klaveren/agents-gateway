@@ -361,6 +361,17 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     async ({ projectId }) => reply(await api('GET', `/projects/${encodeURIComponent(projectId)}/initial-context`)),
   )
 
+  server.registerTool(
+    'get_agent_initial_context',
+    {
+      description:
+        "The initial context of an agent: the specs it loads IN FULL on top of its project's initial context (e.g. the architecture specs for a developer agent), in order, with estimated tokens.",
+      inputSchema: { agentId: z.string() },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ agentId }) => reply(await api('GET', `/agents/${encodeURIComponent(agentId)}/initial-context`)),
+  )
+
   if (!access.write) return
 
   server.registerTool(
@@ -545,6 +556,16 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
       inputSchema: { projectId: z.string(), docIds: z.array(z.string()).describe('Spec ids from list_docs, in prompt order') },
     },
     async ({ projectId, docIds }) => reply(await api('PUT', `/projects/${encodeURIComponent(projectId)}/initial-context`, { body: { docIds } })),
+  )
+
+  server.registerTool(
+    'set_agent_initial_context',
+    {
+      description:
+        "Replace the initial context of an agent: the specs (only specs) it loads IN FULL in every new conversation, on top of its project's, in this order. A project agent may use global specs and those of its project; a global agent only global ones. Send the whole list; empty = none. Mention the total tokens and confirm with the person first.",
+      inputSchema: { agentId: z.string(), docIds: z.array(z.string()).describe('Spec ids from list_docs, in prompt order') },
+    },
+    async ({ agentId, docIds }) => reply(await api('PUT', `/agents/${encodeURIComponent(agentId)}/initial-context`, { body: { docIds } })),
   )
 
   server.registerTool(

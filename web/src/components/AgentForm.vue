@@ -9,6 +9,7 @@ import { useAgentsStore } from '@/stores/agents'
 import { useMcpStore } from '@/stores/mcp'
 import { useProjectsStore } from '@/stores/projects'
 import AgentHooks from './AgentHooks.vue'
+import AgentInitialContext from './AgentInitialContext.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 
 const props = defineProps<{ agent?: IAgentDetail; creating: boolean }>()
@@ -259,7 +260,7 @@ const deleting = ref(false)
  * As guias do formulário: o texto do agente na primeira, e cada grupo de capacidades na sua. A contagem diz
  * quanto está escolhido sem abrir a guia; o ponto vermelho, que o servidor recusou algo ali.
  */
-type TTab = 'agente' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'hooks'
+type TTab = 'agente' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'contexto' | 'hooks'
 const tab = ref<TTab>('agente')
 const TAB_FIELDS: Record<TTab, string[]> = {
   agente: ['id', 'name', 'soul', 'systemPrompt', 'role', 'adminOnly', 'projectId'],
@@ -267,6 +268,7 @@ const TAB_FIELDS: Record<TTab, string[]> = {
   ferramentas: ['allowedTools'],
   mcps: [],
   sdk: [],
+  contexto: [],
   hooks: [],
 }
 const tabs = computed(() => {
@@ -283,6 +285,7 @@ const tabs = computed(() => {
     },
     { id: 'mcps', label: 'MCPs', count: tools.filter((entry) => entry.startsWith('mcp:')).length },
     { id: 'sdk', label: 'SDK', count: tools.filter((entry) => entry.startsWith('sdk:')).length },
+    { id: 'contexto', label: 'Contexto inicial' },
     { id: 'hooks', label: 'Hooks' },
   ]
   // Sem nativa nem sandbox nos providers escolhidos, a guia do SDK não tem o que mostrar.
@@ -753,6 +756,12 @@ async function remove() {
     <p v-else-if="Object.keys(issues).length" class="text-sm text-rose-300">
       Não salvou — corrija: {{ summarizeIssues(issues, FIELD_LABEL) }}
     </p>
+    <!-- ⚖️ O contexto inicial também tem o próprio cadastro (fora do Salvar do agente): só para agente já gravado. -->
+    <section v-if="tab === 'contexto'">
+      <AgentInitialContext v-if="agent && !creating" :agent-id="agent.id" :project-id="agent.projectId" :project-name="projects.list.find((item) => item.id === agent?.projectId)?.name" />
+      <p v-else class="text-sm text-zinc-400">Crie o agente primeiro: o contexto inicial é dele.</p>
+    </section>
+
     <!-- ⚖️ Os hooks têm o próprio cadastro (não vão no Salvar do agente): só existem para um agente já gravado. -->
     <section v-if="tab === 'hooks'">
       <AgentHooks v-if="agent && !creating" :agent-id="agent.id" />
