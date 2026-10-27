@@ -71,6 +71,11 @@ const agentShape = {
     .optional()
     .describe('`subagent`: only called by another agent through delegation (`agent:<id>`), never in a direct conversation. `null` makes it a regular agent.'),
   adminOnly: z.boolean().optional().describe('Only administrators can talk to the agent. Absent or false = open to every account.'),
+  projectId: z
+    .string()
+    .nullable()
+    .optional()
+    .describe('The project the agent belongs to (see list_projects): it only works in that project folder and only its members see it. Absent or null = global (every project).'),
 }
 
 /**
@@ -82,13 +87,24 @@ const agentShape = {
  */
 function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolean; write: boolean }) {
   server.registerTool(
+    'list_projects',
+    {
+      description:
+        'The projects you can use (an administrator sees all, with the folder and member count). Agents and conversations belong to a project; models, MCP servers and packages are global.',
+      annotations: { readOnlyHint: true },
+    },
+    async () => reply(await api('GET', '/projects')),
+  )
+
+  server.registerTool(
     'list_agents',
     {
       description:
-        'List the agents: providers, each with its models (with price) and reasoning levels per model, lanes and tools. Never includes the system prompt. Agents with `role: subagent` are only called by other agents and cannot start a conversation.',
+        'List the agents: providers, each with its models (with price) and reasoning levels per model, lanes and tools, and `projectId` (absent = global). With `projectId`, only that project agents plus the global ones. Never includes the system prompt. Agents with `role: subagent` are only called by other agents and cannot start a conversation.',
+      inputSchema: { projectId: z.string().optional() },
       annotations: { readOnlyHint: true },
     },
-    async () => reply(await api('GET', '/agents')),
+    async ({ projectId }) => reply(await api('GET', '/agents', { query: { project: projectId } })),
   )
 
   server.registerTool(
@@ -103,6 +119,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
         model: z.string().optional(),
         reasoning: z.string().optional(),
         metadata: z.record(z.string(), z.unknown()).optional(),
+        projectId: z.string().optional().describe('For a global agent: the project the conversation belongs to. A project agent always opens in its own project.'),
         message: z.string().optional(),
       },
     },
@@ -134,12 +151,17 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   server.registerTool(
     'list_conversations',
     {
-      description: 'List conversations (yours; an administrator sees all). `metadata` filters by stored metadata keys, e.g. { accountId: "xpto" }.',
-      inputSchema: { q: z.string().optional(), metadata: z.record(z.string(), z.string()).optional(), limit: z.number().int().min(1).max(100).optional() },
+      description: 'List conversations (yours; an administrator sees all). `projectId` keeps one project; `metadata` filters by stored metadata keys, e.g. { accountId: "xpto" }.',
+      inputSchema: {
+        q: z.string().optional(),
+        projectId: z.string().optional(),
+        metadata: z.record(z.string(), z.string()).optional(),
+        limit: z.number().int().min(1).max(100).optional(),
+      },
       annotations: { readOnlyHint: true },
     },
-    async ({ q, metadata, limit }) =>
-      reply(await api('GET', '/conversations', { query: { ...metadata, q, limit } }), (result) =>
+    async ({ q, projectId, metadata, limit }) =>
+      reply(await api('GET', '/conversations', { query: { ...metadata, q, limit, project: projectId } }), (result) =>
         ((result as { sessions?: Array<Record<string, unknown>> }).sessions ?? []).map((session) => ({
           id: session.id,
           title: session.title,
@@ -301,6 +323,29 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   )
 
   if (!access.write) return
+
+  server.registerTool(
+    'save_project',
+    {
+      description:
+        'Create a project, or change the name/description of the one with the same id (the id cannot change). A project gets its own folder; its agents work there and only its members see them. Confirm with the person first.',
+      inputSchema: { id: z.string().describe('2–32 lowercase letters, digits or hyphens'), name: z.string(), description: z.string().optional() },
+    },
+    async ({ id, ...fields }) => {
+      const exists = ((await api('GET', '/projects')).result as Array<{ id: string }> | undefined)?.some((project) => project.id === id)
+      return reply(exists ? await api('PUT', `/projects/${encodeURIComponent(id)}`, { body: fields }) : await api('POST', '/projects', { body: { id, ...fields } }))
+    },
+  )
+
+  server.registerTool(
+    'set_project_members',
+    {
+      description:
+        'Replace the whole member list of a project with these account ids (anyone not listed leaves). Administrators see every project anyway. Confirm with the person first.',
+      inputSchema: { projectId: z.string(), userIds: z.array(z.string()) },
+    },
+    async ({ projectId, userIds }) => reply(await api('PUT', `/projects/${encodeURIComponent(projectId)}/members`, { body: { userIds } })),
+  )
 
   server.registerTool(
     'save_hook',

@@ -15,7 +15,7 @@ import { sessionPrefix } from '@infra/session/Session.Key'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
 import { IConnectionSource, UnavailableProviderError } from './support/Keyed.Client'
 import { composeSystemPrompt, maxToolTurns } from './support/Prompt.Helper'
-import { sessionWorkspace, subscriptionEnv, subscriptionHome } from './support/Subscription.Workspace'
+import { subscriptionEnv, subscriptionHome, workspaceFor } from './support/Subscription.Workspace'
 
 type TSpawn = typeof nodeSpawn
 
@@ -127,7 +127,7 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
     const target = agent.providers.find((candidate) => candidate.provider === record.provider)
     const sandbox = sandboxOf(EProvider.ANTIGRAVITY, target?.sandbox)
     const child = this.spawn(antigravityBin(), antigravityArgs(prompt, record.model, native.conversationId, sandbox), {
-      cwd: sessionWorkspace(sessionId),
+      cwd: workspaceFor(agent.projectId, sessionId),
       env: subscriptionEnv({ HOME: home }),
       stdio: ['ignore', 'pipe', 'pipe'],
       signal: abort.signal,

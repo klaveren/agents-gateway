@@ -9,12 +9,14 @@ import {
   makeMcpProxyController,
   makePackagesController,
   makeHooksController,
+  makeProjectsController,
   makeMcpServersController,
   makeProvidersController,
   makeUsageController,
 } from '@composition/factories/Controller.Factory'
 import { cleanupOrphans } from '@infra/sandbox/Docker.Sandbox'
 import { persistInstalls } from '@infra/packages/Persistent.Installs'
+import { migrateToProjects } from '@composition/factories/Projects.Factory'
 import { bootIssues, bootWarnings } from '@infra/http/Boot.Checks'
 import { clearSessionWorkspaces } from '@infra/adapters/support/Subscription.Workspace'
 import { makeTools } from '@composition/factories/Tools.Factory'
@@ -68,6 +70,8 @@ async function bootstrap() {
   if (accounts?.setupRequired()) console.log(`[setup] Nenhuma conta ainda. Código de instalação do primeiro admin: ${accounts.setupCode}`)
 
   const controller = makeController()
+  // Uma vez: o que existia antes dos projetos vai para o projeto `geral` (ver `migrateToProjects`).
+  await migrateToProjects(controller.conversations)
   const server = new HttpServer(
     controller,
     makeAuthController(),
@@ -77,6 +81,7 @@ async function bootstrap() {
     makeMcpProxyController(),
     makePackagesController(),
     makeHooksController(),
+    makeProjectsController(),
   )
   server.start(Number.parseInt(process.env.PORT || '3000', 10))
 }

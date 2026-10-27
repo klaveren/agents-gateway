@@ -4,12 +4,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { ApiError } from './lib/api'
 import NavRail from './components/NavRail.vue'
 import { useAgentsStore } from './stores/agents'
+import { useProjectsStore } from './stores/projects'
 import { useAuthStore } from './stores/auth'
 import { useConversationsStore } from './stores/conversations'
 import { useProtocolsStore } from './stores/protocols'
 
 const auth = useAuthStore()
 const agents = useAgentsStore()
+const projects = useProjectsStore()
 const conversations = useConversationsStore()
 const protocols = useProtocolsStore()
 const route = useRoute()
@@ -52,6 +54,8 @@ onMounted(async () => {
   await auth.probe()
   // As regras de cada protocolo (lanes, níveis, assinatura): vêm do servidor, a tela não copia.
   void protocols.load().catch(() => undefined)
+  // Os projetos antes dos agentes: o atual recorta a lista.
+  await projects.load().catch(() => undefined)
   await loadAgents()
   // As ferramentas (com os rótulos das nativas), para o histórico mostrar "Busca na web" e não `WebSearch`.
   void agents.loadTools().catch(() => undefined)

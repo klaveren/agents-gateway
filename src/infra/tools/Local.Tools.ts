@@ -1,7 +1,7 @@
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
 import { bashPolicy, denyReason, truncate, type IBashPolicy } from './Bash.Guard'
-import { sessionWorkspace, subscriptionEnv } from '@infra/adapters/support/Subscription.Workspace'
+import { subscriptionEnv, workspaceFor } from '@infra/adapters/support/Subscription.Workspace'
 import { ILocalTool, IToolResult } from './Tool.Types'
 
 export interface IExecOptions {
@@ -88,10 +88,10 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
           // ⛔ Ambiente MÍNIMO: o shell herdava o `process.env` inteiro — chaves de API, `AUTH_SECRET`,
           // `SECRETS_KEY` —, e um `env` bastava para levar tudo. E o `cwd` é o diretório vazio da conversa.
           const { stdout, stderr } = await run(command, {
-            cwd: policy.cwd || sessionWorkspace(context?.sessionId ?? 'run_bash'),
+            cwd: policy.cwd || workspaceFor(context?.projectId, context?.sessionId ?? 'run_bash'),
             timeout: policy.timeoutMs,
             maxBuffer: EXEC_BUFFER_BYTES,
-            env: subscriptionEnv({ HOME: policy.cwd || sessionWorkspace(context?.sessionId ?? 'run_bash') }),
+            env: subscriptionEnv({ HOME: policy.cwd || workspaceFor(context?.projectId, context?.sessionId ?? 'run_bash') }),
           })
           const output = stdout || stderr || 'Command executed successfully with no output.'
           return { status: 'success', result: truncate(output, policy.maxOutputChars) }

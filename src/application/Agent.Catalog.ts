@@ -108,6 +108,12 @@ export class AgentCatalog implements IAgentDirectory {
     return this.repository.save(agent, options.by)
   }
 
+  /** Muda o agente de projeto sem passar pela regra do salvamento — só a migração para projetos usa. */
+  moveToProject(id: string, projectId: string, by: string): void {
+    const stored = this.repository.list().find((agent) => agent.id === id)
+    if (stored) this.repository.save({ ...toAgent(stored), projectId }, by)
+  }
+
   /**
    * ⛔ Não apaga agente que outro usa: um `agent:<id>` órfão travava todo salvamento do agente que delega,
    * e o padrão das configurações apagado fazia toda conversa sem agente escolhido falhar.
@@ -141,5 +147,6 @@ function toAgent(stored: IStoredAgent): IAgent {
     allowedTools: stored.allowedTools,
     ...(stored.role ? { role: stored.role } : {}),
     ...(stored.adminOnly ? { adminOnly: true } : {}),
+    ...(stored.projectId ? { projectId: stored.projectId } : {}),
   }
 }

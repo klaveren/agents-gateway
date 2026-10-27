@@ -8,6 +8,7 @@ import { useConversationsStore } from './conversations'
 import { useSettingsStore } from './settings'
 import { useThreadStore } from './thread'
 import { useUsageStore } from './usage'
+import { useProjectsStore } from './projects'
 
 /**
  * A sessão: quem está logado, e se é admin.
@@ -42,6 +43,7 @@ export const useAuthStore = defineStore('auth', () => {
     useThreadStore().reset()
     useUsageStore().reset()
     useSettingsStore().reset()
+    useProjectsStore().reset()
   }
 
   /**
@@ -51,6 +53,10 @@ export const useAuthStore = defineStore('auth', () => {
   async function rescope(): Promise<void> {
     // Saiu de uma conta e há login: não há escopo até entrar de novo (a tela de login é quem refaz).
     if (!user.value && localAccounts.value) return
+    // Os projetos primeiro: o atual recorta agentes, conversas e o stream.
+    await useProjectsStore()
+      .load()
+      .catch(() => undefined)
     const conversations = useConversationsStore()
     conversations.subscribe(isAdmin.value)
     void conversations.load(isAdmin.value)

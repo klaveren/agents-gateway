@@ -1,0 +1,213 @@
+import assert from 'node:assert'
+import { randomBytes } from 'node:crypto'
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { AddressInfo } from 'node:net'
+import { after, before, describe, it } from 'node:test'
+import { CancelSessionUseCase } from '@application/CancelSession.Usecase'
+import { CreateSessionUseCase } from '@application/CreateSession.Usecase'
+import { DeleteSessionUseCase } from '@application/DeleteSession.Usecase'
+import { GetSessionUseCase } from '@application/GetSession.Usecase'
+import { ListSessionsUseCase } from '@application/ListSessions.Usecase'
+import { ProjectsService } from '@application/Projects.Service'
+import { ReconfigureSessionUseCase } from '@application/ReconfigureSession.Usecase'
+import { SendMessageUseCase } from '@application/SendMessage.Usecase'
+import { EMode } from '@domain/enums/EMode.Enum'
+import { EProvider } from '@domain/enums/EProvider.Enum'
+import { IAgentEvent } from '@domain/models/AgentEvent.Model'
+import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
+import { IMessageInput } from '@domain/models/MessageInput.Model'
+import { ISession } from '@domain/models/Session.Model'
+import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
+import { HmacTokenIssuer } from '@infra/auth/Hmac.TokenIssuer'
+import { NullSettingsRepository } from '@infra/persistence/Null.SettingsRepository'
+import { SqliteConversationRepository } from '@infra/persistence/Sqlite.ConversationRepository'
+import { SqliteProjectRepository } from '@infra/persistence/Sqlite.ProjectRepository'
+import { ToolCatalog } from '@infra/tools/Tool.Catalog'
+import { CLAUDE_TEST_AGENT, GOOGLE_TEST_AGENT, OPENAI_TEST_AGENT, testAgentCatalog } from '../../testing/Agents.Fixture'
+import { AgentController } from './Agent.Controller'
+import { HttpServer } from './Http.Server'
+import { ProjectsController } from './Projects.Controller'
+
+/**
+ * Projetos de ponta a ponta: o membro de um projeto não vê nada do outro, o agente global aparece nos dois,
+ * e a conversa leva o projeto escrito pelo servidor (o cliente não forja).
+ */
+describe('Projetos (integração)', () => {
+  const tokens = new HmacTokenIssuer(randomBytes(32).toString('hex'))
+  const token = (id: string, role: 'admin' | 'member') => tokens.issue({ sub: id, email: `${id}@x.test`, role, ver: 0 }).token
+  const ADMIN = token('u_root', 'admin')
+  const ANA = token('u_ana', 'member')
+  const BIA = token('u_bia', 'member')
+
+  const sessions = new Map<string, ISession>()
+  const received: Array<{ sessionId: string; text: string }> = []
+  const provider = {
+    createSession: async (input: ICreateSessionInput) => {
+      const id = `s-${sessions.size + 1}`
+      const now = new Date()
+      sessions.set(id, {
+        id,
+        agentId: input.agentId!,
+        provider: EProvider.CLAUDE,
+        mode: EMode.AGENT,
+        model: 'm',
+        tools: false,
+        status: 'idle',
+        turns: 0,
+        usage: { inputTokens: 0, outputTokens: 0 },
+        createdAt: now,
+        lastActivityAt: now,
+        metadata: input.metadata,
+      } as ISession)
+      return { id, provider: EProvider.CLAUDE, mode: EMode.AGENT, createdAt: now, metadata: input.metadata }
+    },
+    sendMessage: async function* (sessionId: string, input: IMessageInput): AsyncIterable<IAgentEvent> {
+      received.push({ sessionId, text: `${input.context ?? ''}\n${input.text}` })
+      yield { type: 'message.completed', sessionId, timestamp: new Date() } as IAgentEvent
+    },
+    cancel: async () => undefined,
+    dispose: async () => undefined,
+    describe: (id: string) => {
+      const session = sessions.get(id)
+      if (!session) throw Object.assign(new Error(`Session not found: ${id}`), { name: 'SessionNotFoundError' })
+      return session
+    },
+    reconfigure: () => {
+      throw new Error('not used')
+    },
+    list: () => [...sessions.values()],
+  } as unknown as IAgentProvider
+
+  const folders = mkdtempSync(join(tmpdir(), 'gw-projects-test-'))
+  const agents = testAgentCatalog()
+  const projects = new ProjectsService(
+    new SqliteProjectRepository(':memory:'),
+    () => agents.list(),
+    (id) => ['u_root', 'u_ana', 'u_bia'].includes(id),
+    {
+      create: (id) => (mkdirSync(join(folders, id), { recursive: true }), join(folders, id)),
+      remove: (id) => rmSync(join(folders, id), { recursive: true, force: true }),
+    },
+  )
+  const proof = { prove: async (value: string) => !!tokens.verify(value) }
+  let base = ''
+  let stop = () => undefined as void
+
+  before(async () => {
+    const conversations = new SqliteConversationRepository(':memory:')
+    const controller = new AgentController({
+      agents,
+      catalog: { mcpConnected: false, list: async () => [], mcp: { list: () => [] } } as unknown as ToolCatalog,
+      createSession: new CreateSessionUseCase(provider),
+      sendMessage: new SendMessageUseCase(provider, conversations),
+      cancelSession: new CancelSessionUseCase(provider),
+      reconfigureSession: new ReconfigureSessionUseCase(provider),
+      deleteSession: new DeleteSessionUseCase(provider),
+      getSession: new GetSessionUseCase(provider),
+      listSessions: new ListSessionsUseCase(provider),
+      proof,
+      settings: new NullSettingsRepository(),
+      conversations,
+      projects,
+    })
+    const server = new HttpServer(controller, undefined, undefined, undefined, undefined, undefined, undefined, undefined, new ProjectsController({ projects, proof })).start(0)
+    await new Promise((resolve) => server.once('listening', resolve))
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`
+    server.unref()
+    stop = () => {
+      server.closeAllConnections()
+      server.close()
+    }
+  })
+  after(() => {
+    stop()
+    rmSync(folders, { recursive: true, force: true })
+  })
+
+  const call = (as: string, method: string, path: string, body?: unknown) =>
+    fetch(`${base}${path}`, {
+      method,
+      headers: { 'X-Tool-Authorization': `Bearer ${as}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }).then(
+      async (res) => ({ status: res.status, body: (await res.json()) as { ok: boolean; result?: any; code?: string; details?: any } }), // eslint-disable-line @typescript-eslint/no-explicit-any
+    )
+  const agentIds = async (as: string, project?: string) =>
+    ((await call(as, 'GET', `/agents${project ? `?project=${project}` : ''}`)).body.result as Array<{ id: string }>).map((agent) => agent.id).sort()
+
+  it('o admin cria projetos (com a pasta) e escolhe os membros; cada um vê só os seus', async () => {
+    assert.strictEqual((await call(ADMIN, 'POST', '/projects', { id: 'alfa', name: 'Alfa' })).status, 201)
+    assert.strictEqual((await call(ADMIN, 'POST', '/projects', { id: 'beta', name: 'Beta' })).status, 201)
+    assert.strictEqual((await call(ANA, 'POST', '/projects', { id: 'gama', name: 'Gama' })).status, 404, 'membro não cria projeto')
+    assert.ok(existsSync(join(folders, 'alfa')))
+    await call(ADMIN, 'PUT', '/projects/alfa/members', { userIds: ['u_ana'] })
+    await call(ADMIN, 'PUT', '/projects/beta/members', { userIds: ['u_bia'] })
+    assert.strictEqual((await call(ADMIN, 'PUT', '/projects/beta/members', { userIds: ['u_fantasma'] })).status, 422)
+
+    assert.deepStrictEqual(
+      ((await call(ANA, 'GET', '/projects')).body.result as Array<{ id: string; folder?: string }>).map((project) => [project.id, project.folder]),
+      [['alfa', undefined]],
+    )
+    assert.deepStrictEqual(
+      ((await call(ADMIN, 'GET', '/projects')).body.result as Array<{ id: string }>).map((project) => project.id),
+      ['alfa', 'beta'],
+    )
+  })
+
+  it('⛔ o agente de projeto só aparece para os membros dele; o global aparece em todos', async () => {
+    agents.moveToProject(CLAUDE_TEST_AGENT.id, 'alfa', 'teste')
+    agents.moveToProject(OPENAI_TEST_AGENT.id, 'beta', 'teste')
+    assert.deepStrictEqual(await agentIds(ANA, 'alfa'), [CLAUDE_TEST_AGENT.id, GOOGLE_TEST_AGENT.id].sort())
+    assert.deepStrictEqual(await agentIds(ANA), [CLAUDE_TEST_AGENT.id, GOOGLE_TEST_AGENT.id].sort(), 'sem ?project, o que ela pode usar')
+    assert.strictEqual((await call(ANA, 'GET', '/agents?project=beta')).status, 404, 'projeto alheio responde como inexistente')
+    assert.deepStrictEqual(await agentIds(BIA), [GOOGLE_TEST_AGENT.id, OPENAI_TEST_AGENT.id].sort(), 'e a Bia, só o do projeto dela e o global')
+    assert.deepStrictEqual(await agentIds(ADMIN, 'beta'), [GOOGLE_TEST_AGENT.id, OPENAI_TEST_AGENT.id].sort())
+  })
+
+  it('⛔ abrir conversa no agente de outro projeto: 404; no do próprio, a conversa leva o projeto — e o forjado some', async () => {
+    assert.strictEqual((await call(ANA, 'POST', '/sessions', { agentId: OPENAI_TEST_AGENT.id })).status, 404)
+
+    const opened = await call(ANA, 'POST', '/sessions', { agentId: CLAUDE_TEST_AGENT.id, metadata: { project: 'beta', origem: 'tela' } })
+    assert.strictEqual(opened.status, 201)
+    const session = sessions.get(opened.body.result.id)!
+    assert.deepStrictEqual([session.metadata?.project, session.metadata?.origem], ['alfa', 'tela'])
+
+    await call(ANA, 'POST', `/sessions/${opened.body.result.id}/messages`, { message: 'oi' })
+    assert.match(received.at(-1)!.text, /Projeto: Alfa \(alfa\)\. Sua pasta de trabalho é .*alfa/)
+  })
+
+  it('o agente global aberto dentro de um projeto fica nele; num projeto alheio, 404', async () => {
+    const opened = await call(ANA, 'POST', '/sessions', { agentId: GOOGLE_TEST_AGENT.id, projectId: 'alfa' })
+    assert.strictEqual(sessions.get(opened.body.result.id)?.metadata?.project, 'alfa')
+    await call(ANA, 'POST', `/sessions/${opened.body.result.id}/messages`, { message: 'crie um agente' })
+    assert.match(received.at(-1)!.text, /Projeto atual: Alfa \(projectId "alfa"\)/)
+
+    assert.strictEqual((await call(ANA, 'POST', '/sessions', { agentId: GOOGLE_TEST_AGENT.id, projectId: 'beta' })).status, 404)
+    const loose = await call(ANA, 'POST', '/sessions', { agentId: GOOGLE_TEST_AGENT.id })
+    assert.strictEqual(sessions.get(loose.body.result.id)?.metadata?.project, undefined, 'sem projeto pedido, o global fica sem projeto')
+  })
+
+  it('a caixa de entrada filtra pelo projeto, e o projeto alheio dá 404', async () => {
+    const mine = (await call(ANA, 'GET', '/conversations?project=alfa')).body.result.sessions as Array<{ metadata: { project?: string } }>
+    assert.ok(mine.length >= 2)
+    assert.ok(mine.every((session) => session.metadata.project === 'alfa'))
+    assert.strictEqual((await call(ANA, 'GET', '/conversations?project=beta')).status, 404)
+    const page = (await call(ADMIN, 'GET', '/conversations?scope=all&page=1&project=alfa')).body.result
+    assert.ok(page.sessions.length >= 2 && page.sessions.every((session: { metadata: { project?: string } }) => session.metadata.project === 'alfa'))
+  })
+
+  it('⛔ salvar agente: projeto inexistente e delegação para outro projeto são recusados; apagar projeto com agente, 409', async () => {
+    const detail = (await call(ADMIN, 'GET', `/agents/${CLAUDE_TEST_AGENT.id}`)).body.result
+    const body = { ...detail, providers: detail.providers.map((target: { id: string; models: string[] }) => ({ provider: target.id, models: target.models })) }
+    const ghost = await call(ADMIN, 'PUT', `/agents/${CLAUDE_TEST_AGENT.id}`, { ...body, projectId: 'nao-existe' })
+    assert.strictEqual(ghost.status, 422)
+    assert.ok((ghost.body.details as Array<{ field: string }>).some((issue) => issue.field === 'projectId'))
+    const crossing = await call(ADMIN, 'PUT', `/agents/${CLAUDE_TEST_AGENT.id}`, { ...body, allowedTools: [`agent:${OPENAI_TEST_AGENT.id}`] })
+    assert.ok((crossing.body.details as Array<{ message: string }>).some((issue) => /another project/.test(issue.message)))
+
+    const busy = await call(ADMIN, 'DELETE', '/projects/beta')
+    assert.deepStrictEqual([busy.status, busy.body.code], [409, 'project_in_use'])
+  })
+})

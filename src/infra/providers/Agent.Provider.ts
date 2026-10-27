@@ -171,7 +171,7 @@ export class AgentProvider implements IAgentProvider {
        * outros não — e os que não resolviam falavam com o MCP sem identidade, o que aparece como
        * "não consegui consultar" e parece problema do provider.
        */
-      const context: IExecutionContext = { token: caller()?.token, sessionId, agentId: record.agentId }
+      const context: IExecutionContext = { token: caller()?.token, sessionId, agentId: record.agentId, ...(agent.projectId ? { projectId: agent.projectId } : {}) }
 
       for await (const event of adapter.sendMessage(agent, sessionId, sent, context)) {
         // Somar o usage aqui vale para as seis implementações de uma vez.

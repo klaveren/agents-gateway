@@ -7,6 +7,9 @@ import { McpServersController } from './McpServers.Controller'
 import { McpProxyController } from './McpProxy.Controller'
 import { PackagesController } from './Packages.Controller'
 import { HOOK_PATH, HooksController } from './Hooks.Controller'
+import { ProjectsController } from './Projects.Controller'
+import { ProjectsService } from '@application/Projects.Service'
+import { SqliteProjectRepository } from '@infra/persistence/Sqlite.ProjectRepository'
 import { AgentHooksService } from '@application/AgentHooks.Service'
 import { SqliteAgentHookRepository } from '@infra/persistence/Sqlite.AgentHookRepository'
 import { randomBytes } from 'node:crypto'
@@ -76,6 +79,7 @@ export class HttpServer {
     mcpProxy?: McpProxyController,
     packages: PackagesController = new PackagesController(),
     hooks?: HooksController,
+    projects?: ProjectsController,
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
@@ -104,6 +108,7 @@ export class HttpServer {
         new McpProxyController({ registry: new McpRegistry(new SqliteMcpServerRepository(), { get: () => undefined }), session: () => undefined, agentTools: () => undefined }),
       packages,
       hooks ?? new HooksController({ hooks: defaultHooks(), sessionFor: () => undefined }),
+      projects ?? new ProjectsController({ projects: defaultProjects() }),
     )
     this.setupRoutes()
     this.setupFrontend()
@@ -207,8 +212,15 @@ function buildRoutes(
   mcpProxy: McpProxyController,
   packages: PackagesController,
   hooks: HooksController,
+  projects: ProjectsController,
 ): IRoute[] {
   return [
+    { method: 'get', path: '/projects', handler: projects.list },
+    { method: 'post', path: '/projects', handler: projects.create },
+    { method: 'put', path: '/projects/:id', handler: projects.update },
+    { method: 'delete', path: '/projects/:id', handler: projects.remove },
+    { method: 'get', path: '/projects/:id/members', handler: projects.members },
+    { method: 'put', path: '/projects/:id/members', handler: projects.setMembers },
     { method: 'post', path: HOOK_PATH, handler: hooks.receive },
     { method: 'get', path: '/agents/:agentId/hooks', handler: hooks.list },
     { method: 'post', path: '/agents/:agentId/hooks', handler: hooks.create },
@@ -328,4 +340,14 @@ function defaultProvidersController(): ProvidersController {
 /** Sem composição (testes que sobem só o servidor): hooks em memória, sem agentes. */
 function defaultHooks(): AgentHooksService {
   return new AgentHooksService(new SqliteAgentHookRepository(), new SqliteCredentialStore(new SecretBox(randomBytes(32))), () => false)
+}
+
+/** Sem composição: projetos em memória, sem agentes nem contas, e a pasta só no nome. */
+function defaultProjects(): ProjectsService {
+  return new ProjectsService(
+    new SqliteProjectRepository(),
+    () => [],
+    () => false,
+    { create: (id) => id, remove: () => undefined },
+  )
 }

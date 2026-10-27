@@ -110,6 +110,7 @@ watch(creating, (value) => {
           </span>
           <span v-if="agent.unavailable" class="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-300" :title="`Não abre conversa agora: ${agent.unavailable.label}`">{{ agent.unavailable.label }}</span>
           <span v-if="agent.adminOnly" class="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300" title="Só administradores conversam com este agente">só admin</span>
+          <span v-if="!agent.projectId" class="shrink-0 rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] text-sky-300" title="Aparece em todos os projetos">global</span>
         </RouterLink>
       </template>
       <p v-if="!created.length && !subagents.length" class="px-4 py-2 text-sm text-zinc-500">Nenhum agente criado ainda.</p>

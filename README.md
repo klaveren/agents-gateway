@@ -472,6 +472,21 @@ The image ships Debian's `chromium` for Playwright: the screen's preset is
 `@playwright/mcp@latest --headless --isolated --no-sandbox --executable-path=/usr/bin/chromium`.
 Outside Linux, drop `--executable-path` and it uses the installed Chrome.
 
+### Projects: several isolated workspaces in one gateway
+
+Agents, conversations and hooks belong to a **project**; models, MCP servers and packages are
+system-wide. Each project has its own folder, `<data>/projects/<id>/` (on the pod, the PVC),
+which is the working directory of its agents in every lane — persistent and shared by the
+project's conversations. Admins see every project; everyone else sees the projects they are a
+member of, and a project they cannot use answers 404. Agents with no project are **global** (the
+Atlas): they show up everywhere, and a conversation with one opened inside a project belongs to
+it. The project of a conversation is written by the server (`metadata.project`), never by the
+client. On the first boot with projects, the agents that already existed and their conversations
+move to the `geral` project, with every current account as a member.
+
+The folder organizes, but does not confine yet: confining reads and writes to it with the OS
+sandbox (bubblewrap/seatbelt) is the next step.
+
 ### Agent hooks: an event becomes a conversation
 
 Each agent has a **Hooks** tab. A hook is `POST /v1/hook/<agent>/<hook>` with its own key and a

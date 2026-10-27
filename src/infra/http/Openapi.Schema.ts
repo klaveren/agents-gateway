@@ -257,6 +257,7 @@ const agentSchema = {
     allowedTools: { type: 'array', items: { type: 'string' } },
     role: { type: 'string', enum: ['subagent'], description: 'Present on subagents: only called by another agent.' },
     adminOnly: { type: 'boolean', description: 'Present when only administrators can talk to the agent.' },
+    projectId: { type: 'string', description: 'The project the agent belongs to. Absent = global (every project).' },
   },
 }
 
@@ -294,6 +295,7 @@ const agentBody = {
     systemPrompt: { type: 'string' },
     soul: { type: 'string', maxLength: 8000, description: 'Who the agent is (identity, tone, values); the system prompt says what it does.' },
     role: { type: ['string', 'null'], enum: ['subagent', null], description: '`subagent`: only called by another agent (delegation), never in a direct conversation.' },
+    projectId: { type: ['string', 'null'], description: 'The project the agent belongs to: it works in that project folder and only its members see it. Absent or null = global.' },
     adminOnly: {
       type: 'boolean',
       description:
@@ -404,6 +406,17 @@ const mcpServerSchema = {
     agents: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' } } } },
     selfReference: { type: 'boolean', description: 'The URL is this gateway own /v1/mcp.' },
     install: { type: 'object', description: 'process only', properties: { installed: { type: 'boolean' }, version: { type: 'string' }, stale: { type: 'boolean' } } },
+  },
+}
+
+const projectSchema = {
+  type: 'object',
+  properties: {
+    id: { type: 'string' },
+    name: { type: 'string' },
+    description: { type: 'string' },
+    folder: { type: 'string', description: 'Administrators only: the project folder on the server.' },
+    members: { type: 'integer', description: 'Administrators only.' },
   },
 }
 
@@ -1042,6 +1055,63 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'Saved', ...json(envelope(mcpServerSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
     },
+    '/projects': {
+      get: {
+        summary:
+          'The projects you can use (an administrator sees all, with the folder and member count). Agents and conversations belong to a project; models, MCP servers and packages are global',
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: projectSchema })) }, '401': failures['401'] },
+      },
+      post: {
+        summary: 'Create a project and its folder (<data>/projects/<id>). Administrators only',
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            properties: { id: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{1,31}$' }, name: { type: 'string' }, description: { type: 'string' } },
+            required: ['id', 'name'],
+          }),
+        },
+        responses: { '201': { description: 'Created', ...json(envelope(projectSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/projects/{id}': {
+      put: {
+        summary: 'Change the name or description of a project (not its id). Administrators only',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', properties: { name: { type: 'string' }, description: { type: 'string' } } }) },
+        responses: { '200': { description: 'OK', ...json(envelope(projectSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+      delete: {
+        summary: 'Delete an empty project, its members and folder. Code project_in_use (409) while it still has agents. Administrators only',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'Deleted' },
+          '401': failures['401'],
+          '404': failures['404'],
+          '409': { description: 'Code project_in_use', content: { 'application/json': { schema: failureEnvelope } } },
+        },
+      },
+    },
+    '/projects/{id}/members': {
+      get: {
+        summary: 'The members of a project (account ids). Administrators only',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(envelope({ type: 'array', items: { type: 'object', properties: { userId: { type: 'string' }, addedAt: { type: 'string', format: 'date-time' } } } })),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+      put: {
+        summary: 'Replace the whole member list (anyone not listed leaves). Administrators only',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', properties: { userIds: { type: 'array', items: { type: 'string' } } }, required: ['userIds'] }) },
+        responses: { '200': { description: 'OK' }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
     '/hook/{agentId}/{hookName}': {
       post: {
         summary:
@@ -1353,7 +1423,8 @@ export const OPENAPI_DOCUMENT = {
       },
       get: {
         summary:
-          'The agents, including the lanes each supports. Members see only the active ones; admins see all, each inactive one with `unavailable`. Requires a proven caller; never exposes the system prompt',
+          'The agents, including the lanes each supports. Members see only the active ones; admins see all, each inactive one with `unavailable`. With `project`, that project agents plus the global ones (404 for a project you cannot use); without it, everything you can use. Requires a proven caller; never exposes the system prompt',
+        parameters: [{ name: 'project', in: 'query', schema: { type: 'string' } }],
         responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: agentSchema })) }, '401': failures['401'] },
       },
     },
@@ -1440,7 +1511,7 @@ export const OPENAPI_DOCUMENT = {
       get: {
         summary: "List the caller's own persisted conversations, most recently updated first. `scope=all` (administrators only) lists everyone's",
         description:
-          'Any other query key becomes an exact filter on `metadata` (plain identifiers only). Keys starting with `owner` are discarded: the owner comes from the credential, never from the query. With `scope=all` and `page`, the server paginates and searches.',
+          'Any other query key becomes an exact filter on `metadata` (plain identifiers only). Keys starting with `owner` are discarded: the owner comes from the credential, never from the query. `project` keeps one project (written by the server; 404 for a project you cannot use). With `scope=all` and `page`, the server paginates and searches.',
         parameters: [
           { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 500 } },
           { name: 'scope', in: 'query', schema: { type: 'string', enum: ['all'] }, description: 'Administrators only; anyone else gets 404.' },
@@ -1572,7 +1643,12 @@ export const OPENAPI_DOCUMENT = {
                   systemPrompt: { type: 'string' },
                   metadata: {
                     type: 'object',
-                    description: 'Free-form. The `owner` key is reserved: it is stamped from the caller credential and any `owner` sent here is discarded.',
+                    description: 'Free-form. The `owner` and `project` keys are reserved: stamped by the server, and any sent here is discarded.',
+                  },
+                  projectId: {
+                    type: 'string',
+                    description:
+                      'For a global agent: the project the conversation belongs to (you must be able to use it). A project agent always opens in its own project; 404 if you are not a member.',
                   },
                 },
               },

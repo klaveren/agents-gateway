@@ -2,7 +2,7 @@ import { sessionChoice } from '@domain/Agent.Policy'
 import { randomUUID } from 'node:crypto'
 import { nativeToolsOf } from '@domain/Native.Tools'
 import { IConnectionSource, requireConnection, UnavailableProviderError } from './support/Keyed.Client'
-import { sessionWorkspace, subscriptionEnv } from './support/Subscription.Workspace'
+import { workspaceFor, subscriptionEnv } from './support/Subscription.Workspace'
 import { query, type CanUseTool, type EffortLevel, type Options, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -158,7 +158,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       ...(native.started ? { resume: native.sdkSessionId } : { sessionId: native.sdkSessionId }),
       ...(env ? { env } : {}),
       // Toda lane num diretório vazio por conversa: o `cwd` do processo é a pasta do gateway (`.env`, banco).
-      cwd: sessionWorkspace(sessionId),
+      cwd: workspaceFor(agent.projectId, sessionId),
     }
 
     const effort = this.toEffort(record.reasoning)

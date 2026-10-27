@@ -114,9 +114,9 @@ describe('MCP do próprio gateway (integração)', () => {
   })
 
   it('⛔ o membro só vê as ferramentas comuns; o admin vê as de admin e as de escrita (SELF_MCP_WRITE=0 desliga a escrita)', async () => {
-    const common = ['get_conversation', 'list_agents', 'list_conversations', 'my_usage', 'send_message', 'start_conversation', 'switch_model']
+    const common = ['get_conversation', 'list_agents', 'list_conversations', 'list_projects', 'my_usage', 'send_message', 'start_conversation', 'switch_model']
     const adminRead = ['get_agent', 'hook_deliveries', 'list_hooks', 'list_models', 'list_packages', 'list_providers', 'list_tools', 'search_packages', 'usage_by_key']
-    const write = ['delete_hook', 'install_package', 'remove_package', 'save_agent', 'save_hook', 'set_model_enabled', 'set_model_price']
+    const write = ['delete_hook', 'install_package', 'remove_package', 'save_agent', 'save_hook', 'save_project', 'set_model_enabled', 'set_model_price', 'set_project_members']
     assert.deepStrictEqual(await names(member), common)
     assert.deepStrictEqual(await names(admin), [...common, ...adminRead, ...write].sort())
 

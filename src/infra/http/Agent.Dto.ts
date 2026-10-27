@@ -60,6 +60,8 @@ export interface IAgentDto {
   role?: string
   /** Só administrador conversa com o agente (marcado por quem o criou). */
   adminOnly?: boolean
+  /** O projeto do agente; ausente = global. */
+  projectId?: string
 }
 
 /**
@@ -116,6 +118,7 @@ export function toAgentDto(agent: IAgent, factsOf: (providerId: string) => IAgen
     allowedTools: agent.allowedTools,
     ...(agent.role ? { role: agent.role } : {}),
     ...(agent.adminOnly ? { adminOnly: true } : {}),
+    ...(agent.projectId ? { projectId: agent.projectId } : {}),
   }
 }
 

@@ -22,7 +22,7 @@ import { untestedCodex } from './support/Codex.Binary'
 import { esmImport } from './support/Esm.Import'
 import { IConnectionSource, UnavailableProviderError } from './support/Keyed.Client'
 import { composeSystemPrompt } from './support/Prompt.Helper'
-import { sessionWorkspace, subscriptionEnv, subscriptionHome } from './support/Subscription.Workspace'
+import { projectHome, subscriptionEnv, subscriptionHome, workspaceFor } from './support/Subscription.Workspace'
 
 type TCodexClass = new (options?: CodexOptions) => Codex
 
@@ -162,7 +162,7 @@ export class CodexAgentAdapter implements IAgentAdapter {
     record.abort = abort
     yield { type: 'message.started', sessionId, timestamp: now() }
 
-    const workspace = sessionWorkspace(sessionId)
+    const workspace = workspaceFor(agent.projectId, sessionId)
     const { prompt, warnings } = this.buildInput(input, workspace)
     for (const message of warnings) yield { type: 'warning', sessionId, timestamp: now(), payload: { message } }
     if (this.catalog?.localFor(agent.allowedTools).length) {
@@ -174,7 +174,8 @@ export class CodexAgentAdapter implements IAgentAdapter {
       const Codex = await this.load()
       const home = this.home()
       const codex = new Codex({
-        env: subscriptionEnv({ HOME: workspace, CODEX_HOME: home }),
+        // Num projeto, o HOME é `<projeto>/.home`: os dotfiles do Codex não sujam a pasta do projeto.
+        env: subscriptionEnv({ HOME: agent.projectId ? projectHome(agent.projectId) : workspace, CODEX_HOME: home }),
         config: {
           developer_instructions: withMcpHint(record.systemPrompt, remotes),
           features: codexFeatures(agent.allowedTools),

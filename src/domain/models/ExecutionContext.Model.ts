@@ -22,4 +22,6 @@ export interface IExecutionContext {
   sessionId?: string
   /** O agente que está respondendo. */
   agentId?: string
+  /** O projeto do agente: é na pasta dele que as ferramentas locais (`run_bash`) trabalham. Ausente = global. */
+  projectId?: string
 }

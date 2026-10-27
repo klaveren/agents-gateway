@@ -127,6 +127,8 @@ export interface IAgent {
   role?: 'subagent'
   /** Só administrador conversa com o agente — escolha de quem o criou. */
   adminOnly?: boolean
+  /** O projeto do agente; ausente = global (aparece em todos os projetos). */
+  projectId?: string
   /** Só para admin: por que o agente não abre conversa agora (nenhum provider roda). Ausente = ativo. */
   unavailable?: { reason: 'provider_disabled' | 'no_model' | 'no_key' | 'admin_only'; label: string }
 }
@@ -153,6 +155,8 @@ export interface IAgentInput {
   /** `null` volta a agente normal. */
   role?: 'subagent' | null
   adminOnly?: boolean
+  /** `null` = global. */
+  projectId?: string | null
 }
 
 /** O sandbox do cliente agêntico (`Sandbox.Policy` no servidor). */
@@ -394,6 +398,25 @@ export interface IHookDelivery {
   status: 'running' | 'ok' | 'error'
   sessionId?: string
   error?: string
+}
+
+/** Um projeto: agentes e conversas vivem dentro de um, com a sua pasta. `folder` e `members` só para admin. */
+export interface IProject {
+  id: string
+  name: string
+  description?: string
+  folder?: string
+  members?: number
+  createdAt: string
+  updatedAt: string
+  updatedBy?: string
+}
+
+export interface IProjectMember {
+  projectId: string
+  userId: string
+  addedAt: string
+  addedBy?: string
 }
 
 /** Um hook de agente: `POST /v1/hook/<agente>/<hook>` executa o `prompt` com o evento recebido. */
