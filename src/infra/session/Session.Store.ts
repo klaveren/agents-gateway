@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { addUsage, IUsage } from '@domain/models/AgentEvent.Model'
-import { ITranscriptTurn } from '@domain/Handoff.Policy'
+import { ITranscriptTurn, THandoffKind } from '@domain/Handoff.Policy'
 import { TSessionStatus, usageKey } from '@domain/models/Session.Model'
 
 /**
@@ -38,8 +38,10 @@ export interface ISessionRecord {
   usageByModel?: Record<string, IUsage>
   /** Os turnos em texto, para repassar a outro provider (ver `Handoff.Policy`). Quem mantém é o AgentProvider. */
   transcript?: ITranscriptTurn[]
-  /** A transcrição que o PRÓXIMO turno leva: a sessão acabou de trocar de provider. */
+  /** A transcrição que o PRÓXIMO turno leva: a sessão acabou de trocar de provider, ou foi retomada. */
   handoff?: string
+  /** Por que o `handoff` vai: a falha do turno o refaz com o mesmo aviso. Ausente = troca de provider. */
+  handoffKind?: THandoffKind
   metadata?: Record<string, unknown>
   abort?: AbortController
   native?: unknown
@@ -102,6 +104,19 @@ export class SessionStore {
     this.evictOverflow()
 
     return record
+  }
+
+  /**
+   * A sessão passa a responder por OUTRO id — a retomada abre uma sessão nova e a devolve ao id da conversa gravada,
+   * para os turnos novos caírem nela. `false` se não havia o que mover, ou se o id de destino já está em uso.
+   */
+  adopt(fromId: string, toId: string): boolean {
+    const record = this.sessions.get(fromId)
+    if (!record || this.sessions.has(toId)) return false
+    this.sessions.delete(fromId)
+    record.id = toId
+    this.sessions.set(toId, record)
+    return true
   }
 
   get(id: string): ISessionRecord | undefined {

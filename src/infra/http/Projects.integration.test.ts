@@ -12,6 +12,7 @@ import { GetSessionUseCase } from '@application/GetSession.Usecase'
 import { ListSessionsUseCase } from '@application/ListSessions.Usecase'
 import { ProjectsService } from '@application/Projects.Service'
 import { ReconfigureSessionUseCase } from '@application/ReconfigureSession.Usecase'
+import { ResumeSessionUseCase } from '@application/ResumeSession.Usecase'
 import { SendMessageUseCase } from '@application/SendMessage.Usecase'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -81,7 +82,27 @@ describe('Projetos (integração)', () => {
       throw new Error('not used')
     },
     list: () => [...sessions.values()],
+    // A retomada de verdade está nos testes do AgentProvider; aqui basta devolver a sessão ao mapa.
+    resume: async ({ session }: { session: { id: string; agentId: string; metadata?: Record<string, unknown> } }) => {
+      resumed.push(session.id)
+      const now = new Date()
+      sessions.set(session.id, {
+        id: session.id,
+        agentId: session.agentId,
+        provider: EProvider.CLAUDE,
+        mode: EMode.AGENT,
+        model: 'm',
+        tools: false,
+        status: 'idle',
+        turns: 1,
+        usage: { inputTokens: 0, outputTokens: 0 },
+        createdAt: now,
+        lastActivityAt: now,
+        metadata: session.metadata,
+      } as ISession)
+    },
   } as unknown as IAgentProvider
+  const resumed: string[] = []
 
   const folders = mkdtempSync(join(tmpdir(), 'gw-projects-test-'))
   const agents = testAgentCatalog()
@@ -118,6 +139,7 @@ describe('Projetos (integração)', () => {
       deleteSession: new DeleteSessionUseCase(provider),
       getSession: new GetSessionUseCase(provider),
       listSessions: new ListSessionsUseCase(provider),
+      resumeSession: new ResumeSessionUseCase(provider, conversations),
       proof,
       settings: new NullSettingsRepository(),
       conversations,
@@ -273,6 +295,25 @@ describe('Projetos (integração)', () => {
     assert.deepStrictEqual((await call(ADMIN, 'GET', '/docs')).body.result.find((doc: { id: string }) => doc.id === 'arq').loadedIn.agents, [CLAUDE_TEST_AGENT.id])
     assert.strictEqual((await call(ADMIN, 'GET', '/agents/nao-existe/initial-context')).status, 404)
     assert.strictEqual((await call(ANA, 'GET', `/agents/${CLAUDE_TEST_AGENT.id}/initial-context`)).status, 404)
+  })
+
+  it('⛔ a conversa cuja sessão expirou é retomada pelo dono ao mandar mensagem; por outra pessoa, 404 e nada reabre', async () => {
+    const opened = await call(ANA, 'POST', '/sessions', { agentId: GOOGLE_TEST_AGENT.id, projectId: 'alfa' })
+    const id = opened.body.result.id as string
+    await call(ANA, 'POST', `/sessions/${id}/messages`, { message: 'primeira' })
+    sessions.delete(id)
+
+    assert.strictEqual((await call(BIA, 'POST', `/sessions/${id}/messages`, { message: 'invadir' })).status, 404)
+    assert.deepStrictEqual(resumed, [])
+
+    const again = await call(ANA, 'POST', `/sessions/${id}/messages`, { message: 'segunda' })
+    assert.strictEqual(again.status, 200)
+    assert.deepStrictEqual(resumed, [id])
+    const turns = (await call(ANA, 'GET', `/conversations/${id}/turns`)).body.result.turns as Array<{ request: string }>
+    assert.deepStrictEqual(
+      turns.map((turn) => turn.request),
+      ['primeira', 'segunda'],
+    )
   })
 
   it('⛔ o tamanho do agente é do admin: as partes e o total; para o membro, 404', async () => {

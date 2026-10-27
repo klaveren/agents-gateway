@@ -229,6 +229,11 @@ export const useThreadStore = defineStore('thread', () => {
         return { ok: false }
       }
       turns.value = [...turns.value, settled(id, turn, turns.value.length, session.value)]
+      // A sessão que estava encerrada foi RETOMADA pelo gateway ao receber a mensagem: volta a contar como viva.
+      if (liveSession.value === false) {
+        liveSession.value = true
+        void reloadSession(id)
+      }
       setTimeout(() => void refresh(), 600)
       ok = true
     } catch (failure) {
@@ -264,12 +269,20 @@ export const useThreadStore = defineStore('thread', () => {
     return { ok, created }
   }
 
+  /** O provider e o modelo da sessão (retomada agora), para o cabeçalho e o seletor de modelo. */
+  async function reloadSession(id: string): Promise<void> {
+    const live = await api<ISessionState>(`/sessions/${encodeURIComponent(id)}`).catch(() => undefined)
+    if (live && sessionId.value === id) session.value = { provider: live.provider, model: live.model, reasoning: live.reasoning }
+  }
+
   /** O texto do erro de envio — e o que ele implica: 404 = sessão encerrada; 409 `model_disabled` = relê os agentes. */
   function describe(failure: unknown): string {
     if (failure instanceof ApiError && failure.status === 404 && sessionId.value) {
       liveSession.value = false
-      return 'Falha ao enviar: sessão encerrada. Comece uma nova conversa.'
+      return 'Falha ao enviar: esta conversa não existe mais no gateway. Comece uma nova conversa.'
     }
+    if (failure instanceof ApiError && failure.status === 409 && failure.code === 'not_resumable')
+      return 'Esta conversa não pode ser retomada: é de um subagente, que só abre por delegação.'
     if (failure instanceof ApiError && failure.status === 409 && failure.code === 'model_disabled') {
       // O modelo saiu do ar: a lista de agentes de agora diz quais ainda servem (e o rascunho se ajusta a ela).
       void useAgentsStore()

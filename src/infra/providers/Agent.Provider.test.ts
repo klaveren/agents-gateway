@@ -14,6 +14,7 @@ import {
   SessionBusyError,
   SessionNotFoundError,
   AgentAdminOnlyError,
+  ConversationNotResumableError,
   SubagentOnlyError,
   ToolsNotSupportedError,
 } from '@domain/errors/Domain.Error'
@@ -745,5 +746,82 @@ describe('AgentProvider — rules e documentos', () => {
 
     await provider.createSession({ agentId: SEED.list()[0].id, metadata: { project: 'crm' } })
     assert.ok(!seen.created.includes('read_doc'))
+  })
+})
+
+describe('AgentProvider — retomar a conversa gravada', () => {
+  const agentId = SEED.list()[0].id
+  const stored = {
+    id: 'google-chat-antiga',
+    agentId,
+    provider: EProvider.GOOGLE,
+    mode: EMode.CHAT,
+    model: 'gemini-3.7-flash',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    turns: 2,
+    usage: { inputTokens: 900, outputTokens: 100, totalTokens: 1000 },
+    metadata: { owner: 'u_ana' },
+  }
+  const turns = [
+    { sessionId: stored.id, index: 0, at: new Date(), request: 'Qual é a capital da França?', text: 'Paris.', toolCalls: [] },
+    { sessionId: stored.id, index: 1, at: new Date(), request: 'E da Itália?', text: 'Roma.', toolCalls: [{ tool: 'search_web' }] },
+  ]
+
+  function build() {
+    const store = new SessionStore()
+    const sent: string[] = []
+    const adapter: IAgentAdapter = {
+      async createSession(agent, input) {
+        const record = store.create('google-chat', {
+          agentId: agent.id,
+          provider: EProvider.GOOGLE,
+          protocol: EProvider.GOOGLE,
+          mode: EMode.CHAT,
+          model: input.model ?? 'm',
+          tools: false,
+          systemPrompt: agent.systemPrompt,
+          metadata: input.metadata,
+        })
+        return { id: record.id, provider: EProvider.GOOGLE, mode: record.mode, createdAt: record.createdAt }
+      },
+      async *sendMessage(_agent, sessionId, input) {
+        sent.push(input.text)
+        yield { type: 'usage', sessionId, timestamp: new Date(), payload: { inputTokens: 50, outputTokens: 5 } } as IAgentEvent
+        yield { type: 'message.completed', sessionId, timestamp: new Date() } as IAgentEvent
+      },
+      async cancel() {},
+    }
+    const provider = new AgentProvider(new Map([[adapterKey(EProvider.GOOGLE, EMode.CHAT), adapter]]), store, undefined, SEED)
+    return { provider, store, sent }
+  }
+
+  it('⚖️ volta com o MESMO id, leva a transcrição no próximo turno, e o consumo soma sobre o gravado', async () => {
+    const { provider, store, sent } = build()
+    await provider.resume({ session: stored, turns })
+
+    const record = store.get(stored.id)!
+    assert.deepStrictEqual([record.turns, record.usage.inputTokens, record.metadata?.owner], [2, 900, 'u_ana'])
+    assert.strictEqual(store.size, 1, 'a sessão nova não fica sob outro id')
+
+    for await (const _event of provider.sendMessage(stored.id, { text: 'E da Espanha?' })) void _event
+    assert.match(
+      sent[0],
+      /^\[Contexto do sistema: esta conversa foi retomada[\s\S]*E da Itália\?[\s\S]*Ferramentas usadas: search_web[\s\S]*\[Fim da transcrição\. Mensagem nova:\]\n\nE da Espanha\?$/,
+    )
+    assert.deepStrictEqual([store.get(stored.id)!.turns, store.get(stored.id)!.usage.inputTokens], [3, 950])
+
+    for await (const _event of provider.sendMessage(stored.id, { text: 'Obrigado' })) void _event
+    assert.strictEqual(sent[1], 'Obrigado', 'a transcrição vai uma vez só')
+  })
+
+  it('sessão ainda viva: nada muda; ⛔ conversa de subagente e agente apagado não voltam', async () => {
+    const { provider, store } = build()
+    await provider.resume({ session: stored, turns })
+    await provider.resume({ session: stored, turns })
+    assert.strictEqual(store.size, 1)
+
+    await assert.rejects(() => provider.resume({ session: { ...stored, id: 'filha', metadata: { delegatedBy: { sessionId: 'mae' } } }, turns }), ConversationNotResumableError)
+    await assert.rejects(() => provider.resume({ session: { ...stored, id: 'orfa', agentId: 'nao-existe' }, turns }), AgentNotFoundError)
   })
 })

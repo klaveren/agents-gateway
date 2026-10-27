@@ -268,6 +268,16 @@ export class InvalidHookError extends DomainError {
   }
 }
 
+/** A conversa gravada não volta: é de um subagente (só a delegação a abre). O resto (agente apagado, modelo desligado) sai com o erro de sempre. */
+export class ConversationNotResumableError extends DomainError {
+  constructor(
+    public readonly sessionId: string,
+    public readonly reason: string,
+  ) {
+    super(`Conversation ${sessionId} cannot be resumed: ${reason}`)
+  }
+}
+
 /** A rule ou o documento pedido não vale. Todos os problemas de uma vez. */
 export class InvalidGuidanceError extends DomainError {
   constructor(public readonly issues: Array<{ field: string; message: string }>) {

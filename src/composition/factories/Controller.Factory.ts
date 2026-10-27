@@ -48,6 +48,7 @@ export function makeController(): AgentController {
     deleteSession: usecases.deleteSessionUseCase,
     getSession: usecases.getSessionUseCase,
     listSessions: usecases.listSessionsUseCase,
+    resumeSession: usecases.resumeSessionUseCase,
     agentRemoved: (agentId) => {
       makeHooks().removeAgent(agentId)
       makeGuidance().removeAgent(agentId)

@@ -1,5 +1,5 @@
 import { offers, targetFor } from '@domain/Agent.Policy'
-import { handoffText } from '@domain/Handoff.Policy'
+import { HANDOFF_MAX_CHARS, handoffText } from '@domain/Handoff.Policy'
 import { resolveSessionMode } from '@domain/Session.Policy'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -12,6 +12,7 @@ import {
   AgentNotFoundError,
   AgentUnavailableError,
   AgentWithoutModelError,
+  ConversationNotResumableError,
   InvalidSessionChangeError,
   ProviderNotOfferedError,
   ProviderUnavailableError,
@@ -25,7 +26,7 @@ import { IAgentDirectory } from '@domain/ports/AgentRepository.Port'
 import { IProviderDirectory } from '@domain/ports/ProviderRepository.Port'
 import { ISettingsRepository } from '@domain/ports/SettingsRepository.Port'
 import { IAgent, IAgentTarget } from '@domain/models/Agent.Model'
-import { IAgentEvent } from '@domain/models/AgentEvent.Model'
+import { IAgentEvent, IUsage } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { READ_DOC_TOOL } from '@domain/models/ProjectDoc.Model'
@@ -33,8 +34,9 @@ import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { caller } from '@infra/mcp/Caller.Identity'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
-import { ISession } from '@domain/models/Session.Model'
-import { IAgentProvider, ISessionChange } from '@domain/ports/AgentProvider.Port'
+import { IStoredUsage } from '@domain/models/Conversation.Model'
+import { ISession, usageKey } from '@domain/models/Session.Model'
+import { IAgentProvider, IResumeInput, ISessionChange } from '@domain/ports/AgentProvider.Port'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
 
@@ -212,7 +214,7 @@ export class AgentProvider implements IAgentProvider {
         if (turn.completed) record.handoff = undefined
         else {
           record.native = undefined
-          record.handoff = handoffText(record.transcript ?? [])
+          record.handoff = handoffText(record.transcript ?? [], HANDOFF_MAX_CHARS, record.handoffKind)
         }
       }
     }
@@ -225,6 +227,49 @@ export class AgentProvider implements IAgentProvider {
   private withDocs(agent: IAgent, projectId: string | undefined): IAgent {
     if (!this.guidance?.hasDocs(projectId, agent.id) || agent.allowedTools.includes(READ_DOC_TOOL)) return agent
     return { ...agent, allowedTools: [...agent.allowedTools, READ_DOC_TOOL] }
+  }
+
+  /**
+   * ⚖️ A RETOMADA: a sessão vive na memória e some depois de horas parada ou num reinício; a conversa, não — está no
+   * banco. Reabre pelo caminho normal (`createSession`: valem as regras de hoje — agente apagado, modelo desligado,
+   * só admin), devolve a sessão ao id da conversa e semeia o que o banco tinha (turnos, consumo, transcrição), para o
+   * próximo `saveSession` não zerar os totais nem regravar o título. O modelo recebe a transcrição no próximo turno.
+   * ⛔ Conversa de subagente não volta: só a delegação abre uma.
+   */
+  async resume(input: IResumeInput): Promise<void> {
+    const stored = input.session
+    if (this.sessions.get(stored.id)) return
+    if (stored.metadata?.delegatedBy) throw new ConversationNotResumableError(stored.id, 'it belongs to a subagent, opened only by delegation')
+
+    const last = input.turns[input.turns.length - 1]
+    const created = await this.createSession({
+      agentId: stored.agentId,
+      provider: last?.provider ?? stored.provider,
+      model: last?.model ?? stored.model,
+      mode: stored.mode as EMode,
+      ...(last?.effort ? { reasoning: last.effort } : {}),
+      ...(stored.metadata ? { metadata: stored.metadata } : {}),
+      ...(input.adminAccess ? { adminAccess: true } : {}),
+    })
+    if (!this.sessions.adopt(created.id, stored.id)) return
+    if (this.adminSessions.delete(created.id)) this.adminSessions.add(stored.id)
+
+    const record = this.sessions.get(stored.id)!
+    const transcript = input.turns.map((turn) => ({
+      request: turn.request,
+      ...(turn.files?.length ? { files: turn.files.map((file) => file.name) } : {}),
+      text: turn.text,
+      tools: turn.toolCalls.map((call) => call.tool),
+      by: `${turn.provider ?? stored.provider} · ${turn.model ?? stored.model}`,
+    }))
+    record.turns = stored.turns
+    record.usage = liveUsage(stored.usage)
+    record.usageByModel = stored.usageByModel
+      ? Object.fromEntries(Object.entries(stored.usageByModel).map(([key, usage]) => [key, liveUsage(usage)]))
+      : { [usageKey(stored.provider, stored.model)]: liveUsage(stored.usage) }
+    record.transcript = transcript
+    record.handoff = handoffText(transcript, HANDOFF_MAX_CHARS, 'resume')
+    record.handoffKind = 'resume'
   }
 
   async cancel(sessionId: string): Promise<void> {
@@ -299,6 +344,7 @@ export class AgentProvider implements IAgentProvider {
       record.protocol = protocol
       record.native = undefined
       record.handoff = handoffText(record.transcript ?? [])
+      record.handoffKind = 'switch'
     }
     return toSession(record)
   }
@@ -403,4 +449,10 @@ function toSession(record: ISessionRecord): ISession {
 function projectOf(metadata: Record<string, unknown> | undefined): string | undefined {
   const value = metadata?.[PROJECT_METADATA_KEY]
   return typeof value === 'string' && value ? value : undefined
+}
+
+/** O consumo gravado de volta ao formato da sessão (o `totalTokens` é calculado, não se semeia). */
+function liveUsage(stored: IStoredUsage | undefined): IUsage {
+  const { totalTokens: _total, ...usage } = stored ?? {}
+  return usage
 }

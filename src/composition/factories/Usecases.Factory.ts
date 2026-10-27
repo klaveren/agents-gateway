@@ -1,3 +1,4 @@
+import { ResumeSessionUseCase } from '@application/ResumeSession.Usecase'
 import { CancelSessionUseCase } from '@application/CancelSession.Usecase'
 import { ReconfigureSessionUseCase } from '@application/ReconfigureSession.Usecase'
 import { CreateSessionUseCase } from '@application/CreateSession.Usecase'
@@ -74,5 +75,6 @@ export function makeUsecases() {
     deleteSessionUseCase: new DeleteSessionUseCase(agentProvider),
     getSessionUseCase: new GetSessionUseCase(agentProvider),
     listSessionsUseCase: new ListSessionsUseCase(agentProvider),
+    resumeSessionUseCase: new ResumeSessionUseCase(agentProvider, conversations),
   }
 }

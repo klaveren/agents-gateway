@@ -139,4 +139,14 @@ describe('SessionStore', () => {
     assert.strictEqual(abort.signal.aborted, true)
     assert.strictEqual(store.delete(record.id), false)
   })
+
+  it('adopt: a sessão passa a responder pelo id da conversa; não toma um id em uso', () => {
+    const store = new SessionStore()
+    const fresh = store.create('x', { agentId: 'a', provider: 'p', protocol: 'google' as never, mode: 'chat' as never, model: 'm', tools: false, systemPrompt: '' })
+    const other = store.create('x', { agentId: 'a', provider: 'p', protocol: 'google' as never, mode: 'chat' as never, model: 'm', tools: false, systemPrompt: '' })
+    const freshId = fresh.id
+    assert.strictEqual(store.adopt(freshId, 'antiga'), true)
+    assert.deepStrictEqual([store.get('antiga')?.id, store.get(freshId)], ['antiga', undefined])
+    assert.strictEqual(store.adopt(other.id, 'antiga'), false)
+  })
 })
