@@ -3,6 +3,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { api } from '@/lib/api'
 import type { IConversation } from '@/lib/types'
 import { useRouter } from 'vue-router'
+import { useAgentCommands } from '@/lib/commands'
 import { contextMeter } from '@/lib/contextMeter'
 import { fullTime, tokens, usd } from '@/lib/format'
 import { useAgentsStore } from '@/stores/agents'
@@ -36,6 +37,8 @@ const header = computed(() => thread.header)
 const agent = computed(() => agents.byId.get(header.value?.agentId ?? thread.draft?.agentId ?? ''))
 const owner = computed(() => header.value?.metadata?.owner)
 const shareUrl = computed(() => (header.value?.shared && header.value.shareId ? `${location.origin}/v1/shared/${header.value.shareId}` : ''))
+/** Os `/commands` que a pessoa pode usar com este agente (o autocompletar da caixa). */
+const commands = useAgentCommands(computed(() => agent.value?.id))
 /** A sessão não está viva, mas a conversa volta ao enviar (o gateway a retoma do histórico gravado). */
 const resumable = computed(() => thread.liveSession === false)
 
@@ -232,6 +235,6 @@ async function continueFresh() {
       </button>
     </div>
     <SessionTuner v-if="thread.liveSession && agent" :agent="agent" :mode="header?.mode" :fallback="{ provider: header?.provider, model: header?.model }" />
-    <Composer :sending="thread.sending" :disabled="thread.liveSession === undefined" @send="send" @stop="thread.stop" />
+    <Composer :sending="thread.sending" :disabled="thread.liveSession === undefined" :commands="commands" @send="send" @stop="thread.stop" />
   </section>
 </template>

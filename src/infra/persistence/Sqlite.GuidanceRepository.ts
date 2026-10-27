@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync, SQLInputValue } from 'node:sqlite'
 import { IProjectDoc, TDocKind } from '@domain/models/ProjectDoc.Model'
+import { IAgentResources, IResource, TResourceKind } from '@domain/models/Resource.Model'
 import { IRule } from '@domain/models/Rule.Model'
 import { IGuidanceRepository, TDocPatch, TGuidanceScope, TRulePatch } from '@domain/ports/GuidanceRepository.Port'
 
@@ -48,6 +49,26 @@ const SCHEMA = `
     PRIMARY KEY (agent_id, doc_id)
   );
   CREATE INDEX IF NOT EXISTS agent_context_docs_doc ON agent_context_docs (doc_id);
+  CREATE TABLE IF NOT EXISTS resources (
+    id          TEXT NOT NULL PRIMARY KEY,
+    kind        TEXT NOT NULL,
+    project_id  TEXT,
+    description TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    doc_ids     TEXT NOT NULL DEFAULT '[]',
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    updated_by  TEXT
+  );
+  CREATE INDEX IF NOT EXISTS resources_scope ON resources (project_id, kind);
+  CREATE TABLE IF NOT EXISTS agent_resources (
+    agent_id     TEXT NOT NULL,
+    kind         TEXT NOT NULL,
+    resource_id  TEXT NOT NULL,
+    added_at     TEXT NOT NULL,
+    added_by     TEXT,
+    PRIMARY KEY (agent_id, kind, resource_id)
+  );
 `
 
 type TRow = Record<string, unknown>
@@ -145,6 +166,9 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
   deleteDoc(id: string): boolean {
     this.db.prepare('DELETE FROM project_context_docs WHERE doc_id = ?').run(id)
     this.db.prepare('DELETE FROM agent_context_docs WHERE doc_id = ?').run(id)
+    // O documento sai dos recursos que o anexavam.
+    for (const resource of this.allResources().filter((item) => item.docIds.includes(id)))
+      this.saveResource({ ...resource, docIds: resource.docIds.filter((docId) => docId !== id) })
     return this.db.prepare('DELETE FROM project_docs WHERE id = ?').run(id).changes > 0
   }
 
@@ -176,6 +200,73 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
     this.db.prepare('DELETE FROM agent_context_docs WHERE agent_id = ?').run(agentId)
   }
 
+  resources(scope: TGuidanceScope, kind?: TResourceKind): IResource[] {
+    const where = [scope === null ? 'project_id IS NULL' : 'project_id = ?', ...(kind ? ['kind = ?'] : [])].join(' AND ')
+    const params = [...(scope === null ? [] : [scope]), ...(kind ? [kind] : [])]
+    return (this.db.prepare(`SELECT * FROM resources WHERE ${where} ORDER BY id`).all(...params) as TRow[]).map(toResource)
+  }
+
+  resource(id: string): IResource | undefined {
+    const row = this.db.prepare('SELECT * FROM resources WHERE id = ?').get(id) as TRow | undefined
+    return row ? toResource(row) : undefined
+  }
+
+  saveResource(resource: IResource): void {
+    this.db
+      .prepare(
+        `INSERT INTO resources (id, kind, project_id, description, body, doc_ids, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, project_id = excluded.project_id, description = excluded.description, body = excluded.body,
+           doc_ids = excluded.doc_ids, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+      )
+      .run(
+        resource.id,
+        resource.kind,
+        resource.projectId ?? null,
+        resource.description,
+        resource.body,
+        JSON.stringify(resource.docIds),
+        resource.createdAt.toISOString(),
+        resource.updatedAt.toISOString(),
+        resource.updatedBy ?? null,
+      )
+  }
+
+  deleteResource(id: string): boolean {
+    this.db.prepare('DELETE FROM agent_resources WHERE resource_id = ?').run(id)
+    return this.db.prepare('DELETE FROM resources WHERE id = ?').run(id).changes > 0
+  }
+
+  agentResources(agentId: string): IAgentResources {
+    const rows = this.db.prepare('SELECT kind, resource_id FROM agent_resources WHERE agent_id = ? ORDER BY resource_id').all(agentId) as TRow[]
+    return {
+      skills: rows.filter((row) => row.kind === 'skill').map((row) => row.resource_id as string),
+      commands: rows.filter((row) => row.kind === 'command').map((row) => row.resource_id as string),
+    }
+  }
+
+  setAgentResources(agentId: string, resources: IAgentResources, by: string): void {
+    const now = new Date().toISOString()
+    this.db.exec('BEGIN')
+    try {
+      this.db.prepare('DELETE FROM agent_resources WHERE agent_id = ?').run(agentId)
+      const insert = this.db.prepare('INSERT INTO agent_resources (agent_id, kind, resource_id, added_at, added_by) VALUES (?, ?, ?, ?, ?)')
+      for (const id of resources.skills) insert.run(agentId, 'skill', id, now, by)
+      for (const id of resources.commands) insert.run(agentId, 'command', id, now, by)
+      this.db.exec('COMMIT')
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  deleteAgentResources(agentId: string): void {
+    this.db.prepare('DELETE FROM agent_resources WHERE agent_id = ?').run(agentId)
+  }
+
+  private allResources(): IResource[] {
+    return (this.db.prepare('SELECT * FROM resources').all() as TRow[]).map(toResource)
+  }
+
   /** Troca a lista inteira de um dono (projeto ou agente), numa transação. */
   private replaceList(table: 'project_context_docs' | 'agent_context_docs', owner: 'project_id' | 'agent_id', id: string, docIds: readonly string[], by: string): void {
     const now = new Date().toISOString()
@@ -195,6 +286,8 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
     this.db.prepare('DELETE FROM rules WHERE project_id = ?').run(projectId)
     this.db.prepare('DELETE FROM project_docs WHERE project_id = ?').run(projectId)
     this.db.prepare('DELETE FROM project_context_docs WHERE project_id = ?').run(projectId)
+    const ids = (this.db.prepare('SELECT id FROM resources WHERE project_id = ?').all(projectId) as TRow[]).map((row) => row.id as string)
+    for (const id of ids) this.deleteResource(id)
   }
 
   private patch<T extends object>(table: string, columns: Record<keyof T, string>, id: string, patch: T): void {
@@ -232,6 +325,26 @@ function toDoc(row: TRow): IProjectDoc {
     title: row.title as string,
     summary: row.summary as string,
     body: row.body as string,
+    createdAt: new Date(row.created_at as string),
+    updatedAt: new Date(row.updated_at as string),
+    ...(row.updated_by ? { updatedBy: row.updated_by as string } : {}),
+  }
+}
+
+function toResource(row: TRow): IResource {
+  let docIds: string[]
+  try {
+    docIds = JSON.parse(String(row.doc_ids ?? '[]')) as string[]
+  } catch {
+    docIds = []
+  }
+  return {
+    id: row.id as string,
+    kind: row.kind as TResourceKind,
+    ...(row.project_id ? { projectId: row.project_id as string } : {}),
+    description: row.description as string,
+    body: row.body as string,
+    docIds,
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
     ...(row.updated_by ? { updatedBy: row.updated_by as string } : {}),

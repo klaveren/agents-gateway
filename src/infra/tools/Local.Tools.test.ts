@@ -189,3 +189,14 @@ describe('LocalTools — read_doc', () => {
     assert.deepStrictEqual(asked, ['xpto', undefined])
   })
 })
+
+describe('LocalTools — use_skill', () => {
+  it('só existe com o carregador de skills; carrega pelo agente DA CHAMADA', async () => {
+    assert.ok(!makeLocalTools().some((tool) => tool.name === 'use_skill'))
+    const tool = makeLocalTools({ skills: { loadSkill: (id, agentId) => (id === 'tabela' && agentId === 'dev' ? '# Skill: tabela' : undefined) } }).find(
+      (item) => item.name === 'use_skill',
+    )!
+    assert.deepStrictEqual(await tool.execute({ id: 'tabela' }, { agentId: 'dev' }), { status: 'success', result: '# Skill: tabela' })
+    assert.deepStrictEqual(await tool.execute({ id: 'tabela' }, { agentId: 'outro' }), { status: 'error', result: 'Skill not found: tabela' })
+  })
+})

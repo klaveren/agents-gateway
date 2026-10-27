@@ -372,6 +372,27 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     async ({ agentId }) => reply(await api('GET', `/agents/${encodeURIComponent(agentId)}/initial-context`)),
   )
 
+  server.registerTool(
+    'list_resources',
+    {
+      description:
+        'The skills and commands of one scope, in full. A skill is a way of doing something that an agent loads with use_skill when the subject comes up; a command is a ready request the person fires with /name args (its body uses $ARGUMENTS). Both can carry specs/ADRs (docIds). Agents only see the ones their Resources tab enables. Absent projectId = the global ones.',
+      inputSchema: { projectId: z.string().optional(), kind: z.enum(['skill', 'command']).optional() },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ projectId, kind }) => reply(await api('GET', '/resources', { query: { project: projectId ?? 'global', kind } })),
+  )
+
+  server.registerTool(
+    'get_agent_resources',
+    {
+      description: 'The skills and commands an agent may use: ids, or ["*"] = every global one plus those of its project.',
+      inputSchema: { agentId: z.string() },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ agentId }) => reply(await api('GET', `/agents/${encodeURIComponent(agentId)}/resources`)),
+  )
+
   if (!access.write) return
 
   server.registerTool(
@@ -566,6 +587,42 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
       inputSchema: { agentId: z.string(), docIds: z.array(z.string()).describe('Spec ids from list_docs, in prompt order') },
     },
     async ({ agentId, docIds }) => reply(await api('PUT', `/agents/${encodeURIComponent(agentId)}/initial-context`, { body: { docIds } })),
+  )
+
+  server.registerTool(
+    'save_resource',
+    {
+      description:
+        'Create or replace a skill or a command. The id is a slug (2–48 lowercase letters, digits or hyphens) — the skill name in the index, the /name of the command. The description is the one line the agent reads to know when to use it. A command body is what goes to the agent; $ARGUMENTS takes what the person typed after /name. docIds: specs/ADRs that go along in full (global ones or of the same project). Agents only use it once enabled (set_agent_resources). Confirm with the person first.',
+      inputSchema: {
+        id: z.string(),
+        kind: z.enum(['skill', 'command']),
+        projectId: z.string().nullable().optional().describe('The project; null or absent on a new one = global'),
+        description: z.string(),
+        body: z.string().describe('Skill: markdown. Command: the request, with $ARGUMENTS'),
+        docIds: z.array(z.string()).optional(),
+      },
+    },
+    async ({ id, kind, ...resource }) => {
+      const exists = (await api('GET', `/resources/${encodeURIComponent(id)}`)).ok
+      return reply(exists ? await api('PUT', `/resources/${encodeURIComponent(id)}`, { body: resource }) : await api('POST', '/resources', { body: { id, kind, ...resource } }))
+    },
+  )
+
+  server.registerTool(
+    'delete_resource',
+    { description: 'Delete a skill or a command; agents lose it at once. Confirm with the person first.', inputSchema: { id: z.string() } },
+    async ({ id }) => reply(await api('DELETE', `/resources/${encodeURIComponent(id)}`)),
+  )
+
+  server.registerTool(
+    'set_agent_resources',
+    {
+      description:
+        'Replace which skills and commands an agent may use: ids, or ["*"] = every global one plus those of its project (a global agent: only global ones). Send both lists; an empty list = none. It applies to conversations started from now on. Confirm with the person first.',
+      inputSchema: { agentId: z.string(), skills: z.array(z.string()), commands: z.array(z.string()) },
+    },
+    async ({ agentId, ...resources }) => reply(await api('PUT', `/agents/${encodeURIComponent(agentId)}/resources`, { body: resources })),
   )
 
   server.registerTool(

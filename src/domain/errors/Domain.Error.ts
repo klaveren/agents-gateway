@@ -287,10 +287,10 @@ export class InvalidGuidanceError extends DomainError {
 
 export class GuidanceNotFoundError extends DomainError {
   constructor(
-    public readonly kind: 'rule' | 'doc',
+    public readonly kind: 'rule' | 'doc' | 'resource',
     public readonly id: string,
   ) {
-    super(`${kind === 'rule' ? 'Rule' : 'Document'} not found: ${id}`)
+    super(`${kind === 'rule' ? 'Rule' : kind === 'doc' ? 'Document' : 'Resource'} not found: ${id}`)
   }
 }
 

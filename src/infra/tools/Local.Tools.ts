@@ -4,6 +4,7 @@ import { bashPolicy, denyReason, truncate, type IBashPolicy } from './Bash.Guard
 import { subscriptionEnv, workspaceFor } from '@infra/adapters/support/Subscription.Workspace'
 import { IProjectSandbox, projectSandbox, SANDBOX_SHELL } from '@infra/sandbox/Project.Sandbox'
 import { IProjectDoc, READ_DOC_TOOL } from '@domain/models/ProjectDoc.Model'
+import { USE_SKILL_TOOL } from '@domain/models/Resource.Model'
 import { ILocalTool, IToolResult } from './Tool.Types'
 
 export interface IExecOptions {
@@ -23,12 +24,19 @@ export interface IDocReader {
   readDoc(id: string, projectId?: string): IProjectDoc | undefined
 }
 
+/** Quem carrega uma skill para o agente (o `GuidanceService`). */
+export interface ISkillLoader {
+  loadSkill(id: string, agentId?: string): string | undefined
+}
+
 export interface ILocalToolDeps {
   exec?: TExec
   fetchHtml?: TFetchHtml
   policy?: IBashPolicy
   /** O cerco do agente de projeto (ver `Project.Sandbox`). Ausente = o do processo. */
   sandbox?: IProjectSandbox
+  /** As skills liberadas ao agente. Ausente = sem `use_skill`. */
+  skills?: ISkillLoader
   /** Os documentos (specs e ADRs). Ausente = sem `read_doc`. */
   docs?: IDocReader
 }
@@ -131,7 +139,33 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       },
     },
     ...(deps.docs ? [readDocTool(deps.docs)] : []),
+    ...(deps.skills ? [useSkillTool(deps.skills)] : []),
   ]
+}
+
+/**
+ * `use_skill`: a skill inteira (e os documentos anexados a ela), das que o índice "## Skills" do prompt lista.
+ * ⛔ Só uma skill liberada a ESTE agente (o `agentId` do contexto); outra responde como inexistente.
+ */
+function useSkillTool(skills: ISkillLoader): ILocalTool {
+  return {
+    origin: 'local',
+    name: USE_SKILL_TOOL,
+    description:
+      'Loads the full instructions of a skill listed under "Skills" in your instructions, by its id, with the documents attached to it. Load it before doing what the skill covers.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: 'The skill id, as listed' } },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    execute: async (args, context) => {
+      const id = typeof args.id === 'string' ? args.id.trim() : ''
+      const skill = id ? skills.loadSkill(id, context?.agentId) : undefined
+      if (!skill) return { status: 'error', result: `Skill not found: ${id || '(no id)'}` }
+      return { status: 'success', result: skill }
+    },
+  }
 }
 
 /**

@@ -463,6 +463,27 @@ export interface IAgentFootprint {
   sections: IFootprintSection[]
 }
 
+export type TResourceKind = 'skill' | 'command'
+
+/** Uma skill ou um command (`/nome`). Sem `projectId` = global. */
+export interface IResource {
+  id: string
+  kind: TResourceKind
+  projectId?: string
+  description: string
+  body: string
+  docIds: string[]
+  createdAt: string
+  updatedAt: string
+  updatedBy?: string
+}
+
+/** O que um agente pode usar: ids, ou `['*']` = todos os que ele vê. */
+export interface IAgentResources {
+  skills: string[]
+  commands: string[]
+}
+
 /** O contexto inicial de um projeto: as specs que vão inteiras no prompt, na ordem. */
 export interface IInitialContext {
   docs: Array<{ id: string; title: string; summary: string; projectId?: string; tokens: number }>

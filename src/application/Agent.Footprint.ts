@@ -1,6 +1,7 @@
 import { IAgent } from '@domain/models/Agent.Model'
 import { mcpSelection } from '@domain/models/McpServer.Model'
 import { READ_DOC_TOOL } from '@domain/models/ProjectDoc.Model'
+import { USE_SKILL_TOOL } from '@domain/models/Resource.Model'
 import { estimateTokens, toolTokens } from '@domain/Token.Estimate'
 import { IEnvironmentParts } from './Guidance.Service'
 
@@ -29,7 +30,11 @@ export interface IAgentFootprint {
 }
 
 export interface IFootprintDeps {
-  guidance?: { environmentParts(projectId?: string, agentId?: string): IEnvironmentParts; hasDocs(projectId?: string, agentId?: string): boolean }
+  guidance?: {
+    environmentParts(projectId?: string, agentId?: string): IEnvironmentParts
+    hasDocs(projectId?: string, agentId?: string): boolean
+    hasSkills?(agentId?: string): boolean
+  }
   /** As ferramentas locais que o agente tem (com a de delegação), como a conversa as recebe. */
   localFor(allowed: readonly string[]): TToolShape[]
   /** As ferramentas de um servidor MCP, pedidas com a credencial de quem está na tela. `undefined` = fora do ar. */
@@ -56,9 +61,13 @@ export async function agentFootprint(agent: IAgent, projectId: string | undefine
   add('rules', 'Rules', parts.rules)
   add('projectSpecs', 'Contexto inicial do projeto', parts.projectSpecs)
   add('agentSpecs', 'Contexto inicial do agente', parts.agentSpecs)
+  add('skills', 'Índice de skills', parts.skills)
+  add('commands', 'Índice de commands', parts.commands)
   add('index', 'Índice de documentos', parts.index)
 
-  const allowed = deps.guidance?.hasDocs(projectId, agent.id) && !agent.allowedTools.includes(READ_DOC_TOOL) ? [...agent.allowedTools, READ_DOC_TOOL] : agent.allowedTools
+  // As ferramentas que a conversa liga sozinha: `read_doc` com índice, `use_skill` com skill liberada (como o `AgentProvider`).
+  const automatic = [...(deps.guidance?.hasDocs(projectId, agent.id) ? [READ_DOC_TOOL] : []), ...(deps.guidance?.hasSkills?.(agent.id) ? [USE_SKILL_TOOL] : [])]
+  const allowed = [...agent.allowedTools, ...automatic.filter((tool) => !agent.allowedTools.includes(tool))]
   const local = deps.localFor(allowed)
   if (local.length) sections.push(toolSection('local', 'Ferramentas locais', local))
 

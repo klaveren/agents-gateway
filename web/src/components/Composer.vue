@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { IOutgoingFile } from '@/stores/thread'
+import { commandSuggestions, type ICommandHint } from '@/lib/commands'
 import Icon from './Icon.vue'
 
-const props = defineProps<{ sending: boolean; disabled?: boolean; placeholder?: string }>()
+const props = defineProps<{ sending: boolean; disabled?: boolean; placeholder?: string; commands?: ICommandHint[] }>()
 /** `settle(false)`: o envio falhou — o texto e os anexos voltam para a caixa. */
 const emit = defineEmits<{ send: [text: string, files: IOutgoingFile[], settle: (ok: boolean) => void]; stop: [] }>()
 
@@ -64,7 +65,42 @@ function submit() {
   void nextTick(grow)
 }
 
+/**
+ * O autocompletar de `/commands`: abre quando a mensagem começa com `/` e o nome ainda está sendo digitado. Setas
+ * escolhem, Enter ou Tab completam (`/nome `, para os argumentos), Esc fecha até o texto mudar.
+ */
+const dismissed = ref<string>()
+const highlighted = ref(0)
+const suggestions = computed(() => (dismissed.value === text.value ? [] : commandSuggestions(text.value, props.commands ?? [])))
+watch(suggestions, () => (highlighted.value = 0))
+
+function complete(id: string) {
+  text.value = `/${id} `
+  void nextTick(() => {
+    grow()
+    area.value?.focus()
+  })
+}
+
 function onKey(event: KeyboardEvent) {
+  if (suggestions.value.length && !event.isComposing) {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      const step = event.key === 'ArrowDown' ? 1 : -1
+      highlighted.value = (highlighted.value + step + suggestions.value.length) % suggestions.value.length
+      return
+    }
+    if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab') {
+      event.preventDefault()
+      complete(suggestions.value[highlighted.value].id)
+      return
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      dismissed.value = text.value
+      return
+    }
+  }
   if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
     event.preventDefault()
     submit()
@@ -80,6 +116,20 @@ function onKey(event: KeyboardEvent) {
         <button type="button" class="text-zinc-400 hover:text-white" @click="files.splice(index, 1)"><Icon name="x" class="h-3.5 w-3.5" /></button>
       </span>
     </div>
+    <ul v-if="suggestions.length" class="mb-2 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-lg shadow-black/30" role="listbox" aria-label="Commands">
+      <li v-for="(command, index) in suggestions" :key="command.id" role="option" :aria-selected="index === highlighted">
+        <button
+          type="button"
+          class="flex w-full items-baseline gap-3 px-3 py-2 text-left"
+          :class="index === highlighted ? 'bg-zinc-800' : 'hover:bg-zinc-800/60'"
+          @mousedown.prevent="complete(command.id)"
+          @mouseenter="highlighted = index"
+        >
+          <code class="shrink-0 text-emerald-300">/{{ command.id }}</code>
+          <span class="min-w-0 truncate text-xs text-zinc-400">{{ command.description }}</span>
+        </button>
+      </li>
+    </ul>
     <div class="flex items-end gap-2">
       <button type="button" class="grid h-10 w-10 shrink-0 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-40" :disabled="disabled" title="Anexar" @click="picker?.click()">
         <Icon name="clip" class="h-5 w-5" />

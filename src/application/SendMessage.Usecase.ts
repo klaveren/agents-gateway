@@ -159,7 +159,7 @@ export class SendMessageUseCase {
          * `undefined` obrigaria quem lista a abrir o primeiro turno de cada conversa só para ter um
          * rótulo — uma leitura por linha da lista.
          */
-        title: index === 0 ? titleFrom(input.text) : undefined,
+        title: index === 0 ? titleFrom(input.recordAs ?? input.text) : undefined,
         createdAt: session.createdAt,
         updatedAt: new Date(),
         turns: session.turns,
@@ -178,7 +178,7 @@ export class SendMessageUseCase {
       sessionId,
       index,
       at: new Date(),
-      request: input.text ?? '',
+      request: input.recordAs ?? input.text ?? '',
       files: filesOf(input),
       text: turn.text,
       reasoning: turn.reasoning || undefined,

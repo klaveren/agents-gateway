@@ -2,6 +2,7 @@
 import { computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { levelsOf, type IChoice } from '@/lib/agentChoice'
+import { useAgentCommands } from '@/lib/commands'
 import type { TMode } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import { useProtocolsStore } from '@/stores/protocols'
@@ -32,6 +33,8 @@ const draft = computed(() => thread.draft)
 const listed = computed(() => agents.conversable)
 const usable = computed(() => listed.value.filter((option) => !option.unavailable))
 const agent = computed(() => usable.value.find((option) => option.id === draft.value?.agentId))
+/** Os `/commands` do agente escolhido (o autocompletar da caixa). */
+const commands = useAgentCommands(computed(() => agent.value?.id))
 
 /** As lanes do provider (assinatura só roda a agent); `undefined` = protocolos ainda não carregados. */
 const lanesOf = (providerId: string) => protocols.get(protocols.protocolOf(providerId))?.lanes
@@ -168,6 +171,6 @@ async function send(text: string, files: IOutgoingFile[], settle: (ok: boolean) 
       </div>
     </div>
 
-    <Composer :sending="thread.sending" :disabled="!agent" :placeholder="agent ? `Mensagem para ${agent.name}` : 'Escolha um agente'" @send="send" @stop="thread.stop" />
+    <Composer :sending="thread.sending" :disabled="!agent" :commands="commands" :placeholder="agent ? `Mensagem para ${agent.name}` : 'Escolha um agente'" @send="send" @stop="thread.stop" />
   </section>
 </template>

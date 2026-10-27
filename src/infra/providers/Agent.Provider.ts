@@ -30,6 +30,7 @@ import { IAgentEvent, IUsage } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { READ_DOC_TOOL } from '@domain/models/ProjectDoc.Model'
+import { USE_SKILL_TOOL } from '@domain/models/Resource.Model'
 import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { caller } from '@infra/mcp/Caller.Identity'
@@ -78,7 +79,11 @@ export class AgentProvider implements IAgentProvider {
      * As rules e os documentos do ambiente (ver `GuidanceService`): o texto que vai no system prompt da conversa
      * e se ela tem documento para o `read_doc`. Ausente = sem nada disso.
      */
-    private readonly guidance?: { environmentFor(projectId?: string, agentId?: string): string | undefined; hasDocs(projectId?: string, agentId?: string): boolean },
+    private readonly guidance?: {
+      environmentFor(projectId?: string, agentId?: string): string | undefined
+      hasDocs(projectId?: string, agentId?: string): boolean
+      hasSkills?(agentId?: string): boolean
+    },
   ) {
     /**
      * Uma leitura no boot, e depois só quando muda.
@@ -221,12 +226,14 @@ export class AgentProvider implements IAgentProvider {
   }
 
   /**
-   * O agente com o `read_doc` quando a conversa tem documento no índice: o prompt manda ler, então a
-   * ferramenta vem junto, sem ninguém ter de escolhê-la no cadastro do agente.
+   * O agente com o `read_doc` quando a conversa tem documento no índice, e com o `use_skill` quando ele tem skill
+   * liberada: o prompt manda usar, então a ferramenta vem junto, sem ninguém ter de escolhê-la no cadastro do agente.
    */
   private withDocs(agent: IAgent, projectId: string | undefined): IAgent {
-    if (!this.guidance?.hasDocs(projectId, agent.id) || agent.allowedTools.includes(READ_DOC_TOOL)) return agent
-    return { ...agent, allowedTools: [...agent.allowedTools, READ_DOC_TOOL] }
+    const extra = [...(this.guidance?.hasDocs(projectId, agent.id) ? [READ_DOC_TOOL] : []), ...(this.guidance?.hasSkills?.(agent.id) ? [USE_SKILL_TOOL] : [])].filter(
+      (tool) => !agent.allowedTools.includes(tool),
+    )
+    return extra.length ? { ...agent, allowedTools: [...agent.allowedTools, ...extra] } : agent
   }
 
   /**
