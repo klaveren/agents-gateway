@@ -3,6 +3,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { api } from '@/lib/api'
 import type { IConversation } from '@/lib/types'
 import { useRouter } from 'vue-router'
+import { contextMeter } from '@/lib/contextMeter'
 import { fullTime, tokens, usd } from '@/lib/format'
 import { useAgentsStore } from '@/stores/agents'
 import { useProtocolsStore } from '@/stores/protocols'
@@ -58,6 +59,21 @@ const childCost = computed(() => (children.value.some((child) => child.costUsd !
 /** O provider e o modelo em vigor: os da sessão viva (podem ter trocado), senão os da conversa. */
 const currentModel = computed(() => thread.session?.model ?? header.value?.model)
 const currentProvider = computed(() => thread.session?.provider ?? header.value?.provider ?? agent.value?.providers[0]?.id ?? '')
+
+/**
+ * ⚖️ O CONTEXTO EM USO é o da última chamada ao modelo (`contextTokens`), não a soma do turno: o do turno em
+ * andamento, senão o do último turno que o informou, senão o da conversa.
+ */
+const contextUsed = computed(() => {
+  if (thread.pending?.usage?.contextTokens) return thread.pending.usage.contextTokens
+  for (let index = thread.turns.length - 1; index >= 0; index -= 1) {
+    const value = thread.turns[index].usage?.contextTokens
+    if (value) return value
+  }
+  return header.value?.usage.contextTokens
+})
+const contextWindow = computed(() => agent.value?.providers.find((provider) => provider.id === currentProvider.value)?.contextLength?.[currentModel.value ?? ''])
+const context = computed(() => contextMeter(contextUsed.value, contextWindow.value))
 
 /**
  * O aviso antes do turno que mudou de provider, de modelo ou de nível em relação ao anterior. Só compara
@@ -146,14 +162,22 @@ async function continueFresh() {
           <template v-if="auth.isAdmin && owner"> · {{ owner.email ?? owner.id }}</template>
         </div>
       </div>
-      <div v-if="header" class="ml-auto flex items-center gap-1">
-        <span v-if="auth.isAdmin && header.costUsd !== undefined" class="mr-2 hidden text-xs text-zinc-400 sm:inline">{{ tokens(header.usage.totalTokens) }} tokens · {{ header.costIsFloor ? '≥ ' : '' }}{{ usd(header.costUsd) }}</span>
-        <button class="grid h-9 w-9 place-items-center rounded-full hover:bg-zinc-800" :class="header.shared ? 'text-emerald-400' : 'text-zinc-400'" :title="header.shared ? 'Parar de compartilhar' : 'Compartilhar por link'" @click="toggleShare">
-          <Icon name="share" class="h-5 w-5" />
-        </button>
-        <button class="grid h-9 w-9 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 hover:text-rose-300" title="Apagar histórico" @click="confirming = true">
-          <Icon name="trash" class="h-5 w-5" />
-        </button>
+      <div v-if="header || context" class="ml-auto flex items-center gap-1">
+        <div v-if="context" class="mr-2 flex flex-col items-end gap-1" :title="`Contexto em uso na última chamada ao modelo${context.percent !== undefined ? ` — ${context.percent}% da janela` : ''}`">
+          <span class="text-[11px] tabular-nums" :class="context.warn ? 'text-amber-300' : 'text-zinc-400'">Contexto {{ context.label }}</span>
+          <span v-if="context.percent !== undefined" class="h-1 w-24 overflow-hidden rounded-full bg-zinc-800">
+            <span class="block h-full rounded-full" :class="context.warn ? 'bg-amber-400' : 'bg-emerald-500/70'" :style="{ width: `${context.percent}%` }" />
+          </span>
+        </div>
+        <template v-if="header">
+          <span v-if="auth.isAdmin && header.costUsd !== undefined" class="mr-2 hidden text-xs text-zinc-400 sm:inline">{{ tokens(header.usage.totalTokens) }} tokens · {{ header.costIsFloor ? '≥ ' : '' }}{{ usd(header.costUsd) }}</span>
+          <button class="grid h-9 w-9 place-items-center rounded-full hover:bg-zinc-800" :class="header.shared ? 'text-emerald-400' : 'text-zinc-400'" :title="header.shared ? 'Parar de compartilhar' : 'Compartilhar por link'" @click="toggleShare">
+            <Icon name="share" class="h-5 w-5" />
+          </button>
+          <button class="grid h-9 w-9 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 hover:text-rose-300" title="Apagar histórico" @click="confirming = true">
+            <Icon name="trash" class="h-5 w-5" />
+          </button>
+        </template>
       </div>
     </header>
 

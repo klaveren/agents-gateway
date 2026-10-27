@@ -316,8 +316,8 @@ describe('GoogleAgentAdapter', () => {
     const usage = events.filter((e) => e.type === 'usage').map((e) => e.type === 'usage' && e.payload)
 
     assert.deepStrictEqual(usage, [
-      { inputTokens: 22096, outputTokens: 26, reasoningTokens: 131, cacheReadTokens: 20000, cacheWriteTokens: 0 },
-      { inputTokens: 22603, outputTokens: 134, reasoningTokens: 81, cacheReadTokens: 20282, cacheWriteTokens: 0 },
+      { inputTokens: 22096, outputTokens: 26, reasoningTokens: 131, cacheReadTokens: 20000, cacheWriteTokens: 0, contextTokens: 22096 },
+      { inputTokens: 22603, outputTokens: 134, reasoningTokens: 81, cacheReadTokens: 20282, cacheWriteTokens: 0, contextTokens: 22603 },
     ])
   })
 
@@ -335,7 +335,7 @@ describe('GoogleAgentAdapter', () => {
     const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
     const usage = events.filter((e) => e.type === 'usage').map((e) => e.type === 'usage' && e.payload)
 
-    assert.deepStrictEqual(usage, [{ inputTokens: 50, outputTokens: 4, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }])
+    assert.deepStrictEqual(usage, [{ inputTokens: 50, outputTokens: 4, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, contextTokens: 50 }])
     assert.strictEqual(events[events.length - 1].type, 'message.completed')
   })
 

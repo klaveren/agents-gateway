@@ -711,4 +711,16 @@ describe('SqliteConversationRepository — monitor, rótulos e compartilhamento'
       assert.deepStrictEqual(await repo.usage({ since: new Date('2026-10-23T00:00:00Z'), tzOffsetMinutes: 0 }), [])
     })
   })
+
+  it('o contexto em uso: o turno e a conversa guardam o da última chamada; um turno sem o dado não apaga o da conversa', async () => {
+    const repo = repository()
+    await repo.saveSession(session({ usage: { inputTokens: 900, totalTokens: 900, contextTokens: 600 } }))
+    await repo.appendTurn(turn({ index: 0, usage: { inputTokens: 900, totalTokens: 900, contextTokens: 600 } }))
+    assert.strictEqual((await repo.findSession('s1'))?.usage.contextTokens, 600)
+    assert.strictEqual((await repo.listTurns('s1'))[0].usage?.contextTokens, 600)
+
+    // Codex e Antigravity não informam: a conversa segue com o último que se soube.
+    await repo.saveSession(session({ usage: { inputTokens: 1500, totalTokens: 1500 } }))
+    assert.strictEqual((await repo.findSession('s1'))?.usage.contextTokens, 600)
+  })
 })

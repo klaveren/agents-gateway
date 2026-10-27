@@ -336,6 +336,8 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
 
     return {
       inputTokens: typeof inputTokens === 'number' ? inputTokens : undefined,
+      // Um `response_done` por chamada ao modelo: a entrada dela é o contexto em uso.
+      contextTokens: typeof inputTokens === 'number' ? inputTokens : undefined,
       outputTokens: output === undefined ? undefined : Math.max(output - reasoning, 0),
       reasoningTokens: reasoning || undefined,
       cacheReadTokens: cacheTokensOf(inputTokensDetails, 'cached_tokens'),

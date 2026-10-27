@@ -115,6 +115,9 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: 'conversation_turns', column: 'effort', definition: 'TEXT' },
   { table: 'conversations', column: 'usage_by_model', definition: 'TEXT' },
   { table: 'conversation_turns', column: 'provider', definition: 'TEXT' },
+  // O contexto em uso na última chamada ao modelo (não se soma; `NULL` = o provider não informa).
+  { table: 'conversations', column: 'context_tokens', definition: 'INTEGER' },
+  { table: 'conversation_turns', column: 'context_tokens', definition: 'INTEGER' },
 ]
 
 /**
@@ -201,6 +204,7 @@ function usageOf(row: TRow): IStoredUsage {
     totalTokens: count(row.total_tokens),
     cacheReadTokens: count(row.cache_read_tokens),
     cacheWriteTokens: count(row.cache_write_tokens),
+    ...(typeof row.context_tokens === 'number' ? { contextTokens: row.context_tokens } : {}),
   }
 }
 
@@ -269,8 +273,8 @@ export class SqliteConversationRepository implements IConversationRepository {
        */
       this.db
         .prepare(
-          `INSERT INTO conversations (id, agent_id, provider, mode, model, title, turns, input_tokens, output_tokens, reasoning_tokens, total_tokens, cache_read_tokens, cache_write_tokens, usage_by_model, metadata, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO conversations (id, agent_id, provider, mode, model, title, turns, input_tokens, output_tokens, reasoning_tokens, total_tokens, cache_read_tokens, cache_write_tokens, context_tokens, usage_by_model, metadata, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET
              agent_id = excluded.agent_id,
              provider = excluded.provider,
@@ -284,6 +288,7 @@ export class SqliteConversationRepository implements IConversationRepository {
              total_tokens = excluded.total_tokens,
              cache_read_tokens = excluded.cache_read_tokens,
              cache_write_tokens = excluded.cache_write_tokens,
+             context_tokens = COALESCE(excluded.context_tokens, conversations.context_tokens),
              usage_by_model = COALESCE(excluded.usage_by_model, conversations.usage_by_model),
              metadata = COALESCE(excluded.metadata, conversations.metadata),
              created_at = COALESCE(conversations.created_at, excluded.created_at),
@@ -303,6 +308,7 @@ export class SqliteConversationRepository implements IConversationRepository {
           session.usage.totalTokens ?? 0,
           session.usage.cacheReadTokens ?? 0,
           session.usage.cacheWriteTokens ?? 0,
+          session.usage.contextTokens ?? null,
           session.usageByModel ? JSON.stringify(session.usageByModel) : null,
           session.metadata ? JSON.stringify(session.metadata) : null,
           session.createdAt.toISOString(),
@@ -322,11 +328,11 @@ export class SqliteConversationRepository implements IConversationRepository {
       const stored = this.db
         .prepare(
           `INSERT INTO conversation_turns
-             (conversation_id, idx, at, request, files, response, reasoning, tool_calls, warnings, input_tokens, output_tokens, reasoning_tokens, total_tokens, cache_read_tokens, cache_write_tokens, duration_ms, first_text_ms, aborted, error, classification, model, effort, provider)
+             (conversation_id, idx, at, request, files, response, reasoning, tool_calls, warnings, input_tokens, output_tokens, reasoning_tokens, total_tokens, cache_read_tokens, cache_write_tokens, context_tokens, duration_ms, first_text_ms, aborted, error, classification, model, effort, provider)
            VALUES (?, CASE WHEN EXISTS (SELECT 1 FROM conversation_turns WHERE conversation_id = ? AND idx = ?)
                         THEN (SELECT MAX(idx) + 1 FROM conversation_turns WHERE conversation_id = ?)
                         ELSE ? END,
-                   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            RETURNING idx`,
         )
         .get(
@@ -349,6 +355,7 @@ export class SqliteConversationRepository implements IConversationRepository {
           turn.usage?.totalTokens ?? 0,
           turn.usage?.cacheReadTokens ?? 0,
           turn.usage?.cacheWriteTokens ?? 0,
+          turn.usage?.contextTokens ?? null,
           turn.durationMs ?? null,
           turn.firstTextMs ?? null,
           // O driver aceita number, não boolean.
@@ -651,7 +658,7 @@ export class SqliteConversationRepository implements IConversationRepository {
          * porque o consumo por modelo é um JSON por linha.
          */
         const rows = this.db.prepare('SELECT * FROM conversations').all() as TRow[]
-        const models = new Map<string, { provider: string; model: string; conversations: number; usage: Required<IStoredUsage> }>()
+        const models = new Map<string, { provider: string; model: string; conversations: number; usage: Required<Omit<IStoredUsage, 'contextTokens'>> }>()
         for (const row of rows) {
           const byModel = json<Record<string, IStoredUsage> | undefined>(row.usage_by_model, undefined)
           const entries = byModel && Object.keys(byModel).length ? Object.entries(byModel) : [[text(row.model), usageOf(row)] as const]
@@ -659,9 +666,9 @@ export class SqliteConversationRepository implements IConversationRepository {
             // A chave é `provider|modelo` (a conversa pode ter trocado de provider); a antiga, só o modelo.
             const { provider, model } = parseUsageKey(usageKey, text(row.provider))
             const key = `${provider}\u0000${model}`
-            const entry = models.get(key) ?? models.set(key, { provider, model, conversations: 0, usage: usageOf({}) as Required<IStoredUsage> }).get(key)!
+            const entry = models.get(key) ?? models.set(key, { provider, model, conversations: 0, usage: usageOf({}) as Required<Omit<IStoredUsage, 'contextTokens'>> }).get(key)!
             entry.conversations += 1
-            for (const field of Object.keys(entry.usage) as Array<keyof IStoredUsage>) entry.usage[field] += usage[field] ?? 0
+            for (const field of Object.keys(entry.usage) as Array<keyof typeof entry.usage>) entry.usage[field] += usage[field] ?? 0
           }
         }
         const byModel = [...models.values()].sort((a, b) => b.usage.totalTokens - a.usage.totalTokens)

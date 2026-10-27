@@ -377,6 +377,7 @@ export class AgentController {
       protocol: provider?.protocol ?? Object.values(EProvider).find((value) => value === providerId),
       pricing: this.pricingOf(providerId),
       reasoningOf: models ? (model) => models.reasoningOf(providerId, model) : undefined,
+      contextOf: models ? (model) => models.contextOf(providerId, model) : undefined,
       disabledModels: disabled[providerId],
     }
   }
