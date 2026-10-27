@@ -6,6 +6,7 @@ import { PackagesController } from '@infra/http/Packages.Controller'
 import { HooksController } from '@infra/http/Hooks.Controller'
 import { makeHooks } from './Hooks.Factory'
 import { makeProjects } from './Projects.Factory'
+import { projectSandbox } from '@infra/sandbox/Project.Sandbox'
 import { ProjectsController } from '@infra/http/Projects.Controller'
 import { AgentController } from '@infra/http/Agent.Controller'
 import { AuthController } from '@infra/http/Auth.Controller'
@@ -46,6 +47,7 @@ export function makeController(): AgentController {
     listSessions: usecases.listSessionsUseCase,
     agentRemoved: (agentId) => makeHooks().removeAgent(agentId),
     projects: makeProjects(),
+    sandbox: projectSandbox(),
   })
 }
 

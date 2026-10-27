@@ -27,6 +27,9 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.3.309
         version: 0.3.309(@anthropic-ai/sdk@0.117.1(zod@4.4.3))(@modelcontextprotocol/sdk@1.32.1(zod@4.4.3))(zod@4.4.3)
+      '@anthropic-ai/sandbox-runtime':
+        specifier: 0.0.79
+        version: 0.0.79
       '@anthropic-ai/sdk':
         specifier: ^0.117.1
         version: 0.117.1(zod@4.4.3)
@@ -184,6 +187,11 @@ packages:
       '@anthropic-ai/sdk': '>=0.93.0'
       '@modelcontextprotocol/sdk': ^1.29.0
       zod: ^4.0.0
+
+  '@anthropic-ai/sandbox-runtime@0.0.79':
+    resolution: {integrity: sha512-WjBmS9fbTpnQwQkM9SU+JjhM2CcXo9eWEELktY1100RMvTy/jPhP44yZ3NXhh+GHB350OgPbM3+FubE5WVRtSA==}
+    engines: {node: '>=22.12.0'}
+    hasBin: true
 
   '@anthropic-ai/sdk@0.117.1':
     resolution: {integrity: sha512-Yn2QlXfyCiKJ5YGCOOay7ZE78ISvII2XY621WMCiflmG8IYgwx59IBwPExxki3Xk9jKUtnD/Sj6UvplWr0rZxg==}
@@ -897,6 +905,9 @@ packages:
     resolution: {integrity: sha512-SEeaJLb3qBNF/OaXnaR1NmmBbFYk1zC0ZH/52fATcRPLFg/p791YrcyFFy44Bo9sLaGuSuLp5Q6axbb/O+v/RA==}
     engines: {node: ^14.18.0 || >=16.0.0}
 
+  '@pondwader/socks5-server@1.0.10':
+    resolution: {integrity: sha512-bQY06wzzR8D2+vVCUoBsr5QS2U6UgPUQRmErNwtsuI6vLcyRKkafjkr3KxbtGFf9aBBIV2mcvlsKD1UYaIV+sg==}
+
   '@protobufjs/aspromise@1.1.2':
     resolution: {integrity: sha512-j+gKExEuLmKwvz3OgROXtrJ2UG2x8Ch2YZUxahh+s1F2HZ+wAceUNLkvy6zKCPVRkU++ZWQrdxsUeQXmcg4uoQ==}
 
@@ -1335,6 +1346,10 @@ packages:
   commander@10.0.1:
     resolution: {integrity: sha512-y4Mg2tXshplEbSGzx7amzPwKKOCGuoSRP/CjEdwwk0FOGlUbq6lKuoyDZTNZkmxHdJtp54hdfY/JUrdL7Xfdug==}
     engines: {node: '>=14'}
+
+  commander@12.1.0:
+    resolution: {integrity: sha512-Vw8qHK3bZM9y/P10u3Vib8o/DdkvA2OtPtZvD871QKjy74Wj1WSKFILMPRPSdUSx5RFK1arlJzEtA4PkFgnbuA==}
+    engines: {node: '>=18'}
 
   commander@9.5.0:
     resolution: {integrity: sha512-KRs7WVDKg86PWiuAqhDrAQnTXZKraVcCc6vFdL14qrZ/DcWwuRo7VoiYXalXO7S5GKpqYiVEwCbgFDfxNHKJBQ==}
@@ -2443,6 +2458,10 @@ packages:
     resolution: {integrity: sha512-dRB78srN/l6gqWulah9SrxeYnxeddIG30+GOqK/9OlLVyLg3HPnr6SqOWTWOXKRwC2eGYCkZ59NNuSgvSrpgOA==}
     engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
 
+  node-forge@1.4.2:
+    resolution: {integrity: sha512-rRtAR5XLJ8gCKd9du4qrKAsgCG1ObGP4gLeNJMa4vYSeq4bmBMOJk5IHkrviBV0q7uoAJlVd8HEQYQSVUb4FGQ==}
+    engines: {node: '>= 6.13.0'}
+
   node-gyp@8.4.1:
     resolution: {integrity: sha512-olTJRgUtAb/hOXG0E93wZDs5YiJlgbXxTwQAFHyNlRsXQnYzUaF2aGgujZbw+hR8aF4ZG/rST57bWMWD16jr9w==}
     engines: {node: '>= 10.12.0'}
@@ -3217,6 +3236,9 @@ packages:
     peerDependencies:
       zod: ^3.25.28 || ^4
 
+  zod@3.25.76:
+    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+
   zod@4.4.3:
     resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
@@ -3267,6 +3289,13 @@ snapshots:
       '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.309
       '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.309
       '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.309
+
+  '@anthropic-ai/sandbox-runtime@0.0.79':
+    dependencies:
+      '@pondwader/socks5-server': 1.0.10
+      commander: 12.1.0
+      node-forge: 1.4.2
+      zod: 3.25.76
 
   '@anthropic-ai/sdk@0.117.1(zod@4.4.3)':
     dependencies:
@@ -4210,6 +4239,8 @@ snapshots:
 
   '@pkgr/core@0.3.6': {}
 
+  '@pondwader/socks5-server@1.0.10': {}
+
   '@protobufjs/aspromise@1.1.2': {}
 
   '@protobufjs/base64@1.1.2': {}
@@ -4750,6 +4781,8 @@ snapshots:
       delayed-stream: 1.0.0
 
   commander@10.0.1: {}
+
+  commander@12.1.0: {}
 
   commander@9.5.0: {}
 
@@ -6023,6 +6056,8 @@ snapshots:
       fetch-blob: 3.2.0
       formdata-polyfill: 4.0.10
 
+  node-forge@1.4.2: {}
+
   node-gyp@8.4.1:
     dependencies:
       env-paths: 2.2.1
@@ -6838,5 +6873,7 @@ snapshots:
   zod-to-json-schema@3.25.2(zod@4.4.3):
     dependencies:
       zod: 4.4.3
+
+  zod@3.25.76: {}
 
   zod@4.4.3: {}

@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto'
 import { nativeToolsOf } from '@domain/Native.Tools'
 import { IConnectionSource, requireConnection, UnavailableProviderError } from './support/Keyed.Client'
 import { workspaceFor, subscriptionEnv } from './support/Subscription.Workspace'
-import { query, type CanUseTool, type EffortLevel, type Options, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import { query, type CanUseTool, type EffortLevel, type Options, type HookCallback, type PermissionResult, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import { IProjectSandbox, projectPathIssue, projectSandbox } from '@infra/sandbox/Project.Sandbox'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { reasoningLevel } from '@domain/Reasoning.Levels'
@@ -51,6 +52,8 @@ export interface IClaudeAgentAdapterDeps {
    * ⛔ O CLI recebe o ambiente mínimo, não o `.env` do gateway, e roda num diretório vazio por conversa.
    */
   subscription?: boolean
+  /** O cerco do agente de projeto (ver `Project.Sandbox`). Ausente = o do processo. */
+  sandbox?: IProjectSandbox
 }
 
 /**
@@ -64,6 +67,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
   private readonly query: TQuery
   private readonly store: SessionStore
   private readonly catalog?: ToolCatalog
+  private readonly sandbox: IProjectSandbox
 
   private readonly connections?: IConnectionSource
   private readonly protocol: EProvider
@@ -74,6 +78,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     this.protocol = deps.subscription ? EProvider.CLAUDE_SUB : EProvider.CLAUDE
     this.store = deps.store ?? new SessionStore()
     this.catalog = deps.catalog
+    this.sandbox = deps.sandbox ?? projectSandbox()
   }
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
@@ -138,6 +143,8 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     const natives = nativeToolsOf(agent.allowedTools, EProvider.CLAUDE).flatMap((tool) => tool.sdkNames ?? [tool.sdkName])
     const remotes = (await this.catalog?.mcpServersFor(agent.allowedTools, context)) ?? []
 
+    const project = agent.projectId ? { projectId: agent.projectId, dir: workspaceFor(agent.projectId, sessionId) } : undefined
+    const gate = this.makeGate([...agent.allowedTools, ...natives, ...local.map((tool) => tool.name)], remotes, project)
     const options: Options = {
       model: record.model,
       systemPrompt: record.systemPrompt,
@@ -149,7 +156,10 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       // Nomes soltos em `allowedTools` aprovam antes de o callback rodar e o SDK
       // avisa que o `canUseTool` foi sombreado; por isso o gate fica só aqui.
       // As locais montadas entram pelo NOME — a `delegate_to_agent` vem de `agent:<id>`, não de um nome em `allowedTools`.
-      canUseTool: this.makeGate([...agent.allowedTools, ...natives, ...local.map((tool) => tool.name)], remotes),
+      canUseTool: gate,
+      // ⛔ Agente de projeto: a MESMA decisão também no PreToolUse, que roda em toda ferramenta — o SDK libera
+      // leitura (Read, Glob, Grep) sem passar pelo `canUseTool`, e o filtro de caminho seria pulado.
+      ...(project ? { hooks: { PreToolUse: [{ hooks: [preToolUse(gate)] }] } } : {}),
       // Isolamento: sem isto o subprocesso lê o ~/.claude e o CLAUDE.md da máquina.
       settingSources: [],
       includePartialMessages: true,
@@ -314,19 +324,42 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
    * ⛔ O portão: tool local ou nativa só se o agente a tem; de servidor MCP, só as escolhidas nele (ou
    * todas, com `mcp:<id>/*`). Servidor que o agente não escolheu nem é montado.
    */
-  private makeGate(allowed: string[], remotes: readonly IAgentMcpServer[] = []): CanUseTool {
+  private makeGate(allowed: string[], remotes: readonly IAgentMcpServer[] = [], project?: { projectId: string; dir: string }): CanUseTool {
     const byServer = new Map(remotes.map((remote) => [claudeMcpServerName(remote.config.id), remote]))
-    return async (toolName) => {
+    // Os comandos que ESTE portão já embrulhou: o hook e o `canUseTool` podem passar pelo mesmo Bash, e um
+    // cerco dentro do outro falharia. ⛔ Pela linha exata, nunca por um marcador no texto (o modelo forjaria).
+    const wrapped = new Set<string>()
+    return async (toolName, input) => {
       const [, server] = toolName.split('__')
       const isMcp = toolName.startsWith('mcp__')
       const bare = this.bareToolName(toolName)
 
       const remote = isMcp ? byServer.get(server) : undefined
       if (remote && (!remote.tools || remote.tools.includes(bare))) return { behavior: 'allow' }
-      if (!remote && allowed.includes(bare)) return { behavior: 'allow' }
+      if (!remote && allowed.includes(bare)) return project ? this.confined(bare, input, project, wrapped) : { behavior: 'allow' }
 
       return { behavior: 'deny', message: `Tool "${bare}" is not enabled for this agent.` }
     }
+  }
+
+  /**
+   * ⛔ O AGENTE DE PROJETO SÓ ALCANÇA A PASTA DELE: o Bash roda embrulhado no cerco do sistema operacional
+   * (sem cerco, não roda), e as ferramentas de arquivo passam pelo filtro de caminho.
+   */
+  private async confined(bare: string, input: Record<string, unknown>, project: { projectId: string; dir: string }, wrapped: Set<string>): Promise<PermissionResult> {
+    if (bare === 'Bash') {
+      const command = String(input.command ?? '')
+      if (wrapped.has(command)) return { behavior: 'allow' }
+      try {
+        const line = await this.sandbox.wrap(command, project.projectId)
+        wrapped.add(line)
+        return { behavior: 'allow', updatedInput: { ...input, command: line } }
+      } catch (error: unknown) {
+        return { behavior: 'deny', message: `${error instanceof Error ? error.message : String(error)}. O Bash de agente de projeto fica bloqueado até o cerco funcionar.` }
+      }
+    }
+    const issue = projectPathIssue(project.dir, project.dir, bare, input)
+    return issue ? { behavior: 'deny', message: `${issue}: o agente deste projeto só lê e grava na pasta dele.` } : { behavior: 'allow' }
   }
 
   /** Sem chave de API: o login do host, ou o token OAuth salvo no lugar da chave. */
@@ -409,4 +442,17 @@ export function cliEnv(connection: { key: string; baseUrl?: string; compatible: 
   if (!connection.compatible) return { ...base, ANTHROPIC_API_KEY: connection.key }
 
   return { ...base, ANTHROPIC_BASE_URL: connection.baseUrl, ANTHROPIC_AUTH_TOKEN: connection.key, ANTHROPIC_API_KEY: '' }
+}
+
+/** O `PreToolUse` com a decisão do portão: nega o que o portão nega e aplica o `updatedInput` (o Bash cercado). */
+function preToolUse(gate: CanUseTool): HookCallback {
+  return async (input, _toolUseId, { signal }) => {
+    if (input.hook_event_name !== 'PreToolUse') return {}
+    const decision = await gate(input.tool_name, (input.tool_input ?? {}) as Record<string, unknown>, { signal, toolUseID: input.tool_use_id } as Parameters<CanUseTool>[2])
+    if (decision?.behavior === 'allow')
+      return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', ...(decision.updatedInput ? { updatedInput: decision.updatedInput } : {}) } }
+    return {
+      hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: decision && 'message' in decision ? decision.message : 'denied' },
+    }
+  }
 }

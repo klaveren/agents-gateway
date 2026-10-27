@@ -71,7 +71,9 @@ LABEL org.opencontainers.image.title="agents-gateway" \
 
 # ⚠️ Sem `BASH_CWD`: com ele, o `run_bash` de TODAS as conversas caía na mesma pasta. Sem ele, cada
 # conversa ganha a sua, vazia, em /tmp (no k8s, um `emptyDir`).
+# `SANDBOX_NESTED=1`: o cerco roda dentro de um contêiner, e não monta um `/proc` novo (o contêiner não deixa).
 ENV NODE_ENV=production \
+    SANDBOX_NESTED=1 \
     HOST=0.0.0.0 \
     PORT=3000
 
@@ -84,8 +86,11 @@ ENV NODE_ENV=production \
 # assinatura falhava com "error sending request".
 # `chromium` + `fonts-liberation`: o navegador dos MCPs `process` como o Playwright (`--executable-path=/usr/bin/chromium`).
 # O pod não tem root para instalar as bibliotecas dele depois; o pacote npm do MCP o gateway instala na tela.
+# `bubblewrap socat ripgrep`: o cerco dos agentes de projeto (`@anthropic-ai/sandbox-runtime`, o sandbox do
+# Claude Code). ⚠️ Num contêiner ele precisa de user namespaces: o seccomp do pod tem de liberá-los
+# (`seccompProfile: Unconfined`, ou um perfil que permita `unshare`). Sem isso o Bash de projeto fica bloqueado.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates chromium fonts-liberation \
+    && apt-get install -y --no-install-recommends ca-certificates chromium fonts-liberation bubblewrap socat ripgrep \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin gateway \

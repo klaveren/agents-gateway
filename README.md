@@ -484,8 +484,21 @@ it. The project of a conversation is written by the server (`metadata.project`),
 client. On the first boot with projects, the agents that already existed and their conversations
 move to the `geral` project, with every current account as a member.
 
-The folder organizes, but does not confine yet: confining reads and writes to it with the OS
-sandbox (bubblewrap/seatbelt) is the next step.
+**The folder confines.** A project agent's shell — the Claude `Bash` tool and `run_bash` — runs
+inside the OS sandbox (`@anthropic-ai/sandbox-runtime`, the Claude Code sandbox: seatbelt on macOS,
+bubblewrap on Linux). It reads and writes only the project folder (plus reads `<data>/tools`); the
+rest of `<data>` (database, keys, logins, other projects), the app folder (`.env`) and the gateway
+`HOME` are invisible. The network stays open. The Claude file tools (Read, Write, Edit, Glob, Grep,
+NotebookEdit) go through a path filter that resolves symlinks, enforced in a `PreToolUse` hook.
+Codex keeps its own `workspace-write` (writes confined, reads not) and a project agent cannot use
+the `full` sandbox. Global agents (the Atlas) are not confined.
+
+**On Linux in a container, bubblewrap needs user namespaces**: Docker's default seccomp profile
+blocks them, so the pod needs `securityContext.seccompProfile.type: Unconfined` (or a profile that
+allows `unshare`/`clone` with `CLONE_NEWUSER`). The image ships `bubblewrap socat ripgrep` and
+sets `SANDBOX_NESTED=1` (no fresh `/proc` mount, which containers refuse). Without the sandbox, the
+status says why (Settings → Deployment, and the Projects page) and **a project agent's shell is
+refused** — it never runs unconfined.
 
 ### Agent hooks: an event becomes a conversation
 

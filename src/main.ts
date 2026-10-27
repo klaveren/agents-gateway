@@ -17,6 +17,7 @@ import {
 import { cleanupOrphans } from '@infra/sandbox/Docker.Sandbox'
 import { persistInstalls } from '@infra/packages/Persistent.Installs'
 import { migrateToProjects } from '@composition/factories/Projects.Factory'
+import { projectSandbox } from '@infra/sandbox/Project.Sandbox'
 import { bootIssues, bootWarnings } from '@infra/http/Boot.Checks'
 import { clearSessionWorkspaces } from '@infra/adapters/support/Subscription.Workspace'
 import { makeTools } from '@composition/factories/Tools.Factory'
@@ -70,6 +71,8 @@ async function bootstrap() {
   if (accounts?.setupRequired()) console.log(`[setup] Nenhuma conta ainda. Código de instalação do primeiro admin: ${accounts.setupCode}`)
 
   const controller = makeController()
+  // O cerco dos agentes de projeto: testado agora, para o log dizer cedo se o Bash deles vai ficar bloqueado.
+  void projectSandbox().status()
   // Uma vez: o que existia antes dos projetos vai para o projeto `geral` (ver `migrateToProjects`).
   await migrateToProjects(controller.conversations)
   const server = new HttpServer(

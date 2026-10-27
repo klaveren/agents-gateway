@@ -1,5 +1,8 @@
 import assert from 'node:assert'
-import { describe, it } from 'node:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { after, before, describe, it } from 'node:test'
 import type { query } from '@anthropic-ai/claude-agent-sdk'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -354,5 +357,81 @@ describe('ClaudeAgentAdapter', () => {
       prompts[0].message.content.map((block) => block.type),
       ['image'],
     )
+  })
+
+  describe('agente de projeto: o cerco', () => {
+    // A pasta do projeto nasce na pasta de dados (a do banco): aqui, uma temporária, e não a raiz do repo.
+    const dataRoot = mkdtempSync(join(tmpdir(), 'gw-claude-project-'))
+    const previousDb = process.env.CONVERSATIONS_DB
+    before(() => (process.env.CONVERSATIONS_DB = join(dataRoot, 'gateway.db')))
+    after(() => {
+      process.env.CONVERSATIONS_DB = previousDb
+      rmSync(dataRoot, { recursive: true, force: true })
+    })
+    const projectAgent = (): IAgent => ({ ...getAgent(), projectId: 'xpto', allowedTools: ['sdk:Bash', 'sdk:Read', 'sdk:Write'] })
+    const options = { signal: new AbortController().signal, toolUseID: 't1', requestId: 'r1' }
+    const sandbox = (available: boolean) => ({
+      calls: [] as string[],
+      async status() {
+        return available
+          ? { available: true, mechanism: 'seatbelt' as const }
+          : { available: false, mechanism: 'bubblewrap' as const, reason: 'bwrap: No permissions to create new namespace' }
+      },
+      async wrap(command: string) {
+        this.calls.push(command)
+        if (!available) throw new Error('cerco indisponível neste servidor: bwrap: No permissions to create new namespace')
+        return `cercado(${command})`
+      },
+    })
+    const run = async (available: boolean) => {
+      const seen: TQueryParams[] = []
+      const fake = sandbox(available)
+      const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog: catalogWith(true), sandbox: fake })
+      const session = await adapter.createSession(projectAgent(), { agentId: CLAUDE_TEST_AGENT.id })
+      await drain(adapter.sendMessage(projectAgent(), session.id, { text: 'oi' }, {}))
+      return { options: seen[0].options!, fake }
+    }
+
+    it('⛔ o Bash sai embrulhado no cerco — uma vez só, mesmo passando pelo hook e pelo canUseTool', async () => {
+      const { options: sent, fake } = await run(true)
+      const gate = sent.canUseTool!
+      const first = (await gate('Bash', { command: 'ls /', description: 'x' }, options)) as { behavior: string; updatedInput?: { command: string; description: string } }
+      assert.deepStrictEqual([first.behavior, first.updatedInput?.command, first.updatedInput?.description], ['allow', 'cercado(ls /)', 'x'])
+      const again = (await gate('Bash', { command: 'cercado(ls /)' }, options)) as { behavior: string; updatedInput?: unknown }
+      assert.deepStrictEqual([again.behavior, again.updatedInput], ['allow', undefined])
+      assert.deepStrictEqual(fake.calls, ['ls /'])
+
+      const hook = sent.hooks?.PreToolUse?.[0]?.hooks?.[0]
+      assert.ok(hook, 'o agente de projeto ganha o PreToolUse')
+      const output = (await hook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'pwd' }, tool_use_id: 't2' } as never, 't2', {
+        signal: options.signal,
+      })) as {
+        hookSpecificOutput: { permissionDecision: string; updatedInput?: { command: string } }
+      }
+      assert.deepStrictEqual([output.hookSpecificOutput.permissionDecision, output.hookSpecificOutput.updatedInput?.command], ['allow', 'cercado(pwd)'])
+    })
+
+    it('⛔ sem cerco, o Bash do projeto é recusado com o motivo; Read fora da pasta também', async () => {
+      const { options: sent } = await run(false)
+      const denied = (await sent.canUseTool!('Bash', { command: 'ls' }, options)) as { behavior: string; message?: string }
+      assert.strictEqual(denied.behavior, 'deny')
+      assert.match(denied.message ?? '', /No permissions to create new namespace.*bloqueado/)
+      const outside = (await sent.canUseTool!('Read', { file_path: '/etc/hosts' }, options)) as { behavior: string; message?: string }
+      assert.deepStrictEqual([outside.behavior, /fora da pasta do projeto/.test(outside.message ?? '')], ['deny', true])
+      const inside = (await sent.canUseTool!('Write', { file_path: 'notas.md', content: 'x' }, options)) as { behavior: string }
+      assert.strictEqual(inside.behavior, 'allow')
+    })
+
+    it('o agente global continua sem cerco nem hook', async () => {
+      const seen: TQueryParams[] = []
+      const fake = sandbox(true)
+      const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog: catalogWith(true), sandbox: fake })
+      const global = { ...getAgent(), allowedTools: ['sdk:Bash'] }
+      const session = await adapter.createSession(global, { agentId: CLAUDE_TEST_AGENT.id })
+      await drain(adapter.sendMessage(global, session.id, { text: 'oi' }, {}))
+      assert.strictEqual(seen[0].options?.hooks, undefined)
+      const decision = (await seen[0].options!.canUseTool!('Bash', { command: 'ls' }, options)) as { behavior: string; updatedInput?: unknown }
+      assert.deepStrictEqual([decision.behavior, decision.updatedInput, fake.calls], ['allow', undefined, []])
+    })
   })
 })

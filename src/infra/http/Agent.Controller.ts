@@ -36,6 +36,7 @@ import { ISettingsRepository } from '@domain/ports/SettingsRepository.Port'
 import { ISessionContextProvider } from '@domain/ports/SessionContextProvider.Port'
 import { SessionNotFoundError } from '@domain/errors/Domain.Error'
 import { IProjectCaller, ProjectsService } from '@application/Projects.Service'
+import { IProjectSandbox } from '@infra/sandbox/Project.Sandbox'
 import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
 import { IAgentProviderFacts, toAgentDetailDto, toAgentDto } from './Agent.Dto'
 import { assertNoAdkTemplateCollision } from '@infra/adapters/GoogleAgent.Adapter'
@@ -105,6 +106,8 @@ export interface IAgentControllerDeps {
   agentRemoved?: (agentId: string) => void
   /** Os projetos e quem é membro. Ausente = sem projetos (tudo como antes: um espaço só). */
   projects?: ProjectsService
+  /** O cerco dos agentes de projeto, para a tela mostrar se funciona neste servidor. */
+  sandbox?: IProjectSandbox
   /** Os providers configurados — para o agente apontar para um que existe. Ausente = só os oficiais. */
   providers?: IProviderDirectory
   /** O catálogo de modelos: preços por provider, e os modelos que um agente pode oferecer. */
@@ -303,7 +306,7 @@ export class AgentController {
     const project = projects.get(projectId)
     const agent = session ? this.agents.get(session.agentId) : undefined
     return agent?.projectId === projectId
-      ? `Projeto: ${project.name} (${project.id}). Sua pasta de trabalho é ${projects.folderOf(projectId)} — persistente e compartilhada pelas conversas do projeto.`
+      ? `Projeto: ${project.name} (${project.id}). Sua pasta de trabalho é ${projects.folderOf(projectId)} — persistente e compartilhada pelas conversas do projeto. Fora desta pasta você não lê nem grava.`
       : `Projeto atual: ${project.name} (projectId "${project.id}"). Agentes, hooks e conversas que você criar aqui pertencem a este projeto.`
   }
 
@@ -324,6 +327,10 @@ export class AgentController {
     const issues: Array<{ field: string; message: string }> = []
     if (agent.projectId && this.usecases.projects && !this.usecases.projects.exists(agent.projectId))
       issues.push({ field: 'projectId', message: `no such project: ${agent.projectId}` })
+    // ⛔ No projeto, nada de sandbox `full`: o Codex e o Antigravity rodariam soltos, fora da pasta do projeto.
+    if (agent.projectId)
+      for (const target of agent.providers.filter((candidate) => candidate.sandbox === 'full'))
+        issues.push({ field: 'providers', message: `${target.provider}: a project agent cannot use the full sandbox (it would run outside the project folder)` })
     for (const entry of agent.allowedTools.filter((tool) => tool.startsWith('agent:'))) {
       const target = this.agents.get(entry.slice('agent:'.length))
       if (target?.projectId && target.projectId !== agent.projectId) issues.push({ field: 'allowedTools', message: `${entry} is in another project (${target.projectId})` })
@@ -606,6 +613,8 @@ export class AgentController {
         deployment: {
           localToolsEnabled: process.env.LOCAL_TOOLS_ENABLED?.trim() || undefined,
           allowAnonymous: process.env.ALLOW_ANONYMOUS === '1',
+          // O cerco dos agentes de projeto funciona AQUI? Sem ele, o Bash deles fica bloqueado.
+          ...(this.usecases.sandbox ? { sandbox: await this.usecases.sandbox.status() } : {}),
         },
       }
     })
