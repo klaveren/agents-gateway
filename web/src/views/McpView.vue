@@ -11,6 +11,7 @@ import { fullTime, initials } from '@/lib/format'
 import type { IMcpContainer, IMcpProcess, IMcpServer, TMcpAuth, TMcpKind, TMcpTransport } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
 import { useMcpStore, type INewMcpServer } from '@/stores/mcp'
+import { useSettingsStore } from '@/stores/settings'
 
 /**
  * A guia MCPs: os servidores de onde os agentes tiram ferramentas. Cada agente escolhe, no formulário
@@ -22,6 +23,12 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const mcp = useMcpStore()
+const settings = useSettingsStore()
+/** Sem Docker neste servidor (o pod do k3s não tem): o "Contêiner isolado" não sobe. `undefined` = não se sabe. */
+const dockerDown = computed(() => {
+  const docker = settings.current?.deployment?.docker
+  return docker && !docker.available ? (docker.reason ?? 'o Docker não responde') : undefined
+})
 
 const AUTH_LABEL: Record<TMcpAuth, { label: string; hint: string }> = {
   caller: { label: 'Credencial de quem conversa', hint: 'O gateway repassa o token da pessoa (Authorization: Bearer …): o MCP decide o que cada uma vê.' },
@@ -69,7 +76,7 @@ const removing = ref<IMcpServer>()
 const removeError = ref<string>()
 
 onMounted(async () => {
-  if (auth.isAdmin) await mcp.load().catch((error) => (loadError.value = describe(error)))
+  if (auth.isAdmin) await Promise.all([mcp.load().catch((error) => (loadError.value = describe(error))), settings.load().catch(() => undefined)])
 })
 
 const editOf = (server: IMcpServer): IEdit => ({ name: server.name, url: server.url, transport: server.transport, auth: server.auth, headerName: server.headerName ?? 'Authorization' })
@@ -270,9 +277,21 @@ async function confirmRemove() {
           <div class="field">
             Tipo
             <div class="flex flex-wrap gap-1.5">
-              <button v-for="(option, value) in KIND_LABEL" :key="value" type="button" class="chip" :class="{ on: form.kind === value }" @click="form.kind = value">{{ option.label }}</button>
+              <button
+                v-for="(option, value) in KIND_LABEL"
+                :key="value"
+                type="button"
+                class="chip disabled:cursor-not-allowed disabled:opacity-40"
+                :class="{ on: form.kind === value }"
+                :disabled="value === 'container' && !!dockerDown && form.kind !== 'container'"
+                :title="value === 'container' && dockerDown ? `Indisponível: ${dockerDown}` : undefined"
+                @click="form.kind = value"
+              >
+                {{ option.label }}
+              </button>
             </div>
             <small class="hint">{{ KIND_LABEL[form.kind].hint }}</small>
+            <small v-if="dockerDown" class="hint text-amber-300/80">Contêiner isolado indisponível aqui: {{ dockerDown }}. Use o Processo local (npm).</small>
           </div>
           <div class="grid gap-3 sm:grid-cols-2">
             <label class="field">Nome<input v-model="form.name" required class="input" placeholder="CRM interno" @blur="slug" /><small v-for="m in formIssues.name" :key="m" class="error">{{ m }}</small></label>
@@ -336,6 +355,9 @@ async function confirmRemove() {
         </p>
 
         <template v-if="selected.kind === 'container'">
+          <p v-if="dockerDown" class="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+            Este MCP não sobe neste servidor: {{ dockerDown }}. Recrie-o como Processo local (npm), se o pacote existir.
+          </p>
           <div class="flex flex-wrap items-center gap-2 text-xs text-zinc-400">
             <span class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-emerald-300">contêiner isolado</span>
             <span>{{ selected.status.instances ?? 0 }} instância(s) ativa(s) — uma por conversa</span>

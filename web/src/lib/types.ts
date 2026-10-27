@@ -216,6 +216,8 @@ export interface ISettings {
     allowAnonymous: boolean
     /** O cerco dos agentes de projeto neste servidor. Sem ele, o Bash deles fica bloqueado. */
     sandbox?: ISandboxStatus
+    /** O Docker responde neste servidor? Sem ele, o MCP "Contêiner isolado" não sobe. */
+    docker?: { available: boolean; reason?: string }
   }
 }
 

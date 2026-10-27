@@ -1,3 +1,4 @@
+import { dockerStatus } from '@infra/sandbox/Docker.Sandbox'
 import { GuidanceController } from '@infra/http/Guidance.Controller'
 import { makeGuidance } from './Guidance.Factory'
 import { SubscriptionLogins } from '@infra/providers/Subscription.Client'
@@ -50,6 +51,7 @@ export function makeController(): AgentController {
     agentRemoved: (agentId) => makeHooks().removeAgent(agentId),
     projects: makeProjects(),
     sandbox: projectSandbox(),
+    docker: () => dockerStatus(),
   })
 }
 

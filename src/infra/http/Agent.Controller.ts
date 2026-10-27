@@ -36,6 +36,7 @@ import { ISettingsRepository } from '@domain/ports/SettingsRepository.Port'
 import { ISessionContextProvider } from '@domain/ports/SessionContextProvider.Port'
 import { SessionNotFoundError } from '@domain/errors/Domain.Error'
 import { IProjectCaller, ProjectsService } from '@application/Projects.Service'
+import { IDockerStatus } from '@infra/sandbox/Docker.Sandbox'
 import { IProjectSandbox } from '@infra/sandbox/Project.Sandbox'
 import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
 import { IAgentProviderFacts, toAgentDetailDto, toAgentDto } from './Agent.Dto'
@@ -108,6 +109,8 @@ export interface IAgentControllerDeps {
   projects?: ProjectsService
   /** O cerco dos agentes de projeto, para a tela mostrar se funciona neste servidor. */
   sandbox?: IProjectSandbox
+  /** O Docker responde aqui? (o MCP "Contêiner isolado" precisa dele). Ausente = não se informa. */
+  docker?: () => Promise<IDockerStatus>
   /** Os providers configurados — para o agente apontar para um que existe. Ausente = só os oficiais. */
   providers?: IProviderDirectory
   /** O catálogo de modelos: preços por provider, e os modelos que um agente pode oferecer. */
@@ -616,6 +619,8 @@ export class AgentController {
           allowAnonymous: process.env.ALLOW_ANONYMOUS === '1',
           // O cerco dos agentes de projeto funciona AQUI? Sem ele, o Bash deles fica bloqueado.
           ...(this.usecases.sandbox ? { sandbox: await this.usecases.sandbox.status() } : {}),
+          // Sem Docker, o MCP em contêiner não sobe: a tela desliga a opção e avisa nos que existem.
+          ...(this.usecases.docker ? { docker: await this.usecases.docker() } : {}),
         },
       }
     })
