@@ -10,6 +10,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { MicromambaAdapter } from '@infra/packages/Micromamba.Adapter'
 import { HttpServer } from './Http.Server'
+import { randomBytes } from 'node:crypto'
+import { AgentHooksService } from '@application/AgentHooks.Service'
+import { makeAgents } from '@composition/factories/Agents.Factory'
+import { SqliteAgentHookRepository } from '@infra/persistence/Sqlite.AgentHookRepository'
+import { SqliteCredentialStore } from '@infra/persistence/Sqlite.CredentialStore'
+import { SecretBox } from '@infra/secrets/Aes.SecretBox'
+import { HooksController } from './Hooks.Controller'
 import { PackagesController } from './Packages.Controller'
 
 /** Um micromamba falso: instala `jq` (cria o ambiente) e lista o que está lá. */
@@ -62,9 +69,21 @@ describe('MCP do próprio gateway (integração)', () => {
       packages: new MicromambaAdapter(join(mambaDir, 'micromamba'), join(mambaDir, 'tools'), join(mambaDir, 'root')),
       proof: makeAuth().proof,
     })
-    const server = new HttpServer(controller, makeAuthController(), makeProvidersController(), makeUsageController(controller.conversations), undefined, undefined, packages).start(
-      0,
-    )
+    const hooks = new HooksController({
+      hooks: new AgentHooksService(new SqliteAgentHookRepository(), new SqliteCredentialStore(new SecretBox(randomBytes(32))), (id) => !!makeAgents().get(id)),
+      proof: makeAuth().proof,
+      sessionFor: () => undefined,
+    })
+    const server = new HttpServer(
+      controller,
+      makeAuthController(),
+      makeProvidersController(),
+      makeUsageController(controller.conversations),
+      undefined,
+      undefined,
+      packages,
+      hooks,
+    ).start(0)
     await new Promise((resolve) => server.once('listening', resolve))
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`
     server.unref()
@@ -96,8 +115,8 @@ describe('MCP do próprio gateway (integração)', () => {
 
   it('⛔ o membro só vê as ferramentas comuns; o admin vê as de admin e as de escrita (SELF_MCP_WRITE=0 desliga a escrita)', async () => {
     const common = ['get_conversation', 'list_agents', 'list_conversations', 'my_usage', 'send_message', 'start_conversation', 'switch_model']
-    const adminRead = ['get_agent', 'list_models', 'list_packages', 'list_providers', 'list_tools', 'search_packages', 'usage_by_key']
-    const write = ['install_package', 'remove_package', 'save_agent', 'set_model_enabled', 'set_model_price']
+    const adminRead = ['get_agent', 'hook_deliveries', 'list_hooks', 'list_models', 'list_packages', 'list_providers', 'list_tools', 'search_packages', 'usage_by_key']
+    const write = ['delete_hook', 'install_package', 'remove_package', 'save_agent', 'save_hook', 'set_model_enabled', 'set_model_price']
     assert.deepStrictEqual(await names(member), common)
     assert.deepStrictEqual(await names(admin), [...common, ...adminRead, ...write].sort())
 
@@ -169,5 +188,24 @@ describe('MCP do próprio gateway (integração)', () => {
     assert.deepStrictEqual(listed.packages, [{ name: 'jq', version: '1.8.2', explicit: true }])
     const refused = await client.callTool({ name: 'install_package', arguments: { name: 'jq; rm -rf /' } })
     assert.strictEqual(refused.isError, true)
+  })
+
+  it('⛔ save_hook cria e edita o hook, mas a chave NÃO entra na conversa; list_hooks e delete_hook fecham o ciclo', async () => {
+    const client = await connect(admin)
+    const created = json(await client.callTool({ name: 'save_hook', arguments: { agentId: 'atlas', name: 'deploy', prompt: 'Resuma o deploy.', verify: 'hmac' } }))
+    assert.deepStrictEqual([created.name, created.verify, created.path], ['deploy', 'hmac', '/v1/hook/atlas/deploy'])
+    assert.strictEqual(created.secret, undefined)
+    assert.match(created.key, /Trocar chave/)
+    assert.ok(!JSON.stringify(created).includes('whk_'), 'nenhuma chave na resposta da ferramenta')
+
+    const changed = json(await client.callTool({ name: 'save_hook', arguments: { agentId: 'atlas', name: 'deploy', prompt: 'Outro prompt.', session: 'continuous' } }))
+    assert.deepStrictEqual([changed.prompt, changed.session, changed.key], ['Outro prompt.', 'continuous', undefined])
+    assert.deepStrictEqual(
+      json(await client.callTool({ name: 'list_hooks', arguments: { agentId: 'atlas' } })).map((hook: { name: string }) => hook.name),
+      ['deploy'],
+    )
+    assert.deepStrictEqual(json(await client.callTool({ name: 'hook_deliveries', arguments: { agentId: 'atlas', name: 'deploy' } })), [])
+    await client.callTool({ name: 'delete_hook', arguments: { agentId: 'atlas', name: 'deploy' } })
+    assert.deepStrictEqual(json(await client.callTool({ name: 'list_hooks', arguments: { agentId: 'atlas' } })), [])
   })
 })

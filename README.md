@@ -472,6 +472,18 @@ The image ships Debian's `chromium` for Playwright: the screen's preset is
 `@playwright/mcp@latest --headless --isolated --no-sandbox --executable-path=/usr/bin/chromium`.
 Outside Linux, drop `--executable-path` and it uses the installed Chrome.
 
+### Agent hooks: an event becomes a conversation
+
+Each agent has a **Hooks** tab. A hook is `POST /v1/hook/<agent>/<hook>` with its own key and a
+prompt: when a service (GitHub, a CRM, a cron) calls it, the agent runs that prompt with the event
+appended — content type, the useful `x-*` headers, the query and the body (never the key or the
+signature). The gateway answers **202** at once with the conversation id and the turn runs in the
+background, as the account that created the hook (its permissions, its inbox; disable the account
+and the hook stops). Verification is per hook: the key in `Authorization: Bearer` / `X-Hook-Key`,
+or an HMAC-SHA256 signature of the raw body (GitHub's `X-Hub-Signature-256` by default). A hook
+opens a new conversation per call, or keeps one continuous conversation where calls queue up.
+`HOOK_RATE_LIMIT` (default 60) caps calls per minute per hook.
+
 ### Server tools that survive a reboot: the Packages tab
 
 On the pod there is no root and the rootfs is read-only, so `apt install` is not an option and

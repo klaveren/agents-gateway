@@ -210,6 +210,16 @@ export class AccountsService {
     return toUser(stored)
   }
 
+  /**
+   * Uma sessão da conta SEM senha — a de um hook, que roda em nome de quem o criou. `undefined` se a conta
+   * não existe mais ou está desativada: o hook para junto com ela.
+   */
+  sessionForHook(id: string): ISession | undefined {
+    const user = this.users.findById(id)
+    if (!user || user.disabled) return undefined
+    return this.sessionFor(id)
+  }
+
   /** Quando um token de sessão DESTE gateway vence — `undefined` para o que não é dele ou não vale. */
   expiryOf(token: string): Date | undefined {
     const claims = this.tokens.verify(token)

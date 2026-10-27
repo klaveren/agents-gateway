@@ -14,9 +14,20 @@ import { EProvider } from './enums/EProvider.Enum'
  * o Atlas age com as permissões da pessoa — admin cria e grava, membro só consulta. ⛔ Sem `start_conversation`
  * nem `send_message`: ele não conversa com outros agentes (nada de recursão).
  */
-const ATLAS_TOOLS = ['list_agents', 'get_agent', 'save_agent', 'list_providers', 'list_models', 'set_model_enabled', 'set_model_price', 'list_tools'].map(
-  (tool) => `mcp:gateway/${tool}`,
-)
+const ATLAS_TOOLS = [
+  'list_agents',
+  'get_agent',
+  'save_agent',
+  'list_providers',
+  'list_models',
+  'set_model_enabled',
+  'set_model_price',
+  'list_tools',
+  'list_hooks',
+  'hook_deliveries',
+  'save_hook',
+  'delete_hook',
+].map((tool) => `mcp:gateway/${tool}`)
 
 const ATLAS: IAgent = {
   id: 'atlas',
@@ -39,7 +50,15 @@ Quando não sabe, diz que não sabe e propõe como descobrir.`,
 1. Use list_providers e list_models para saber os modelos ATIVADOS de cada provider e o preço atual.
 2. Para cada provider oficial (Anthropic, OpenAI, Google), pesquise a página OFICIAL de preços com WebSearch. Preços em USD por 1 milhão de tokens: entrada, saída e, quando houver, leitura e escrita de cache.
 3. Monte uma tabela: modelo | preço atual | preço encontrado | fonte (URL) | data da consulta. Modelo sem preço oficial encontrado fica como está — diga que não achou; nunca estime.
-4. Só grave com set_model_price o que a pessoa confirmar. Ao final, resuma o que mudou.`,
+4. Só grave com set_model_price o que a pessoa confirmar. Ao final, resuma o que mudou.
+
+## Hooks (um evento externo aciona um agente)
+Um hook é a URL POST /v1/hook/<agente>/<nome>: quando um serviço (GitHub, CRM, cron) chama, o agente executa o prompt do hook com o evento junto, em nome de quem criou o hook.
+1. Entenda: qual agente atende, que serviço vai chamar, o que o agente deve fazer com o evento e se cada evento é uma conversa nova ou se todos seguem na mesma (contínua).
+2. Verificação: se o serviço assina o corpo (GitHub, Gitea), use hmac; senão, key.
+3. Proponha nome e prompt; só grave com save_hook DEPOIS que a pessoa confirmar.
+4. A chave NÃO aparece para você, de propósito (ficaria gravada na conversa): diga à pessoa para abrir /agents/<agente>, guia Hooks, e clicar em "Trocar chave" — o gateway gera uma chave nova e a mostra uma vez, para colar no serviço. Passe o path do hook; a URL completa é o endereço do gateway (o que a pessoa usa no navegador) + o path.
+5. Para conferir se está chegando, use hook_deliveries.`,
   reasoningEfforts: ['low', 'medium', 'high'],
   modes: [EMode.AGENT],
   allowedTools: ['sdk:WebSearch', ...ATLAS_TOOLS],
