@@ -14,14 +14,14 @@ export type TSandboxLevel = 'read-only' | 'workspace-write' | 'full'
 
 /** Os níveis que cada protocolo tem. O primeiro é o padrão. Sem entrada, o protocolo não tem sandbox para ajustar. */
 export const SANDBOX_LEVELS: Readonly<Partial<Record<EProvider, readonly TSandboxLevel[]>>> = {
-  // O `sandboxMode` do Codex SDK: `read-only`, `workspace-write` e `danger-full-access`.
-  [EProvider.CODEX]: ['read-only', 'workspace-write', 'full'],
-  // O `agy` tem `--sandbox` ligado ou desligado. Ligado, nega o que pede permissão.
-  [EProvider.ANTIGRAVITY]: ['read-only', 'full'],
+  // ⛔ O Codex não tem nível a escolher: roda sempre só leitura e sem terminal. O terminal e os arquivos dele são os do
+  // gateway, por MCP (`Turn.Grants`), com as permissões e o cerco do agente.
+  // ⛔ O `agy` roda sempre com `--sandbox` (nega terminal, escrita e o que está fora da pasta dele), na pasta vazia da
+  // conversa.
 }
 
-/** Os protocolos cujo sandbox libera a rede à parte (o `networkAccessEnabled` do Codex). */
-export const SANDBOX_NETWORK: readonly EProvider[] = [EProvider.CODEX]
+/** Os protocolos cujo sandbox libera a rede à parte. A rede de quem roda comando é a regra de rede do agente. */
+export const SANDBOX_NETWORK: readonly EProvider[] = []
 
 export function sandboxLevelsOf(protocol: EProvider): readonly TSandboxLevel[] {
   return SANDBOX_LEVELS[protocol] ?? []

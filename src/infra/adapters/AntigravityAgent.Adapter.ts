@@ -3,7 +3,6 @@ import { spawn as nodeSpawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { sandboxOf, TSandboxLevel } from '@domain/Sandbox.Policy'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
@@ -42,12 +41,13 @@ const TURN_TIMEOUT_S = 600
 /**
  * Os argumentos de um turno.
  *
- * ⛔ `--sandbox` por padrão e NUNCA `--dangerously-skip-permissions`: em modo headless, o que pede
- * permissão (comando, leitura de arquivo) é negado sozinho; sem `--sandbox`, o `agy` 0.65 deixou passar
- * um `ls` "inofensivo" — verificado. Sai só com `sandbox: 'full'` no provider do agente, escolha de quem o criou. `--disable-slash-commands`: a mensagem de quem conversa nunca vira
+ * ⛔ SEMPRE `--sandbox` e NUNCA `--dangerously-skip-permissions`: em modo headless, o que pede permissão é negado
+ * sozinho. Verificado no `agy` 1.4.5: terminal, escrita e leitura FORA da pasta, negados; leitura DENTRO da pasta,
+ * liberada — inclusive o `.env`. Por isso a pasta é sempre a vazia da conversa (ver `sendMessage`). Sem `--sandbox`, o
+ * `agy` 0.65 deixou passar um `ls` "inofensivo". `--disable-slash-commands`: a mensagem de quem conversa nunca vira
  * comando do CLI.
  */
-export function antigravityArgs(prompt: string, model: string, conversationId?: string, sandbox: TSandboxLevel = 'read-only'): string[] {
+export function antigravityArgs(prompt: string, model: string, conversationId?: string): string[] {
   return [
     // ⛔ `-p=<texto>` e não `-p <texto>`: separado, um texto que começa com `--` vira flag do CLI
     // (verificado: `-p "--help"` imprimia a ajuda). Colado, é sempre o valor.
@@ -56,7 +56,7 @@ export function antigravityArgs(prompt: string, model: string, conversationId?: 
     'stream-json',
     '--print-timeout',
     `${TURN_TIMEOUT_S}s`,
-    ...(sandbox === 'full' ? [] : ['--sandbox']),
+    '--sandbox',
     '--disable-slash-commands',
     ...(model ? ['--model', model] : []),
     ...(conversationId ? ['--conversation', conversationId] : []),
@@ -124,10 +124,10 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
 
     const prompt = native.conversationId ? input.text : `${record.systemPrompt}\n\n---\n\n${input.text}`
     const home = this.home()
-    const target = agent.providers.find((candidate) => candidate.provider === record.provider)
-    const sandbox = sandboxOf(EProvider.ANTIGRAVITY, target?.sandbox)
-    const child = this.spawn(antigravityBin(), antigravityArgs(prompt, record.model, native.conversationId, sandbox), {
-      cwd: workspaceFor(agent.projectId, sessionId),
+    // ⛔ A pasta VAZIA da conversa, nunca a do projeto: o `agy` lê tudo o que está na pasta dele, sem as permissões do
+    // agente (o `.env` inclusive). O terminal e os arquivos do projeto não chegam ao Gemini.
+    const child = this.spawn(antigravityBin(), antigravityArgs(prompt, record.model, native.conversationId), {
+      cwd: workspaceFor(undefined, sessionId),
       env: subscriptionEnv({ HOME: home }),
       stdio: ['ignore', 'pipe', 'pipe'],
       signal: abort.signal,

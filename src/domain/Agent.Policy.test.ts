@@ -36,8 +36,9 @@ describe('agentIssues', () => {
         modelEnabled: () => true,
       }).map((issue) => issue.message)
 
-    assert.deepStrictEqual(on({ sandbox: 'full', network: true }, EProvider.CODEX), [])
-    assert.deepStrictEqual(on({ sandbox: 'workspace-write' }, EProvider.ANTIGRAVITY), ['p: not a sandbox level here: workspace-write'])
+    // ⛔ O Codex não tem nível nem rede a escolher: roda sempre só leitura (o terminal é o do gateway).
+    assert.deepStrictEqual(on({ sandbox: 'full', network: true }, EProvider.CODEX), ['p: has no sandbox to set', 'p: has no sandbox network to open'])
+    assert.deepStrictEqual(on({ sandbox: 'full' }, EProvider.ANTIGRAVITY), ['p: has no sandbox to set'])
     assert.deepStrictEqual(on({ network: true }, EProvider.ANTIGRAVITY), ['p: has no sandbox network to open'])
     assert.deepStrictEqual(on({ sandbox: 'read-only' }, EProvider.CLAUDE), ['p: has no sandbox to set'])
   })

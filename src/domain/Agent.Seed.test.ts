@@ -115,6 +115,25 @@ describe('AGENT_SEED', () => {
     assert.strictEqual(migration.change(AGENT_SEED[0]), undefined)
   })
 
+  it('os CLIs rodam com o sandbox fixo: o nível e a rede escolhidos para o Codex e o Gemini saem; os de outro ficam', () => {
+    const migration = AGENT_MIGRATIONS.find((item) => item.key === 'cli-fixed-sandbox')!
+    const base = { id: 'cx', name: 'Cx', systemPrompt: 'p', modes: [EMode.AGENT], allowedTools: [] }
+    const changed = migration.change({
+      ...base,
+      providers: [
+        { provider: EProvider.CODEX, models: ['m'], sandbox: 'workspace-write', network: true },
+        { provider: EProvider.ANTIGRAVITY, models: ['g'], sandbox: 'full' },
+        { provider: EProvider.CLAUDE, models: ['c'] },
+      ],
+    })
+    assert.deepStrictEqual(changed?.providers, [
+      { provider: EProvider.CODEX, models: ['m'] },
+      { provider: EProvider.ANTIGRAVITY, models: ['g'] },
+      { provider: EProvider.CLAUDE, models: ['c'] },
+    ])
+    assert.strictEqual(migration.change({ ...base, providers: [{ provider: EProvider.CODEX, models: ['m'] }] }), undefined)
+  })
+
   it('a lista de tarefas virou do gateway: quem tinha o TodoWrite nativo ganha o update_todos — uma vez', () => {
     const repository = new NullAgentRepository()
     repository.save({ ...AGENT_SEED[0], id: 'qualquer', allowedTools: ['sdk:TodoWrite', 'sdk:WebSearch'] }, 'seed')

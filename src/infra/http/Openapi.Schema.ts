@@ -1888,6 +1888,15 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'JSON-RPC response', content: { 'application/json': { schema: { type: 'object' } } } }, '401': failures['401'], '404': failures['404'] },
       },
     },
+    '/turn-tools': {
+      post: {
+        summary:
+          "The gateway's terminal, files and to-do list for a CLI lane (Codex), over MCP. Requires the turn grant in X-Turn-Grant: the tools and the context (agent, conversation, project) come from it, valid only while that turn runs. Every call goes through the agent's permissions and sandbox",
+        parameters: [{ name: 'X-Turn-Grant', in: 'header', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', description: 'A JSON-RPC 2.0 message' } } } },
+        responses: { '200': { description: 'JSON-RPC response', content: { 'application/json': { schema: { type: 'object' } } } }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
     '/mcp-servers/{id}/tools': {
       get: {
         summary: 'The tools the server offers now (name, description, input schema). Administrators only',

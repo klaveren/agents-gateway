@@ -79,9 +79,14 @@ describe('AntigravityAgentAdapter', () => {
     assert.deepStrictEqual(args.slice(-4), ['--model', 'gemini-4-argon-high', '--conversation', 'conv-9'])
   })
 
-  it('⚖️ sem `--sandbox` só com `full`, escolha de quem criou o agente', () => {
-    assert.ok(antigravityArgs('oi', 'm', undefined, 'read-only').includes('--sandbox'))
-    assert.ok(!antigravityArgs('oi', 'm', undefined, 'full').includes('--sandbox'))
+  it('⛔ agente de projeto: o Gemini roda na pasta vazia da conversa, nunca na do projeto (ele lê tudo o que está nela)', async () => {
+    const calls: ISpawned[] = []
+    const adapter = new AntigravityAgentAdapter({ store: new SessionStore(), spawn: fakeSpawn(calls, turn), home: () => '/Users/pessoa' })
+    const project = { ...agent, projectId: 'xpto' }
+    const session = await adapter.createSession(project, {})
+    await collect(adapter.sendMessage(project, session.id, { text: 'olá' }, {}))
+    assert.ok(calls[0].options.cwd?.includes('gateway-sub') && !calls[0].options.cwd.includes('xpto'))
+    assert.ok(calls[0].args.includes('--sandbox'))
   })
 
   it('primeiro turno leva as instruções; o segundo retoma a conversa, sem repeti-las; ambiente mínimo', async () => {

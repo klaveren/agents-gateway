@@ -12,6 +12,7 @@ import { ProvidersController } from './Providers.Controller'
 import { UsageController } from './Usage.Controller'
 import { McpServersController } from './McpServers.Controller'
 import { McpProxyController } from './McpProxy.Controller'
+import { TurnToolsController } from './TurnTools.Controller'
 import { PackagesController } from './Packages.Controller'
 import { HOOK_PATH, HooksController } from './Hooks.Controller'
 import { ProjectsController } from './Projects.Controller'
@@ -219,6 +220,9 @@ export class HttpServer {
   }
 }
 
+/** As ferramentas do gateway para os CLIs, pela concessão do turno (ver `Turn.Grants`). */
+const turnTools = new TurnToolsController()
+
 function buildRoutes(
   controller: AgentController,
   auth: AuthController,
@@ -287,6 +291,7 @@ function buildRoutes(
     { method: 'delete', path: '/packages/:name', handler: packages.remove },
     // A ponte dos SDKs agênticos até os MCPs em contêiner (ver `McpProxy.Controller`).
     { method: 'post', path: '/mcp-proxy/:serverId', handler: mcpProxy.handle },
+    { method: 'post', path: '/turn-tools', handler: turnTools.handle },
     { method: 'get', path: '/mcp-servers', handler: mcpServers.list },
     { method: 'post', path: '/mcp-servers', handler: mcpServers.create },
     { method: 'put', path: '/mcp-servers/:id', handler: mcpServers.update },

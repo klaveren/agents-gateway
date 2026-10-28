@@ -12,6 +12,7 @@ import {
 import { IAgent } from './models/Agent.Model'
 import { UPDATE_TODOS_TOOL } from './models/ConversationTodo.Model'
 import { toCapabilities } from './Capability.Catalog'
+import { EProvider } from './enums/EProvider.Enum'
 
 /** A nativa que saiu do catálogo (a lista de tarefas agora é do gateway). */
 export const RETIRED_TODO_NATIVE = 'sdk:TodoWrite'
@@ -83,6 +84,22 @@ export const AGENT_MIGRATIONS: readonly IAgentMigration[] = [
     key: 'permissions-atlas',
     agentIds: ['atlas', 'atlas-admin'],
     change: (agent) => (agent.permissions?.length ? undefined : { ...agent, permissions: agent.id === 'atlas-admin' ? ATLAS_ADMIN_PERMISSIONS : ATLAS_PERMISSIONS }),
+  },
+  {
+    // Os CLIs por assinatura passaram a rodar com o sandbox fixo: o Codex sempre só leitura e sem terminal (o terminal e
+    // os arquivos são os do gateway, por MCP); o Gemini sempre com `--sandbox`. O nível e a rede escolhidos saem.
+    key: 'cli-fixed-sandbox',
+    agentIds: '*',
+    change: (agent) => {
+      const fixed = (provider: string) => provider === EProvider.CODEX || provider === EProvider.ANTIGRAVITY
+      if (!agent.providers.some((target) => fixed(target.provider) && (target.sandbox !== undefined || target.network !== undefined))) return undefined
+      const providers = agent.providers.map((target) => {
+        if (!fixed(target.provider)) return target
+        const { sandbox: _sandbox, network: _network, ...rest } = target
+        return rest
+      })
+      return { ...agent, providers }
+    },
   },
   {
     // As CAPACIDADES: os ids de antes (`run_bash`, `sdk:Read`, `search_web`…) viram `cap:`. O Bash nativo do Claude vira o

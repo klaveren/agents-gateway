@@ -6,6 +6,7 @@ import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { SessionStore } from '@infra/session/Session.Store'
+import { TurnGrants } from '@infra/tools/Turn.Grants'
 import { CODEX_LOCKED_FEATURES, CodexAgentAdapter, codexMcpServers, withMcpHint } from './CodexAgent.Adapter'
 
 interface ICall {
@@ -87,7 +88,7 @@ describe('CodexAgentAdapter', () => {
     }
   })
 
-  it('⚖️ o agente escolhe: sandbox e rede do provider, e a nativa do terminal destrava só o terminal', async () => {
+  it('⛔ sempre só leitura, sem rede e sem o terminal do Codex, mesmo com o nível, a rede e a nativa escolhidos', async () => {
     const calls: ICall[] = []
     const open: IAgent = {
       ...agent,
@@ -99,16 +100,49 @@ describe('CodexAgentAdapter', () => {
     await collect(adapter.sendMessage(open, session.id, { text: 'oi' }, {}))
 
     const [call] = calls
-    assert.strictEqual(call.thread.sandboxMode, 'workspace-write')
-    assert.strictEqual(call.thread.networkAccessEnabled, true)
+    assert.strictEqual(call.thread.sandboxMode, 'read-only')
+    assert.strictEqual(call.thread.networkAccessEnabled, false)
     const { features } = call.options.config as { features: Record<string, boolean> }
-    assert.deepStrictEqual(features, { ...CODEX_LOCKED_FEATURES, shell_tool: true, unified_exec: true })
+    assert.deepStrictEqual(features, CODEX_LOCKED_FEATURES)
+  })
 
-    const full: IAgent = { ...open, providers: agent.providers.map((target) => ({ ...target, sandbox: 'full' as const })) }
-    const other = await adapter.createSession(full, {})
-    await collect(adapter.sendMessage(full, other.id, { text: 'oi' }, {}))
-    assert.strictEqual(calls[1].thread.sandboxMode, 'danger-full-access')
-    assert.strictEqual(calls[1].thread.networkAccessEnabled, false)
+  it('⛔ o terminal e os arquivos do gateway por MCP, numa concessão que só vale durante o turno', async () => {
+    const calls: ICall[] = []
+    const grants = new TurnGrants()
+    const local = (name: string) => ({
+      origin: 'local' as const,
+      name,
+      description: name,
+      inputSchema: { type: 'object' as const, properties: {}, required: [], additionalProperties: false as const },
+      execute: async () => ({ status: 'success' as const, result: name }),
+    })
+    const catalog = { localFor: () => [local('run_bash'), local('read_file')], mcpServersFor: async () => [] }
+    let during: unknown
+    const adapter = new CodexAgentAdapter({
+      store: new SessionStore(),
+      catalog: catalog as never,
+      turnTools: { url: 'http://127.0.0.1:3000/v1/turn-tools', grants },
+      load: async () =>
+        fakeCodex(calls, (turn) => {
+          const servers = (calls[turn - 1].options.config as { mcp_servers: Record<string, { http_headers: Record<string, string> }> }).mcp_servers
+          during = grants.get(servers.gateway_tools.http_headers['X-Turn-Grant'])
+          return turnEvents(turn)
+        }) as never,
+      home: () => '/gw',
+    })
+    const withTools: IAgent = { ...agent, allowedTools: ['run_bash', 'read_file'] }
+    const session = await adapter.createSession(withTools, {})
+    await collect(adapter.sendMessage(withTools, session.id, { text: 'oi' }, { token: 'tk', agentId: 'cx' }))
+
+    const config = calls[0].options.config as { mcp_servers: Record<string, { url: string; http_headers: Record<string, string> }>; developer_instructions: string }
+    const server = config.mcp_servers.gateway_tools
+    assert.strictEqual(server.url, 'http://127.0.0.1:3000/v1/turn-tools')
+    assert.strictEqual(server.http_headers['X-Tool-Authorization'], 'Bearer tk')
+    assert.strictEqual((server as { default_tools_approval_mode?: string }).default_tools_approval_mode, 'approve')
+    const granted = during as { tools: Array<{ name: string }>; context: { agentId: string; sessionId: string } }
+    assert.deepStrictEqual([granted.tools.map((tool) => tool.name), granted.context.agentId, granted.context.sessionId], [['run_bash', 'read_file'], 'cx', session.id])
+    assert.strictEqual(grants.get(server.http_headers['X-Turn-Grant']), undefined, 'acabou o turno, a concessão morre')
+    assert.match(config.developer_instructions, /gateway_tools.*run_bash, read_file/)
   })
 
   it('retoma a thread no segundo turno e mapeia texto, uso (cache como parcela) e aviso não fatal', async () => {

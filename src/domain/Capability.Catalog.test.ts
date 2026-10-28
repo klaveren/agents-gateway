@@ -52,11 +52,26 @@ describe('Capability.Catalog', () => {
     assert.ok(!allowedTools.some((tool) => tool.startsWith('sdk:')))
   })
 
-  it('assinaturas por CLI: o Codex sem terminal (o dele não segue as permissões); o Gemini, o que já traz; tarefas indisponíveis', () => {
+  it('assinaturas por CLI: o Codex com o terminal, os arquivos e as tarefas do gateway (por MCP); o Gemini sem eles', () => {
     const codex = resolve(EProvider.CODEX)
-    assert.deepStrictEqual(codex.allowedTools, ['sdk:codex:web_search', 'mcp:gateway/list_agents'])
-    assert.deepStrictEqual(codex.unavailable, ['Terminal', 'Abrir página', 'Lista de tarefas'])
-    assert.deepStrictEqual(resolve(EProvider.ANTIGRAVITY).allowedTools, ['mcp:gateway/list_agents'])
+    assert.deepStrictEqual(codex.allowedTools, [
+      'run_bash',
+      'read_file',
+      'list_files',
+      'search_files',
+      'write_file',
+      'edit_file',
+      'sdk:codex:web_search',
+      'update_todos',
+      'mcp:gateway/list_agents',
+    ])
+    assert.deepStrictEqual(codex.unavailable, ['Abrir página'])
+    // ⛔ O terminal do próprio Codex nunca sai da resolução, nem escolhido direto.
+    assert.ok(!resolveCapabilities(['sdk:codex:shell'], { protocol: EProvider.CODEX, official: true, mode: EMode.AGENT }).allowedTools.length)
+    // ⛔ O Gemini sem terminal nem arquivos: o `--sandbox` dele nega o terminal, e ele só vê a pasta vazia da conversa.
+    const gemini = resolve(EProvider.ANTIGRAVITY)
+    assert.deepStrictEqual(gemini.allowedTools, ['mcp:gateway/list_agents'])
+    assert.deepStrictEqual(gemini.unavailable, ['Terminal', 'Ler arquivos', 'Escrever arquivos', 'Busca na web', 'Abrir página', 'Lista de tarefas'])
   })
 
   it('a tela diz como roda; os ids antigos viram capacidade sem repetir', () => {

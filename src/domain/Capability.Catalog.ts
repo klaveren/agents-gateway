@@ -36,9 +36,10 @@ export const CAPABILITIES: readonly ICapability[] = [
     description: 'Roda comandos na pasta da conversa (ou do projeto), com trava de comandos perigosos e teto de tempo.',
     risk: 'server-exec',
     local: ['run_bash'],
-    // ⛔ O terminal do Codex não segue as permissões (é o cerco dele, não o das regras): desligado até ele receber o
-    // terminal do gateway por MCP.
-    runs: { [EProvider.CODEX]: { unavailable: true }, [EProvider.ANTIGRAVITY]: { builtIn: 'terminal do Gemini' } },
+    // ⛔ O terminal do Codex não segue as permissões: o Codex recebe o do gateway, por MCP (`Turn.Grants`).
+    // ⛔ O Gemini por assinatura roda com o `--sandbox` dele, que nega o terminal; o do gateway não chega a ele (o MCP do
+    // `agy` é da instalação inteira).
+    runs: { [EProvider.ANTIGRAVITY]: { unavailable: true } },
   },
   {
     id: 'files.read',
@@ -50,8 +51,8 @@ export const CAPABILITIES: readonly ICapability[] = [
       // ⛔ Sem o Glob e o Grep nativos: varrem a pasta inteira e devolveriam o conteúdo de arquivo negado (o `.env`
       // num Grep). A busca e a listagem são as do gateway, que conferem arquivo por arquivo; o Read (um arquivo) é o dele.
       [EProvider.CLAUDE]: { tools: ['sdk:Read', 'list_files', 'search_files'], note: 'Read do Claude, busca do gateway' },
-      [EProvider.CODEX]: { builtIn: 'pelo terminal do Codex' },
-      [EProvider.ANTIGRAVITY]: { builtIn: 'embutido no Gemini' },
+      // O Gemini só lê a pasta vazia da conversa: os arquivos do projeto não chegam a ele.
+      [EProvider.ANTIGRAVITY]: { unavailable: true },
     },
   },
   {
@@ -62,8 +63,7 @@ export const CAPABILITIES: readonly ICapability[] = [
     local: ['write_file', 'edit_file'],
     runs: {
       [EProvider.CLAUDE]: { tools: ['sdk:Write', 'sdk:Edit'], note: 'nativa do Claude' },
-      [EProvider.CODEX]: { builtIn: 'pelo terminal do Codex' },
-      [EProvider.ANTIGRAVITY]: { builtIn: 'embutido no Gemini' },
+      [EProvider.ANTIGRAVITY]: { unavailable: true },
     },
   },
   {
@@ -100,7 +100,7 @@ export const CAPABILITIES: readonly ICapability[] = [
     description: 'O agente organiza os passos de um trabalho longo; a lista aparece na conversa.',
     risk: 'session',
     local: [UPDATE_TODOS_TOOL],
-    runs: { [EProvider.CODEX]: { unavailable: true }, [EProvider.ANTIGRAVITY]: { unavailable: true } },
+    runs: { [EProvider.ANTIGRAVITY]: { unavailable: true } },
   },
 ]
 
