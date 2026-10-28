@@ -238,16 +238,17 @@ function describe(failure: unknown): string {
     <p class="font-medium text-zinc-200">Só quem administra constrói {{ title }}.</p>
   </div>
 
-  <div v-else class="flex h-full min-h-0 flex-col">
+  <div v-else class="@container flex h-full min-h-0 flex-col">
     <header v-if="!embedded" class="flex flex-wrap items-center gap-3 border-b border-zinc-800/80 px-4 py-3">
       <h1 class="text-xl font-semibold">{{ title }}</h1>
       <BuildTabs :kind="kind" :active="tab" />
     </header>
 
     <!-- CONSTRUIR: as conversas com o construtor, a conversa aberta e o rascunho. -->
-    <!-- ⚖️ Três colunas só em tela larga: abaixo disso, a conversa ficava espremida entre a lista e o rascunho, e empilham. -->
-    <div v-if="tab === 'build'" class="scroll-thin flex min-h-0 flex-1 flex-col overflow-y-auto xl:flex-row xl:overflow-hidden">
-      <aside class="flex shrink-0 flex-col gap-1 border-b border-zinc-800/80 p-3 xl:w-60 xl:border-r xl:border-b-0">
+    <!-- ⚖️ Três colunas só quando o PRÓPRIO espaço é largo (container query, não a janela): embutido no projeto ou em janela
+         estreita, a conversa ficava espremida entre a lista e o rascunho — aí eles empilham. -->
+    <div v-if="tab === 'build'" class="scroll-thin flex min-h-0 flex-1 flex-col overflow-y-auto @5xl:flex-row @5xl:overflow-hidden">
+      <aside class="flex shrink-0 flex-col gap-1 border-b border-zinc-800/80 p-3 @5xl:w-60 @5xl:border-r @5xl:border-b-0">
         <button
           :disabled="starting"
           class="flex items-center justify-center gap-2 rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50"
@@ -259,7 +260,7 @@ function describe(failure: unknown): string {
         <p v-if="buildsError" class="px-1 text-xs text-rose-300">{{ buildsError }}</p>
         <h2 v-else-if="builds.length" class="px-1 pt-2 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Conversas com o construtor</h2>
         <p v-else class="px-1 pt-2 text-xs text-zinc-500">Nenhuma conversa com o construtor{{ scopeProject ? ' neste projeto' : '' }} ainda.</p>
-        <div class="scroll-thin flex max-h-32 flex-col gap-0.5 overflow-y-auto xl:max-h-none">
+        <div class="scroll-thin flex max-h-32 flex-col gap-0.5 overflow-y-auto @5xl:max-h-none">
           <RouterLink
             v-for="build in builds"
             :key="build.id"
@@ -273,7 +274,7 @@ function describe(failure: unknown): string {
         </div>
       </aside>
 
-      <main class="flex min-h-[30rem] min-w-0 flex-1 flex-col xl:min-h-0">
+      <main class="flex min-h-[30rem] min-w-0 flex-1 flex-col @5xl:min-h-0">
         <ThreadView v-if="selected" :key="selected" embedded :agent-id="builderAgentId(kind)" mode="agent" @removed="removed" />
         <section v-else class="mx-auto flex max-w-xl flex-col gap-3 p-6 text-sm text-zinc-300">
           <h2 class="text-lg font-semibold text-zinc-100">Construir {{ info.article }}</h2>
@@ -301,7 +302,7 @@ function describe(failure: unknown): string {
         </section>
       </main>
 
-      <aside v-if="selected" class="scroll-thin flex shrink-0 flex-col gap-3 border-t border-zinc-800/80 p-4 xl:w-[24rem] xl:overflow-y-auto xl:border-t-0 xl:border-l">
+      <aside v-if="selected" class="scroll-thin flex shrink-0 flex-col gap-3 border-t border-zinc-800/80 p-4 @5xl:w-[24rem] @5xl:overflow-y-auto @5xl:border-t-0 @5xl:border-l">
         <h2 class="text-sm font-semibold text-zinc-200">Rascunho</h2>
         <p v-if="!draft" class="text-xs text-zinc-500">Ainda nenhum. Quando o construtor fechar {{ info.article }}, o rascunho aparece aqui.</p>
         <template v-else>

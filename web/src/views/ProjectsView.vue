@@ -205,7 +205,7 @@ async function confirmRemove() {
         </form>
       </template>
 
-      <section v-else-if="selected" :key="selected.id" class="mx-auto flex max-w-3xl flex-col gap-4">
+      <section v-else-if="selected" :key="selected.id" class="mx-auto flex flex-col gap-4" :class="tab === 'construir' ? 'max-w-6xl' : 'max-w-3xl'">
         <div class="flex items-center gap-3">
           <span class="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-600 text-base font-bold text-zinc-950">{{ initials(selected.name) }}</span>
           <div class="min-w-0">
