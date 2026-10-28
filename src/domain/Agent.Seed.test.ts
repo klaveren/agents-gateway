@@ -47,12 +47,13 @@ describe('AGENT_SEED', () => {
     for (const agent of AGENT_SEED) {
       assert.deepStrictEqual(
         agent.allowedTools.filter((tool) => tool.startsWith('agent:')),
-        ['agent:builder-skill', 'agent:builder-command', 'agent:builder-rule', 'agent:builder-spec', 'agent:builder-adr', 'agent:builder-knowledge'],
+        ['agent:builder-skill', 'agent:builder-command', 'agent:builder-rule', 'agent:builder-spec', 'agent:builder-adr', 'agent:builder-knowledge', 'agent:builder-agent'],
       )
       assert.ok(
-        agent.allowedTools.every((tool) => !/send_message|start_conversation|save_rule|save_doc|save_resource/.test(tool)),
+        agent.allowedTools.every((tool) => !/send_message|start_conversation|save_rule|save_doc|save_resource|save_agent/.test(tool)),
         agent.id,
       )
+      assert.match(agent.systemPrompt, /## Agentes\nCriar ou ajustar um AGENTE é com o builder-agent/)
       assert.match(agent.systemPrompt, /## Construtores[\s\S]*Nunca confirme por conta própria/)
     }
   })
@@ -98,6 +99,17 @@ describe('AGENT_SEED', () => {
     repository.migrateOnce(migration.key, 'atlas', migration.change, 'seed')
     assert.match(repository.list()[0].systemPrompt, /Construtores \(sem conhecimento\)\nPesquisa ou estudo de um tema[\s\S]*builder-knowledge/)
     // O Atlas novo já nasce com a linha: a migração não a repete.
+    assert.strictEqual(migration.change(AGENT_SEED[0]), undefined)
+  })
+
+  it('a migração do construtor de agentes tira o save_agent do Atlas que já existe e ensina a delegar — uma vez', () => {
+    const repository = new NullAgentRepository()
+    repository.save({ ...AGENT_SEED[0], systemPrompt: 'antigo', allowedTools: ['mcp:gateway/save_agent', 'mcp:gateway/list_agents'] }, 'seed')
+    const migration = AGENT_MIGRATIONS.find((item) => item.key === 'atlas-agent-builder')!
+    repository.migrateOnce(migration.key, 'atlas', migration.change, 'seed')
+    const atlas = repository.list()[0]
+    assert.deepStrictEqual(atlas.allowedTools, ['mcp:gateway/list_agents'])
+    assert.match(atlas.systemPrompt, /^antigo\n\n## Agentes\nCriar ou ajustar um AGENTE é com o builder-agent/)
     assert.strictEqual(migration.change(AGENT_SEED[0]), undefined)
   })
 })

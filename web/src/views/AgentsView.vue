@@ -3,9 +3,11 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AgentAvatar from '@/components/AgentAvatar.vue'
 import AgentForm from '@/components/AgentForm.vue'
+import BuildTabs from '@/components/BuildTabs.vue'
 import Icon from '@/components/Icon.vue'
 import MasterDetail from '@/components/MasterDetail.vue'
-import type { IAgent, IAgentDetail } from '@/lib/types'
+import { pendingDraft } from '@/lib/builder'
+import type { IAgent, IAgentDetail, TMode, TSandboxLevel } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import { useAuthStore } from '@/stores/auth'
 import { useProvidersStore } from '@/stores/providers'
@@ -30,6 +32,49 @@ function providersLine(agent: IAgent): string {
 const detail = ref<IAgentDetail>()
 const template = ref<IAgentDetail>()
 const error = ref<string>()
+/** O formulário veio do construtor ("Abrir no editor"): avisa, até a próxima troca de agente. */
+const draftNote = ref<string>()
+
+/** O registro do rascunho (como o `save_agent` recebe) no formato que o formulário lê. */
+function fromDraft(agent: Record<string, unknown>, base?: IAgentDetail): IAgentDetail {
+  const text = (value: unknown, fallback = '') => (typeof value === 'string' ? value : fallback)
+  const list = (value: unknown) => (Array.isArray(value) ? value.map(String) : [])
+  const providers = Array.isArray(agent.providers) ? (agent.providers as Array<Record<string, unknown>>) : []
+  return {
+    ...(base ?? {}),
+    id: text(agent.id, base?.id),
+    name: text(agent.name, base?.name),
+    soul: text(agent.soul, base?.soul),
+    systemPrompt: text(agent.systemPrompt, base?.systemPrompt),
+    providers: providers.map((target) => ({
+      id: text(target.provider),
+      name: text(target.provider),
+      models: list(target.models),
+      pricing: {},
+      ...(typeof target.sandbox === 'string' ? { sandbox: target.sandbox as TSandboxLevel } : {}),
+      ...(target.network === true ? { network: true } : {}),
+    })),
+    reasoningEfforts: list(agent.reasoningEfforts),
+    modes: list(agent.modes) as TMode[],
+    allowedTools: list(agent.allowedTools),
+    ...(agent.role === 'subagent' ? { role: 'subagent' as const } : { role: undefined }),
+    adminOnly: agent.adminOnly === true,
+    ...(typeof agent.projectId === 'string' && agent.projectId ? { projectId: agent.projectId } : { projectId: undefined }),
+  }
+}
+
+/**
+ * O rascunho do construtor ("Abrir no editor"): o agente novo nasce com ele; o que já existe abre com ele por cima —
+ * SEM salvar, e consumido. O contexto inicial e os recursos do rascunho ficam para as guias do agente, depois de salvar.
+ */
+function takeDraft(id?: string): IAgentDetail | undefined {
+  const pending = pendingDraft.value
+  if (pending?.kind !== 'agent' || !pending.agent || (id && pending.id !== id)) return undefined
+  pendingDraft.value = undefined
+  const extras = [pending.initialContext.length ? `contexto inicial (${pending.initialContext.join(', ')})` : '', pending.resources ? 'recursos' : ''].filter(Boolean)
+  draftNote.value = `Rascunho do construtor aplicado: revise e salve.${extras.length ? ` ${extras.join(' e ')} ficam para as guias do agente depois de salvar — ou peça ao construtor para gravar tudo.` : ''}`
+  return fromDraft(pending.agent, id ? detail.value : undefined)
+}
 
 const creating = computed(() => route.name === 'agent-new')
 const created = computed(() => agents.list.filter((agent) => agent.role !== 'subagent'))
@@ -49,7 +94,10 @@ async function loadDetail(id: string, keepCurrent = false) {
   const token = ++generation
   try {
     const fresh = await agents.detail(id)
-    if (token === generation) detail.value = fresh
+    if (token !== generation) return
+    detail.value = fresh
+    const drafted = takeDraft(id)
+    if (drafted) detail.value = drafted
   } catch (failure) {
     if (token !== generation) return
     if (!keepCurrent) detail.value = undefined
@@ -59,10 +107,15 @@ async function loadDetail(id: string, keepCurrent = false) {
 
 watch(
   () => [props.id, creating.value] as const,
-  async ([id]) => {
+  async ([id, isNew]) => {
     error.value = undefined
     detail.value = undefined
+    draftNote.value = undefined
     generation++
+    if (isNew) {
+      const drafted = takeDraft()
+      if (drafted) template.value = drafted
+    }
     if (!id) return
     await loadDetail(id)
   },
@@ -94,6 +147,7 @@ watch(creating, (value) => {
         <h1 class="text-xl font-semibold">Agentes</h1>
         <RouterLink to="/agents/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Novo agente" @click="template = undefined"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
+      <BuildTabs kind="agent" active="list" class="px-3 pb-2" />
       <template v-for="group in [{ label: 'Criados', items: created }, { label: 'Subagentes', items: subagents }]" :key="group.label">
         <h2 v-if="group.items.length" class="px-4 pt-3 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">{{ group.label }}</h2>
         <RouterLink
@@ -118,7 +172,8 @@ watch(creating, (value) => {
 
     <template #detail>
       <template v-if="creating">
-        <h2 class="mx-auto mb-4 max-w-3xl text-lg font-semibold">{{ template ? 'Duplicar agente' : 'Novo agente' }}</h2>
+        <h2 class="mx-auto mb-4 max-w-3xl text-lg font-semibold">{{ template ? (draftNote ? 'Novo agente (do construtor)' : 'Duplicar agente') : 'Novo agente' }}</h2>
+        <p v-if="draftNote" class="mx-auto mb-4 max-w-3xl text-sm text-emerald-300">{{ draftNote }}</p>
         <AgentForm :agent="template" creating @saved="(saved) => router.push(`/agents/${saved}`)" />
       </template>
       <template v-else-if="detail">
@@ -131,6 +186,7 @@ watch(creating, (value) => {
           <span v-if="agents.byId.get(detail.id)?.unavailable" class="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-300">{{ agents.byId.get(detail.id)?.unavailable?.label }}</span>
           <RouterLink v-if="detail.role !== 'subagent'" :to="{ path: '/new', query: { agent: detail.id } }" class="ml-auto shrink-0 rounded-full bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700">Conversar</RouterLink>
         </div>
+        <p v-if="draftNote" class="mx-auto mb-4 max-w-3xl text-sm text-emerald-300">{{ draftNote }}</p>
         <AgentForm :agent="detail" :creating="false" @saved="(saved) => loadDetail(saved, true)" @duplicate="duplicate" @removed="router.push('/agents')" />
       </template>
       <p v-else-if="error" class="text-sm text-rose-300">{{ error }}</p>

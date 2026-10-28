@@ -30,8 +30,15 @@ describe('Builder.Agents', () => {
     assert.match(knowledge.systemPrompt, /# Protocolo de construção de conhecimento[\s\S]*## Fontes/)
   })
 
+  it('o de agentes consulta o catálogo e grava o agente, o contexto inicial e os recursos', () => {
+    const builder = builderAgent('agent', { provider: 'claude', models: ['m'] })
+    for (const tool of ['list_providers', 'list_models', 'list_tools', 'save_agent', 'set_agent_initial_context', 'set_agent_resources'])
+      assert.ok(builder.allowedTools.includes(`mcp:gateway/${tool}`), tool)
+    assert.match(builder.systemPrompt, /# Protocolo de construção de agente[\s\S]*## O checklist de nascimento/)
+  })
+
   it('os ids reservados e o caminho de volta, do id ao tipo', () => {
-    assert.deepStrictEqual(CORE_AGENT_IDS, ['builder-skill', 'builder-command', 'builder-rule', 'builder-spec', 'builder-adr', 'builder-knowledge'])
+    assert.deepStrictEqual(CORE_AGENT_IDS, ['builder-skill', 'builder-command', 'builder-rule', 'builder-spec', 'builder-adr', 'builder-knowledge', 'builder-agent'])
     assert.deepStrictEqual([builderKindOf(builderAgentId('skill')), builderKindOf('atlas'), builderKindOf(undefined)], ['skill', undefined, undefined])
   })
 })

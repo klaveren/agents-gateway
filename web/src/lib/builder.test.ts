@@ -15,7 +15,17 @@ describe('latestDraft', () => {
         { tool: 'read_doc', args: { id: 'api' } },
       ]),
     ]
-    expect(latestDraft(turns)).toEqual({ id: 'segunda', title: '', summary: '', description: 'Revisa', body: 'passos', docIds: ['api'], global: true, saved: false })
+    expect(latestDraft(turns)).toEqual({
+      id: 'segunda',
+      title: '',
+      summary: '',
+      description: 'Revisa',
+      body: 'passos',
+      docIds: ['api'],
+      global: true,
+      initialContext: [],
+      saved: false,
+    })
   })
 
   it('os campos de doc e de rule; gravado = um save que deu certo DEPOIS do último rascunho', () => {
@@ -29,6 +39,28 @@ describe('latestDraft', () => {
       title: 'Dados',
       saved: false,
     })
+  })
+
+  it('agente: id, nome, soul e prompt saem do registro; o contexto inicial e os recursos vêm junto; save_agent conta como gravado', () => {
+    const call = {
+      tool: 'propose_draft',
+      args: {
+        agent: { id: 'revisor', name: 'Revisor', soul: 'Direto.', systemPrompt: 'Revise.', projectId: 'xpto' },
+        initialContext: ['api'],
+        resources: { skills: ['*'], commands: [] },
+      },
+    }
+    expect(latestDraft([turn(0, [call])])).toMatchObject({
+      id: 'revisor',
+      title: 'Revisor',
+      description: 'Direto.',
+      body: 'Revise.',
+      global: false,
+      initialContext: ['api'],
+      resources: { skills: ['*'], commands: [] },
+      saved: false,
+    })
+    expect(latestDraft([turn(0, [call, { tool: 'save_agent', result: 'ok' }])])?.saved).toBe(true)
   })
 
   it('sem chamada, ou com argumentos ilegíveis, não há rascunho', () => {

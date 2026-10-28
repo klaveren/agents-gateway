@@ -8,7 +8,7 @@ import type { ITurn } from './types'
  */
 export const PROPOSE_DRAFT_TOOL = 'propose_draft'
 
-export type TBuildKind = 'skill' | 'command' | 'rule' | 'spec' | 'adr' | 'knowledge'
+export type TBuildKind = 'skill' | 'command' | 'rule' | 'spec' | 'adr' | 'knowledge' | 'agent'
 
 /** O que a tela precisa de cada tipo: título, onde mora, como se fala dele. */
 export const BUILD_KINDS: Readonly<Record<TBuildKind, { title: string; base: string; noun: string; article: string; builder: string }>> = {
@@ -18,10 +18,11 @@ export const BUILD_KINDS: Readonly<Record<TBuildKind, { title: string; base: str
   spec: { title: 'Specs', base: '/specs', noun: 'spec', article: 'uma spec', builder: 'Construtor de specs' },
   adr: { title: 'ADRs', base: '/adrs', noun: 'ADR', article: 'uma ADR', builder: 'Construtor de ADRs' },
   knowledge: { title: 'Conhecimento', base: '/knowledge', noun: 'estudo', article: 'um estudo de conhecimento', builder: 'Construtor de conhecimento' },
+  agent: { title: 'Agentes', base: '/agents', noun: 'agente', article: 'um agente', builder: 'Construtor de agentes' },
 }
 
 /** As ferramentas com que o construtor grava (as do MCP do gateway que o Atlas também usa). */
-const SAVE_TOOLS = ['save_rule', 'save_doc', 'save_resource']
+const SAVE_TOOLS = ['save_rule', 'save_doc', 'save_resource', 'save_agent']
 
 /** O id do construtor de um tipo (no gateway, `Builder.Agents`). */
 export function builderAgentId(kind: TBuildKind): string {
@@ -43,6 +44,12 @@ export interface IBuilderDraft {
   body: string
   docIds: string[]
   global: boolean
+  /** Agente: o registro como o `save_agent` recebe. `id`, `title` (o nome), `description` (a soul) e `body` (o prompt) saem dele. */
+  agent?: Record<string, unknown>
+  /** Agente: as specs do contexto inicial. */
+  initialContext: string[]
+  /** Agente: as skills e os commands (ausente = o padrão, todos). */
+  resources?: { skills?: string[]; commands?: string[] }
 }
 
 /**
@@ -76,16 +83,41 @@ function draftOf(raw: unknown): IBuilderDraft | undefined {
   }
   if (!args || typeof args !== 'object') return undefined
   const value = args as Record<string, unknown>
-  if (typeof value.body !== 'string') return undefined
   const text = (field: unknown) => (typeof field === 'string' ? field.trim() : '')
+  const ids = (field: unknown) => (Array.isArray(field) ? field.filter((id): id is string => typeof id === 'string') : [])
+  const agent = value.agent && typeof value.agent === 'object' && !Array.isArray(value.agent) ? (value.agent as Record<string, unknown>) : undefined
+  if (agent) {
+    const resources = value.resources && typeof value.resources === 'object' ? (value.resources as Record<string, unknown>) : undefined
+    return {
+      id: text(agent.id),
+      title: text(agent.name),
+      summary: '',
+      description: text(agent.soul),
+      body: typeof agent.systemPrompt === 'string' ? agent.systemPrompt : '',
+      docIds: [],
+      global: !agent.projectId,
+      agent,
+      initialContext: ids(value.initialContext),
+      ...(resources
+        ? {
+            resources: {
+              skills: Array.isArray(resources.skills) ? ids(resources.skills) : undefined,
+              commands: Array.isArray(resources.commands) ? ids(resources.commands) : undefined,
+            },
+          }
+        : {}),
+    }
+  }
+  if (typeof value.body !== 'string') return undefined
   return {
     id: text(value.id),
     title: text(value.title),
     summary: text(value.summary),
     description: text(value.description),
     body: value.body,
-    docIds: Array.isArray(value.docIds) ? value.docIds.filter((id): id is string => typeof id === 'string') : [],
+    docIds: ids(value.docIds),
     global: value.global === true,
+    initialContext: [],
   }
 }
 

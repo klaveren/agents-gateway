@@ -2,6 +2,7 @@ import { IAgent, IAgentTarget } from './models/Agent.Model'
 import { ICoreProtocol, PROTOCOL_KINDS, TProtocolKind } from './models/Protocol.Model'
 import { EMode } from './enums/EMode.Enum'
 import { ADR_PROTOCOL } from './protocols/Adr.Protocol'
+import { AGENT_PROTOCOL } from './protocols/Agent.Protocol'
 import { COMMAND_PROTOCOL } from './protocols/Command.Protocol'
 import { KNOWLEDGE_PROTOCOL } from './protocols/Knowledge.Protocol'
 import { RULE_PROTOCOL } from './protocols/Rule.Protocol'
@@ -23,6 +24,7 @@ export const PROTOCOLS: Readonly<Record<TProtocolKind, ICoreProtocol>> = {
   spec: SPEC_PROTOCOL,
   adr: ADR_PROTOCOL,
   knowledge: KNOWLEDGE_PROTOCOL,
+  agent: AGENT_PROTOCOL,
 }
 
 /** A ferramenta com que o construtor entrega o rascunho. Interna: só os agentes do core a recebem. */
@@ -44,6 +46,8 @@ interface IBuilderKind {
   extra?: string[]
   /** O passo 1 do fluxo, quando não é "pergunte o que faltar". */
   intake?: string
+  /** As outras gravações do mesmo rascunho, na mesma confirmação (o contexto inicial e os recursos do agente). */
+  saveAlso?: string[]
 }
 
 const KINDS: Readonly<Record<TProtocolKind, IBuilderKind>> = {
@@ -93,6 +97,27 @@ const KINDS: Readonly<Record<TProtocolKind, IBuilderKind>> = {
     intake:
       'Classifique o pedido (é conhecimento?) e PESQUISE sem perguntar — só pergunte se o tema for ambíguo. Busque as fontes na ordem do protocolo e LEIA as que citar; anote URL e data de acesso.',
   },
+  agent: {
+    article: 'um agente',
+    name: 'Construtor de agentes',
+    read: [
+      'list_agents',
+      'get_agent',
+      'list_projects',
+      'list_providers',
+      'list_models',
+      'list_tools',
+      'list_docs',
+      'get_doc',
+      'list_resources',
+      'get_agent_initial_context',
+      'get_agent_resources',
+    ],
+    save: 'save_agent',
+    saveAlso: ['set_agent_initial_context', 'set_agent_resources'],
+    after:
+      'Grave o contexto inicial (set_agent_initial_context) e os recursos (set_agent_resources) que o rascunho trouxer, na mesma confirmação. Depois, dê o link /agents/<id> e diga quantos tokens o agente pesa por conversa (a guia Tamanho mostra).',
+  },
 }
 
 /** O id do construtor de um tipo. */
@@ -140,7 +165,7 @@ ${PROTOCOLS[kind].body}`
  * ⚠️ Só a lane `agent`: a `chat` não tem ferramentas, e sem elas não há rascunho.
  */
 export function builderAgent(kind: TProtocolKind, target: IAgentTarget): IAgent {
-  const { name, read, save, extra = [] } = KINDS[kind]
+  const { name, read, save, saveAlso = [], extra = [] } = KINDS[kind]
   return {
     id: builderAgentId(kind),
     name,
@@ -149,7 +174,7 @@ export function builderAgent(kind: TProtocolKind, target: IAgentTarget): IAgent 
     systemPrompt: prompt(kind),
     reasoningEfforts: ['low', 'medium', 'high'],
     modes: [EMode.AGENT],
-    allowedTools: [...[...read, save].map((tool) => `mcp:gateway/${tool}`), ...extra, PROPOSE_DRAFT_TOOL],
+    allowedTools: [...[...read, save, ...saveAlso].map((tool) => `mcp:gateway/${tool}`), ...extra, PROPOSE_DRAFT_TOOL],
     adminOnly: true,
   }
 }
