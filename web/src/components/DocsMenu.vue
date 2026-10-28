@@ -2,8 +2,8 @@
 import RailMenu, { type IRailMenuItem } from './RailMenu.vue'
 
 /**
- * O menu DOCS (só admin): o que os agentes recebem e consultam — as rules (no prompt), as specs e as ADRs (no
- * índice, lidas com `read_doc`).
+ * O menu DOCS (só admin): o que os agentes recebem e consultam — as rules (no prompt), as specs, as ADRs e o
+ * conhecimento (no índice, lidos com `read_doc`).
  */
 defineProps<{ placement: 'side' | 'up'; active?: string }>()
 
@@ -11,6 +11,7 @@ const ITEMS: IRailMenuItem[] = [
   { to: '/rules', key: 'rules', label: 'Rules', hint: 'Regras que todo agente respeita', icon: 'rule' },
   { to: '/specs', key: 'specs', label: 'Specs', hint: 'Como algo deve ser', icon: 'doc' },
   { to: '/adrs', key: 'adrs', label: 'ADRs', hint: 'Decisões tomadas e o porquê', icon: 'doc' },
+  { to: '/knowledge', key: 'knowledge', label: 'Conhecimento', hint: 'Estudos de um tema, com as fontes', icon: 'doc' },
 ]
 </script>
 

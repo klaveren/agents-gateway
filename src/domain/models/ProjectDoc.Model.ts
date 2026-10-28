@@ -1,12 +1,13 @@
 /**
- * Um DOCUMENTO de referência em markdown: uma spec (como algo deve ser) ou uma ADR (uma decisão de
- * arquitetura e o porquê). O status de uma ADR ("Proposta", "Aceita"…) fica no próprio texto.
+ * Um DOCUMENTO de referência em markdown: uma spec (como algo deve ser), uma ADR (uma decisão de arquitetura e o
+ * porquê) ou CONHECIMENTO (o estudo de um tema, com as fontes — a base sólida antes de escrever spec, skill ou ADR). O
+ * status de uma ADR ("Proposta", "Aceita"…) fica no próprio texto.
  *
  * ⚖️ O PROMPT LEVA SÓ O ÍNDICE (id, título, resumo): o agente lê o documento inteiro com `read_doc` quando
  * precisa — documento grande não pesa no contexto de toda conversa. Global ou do projeto, como a rule.
  */
-export type TDocKind = 'spec' | 'adr'
-export const DOC_KINDS: readonly TDocKind[] = ['spec', 'adr']
+export type TDocKind = 'spec' | 'adr' | 'knowledge'
+export const DOC_KINDS: readonly TDocKind[] = ['spec', 'adr', 'knowledge']
 
 export interface IProjectDoc {
   /** Slug, único no gateway: é o que o agente passa ao `read_doc`. */

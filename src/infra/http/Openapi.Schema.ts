@@ -518,7 +518,7 @@ const docSchema = {
   type: 'object',
   properties: {
     id: { type: 'string', description: 'Slug; what agents pass to read_doc.' },
-    kind: { type: 'string', enum: ['spec', 'adr'] },
+    kind: { type: 'string', enum: ['spec', 'adr', 'knowledge'] },
     projectId: { type: 'string', description: 'Absent = global.' },
     title: { type: 'string' },
     summary: { type: 'string', description: 'One line: what the conversation index shows.' },
@@ -538,7 +538,7 @@ const docBody = {
   type: 'object',
   properties: {
     id: { type: 'string', description: 'Only on create.' },
-    kind: { type: 'string', enum: ['spec', 'adr'] },
+    kind: { type: 'string', enum: ['spec', 'adr', 'knowledge'] },
     projectId: { type: 'string', nullable: true, description: 'The project; null = global.' },
     title: { type: 'string' },
     summary: { type: 'string' },
@@ -1282,7 +1282,7 @@ export const OPENAPI_DOCUMENT = {
       get: {
         summary:
           'The specs and ADRs of one scope, without the body. Conversations get an index (id, title, summary) of the global ones plus those of their project; agents read one with read_doc. Administrators only',
-        parameters: [guidanceScope, { name: 'kind', in: 'query', required: false, schema: { type: 'string', enum: ['spec', 'adr'] } }],
+        parameters: [guidanceScope, { name: 'kind', in: 'query', required: false, schema: { type: 'string', enum: ['spec', 'adr', 'knowledge'] } }],
         responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: docSchema })) }, '401': failures['401'], '404': failures['404'] },
       },
       post: {
@@ -1394,9 +1394,9 @@ export const OPENAPI_DOCUMENT = {
     '/protocols/{kind}': {
       get: {
         summary:
-          'How a skill, command, rule, spec or ADR must be built: the core protocol (shipped with the gateway, versioned) and the administrators addenda — the global one and, with ?project=, the project one. The builder follows both. Administrators only',
+          'How a skill, command, rule, spec, ADR or knowledge study must be built: the core protocol (shipped with the gateway, versioned) and the administrators addenda — the global one and, with ?project=, the project one. The builder follows both. Administrators only',
         parameters: [
-          { name: 'kind', in: 'path', required: true, schema: { type: 'string', enum: ['skill', 'command', 'rule', 'spec', 'adr'] } },
+          { name: 'kind', in: 'path', required: true, schema: { type: 'string', enum: ['skill', 'command', 'rule', 'spec', 'adr', 'knowledge'] } },
           { name: 'project', in: 'query', required: false, schema: { type: 'string' } },
         ],
         responses: { '200': { description: 'OK', ...json(envelope(protocolView)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
@@ -1406,7 +1406,7 @@ export const OPENAPI_DOCUMENT = {
       put: {
         summary:
           'Write the addendum of a scope (absent or null projectId = global). It goes AFTER the core protocol and never replaces it; an empty body deletes it. Administrators only',
-        parameters: [{ name: 'kind', in: 'path', required: true, schema: { type: 'string', enum: ['skill', 'command', 'rule', 'spec', 'adr'] } }],
+        parameters: [{ name: 'kind', in: 'path', required: true, schema: { type: 'string', enum: ['skill', 'command', 'rule', 'spec', 'adr', 'knowledge'] } }],
         requestBody: {
           required: true,
           ...json({ type: 'object', required: ['body'], properties: { projectId: { type: 'string', nullable: true }, body: { type: 'string' } } }),

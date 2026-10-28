@@ -431,7 +431,7 @@ export interface IRule {
   updatedBy?: string
 }
 
-export type TDocKind = 'spec' | 'adr'
+export type TDocKind = 'spec' | 'adr' | 'knowledge'
 
 /** Uma spec ou ADR em markdown. A lista vem sem o `body`. */
 export interface IProjectDoc {

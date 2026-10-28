@@ -1,4 +1,4 @@
-import { ATLAS_BUILDERS_SECTION, BUILDER_DELEGATIONS, RETIRED_ATLAS_TOOLS } from './Agent.Seed'
+import { ATLAS_BUILDERS_SECTION, ATLAS_KNOWLEDGE_LINE, BUILDER_DELEGATIONS, RETIRED_ATLAS_TOOLS } from './Agent.Seed'
 import { IAgent } from './models/Agent.Model'
 
 /** Uma mudança que o gateway aplica UMA VEZ num agente da semente que já está no banco (ver `migrateOnce`). */
@@ -26,5 +26,12 @@ export const AGENT_MIGRATIONS: readonly IAgentMigration[] = [
       const same = systemPrompt === agent.systemPrompt && allowedTools.length === agent.allowedTools.length && allowedTools.every((tool) => agent.allowedTools.includes(tool))
       return same ? undefined : { ...agent, allowedTools, systemPrompt }
     },
+  },
+  {
+    // O construtor de conhecimento chegou depois: o Atlas que já tinha a seção dos construtores aprende a delegar a ele.
+    // (A delegação `agent:builder-knowledge` chega pela semente.)
+    key: 'atlas-knowledge',
+    agentIds: ['atlas', 'atlas-admin'],
+    change: (agent) => (agent.systemPrompt.includes('builder-knowledge') ? undefined : { ...agent, systemPrompt: `${agent.systemPrompt.trimEnd()}\n${ATLAS_KNOWLEDGE_LINE}` }),
   },
 ]

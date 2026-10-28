@@ -8,7 +8,7 @@ import type { ITurn } from './types'
  */
 export const PROPOSE_DRAFT_TOOL = 'propose_draft'
 
-export type TBuildKind = 'skill' | 'command' | 'rule' | 'spec' | 'adr'
+export type TBuildKind = 'skill' | 'command' | 'rule' | 'spec' | 'adr' | 'knowledge'
 
 /** O que a tela precisa de cada tipo: título, onde mora, como se fala dele. */
 export const BUILD_KINDS: Readonly<Record<TBuildKind, { title: string; base: string; noun: string; article: string; builder: string }>> = {
@@ -17,6 +17,7 @@ export const BUILD_KINDS: Readonly<Record<TBuildKind, { title: string; base: str
   rule: { title: 'Rules', base: '/rules', noun: 'rule', article: 'uma rule', builder: 'Construtor de rules' },
   spec: { title: 'Specs', base: '/specs', noun: 'spec', article: 'uma spec', builder: 'Construtor de specs' },
   adr: { title: 'ADRs', base: '/adrs', noun: 'ADR', article: 'uma ADR', builder: 'Construtor de ADRs' },
+  knowledge: { title: 'Conhecimento', base: '/knowledge', noun: 'estudo', article: 'um estudo de conhecimento', builder: 'Construtor de conhecimento' },
 }
 
 /** As ferramentas com que o construtor grava (as do MCP do gateway que o Atlas também usa). */

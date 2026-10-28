@@ -5,8 +5,8 @@
  * administra só SOMA um complemento (global ou do projeto), que vem DEPOIS do core e nunca o substitui: a próxima
  * versão do core continua valendo onde houver complemento.
  */
-export type TProtocolKind = 'skill' | 'command' | 'rule' | 'spec' | 'adr'
-export const PROTOCOL_KINDS: readonly TProtocolKind[] = ['skill', 'command', 'rule', 'spec', 'adr']
+export type TProtocolKind = 'skill' | 'command' | 'rule' | 'spec' | 'adr' | 'knowledge'
+export const PROTOCOL_KINDS: readonly TProtocolKind[] = ['skill', 'command', 'rule', 'spec', 'adr', 'knowledge']
 
 export interface ICoreProtocol {
   kind: TProtocolKind

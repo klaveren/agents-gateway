@@ -3,6 +3,7 @@ import { ICoreProtocol, PROTOCOL_KINDS, TProtocolKind } from './models/Protocol.
 import { EMode } from './enums/EMode.Enum'
 import { ADR_PROTOCOL } from './protocols/Adr.Protocol'
 import { COMMAND_PROTOCOL } from './protocols/Command.Protocol'
+import { KNOWLEDGE_PROTOCOL } from './protocols/Knowledge.Protocol'
 import { RULE_PROTOCOL } from './protocols/Rule.Protocol'
 import { SKILL_PROTOCOL } from './protocols/Skill.Protocol'
 import { SPEC_PROTOCOL } from './protocols/Spec.Protocol'
@@ -21,6 +22,7 @@ export const PROTOCOLS: Readonly<Record<TProtocolKind, ICoreProtocol>> = {
   rule: RULE_PROTOCOL,
   spec: SPEC_PROTOCOL,
   adr: ADR_PROTOCOL,
+  knowledge: KNOWLEDGE_PROTOCOL,
 }
 
 /** A ferramenta com que o construtor entrega o rascunho. Interna: só os agentes do core a recebem. */
@@ -38,6 +40,10 @@ interface IBuilderKind {
   save: string
   /** O que dizer depois de gravar. */
   after: string
+  /** Ferramentas além das do gateway (a pesquisa na web do construtor de conhecimento). */
+  extra?: string[]
+  /** O passo 1 do fluxo, quando não é "pergunte o que faltar". */
+  intake?: string
 }
 
 const KINDS: Readonly<Record<TProtocolKind, IBuilderKind>> = {
@@ -76,6 +82,17 @@ const KINDS: Readonly<Record<TProtocolKind, IBuilderKind>> = {
     save: 'save_doc',
     after: 'Avise que ela entra no índice das conversas novas.',
   },
+  knowledge: {
+    article: 'um estudo de conhecimento',
+    name: 'Construtor de conhecimento',
+    read: ['list_docs', 'get_doc'],
+    save: 'save_doc',
+    after: 'Avise que ele entra no índice das conversas novas e que é a base para as specs, skills e ADRs do tema.',
+    // ⚖️ A pesquisa: a busca e a leitura nativas do Claude (leem a fonte inteira); em outro provider, a busca local.
+    extra: ['sdk:WebSearch', 'sdk:WebFetch', 'search_web'],
+    intake:
+      'Classifique o pedido (é conhecimento?) e PESQUISE sem perguntar — só pergunte se o tema for ambíguo. Busque as fontes na ordem do protocolo e LEIA as que citar; anote URL e data de acesso.',
+  },
 }
 
 /** O id do construtor de um tipo. */
@@ -95,13 +112,13 @@ const SOUL = `Você é o Construtor do gateway: ajuda quem administra a criar ar
 Direto e preciso, em português claro. Pergunta uma coisa por vez. Não inventa: o que existe no gateway você consulta.`
 
 function prompt(kind: TProtocolKind): string {
-  const { article, read, save, after } = KINDS[kind]
+  const { article, read, save, after, intake } = KINDS[kind]
   return `Você constrói ${article} por conversa, com quem administra: entrega um rascunho e, quando a pessoa confirmar, grava.
 
 ## Como trabalhar
-1. Entenda o pedido: o que é, para quem, em que projeto. Pergunte o que faltar, uma coisa por vez.
+1. ${intake ?? 'Entenda o pedido: o que é, para quem, em que projeto. Pergunte o que faltar, uma coisa por vez.'}
 2. Confira o que já existe ("O que já existe", abaixo; o conteúdo inteiro com ${read.join(' e ')}). Se já houver um parecido, diga qual e proponha ajustá-lo em vez de criar outro.
-3. Procure as specs e ADRs relacionadas (o índice "Documentos de referência"; leia com read_doc). Cite ou anexe em vez de copiar regra.
+3. Procure o conhecimento, as specs e as ADRs relacionadas (o índice "Documentos de referência"; leia com read_doc). O estudo de conhecimento do tema é a base: parta dele. Cite ou anexe em vez de copiar regra.
 4. Monte o rascunho seguindo o protocolo abaixo e o complemento de quem administra (o complemento vem depois e acrescenta; em conflito, vale o complemento).
 5. Entregue com ${PROPOSE_DRAFT_TOOL}. Se ela devolver problemas, corrija e entregue de novo. Depois, diga em uma ou duas frases o que propôs, que o rascunho está ao lado e pergunte se pode gravar.
 6. A pessoa pediu mudança: ajuste e entregue de novo com ${PROPOSE_DRAFT_TOOL}.
@@ -123,7 +140,7 @@ ${PROTOCOLS[kind].body}`
  * ⚠️ Só a lane `agent`: a `chat` não tem ferramentas, e sem elas não há rascunho.
  */
 export function builderAgent(kind: TProtocolKind, target: IAgentTarget): IAgent {
-  const { name, read, save } = KINDS[kind]
+  const { name, read, save, extra = [] } = KINDS[kind]
   return {
     id: builderAgentId(kind),
     name,
@@ -132,7 +149,7 @@ export function builderAgent(kind: TProtocolKind, target: IAgentTarget): IAgent 
     systemPrompt: prompt(kind),
     reasoningEfforts: ['low', 'medium', 'high'],
     modes: [EMode.AGENT],
-    allowedTools: [...[...read, save].map((tool) => `mcp:gateway/${tool}`), PROPOSE_DRAFT_TOOL],
+    allowedTools: [...[...read, save].map((tool) => `mcp:gateway/${tool}`), ...extra, PROPOSE_DRAFT_TOOL],
     adminOnly: true,
   }
 }

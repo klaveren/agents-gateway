@@ -30,7 +30,7 @@ const thread = useThreadStore()
 const info = computed(() => BUILD_KINDS[props.kind])
 const base = computed(() => info.value.base)
 const title = computed(() => info.value.title)
-const isDoc = computed(() => props.kind === 'spec' || props.kind === 'adr')
+const isDoc = computed(() => props.kind === 'spec' || props.kind === 'adr' || props.kind === 'knowledge')
 const isResource = computed(() => props.kind === 'skill' || props.kind === 'command')
 
 onMounted(async () => {
