@@ -7,6 +7,7 @@ import UsageTiles from '@/components/UsageTiles.vue'
 import { tokens, usd } from '@/lib/format'
 import type { IUsageFigure } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
+import { useProjectsStore } from '@/stores/projects'
 import { useUsageStore } from '@/stores/usage'
 
 /**
@@ -17,9 +18,12 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const usage = useUsageStore()
+const projects = useProjectsStore()
 
 const PERIODS = [7, 30, 90]
 const days = ref(30)
+/** O projeto do recorte (`?project=`, na URL para o link levar junto). Ausente = todos. */
+const selectedProject = computed(() => (typeof route.query.project === 'string' && route.query.project ? route.query.project : undefined))
 const tab = computed(() => (auth.isAdmin && (route.query.tab === 'users' || route.query.tab === 'keys') ? route.query.tab : 'mine'))
 const selectedUser = computed(() => (typeof route.query.user === 'string' ? route.query.user : undefined))
 
@@ -42,10 +46,18 @@ const { mine, users, detail, groups, valueDetail, loading, error } = storeToRefs
 
 function load() {
   if (!auth.signedIn) return usage.reset()
-  return usage.load({ tab: tab.value, days: days.value, user: selectedUser.value, key: metaKey.value, value: selectedValue.value })
+  return usage.load({ tab: tab.value, days: days.value, user: selectedUser.value, key: metaKey.value, value: selectedValue.value, project: selectedProject.value })
 }
 
-watch([days, tab, selectedUser, metaKey, selectedValue, () => auth.signedIn], () => void load(), { immediate: true })
+watch([days, tab, selectedUser, metaKey, selectedValue, selectedProject, () => auth.signedIn], () => void load(), { immediate: true })
+// A lista do seletor: os projetos que a pessoa pode usar (o admin, todos).
+watch(
+  () => auth.signedIn,
+  (signedIn) => {
+    if (signedIn && !projects.loaded) void projects.load().catch(() => undefined)
+  },
+  { immediate: true },
+)
 watch(metaKey, (key) => (keyDraft.value = key))
 
 function applyKey() {
@@ -80,7 +92,17 @@ const go = (query: Record<string, string | undefined>) => router.replace({ query
           <button class="rounded-full px-3 py-1" :class="tab === 'users' ? 'bg-zinc-700 text-white' : 'text-zinc-400'" @click="go({ tab: 'users', user: undefined })">Por usuário</button>
           <button class="rounded-full px-3 py-1" :class="tab === 'keys' ? 'bg-zinc-700 text-white' : 'text-zinc-400'" @click="go({ tab: 'keys', user: undefined, value: undefined })">Por chave</button>
         </div>
-        <div class="ml-auto flex shrink-0 gap-1 rounded-full bg-zinc-900 p-1 text-sm whitespace-nowrap" role="group" aria-label="Período">
+        <select
+          v-if="projects.list.length > 1 || selectedProject"
+          class="ml-auto rounded-full bg-zinc-900 px-3 py-1.5 text-sm text-zinc-200 ring-1 ring-zinc-800"
+          aria-label="Projeto"
+          :value="selectedProject ?? ''"
+          @change="go({ project: ($event.target as HTMLSelectElement).value || undefined })"
+        >
+          <option value="">Todos os projetos</option>
+          <option v-for="project in projects.list" :key="project.id" :value="project.id">{{ project.name }}</option>
+        </select>
+        <div class="flex shrink-0 gap-1 rounded-full bg-zinc-900 p-1 text-sm whitespace-nowrap" :class="projects.list.length > 1 || selectedProject ? '' : 'ml-auto'" role="group" aria-label="Período">
           <button v-for="period in PERIODS" :key="period" class="rounded-full px-3 py-1" :class="days === period ? 'bg-zinc-700 text-white' : 'text-zinc-400'" @click="days = period">{{ period }} dias</button>
         </div>
       </header>

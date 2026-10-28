@@ -2,6 +2,7 @@ import { AccountsService } from '@application/Accounts.Service'
 import { ModelCatalogService } from '@application/ModelCatalog.Service'
 import { IUsageFigure, IUsageSummary, usageDays, UsageService } from '@application/Usage.Service'
 import { MODEL_PRICING, TModelPricing } from '@domain/models/Model.Pricing'
+import { PROJECT_ID_PATTERN } from '@domain/models/Project.Model'
 import { IUsageQuery, metadataKeyIssue } from '@domain/models/Usage.Model'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { Request, Response } from 'express'
@@ -151,6 +152,9 @@ export class UsageController {
 
     const query: IUsageQuery = { since, tzOffsetMinutes: tz }
     if (owner !== undefined) query.owner = owner && owner.account === undefined ? { id: owner.id } : owner
+    // `?project=<id>`: só as conversas desse projeto (o `metadata.project` que o gateway carimba ao abrir a conversa).
+    const project = typeof req.query.project === 'string' ? req.query.project.trim() : ''
+    if (PROJECT_ID_PATTERN.test(project)) query.metadata = { project }
 
     return { query, days: usageDays(since, now, tz), period: { days: period, since: since.toISOString(), tzOffsetMinutes: tz } }
   }
