@@ -154,8 +154,8 @@ async function openInEditor() {
   if (!current) return
   const projectId = current.global ? undefined : buildProject.value
   pendingDraft.value = { ...current, kind: props.kind, ...(projectId ? { projectId } : {}) }
-  // A rule do projeto vai para a guia Ambiente dele; a global, para as rules globais (Sistema).
-  if (props.kind === 'rule') return void (await router.push(projectId ? { path: `/projects/${projectId}`, query: { tab: 'ambiente' } } : base.value))
+  // A rule vai para o formulário de rule nova da página Rules, no escopo dela.
+  if (props.kind === 'rule') return void (await router.push(base.value))
   await router.push((await exists(current.id)) ? `${base.value}/${current.id}` : `${base.value}/new`)
 }
 

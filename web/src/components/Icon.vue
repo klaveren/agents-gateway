@@ -1,11 +1,12 @@
 <script setup lang="ts">
 /** Ícones de traço (24×24), desenhados inline: nenhuma dependência para meia dúzia de símbolos. */
-defineProps<{ name: 'inbox' | 'agents' | 'settings' | 'plus' | 'search' | 'send' | 'stop' | 'clip' | 'back' | 'share' | 'trash' | 'copy' | 'bolt' | 'check' | 'x' | 'refresh' | 'users' | 'logout' | 'key' | 'chart' | 'user' | 'plug' | 'box' | 'rule' | 'doc' | 'slash' }>()
+defineProps<{ name: 'inbox' | 'agents' | 'settings' | 'plus' | 'search' | 'send' | 'stop' | 'clip' | 'back' | 'share' | 'trash' | 'copy' | 'bolt' | 'check' | 'x' | 'refresh' | 'users' | 'logout' | 'key' | 'chart' | 'user' | 'plug' | 'box' | 'rule' | 'doc' | 'slash' | 'folder' }>()
 </script>
 
 <template>
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     <template v-if="name === 'inbox'"><path d="M4 13h4l1.5 3h5L16 13h4" /><path d="M5.5 5h13L21 13v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5z" /></template>
+    <template v-else-if="name === 'folder'"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></template>
     <template v-else-if="name === 'slash'"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M14 8l-4 8" /></template>
     <template v-else-if="name === 'rule'"><path d="M9 6h11M9 12h11M9 18h11" /><path d="M4 5.5l1 1 2-2M4 11.5l1 1 2-2M4 17.5l1 1 2-2" /></template>
     <template v-else-if="name === 'doc'"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5M9 13h6M9 17h4" /></template>

@@ -4,8 +4,6 @@ import { useRoute, useRouter } from 'vue-router'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import Icon from '@/components/Icon.vue'
 import MasterDetail from '@/components/MasterDetail.vue'
-import ProjectEnvironment from '@/components/ProjectEnvironment.vue'
-import BuildView from '@/views/BuildView.vue'
 import { ApiError } from '@/lib/api'
 import { initials } from '@/lib/format'
 import type { IProject } from '@/lib/types'
@@ -42,21 +40,6 @@ const error = ref<string>()
 const note = ref<string>()
 const removing = ref<IProject>()
 const removeError = ref<string>()
-/**
- * As abas do projeto: o cadastro, o AMBIENTE (o que toda conversa dele recebe: rules e specs inteiras) e o construtor de
- * rules do projeto. `?tab=` abre direto numa delas (o "Abrir no editor" de uma rule leva ao Ambiente).
- */
-const TABS = [
-  { id: 'geral', label: 'Geral' },
-  { id: 'ambiente', label: 'Ambiente' },
-  { id: 'construir', label: 'Construir rule' },
-] as const
-type TProjectTab = (typeof TABS)[number]['id']
-const tabFromRoute = () => TABS.find((item) => item.id === route.query.tab)?.id ?? 'geral'
-const tab = ref<TProjectTab>(tabFromRoute())
-watch(() => route.query.tab, () => (tab.value = tabFromRoute()))
-/** No construtor de rules: a conversa ou o protocolo (com o complemento do projeto). */
-const buildTab = ref<'build' | 'protocol'>('build')
 
 onMounted(async () => {
   if (!auth.isAdmin) return
@@ -205,7 +188,7 @@ async function confirmRemove() {
         </form>
       </template>
 
-      <section v-else-if="selected" :key="selected.id" class="mx-auto flex flex-col gap-4" :class="tab === 'construir' ? 'max-w-6xl' : 'max-w-3xl'">
+      <section v-else-if="selected" :key="selected.id" class="mx-auto flex max-w-3xl flex-col gap-4">
         <div class="flex items-center gap-3">
           <span class="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-600 text-base font-bold text-zinc-950">{{ initials(selected.name) }}</span>
           <div class="min-w-0">
@@ -215,32 +198,11 @@ async function confirmRemove() {
           <button v-if="selected.id !== projects.current" type="button" class="ml-auto rounded-full bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700" @click="projects.select(selected.id)">Usar este projeto</button>
         </div>
 
-        <nav class="flex flex-wrap gap-1 border-b border-zinc-800" role="tablist">
-          <button
-            v-for="item in TABS"
-            :key="item.id"
-            type="button"
-            role="tab"
-            :aria-selected="tab === item.id"
-            class="-mb-px border-b-2 px-3 py-2 text-sm"
-            :class="tab === item.id ? 'border-emerald-500 text-zinc-100' : 'border-transparent text-zinc-400 hover:text-zinc-200'"
-            @click="router.replace({ query: { ...route.query, tab: item.id } })"
-          >
-            {{ item.label }}
-          </button>
-        </nav>
+        <p class="text-xs text-zinc-500">
+          O que toda conversa do projeto recebe — rules e specs inteiras — fica em <RouterLink to="/environment" class="text-emerald-400 underline underline-offset-2">Projeto → Ambiente</RouterLink>
+          (com este projeto em uso).
+        </p>
 
-        <ProjectEnvironment v-if="tab === 'ambiente'" :project-id="selected.id" />
-        <div v-else-if="tab === 'construir'" class="flex flex-col gap-2">
-          <div class="flex gap-1 text-xs">
-            <button type="button" class="rounded-full px-3 py-1" :class="buildTab === 'build' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-800/60'" @click="buildTab = 'build'">Construir</button>
-            <button type="button" class="rounded-full px-3 py-1" :class="buildTab === 'protocol' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-800/60'" @click="buildTab = 'protocol'">Protocolo</button>
-          </div>
-          <div class="h-[70vh] overflow-hidden rounded-xl border border-zinc-800">
-            <BuildView kind="rule" :tab="buildTab" :project="selected.id" embedded />
-          </div>
-        </div>
-        <template v-else>
 
         <div class="rounded-xl border border-zinc-800 p-3 text-xs text-zinc-400">
           <div class="mb-1 font-medium text-zinc-300">Pasta</div>
@@ -288,7 +250,6 @@ async function confirmRemove() {
         <div class="flex justify-end text-xs">
           <button type="button" class="text-rose-300 hover:underline" @click="(removing = selected), (removeError = undefined)">Apagar projeto</button>
         </div>
-        </template>
       </section>
       <div v-else class="grid h-full place-items-center text-zinc-500">Escolha um projeto ou crie um novo.</div>
 

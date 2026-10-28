@@ -8,11 +8,12 @@ import { GLOBAL_SCOPE, rulesTokens, scopeToProjectId } from '@/lib/guidance'
 import type { IRule } from '@/lib/types'
 
 /**
- * As RULES de um escopo: as globais (em Sistema) ou as de um projeto (na guia Ambiente dele). Uma por registro, numeradas
- * como entram no prompt. `showGlobals`: no projeto, as globais aparecem antes, só para ler — é a ordem da conversa.
- * Emite `weight`: os tokens das rules ligadas que toda conversa do escopo leva (as globais inclusive, quando mostradas).
+ * As RULES de um escopo: as globais ou as de um projeto. Uma por registro, numeradas como entram no prompt.
+ * `showGlobals`: no projeto, as globais aparecem antes, só para ler — é a ordem da conversa. `readonly`: só a lista
+ * (o Ambiente mostra; quem edita é a página Rules). Emite `weight`: os tokens das rules ligadas que toda conversa do
+ * escopo leva (as globais inclusive, quando mostradas).
  */
-const props = defineProps<{ scope: string; showGlobals?: boolean }>()
+const props = defineProps<{ scope: string; showGlobals?: boolean; readonly?: boolean }>()
 const emit = defineEmits<{ weight: [tokens: number] }>()
 
 const rules = ref<IRule[]>([])
@@ -130,14 +131,14 @@ function describe(failure: unknown): string {
     <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
 
     <ol class="flex flex-col gap-2">
-      <li v-for="rule in showGlobals ? globals : []" :key="rule.id" class="rounded-xl border border-zinc-800/60 p-3 opacity-60" title="Global: edita-se em Sistema → Rules globais">
+      <li v-for="rule in showGlobals ? globals : []" :key="rule.id" class="rounded-xl border border-zinc-800/60 p-3 opacity-60" title="Global: vale em todos os projetos (edita-se em Rules, escopo Global)">
         <div class="flex items-start gap-3">
           <span class="mt-0.5 shrink-0 rounded-md bg-zinc-800 px-1.5 py-0.5 font-mono text-[11px] text-zinc-300">{{ numberOf.get(rule.id) ? `Rule ${numberOf.get(rule.id)}` : '—' }}</span>
           <div class="min-w-0 flex-1">
             <p class="text-sm font-medium">{{ rule.title }}<span v-if="!rule.enabled" class="ml-2 text-xs font-normal text-zinc-500">desligada</span></p>
             <p class="mt-0.5 text-sm whitespace-pre-line text-zinc-400">{{ rule.body }}</p>
           </div>
-          <RouterLink to="/rules" class="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-400 hover:text-zinc-200">global · em Sistema</RouterLink>
+          <span class="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-400">global</span>
         </div>
       </li>
       <li v-for="(rule, index) in rules" :key="rule.id" class="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3" :class="rule.enabled ? '' : 'opacity-60'">
@@ -155,7 +156,7 @@ function describe(failure: unknown): string {
             <p class="text-sm font-medium">{{ rule.title }}<span v-if="!rule.enabled" class="ml-2 text-xs font-normal text-zinc-500">desligada</span></p>
             <p class="mt-0.5 text-sm whitespace-pre-line text-zinc-400">{{ rule.body }}</p>
           </div>
-          <div class="flex shrink-0 items-center gap-0.5 text-zinc-400">
+          <div v-if="!readonly" class="flex shrink-0 items-center gap-0.5 text-zinc-400">
             <button type="button" class="grid h-7 w-7 place-items-center rounded-full hover:bg-zinc-800 disabled:opacity-30" :disabled="busy || index === 0" title="Subir" @click="move(rule, 'up')">↑</button>
             <button type="button" class="grid h-7 w-7 place-items-center rounded-full hover:bg-zinc-800 disabled:opacity-30" :disabled="busy || index === rules.length - 1" title="Descer" @click="move(rule, 'down')">↓</button>
             <button type="button" class="rounded-full px-2 py-1 text-xs hover:bg-zinc-800" :disabled="busy" @click="toggle(rule)">{{ rule.enabled ? 'Desligar' : 'Ligar' }}</button>
@@ -166,10 +167,10 @@ function describe(failure: unknown): string {
       </li>
     </ol>
     <p v-if="!loading && !rules.length" class="rounded-xl border border-dashed border-zinc-800 p-4 text-center text-sm text-zinc-500">
-      Nenhuma rule {{ scope === GLOBAL_SCOPE ? 'global' : 'do projeto' }} ainda.
+      Nenhuma rule {{ scope === GLOBAL_SCOPE ? 'global' : 'do projeto' }}{{ readonly ? '' : ' ainda' }}.
     </p>
 
-    <form class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3" @submit.prevent="add">
+    <form v-if="!readonly" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3" @submit.prevent="add">
       <p class="text-sm font-medium">Nova rule {{ scope === GLOBAL_SCOPE ? 'global' : 'do projeto' }}</p>
       <p v-if="draftNote" class="text-xs text-emerald-300">{{ draftNote }}</p>
       <label class="field">Título<input v-model="draft.title" required maxlength="120" class="input text-sm" placeholder="Idioma" /><small v-for="m in draftIssues.title" :key="m" class="error">{{ m }}</small></label>

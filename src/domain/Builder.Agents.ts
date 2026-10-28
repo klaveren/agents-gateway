@@ -70,7 +70,7 @@ const KINDS: Readonly<Record<TProtocolKind, IBuilderKind>> = {
     name: 'Construtor de rules',
     read: ['list_rules'],
     save: 'save_rule',
-    after: 'Avise que ela vale para as conversas que começarem agora, e onde vê-la: a do projeto na guia Ambiente dele, a global em Sistema → Rules globais.',
+    after: 'Avise que ela vale para as conversas que começarem agora, e que está em Projeto → Rules (e no Ambiente do projeto).',
   },
   spec: {
     article: 'uma spec',

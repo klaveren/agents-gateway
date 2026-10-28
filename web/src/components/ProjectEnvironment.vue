@@ -34,8 +34,11 @@ const format = (value: number) => value.toLocaleString('pt-BR')
     </div>
 
     <div class="flex flex-col gap-2">
-      <h3 class="text-sm font-semibold text-zinc-200">Rules <span class="text-xs font-normal text-zinc-500">— no prompt de toda conversa, nesta ordem: as globais e depois as do projeto</span></h3>
-      <RulesEditor :scope="projectId" show-globals @weight="(tokens) => (rulesWeight = tokens)" />
+      <div class="flex items-baseline gap-2">
+        <h3 class="text-sm font-semibold text-zinc-200">Rules <span class="text-xs font-normal text-zinc-500">— no prompt de toda conversa, nesta ordem: as globais e depois as do projeto</span></h3>
+        <RouterLink to="/rules" class="ml-auto shrink-0 text-xs text-emerald-400 underline underline-offset-2">Editar em Rules</RouterLink>
+      </div>
+      <RulesEditor :scope="projectId" show-globals readonly @weight="(tokens) => (rulesWeight = tokens)" />
     </div>
 
     <div class="flex flex-col gap-2">

@@ -3,7 +3,7 @@ import RailMenu, { type IRailMenuItem } from './RailMenu.vue'
 
 /**
  * O menu DOCS (só admin): o que os agentes consultam — as specs, as ADRs e o conhecimento (no índice, lidos com
- * `read_doc`). ⚖️ As rules moram no projeto (guia Ambiente) e, as globais, em Sistema.
+ * `read_doc`). ⚖️ As rules moram no menu Projeto, junto do Ambiente.
  */
 defineProps<{ placement: 'side' | 'up'; active?: string }>()
 

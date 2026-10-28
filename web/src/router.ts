@@ -10,6 +10,7 @@ import ProjectsView from './views/ProjectsView.vue'
 import ResourcesView from './views/ResourcesView.vue'
 import BuildView from './views/BuildView.vue'
 import RulesView from './views/RulesView.vue'
+import EnvironmentView from './views/EnvironmentView.vue'
 import ProvidersView from './views/ProvidersView.vue'
 import SettingsView from './views/SettingsView.vue'
 import UsageView from './views/UsageView.vue'
@@ -43,9 +44,9 @@ export const router = createRouter({
     { path: '/projects/new', name: 'project-new', component: ProjectsView },
     { path: '/projects/:id', name: 'project', component: ProjectsView, props: true },
     { path: '/rules', name: 'rules', component: RulesView },
-    // As rules GLOBAIS (Sistema): o construtor e o protocolo no escopo global; as do projeto, na guia Ambiente dele.
-    { path: '/rules/build', name: 'rule-build', component: BuildView, props: { kind: 'rule', tab: 'build', project: null } },
-    { path: '/rules/protocol', name: 'rule-protocol', component: BuildView, props: { kind: 'rule', tab: 'protocol', project: null } },
+    { path: '/rules/build', name: 'rule-build', component: BuildView, props: { kind: 'rule', tab: 'build' } },
+    { path: '/rules/protocol', name: 'rule-protocol', component: BuildView, props: { kind: 'rule', tab: 'protocol' } },
+    { path: '/environment', name: 'environment', component: EnvironmentView },
     { path: '/specs', name: 'specs', component: DocsView, props: { kind: 'spec' } },
     { path: '/specs/new', name: 'spec-new', component: DocsView, props: { kind: 'spec' } },
     { path: '/specs/build', name: 'spec-build', component: BuildView, props: { kind: 'spec', tab: 'build' } },
