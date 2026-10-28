@@ -34,7 +34,7 @@ watch(
 
 <template>
   <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
-    <p class="font-medium text-zinc-200">Só quem administra cadastra as rules.</p>
+    <p class="font-medium text-zinc-200">Só quem administra pode gerenciar as regras.</p>
   </div>
 
   <div v-else class="scroll-thin h-full overflow-y-auto px-4 py-5">
@@ -47,8 +47,7 @@ watch(
         </select>
       </header>
       <p class="text-xs text-zinc-500">
-        As regras do ambiente que todo agente respeita. Entram no system prompt de cada conversa nova: as globais e depois as do projeto dela. Editar vale para as
-        próximas conversas. Mostrando: <strong class="text-zinc-300">{{ label }}</strong>.
+        Regras que todo agente respeita. Editar vale para as próximas conversas. Mostrando: <strong class="text-zinc-300">{{ label }}</strong>.
       </p>
       <RulesEditor :key="scope" :scope="scope" :show-globals="scope !== GLOBAL_SCOPE" />
     </section>

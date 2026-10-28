@@ -19,13 +19,13 @@ onMounted(async () => {
 <template>
   <InitialContextEditor :endpoint="`/agents/${encodeURIComponent(agentId)}/initial-context`" :project-id="projectId" :base-tokens="project?.totalTokens">
     <p class="text-sm text-zinc-400">
-      As specs marcadas aqui vão <strong class="text-zinc-200">inteiras</strong> no prompt deste agente, além das rules
+      As Specs marcadas são enviadas <strong class="text-zinc-200">inteiras</strong> a este agente, além das Rules
       <template v-if="projectId">
-        e das {{ project?.docs.length ?? 0 }} spec(s) do contexto inicial do projeto
+        e das {{ project?.docs.length ?? 0 }} Spec(s) do contexto inicial do projeto
         <RouterLink :to="`/projects/${projectId}`" class="text-emerald-400 underline underline-offset-2">{{ projectName ?? projectId }}</RouterLink>.
       </template>
-      <template v-else>. Agente global: só specs globais, porque ele roda em qualquer projeto.</template>
-      Os outros agentes não as recebem. A ordem das marcadas é a ordem no prompt.
+      <template v-else>. Agente global: só Specs globais.</template>
+      Só este agente as recebe. A ordem é a da lista.
     </p>
   </InitialContextEditor>
 </template>

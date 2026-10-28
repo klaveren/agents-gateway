@@ -93,23 +93,20 @@ async function confirmRemove() {
     <section class="mx-auto flex max-w-3xl flex-col gap-4 p-4 md:p-6">
       <header class="flex items-center gap-2">
         <h1 class="text-xl font-semibold">Pacotes</h1>
-        <span v-if="packages.state?.version" class="ml-auto text-xs text-zinc-500">micromamba {{ packages.state.version }}</span>
       </header>
       <p class="text-xs text-zinc-500">
-        Ferramentas do servidor (git, curl, jq, ffmpeg…) do conda-forge, sem root. Ficam em <code>{{ packages.state?.prefix ?? '<dados>/tools' }}</code> — persistente: sobrevivem ao reboot. Valem na hora para o Bash dos agentes, o
-        run_bash e os MCPs locais. Pacotes de linguagem instalados globalmente (<code>npm i -g</code>, <code>pip install --user</code>, <code>uv tool</code>, <code>cargo</code>, <code>go install</code>, <code>gem</code>) também
-        vão para o disco persistente.
+        Instale ferramentas no servidor (git, curl, jq, ffmpeg…). Ficam disponíveis na hora para os agentes e os MCPs locais.
       </p>
       <p v-if="loadError" class="text-sm text-rose-300">{{ loadError }}</p>
 
       <div v-if="packages.state && !packages.state.available" class="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
-        O micromamba não está neste servidor. A imagem do gateway já traz; rodando fora dela, instale (<code>brew install micromamba</code> no Mac) ou aponte <code>MICROMAMBA_BIN</code> e reinicie.
+        O gerenciador de pacotes (micromamba) não está instalado neste servidor. Instale-o (no Mac: <code>brew install micromamba</code>) e reinicie.
       </div>
 
       <template v-else-if="packages.state">
         <label class="flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 focus-within:border-emerald-500/60">
           <Icon name="search" class="h-4 w-4 shrink-0 text-zinc-500" />
-          <input v-model="query" class="min-w-0 flex-1 bg-transparent text-sm text-zinc-100 outline-none" placeholder="Buscar no conda-forge: git, curl, jq, ffmpeg…" autocomplete="off" spellcheck="false" />
+          <input v-model="query" class="min-w-0 flex-1 bg-transparent text-sm text-zinc-100 outline-none" placeholder="Buscar pacote: git, curl, jq, ffmpeg…" autocomplete="off" spellcheck="false" />
           <span v-if="searching" class="text-xs text-zinc-500">buscando…</span>
         </label>
         <p v-if="searchError" class="text-sm text-rose-300">{{ searchError }}</p>
@@ -126,7 +123,7 @@ async function confirmRemove() {
             </button>
           </li>
         </ul>
-        <p v-else-if="query.trim().length >= 2 && !searching && !searchError" class="text-xs text-zinc-500">Nada no conda-forge com esse nome.</p>
+        <p v-else-if="query.trim().length >= 2 && !searching && !searchError" class="text-xs text-zinc-500">Nenhum pacote com esse nome.</p>
 
         <div v-if="result" class="flex flex-col gap-2">
           <p class="text-sm" :class="result.ok ? 'text-emerald-300' : 'text-rose-300'">
@@ -162,7 +159,7 @@ async function confirmRemove() {
     <ConfirmDialog
       :open="!!removing"
       :title="`Desinstalar ${removing ?? ''}?`"
-      message="Sai da pasta de ferramentas do servidor. Agentes e MCPs que dependem dele deixam de achar o comando."
+      message="Agentes e MCPs que dependem dele deixam de funcionar."
       action="Desinstalar"
       @confirm="confirmRemove"
       @cancel="removing = undefined"

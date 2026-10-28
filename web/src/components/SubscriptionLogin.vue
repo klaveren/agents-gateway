@@ -26,15 +26,15 @@ let alive = true
 /** O que a tela diz quando não dá para ser nativo — por assinatura. */
 const HELP: Record<string, { note?: string; missing?: string; command?: string; link?: { href: string; label: string } }> = {
   codex: {
-    note: 'Se a página do ChatGPT pedir para ativar o login com código de dispositivo, ative em Configurações → Segurança e clique em Entrar de novo.',
+    note: 'Se o ChatGPT pedir "login por código de dispositivo", ative em Configurações → Segurança e clique em Entrar de novo.',
     link: { href: 'https://chatgpt.com/#settings/Security', label: 'Abrir a segurança do ChatGPT ↗' },
   },
   'claude-sub': {
-    note: 'Sem conseguir pelo Entrar? Gere o token em qualquer máquina com o Claude Code e cole no campo "Token OAuth" abaixo.',
+    note: 'Se o Entrar não funcionar, gere um token com o comando abaixo e cole no campo "Token (opcional)", mais abaixo.',
     command: 'claude setup-token',
   },
   antigravity: {
-    missing: 'O Antigravity CLI não está na máquina do gateway. Na imagem oficial ele já vem; fora dela, instale a versão 1.4.6 (Linux ou macOS) e, se não estiver no PATH como "agy", aponte ANTIGRAVITY_BIN para o binário.',
+    missing: 'O Antigravity CLI não está instalado no servidor. Instale a versão 1.4.6 (Linux ou macOS) e reinicie.',
     link: { href: 'https://github.com/google-antigravity/antigravity-cli/releases/tag/1.4.6', label: 'Baixar o Antigravity CLI 1.4.6 ↗' },
   },
 }
@@ -93,7 +93,7 @@ async function copy(text: string, what: string) {
     copyTimer = setTimeout(() => (copied.value = undefined), 1500)
   } catch {
     copied.value = undefined
-    error.value = 'não foi possível copiar; selecione e copie à mão'
+    error.value = 'Não foi possível copiar; selecione e copie à mão'
   }
 }
 
@@ -157,7 +157,7 @@ onBeforeUnmount(() => {
           </div>
         </li>
         <li v-if="login.needsCode">
-          Se a página mostrar um código, cole aqui (abrindo no mesmo computador do gateway, ela conclui sozinha):
+          Se a página mostrar um código, cole aqui:
           <form class="mt-1 flex gap-2" @submit.prevent="send">
             <input v-model="code" autocomplete="off" spellcheck="false" placeholder="código de autorização" class="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-sm outline-none focus:border-emerald-500/60" />
             <button type="submit" :disabled="busy || !code.trim()" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 disabled:opacity-40">Enviar</button>

@@ -24,13 +24,12 @@ const router = useRouter()
 const auth = useAuthStore()
 const projects = useProjectsStore()
 
-const KIND: Record<TResourceKind, { title: string; one: string; base: string; short: string; lead: string; when: string[]; example: string; bodyHint: string; template: string }> = {
+const KIND: Record<TResourceKind, { title: string; one: string; base: string; lead: string; when: string[]; example: string; bodyHint: string; template: string }> = {
   skill: {
     title: 'Skills',
     one: 'skill',
     base: '/skills',
-    short: 'Modos de fazer que o agente carrega quando o assunto aparece.',
-    lead: 'Uma skill ensina o agente a fazer UMA coisa bem: o passo a passo, o formato, os cuidados. O prompt dele só leva o nome e a descrição; quando o assunto aparece, ele carrega a skill inteira (e as specs e ADRs anexadas) com use_skill. Não pesa na conversa até ser usada.',
+    lead: 'Uma skill ensina o agente a fazer uma coisa bem: passo a passo, formato, cuidados. Ele só a carrega quando precisa.',
     when: ['Um procedimento que se repete (revisar um PR, gerar um relatório)', 'Um formato que tem de sair sempre igual', 'Um conhecimento que só alguns pedidos precisam'],
     example: 'Ex.: "tabela-markdown — Montar tabelas em markdown com cabeçalho e alinhamento".',
     bodyHint: 'Markdown: o que o agente segue quando carregar a skill.',
@@ -40,11 +39,10 @@ const KIND: Record<TResourceKind, { title: string; one: string; base: string; sh
     title: 'Commands',
     one: 'command',
     base: '/commands',
-    short: 'Pedidos prontos que a pessoa dispara com /nome.',
-    lead: 'Um command é um pedido pronto: a pessoa digita /nome e o que quiser depois, e o gateway troca pelo texto do command — com $ARGUMENTS no lugar do que ela digitou — e as specs e ADRs anexadas. A conversa grava o que ela digitou.',
+    lead: 'Um command é um pedido pronto: a pessoa digita /nome e o que quiser depois, e o texto salvo é enviado ao agente.',
     when: ['Um pedido que se faz sempre do mesmo jeito', 'Um roteiro longo que ninguém quer redigitar', 'Um ponto de partida padronizado para o time'],
     example: 'Ex.: /resumir relatorio.md → "Resuma relatorio.md em 3 linhas, com os números principais."',
-    bodyHint: 'O texto que vai ao agente. $ARGUMENTS recebe o que a pessoa digitou depois de /nome (sem ele, os argumentos vão no fim).',
+    bodyHint: 'O texto enviado ao agente. Use $ARGUMENTS onde entra o que a pessoa digitar depois de /nome.',
     template: 'Faça … com $ARGUMENTS.',
   },
 }
@@ -176,7 +174,7 @@ async function save() {
     } else {
       loaded.value = await api<IResource>(`/resources/${encodeURIComponent(form.value.id)}`, { method: 'PUT', body })
       form.value.docIds = [...loaded.value.docIds]
-      note.value = 'Salvo. Vale para as conversas que começarem agora, nos agentes do escopo (menos os que têm a guia Recursos restrita).'
+      note.value = 'Salvo. Vale para as próximas conversas.'
       await loadList()
     }
   } catch (failure) {
@@ -208,16 +206,15 @@ function describe(failure: unknown): string {
 
 <template>
   <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
-    <p class="font-medium text-zinc-200">Só quem administra cadastra {{ info.title }}.</p>
+    <p class="font-medium text-zinc-200">Só quem administra pode gerenciar {{ info.title }}.</p>
   </div>
 
   <MasterDetail v-else :open="!!id || adding" :back-to="info.base" :back-label="info.title" :title="adding ? `Nova ${info.one}` : loaded?.id">
     <template #list>
-      <header class="flex items-center gap-2 px-4 pt-4 pb-1">
+      <header class="flex items-center gap-2 px-4 pt-4 pb-3">
         <h1 class="text-xl font-semibold">{{ info.title }}</h1>
         <RouterLink :to="`${info.base}/new`" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" :title="`Nova ${info.one}`"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
-      <p class="px-4 pb-2 text-xs text-zinc-500">{{ info.short }}</p>
       <BuildTabs :kind="kind" active="list" class="px-3 pb-2" />
       <div class="px-4 pb-2">
         <select v-model="scope" class="input py-1.5 text-sm" aria-label="Escopo">
@@ -238,13 +235,13 @@ function describe(failure: unknown): string {
         <label class="field">
           Descrição
           <input v-model="form.description" required maxlength="300" class="input" :placeholder="kind === 'command' ? 'Resume um arquivo em 3 linhas' : 'Montar tabelas em markdown'" @blur="slug" />
-          <small class="hint">Uma linha: é o que o agente{{ kind === 'command' ? ' e a pessoa (no autocompletar)' : '' }} lê para saber quando usar.</small>
+          <small class="hint">Uma linha: diz quando usar.</small>
           <small v-for="m in issues.description" :key="m" class="error">{{ m }}</small>
         </label>
         <label class="field">
-          Id
+          Identificador
           <input v-model="form.id" :disabled="!adding" required pattern="[a-z0-9][a-z0-9-]{1,47}" class="input font-mono disabled:opacity-60" :placeholder="kind === 'command' ? 'resumir' : 'tabela-markdown'" />
-          <small class="hint">{{ kind === 'command' ? 'É o /nome que a pessoa digita.' : 'É por ele que o agente carrega a skill (use_skill).' }} Não muda depois.</small>
+          <small class="hint">{{ kind === 'command' ? 'É o /nome que a pessoa digita.' : 'Identifica a skill.' }} Não muda depois.</small>
           <small v-for="m in issues.id" :key="m" class="error">{{ m }}</small>
         </label>
         <div class="flex flex-wrap items-center gap-3 text-sm">
@@ -268,7 +265,7 @@ function describe(failure: unknown): string {
         </div>
 
         <div class="flex flex-col gap-1.5 rounded-xl border border-zinc-800 p-3">
-          <p class="text-sm font-medium text-zinc-200">Specs e ADRs anexadas <span class="text-xs font-normal text-zinc-500">— vão inteiras junto quando {{ kind === 'command' ? 'o command é usado' : 'a skill é carregada' }}</span></p>
+          <p class="text-sm font-medium text-zinc-200">Specs e ADRs anexadas <span class="text-xs font-normal text-zinc-500">— vão junto quando {{ kind === 'command' ? 'o command é usado' : 'a skill é carregada' }}</span></p>
           <p v-if="!attachable.length" class="text-xs text-zinc-500">Nenhum documento {{ form.global ? 'global' : 'global ou deste projeto' }}. <RouterLink to="/specs/new" class="text-emerald-400 underline underline-offset-2">Criar uma spec</RouterLink>.</p>
           <label v-for="doc in attachable" :key="doc.id" class="flex items-center gap-2 text-sm">
             <input type="checkbox" class="accent-emerald-500" :checked="form.docIds.includes(doc.id)" @change="toggleDoc(doc.id)" />
@@ -299,14 +296,14 @@ function describe(failure: unknown): string {
         </div>
         <p class="text-zinc-400">{{ info.example }}</p>
         <p class="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3 text-xs text-zinc-400">
-          Quem pode usar: por padrão, todo agente do escopo — global vale em todos os projetos; a de projeto, só nos agentes dele. A guia <strong class="text-zinc-300">Recursos</strong> de um agente restringe o que ele usa. As que ele usa entram sozinhas no índice do prompt dele.
+          Quem usa: todo agente do escopo. A guia <strong class="text-zinc-300">Recursos</strong> de um agente pode restringir.
         </p>
         <div><RouterLink :to="`${info.base}/new`" class="inline-block rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400">Nova {{ info.one }}</RouterLink></div>
       </section>
     </template>
   </MasterDetail>
 
-  <ConfirmDialog :open="removing" :title="`Apagar a ${info.one}?`" :message="`${form.id} some dos agentes que a usam, na hora.`" :busy="busy" @confirm="confirmRemove" @cancel="removing = false" />
+  <ConfirmDialog :open="removing" :title="`Apagar a ${info.one}?`" :message="`Os agentes deixam de usar ${form.id} na hora.`" :busy="busy" @confirm="confirmRemove" @cancel="removing = false" />
 </template>
 
 <style scoped>

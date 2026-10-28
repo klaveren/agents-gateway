@@ -45,7 +45,7 @@ async function submit() {
     if (failure instanceof ApiError && failure.status === 422) issues.value = failure.fieldIssues
     else if (failure instanceof ApiError && failure.code === 'login_locked') error.value = 'Muitas tentativas. Espere alguns minutos e tente de novo.'
     else if (failure instanceof ApiError && failure.code === 'invalid_credentials') error.value = 'E-mail ou senha inválidos.'
-    else if (failure instanceof ApiError && isSetup.value && failure.status === 404) error.value = 'Código de instalação errado, ou já existe uma conta. O código aparece no log do servidor ao iniciar ([setup] …).'
+    else if (failure instanceof ApiError && isSetup.value && failure.status === 404) error.value = 'Código errado, ou já existe uma conta.'
     else error.value = failure instanceof Error ? failure.message : String(failure)
   } finally {
     busy.value = false
@@ -60,14 +60,14 @@ async function submit() {
         <div class="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-emerald-400 to-teal-600 text-sm font-bold text-zinc-950">AG</div>
         <div>
           <h1 class="font-semibold">{{ isSetup ? 'Criar o primeiro administrador' : 'Entrar' }}</h1>
-          <p class="text-xs text-zinc-400">{{ isSetup ? 'Só uma vez, com o código do log do servidor.' : 'Agents Gateway' }}</p>
+          <p class="text-xs text-zinc-400">{{ isSetup ? 'Só na primeira vez.' : 'Agents Gateway' }}</p>
         </div>
       </div>
 
       <label v-if="isSetup" class="field">
         Código de instalação
         <input v-model="code" required autocomplete="off" spellcheck="false" placeholder="AB12-CD34-EF56" class="input font-mono uppercase" />
-        <small class="hint">Está no log do servidor, na linha que começa com [setup].</small>
+        <small class="hint">O código está no log do servidor, na linha [setup].</small>
       </label>
       <label v-if="isSetup" class="field">
         Nome

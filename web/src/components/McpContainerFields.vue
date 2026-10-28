@@ -30,21 +30,21 @@ function playwright() {
 <template>
   <div class="flex flex-col gap-3">
     <div class="flex flex-wrap items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-200">
-      <span class="min-w-0 flex-1">Cada conversa ganha o <strong>seu</strong> contêiner: sem acesso ao disco, às chaves nem à rede deste servidor, e com saída só para os domínios listados.</span>
-      <button type="button" class="shrink-0 rounded-full bg-zinc-800 px-3 py-1 text-zinc-100 hover:bg-zinc-700" @click="playwright">Modelo: Playwright</button>
+      <span class="min-w-0 flex-1">Cada conversa roda isolada do servidor e só acessa os domínios listados.</span>
+      <button type="button" class="shrink-0 rounded-full bg-zinc-800 px-3 py-1 text-zinc-100 hover:bg-zinc-700" @click="playwright">Preencher com Playwright</button>
     </div>
     <label class="field">
-      Imagem
+      Imagem do contêiner
       <input v-model="model.image" required class="input font-mono" placeholder="mcr.microsoft.com/playwright/mcp:latest" />
       <small v-for="m in issues?.image" :key="m" class="error">{{ m }}</small>
     </label>
     <div class="grid gap-3 sm:grid-cols-2">
       <label class="field">
-        Argumentos <span class="hint">um por linha; <code>{proxy}</code> = o proxy de saída</span>
+        Argumentos <span class="hint">um por linha (<code>{proxy}</code> = proxy de saída)</span>
         <textarea v-model="args" rows="3" class="input font-mono text-xs" placeholder="--isolated" />
       </label>
       <label class="field">
-        Pastas graváveis <span class="hint">em memória; o resto é só leitura</span>
+        Pastas graváveis <span class="hint">o resto é só leitura</span>
         <textarea v-model="writable" rows="3" class="input font-mono text-xs" placeholder="/home/node" />
         <small v-for="m in issues?.writable" :key="m" class="error">{{ m }}</small>
       </label>
@@ -57,12 +57,12 @@ function playwright() {
       </div>
     </div>
     <label v-if="model.network === 'allowlist'" class="field">
-      Domínios permitidos <span class="hint">um por linha, com subdomínios; <code>{meta:siteDomain}</code> = o domínio gravado no metadata da conversa (um por cliente)</span>
+      Domínios permitidos <span class="hint">um por linha, com subdomínios. <code>{meta:siteDomain}</code> = domínio do cliente da conversa</span>
       <textarea v-model="hosts" rows="3" class="input font-mono text-xs" placeholder="{meta:siteDomain}" />
       <small v-for="m in issues?.allowedHosts" :key="m" class="error">{{ m }}</small>
     </label>
     <div class="grid gap-3 sm:grid-cols-3">
-      <label class="field">Variáveis secretas <span class="hint">nomes; o valor vai depois</span><input v-model="env" class="input font-mono text-xs" placeholder="API_TOKEN" /></label>
+      <label class="field">Variáveis secretas <span class="hint">só os nomes — os valores você coloca depois de salvar</span><input v-model="env" class="input font-mono text-xs" placeholder="API_TOKEN" /></label>
       <label class="field">Memória (MB)<input v-model.number="model.memoryMb" type="number" min="128" max="4096" class="input" /></label>
       <label class="field">CPUs<input v-model.number="model.cpus" type="number" min="0.25" max="4" step="0.25" class="input" /></label>
     </div>

@@ -43,24 +43,24 @@
     <div class="flex flex-wrap items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
       <span class="min-w-0 flex-1">
         Roda
-        <strong>no servidor do gateway</strong>
-        , com o usuário, o disco e a rede dele — sem isolamento. Quem conversa com um agente que tem estas ferramentas ganha esse alcance.
+        <strong>direto no servidor</strong>
+        , sem isolamento: quem usa o agente tem o mesmo acesso que o servidor.
       </span>
-      <button type="button" class="shrink-0 rounded-full bg-zinc-800 px-3 py-1 text-zinc-100 hover:bg-zinc-700" @click="playwright">Modelo: Playwright</button>
+      <button type="button" class="shrink-0 rounded-full bg-zinc-800 px-3 py-1 text-zinc-100 hover:bg-zinc-700" @click="playwright">Preencher com Playwright</button>
     </div>
     <div class="grid gap-3 sm:grid-cols-2">
       <label class="field">
         Pacote npm
         <input v-model="model.package" class="input font-mono" placeholder="@playwright/mcp@latest" />
-        <small class="hint">Instalado pelo botão Instalar numa pasta do servidor. Vazio = só o comando abaixo.</small>
+        <small class="hint">Instalado pelo botão "Instalar". Em branco, usa só o comando.</small>
         <small v-for="m in issues?.package" :key="m" class="error">{{ m }}</small>
       </label>
       <label class="field">
         Comando
         <span class="hint">opcional</span>
-        <input v-model="model.command" class="input font-mono" placeholder="o bin do pacote" />
+        <input v-model="model.command" class="input font-mono" placeholder="comando do pacote" />
         <small class="hint">
-          Com pacote: o nome do bin, se ele tiver vários. Sem pacote: um comando do servidor (
+          Com pacote: só se ele tiver vários comandos. Sem pacote: o comando a rodar (
           <code>npx</code>
           ,
           <code>uvx</code>
@@ -74,22 +74,21 @@
       <span class="hint">um por linha</span>
       <textarea v-model="args" rows="4" class="input font-mono text-xs" placeholder="--headless" />
       <small class="hint">
-        No Playwright,
+        No Mac ou Windows, remova a linha
         <code>--executable-path=/usr/bin/chromium</code>
-        é o navegador da imagem do gateway; num Mac ou Windows, tire essa linha e ele usa o Chrome instalado.
+        para usar o Chrome instalado.
       </small>
       <small v-for="m in issues?.args" :key="m" class="error">{{ m }}</small>
     </label>
     <div class="grid gap-3 sm:grid-cols-2">
       <label class="field">
         Variáveis secretas
-        <span class="hint">nomes; o valor vai depois</span>
+        <span class="hint">só os nomes — os valores você coloca depois de salvar</span>
         <input v-model="env" class="input font-mono text-xs" placeholder="API_TOKEN" />
-        <small class="hint">O processo não herda o ambiente do gateway: só o básico e estas.</small>
         <small v-for="m in issues?.env" :key="m" class="error">{{ m }}</small>
       </label>
       <div class="field">
-        Instância
+        Execução
         <div class="flex flex-wrap gap-1.5">
           <button type="button" class="chip" :class="{ on: model.scope === 'conversation' }" @click="model = { ...model, scope: 'conversation' }">Uma por conversa</button>
           <button type="button" class="chip" :class="{ on: model.scope === 'shared' }" @click="model = { ...model, scope: 'shared' }">Compartilhada</button>
@@ -97,8 +96,8 @@
         <small class="hint">
           {{
             model.scope === 'conversation'
-              ? 'Cada conversa ganha o seu processo (navegador, cookies e arquivos separados).'
-              : 'Um processo só para todas as conversas: o estado de uma aparece para as outras.'
+              ? 'Cada conversa tem a sua, separada.'
+              : 'Uma só para todas: o que uma faz aparece para as outras.'
           }}
         </small>
       </div>

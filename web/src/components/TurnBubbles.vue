@@ -83,7 +83,7 @@ const thinking = computed(() => !!props.pending && !text.value && !props.pending
         </div>
         <!-- eslint-disable-next-line vue/no-v-html -- renderMarkdown escapa antes de marcar -->
         <div v-if="text" class="prose-agent break-words" v-html="renderMarkdown(text)" />
-        <p v-if="error" class="mt-1 text-sm text-rose-300">Erro: {{ error }}</p>
+        <p v-if="error" class="mt-1 text-sm text-rose-300">Algo deu errado: {{ error }}</p>
         <p v-if="aborted" class="mt-1 text-xs text-zinc-400 italic">Interrompido.</p>
         <div v-if="turn" class="mt-1 flex items-center justify-end gap-2 text-[11px] text-zinc-500">
           <span v-if="turn.classification" class="flex items-center gap-1" :title="CLASSIFICATION_LABEL[turn.classification]">

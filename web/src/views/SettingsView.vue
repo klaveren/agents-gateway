@@ -33,18 +33,18 @@ const issues = ref<Array<{ field: string; message: string }>>([])
 const limitDrafts = ref<Partial<Record<TLimitName, number | ''>>>({})
 
 const LIMITS: Array<{ name: TLimitName; label: string }> = [
-  { name: 'maxToolTurns', label: 'Voltas de ferramenta por turno' },
-  { name: 'maxOutputTokens', label: 'Tokens de saída por resposta' },
-  { name: 'delegationMaxDepth', label: 'Profundidade de delegação' },
-  { name: 'bashTimeoutMs', label: 'Tempo limite do bash (ms)' },
-  { name: 'bashMaxOutputChars', label: 'Saída máxima do bash (caracteres)' },
-  { name: 'sessionsPerOwner', label: 'Sessões simultâneas por dono' },
-  { name: 'streamsPerOwner', label: 'Streams simultâneos por dono' },
+  { name: 'maxToolTurns', label: 'Passos de ferramenta por mensagem' },
+  { name: 'maxOutputTokens', label: 'Tamanho máximo da resposta (tokens)' },
+  { name: 'delegationMaxDepth', label: 'Níveis de delegação entre agentes' },
+  { name: 'bashTimeoutMs', label: 'Tempo limite do terminal (ms)' },
+  { name: 'bashMaxOutputChars', label: 'Saída máxima do terminal (caracteres)' },
+  { name: 'sessionsPerOwner', label: 'Conversas simultâneas por pessoa' },
+  { name: 'streamsPerOwner', label: 'Respostas simultâneas por pessoa' },
 ]
 
 const DEPLOYMENT: Array<{ key: 'localToolsEnabled' | 'allowAnonymous'; label: string }> = [
-  { key: 'allowAnonymous', label: 'Aceita chamador anônimo' },
-  { key: 'localToolsEnabled', label: 'Ferramentas locais' },
+  { key: 'allowAnonymous', label: 'Permite uso sem login' },
+  { key: 'localToolsEnabled', label: 'Ferramentas locais no servidor' },
 ]
 
 /** Booleano vira sim/não; texto (lista do `.env`) aparece como veio; ausente é "—". */
@@ -54,9 +54,9 @@ function deploymentValue(value: boolean | string | undefined): string {
 }
 
 const AUDIENCE: Array<{ value: TAudience; label: string; hint: string }> = [
-  { value: 'all', label: 'Aberto', hint: 'Todo chamador que o gateway deixa passar abre sessão.' },
-  { value: 'restricted', label: 'Restrito', hint: 'Só papéis de AUDIENCE_ROLES, com identidade provada.' },
-  { value: 'off', label: 'Desligado', hint: 'Ninguém abre sessão nova. Conversas em andamento terminam o turno.' },
+  { value: 'all', label: 'Aberto', hint: 'Qualquer pessoa com acesso abre conversa.' },
+  { value: 'restricted', label: 'Restrito', hint: 'Só os papéis permitidos, com login.' },
+  { value: 'off', label: 'Desligado', hint: 'Ninguém abre conversa nova. As em andamento terminam a mensagem atual.' },
 ]
 
 const agent = computed(() => agents.byId.get(agentId.value || settings.current?.defaults?.agentId || ''))
@@ -131,7 +131,7 @@ async function saveSettings() {
       // Vazio = `null`: o limite volta ao padrão do `.env`.
       limits: Object.fromEntries(LIMITS.map(({ name }) => [name, limitDrafts.value[name] === '' || limitDrafts.value[name] === undefined ? null : Number(limitDrafts.value[name])])),
     })
-    saved.value = 'Configuração salva — vale para a próxima sessão.'
+    saved.value = 'Configuração salva. Vale para as próximas conversas.'
   } catch (error) {
     if (error instanceof ApiError && Array.isArray(error.details) && error.details.length) {
       issues.value = (error.details as Array<{ field?: string; message?: string }>).map((item) => ({ field: item.field ?? '', message: item.message ?? 'inválido' }))
@@ -179,31 +179,31 @@ async function saveSettings() {
             </select>
           </label>
           <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
-            Modelo do classificador
+            Modelo de classificação
             <select v-model="classifier" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2 text-sm">
               <option value="">Nenhum (sem classificação)</option>
               <option v-if="classifier && !classifierOptions.some((option) => option.value === classifier)" :value="classifier">{{ classifier.replace('::', ' · ') }} (não ativado)</option>
               <option v-for="option in classifierOptions" :key="option.value" :value="option.value">{{ protocols.providerName(option.provider) }} · {{ option.model }}</option>
             </select>
-            <small class="text-xs text-zinc-500">Os modelos ativados em Modelos (com chave, não assinatura). Sem escolha, nada é classificado. Prefira um pequeno: ele roda a cada turno.</small>
+            <small class="text-xs text-zinc-500">Só modelos ativados com chave (sem assinatura). Prefira um pequeno: roda a cada mensagem.</small>
           </label>
-          <label class="flex items-center gap-2 self-end pb-2 text-sm text-zinc-300">
-            <input v-model="classifyTurns" type="checkbox" class="accent-emerald-500" /> Classificar cada turno
+          <label class="flex items-center gap-2 self-start text-sm text-zinc-300 sm:mt-6 sm:h-[38px]">
+            <input v-model="classifyTurns" type="checkbox" class="accent-emerald-500" /> Classificar cada mensagem
           </label>
           <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
             Modelo do construtor
             <select v-model="builder" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2 text-sm">
-              <option value="">O do Atlas</option>
+              <option value="">Mesmo do Atlas</option>
               <option v-if="builder && !builderOptions.some((option) => option.value === builder)" :value="builder">{{ builder.replace('::', ' · ') }} (não ativado)</option>
               <option v-for="option in builderOptions" :key="option.value" :value="option.value">{{ protocols.providerName(option.provider) }} · {{ option.model }}</option>
             </select>
-            <small class="text-xs text-zinc-500">O agente do sistema que redige skills e commands (guia Construir). Prefira um modelo forte: ele segue o protocolo e pergunta o que falta.</small>
+            <small class="text-xs text-zinc-500">Redige skills e commands na guia Construir. Prefira um modelo forte.</small>
           </label>
         </div>
 
         <div v-if="settings.current.limitBounds" class="flex flex-col gap-2">
           <h3 class="text-sm font-medium text-zinc-300">Limites</h3>
-          <p class="text-xs text-zinc-400">Vazio = vale o padrão do servidor (o número cinza). Cada limite tem mínimo e máximo.</p>
+          <p class="text-xs text-zinc-400">Em branco, vale o padrão (número cinza).</p>
           <div class="grid gap-3 sm:grid-cols-2">
             <label v-for="limit in LIMITS" :key="limit.name" class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
               {{ limit.label }}
@@ -216,7 +216,7 @@ async function saveSettings() {
                 :placeholder="String(settings.current.limitsInEffect?.[limit.name] ?? '')"
                 class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm tabular-nums"
               />
-              <small class="text-xs text-zinc-500">{{ settings.current.limitBounds[limit.name]?.min }} a {{ settings.current.limitBounds[limit.name]?.max }} · <code>{{ settings.current.limitBounds[limit.name]?.env }}</code></small>
+              <small class="text-xs text-zinc-500">{{ settings.current.limitBounds[limit.name]?.min }} a {{ settings.current.limitBounds[limit.name]?.max }}</small>
             </label>
           </div>
         </div>
@@ -234,7 +234,7 @@ async function saveSettings() {
 
       <section v-if="auth.isAdmin && settings.current?.deployment" class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
         <h2 class="font-medium">Implantação</h2>
-        <p class="text-xs text-zinc-400">Decisões do deploy: só leitura aqui. Mudam no <code>.env</code> do servidor, com reinício.</p>
+        <p class="text-xs text-zinc-400">Só leitura. Para mudar, edite o <code>.env</code> do servidor e reinicie.</p>
         <dl class="grid gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
           <div v-for="item in DEPLOYMENT" :key="item.key" class="flex min-w-0 items-baseline justify-between gap-3 border-b border-zinc-800/70 pb-1.5">
             <dt class="text-zinc-400">{{ item.label }}</dt>
@@ -242,8 +242,8 @@ async function saveSettings() {
           </div>
         </dl>
         <p v-if="settings.current.deployment.sandbox" class="text-xs" :class="settings.current.deployment.sandbox.available ? 'text-emerald-300' : 'text-amber-300'">
-          Cerco dos agentes de projeto:
-          {{ settings.current.deployment.sandbox.available ? `ativo (${settings.current.deployment.sandbox.mechanism})` : `indisponível — ${settings.current.deployment.sandbox.reason ?? 'sem motivo'}. O Bash deles fica bloqueado.` }}
+          Isolamento dos agentes de projeto:
+          {{ settings.current.deployment.sandbox.available ? 'ativo' : `indisponível — ${settings.current.deployment.sandbox.reason ?? 'sem motivo'}. O terminal deles fica bloqueado.` }}
         </p>
       </section>
 

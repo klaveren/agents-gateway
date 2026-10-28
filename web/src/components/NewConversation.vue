@@ -3,6 +3,7 @@ import { computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { levelsOf, type IChoice } from '@/lib/agentChoice'
 import { useAgentCommands } from '@/lib/commands'
+import { effortLabel } from '@/lib/format'
 import type { TMode } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import { useProtocolsStore } from '@/stores/protocols'
@@ -20,9 +21,9 @@ const protocols = useProtocolsStore()
 const thread = useThreadStore()
 
 const MODE_HINT: Record<string, string> = {
-  chat: 'SDK normal do provedor. Conversa, anexos e raciocínio.',
-  chatTools: 'SDK normal + o loop de tools escrito à mão.',
-  agent: 'Agents SDK oficial: o loop de tools é do SDK.',
+  chat: 'Conversa simples, com anexos.',
+  chatTools: 'Conversa em que o agente pode usar ferramentas.',
+  agent: 'Modo agente: faz tarefas em várias etapas, com ferramentas.',
 }
 
 const draft = computed(() => thread.draft)
@@ -135,7 +136,7 @@ async function send(text: string, files: IOutgoingFile[], settle: (ok: boolean) 
               <AgentAvatar :name="option.name" :provider="option.providers[0]?.id ?? ''" size="sm" />
               <span class="min-w-0 flex-1">
                 <span class="block truncate text-sm font-medium">{{ option.name }}</span>
-                <span class="block truncate text-xs text-zinc-400">{{ option.providers.map((provider) => provider.name).join(' / ') }} · {{ option.allowedTools.join(', ') || 'sem tools' }}</span>
+                <span class="block truncate text-xs text-zinc-400">{{ option.providers[0]?.name }} · {{ option.providers[0]?.models[0] }}<template v-if="option.providers.length > 1"> · +{{ option.providers.length - 1 }} provedor(es)</template></span>
                 <span v-if="option.unavailable" class="block truncate text-xs text-amber-300">{{ option.unavailable.label }}</span>
               </span>
             </button>
@@ -143,11 +144,11 @@ async function send(text: string, files: IOutgoingFile[], settle: (ok: boolean) 
 
           <div v-if="agent && draft" class="grid gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 sm:grid-cols-2">
             <div class="sm:col-span-2">
-              <span class="mb-1.5 block text-xs font-medium text-zinc-400">Lane</span>
+              <span class="mb-1.5 block text-xs font-medium text-zinc-400">Modo</span>
               <div class="flex flex-wrap gap-1.5">
-                <button v-if="lanes.includes('chat')" class="rounded-full border px-3 py-1 text-sm" :class="draft.mode === 'chat' && !draft.tools ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-200' : 'border-zinc-700'" @click="setMode('chat', false)">Chat</button>
-                <button v-if="lanes.includes('chat') && agent.allowedTools.length" class="rounded-full border px-3 py-1 text-sm" :class="draft.mode === 'chat' && draft.tools ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-200' : 'border-zinc-700'" @click="setMode('chat', true)">Chat + tools</button>
-                <button v-if="lanes.includes('agent')" class="rounded-full border px-3 py-1 text-sm" :class="draft.mode === 'agent' ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-200' : 'border-zinc-700'" @click="setMode('agent', false)">Agents SDK</button>
+                <button v-if="lanes.includes('chat')" class="rounded-full border px-3 py-1 text-sm" :class="draft.mode === 'chat' && !draft.tools ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-200' : 'border-zinc-700'" @click="setMode('chat', false)">Conversa</button>
+                <button v-if="lanes.includes('chat') && agent.allowedTools.length" class="rounded-full border px-3 py-1 text-sm" :class="draft.mode === 'chat' && draft.tools ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-200' : 'border-zinc-700'" @click="setMode('chat', true)">Conversa + ferramentas</button>
+                <button v-if="lanes.includes('agent')" class="rounded-full border px-3 py-1 text-sm" :class="draft.mode === 'agent' ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-200' : 'border-zinc-700'" @click="setMode('agent', false)">Agente</button>
               </div>
               <p class="mt-1.5 text-xs text-zinc-500">{{ MODE_HINT[draft.mode === 'chat' && draft.tools ? 'chatTools' : draft.mode] }}</p>
             </div>
@@ -158,8 +159,8 @@ async function send(text: string, files: IOutgoingFile[], settle: (ok: boolean) 
             <label v-if="reasoningLevels.length" class="text-xs font-medium text-zinc-400">
               Raciocínio
               <select v-model="draft.reasoning" class="mt-1 w-full rounded-lg bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100">
-                <option :value="undefined">padrão</option>
-                <option v-for="effort in reasoningLevels" :key="effort" :value="effort">{{ effort }}</option>
+                <option :value="undefined">Padrão</option>
+                <option v-for="effort in reasoningLevels" :key="effort" :value="effort">{{ effortLabel(effort) }}</option>
               </select>
             </label>
           </div>

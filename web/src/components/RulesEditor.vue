@@ -131,9 +131,9 @@ function describe(failure: unknown): string {
     <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
 
     <ol class="flex flex-col gap-2">
-      <li v-for="rule in showGlobals ? globals : []" :key="rule.id" class="rounded-xl border border-zinc-800/60 p-3 opacity-60" title="Global: vale em todos os projetos (edita-se em Rules, escopo Global)">
+      <li v-for="rule in showGlobals ? globals : []" :key="rule.id" class="rounded-xl border border-zinc-800/60 p-3 opacity-60" title="Regra global: vale em todos os projetos">
         <div class="flex items-start gap-3">
-          <span class="mt-0.5 shrink-0 rounded-md bg-zinc-800 px-1.5 py-0.5 font-mono text-[11px] text-zinc-300">{{ numberOf.get(rule.id) ? `Rule ${numberOf.get(rule.id)}` : '—' }}</span>
+          <span class="mt-0.5 shrink-0 rounded-md bg-zinc-800 px-1.5 py-0.5 font-mono text-[11px] text-zinc-300">{{ numberOf.get(rule.id) ? `Regra ${numberOf.get(rule.id)}` : '—' }}</span>
           <div class="min-w-0 flex-1">
             <p class="text-sm font-medium">{{ rule.title }}<span v-if="!rule.enabled" class="ml-2 text-xs font-normal text-zinc-500">desligada</span></p>
             <p class="mt-0.5 text-sm whitespace-pre-line text-zinc-400">{{ rule.body }}</p>
@@ -151,7 +151,7 @@ function describe(failure: unknown): string {
           </div>
         </form>
         <div v-else class="flex items-start gap-3">
-          <span class="mt-0.5 shrink-0 rounded-md bg-zinc-800 px-1.5 py-0.5 font-mono text-[11px] text-zinc-300">{{ numberOf.get(rule.id) ? `Rule ${numberOf.get(rule.id)}` : '—' }}</span>
+          <span class="mt-0.5 shrink-0 rounded-md bg-zinc-800 px-1.5 py-0.5 font-mono text-[11px] text-zinc-300">{{ numberOf.get(rule.id) ? `Regra ${numberOf.get(rule.id)}` : '—' }}</span>
           <div class="min-w-0 flex-1">
             <p class="text-sm font-medium">{{ rule.title }}<span v-if="!rule.enabled" class="ml-2 text-xs font-normal text-zinc-500">desligada</span></p>
             <p class="mt-0.5 text-sm whitespace-pre-line text-zinc-400">{{ rule.body }}</p>
@@ -167,17 +167,17 @@ function describe(failure: unknown): string {
       </li>
     </ol>
     <p v-if="!loading && !rules.length" class="rounded-xl border border-dashed border-zinc-800 p-4 text-center text-sm text-zinc-500">
-      Nenhuma rule {{ scope === GLOBAL_SCOPE ? 'global' : 'do projeto' }}{{ readonly ? '' : ' ainda' }}.
+      Nenhuma regra {{ scope === GLOBAL_SCOPE ? 'global' : 'do projeto' }}{{ readonly ? '' : ' ainda' }}.
     </p>
 
     <form v-if="!readonly" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3" @submit.prevent="add">
-      <p class="text-sm font-medium">Nova rule {{ scope === GLOBAL_SCOPE ? 'global' : 'do projeto' }}</p>
+      <p class="text-sm font-medium">Nova regra {{ scope === GLOBAL_SCOPE ? 'global' : 'do projeto' }}</p>
       <p v-if="draftNote" class="text-xs text-emerald-300">{{ draftNote }}</p>
       <label class="field">Título<input v-model="draft.title" required maxlength="120" class="input text-sm" placeholder="Idioma" /><small v-for="m in draftIssues.title" :key="m" class="error">{{ m }}</small></label>
       <label class="field">
         Regra
         <textarea v-model="draft.body" required rows="3" maxlength="4000" class="input text-sm" placeholder="Responda sempre em português do Brasil." />
-        <small class="hint">Curta e no imperativo: uma regra por registro.</small>
+        <small class="hint">Curta e direta: uma regra por vez.</small>
         <small v-for="m in draftIssues.body" :key="m" class="error">{{ m }}</small>
       </label>
       <div><button type="submit" :disabled="busy" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50">Adicionar</button></div>
@@ -185,8 +185,8 @@ function describe(failure: unknown): string {
 
     <ConfirmDialog
       :open="!!removing"
-      title="Apagar a rule?"
-      :message="removing ? `${removing.title}. As conversas novas deixam de recebê-la; as seguintes são renumeradas.` : ''"
+      title="Apagar a regra?"
+      :message="removing ? `${removing.title}. As próximas conversas não terão esta regra.` : ''"
       :busy="busy"
       @confirm="confirmRemove"
       @cancel="removing = undefined"

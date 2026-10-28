@@ -57,9 +57,9 @@ const agentName = (id: string) => agents.byId.get(id)?.name ?? id
       <header class="flex items-start gap-3">
         <div class="min-w-0 flex-1">
           <h1 class="text-xl font-semibold">Agendamentos{{ project ? ` — ${project.name}` : '' }}</h1>
-          <p class="text-xs text-zinc-500">O que os agentes rodam sozinhos, pela próxima execução. Para criar ou mudar, abra o agente na guia Agendamentos.</p>
+          <p class="text-xs text-zinc-500">O que os agentes fazem sozinhos. Para criar ou mudar, use a guia Agendamentos do agente.</p>
         </div>
-        <button type="button" class="shrink-0 text-xs text-zinc-400 hover:text-zinc-200" :disabled="loading" @click="reload">atualizar</button>
+        <button type="button" class="shrink-0 text-xs text-zinc-400 hover:text-zinc-200" :disabled="loading" @click="reload">Atualizar</button>
       </header>
       <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
 
@@ -78,7 +78,7 @@ const agentName = (id: string) => agents.byId.get(id)?.name ?? id
             </span>
             <span class="shrink-0 text-right text-xs">
               <span v-if="schedule.nextRunAt" class="block text-zinc-300">{{ fullTime(schedule.nextRunAt) }}</span>
-              <span v-else class="block" :class="schedule.pausedReason ? 'text-rose-300' : 'text-zinc-500'">{{ schedule.pausedReason ? 'pausado' : 'desligado' }}</span>
+              <span v-else class="block" :class="schedule.pausedReason ? 'text-rose-300' : 'text-zinc-500'">{{ schedule.pausedReason ? 'Pausado' : 'Desligado' }}</span>
               <span v-if="schedule.lastRun" class="block" :class="RUN_STATUS[schedule.lastRun.status].tone">última: {{ RUN_STATUS[schedule.lastRun.status].label }}</span>
             </span>
           </RouterLink>

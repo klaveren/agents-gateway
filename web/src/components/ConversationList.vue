@@ -106,7 +106,7 @@ const topLevel = computed(() => conversations.items.filter((conversation) => !co
 
     <div class="scroll-thin min-h-0 flex-1 overflow-y-auto px-2 pb-4">
       <p v-if="auth.unauthorized" class="m-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
-        O gateway recusou a credencial: a sessão expirou ou foi encerrada. <RouterLink to="/login" class="underline">Entre de novo</RouterLink>.
+        Sua sessão expirou. <RouterLink to="/login" class="underline">Entre de novo</RouterLink>.
       </p>
       <p v-else-if="conversations.error" class="m-3 text-sm text-rose-300">{{ conversations.error }}</p>
       <p v-else-if="!conversations.loading && !conversations.items.length" class="m-6 text-center text-sm text-zinc-500">Nenhuma conversa{{ conversations.filters.q || conversations.filters.agentId ? ' com esse filtro' : ' ainda' }}.</p>

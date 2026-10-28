@@ -33,7 +33,7 @@ const grouped = computed(() => props.agent.providers.length > 1)
 const count = computed(() => groups.value.reduce((total, group) => total + (group.reason ? 0 : group.models.length), 0))
 
 function label(provider: IAgentProvider, model: string, orphan?: string): string {
-  if (model === orphan) return `${model} (desativado)`
+  if (model === orphan) return `${model} (indisponível)`
   const price = provider.pricing[model]
   return `${model}${price ? ` — $${price.output}/1M saída` : ''}`
 }
@@ -47,7 +47,7 @@ function change(event: Event) {
 
 <template>
   <select :value="value ? choiceKey(value) : ''" :disabled="disabled || count < 2" :class="selectClass" @change="change">
-    <option v-if="orphanProvider" :value="choiceKey(orphanProvider)" disabled>{{ orphanProvider.provider }} · {{ orphanProvider.model }} (fora do agente)</option>
+    <option v-if="orphanProvider" :value="choiceKey(orphanProvider)" disabled>{{ orphanProvider.provider }} · {{ orphanProvider.model }} (indisponível neste agente)</option>
     <template v-for="group in groups" :key="group.provider.id">
       <optgroup v-if="grouped" :label="group.reason ? `${group.provider.name} — ${group.reason}` : group.provider.name">
         <option v-for="model in group.models" :key="model" :value="choiceKey({ provider: group.provider.id, model })" :disabled="!!group.reason || model === group.orphan">

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ApiError } from '@/lib/api'
 import { BUILD_KINDS, builderAgentId, type TBuildKind } from '@/lib/builder'
@@ -121,11 +121,11 @@ const reasoningLevels = computed(() => unionLevels(infos.value))
 
 const natives = computed(() => agents.nativeTools.filter((tool) => families.value.includes(tool.protocol)).sort((a, b) => RISK_ORDER.indexOf(a.risk) - RISK_ORDER.indexOf(b.risk)))
 const RISK_LABEL: Record<string, string> = {
-  hosted: 'no fornecedor',
+  hosted: 'no provedor',
   session: 'só a conversa',
-  'server-network': 'rede deste servidor',
-  'server-read': 'lê este servidor',
-  'server-exec': 'escreve e executa neste servidor',
+  'server-network': 'usa a internet',
+  'server-read': 'lê arquivos',
+  'server-exec': 'escreve e executa',
 }
 const RISK_CLASS: Record<string, string> = {
   hosted: 'bg-zinc-800 text-zinc-300',
@@ -154,25 +154,25 @@ const sdkSections = computed(() =>
 
 /** Por que uma nativa não roda neste provider — ou nada, se roda. */
 function nativeBlock(tool: INativeTool, entry: TSelected): string | undefined {
-  return tool.officialOnly && !entry.official ? 'só no provedor oficial' : undefined
+  return tool.officialOnly && !entry.official ? 'Só no provedor oficial.' : undefined
 }
 
 const SANDBOX_LABEL: Record<TSandboxLevel, string> = {
   'read-only': 'Só leitura',
   'workspace-write': 'Escreve na pasta da conversa',
-  full: 'Sem sandbox',
+  full: 'Acesso total',
 }
 const SANDBOX_HINT: Record<TSandboxLevel, string> = {
   'read-only': 'Lê o disco, não escreve.',
-  'workspace-write': 'Escreve só no diretório vazio da conversa.',
-  full: 'Lê, escreve e executa neste servidor como o gateway: .env, secrets.key, o banco.',
+  'workspace-write': 'Escreve só na pasta da conversa.',
+  full: 'Lê, escreve e executa no servidor, sem limites.',
 }
 function sandboxLabel(protocol: string, level: TSandboxLevel): string {
   // No Antigravity é ligado/desligado: com sandbox, nega o que pede permissão.
-  return protocol === 'antigravity' && level === 'read-only' ? 'Com sandbox' : SANDBOX_LABEL[level]
+  return protocol === 'antigravity' && level === 'read-only' ? 'Restrito' : SANDBOX_LABEL[level]
 }
 function sandboxHint(protocol: string, level: TSandboxLevel): string {
-  return protocol === 'antigravity' && level === 'read-only' ? 'Nega comando e leitura de arquivo.' : SANDBOX_HINT[level]
+  return protocol === 'antigravity' && level === 'read-only' ? 'Não executa comandos nem lê arquivos.' : SANDBOX_HINT[level]
 }
 /** O padrão (o primeiro nível) não é gravado: o agente segue o padrão do protocolo. */
 function setSandbox(entry: TSelected, levels: TSandboxLevel[], level: TSandboxLevel) {
@@ -221,15 +221,15 @@ const openSandboxes = computed(() =>
 
 /** O nome que a pessoa vê de cada campo, para o resumo do erro perto do Salvar. */
 const FIELD_LABEL: Record<string, string> = {
-  id: 'Id',
+  id: 'Identificador',
   name: 'Nome',
   providers: 'Provedores',
   models: 'Modelos',
-  modes: 'Lanes',
+  modes: 'Modos',
   reasoningEfforts: 'Raciocínio',
   allowedTools: 'Ferramentas',
-  soul: 'Soul',
-  systemPrompt: 'Prompt',
+  soul: 'Personalidade',
+  systemPrompt: 'Instrução do sistema',
   role: 'Só subagente',
   adminOnly: 'Só administradores',
   projectId: 'Projeto',
@@ -277,6 +277,27 @@ const deleting = ref(false)
 type TTab = 'agente' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos'
 // `#agendamentos` no link (a visão geral dos agendamentos) abre direto na guia.
 const tab = ref<TTab>(useRoute().hash === '#agendamentos' ? 'agendamentos' : 'agente')
+
+/** Sobram guias à direita (a barra rola de lado): a borda esmaece, para ninguém achar que acabaram. */
+const tabBar = ref<HTMLElement>()
+const moreTabs = ref(false)
+const measureTabs = () => {
+  const bar = tabBar.value
+  moreTabs.value = !!bar && bar.scrollLeft + bar.clientWidth < bar.scrollWidth - 4
+}
+const tabObserver = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measureTabs)
+watch(tabBar, (bar, old) => {
+  if (old) tabObserver?.unobserve(old)
+  if (bar) tabObserver?.observe(bar)
+  measureTabs()
+})
+onBeforeUnmount(() => tabObserver?.disconnect())
+// A guia escolhida (inclusive a que veio no link) fica à vista.
+watch(
+  [tab, tabBar],
+  () => void nextTick(() => tabBar.value?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })),
+  { immediate: true },
+)
 const TAB_FIELDS: Record<TTab, string[]> = {
   agente: ['id', 'name', 'soul', 'systemPrompt', 'role', 'adminOnly', 'projectId'],
   modelos: ['providers', 'models', 'modes', 'reasoningEfforts'],
@@ -291,7 +312,7 @@ const TAB_FIELDS: Record<TTab, string[]> = {
 }
 const tabs = computed(() => {
   const tools = form.value.allowedTools
-  const alert = (id: TTab) => (TAB_FIELDS[id].some((field) => issues.value[field]?.length) ? 'O servidor recusou algo nesta guia' : undefined)
+  const alert = (id: TTab) => (TAB_FIELDS[id].some((field) => issues.value[field]?.length) ? 'Corrija os campos desta guia.' : undefined)
   const all: Array<{ id: TTab; label: string; count?: number; alert?: string }> = [
     { id: 'agente', label: 'Agente', alert: alert('agente') },
     { id: 'modelos', label: 'Modelos', count: form.value.providers.reduce((total, target) => total + target.models.length, 0), alert: alert('modelos') },
@@ -299,10 +320,10 @@ const tabs = computed(() => {
       id: 'ferramentas',
       label: 'Ferramentas',
       count: tools.filter((entry) => !entry.startsWith('mcp:') && !entry.startsWith('sdk:')).length,
-      alert: alert('ferramentas') ?? (orphans.value.length ? 'Há ferramentas órfãs' : undefined),
+      alert: alert('ferramentas') ?? (orphans.value.length ? 'Há ferramentas indisponíveis' : undefined),
     },
     { id: 'mcps', label: 'MCPs', count: tools.filter((entry) => entry.startsWith('mcp:')).length },
-    { id: 'sdk', label: 'SDK', count: tools.filter((entry) => entry.startsWith('sdk:')).length },
+    { id: 'sdk', label: 'Permissões', count: tools.filter((entry) => entry.startsWith('sdk:')).length },
     { id: 'recursos', label: 'Recursos' },
     { id: 'contexto', label: 'Contexto inicial' },
     { id: 'tamanho', label: 'Tamanho' },
@@ -457,7 +478,7 @@ function slugify() {
 const saveSummary = computed(() => {
   const { providers: targets, modes, allowedTools } = form.value
   const list = targets.map((target, index) => `${protocols.providerName(target.provider)} (${target.models.length} modelo(s)${index === 0 && target.models[0] ? `, padrão ${target.models[0]}` : ''})`)
-  return `${targets.length > 1 ? 'Provedores' : 'Provedor'} ${list.join(', ') || 'nenhum'}; lanes ${modes.join(' + ') || 'nenhuma'}; ${allowedTools.length} ferramenta(s).`
+  return `${targets.length > 1 ? 'Provedores' : 'Provedor'} ${list.join(', ') || 'nenhum'}; modos ${modes.map((mode) => (mode === 'chat' ? 'Conversa' : 'Agente')).join(' + ') || 'nenhum'}; ${allowedTools.length} ferramenta(s).`
 })
 
 async function save() {
@@ -497,14 +518,15 @@ async function remove() {
 
 <template>
   <form class="mx-auto flex max-w-3xl flex-col gap-5" @submit.prevent="confirmingSave = true" @invalid.capture="tab = 'agente'">
-    <nav class="flex flex-wrap gap-1 border-b border-zinc-800" role="tablist">
+    <!-- Uma linha só: com muitas guias, rola de lado (quebrar em duas linhas desalinhava o sublinhado). -->
+    <nav ref="tabBar" class="no-scrollbar flex gap-1 overflow-x-auto border-b border-zinc-800" :class="{ 'fade-right': moreTabs }" role="tablist" @scroll.passive="measureTabs">
       <button
         v-for="item in tabs"
         :key="item.id"
         type="button"
         role="tab"
         :aria-selected="tab === item.id"
-        class="-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm"
+        class="flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-sm whitespace-nowrap"
         :class="tab === item.id ? 'border-emerald-500 text-zinc-100' : 'border-transparent text-zinc-400 hover:text-zinc-200'"
         @click="tab = item.id"
       >
@@ -520,9 +542,9 @@ async function remove() {
         <small v-for="message in issues.name" :key="message" class="error">{{ message }}</small>
       </label>
       <label class="field">
-        <span>Id</span>
+        <span>Identificador</span>
         <input v-model="form.id" :disabled="!creating" required pattern="[a-z0-9][a-z0-9-]{1,47}" class="input font-mono disabled:opacity-60" placeholder="meu-agente" />
-        <small v-if="creating" class="hint">Fica na URL e nas conversas. Não muda depois.</small>
+        <small v-if="creating" class="hint">Identificador único. Não muda depois.</small>
         <small v-for="message in issues.id" :key="message" class="error">{{ message }}</small>
       </label>
 
@@ -531,7 +553,7 @@ async function remove() {
           <button type="button" role="switch" :aria-checked="form.role === 'subagent'" class="switch" :class="{ on: form.role === 'subagent' }" @click="form.role = form.role === 'subagent' ? null : 'subagent'"><span /></button>
           <span>Só subagente</span>
         </label>
-        <small class="hint">Só é chamado por outro agente (delegação, em "Pode delegar a"). Não aparece em Nova conversa e não abre conversa direta, nem pela API.</small>
+        <small class="hint">Só outros agentes o chamam (em "Pode delegar a"). Não aparece em Nova conversa.</small>
       </div>
       <label class="field sm:col-span-2">
         <span>Projeto</span>
@@ -539,7 +561,7 @@ async function remove() {
           <option :value="null">Global — aparece em todos os projetos</option>
           <option v-for="project in projects.list" :key="project.id" :value="project.id">{{ project.name }}</option>
         </select>
-        <small class="hint">{{ form.projectId ? 'Só os membros do projeto veem o agente, e ele trabalha na pasta do projeto.' : 'Global, como o Atlas: qualquer projeto o vê, e cada conversa dele começa numa pasta vazia.' }}</small>
+        <small class="hint">{{ form.projectId ? 'Só os membros do projeto veem o agente.' : 'Qualquer projeto vê o agente.' }}</small>
         <small v-for="message in issues.projectId" :key="message" class="error">{{ message }}</small>
       </label>
       <div class="field sm:col-span-2">
@@ -547,37 +569,37 @@ async function remove() {
           <button type="button" role="switch" :aria-checked="!!form.adminOnly" class="switch" :class="{ on: form.adminOnly }" @click="form.adminOnly = !form.adminOnly"><span /></button>
           <span>Só administradores</span>
         </label>
-        <small class="hint">Desligado, qualquer conta conversa com o agente do jeito que ele está configurado aqui: provedores, assinaturas, ferramentas e sandbox.</small>
+        <small class="hint">Desligado, qualquer pessoa com conta pode conversar com este agente.</small>
       </div>
 
       <label class="field sm:col-span-2">
-        <span>Soul <em class="font-normal text-zinc-500">— quem o agente é: identidade, tom, valores, jeito de falar. Vai para o modelo antes do prompt.</em></span>
+        <span>Personalidade <em class="font-normal text-zinc-500">— quem o agente é: identidade, tom e jeito de falar.</em></span>
         <textarea v-model="form.soul" rows="4" maxlength="8000" class="input scroll-thin text-[13px] leading-relaxed" placeholder="Você é a Íris: gentil, direta, explica sem jargão e admite quando não sabe." />
         <small v-for="message in issues.soul" :key="message" class="error">{{ message }}</small>
       </label>
       <label class="field sm:col-span-2">
         <span>Instrução do sistema <em class="font-normal text-zinc-500">— o que o agente faz: função, regras, como usar as ferramentas</em></span>
         <textarea v-model="form.systemPrompt" required rows="10" class="input scroll-thin font-mono text-[13px] leading-relaxed" placeholder="Você é o agente…" />
-        <small v-if="anyGoogle" class="hint">Gemini (ADK): não use {chaves} — o ADK as lê como variável de sessão.</small>
+        <small v-if="anyGoogle" class="hint">Com Gemini, evite {chaves} no texto: viram variáveis e dão erro.</small>
         <small v-for="message in issues.systemPrompt" :key="message" class="error">{{ message }}</small>
       </label>
     </fieldset>
     <fieldset v-show="tab === 'modelos'" class="grid gap-4 sm:grid-cols-2">
       <div class="field sm:col-span-2">
-        <span>Provedores <em class="font-normal text-zinc-500">— onde o agente roda; a conversa troca entre eles no meio. O primeiro é o padrão.</em></span>
+        <span>Provedores <em class="font-normal text-zinc-500">— onde o agente roda. O primeiro é o padrão.</em></span>
         <div class="flex flex-wrap gap-1.5">
           <button v-for="provider in providerOptions" :key="provider.id" type="button" class="chip" :class="{ on: chosen.includes(provider.id) }" @click="toggleProvider(provider.id)">
             {{ provider.name }}<span v-if="chosen[0] === provider.id" class="ml-1 text-[10px] text-emerald-300">padrão</span><span v-if="!provider.enabled" class="text-[10px] text-zinc-500"> desligado</span>
           </button>
-          <span v-if="!providerOptions.length" class="text-sm text-zinc-500">{{ chosen.length ? chosen.map((id) => protocols.providerName(id)).join(', ') : 'Nenhum provedor pronto — configure em Modelos.' }}</span>
+          <span v-if="!providerOptions.length" class="text-sm text-zinc-500">{{ chosen.length ? chosen.map((id) => protocols.providerName(id)).join(', ') : 'Nenhum provedor pronto. Configure em Modelos.' }}</span>
         </div>
         <small v-for="message in issues.providers" :key="message" class="error">{{ message }}</small>
       </div>
 
       <div v-if="form.providers.length" class="field sm:col-span-2">
-        <span>Modelos <em class="font-normal text-zinc-500">— os ativados em Modelos; o padrão é o que a conversa usa quando ninguém escolhe</em></span>
+        <span>Modelos <em class="font-normal text-zinc-500">— o padrão é o usado quando ninguém escolhe.</em></span>
         <p v-if="dropped.length" class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-normal text-amber-200">
-          Desligados no catálogo, saem ao salvar:
+          Estes modelos foram desligados e saem ao salvar:
           <template v-for="([providerId, models], index) in dropped" :key="providerId">{{ index ? '; ' : '' }}{{ protocols.providerName(providerId) }}: <code>{{ models.join(', ') }}</code></template>. Para manter, ative em Modelos.
         </p>
         <input v-if="manyModels" v-model="modelSearch" type="search" placeholder="Buscar modelo…" class="input text-sm" />
@@ -603,13 +625,12 @@ async function remove() {
             </li>
           </ul>
         </div>
-        <small v-if="anyCompatible" class="hint">Provedor compatível: tool use e raciocínio variam por modelo.</small>
-        <small v-if="form.providers.length > 1" class="hint">Ao trocar de provedor no meio da conversa, o novo recebe a transcrição dos turnos (o estado interno do anterior não vai junto).</small>
+        <small v-if="anyCompatible" class="hint">Neste provedor, o uso de ferramentas e o raciocínio dependem do modelo.</small>
         <small v-for="message in issues.models" :key="message" class="error">{{ message }}</small>
       </div>
 
       <div class="field">
-        <span>Lanes</span>
+        <span>Modos</span>
         <div class="flex flex-wrap gap-1.5">
           <button
             v-for="mode in (['chat', 'agent'] as TMode[])"
@@ -620,10 +641,10 @@ async function remove() {
             :disabled="!lanesAllowed.includes(mode)"
             @click="toggle(form.modes, mode)"
           >
-            {{ mode === 'chat' ? 'Chat' : 'Agents SDK' }}
+            {{ mode === 'chat' ? 'Conversa' : 'Agente' }}
           </button>
         </div>
-        <small v-if="anySubscription" class="hint">Assinatura: só a lane Agents SDK. A conta é pessoal: quem conversa com o agente usa a sua assinatura.</small>
+        <small v-if="anySubscription" class="hint">Com assinatura, só o modo Agente. Quem conversa usa a própria assinatura.</small>
         <small v-for="message in issues.modes" :key="message" class="error">{{ message }}</small>
       </div>
       <div class="field">
@@ -631,8 +652,8 @@ async function remove() {
         <div v-if="reasoningLevels.length" class="flex flex-wrap gap-1.5">
           <button v-for="level in reasoningLevels" :key="level" type="button" class="chip font-mono" :class="{ on: form.reasoningEfforts?.includes(level) }" @click="toggle((form.reasoningEfforts ??= []), level)">{{ level }}</button>
         </div>
-        <small v-else class="hint">O SDK do Gemini usado aqui não controla o raciocínio; o modelo decide sozinho.</small>
-        <small v-if="reasoningLevels.length" class="hint">Os que a conversa pode escolher. Modelo que não raciocina não mostra o seletor.</small>
+        <small v-else class="hint">O Gemini não permite escolher o nível de raciocínio.</small>
+        <small v-if="reasoningLevels.length" class="hint">Os níveis que a pessoa pode escolher na conversa.</small>
         <small v-for="message in issues.reasoningEfforts" :key="message" class="error">{{ message }}</small>
       </div>
 
@@ -655,13 +676,13 @@ async function remove() {
           <span v-if="!agents.tools.length" class="text-sm text-zinc-500">Nenhuma disponível.</span>
         </div>
         <small v-if="dangerousChosen.length" class="text-amber-300">
-          ⚠ {{ dangerousChosen.join(', ') }} alcança o servidor do gateway: quem conversar com este agente ganha esse alcance.<template v-if="!form.adminOnly"> Marque "Só administradores" na guia Agente se não for para todos.</template>
+          ⚠ {{ dangerousChosen.join(', ') }} dá acesso ao servidor. Quem conversar com este agente também terá esse acesso.<template v-if="!form.adminOnly"> Marque "Só administradores" na guia Agente se não for para todos.</template>
         </small>
         <small v-for="message in issues.allowedTools" :key="message" class="error">{{ message }}</small>
       </div>
 
       <div class="field sm:col-span-2">
-        <span>Pode delegar a <em class="font-normal text-zinc-500">— outros agentes a quem este pede parte do trabalho (rodam com as permissões de quem conversa; até {{ agents.limits.delegationMaxDepth }} níveis, sem ciclos)</em></span>
+        <span>Pode delegar a <em class="font-normal text-zinc-500">— outros agentes a quem este pode pedir ajuda.</em></span>
         <div class="flex flex-wrap gap-1.5">
           <button
             v-for="other in agents.list.filter((candidate) => candidate.id !== form.id)"
@@ -680,20 +701,20 @@ async function remove() {
             type="button"
             class="chip"
             :class="{ on: form.allowedTools.includes(`agent:${builder.id}`) }"
-            :title="`Agente do sistema, só de admin: segue o protocolo de ${builder.noun} e grava depois da confirmação`"
+            :title="`Agente do sistema, só para administradores`"
             @click="toggle(form.allowedTools, `agent:${builder.id}`)"
           >
             {{ builder.name }}<span class="ml-1 text-[10px] text-zinc-500">sistema</span>
           </button>
         </div>
-        <small v-if="form.allowedTools.some((entry) => entry.startsWith('agent:')) && !form.modes.includes('agent')" class="hint">Na lane chat, a delegação só roda com o loop de ferramentas ligado.</small>
+        <small v-if="form.allowedTools.some((entry) => entry.startsWith('agent:')) && !form.modes.includes('agent')" class="hint">A delegação só funciona no modo Agente.</small>
       </div>
 
       <div v-if="orphans.length" class="field sm:col-span-2">
-        <span>Órfãs <em class="font-normal text-zinc-500">— escolhidas, mas que os provedores do agente ou o servidor não oferecem; o servidor recusa o salvamento com elas</em></span>
+        <span>Indisponíveis <em class="font-normal text-zinc-500">— escolhidas, mas não oferecidas pelos provedores. Remova para salvar.</em></span>
         <div class="flex flex-wrap gap-1.5">
           <button v-for="entry in orphans" :key="entry" type="button" class="chip on danger font-mono text-xs" title="Clique para tirar do agente" @click="toggle(form.allowedTools, entry)">
-            <span class="mr-1 rounded-full bg-amber-500/20 px-1.5 text-[10px] text-amber-200">órfão</span>{{ entry }} ✕
+            <span class="mr-1 rounded-full bg-amber-500/20 px-1.5 text-[10px] text-amber-200">indisponível</span>{{ entry }} ✕
           </button>
         </div>
       </div>
@@ -701,14 +722,13 @@ async function remove() {
     </fieldset>
     <fieldset v-show="tab === 'mcps'" class="grid gap-4 sm:grid-cols-2">
       <div class="field sm:col-span-2">
-        <span>MCPs <em class="font-normal text-zinc-500">— os servidores cadastrados em MCPs; o agente só vê o que for marcado aqui</em></span>
+        <span>MCPs <em class="font-normal text-zinc-500">— o agente usa só o que estiver marcado.</em></span>
         <div v-if="enabledMcp.length" class="flex flex-col gap-2">
           <div v-for="server in enabledMcp" :key="server.id" class="rounded-xl border border-zinc-800 px-3 py-2 font-normal">
             <div class="flex flex-wrap items-center gap-2">
               <span class="text-sm text-zinc-200">{{ server.name }}</span>
-              <code class="text-[11px] text-zinc-500">mcp:{{ server.id }}</code>
               <span v-if="!server.status.connected" class="text-[11px] text-amber-300">sem conexão</span>
-              <span v-if="mcpWeight(server.id)" class="text-[11px] text-zinc-500" title="A definição das ferramentas escolhidas vai em toda chamada ao modelo deste agente">≈ {{ mcpWeight(server.id).toLocaleString('pt-BR') }} tokens por chamada</span>
+              <span v-if="mcpWeight(server.id)" class="text-[11px] text-zinc-500" title="Tamanho das ferramentas escolhidas, enviado a cada mensagem">≈ {{ mcpWeight(server.id).toLocaleString('pt-BR') }} tokens por mensagem</span>
               <label class="ml-auto flex items-center gap-1.5 text-xs text-zinc-400">
                 <input type="checkbox" class="accent-emerald-500" :checked="form.allowedTools.includes(mcpRef(server.id, '*'))" @change="toggleAllMcp(server.id)" />
                 Todas as ferramentas
@@ -721,7 +741,7 @@ async function remove() {
                 type="button"
                 class="chip font-mono text-xs"
                 :class="{ on: form.allowedTools.includes(mcpRef(server.id, tool.name)) }"
-                :title="tool.unlisted ? 'Escolhida, mas o servidor não a listou agora (fora do ar, ou só aparece dentro de uma conversa)' : `${tool.description ?? ''} (≈ ${toolTokens(tool)} tokens)`"
+                :title="tool.unlisted ? 'Escolhida, mas o servidor não a mostra agora' : `${tool.description ?? ''} (≈ ${toolTokens(tool)} tokens)`"
                 @click="toggle(form.allowedTools, mcpRef(server.id, tool.name))"
               >
                 {{ tool.name }}<span v-if="tool.unlisted" class="ml-1 text-[10px] text-zinc-500">não listada</span>
@@ -730,22 +750,21 @@ async function remove() {
             </div>
           </div>
         </div>
-        <span v-else class="text-sm font-normal text-zinc-500">Nenhum MCP ligado. <RouterLink to="/mcp" class="text-emerald-400 hover:underline">Cadastrar em MCPs</RouterLink>.</span>
+        <span v-else class="text-sm font-normal text-zinc-500">Nenhum MCP ligado. <RouterLink to="/mcp" class="text-emerald-400 hover:underline">Cadastre em MCPs</RouterLink>.</span>
       </div>
 
     </fieldset>
     <fieldset v-show="tab === 'sdk'" class="flex flex-col gap-4">
-      <p class="text-xs text-zinc-500">Só na lane Agents SDK. Cada provedor tem o seu nível de acesso: as ferramentas do SDK dele e, no Codex e no Antigravity, o sandbox.</p>
-      <p v-if="!form.modes.includes('agent')" class="text-xs text-amber-300">Este agente não tem a lane Agents SDK ligada: nada daqui é usado.</p>
+      <p class="text-xs text-zinc-500">Só no modo Agente. Cada provedor tem as suas ferramentas e permissões.</p>
+      <p v-if="!form.modes.includes('agent')" class="text-xs text-amber-300">O modo Agente está desligado: nada daqui é usado.</p>
       <section v-for="section in sdkSections" :key="section.entry.target.provider" class="flex flex-col gap-2 rounded-xl border border-zinc-800 px-3 py-3">
         <div class="flex flex-wrap items-center gap-2 text-sm">
           <span class="font-medium text-zinc-200">{{ protocols.providerName(section.entry.target.provider) }}</span>
           <span v-if="section.entry.info" class="text-[11px] text-zinc-500">{{ section.entry.info.label }}</span>
-          <span v-if="section.shared.length && section.tools.length" class="text-[11px] text-zinc-500">· mesmas ferramentas de {{ section.shared.join(', ') }}</span>
         </div>
 
         <div v-if="section.levels.length" class="flex flex-col gap-1.5">
-          <span class="text-xs text-zinc-400">Sandbox</span>
+          <span class="text-xs text-zinc-400">Nível de acesso</span>
           <div class="flex flex-wrap gap-1.5">
             <button
               v-for="level in section.levels"
@@ -762,7 +781,7 @@ async function remove() {
           <small class="hint">{{ sandboxHint(section.entry.protocol, section.entry.target.sandbox ?? section.levels[0]) }}</small>
           <label v-if="section.network" class="flex items-center gap-2 text-xs text-zinc-300">
             <input type="checkbox" class="accent-emerald-500" :checked="!!section.entry.target.network" @change="section.entry.target.network = !section.entry.target.network || undefined" />
-            Rede no sandbox <span class="text-zinc-500">— os comandos saem para a rede a partir deste servidor</span>
+            Acesso à internet
           </label>
         </div>
 
@@ -777,53 +796,53 @@ async function remove() {
             <span class="shrink-0 rounded-full px-2 py-0.5 text-[10px]" :class="RISK_CLASS[tool.risk]">{{ RISK_LABEL[tool.risk] }}</span>
           </li>
         </ul>
-        <p v-else-if="!section.levels.length" class="text-xs text-zinc-500">Este provedor não tem ferramentas de SDK para ligar aqui.</p>
+        <p v-else-if="!section.levels.length" class="text-xs text-zinc-500">Este provedor não tem ferramentas para ligar aqui.</p>
       </section>
       <small v-if="dangerousNatives.length || openSandboxes.length" class="text-amber-300">
-        ⚠ <template v-if="dangerousNatives.length">{{ dangerousNatives.join(', ') }} alcança o disco, a rede ou os comandos deste servidor. </template>
-        <template v-if="openSandboxes.length">{{ openSandboxes.join(', ') }}: sandbox aberto. </template>Quem conversar com este agente ganha esse alcance.<template v-if="!form.adminOnly"> Marque "Só administradores" na guia Agente se não for para todos.</template>
+        ⚠ <template v-if="dangerousNatives.length">{{ dangerousNatives.join(', ') }} dá acesso ao disco, à internet e aos comandos do servidor. </template>
+        <template v-if="openSandboxes.length">{{ openSandboxes.join(', ') }}: acesso total. </template>Quem conversar com este agente também terá esse acesso.<template v-if="!form.adminOnly"> Marque "Só administradores" na guia Agente se não for para todos.</template>
       </small>
     </fieldset>
 
     <p v-if="failure && !Object.keys(issues).length" class="text-sm whitespace-pre-line text-rose-300">{{ failure }}</p>
     <!-- O erro de campo aparece junto do campo, que pode estar fora da tela: aqui, perto do Salvar, o resumo. -->
     <p v-else-if="Object.keys(issues).length" class="text-sm text-rose-300">
-      Não salvou — corrija: {{ summarizeIssues(issues, FIELD_LABEL) }}
+      Não foi possível salvar. Corrija: {{ summarizeIssues(issues, FIELD_LABEL) }}
     </p>
     <!-- ⚖️ Os recursos (skills e commands) têm o próprio cadastro (fora do Salvar do agente): só para agente já gravado. -->
     <section v-if="tab === 'recursos'">
       <AgentResources v-if="agent && !creating" :agent-id="agent.id" :project-id="agent.projectId" :project-name="projects.list.find((item) => item.id === agent?.projectId)?.name" />
-      <p v-else class="text-sm text-zinc-400">Crie o agente primeiro: os recursos são liberados para ele.</p>
+      <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
     </section>
 
     <!-- ⚖️ O contexto inicial também tem o próprio cadastro (fora do Salvar do agente): só para agente já gravado. -->
     <section v-if="tab === 'contexto'">
       <AgentInitialContext v-if="agent && !creating" :agent-id="agent.id" :project-id="agent.projectId" :project-name="projects.list.find((item) => item.id === agent?.projectId)?.name" />
-      <p v-else class="text-sm text-zinc-400">Crie o agente primeiro: o contexto inicial é dele.</p>
+      <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
     </section>
 
     <!-- O tamanho é medido no servidor, sobre o agente salvo: só para agente já gravado. -->
     <section v-if="tab === 'tamanho'">
       <AgentFootprint v-if="agent && !creating" :agent-id="agent.id" :project-id="agent.projectId" />
-      <p v-else class="text-sm text-zinc-400">Crie o agente primeiro: o tamanho é medido sobre o que está salvo.</p>
+      <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
     </section>
 
     <!-- ⚖️ Os hooks têm o próprio cadastro (não vão no Salvar do agente): só existem para um agente já gravado. -->
     <section v-if="tab === 'hooks'">
       <AgentHooks v-if="agent && !creating" :agent-id="agent.id" />
-      <p v-else class="text-sm text-zinc-400">Crie o agente primeiro: o hook é dele, e a URL leva o id.</p>
+      <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
     </section>
 
     <!-- Os agendamentos também têm o próprio cadastro, como os hooks. -->
     <section v-if="tab === 'agendamentos'">
       <AgentSchedules v-if="agent && !creating" :agent-id="agent.id" :project-id="agent.projectId" />
-      <p v-else class="text-sm text-zinc-400">Crie o agente primeiro: o agendamento é dele.</p>
+      <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
     </section>
 
     <p v-if="agent?.updatedBy" class="text-xs text-zinc-500">Alterado por {{ agent.updatedBy }} em {{ agent.updatedAt ? new Date(agent.updatedAt).toLocaleString('pt-BR') : '' }}</p>
 
     <p v-if="loadError" class="text-sm text-rose-300">
-      Não consegui carregar os providers ({{ loadError }}), então não dá para salvar.
+      Não foi possível carregar os provedores ({{ loadError }}), então não dá para salvar.
       <button type="button" class="underline hover:text-rose-200" @click="loadBase">Tentar de novo</button>
     </p>
     <p v-else-if="!ready" class="text-xs text-zinc-500">Carregando provedores…</p>
@@ -845,7 +864,7 @@ async function remove() {
     <ConfirmDialog
       :open="confirming"
       :title="`Apagar o agente ${agent?.name ?? ''}?`"
-      message="Some da lista e nenhuma sessão nova nasce dele. As conversas gravadas continuam, e sessões abertas terminam com o agente com que nasceram."
+      message="O agente sai da lista e não abre mais conversas. As conversas já feitas continuam."
       :busy="deleting"
       @confirm="remove"
       @cancel="confirming = false"

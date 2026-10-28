@@ -147,7 +147,7 @@ async function confirmRemove() {
         <h1 class="text-xl font-semibold">Projetos</h1>
         <RouterLink to="/projects/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Novo projeto"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
-      <p class="px-4 pb-3 text-xs text-zinc-500">Cada projeto tem os seus agentes, conversas e pasta. Modelos, MCPs e pacotes são do sistema e valem para todos; o Atlas é global.</p>
+      <p class="px-4 pb-3 text-xs text-zinc-500">Cada projeto tem seus agentes, conversas e pasta.</p>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
       <p v-if="!projects.list.length && !loadError" class="px-4 py-2 text-sm text-zinc-500">Nenhum projeto ainda.</p>
       <RouterLink
@@ -175,7 +175,7 @@ async function confirmRemove() {
             <label class="field">
               Id
               <input v-model="form.id" required pattern="[a-z0-9][a-z0-9-]{1,31}" class="input font-mono" placeholder="xpto" />
-              <small class="hint">Vira o nome da pasta (<code>data/projects/{{ form.id || 'id' }}</code>). Não muda depois.</small>
+              <small class="hint">Nome da pasta do projeto (<code>data/projects/{{ form.id || 'id' }}</code>). Não muda depois.</small>
               <small v-for="m in formIssues.id" :key="m" class="error">{{ m }}</small>
             </label>
           </div>
@@ -199,23 +199,20 @@ async function confirmRemove() {
         </div>
 
         <p class="text-xs text-zinc-500">
-          O que toda conversa do projeto recebe — rules e specs inteiras — fica em <RouterLink to="/environment" class="text-emerald-400 underline underline-offset-2">Projeto → Ambiente</RouterLink>
-          (com este projeto em uso).
+          Regras e specs do projeto ficam em <RouterLink to="/environment" class="text-emerald-400 underline underline-offset-2">Projeto → Ambiente</RouterLink>.
         </p>
 
 
         <div class="rounded-xl border border-zinc-800 p-3 text-xs text-zinc-400">
           <div class="mb-1 font-medium text-zinc-300">Pasta</div>
           <code class="block truncate text-zinc-200">{{ selected.folder }}</code>
-          <p class="mt-2 text-zinc-400">Os agentes do projeto trabalham nesta pasta, persistente e compartilhada pelas conversas dele.</p>
+          <p class="mt-2 text-zinc-400">Pasta de trabalho dos agentes deste projeto.</p>
           <p v-if="sandbox?.available" class="mt-2 text-emerald-300">
-            ✓ Cerco ativo ({{ sandbox.mechanism }}): o Bash e o run_bash dos agentes do projeto só leem e gravam nesta pasta, com a rede liberada. As ferramentas de arquivo do Claude (Read, Write, Edit, Glob, Grep) também ficam presas a ela.
+            ✓ Os agentes só acessam arquivos desta pasta.
           </p>
           <p v-else-if="sandbox" class="mt-2 text-amber-300">
-            ⚠ Cerco indisponível neste servidor{{ sandbox.reason ? `: ${sandbox.reason}` : '' }}. O Bash e o run_bash dos agentes de projeto ficam bloqueados; as ferramentas de arquivo do Claude continuam presas à pasta. No Linux em
-            contêiner, o seccomp do pod precisa liberar user namespaces.
+            ⚠ O isolamento da pasta não está disponível. Peça a quem cuida do servidor.
           </p>
-          <p class="mt-2 text-zinc-500">Codex: grava só na pasta (workspace-write), mas lê fora. Antigravity: sem o sandbox "full". O agente global (Atlas) não passa pelo cerco.</p>
         </div>
 
         <div class="grid gap-3 sm:grid-cols-2">
@@ -229,14 +226,14 @@ async function confirmRemove() {
         <div class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
           <div class="flex items-center gap-2">
             <h3 class="text-sm font-medium text-zinc-200">Membros</h3>
-            <span class="text-xs text-zinc-500">quem vê este projeto (o admin vê todos)</span>
+            <span class="text-xs text-zinc-500">quem pode ver este projeto</span>
           </div>
           <ul class="divide-y divide-zinc-800">
             <li v-for="user in users.list" :key="user.id" class="flex items-center gap-3 py-1.5">
               <label class="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-sm">
                 <input type="checkbox" class="accent-emerald-500" :checked="members.has(user.id)" @change="toggleMember(user.id)" />
                 <span class="min-w-0 flex-1 truncate">{{ user.name }} <span class="text-xs text-zinc-500">{{ user.email }}</span></span>
-                <span v-if="user.role === 'admin'" class="text-[10px] text-zinc-500">admin</span>
+                <span v-if="user.role === 'admin'" class="text-[10px] text-zinc-500">administrador</span>
               </label>
             </li>
           </ul>
@@ -256,7 +253,7 @@ async function confirmRemove() {
       <ConfirmDialog
         :open="!!removing"
         :title="`Apagar o projeto ${removing?.name ?? ''}?`"
-        :message="removeError ?? 'Some o cadastro, os membros e a PASTA do projeto (os arquivos dela). Com agente dentro, o gateway recusa e diz quais.'"
+        :message="removeError ?? 'Apaga o projeto, os membros e os arquivos da pasta. Só funciona sem agentes no projeto.'"
         action="Apagar"
         @confirm="confirmRemove"
         @cancel="removing = undefined"

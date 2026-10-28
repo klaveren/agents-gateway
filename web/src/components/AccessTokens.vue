@@ -89,7 +89,7 @@ async function revoke() {
   <section id="tokens" class="flex scroll-mt-4 flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
     <h2 class="font-medium">Tokens de acesso</h2>
     <p class="text-xs text-zinc-400">
-      Para o Claude Code (MCP do gateway), scripts e integrações. O token age como a sua conta — perdeu o admin, o token perde junto — e não cai ao sair. Revogue aqui quando não usar mais.
+      Para o Claude Code, scripts e integrações. O token age como a sua conta. Revogue quando não usar mais.
     </p>
 
     <div v-if="revealed" class="flex flex-col gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm">

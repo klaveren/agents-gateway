@@ -72,7 +72,7 @@ function takeDraft(id?: string): IAgentDetail | undefined {
   if (pending?.kind !== 'agent' || !pending.agent || (id && pending.id !== id)) return undefined
   pendingDraft.value = undefined
   const extras = [pending.initialContext.length ? `contexto inicial (${pending.initialContext.join(', ')})` : '', pending.resources ? 'recursos' : ''].filter(Boolean)
-  draftNote.value = `Rascunho do construtor aplicado: revise e salve.${extras.length ? ` ${extras.join(' e ')} ficam para as guias do agente depois de salvar — ou peça ao construtor para gravar tudo.` : ''}`
+  draftNote.value = `Rascunho aplicado. Revise e salve.${extras.length ? ` ${extras.join(' e ')} ficam para depois de salvar.` : ''}`
   return fromDraft(pending.agent, id ? detail.value : undefined)
 }
 
@@ -148,7 +148,7 @@ watch(creating, (value) => {
         <RouterLink to="/agents/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Novo agente" @click="template = undefined"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
       <BuildTabs kind="agent" active="list" class="px-3 pb-2" />
-      <template v-for="group in [{ label: 'Criados', items: created }, { label: 'Subagentes', items: subagents }]" :key="group.label">
+      <template v-for="group in [{ label: 'Agentes', items: created }, { label: 'Subagentes', items: subagents }]" :key="group.label">
         <h2 v-if="group.items.length" class="px-4 pt-3 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">{{ group.label }}</h2>
         <RouterLink
           v-for="agent in group.items"
@@ -162,8 +162,8 @@ watch(creating, (value) => {
             <span class="block truncate text-sm font-medium">{{ agent.name }}</span>
             <span class="block truncate text-xs text-zinc-500">{{ providersLine(agent) }}</span>
           </span>
-          <span v-if="agent.unavailable" class="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-300" :title="`Não abre conversa agora: ${agent.unavailable.label}`">{{ agent.unavailable.label }}</span>
-          <span v-if="agent.adminOnly" class="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300" title="Só administradores conversam com este agente">só admin</span>
+          <span v-if="agent.unavailable" class="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-300" :title="`Indisponível agora: ${agent.unavailable.label}`">{{ agent.unavailable.label }}</span>
+          <span v-if="agent.adminOnly" class="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300" title="Só administradores conversam com este agente">só administradores</span>
           <span v-if="!agent.projectId" class="shrink-0 rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] text-sky-300" title="Aparece em todos os projetos">global</span>
         </RouterLink>
       </template>

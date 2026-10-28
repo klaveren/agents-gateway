@@ -104,7 +104,7 @@ function topRounded(x: number, top: number, width: number, height: number): stri
           <span class="h-2 w-2 rounded-sm" :style="{ background: segment.color }" /> {{ segment.label }} {{ tokens(bars[hover].parts[segment.key]) }}
         </div>
         <div class="mt-1 text-zinc-400">Entrada total {{ tokens(bars[hover].day.usage.inputTokens) }}</div>
-        <div class="mt-1 text-zinc-400">{{ bars[hover].day.turns }} turnos<template v-if="showCost && bars[hover].day.costUsd !== undefined"> · {{ bars[hover].day.costIsFloor ? '≥ ' : '' }}{{ usd(bars[hover].day.costUsd) }}</template></div>
+        <div class="mt-1 text-zinc-400">{{ bars[hover].day.turns }} mensagens<template v-if="showCost && bars[hover].day.costUsd !== undefined"> · {{ bars[hover].day.costIsFloor ? '≥ ' : '' }}{{ usd(bars[hover].day.costUsd) }}</template></div>
       </div>
     </div>
 
@@ -116,7 +116,7 @@ function topRounded(x: number, top: number, width: number, height: number): stri
           <th class="font-medium">Cache lido</th>
           <th class="font-medium">Cache gravado</th>
           <th class="font-medium">Saída</th>
-          <th class="font-medium">Turnos</th>
+          <th class="font-medium">Mensagens</th>
           <th v-if="showCost" class="font-medium">Custo</th>
         </tr>
       </thead>

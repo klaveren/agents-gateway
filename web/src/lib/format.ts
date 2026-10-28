@@ -44,3 +44,10 @@ export const CLASSIFICATION_COLOR: Record<string, string> = {
 }
 
 export const CLASSIFICATION_LABEL: Record<string, string> = { green: 'Verde', blue: 'Azul', amber: 'Âmbar', red: 'Vermelho' }
+
+const EFFORT_LABEL: Record<string, string> = { none: 'Nenhum', minimal: 'Mínimo', low: 'Baixo', medium: 'Médio', high: 'Alto', xhigh: 'Muito alto', max: 'Máximo' }
+
+/** O nível de raciocínio como a pessoa lê ("Alto"); um nível desconhecido aparece como veio. */
+export function effortLabel(effort: string): string {
+  return EFFORT_LABEL[effort] ?? effort
+}

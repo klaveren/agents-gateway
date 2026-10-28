@@ -34,9 +34,9 @@ const dockerDown = computed(() => {
 })
 
 const AUTH_LABEL: Record<TMcpAuth, { label: string; hint: string }> = {
-  caller: { label: 'Credencial de quem conversa', hint: 'O gateway repassa o token da pessoa (Authorization: Bearer …): o MCP decide o que cada uma vê.' },
-  header: { label: 'Header fixo (segredo)', hint: 'Uma chave do serviço, guardada cifrada. Vale para todo mundo que conversa com o agente.' },
-  none: { label: 'Nenhuma', hint: 'MCP aberto, sem credencial.' },
+  caller: { label: 'Login de quem conversa', hint: 'O MCP recebe o login da pessoa e decide o que ela vê.' },
+  header: { label: 'Chave fixa', hint: 'Uma chave só, usada por todos que falam com o agente.' },
+  none: { label: 'Nenhuma', hint: 'Sem autenticação.' },
 }
 const TRANSPORT_LABEL: Record<TMcpTransport, string> = { auto: 'Automático', http: 'Streamable HTTP', sse: 'SSE' }
 
@@ -48,9 +48,9 @@ const blankContainer = (): IMcpContainer => ({ image: '', args: [], writable: []
 const blankProcess = (): IMcpProcess => ({ package: '', command: '', args: [], env: [], scope: 'conversation' })
 const blank = (): INewMcpServer => ({ id: '', name: '', kind: 'process', container: blankContainer(), process: blankProcess(), url: '', transport: 'auto', auth: 'none', headerName: 'Authorization', secret: '' })
 const KIND_LABEL: Record<TMcpKind, { label: string; hint: string }> = {
-  process: { label: 'Local (npm)', hint: 'O gateway instala o pacote e roda como processo dele, sem contêiner — com o alcance do servidor.' },
-  remote: { label: 'Remoto (URL)', hint: 'Um MCP que já está no ar, por HTTP/SSE.' },
-  container: { label: 'Contêiner isolado', hint: 'O gateway sobe a imagem num contêiner trancado — um por conversa. Precisa de Docker no servidor.' },
+  process: { label: 'Local (npm)', hint: 'Instala o pacote npm e roda no servidor, sem isolamento.' },
+  remote: { label: 'Remoto (URL)', hint: 'Um MCP que já está no ar, acessado por URL.' },
+  container: { label: 'Contêiner isolado', hint: 'Roda isolado, um contêiner por conversa. Precisa de Docker.' },
 }
 /** O rascunho do contêiner na edição (a cópia do que está gravado). */
 const containerDraft = ref<IMcpContainer>(blankContainer())
@@ -256,7 +256,7 @@ async function confirmRemove() {
         <h1 class="text-xl font-semibold">MCPs</h1>
         <RouterLink to="/mcp/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Adicionar MCP"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
-      <p class="px-4 pb-3 text-xs text-zinc-500">Os servidores de onde os agentes tiram ferramentas. Cada agente escolhe, no formulário dele, os servidores e as ferramentas que usa.</p>
+      <p class="px-4 pb-3 text-xs text-zinc-500">Servidores que dão ferramentas aos agentes. Cada agente escolhe as que usa.</p>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
       <p v-if="!mcp.list.length && !loadError" class="px-4 py-2 text-sm text-zinc-500">Nenhum MCP cadastrado ainda.</p>
       <RouterLink
@@ -296,28 +296,28 @@ async function confirmRemove() {
               </button>
             </div>
             <small class="hint">{{ KIND_LABEL[form.kind].hint }}</small>
-            <small v-if="dockerDown" class="hint text-amber-300/80">Contêiner isolado indisponível aqui: {{ dockerDown }}. Use o Local (npm).</small>
+            <small v-if="dockerDown" class="hint text-amber-300/80">Contêiner indisponível: {{ dockerDown }}. Use "Local (npm)".</small>
           </div>
           <div class="grid gap-3 sm:grid-cols-2">
             <label class="field">Nome<input v-model="form.name" required class="input" placeholder="CRM interno" @blur="slug" /><small v-for="m in formIssues.name" :key="m" class="error">{{ m }}</small></label>
             <label class="field">
-              Id
+              Identificador
               <input v-model="form.id" required pattern="[a-z0-9][a-z0-9-]{1,31}" class="input font-mono" placeholder="crm" />
-              <small class="hint">Os agentes escolhem as ferramentas como <code>mcp:{{ form.id || 'id' }}/…</code>. Não muda depois.</small>
+              <small class="hint">Nome interno usado nos agentes: <code>mcp:{{ form.id || 'id' }}/…</code>. Não muda depois.</small>
               <small v-for="m in formIssues.id" :key="m" class="error">{{ m }}</small>
             </label>
             <label v-if="form.kind === 'remote'" class="field sm:col-span-2">
               URL
               <input v-model="form.url" required class="input font-mono" placeholder="https://mcp.exemplo.com/mcp" />
               <small v-for="m in formIssues.url" :key="m" class="error">{{ m }}</small>
-              <small v-if="pointsToSelf(form.url)" class="text-amber-300">⚠ É o MCP do próprio gateway: um agente que conversa com outros agentes pode entrar em recursão.</small>
+              <small v-if="pointsToSelf(form.url)" class="text-amber-300">⚠ Este é o MCP do próprio gateway: um agente pode acabar chamando a si mesmo.</small>
             </label>
           </div>
           <McpContainerFields v-if="form.kind === 'container' && form.container" v-model="form.container" :issues="formIssues" />
           <McpProcessFields v-if="form.kind === 'process' && form.process" v-model="form.process" :issues="formIssues" />
           <p v-if="form.kind === 'process'" class="text-xs text-zinc-500">Depois de adicionar, clique em <strong>Instalar</strong> para baixar o pacote.</p>
           <div v-if="form.kind === 'remote'" class="field">
-            Transporte
+            Conexão
             <div class="flex flex-wrap gap-1.5">
               <button v-for="(label, value) in TRANSPORT_LABEL" :key="value" type="button" class="chip" :class="{ on: form.transport === value }" @click="form.transport = value">{{ label }}</button>
             </div>
@@ -328,11 +328,11 @@ async function confirmRemove() {
               <button v-for="(option, value) in AUTH_LABEL" :key="value" type="button" class="chip" :class="{ on: form.auth === value }" @click="form.auth = value">{{ option.label }}</button>
             </div>
             <small class="hint">{{ AUTH_LABEL[form.auth].hint }}</small>
-            <small v-if="form.auth === 'caller'" class="text-xs text-amber-300">⚠ Este servidor recebe a sessão de quem conversa (o token do gateway) e pode usá-la como essa pessoa. Só para um servidor seu, de confiança.</small>
+            <small v-if="form.auth === 'caller'" class="text-xs text-amber-300">⚠ O servidor passa a agir como a pessoa que conversa. Só use em servidor seu, de confiança.</small>
           </div>
           <div v-if="form.kind === 'remote' && form.auth === 'header'" class="grid gap-3 sm:grid-cols-2">
-            <label class="field">Header<input v-model="form.headerName" class="input font-mono" placeholder="Authorization" /></label>
-            <label class="field">Valor (segredo)<input v-model="form.secret" type="password" autocomplete="off" spellcheck="false" class="input font-mono" placeholder="Bearer …" /></label>
+            <label class="field">Cabeçalho<input v-model="form.headerName" class="input font-mono" placeholder="Authorization" /></label>
+            <label class="field">Chave<input v-model="form.secret" type="password" autocomplete="off" spellcheck="false" class="input font-mono" placeholder="Bearer …" /></label>
           </div>
           <p v-if="formError" class="text-sm text-rose-300">{{ formError }}</p>
           <div class="flex gap-2">
@@ -356,29 +356,29 @@ async function confirmRemove() {
         </div>
 
         <p v-if="selected.selfReference" class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-          É o MCP do próprio gateway: um agente com estas ferramentas pode abrir conversas com outros agentes — inclusive com ele mesmo. Dê só as ferramentas de que ele precisa.
+          MCP do próprio gateway: o agente pode abrir conversas com outros agentes, até com ele mesmo. Dê só o necessário.
         </p>
 
         <template v-if="selected.kind === 'container'">
           <p v-if="dockerDown" class="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
-            Este MCP não sobe neste servidor: {{ dockerDown }}. Recrie-o como Local (npm), se o pacote existir.
+            Este MCP não roda neste servidor: {{ dockerDown }}. Recrie como "Local (npm)".
           </p>
           <div class="flex flex-wrap items-center gap-2 text-xs text-zinc-400">
             <span class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-emerald-300">contêiner isolado</span>
-            <span>{{ selected.status.instances ?? 0 }} instância(s) ativa(s) — uma por conversa</span>
+            <span>{{ selected.status.instances ?? 0 }} em execução — uma por conversa</span>
             <button v-if="selected.status.instances" type="button" class="ml-auto rounded-full px-3 py-1 text-rose-300 hover:bg-rose-500/10" :disabled="busy" @click="stopAll">Encerrar todas</button>
           </div>
           <label class="field">Nome<input v-model="edit.name" required class="input" /></label>
           <McpContainerFields v-model="containerDraft" />
           <div v-if="containerDirty || edit.name !== selected.name" class="flex gap-2">
             <button type="button" :disabled="busy" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="saveContainer">Salvar alterações</button>
-            <span class="self-center text-xs text-zinc-500">Vale para as próximas conversas; as instâncias abertas seguem como estão.</span>
+            <span class="self-center text-xs text-zinc-500">Vale para as próximas conversas.</span>
           </div>
           <div v-if="selected.env?.length" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
             <h3 class="text-sm font-medium text-zinc-200">Variáveis secretas</h3>
             <form v-for="variable in selected.env" :key="variable.name" class="flex flex-wrap items-center gap-2" @submit.prevent="saveEnv(variable.name)">
               <code class="w-40 shrink-0 text-xs text-zinc-300">{{ variable.name }}</code>
-              <input v-model="envValues[variable.name]" type="password" autocomplete="off" :placeholder="variable.configured ? 'definida — colar para trocar' : 'sem valor'" class="input min-w-0 flex-1 font-mono text-sm" />
+              <input v-model="envValues[variable.name]" type="password" autocomplete="off" :placeholder="variable.configured ? 'preenchida — colar para trocar' : 'sem valor'" class="input min-w-0 flex-1 font-mono text-sm" />
               <button type="submit" :disabled="busy || !envValues[variable.name]" class="rounded-full bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700 disabled:opacity-40">Salvar</button>
             </form>
           </div>
@@ -387,21 +387,21 @@ async function confirmRemove() {
         <template v-if="selected.kind === 'process'">
           <div class="flex flex-wrap items-center gap-2 text-xs text-zinc-400">
             <span class="rounded-full bg-amber-500/15 px-2 py-0.5 text-amber-300">local (npm)</span>
-            <span>{{ selected.status.instances ?? 0 }} instância(s) ativa(s) — {{ selected.process?.scope === 'shared' ? 'compartilhada' : 'uma por conversa' }}</span>
+            <span>{{ selected.status.instances ?? 0 }} em execução — {{ selected.process?.scope === 'shared' ? 'compartilhada' : 'uma por conversa' }}</span>
             <button v-if="selected.status.instances" type="button" class="ml-auto rounded-full px-3 py-1 text-rose-300 hover:bg-rose-500/10" :disabled="busy" @click="stopAll">Encerrar todas</button>
           </div>
           <label class="field">Nome<input v-model="edit.name" required class="input" /></label>
           <McpProcessFields v-model="processDraft" />
           <div v-if="processDirty || edit.name !== selected.name" class="flex gap-2">
             <button type="button" :disabled="busy" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="saveProcess">Salvar alterações</button>
-            <span class="self-center text-xs text-zinc-500">As instâncias abertas são encerradas; a próxima ferramenta sobe com o cadastro novo.</span>
+            <span class="self-center text-xs text-zinc-500">As execuções em andamento serão encerradas.</span>
           </div>
           <div v-if="selected.process?.package" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
             <div class="flex flex-wrap items-center gap-2">
               <h3 class="text-sm font-medium text-zinc-200">Instalação</h3>
               <span class="text-xs" :class="!selected.install?.installed || selected.install.stale ? 'text-amber-300' : 'text-zinc-400'">
                 <template v-if="!selected.install?.installed">não instalado</template>
-                <template v-else-if="selected.install.stale">instalado {{ selected.install.spec }} (v{{ selected.install.version }}) — o pacote mudou, reinstale</template>
+                <template v-else-if="selected.install.stale">instalado v{{ selected.install.version }} — o pacote mudou, reinstale</template>
                 <template v-else>v{{ selected.install.version }}<template v-if="selected.install.installedAt"> · {{ fullTime(selected.install.installedAt) }}</template></template>
               </span>
               <button type="button" :disabled="busy || processDirty" class="ml-auto rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="install">
@@ -409,14 +409,14 @@ async function confirmRemove() {
               </button>
             </div>
             <small v-if="processDirty" class="text-xs text-zinc-500">Salve as alterações antes de instalar.</small>
-            <p v-if="installResult" class="text-sm" :class="installResult.ok ? 'text-emerald-300' : 'text-rose-300'">{{ installResult.ok ? `✓ Instalado v${installResult.version}.` : '✕ O npm falhou — a instalação anterior, se havia, continua valendo.' }}</p>
+            <p v-if="installResult" class="text-sm" :class="installResult.ok ? 'text-emerald-300' : 'text-rose-300'">{{ installResult.ok ? `✓ Instalado v${installResult.version}.` : '✕ A instalação falhou. A versão anterior continua.' }}</p>
             <pre v-if="installResult && !installResult.ok && installResult.log" class="max-h-48 overflow-auto rounded-lg bg-zinc-950 p-2 text-[11px] whitespace-pre-wrap text-zinc-400">{{ installResult.log }}</pre>
           </div>
           <div v-if="selected.env?.length" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
             <h3 class="text-sm font-medium text-zinc-200">Variáveis secretas</h3>
             <form v-for="variable in selected.env" :key="variable.name" class="flex flex-wrap items-center gap-2" @submit.prevent="saveEnv(variable.name)">
               <code class="w-40 shrink-0 text-xs text-zinc-300">{{ variable.name }}</code>
-              <input v-model="envValues[variable.name]" type="password" autocomplete="off" :placeholder="variable.configured ? 'definida — colar para trocar' : 'sem valor'" class="input min-w-0 flex-1 font-mono text-sm" />
+              <input v-model="envValues[variable.name]" type="password" autocomplete="off" :placeholder="variable.configured ? 'preenchida — colar para trocar' : 'sem valor'" class="input min-w-0 flex-1 font-mono text-sm" />
               <button type="submit" :disabled="busy || !envValues[variable.name]" class="rounded-full bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700 disabled:opacity-40">Salvar</button>
             </form>
           </div>
@@ -428,7 +428,7 @@ async function confirmRemove() {
             <label class="field">URL<input v-model="edit.url" required :readonly="isSelf" class="input font-mono read-only:opacity-60" /></label>
           </div>
           <div class="field">
-            Transporte
+            Conexão
             <div class="flex flex-wrap gap-1.5">
               <button v-for="(label, value) in TRANSPORT_LABEL" :key="value" type="button" class="chip" :class="{ on: edit.transport === value }" @click="edit.transport = value">{{ label }}</button>
             </div>
@@ -449,10 +449,10 @@ async function confirmRemove() {
               </button>
             </div>
             <small class="hint">{{ AUTH_LABEL[edit.auth].hint }}</small>
-            <small v-if="isSelf" class="hint">Fixo no MCP do próprio gateway: ele sempre age com a credencial de quem conversa (o seu login, numa conversa sua).</small>
-            <small v-if="edit.auth === 'caller' && selected?.id !== 'gateway'" class="text-xs text-amber-300">⚠ Este servidor recebe a sessão de quem conversa (o token do gateway) e pode usá-la como essa pessoa. Só para um servidor seu, de confiança.</small>
+            <small v-if="isSelf" class="hint">Fixo neste MCP: ele sempre usa o login de quem conversa.</small>
+            <small v-if="edit.auth === 'caller' && selected?.id !== 'gateway'" class="text-xs text-amber-300">⚠ O servidor passa a agir como a pessoa que conversa. Só use em servidor seu, de confiança.</small>
           </div>
-          <label v-if="edit.auth === 'header'" class="field sm:w-1/2">Header<input v-model="edit.headerName" class="input font-mono" /></label>
+          <label v-if="edit.auth === 'header'" class="field sm:w-1/2">Cabeçalho<input v-model="edit.headerName" class="input font-mono" /></label>
           <div v-if="dirty" class="flex gap-2">
             <button type="submit" :disabled="busy" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40">Salvar alterações</button>
           </div>
@@ -460,11 +460,11 @@ async function confirmRemove() {
 
         <div v-if="selected.kind === 'remote' && selected.auth === 'header'" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
           <p class="text-xs" :class="selected.secret.configured ? 'text-zinc-400' : 'text-amber-300'">
-            <template v-if="selected.secret.configured">Segredo salvo · termina em …{{ selected.secret.last4 }}<template v-if="selected.secret.updatedAt"> · {{ fullTime(selected.secret.updatedAt) }}</template></template>
-            <template v-else>Sem segredo: o header não é enviado.</template>
+            <template v-if="selected.secret.configured">Chave salva · termina em …{{ selected.secret.last4 }}<template v-if="selected.secret.updatedAt"> · {{ fullTime(selected.secret.updatedAt) }}</template></template>
+            <template v-else>Sem chave salva: nada é enviado.</template>
           </p>
           <form class="flex flex-wrap items-center gap-2" @submit.prevent="saveSecret">
-            <input v-model="secret" type="password" autocomplete="off" spellcheck="false" :placeholder="selected.secret.configured ? 'Colar novo valor para trocar' : `Valor do ${selected.headerName ?? 'Authorization'}`" class="input min-w-0 flex-1 font-mono text-sm" />
+            <input v-model="secret" type="password" autocomplete="off" spellcheck="false" :placeholder="selected.secret.configured ? 'Colar nova chave para trocar' : 'Colar a chave'" class="input min-w-0 flex-1 font-mono text-sm" />
             <button type="submit" :disabled="busy || !secret.trim()" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40">Salvar</button>
             <button v-if="selected.secret.configured" type="button" class="rounded-full px-3 py-2 text-sm text-rose-300 hover:bg-rose-500/10" @click="clearSecret">Remover</button>
           </form>
@@ -479,10 +479,10 @@ async function confirmRemove() {
 
         <div class="border-t border-zinc-800/80 pt-4">
           <h3 class="mb-1 text-sm font-medium text-zinc-200">
-            Ferramentas <span class="text-xs font-normal text-zinc-500">{{ tools.length }}<template v-if="tools.length"> · ≈ {{ toolsTokens(tools).toLocaleString('pt-BR') }} tokens todas juntas</template></span>
+            Ferramentas <span class="text-xs font-normal text-zinc-500">{{ tools.length }}<template v-if="tools.length"> · ≈ {{ toolsTokens(tools).toLocaleString('pt-BR') }} tokens no total</template></span>
           </h3>
           <p v-if="tools.length" class="mb-2 text-xs text-zinc-500">
-            O peso de cada uma: a definição (nome, descrição, parâmetros) vai em toda chamada ao modelo de um agente que a tem, mesmo sem ser usada. Dê ao agente só as de que ele precisa.
+            Cada ferramenta ocupa espaço na conversa do agente, mesmo sem uso. Dê só as necessárias.
           </p>
           <ul v-if="tools.length" class="divide-y divide-zinc-800 rounded-xl border border-zinc-800">
             <li v-for="tool in toolsByWeight" :key="tool.name" class="flex items-start gap-3 px-3 py-2">
@@ -509,7 +509,7 @@ async function confirmRemove() {
       <ConfirmDialog
         :open="!!removing"
         :title="`Remover o MCP ${removing?.name ?? ''}?`"
-        :message="removeError ?? 'O servidor e o segredo dele somem. Se algum agente ainda o usa, o gateway recusa e diz quais.'"
+        :message="removeError ?? 'O servidor e a chave dele serão apagados. Não dá se algum agente ainda o usa.'"
         action="Remover"
         @confirm="confirmRemove"
         @cancel="removing = undefined"

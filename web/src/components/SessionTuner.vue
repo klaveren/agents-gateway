@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { levelsOf, resolveChoice, type IChoice } from '@/lib/agentChoice'
+import { effortLabel } from '@/lib/format'
 import type { IAgent, IAgentProvider, TMode } from '@/lib/types'
 import { useProtocolsStore } from '@/stores/protocols'
 import { useThreadStore } from '@/stores/thread'
@@ -38,7 +39,7 @@ watch(
 function blocked(provider: IAgentProvider): string | undefined {
   if (!props.mode || !provider.protocol) return undefined
   const lanes = protocols.get(provider.protocol)?.lanes
-  return lanes && !lanes.includes(props.mode) ? `não roda a lane ${props.mode}` : undefined
+  return lanes && !lanes.includes(props.mode) ? `não funciona neste modo` : undefined
 }
 
 /** Falhou? O select já mostra a escolha nova (o DOM guarda o que o usuário clicou): volta ao valor real da sessão. */
@@ -88,14 +89,14 @@ function pickReasoning(event: Event) {
     </label>
     <label v-if="levels.length" class="flex items-center gap-1.5">
       Raciocínio
-      <select :value="thread.session?.reasoning ?? ''" :disabled="busy" class="rounded-md bg-zinc-800 px-1.5 py-0.5 font-mono text-zinc-100 disabled:opacity-60" @change="pickReasoning">
-        <option value="">padrão</option>
-        <option v-for="level in levels" :key="level" :value="level">{{ level }}</option>
+      <select :value="thread.session?.reasoning ?? ''" :disabled="busy" class="rounded-md bg-zinc-800 px-1.5 py-0.5 text-zinc-100 disabled:opacity-60" @change="pickReasoning">
+        <option value="">Padrão</option>
+        <option v-for="level in levels" :key="level" :value="level">{{ effortLabel(level) }}</option>
       </select>
     </label>
     <span v-if="saving" class="text-zinc-500">trocando…</span>
     <span v-else-if="failure" class="text-rose-300">{{ failure }}</span>
-    <span v-else-if="switched" class="text-amber-300/90">agora em {{ switched }}: o histórico vai como transcrição na próxima mensagem</span>
+    <span v-else-if="switched" class="text-amber-300/90">agora em {{ switched }}; vale a partir da próxima mensagem</span>
     <span v-else class="hidden text-zinc-600 sm:inline">vale a partir da próxima mensagem</span>
   </div>
 </template>

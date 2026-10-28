@@ -22,9 +22,9 @@ import { useThreadStore } from '@/stores/thread'
  */
 /**
  * `project`: o escopo FIXO — `null` = global (as rules globais, em Sistema), um id = aquele projeto (a guia do projeto).
- * Ausente = o projeto atual. `embedded`: dentro de outra tela, sem o cabeçalho nem as guias.
+ * Ausente = o projeto atual.
  */
-const props = defineProps<{ kind: TBuildKind; tab: 'build' | 'protocol'; project?: string | null; embedded?: boolean }>()
+const props = defineProps<{ kind: TBuildKind; tab: 'build' | 'protocol'; project?: string | null }>()
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
@@ -53,7 +53,7 @@ const agentTools = computed(() => (Array.isArray(draft.value?.agent?.allowedTool
 const agentResources = computed(() => {
   const resources = draft.value?.resources
   const line = (ids?: string[]) => (!ids || ids.includes('*') ? 'todos' : ids.length ? ids.join(', ') : 'nenhum')
-  return resources ? `skills: ${line(resources.skills)} · commands: ${line(resources.commands)}` : 'skills e commands: todos (o padrão)'
+  return resources ? `Skills: ${line(resources.skills)} · Commands: ${line(resources.commands)}` : 'Skills e Commands: todos'
 })
 
 onMounted(async () => {
@@ -80,8 +80,9 @@ async function loadBuilds() {
   if (!auth.isAdmin || props.tab !== 'build') return
   buildsError.value = undefined
   try {
-    const found = (await api<{ sessions: IConversation[] }>('/conversations', { query: { builder: props.kind, limit: 50, ...(scopeProject.value ? { project: scopeProject.value } : {}) } }))
-      .sessions
+    const found = (
+      await api<{ sessions: IConversation[] }>('/conversations', { query: { builder: props.kind, limit: 50, ...(scopeProject.value ? { project: scopeProject.value } : {}) } })
+    ).sessions
     // Escopo global: só as conversas sem projeto (a busca sem `project` traria as de todos).
     builds.value = props.project === null ? found.filter((build) => !build.metadata?.project) : found
     // Aberta antes de a lista chegar (recarregou a página): o cabeçalho ganha o título agora.
@@ -100,7 +101,11 @@ watch(
 watch(
   selected,
   (id) => {
-    if (id && thread.sessionId !== id) void thread.open(id, builds.value.find((build) => build.id === id))
+    if (id && thread.sessionId !== id)
+      void thread.open(
+        id,
+        builds.value.find((build) => build.id === id),
+      )
   },
   { immediate: true },
 )
@@ -238,17 +243,16 @@ function describe(failure: unknown): string {
     <p class="font-medium text-zinc-200">Só quem administra constrói {{ title }}.</p>
   </div>
 
-  <div v-else class="@container flex h-full min-h-0 flex-col">
-    <header v-if="!embedded" class="flex flex-wrap items-center gap-3 border-b border-zinc-800/80 px-4 py-3">
-      <h1 class="text-xl font-semibold">{{ title }}</h1>
-      <BuildTabs :kind="kind" :active="tab" />
-    </header>
-
-    <!-- CONSTRUIR: as conversas com o construtor, a conversa aberta e o rascunho. -->
-    <!-- ⚖️ Três colunas só quando o PRÓPRIO espaço é largo (container query, não a janela): embutido no projeto ou em janela
-         estreita, a conversa ficava espremida entre a lista e o rascunho — aí eles empilham. -->
-    <div v-if="tab === 'build'" class="scroll-thin flex min-h-0 flex-1 flex-col overflow-y-auto @5xl:flex-row @5xl:overflow-hidden">
-      <aside class="flex shrink-0 flex-col gap-1 border-b border-zinc-800/80 p-3 @5xl:w-60 @5xl:border-r @5xl:border-b-0">
+  <!-- ⚖️ O título e as guias moram numa coluna à esquerda da largura da lista (340px), como em Lista: trocar de guia não
+       mexe neles de lugar. Em Construir, a mesma coluna leva as conversas com o construtor. -->
+  <div v-else class="flex h-full min-h-0 flex-col lg:flex-row">
+    <aside class="scroll-thin flex shrink-0 flex-col border-b border-zinc-800/80 lg:h-full lg:w-[340px] lg:overflow-y-auto lg:border-r lg:border-b-0">
+      <!-- A altura do botão "+" das listas: o título não pula ao trocar de guia. -->
+      <header class="flex h-9 box-content items-center gap-2 px-4 pt-4 pb-3">
+        <h1 class="text-xl font-semibold">{{ title }}</h1>
+      </header>
+      <BuildTabs :kind="kind" :active="tab" class="px-3 pb-2" />
+      <div v-if="tab === 'build'" class="flex flex-col gap-1 px-3 pt-1 pb-3">
         <button
           :disabled="starting"
           class="flex items-center justify-center gap-2 rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50"
@@ -258,9 +262,9 @@ function describe(failure: unknown): string {
           Criar com o construtor
         </button>
         <p v-if="buildsError" class="px-1 text-xs text-rose-300">{{ buildsError }}</p>
-        <h2 v-else-if="builds.length" class="px-1 pt-2 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Conversas com o construtor</h2>
+        <h2 v-else-if="builds.length" class="px-1 pt-3 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Conversas com o construtor</h2>
         <p v-else class="px-1 pt-2 text-xs text-zinc-500">Nenhuma conversa com o construtor{{ scopeProject ? ' neste projeto' : '' }} ainda.</p>
-        <div class="scroll-thin flex max-h-32 flex-col gap-0.5 overflow-y-auto @5xl:max-h-none">
+        <div class="scroll-thin flex max-h-32 flex-col gap-0.5 overflow-y-auto lg:max-h-none">
           <RouterLink
             v-for="build in builds"
             :key="build.id"
@@ -269,119 +273,121 @@ function describe(failure: unknown): string {
             :class="build.id === selected ? 'bg-emerald-500/15' : 'hover:bg-zinc-800/60'"
           >
             <span class="block truncate text-sm">{{ build.title || 'Conversa com o construtor' }}</span>
-            <span class="block truncate text-xs text-zinc-500">{{ shortTime(build.updatedAt) }} · {{ build.turns }} turno(s)</span>
+            <span class="block truncate text-xs text-zinc-500">{{ shortTime(build.updatedAt) }} · {{ build.turns }} mensagem(ns)</span>
           </RouterLink>
         </div>
-      </aside>
+      </div>
+    </aside>
 
-      <main class="flex min-h-[30rem] min-w-0 flex-1 flex-col @5xl:min-h-0">
-        <ThreadView v-if="selected" :key="selected" embedded :agent-id="builderAgentId(kind)" mode="agent" @removed="removed" />
-        <section v-else class="mx-auto flex max-w-xl flex-col gap-3 p-6 text-sm text-zinc-300">
-          <h2 class="text-lg font-semibold text-zinc-100">Construir {{ info.article }}</h2>
-          <p>
-            O construtor é um agente do sistema que segue o
-            <span v-if="embedded">protocolo</span>
-            <RouterLink v-else :to="`${base}/protocol`" class="text-emerald-400 underline underline-offset-2">protocolo</RouterLink>
-            de {{ info.title.toLowerCase() }}: entende o que você quer, confere o que já existe, procura as specs e ADRs relacionadas e pergunta o que faltar. No fim, entrega um
-            rascunho ao lado.
-          </p>
-          <p class="text-zinc-400">
-            Ele só grava quando você disser na conversa que pode. Se preferir ajustar à mão, "Abrir no editor" leva o rascunho para a guia Lista, sem salvar. A conversa fica
-            aqui, fora da caixa de entrada, e o consumo entra no Uso como "Construtor".
-          </p>
-          <p class="text-xs text-zinc-500">O modelo dele se escolhe em Sistema → Modelo do construtor (sem escolha, o do Atlas).</p>
-          <div>
-            <button
-              :disabled="starting"
-              class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50"
-              @click="startBuild"
-            >
-              Criar com o construtor
-            </button>
-          </div>
-        </section>
-      </main>
+    <!-- CONSTRUIR: a conversa aberta e o rascunho. ⚖️ Lado a lado só quando o PRÓPRIO espaço é largo (container query). -->
+    <div v-if="tab === 'build'" class="@container min-h-0 min-w-0 flex-1">
+      <div class="scroll-thin flex h-full min-h-0 flex-col overflow-y-auto @3xl:flex-row @3xl:overflow-hidden">
+        <main class="flex min-h-[30rem] min-w-0 flex-1 flex-col @3xl:min-h-0">
+          <ThreadView v-if="selected" :key="selected" embedded :agent-id="builderAgentId(kind)" mode="agent" @removed="removed" />
+          <section v-else class="mx-auto flex max-w-xl flex-col gap-3 p-6 text-sm text-zinc-300">
+            <h2 class="text-lg font-semibold text-zinc-100">Construir {{ info.article }}</h2>
+            <p>
+              O construtor segue o
+              <RouterLink :to="`${base}/protocol`" class="text-emerald-400 underline underline-offset-2">protocolo</RouterLink>
+              de {{ info.title.toLowerCase() }}: entende o que você quer, confere o que já existe e pergunta o que faltar. No fim, entrega um rascunho ao lado.
+            </p>
+            <p class="text-zinc-400">Ele só salva quando você autorizar na conversa. Para ajustar à mão, use "Abrir no editor".</p>
+            <div>
+              <button
+                :disabled="starting"
+                class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50"
+                @click="startBuild"
+              >
+                Criar com o construtor
+              </button>
+            </div>
+          </section>
+        </main>
 
-      <aside v-if="selected" class="scroll-thin flex shrink-0 flex-col gap-3 border-t border-zinc-800/80 p-4 @5xl:w-[24rem] @5xl:overflow-y-auto @5xl:border-t-0 @5xl:border-l">
-        <h2 class="text-sm font-semibold text-zinc-200">Rascunho</h2>
-        <p v-if="!draft" class="text-xs text-zinc-500">Ainda nenhum. Quando o construtor fechar {{ info.article }}, o rascunho aparece aqui.</p>
-        <template v-else>
-          <div>
-            <p v-if="kind === 'rule'" class="text-base font-medium text-zinc-100">{{ draft.title }}</p>
-            <template v-else-if="isAgent">
-              <p class="text-base font-medium text-zinc-100">{{ draft.title }}</p>
-              <p class="font-mono text-xs text-zinc-500">{{ draft.id }}</p>
-              <p v-if="draft.description" class="mt-1 text-sm text-zinc-300 italic">{{ draft.description }}</p>
-            </template>
-            <template v-else>
-              <p class="font-mono text-base text-zinc-100">{{ kind === 'command' ? '/' : '' }}{{ draft.id }}</p>
-              <p v-if="isDoc" class="text-sm font-medium text-zinc-200">{{ draft.title }}</p>
-              <p class="text-sm text-zinc-300">{{ isDoc ? draft.summary : draft.description }}</p>
-            </template>
-            <p class="mt-1 text-xs text-zinc-500">{{ draft.global ? 'Global — todos os projetos' : `Projeto ${buildProject ?? '—'}` }}</p>
-          </div>
-          <p v-if="draft.saved" class="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
-            <Icon name="check" class="h-4 w-4" /> Salvo pelo construtor.
-            <RouterLink :to="savedLink" class="ml-auto text-emerald-300 underline underline-offset-2">Abrir</RouterLink>
-          </p>
-          <dl v-if="isAgent" class="flex flex-col gap-1.5 text-xs">
+        <aside v-if="selected" class="scroll-thin flex shrink-0 flex-col gap-3 border-t border-zinc-800/80 p-4 @3xl:w-[22rem] @3xl:overflow-y-auto @3xl:border-t-0 @3xl:border-l">
+          <h2 class="text-sm font-semibold text-zinc-200">Rascunho</h2>
+          <p v-if="!draft" class="text-xs text-zinc-500">Ainda nenhum. Quando o construtor fechar {{ info.article }}, o rascunho aparece aqui.</p>
+          <template v-else>
             <div>
-              <dt class="text-zinc-500">Modelos</dt>
-              <dd v-for="line in agentProviders" :key="line" class="font-mono text-zinc-300">{{ line }}</dd>
+              <p v-if="kind === 'rule'" class="text-base font-medium text-zinc-100">{{ draft.title }}</p>
+              <template v-else-if="isAgent">
+                <p class="text-base font-medium text-zinc-100">{{ draft.title }}</p>
+                <p class="font-mono text-xs text-zinc-500">{{ draft.id }}</p>
+                <p v-if="draft.description" class="mt-1 text-sm text-zinc-300 italic">{{ draft.description }}</p>
+              </template>
+              <template v-else>
+                <p class="font-mono text-base text-zinc-100">{{ kind === 'command' ? '/' : '' }}{{ draft.id }}</p>
+                <p v-if="isDoc" class="text-sm font-medium text-zinc-200">{{ draft.title }}</p>
+                <p class="text-sm text-zinc-300">{{ isDoc ? draft.summary : draft.description }}</p>
+              </template>
+              <p class="mt-1 text-xs text-zinc-500">
+                {{ draft.global ? 'Global — todos os projetos' : `Projeto ${projects.list.find((item) => item.id === buildProject)?.name ?? buildProject ?? '—'}` }}
+              </p>
             </div>
-            <div v-if="agentTools.length">
-              <dt class="text-zinc-500">Ferramentas</dt>
-              <dd class="mt-0.5 flex flex-wrap gap-1">
-                <span v-for="tool in agentTools" :key="tool" class="rounded-full bg-zinc-800 px-2 py-0.5 font-mono text-[11px] text-zinc-300">{{ tool }}</span>
-              </dd>
+            <p v-if="draft.saved" class="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
+              <Icon name="check" class="h-4 w-4" />
+              Salvo pelo construtor.
+              <RouterLink :to="savedLink" class="ml-auto text-emerald-300 underline underline-offset-2">Abrir</RouterLink>
+            </p>
+            <dl v-if="isAgent" class="flex flex-col gap-1.5 text-xs">
+              <div>
+                <dt class="text-zinc-500">Modelos</dt>
+                <dd v-for="line in agentProviders" :key="line" class="font-mono text-zinc-300">{{ line }}</dd>
+              </div>
+              <div v-if="agentTools.length">
+                <dt class="text-zinc-500">Ferramentas</dt>
+                <dd class="mt-0.5 flex flex-wrap gap-1">
+                  <span v-for="tool in agentTools" :key="tool" class="rounded-full bg-zinc-800 px-2 py-0.5 font-mono text-[11px] text-zinc-300">{{ tool }}</span>
+                </dd>
+              </div>
+              <div v-if="draft.initialContext.length">
+                <dt class="text-zinc-500">Contexto inicial</dt>
+                <dd class="font-mono text-zinc-300">{{ draft.initialContext.join(', ') }}</dd>
+              </div>
+              <div>
+                <dt class="text-zinc-500">Recursos</dt>
+                <dd class="text-zinc-300">{{ agentResources }}</dd>
+              </div>
+              <div class="flex flex-wrap gap-1">
+                <span v-if="draft.agent?.adminOnly" class="rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300">só admin</span>
+                <span v-if="draft.agent?.role === 'subagent'" class="rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300">subagente</span>
+              </div>
+            </dl>
+            <div v-if="isResource && draft.docIds.length" class="flex flex-wrap gap-1">
+              <span v-for="docId in draft.docIds" :key="docId" class="rounded-full bg-zinc-800 px-2 py-0.5 font-mono text-[11px] text-zinc-300">{{ docId }}</span>
             </div>
-            <div v-if="draft.initialContext.length">
-              <dt class="text-zinc-500">Contexto inicial</dt>
-              <dd class="font-mono text-zinc-300">{{ draft.initialContext.join(', ') }}</dd>
+            <div class="flex gap-1 text-xs">
+              <button
+                type="button"
+                class="rounded-full px-3 py-1"
+                :class="draftPreview ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-800/60'"
+                @click="draftPreview = true"
+              >
+                Prévia
+              </button>
+              <button
+                type="button"
+                class="rounded-full px-3 py-1"
+                :class="!draftPreview ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-800/60'"
+                @click="draftPreview = false"
+              >
+                Texto
+              </button>
             </div>
-            <div>
-              <dt class="text-zinc-500">Recursos</dt>
-              <dd class="text-zinc-300">{{ agentResources }}</dd>
-            </div>
-            <div class="flex flex-wrap gap-1">
-              <span v-if="draft.agent?.adminOnly" class="rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300">só admin</span>
-              <span v-if="draft.agent?.role === 'subagent'" class="rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300">subagente</span>
-            </div>
-          </dl>
-          <div v-if="isResource && draft.docIds.length" class="flex flex-wrap gap-1">
-            <span v-for="docId in draft.docIds" :key="docId" class="rounded-full bg-zinc-800 px-2 py-0.5 font-mono text-[11px] text-zinc-300">{{ docId }}</span>
-          </div>
-          <div class="flex gap-1 text-xs">
+            <!-- eslint-disable-next-line vue/no-v-html -- renderMarkdown escapa antes de marcar -->
+            <div v-if="draftPreview" class="prose-agent rounded-xl border border-zinc-800 p-3 text-sm break-words" v-html="renderMarkdown(draft.body)" />
+            <pre v-else class="rounded-xl border border-zinc-800 p-3 font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-zinc-300">{{ draft.body }}</pre>
             <button
-              type="button"
-              class="rounded-full px-3 py-1"
-              :class="draftPreview ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-800/60'"
-              @click="draftPreview = true"
+              class="rounded-full px-4 py-2 text-sm font-medium"
+              :class="draft.saved ? 'text-zinc-300 hover:bg-zinc-800' : 'bg-emerald-500 text-zinc-950 hover:bg-emerald-400'"
+              @click="openInEditor"
             >
-              Prévia
+              Abrir no editor
             </button>
-            <button
-              type="button"
-              class="rounded-full px-3 py-1"
-              :class="!draftPreview ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-800/60'"
-              @click="draftPreview = false"
-            >
-              Texto
-            </button>
-          </div>
-          <!-- eslint-disable-next-line vue/no-v-html -- renderMarkdown escapa antes de marcar -->
-          <div v-if="draftPreview" class="prose-agent rounded-xl border border-zinc-800 p-3 text-sm break-words" v-html="renderMarkdown(draft.body)" />
-          <pre v-else class="rounded-xl border border-zinc-800 p-3 font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-zinc-300">{{ draft.body }}</pre>
-          <button
-            class="rounded-full px-4 py-2 text-sm font-medium"
-            :class="draft.saved ? 'text-zinc-300 hover:bg-zinc-800' : 'bg-emerald-500 text-zinc-950 hover:bg-emerald-400'"
-            @click="openInEditor"
-          >
-            Abrir no editor
-          </button>
-          <p class="text-xs text-zinc-500">{{ draft.saved ? 'Para ajustar à mão.' : 'Diga na conversa que pode gravar, ou abra na guia Lista, preenchido e sem salvar.' }}</p>
-        </template>
-      </aside>
+            <p class="text-xs text-zinc-500">{{ draft.saved ? 'Para ajustar à mão.' : 'Diga ao construtor para salvar, ou abra no editor.' }}</p>
+          </template>
+        </aside>
+      </div>
     </div>
 
     <!-- PROTOCOLO: o do core, só leitura, e os complementos. -->
@@ -394,21 +400,19 @@ function describe(failure: unknown): string {
               <h2 class="font-semibold">{{ protocol.core.title }}</h2>
               <span class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] text-emerald-300">do sistema · v{{ protocol.core.version }}</span>
             </header>
-            <p class="border-b border-zinc-800 px-4 py-2 text-xs text-zinc-500">
-              Vem com o gateway e se atualiza com ele. Não se edita: para acrescentar regras suas, use o complemento abaixo.
-            </p>
+            <p class="border-b border-zinc-800 px-4 py-2 text-xs text-zinc-500">Padrão do sistema, não editável. Para acrescentar regras, use o complemento abaixo.</p>
             <!-- eslint-disable-next-line vue/no-v-html -- renderMarkdown escapa antes de marcar -->
             <div class="prose-agent px-4 py-3 text-sm break-words" v-html="renderMarkdown(protocol.core.body)" />
           </section>
 
           <section class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-4">
             <h2 class="font-semibold">Complemento global</h2>
-            <p class="text-xs text-zinc-500">Vale em todos os projetos, depois do protocolo do sistema. Em conflito, vale o complemento. Vazio = sem complemento.</p>
+            <p class="text-xs text-zinc-500">Vale em todos os projetos e prevalece sobre o protocolo.</p>
             <textarea
               v-model="addenda.global"
               rows="6"
               class="input font-mono text-[13px]"
-              placeholder="Ex.: a descrição é sempre em português; o id começa pelo domínio (infra-, api-…)."
+              placeholder="Ex.: a descrição é sempre em português; o id começa pelo tema (infra-, api-…)."
             />
             <div class="flex items-center gap-3">
               <button
@@ -418,7 +422,7 @@ function describe(failure: unknown): string {
               >
                 Salvar
               </button>
-              <span v-if="saved === 'global'" class="text-xs text-emerald-300">Salvo. Vale para as conversas com o construtor que começarem agora.</span>
+              <span v-if="saved === 'global'" class="text-xs text-emerald-300">Salvo. Vale para as próximas conversas.</span>
               <span v-else-if="protocol.addenda.global" class="text-xs text-zinc-500">
                 {{ shortTime(protocol.addenda.global.updatedAt) }} · {{ protocol.addenda.global.updatedBy }}
               </span>
@@ -427,7 +431,7 @@ function describe(failure: unknown): string {
 
           <section v-if="scopeProject" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-4">
             <h2 class="font-semibold">Complemento do projeto {{ currentProjectName }}</h2>
-            <p class="text-xs text-zinc-500">Só nas conversas com o construtor deste projeto, depois do global.</p>
+            <p class="text-xs text-zinc-500">Vale só neste projeto.</p>
             <textarea v-model="addenda.project" rows="6" class="input font-mono text-[13px]" />
             <div class="flex items-center gap-3">
               <button
@@ -437,7 +441,7 @@ function describe(failure: unknown): string {
               >
                 Salvar
               </button>
-              <span v-if="saved === 'project'" class="text-xs text-emerald-300">Salvo. Vale para as conversas com o construtor que começarem agora.</span>
+              <span v-if="saved === 'project'" class="text-xs text-emerald-300">Salvo. Vale para as próximas conversas.</span>
               <span v-else-if="protocol.addenda.project" class="text-xs text-zinc-500">
                 {{ shortTime(protocol.addenda.project.updatedAt) }} · {{ protocol.addenda.project.updatedBy }}
               </span>

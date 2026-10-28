@@ -47,7 +47,7 @@ export function renderMarkdown(text: string): string {
     while (index + taken.length < lines.length && pattern.test(lines[index + taken.length])) taken.push(lines[index + taken.length])
     return taken
   }
-  for (let index = 0; index < lines.length; ) {
+  for (let index = 0; index < lines.length;) {
     const line = lines[index]
     const heading = /^(#{1,4})\s+(.+)$/.exec(line)
     if (TABLE_ROW.test(line) && TABLE_RULE.test(lines[index + 1] ?? '')) {
@@ -55,7 +55,14 @@ export function renderMarkdown(text: string): string {
       const head = cells(line)
         .map((cell) => `<th>${cell}</th>`)
         .join('')
-      const body = rows.map((row) => `<tr>${cells(row).map((cell) => `<td>${cell}</td>`).join('')}</tr>`).join('')
+      const body = rows
+        .map(
+          (row) =>
+            `<tr>${cells(row)
+              .map((cell) => `<td>${cell}</td>`)
+              .join('')}</tr>`,
+        )
+        .join('')
       parts.push({ block: true, html: `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>` })
       index += 2 + rows.length
     } else if (heading) {
