@@ -1,3 +1,5 @@
+import type { IPermissionChecker } from '@application/Permissions.Service'
+import { makePermissions } from './Permissions.Factory'
 import { makeGuidance } from './Guidance.Factory'
 import { makeConversationRepository } from './Conversations.Factory'
 import { IMcpServerConfig } from '@domain/models/McpServer.Model'
@@ -45,14 +47,18 @@ export function makeTools(): ITools {
       servers,
       catalog: new ToolCatalog(
         mcp,
-        makeLocalTools({ docs: makeGuidance(), skills: makeGuidance(), drafts: makeGuidance(), todos: todoStore() }),
-        (allowed) => makeDelegateTool(runnableTargets(allowed), delegation),
+        makeLocalTools({ docs: makeGuidance(), skills: makeGuidance(), drafts: makeGuidance(), todos: todoStore(), permissions: lazyPermissions }),
+        (allowed) => makeDelegateTool(runnableTargets(allowed), delegation, lazyPermissions),
         containerProxy,
+        lazyPermissions,
       ),
     }
   }
   return instance
 }
+
+/** As permissões, pedidas na hora (a fábrica delas lê os agentes, que leem o catálogo de ferramentas ao nascer). */
+const lazyPermissions: IPermissionChecker = { check: (asker, subject, options) => makePermissions().check(asker, subject, options) }
 
 /** Onde o `update_todos` grava: o banco das conversas, aberto na primeira tarefa (uma conexão a mais no mesmo arquivo). */
 let todos: IConversationRepository | undefined

@@ -158,5 +158,6 @@ function toAgent(stored: IStoredAgent): IAgent {
     ...(stored.role ? { role: stored.role } : {}),
     ...(stored.adminOnly ? { adminOnly: true } : {}),
     ...(stored.projectId ? { projectId: stored.projectId } : {}),
+    ...(stored.permissions?.length ? { permissions: stored.permissions } : {}),
   }
 }

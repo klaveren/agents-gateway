@@ -137,6 +137,18 @@ export const agentBodySchema = z.object({
   adminOnly: z.boolean().optional(),
   /** O projeto do agente. Ausente (ou `null`) = global, em todos os projetos. */
   projectId: z.string().trim().max(32).nullable().optional(),
+  /** As regras de permissão do agente (ver `Permission.Policy`). Ausente na edição = mantém as que ele tem. */
+  permissions: z
+    .array(
+      z.object({
+        category: z.enum(['terminal', 'read', 'write', 'network', 'mcp', 'skill', 'delegate']),
+        pattern: z.string().trim().min(1).max(300),
+        decision: z.enum(['allow', 'deny']),
+        note: z.string().max(200).optional(),
+      }),
+    )
+    .max(300)
+    .optional(),
 })
 
 /**

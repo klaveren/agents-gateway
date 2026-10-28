@@ -1,3 +1,4 @@
+import type { IPermissionRule } from '@domain/Permission.Policy'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IModelPrice, MODEL_PRICING, TModelPricing } from '@domain/models/Model.Pricing'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -78,6 +79,8 @@ export interface IAgentDetailDto extends IAgentDto {
   systemPrompt: string
   /** Quem o agente é (personalidade). Só para quem administra, como o prompt. */
   soul?: string
+  /** As regras de permissão do agente (a camada dele). Só para quem administra. */
+  permissions?: IPermissionRule[]
   updatedAt?: Date
   updatedBy?: string
 }
@@ -140,6 +143,7 @@ export function toAgentDetailDto(
     ...toAgentDto(entry.agent, factsOf),
     systemPrompt: entry.agent.systemPrompt,
     soul: entry.agent.soul,
+    ...(entry.agent.permissions?.length ? { permissions: entry.agent.permissions } : {}),
     updatedAt: entry.updatedAt,
     updatedBy: entry.updatedBy,
   }

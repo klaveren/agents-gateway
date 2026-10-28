@@ -1,3 +1,4 @@
+import { makePermissions } from './Permissions.Factory'
 import { migrateLegacyToProjects, ProjectsService } from '@application/Projects.Service'
 import { AGENT_SEED } from '@domain/Agent.Seed'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
@@ -32,10 +33,11 @@ function build() {
         .some((user) => user.id === userId),
     {
       create: (id) => projectWorkspace(id),
-      // As rules e os documentos do projeto vão junto com a pasta.
+      // As rules, os documentos e as permissões do projeto vão junto com a pasta.
       remove: (id) => {
         removeProjectWorkspace(id)
         makeGuidance().removeProject(id)
+        makePermissions().removeProject(id)
       },
     },
   )

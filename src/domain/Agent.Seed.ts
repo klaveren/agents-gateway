@@ -1,3 +1,4 @@
+import type { IPermissionRule } from './Permission.Policy'
 import { IAgent } from './models/Agent.Model'
 import { builderAgentId } from './Builder.Agents'
 import { PROTOCOL_KINDS } from './models/Protocol.Model'
@@ -58,6 +59,21 @@ const ATLAS_TOOLS = [
 export const BUILDER_DELEGATIONS: readonly string[] = PROTOCOL_KINDS.map((kind) => `agent:${builderAgentId(kind)}`)
 /** As ferramentas de gravar conteúdo que o Atlas deixou de ter (a migração as tira do Atlas que já está no banco). */
 export const RETIRED_ATLAS_TOOLS: readonly string[] = ['save_rule', 'save_doc', 'save_resource'].map((tool) => `mcp:gateway/${tool}`)
+
+/**
+ * As permissões do Atlas (ver `Permission.Policy`): sem regra, tudo é negado — e o Atlas precisa das ferramentas do
+ * próprio gateway e de delegar aos construtores. O Atlas Admin também lê e grava na pasta da conversa.
+ */
+export const ATLAS_PERMISSIONS: IPermissionRule[] = [
+  { category: 'mcp', pattern: 'gateway/*', decision: 'allow', note: 'as ferramentas do gateway' },
+  { category: 'delegate', pattern: 'builder-*', decision: 'allow', note: 'os construtores do core' },
+]
+export const ATLAS_ADMIN_PERMISSIONS: IPermissionRule[] = [
+  ...ATLAS_PERMISSIONS,
+  { category: 'read', pattern: '**', decision: 'allow', note: 'a pasta de trabalho' },
+  { category: 'write', pattern: '**', decision: 'allow', note: 'a pasta de trabalho' },
+]
+
 /** E o de gravar agente, que saiu depois (migração `atlas-agent-builder`). */
 export const RETIRED_ATLAS_AGENT_TOOL = 'mcp:gateway/save_agent'
 
@@ -140,6 +156,7 @@ ${ATLAS_BUILDERS_SECTION}`,
   reasoningEfforts: ['low', 'medium', 'high'],
   modes: [EMode.AGENT],
   allowedTools: ['cap:web.search', 'cap:todos', ...ATLAS_TOOLS, ...BUILDER_DELEGATIONS],
+  permissions: ATLAS_PERMISSIONS,
 }
 
 /** O que o Atlas Admin tem a mais: o sistema operacional desta máquina, pelas nativas do Claude Agent SDK. */
@@ -183,6 +200,7 @@ Primeiro confira se já existe: command -v <nome>. Se faltar:
 
 MCPs (como o Playwright) se cadastram e instalam na guia MCPs da tela — você não tem ferramenta para isso: oriente a pessoa.`,
   allowedTools: ['cap:web.search', 'cap:todos', ...HOST_TOOLS, ...ATLAS_TOOLS, ...PACKAGE_TOOLS, ...BUILDER_DELEGATIONS],
+  permissions: ATLAS_ADMIN_PERMISSIONS,
   adminOnly: true,
 }
 

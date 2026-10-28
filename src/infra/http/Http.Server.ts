@@ -1,3 +1,6 @@
+import { PermissionsService } from '@application/Permissions.Service'
+import { SqlitePermissionRepository } from '@infra/persistence/Sqlite.PermissionRepository'
+import { PermissionsController } from './Permissions.Controller'
 import { SchedulesController } from './Schedules.Controller'
 import { AgentSchedulesService } from '@application/AgentSchedules.Service'
 import { ScheduleRunner } from '@application/Schedule.Runner'
@@ -89,6 +92,7 @@ export class HttpServer {
     projects?: ProjectsController,
     guidance?: GuidanceController,
     schedules?: SchedulesController,
+    permissions?: PermissionsController,
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
@@ -120,6 +124,7 @@ export class HttpServer {
       projects ?? new ProjectsController({ projects: defaultProjects() }),
       guidance ?? new GuidanceController({ guidance: new GuidanceService(new SqliteGuidanceRepository(), () => false) }),
       schedules ?? defaultSchedules(),
+      permissions ?? defaultPermissions(),
     )
     this.setupRoutes()
     this.setupFrontend()
@@ -226,8 +231,13 @@ function buildRoutes(
   projects: ProjectsController,
   guidance: GuidanceController,
   schedules: SchedulesController,
+  permissions: PermissionsController,
 ): IRoute[] {
   return [
+    { method: 'get', path: '/projects/:projectId/permissions', handler: permissions.get },
+    { method: 'put', path: '/projects/:projectId/permissions', handler: permissions.save },
+    { method: 'post', path: '/projects/:projectId/permissions/test', handler: permissions.test },
+    { method: 'get', path: '/projects/:projectId/permissions/decisions', handler: permissions.decisions },
     { method: 'get', path: '/rules', handler: guidance.listRules },
     { method: 'post', path: '/rules', handler: guidance.createRule },
     { method: 'put', path: '/rules/:id', handler: guidance.updateRule },
@@ -391,6 +401,16 @@ function defaultSchedules(): SchedulesController {
     () => false,
   )
   return new SchedulesController({ schedules, runner: new ScheduleRunner(schedules, async () => ({})), agentProject: () => undefined })
+}
+
+/** Sem composição: permissões em memória, sem projetos. */
+function defaultPermissions(): PermissionsController {
+  return new PermissionsController({
+    permissions: new PermissionsService(new SqlitePermissionRepository(), () => undefined),
+    projectExists: () => false,
+    agentExists: () => false,
+    installationRules: () => [],
+  })
 }
 
 /** Sem composição (testes que sobem só o servidor): hooks em memória, sem agentes. */

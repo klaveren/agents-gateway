@@ -377,7 +377,7 @@ export class GuidanceService {
         ...own.map((doc) => `### ${doc.title}\n${doc.body.trim()}`),
       ].join('\n\n')
     }
-    const skills = this.usableResources('skill', agentId)
+    const skills = this.usableResources('skill', agentId).filter((skill) => !this.skillFilter || this.skillFilter(agentId, projectId, skill.id))
     if (skills.length) {
       parts.skills = [
         '## Skills',
@@ -472,11 +472,17 @@ export class GuidanceService {
    * Quem confere o REGISTRO do agente com as regras do cadastro (as mesmas do `POST /agents`): o controller, que tem o
    * catálogo de ferramentas, os providers e os modelos. Ligado na composição; sem ele, o rascunho de agente é recusado.
    */
+  /** As permissões de skill (ver `Permission.Policy`): o índice do prompt só lista as que o agente pode usar no projeto. */
+  useSkillFilter(filter: (agentId: string | undefined, projectId: string | undefined, skillId: string) => boolean): void {
+    this.skillFilter = filter
+  }
+
   useAgentChecker(checker: TAgentChecker): void {
     this.agentChecker = checker
   }
 
   private agentChecker?: TAgentChecker
+  private skillFilter?: (agentId: string | undefined, projectId: string | undefined, skillId: string) => boolean
 
   /**
    * Os problemas do rascunho de AGENTE, sem gravar: o registro (como o `save_agent` recebe), o contexto inicial e os

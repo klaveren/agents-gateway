@@ -15,6 +15,8 @@ import { toolsTokens, toolTokens } from '@/lib/toolTokens'
 import AgentFootprint from './AgentFootprint.vue'
 import AgentHooks from './AgentHooks.vue'
 import AgentSchedules from './AgentSchedules.vue'
+import PermissionRules from './PermissionRules.vue'
+import PermissionTester from './PermissionTester.vue'
 import AgentInitialContext from './AgentInitialContext.vue'
 import AgentResources from './AgentResources.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
@@ -262,6 +264,7 @@ const blank = (): IAgentInput => ({
   role: null,
   adminOnly: false,
   projectId: projects.current ?? null,
+  permissions: [],
 })
 const form = ref<IAgentInput>(blank())
 
@@ -347,16 +350,15 @@ const tabs = computed(() => {
       alert: alert('ferramentas') ?? (orphans.value.length ? 'Há ferramentas indisponíveis' : undefined),
     },
     { id: 'mcps', label: 'MCPs', count: tools.filter((entry) => entry.startsWith('mcp:')).length },
-    { id: 'sdk', label: 'Permissões', count: tools.filter((entry) => entry.startsWith('sdk:')).length },
+    { id: 'sdk', label: 'Permissões', count: (form.value.permissions?.length ?? 0) + tools.filter((entry) => entry.startsWith('sdk:')).length },
     { id: 'recursos', label: 'Recursos' },
     { id: 'contexto', label: 'Contexto inicial' },
     { id: 'tamanho', label: 'Tamanho' },
     { id: 'hooks', label: 'Hooks' },
     { id: 'agendamentos', label: 'Agendamentos' },
   ]
-  // Sem nativa nem sandbox nos providers escolhidos, a guia do SDK não tem o que mostrar.
-  const sdkEmpty = sdkSections.value.every((section) => !section.tools.length && !section.levels.length)
-  return all.filter((item) => item.id !== 'sdk' || !sdkEmpty || item.count)
+  // A guia Permissões aparece sempre: as regras do agente moram nela, haja ou não nível de acesso ou extras.
+  return all
 })
 // A guia que sumiu (tirou o provider das nativas) não fica aberta vazia.
 watch(tabs, (list) => {
@@ -472,6 +474,7 @@ watch(
           role: agent.role ?? null,
           adminOnly: !!agent.adminOnly,
           projectId: agent.projectId ?? null,
+          permissions: (agent.permissions ?? []).map((rule) => ({ ...rule })),
         }
       : blank()
     issues.value = {}
@@ -511,7 +514,11 @@ async function save() {
   issues.value = {}
   failure.value = undefined
   try {
-    const input: IAgentInput = { ...form.value, reasoningEfforts: (form.value.reasoningEfforts ?? []).filter((level) => reasoningLevels.value.includes(level)) }
+    const input: IAgentInput = {
+      ...form.value,
+      reasoningEfforts: (form.value.reasoningEfforts ?? []).filter((level) => reasoningLevels.value.includes(level)),
+      permissions: (form.value.permissions ?? []).filter((rule) => rule.pattern.trim()),
+    }
     const saved = await agents.save(input, props.creating)
     emit('saved', saved.id)
   } catch (error) {
@@ -797,6 +804,15 @@ async function remove() {
 
     </fieldset>
     <fieldset v-show="tab === 'sdk'" class="flex flex-col gap-4">
+      <div class="flex flex-col gap-2">
+        <h3 class="text-sm font-medium text-zinc-200">Regras deste agente</h3>
+        <p class="text-xs text-zinc-500">
+          Valem antes das do projeto: liberam o que o projeto fechou, ou fecham mais. Sem regra no agente nem no projeto, negado. As do sistema valem sempre.
+        </p>
+        <PermissionRules v-model="form.permissions!" />
+        <PermissionTester v-if="agent && !creating && (agent.projectId ?? projects.current)" :project-id="(agent.projectId ?? projects.current)!" :agent-id="agent.id" />
+        <small class="hint">O teste usa as regras já salvas.</small>
+      </div>
       <p class="text-xs text-zinc-500">Só no modo Agente: o nível de acesso das assinaturas e os extras que só um provedor tem. Terminal, arquivos e busca ficam em Ferramentas.</p>
       <p v-if="!form.modes.includes('agent')" class="text-xs text-amber-300">O modo Agente está desligado: nada daqui é usado.</p>
       <section v-for="section in sdkSections" :key="section.entry.target.provider" class="flex flex-col gap-2 rounded-xl border border-zinc-800 px-3 py-3">

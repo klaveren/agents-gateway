@@ -45,7 +45,9 @@ export const CAPABILITIES: readonly ICapability[] = [
     risk: 'server-read',
     local: ['read_file', 'list_files', 'search_files'],
     runs: {
-      [EProvider.CLAUDE]: { tools: ['sdk:Read', 'sdk:Glob', 'sdk:Grep'], note: 'nativa do Claude' },
+      // ⛔ Sem o Glob e o Grep nativos: varrem a pasta inteira e devolveriam o conteúdo de arquivo negado (o `.env`
+      // num Grep). A busca e a listagem são as do gateway, que conferem arquivo por arquivo; o Read (um arquivo) é o dele.
+      [EProvider.CLAUDE]: { tools: ['sdk:Read', 'list_files', 'search_files'], note: 'Read do Claude, busca do gateway' },
       [EProvider.CODEX]: { builtIn: 'pelo terminal do Codex' },
       [EProvider.ANTIGRAVITY]: { builtIn: 'embutido no Gemini' },
     },

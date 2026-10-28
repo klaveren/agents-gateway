@@ -1,0 +1,77 @@
+import assert from 'node:assert'
+import { describe, it } from 'node:test'
+import { commandMatches, decide, hostMatches, IPermissionRule, pathMatches, permissionIssues } from './Permission.Policy'
+
+const rule = (category: IPermissionRule['category'], pattern: string, decision: IPermissionRule['decision'] = 'allow'): IPermissionRule => ({ category, pattern, decision })
+const cmd = (text: string) => ({ category: 'terminal' as const, value: text, argv: text.split(' ') })
+
+describe('Permission.Policy', () => {
+  it('sem regra, negado; o projeto fecha e o agente libera; dentro da camada, negar vence permitir', () => {
+    assert.strictEqual(decide(cmd('git status'), {}).layer, 'default')
+    assert.strictEqual(decide(cmd('git status'), {}).allowed, false)
+
+    const project = [rule('terminal', 'git *'), rule('terminal', 'git push *', 'deny')]
+    assert.strictEqual(decide(cmd('git status'), { project }).allowed, true)
+    assert.strictEqual(decide(cmd('git push origin main'), { project }).allowed, false)
+
+    // O agente libera o que o projeto negou — e a regra de negar dele, na mesma camada, vence a de permitir.
+    const agent = [rule('terminal', 'git push origin *'), rule('terminal', 'git push origin main', 'deny')]
+    assert.strictEqual(decide(cmd('git push origin feature/x'), { project, agent }).allowed, true)
+    const main = decide(cmd('git push origin main'), { project, agent })
+    assert.deepStrictEqual([main.allowed, main.layer, main.rule?.pattern], [false, 'agent', 'git push origin main'])
+  })
+
+  it('⛔ a camada sistema é final: nem o agente com * levanta', () => {
+    const agent = [rule('read', '**'), rule('terminal', '*')]
+    for (const path of ['.env', 'apps/api/.env.local', 'deploy/server.pem', 'home/id_rsa']) {
+      const verdict = decide({ category: 'read', value: path }, { agent })
+      assert.deepStrictEqual([verdict.allowed, verdict.layer], [false, 'system'], path)
+    }
+    assert.strictEqual(decide(cmd('sudo ls'), { agent }).layer, 'system')
+    assert.strictEqual(decide({ category: 'terminal', value: 'sh', argv: ['sh'] }, { agent }).layer, 'system')
+    // Regra de sistema da instalação (a pasta de dados, absoluta).
+    const extra = [rule('read', '/srv/gateway/data/**', 'deny')]
+    assert.strictEqual(decide({ category: 'read', value: '/srv/gateway/data/gateway.db' }, { agent: [rule('read', '/srv/**')] }, extra).layer, 'system')
+  })
+
+  it('comando por palavras; o nome pela base, para /bin/rm não escapar de rm', () => {
+    assert.ok(commandMatches('git *', ['git']))
+    assert.ok(commandMatches('git *', ['git', 'push', '-f']))
+    assert.ok(!commandMatches('git', ['git', 'status']))
+    assert.ok(commandMatches('npm run test*', ['npm', 'run', 'test:unit']))
+    assert.ok(commandMatches('rm *', ['/bin/rm', '-rf', 'x']))
+    assert.ok(commandMatches('git push * main', ['git', 'push', '--force', 'origin', 'main']))
+    assert.ok(!commandMatches('git push * main', ['git', 'push', 'origin', 'dev']))
+    assert.ok(commandMatches('*', ['qualquer', 'coisa']))
+  })
+
+  it('caminho em glob; sem barra, o nome em qualquer pasta; absoluto e ~ para fora da pasta', () => {
+    assert.ok(pathMatches('apps/**', 'apps/web/src/main.ts'))
+    assert.ok(!pathMatches('apps/**', 'packages/x.ts'))
+    assert.ok(pathMatches('src/*.ts', 'src/a.ts') && !pathMatches('src/*.ts', 'src/deep/a.ts'))
+    assert.ok(pathMatches('**/*.test.ts', 'a/b/c.test.ts') && pathMatches('**/*.test.ts', 'c.test.ts'))
+    assert.ok(pathMatches('*.md', 'docs/README.md'))
+    assert.ok(pathMatches('/home/sre/.ssh/logiccus', '/home/sre/.ssh/logiccus'))
+  })
+
+  it('destino de rede com subdomínio e porta', () => {
+    assert.ok(hostMatches('*.logiccus.com', 'api.logiccus.com'))
+    assert.ok(!hostMatches('*.logiccus.com', 'logiccus.com.evil.io'))
+    assert.ok(hostMatches('prod.logiccus.com:22', 'prod.logiccus.com:22'))
+    assert.ok(!hostMatches('prod.logiccus.com:22', 'prod.logiccus.com:443'))
+    assert.ok(hostMatches('github.com', 'github.com:443'))
+  })
+
+  it('MCP, skill e delegação por glob no nome', () => {
+    assert.ok(decide({ category: 'mcp', value: 'logiccus/ticket_get' }, { project: [rule('mcp', 'logiccus/ticket_*')] }).allowed)
+    assert.ok(!decide({ category: 'mcp', value: 'logiccus/meeting_create' }, { project: [rule('mcp', 'logiccus/*'), rule('mcp', 'logiccus/meeting_create', 'deny')] }).allowed)
+    assert.ok(decide({ category: 'skill', value: 'akm-research' }, { agent: [rule('skill', 'akm-*')] }).allowed)
+    assert.ok(!decide({ category: 'delegate', value: 'agent-god' }, { agent: [rule('delegate', 'agent-*'), rule('delegate', 'agent-god', 'deny')] }).allowed)
+  })
+
+  it('o salvamento recusa regra sem padrão, categoria desconhecida e decisão inválida', () => {
+    assert.deepStrictEqual(permissionIssues([rule('terminal', 'ls')]), [])
+    const issues = permissionIssues([{ category: 'x', pattern: '', decision: 'talvez' }])
+    assert.strictEqual(issues.length, 3)
+  })
+})

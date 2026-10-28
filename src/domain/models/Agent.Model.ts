@@ -1,3 +1,4 @@
+import type { IPermissionRule } from '@domain/Permission.Policy'
 import { EMode } from '../enums/EMode.Enum'
 import type { TSandboxLevel } from '../Sandbox.Policy'
 
@@ -38,6 +39,11 @@ export interface IAgent {
    * agente GLOBAL (o Atlas): aparece em todos os projetos.
    */
   projectId?: string
+  /**
+   * As regras de permissão DESTE agente (a camada do agente, ver `Permission.Policy`): o que ele pode além (ou aquém)
+   * das regras do projeto. Ausente = nenhuma: valem as do projeto.
+   */
+  permissions?: IPermissionRule[]
 }
 
 /** Um provider do agente e os modelos que ele usa ali. */

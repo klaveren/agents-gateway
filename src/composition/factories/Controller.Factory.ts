@@ -1,3 +1,5 @@
+import { installationRules, makePermissions } from './Permissions.Factory'
+import { PermissionsController } from '@infra/http/Permissions.Controller'
 import { SchedulesController } from '@infra/http/Schedules.Controller'
 import { makeScheduleRunner, makeSchedules } from './Schedules.Factory'
 import { dockerStatus } from '@infra/sandbox/Docker.Sandbox'
@@ -63,6 +65,10 @@ export function makeController(): AgentController {
   })
   // O rascunho de agente do construtor é conferido com as MESMAS regras do cadastro, que moram aqui.
   makeGuidance().useAgentChecker((agent) => controller.agentDraftIssues(agent))
+  makeGuidance().useSkillFilter(
+    (agentId, projectId, skillId) =>
+      makePermissions().test({ ...(agentId ? { agentId } : {}), ...(projectId ? { projectId } : {}) }, { category: 'skill', value: skillId }).allowed,
+  )
   return controller
 }
 
@@ -71,6 +77,16 @@ export function makeSchedulesController(): SchedulesController {
     schedules: makeSchedules(),
     runner: makeScheduleRunner(),
     agentProject: (agentId) => makeAgents().get(agentId)?.projectId,
+    proof: makeAuth().proof,
+  })
+}
+
+export function makePermissionsController(): PermissionsController {
+  return new PermissionsController({
+    permissions: makePermissions(),
+    projectExists: (projectId) => makeProjects().exists(projectId),
+    agentExists: (agentId) => !!makeAgents().get(agentId),
+    installationRules: () => installationRules(),
     proof: makeAuth().proof,
   })
 }

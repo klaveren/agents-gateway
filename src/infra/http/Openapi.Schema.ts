@@ -590,6 +590,21 @@ const scheduleInput = {
     enabled: { type: 'boolean' },
   },
 }
+const permissionRuleSchema = {
+  type: 'object',
+  properties: {
+    category: { type: 'string', enum: ['terminal', 'read', 'write', 'network', 'mcp', 'skill', 'delegate'] },
+    pattern: {
+      type: 'string',
+      description:
+        'terminal: words (`git push *`); read/write: glob on the canonical path (`apps/**`, `*.env`); network: host[:port] (`*.x.com`); mcp: `server/tool`; skill/delegate: id glob',
+    },
+    decision: { type: 'string', enum: ['allow', 'deny'] },
+    note: { type: 'string' },
+  },
+  required: ['category', 'pattern', 'decision'],
+}
+
 const scheduleSchema = {
   type: 'object',
   properties: {
@@ -1596,6 +1611,134 @@ export const OPENAPI_DOCUMENT = {
             ),
           },
           '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+    },
+    '/projects/{projectId}/permissions': {
+      get: {
+        summary: 'The permission rules of a project (the project layer), plus the fixed system rules. Administrators only (404 otherwise)',
+        description:
+          'Layers: system (fixed denies: secrets, gateway data, destructive commands) → agent (`IAgent.permissions`) → project → no rule = deny. Within a layer, deny beats allow regardless of order.',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  projectId: { type: 'string' },
+                  rules: { type: 'array', items: permissionRuleSchema },
+                  system: { type: 'array', items: permissionRuleSchema },
+                  updatedAt: { type: 'string', format: 'date-time' },
+                  updatedBy: { type: 'string' },
+                },
+              }),
+            ),
+          },
+          '404': failures['404'],
+        },
+      },
+      put: {
+        summary: 'Replace the permission rules of a project. Administrators only',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': { schema: { type: 'object', properties: { rules: { type: 'array', items: permissionRuleSchema, maxItems: 300 } }, required: ['rules'] } },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Saved',
+            ...json(envelope({ type: 'object', properties: { projectId: { type: 'string' }, rules: { type: 'array', items: permissionRuleSchema } } })),
+          },
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
+    '/projects/{projectId}/permissions/test': {
+      post: {
+        summary:
+          'What would be decided for a request (nothing is recorded). A terminal command is analyzed like the terminal does: every part and every redirect. Administrators only',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  agentId: { type: 'string' },
+                  category: { type: 'string', enum: ['terminal', 'read', 'write', 'network', 'mcp', 'skill', 'delegate'] },
+                  value: { type: 'string' },
+                },
+                required: ['category', 'value'],
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'OK. `allowed` is true only if every part is allowed.',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  allowed: { type: 'boolean' },
+                  parts: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        category: { type: 'string' },
+                        value: { type: 'string' },
+                        allowed: { type: 'boolean' },
+                        layer: { type: 'string', enum: ['system', 'agent', 'project', 'default'] },
+                        reason: { type: 'string' },
+                      },
+                    },
+                  },
+                },
+              }),
+            ),
+          },
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
+    '/projects/{projectId}/permissions/decisions': {
+      get: {
+        summary: 'The latest permission decisions taken in the project (at most 200; the last 500 are kept). Administrators only',
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'agentId', in: 'query', required: false, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    at: { type: 'string', format: 'date-time' },
+                    agentId: { type: 'string' },
+                    sessionId: { type: 'string' },
+                    category: { type: 'string' },
+                    subject: { type: 'string' },
+                    allowed: { type: 'boolean' },
+                    layer: { type: 'string' },
+                    pattern: { type: 'string' },
+                  },
+                },
+              }),
+            ),
+          },
           '404': failures['404'],
         },
       },

@@ -8,6 +8,12 @@ import { ILocalTool, IToolResult } from './Tool.Types'
 export interface IFileToolDeps {
   /** A pasta-raiz onde as tools podem mexer, por chamada (a pasta do projeto da conversa). */
   rootFor: (context?: IExecutionContext) => string
+  /**
+   * As permissões (ver `Permission.Policy`): o motivo da negação para ler ou escrever o caminho (relativo à raiz), ou
+   * nada se pode. `log`: registra a decisão (no arquivo pedido, sim; em cada item de uma listagem, não). Ausente = sem
+   * permissões (só a raiz e a lista protegida valem).
+   */
+  access?: (context: IExecutionContext | undefined, kind: 'read' | 'write', path: string, log: boolean) => string | undefined
 }
 
 const READ_WHOLE_MAX_BYTES = 256 * 1024
@@ -22,7 +28,8 @@ const BINARY_SNIFF_BYTES = 8 * 1024
 const SKIPPED_DIRS = new Set(['node_modules', '.git'])
 
 /** O caminho real do alvo; se ele não existe, o do ancestral mais próximo que existe + o resto. */
-function realOf(target: string): string {
+/** O caminho canônico (links resolvidos; o que ainda não existe, pelo ancestral que existe). */
+export function realOf(target: string): string {
   const rest: string[] = []
   let current = target
   while (!existsSync(current)) {
@@ -69,12 +76,14 @@ const fail = (result: string): IToolResult => ({ status: 'error', result })
 const toMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 /** O caminho já conferido (dentro da raiz e não protegido) ou o erro pronto. */
-function guard(root: string, path: unknown): { abs: string } | { error: IToolResult } {
+function guard(root: string, path: unknown, permit?: (rel: string) => string | undefined): { abs: string } | { error: IToolResult } {
   if (typeof path !== 'string' || !path.trim()) return { error: fail('path is required.') }
   const abs = resolveInside(root, path)
   if (!abs) return { error: fail('path is outside the allowed folder') }
   const reason = deniedPath(abs, root)
   if (reason) return { error: fail(`${reason}: this file is protected`) }
+  const denied = permit?.(relOf(root, abs))
+  if (denied) return { error: fail(`Not permitted: ${denied}`) }
   return { abs }
 }
 
@@ -128,7 +137,7 @@ function readFileTool(deps: IFileToolDeps): ILocalTool {
     },
     async execute(args, context): Promise<IToolResult> {
       const root = deps.rootFor(context)
-      const checked = guard(root, args.path)
+      const checked = guard(root, args.path, (rel) => deps.access?.(context, 'read', rel, true))
       if ('error' in checked) return checked.error
       try {
         const info = await stat(checked.abs)
@@ -175,7 +184,7 @@ function listFilesTool(deps: IFileToolDeps): ILocalTool {
         const names: string[] = []
         for (const name of await walk(checked.abs, pattern)) {
           const abs = resolveInside(root, join(checked.abs, name))
-          if (abs && !deniedPath(abs, root)) names.push(relOf(root, abs))
+          if (abs && !deniedPath(abs, root) && !deps.access?.(context, 'read', relOf(root, abs), false)) names.push(relOf(root, abs))
         }
         if (!names.length) return { status: 'success', result: 'No files match.' }
         const shown = names.slice(0, LIST_MAX).join('\n')
@@ -220,7 +229,7 @@ function searchFilesTool(deps: IFileToolDeps): ILocalTool {
         let truncated = false
         for (const name of await walk(checked.abs, fileGlob)) {
           const abs = resolveInside(root, join(checked.abs, name))
-          if (!abs || deniedPath(abs, root)) continue
+          if (!abs || deniedPath(abs, root) || deps.access?.(context, 'read', relOf(root, abs), false)) continue
           const info = await stat(abs)
           if (!info.isFile() || info.size > SEARCH_FILE_MAX_BYTES || (await isBinary(abs))) continue
           const lines = (await readFile(abs, 'utf8')).split('\n')
@@ -260,7 +269,7 @@ function writeFileTool(deps: IFileToolDeps): ILocalTool {
     },
     async execute(args, context): Promise<IToolResult> {
       const root = deps.rootFor(context)
-      const checked = guard(root, args.path)
+      const checked = guard(root, args.path, (rel) => deps.access?.(context, 'write', rel, true))
       if ('error' in checked) return checked.error
       if (typeof args.content !== 'string') return fail('content is required.')
       const bytes = Buffer.byteLength(args.content)
@@ -268,7 +277,7 @@ function writeFileTool(deps: IFileToolDeps): ILocalTool {
       try {
         await mkdir(dirname(checked.abs), { recursive: true })
         // Revalida depois do mkdir: o pai agora existe e pode ser um symlink que escapa.
-        const again = guard(root, args.path)
+        const again = guard(root, args.path, (rel) => deps.access?.(context, 'write', rel, false))
         if ('error' in again) return again.error
         await writeFile(again.abs, args.content, 'utf8')
         return { status: 'success', result: `Wrote ${bytes} bytes to ${relOf(root, again.abs)}` }
@@ -298,7 +307,7 @@ function editFileTool(deps: IFileToolDeps): ILocalTool {
     },
     async execute(args, context): Promise<IToolResult> {
       const root = deps.rootFor(context)
-      const checked = guard(root, args.path)
+      const checked = guard(root, args.path, (rel) => deps.access?.(context, 'write', rel, true))
       if ('error' in checked) return checked.error
       const { old_string: from, new_string: to } = args
       if (typeof from !== 'string' || typeof to !== 'string' || !from) return fail('old_string and new_string are required (old_string cannot be empty).')

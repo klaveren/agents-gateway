@@ -175,6 +175,8 @@ export function builderAgent(kind: TProtocolKind, target: IAgentTarget): IAgent 
     reasoningEfforts: ['low', 'medium', 'high'],
     modes: [EMode.AGENT],
     allowedTools: [...[...read, save, ...saveAlso].map((tool) => `mcp:gateway/${tool}`), ...extra, PROPOSE_DRAFT_TOOL, 'cap:todos'],
+    // Sem regra tudo é negado: o construtor usa as ferramentas do gateway do tipo dele (o `allowedTools` já as restringe).
+    permissions: [{ category: 'mcp', pattern: 'gateway/*', decision: 'allow', note: 'as ferramentas do gateway' }],
     adminOnly: true,
   }
 }
