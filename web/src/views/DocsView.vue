@@ -217,8 +217,8 @@ function describe(failure: unknown): string {
         <RouterLink :to="`${info.base}/new`" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" :title="`Nova ${info.one}`"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
       <BuildTabs :kind="kind" active="list" class="px-3 pb-2" />
-      <div class="px-4 pb-2">
-        <select v-model="scope" class="input py-1.5 text-sm" aria-label="Escopo">
+      <div class="px-3 pb-2">
+        <select v-model="scope" class="input w-full py-1.5 text-sm" aria-label="Escopo">
           <option v-for="item in scopes" :key="item.id" :value="item.id">{{ item.name }}</option>
         </select>
       </div>
