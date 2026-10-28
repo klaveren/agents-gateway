@@ -190,7 +190,7 @@ async function saveSettings() {
           <label class="flex items-center gap-2 self-start text-sm text-zinc-300 sm:mt-6 sm:h-[38px]">
             <input v-model="classifyTurns" type="checkbox" class="accent-emerald-500" /> Classificar cada mensagem
           </label>
-          <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
+          <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300 sm:col-span-2">
             Modelo do construtor
             <select v-model="builder" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2 text-sm">
               <option value="">Mesmo do Atlas</option>

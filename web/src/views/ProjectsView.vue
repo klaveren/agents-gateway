@@ -215,9 +215,9 @@ async function confirmRemove() {
           </p>
         </div>
 
-        <div class="grid gap-3 sm:grid-cols-2">
+        <div class="grid gap-3">
           <label class="field">Nome<input v-model="edit.name" class="input" /></label>
-          <label class="field sm:col-span-2">Descrição<textarea v-model="edit.description" rows="2" class="input text-sm" /></label>
+          <label class="field">Descrição<textarea v-model="edit.description" rows="2" class="input text-sm" /></label>
         </div>
         <div v-if="dirty" class="flex gap-2">
           <button type="button" :disabled="busy" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="save">Salvar</button>
