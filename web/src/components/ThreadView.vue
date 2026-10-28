@@ -38,7 +38,9 @@ const agent = computed(() => agents.byId.get(header.value?.agentId ?? thread.dra
 const owner = computed(() => header.value?.metadata?.owner)
 const shareUrl = computed(() => (header.value?.shared && header.value.shareId ? `${location.origin}/v1/shared/${header.value.shareId}` : ''))
 /** Os `/commands` que a pessoa pode usar com este agente (o autocompletar da caixa). */
-const commands = useAgentCommands(computed(() => agent.value?.id))
+// ⚠️ Pelo agente da CONVERSA (o cabeçalho), não só pela lista de agentes: ela vem recortada pelo projeto atual, e a
+// conversa pode ser de outro projeto. Quem diz o que a pessoa pode usar é o servidor.
+const commands = useAgentCommands(computed(() => agent.value?.id ?? header.value?.agentId ?? thread.agentId))
 /** A sessão não está viva, mas a conversa volta ao enviar (o gateway a retoma do histórico gravado). */
 const resumable = computed(() => thread.liveSession === false)
 

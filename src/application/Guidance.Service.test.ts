@@ -315,6 +315,15 @@ describe('GuidanceService', () => {
       assert.throws(() => service.expandCommand('/resumir x', 'resumo'), /not enabled for this agent/)
     })
 
+    it('/skill: a skill escolhida vai inteira, já carregada, com o pedido depois; ⛔ não liberada é recusada', () => {
+      const service = seeded()
+      service.setAgentResources('dev', { skills: ['tabela'], commands: [] }, 'root')
+      const expanded = service.expandCommand('/tabela frutas e cores', 'dev')!
+      assert.match(expanded.text, /pediu a skill tabela[\s\S]*# Skill: tabela\n\nSempre com cabeçalho\.[\s\S]*### Padrão \[spec\][\s\S]*# Pedido\n\nfrutas e cores$/)
+      assert.strictEqual(expanded.label, '/tabela frutas e cores')
+      assert.throws(() => service.expandCommand('/tabela x', 'resumo'), /skill \/tabela is not enabled for this agent/)
+    })
+
     it('apagar o doc tira ele dos recursos; apagar o agente ou o projeto limpa', () => {
       const service = seeded()
       service.setAgentResources('dev', { skills: ['tabela'], commands: ['resumir'] }, 'root')

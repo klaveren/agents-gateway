@@ -82,6 +82,8 @@ const messageOf = (failure: unknown): string => (failure instanceof Error ? fail
 export const useThreadStore = defineStore('thread', () => {
   const sessionId = ref<string>()
   const header = ref<IConversation>()
+  /** O agente da conversa, como a rota de turnos o diz — vale quando o cabeçalho não está na lista (outro projeto). */
+  const agentId = ref<string>()
   const turns = ref<ITurn[]>([])
   const loading = ref(false)
   const error = ref<string>()
@@ -115,6 +117,7 @@ export const useThreadStore = defineStore('thread', () => {
     const current = leave()
     sessionId.value = id
     header.value = known
+    agentId.value = undefined
     draft.value = undefined
     pending.value = undefined
     turns.value = []
@@ -127,7 +130,7 @@ export const useThreadStore = defineStore('thread', () => {
       let unsure = false
       let historyFailure: string | undefined
       const [history, live] = await Promise.all([
-        api<{ turns: ITurn[] }>(`/conversations/${encodeURIComponent(id)}/turns`).catch((failure) => {
+        api<{ agentId?: string; turns: ITurn[] }>(`/conversations/${encodeURIComponent(id)}/turns`).catch((failure) => {
           if (!isNotFound(failure)) historyFailure = messageOf(failure)
           return { turns: [] as ITurn[] }
         }),
@@ -139,6 +142,7 @@ export const useThreadStore = defineStore('thread', () => {
       ])
       if (current !== generation) return
       turns.value = history.turns
+      agentId.value = 'agentId' in history ? history.agentId : undefined
       liveSession.value = !!live || unsure
       session.value = live ? { provider: live.provider, model: live.model, reasoning: live.reasoning } : undefined
       if (historyFailure) error.value = `Não foi possível carregar o histórico: ${historyFailure}`
@@ -367,7 +371,7 @@ export const useThreadStore = defineStore('thread', () => {
     pending.value = { ...turn, tools: [...turn.tools] }
   }
 
-  return { sessionId, header, turns, loading, error, liveSession, session, draft, pending, sending, open, startDraft, setHeader, refresh, send, reconfigure, stop, reset }
+  return { sessionId, header, agentId, turns, loading, error, liveSession, session, draft, pending, sending, open, startDraft, setHeader, refresh, send, reconfigure, stop, reset }
 })
 
 /** O turno do stream no formato do gravado, até a releitura trazer o de verdade. */

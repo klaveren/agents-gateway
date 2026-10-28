@@ -480,21 +480,26 @@ export class GuidanceService {
   }
 
   /**
-   * `/nome argumentos` → o texto do command, com `$ARGUMENTS` trocado e os documentos anexados. `undefined` quando
-   * a mensagem não é um command conhecido (segue como texto). ⛔ Command que existe mas não está liberado para este
-   * agente é recusado com o motivo.
+   * `/nome argumentos` → o que vai ao modelo, com os documentos anexados. `undefined` quando a mensagem não é um
+   * recurso conhecido (segue como texto). ⛔ O que existe mas não está liberado para este agente é recusado com o motivo.
+   * - COMMAND: o texto dele, com `$ARGUMENTS` trocado (sem ele, os argumentos vão no fim).
+   * - SKILL: a pessoa a escolheu de propósito — ela vai inteira, já carregada, com o pedido depois (sem o `use_skill`).
    */
   expandCommand(text: string, agentId?: string): IExpandedCommand | undefined {
     const match = /^\/([a-z0-9][a-z0-9-]{1,47})(?:\s+([\s\S]*))?$/.exec(text.trim())
     if (!match) return undefined
     const [, id, rawArgs] = match
     const existing = this.repository.resource(id)
-    if (!existing || existing.kind !== 'command') return undefined
-    const command = this.usableResources('command', agentId).find((resource) => resource.id === id)
-    if (!command) throw new InvalidGuidanceError([{ field: 'message', message: `command /${id} is not enabled for this agent` }])
+    if (!existing) return undefined
+    const resource = this.usableResources(existing.kind, agentId).find((item) => item.id === id)
+    if (!resource) throw new InvalidGuidanceError([{ field: 'message', message: `${existing.kind} /${id} is not enabled for this agent` }])
     const args = (rawArgs ?? '').trim()
-    const body = command.body.includes('$ARGUMENTS') ? command.body.replace(/\$ARGUMENTS/g, args) : `${command.body.trim()}${args ? `\n\nArgumentos: ${args}` : ''}`
-    return { text: `${body.trim()}${this.attachments(command)}`, label: text.trim(), command: id }
+    if (resource.kind === 'skill') {
+      const skill = `[A pessoa pediu a skill ${resource.id}: ela já está carregada abaixo — siga-a.]\n\n# Skill: ${resource.id}\n\n${resource.body.trim()}${this.attachments(resource)}`
+      return { text: `${skill}\n\n# Pedido\n\n${args || '(sem texto: aplique a skill ao que estamos fazendo)'}`, label: text.trim(), command: id }
+    }
+    const body = resource.body.includes('$ARGUMENTS') ? resource.body.replace(/\$ARGUMENTS/g, args) : `${resource.body.trim()}${args ? `\n\nArgumentos: ${args}` : ''}`
+    return { text: `${body.trim()}${this.attachments(resource)}`, label: text.trim(), command: id }
   }
 
   /** O projeto foi apagado: as rules e os documentos dele vão junto. */
