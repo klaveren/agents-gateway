@@ -59,7 +59,7 @@ async function changePassword() {
               <input v-model="nextPassword" type="password" required autocomplete="new-password" class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm" />
             </label>
             <div class="flex items-center gap-3 sm:col-span-2">
-              <button type="submit" class="rounded-full bg-zinc-800 px-4 py-2 text-sm hover:bg-zinc-700">Trocar senha</button>
+              <button type="submit" class="btn btn-secondary">Trocar senha</button>
               <span v-if="passwordNote" class="text-sm text-emerald-300">{{ passwordNote }}</span>
               <span v-if="passwordError" class="text-sm text-rose-300">{{ passwordError }}</span>
             </div>

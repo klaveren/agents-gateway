@@ -118,7 +118,7 @@ async function confirmRemove() {
               <div class="text-xs text-zinc-500">{{ hit.version }}<template v-if="hit.license"> · {{ hit.license }}</template></div>
             </div>
             <span v-if="versionOf(hit.name)" class="text-xs text-emerald-300">instalado {{ versionOf(hit.name) }}</span>
-            <button v-else type="button" :disabled="!!working" class="rounded-full bg-emerald-500 px-3 py-1 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="act(hit.name, 'install')">
+            <button v-else type="button" :disabled="!!working" class="btn btn-sm btn-primary" @click="act(hit.name, 'install')">
               {{ working === hit.name ? 'Instalando…' : 'Instalar' }}
             </button>
           </li>
@@ -140,7 +140,7 @@ async function confirmRemove() {
                 <div class="truncate font-mono text-[13px] text-zinc-200">{{ entry.name }}</div>
                 <div class="text-xs text-zinc-500">{{ entry.version }}</div>
               </div>
-              <button type="button" :disabled="!!working" class="rounded-full px-3 py-1 text-sm text-rose-300 hover:bg-rose-500/10 disabled:opacity-40" @click="removing = entry.name">
+              <button type="button" :disabled="!!working" class="btn btn-sm btn-danger" @click="removing = entry.name">
                 {{ working === entry.name ? 'Removendo…' : 'Desinstalar' }}
               </button>
             </li>

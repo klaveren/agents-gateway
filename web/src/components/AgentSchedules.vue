@@ -163,7 +163,7 @@ const summary = (schedule: ISchedule) => describeCron(schedule.cron) ?? schedule
       </li>
       <li v-if="!list.length && !loadError" class="px-3 py-3 text-xs text-zinc-500">Nenhum agendamento ainda.</li>
     </ul>
-    <button v-if="!addingNew" type="button" class="self-start rounded-full bg-zinc-800 px-4 py-1.5 text-sm hover:bg-zinc-700" @click="openSchedule('')">+ Novo agendamento</button>
+    <button v-if="!addingNew" type="button" class="btn btn-secondary self-start" @click="openSchedule('')">+ Novo agendamento</button>
 
     <div v-if="editing" class="flex flex-col gap-3 rounded-xl border border-zinc-800 p-3">
       <h3 class="text-sm font-medium text-zinc-200">{{ selected ? `Agendamento ${selected.name}` : 'Novo agendamento' }}</h3>
@@ -229,12 +229,12 @@ const summary = (schedule: ISchedule) => describeCron(schedule.cron) ?? schedule
 
       <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
       <div class="flex flex-wrap gap-2">
-        <button v-if="!selected" type="button" :disabled="busy" class="rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="create">Criar agendamento</button>
+        <button v-if="!selected" type="button" :disabled="busy" class="btn btn-primary" @click="create">Criar agendamento</button>
         <template v-else>
-          <button type="button" :disabled="busy" class="rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="save">Salvar agendamento</button>
-          <button type="button" :disabled="busy" class="rounded-full bg-zinc-800 px-4 py-1.5 text-sm hover:bg-zinc-700" @click="runNow">Rodar agora</button>
+          <button type="button" :disabled="busy" class="btn btn-primary" @click="save">Salvar agendamento</button>
+          <button type="button" :disabled="busy" class="btn btn-secondary" @click="runNow">Rodar agora</button>
           <span v-if="started" class="self-center text-xs text-emerald-300">começou — acompanhe abaixo</span>
-          <button type="button" :disabled="busy" class="ml-auto rounded-full px-3 py-1.5 text-sm text-rose-300 hover:bg-rose-500/10" @click="confirm = selected.name">Apagar</button>
+          <button type="button" :disabled="busy" class="btn btn-danger ml-auto" @click="confirm = selected.name">Apagar</button>
         </template>
       </div>
 
@@ -282,11 +282,5 @@ const summary = (schedule: ISchedule) => describeCron(schedule.cron) ?? schedule
 }
 .error {
   @apply text-xs font-normal text-rose-300;
-}
-.chip {
-  @apply rounded-full border border-zinc-700 px-3 py-1 text-sm font-normal text-zinc-300 hover:bg-zinc-800;
-}
-.chip.on {
-  @apply border-emerald-500/60 bg-emerald-500/15 text-emerald-200;
 }
 </style>

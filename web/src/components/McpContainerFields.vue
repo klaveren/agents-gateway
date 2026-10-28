@@ -31,7 +31,7 @@ function playwright() {
   <div class="flex flex-col gap-3">
     <div class="flex flex-wrap items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-200">
       <span class="min-w-0 flex-1">Cada conversa roda isolada do servidor e só acessa os domínios listados.</span>
-      <button type="button" class="shrink-0 rounded-full bg-zinc-800 px-3 py-1 text-zinc-100 hover:bg-zinc-700" @click="playwright">Preencher com Playwright</button>
+      <button type="button" class="btn btn-sm btn-secondary" @click="playwright">Preencher com Playwright</button>
     </div>
     <label class="field">
       Imagem do contêiner
@@ -84,11 +84,5 @@ function playwright() {
 }
 .error {
   @apply text-xs font-normal text-rose-300;
-}
-.chip {
-  @apply rounded-full border border-zinc-700 px-3 py-1 text-sm font-normal text-zinc-300 hover:bg-zinc-800;
-}
-.chip.on {
-  @apply border-emerald-500/60 bg-emerald-500/15 text-emerald-200;
 }
 </style>

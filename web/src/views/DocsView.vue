@@ -260,8 +260,8 @@ function describe(failure: unknown): string {
 
         <div class="flex flex-col gap-1">
           <div class="flex gap-1 text-xs">
-            <button type="button" class="rounded-full px-3 py-1" :class="!preview ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-800/60'" @click="preview = false">Markdown</button>
-            <button type="button" class="rounded-full px-3 py-1" :class="preview ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-800/60'" @click="preview = true">Prévia</button>
+            <button type="button" class="btn btn-sm" :class="!preview ? 'btn-secondary' : 'btn-ghost'" @click="preview = false">Markdown</button>
+            <button type="button" class="btn btn-sm" :class="preview ? 'btn-secondary' : 'btn-ghost'" @click="preview = true">Prévia</button>
           </div>
           <textarea v-if="!preview" v-model="form.body" required rows="18" class="input font-mono text-[13px] leading-relaxed" aria-label="Conteúdo em markdown" />
           <!-- eslint-disable-next-line vue/no-v-html -- renderMarkdown escapa antes de marcar -->
@@ -272,9 +272,9 @@ function describe(failure: unknown): string {
         <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
         <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
         <div class="flex gap-2">
-          <button type="submit" :disabled="busy || !dirty" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50">{{ adding ? 'Criar' : 'Salvar' }}</button>
-          <RouterLink v-if="adding" :to="info.base" class="rounded-full px-4 py-2 text-sm hover:bg-zinc-800">Cancelar</RouterLink>
-          <button v-else type="button" class="ml-auto rounded-full px-4 py-2 text-sm text-rose-300 hover:bg-rose-500/10" @click="removing = true">Apagar</button>
+          <button type="submit" :disabled="busy || !dirty" class="btn btn-primary">{{ adding ? 'Criar' : 'Salvar' }}</button>
+          <RouterLink v-if="adding" :to="info.base" class="btn btn-ghost">Cancelar</RouterLink>
+          <button v-else type="button" class="btn btn-danger ml-auto" @click="removing = true">Apagar</button>
         </div>
       </form>
       <p v-else-if="error" class="mx-auto max-w-3xl text-sm text-rose-300">{{ error }}</p>
@@ -291,7 +291,7 @@ function describe(failure: unknown): string {
         <p class="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3 text-xs text-zinc-400">
           Como o agente usa: ele vê o título e o resumo de cada documento e lê o inteiro quando o assunto aparece. Por isso o resumo importa.
         </p>
-        <div><RouterLink :to="`${info.base}/new`" class="inline-block rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400">{{ g.nova }} {{ info.one }}</RouterLink></div>
+        <div><RouterLink :to="`${info.base}/new`" class="btn btn-primary">{{ g.nova }} {{ info.one }}</RouterLink></div>
       </section>
     </template>
   </MasterDetail>

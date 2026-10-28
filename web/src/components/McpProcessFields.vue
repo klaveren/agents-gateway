@@ -46,7 +46,7 @@
         <strong>direto no servidor</strong>
         , sem isolamento: quem usa o agente tem o mesmo acesso que o servidor.
       </span>
-      <button type="button" class="shrink-0 rounded-full bg-zinc-800 px-3 py-1 text-zinc-100 hover:bg-zinc-700" @click="playwright">Preencher com Playwright</button>
+      <button type="button" class="btn btn-sm btn-secondary" @click="playwright">Preencher com Playwright</button>
     </div>
     <div class="grid gap-3 sm:grid-cols-2">
       <label class="field">
@@ -119,11 +119,5 @@
   }
   .error {
     @apply text-xs font-normal text-rose-300;
-  }
-  .chip {
-    @apply rounded-full border border-zinc-700 px-3 py-1 text-sm font-normal text-zinc-300 hover:bg-zinc-800;
-  }
-  .chip.on {
-    @apply border-emerald-500/60 bg-emerald-500/15 text-emerald-200;
   }
 </style>

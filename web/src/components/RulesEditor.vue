@@ -146,8 +146,8 @@ function describe(failure: unknown): string {
           <input v-model="edit.title" required maxlength="120" class="input text-sm font-medium" aria-label="Título" />
           <textarea v-model="edit.body" required rows="3" maxlength="4000" class="input text-sm" aria-label="Regra" />
           <div class="flex gap-2">
-            <button type="submit" :disabled="busy" class="rounded-full bg-emerald-500 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50">Salvar</button>
-            <button type="button" class="rounded-full px-3 py-1.5 text-sm hover:bg-zinc-800" @click="editing = undefined">Cancelar</button>
+            <button type="submit" :disabled="busy" class="btn btn-sm btn-primary">Salvar</button>
+            <button type="button" class="btn btn-sm btn-ghost" @click="editing = undefined">Cancelar</button>
           </div>
         </form>
         <div v-else class="flex items-start gap-3">
@@ -159,8 +159,8 @@ function describe(failure: unknown): string {
           <div v-if="!readonly" class="flex shrink-0 items-center gap-0.5 text-zinc-400">
             <button type="button" class="grid h-7 w-7 place-items-center rounded-full hover:bg-zinc-800 disabled:opacity-30" :disabled="busy || index === 0" title="Subir" @click="move(rule, 'up')">↑</button>
             <button type="button" class="grid h-7 w-7 place-items-center rounded-full hover:bg-zinc-800 disabled:opacity-30" :disabled="busy || index === rules.length - 1" title="Descer" @click="move(rule, 'down')">↓</button>
-            <button type="button" class="rounded-full px-2 py-1 text-xs hover:bg-zinc-800" :disabled="busy" @click="toggle(rule)">{{ rule.enabled ? 'Desligar' : 'Ligar' }}</button>
-            <button type="button" class="rounded-full px-2 py-1 text-xs hover:bg-zinc-800" @click="startEdit(rule)">Editar</button>
+            <button type="button" class="btn btn-sm btn-ghost" :disabled="busy" @click="toggle(rule)">{{ rule.enabled ? 'Desligar' : 'Ligar' }}</button>
+            <button type="button" class="btn btn-sm btn-ghost" @click="startEdit(rule)">Editar</button>
             <button type="button" class="grid h-7 w-7 place-items-center rounded-full hover:bg-zinc-800 hover:text-rose-300" title="Apagar" @click="removing = rule"><Icon name="trash" class="h-4 w-4" /></button>
           </div>
         </div>
@@ -180,7 +180,7 @@ function describe(failure: unknown): string {
         <small class="hint">Curta e direta: uma regra por vez.</small>
         <small v-for="m in draftIssues.body" :key="m" class="error">{{ m }}</small>
       </label>
-      <div><button type="submit" :disabled="busy" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50">Adicionar</button></div>
+      <div><button type="submit" :disabled="busy" class="btn btn-primary">Adicionar</button></div>
     </form>
 
     <ConfirmDialog

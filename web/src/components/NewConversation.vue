@@ -146,9 +146,9 @@ async function send(text: string, files: IOutgoingFile[], settle: (ok: boolean) 
             <div class="sm:col-span-2">
               <span class="mb-1.5 block text-xs font-medium text-zinc-400">Modo</span>
               <div class="flex flex-wrap gap-1.5">
-                <button v-if="lanes.includes('chat')" class="rounded-full border px-3 py-1 text-sm" :class="draft.mode === 'chat' && !draft.tools ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-200' : 'border-zinc-700'" @click="setMode('chat', false)">Conversa</button>
-                <button v-if="lanes.includes('chat') && agent.allowedTools.length" class="rounded-full border px-3 py-1 text-sm" :class="draft.mode === 'chat' && draft.tools ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-200' : 'border-zinc-700'" @click="setMode('chat', true)">Conversa + ferramentas</button>
-                <button v-if="lanes.includes('agent')" class="rounded-full border px-3 py-1 text-sm" :class="draft.mode === 'agent' ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-200' : 'border-zinc-700'" @click="setMode('agent', false)">Agente</button>
+                <button v-if="lanes.includes('chat')" class="chip" :class="{ on: draft.mode === 'chat' && !draft.tools }" @click="setMode('chat', false)">Conversa</button>
+                <button v-if="lanes.includes('chat') && agent.allowedTools.length" class="chip" :class="{ on: draft.mode === 'chat' && draft.tools }" @click="setMode('chat', true)">Conversa + ferramentas</button>
+                <button v-if="lanes.includes('agent')" class="chip" :class="{ on: draft.mode === 'agent' }" @click="setMode('agent', false)">Agente</button>
               </div>
               <p class="mt-1.5 text-xs text-zinc-500">{{ MODE_HINT[draft.mode === 'chat' && draft.tools ? 'chatTools' : draft.mode] }}</p>
             </div>

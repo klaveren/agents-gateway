@@ -166,7 +166,7 @@ async function doReset() {
   <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
     <div>
       <p class="font-medium text-zinc-200">Só quem administra gerencia usuários.</p>
-      <RouterLink v-if="!auth.signedIn" :to="{ path: '/login', query: { next: '/users' } }" class="mt-3 inline-block rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950">Entrar</RouterLink>
+      <RouterLink v-if="!auth.signedIn" :to="{ path: '/login', query: { next: '/users' } }" class="mt-3 btn btn-primary">Entrar</RouterLink>
     </div>
   </div>
 
@@ -219,8 +219,8 @@ async function doReset() {
           </label>
           <p v-if="formError" class="text-sm text-rose-300 sm:col-span-2">{{ formError }}</p>
           <div class="flex gap-2 sm:col-span-2">
-            <button type="submit" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400">Criar</button>
-            <RouterLink to="/users" class="rounded-full px-4 py-2 text-sm hover:bg-zinc-800">Cancelar</RouterLink>
+            <button type="submit" class="btn btn-primary">Criar</button>
+            <RouterLink to="/users" class="btn btn-ghost">Cancelar</RouterLink>
           </div>
         </form>
       </template>
@@ -257,9 +257,9 @@ async function doReset() {
         </div>
 
         <div class="flex flex-wrap gap-2">
-          <button type="button" class="rounded-full bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-700" @click="(resetting = selected), (resetPassword = ''), (resetError = undefined), (resetDone = undefined)">Redefinir senha</button>
-          <button type="button" class="rounded-full bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-700" @click="(ending = selected), (resetDone = undefined)">Encerrar sessões</button>
-          <RouterLink v-if="auth.isAdmin" :to="{ path: '/usage', query: { tab: 'users', user: selected.id } }" class="rounded-full px-3 py-1.5 text-sm text-emerald-400 hover:bg-zinc-800">Ver uso →</RouterLink>
+          <button type="button" class="btn btn-secondary" @click="(resetting = selected), (resetPassword = ''), (resetError = undefined), (resetDone = undefined)">Redefinir senha</button>
+          <button type="button" class="btn btn-secondary" @click="(ending = selected), (resetDone = undefined)">Encerrar sessões</button>
+          <RouterLink v-if="auth.isAdmin" :to="{ path: '/usage', query: { tab: 'users', user: selected.id } }" class="btn btn-ghost">Ver uso →</RouterLink>
         </div>
       </section>
       <div v-else class="grid h-full place-items-center text-zinc-500">Escolha um usuário ou crie um novo.</div>
@@ -282,8 +282,8 @@ async function doReset() {
             <input v-model="resetPassword" type="password" required autocomplete="new-password" class="input mt-3 w-full" placeholder="Pelo menos 10 caracteres" />
             <p v-if="resetError" class="mt-2 text-xs text-rose-300">{{ resetError }}</p>
             <div class="mt-4 flex justify-end gap-2">
-              <button type="button" class="rounded-full px-4 py-2 text-sm hover:bg-zinc-800" @click="resetting = undefined">Cancelar</button>
-              <button type="submit" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950">Redefinir</button>
+              <button type="button" class="btn btn-ghost" @click="resetting = undefined">Cancelar</button>
+              <button type="submit" class="btn btn-primary">Redefinir</button>
             </div>
           </form>
         </div>

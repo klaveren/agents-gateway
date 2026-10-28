@@ -26,8 +26,8 @@ const emit = defineEmits<{ confirm: []; cancel: [] }>()
         <h2 class="font-semibold">{{ title }}</h2>
         <p v-if="message" class="mt-1.5 text-sm text-zinc-400">{{ message }}</p>
         <div class="mt-5 flex justify-end gap-2">
-          <button type="button" class="rounded-full px-4 py-2 text-sm hover:bg-zinc-800" @click="emit('cancel')">Cancelar</button>
-          <button type="button" :disabled="busy" :class="tone === 'neutral' ? 'bg-emerald-500 text-zinc-950 hover:bg-emerald-400' : 'bg-rose-500 text-white hover:bg-rose-400'" class="rounded-full px-4 py-2 text-sm font-medium disabled:opacity-50" autofocus @click="emit('confirm')">{{ label }}</button>
+          <button type="button" class="btn btn-ghost" @click="emit('cancel')">Cancelar</button>
+          <button type="button" :disabled="busy" :class="tone === 'neutral' ? 'btn-primary' : 'bg-rose-500 text-white hover:bg-rose-400'" class="btn" autofocus @click="emit('confirm')">{{ label }}</button>
         </div>
       </div>
     </div>

@@ -133,10 +133,10 @@ onBeforeUnmount(() => {
       <span class="text-sm font-medium">Conta</span>
       <span v-if="login.state === 'done'" class="text-sm text-emerald-300">✓ Conectado</span>
       <span v-else-if="login.state === 'failed' && !login.missing" class="text-sm text-rose-300">✕ {{ login.message }}</span>
-      <button v-if="login.state !== 'waiting'" type="button" :disabled="busy" class="ml-auto rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="start">
+      <button v-if="login.state !== 'waiting'" type="button" :disabled="busy" class="ml-auto btn btn-primary" @click="start">
         {{ busy ? 'Abrindo…' : 'Entrar' }}
       </button>
-      <button v-else type="button" class="ml-auto rounded-full px-3 py-2 text-sm text-zinc-400 hover:bg-zinc-800" @click="act(() => providers.login(provider.id, 'cancel'))">Cancelar</button>
+      <button v-else type="button" class="ml-auto btn btn-ghost" @click="act(() => providers.login(provider.id, 'cancel'))">Cancelar</button>
     </div>
 
     <template v-if="login.state === 'waiting'">
@@ -145,7 +145,7 @@ onBeforeUnmount(() => {
           Abra o link e entre na conta:
           <div v-if="login.url" class="mt-1 flex items-center gap-2">
             <a :href="login.url" target="_blank" rel="noopener noreferrer" class="min-w-0 flex-1 truncate font-mono text-xs text-emerald-400 hover:underline">{{ login.url }}</a>
-            <button type="button" class="shrink-0 rounded-full bg-zinc-800 px-3 py-1 text-xs hover:bg-zinc-700" @click="copy(login.url, 'url')">{{ copied === 'url' ? 'Copiado' : 'Copiar' }}</button>
+            <button type="button" class="btn btn-sm btn-secondary" @click="copy(login.url, 'url')">{{ copied === 'url' ? 'Copiado' : 'Copiar' }}</button>
           </div>
           <p v-else class="text-xs text-zinc-500">aguardando o link…</p>
         </li>
@@ -153,14 +153,14 @@ onBeforeUnmount(() => {
           Digite este código na página:
           <div class="mt-1 flex items-center gap-2">
             <code class="rounded-lg bg-zinc-950 px-3 py-1.5 font-mono text-base tracking-widest">{{ login.userCode }}</code>
-            <button type="button" class="rounded-full bg-zinc-800 px-3 py-1 text-xs hover:bg-zinc-700" @click="copy(login.userCode, 'code')">{{ copied === 'code' ? 'Copiado' : 'Copiar' }}</button>
+            <button type="button" class="btn btn-sm btn-secondary" @click="copy(login.userCode, 'code')">{{ copied === 'code' ? 'Copiado' : 'Copiar' }}</button>
           </div>
         </li>
         <li v-if="login.needsCode">
           Se a página mostrar um código, cole aqui:
           <form class="mt-1 flex gap-2" @submit.prevent="send">
             <input v-model="code" autocomplete="off" spellcheck="false" placeholder="código de autorização" class="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-sm outline-none focus:border-emerald-500/60" />
-            <button type="submit" :disabled="busy || !code.trim()" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 disabled:opacity-40">Enviar</button>
+            <button type="submit" :disabled="busy || !code.trim()" class="btn btn-primary">Enviar</button>
           </form>
         </li>
       </ol>
@@ -176,7 +176,7 @@ onBeforeUnmount(() => {
       <span>{{ help.note }}</span>
       <div v-if="help.command" class="flex items-center gap-2">
         <code class="rounded bg-zinc-950 px-2 py-1 font-mono text-zinc-300">{{ help.command }}</code>
-        <button type="button" class="rounded-full bg-zinc-800 px-3 py-1 hover:bg-zinc-700" @click="copy(help.command, 'command')">{{ copied === 'command' ? 'Copiado' : 'Copiar' }}</button>
+        <button type="button" class="btn btn-sm btn-secondary" @click="copy(help.command, 'command')">{{ copied === 'command' ? 'Copiado' : 'Copiar' }}</button>
       </div>
       <a v-if="help.link" :href="help.link.href" target="_blank" rel="noopener noreferrer" class="text-emerald-400 hover:underline">{{ help.link.label }}</a>
     </div>

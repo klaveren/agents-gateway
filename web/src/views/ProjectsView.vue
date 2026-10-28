@@ -182,8 +182,8 @@ async function confirmRemove() {
           <label class="field">Descrição <span class="hint">opcional</span><textarea v-model="form.description" rows="3" class="input text-sm" /></label>
           <p v-if="formError" class="text-sm text-rose-300">{{ formError }}</p>
           <div class="flex gap-2">
-            <button type="submit" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400">Criar projeto</button>
-            <RouterLink to="/projects" class="rounded-full px-4 py-2 text-sm hover:bg-zinc-800">Cancelar</RouterLink>
+            <button type="submit" class="btn btn-primary">Criar projeto</button>
+            <RouterLink to="/projects" class="btn btn-ghost">Cancelar</RouterLink>
           </div>
         </form>
       </template>
@@ -195,7 +195,7 @@ async function confirmRemove() {
             <h2 class="truncate text-lg font-semibold">{{ selected.name }}</h2>
             <p class="truncate font-mono text-xs text-zinc-500">{{ selected.id }}</p>
           </div>
-          <button v-if="selected.id !== projects.current" type="button" class="ml-auto rounded-full bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700" @click="projects.select(selected.id)">Usar este projeto</button>
+          <button v-if="selected.id !== projects.current" type="button" class="btn btn-secondary ml-auto" @click="projects.select(selected.id)">Usar este projeto</button>
         </div>
 
         <p class="text-xs text-zinc-500">
@@ -220,7 +220,7 @@ async function confirmRemove() {
           <label class="field">Descrição<textarea v-model="edit.description" rows="2" class="input text-sm" /></label>
         </div>
         <div v-if="dirty" class="flex gap-2">
-          <button type="button" :disabled="busy" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="save">Salvar</button>
+          <button type="button" :disabled="busy" class="btn btn-primary" @click="save">Salvar</button>
         </div>
 
         <div class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
@@ -238,14 +238,14 @@ async function confirmRemove() {
             </li>
           </ul>
           <div v-if="membersDirty" class="flex gap-2">
-            <button type="button" :disabled="busy" class="rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="saveMembers">Salvar membros</button>
+            <button type="button" :disabled="busy" class="btn btn-primary" @click="saveMembers">Salvar membros</button>
           </div>
         </div>
 
         <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
         <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
         <div class="flex justify-end text-xs">
-          <button type="button" class="text-rose-300 hover:underline" @click="(removing = selected), (removeError = undefined)">Apagar projeto</button>
+          <button type="button" class="btn btn-danger" @click="(removing = selected), (removeError = undefined)">Apagar projeto</button>
         </div>
       </section>
       <div v-else class="grid h-full place-items-center text-zinc-500">Escolha um projeto ou crie um novo.</div>

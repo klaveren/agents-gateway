@@ -255,7 +255,7 @@ function describe(failure: unknown): string {
       <div v-if="tab === 'build'" class="flex flex-col gap-1 px-3 pt-1 pb-3">
         <button
           :disabled="starting"
-          class="flex items-center justify-center gap-2 rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50"
+          class="btn btn-primary"
           @click="startBuild"
         >
           <Icon name="plus" class="h-4 w-4" />
@@ -295,7 +295,7 @@ function describe(failure: unknown): string {
             <div>
               <button
                 :disabled="starting"
-                class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50"
+                class="btn btn-primary"
                 @click="startBuild"
               >
                 Criar com o construtor
@@ -359,16 +359,16 @@ function describe(failure: unknown): string {
             <div class="flex gap-1 text-xs">
               <button
                 type="button"
-                class="rounded-full px-3 py-1"
-                :class="draftPreview ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-800/60'"
+                class="btn btn-sm"
+                :class="draftPreview ? 'btn-secondary' : 'btn-ghost'"
                 @click="draftPreview = true"
               >
                 Prévia
               </button>
               <button
                 type="button"
-                class="rounded-full px-3 py-1"
-                :class="!draftPreview ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-800/60'"
+                class="btn btn-sm"
+                :class="!draftPreview ? 'btn-secondary' : 'btn-ghost'"
                 @click="draftPreview = false"
               >
                 Texto
@@ -378,8 +378,8 @@ function describe(failure: unknown): string {
             <div v-if="draftPreview" class="prose-agent rounded-xl border border-zinc-800 p-3 text-sm break-words" v-html="renderMarkdown(draft.body)" />
             <pre v-else class="rounded-xl border border-zinc-800 p-3 font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-zinc-300">{{ draft.body }}</pre>
             <button
-              class="rounded-full px-4 py-2 text-sm font-medium"
-              :class="draft.saved ? 'text-zinc-300 hover:bg-zinc-800' : 'bg-emerald-500 text-zinc-950 hover:bg-emerald-400'"
+              class="btn"
+              :class="draft.saved ? 'btn-ghost' : 'btn-primary'"
               @click="openInEditor"
             >
               Abrir no editor
@@ -417,7 +417,7 @@ function describe(failure: unknown): string {
             <div class="flex items-center gap-3">
               <button
                 :disabled="saving === 'global'"
-                class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50"
+                class="btn btn-primary"
                 @click="saveAddendum('global')"
               >
                 Salvar
@@ -436,7 +436,7 @@ function describe(failure: unknown): string {
             <div class="flex items-center gap-3">
               <button
                 :disabled="saving === 'project'"
-                class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50"
+                class="btn btn-primary"
                 @click="saveAddendum('project')"
               >
                 Salvar

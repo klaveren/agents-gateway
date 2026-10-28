@@ -155,12 +155,12 @@ const STATUS: Record<IHookDelivery['status'], { label: string; tone: string }> =
       </div>
       <div class="flex items-center gap-2">
         <code class="min-w-0 flex-1 truncate rounded bg-zinc-950 px-2 py-1 font-mono text-xs text-zinc-100">{{ revealed.secret }}</code>
-        <button type="button" class="rounded-full bg-zinc-800 px-3 py-1 text-xs hover:bg-zinc-700" @click="copy('secret', revealed.secret)">{{ copied === 'secret' ? 'copiado' : 'copiar' }}</button>
+        <button type="button" class="btn btn-sm btn-secondary" @click="copy('secret', revealed.secret)">{{ copied === 'secret' ? 'copiado' : 'copiar' }}</button>
       </div>
       <template v-for="hook in list.filter((entry) => entry.name === revealed?.name)" :key="hook.name">
         <div class="flex items-center gap-2">
           <code class="min-w-0 flex-1 truncate rounded bg-zinc-950 px-2 py-1 font-mono text-xs text-zinc-300">{{ urlOf(hook) }}</code>
-          <button type="button" class="rounded-full bg-zinc-800 px-3 py-1 text-xs hover:bg-zinc-700" @click="copy('url', urlOf(hook))">{{ copied === 'url' ? 'copiado' : 'copiar URL' }}</button>
+          <button type="button" class="btn btn-sm btn-secondary" @click="copy('url', urlOf(hook))">{{ copied === 'url' ? 'copiado' : 'copiar URL' }}</button>
         </div>
         <p class="text-xs text-zinc-400">Exemplo de chamada</p>
         <pre class="overflow-x-auto rounded bg-zinc-950 p-2 text-[11px] text-zinc-400">{{ curlOf(hook, revealed.secret) }}</pre>
@@ -184,13 +184,13 @@ const STATUS: Record<IHookDelivery['status'], { label: string; tone: string }> =
       </li>
       <li v-if="!list.length && !loadError" class="px-3 py-3 text-xs text-zinc-500">Nenhum hook ainda.</li>
     </ul>
-    <button v-if="!addingNew" type="button" class="self-start rounded-full bg-zinc-800 px-4 py-1.5 text-sm hover:bg-zinc-700" @click="openHook('')">+ Novo hook</button>
+    <button v-if="!addingNew" type="button" class="btn btn-secondary self-start" @click="openHook('')">+ Novo hook</button>
 
     <div v-if="editing" class="flex flex-col gap-3 rounded-xl border border-zinc-800 p-3">
       <h3 class="text-sm font-medium text-zinc-200">{{ selected ? `Hook ${selected.name}` : 'Novo hook' }}</h3>
       <div v-if="selected" class="flex items-center gap-2">
         <code class="min-w-0 flex-1 truncate rounded bg-zinc-950 px-2 py-1 font-mono text-xs text-zinc-300">POST {{ urlOf(selected) }}</code>
-        <button type="button" class="rounded-full bg-zinc-800 px-3 py-1 text-xs hover:bg-zinc-700" @click="copy('url', urlOf(selected))">{{ copied === 'url' ? 'copiado' : 'copiar' }}</button>
+        <button type="button" class="btn btn-sm btn-secondary" @click="copy('url', urlOf(selected))">{{ copied === 'url' ? 'copiado' : 'copiar' }}</button>
       </div>
       <label v-if="!selected" class="field">
         Nome
@@ -235,12 +235,12 @@ const STATUS: Record<IHookDelivery['status'], { label: string; tone: string }> =
 
       <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
       <div class="flex flex-wrap gap-2">
-        <button v-if="!selected" type="button" :disabled="busy" class="rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="create">Criar</button>
+        <button v-if="!selected" type="button" :disabled="busy" class="btn btn-primary" @click="create">Criar</button>
         <template v-else>
-          <button type="button" :disabled="busy" class="rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="save">Salvar</button>
-          <button type="button" :disabled="busy" class="rounded-full bg-zinc-800 px-4 py-1.5 text-sm hover:bg-zinc-700" @click="confirm = { kind: 'rotate', name: selected.name }">Trocar chave</button>
+          <button type="button" :disabled="busy" class="btn btn-primary" @click="save">Salvar</button>
+          <button type="button" :disabled="busy" class="btn btn-secondary" @click="confirm = { kind: 'rotate', name: selected.name }">Trocar chave</button>
           <span v-if="selected.secretLast4" class="self-center text-xs text-zinc-500">chave termina em …{{ selected.secretLast4 }}</span>
-          <button type="button" :disabled="busy" class="ml-auto rounded-full px-3 py-1.5 text-sm text-rose-300 hover:bg-rose-500/10" @click="confirm = { kind: 'remove', name: selected.name }">Apagar</button>
+          <button type="button" :disabled="busy" class="btn btn-danger ml-auto" @click="confirm = { kind: 'remove', name: selected.name }">Apagar</button>
         </template>
       </div>
 
@@ -287,11 +287,5 @@ const STATUS: Record<IHookDelivery['status'], { label: string; tone: string }> =
 }
 .error {
   @apply text-xs font-normal text-rose-300;
-}
-.chip {
-  @apply rounded-full border border-zinc-700 px-3 py-1 text-sm font-normal text-zinc-300 hover:bg-zinc-800;
-}
-.chip.on {
-  @apply border-emerald-500/60 bg-emerald-500/15 text-emerald-200;
 }
 </style>

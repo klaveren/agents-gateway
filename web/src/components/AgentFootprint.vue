@@ -60,7 +60,7 @@ const fmt = (value: number) => value.toLocaleString('pt-BR')
           <option v-for="item in projects.list" :key="item.id" :value="item.id">{{ item.name }}</option>
         </select>
       </label>
-      <button type="button" class="rounded-full bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700 disabled:opacity-40" :class="projectId ? 'ml-auto' : ''" :disabled="loading" @click="load">{{ loading ? 'Medindo…' : 'Atualizar' }}</button>
+      <button type="button" class="btn btn-secondary" :class="projectId ? 'ml-auto' : ''" :disabled="loading" @click="load">{{ loading ? 'Medindo…' : 'Atualizar' }}</button>
     </div>
 
     <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>

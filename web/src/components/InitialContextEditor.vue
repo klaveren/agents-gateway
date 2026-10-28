@@ -123,7 +123,7 @@ function describe(failure: unknown): string {
         {{ selected.length }} spec(s) · ≈ {{ weight.total.toLocaleString('pt-BR') }} tokens<template v-if="baseTokens"> · ≈ {{ total.total.toLocaleString('pt-BR') }} com o contexto do projeto</template> em toda conversa
         <template v-if="total.warn"> — acima de {{ CONTEXT_WARN_TOKENS.toLocaleString('pt-BR') }}, fica mais caro</template>
       </span>
-      <button type="button" :disabled="busy || !dirty" class="ml-auto rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="save">Salvar</button>
+      <button type="button" :disabled="busy || !dirty" class="btn btn-primary ml-auto" @click="save">Salvar</button>
     </div>
     <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
   </section>

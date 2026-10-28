@@ -79,7 +79,7 @@ const go = (query: Record<string, string | undefined>) => router.replace({ query
   <div v-if="!auth.signedIn" class="grid h-full place-items-center p-6 text-center text-zinc-400">
     <div>
       <p class="font-medium text-zinc-200">Entre para ver o seu uso.</p>
-      <RouterLink v-if="auth.localAccounts" :to="{ path: '/login', query: { next: '/usage' } }" class="mt-3 inline-block rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950">Entrar</RouterLink>
+      <RouterLink v-if="auth.localAccounts" :to="{ path: '/login', query: { next: '/usage' } }" class="btn btn-primary mt-3">Entrar</RouterLink>
     </div>
   </div>
 
@@ -125,7 +125,7 @@ const go = (query: Record<string, string | undefined>) => router.replace({ query
         <form class="flex flex-wrap items-center gap-2 text-sm" @submit.prevent="applyKey">
           <label class="text-zinc-400" for="metadata-key">Agrupar pelo campo</label>
           <input id="metadata-key" v-model="keyDraft" class="w-48 rounded-lg bg-zinc-900 px-2 py-1 font-mono text-zinc-100 ring-1 ring-zinc-800" placeholder="accountId" />
-          <button class="rounded-full bg-zinc-800 px-3 py-1 text-zinc-100 hover:bg-zinc-700">Agrupar</button>
+          <button class="btn btn-secondary">Agrupar</button>
         </form>
         <template v-if="groups">
           <UsageTiles :figure="groups.totals" :show-cost="true">

@@ -848,9 +848,9 @@ async function remove() {
     <p v-else-if="!ready" class="text-xs text-zinc-500">Carregando provedores…</p>
 
     <div v-show="tab !== 'hooks' && tab !== 'agendamentos'" class="flex gap-2">
-      <button type="submit" :disabled="saving || !ready || !!loadError || !form.providers.length" class="rounded-full bg-emerald-500 px-5 py-2 font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50">{{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar' }}</button>
-      <button v-if="!creating && agent" type="button" class="rounded-full bg-zinc-800 px-4 py-2 hover:bg-zinc-700" @click="emit('duplicate', agent)">Duplicar</button>
-      <button v-if="!creating && agent" type="button" class="ml-auto rounded-full px-4 py-2 text-rose-300 hover:bg-rose-500/10" @click="confirming = true">Apagar</button>
+      <button type="submit" :disabled="saving || !ready || !!loadError || !form.providers.length" class="btn btn-primary">{{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar' }}</button>
+      <button v-if="!creating && agent" type="button" class="btn btn-secondary" @click="emit('duplicate', agent)">Duplicar</button>
+      <button v-if="!creating && agent" type="button" class="btn btn-danger ml-auto" @click="confirming = true">Apagar</button>
     </div>
     <ConfirmDialog
       :open="confirmingSave"
@@ -886,12 +886,6 @@ async function remove() {
 }
 .error {
   @apply text-xs font-normal text-rose-300;
-}
-.chip {
-  @apply rounded-full border border-zinc-700 px-3 py-1 text-sm font-normal text-zinc-300 hover:bg-zinc-800;
-}
-.chip.on {
-  @apply border-emerald-500/60 bg-emerald-500/15 text-emerald-200;
 }
 .chip.danger.on {
   @apply border-amber-500/60 bg-amber-500/15 text-amber-200;

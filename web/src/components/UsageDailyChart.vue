@@ -69,7 +69,7 @@ function topRounded(x: number, top: number, width: number, height: number): stri
   <div class="viz-root flex flex-col gap-2">
     <div class="flex flex-wrap items-center gap-4 text-xs text-zinc-400">
       <span v-for="segment in USAGE_SEGMENTS" :key="segment.key" class="flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-sm" :style="{ background: segment.color }" /> {{ segment.label }}</span>
-      <button type="button" class="ml-auto text-zinc-400 hover:text-zinc-100" @click="showTable = !showTable">{{ showTable ? 'Ver gráfico' : 'Ver tabela' }}</button>
+      <button type="button" class="btn btn-sm btn-ghost ml-auto" @click="showTable = !showTable">{{ showTable ? 'Ver gráfico' : 'Ver tabela' }}</button>
     </div>
 
     <div v-if="!showTable" class="relative" @mouseleave="hover = undefined">

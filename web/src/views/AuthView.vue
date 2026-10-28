@@ -92,7 +92,7 @@ async function submit() {
       </label>
 
       <p v-if="error" class="mb-3 text-sm text-rose-300">{{ error }}</p>
-      <button type="submit" :disabled="busy" class="w-full rounded-full bg-emerald-500 py-2.5 font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50">
+      <button type="submit" :disabled="busy" class="w-full btn btn-primary">
         {{ busy ? 'Aguarde…' : isSetup ? 'Criar e entrar' : 'Entrar' }}
       </button>
       <RouterLink v-if="!isSetup" to="/" class="mt-3 block text-center text-xs text-zinc-500 hover:text-zinc-300">Continuar sem entrar</RouterLink>

@@ -83,8 +83,8 @@ const topLevel = computed(() => conversations.items.filter((conversation) => !co
       <button
         v-for="tab in agentTabs"
         :key="tab.id"
-        class="shrink-0 rounded-full border px-3 py-1 text-xs transition-colors"
-        :class="conversations.filters.agentId === tab.id ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-300' : 'border-zinc-700 text-zinc-300 hover:bg-zinc-800'"
+        class="chip shrink-0"
+        :class="{ on: conversations.filters.agentId === tab.id }"
         @click="toggleAgent(tab.id)"
       >
         {{ tab.name }} <span class="text-zinc-500">{{ tab.count }}</span>
@@ -95,8 +95,8 @@ const topLevel = computed(() => conversations.items.filter((conversation) => !co
       <button
         v-for="tab in classificationTabs"
         :key="tab.value"
-        class="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors"
-        :class="conversations.filters.classification === tab.value ? 'border-zinc-400 bg-zinc-800 text-white' : 'border-zinc-800 text-zinc-400 hover:bg-zinc-800'"
+        class="chip"
+        :class="{ on: conversations.filters.classification === tab.value }"
         :title="CLASSIFICATION_LABEL[tab.value]"
         @click="toggleClassification(tab.value)"
       >

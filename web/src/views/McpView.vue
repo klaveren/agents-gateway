@@ -246,7 +246,7 @@ async function confirmRemove() {
   <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
     <div>
       <p class="font-medium text-zinc-200">Só quem administra cadastra os MCPs.</p>
-      <RouterLink v-if="!auth.signedIn && auth.localAccounts" :to="{ path: '/login', query: { next: '/mcp' } }" class="mt-3 inline-block rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950">Entrar</RouterLink>
+      <RouterLink v-if="!auth.signedIn && auth.localAccounts" :to="{ path: '/login', query: { next: '/mcp' } }" class="mt-3 btn btn-primary">Entrar</RouterLink>
     </div>
   </div>
 
@@ -336,8 +336,8 @@ async function confirmRemove() {
           </div>
           <p v-if="formError" class="text-sm text-rose-300">{{ formError }}</p>
           <div class="flex gap-2">
-            <button type="submit" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400">Adicionar</button>
-            <RouterLink to="/mcp" class="rounded-full px-4 py-2 text-sm hover:bg-zinc-800">Cancelar</RouterLink>
+            <button type="submit" class="btn btn-primary">Adicionar</button>
+            <RouterLink to="/mcp" class="btn btn-ghost">Cancelar</RouterLink>
           </div>
         </form>
       </template>
@@ -366,12 +366,12 @@ async function confirmRemove() {
           <div class="flex flex-wrap items-center gap-2 text-xs text-zinc-400">
             <span class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-emerald-300">contêiner isolado</span>
             <span>{{ selected.status.instances ?? 0 }} em execução — uma por conversa</span>
-            <button v-if="selected.status.instances" type="button" class="ml-auto rounded-full px-3 py-1 text-rose-300 hover:bg-rose-500/10" :disabled="busy" @click="stopAll">Encerrar todas</button>
+            <button v-if="selected.status.instances" type="button" class="ml-auto btn btn-sm btn-danger" :disabled="busy" @click="stopAll">Encerrar todas</button>
           </div>
           <label class="field">Nome<input v-model="edit.name" required class="input" /></label>
           <McpContainerFields v-model="containerDraft" />
           <div v-if="containerDirty || edit.name !== selected.name" class="flex gap-2">
-            <button type="button" :disabled="busy" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="saveContainer">Salvar alterações</button>
+            <button type="button" :disabled="busy" class="btn btn-primary" @click="saveContainer">Salvar alterações</button>
             <span class="self-center text-xs text-zinc-500">Vale para as próximas conversas.</span>
           </div>
           <div v-if="selected.env?.length" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
@@ -379,7 +379,7 @@ async function confirmRemove() {
             <form v-for="variable in selected.env" :key="variable.name" class="flex flex-wrap items-center gap-2" @submit.prevent="saveEnv(variable.name)">
               <code class="w-40 shrink-0 text-xs text-zinc-300">{{ variable.name }}</code>
               <input v-model="envValues[variable.name]" type="password" autocomplete="off" :placeholder="variable.configured ? 'preenchida — colar para trocar' : 'sem valor'" class="input min-w-0 flex-1 font-mono text-sm" />
-              <button type="submit" :disabled="busy || !envValues[variable.name]" class="rounded-full bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700 disabled:opacity-40">Salvar</button>
+              <button type="submit" :disabled="busy || !envValues[variable.name]" class="btn btn-sm btn-secondary">Salvar</button>
             </form>
           </div>
         </template>
@@ -388,12 +388,12 @@ async function confirmRemove() {
           <div class="flex flex-wrap items-center gap-2 text-xs text-zinc-400">
             <span class="rounded-full bg-amber-500/15 px-2 py-0.5 text-amber-300">local (npm)</span>
             <span>{{ selected.status.instances ?? 0 }} em execução — {{ selected.process?.scope === 'shared' ? 'compartilhada' : 'uma por conversa' }}</span>
-            <button v-if="selected.status.instances" type="button" class="ml-auto rounded-full px-3 py-1 text-rose-300 hover:bg-rose-500/10" :disabled="busy" @click="stopAll">Encerrar todas</button>
+            <button v-if="selected.status.instances" type="button" class="ml-auto btn btn-sm btn-danger" :disabled="busy" @click="stopAll">Encerrar todas</button>
           </div>
           <label class="field">Nome<input v-model="edit.name" required class="input" /></label>
           <McpProcessFields v-model="processDraft" />
           <div v-if="processDirty || edit.name !== selected.name" class="flex gap-2">
-            <button type="button" :disabled="busy" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="saveProcess">Salvar alterações</button>
+            <button type="button" :disabled="busy" class="btn btn-primary" @click="saveProcess">Salvar alterações</button>
             <span class="self-center text-xs text-zinc-500">As execuções em andamento serão encerradas.</span>
           </div>
           <div v-if="selected.process?.package" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
@@ -404,7 +404,7 @@ async function confirmRemove() {
                 <template v-else-if="selected.install.stale">instalado v{{ selected.install.version }} — o pacote mudou, reinstale</template>
                 <template v-else>v{{ selected.install.version }}<template v-if="selected.install.installedAt"> · {{ fullTime(selected.install.installedAt) }}</template></template>
               </span>
-              <button type="button" :disabled="busy || processDirty" class="ml-auto rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="install">
+              <button type="button" :disabled="busy || processDirty" class="ml-auto btn btn-sm btn-primary" @click="install">
                 {{ installing ? 'Instalando…' : selected.install?.installed ? 'Reinstalar' : 'Instalar' }}
               </button>
             </div>
@@ -417,7 +417,7 @@ async function confirmRemove() {
             <form v-for="variable in selected.env" :key="variable.name" class="flex flex-wrap items-center gap-2" @submit.prevent="saveEnv(variable.name)">
               <code class="w-40 shrink-0 text-xs text-zinc-300">{{ variable.name }}</code>
               <input v-model="envValues[variable.name]" type="password" autocomplete="off" :placeholder="variable.configured ? 'preenchida — colar para trocar' : 'sem valor'" class="input min-w-0 flex-1 font-mono text-sm" />
-              <button type="submit" :disabled="busy || !envValues[variable.name]" class="rounded-full bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700 disabled:opacity-40">Salvar</button>
+              <button type="submit" :disabled="busy || !envValues[variable.name]" class="btn btn-sm btn-secondary">Salvar</button>
             </form>
           </div>
         </template>
@@ -454,7 +454,7 @@ async function confirmRemove() {
           </div>
           <label v-if="edit.auth === 'header'" class="field sm:w-1/2">Cabeçalho<input v-model="edit.headerName" class="input font-mono" /></label>
           <div v-if="dirty" class="flex gap-2">
-            <button type="submit" :disabled="busy" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40">Salvar alterações</button>
+            <button type="submit" :disabled="busy" class="btn btn-primary">Salvar alterações</button>
           </div>
         </form>
 
@@ -465,13 +465,13 @@ async function confirmRemove() {
           </p>
           <form class="flex flex-wrap items-center gap-2" @submit.prevent="saveSecret">
             <input v-model="secret" type="password" autocomplete="off" spellcheck="false" :placeholder="selected.secret.configured ? 'Colar nova chave para trocar' : 'Colar a chave'" class="input min-w-0 flex-1 font-mono text-sm" />
-            <button type="submit" :disabled="busy || !secret.trim()" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40">Salvar</button>
-            <button v-if="selected.secret.configured" type="button" class="rounded-full px-3 py-2 text-sm text-rose-300 hover:bg-rose-500/10" @click="clearSecret">Remover</button>
+            <button type="submit" :disabled="busy || !secret.trim()" class="btn btn-primary">Salvar</button>
+            <button v-if="selected.secret.configured" type="button" class="btn btn-danger" @click="clearSecret">Remover</button>
           </form>
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
-          <button type="button" :disabled="busy || !selected.enabled" class="rounded-full bg-zinc-800 px-4 py-2 text-sm hover:bg-zinc-700 disabled:opacity-40" @click="test">Testar conexão</button>
+          <button type="button" :disabled="busy || !selected.enabled" class="btn btn-secondary" @click="test">Testar conexão</button>
           <span v-if="testResult" class="text-sm" :class="testResult.ok ? 'text-emerald-300' : 'text-rose-300'">{{ testResult.ok ? `✓ Conectado — ${testResult.tools} ferramenta(s).` : `✕ ${testResult.message}` }}</span>
           <span v-else-if="selected.status.lastError" class="text-xs text-rose-300">Último erro: {{ selected.status.lastError }}</span>
         </div>
@@ -499,7 +499,7 @@ async function confirmRemove() {
 
         <div class="flex flex-wrap items-center gap-1.5 text-xs text-zinc-500">
           <span>Agentes:</span>
-          <RouterLink v-for="agent in selected.agents" :key="agent.id" :to="`/agents/${agent.id}`" class="rounded-full bg-zinc-800 px-2 py-0.5 text-zinc-300 hover:bg-zinc-700">{{ agent.name }}</RouterLink>
+          <RouterLink v-for="agent in selected.agents" :key="agent.id" :to="`/agents/${agent.id}`" class="btn btn-sm btn-secondary">{{ agent.name }}</RouterLink>
           <span v-if="!selected.agents.length">nenhum ainda — escolha as ferramentas no formulário do agente</span>
           <button type="button" class="ml-auto text-rose-300 hover:underline" @click="(removing = selected), (removeError = undefined)">Remover MCP</button>
         </div>
@@ -532,12 +532,6 @@ async function confirmRemove() {
 }
 .error {
   @apply text-xs font-normal text-rose-300;
-}
-.chip {
-  @apply rounded-full border border-zinc-700 px-3 py-1 text-sm font-normal text-zinc-300 hover:bg-zinc-800;
-}
-.chip.on {
-  @apply border-emerald-500/60 bg-emerald-500/15 text-emerald-200;
 }
 .switch {
   @apply relative h-6 w-11 rounded-full bg-zinc-700 transition-colors disabled:opacity-40;

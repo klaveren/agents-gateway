@@ -101,6 +101,6 @@ async function save() {
 
     <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
     <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
-    <div><button type="button" :disabled="busy || !dirty" class="rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="save">Salvar</button></div>
+    <div><button type="button" :disabled="busy || !dirty" class="btn btn-primary" @click="save">Salvar</button></div>
   </section>
 </template>

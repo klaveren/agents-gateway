@@ -162,7 +162,7 @@ function sourceLabel(provider: IProviderStatus): string {
   <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
     <div>
       <p class="font-medium text-zinc-200">Só quem administra configura os modelos.</p>
-      <RouterLink v-if="!auth.signedIn && auth.localAccounts" :to="{ path: '/login', query: { next: '/models' } }" class="mt-3 inline-block rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950">Entrar</RouterLink>
+      <RouterLink v-if="!auth.signedIn && auth.localAccounts" :to="{ path: '/login', query: { next: '/models' } }" class="mt-3 btn btn-primary">Entrar</RouterLink>
     </div>
   </div>
 
@@ -218,8 +218,8 @@ function sourceLabel(provider: IProviderStatus): string {
           <p class="text-xs text-amber-300/80">Nos compatíveis, ferramentas e raciocínio variam por modelo e podem falhar.</p>
           <p v-if="formError" class="text-sm text-rose-300">{{ formError }}</p>
           <div class="flex gap-2">
-            <button type="submit" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400">Adicionar</button>
-            <RouterLink to="/models" class="rounded-full px-4 py-2 text-sm hover:bg-zinc-800">Cancelar</RouterLink>
+            <button type="submit" class="btn btn-primary">Adicionar</button>
+            <RouterLink to="/models" class="btn btn-ghost">Cancelar</RouterLink>
           </div>
         </form>
       </template>
@@ -250,7 +250,7 @@ function sourceLabel(provider: IProviderStatus): string {
           <p class="text-xs text-zinc-400">{{ SUBSCRIPTION_HINT[selected.protocol] }}</p>
           <SubscriptionLogin :provider="selected" @done="loginDone(selected.id)" />
           <div v-if="selected.protocol !== 'claude-sub'" class="flex">
-            <button type="button" :disabled="busy[selected.id]" class="rounded-full bg-zinc-800 px-4 py-2 text-sm hover:bg-zinc-700 disabled:opacity-40" @click="test(selected.id)">{{ busy[selected.id] ? 'Testando…' : 'Testar' }}</button>
+            <button type="button" :disabled="busy[selected.id]" class="btn btn-secondary" @click="test(selected.id)">{{ busy[selected.id] ? 'Testando…' : 'Testar' }}</button>
           </div>
         </template>
 
@@ -263,9 +263,9 @@ function sourceLabel(provider: IProviderStatus): string {
             :placeholder="selected.subscription ? 'Token (opcional)' : selected.credential.configured ? 'Colar nova chave para trocar' : 'Colar a chave'"
             class="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-sm outline-none focus:border-emerald-500/60"
           />
-          <button type="button" :disabled="busy[selected.id] || (!drafts[selected.id] && !selected.credential.configured && !selected.subscription)" class="rounded-full bg-zinc-800 px-4 py-2 text-sm hover:bg-zinc-700 disabled:opacity-40" @click="test(selected.id)">Testar</button>
-          <button type="submit" :disabled="busy[selected.id] || !drafts[selected.id]?.trim()" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40">Salvar</button>
-          <button v-if="selected.credential.source === 'stored'" type="button" class="rounded-full px-3 py-2 text-sm text-rose-300 hover:bg-rose-500/10" @click="removingKey = selected">Remover chave</button>
+          <button type="button" :disabled="busy[selected.id] || (!drafts[selected.id] && !selected.credential.configured && !selected.subscription)" class="btn btn-secondary" @click="test(selected.id)">Testar</button>
+          <button type="submit" :disabled="busy[selected.id] || !drafts[selected.id]?.trim()" class="btn btn-primary">Salvar</button>
+          <button v-if="selected.credential.source === 'stored'" type="button" class="btn btn-danger" @click="removingKey = selected">Remover chave</button>
         </form>
 
         <p v-if="results[selected.id]" class="text-sm" :class="results[selected.id].ok ? 'text-emerald-300' : 'text-rose-300'">
@@ -321,12 +321,6 @@ function sourceLabel(provider: IProviderStatus): string {
 }
 .error {
   @apply text-xs font-normal text-rose-300;
-}
-.chip {
-  @apply rounded-full border border-zinc-700 px-3 py-1 text-sm font-normal text-zinc-300 hover:bg-zinc-800;
-}
-.chip.on {
-  @apply border-emerald-500/60 bg-emerald-500/15 text-emerald-200;
 }
 .switch {
   @apply relative h-6 w-11 rounded-full bg-zinc-700 transition-colors disabled:opacity-40;

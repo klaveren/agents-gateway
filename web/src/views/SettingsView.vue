@@ -222,7 +222,7 @@ async function saveSettings() {
         </div>
 
         <div class="flex items-center gap-3">
-          <button class="rounded-full bg-emerald-500 px-5 py-2 font-medium text-zinc-950 hover:bg-emerald-400" @click="saveSettings">Salvar</button>
+          <button class="btn btn-primary" @click="saveSettings">Salvar</button>
           <span v-if="saved" class="text-sm text-emerald-300">{{ saved }}</span>
           <span v-if="failure" class="text-sm text-rose-300">{{ failure }}</span>
         </div>
