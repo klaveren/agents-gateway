@@ -548,13 +548,6 @@ async function remove() {
         <small v-for="message in issues.id" :key="message" class="error">{{ message }}</small>
       </label>
 
-      <div class="field sm:col-span-2">
-        <label class="flex items-center gap-3">
-          <button type="button" role="switch" :aria-checked="form.role === 'subagent'" class="switch" :class="{ on: form.role === 'subagent' }" @click="form.role = form.role === 'subagent' ? null : 'subagent'"><span /></button>
-          <span>Só subagente</span>
-        </label>
-        <small class="hint">Só outros agentes o chamam (em "Pode delegar a"). Não aparece em Nova conversa.</small>
-      </div>
       <label class="field sm:col-span-2">
         <span>Projeto</span>
         <select v-model="form.projectId" class="input">
@@ -564,7 +557,14 @@ async function remove() {
         <small class="hint">{{ form.projectId ? 'Só os membros do projeto veem o agente.' : 'Qualquer projeto vê o agente.' }}</small>
         <small v-for="message in issues.projectId" :key="message" class="error">{{ message }}</small>
       </label>
-      <div class="field sm:col-span-2">
+      <div class="field">
+        <label class="flex items-center gap-3">
+          <button type="button" role="switch" :aria-checked="form.role === 'subagent'" class="switch" :class="{ on: form.role === 'subagent' }" @click="form.role = form.role === 'subagent' ? null : 'subagent'"><span /></button>
+          <span>Só subagente</span>
+        </label>
+        <small class="hint">Só outros agentes o chamam (em "Pode delegar a"). Não aparece em Nova conversa.</small>
+      </div>
+      <div class="field">
         <label class="flex items-center gap-3">
           <button type="button" role="switch" :aria-checked="!!form.adminOnly" class="switch" :class="{ on: form.adminOnly }" @click="form.adminOnly = !form.adminOnly"><span /></button>
           <span>Só administradores</span>
