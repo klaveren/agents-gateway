@@ -1,12 +1,13 @@
 import { sessionChoice } from '@domain/Agent.Policy'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import { nativeToolsOf } from '@domain/Native.Tools'
 import { IConnectionSource, requireConnection, UnavailableProviderError } from './support/Keyed.Client'
 import { dataDir, workspaceFor, subscriptionEnv } from './support/Subscription.Workspace'
 import { query, type CanUseTool, type EffortLevel, type Options, type HookCallback, type PermissionResult, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
-import { IProjectSandbox, projectPathIssue, projectSandbox } from '@infra/sandbox/Project.Sandbox'
+import { IProjectSandbox, PATH_FIELDS, projectPathIssue, projectSandbox } from '@infra/sandbox/Project.Sandbox'
+import { deniedPath } from '@infra/tools/File.Tools'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { reasoningLevel } from '@domain/Reasoning.Levels'
@@ -162,9 +163,10 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       // avisa que o `canUseTool` foi sombreado; por isso o gate fica só aqui.
       // As locais montadas entram pelo NOME — a `delegate_to_agent` vem de `agent:<id>`, não de um nome em `allowedTools`.
       canUseTool: gate,
-      // ⛔ Agente de projeto: a MESMA decisão também no PreToolUse, que roda em toda ferramenta — o SDK libera
-      // leitura (Read, Glob, Grep) sem passar pelo `canUseTool`, e o filtro de caminho seria pulado.
-      ...(project ? { hooks: { PreToolUse: [{ hooks: [preToolUse(gate)] }] } } : {}),
+      // ⛔ A MESMA decisão também no PreToolUse, que roda em toda ferramenta e em TODO agente — o SDK libera leitura
+      // (Read, Glob, Grep) sem passar pelo `canUseTool`, e o filtro de caminho (projeto) e a lista protegida (.env,
+      // chaves, dados do gateway) seriam pulados.
+      hooks: { PreToolUse: [{ hooks: [preToolUse(gate)] }] },
       // Isolamento: sem isto o subprocesso lê o ~/.claude e o CLAUDE.md da máquina.
       settingSources: [],
       includePartialMessages: true,
@@ -373,7 +375,12 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
 
       const remote = isMcp ? byServer.get(server) : undefined
       if (remote && (!remote.tools || remote.tools.includes(bare))) return { behavior: 'allow' }
-      if (!remote && allowed.includes(bare)) return project ? this.confined(bare, input, project, wrapped) : { behavior: 'allow' }
+      if (!remote && allowed.includes(bare)) {
+        // ⛔ Em qualquer agente, de projeto ou global: as nativas de arquivo nunca tocam .env, chaves nem os dados do gateway.
+        const protectedPath = protectedPathOf(bare, input, project?.dir)
+        if (protectedPath) return { behavior: 'deny', message: `${protectedPath}: este arquivo é protegido.` }
+        return project ? this.confined(bare, input, project, wrapped) : { behavior: 'allow' }
+      }
 
       return { behavior: 'deny', message: `Tool "${bare}" is not enabled for this agent.` }
     }
@@ -521,3 +528,17 @@ function resultText(content: unknown): string {
     )
   return 'tool failed'
 }
+
+/** O caminho protegido que uma nativa de arquivo do Claude pediu (ver `deniedPath`), ou nada. Glob relativo não aponta para fora. */
+function protectedPathOf(toolName: string, input: Record<string, unknown>, root = PROTECTED_ROOT): string | undefined {
+  for (const field of PATH_FIELDS[toolName] ?? []) {
+    const value = input[field]
+    if (typeof value !== 'string' || !value || ((field === 'pattern' || field === 'glob') && !isAbsolute(value))) continue
+    const reason = deniedPath(resolve(root === PROTECTED_ROOT ? process.cwd() : root, value), root)
+    if (reason) return `${toolName}: ${value} (${reason})`
+  }
+  return undefined
+}
+
+/** Agente global: nenhuma pasta liberada dentro dos dados do gateway. O de projeto libera a pasta dele (o cerco faz o resto). */
+const PROTECTED_ROOT = '/nonexistent-root'

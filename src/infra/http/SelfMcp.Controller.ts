@@ -246,14 +246,15 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'list_tools',
     {
       description:
-        'Everything an agent can be given in allowedTools: local tools (by name), SDK native tools (`sdk:…`, per provider protocol, with risk) and the MCP servers with their tools (`mcp:<server>/<tool>` or `mcp:<server>/*`).',
+        'Everything an agent can be given in allowedTools: capabilities (`cap:terminal`, `cap:files.read`, `cap:files.write`, `cap:web.search`, `cap:web.fetch`, `cap:todos` — the gateway decides per provider what runs; `runs` says how), other local tools (by name), provider-only SDK extras (`sdk:…`, with risk) and the MCP servers with their tools (`mcp:<server>/<tool>` or `mcp:<server>/*`). Prefer capabilities over the old ids (run_bash, sdk:Read…), which are converted on save.',
       annotations: { readOnlyHint: true },
     },
     async () => {
       const catalog = await api('GET', '/tools')
       if (!catalog.ok) return reply(catalog)
-      const { tools, native } = catalog.result as {
+      const { tools, native, capabilities } = catalog.result as {
         tools?: Array<{ name: string; description: string }>
+        capabilities?: Array<{ id: string; label: string; description: string; risk: string; runs: Record<string, string> }>
         native?: Array<{ id: string; protocol: string; label: string; risk: string; officialOnly: boolean }>
       }
       const servers = await api('GET', '/mcp-servers')
@@ -270,7 +271,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
               }),
           )
         : []
-      return text({ local: (tools ?? []).map((tool) => ({ name: tool.name, description: tool.description })), native, mcp })
+      return text({ capabilities, local: (tools ?? []).map((tool) => ({ name: tool.name, description: tool.description })), native, mcp })
     },
   )
 

@@ -162,7 +162,7 @@ export function projectSandbox(): IProjectSandbox {
 }
 
 /** As ferramentas de ARQUIVO do Claude e onde cada uma diz o caminho. */
-const PATH_FIELDS: Record<string, string[]> = {
+export const PATH_FIELDS: Readonly<Record<string, string[]>> = {
   Read: ['file_path'],
   Write: ['file_path'],
   Edit: ['file_path'],

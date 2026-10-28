@@ -1,3 +1,4 @@
+import { CAPABILITIES, CAPABILITY_PREFIX, CAPABILITY_TOOLS, capability, capabilityRuns, toCapabilities } from '@domain/Capability.Catalog'
 import { agentUnavailable, IAvailabilityFacts, TAgentUnavailable, targetUnavailable, UNAVAILABLE_LABEL } from '@domain/Agent.Availability'
 import { clientMetadata } from '@domain/Session.Metadata'
 import { metaPlaceholderKeys } from '@infra/sandbox/Egress.Proxy'
@@ -519,7 +520,8 @@ export class AgentController {
     }
     const id = parsed.id ?? ''
     const exists = !!this.agents.entry(id)
-    const input = toAgentInput(id, parsed)
+    const raw = toAgentInput(id, parsed)
+    const input = { ...raw, allowedTools: toCapabilities(raw.allowedTools) }
     const takenIds = exists ? [] : [...this.agents.list().map((agent) => agent.id), ...CORE_AGENT_IDS]
     return { issues: [...this.projectIssues(input), ...agentIssues(input, { ...(await this.agentRules()), takenIds })], exists }
   }
@@ -605,7 +607,8 @@ export class AgentController {
       const agent = this.agents.get(agentId)
       if (!agent) throw new AgentNotFoundError(agentId)
 
-      return this.catalogFor(agent.allowedTools)
+      // As capacidades entram pelas ferramentas do gateway que as implementam (a lista é a mesma em todo provedor).
+      return this.catalogFor([...agent.allowedTools, ...agent.allowedTools.flatMap((tool) => capability(tool)?.local ?? [])])
     })
   }
 
@@ -614,9 +617,27 @@ export class AgentController {
       await this.requireCaller()
       // As nativas vão junto, todas liberadas. `dangerous`: alcança este servidor — a tela avisa quem configura.
       const dangerous = (id: string) => dangerousToolsOf([id]).length > 0
-      const native = NATIVE_TOOLS.map((tool) => ({ ...tool, dangerous: dangerous(tool.id) }))
+      // ⚖️ O que virou CAPACIDADE (Terminal, Arquivos, Busca…) não aparece solto: vem em `capabilities`, com o que roda em
+      // cada provedor. Ficam as nativas que só um provedor tem (os "extras") e as locais que não são capacidade.
+      const native = NATIVE_TOOLS.filter((tool) => !CAPABILITY_TOOLS.has(tool.id)).map((tool) => ({ ...tool, dangerous: dangerous(tool.id) }))
       const catalog = await this.catalogFor(this.localTools)
-      return { ...catalog, tools: catalog.tools.map((tool) => ({ ...tool, dangerous: dangerous(tool.name) })), native, limits: { delegationMaxDepth: delegationMaxDepth() } }
+      // As que o servidor oferece de fato (o perímetro `LOCAL_TOOLS_ENABLED` já aplicado).
+      const perimeter = catalog.tools.filter((tool) => tool.origin === 'local').map((tool) => tool.name)
+      const capabilities = CAPABILITIES.filter((item) => !item.local.length || item.local.some((tool) => perimeter.includes(tool))).map((item) => ({
+        id: `${CAPABILITY_PREFIX}${item.id}`,
+        label: item.label,
+        description: item.description,
+        risk: item.risk,
+        dangerous: item.risk.startsWith('server-'),
+        runs: Object.fromEntries(Object.values(EProvider).map((protocol) => [protocol, capabilityRuns(item, protocol)])),
+      }))
+      return {
+        ...catalog,
+        tools: catalog.tools.filter((tool) => !CAPABILITY_TOOLS.has(tool.name)).map((tool) => ({ ...tool, dangerous: dangerous(tool.name) })),
+        capabilities,
+        native,
+        limits: { delegationMaxDepth: delegationMaxDepth() },
+      }
     })
   }
 

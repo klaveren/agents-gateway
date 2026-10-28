@@ -151,6 +151,24 @@ describe('ClaudeAgentAdapter', () => {
     assert.ok(events.find((event) => event.type === 'error' && String(event.payload.message).includes('Providers')))
   })
 
+  it('⛔ as nativas de arquivo nunca tocam .env nem chaves, também no agente global', async () => {
+    const seen: TQueryParams[] = []
+    const init = { type: 'system', subtype: 'init', session_id: 'cli-1', tools: ['Read', 'Write'] }
+    const adapter = new ClaudeAgentAdapter({ query: queryWith(() => [init, ...turn()], seen) })
+    const agent = { ...getAgent(), allowedTools: ['sdk:Read', 'sdk:Write'] }
+    const session = await adapter.createSession(agent, { agentId: CLAUDE_TEST_AGENT.id })
+    await drain(adapter.sendMessage(agent, session.id, { text: 'hi' }, {}))
+
+    const gate = seen[0].options?.canUseTool as (name: string, input: Record<string, unknown>, options: unknown) => Promise<{ behavior: string; message?: string }>
+    assert.strictEqual((await gate('Read', { file_path: '/srv/app/notas.md' }, {})).behavior, 'allow')
+    for (const file_path of ['/srv/app/.env', '/srv/app/.env.local', '/home/x/id_rsa', '/srv/certs/server.pem']) {
+      const result = await gate('Read', { file_path }, {})
+      assert.strictEqual(result.behavior, 'deny', file_path)
+      assert.match(result.message ?? '', /protegido/)
+    }
+    assert.strictEqual((await gate('Write', { file_path: 'secrets.json' }, {})).behavior, 'deny')
+  })
+
   it('liga só as nativas do agente no CLI, o gate as aprova, e avisa quando o init não traz uma delas', async () => {
     const seen: TQueryParams[] = []
     const init = { type: 'system', subtype: 'init', session_id: 'cli-1', tools: ['WebSearch'] }
@@ -468,14 +486,14 @@ describe('ClaudeAgentAdapter', () => {
       assert.strictEqual(inside.behavior, 'allow')
     })
 
-    it('o agente global continua sem cerco nem hook', async () => {
+    it('o agente global continua sem cerco, mas com o hook (a lista protegida vale para ele)', async () => {
       const seen: TQueryParams[] = []
       const fake = sandbox(true)
       const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog: catalogWith(true), sandbox: fake })
       const global = { ...getAgent(), allowedTools: ['sdk:Bash'] }
       const session = await adapter.createSession(global, { agentId: CLAUDE_TEST_AGENT.id })
       await drain(adapter.sendMessage(global, session.id, { text: 'oi' }, {}))
-      assert.strictEqual(seen[0].options?.hooks, undefined)
+      assert.ok(seen[0].options?.hooks?.PreToolUse?.length)
       const decision = (await seen[0].options!.canUseTool!('Bash', { command: 'ls' }, options)) as { behavior: string; updatedInput?: unknown }
       assert.deepStrictEqual([decision.behavior, decision.updatedInput, fake.calls], ['allow', undefined, []])
     })

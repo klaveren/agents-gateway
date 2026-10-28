@@ -20,9 +20,10 @@ describe('AGENT_SEED', () => {
     const [atlas, admin] = AGENT_SEED
 
     assert.ok(!atlas.adminOnly)
-    assert.ok(atlas.allowedTools.every((tool) => tool.startsWith('mcp:gateway/') || tool.startsWith('agent:builder-') || tool === 'sdk:WebSearch' || tool === UPDATE_TODOS_TOOL))
+    assert.ok(atlas.allowedTools.every((tool) => tool.startsWith('mcp:gateway/') || tool.startsWith('agent:builder-') || tool.startsWith('cap:')))
+    assert.ok(!atlas.allowedTools.some((tool) => ['cap:terminal', 'cap:files.read', 'cap:files.write'].includes(tool)))
     assert.strictEqual(admin.adminOnly, true)
-    for (const tool of ['sdk:Bash', 'sdk:Read', 'sdk:Write', 'sdk:Edit']) assert.ok(admin.allowedTools.includes(tool), tool)
+    for (const tool of ['cap:terminal', 'cap:files.read', 'cap:files.write']) assert.ok(admin.allowedTools.includes(tool), tool)
     assert.ok(atlas.allowedTools.every((tool) => admin.allowedTools.includes(tool)))
   })
 
@@ -34,14 +35,14 @@ describe('AGENT_SEED', () => {
     assert.match(admin.systemPrompt, /search_packages/)
   })
 
-  it('o Atlas é um agente Claude da lane agent, com raciocínio e a WebSearch nativa', () => {
+  it('o Atlas é um agente Claude da lane agent, com raciocínio e a busca na web', () => {
     const [atlas] = AGENT_SEED
 
     assert.strictEqual(atlas.providers[0].provider, EProvider.CLAUDE)
     assert.deepStrictEqual(atlas.modes, [EMode.AGENT])
     assert.ok(atlas.providers[0].models.includes('claude-sonnet-5'))
     assert.ok(atlas.reasoningEfforts?.includes('high'))
-    assert.ok(atlas.allowedTools.includes('sdk:WebSearch'))
+    assert.ok(atlas.allowedTools.includes('cap:web.search'))
   })
 
   it('⛔ o Atlas só delega aos construtores do core — sem send_message / start_conversation — e não grava conteúdo', () => {
@@ -63,7 +64,7 @@ describe('AGENT_SEED', () => {
     for (const agent of AGENT_SEED) {
       const issues = agentIssues(agent, {
         takenIds: [],
-        knownTools: [UPDATE_TODOS_TOOL],
+        knownTools: [UPDATE_TODOS_TOOL, 'search_web', 'run_bash', 'read_file', 'write_file'],
         providerOf: (model) => (model.startsWith('claude') ? EProvider.CLAUDE : undefined),
         mcpServerExists: (server) => server === 'gateway',
         agentExists: (id) => id.startsWith('builder-'),
@@ -122,5 +123,14 @@ describe('AGENT_SEED', () => {
     repository.migrateOnce(migration.key, 'qualquer', migration.change, 'seed')
     assert.deepStrictEqual(repository.list()[0].allowedTools, ['sdk:WebSearch', UPDATE_TODOS_TOOL])
     assert.strictEqual(migration.change({ ...AGENT_SEED[0], allowedTools: ['sdk:WebSearch'] }), undefined)
+  })
+
+  it('as capacidades: os ids de antes viram cap:, o Bash nativo vira o Terminal do gateway — uma vez', () => {
+    const repository = new NullAgentRepository()
+    repository.save({ ...AGENT_SEED[0], id: 'antigo', allowedTools: ['sdk:Bash', 'sdk:Read', 'sdk:Write', 'search_web', 'mcp:gateway/list_agents'] }, 'seed')
+    const migration = AGENT_MIGRATIONS.find((item) => item.key === 'capabilities')!
+    repository.migrateOnce(migration.key, 'antigo', migration.change, 'seed')
+    assert.deepStrictEqual(repository.list()[0].allowedTools, ['cap:terminal', 'cap:files.read', 'cap:files.write', 'cap:web.search', 'mcp:gateway/list_agents'])
+    assert.strictEqual(migration.change(repository.list()[0]), undefined)
   })
 })

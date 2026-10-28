@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ApiError } from '@/lib/api'
+import { effortLabel } from '@/lib/format'
 import { BUILD_KINDS, builderAgentId, type TBuildKind } from '@/lib/builder'
 import { defaultLanes, findOrphans, isUsableProvider, pruneModels, pruneNatives, summarizeIssues, unionLanes, unionLevels } from '@/lib/agentForm'
 import { useProvidersStore } from '@/stores/providers'
@@ -212,7 +213,20 @@ function makeDefaultProvider(id: string) {
 
 /** Ferramentas que mudam algo fora da conversa: quem diz é o servidor (`dangerous` em `GET /tools`). */
 const dangerousNames = computed(() => new Set(agents.tools.filter((tool) => tool.dangerous).map((tool) => tool.name)))
-const dangerousChosen = computed(() => form.value.allowedTools.filter((name) => dangerousNames.value.has(name)).map((name) => LOCAL_TOOL_LABEL[name] ?? name))
+const dangerousChosen = computed(() => [
+  ...agents.capabilities.filter((item) => item.dangerous && form.value.allowedTools.includes(item.id)).map((item) => item.label),
+  ...form.value.allowedTools.filter((name) => dangerousNames.value.has(name)).map((name) => LOCAL_TOOL_LABEL[name] ?? name),
+])
+/** As capacidades escolhidas e como cada uma roda nos provedores do agente ("Anthropic: nativa do Claude · Google: do gateway"). */
+const capabilityRows = computed(() =>
+  agents.capabilities
+    .filter((item) => form.value.allowedTools.includes(item.id))
+    .map((item) => ({
+      id: item.id,
+      label: item.label,
+      runs: form.value.providers.map((target) => `${protocols.providerName(target.provider)}: ${item.runs[protocols.protocolOf(target.provider) ?? target.provider] ?? 'indisponível'}`).join(' · '),
+    })),
+)
 const dangerousNatives = computed(() => natives.value.filter((tool) => tool.dangerous && form.value.allowedTools.includes(tool.id)).map((tool) => tool.label))
 /** Os providers do agente sem sandbox ou com a rede dele aberta. */
 const openSandboxes = computed(() =>
@@ -660,7 +674,7 @@ async function remove() {
       <div class="field">
         <span>Níveis de raciocínio</span>
         <div v-if="reasoningLevels.length" class="flex flex-wrap gap-1.5">
-          <button v-for="level in reasoningLevels" :key="level" type="button" class="chip font-mono" :class="{ on: form.reasoningEfforts?.includes(level) }" @click="toggle((form.reasoningEfforts ??= []), level)">{{ level }}</button>
+          <button v-for="level in reasoningLevels" :key="level" type="button" class="chip" :class="{ on: form.reasoningEfforts?.includes(level) }" @click="toggle((form.reasoningEfforts ??= []), level)">{{ effortLabel(level) }}</button>
         </div>
         <small v-else class="hint">O Gemini não permite escolher o nível de raciocínio.</small>
         <small v-if="reasoningLevels.length" class="hint">Os níveis que a pessoa pode escolher na conversa.</small>
@@ -670,7 +684,26 @@ async function remove() {
     </fieldset>
     <fieldset v-show="tab === 'ferramentas'" class="grid gap-4 sm:grid-cols-2">
       <div class="field sm:col-span-2">
-        <span>Ferramentas locais</span>
+        <span>Capacidades <em class="font-normal text-zinc-500">— o que o agente pode fazer; o gateway decide como roda em cada provedor.</em></span>
+        <div class="flex flex-wrap gap-1.5">
+          <button
+            v-for="item in agents.capabilities"
+            :key="item.id"
+            type="button"
+            class="chip"
+            :class="{ on: form.allowedTools.includes(item.id), danger: item.dangerous }"
+            :title="item.description"
+            @click="toggle(form.allowedTools, item.id)"
+          >
+            {{ item.label }}
+          </button>
+        </div>
+        <ul v-if="capabilityRows.length && form.providers.length" class="flex flex-col gap-0.5 text-xs text-zinc-500">
+          <li v-for="row in capabilityRows" :key="row.id"><span class="text-zinc-300">{{ row.label }}</span> — {{ row.runs }}</li>
+        </ul>
+      </div>
+      <div v-if="agents.tools.length" class="field sm:col-span-2">
+        <span>Outras ferramentas do gateway</span>
         <div class="flex flex-wrap gap-1.5">
           <button
             v-for="tool in agents.tools"
@@ -683,7 +716,6 @@ async function remove() {
           >
             {{ LOCAL_TOOL_LABEL[tool.name] ?? tool.name }}
           </button>
-          <span v-if="!agents.tools.length" class="text-sm text-zinc-500">Nenhuma disponível.</span>
         </div>
         <small v-if="dangerousChosen.length" class="text-amber-300">
           ⚠ {{ dangerousChosen.join(', ') }} dá acesso ao servidor. Quem conversar com este agente também terá esse acesso.<template v-if="!form.adminOnly"> Marque "Só administradores" na guia Agente se não for para todos.</template>
@@ -765,7 +797,7 @@ async function remove() {
 
     </fieldset>
     <fieldset v-show="tab === 'sdk'" class="flex flex-col gap-4">
-      <p class="text-xs text-zinc-500">Só no modo Agente. Cada provedor tem as suas ferramentas e permissões.</p>
+      <p class="text-xs text-zinc-500">Só no modo Agente: o nível de acesso das assinaturas e os extras que só um provedor tem. Terminal, arquivos e busca ficam em Ferramentas.</p>
       <p v-if="!form.modes.includes('agent')" class="text-xs text-amber-300">O modo Agente está desligado: nada daqui é usado.</p>
       <section v-for="section in sdkSections" :key="section.entry.target.provider" class="flex flex-col gap-2 rounded-xl border border-zinc-800 px-3 py-3">
         <div class="flex flex-wrap items-center gap-2 text-sm">
@@ -795,6 +827,7 @@ async function remove() {
           </label>
         </div>
 
+        <span v-if="section.tools.length" class="text-xs text-zinc-400">Extras do provedor</span>
         <ul v-if="section.tools.length" class="divide-y divide-zinc-800/70 rounded-lg border border-zinc-800">
           <li v-for="tool in section.tools" :key="tool.id" class="flex items-center gap-3 px-3 py-2" :class="{ 'opacity-50': nativeBlock(tool, section.entry) }">
             <input type="checkbox" class="accent-emerald-500" :checked="form.allowedTools.includes(tool.id)" :disabled="!!nativeBlock(tool, section.entry) && !form.allowedTools.includes(tool.id)" @change="toggle(form.allowedTools, tool.id)" />
@@ -806,7 +839,7 @@ async function remove() {
             <span class="shrink-0 rounded-full px-2 py-0.5 text-[10px]" :class="RISK_CLASS[tool.risk]">{{ RISK_LABEL[tool.risk] }}</span>
           </li>
         </ul>
-        <p v-else-if="!section.levels.length" class="text-xs text-zinc-500">Este provedor não tem ferramentas para ligar aqui.</p>
+        <p v-else-if="!section.levels.length" class="text-xs text-zinc-500">Nada a ajustar neste provedor.</p>
       </section>
       <small v-if="dangerousNatives.length || openSandboxes.length" class="text-amber-300">
         ⚠ <template v-if="dangerousNatives.length">{{ dangerousNatives.join(', ') }} dá acesso ao disco, à internet e aos comandos do servidor. </template>

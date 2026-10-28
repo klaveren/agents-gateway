@@ -1,4 +1,3 @@
-import { UPDATE_TODOS_TOOL } from './models/ConversationTodo.Model'
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import { EMode } from './enums/EMode.Enum'
@@ -15,15 +14,9 @@ describe('Builder.Agents', () => {
 
   it('⛔ cada um com a leitura e a gravação do SEU tipo, e o prompt manda gravar só depois da confirmação', () => {
     const target = { provider: 'claude', models: ['m'] }
-    assert.deepStrictEqual(builderAgent('rule', target).allowedTools, ['mcp:gateway/list_rules', 'mcp:gateway/save_rule', PROPOSE_DRAFT_TOOL, UPDATE_TODOS_TOOL])
-    assert.deepStrictEqual(builderAgent('adr', target).allowedTools, [
-      'mcp:gateway/list_docs',
-      'mcp:gateway/get_doc',
-      'mcp:gateway/save_doc',
-      PROPOSE_DRAFT_TOOL,
-      UPDATE_TODOS_TOOL,
-    ])
-    assert.deepStrictEqual(builderAgent('skill', target).allowedTools, ['mcp:gateway/list_resources', 'mcp:gateway/save_resource', PROPOSE_DRAFT_TOOL, UPDATE_TODOS_TOOL])
+    assert.deepStrictEqual(builderAgent('rule', target).allowedTools, ['mcp:gateway/list_rules', 'mcp:gateway/save_rule', PROPOSE_DRAFT_TOOL, 'cap:todos'])
+    assert.deepStrictEqual(builderAgent('adr', target).allowedTools, ['mcp:gateway/list_docs', 'mcp:gateway/get_doc', 'mcp:gateway/save_doc', PROPOSE_DRAFT_TOOL, 'cap:todos'])
+    assert.deepStrictEqual(builderAgent('skill', target).allowedTools, ['mcp:gateway/list_resources', 'mcp:gateway/save_resource', PROPOSE_DRAFT_TOOL, 'cap:todos'])
     const spec = builderAgent('spec', target).systemPrompt
     assert.match(spec, /Só grave com save_doc DEPOIS que a pessoa disser nesta conversa \(ou o agente que delegou trouxer a confirmação dela\)/)
     assert.match(spec, /A pessoa confirmou: grave o último rascunho/)
@@ -32,7 +25,7 @@ describe('Builder.Agents', () => {
 
   it('o de conhecimento pesquisa na web e lê a fonte, e começa pesquisando em vez de perguntar', () => {
     const knowledge = builderAgent('knowledge', { provider: 'claude', models: ['m'] })
-    for (const tool of ['sdk:WebSearch', 'sdk:WebFetch', 'search_web', 'mcp:gateway/save_doc', PROPOSE_DRAFT_TOOL]) assert.ok(knowledge.allowedTools.includes(tool), tool)
+    for (const tool of ['cap:web.search', 'cap:web.fetch', 'mcp:gateway/save_doc', PROPOSE_DRAFT_TOOL]) assert.ok(knowledge.allowedTools.includes(tool), tool)
     assert.match(knowledge.systemPrompt, /1\. Classifique o pedido \(é conhecimento\?\) e PESQUISE sem perguntar/)
     assert.match(knowledge.systemPrompt, /# Protocolo de construção de conhecimento[\s\S]*## Fontes/)
   })

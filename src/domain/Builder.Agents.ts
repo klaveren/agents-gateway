@@ -1,4 +1,3 @@
-import { UPDATE_TODOS_TOOL } from './models/ConversationTodo.Model'
 import { IAgent, IAgentTarget } from './models/Agent.Model'
 import { ICoreProtocol, PROTOCOL_KINDS, TProtocolKind } from './models/Protocol.Model'
 import { EMode } from './enums/EMode.Enum'
@@ -94,7 +93,7 @@ const KINDS: Readonly<Record<TProtocolKind, IBuilderKind>> = {
     save: 'save_doc',
     after: 'Avise que ele entra no índice das conversas novas e que é a base para as specs, skills e ADRs do tema.',
     // ⚖️ A pesquisa: a busca e a leitura nativas do Claude (leem a fonte inteira); em outro provider, a busca local.
-    extra: ['sdk:WebSearch', 'sdk:WebFetch', 'search_web'],
+    extra: ['cap:web.search', 'cap:web.fetch'],
     intake:
       'Classifique o pedido (é conhecimento?) e PESQUISE sem perguntar — só pergunte se o tema for ambíguo. Busque as fontes na ordem do protocolo e LEIA as que citar; anote URL e data de acesso.',
   },
@@ -175,7 +174,7 @@ export function builderAgent(kind: TProtocolKind, target: IAgentTarget): IAgent 
     systemPrompt: prompt(kind),
     reasoningEfforts: ['low', 'medium', 'high'],
     modes: [EMode.AGENT],
-    allowedTools: [...[...read, save, ...saveAlso].map((tool) => `mcp:gateway/${tool}`), ...extra, PROPOSE_DRAFT_TOOL, UPDATE_TODOS_TOOL],
+    allowedTools: [...[...read, save, ...saveAlso].map((tool) => `mcp:gateway/${tool}`), ...extra, PROPOSE_DRAFT_TOOL, 'cap:todos'],
     adminOnly: true,
   }
 }

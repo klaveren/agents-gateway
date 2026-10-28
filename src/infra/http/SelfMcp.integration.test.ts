@@ -184,7 +184,8 @@ describe('MCP do próprio gateway (integração)', () => {
 
     const tools = json(await client.callTool({ name: 'list_tools', arguments: {} }))
     assert.ok(Array.isArray(tools.local) && Array.isArray(tools.native) && Array.isArray(tools.mcp))
-    assert.ok(tools.local.some((tool: { name: string }) => tool.name === 'run_bash'))
+    assert.ok(tools.capabilities.some((item: { id: string }) => item.id === 'cap:terminal'))
+    assert.ok(!tools.local.some((tool: { name: string }) => tool.name === 'run_bash'))
   })
 
   it('list_providers e list_models: só o ativo por padrão; includeDisabled mostra o resto', async () => {
