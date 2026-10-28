@@ -22,14 +22,20 @@ export interface ICommandHint {
   description: string
 }
 
-/** As sugestões de cada guia para o texto digitado (ver `commandSuggestions`). */
-export function slashSuggestions(text: string, commands: readonly ICommandHint[]): Record<TSlashKind, ICommandHint[]> {
+/**
+ * As sugestões de cada guia para o texto digitado (ver `commandSuggestions`), até 50 por guia (a lista rola). `filter`:
+ * o campo de busca do seletor — mais um recorte, no nome e na descrição, sem acento.
+ */
+export function slashSuggestions(text: string, commands: readonly ICommandHint[], filter = ''): Record<TSlashKind, ICommandHint[]> {
+  const wanted = fold(filter.trim())
+  const kept = wanted ? commands.filter((command) => fold(`${command.id} ${command.description}`).includes(wanted)) : commands
   return Object.fromEntries(
     SLASH_TABS.map(({ kind }) => [
       kind,
       commandSuggestions(
         text,
-        commands.filter((command) => (command.kind ?? 'command') === kind),
+        kept.filter((command) => (command.kind ?? 'command') === kind),
+        50,
       ),
     ]),
   ) as Record<TSlashKind, ICommandHint[]>
@@ -56,7 +62,7 @@ const fold = (text: string) =>
  * depois da barra procura no nome e na descrição, sem acento; os do nome que começa igual vêm primeiro, depois os do
  * nome que contém, depois os da descrição.
  */
-export function commandSuggestions(text: string, commands: readonly ICommandHint[]): ICommandHint[] {
+export function commandSuggestions(text: string, commands: readonly ICommandHint[], limit = 8): ICommandHint[] {
   const match = /^\/(\S*)$/.exec(text)
   if (!match || !commands.length) return []
   const query = fold(match[1])
@@ -70,7 +76,7 @@ export function commandSuggestions(text: string, commands: readonly ICommandHint
     .map((command, index) => ({ command, index, score: rank(command) }))
     .filter((item) => item.score >= 0)
     .sort((a, b) => a.score - b.score || a.index - b.index)
-    .slice(0, 8)
+    .slice(0, limit)
     .map((item) => item.command)
 }
 

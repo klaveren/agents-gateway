@@ -74,15 +74,26 @@ function submit() {
 const dismissed = ref<string>()
 const highlighted = ref(0)
 const tab = ref<TSlashKind>('skill')
+/** O campo de busca do seletor: recorta os itens da guia, além do que vem depois da barra. */
+const filter = ref('')
+const filterInput = ref<HTMLInputElement>()
+const list = ref<HTMLElement>()
 const slashOpen = computed(() => dismissed.value !== text.value && /^\/\S*$/.test(text.value))
-const matches = computed(() => slashSuggestions(text.value, props.commands ?? []))
+const matches = computed(() => slashSuggestions(text.value, props.commands ?? [], filter.value))
 const shownTab = computed(() => shownSlashTab(tab.value, text.value, matches.value))
 const suggestions = computed(() => (slashOpen.value ? matches.value[shownTab.value] : []))
 watch(suggestions, () => (highlighted.value = 0))
-// Fechou o `/`: a próxima vez abre nas skills de novo.
-watch(slashOpen, (open) => (open ? undefined : (tab.value = 'skill')))
+// Fechou o `/`: a próxima vez abre nas skills de novo, sem busca.
+watch(slashOpen, (open) => {
+  if (open) return
+  tab.value = 'skill'
+  filter.value = ''
+})
+// O escolhido fica à vista quando a lista rola.
+watch(highlighted, () => void nextTick(() => list.value?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })))
 /** A guia aberta não tem nada: diz por quê, em vez de a lista ficar muda. */
 const slashEmpty = computed(() => slashOpen.value && !suggestions.value.length)
+const searching = computed(() => text.value !== '/' || !!filter.value.trim())
 const tabLabel = computed(() => SLASH_TABS.find((item) => item.kind === shownTab.value)?.label.toLowerCase() ?? '')
 const KIND_STYLE: Record<TSlashKind, string> = {
   skill: 'bg-violet-500/15 text-violet-300',
@@ -103,6 +114,22 @@ function complete(id: string) {
     grow()
     area.value?.focus()
   })
+}
+
+/** As teclas do campo de busca: as mesmas da lista; Esc limpa a busca e volta para a caixa de mensagem. */
+function onFilterKey(event: KeyboardEvent) {
+  if (event.isComposing) return
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault()
+    if (suggestions.value.length) highlighted.value = (highlighted.value + (event.key === 'ArrowDown' ? 1 : -1) + suggestions.value.length) % suggestions.value.length
+  } else if (event.key === 'Enter' || event.key === 'Tab') {
+    event.preventDefault()
+    if (suggestions.value.length) complete(suggestions.value[highlighted.value].id)
+  } else if (event.key === 'Escape') {
+    event.preventDefault()
+    filter.value = ''
+    area.value?.focus()
+  }
 }
 
 function onKey(event: KeyboardEvent) {
@@ -151,7 +178,8 @@ function onKey(event: KeyboardEvent) {
       </span>
     </div>
     <div v-if="slashOpen" class="mb-2 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-lg shadow-black/30">
-    <div class="flex gap-1 overflow-x-auto border-b border-zinc-800 px-2 py-1.5 text-xs" role="tablist" aria-label="Tipo">
+    <div class="flex items-center gap-1 border-b border-zinc-800 px-2 py-1.5 text-xs">
+    <div class="scroll-thin flex min-w-0 gap-1 overflow-x-auto" role="tablist" aria-label="Tipo">
       <button
         v-for="item in SLASH_TABS"
         :key="item.kind"
@@ -162,11 +190,18 @@ function onKey(event: KeyboardEvent) {
         :class="item.kind === shownTab ? 'bg-zinc-800 text-zinc-100' : matches[item.kind].length ? 'text-zinc-400 hover:bg-zinc-800/60' : 'text-zinc-600 hover:bg-zinc-800/60'"
         @mousedown.prevent="tab = item.kind"
       >
-        {{ item.label }}<span v-if="text !== '/' && matches[item.kind].length" class="ml-1 text-zinc-500">{{ matches[item.kind].length }}</span>
+        {{ item.label }}<span v-if="searching && matches[item.kind].length" class="ml-1 text-zinc-500">{{ matches[item.kind].length }}</span>
       </button>
     </div>
+    <label class="ml-auto flex w-40 shrink-0 items-center gap-1.5 rounded-full bg-zinc-800 px-2.5 py-1 text-zinc-300 focus-within:ring-1 focus-within:ring-emerald-500/60">
+      <Icon name="search" class="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+      <input ref="filterInput" v-model="filter" type="search" class="min-w-0 flex-1 bg-transparent outline-none placeholder:text-zinc-500" :placeholder="`Buscar em ${tabLabel}`" :aria-label="`Buscar em ${tabLabel}`" @keydown="onFilterKey" />
+    </label>
+    </div>
+    <!-- ⚖️ Altura FIXA: a lista rola em vez de a caixa crescer e encolher a cada guia ou letra. -->
+    <div ref="list" class="scroll-thin h-56 overflow-y-auto">
     <p v-if="slashEmpty" class="px-3 py-2 text-xs text-zinc-400">
-      {{ text === '/' ? `Nada em ${tabLabel} para esta conversa.` : `Nenhum item em ${tabLabel} com esse nome.` }}
+      {{ searching ? `Nenhum item em ${tabLabel} com esse nome.` : `Nada em ${tabLabel} para esta conversa.` }}
     </p>
     <ul v-if="suggestions.length" role="listbox" :aria-label="tabLabel">
       <li v-for="(command, index) in suggestions" :key="command.id" role="option" :aria-selected="index === highlighted">
@@ -183,6 +218,7 @@ function onKey(event: KeyboardEvent) {
         </button>
       </li>
     </ul>
+    </div>
     </div>
     <div class="flex items-end gap-2">
       <button type="button" class="grid h-10 w-10 shrink-0 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-40" :disabled="disabled" title="Anexar" @click="picker?.click()">

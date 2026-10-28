@@ -42,6 +42,12 @@ describe('as guias do /', () => {
     expect(matches.adr).toEqual([])
   })
 
+  it('a busca do seletor recorta a guia pelo nome e pela descrição, sem acento', () => {
+    expect(slashSuggestions('/', items, 'padroes').spec.map((item) => item.id)).toEqual(['spec:api-rest'])
+    expect(slashSuggestions('/', items, 'resume').command.map((item) => item.id)).toEqual(['resumir'])
+    expect(slashSuggestions('/', items, 'nada-disso').skill).toEqual([])
+  })
+
   it('a guia escolhida aparece; se ela não tem nada para o que foi digitado, a primeira que tem', () => {
     expect(shownSlashTab('skill', '/', slashSuggestions('/', items))).toBe('skill')
     expect(shownSlashTab('adr', '/', slashSuggestions('/', items))).toBe('adr')
