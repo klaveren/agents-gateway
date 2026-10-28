@@ -23,7 +23,7 @@ const section = computed(() => {
   if (name.startsWith('mcp')) return 'mcp'
   if (name === 'user' || name.startsWith('user-')) return 'users'
   if (name === 'rules' || name.startsWith('rule-')) return 'rules'
-  if (name === 'environment') return 'environment'
+  if (name === 'environment' || name === 'schedules') return name
   if (name.startsWith('spec')) return 'specs'
   if (name.startsWith('skill')) return 'skills'
   if (name.startsWith('command')) return 'commands'

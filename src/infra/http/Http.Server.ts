@@ -1,3 +1,7 @@
+import { SchedulesController } from './Schedules.Controller'
+import { AgentSchedulesService } from '@application/AgentSchedules.Service'
+import { ScheduleRunner } from '@application/Schedule.Runner'
+import { SqliteAgentScheduleRepository } from '@infra/persistence/Sqlite.AgentScheduleRepository'
 import { cookieCredential } from './Session.Cookie'
 import { AgentController } from './Agent.Controller'
 import { AuthController } from './Auth.Controller'
@@ -84,6 +88,7 @@ export class HttpServer {
     hooks?: HooksController,
     projects?: ProjectsController,
     guidance?: GuidanceController,
+    schedules?: SchedulesController,
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
@@ -114,6 +119,7 @@ export class HttpServer {
       hooks ?? new HooksController({ hooks: defaultHooks(), sessionFor: () => undefined }),
       projects ?? new ProjectsController({ projects: defaultProjects() }),
       guidance ?? new GuidanceController({ guidance: new GuidanceService(new SqliteGuidanceRepository(), () => false) }),
+      schedules ?? defaultSchedules(),
     )
     this.setupRoutes()
     this.setupFrontend()
@@ -219,6 +225,7 @@ function buildRoutes(
   hooks: HooksController,
   projects: ProjectsController,
   guidance: GuidanceController,
+  schedules: SchedulesController,
 ): IRoute[] {
   return [
     { method: 'get', path: '/rules', handler: guidance.listRules },
@@ -257,6 +264,13 @@ function buildRoutes(
     { method: 'delete', path: '/agents/:agentId/hooks/:hookName', handler: hooks.remove },
     { method: 'post', path: '/agents/:agentId/hooks/:hookName/rotate', handler: hooks.rotate },
     { method: 'get', path: '/agents/:agentId/hooks/:hookName/deliveries', handler: hooks.deliveries },
+    { method: 'get', path: '/schedules', handler: schedules.listAll },
+    { method: 'get', path: '/agents/:agentId/schedules', handler: schedules.list },
+    { method: 'post', path: '/agents/:agentId/schedules', handler: schedules.create },
+    { method: 'put', path: '/agents/:agentId/schedules/:scheduleName', handler: schedules.update },
+    { method: 'delete', path: '/agents/:agentId/schedules/:scheduleName', handler: schedules.remove },
+    { method: 'post', path: '/agents/:agentId/schedules/:scheduleName/run', handler: schedules.run },
+    { method: 'get', path: '/agents/:agentId/schedules/:scheduleName/runs', handler: schedules.runs },
     { method: 'get', path: '/packages', handler: packages.list },
     { method: 'get', path: '/packages/search', handler: packages.search },
     { method: 'post', path: '/packages', handler: packages.install },
@@ -366,6 +380,16 @@ function defaultMcpServersController(): McpServersController {
 function defaultProvidersController(): ProvidersController {
   const credentials = new SqliteCredentialStore(new SecretBox(randomBytes(32)))
   return new ProvidersController({ providers: new ProvidersService(new SqliteProviderRepository(), credentials), credentials, agents: { list: () => [], get: () => undefined } })
+}
+
+/** Sem composição: agendamentos em memória, sem agentes, e um relógio que nunca liga. */
+function defaultSchedules(): SchedulesController {
+  const schedules = new AgentSchedulesService(
+    new SqliteAgentScheduleRepository(),
+    () => undefined,
+    () => false,
+  )
+  return new SchedulesController({ schedules, runner: new ScheduleRunner(schedules, async () => ({})), agentProject: () => undefined })
 }
 
 /** Sem composição (testes que sobem só o servidor): hooks em memória, sem agentes. */

@@ -578,3 +578,39 @@ export interface ISubscriptionLogin {
   /** O cliente não está na máquina do gateway: a tela mostra como instalar. */
   missing?: boolean
 }
+
+/** Uma execução de agendamento, para o histórico. */
+export interface IScheduleRun {
+  id: string
+  trigger: 'cron' | 'manual'
+  scheduledFor: string
+  startedAt?: string
+  finishedAt?: string
+  status: 'running' | 'ok' | 'error' | 'skipped' | 'missed'
+  sessionId?: string
+  error?: string
+}
+
+/** O que se edita num agendamento. */
+export interface TScheduleInput {
+  cron: string
+  timezone: string
+  prompt: string
+  session: 'new' | 'continuous'
+  projectId?: string | null
+  enabled: boolean
+}
+
+/** Um agendamento de agente: o agente executa `prompt` nos horários do cron, em nome de quem criou. */
+export interface ISchedule extends TScheduleInput {
+  agentId: string
+  name: string
+  sessionId?: string
+  runAs: string
+  failures: number
+  pausedReason?: string
+  nextRunAt?: string
+  lastRun?: IScheduleRun
+  updatedAt?: string
+  updatedBy?: string
+}

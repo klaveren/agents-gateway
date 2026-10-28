@@ -69,7 +69,8 @@ function runnableTargets(allowed: readonly string[]): string[] {
   return active.length ? active : [...allowed]
 }
 
-function selfUrl(env: NodeJS.ProcessEnv = process.env): string {
+/** O MCP do próprio gateway neste processo (`http://<host>:<porta>/v1/mcp`); sem o `/mcp`, a base da API. */
+export function selfUrl(env: NodeJS.ProcessEnv = process.env): string {
   const bound = env.HOST?.trim()
   const address = !bound || bound === '0.0.0.0' || bound === '::' ? '127.0.0.1' : bound
   return `http://${address.includes(':') ? `[${address}]` : address}:${Number.parseInt(env.PORT || '3000', 10)}/v1/mcp`

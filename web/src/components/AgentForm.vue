@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ApiError } from '@/lib/api'
 import { BUILD_KINDS, builderAgentId, type TBuildKind } from '@/lib/builder'
 import { defaultLanes, findOrphans, isUsableProvider, pruneModels, pruneNatives, summarizeIssues, unionLanes, unionLevels } from '@/lib/agentForm'
@@ -12,6 +13,7 @@ import { useProjectsStore } from '@/stores/projects'
 import { toolsTokens, toolTokens } from '@/lib/toolTokens'
 import AgentFootprint from './AgentFootprint.vue'
 import AgentHooks from './AgentHooks.vue'
+import AgentSchedules from './AgentSchedules.vue'
 import AgentInitialContext from './AgentInitialContext.vue'
 import AgentResources from './AgentResources.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
@@ -272,8 +274,9 @@ const deleting = ref(false)
  * As guias do formulário: o texto do agente na primeira, e cada grupo de capacidades na sua. A contagem diz
  * quanto está escolhido sem abrir a guia; o ponto vermelho, que o servidor recusou algo ali.
  */
-type TTab = 'agente' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'contexto' | 'tamanho' | 'hooks'
-const tab = ref<TTab>('agente')
+type TTab = 'agente' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos'
+// `#agendamentos` no link (a visão geral dos agendamentos) abre direto na guia.
+const tab = ref<TTab>(useRoute().hash === '#agendamentos' ? 'agendamentos' : 'agente')
 const TAB_FIELDS: Record<TTab, string[]> = {
   agente: ['id', 'name', 'soul', 'systemPrompt', 'role', 'adminOnly', 'projectId'],
   modelos: ['providers', 'models', 'modes', 'reasoningEfforts'],
@@ -284,6 +287,7 @@ const TAB_FIELDS: Record<TTab, string[]> = {
   contexto: [],
   tamanho: [],
   hooks: [],
+  agendamentos: [],
 }
 const tabs = computed(() => {
   const tools = form.value.allowedTools
@@ -303,6 +307,7 @@ const tabs = computed(() => {
     { id: 'contexto', label: 'Contexto inicial' },
     { id: 'tamanho', label: 'Tamanho' },
     { id: 'hooks', label: 'Hooks' },
+    { id: 'agendamentos', label: 'Agendamentos' },
   ]
   // Sem nativa nem sandbox nos providers escolhidos, a guia do SDK não tem o que mostrar.
   const sdkEmpty = sdkSections.value.every((section) => !section.tools.length && !section.levels.length)
@@ -809,6 +814,12 @@ async function remove() {
       <p v-else class="text-sm text-zinc-400">Crie o agente primeiro: o hook é dele, e a URL leva o id.</p>
     </section>
 
+    <!-- Os agendamentos também têm o próprio cadastro, como os hooks. -->
+    <section v-if="tab === 'agendamentos'">
+      <AgentSchedules v-if="agent && !creating" :agent-id="agent.id" :project-id="agent.projectId" />
+      <p v-else class="text-sm text-zinc-400">Crie o agente primeiro: o agendamento é dele.</p>
+    </section>
+
     <p v-if="agent?.updatedBy" class="text-xs text-zinc-500">Alterado por {{ agent.updatedBy }} em {{ agent.updatedAt ? new Date(agent.updatedAt).toLocaleString('pt-BR') : '' }}</p>
 
     <p v-if="loadError" class="text-sm text-rose-300">
@@ -817,7 +828,7 @@ async function remove() {
     </p>
     <p v-else-if="!ready" class="text-xs text-zinc-500">Carregando provedores…</p>
 
-    <div v-show="tab !== 'hooks'" class="flex gap-2">
+    <div v-show="tab !== 'hooks' && tab !== 'agendamentos'" class="flex gap-2">
       <button type="submit" :disabled="saving || !ready || !!loadError || !form.providers.length" class="rounded-full bg-emerald-500 px-5 py-2 font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50">{{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar' }}</button>
       <button v-if="!creating && agent" type="button" class="rounded-full bg-zinc-800 px-4 py-2 hover:bg-zinc-700" @click="emit('duplicate', agent)">Duplicar</button>
       <button v-if="!creating && agent" type="button" class="ml-auto rounded-full px-4 py-2 text-rose-300 hover:bg-rose-500/10" @click="confirming = true">Apagar</button>

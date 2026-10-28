@@ -14,6 +14,8 @@ import {
   InvalidMcpServerError,
   InvalidHookError,
   HookNotFoundError,
+  InvalidScheduleError,
+  ScheduleNotFoundError,
   McpServerNotFoundError,
   McpServerInUseError,
   InvalidProjectError,
@@ -168,6 +170,14 @@ export function toHttpFailure(error: unknown): IHttpFailure {
   }
 
   if (error instanceof HookNotFoundError) {
+    return { status: 404, code: 'not_found', message: error.message }
+  }
+
+  if (error instanceof InvalidScheduleError) {
+    return { status: 422, code: 'validation_error', message: 'Schedule is invalid', details: error.issues }
+  }
+
+  if (error instanceof ScheduleNotFoundError) {
     return { status: 404, code: 'not_found', message: error.message }
   }
 

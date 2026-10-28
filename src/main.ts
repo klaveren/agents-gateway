@@ -11,6 +11,7 @@ import {
   makeHooksController,
   makeProjectsController,
   makeGuidanceController,
+  makeSchedulesController,
   makeMcpServersController,
   makeProvidersController,
   makeUsageController,
@@ -22,6 +23,7 @@ import { projectSandbox } from '@infra/sandbox/Project.Sandbox'
 import { bootIssues, bootWarnings } from '@infra/http/Boot.Checks'
 import { clearSessionWorkspaces } from '@infra/adapters/support/Subscription.Workspace'
 import { makeTools } from '@composition/factories/Tools.Factory'
+import { makeScheduleRunner } from '@composition/factories/Schedules.Factory'
 import { warnIfProofDisabled } from '@infra/http/Caller.Proof'
 import { HttpServer } from '@infra/http/Http.Server'
 
@@ -87,8 +89,11 @@ async function bootstrap() {
     makeHooksController(),
     makeProjectsController(),
     makeGuidanceController(),
+    makeSchedulesController(),
   )
   server.start(Number.parseInt(process.env.PORT || '3000', 10))
+  // O relógio dos agendamentos: depois de o servidor subir — ele executa pela API deste processo.
+  makeScheduleRunner().start()
 }
 
 bootstrap().catch(console.error)
