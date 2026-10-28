@@ -39,6 +39,12 @@ export class AgentCatalog implements IAgentDirectory {
      * PADRÃO, os alvos de delegação e o provider com que a sessão nasce.
      */
     private readonly runnable?: (agent: IAgent, target: IAgentTarget) => boolean,
+    /**
+     * Os agentes do CORE (o construtor, ver `Builder.Agents`): definidos no código, montados na hora com o modelo das
+     * configurações. ⚖️ `get` os acha — é por ele que a sessão abre; `list` não os mostra — fora da tela, do padrão e
+     * da delegação. E os ids deles não servem para agente do catálogo.
+     */
+    private readonly core: () => IAgent[] = () => [],
   ) {}
 
   /** Os agentes com os modelos que podem ser usados agora. */
@@ -57,7 +63,7 @@ export class AgentCatalog implements IAgentDirectory {
   }
 
   get(id: string): IAgent | undefined {
-    return this.list().find((agent) => agent.id === id)
+    return this.list().find((agent) => agent.id === id) ?? this.core().find((agent) => agent.id === id)
   }
 
   /** Os modelos declarados que estão DESLIGADOS no catálogo — a tela de edição os mostra marcados. */
@@ -101,7 +107,7 @@ export class AgentCatalog implements IAgentDirectory {
     if (!options.creating && !this.repository.list().some((stored) => stored.id === agent.id)) throw new AgentNotFoundError(agent.id)
 
     // Na criação nenhum id existente serve; na atualização, o próprio é este.
-    const takenIds = options.creating ? this.list().map((existing) => existing.id) : []
+    const takenIds = options.creating ? [...this.list(), ...this.core()].map((existing) => existing.id) : []
     const issues = agentIssues(agent, { ...options.rules, takenIds })
     if (issues.length) throw new InvalidAgentError(issues)
 

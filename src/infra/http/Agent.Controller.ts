@@ -43,6 +43,7 @@ import { GuidanceService } from '@application/Guidance.Service'
 import { IDockerStatus } from '@infra/sandbox/Docker.Sandbox'
 import { IProjectSandbox } from '@infra/sandbox/Project.Sandbox'
 import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
+import { BUILDER_METADATA_KEY, builderKindOf, CORE_AGENT_IDS } from '@domain/Builder.Agents'
 import { IAgentProviderFacts, toAgentDetailDto, toAgentDto } from './Agent.Dto'
 import { assertNoAdkTemplateCollision } from '@infra/adapters/GoogleAgent.Adapter'
 import { IConversationView, toConversationDto, toStatsDto, toTurnDto } from './Conversation.Dto'
@@ -254,6 +255,8 @@ export class AgentController {
     model?: string | null
     classifierModel?: string | null
     classifierProvider?: string | null
+    builderProvider?: string | null
+    builderModel?: string | null
   }) {
     const issues: Array<{ field: string; message: string }> = []
     const current = await this.usecases.settings.read()
@@ -283,6 +286,19 @@ export class AgentController {
       !this.usecases.models.isEnabled(classifierProvider, classifierModel)
     ) {
       issues.push({ field: 'classifierModel', message: `${classifierModel} is not enabled in ${classifierProvider}` })
+    }
+
+    // O construtor: os dois juntos, provider ligado e modelo ativado nele (ou nenhum dos dois = o do Atlas).
+    const builderProvider = body.builderProvider === undefined ? current.builderProvider : body.builderProvider || undefined
+    const builderModel = body.builderModel === undefined ? current.builderModel : body.builderModel || undefined
+    if (body.builderProvider !== undefined || body.builderModel !== undefined) {
+      if (!!builderProvider !== !!builderModel) issues.push({ field: 'builderModel', message: 'choose the provider and the model together (or neither: the ones of Atlas)' })
+      else if (builderProvider && builderModel) {
+        if (this.usecases.providers && !this.usecases.providers.get(builderProvider)?.enabled)
+          issues.push({ field: 'builderProvider', message: `${builderProvider} is disabled or does not exist` })
+        else if (this.usecases.models && !this.usecases.models.isEnabled(builderProvider, builderModel))
+          issues.push({ field: 'builderModel', message: `${builderModel} is not enabled in ${builderProvider}` })
+      }
     }
     return issues
   }
@@ -597,6 +613,9 @@ export class AgentController {
 
         // ⛔ O `owner` (e a delegação) do corpo são descartados SEMPRE: só o servidor os escreve. Para
         // quem não é admin, também as chaves que abrem a rede de um contêiner (`{meta:…}`).
+        // ⛔ O construtor é do core e só de admin: para quem não é, ele nem existe (o `adminOnly` do provider é a segunda trava).
+        if (builderKindOf(body.agentId) && !adminAccess) throw new AgentNotFoundError(body.agentId!)
+
         const { metadata, issues } = clientMetadata(body.metadata, { admin: adminAccess, protectedKeys: this.egressMetadataKeys() })
         if (issues.length) throw new HttpError(422, 'validation_error', 'Request body is invalid', issues)
         const owner = ownerOf(resolved)
@@ -607,7 +626,15 @@ export class AgentController {
 
         const { projectId: requested, ...session } = body
         const project = await this.sessionProject({ userId: resolved.identity?.id, admin: adminAccess }, body.agentId, requested)
-        const stamped = { ...metadata, ...(owner ? { owner } : {}), ...(project ? { [PROJECT_METADATA_KEY]: project } : {}) }
+        // ⛔ A marca de construção também é só do servidor: vem do agente, nunca do corpo (esconderia a conversa da caixa).
+        const { [BUILDER_METADATA_KEY]: _builder, ...declared } = metadata ?? {}
+        const building = builderKindOf(body.agentId)
+        const stamped = {
+          ...declared,
+          ...(owner ? { owner } : {}),
+          ...(project ? { [PROJECT_METADATA_KEY]: project } : {}),
+          ...(building ? { [BUILDER_METADATA_KEY]: building } : {}),
+        }
         return this.usecases.createSession.execute({ ...session, metadata: stamped, adminAccess })
       },
       { status: 201, message: 'Session created successfully' },
@@ -692,6 +719,12 @@ export class AgentController {
         // tela teria dito "salvo". Recusa na gravação, onde a causa ainda está à vista.
         if (typeof body.agentId === 'string' && body.agentId && !this.agents.get(body.agentId)) {
           throw new HttpError(422, 'validation_error', 'Request body is invalid', [{ field: 'agentId', message: `unknown agent: ${body.agentId}` }])
+        }
+        // O construtor é do core: abre só pela tela de construção, nunca como o padrão.
+        if (typeof body.agentId === 'string' && CORE_AGENT_IDS.includes(body.agentId)) {
+          throw new HttpError(422, 'validation_error', 'Request body is invalid', [
+            { field: 'agentId', message: `${body.agentId} is a core agent: it cannot be the default agent` },
+          ])
         }
         // Subagente como padrão faria toda conversa sem agente escolhido falhar com `subagent_only`.
         if (typeof body.agentId === 'string' && body.agentId && this.agents.get(body.agentId)?.role === 'subagent') {
@@ -819,6 +852,8 @@ export class AgentController {
         if (!admin && !ownsSession(resolved, metadata)) return
         // Com `?project`, só as conversas daquele projeto.
         if (project && metadata?.[PROJECT_METADATA_KEY] !== project) return
+        // As construções não entram na caixa de entrada (a guia Construir as lista).
+        if (metadata?.[BUILDER_METADATA_KEY]) return
 
         if (event.type === 'conversation.updated') stream.emit(event.type, { session: toConversationDto(event.session, view) })
         else stream.emit(event.type, { sessionId: event.sessionId })

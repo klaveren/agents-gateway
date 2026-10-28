@@ -373,6 +373,23 @@ describe('ClaudeAgentAdapter', () => {
     assert.ok(events.find((e) => e.type === 'tool.result' && e.payload.tool === 'crm__stats'))
   })
 
+  it('⛔ a chamada recusada ou que falhou (`is_error`) sai como erro, com o texto — não como resultado', async () => {
+    const adapter = new ClaudeAgentAdapter({
+      query: queryWith(() => [
+        { type: 'assistant', message: { content: [{ type: 'tool_use', id: 't1', name: 'mcp__mcp_gateway__list_docs', input: {} }] } },
+        {
+          type: 'user',
+          message: { content: [{ type: 'tool_result', tool_use_id: 't1', is_error: true, content: [{ type: 'text', text: 'Tool "list_docs" is not enabled for this agent.' }] }] },
+        },
+      ]),
+    })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
+
+    assert.ok(!events.some((e) => e.type === 'tool.result'))
+    assert.deepStrictEqual(events.find((e) => e.type === 'tool.error')?.payload, { tool: 'list_docs', message: 'Tool "list_docs" is not enabled for this agent.' })
+  })
+
   it('sends an attachment with no text without an empty text block', async () => {
     const seen: TQueryParams[] = []
     const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen) })

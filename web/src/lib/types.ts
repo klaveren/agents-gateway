@@ -201,6 +201,9 @@ export interface ISettings {
   model?: string
   classifierModel?: string
   classifierProvider?: string
+  /** O provider e o modelo do construtor (agente do core). Ausentes = os do Atlas. */
+  builderProvider?: string
+  builderModel?: string
   classifyTurns?: boolean
   updatedAt?: string
   updatedBy?: string

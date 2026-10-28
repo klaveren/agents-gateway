@@ -15,6 +15,7 @@ import {
   PREVIEW_MAX,
 } from '@domain/models/Conversation.Model'
 import { IUsageQuery, IUsageRow, metadataKeyIssue } from '@domain/models/Usage.Model'
+import { BUILDER_METADATA_KEY } from '@domain/Builder.Agents'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 
 /**
@@ -414,6 +415,10 @@ export class SqliteConversationRepository implements IConversationRepository {
           where.push(owner.sql)
           params.push(...owner.params)
         }
+
+        // ⚖️ As conversas do construtor (`metadata.builder`) ficam fora, a não ser que o filtro as peça (`?builder=skill`):
+        // a guia Construir as lista; a caixa de entrada é das conversas com agentes.
+        if (!Object.prototype.hasOwnProperty.call(options.filter ?? {}, BUILDER_METADATA_KEY)) where.push(`json_extract(metadata, '$.${BUILDER_METADATA_KEY}') IS NULL`)
 
         const limit = Math.min(Math.max(options.limit ?? 100, 1), 500)
         const clause = where.length ? `WHERE ${where.join(' AND ')}` : ''

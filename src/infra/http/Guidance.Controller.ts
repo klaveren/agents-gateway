@@ -27,6 +27,7 @@ const resourceSchema = z.object({
   body: z.string().max(200_000).optional(),
   docIds: z.array(z.string().max(80)).max(50).optional(),
 })
+const addendumSchema = z.object({ projectId: project, body: z.string().max(40_000) })
 const agentResourcesSchema = z.object({ skills: z.array(z.string().max(80)).max(200).optional(), commands: z.array(z.string().max(80)).max(200).optional() })
 const docSchema = z.object({
   id: z.string().max(80).optional(),
@@ -65,6 +66,8 @@ export class GuidanceController {
       'deleteResource',
       'getAgentResources',
       'setAgentResources',
+      'getProtocol',
+      'setProtocolAddendum',
     ] as const)
       this[name] = this[name].bind(this)
   }
@@ -238,6 +241,23 @@ export class GuidanceController {
     })
   }
 
+  /** O protocolo do tipo: o do core (versão e corpo) e os complementos — o global e, com `?project=`, o do projeto. */
+  async getProtocol(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      await this.requireAdmin('getProtocol')
+      return this.deps.guidance.protocol(kindOf(req), scopeOf(req) ?? undefined)
+    })
+  }
+
+  /** Grava o complemento do escopo (`projectId` ausente ou nulo = global). Corpo vazio apaga. */
+  async setProtocolAddendum(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const by = await this.requireAdmin('setProtocolAddendum')
+      const body = parseBody(addendumSchema, req.body)
+      return this.deps.guidance.setProtocolAddendum(kindOf(req), body.projectId || null, body.body, by)
+    })
+  }
+
   private async requireAdmin(operation: string): Promise<string> {
     const access = await checkAdminAccess(this.deps.proof)
     if (!access.allowed) {
@@ -262,4 +282,9 @@ export class GuidanceController {
 function scopeOf(req: Request): TGuidanceScope {
   const value = typeof req.query.project === 'string' ? req.query.project.trim() : ''
   return value && value !== 'global' ? value : null
+}
+
+/** O `:kind` da rota: skill ou command (o serviço recusa o resto, com o motivo). */
+function kindOf(req: Request): TResourceKind {
+  return req.params.kind as TResourceKind
 }

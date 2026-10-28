@@ -335,6 +335,8 @@ const settingsSchema = {
     model: { type: 'string', description: "Model used when the caller sends none. A model the chosen agent does not declare falls back to the agent's default." },
     classifierModel: { type: 'string', description: 'Model that labels each turn — an enabled model of `classifierProvider`.' },
     classifierProvider: { type: 'string', description: 'Provider of the classifier model. Absent: inferred from the model id (official providers only).' },
+    builderProvider: { type: 'string', description: 'Provider of the builder (the core agent that drafts skills and commands). Absent: the one of Atlas.' },
+    builderModel: { type: 'string', description: 'Model of the builder — an enabled model of `builderProvider`. Absent: the one of Atlas.' },
     classifyTurns: { type: 'boolean', description: 'Stored only for now: the turn classifier arrives in a later phase.' },
     updatedAt: { type: 'string', format: 'date-time' },
     updatedBy: { type: 'string' },
@@ -562,6 +564,31 @@ const agentResources = {
   type: 'object',
   properties: { skills: { type: 'array', items: { type: 'string' } }, commands: { type: 'array', items: { type: 'string' } } },
   description: 'Ids, or ["*"] = every global one plus those of the agent project (a global agent: only global ones).',
+}
+const protocolAddendum = {
+  type: 'object',
+  properties: {
+    kind: { type: 'string' },
+    projectId: { type: 'string' },
+    body: { type: 'string' },
+    updatedAt: { type: 'string', format: 'date-time' },
+    updatedBy: { type: 'string' },
+  },
+}
+const protocolView = {
+  type: 'object',
+  properties: {
+    core: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['skill', 'command'] },
+        version: { type: 'string' },
+        title: { type: 'string' },
+        body: { type: 'string', description: 'Markdown.' },
+      },
+    },
+    addenda: { type: 'object', properties: { global: protocolAddendum, project: protocolAddendum } },
+  },
 }
 const initialContext = {
   type: 'object',
@@ -1364,6 +1391,29 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'OK', ...json(envelope(agentResources)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
     },
+    '/protocols/{kind}': {
+      get: {
+        summary:
+          'How a skill or command must be built: the core protocol (shipped with the gateway, versioned) and the administrators addenda — the global one and, with ?project=, the project one. The builder follows both. Administrators only',
+        parameters: [
+          { name: 'kind', in: 'path', required: true, schema: { type: 'string', enum: ['skill', 'command'] } },
+          { name: 'project', in: 'query', required: false, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: 'OK', ...json(envelope(protocolView)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/protocols/{kind}/addendum': {
+      put: {
+        summary:
+          'Write the addendum of a scope (absent or null projectId = global). It goes AFTER the core protocol and never replaces it; an empty body deletes it. Administrators only',
+        parameters: [{ name: 'kind', in: 'path', required: true, schema: { type: 'string', enum: ['skill', 'command'] } }],
+        requestBody: {
+          required: true,
+          ...json({ type: 'object', required: ['body'], properties: { projectId: { type: 'string', nullable: true }, body: { type: 'string' } } }),
+        },
+        responses: { '200': { description: 'OK', ...json(envelope(protocolView)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
     '/agents/{agentId}/commands': {
       get: {
         summary:
@@ -1798,6 +1848,8 @@ export const OPENAPI_DOCUMENT = {
                   model: nullableText,
                   classifierModel: nullableText,
                   classifierProvider: nullableText,
+                  builderProvider: nullableText,
+                  builderModel: nullableText,
                   classifyTurns: { type: ['boolean', 'null'] },
                 },
               },

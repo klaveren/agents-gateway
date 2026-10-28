@@ -50,6 +50,14 @@ export function buildClaudeMcpServers(local: ILocalTool[], remotes: readonly IAg
   return servers
 }
 
+/**
+ * As ferramentas MCP que o modelo NÃO deve ver (`disallowedTools` do SDK), no nome que o SDK dá: as do servidor que
+ * ficaram fora da escolha do agente (`IAgentMcpServer.hidden`).
+ */
+export function claudeHiddenTools(remotes: readonly IAgentMcpServer[]): string[] {
+  return remotes.flatMap((remote) => (remote.hidden ?? []).map((name) => `mcp__${claudeMcpServerName(remote.config.id)}__${name}`))
+}
+
 /** Os headers de um servidor MCP para quem conecta por conta própria (os SDKs agênticos). */
 export function mcpHeaders(remote: IAgentMcpServer, token?: string): Record<string, string> | undefined {
   const headers: Record<string, string> = { ...remote.fixed }
@@ -66,7 +74,8 @@ function toZodShape(item: ILocalTool): ZodRawShape {
     const type = typeof property.type === 'string' ? property.type : 'string'
     const description = typeof property.description === 'string' ? property.description : ''
 
-    const base = type === 'number' ? z.number() : type === 'boolean' ? z.boolean() : z.string()
+    // Lista: de texto (o que as nossas declaram — `docIds`); antes virava texto, e o modelo mandava a lista como string.
+    const base = type === 'number' ? z.number() : type === 'boolean' ? z.boolean() : type === 'array' ? z.array(z.string()) : z.string()
     const described = description ? base.describe(description) : base
     return [key, item.inputSchema.required.includes(key) ? described : described.optional()] as const
   })

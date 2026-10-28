@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { coreAgentName } from '@/lib/builder'
 import { tokens, usd } from '@/lib/format'
 import type { IUsageFigure, IUsageSummary } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
@@ -19,7 +20,7 @@ const share = (item: IUsageFigure, list: IUsageFigure[]) => {
   const max = Math.max(1, ...list.map((other) => other.usage.totalTokens))
   return `${Math.max(2, (item.usage.totalTokens / max) * 100)}%`
 }
-const agentName = (id: string) => agents.byId.get(id)?.name ?? id
+const agentName = (id: string) => agents.byId.get(id)?.name ?? coreAgentName(id) ?? id
 </script>
 
 <template>

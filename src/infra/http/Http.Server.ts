@@ -240,6 +240,8 @@ function buildRoutes(
     { method: 'delete', path: '/resources/:id', handler: guidance.deleteResource },
     { method: 'get', path: '/agents/:agentId/resources', handler: guidance.getAgentResources },
     { method: 'put', path: '/agents/:agentId/resources', handler: guidance.setAgentResources },
+    { method: 'get', path: '/protocols/:kind', handler: guidance.getProtocol },
+    { method: 'put', path: '/protocols/:kind/addendum', handler: guidance.setProtocolAddendum },
     { method: 'get', path: '/agents/:agentId/initial-context', handler: guidance.getAgentContext },
     { method: 'put', path: '/agents/:agentId/initial-context', handler: guidance.setAgentContext },
     { method: 'get', path: '/projects', handler: projects.list },

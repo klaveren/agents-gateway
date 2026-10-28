@@ -335,4 +335,78 @@ describe('GuidanceService', () => {
       assert.deepStrictEqual(service.agentResources('dev'), { skills: [], commands: [] })
     })
   })
+
+  describe('protocolos e o construtor', () => {
+    const seeded = () => {
+      const service = new GuidanceService(
+        new SqliteGuidanceRepository(':memory:'),
+        (id) => ['xpto', 'crm'].includes(id),
+        (id) => (id === 'builder-skill' || id === 'dev' ? { id } : undefined),
+      )
+      service.createDoc({ ...doc('padrao'), title: 'Padrão' }, 'root')
+      service.createDoc({ ...doc('so-crm', 'crm'), title: 'Só CRM' }, 'root')
+      service.createResource({ id: 'tabela', kind: 'skill', description: 'Montar tabelas', body: 'x' }, 'root')
+      service.createResource({ id: 'xpto-revisar', kind: 'skill', projectId: 'xpto', description: 'Revisar no XPTO', body: 'x' }, 'root')
+      service.createResource({ id: 'do-crm', kind: 'skill', projectId: 'crm', description: 'Do CRM', body: 'x' }, 'root')
+      service.createResource({ id: 'resumir', kind: 'command', description: 'Resume', body: 'Resuma $ARGUMENTS' }, 'root')
+      return service
+    }
+
+    it('o do core vem com a versão; o complemento é por escopo, soma ao core, e corpo vazio apaga', () => {
+      const service = seeded()
+      const empty = service.protocol('skill', 'xpto')
+      assert.match(empty.core.body, /# Protocolo de construção de skill/)
+      assert.match(empty.core.version, /^\d+\.\d+\.\d+$/)
+      assert.deepStrictEqual(empty.addenda, {})
+
+      service.setProtocolAddendum('skill', null, 'Descrição em português.', 'root')
+      const view = service.setProtocolAddendum('skill', 'xpto', '  O id começa com xpto-.  ', 'root')
+      assert.deepStrictEqual(
+        [view.addenda.global?.body, view.addenda.project?.body, view.addenda.project?.projectId],
+        ['Descrição em português.', 'O id começa com xpto-.', 'xpto'],
+      )
+      assert.strictEqual(service.protocol('skill', 'crm').addenda.project, undefined)
+      assert.strictEqual(service.protocol('command').addenda.global, undefined)
+
+      service.setProtocolAddendum('skill', 'xpto', '  ', 'root')
+      assert.strictEqual(service.protocol('skill', 'xpto').addenda.project, undefined)
+      service.setProtocolAddendum('skill', 'xpto', 'de novo', 'root')
+      service.removeProject('xpto')
+      assert.strictEqual(service.protocol('skill', 'xpto').addenda.project, undefined)
+      assert.strictEqual(service.protocol('skill').addenda.global?.body, 'Descrição em português.')
+      assert.throws(() => service.protocol('skill', 'nada'), ProjectNotFoundError)
+    })
+
+    it('⛔ complemento: tipo que não existe e projeto que não existe são recusados', () => {
+      const service = seeded()
+      assert.throws(() => service.setProtocolAddendum('agente' as 'skill', null, 'x', 'root'), InvalidGuidanceError)
+      assert.throws(() => service.setProtocolAddendum('skill', 'nada', 'x', 'root'), /no such project/)
+    })
+
+    it('o construtor recebe o complemento e o que já existe do tipo, no escopo da conversa; outro agente não', () => {
+      const service = seeded()
+      service.setProtocolAddendum('skill', null, 'Regra global.', 'root')
+      service.setProtocolAddendum('skill', 'xpto', 'Regra do XPTO.', 'root')
+      const parts = service.environmentParts('xpto', 'builder-skill')
+      assert.match(parts.protocol!, /## Complemento do protocolo[\s\S]*### Global\nRegra global\.[\s\S]*### Do projeto xpto\nRegra do XPTO\./)
+      assert.match(parts.existing!, /## O que já existe \(skills\)\n- tabela \[global\] — Montar tabelas\n- xpto-revisar \[xpto\] — Revisar no XPTO$/)
+      assert.match(service.environmentFor('xpto', 'builder-skill')!, /## Documentos de referência[\s\S]*## Complemento do protocolo[\s\S]*## O que já existe/)
+      const plain = service.environmentParts('xpto', 'dev')
+      assert.deepStrictEqual([plain.protocol, plain.existing], [undefined, undefined])
+    })
+
+    it('draftIssues: as regras do cadastro sem gravar; id do mesmo tipo é ajuste, de outro tipo é recusado', () => {
+      const service = seeded()
+      const ok = service.draftIssues({ kind: 'skill', id: 'nova-skill', description: 'Faz algo', body: 'Passos', docIds: ['padrao'] }, 'xpto')
+      assert.deepStrictEqual([ok.issues, ok.updates, ok.resource.projectId], [[], false, 'xpto'])
+      assert.throws(() => service.resource('nova-skill'), GuidanceNotFoundError)
+
+      assert.strictEqual(service.draftIssues({ kind: 'skill', id: 'tabela', description: 'd', body: 'b', global: true }).updates, true)
+      assert.deepStrictEqual(
+        service.draftIssues({ kind: 'skill', id: 'resumir', description: '', body: '', docIds: ['so-crm'] }, 'xpto').issues.map((issue) => issue.field),
+        ['id', 'description', 'body', 'docIds'],
+      )
+      assert.match(service.draftIssues({ kind: 'skill', id: 'Ruim!', description: 'd', body: 'b' }).issues[0].message, /lowercase/)
+    })
+  })
 })

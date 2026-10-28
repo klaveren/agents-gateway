@@ -1,3 +1,4 @@
+import { PROPOSE_DRAFT_TOOL } from '@domain/Builder.Agents'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IMcpServerConfig, isLaunchedMcp, MCP_ALL_TOOLS, mcpSelection, parseMcpToolRef } from '@domain/models/McpServer.Model'
 import { McpRegistry } from '@infra/mcp/Mcp.Registry'
@@ -25,6 +26,11 @@ export interface IAgentMcpServer {
   callerHeader?: string
   /** Headers de toda requisição, além da credencial (ex.: o portão do próprio gateway). */
   fixed?: Record<string, string>
+  /**
+   * As ferramentas do servidor FORA da escolha (com `tools`): o SDK que conecta por conta própria lista o servidor
+   * inteiro, e estas saem do contexto do modelo. Ausente = não se soube listar (o portão ainda recusa).
+   */
+  hidden?: string[]
 }
 
 /** O servidor do `CALLER_PROOF_TOOL` quando o nome vem solto (o semeado de `MCP_SERVER_URL`). */
@@ -56,8 +62,9 @@ export class ToolCatalog {
   }
 
   /** Os nomes de todas as tools locais deste processo. */
+  /** As locais que um agente do catálogo pode escolher. ⛔ Sem a do construtor: ela é só dos agentes do core. */
   localNames(): string[] {
-    return this.local.map((tool) => tool.name)
+    return this.local.map((tool) => tool.name).filter((name) => name !== PROPOSE_DRAFT_TOOL)
   }
 
   /** As locais que o agente escolheu — e, se ele pode delegar (`agent:<id>`), a `delegate_to_agent` dele. */
@@ -117,6 +124,12 @@ export class ToolCatalog {
     return { ...config, kind: 'remote', url: `${this.containerProxy.base}/${config.id}`, transport: 'http', auth: 'caller', headerName: 'X-Tool-Authorization' }
   }
 
+  /** As ferramentas do servidor que ficaram fora da escolha. Sem conseguir listar, nenhuma (o portão segue recusando). */
+  private async hiddenOf(id: string, chosen: ReadonlySet<string>, context?: IExecutionContext): Promise<string[]> {
+    const tools = await this.mcp.tools(id, context?.sessionId, context?.token).catch(() => [])
+    return tools.map((tool) => tool.name).filter((name) => !chosen.has(name))
+  }
+
   /** Os servidores MCP que um agente escolheu e que estão de pé agora — os SDKs agênticos conectam neles. */
   async mcpServersFor(allowed: readonly string[], context?: IExecutionContext): Promise<IAgentMcpServer[]> {
     const servers: IAgentMcpServer[] = []
@@ -125,9 +138,11 @@ export class ToolCatalog {
       if (stored && isLaunchedMcp(stored)) {
         const proxied = stored.enabled && context?.sessionId ? this.viaProxy(stored) : undefined
         if (!proxied || !context?.sessionId) continue
+        const hidden = choice.all ? [] : await this.hiddenOf(id, choice.tools, context)
         servers.push({
           config: proxied,
           ...(choice.all ? {} : { tools: [...choice.tools] }),
+          ...(hidden.length ? { hidden } : {}),
           callerHeader: 'X-Tool-Authorization',
           fixed: { 'X-Gateway-Session': context.sessionId },
         })
@@ -137,9 +152,11 @@ export class ToolCatalog {
       const config = stored
       if (!client || !config) continue
       const fixed = this.mcp.fixedHeaders(config)
+      const hidden = choice.all ? [] : await this.hiddenOf(id, choice.tools, context)
       servers.push({
         config,
         ...(choice.all ? {} : { tools: [...choice.tools] }),
+        ...(hidden.length ? { hidden } : {}),
         ...(config.auth === 'header' ? { header: this.mcp.header(id) } : {}),
         ...(config.auth === 'caller' && config.headerName ? { callerHeader: config.headerName } : {}),
         ...(fixed ? { fixed } : {}),

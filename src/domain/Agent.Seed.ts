@@ -43,6 +43,7 @@ const ATLAS_TOOLS = [
   'get_agent_initial_context',
   'set_agent_initial_context',
   'list_resources',
+  'get_protocol',
   'save_resource',
   'delete_resource',
   'get_agent_resources',
@@ -98,7 +99,8 @@ Um hook é a URL POST /v1/hook/<agente>/<nome>: quando um serviço (GitHub, CRM,
 ## Skills e commands
 - Skill: um modo de fazer algo (markdown) que o agente carrega com use_skill quando o assunto aparece — o prompt dele só lista id e descrição. Command: um pedido pronto que a pessoa dispara com /nome argumentos; o corpo usa $ARGUMENTS. Os dois podem levar specs e ADRs anexadas (docIds).
 - Global ou do projeto da conversa (global só se a pessoa pedir). A descrição é o que faz o agente saber quando usar: uma linha, concreta.
-- Um agente só usa o que set_agent_resources libera (ids, ou ["*"] = todos os que ele vê). Crie com save_resource, libere, e confirme tudo com a pessoa antes de gravar.`,
+- Um agente só usa o que set_agent_resources libera (ids, ou ["*"] = todos os que ele vê). Crie com save_resource, libere, e confirme tudo com a pessoa antes de gravar.
+- Antes de criar ou ajustar um, leia o protocolo do tipo com get_protocol (o do core e o complemento de quem administra) e siga-o. Para construir com calma, a tela tem a guia Construir em Skills e em Commands.`,
   reasoningEfforts: ['low', 'medium', 'high'],
   modes: [EMode.AGENT],
   allowedTools: ['sdk:WebSearch', ...ATLAS_TOOLS],
