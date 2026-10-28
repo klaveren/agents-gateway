@@ -186,7 +186,7 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
 
 /** A falha sem resultado, com a correção quando é o login. */
 export function antigravityFailure(stderr: string, code: number | null): string {
-  if (/Authentication required|authentication failed/i.test(stderr)) return 'O Antigravity não está conectado: entre em Providers → Antigravity (assinatura) → Entrar.'
+  if (/Authentication required|authentication failed/i.test(stderr)) return 'O Gemini não está conectado: entre em Sistema → Modelos → Gemini → Entrar.'
   if (code === null) return `Não consegui rodar o Antigravity (${antigravityBin()}). Instale o agy ou defina ANTIGRAVITY_BIN.`
   return stderr.trim().split('\n').slice(-3).join(' ') || `agy saiu com código ${code}`
 }

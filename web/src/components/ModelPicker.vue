@@ -4,7 +4,7 @@ import { choiceKey, parseChoice, type IChoice } from '@/lib/agentChoice'
 import type { IAgent, IAgentProvider } from '@/lib/types'
 
 /**
- * Provider e modelo num select só, agrupado por provider ("Claude (assinatura)" › modelos). Com um
+ * Provider e modelo num select só, agrupado por provider ("Claude" › modelos). Com um
  * provider só, os grupos somem e fica a lista de modelos de sempre.
  *
  * ⚠️ A escolha atual pode ter saído do agente (modelo desativado no meio da conversa): ela entra na lista,

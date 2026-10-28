@@ -138,13 +138,16 @@ async function create() {
   }
 }
 
-/** A linha de baixo na lista: o que falta, ou o resumo. */
+/** Como se paga: por token (chave de API), pela assinatura de alguém, ou por uma API compatível. */
+const billingOf = (provider: Pick<IProviderStatus, 'subscription' | 'official' | 'protocol'>) =>
+  provider.subscription ? 'assinatura' : provider.official ? 'por token' : `compatível ${protocolLabel(provider.protocol)}`
+
+/** A linha de baixo na lista: como se paga, e o que falta ou o resumo. */
 function rowStatus(provider: IProviderStatus): string {
-  if (!provider.enabled) return 'desligado'
-  if (provider.subscription) return `assinatura · ${provider.catalog ? `${provider.catalog.enabled} de ${provider.catalog.total} modelos` : 'modelos não listados'}`
-  if (!provider.credential.configured) return 'sem chave'
   const models = provider.catalog ? `${provider.catalog.enabled} de ${provider.catalog.total} modelos` : 'modelos não listados'
-  return `${provider.official ? 'oficial' : `compatível ${protocolLabel(provider.protocol)}`} · ${models}`
+  if (!provider.enabled) return `${billingOf(provider)} · desligado`
+  if (!provider.subscription && !provider.credential.configured) return `${billingOf(provider)} · sem chave`
+  return `${billingOf(provider)} · ${models}`
 }
 
 function sourceLabel(provider: IProviderStatus): string {
@@ -224,7 +227,7 @@ function sourceLabel(provider: IProviderStatus): string {
         <div class="flex items-center gap-3">
           <AgentAvatar :name="selected.name" :provider="selected.id" size="lg" />
           <div class="min-w-0">
-            <h2 class="text-lg font-semibold">{{ selected.name }} <span class="ml-1 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] font-normal text-zinc-400">{{ selected.subscription ? 'assinatura' : selected.official ? 'oficial' : `compatível ${protocolLabel(selected.protocol)}` }}</span></h2>
+            <h2 class="text-lg font-semibold">{{ selected.name }} <span class="ml-1 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] font-normal text-zinc-400">{{ billingOf(selected) }}</span></h2>
             <p class="text-xs break-all" :class="selected.credential.configured || selected.subscription ? 'text-zinc-400' : 'text-amber-300'">
               {{ sourceLabel(selected) }}<template v-if="selected.baseUrl"> · <code>{{ selected.baseUrl }}</code></template>
             </p>

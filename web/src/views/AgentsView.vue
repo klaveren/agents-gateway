@@ -22,7 +22,7 @@ const agents = useAgentsStore()
 const providers = useProvidersStore()
 const protocols = useProtocolsStore()
 
-/** "Claude (assinatura) · claude-opus-5 +2": o padrão com o modelo dele, e quantos providers mais o agente tem. */
+/** "Claude · claude-opus-5 +2": o padrão com o modelo dele, e quantos providers mais o agente tem. */
 function providersLine(agent: IAgent): string {
   const [first, ...rest] = agent.providers
   if (!first) return 'sem provedor'
