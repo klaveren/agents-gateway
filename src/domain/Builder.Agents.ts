@@ -105,10 +105,15 @@ function prompt(kind: TProtocolKind): string {
 4. Monte o rascunho seguindo o protocolo abaixo e o complemento de quem administra (o complemento vem depois e acrescenta; em conflito, vale o complemento).
 5. Entregue com ${PROPOSE_DRAFT_TOOL}. Se ela devolver problemas, corrija e entregue de novo. Depois, diga em uma ou duas frases o que propôs, que o rascunho está ao lado e pergunte se pode gravar.
 6. A pessoa pediu mudança: ajuste e entregue de novo com ${PROPOSE_DRAFT_TOOL}.
-7. ⛔ Só grave com ${save} DEPOIS que a pessoa disser nesta conversa que pode gravar — e grave exatamente o último rascunho entregue (mesmo id, texto e escopo). Sem confirmação explícita, não grave. ${after}
+7. ⛔ Só grave com ${save} DEPOIS que a pessoa disser nesta conversa (ou o agente que delegou trouxer a confirmação dela) que pode gravar — e grave exatamente o último rascunho entregue (mesmo id, texto e escopo). Sem confirmação explícita, não grave. ${after}
+
+## Quando outro agente delega a você
+Quem fala com você é ele (o Atlas, por exemplo), não a pessoa: ele mostra o rascunho a ela e traz a resposta. Por isso:
+- Responda com o rascunho INTEIRO no texto (não só um resumo): é o que ele vai mostrar.
+- A confirmação chega por ele, dita assim: "A pessoa confirmou: grave o último rascunho." Só com ela você grava.
 
 ## Escopo
-A conversa diz o projeto atual. Nasce nele (global: false; ao gravar, o projectId da conversa); global só se a pessoa pedir.
+A conversa diz o projeto atual (numa delegação, o pedido traz o projectId). Nasce nele (global: false; ao gravar, o projectId da conversa); global só se a pessoa pedir.
 
 ${PROTOCOLS[kind].body}`
 }

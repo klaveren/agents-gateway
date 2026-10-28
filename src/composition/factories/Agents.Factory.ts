@@ -1,5 +1,6 @@
 import { AgentCatalog } from '@application/Agent.Catalog'
 import { AGENT_SEED } from '@domain/Agent.Seed'
+import { AGENT_MIGRATIONS } from '@domain/Agent.Migrations'
 import { builderAgent, PROTOCOLS } from '@domain/Builder.Agents'
 import { IAgentSettings } from '@domain/models/Settings.Model'
 import { IAgent } from '@domain/models/Agent.Model'
@@ -32,6 +33,7 @@ export function makeAgents(): AgentCatalog {
 
   const repository = build()
   repository.seedOnce(AGENT_SEED, 'seed')
+  for (const migration of AGENT_MIGRATIONS) for (const id of migration.agentIds) repository.migrateOnce(migration.key, id, migration.change, 'seed')
 
   // ⚠️ O catálogo é pedido NA HORA, não aqui: ele próprio lê os agentes ao nascer (para ativar os
   // modelos que eles já usam), e pedi-lo agora seria uma volta sem fim entre as duas fábricas.

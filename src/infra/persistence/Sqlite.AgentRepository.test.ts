@@ -123,4 +123,27 @@ describe('SqliteAgentRepository — ferramentas novas da semente', () => {
     repo.seedOnce([{ ...seed, allowedTools: ['a', 'b'] }], 'seed')
     assert.deepStrictEqual(repo.list().find((item) => item.id === 'atlas')!.allowedTools, [])
   })
+
+  it('migrateOnce: aplica uma vez por banco, guarda o resto do agente e ignora o que não existe', () => {
+    const agent: IAgent = {
+      id: 'juridico',
+      name: 'Jurídico',
+      providers: [{ provider: EProvider.CLAUDE, models: ['m'] }],
+      systemPrompt: 'p',
+      modes: [EMode.AGENT],
+      allowedTools: [],
+    }
+    const repo = new SqliteAgentRepository(':memory:')
+    repo.save({ ...agent, allowedTools: ['velha', 'fica'] }, 'root')
+    const drop = (item: IAgent) => ({ ...item, allowedTools: item.allowedTools.filter((tool) => tool !== 'velha') })
+    repo.migrateOnce('tirar-velha', 'juridico', drop, 'seed')
+    assert.deepStrictEqual(repo.list()[0].allowedTools, ['fica'])
+    assert.strictEqual(repo.list()[0].name, 'Jurídico')
+
+    repo.save({ ...agent, allowedTools: ['velha'] }, 'root')
+    repo.migrateOnce('tirar-velha', 'juridico', drop, 'seed')
+    assert.deepStrictEqual(repo.list()[0].allowedTools, ['velha'])
+    repo.migrateOnce('tirar-velha', 'nao-existe', drop, 'seed')
+    assert.strictEqual(repo.list().length, 1)
+  })
 })

@@ -118,6 +118,22 @@ export class SqliteAgentRepository implements IAgentRepository {
     for (const tool of fresh) mark.run(`seed-tool:${agent.id}:${tool}`, now)
   }
 
+  migrateOnce(key: string, agentId: string, change: (agent: IAgent) => IAgent | undefined, by: string): void {
+    const mark = `migration:${key}:${agentId}`
+    if (this.db.prepare('SELECT 1 FROM agent_meta WHERE key = ?').get(mark)) return
+    const row = this.db.prepare('SELECT * FROM agents WHERE id = ?').get(agentId) as TRow | undefined
+    const current = row ? this.toAgent(row) : undefined
+    if (current) {
+      const { createdAt: _created, updatedAt: _updated, updatedBy: _by, ...agent } = current
+      const next = change(agent)
+      if (next) {
+        this.save(next, by)
+        console.log(`[agentes] ${agentId}: migração ${key} aplicada`)
+      }
+    }
+    this.db.prepare('INSERT OR IGNORE INTO agent_meta (key, value) VALUES (?, ?)').run(mark, new Date().toISOString())
+  }
+
   delete(id: string): boolean {
     return this.db.prepare('DELETE FROM agents WHERE id = ?').run(id).changes > 0
   }

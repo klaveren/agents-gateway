@@ -24,6 +24,12 @@ export interface IAgentRepository {
   delete(id: string): boolean
   /** Grava a semente de primeiro boot, uma vez por banco. Agente apagado depois não volta. */
   seedOnce(agents: readonly IAgent[], by: string): void
+  /**
+   * Aplica UMA VEZ por banco (`migration:<key>:<agentId>`) uma mudança num agente que já existe — quando o gateway muda o
+   * que a semente dele faz (o Atlas deixou de gravar conteúdo e passou a delegar). `change` devolve `undefined` para não
+   * mexer. Agente que não existe (apagado) fica como está.
+   */
+  migrateOnce(key: string, agentId: string, change: (agent: IAgent) => IAgent | undefined, by: string): void
 }
 
 /**

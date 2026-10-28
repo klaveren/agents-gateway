@@ -18,7 +18,8 @@ describe('Builder.Agents', () => {
     assert.deepStrictEqual(builderAgent('adr', target).allowedTools, ['mcp:gateway/list_docs', 'mcp:gateway/get_doc', 'mcp:gateway/save_doc', PROPOSE_DRAFT_TOOL])
     assert.deepStrictEqual(builderAgent('skill', target).allowedTools, ['mcp:gateway/list_resources', 'mcp:gateway/save_resource', PROPOSE_DRAFT_TOOL])
     const spec = builderAgent('spec', target).systemPrompt
-    assert.match(spec, /Só grave com save_doc DEPOIS que a pessoa disser nesta conversa que pode gravar/)
+    assert.match(spec, /Só grave com save_doc DEPOIS que a pessoa disser nesta conversa \(ou o agente que delegou trouxer a confirmação dela\)/)
+    assert.match(spec, /A pessoa confirmou: grave o último rascunho/)
     assert.match(spec, /# Protocolo de construção de spec/)
   })
 

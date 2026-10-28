@@ -1,4 +1,6 @@
 import { IAgent } from './models/Agent.Model'
+import { builderAgentId } from './Builder.Agents'
+import { PROTOCOL_KINDS } from './models/Protocol.Model'
 import { EMode } from './enums/EMode.Enum'
 import { EProvider } from './enums/EProvider.Enum'
 
@@ -31,12 +33,10 @@ const ATLAS_TOOLS = [
   'save_hook',
   'delete_hook',
   'list_rules',
-  'save_rule',
   'move_rule',
   'delete_rule',
   'list_docs',
   'get_doc',
-  'save_doc',
   'delete_doc',
   'get_initial_context',
   'set_initial_context',
@@ -44,11 +44,27 @@ const ATLAS_TOOLS = [
   'set_agent_initial_context',
   'list_resources',
   'get_protocol',
-  'save_resource',
   'delete_resource',
   'get_agent_resources',
   'set_agent_resources',
 ].map((tool) => `mcp:gateway/${tool}`)
+
+/**
+ * ⚖️ O CONTEÚDO (rules, specs, ADRs, skills, commands) quem grava é o CONSTRUTOR do tipo, que segue o protocolo do core:
+ * o Atlas delega (`agent:builder-<tipo>`) em vez de gravar com `save_*`. Uma porta só para criar, e ela segue o protocolo.
+ */
+export const BUILDER_DELEGATIONS: readonly string[] = PROTOCOL_KINDS.map((kind) => `agent:${builderAgentId(kind)}`)
+/** As ferramentas de gravar conteúdo que o Atlas deixou de ter (a migração as tira do Atlas que já está no banco). */
+export const RETIRED_ATLAS_TOOLS: readonly string[] = ['save_rule', 'save_doc', 'save_resource'].map((tool) => `mcp:gateway/${tool}`)
+
+/** Como o Atlas cria conteúdo: delegando ao construtor. Também é o que a migração acrescenta ao prompt do Atlas que já existe. */
+export const ATLAS_BUILDERS_SECTION = `## Construtores: rules, specs, ADRs, skills e commands
+Você NÃO grava esse conteúdo: quem cria ou ajusta é o construtor do tipo (builder-rule, builder-spec, builder-adr, builder-skill, builder-command), que segue o protocolo do core. Delegue com delegate_to_agent.
+1. Entenda o que a pessoa quer (o quê, para quem, em que projeto) e mande ao construtor o pedido COMPLETO, com o projectId da conversa — ele não vê esta conversa.
+2. Ele devolve o rascunho: mostre-o à pessoa por inteiro e pergunte se pode gravar.
+3. Só depois que a pessoa disser que pode, continue a MESMA delegação (o sessionId que ela devolveu) com: "A pessoa confirmou: grave o último rascunho." Pedido de mudança: repasse na mesma delegação.
+4. ⛔ Nunca confirme por conta própria, nem diga que a pessoa confirmou sem ela ter dito.
+Você mesmo continua listando e lendo (list_rules, list_docs, get_doc, list_resources, get_protocol), reordenando rules (move_rule), apagando (delete_rule, delete_doc, delete_resource — confirme antes), cuidando do contexto inicial e liberando recursos para agentes (set_agent_resources). Ligar ou desligar uma rule é na tela Rules.`
 
 const ATLAS: IAgent = {
   id: 'atlas',
@@ -90,8 +106,7 @@ Um hook é a URL POST /v1/hook/<agente>/<nome>: quando um serviço (GitHub, CRM,
 ## Rules, specs e ADRs
 - Rules são as regras do ambiente (Rule 1, Rule 2…): todo agente recebe as ligadas no system prompt quando a conversa começa — as globais e depois as do projeto da conversa. Specs (como algo deve ser) e ADRs (uma decisão e o porquê) são documentos em markdown: a conversa recebe só o índice e o agente lê o inteiro com read_doc.
 - Nasce no projeto da conversa (o projectId dela). Global (projectId null) só se a pessoa pedir.
-- Rule: título curto e corpo imperativo, uma regra por registro. Documento: id em slug, resumo de uma linha (é o que aparece no índice) e o corpo em markdown; numa ADR, o status vai no texto.
-- Consulte com list_rules e list_docs antes de criar, para não duplicar. Para reordenar, move_rule (uma posição por chamada). Só grave (save_rule, save_doc), reordene ou apague DEPOIS que a pessoa confirmar o texto.
+- Consulte com list_rules e list_docs. Para reordenar, move_rule (uma posição por chamada). Reordene ou apague só DEPOIS que a pessoa confirmar.
 - Contexto inicial do projeto (get_initial_context, set_initial_context): as specs marcadas vão INTEIRAS no prompt de toda conversa do projeto, junto com as rules; as demais ficam no índice. Só specs, globais ou do projeto. Tudo o que entra pesa em toda conversa: diga o total de tokens antes de gravar.
 - Contexto inicial do agente (get_agent_initial_context, set_agent_initial_context): specs que UM agente carrega inteiras além das do projeto (o desenvolvedor e as de arquitetura). Agente global, só specs globais.
 - Vale para as conversas que começarem depois: diga isso à pessoa.
@@ -99,11 +114,13 @@ Um hook é a URL POST /v1/hook/<agente>/<nome>: quando um serviço (GitHub, CRM,
 ## Skills e commands
 - Skill: um modo de fazer algo (markdown) que o agente carrega com use_skill quando o assunto aparece — o prompt dele só lista id e descrição. Command: um pedido pronto que a pessoa dispara com /nome argumentos; o corpo usa $ARGUMENTS. Os dois podem levar specs e ADRs anexadas (docIds).
 - Global ou do projeto da conversa (global só se a pessoa pedir). A descrição é o que faz o agente saber quando usar: uma linha, concreta.
-- Um agente só usa o que set_agent_resources libera (ids, ou ["*"] = todos os que ele vê). Crie com save_resource, libere, e confirme tudo com a pessoa antes de gravar.
-- Antes de criar ou ajustar uma skill, um command, uma rule, uma spec ou uma ADR, leia o protocolo do tipo com get_protocol (o do core e o complemento de quem administra) e siga-o. Para construir com calma, a tela tem a guia Construir em cada um deles.`,
+- Um agente só usa o que set_agent_resources libera (ids, ou ["*"] = todos os que ele vê). Depois que o construtor gravar, libere — confirmando com a pessoa.
+- A tela também tem a guia Construir em cada um deles, para construir direto com o construtor.
+
+${ATLAS_BUILDERS_SECTION}`,
   reasoningEfforts: ['low', 'medium', 'high'],
   modes: [EMode.AGENT],
-  allowedTools: ['sdk:WebSearch', ...ATLAS_TOOLS],
+  allowedTools: ['sdk:WebSearch', ...ATLAS_TOOLS, ...BUILDER_DELEGATIONS],
 }
 
 /** O que o Atlas Admin tem a mais: o sistema operacional desta máquina, pelas nativas do Claude Agent SDK. */
@@ -146,7 +163,7 @@ Primeiro confira se já existe: command -v <nome>. Se faltar:
 5. O que você instala vale na hora no seu Bash, no dos outros agentes e nos MCPs locais; remover tira de todos.
 
 MCPs (como o Playwright) se cadastram e instalam na guia MCPs da tela — você não tem ferramenta para isso: oriente a pessoa.`,
-  allowedTools: ['sdk:WebSearch', ...HOST_TOOLS, ...ATLAS_TOOLS, ...PACKAGE_TOOLS],
+  allowedTools: ['sdk:WebSearch', ...HOST_TOOLS, ...ATLAS_TOOLS, ...PACKAGE_TOOLS, ...BUILDER_DELEGATIONS],
   adminOnly: true,
 }
 
