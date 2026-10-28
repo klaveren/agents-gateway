@@ -15,18 +15,36 @@ describe('latestDraft', () => {
         { tool: 'read_doc', args: { id: 'api' } },
       ]),
     ]
-    expect(latestDraft(turns)).toEqual({ id: 'segunda', description: 'Revisa', body: 'passos', docIds: ['api'], global: true })
+    expect(latestDraft(turns)).toEqual({ id: 'segunda', title: '', summary: '', description: 'Revisa', body: 'passos', docIds: ['api'], global: true, saved: false })
+  })
+
+  it('os campos de doc e de rule; gravado = um save que deu certo DEPOIS do último rascunho', () => {
+    const spec = { tool: 'propose_draft', args: { id: 'api', title: 'API', summary: 'Padrões', body: '# API' } }
+    expect(latestDraft([turn(0, [spec])])).toMatchObject({ id: 'api', title: 'API', summary: 'Padrões', saved: false })
+    expect(latestDraft([turn(0, [spec]), turn(1, [{ tool: 'save_doc', error: 'recusado' }])])?.saved).toBe(false)
+    expect(latestDraft([turn(0, [spec]), turn(1, [{ tool: 'mcp__mcp_gateway__save_doc', result: 'ok' }])])?.saved).toBe(true)
+    // Um rascunho novo depois de gravar volta a "não gravado".
+    expect(latestDraft([turn(0, [spec, { tool: 'save_doc' }]), turn(1, [{ tool: 'propose_draft', args: { title: 'Dados', body: 'Nunca apague.' } }])])).toMatchObject({
+      id: '',
+      title: 'Dados',
+      saved: false,
+    })
   })
 
   it('sem chamada, ou com argumentos ilegíveis, não há rascunho', () => {
     expect(latestDraft([])).toBeUndefined()
     expect(latestDraft([turn(0, [{ tool: 'propose_draft', args: '{quebrado' }])])).toBeUndefined()
-    expect(latestDraft([turn(0, [{ tool: 'propose_draft', args: { description: 'sem id' } }])])).toBeUndefined()
+    expect(latestDraft([turn(0, [{ tool: 'propose_draft', args: { description: 'sem corpo' } }])])).toBeUndefined()
   })
 })
 
 describe('coreAgentName', () => {
   it('nomeia os construtores; o resto não', () => {
-    expect([coreAgentName('builder-command'), coreAgentName('atlas'), coreAgentName(undefined)]).toEqual(['Construtor de commands', undefined, undefined])
+    expect([coreAgentName('builder-command'), coreAgentName('builder-adr'), coreAgentName('atlas'), coreAgentName(undefined)]).toEqual([
+      'Construtor de commands',
+      'Construtor de ADRs',
+      undefined,
+      undefined,
+    ])
   })
 })

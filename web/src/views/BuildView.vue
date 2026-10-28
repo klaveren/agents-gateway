@@ -2,34 +2,36 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Icon from '@/components/Icon.vue'
-import ResourceTabs from '@/components/ResourceTabs.vue'
+import BuildTabs from '@/components/BuildTabs.vue'
 import ThreadView from '@/components/ThreadView.vue'
 import { api } from '@/lib/api'
-import { builderAgentId, latestDraft, pendingDraft } from '@/lib/builder'
+import { BUILD_KINDS, builderAgentId, latestDraft, pendingDraft, type TBuildKind } from '@/lib/builder'
 import { shortTime } from '@/lib/format'
 import { renderMarkdown } from '@/lib/markdown'
-import type { IConversation, IResource, TResourceKind } from '@/lib/types'
+import type { IConversation, IProjectDoc, IResource } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectsStore } from '@/stores/projects'
 import { useThreadStore } from '@/stores/thread'
 
 /**
- * As guias CONSTRUIR e PROTOCOLO de Skills e de Commands (só admin).
+ * As guias CONSTRUIR e PROTOCOLO de Rules, Specs, ADRs, Skills e Commands (só admin).
  *
  * ⚖️ O protocolo do CORE chega com o gateway e não se edita aqui: quem administra só soma um complemento (global ou do
- * projeto), que vem depois dele. O construtor é um agente do core que segue os dois numa conversa guiada e entrega um
- * rascunho; quem salva é a pessoa, pelo editor da guia Lista.
+ * projeto), que vem depois dele. O construtor é um agente do core que segue os dois numa conversa guiada, entrega um
+ * rascunho e grava quando a pessoa confirma na conversa; o rascunho também abre no editor da guia Lista.
  */
-const props = defineProps<{ kind: TResourceKind; tab: 'build' | 'protocol' }>()
+const props = defineProps<{ kind: TBuildKind; tab: 'build' | 'protocol' }>()
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const projects = useProjectsStore()
 const thread = useThreadStore()
 
-const noun = computed(() => (props.kind === 'skill' ? 'skill' : 'command'))
-const base = computed(() => (props.kind === 'skill' ? '/skills' : '/commands'))
-const title = computed(() => (props.kind === 'skill' ? 'Skills' : 'Commands'))
+const info = computed(() => BUILD_KINDS[props.kind])
+const base = computed(() => info.value.base)
+const title = computed(() => info.value.title)
+const isDoc = computed(() => props.kind === 'spec' || props.kind === 'adr')
+const isResource = computed(() => props.kind === 'skill' || props.kind === 'command')
 
 onMounted(async () => {
   if (!auth.isAdmin) return
@@ -72,11 +74,7 @@ watch(
 watch(
   selected,
   (id) => {
-    if (id && thread.sessionId !== id)
-      void thread.open(
-        id,
-        builds.value.find((build) => build.id === id),
-      )
+    if (id && thread.sessionId !== id) void thread.open(id, builds.value.find((build) => build.id === id))
   },
   { immediate: true },
 )
@@ -85,6 +83,19 @@ watch(
   () => thread.turns.length,
   () => {
     if (selected.value && thread.sessionId === selected.value) void loadBuilds()
+  },
+)
+/**
+ * ⚠️ O rascunho mora nos ARGUMENTOS da chamada, e eles só existem no turno GRAVADO: o do stream tem só o nome da
+ * ferramenta. A gravação chega ao banco um pouco depois do fim do stream (às vezes depois da releitura de 600 ms da
+ * conversa), então aqui se relê mais duas vezes depois de cada resposta.
+ */
+watch(
+  () => thread.sending,
+  (sending, was) => {
+    if (sending || !was || !selected.value) return
+    const id = selected.value
+    for (const delay of [1500, 4000]) setTimeout(() => thread.sessionId === id && void thread.refresh(), delay)
   },
 )
 
@@ -106,17 +117,30 @@ async function removed() {
   await loadBuilds()
 }
 
-/** Leva o rascunho ao editor da guia Lista, preenchido e NÃO salvo: o id que já existe abre a edição dele. */
+/**
+ * Leva o rascunho ao editor da guia Lista, preenchido e NÃO salvo: o id que já existe abre a edição dele. A rule não tem
+ * id no rascunho — vai para o formulário de rule nova.
+ */
 async function openInEditor() {
   const current = draft.value
   if (!current) return
   const projectId = current.global ? undefined : buildProject.value
   pendingDraft.value = { ...current, kind: props.kind, ...(projectId ? { projectId } : {}) }
-  const exists = await api<IResource>(`/resources/${encodeURIComponent(current.id)}`)
-    .then((resource) => resource.kind === props.kind)
-    .catch(() => false)
-  await router.push(exists ? `${base.value}/${current.id}` : `${base.value}/new`)
+  if (props.kind === 'rule') return void (await router.push(base.value))
+  await router.push((await exists(current.id)) ? `${base.value}/${current.id}` : `${base.value}/new`)
 }
+
+/** O id já é um registro DESTE tipo? */
+async function exists(id: string): Promise<boolean> {
+  if (!id) return false
+  const path = isDoc.value ? `/docs/${encodeURIComponent(id)}` : `/resources/${encodeURIComponent(id)}`
+  return api<IProjectDoc | IResource>(path)
+    .then((item) => item.kind === props.kind)
+    .catch(() => false)
+}
+
+/** Onde o registro gravado pelo construtor aparece. */
+const savedLink = computed(() => (props.kind === 'rule' || !draft.value?.id ? base.value : `${base.value}/${draft.value.id}`))
 
 // ── Protocolo ────────────────────────────────────────────────────────────────
 
@@ -126,7 +150,7 @@ interface IAddendum {
   updatedBy?: string
 }
 interface IProtocolView {
-  core: { kind: TResourceKind; version: string; title: string; body: string }
+  core: { kind: TBuildKind; version: string; title: string; body: string }
   addenda: { global?: IAddendum; project?: IAddendum }
 }
 
@@ -184,7 +208,7 @@ function describe(failure: unknown): string {
   <div v-else class="flex h-full min-h-0 flex-col">
     <header class="flex flex-wrap items-center gap-3 border-b border-zinc-800/80 px-4 py-3">
       <h1 class="text-xl font-semibold">{{ title }}</h1>
-      <ResourceTabs :kind="kind" :active="tab" />
+      <BuildTabs :kind="kind" :active="tab" />
     </header>
 
     <!-- CONSTRUIR: as construções, a conversa e o rascunho. -->
@@ -217,14 +241,17 @@ function describe(failure: unknown): string {
       <main class="flex min-h-[24rem] min-w-0 flex-1 flex-col">
         <ThreadView v-if="selected" :key="selected" embedded :agent-id="builderAgentId(kind)" mode="agent" @removed="removed" />
         <section v-else class="mx-auto flex max-w-xl flex-col gap-3 p-6 text-sm text-zinc-300">
-          <h2 class="text-lg font-semibold text-zinc-100">Construir uma {{ noun }}</h2>
+          <h2 class="text-lg font-semibold text-zinc-100">Construir {{ info.article }}</h2>
           <p>
             O construtor é um agente do sistema que segue o
             <RouterLink :to="`${base}/protocol`" class="text-emerald-400 underline underline-offset-2">protocolo</RouterLink>
-            de {{ noun }}s: entende o que você quer, confere o que já existe, procura as specs e ADRs de que ela depende e pergunta o que faltar. No fim, entrega um rascunho ao
-            lado — você revisa e salva pelo editor.
+            de {{ info.title.toLowerCase() }}: entende o que você quer, confere o que já existe, procura as specs e ADRs relacionadas e pergunta o que faltar. No fim, entrega um
+            rascunho ao lado.
           </p>
-          <p class="text-zinc-400">Ele não grava nada sozinho. A conversa fica aqui, fora da caixa de entrada, e o consumo entra no Uso como "Construtor".</p>
+          <p class="text-zinc-400">
+            Ele só grava quando você disser na conversa que pode. Se preferir ajustar à mão, "Abrir no editor" leva o rascunho para a guia Lista, sem salvar. A conversa fica
+            aqui, fora da caixa de entrada, e o consumo entra no Uso como "Construtor".
+          </p>
           <p class="text-xs text-zinc-500">O modelo dele se escolhe em Sistema → Modelo do construtor (sem escolha, o do Atlas).</p>
           <div>
             <button
@@ -240,14 +267,22 @@ function describe(failure: unknown): string {
 
       <aside v-if="selected" class="scroll-thin flex shrink-0 flex-col gap-3 overflow-y-auto border-t border-zinc-800/80 p-4 lg:w-[26rem] lg:border-t-0 lg:border-l">
         <h2 class="text-sm font-semibold text-zinc-200">Rascunho</h2>
-        <p v-if="!draft" class="text-xs text-zinc-500">Ainda nenhum. Quando o construtor fechar a {{ noun }}, ela aparece aqui.</p>
+        <p v-if="!draft" class="text-xs text-zinc-500">Ainda nenhum. Quando o construtor fechar {{ info.article }}, o rascunho aparece aqui.</p>
         <template v-else>
           <div>
-            <p class="font-mono text-base text-zinc-100">{{ kind === 'command' ? '/' : '' }}{{ draft.id }}</p>
-            <p class="text-sm text-zinc-300">{{ draft.description }}</p>
+            <p v-if="kind === 'rule'" class="text-base font-medium text-zinc-100">{{ draft.title }}</p>
+            <template v-else>
+              <p class="font-mono text-base text-zinc-100">{{ kind === 'command' ? '/' : '' }}{{ draft.id }}</p>
+              <p v-if="isDoc" class="text-sm font-medium text-zinc-200">{{ draft.title }}</p>
+              <p class="text-sm text-zinc-300">{{ isDoc ? draft.summary : draft.description }}</p>
+            </template>
             <p class="mt-1 text-xs text-zinc-500">{{ draft.global ? 'Global — todos os projetos' : `Projeto ${buildProject ?? '—'}` }}</p>
           </div>
-          <div v-if="draft.docIds.length" class="flex flex-wrap gap-1">
+          <p v-if="draft.saved" class="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
+            <Icon name="check" class="h-4 w-4" /> Salvo pelo construtor.
+            <RouterLink :to="savedLink" class="ml-auto text-emerald-300 underline underline-offset-2">Abrir</RouterLink>
+          </p>
+          <div v-if="isResource && draft.docIds.length" class="flex flex-wrap gap-1">
             <span v-for="docId in draft.docIds" :key="docId" class="rounded-full bg-zinc-800 px-2 py-0.5 font-mono text-[11px] text-zinc-300">{{ docId }}</span>
           </div>
           <div class="flex gap-1 text-xs">
@@ -271,8 +306,14 @@ function describe(failure: unknown): string {
           <!-- eslint-disable-next-line vue/no-v-html -- renderMarkdown escapa antes de marcar -->
           <div v-if="draftPreview" class="prose-agent rounded-xl border border-zinc-800 p-3 text-sm break-words" v-html="renderMarkdown(draft.body)" />
           <pre v-else class="rounded-xl border border-zinc-800 p-3 font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-zinc-300">{{ draft.body }}</pre>
-          <button class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400" @click="openInEditor">Abrir no editor</button>
-          <p class="text-xs text-zinc-500">Abre na guia Lista, preenchido e sem salvar.</p>
+          <button
+            class="rounded-full px-4 py-2 text-sm font-medium"
+            :class="draft.saved ? 'text-zinc-300 hover:bg-zinc-800' : 'bg-emerald-500 text-zinc-950 hover:bg-emerald-400'"
+            @click="openInEditor"
+          >
+            Abrir no editor
+          </button>
+          <p class="text-xs text-zinc-500">{{ draft.saved ? 'Para ajustar à mão.' : 'Diga na conversa que pode gravar, ou abra na guia Lista, preenchido e sem salvar.' }}</p>
         </template>
       </aside>
     </div>

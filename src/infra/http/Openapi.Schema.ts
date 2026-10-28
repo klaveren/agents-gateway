@@ -1394,9 +1394,9 @@ export const OPENAPI_DOCUMENT = {
     '/protocols/{kind}': {
       get: {
         summary:
-          'How a skill or command must be built: the core protocol (shipped with the gateway, versioned) and the administrators addenda — the global one and, with ?project=, the project one. The builder follows both. Administrators only',
+          'How a skill, command, rule, spec or ADR must be built: the core protocol (shipped with the gateway, versioned) and the administrators addenda — the global one and, with ?project=, the project one. The builder follows both. Administrators only',
         parameters: [
-          { name: 'kind', in: 'path', required: true, schema: { type: 'string', enum: ['skill', 'command'] } },
+          { name: 'kind', in: 'path', required: true, schema: { type: 'string', enum: ['skill', 'command', 'rule', 'spec', 'adr'] } },
           { name: 'project', in: 'query', required: false, schema: { type: 'string' } },
         ],
         responses: { '200': { description: 'OK', ...json(envelope(protocolView)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
@@ -1406,7 +1406,7 @@ export const OPENAPI_DOCUMENT = {
       put: {
         summary:
           'Write the addendum of a scope (absent or null projectId = global). It goes AFTER the core protocol and never replaces it; an empty body deletes it. Administrators only',
-        parameters: [{ name: 'kind', in: 'path', required: true, schema: { type: 'string', enum: ['skill', 'command'] } }],
+        parameters: [{ name: 'kind', in: 'path', required: true, schema: { type: 'string', enum: ['skill', 'command', 'rule', 'spec', 'adr'] } }],
         requestBody: {
           required: true,
           ...json({ type: 'object', required: ['body'], properties: { projectId: { type: 'string', nullable: true }, body: { type: 'string' } } }),

@@ -12,8 +12,18 @@ describe('Builder.Agents', () => {
     assert.match(agent.systemPrompt, /# Protocolo de construção de command[\s\S]*\$ARGUMENTS/)
   })
 
+  it('⛔ cada um com a leitura e a gravação do SEU tipo, e o prompt manda gravar só depois da confirmação', () => {
+    const target = { provider: 'claude', models: ['m'] }
+    assert.deepStrictEqual(builderAgent('rule', target).allowedTools, ['mcp:gateway/list_rules', 'mcp:gateway/save_rule', PROPOSE_DRAFT_TOOL])
+    assert.deepStrictEqual(builderAgent('adr', target).allowedTools, ['mcp:gateway/list_docs', 'mcp:gateway/get_doc', 'mcp:gateway/save_doc', PROPOSE_DRAFT_TOOL])
+    assert.deepStrictEqual(builderAgent('skill', target).allowedTools, ['mcp:gateway/list_resources', 'mcp:gateway/save_resource', PROPOSE_DRAFT_TOOL])
+    const spec = builderAgent('spec', target).systemPrompt
+    assert.match(spec, /Só grave com save_doc DEPOIS que a pessoa disser nesta conversa que pode gravar/)
+    assert.match(spec, /# Protocolo de construção de spec/)
+  })
+
   it('os ids reservados e o caminho de volta, do id ao tipo', () => {
-    assert.deepStrictEqual(CORE_AGENT_IDS, ['builder-skill', 'builder-command'])
+    assert.deepStrictEqual(CORE_AGENT_IDS, ['builder-skill', 'builder-command', 'builder-rule', 'builder-spec', 'builder-adr'])
     assert.deepStrictEqual([builderKindOf(builderAgentId('skill')), builderKindOf('atlas'), builderKindOf(undefined)], ['skill', undefined, undefined])
   })
 })

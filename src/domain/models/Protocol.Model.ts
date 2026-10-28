@@ -1,5 +1,3 @@
-import { TResourceKind } from './Resource.Model'
-
 /**
  * Um PROTOCOLO: como um artefato agêntico (uma skill, um command) deve ser construído neste gateway.
  *
@@ -7,7 +5,8 @@ import { TResourceKind } from './Resource.Model'
  * administra só SOMA um complemento (global ou do projeto), que vem DEPOIS do core e nunca o substitui: a próxima
  * versão do core continua valendo onde houver complemento.
  */
-export type TProtocolKind = TResourceKind
+export type TProtocolKind = 'skill' | 'command' | 'rule' | 'spec' | 'adr'
+export const PROTOCOL_KINDS: readonly TProtocolKind[] = ['skill', 'command', 'rule', 'spec', 'adr']
 
 export interface ICoreProtocol {
   kind: TProtocolKind
@@ -34,3 +33,19 @@ export interface IProtocolView {
 }
 
 export const PROTOCOL_ADDENDUM_MAX = 20_000
+
+/**
+ * O rascunho que o construtor entrega (`propose_draft`): ainda não é registro. Os campos valem conforme o tipo — rule:
+ * título e corpo; spec/ADR: id, título, resumo e corpo; skill/command: id, descrição, corpo e documentos anexados.
+ */
+export interface IBuilderDraft {
+  kind: TProtocolKind
+  id?: string
+  title?: string
+  summary?: string
+  description?: string
+  body?: string
+  docIds?: string[]
+  /** Ausente = o do projeto da conversa (sem projeto, global). */
+  global?: boolean
+}

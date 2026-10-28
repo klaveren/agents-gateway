@@ -25,17 +25,6 @@ export interface IResource {
   updatedBy?: string
 }
 
-/** O rascunho que o construtor entrega: ainda não é recurso, e nada se grava. */
-export interface IResourceDraft {
-  kind: TResourceKind
-  id?: string
-  description?: string
-  body?: string
-  docIds?: string[]
-  /** Ausente = o do projeto da conversa (sem projeto, global). */
-  global?: boolean
-}
-
 /** O que um agente pode usar: ids, ou `['*']` = todos os globais e os do projeto dele. */
 export interface IAgentResources {
   skills: string[]

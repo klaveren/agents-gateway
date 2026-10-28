@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import BuildTabs from '@/components/BuildTabs.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import Icon from '@/components/Icon.vue'
 import { api, ApiError } from '@/lib/api'
+import { pendingDraft } from '@/lib/builder'
 import { GLOBAL_SCOPE, scopeLabel, scopeToProjectId } from '@/lib/guidance'
 import type { IRule } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
@@ -22,6 +24,8 @@ const globalCount = ref(0)
 const loading = ref(false)
 const error = ref<string>()
 const draft = ref({ title: '', body: '' })
+/** Aviso de que o formulário de rule nova veio do construtor ("Abrir no editor"). */
+const draftNote = ref<string>()
 const draftIssues = ref<Record<string, string[]>>({})
 const editing = ref<string>()
 const edit = ref({ title: '', body: '' })
@@ -34,8 +38,19 @@ const label = computed(() => scopeLabel(scope.value, projects.list))
 onMounted(async () => {
   if (!auth.isAdmin) return
   if (!projects.loaded) await projects.load().catch(() => undefined)
+  applyDraft()
   await load()
 })
+
+/** O rascunho do construtor: vai para o formulário de rule nova, no escopo dele, SEM salvar — e é consumido. */
+function applyDraft() {
+  const pending = pendingDraft.value
+  if (pending?.kind !== 'rule') return
+  pendingDraft.value = undefined
+  scope.value = pending.projectId ?? GLOBAL_SCOPE
+  draft.value = { title: pending.title, body: pending.body }
+  draftNote.value = 'Rascunho do construtor aplicado: revise e adicione.'
+}
 watch(scope, () => {
   editing.value = undefined
   void load()
@@ -74,6 +89,7 @@ async function add() {
   try {
     await api('/rules', { method: 'POST', body: { ...draft.value, projectId: scopeToProjectId(scope.value) } })
     draft.value = { title: '', body: '' }
+    draftNote.value = undefined
     await load()
   } catch (failure) {
     if (failure instanceof ApiError && failure.status === 422) draftIssues.value = failure.fieldIssues
@@ -117,6 +133,7 @@ function describe(failure: unknown): string {
     <section class="mx-auto flex max-w-3xl flex-col gap-4">
       <header class="flex flex-wrap items-center gap-3">
         <h1 class="text-xl font-semibold">Rules</h1>
+        <BuildTabs kind="rule" active="list" />
         <select v-model="scope" class="input ml-auto w-auto py-1.5 text-sm" aria-label="Escopo">
           <option v-for="item in scopes" :key="item.id" :value="item.id">{{ item.name }}</option>
         </select>
@@ -158,6 +175,7 @@ function describe(failure: unknown): string {
 
       <form class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3" @submit.prevent="add">
         <p class="text-sm font-medium">Nova rule em {{ label }}</p>
+        <p v-if="draftNote" class="text-xs text-emerald-300">{{ draftNote }}</p>
         <label class="field">Título<input v-model="draft.title" required maxlength="120" class="input text-sm" placeholder="Idioma" /><small v-for="m in draftIssues.title" :key="m" class="error">{{ m }}</small></label>
         <label class="field">
           Regra

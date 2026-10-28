@@ -387,8 +387,8 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'get_protocol',
     {
       description:
-        'How a skill or command must be built in this gateway: the core protocol (shipped with the gateway, versioned) and the administrators addenda (global, then the project one), which add to it. Follow both when creating or adjusting one.',
-      inputSchema: { kind: z.enum(['skill', 'command']), projectId: z.string().optional() },
+        'How a skill, command, rule, spec or ADR must be built in this gateway: the core protocol (shipped with the gateway, versioned) and the administrators addenda (global, then the project one), which add to it. Follow both when creating or adjusting one.',
+      inputSchema: { kind: z.enum(['skill', 'command', 'rule', 'spec', 'adr']), projectId: z.string().optional() },
       annotations: { readOnlyHint: true },
     },
     async ({ kind, projectId }) => reply(await api('GET', `/protocols/${kind}`, { query: { project: projectId } })),
