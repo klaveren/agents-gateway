@@ -617,7 +617,9 @@ export class GuidanceService {
    * - COMMAND: o texto dele, com `$ARGUMENTS` trocado (sem ele, os argumentos vão no fim).
    * - SKILL: a pessoa a escolheu de propósito — ela vai inteira, já carregada, com o pedido depois (sem o `use_skill`).
    */
-  expandCommand(text: string, agentId?: string): IExpandedCommand | undefined {
+  expandCommand(text: string, agentId?: string, projectId?: string): IExpandedCommand | undefined {
+    const doc = this.expandDoc(text, projectId)
+    if (doc) return doc
     const match = /^\/([a-z0-9][a-z0-9-]{1,47})(?:\s+([\s\S]*))?$/.exec(text.trim())
     if (!match) return undefined
     const [, id, rawArgs] = match
@@ -632,6 +634,25 @@ export class GuidanceService {
     }
     const body = resource.body.includes('$ARGUMENTS') ? resource.body.replace(/\$ARGUMENTS/g, args) : `${resource.body.trim()}${args ? `\n\nArgumentos: ${args}` : ''}`
     return { text: `${body.trim()}${this.attachments(resource)}`, label: text.trim(), command: id }
+  }
+
+  /**
+   * `/spec:<id> pedido` (também `adr:` e `knowledge:`): a pessoa escolheu um DOCUMENTO no `/` — ele vai inteiro, com o
+   * pedido depois (sem o agente precisar achá-lo). ⛔ Só o global ou o do projeto da conversa, como o `read_doc`; o
+   * que não existe ou é de outro projeto segue como texto.
+   */
+  private expandDoc(text: string, projectId?: string): IExpandedCommand | undefined {
+    const match = /^\/(spec|adr|knowledge):([a-z0-9][a-z0-9-]{1,63})(?:\s+([\s\S]*))?$/.exec(text.trim())
+    if (!match) return undefined
+    const [, kind, id, rawArgs] = match
+    const doc = this.readDoc(id, projectId)
+    if (!doc || doc.kind !== kind) return undefined
+    const args = (rawArgs ?? '').trim()
+    return {
+      text: `[A pessoa anexou o documento ${doc.id} (${doc.kind}): ele está abaixo, inteiro.]\n\n# ${doc.title} [${doc.kind}]\n\n${doc.body.trim()}\n\n# Pedido\n\n${args || '(sem texto: use o documento no que estamos fazendo)'}`,
+      label: text.trim(),
+      command: `${kind}:${id}`,
+    }
   }
 
   /** O projeto foi apagado: as rules e os documentos dele vão junto. */

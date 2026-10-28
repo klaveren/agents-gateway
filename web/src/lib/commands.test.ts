@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { commandSuggestions } from './commands'
+import { commandSuggestions, shownSlashTab, slashSuggestions } from './commands'
 
 describe('commandSuggestions', () => {
   const commands = [
@@ -24,5 +24,29 @@ describe('commandSuggestions', () => {
     expect(ids('/PULL')).toEqual(['revisar-pr'])
     // Sem acento: "resumé" acha a descrição "Resume".
     expect(ids('/resumé')).toEqual(['resumir'])
+  })
+})
+
+describe('as guias do /', () => {
+  const items = [
+    { id: 'tabela-markdown', kind: 'skill' as const, description: 'Montar tabelas' },
+    { id: 'resumir', kind: 'command' as const, description: 'Resume um arquivo' },
+    { id: 'spec:api-rest', kind: 'spec' as const, description: 'API REST — Padrões de rota' },
+    { id: 'knowledge:feature-flags', kind: 'knowledge' as const, description: 'Feature flags' },
+  ]
+
+  it('separa por tipo; resposta antiga sem tipo conta como command', () => {
+    const matches = slashSuggestions('/', [...items, { id: 'velho', description: 'Sem tipo' }])
+    expect(matches.skill.map((item) => item.id)).toEqual(['tabela-markdown'])
+    expect(matches.command.map((item) => item.id)).toEqual(['resumir', 'velho'])
+    expect(matches.adr).toEqual([])
+  })
+
+  it('a guia escolhida aparece; se ela não tem nada para o que foi digitado, a primeira que tem', () => {
+    expect(shownSlashTab('skill', '/', slashSuggestions('/', items))).toBe('skill')
+    expect(shownSlashTab('adr', '/', slashSuggestions('/', items))).toBe('adr')
+    expect(shownSlashTab('skill', '/api', slashSuggestions('/api', items))).toBe('spec')
+    expect(shownSlashTab('knowledge', '/flags', slashSuggestions('/flags', items))).toBe('knowledge')
+    expect(shownSlashTab('skill', '/zzz', slashSuggestions('/zzz', items))).toBe('skill')
   })
 })

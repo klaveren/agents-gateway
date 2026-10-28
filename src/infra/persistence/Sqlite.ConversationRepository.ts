@@ -455,6 +455,8 @@ export class SqliteConversationRepository implements IConversationRepository {
           search.push(`json_extract(metadata, '$.project') = ?`)
           searchParams.push(query.project)
         }
+        // As conversas do construtor ficam fora da caixa de entrada também na lista paginada (a do admin), e das contagens.
+        search.push(`json_extract(metadata, '$.${BUILDER_METADATA_KEY}') IS NULL`)
 
         const term = query.q?.trim().toLowerCase()
         if (term) {
