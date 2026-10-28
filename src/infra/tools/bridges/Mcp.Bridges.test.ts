@@ -2,7 +2,7 @@ import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import { IMcpServerConfig } from '@domain/models/McpServer.Model'
 import { IAgentMcpServer } from '../Tool.Catalog'
-import { buildClaudeMcpServers } from './Claude.ToolBridge'
+import { buildClaudeMcpServers, claudeHiddenTools } from './Claude.ToolBridge'
 import { buildOpenAIMcpServers } from './OpenAI.ToolBridge'
 
 const config = (id: string, over: Partial<IMcpServerConfig> = {}): IMcpServerConfig => ({
@@ -31,6 +31,13 @@ describe('pontes MCP com vários servidores', () => {
     assert.deepStrictEqual(servers.mcp_crm.headers, { authorization: 'Bearer token-de-quem-conversa' })
     assert.deepStrictEqual([servers.mcp_docs_int.type, servers.mcp_docs_int.headers], ['sse', { 'X-Api-Key': 'segredo' }])
     assert.strictEqual(servers.mcp_aberto.headers, undefined)
+  })
+
+  it('⛔ Claude Agent SDK: as ferramentas fora da escolha saem do contexto do modelo, no nome do SDK', () => {
+    assert.deepStrictEqual(claudeHiddenTools([...remotes, { config: config('gateway'), tools: ['list_resources'], hidden: ['list_docs', 'save_doc'] }]), [
+      'mcp__mcp_gateway__list_docs',
+      'mcp__mcp_gateway__save_doc',
+    ])
   })
 
   it('OpenAI Agents: um servidor por MCP, com o filtro das ferramentas escolhidas', () => {

@@ -73,10 +73,10 @@ describe('ToolCatalog', () => {
     const servers = await catalog().mcpServersFor(['mcp:crm/stats', 'mcp:docs/*', 'mcp:fora/*', 'search_web'])
 
     assert.deepStrictEqual(
-      servers.map((server) => [server.config.id, server.tools]),
+      servers.map((server) => [server.config.id, server.tools, server.hidden]),
       [
-        ['crm', ['stats']],
-        ['docs', undefined],
+        ['crm', ['stats'], ['search', 'run_bash']],
+        ['docs', undefined, undefined],
       ],
     )
   })

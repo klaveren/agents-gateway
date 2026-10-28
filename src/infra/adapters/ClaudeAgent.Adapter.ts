@@ -19,7 +19,7 @@ import { IFileAttachment, IMessageInput } from '@domain/models/MessageInput.Mode
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { sessionPrefix } from '@infra/session/Session.Key'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
-import { buildClaudeMcpServers, claudeMcpServerName } from '@infra/tools/bridges/Claude.ToolBridge'
+import { buildClaudeMcpServers, claudeHiddenTools, claudeMcpServerName } from '@infra/tools/bridges/Claude.ToolBridge'
 import { IAgentMcpServer, ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { composeSystemPrompt, maxToolTurns } from './support/Prompt.Helper'
 
@@ -155,6 +155,9 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       // tools nossas (locais e do MCP) chegam por `mcpServers`.
       tools: natives,
       mcpServers: buildClaudeMcpServers(local, remotes, context.token, context),
+      // ⛔ As ferramentas de um servidor que o agente NÃO escolheu saem do contexto do modelo: o SDK lista o servidor
+      // inteiro, e o portão só recusava depois de o modelo tentar (uma ida perdida, e ele achando que podia).
+      disallowedTools: claudeHiddenTools(remotes),
       // Nomes soltos em `allowedTools` aprovam antes de o callback rodar e o SDK
       // avisa que o `canUseTool` foi sombreado; por isso o gate fica só aqui.
       // As locais montadas entram pelo NOME — a `delegate_to_agent` vem de `agent:<id>`, não de um nome em `allowedTools`.
@@ -238,6 +241,12 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
           for (const block of content) {
             if (block.type === 'tool_result') {
               const tool = toolNames.get(block.tool_use_id) ?? block.tool_use_id
+              // ⚠️ Recusada pelo portão ou falhou (`is_error`): sai como erro — antes saía como resultado, e a tela
+              // marcava ✓ numa chamada que nem rodou.
+              if (block.is_error) {
+                yield { type: 'tool.error', sessionId, timestamp: new Date(), payload: { tool, message: resultText(block.content) } }
+                continue
+              }
               yield {
                 type: 'tool.result',
                 sessionId,
@@ -498,4 +507,17 @@ export function cliSessionExists(id: string, root = claudeConfigDir()): boolean 
   const projects = join(root, 'projects')
   if (!existsSync(projects)) return false
   return readdirSync(projects).some((dir) => existsSync(join(projects, dir, `${id}.jsonl`)))
+}
+
+/** O texto de um `tool_result` (string ou blocos), para a mensagem de erro. */
+function resultText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content))
+    return (
+      content
+        .map((block) => (block && typeof block === 'object' && 'text' in block ? String(block.text) : ''))
+        .join('\n')
+        .trim() || 'tool failed'
+    )
+  return 'tool failed'
 }
