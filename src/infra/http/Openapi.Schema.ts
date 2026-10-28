@@ -1365,10 +1365,19 @@ export const OPENAPI_DOCUMENT = {
     },
     '/agents/{agentId}/commands': {
       get: {
-        summary: 'The /commands the caller may use with this agent — id and description only (the composer autocomplete). Anyone who can talk to the agent',
+        summary:
+          'The /commands and skills the caller may use with this agent — id, kind and description only (the composer autocomplete; a skill picked with /name goes in full, already loaded). Anyone who can talk to the agent',
         parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
         responses: {
-          '200': { description: 'OK', ...json(envelope({ type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, description: { type: 'string' } } } })) },
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'array',
+                items: { type: 'object', properties: { id: { type: 'string' }, kind: { type: 'string', enum: ['command', 'skill'] }, description: { type: 'string' } } },
+              }),
+            ),
+          },
           '401': failures['401'],
           '404': failures['404'],
         },

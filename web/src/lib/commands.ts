@@ -1,23 +1,42 @@
 import { ref, watch, type Ref } from 'vue'
 import { api } from './api'
 
-/** Um `/command` que a pessoa pode usar com o agente (o autocompletar da caixa de mensagem). */
+/** Um `/command` ou uma skill que a pessoa pode usar com o agente (o autocompletar da caixa de mensagem). */
 export interface ICommandHint {
   id: string
+  /** Ausente nas respostas antigas: vale `command`. */
+  kind?: 'command' | 'skill'
   description: string
 }
 
+/** Minúsculas e sem acento: "Resumé" acha "resume". */
+const fold = (text: string) =>
+  text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+
 /**
- * As sugestões para o que está na caixa: só quando a mensagem COMEÇA com `/` e ainda não tem espaço (a pessoa está
- * digitando o nome). Pelo começo do nome; o resto, pelo pedaço em qualquer lugar.
+ * A BUSCA de `/`: só quando a mensagem COMEÇA com `/` e ainda não tem espaço (a pessoa está escolhendo). O que vem
+ * depois da barra procura no nome e na descrição, sem acento; os do nome que começa igual vêm primeiro, depois os do
+ * nome que contém, depois os da descrição.
  */
 export function commandSuggestions(text: string, commands: readonly ICommandHint[]): ICommandHint[] {
-  const match = /^\/([a-z0-9-]*)$/.exec(text)
+  const match = /^\/(\S*)$/.exec(text)
   if (!match || !commands.length) return []
-  const query = match[1]
-  const starts = commands.filter((command) => command.id.startsWith(query))
-  const contains = commands.filter((command) => !command.id.startsWith(query) && command.id.includes(query))
-  return [...starts, ...contains].slice(0, 8)
+  const query = fold(match[1])
+  const rank = (command: ICommandHint) => {
+    const id = fold(command.id)
+    if (id.startsWith(query)) return 0
+    if (id.includes(query)) return 1
+    return fold(command.description).includes(query) ? 2 : -1
+  }
+  return commands
+    .map((command, index) => ({ command, index, score: rank(command) }))
+    .filter((item) => item.score >= 0)
+    .sort((a, b) => a.score - b.score || a.index - b.index)
+    .slice(0, 8)
+    .map((item) => item.command)
 }
 
 /** Os commands do agente, buscados quando ele muda. Sem agente, nenhum; falhar não atrapalha a conversa. */

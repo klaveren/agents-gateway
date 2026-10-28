@@ -417,8 +417,8 @@ export class AgentController {
    * As ferramentas do MCP `caller` (o do gateway) são pedidas com a credencial de quem está na tela.
    */
   /**
-   * Os `/commands` que a pessoa pode usar com este agente — o autocompletar da caixa de mensagem. ⚖️ De quem pode
-   * conversar com o agente, não só admin: só o nome e a descrição, nunca o texto do command.
+   * Os `/commands` e as skills que a pessoa pode usar com este agente — o autocompletar da caixa de mensagem. ⚖️ De
+   * quem pode conversar com o agente, não só admin: só o nome, o tipo e a descrição, nunca o texto.
    */
   async getAgentCommands(req: Request, res: Response) {
     await this.respond(res, async () => {
@@ -426,7 +426,13 @@ export class AgentController {
       const admin = (await checkAdminAccess(this.usecases.proof)).allowed
       const agent = this.agents.get(req.params.agentId as string)
       if (!agent || !this.agentVisible(agent, { userId: resolved.identity?.id, admin })) throw new AgentNotFoundError(req.params.agentId as string)
-      return (this.usecases.guidance?.usableResources('command', agent.id) ?? []).map((command) => ({ id: command.id, description: command.description }))
+      // Os commands e as skills: a caixa sugere os dois ao digitar `/` (a skill escolhida vai inteira, já carregada).
+      const guidance = this.usecases.guidance
+      return [...(guidance?.usableResources('command', agent.id) ?? []), ...(guidance?.usableResources('skill', agent.id) ?? [])].map((resource) => ({
+        id: resource.id,
+        kind: resource.kind,
+        description: resource.description,
+      }))
     })
   }
 
@@ -862,7 +868,8 @@ export class AgentController {
 
         const turns = await this.usecases.conversations.listTurns(id)
 
-        return { sessionId: id, turns: turns.map((turn) => toTurnDto(turn, conversation, view)) }
+        // `agentId`: a tela sabe de quem é a conversa mesmo quando ela é de outro projeto que o atual (o autocompletar de `/`).
+        return { sessionId: id, agentId: conversation.agentId, turns: turns.map((turn) => toTurnDto(turn, conversation, view)) }
       },
       { message: 'Turns listed' },
     )

@@ -66,8 +66,9 @@ function submit() {
 }
 
 /**
- * O autocompletar de `/commands`: abre quando a mensagem começa com `/` e o nome ainda está sendo digitado. Setas
- * escolhem, Enter ou Tab completam (`/nome `, para os argumentos), Esc fecha até o texto mudar.
+ * A busca de `/`: commands e skills, pelo nome e pela descrição, enquanto a mensagem começa com `/` e o nome ainda
+ * está sendo digitado. Setas escolhem, Enter ou Tab completam (`/nome `, para o pedido), Esc fecha até o texto mudar.
+ * A skill escolhida vai inteira para o agente, já carregada.
  */
 const dismissed = ref<string>()
 const highlighted = ref(0)
@@ -116,7 +117,7 @@ function onKey(event: KeyboardEvent) {
         <button type="button" class="text-zinc-400 hover:text-white" @click="files.splice(index, 1)"><Icon name="x" class="h-3.5 w-3.5" /></button>
       </span>
     </div>
-    <ul v-if="suggestions.length" class="mb-2 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-lg shadow-black/30" role="listbox" aria-label="Commands">
+    <ul v-if="suggestions.length" class="mb-2 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-lg shadow-black/30" role="listbox" aria-label="Commands e skills">
       <li v-for="(command, index) in suggestions" :key="command.id" role="option" :aria-selected="index === highlighted">
         <button
           type="button"
@@ -126,6 +127,7 @@ function onKey(event: KeyboardEvent) {
           @mouseenter="highlighted = index"
         >
           <code class="shrink-0 text-emerald-300">/{{ command.id }}</code>
+          <span class="shrink-0 rounded-full px-1.5 text-[10px]" :class="command.kind === 'skill' ? 'bg-violet-500/15 text-violet-300' : 'bg-zinc-800 text-zinc-400'">{{ command.kind === 'skill' ? 'skill' : 'command' }}</span>
           <span class="min-w-0 truncate text-xs text-zinc-400">{{ command.description }}</span>
         </button>
       </li>

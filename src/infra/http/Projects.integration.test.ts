@@ -334,7 +334,7 @@ describe('Projetos (integração)', () => {
     assert.strictEqual((await call(ADMIN, 'PUT', `/agents/${GOOGLE_TEST_AGENT.id}/resources`, { skills: [], commands: ['saudar'] })).status, 200)
 
     const listed = await call(ANA, 'GET', `/agents/${GOOGLE_TEST_AGENT.id}/commands`)
-    assert.deepStrictEqual([listed.status, listed.body.result], [200, [{ id: 'saudar', description: 'Cumprimenta alguém' }]])
+    assert.deepStrictEqual([listed.status, listed.body.result], [200, [{ id: 'saudar', kind: 'command', description: 'Cumprimenta alguém' }]])
 
     const opened = await call(ANA, 'POST', '/sessions', { agentId: GOOGLE_TEST_AGENT.id, projectId: 'alfa' })
     const id = opened.body.result.id as string
