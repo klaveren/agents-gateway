@@ -264,6 +264,8 @@ describe('GuidanceService', () => {
       service.createResource({ id: 'tabela', kind: 'skill', description: 'Montar tabelas em markdown', body: 'Sempre com cabeçalho.', docIds: ['padrao'] }, 'root')
       service.createResource({ id: 'resumir', kind: 'command', projectId: 'xpto', description: 'Resume um arquivo', body: 'Resuma $ARGUMENTS em 3 linhas.' }, 'root')
       service.createResource({ id: 'do-crm', kind: 'command', projectId: 'crm', description: 'Do CRM', body: 'x' }, 'root')
+      // O XPTO Resumo é o que não usa nenhum, de propósito (sem marcação seriam todos).
+      service.setAgentResources('resumo', { skills: [], commands: [] }, 'root')
       return service
     }
 
@@ -278,10 +280,20 @@ describe('GuidanceService', () => {
       assert.throws(() => service.setAgentResources('dev', { skills: ['*', 'tabela'] }, 'root'), /goes alone/)
     })
 
-    it('⚖️ sem liberação, nada; com `*`, os globais e os do projeto do agente; o índice entra no prompt', () => {
+    it('⚖️ sem marcação, todos (os globais e os do projeto); "nenhum" é escolha explícita; o índice entra no prompt', () => {
       const service = seeded()
-      assert.deepStrictEqual(service.usableResources('skill', 'dev'), [])
-      assert.strictEqual(service.environmentFor('xpto', 'dev'), service.environmentFor('xpto', 'resumo'))
+      assert.deepStrictEqual(service.agentResources('dev'), { skills: ['*'], commands: ['*'] })
+      assert.deepStrictEqual(
+        service.usableResources('command', 'dev').map((item) => item.id),
+        ['resumir'],
+      )
+      assert.deepStrictEqual(service.agentResources('resumo'), { skills: [], commands: [] })
+      assert.deepStrictEqual(service.usableResources('skill', 'resumo'), [])
+      // O agente global vê os globais; o construtor do core, nenhum (ele os escreve).
+      assert.deepStrictEqual(
+        service.usableResources('skill', 'atlas').map((item) => item.id),
+        ['tabela'],
+      )
 
       service.setAgentResources('dev', { skills: ['tabela'], commands: ['*'] }, 'root')
       assert.deepStrictEqual(
@@ -332,7 +344,14 @@ describe('GuidanceService', () => {
       service.removeProject('xpto')
       assert.throws(() => service.resource('resumir'), GuidanceNotFoundError)
       service.removeAgent('dev')
-      assert.deepStrictEqual(service.agentResources('dev'), { skills: [], commands: [] })
+      assert.deepStrictEqual(service.agentResources('dev'), { skills: ['*'], commands: ['*'] })
+    })
+
+    it('⛔ apagar o único recurso liberado a um agente não o abre para todos: ele fica com nenhum', () => {
+      const service = seeded()
+      service.setAgentResources('dev', { skills: ['tabela'], commands: ['resumir'] }, 'root')
+      service.deleteResource('tabela')
+      assert.deepStrictEqual(service.agentResources('dev'), { skills: [], commands: ['resumir'] })
     })
   })
 

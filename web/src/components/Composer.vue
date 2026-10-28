@@ -74,6 +74,8 @@ const dismissed = ref<string>()
 const highlighted = ref(0)
 const suggestions = computed(() => (dismissed.value === text.value ? [] : commandSuggestions(text.value, props.commands ?? [])))
 watch(suggestions, () => (highlighted.value = 0))
+/** Digitou `/` e nada casa: diz por quê, em vez de a caixa ficar muda. */
+const slashEmpty = computed(() => dismissed.value !== text.value && /^\/\S*$/.test(text.value) && !suggestions.value.length)
 
 function complete(id: string) {
   text.value = `/${id} `
@@ -117,6 +119,9 @@ function onKey(event: KeyboardEvent) {
         <button type="button" class="text-zinc-400 hover:text-white" @click="files.splice(index, 1)"><Icon name="x" class="h-3.5 w-3.5" /></button>
       </span>
     </div>
+    <p v-if="slashEmpty" class="mb-2 rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs text-zinc-400">
+      {{ (commands ?? []).length ? 'Nenhum command ou skill com esse nome para este agente.' : 'Este agente não tem commands nem skills — ou a guia Recursos dele não libera nenhum.' }}
+    </p>
     <ul v-if="suggestions.length" class="mb-2 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-lg shadow-black/30" role="listbox" aria-label="Commands e skills">
       <li v-for="(command, index) in suggestions" :key="command.id" role="option" :aria-selected="index === highlighted">
         <button

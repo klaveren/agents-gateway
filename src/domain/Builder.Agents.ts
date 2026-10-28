@@ -46,14 +46,14 @@ const KINDS: Readonly<Record<TProtocolKind, IBuilderKind>> = {
     name: 'Construtor de skills',
     read: ['list_resources'],
     save: 'save_resource',
-    after: 'Avise que nenhum agente a usa até ser liberada na guia Recursos dele.',
+    after: 'Avise que os agentes do escopo dela já podem usá-la (menos os que têm a guia Recursos restrita).',
   },
   command: {
     article: 'um command',
     name: 'Construtor de commands',
     read: ['list_resources'],
     save: 'save_resource',
-    after: 'Avise que só quem conversa com um agente que o libera (guia Recursos) pode dispará-lo.',
+    after: 'Avise que já dá para dispará-lo com /nome nos agentes do escopo dele (menos os que têm a guia Recursos restrita).',
   },
   rule: {
     article: 'uma rule',
