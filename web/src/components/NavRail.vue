@@ -67,7 +67,7 @@ const links = computed<Array<{ to: string; key: string; label: string; short?: s
       :class="section === link.key ? 'bg-zinc-800 text-emerald-300' : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'"
     >
       <Icon :name="link.icon" class="h-[22px] w-[22px]" />
-      <span class="max-w-full truncate px-0.5 md:hidden">{{ link.short ?? link.label }}</span>
+      <span class="max-w-full truncate md:hidden">{{ link.short ?? link.label }}</span>
       <span class="hidden md:inline">{{ link.label }}</span>
       <span v-if="link.badge" class="absolute top-0.5 right-[calc(50%-20px)] md:top-1 md:right-2 min-w-[18px] rounded-full bg-emerald-500 px-1 text-center text-[10px] leading-[18px] font-semibold text-zinc-950">{{ link.badge > 99 ? '99+' : link.badge }}</span>
     </RouterLink>
