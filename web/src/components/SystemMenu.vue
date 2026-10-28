@@ -4,12 +4,13 @@ import RailMenu, { type IRailMenuItem } from './RailMenu.vue'
 /**
  * O menu do SISTEMA (só admin): Projetos, Usuários, Modelos, MCPs, Pacotes e Configuração num botão só, como o da conta.
  * ⚖️ O trilho fica com o que se usa todo dia (conversas, uso, agentes); o que se configura de vez em
- * quando mora aqui. Rules, specs e ADRs moram no menu Docs.
+ * quando mora aqui. Specs, ADRs e conhecimento moram no menu Docs; as rules de um projeto, na guia Ambiente dele.
  */
 defineProps<{ placement: 'side' | 'up'; active?: string }>()
 
 const ITEMS: IRailMenuItem[] = [
-  { to: '/projects', key: 'projects', label: 'Projetos', hint: 'Pastas, membros e o que é de cada um', icon: 'agents' },
+  { to: '/projects', key: 'projects', label: 'Projetos', hint: 'Pastas, membros e o ambiente de cada um', icon: 'agents' },
+  { to: '/rules', key: 'rules', label: 'Rules globais', hint: 'Regras de todos os projetos', icon: 'rule' },
   { to: '/users', key: 'users', label: 'Usuários', hint: 'Contas, papéis e acessos', icon: 'users' },
   { to: '/models', key: 'providers', label: 'Modelos', hint: 'Provedores, chaves, assinaturas e modelos', icon: 'key' },
   { to: '/mcp', key: 'mcp', label: 'MCPs', hint: 'Servidores de ferramentas', icon: 'plug' },

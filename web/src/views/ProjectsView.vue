@@ -4,7 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import Icon from '@/components/Icon.vue'
 import MasterDetail from '@/components/MasterDetail.vue'
-import ProjectInitialContext from '@/components/ProjectInitialContext.vue'
+import ProjectEnvironment from '@/components/ProjectEnvironment.vue'
+import BuildView from '@/views/BuildView.vue'
 import { ApiError } from '@/lib/api'
 import { initials } from '@/lib/format'
 import type { IProject } from '@/lib/types'
@@ -41,12 +42,21 @@ const error = ref<string>()
 const note = ref<string>()
 const removing = ref<IProject>()
 const removeError = ref<string>()
-/** As abas do projeto: o cadastro e o contexto inicial (as specs que todo agente dele carrega inteiras). */
+/**
+ * As abas do projeto: o cadastro, o AMBIENTE (o que toda conversa dele recebe: rules e specs inteiras) e o construtor de
+ * rules do projeto. `?tab=` abre direto numa delas (o "Abrir no editor" de uma rule leva ao Ambiente).
+ */
 const TABS = [
   { id: 'geral', label: 'Geral' },
-  { id: 'contexto', label: 'Contexto inicial' },
+  { id: 'ambiente', label: 'Ambiente' },
+  { id: 'construir', label: 'Construir rule' },
 ] as const
-const tab = ref<(typeof TABS)[number]['id']>('geral')
+type TProjectTab = (typeof TABS)[number]['id']
+const tabFromRoute = () => TABS.find((item) => item.id === route.query.tab)?.id ?? 'geral'
+const tab = ref<TProjectTab>(tabFromRoute())
+watch(() => route.query.tab, () => (tab.value = tabFromRoute()))
+/** No construtor de rules: a conversa ou o protocolo (com o complemento do projeto). */
+const buildTab = ref<'build' | 'protocol'>('build')
 
 onMounted(async () => {
   if (!auth.isAdmin) return
@@ -214,13 +224,22 @@ async function confirmRemove() {
             :aria-selected="tab === item.id"
             class="-mb-px border-b-2 px-3 py-2 text-sm"
             :class="tab === item.id ? 'border-emerald-500 text-zinc-100' : 'border-transparent text-zinc-400 hover:text-zinc-200'"
-            @click="tab = item.id"
+            @click="router.replace({ query: { ...route.query, tab: item.id } })"
           >
             {{ item.label }}
           </button>
         </nav>
 
-        <ProjectInitialContext v-if="tab === 'contexto'" :project-id="selected.id" />
+        <ProjectEnvironment v-if="tab === 'ambiente'" :project-id="selected.id" />
+        <div v-else-if="tab === 'construir'" class="flex flex-col gap-2">
+          <div class="flex gap-1 text-xs">
+            <button type="button" class="rounded-full px-3 py-1" :class="buildTab === 'build' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-800/60'" @click="buildTab = 'build'">Construir</button>
+            <button type="button" class="rounded-full px-3 py-1" :class="buildTab === 'protocol' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-800/60'" @click="buildTab = 'protocol'">Protocolo</button>
+          </div>
+          <div class="h-[70vh] overflow-hidden rounded-xl border border-zinc-800">
+            <BuildView kind="rule" :tab="buildTab" :project="selected.id" embedded />
+          </div>
+        </div>
         <template v-else>
 
         <div class="rounded-xl border border-zinc-800 p-3 text-xs text-zinc-400">

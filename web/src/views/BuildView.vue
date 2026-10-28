@@ -20,7 +20,11 @@ import { useThreadStore } from '@/stores/thread'
  * projeto), que vem depois dele. O construtor é um agente do core que segue os dois numa conversa guiada, entrega um
  * rascunho e grava quando a pessoa confirma na conversa; o rascunho também abre no editor da guia Lista.
  */
-const props = defineProps<{ kind: TBuildKind; tab: 'build' | 'protocol' }>()
+/**
+ * `project`: o escopo FIXO — `null` = global (as rules globais, em Sistema), um id = aquele projeto (a guia do projeto).
+ * Ausente = o projeto atual. `embedded`: dentro de outra tela, sem o cabeçalho nem as guias.
+ */
+const props = defineProps<{ kind: TBuildKind; tab: 'build' | 'protocol'; project?: string | null; embedded?: boolean }>()
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
@@ -28,8 +32,10 @@ const projects = useProjectsStore()
 const thread = useThreadStore()
 
 const info = computed(() => BUILD_KINDS[props.kind])
+/** O projeto em que se constrói: o fixo, ou o atual. `undefined` = global. */
+const scopeProject = computed(() => (props.project === undefined ? (projects.current ?? undefined) : (props.project ?? undefined)))
 const base = computed(() => info.value.base)
-const title = computed(() => info.value.title)
+const title = computed(() => (props.kind === 'rule' && props.project === null ? 'Rules globais' : info.value.title))
 const isDoc = computed(() => props.kind === 'spec' || props.kind === 'adr' || props.kind === 'knowledge')
 const isResource = computed(() => props.kind === 'skill' || props.kind === 'command')
 const isAgent = computed(() => props.kind === 'agent')
@@ -65,7 +71,7 @@ const selectedBuild = computed(() => builds.value.find((build) => build.id === s
 /** O projeto da conversa com o construtor: o da conversa (o servidor o carimbou), senão o atual. */
 const buildProject = computed(() => {
   const stamped = selectedBuild.value?.metadata?.project
-  return typeof stamped === 'string' ? stamped : (projects.current ?? undefined)
+  return typeof stamped === 'string' ? stamped : scopeProject.value
 })
 const draft = computed(() => (selected.value && thread.sessionId === selected.value ? latestDraft(thread.turns) : undefined))
 const draftPreview = ref(true)
@@ -74,7 +80,10 @@ async function loadBuilds() {
   if (!auth.isAdmin || props.tab !== 'build') return
   buildsError.value = undefined
   try {
-    builds.value = (await api<{ sessions: IConversation[] }>('/conversations', { query: { builder: props.kind, limit: 50, ...projects.query } })).sessions
+    const found = (await api<{ sessions: IConversation[] }>('/conversations', { query: { builder: props.kind, limit: 50, ...(scopeProject.value ? { project: scopeProject.value } : {}) } }))
+      .sessions
+    // Escopo global: só as conversas sem projeto (a busca sem `project` traria as de todos).
+    builds.value = props.project === null ? found.filter((build) => !build.metadata?.project) : found
     // Aberta antes de a lista chegar (recarregou a página): o cabeçalho ganha o título agora.
     const open = builds.value.find((build) => build.id === selected.value)
     if (open && !thread.header) thread.setHeader(open)
@@ -84,7 +93,7 @@ async function loadBuilds() {
 }
 
 watch(
-  () => [props.kind, props.tab, projects.current] as const,
+  () => [props.kind, props.tab, scopeProject.value] as const,
   () => void loadBuilds(),
   { immediate: true },
 )
@@ -120,8 +129,9 @@ async function startBuild() {
   starting.value = true
   buildsError.value = undefined
   try {
-    const { id } = await api<{ id: string }>('/sessions', { method: 'POST', body: { agentId: builderAgentId(props.kind), projectId: projects.current ?? undefined } })
-    await router.replace({ query: { c: id } })
+    const { id } = await api<{ id: string }>('/sessions', { method: 'POST', body: { agentId: builderAgentId(props.kind), projectId: scopeProject.value } })
+    // ⚠️ Preserva o resto da query: embutido (a guia do projeto), o `?tab=` é da tela que embute.
+    await router.replace({ query: { ...route.query, c: id } })
   } catch (failure) {
     buildsError.value = describe(failure)
   } finally {
@@ -130,7 +140,8 @@ async function startBuild() {
 }
 
 async function removed() {
-  await router.replace({ query: {} })
+  const { c: _closed, ...rest } = route.query
+  await router.replace({ query: rest })
   await loadBuilds()
 }
 
@@ -143,7 +154,8 @@ async function openInEditor() {
   if (!current) return
   const projectId = current.global ? undefined : buildProject.value
   pendingDraft.value = { ...current, kind: props.kind, ...(projectId ? { projectId } : {}) }
-  if (props.kind === 'rule') return void (await router.push(base.value))
+  // A rule do projeto vai para a guia Ambiente dele; a global, para as rules globais (Sistema).
+  if (props.kind === 'rule') return void (await router.push(projectId ? { path: `/projects/${projectId}`, query: { tab: 'ambiente' } } : base.value))
   await router.push((await exists(current.id)) ? `${base.value}/${current.id}` : `${base.value}/new`)
 }
 
@@ -180,13 +192,13 @@ const protocolError = ref<string>()
 const addenda = ref({ global: '', project: '' })
 const saving = ref<'global' | 'project'>()
 const saved = ref<'global' | 'project'>()
-const currentProjectName = computed(() => projects.list.find((project) => project.id === projects.current)?.name ?? projects.current)
+const currentProjectName = computed(() => projects.list.find((project) => project.id === scopeProject.value)?.name ?? scopeProject.value)
 
 async function loadProtocol() {
   if (!auth.isAdmin || props.tab !== 'protocol') return
   protocolError.value = undefined
   try {
-    const view = await api<IProtocolView>(`/protocols/${props.kind}`, { query: projects.query })
+    const view = await api<IProtocolView>(`/protocols/${props.kind}`, { query: scopeProject.value ? { project: scopeProject.value } : {} })
     protocol.value = view
     addenda.value = { global: view.addenda.global?.body ?? '', project: view.addenda.project?.body ?? '' }
   } catch (failure) {
@@ -195,7 +207,7 @@ async function loadProtocol() {
 }
 
 watch(
-  () => [props.kind, props.tab, projects.current] as const,
+  () => [props.kind, props.tab, scopeProject.value] as const,
   () => void loadProtocol(),
   { immediate: true },
 )
@@ -205,7 +217,7 @@ async function saveAddendum(scope: 'global' | 'project') {
   saved.value = undefined
   protocolError.value = undefined
   try {
-    await api(`/protocols/${props.kind}/addendum`, { method: 'PUT', body: { projectId: scope === 'project' ? projects.current : null, body: addenda.value[scope] } })
+    await api(`/protocols/${props.kind}/addendum`, { method: 'PUT', body: { projectId: scope === 'project' ? scopeProject.value : null, body: addenda.value[scope] } })
     // A resposta é a do escopo gravado; relê no do projeto atual, para os dois complementos.
     await loadProtocol()
     saved.value = scope
@@ -227,7 +239,7 @@ function describe(failure: unknown): string {
   </div>
 
   <div v-else class="flex h-full min-h-0 flex-col">
-    <header class="flex flex-wrap items-center gap-3 border-b border-zinc-800/80 px-4 py-3">
+    <header v-if="!embedded" class="flex flex-wrap items-center gap-3 border-b border-zinc-800/80 px-4 py-3">
       <h1 class="text-xl font-semibold">{{ title }}</h1>
       <BuildTabs :kind="kind" :active="tab" />
     </header>
@@ -245,12 +257,12 @@ function describe(failure: unknown): string {
         </button>
         <p v-if="buildsError" class="px-1 text-xs text-rose-300">{{ buildsError }}</p>
         <h2 v-else-if="builds.length" class="px-1 pt-2 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Conversas com o construtor</h2>
-        <p v-else class="px-1 pt-2 text-xs text-zinc-500">Nenhuma conversa com o construtor{{ projects.current ? ' neste projeto' : '' }} ainda.</p>
+        <p v-else class="px-1 pt-2 text-xs text-zinc-500">Nenhuma conversa com o construtor{{ scopeProject ? ' neste projeto' : '' }} ainda.</p>
         <div class="scroll-thin flex max-h-40 flex-col gap-0.5 overflow-y-auto lg:max-h-none">
           <RouterLink
             v-for="build in builds"
             :key="build.id"
-            :to="{ query: { c: build.id } }"
+            :to="{ query: { ...route.query, c: build.id } }"
             class="rounded-xl px-3 py-2"
             :class="build.id === selected ? 'bg-emerald-500/15' : 'hover:bg-zinc-800/60'"
           >
@@ -266,7 +278,8 @@ function describe(failure: unknown): string {
           <h2 class="text-lg font-semibold text-zinc-100">Construir {{ info.article }}</h2>
           <p>
             O construtor é um agente do sistema que segue o
-            <RouterLink :to="`${base}/protocol`" class="text-emerald-400 underline underline-offset-2">protocolo</RouterLink>
+            <span v-if="embedded">protocolo</span>
+            <RouterLink v-else :to="`${base}/protocol`" class="text-emerald-400 underline underline-offset-2">protocolo</RouterLink>
             de {{ info.title.toLowerCase() }}: entende o que você quer, confere o que já existe, procura as specs e ADRs relacionadas e pergunta o que faltar. No fim, entrega um
             rascunho ao lado.
           </p>
@@ -410,7 +423,7 @@ function describe(failure: unknown): string {
             </div>
           </section>
 
-          <section v-if="projects.current" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-4">
+          <section v-if="scopeProject" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-4">
             <h2 class="font-semibold">Complemento do projeto {{ currentProjectName }}</h2>
             <p class="text-xs text-zinc-500">Só nas conversas com o construtor deste projeto, depois do global.</p>
             <textarea v-model="addenda.project" rows="6" class="input font-mono text-[13px]" />
@@ -428,7 +441,7 @@ function describe(failure: unknown): string {
               </span>
             </div>
           </section>
-          <p v-else class="text-xs text-zinc-500">Escolha um projeto para ver e editar o complemento dele.</p>
+          <p v-else-if="project !== null" class="text-xs text-zinc-500">Escolha um projeto para ver e editar o complemento dele.</p>
         </template>
       </div>
     </div>

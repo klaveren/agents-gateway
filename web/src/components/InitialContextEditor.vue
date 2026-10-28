@@ -11,6 +11,8 @@ import type { IInitialContext, IProjectDoc } from '@/lib/types'
  * na guia do agente), para o peso mostrar o total da conversa.
  */
 const props = defineProps<{ endpoint: string; projectId?: string; baseTokens?: number }>()
+/** O peso das marcadas (o que já está na lista, salvo ou não): quem embute mostra o total da conversa. */
+const emit = defineEmits<{ weight: [tokens: number] }>()
 
 const available = ref<IProjectDoc[]>([])
 const selected = ref<string[]>([])
@@ -28,6 +30,7 @@ const total = computed(() => {
   return { total: sum, warn: sum > CONTEXT_WARN_TOKENS }
 })
 const dirty = computed(() => selected.value.join() !== saved.value.join())
+watch(weight, (value) => emit('weight', value.total), { immediate: true })
 /** As marcadas primeiro, na ordem do prompt; depois as demais, pelo título. */
 const ordered = computed(() => [...selected.value.map((id) => byId.value.get(id)).filter((doc): doc is IProjectDoc => !!doc), ...available.value.filter((doc) => !selected.value.includes(doc.id))])
 

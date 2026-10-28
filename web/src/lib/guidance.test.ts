@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { renderMarkdown } from './markdown'
-import { contextWeight, docSlug, scopeLabel, scopeToProjectId } from './guidance'
+import { contextWeight, docSlug, rulesTokens, scopeLabel, scopeToProjectId } from './guidance'
 
 describe('guidance', () => {
   const projects = [{ id: 'xpto', name: 'Loja XPTO', createdAt: '', updatedAt: '' }]
@@ -23,5 +23,19 @@ describe('guidance', () => {
     const tokens: Record<string, number> = { a: 15_000, b: 6_000 }
     expect(contextWeight(['a'], (id) => tokens[id])).toEqual({ total: 15_000, warn: false })
     expect(contextWeight(['a', 'b', 'sumiu'], (id) => tokens[id])).toEqual({ total: 21_000, warn: true })
+  })
+})
+
+describe('rulesTokens', () => {
+  it('só as ligadas, com o cabeçalho; nenhuma ligada, zero', () => {
+    expect(rulesTokens([{ title: 'Idioma', body: 'Responda em português.', enabled: false }])).toBe(0)
+    const one = rulesTokens([{ title: 'Idioma', body: 'Responda em português.', enabled: true }])
+    expect(one).toBeGreaterThan(30)
+    expect(
+      rulesTokens([
+        { title: 'Idioma', body: 'Responda em português.', enabled: true },
+        { title: 'X', body: 'Y', enabled: false },
+      ]),
+    ).toBe(one)
   })
 })

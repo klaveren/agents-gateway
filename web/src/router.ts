@@ -43,8 +43,9 @@ export const router = createRouter({
     { path: '/projects/new', name: 'project-new', component: ProjectsView },
     { path: '/projects/:id', name: 'project', component: ProjectsView, props: true },
     { path: '/rules', name: 'rules', component: RulesView },
-    { path: '/rules/build', name: 'rule-build', component: BuildView, props: { kind: 'rule', tab: 'build' } },
-    { path: '/rules/protocol', name: 'rule-protocol', component: BuildView, props: { kind: 'rule', tab: 'protocol' } },
+    // As rules GLOBAIS (Sistema): o construtor e o protocolo no escopo global; as do projeto, na guia Ambiente dele.
+    { path: '/rules/build', name: 'rule-build', component: BuildView, props: { kind: 'rule', tab: 'build', project: null } },
+    { path: '/rules/protocol', name: 'rule-protocol', component: BuildView, props: { kind: 'rule', tab: 'protocol', project: null } },
     { path: '/specs', name: 'specs', component: DocsView, props: { kind: 'spec' } },
     { path: '/specs/new', name: 'spec-new', component: DocsView, props: { kind: 'spec' } },
     { path: '/specs/build', name: 'spec-build', component: BuildView, props: { kind: 'spec', tab: 'build' } },
