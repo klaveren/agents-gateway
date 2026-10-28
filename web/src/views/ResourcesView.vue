@@ -24,7 +24,7 @@ const router = useRouter()
 const auth = useAuthStore()
 const projects = useProjectsStore()
 
-const KIND: Record<TResourceKind, { title: string; one: string; base: string; lead: string; when: string[]; example: string; bodyHint: string; template: string }> = {
+const KIND: Record<TResourceKind, { title: string; one: string; masc?: boolean; base: string; lead: string; when: string[]; example: string; bodyHint: string; template: string }> = {
   skill: {
     title: 'Skills',
     one: 'skill',
@@ -38,6 +38,7 @@ const KIND: Record<TResourceKind, { title: string; one: string; base: string; le
   command: {
     title: 'Commands',
     one: 'command',
+    masc: true,
     base: '/commands',
     lead: 'Um command é um pedido pronto: a pessoa digita /nome e o que quiser depois, e o texto salvo é enviado ao agente.',
     when: ['Um pedido que se faz sempre do mesmo jeito', 'Um roteiro longo que ninguém quer redigitar', 'Um ponto de partida padronizado para o time'],
@@ -53,6 +54,8 @@ const docs = ref<IProjectDoc[]>([])
 const loadError = ref<string>()
 const adding = computed(() => route.name === `${props.kind}-new`)
 const info = computed(() => KIND[props.kind])
+/** As palavras que concordam com o tipo: "Novo estudo", "Nova spec". */
+const g = computed(() => (info.value.masc ? { nova: 'Novo', nenhuma: 'Nenhum', uma: 'um', a: 'o' } : { nova: 'Nova', nenhuma: 'Nenhuma', uma: 'uma', a: 'a' }))
 
 const form = ref({ id: '', description: '', body: '', global: true, project: '', docIds: [] as string[] })
 const loaded = ref<IResource>()
@@ -209,11 +212,11 @@ function describe(failure: unknown): string {
     <p class="font-medium text-zinc-200">Só quem administra pode gerenciar {{ info.title }}.</p>
   </div>
 
-  <MasterDetail v-else :open="!!id || adding" :back-to="info.base" :back-label="info.title" :title="adding ? `Nova ${info.one}` : loaded?.id">
+  <MasterDetail v-else :open="!!id || adding" :back-to="info.base" :back-label="info.title" :title="adding ? `${g.nova} ${info.one}` : loaded?.id">
     <template #list>
       <header class="flex items-center gap-2 px-4 pt-4 pb-3">
         <h1 class="text-xl font-semibold">{{ info.title }}</h1>
-        <RouterLink :to="`${info.base}/new`" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" :title="`Nova ${info.one}`"><Icon name="plus" class="h-5 w-5" /></RouterLink>
+        <RouterLink :to="`${info.base}/new`" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" :title="`${g.nova} ${info.one}`"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
       <BuildTabs :kind="kind" active="list" class="px-3 pb-2" />
       <div class="px-3 pb-2">
@@ -222,7 +225,7 @@ function describe(failure: unknown): string {
         </select>
       </div>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
-      <p v-else-if="!list.length" class="px-4 py-2 text-sm text-zinc-500">Nenhuma {{ info.one }} em {{ scopeLabel(scope, projects.list) }}.</p>
+      <p v-else-if="!list.length" class="px-4 py-2 text-sm text-zinc-500">{{ g.nenhuma }} {{ info.one }} em {{ scopeLabel(scope, projects.list) }}.</p>
       <RouterLink v-for="resource in list" :key="resource.id" :to="`${info.base}/${resource.id}`" class="mx-2 block rounded-xl px-3 py-2" :class="resource.id === id ? 'bg-emerald-500/15' : 'hover:bg-zinc-800/60'">
         <span class="block truncate font-mono text-sm">{{ kind === 'command' ? '/' : '' }}{{ resource.id }}</span>
         <span class="block truncate text-xs text-zinc-500">{{ resource.description }}<template v-if="resource.docIds.length"> · {{ resource.docIds.length }} doc(s)</template></span>
@@ -231,7 +234,7 @@ function describe(failure: unknown): string {
 
     <template #detail>
       <form v-if="adding || loaded" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save">
-        <h2 class="font-mono text-lg font-semibold">{{ adding ? `Nova ${info.one}` : `${kind === 'command' ? '/' : ''}${loaded?.id}` }}</h2>
+        <h2 class="font-mono text-lg font-semibold">{{ adding ? `${g.nova} ${info.one}` : `${kind === 'command' ? '/' : ''}${loaded?.id}` }}</h2>
         <label class="field">
           Descrição
           <input v-model="form.description" required maxlength="300" class="input" :placeholder="kind === 'command' ? 'Resume um arquivo em 3 linhas' : 'Montar tabelas em markdown'" @blur="slug" />
@@ -286,7 +289,7 @@ function describe(failure: unknown): string {
       </form>
       <p v-else-if="error" class="mx-auto max-w-3xl text-sm text-rose-300">{{ error }}</p>
       <section v-else class="mx-auto flex max-w-2xl flex-col gap-3 text-sm text-zinc-300">
-        <h2 class="text-lg font-semibold text-zinc-100">O que é uma {{ info.one }}</h2>
+        <h2 class="text-lg font-semibold text-zinc-100">O que é {{ g.uma }} {{ info.one }}</h2>
         <p>{{ info.lead }}</p>
         <div>
           <p class="mb-1 font-medium text-zinc-200">Quando criar uma</p>
@@ -298,12 +301,12 @@ function describe(failure: unknown): string {
         <p class="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3 text-xs text-zinc-400">
           Quem usa: todo agente do escopo. A guia <strong class="text-zinc-300">Recursos</strong> de um agente pode restringir.
         </p>
-        <div><RouterLink :to="`${info.base}/new`" class="inline-block rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400">Nova {{ info.one }}</RouterLink></div>
+        <div><RouterLink :to="`${info.base}/new`" class="inline-block rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400">{{ g.nova }} {{ info.one }}</RouterLink></div>
       </section>
     </template>
   </MasterDetail>
 
-  <ConfirmDialog :open="removing" :title="`Apagar a ${info.one}?`" :message="`Os agentes deixam de usar ${form.id} na hora.`" :busy="busy" @confirm="confirmRemove" @cancel="removing = false" />
+  <ConfirmDialog :open="removing" :title="`Apagar ${g.a} ${info.one}?`" :message="`Os agentes deixam de usar ${form.id} na hora.`" :busy="busy" @confirm="confirmRemove" @cancel="removing = false" />
 </template>
 
 <style scoped>

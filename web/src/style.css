@@ -80,3 +80,16 @@ body {
 .fade-right {
   mask-image: linear-gradient(to right, black calc(100% - 3rem), transparent);
 }
+
+/*
+ * A seta dos selects: a nativa cola na borda direita (e muda de navegador para navegador). Fora de camada, de propósito:
+ * vence o `px-*` das utilidades, que senão tiraria o espaço da seta.
+ */
+select:not([multiple]) {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a1a1aa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.625rem center;
+  background-size: 0.875rem;
+  padding-right: 2rem;
+}
