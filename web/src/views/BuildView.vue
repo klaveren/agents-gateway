@@ -62,7 +62,7 @@ const buildsError = ref<string>()
 const starting = ref(false)
 const selected = computed(() => (typeof route.query.c === 'string' && route.query.c ? route.query.c : undefined))
 const selectedBuild = computed(() => builds.value.find((build) => build.id === selected.value))
-/** O projeto da construção: o da conversa (o servidor o carimbou), senão o atual. */
+/** O projeto da conversa com o construtor: o da conversa (o servidor o carimbou), senão o atual. */
 const buildProject = computed(() => {
   const stamped = selectedBuild.value?.metadata?.project
   return typeof stamped === 'string' ? stamped : (projects.current ?? undefined)
@@ -95,7 +95,7 @@ watch(
   },
   { immediate: true },
 )
-// O título e o resumo da construção nascem no primeiro turno: relê a lista quando um turno termina.
+// O título e o resumo da conversa nascem no primeiro turno: relê a lista quando um turno termina.
 watch(
   () => thread.turns.length,
   () => {
@@ -232,7 +232,7 @@ function describe(failure: unknown): string {
       <BuildTabs :kind="kind" :active="tab" />
     </header>
 
-    <!-- CONSTRUIR: as construções, a conversa e o rascunho. -->
+    <!-- CONSTRUIR: as conversas com o construtor, a conversa aberta e o rascunho. -->
     <div v-if="tab === 'build'" class="flex min-h-0 flex-1 flex-col lg:flex-row">
       <aside class="flex shrink-0 flex-col gap-1 border-b border-zinc-800/80 p-3 lg:w-64 lg:border-r lg:border-b-0">
         <button
@@ -241,10 +241,11 @@ function describe(failure: unknown): string {
           @click="startBuild"
         >
           <Icon name="plus" class="h-4 w-4" />
-          Nova construção
+          Criar com o construtor
         </button>
         <p v-if="buildsError" class="px-1 text-xs text-rose-300">{{ buildsError }}</p>
-        <p v-else-if="!builds.length" class="px-1 pt-2 text-xs text-zinc-500">Nenhuma construção{{ projects.current ? ' neste projeto' : '' }} ainda.</p>
+        <h2 v-else-if="builds.length" class="px-1 pt-2 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Conversas com o construtor</h2>
+        <p v-else class="px-1 pt-2 text-xs text-zinc-500">Nenhuma conversa com o construtor{{ projects.current ? ' neste projeto' : '' }} ainda.</p>
         <div class="scroll-thin flex max-h-40 flex-col gap-0.5 overflow-y-auto lg:max-h-none">
           <RouterLink
             v-for="build in builds"
@@ -253,7 +254,7 @@ function describe(failure: unknown): string {
             class="rounded-xl px-3 py-2"
             :class="build.id === selected ? 'bg-emerald-500/15' : 'hover:bg-zinc-800/60'"
           >
-            <span class="block truncate text-sm">{{ build.title || 'Construção' }}</span>
+            <span class="block truncate text-sm">{{ build.title || 'Conversa com o construtor' }}</span>
             <span class="block truncate text-xs text-zinc-500">{{ shortTime(build.updatedAt) }} · {{ build.turns }} turno(s)</span>
           </RouterLink>
         </div>
@@ -280,7 +281,7 @@ function describe(failure: unknown): string {
               class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50"
               @click="startBuild"
             >
-              Nova construção
+              Criar com o construtor
             </button>
           </div>
         </section>
@@ -402,7 +403,7 @@ function describe(failure: unknown): string {
               >
                 Salvar
               </button>
-              <span v-if="saved === 'global'" class="text-xs text-emerald-300">Salvo. Vale para as construções que começarem agora.</span>
+              <span v-if="saved === 'global'" class="text-xs text-emerald-300">Salvo. Vale para as conversas com o construtor que começarem agora.</span>
               <span v-else-if="protocol.addenda.global" class="text-xs text-zinc-500">
                 {{ shortTime(protocol.addenda.global.updatedAt) }} · {{ protocol.addenda.global.updatedBy }}
               </span>
@@ -411,7 +412,7 @@ function describe(failure: unknown): string {
 
           <section v-if="projects.current" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-4">
             <h2 class="font-semibold">Complemento do projeto {{ currentProjectName }}</h2>
-            <p class="text-xs text-zinc-500">Só nas construções deste projeto, depois do global.</p>
+            <p class="text-xs text-zinc-500">Só nas conversas com o construtor deste projeto, depois do global.</p>
             <textarea v-model="addenda.project" rows="6" class="input font-mono text-[13px]" />
             <div class="flex items-center gap-3">
               <button
@@ -421,7 +422,7 @@ function describe(failure: unknown): string {
               >
                 Salvar
               </button>
-              <span v-if="saved === 'project'" class="text-xs text-emerald-300">Salvo. Vale para as construções que começarem agora.</span>
+              <span v-if="saved === 'project'" class="text-xs text-emerald-300">Salvo. Vale para as conversas com o construtor que começarem agora.</span>
               <span v-else-if="protocol.addenda.project" class="text-xs text-zinc-500">
                 {{ shortTime(protocol.addenda.project.updatedAt) }} · {{ protocol.addenda.project.updatedBy }}
               </span>
