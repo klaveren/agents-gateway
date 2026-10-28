@@ -52,10 +52,10 @@ describe('Capability.Catalog', () => {
     assert.ok(!allowedTools.some((tool) => tool.startsWith('sdk:')))
   })
 
-  it('assinaturas por CLI: o Codex usa o terminal dele; o Gemini, o que já traz; tarefas indisponíveis', () => {
+  it('assinaturas por CLI: o Codex sem terminal (o dele não segue as permissões); o Gemini, o que já traz; tarefas indisponíveis', () => {
     const codex = resolve(EProvider.CODEX)
-    assert.deepStrictEqual(codex.allowedTools, ['sdk:codex:shell', 'sdk:codex:web_search', 'mcp:gateway/list_agents'])
-    assert.deepStrictEqual(codex.unavailable, ['Abrir página', 'Lista de tarefas'])
+    assert.deepStrictEqual(codex.allowedTools, ['sdk:codex:web_search', 'mcp:gateway/list_agents'])
+    assert.deepStrictEqual(codex.unavailable, ['Terminal', 'Abrir página', 'Lista de tarefas'])
     assert.deepStrictEqual(resolve(EProvider.ANTIGRAVITY).allowedTools, ['mcp:gateway/list_agents'])
   })
 

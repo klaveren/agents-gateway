@@ -58,7 +58,10 @@ export function makeTools(): ITools {
 }
 
 /** As permissões, pedidas na hora (a fábrica delas lê os agentes, que leem o catálogo de ferramentas ao nascer). */
-const lazyPermissions: IPermissionChecker = { check: (asker, subject, options) => makePermissions().check(asker, subject, options) }
+const lazyPermissions: IPermissionChecker = {
+  check: (asker, subject, options) => makePermissions().check(asker, subject, options),
+  layers: (asker) => makePermissions().layers(asker),
+}
 
 /** Onde o `update_todos` grava: o banco das conversas, aberto na primeira tarefa (uma conexão a mais no mesmo arquivo). */
 let todos: IConversationRepository | undefined

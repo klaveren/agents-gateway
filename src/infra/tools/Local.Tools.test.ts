@@ -4,6 +4,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import { makeLocalTools, type IExecOptions, type TExec } from './Local.Tools'
+import { realOf } from './File.Tools'
+import type { IPermissionChecker } from '@application/Permissions.Service'
+import type { ICercoPlan } from '@domain/Cerco.Plan'
+import { decide, type IPermissionRule } from '@domain/Permission.Policy'
+import { networkGate } from '@infra/permissions/Network.Gate'
+import type { IProjectSandbox } from '@infra/sandbox/Project.Sandbox'
 import { ILocalTool } from './Tool.Types'
 import { GuidanceService } from '@application/Guidance.Service'
 import { SqliteGuidanceRepository } from '@infra/persistence/Sqlite.GuidanceRepository'
@@ -172,6 +178,81 @@ describe('LocalTools', () => {
       const outcome = await find(tools, 'run_bash').execute({ command: 'ls' }, { projectId: 'xpto' })
       assert.deepStrictEqual([outcome.status, ran], ['error', false])
       assert.match(String(outcome.result), /No permissions.*bloqueado/)
+    })
+  })
+
+  describe('⛔ com permissões: a análise por partes, o cerco das regras e a rede', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gw-local-perm-'))
+    after(() => rmSync(root, { recursive: true, force: true }))
+    const rule = (category: IPermissionRule['category'], pattern: string, decision: IPermissionRule['decision'] = 'allow'): IPermissionRule => ({ category, pattern, decision })
+    const checker = (agent: IPermissionRule[]): IPermissionChecker => ({ check: (_asker, subject) => decide(subject, { agent }), layers: () => ({ agent, system: [] }) })
+    const setup = (agent: IPermissionRule[], during?: (token: string) => Promise<void>) => {
+      const seen: { ran: string[]; plan?: ICercoPlan; token?: string } = { ran: [] }
+      const sandbox: IProjectSandbox = {
+        status: async () => ({ available: true, mechanism: 'seatbelt' }),
+        wrap: async () => assert.fail('o cerco fixo não vale com permissões'),
+        wrapWith: async (command, cercoRoot, plan, token) => {
+          seen.plan = plan({ root: cercoRoot, scratch: [join(cercoRoot, '.home')], alwaysRead: [], alwaysDeny: ['/home/gw'] })
+          seen.token = token
+          return `cercado(${command})`
+        },
+      }
+      const tools = makeLocalTools({
+        exec: async (command) => (seen.ran.push(command), await during?.(seen.token!), { stdout: 'ok', stderr: '' }),
+        fetchHtml: async () => '',
+        policy: { ...policy, cwd: root },
+        sandbox,
+        permissions: checker(agent),
+      })
+      return { seen, run: (command: string) => find(tools, 'run_bash').execute({ command }, { sessionId: 's1', agentId: 'dev' }) }
+    }
+
+    it('cada comando da linha passa pela regra: o permitido não leva o negado junto', async () => {
+      const { seen, run } = setup([rule('terminal', 'git *')])
+      const outcome = await run('git status; rm notas.txt')
+      assert.deepStrictEqual([outcome.status, seen.ran], ['error', []])
+      assert.match(outcome.result, /Not permitted: .*"rm notas.txt"/)
+      assert.strictEqual((await run('git status && git log -1')).status, 'success')
+    })
+
+    it('o que não dá para analisar é negado, mesmo com o terminal liberado', async () => {
+      const { seen, run } = setup([rule('terminal', '*')])
+      assert.match((await run('eval "$CMD"')).result, /não dá para analisar/)
+      assert.deepStrictEqual(seen.ran, [])
+    })
+
+    it('o redirecionamento é escrita: sem regra de escrita, negado; com ela, o cerco grava só ali', async () => {
+      assert.match((await setup([rule('terminal', 'echo *')]).run('echo oi > notas.txt')).result, /nenhuma regra de escrita/)
+      const { seen, run } = setup([rule('terminal', 'echo *'), rule('write', '*.txt')])
+      assert.strictEqual((await run('echo oi > notas.txt')).status, 'success')
+      assert.deepStrictEqual(seen.ran, ['cercado(echo oi > notas.txt)'])
+      assert.ok(seen.plan?.writeAllow.includes(join(realOf(root), '**/*.txt')))
+      assert.ok(seen.plan?.readDeny.includes(realOf(root)) && seen.plan.readDeny.includes('/home/gw'))
+    })
+
+    it('a rede do comando: o destino que a regra libera passa, o resto não; acabou o comando, o token morre', async () => {
+      const verdicts: boolean[] = []
+      const { seen, run } = setup([rule('terminal', 'curl *'), rule('network', '93.184.215.14:443')], async (token) => {
+        for (const [host, port] of [
+          ['93.184.215.14', 443],
+          ['evil.example', 443],
+          ['127.0.0.1', 443],
+        ] as const)
+          verdicts.push((await networkGate().decide(token, host, port)).allowed)
+      })
+      assert.strictEqual((await run('curl -s https://93.184.215.14')).status, 'success')
+      assert.deepStrictEqual(verdicts, [true, false, false])
+      assert.strictEqual((await networkGate().decide(seen.token, '93.184.215.14', 443)).allowed, false)
+    })
+
+    it('sem o cerco das regras no servidor, o terminal fica bloqueado', async () => {
+      const tools = makeLocalTools({
+        exec: async () => assert.fail('não roda'),
+        policy: { ...policy, cwd: root },
+        sandbox: { status: async () => ({ available: true, mechanism: 'seatbelt' }), wrap: async () => 'x' },
+        permissions: checker([rule('terminal', '*')]),
+      })
+      assert.match((await find(tools, 'run_bash').execute({ command: 'ls' })).result, /bloqueado/)
     })
   })
 })

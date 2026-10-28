@@ -406,8 +406,22 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     }
   }
 
-  /** As regras de leitura e escrita (`Permission.Policy`) nas nativas de arquivo: o caminho canônico, relativo à pasta. */
+  /**
+   * As regras (`Permission.Policy`) nas nativas: leitura e escrita pelo caminho canônico, relativo à pasta; o WebFetch
+   * pelo destino da URL (a regra de rede). ⚠️ O WebFetch roda no processo do CLI, fora do cerco: a regra é a trava.
+   */
   private fileRefusal(bare: string, input: Record<string, unknown>, who: { asker: ReturnType<typeof askerOf>; cwd: string }): string | undefined {
+    if (bare === 'WebFetch') {
+      let target: URL
+      try {
+        target = new URL(String(input.url ?? ''))
+      } catch {
+        return 'WebFetch: endereço inválido.'
+      }
+      const port = target.port || (target.protocol === 'http:' ? '80' : '443')
+      const verdict = this.permissions!.check(who.asker, { category: 'network', value: `${target.hostname.replace(/^\[|\]$/g, '')}:${port}` }, { log: true })
+      return verdict.allowed ? undefined : `WebFetch: ${verdict.reason}.`
+    }
     const kind = bare === 'Read' ? 'read' : ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(bare) ? 'write' : undefined
     if (!kind) return undefined
     for (const field of PATH_FIELDS[bare] ?? []) {
