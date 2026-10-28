@@ -36,6 +36,50 @@ const turn = (over: Partial<IConversationTurn> = {}): IConversationTurn => ({
 const repository = () => new SqliteConversationRepository(':memory:')
 
 describe('SqliteConversationRepository', () => {
+  it('a tabela antiga das tarefas (com FK) é recriada sem ela, com o que havia', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'todos-fk-'))
+    const path = join(dir, 'gateway.db')
+    try {
+      new SqliteConversationRepository(path)
+      const old = new DatabaseSync(path)
+      old.exec(`PRAGMA foreign_keys = OFF; DROP TABLE conversation_todos;
+        CREATE TABLE conversation_todos (conversation_id TEXT NOT NULL PRIMARY KEY, items TEXT NOT NULL, updated_at TEXT NOT NULL,
+          FOREIGN KEY (conversation_id) REFERENCES conversations (id) ON DELETE CASCADE);
+        INSERT INTO conversation_todos VALUES ('c1', '[]', '2026-10-28T00:00:00.000Z');`)
+      old.close()
+      new SqliteConversationRepository(path)
+      const db = new DatabaseSync(path)
+      assert.strictEqual((db.prepare("SELECT count(*) AS n FROM pragma_foreign_key_list('conversation_todos')").get() as { n: number }).n, 0)
+      assert.strictEqual((db.prepare('SELECT count(*) AS n FROM conversation_todos').get() as { n: number }).n, 1)
+      db.close()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a lista de tarefas: grava trocando a inteira, lê de volta, e some com a conversa', async () => {
+    const repo = repository()
+    await repo.saveSession(session())
+    const id = session().id
+    assert.deepStrictEqual(await repo.todos(id), { items: [] })
+    await repo.saveTodos(id, [{ title: 'Ler', status: 'done' }])
+    await repo.saveTodos(id, [
+      { title: 'Ler', status: 'done' },
+      { title: 'Escrever', status: 'in_progress' },
+    ])
+    const saved = await repo.todos(id)
+    assert.deepStrictEqual(saved.items, [
+      { title: 'Ler', status: 'done' },
+      { title: 'Escrever', status: 'in_progress' },
+    ])
+    assert.ok(saved.updatedAt instanceof Date)
+    await repo.deleteSession(id)
+    assert.deepStrictEqual(await repo.todos(id), { items: [] })
+    // A lista nasce no primeiro turno, antes de a conversa ser gravada: grava mesmo assim.
+    await repo.saveTodos('ainda-sem-conversa', [{ title: 'x', status: 'pending' }])
+    assert.deepStrictEqual((await repo.todos('ainda-sem-conversa')).items, [{ title: 'x', status: 'pending' }])
+  })
+
   it('stores a conversation and reads it back whole', async () => {
     const repo = repository()
     await repo.saveSession(session({ metadata: { user: 'u1' } }))

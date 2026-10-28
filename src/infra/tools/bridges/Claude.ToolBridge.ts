@@ -1,5 +1,5 @@
 import { createSdkMcpServer, tool, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
-import { z, type ZodRawShape } from 'zod'
+import { z, type ZodRawShape, type ZodTypeAny } from 'zod'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IAgentMcpServer } from '../Tool.Catalog'
 import { ILocalTool } from '../Tool.Types'
@@ -72,28 +72,41 @@ export function mcpHeaders(remote: IAgentMcpServer, token?: string): Record<stri
 }
 
 /** O helper `tool()` do SDK só aceita raw shape do zod, não JSON Schema. */
-function toZodShape(item: ILocalTool): ZodRawShape {
-  const entries = Object.entries(item.inputSchema.properties).map(([key, property]) => {
-    // Lido com cuidado porque `properties` é JSON Schema aberto: uma tool pode declarar propriedade
-    // sem `description`, ou com `type` composto. Cair para string é o que o SDK já fazia na prática.
-    const type = typeof property.type === 'string' ? property.type : 'string'
-    const description = typeof property.description === 'string' ? property.description : ''
+export function toZodShape(item: ILocalTool): ZodRawShape {
+  return Object.fromEntries(
+    Object.entries(item.inputSchema.properties).map(([key, property]) => {
+      const zod = toZod(property)
+      return [key, item.inputSchema.required.includes(key) ? zod : zod.optional()] as const
+    }),
+  ) as ZodRawShape
+}
 
-    // Lista: de texto (o que as nossas declaram — `docIds`); antes virava texto, e o modelo mandava a lista como string.
-    // Objeto: livre (o registro do agente no rascunho); a validação é da própria ferramenta.
-    const base =
-      type === 'number'
-        ? z.number()
-        : type === 'boolean'
-          ? z.boolean()
-          : type === 'array'
-            ? z.array(z.string())
-            : type === 'object'
-              ? z.record(z.string(), z.unknown())
+/**
+ * Uma propriedade de JSON Schema em zod, com cuidado porque `properties` é JSON Schema aberto: uma tool pode declarar
+ * propriedade sem `description`, ou com `type` composto — cair para texto é o que o SDK já fazia na prática.
+ * Lista: dos itens que ela declara (texto, ou objeto como as tarefas do `update_todos`). Objeto sem `properties`: livre
+ * (o registro do agente no rascunho; quem valida é a própria ferramenta). Texto com `enum`: só esses valores.
+ */
+function toZod(property: Record<string, unknown>): ZodTypeAny {
+  const type = typeof property.type === 'string' ? property.type : 'string'
+  const description = typeof property.description === 'string' ? property.description : ''
+  const items = property.items && typeof property.items === 'object' ? (property.items as Record<string, unknown>) : undefined
+  const properties = property.properties && typeof property.properties === 'object' ? (property.properties as Record<string, Record<string, unknown>>) : undefined
+  const required = Array.isArray(property.required) ? (property.required as string[]) : []
+  const values = Array.isArray(property.enum) ? (property.enum as unknown[]).filter((value): value is string => typeof value === 'string') : []
+  const base: ZodTypeAny =
+    type === 'number' || type === 'integer'
+      ? z.number()
+      : type === 'boolean'
+        ? z.boolean()
+        : type === 'array'
+          ? z.array(items ? toZod(items) : z.string())
+          : type === 'object'
+            ? properties
+              ? z.object(Object.fromEntries(Object.entries(properties).map(([key, child]) => [key, required.includes(key) ? toZod(child) : toZod(child).optional()])))
+              : z.record(z.string(), z.unknown())
+            : values.length
+              ? z.enum(values as [string, ...string[]])
               : z.string()
-    const described = description ? base.describe(description) : base
-    return [key, item.inputSchema.required.includes(key) ? described : described.optional()] as const
-  })
-
-  return Object.fromEntries(entries) as ZodRawShape
+  return description ? base.describe(description) : base
 }

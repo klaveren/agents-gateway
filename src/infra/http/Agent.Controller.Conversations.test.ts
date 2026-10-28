@@ -339,6 +339,20 @@ describe('AgentController — conversas, monitor e compartilhamento', () => {
     })
   })
 
+  describe('GET /conversations/:id/todos', () => {
+    const todos = (id: string) => (res: Response, controller: AgentController) => controller.getConversationTodos(request({ params: { id } }), res)
+
+    it('o dono lê a lista; sem lista, vem vazia; outro dono recebe 404', async () => {
+      const { controller, conversations } = await setup()
+
+      assert.deepStrictEqual((await call(ALICE, (res) => todos('a1')(res, controller))).body!.result.items, [])
+      await conversations.saveTodos('a1', [{ title: 'Ler', status: 'in_progress' }])
+      const mine = await call(ALICE, (res) => todos('a1')(res, controller))
+      assert.deepStrictEqual(mine.body!.result.items, [{ title: 'Ler', status: 'in_progress' }])
+      assert.strictEqual((await call(BOB, (res) => todos('a1')(res, controller))).status, 404)
+    })
+  })
+
   describe('GET /conversations/:id/turns', () => {
     const turns = (id: string) => (res: Response, controller: AgentController) => controller.getConversationTurns(request({ params: { id } }), res)
 

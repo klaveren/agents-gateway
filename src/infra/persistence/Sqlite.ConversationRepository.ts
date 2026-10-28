@@ -1,3 +1,4 @@
+import { ITodoItem } from '@domain/models/ConversationTodo.Model'
 import { parseUsageKey } from '@domain/models/Session.Model'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync } from 'node:fs'
@@ -84,6 +85,15 @@ const SCHEMA = `
     classification   TEXT,
     PRIMARY KEY (conversation_id, idx),
     FOREIGN KEY (conversation_id) REFERENCES conversations (id) ON DELETE CASCADE
+  );
+
+  -- A lista de tarefas da conversa (ver ConversationTodo.Model): a lista inteira, trocada a cada update_todos.
+  -- Sem FK de propósito: a conversa só é gravada DEPOIS do primeiro turno, e a lista nasce durante ele.
+  -- Quem apaga a conversa apaga a lista (deleteSession).
+  CREATE TABLE IF NOT EXISTS conversation_todos (
+    conversation_id TEXT NOT NULL PRIMARY KEY,
+    items           TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
   );
 `
 
@@ -250,8 +260,21 @@ export class SqliteConversationRepository implements IConversationRepository {
     // `ON DELETE CASCADE` declarado acima seria decorativo.
     this.db.exec('PRAGMA journal_mode = WAL')
     this.db.exec('PRAGMA foreign_keys = ON')
+    this.dropTodosForeignKey()
     this.db.exec(SCHEMA)
     this.migrate()
+  }
+
+  /** A primeira versão da lista de tarefas tinha FK e recusava a lista do primeiro turno: recria sem ela, com o que havia. */
+  private dropTodosForeignKey(): void {
+    const keys = this.db.prepare("SELECT count(*) AS n FROM pragma_foreign_key_list('conversation_todos')").get() as { n: number }
+    if (!keys.n) return
+    this.db.exec(`
+      ALTER TABLE conversation_todos RENAME TO conversation_todos_fk;
+      CREATE TABLE conversation_todos (conversation_id TEXT NOT NULL PRIMARY KEY, items TEXT NOT NULL, updated_at TEXT NOT NULL);
+      INSERT INTO conversation_todos SELECT conversation_id, items, updated_at FROM conversation_todos_fk;
+      DROP TABLE conversation_todos_fk;
+    `)
   }
 
   /** Acrescenta as colunas que um arquivo antigo ainda não tem. Nunca remove nem reescreve nada. */
@@ -554,6 +577,27 @@ export class SqliteConversationRepository implements IConversationRepository {
     }
   }
 
+  async todos(sessionId: string): Promise<{ items: ITodoItem[]; updatedAt?: Date }> {
+    return (
+      this.guard('todos', () => {
+        const row = this.db.prepare('SELECT items, updated_at FROM conversation_todos WHERE conversation_id = ?').get(sessionId) as
+          { items: string; updated_at: string } | undefined
+        if (!row) return { items: [] }
+        return { items: JSON.parse(row.items) as ITodoItem[], updatedAt: new Date(row.updated_at) }
+      }) ?? { items: [] }
+    )
+  }
+
+  /** ⛔ Não engole o erro (como `setShared`): a escrita é a ação pedida. A conversa pode ainda não estar gravada (primeiro turno). */
+  async saveTodos(sessionId: string, items: ITodoItem[]): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO conversation_todos (conversation_id, items, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT (conversation_id) DO UPDATE SET items = excluded.items, updated_at = excluded.updated_at`,
+      )
+      .run(sessionId, JSON.stringify(items), new Date().toISOString())
+  }
+
   async findSession(sessionId: string): Promise<IConversationSession | undefined> {
     return this.guard('findSession', () => {
       const row = this.db.prepare(`SELECT ${SESSION_COLUMNS} FROM conversations WHERE id = ?`).get(sessionId) as TRow | undefined
@@ -588,6 +632,7 @@ export class SqliteConversationRepository implements IConversationRepository {
       // Os turnos saem pelo `ON DELETE CASCADE` — que só funciona com `foreign_keys` ligado, feito
       // no construtor. NÃO encosta na sessão viva do provider: apagar histórico não para conversa.
       this.db.prepare('DELETE FROM conversations WHERE id = ?').run(sessionId)
+      this.db.prepare('DELETE FROM conversation_todos WHERE conversation_id = ?').run(sessionId)
     })
   }
 

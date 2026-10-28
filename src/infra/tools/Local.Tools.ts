@@ -8,6 +8,7 @@ import { IDocHit } from '@domain/ports/GuidanceRepository.Port'
 import { USE_SKILL_TOOL } from '@domain/models/Resource.Model'
 import { IBuilderDraft } from '@domain/models/Protocol.Model'
 import { builderKindOf, PROPOSE_DRAFT_TOOL } from '@domain/Builder.Agents'
+import { ITodoItem, todoIssues, todoText, UPDATE_TODOS_TOOL } from '@domain/models/ConversationTodo.Model'
 import { ILocalTool, IToolResult } from './Tool.Types'
 
 export interface IExecOptions {
@@ -53,6 +54,12 @@ export interface ILocalToolDeps {
   docs?: IDocReader
   /** O conferente dos rascunhos do construtor. Ausente = sem `propose_draft`. */
   drafts?: IDraftChecker
+  /** Onde fica a lista de tarefas da conversa (o repositório de conversas). Ausente = sem `update_todos`. */
+  todos?: ITodoStore
+}
+
+export interface ITodoStore {
+  saveTodos?(sessionId: string, items: ITodoItem[]): Promise<void>
 }
 
 const EXEC_BUFFER_BYTES = 1024 * 1024
@@ -156,7 +163,53 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     ...(deps.docs?.searchDocs ? [searchDocsTool(deps.docs)] : []),
     ...(deps.skills ? [useSkillTool(deps.skills)] : []),
     ...(deps.drafts ? [proposeDraftTool(deps.drafts)] : []),
+    ...(deps.todos?.saveTodos ? [updateTodosTool(deps.todos)] : []),
   ]
+}
+
+/**
+ * `update_todos`: a lista de tarefas da conversa, trocada inteira a cada chamada (o formato que os modelos já conhecem do
+ * TodoWrite, sem estado parcial). Grava na conversa — a tela mostra — e devolve a lista, para o modelo ver o estado.
+ */
+function updateTodosTool(store: ITodoStore): ILocalTool {
+  return {
+    origin: 'local',
+    name: UPDATE_TODOS_TOOL,
+    description:
+      'Keeps the task list of this conversation, which the person sees next to the chat. Use it for work with 3 or more steps: write the full list at the start, keep exactly one item in_progress while you work on it, and mark it done as soon as it is finished (send the whole list every time). Skip it for simple requests.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        items: {
+          type: 'array',
+          description: 'The whole list, in order.',
+          items: {
+            type: 'object',
+            properties: {
+              title: { type: 'string', description: 'The task, short and concrete.' },
+              status: { type: 'string', enum: ['pending', 'in_progress', 'done', 'cancelled'] },
+            },
+            required: ['title', 'status'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['items'],
+      additionalProperties: false,
+    },
+    execute: async (args, context) => {
+      if (!context?.sessionId) return { status: 'error', result: `${UPDATE_TODOS_TOOL} only works inside a conversation.` }
+      const issues = todoIssues(args.items)
+      if (issues.length) return { status: 'error', result: `Not saved — fix and call again: ${issues.join('; ')}` }
+      const items = (args.items as ITodoItem[]).map((item) => ({ title: item.title.trim(), status: item.status }))
+      try {
+        await store.saveTodos!(context.sessionId, items)
+      } catch (error: unknown) {
+        return { status: 'error', result: `Could not save the task list: ${toMessage(error)}` }
+      }
+      return { status: 'success', result: todoText(items) }
+    },
+  }
 }
 
 /**

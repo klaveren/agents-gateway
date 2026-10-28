@@ -1,3 +1,4 @@
+import { UPDATE_TODOS_TOOL } from './models/ConversationTodo.Model'
 import { IAgent } from './models/Agent.Model'
 import { builderAgentId } from './Builder.Agents'
 import { PROTOCOL_KINDS } from './models/Protocol.Model'
@@ -139,11 +140,11 @@ ${ATLAS_SCHEDULES_SECTION}
 ${ATLAS_BUILDERS_SECTION}`,
   reasoningEfforts: ['low', 'medium', 'high'],
   modes: [EMode.AGENT],
-  allowedTools: ['sdk:WebSearch', ...ATLAS_TOOLS, ...BUILDER_DELEGATIONS],
+  allowedTools: ['sdk:WebSearch', UPDATE_TODOS_TOOL, ...ATLAS_TOOLS, ...BUILDER_DELEGATIONS],
 }
 
 /** O que o Atlas Admin tem a mais: o sistema operacional desta máquina, pelas nativas do Claude Agent SDK. */
-const HOST_TOOLS = ['sdk:TodoWrite', 'sdk:WebFetch', 'sdk:Read', 'sdk:Glob', 'sdk:Grep', 'sdk:Write', 'sdk:Edit', 'sdk:Bash']
+const HOST_TOOLS = ['sdk:WebFetch', 'sdk:Read', 'sdk:Glob', 'sdk:Grep', 'sdk:Write', 'sdk:Edit', 'sdk:Bash']
 /** E a guia Pacotes, pelo MCP do gateway: instalar o que falta no servidor sem root. */
 const PACKAGE_TOOLS = ['list_packages', 'search_packages', 'install_package', 'remove_package'].map((tool) => `mcp:gateway/${tool}`)
 
@@ -182,7 +183,7 @@ Primeiro confira se já existe: command -v <nome>. Se faltar:
 5. O que você instala vale na hora no seu Bash, no dos outros agentes e nos MCPs locais; remover tira de todos.
 
 MCPs (como o Playwright) se cadastram e instalam na guia MCPs da tela — você não tem ferramenta para isso: oriente a pessoa.`,
-  allowedTools: ['sdk:WebSearch', ...HOST_TOOLS, ...ATLAS_TOOLS, ...PACKAGE_TOOLS, ...BUILDER_DELEGATIONS],
+  allowedTools: ['sdk:WebSearch', UPDATE_TODOS_TOOL, ...HOST_TOOLS, ...ATLAS_TOOLS, ...PACKAGE_TOOLS, ...BUILDER_DELEGATIONS],
   adminOnly: true,
 }
 

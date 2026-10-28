@@ -155,17 +155,16 @@ describe('ClaudeAgentAdapter', () => {
     const seen: TQueryParams[] = []
     const init = { type: 'system', subtype: 'init', session_id: 'cli-1', tools: ['WebSearch'] }
     const adapter = new ClaudeAgentAdapter({ query: queryWith(() => [init, ...turn()], seen) })
-    const agent = { ...getAgent(), allowedTools: ['sdk:WebSearch', 'sdk:TodoWrite'] }
+    const agent = { ...getAgent(), allowedTools: ['sdk:WebSearch', 'sdk:Read'] }
     const session = await adapter.createSession(agent, { agentId: CLAUDE_TEST_AGENT.id })
     const events = await drain(adapter.sendMessage(agent, session.id, { text: 'hi' }, {}))
 
-    // `sdk:TodoWrite` vai ao CLI com os nomes de hoje (o 2.1.28x trocou TodoWrite por Task*).
-    assert.deepStrictEqual(seen[0].options?.tools, ['WebSearch', 'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate'])
+    assert.deepStrictEqual(seen[0].options?.tools, ['WebSearch', 'Read'])
     const gate = seen[0].options?.canUseTool as (name: string, input: Record<string, unknown>, options: unknown) => Promise<{ behavior: string }>
     assert.strictEqual((await gate('WebSearch', {}, {})).behavior, 'allow')
-    assert.strictEqual((await gate('TaskCreate', {}, {})).behavior, 'allow')
+    assert.strictEqual((await gate('Read', {}, {})).behavior, 'allow')
     assert.strictEqual((await gate('Bash', {}, {})).behavior, 'deny')
-    assert.ok(events.find((event) => event.type === 'warning' && String(event.payload.message).includes('TaskCreate')))
+    assert.ok(events.find((event) => event.type === 'warning' && String(event.payload.message).includes('Read')))
   })
 
   it('⛔ o CLI não carrega os conectores da conta claude.ai de quem fez o login', () => {

@@ -8,11 +8,16 @@ import {
   RETIRED_ATLAS_TOOLS,
 } from './Agent.Seed'
 import { IAgent } from './models/Agent.Model'
+import { UPDATE_TODOS_TOOL } from './models/ConversationTodo.Model'
 
-/** Uma mudança que o gateway aplica UMA VEZ num agente da semente que já está no banco (ver `migrateOnce`). */
+/** A nativa que saiu do catálogo (a lista de tarefas agora é do gateway). */
+export const RETIRED_TODO_NATIVE = 'sdk:TodoWrite'
+
+/** Uma mudança que o gateway aplica UMA VEZ num agente que já está no banco (ver `migrateOnce`). */
 export interface IAgentMigration {
   key: string
-  agentIds: readonly string[]
+  /** Os agentes da semente que ela toca; `'*'` = todos os que existem no banco quando o gateway sobe. */
+  agentIds: readonly string[] | '*'
   change: (agent: IAgent) => IAgent | undefined
 }
 
@@ -58,5 +63,15 @@ export const AGENT_MIGRATIONS: readonly IAgentMigration[] = [
     agentIds: ['atlas', 'atlas-admin'],
     change: (agent) =>
       agent.systemPrompt.includes('save_schedule') ? undefined : { ...agent, systemPrompt: `${agent.systemPrompt.trimEnd()}\n\n## Agendamentos\n${ATLAS_SCHEDULES_SECTION}` },
+  },
+  {
+    // A lista de tarefas passou a ser do gateway: quem tinha a nativa do Claude (`sdk:TodoWrite`) ganha a `update_todos`.
+    key: 'todos-native',
+    agentIds: '*',
+    change: (agent) => {
+      if (!agent.allowedTools.includes(RETIRED_TODO_NATIVE)) return undefined
+      const tools = agent.allowedTools.filter((tool) => tool !== RETIRED_TODO_NATIVE)
+      return { ...agent, allowedTools: tools.includes(UPDATE_TODOS_TOOL) ? tools : [...tools, UPDATE_TODOS_TOOL] }
+    },
   },
 ]

@@ -2025,6 +2025,37 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/conversations/{id}/todos': {
+      get: {
+        summary: 'The task list of a conversation (kept by the agent with the `update_todos` tool). The owner or an administrator; anyone else gets 404',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'OK. Empty `items` = no task list yet.',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  sessionId: { type: 'string' },
+                  items: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: { title: { type: 'string' }, status: { type: 'string', enum: ['pending', 'in_progress', 'done', 'cancelled'] } },
+                      required: ['title', 'status'],
+                    },
+                  },
+                  updatedAt: { type: 'string', format: 'date-time' },
+                },
+                required: ['sessionId', 'items'],
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+    },
     '/conversations/{id}/share': {
       put: {
         summary: 'Open or close the conversation by link. The owner or an administrator; anyone else gets 404',
