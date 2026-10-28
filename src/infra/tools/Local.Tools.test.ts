@@ -233,4 +233,12 @@ describe('LocalTools — propose_draft', () => {
     assert.match(String(adjust.result), /adjusts the existing command resumir, global/)
     assert.strictEqual(service.resource('resumir').description, 'Resume')
   })
+
+  it('spec e rule: os campos de cada tipo; a rule sem título volta com o problema', async () => {
+    const tool = toolOf(guidance())
+    const spec = await tool.execute({ id: 'api-rest', title: 'API REST', summary: 'Padrões de API', body: '# API' }, { agentId: 'builder-spec', conversationProjectId: 'xpto' })
+    assert.match(String(spec.result), /new spec api-rest, project xpto\)\. Nothing was saved.*only after they confirm/)
+    const rule = await tool.execute({ body: 'Nunca apague sem backup.' }, { agentId: 'builder-rule' })
+    assert.deepStrictEqual([rule.status, /- title: required/.test(String(rule.result))], ['error', true])
+  })
 })

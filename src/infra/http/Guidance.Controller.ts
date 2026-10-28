@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { z } from 'zod'
 import { estimateTokens, GuidanceService } from '@application/Guidance.Service'
 import { DOC_KINDS, TDocKind } from '@domain/models/ProjectDoc.Model'
+import { TProtocolKind } from '@domain/models/Protocol.Model'
 import { RESOURCE_KINDS, TResourceKind } from '@domain/models/Resource.Model'
 import { TGuidanceScope } from '@domain/ports/GuidanceRepository.Port'
 import { checkAdminAccess } from './Caller.Admin'
@@ -284,7 +285,7 @@ function scopeOf(req: Request): TGuidanceScope {
   return value && value !== 'global' ? value : null
 }
 
-/** O `:kind` da rota: skill ou command (o serviço recusa o resto, com o motivo). */
-function kindOf(req: Request): TResourceKind {
-  return req.params.kind as TResourceKind
+/** O `:kind` da rota: skill, command, rule, spec ou adr (o serviço recusa o resto, com o motivo). */
+function kindOf(req: Request): TProtocolKind {
+  return req.params.kind as TProtocolKind
 }

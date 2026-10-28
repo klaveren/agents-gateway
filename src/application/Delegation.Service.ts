@@ -1,3 +1,4 @@
+import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
 import { DELEGATED_BY, DELEGATED_FROM, DELEGATION_CHAIN, DELEGATION_DEPTH, delegationMaxDepth } from '@domain/models/Delegation.Model'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
@@ -76,6 +77,8 @@ export class DelegationService {
           ...(mode === EMode.CHAT ? { tools: true } : {}),
           metadata: {
             ...(metadata.owner ? { owner: metadata.owner } : {}),
+            // O projeto da conversa-mãe: o filho global (o construtor) trabalha nele — é onde o que ele grava nasce.
+            ...(typeof metadata[PROJECT_METADATA_KEY] === 'string' ? { [PROJECT_METADATA_KEY]: metadata[PROJECT_METADATA_KEY] } : {}),
             [DELEGATED_BY]: parent.id,
             [DELEGATED_FROM]: parent.agentId,
             [DELEGATION_DEPTH]: depth,

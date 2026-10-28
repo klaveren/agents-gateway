@@ -21,6 +21,7 @@ export class NullAgentRepository implements IAgentRepository {
   }
 
   private readonly seeded = new Set<string>()
+  private readonly migrated = new Set<string>()
 
   seedOnce(agents: readonly IAgent[], by: string): void {
     for (const agent of agents) {
@@ -28,6 +29,15 @@ export class NullAgentRepository implements IAgentRepository {
       this.seeded.add(agent.id)
       if (!this.agents.has(agent.id)) this.save(agent, by)
     }
+  }
+
+  migrateOnce(key: string, agentId: string, change: (agent: IAgent) => IAgent | undefined, by: string): void {
+    const mark = `${key}:${agentId}`
+    if (this.migrated.has(mark)) return
+    this.migrated.add(mark)
+    const current = this.agents.get(agentId)
+    const next = current ? change(current) : undefined
+    if (next) this.save(next, by)
   }
 
   delete(id: string): boolean {

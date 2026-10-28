@@ -8,7 +8,7 @@ import ProfileView from './views/ProfileView.vue'
 import DocsView from './views/DocsView.vue'
 import ProjectsView from './views/ProjectsView.vue'
 import ResourcesView from './views/ResourcesView.vue'
-import ResourceBuildView from './views/ResourceBuildView.vue'
+import BuildView from './views/BuildView.vue'
 import RulesView from './views/RulesView.vue'
 import ProvidersView from './views/ProvidersView.vue'
 import SettingsView from './views/SettingsView.vue'
@@ -41,22 +41,28 @@ export const router = createRouter({
     { path: '/projects/new', name: 'project-new', component: ProjectsView },
     { path: '/projects/:id', name: 'project', component: ProjectsView, props: true },
     { path: '/rules', name: 'rules', component: RulesView },
+    { path: '/rules/build', name: 'rule-build', component: BuildView, props: { kind: 'rule', tab: 'build' } },
+    { path: '/rules/protocol', name: 'rule-protocol', component: BuildView, props: { kind: 'rule', tab: 'protocol' } },
     { path: '/specs', name: 'specs', component: DocsView, props: { kind: 'spec' } },
     { path: '/specs/new', name: 'spec-new', component: DocsView, props: { kind: 'spec' } },
+    { path: '/specs/build', name: 'spec-build', component: BuildView, props: { kind: 'spec', tab: 'build' } },
+    { path: '/specs/protocol', name: 'spec-protocol', component: BuildView, props: { kind: 'spec', tab: 'protocol' } },
     { path: '/specs/:id', name: 'spec', component: DocsView, props: (to) => ({ kind: 'spec', id: to.params.id }) },
     { path: '/adrs', name: 'adrs', component: DocsView, props: { kind: 'adr' } },
     { path: '/adrs/new', name: 'adr-new', component: DocsView, props: { kind: 'adr' } },
+    { path: '/adrs/build', name: 'adr-build', component: BuildView, props: { kind: 'adr', tab: 'build' } },
+    { path: '/adrs/protocol', name: 'adr-protocol', component: BuildView, props: { kind: 'adr', tab: 'protocol' } },
     { path: '/adrs/:id', name: 'adr', component: DocsView, props: (to) => ({ kind: 'adr', id: to.params.id }) },
     { path: '/docs', redirect: '/specs' },
     { path: '/skills', name: 'skills', component: ResourcesView, props: { kind: 'skill' } },
     { path: '/skills/new', name: 'skill-new', component: ResourcesView, props: { kind: 'skill' } },
-    { path: '/skills/build', name: 'skill-build', component: ResourceBuildView, props: { kind: 'skill', tab: 'build' } },
-    { path: '/skills/protocol', name: 'skill-protocol', component: ResourceBuildView, props: { kind: 'skill', tab: 'protocol' } },
+    { path: '/skills/build', name: 'skill-build', component: BuildView, props: { kind: 'skill', tab: 'build' } },
+    { path: '/skills/protocol', name: 'skill-protocol', component: BuildView, props: { kind: 'skill', tab: 'protocol' } },
     { path: '/skills/:id', name: 'skill', component: ResourcesView, props: (to) => ({ kind: 'skill', id: to.params.id }) },
     { path: '/commands', name: 'commands', component: ResourcesView, props: { kind: 'command' } },
     { path: '/commands/new', name: 'command-new', component: ResourcesView, props: { kind: 'command' } },
-    { path: '/commands/build', name: 'command-build', component: ResourceBuildView, props: { kind: 'command', tab: 'build' } },
-    { path: '/commands/protocol', name: 'command-protocol', component: ResourceBuildView, props: { kind: 'command', tab: 'protocol' } },
+    { path: '/commands/build', name: 'command-build', component: BuildView, props: { kind: 'command', tab: 'build' } },
+    { path: '/commands/protocol', name: 'command-protocol', component: BuildView, props: { kind: 'command', tab: 'protocol' } },
     { path: '/commands/:id', name: 'command', component: ResourcesView, props: (to) => ({ kind: 'command', id: to.params.id }) },
     { path: '/mcp/new', name: 'mcp-new', component: McpView },
     { path: '/mcp/:id', name: 'mcp-server', component: McpView, props: true },

@@ -79,6 +79,12 @@ describe('DelegationService', () => {
     assert.strictEqual(created[0].delegated, true)
   })
 
+  it('a filha trabalha no projeto da conversa-mãe (o construtor grava nele)', async () => {
+    const { service, created } = build({ owner: { id: 'ana' }, project: 'xpto' })
+    await service.delegate({ allowed: ['tradutor'], agentId: 'tradutor', message: 'x' }, { sessionId: 'pai' })
+    assert.strictEqual(created[0].metadata?.project, 'xpto')
+  })
+
   it('⛔ recusa: fora da lista, ciclo (inclusive o próprio agente) e acima da profundidade', async () => {
     const { service } = build()
     assert.match(JSON.stringify(await service.delegate({ allowed: ['tradutor'], agentId: 'outro', message: 'x' }, { sessionId: 'pai' })), /not allowed/)

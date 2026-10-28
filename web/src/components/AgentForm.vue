@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { ApiError } from '@/lib/api'
+import { BUILD_KINDS, builderAgentId, type TBuildKind } from '@/lib/builder'
 import { defaultLanes, findOrphans, isUsableProvider, pruneModels, pruneNatives, summarizeIssues, unionLanes, unionLevels } from '@/lib/agentForm'
 import { useProvidersStore } from '@/stores/providers'
 import { useProtocolsStore } from '@/stores/protocols'
@@ -16,6 +17,8 @@ import AgentResources from './AgentResources.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 
 const props = defineProps<{ agent?: IAgentDetail; creating: boolean }>()
+/** Os construtores do core como alvos de delegação (fora da lista de agentes). */
+const CORE_BUILDERS = (Object.keys(BUILD_KINDS) as TBuildKind[]).map((kind) => ({ id: builderAgentId(kind), name: BUILD_KINDS[kind].builder, noun: BUILD_KINDS[kind].noun }))
 const emit = defineEmits<{ saved: [id: string]; duplicate: [agent: IAgentDetail]; removed: [] }>()
 
 const agents = useAgentsStore()
@@ -250,7 +253,7 @@ const form = ref<IAgentInput>(blank())
 const orphans = computed(() =>
   findOrphans(form.value.allowedTools, {
     natives: agents.toolsLoaded && protocols.loaded ? new Set(natives.value.map((tool) => tool.id)) : undefined,
-    agents: agents.loaded ? new Set(agents.list.filter((candidate) => candidate.id !== form.value.id).map((candidate) => candidate.id)) : undefined,
+    agents: agents.loaded ? new Set([...agents.list.filter((candidate) => candidate.id !== form.value.id).map((candidate) => candidate.id), ...CORE_BUILDERS.map((builder) => builder.id)]) : undefined,
     mcp: mcpReady.value ? mcpOffered : undefined,
   }),
 )
@@ -664,6 +667,18 @@ async function remove() {
             @click="toggle(form.allowedTools, `agent:${other.id}`)"
           >
             {{ other.name }}<span v-if="other.role === 'subagent'" class="ml-1 text-[10px] text-zinc-500">subagente</span>
+          </button>
+          <!-- Os construtores do core: não estão na lista de agentes, mas recebem delegação (o Atlas cria conteúdo por eles). -->
+          <button
+            v-for="builder in CORE_BUILDERS"
+            :key="builder.id"
+            type="button"
+            class="chip"
+            :class="{ on: form.allowedTools.includes(`agent:${builder.id}`) }"
+            :title="`Agente do sistema, só de admin: segue o protocolo de ${builder.noun} e grava depois da confirmação`"
+            @click="toggle(form.allowedTools, `agent:${builder.id}`)"
+          >
+            {{ builder.name }}<span class="ml-1 text-[10px] text-zinc-500">sistema</span>
           </button>
         </div>
         <small v-if="form.allowedTools.some((entry) => entry.startsWith('agent:')) && !form.modes.includes('agent')" class="hint">Na lane chat, a delegação só roda com o loop de ferramentas ligado.</small>

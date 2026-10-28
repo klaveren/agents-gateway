@@ -398,7 +398,7 @@ describe('GuidanceService', () => {
     it('draftIssues: as regras do cadastro sem gravar; id do mesmo tipo é ajuste, de outro tipo é recusado', () => {
       const service = seeded()
       const ok = service.draftIssues({ kind: 'skill', id: 'nova-skill', description: 'Faz algo', body: 'Passos', docIds: ['padrao'] }, 'xpto')
-      assert.deepStrictEqual([ok.issues, ok.updates, ok.resource.projectId], [[], false, 'xpto'])
+      assert.deepStrictEqual([ok.issues, ok.updates, ok.projectId], [[], false, 'xpto'])
       assert.throws(() => service.resource('nova-skill'), GuidanceNotFoundError)
 
       assert.strictEqual(service.draftIssues({ kind: 'skill', id: 'tabela', description: 'd', body: 'b', global: true }).updates, true)
@@ -407,6 +407,44 @@ describe('GuidanceService', () => {
         ['id', 'description', 'body', 'docIds'],
       )
       assert.match(service.draftIssues({ kind: 'skill', id: 'Ruim!', description: 'd', body: 'b' }).issues[0].message, /lowercase/)
+    })
+
+    it('draftIssues de rule, spec e ADR: as regras de cada cadastro; doc com id de outro tipo é recusado, do mesmo é ajuste', () => {
+      const service = seeded()
+      service.createDoc({ ...doc('decisao'), kind: 'adr', title: 'Decisão' }, 'root')
+      assert.deepStrictEqual(
+        service.draftIssues({ kind: 'rule', title: '', body: '' }).issues.map((issue) => issue.field),
+        ['title', 'body'],
+      )
+      const rule = service.draftIssues({ kind: 'rule', title: 'Dados', body: 'Nunca apague sem backup.' }, 'xpto')
+      assert.deepStrictEqual([rule.issues, rule.id, rule.projectId], [[], undefined, 'xpto'])
+
+      const spec = service.draftIssues({ kind: 'spec', id: 'api-rest', title: 'API', summary: 'Padrões', body: '# API' }, 'xpto')
+      assert.deepStrictEqual([spec.issues, spec.updates, spec.id], [[], false, 'api-rest'])
+      assert.strictEqual(service.draftIssues({ kind: 'spec', id: 'padrao', title: 'P', summary: '', body: 'x' }).updates, true)
+      assert.match(service.draftIssues({ kind: 'spec', id: 'decisao', title: 'T', summary: '', body: 'x' }).issues[0].message, /already taken by an adr/)
+      assert.deepStrictEqual(
+        service.draftIssues({ kind: 'adr', id: 'X', title: '', summary: '', body: '' }).issues.map((issue) => issue.field),
+        ['id', 'title', 'body'],
+      )
+    })
+
+    it('o construtor de rule e o de spec veem o que já existe do tipo deles; protocol aceita os cinco tipos', () => {
+      const service = seeded()
+      service.createRule({ title: 'Dados', body: 'Nunca apague sem backup.' }, 'root')
+      service.createRule({ title: 'Do XPTO', body: 'Responda em português.', projectId: 'xpto' }, 'root')
+      const agentOf = (id: string) => ({ id })
+      const builder = new GuidanceService(new SqliteGuidanceRepository(':memory:'), (id) => id === 'xpto', agentOf)
+      builder.createRule({ title: 'Dados', body: 'Nunca apague sem backup.' }, 'root')
+      builder.createRule({ title: 'Do XPTO', body: 'Responda em português.', projectId: 'xpto' }, 'root')
+      builder.createDoc({ ...doc('padrao'), title: 'Padrão' }, 'root')
+      assert.match(
+        builder.environmentParts('xpto', 'builder-rule').existing!,
+        /## O que já existe \(rules\)\n- Rule 1 \[global\] — Dados: Nunca apague sem backup\.\n- Rule 1 \[xpto\] — Do XPTO: Responda em português\.$/,
+      )
+      assert.match(builder.environmentParts('xpto', 'builder-spec').existing!, /## O que já existe \(specs\)\n- padrao \[global\] — Padrão: resumo padrao$/)
+      assert.match(builder.environmentParts(undefined, 'builder-adr').existing!, /\(ADRs\)\nNada ainda/)
+      for (const kind of ['skill', 'command', 'rule', 'spec', 'adr'] as const) assert.strictEqual(service.protocol(kind).core.kind, kind)
     })
   })
 })

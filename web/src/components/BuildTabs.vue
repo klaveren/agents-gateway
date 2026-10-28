@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import type { TResourceKind } from '@/lib/types'
+import { BUILD_KINDS, type TBuildKind } from '@/lib/builder'
 
-/** As guias de Skills e de Commands: a lista (o cadastro), o construtor e o protocolo. */
-defineProps<{ kind: TResourceKind; active: 'list' | 'build' | 'protocol' }>()
+/** As guias de Rules, Specs, ADRs, Skills e Commands: a lista (o cadastro), o construtor e o protocolo. */
+defineProps<{ kind: TBuildKind; active: 'list' | 'build' | 'protocol' }>()
 
 const TABS = [
   { key: 'list', label: 'Lista', path: '' },
@@ -16,7 +16,7 @@ const TABS = [
     <RouterLink
       v-for="tab in TABS"
       :key="tab.key"
-      :to="`/${kind === 'skill' ? 'skills' : 'commands'}${tab.path}`"
+      :to="`${BUILD_KINDS[kind].base}${tab.path}`"
       class="rounded-full px-3 py-1"
       :class="active === tab.key ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-800/60'"
       :aria-current="active === tab.key ? 'page' : undefined"

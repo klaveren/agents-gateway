@@ -7,7 +7,6 @@ import {
   ALL_RESOURCES,
   IAgentResources,
   IResource,
-  IResourceDraft,
   RESOURCE_BODY_MAX,
   RESOURCE_DESCRIPTION_MAX,
   RESOURCE_ID_PATTERN,
@@ -15,7 +14,7 @@ import {
   TResourceKind,
   USE_SKILL_TOOL,
 } from '@domain/models/Resource.Model'
-import { IProtocolAddendum, IProtocolView, PROTOCOL_ADDENDUM_MAX, TProtocolKind } from '@domain/models/Protocol.Model'
+import { IBuilderDraft, IProtocolAddendum, IProtocolView, PROTOCOL_ADDENDUM_MAX, PROTOCOL_KINDS, TProtocolKind } from '@domain/models/Protocol.Model'
 import { IRule, RULE_BODY_MAX, RULE_TITLE_MAX } from '@domain/models/Rule.Model'
 import { IGuidanceRepository, TGuidanceScope } from '@domain/ports/GuidanceRepository.Port'
 
@@ -63,7 +62,7 @@ export interface IEnvironmentParts {
   existing?: string
 }
 
-export type { IResourceDraft }
+export type { IBuilderDraft }
 
 export interface IResourceInput {
   id?: string
@@ -400,27 +399,43 @@ export class GuidanceService {
   }
 
   /**
-   * Os problemas do rascunho, campo a campo, SEM gravar — as mesmas regras de `createResource`/`updateResource`.
-   * ⚖️ Um id que já existe, do mesmo tipo, é o rascunho de um AJUSTE: vale (`updates: true`); de outro tipo, não.
+   * Os problemas do rascunho, campo a campo, SEM gravar — as mesmas regras do cadastro do tipo.
+   * ⚖️ Um id que já existe, do mesmo tipo, é o rascunho de um AJUSTE: vale (`updates: true`); de outro tipo, não. A rule
+   * não tem id no rascunho: é sempre uma nova (o ajuste de uma rule se faz na tela, onde ela é escolhida).
    */
-  draftIssues(draft: IResourceDraft, projectId?: string): { issues: TIssues; updates: boolean; resource: IResource } {
+  draftIssues(draft: IBuilderDraft, projectId?: string): { issues: TIssues; updates: boolean; id?: string; projectId?: string } {
     const scope = draft.global ? undefined : projectId
-    const resource: IResource = {
-      id: draft.id?.trim() ?? '',
-      kind: draft.kind,
-      ...(scope ? { projectId: scope } : {}),
-      description: draft.description?.trim() ?? '',
-      body: draft.body ?? '',
-      docIds: draft.docIds ?? [],
-      createdAt: this.now(),
-      updatedAt: this.now(),
+    const issues: TIssues = []
+    let updates = false
+    const id = draft.id?.trim() ?? ''
+    if (draft.kind === 'rule') {
+      issues.push(...ruleIssues({ title: draft.title?.trim() ?? '', body: draft.body?.trim() ?? '' } as IRule))
+    } else if (draft.kind === 'spec' || draft.kind === 'adr') {
+      issues.push(...docIssues({ kind: draft.kind, title: draft.title?.trim() ?? '', summary: draft.summary?.trim() ?? '', body: draft.body ?? '' } as IProjectDoc))
+      const existing = DOC_ID_PATTERN.test(id) ? this.repository.doc(id) : undefined
+      if (!DOC_ID_PATTERN.test(id)) issues.unshift({ field: 'id', message: 'use 2–64 lowercase letters, digits or hyphens' })
+      else if (existing && existing.kind !== draft.kind) issues.unshift({ field: 'id', message: `already taken by an ${existing.kind}: ${id}` })
+      updates = !!existing && existing.kind === draft.kind
+    } else {
+      issues.push(
+        ...this.resourceIssues({
+          id,
+          kind: draft.kind,
+          ...(scope ? { projectId: scope } : {}),
+          description: draft.description?.trim() ?? '',
+          body: draft.body ?? '',
+          docIds: draft.docIds ?? [],
+          createdAt: this.now(),
+          updatedAt: this.now(),
+        }),
+      )
+      const existing = RESOURCE_ID_PATTERN.test(id) ? this.repository.resource(id) : undefined
+      if (!RESOURCE_ID_PATTERN.test(id)) issues.unshift({ field: 'id', message: 'use 2–48 lowercase letters, digits or hyphens' })
+      else if (existing && existing.kind !== draft.kind) issues.unshift({ field: 'id', message: `already taken by a ${existing.kind}: ${id}` })
+      updates = !!existing && existing.kind === draft.kind
     }
-    const issues = this.resourceIssues(resource)
-    const existing = RESOURCE_ID_PATTERN.test(resource.id) ? this.repository.resource(resource.id) : undefined
-    if (!RESOURCE_ID_PATTERN.test(resource.id)) issues.unshift({ field: 'id', message: 'use 2–48 lowercase letters, digits or hyphens' })
-    else if (existing && existing.kind !== resource.kind) issues.unshift({ field: 'id', message: `already taken by a ${existing.kind}: ${resource.id}` })
     if (scope && !this.projectExists(scope)) issues.push({ field: 'projectId', message: `no such project: ${scope}` })
-    return { issues, updates: !!existing && existing.kind === resource.kind, resource }
+    return { issues, updates, ...(draft.kind !== 'rule' ? { id } : {}), ...(scope ? { projectId: scope } : {}) }
   }
 
   /** O que o construtor recebe além do ambiente: o complemento do protocolo e o que já existe do tipo dele. */
@@ -435,14 +450,23 @@ export class GuidanceService {
         ...(project ? [`### Do projeto ${projectId}\n${project.body}`] : []),
       ].join('\n\n')
     }
-    const existing = [...this.repository.resources(null, kind), ...(projectId ? this.repository.resources(projectId, kind) : [])]
-    parts.existing = [
-      `## O que já existe (${kind === 'skill' ? 'skills' : 'commands'})`,
-      ...(existing.length
-        ? existing.map((resource) => `- ${kind === 'command' ? '/' : ''}${resource.id} [${resource.projectId ?? 'global'}] — ${resource.description}`)
-        : ['Nada ainda: este será o primeiro.']),
-    ].join('\n')
+    const lines = this.existingLines(kind, projectId)
+    parts.existing = [`## O que já existe (${EXISTING_LABEL[kind]})`, ...(lines.length ? lines : ['Nada ainda: este será o primeiro.'])].join('\n')
     return parts
+  }
+
+  /** Uma linha por registro do tipo, globais e do projeto da conversa — o bastante para não duplicar. */
+  private existingLines(kind: TProtocolKind, projectId?: string): string[] {
+    const scopes: TGuidanceScope[] = [null, ...(projectId ? [projectId] : [])]
+    if (kind === 'rule')
+      return scopes.flatMap((scope) =>
+        this.repository.rules(scope).map((rule) => `- Rule ${rule.position} [${scope ?? 'global'}]${rule.enabled ? '' : ' (desligada)'} — ${rule.title}: ${rule.body}`),
+      )
+    if (kind === 'spec' || kind === 'adr')
+      return scopes.flatMap((scope) => this.repository.docs(scope, kind).map((doc) => `- ${doc.id} [${scope ?? 'global'}] — ${doc.title}${doc.summary ? `: ${doc.summary}` : ''}`))
+    return scopes.flatMap((scope) =>
+      this.repository.resources(scope, kind).map((resource) => `- ${kind === 'command' ? '/' : ''}${resource.id} [${scope ?? 'global'}] — ${resource.description}`),
+    )
   }
 
   resources(scope: TGuidanceScope, kind?: TResourceKind): IResource[] {
@@ -643,7 +667,7 @@ export class GuidanceService {
   }
 
   private requireKind(kind: TProtocolKind): void {
-    if (!RESOURCE_KINDS.includes(kind)) throw new InvalidGuidanceError([{ field: 'kind', message: `one of ${RESOURCE_KINDS.join(', ')}` }])
+    if (!PROTOCOL_KINDS.includes(kind)) throw new InvalidGuidanceError([{ field: 'kind', message: `one of ${PROTOCOL_KINDS.join(', ')}` }])
   }
 
   private requireProject(projectId: string): void {
@@ -672,6 +696,8 @@ export class GuidanceService {
     if (issues.length) throw new InvalidGuidanceError(issues)
   }
 }
+
+const EXISTING_LABEL: Readonly<Record<TProtocolKind, string>> = { skill: 'skills', command: 'commands', rule: 'rules', spec: 'specs', adr: 'ADRs' }
 
 function ruleIssues(rule: IRule): TIssues {
   const issues: TIssues = []

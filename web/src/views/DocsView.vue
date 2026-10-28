@@ -3,8 +3,10 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import Icon from '@/components/Icon.vue'
+import BuildTabs from '@/components/BuildTabs.vue'
 import MasterDetail from '@/components/MasterDetail.vue'
 import { api, ApiError } from '@/lib/api'
+import { pendingDraft } from '@/lib/builder'
 import { docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId } from '@/lib/guidance'
 import { renderMarkdown } from '@/lib/markdown'
 import type { IProjectDoc, TDocKind } from '@/lib/types'
@@ -100,6 +102,7 @@ watch(
     if (isNew) {
       loaded.value = undefined
       form.value = { id: '', kind, title: '', summary: '', body: TEMPLATE[kind], global: scope.value === GLOBAL_SCOPE, project: scope.value === GLOBAL_SCOPE ? (projects.current ?? '') : scope.value }
+      applyDraft(kind)
       return
     }
     if (!id) return
@@ -109,6 +112,7 @@ watch(
       if (doc.kind !== kind) return void router.replace(`${KIND[doc.kind].base}/${doc.id}`)
       loaded.value = doc
       form.value = { id: doc.id, kind: doc.kind, title: doc.title, summary: doc.summary, body: doc.body ?? '', global: !doc.projectId, project: doc.projectId ?? projects.current ?? '' }
+      applyDraft(kind, doc.id)
     } catch (failure) {
       loaded.value = undefined
       error.value = describe(failure)
@@ -116,6 +120,18 @@ watch(
   },
   { immediate: true },
 )
+
+/**
+ * O rascunho do construtor ("Abrir no editor"): preenche o formulário SEM salvar, e é consumido. Só o do mesmo tipo e,
+ * na edição, o do mesmo id.
+ */
+function applyDraft(kind: TDocKind, id?: string) {
+  const draft = pendingDraft.value
+  if (!draft || draft.kind !== kind || (id && draft.id !== id)) return
+  pendingDraft.value = undefined
+  form.value = { id: id ?? draft.id, kind, title: draft.title, summary: draft.summary, body: draft.body, global: !draft.projectId, project: draft.projectId ?? projects.current ?? '' }
+  note.value = 'Rascunho do construtor aplicado: revise e salve.'
+}
 
 async function loadList() {
   loadError.value = undefined
@@ -193,6 +209,7 @@ function describe(failure: unknown): string {
         <RouterLink :to="`${info.base}/new`" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" :title="`Nova ${info.one}`"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
       <p class="px-4 pb-2 text-xs text-zinc-500">{{ info.short }}</p>
+      <BuildTabs :kind="kind" active="list" class="px-3 pb-2" />
       <div class="px-4 pb-2">
         <select v-model="scope" class="input py-1.5 text-sm" aria-label="Escopo">
           <option v-for="item in scopes" :key="item.id" :value="item.id">{{ item.name }}</option>

@@ -4,7 +4,8 @@ import { bashPolicy, denyReason, truncate, type IBashPolicy } from './Bash.Guard
 import { subscriptionEnv, workspaceFor } from '@infra/adapters/support/Subscription.Workspace'
 import { IProjectSandbox, projectSandbox, SANDBOX_SHELL } from '@infra/sandbox/Project.Sandbox'
 import { IProjectDoc, READ_DOC_TOOL } from '@domain/models/ProjectDoc.Model'
-import { IResource, IResourceDraft, USE_SKILL_TOOL } from '@domain/models/Resource.Model'
+import { USE_SKILL_TOOL } from '@domain/models/Resource.Model'
+import { IBuilderDraft } from '@domain/models/Protocol.Model'
 import { builderKindOf, PROPOSE_DRAFT_TOOL } from '@domain/Builder.Agents'
 import { ILocalTool, IToolResult } from './Tool.Types'
 
@@ -27,7 +28,7 @@ export interface IDocReader {
 
 /** Quem confere o rascunho do construtor sem gravar (o `GuidanceService`). */
 export interface IDraftChecker {
-  draftIssues(draft: IResourceDraft, projectId?: string): { issues: Array<{ field: string; message: string }>; updates: boolean; resource: IResource }
+  draftIssues(draft: IBuilderDraft, projectId?: string): { issues: Array<{ field: string; message: string }>; updates: boolean; id?: string; projectId?: string }
 }
 
 /** Quem carrega uma skill para o agente (o `GuidanceService`). */
@@ -158,21 +159,24 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
  * O tipo vem do agente (o construtor de skills só propõe skill); outro agente não tem o que propor.
  */
 function proposeDraftTool(drafts: IDraftChecker): ILocalTool {
+  const text = (value: unknown) => (typeof value === 'string' ? value : undefined)
   return {
     origin: 'local',
     name: PROPOSE_DRAFT_TOOL,
     description:
-      'Hands the draft to the person, who reviews and saves it. Nothing is saved by this tool. It checks the draft with the same rules as saving and returns the problems field by field: fix them and call it again.',
+      'Hands the draft to the person, who reviews it next to the conversation. Nothing is saved by this tool. It checks the draft with the same rules as saving and returns the problems field by field: fix them and call it again. Fields by kind — rule: title, body; spec/adr: id, title, summary, body; skill/command: id, description, body, docIds.',
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: 'Slug: 2–48 lowercase letters, digits or hyphens. An existing id of the same kind means adjusting it.' },
-        description: { type: 'string', description: 'One concrete line: what it does and when to use it.' },
-        body: { type: 'string', description: 'The markdown body, following the protocol.' },
-        docIds: { type: 'array', items: { type: 'string' }, description: 'Specs and ADRs to attach (ids from the document index).' },
+        id: { type: 'string', description: 'spec/adr/skill/command: slug of lowercase letters, digits or hyphens. An existing id of the same kind means adjusting it.' },
+        title: { type: 'string', description: 'rule/spec/adr: the short title.' },
+        summary: { type: 'string', description: 'spec/adr: one line — what shows in the conversation index.' },
+        description: { type: 'string', description: 'skill/command: one concrete line — what it does and when to use it.' },
+        body: { type: 'string', description: 'The body, following the protocol (markdown; a rule is one or two imperative sentences).' },
+        docIds: { type: 'array', items: { type: 'string' }, description: 'skill/command: specs and ADRs to attach (ids from the document index).' },
         global: { type: 'boolean', description: 'true = global (all projects). Default: the project of the conversation.' },
       },
-      required: ['id', 'description', 'body'],
+      required: ['body'],
       additionalProperties: false,
     },
     execute: async (args, context) => {
@@ -180,19 +184,22 @@ function proposeDraftTool(drafts: IDraftChecker): ILocalTool {
       if (!kind) return { status: 'error', result: `${PROPOSE_DRAFT_TOOL} is only for the core builder.` }
       const draft = {
         kind,
-        id: typeof args.id === 'string' ? args.id : undefined,
-        description: typeof args.description === 'string' ? args.description : undefined,
-        body: typeof args.body === 'string' ? args.body : undefined,
+        id: text(args.id),
+        title: text(args.title),
+        summary: text(args.summary),
+        description: text(args.description),
+        body: text(args.body),
         docIds: Array.isArray(args.docIds) ? args.docIds.filter((id): id is string => typeof id === 'string') : undefined,
         global: args.global === true,
       }
-      const { issues, updates, resource } = drafts.draftIssues(draft, context?.conversationProjectId)
+      const { issues, updates, id, projectId } = drafts.draftIssues(draft, context?.conversationProjectId)
       if (issues.length)
         return { status: 'error', result: `The draft has problems — fix and call again:\n${issues.map((issue) => `- ${issue.field}: ${issue.message}`).join('\n')}` }
-      const scope = resource.projectId ? `project ${resource.projectId}` : 'global'
+      const scope = projectId ? `project ${projectId}` : 'global'
+      const what = updates ? `adjusts the existing ${kind} ${id}` : `new ${kind}${id ? ` ${id}` : ''}`
       return {
         status: 'success',
-        result: `Draft delivered (${updates ? `adjusts the existing ${kind} ${resource.id}` : `new ${kind} ${resource.id}`}, ${scope}). Nothing was saved: the person reviews it next to the conversation and saves.`,
+        result: `Draft delivered (${what}, ${scope}). Nothing was saved: the person reviews it next to the conversation. Save it only after they confirm here.`,
       }
     },
   }
