@@ -47,8 +47,12 @@ export const TEST_AGENT_DIRECTORY = {
 }
 
 /** Um catálogo em memória já com os agentes de teste (e o que mais o teste passar). */
-export function testAgentCatalog(usable?: ConstructorParameters<typeof AgentCatalog>[1], runnable?: ConstructorParameters<typeof AgentCatalog>[2]): AgentCatalog {
+export function testAgentCatalog(
+  usable?: ConstructorParameters<typeof AgentCatalog>[1],
+  runnable?: ConstructorParameters<typeof AgentCatalog>[2],
+  core?: ConstructorParameters<typeof AgentCatalog>[3],
+): AgentCatalog {
   const repository = new NullAgentRepository()
   repository.seedOnce(TEST_AGENTS, 'teste')
-  return new AgentCatalog(repository, usable, runnable)
+  return new AgentCatalog(repository, usable, runnable, core)
 }

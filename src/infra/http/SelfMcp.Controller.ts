@@ -384,6 +384,17 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   )
 
   server.registerTool(
+    'get_protocol',
+    {
+      description:
+        'How a skill or command must be built in this gateway: the core protocol (shipped with the gateway, versioned) and the administrators addenda (global, then the project one), which add to it. Follow both when creating or adjusting one.',
+      inputSchema: { kind: z.enum(['skill', 'command']), projectId: z.string().optional() },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ kind, projectId }) => reply(await api('GET', `/protocols/${kind}`, { query: { project: projectId } })),
+  )
+
+  server.registerTool(
     'get_agent_resources',
     {
       description: 'The skills and commands an agent may use: ids, or ["*"] = every global one plus those of its project.',

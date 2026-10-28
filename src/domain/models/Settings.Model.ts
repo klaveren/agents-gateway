@@ -65,6 +65,13 @@ export interface IAgentSettings {
   classifierProvider?: string
   classifyTurns?: boolean
 
+  /**
+   * O provider e o modelo do CONSTRUTOR (o agente do core que redige skills e commands, ver `Builder.Agents`).
+   * Ausentes = os do Atlas. ⚖️ É o único botão sobre ele: o resto é do core.
+   */
+  builderProvider?: string
+  builderModel?: string
+
   /** Os tetos ajustáveis (ver `Limits.Model`). Ausente, ou um limite ausente = o `.env` ou o padrão. */
   limits?: ILimits
 
@@ -113,6 +120,8 @@ export function normalizeSettings(raw: unknown): IAgentSettings {
     classifierModel: text(stored.classifierModel),
     classifierProvider: text(stored.classifierProvider),
     classifyTurns: typeof stored.classifyTurns === 'boolean' ? stored.classifyTurns : undefined,
+    builderProvider: text(stored.builderProvider),
+    builderModel: text(stored.builderModel),
     limits: normalizeLimits(stored.limits),
     updatedAt: date(stored.updatedAt),
     updatedBy: text(stored.updatedBy),
@@ -136,7 +145,7 @@ export type TSettingsChange = {
 } & { limits?: { [K in keyof ILimits]?: number | null } | null }
 
 /** Os campos que quem salva controla. `updatedAt`/`updatedBy` são carimbo, não escolha. */
-const EDITABLE = ['audience', 'agentId', 'provider', 'model', 'classifierModel', 'classifierProvider', 'classifyTurns', 'limits'] as const
+const EDITABLE = ['audience', 'agentId', 'provider', 'model', 'classifierModel', 'classifierProvider', 'classifyTurns', 'builderProvider', 'builderModel', 'limits'] as const
 const REQUIRED = ['audience'] as const
 
 /**

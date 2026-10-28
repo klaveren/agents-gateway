@@ -3,6 +3,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { api } from '@/lib/api'
 import type { IConversation } from '@/lib/types'
 import { useRouter } from 'vue-router'
+import { coreAgentName } from '@/lib/builder'
 import { useAgentCommands } from '@/lib/commands'
 import { contextMeter } from '@/lib/contextMeter'
 import { fullTime, tokens, usd } from '@/lib/format'
@@ -18,6 +19,9 @@ import Icon from './Icon.vue'
 import SessionTuner from './SessionTuner.vue'
 import TurnBubbles from './TurnBubbles.vue'
 
+/** `embedded`: dentro de outra tela (a guia Construir) — sem voltar, compartilhar nem "comece uma nova"; apagar avisa quem embute. */
+const props = defineProps<{ embedded?: boolean }>()
+const emit = defineEmits<{ removed: [] }>()
 const router = useRouter()
 const auth = useAuthStore()
 const agents = useAgentsStore()
@@ -35,6 +39,8 @@ const actionError = ref<string>()
 
 const header = computed(() => thread.header)
 const agent = computed(() => agents.byId.get(header.value?.agentId ?? thread.draft?.agentId ?? ''))
+/** O nome do agente — o do core (o construtor) não está na lista de agentes. */
+const agentName = computed(() => agent.value?.name ?? coreAgentName(header.value?.agentId ?? thread.agentId) ?? header.value?.agentId)
 const owner = computed(() => header.value?.metadata?.owner)
 const shareUrl = computed(() => (header.value?.shared && header.value.shareId ? `${location.origin}/v1/shared/${header.value.shareId}` : ''))
 /** Os `/commands` que a pessoa pode usar com este agente (o autocompletar da caixa). */
@@ -138,7 +144,8 @@ async function remove() {
   try {
     await conversations.remove(header.value.id)
     confirming.value = false
-    await router.push('/')
+    if (props.embedded) emit('removed')
+    else await router.push('/')
   } catch (error) {
     deleteError.value = error instanceof Error ? error.message : String(error)
   } finally {
@@ -158,12 +165,12 @@ async function continueFresh() {
 <template>
   <section class="flex h-full flex-col">
     <header class="flex items-center gap-3 border-b border-zinc-800/80 bg-zinc-900/40 px-4 py-2.5">
-      <RouterLink to="/" class="grid h-9 w-9 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 lg:hidden" title="Voltar"><Icon name="back" class="h-5 w-5" /></RouterLink>
-      <AgentAvatar :name="agent?.name ?? header?.agentId ?? '?'" :provider="currentProvider || 'claude'" size="sm" />
+      <RouterLink v-if="!embedded" to="/" class="grid h-9 w-9 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 lg:hidden" title="Voltar"><Icon name="back" class="h-5 w-5" /></RouterLink>
+      <AgentAvatar :name="agentName ?? '?'" :provider="currentProvider || 'claude'" size="sm" />
       <div class="min-w-0">
-        <div class="truncate font-medium">{{ header?.title || agent?.name || 'Conversa' }}</div>
+        <div class="truncate font-medium">{{ header?.title || agentName || 'Conversa' }}</div>
         <div class="truncate text-xs text-zinc-400">
-          {{ agent?.name ?? header?.agentId }} · {{ protocols.providerName(currentProvider) }} {{ currentModel }}<template v-if="thread.session?.reasoning"> ({{ thread.session.reasoning }})</template> ·
+          {{ agentName }} · {{ protocols.providerName(currentProvider) }} {{ currentModel }}<template v-if="thread.session?.reasoning"> ({{ thread.session.reasoning }})</template> ·
           {{ header?.mode === 'agent' ? 'Agents SDK' : 'chat' }}
           <template v-if="auth.isAdmin && owner"> · {{ owner.email ?? owner.id }}</template>
         </div>
@@ -178,7 +185,7 @@ async function continueFresh() {
         </div>
         <template v-if="header">
           <span v-if="auth.isAdmin && header.costUsd !== undefined" class="mr-2 hidden text-xs text-zinc-400 sm:inline">{{ tokens(header.usage.totalTokens) }} tokens · {{ header.costIsFloor ? '≥ ' : '' }}{{ usd(header.costUsd) }}</span>
-          <button class="grid h-9 w-9 place-items-center rounded-full hover:bg-zinc-800" :class="header.shared ? 'text-emerald-400' : 'text-zinc-400'" :title="header.shared ? 'Parar de compartilhar' : 'Compartilhar por link'" @click="toggleShare">
+          <button v-if="!embedded" class="grid h-9 w-9 place-items-center rounded-full hover:bg-zinc-800" :class="header.shared ? 'text-emerald-400' : 'text-zinc-400'" :title="header.shared ? 'Parar de compartilhar' : 'Compartilhar por link'" @click="toggleShare">
             <Icon name="share" class="h-5 w-5" />
           </button>
           <button class="grid h-9 w-9 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 hover:text-rose-300" title="Apagar histórico" @click="confirming = true">
@@ -232,7 +239,7 @@ async function continueFresh() {
     <!-- ⚖️ Sessão encerrada (expirou, ou o gateway reiniciou) não tranca a conversa: ao enviar, o gateway a retoma com o histórico. -->
     <div v-if="resumable" class="flex flex-wrap items-center gap-3 border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-2 text-xs text-zinc-400">
       <span>Sessão encerrada — ao enviar, a conversa continua de onde parou: o agente recebe o histórico (o texto e as ferramentas usadas; anexos não voltam).</span>
-      <button class="ml-auto flex items-center gap-1.5 rounded-full px-3 py-1 text-zinc-300 hover:bg-zinc-800" @click="continueFresh">
+      <button v-if="!embedded" class="ml-auto flex items-center gap-1.5 rounded-full px-3 py-1 text-zinc-300 hover:bg-zinc-800" @click="continueFresh">
         <Icon name="refresh" class="h-3.5 w-3.5" /> ou comece uma nova
       </button>
     </div>

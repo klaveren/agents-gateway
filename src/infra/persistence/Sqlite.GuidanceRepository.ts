@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync, SQLInputValue } from 'node:sqlite'
 import { IProjectDoc, TDocKind } from '@domain/models/ProjectDoc.Model'
+import { IProtocolAddendum, TProtocolKind } from '@domain/models/Protocol.Model'
 import { IAgentResources, IResource, TResourceKind } from '@domain/models/Resource.Model'
 import { IRule } from '@domain/models/Rule.Model'
 import { IGuidanceRepository, TDocPatch, TGuidanceScope, TRulePatch } from '@domain/ports/GuidanceRepository.Port'
@@ -68,6 +69,14 @@ const SCHEMA = `
     added_at     TEXT NOT NULL,
     added_by     TEXT,
     PRIMARY KEY (agent_id, kind, resource_id)
+  );
+  CREATE TABLE IF NOT EXISTS protocol_addenda (
+    kind        TEXT NOT NULL,
+    project_id  TEXT NOT NULL DEFAULT '',
+    body        TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    updated_by  TEXT,
+    PRIMARY KEY (kind, project_id)
   );
 `
 
@@ -263,6 +272,32 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
     this.db.prepare('DELETE FROM agent_resources WHERE agent_id = ?').run(agentId)
   }
 
+  /** ⚠️ O global é `project_id = ''`, não NULL: NULL não colide na chave primária, e o global viraria vários. */
+  protocolAddendum(kind: TProtocolKind, scope: TGuidanceScope): IProtocolAddendum | undefined {
+    const row = this.db.prepare('SELECT * FROM protocol_addenda WHERE kind = ? AND project_id = ?').get(kind, scope ?? '') as TRow | undefined
+    if (!row) return undefined
+    return {
+      kind: row.kind as TProtocolKind,
+      ...(row.project_id ? { projectId: row.project_id as string } : {}),
+      body: row.body as string,
+      updatedAt: new Date(row.updated_at as string),
+      ...(row.updated_by ? { updatedBy: row.updated_by as string } : {}),
+    }
+  }
+
+  setProtocolAddendum(kind: TProtocolKind, scope: TGuidanceScope, addendum: IProtocolAddendum | undefined): void {
+    if (!addendum) {
+      this.db.prepare('DELETE FROM protocol_addenda WHERE kind = ? AND project_id = ?').run(kind, scope ?? '')
+      return
+    }
+    this.db
+      .prepare(
+        `INSERT INTO protocol_addenda (kind, project_id, body, updated_at, updated_by) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(kind, project_id) DO UPDATE SET body = excluded.body, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+      )
+      .run(kind, scope ?? '', addendum.body, addendum.updatedAt.toISOString(), addendum.updatedBy ?? null)
+  }
+
   private allResources(): IResource[] {
     return (this.db.prepare('SELECT * FROM resources').all() as TRow[]).map(toResource)
   }
@@ -286,6 +321,7 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
     this.db.prepare('DELETE FROM rules WHERE project_id = ?').run(projectId)
     this.db.prepare('DELETE FROM project_docs WHERE project_id = ?').run(projectId)
     this.db.prepare('DELETE FROM project_context_docs WHERE project_id = ?').run(projectId)
+    this.db.prepare('DELETE FROM protocol_addenda WHERE project_id = ?').run(projectId)
     const ids = (this.db.prepare('SELECT id FROM resources WHERE project_id = ?').all(projectId) as TRow[]).map((row) => row.id as string)
     for (const id of ids) this.deleteResource(id)
   }

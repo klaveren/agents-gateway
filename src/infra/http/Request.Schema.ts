@@ -84,6 +84,8 @@ export const updateSettingsSchema = z.object({
   // ⚠️ Só gravados por enquanto: o classificador de turno chega numa fase posterior.
   classifierModel: clearable,
   classifierProvider: clearable,
+  builderProvider: clearable,
+  builderModel: clearable,
   classifyTurns: z.boolean().nullable().optional(),
   // Cada limite na faixa dele; `null` num limite volta ao `.env`, e `null` no objeto volta todos.
   limits: z

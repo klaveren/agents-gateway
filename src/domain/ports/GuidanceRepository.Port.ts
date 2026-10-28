@@ -1,4 +1,5 @@
 import { IProjectDoc, TDocKind } from '@domain/models/ProjectDoc.Model'
+import { IProtocolAddendum, TProtocolKind } from '@domain/models/Protocol.Model'
 import { IAgentResources, IResource, TResourceKind } from '@domain/models/Resource.Model'
 import { IRule } from '@domain/models/Rule.Model'
 
@@ -50,6 +51,11 @@ export interface IGuidanceRepository {
   agentResources(agentId: string): IAgentResources
   setAgentResources(agentId: string, resources: IAgentResources, by: string): void
   deleteAgentResources(agentId: string): void
+
+  /** O complemento do protocolo de um tipo, no escopo. */
+  protocolAddendum(kind: TProtocolKind, scope: TGuidanceScope): IProtocolAddendum | undefined
+  /** Grava o complemento; `undefined` apaga. */
+  setProtocolAddendum(kind: TProtocolKind, scope: TGuidanceScope, addendum: IProtocolAddendum | undefined): void
 
   /** O projeto foi apagado: as rules, os documentos e o contexto inicial dele vão junto. */
   deleteProject(projectId: string): void

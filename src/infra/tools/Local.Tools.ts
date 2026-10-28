@@ -4,7 +4,8 @@ import { bashPolicy, denyReason, truncate, type IBashPolicy } from './Bash.Guard
 import { subscriptionEnv, workspaceFor } from '@infra/adapters/support/Subscription.Workspace'
 import { IProjectSandbox, projectSandbox, SANDBOX_SHELL } from '@infra/sandbox/Project.Sandbox'
 import { IProjectDoc, READ_DOC_TOOL } from '@domain/models/ProjectDoc.Model'
-import { USE_SKILL_TOOL } from '@domain/models/Resource.Model'
+import { IResource, IResourceDraft, USE_SKILL_TOOL } from '@domain/models/Resource.Model'
+import { builderKindOf, PROPOSE_DRAFT_TOOL } from '@domain/Builder.Agents'
 import { ILocalTool, IToolResult } from './Tool.Types'
 
 export interface IExecOptions {
@@ -24,6 +25,11 @@ export interface IDocReader {
   readDoc(id: string, projectId?: string): IProjectDoc | undefined
 }
 
+/** Quem confere o rascunho do construtor sem gravar (o `GuidanceService`). */
+export interface IDraftChecker {
+  draftIssues(draft: IResourceDraft, projectId?: string): { issues: Array<{ field: string; message: string }>; updates: boolean; resource: IResource }
+}
+
 /** Quem carrega uma skill para o agente (o `GuidanceService`). */
 export interface ISkillLoader {
   loadSkill(id: string, agentId?: string): string | undefined
@@ -39,6 +45,8 @@ export interface ILocalToolDeps {
   skills?: ISkillLoader
   /** Os documentos (specs e ADRs). Ausente = sem `read_doc`. */
   docs?: IDocReader
+  /** O conferente dos rascunhos do construtor. Ausente = sem `propose_draft`. */
+  drafts?: IDraftChecker
 }
 
 const EXEC_BUFFER_BYTES = 1024 * 1024
@@ -140,7 +148,54 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     },
     ...(deps.docs ? [readDocTool(deps.docs)] : []),
     ...(deps.skills ? [useSkillTool(deps.skills)] : []),
+    ...(deps.drafts ? [proposeDraftTool(deps.drafts)] : []),
   ]
+}
+
+/**
+ * `propose_draft`: o construtor entrega o rascunho. ⛔ NÃO GRAVA: confere com as regras do cadastro e devolve os
+ * problemas ao modelo (para ele corrigir) ou o aceite. A tela lê o rascunho dos argumentos da chamada e a pessoa salva.
+ * O tipo vem do agente (o construtor de skills só propõe skill); outro agente não tem o que propor.
+ */
+function proposeDraftTool(drafts: IDraftChecker): ILocalTool {
+  return {
+    origin: 'local',
+    name: PROPOSE_DRAFT_TOOL,
+    description:
+      'Hands the draft to the person, who reviews and saves it. Nothing is saved by this tool. It checks the draft with the same rules as saving and returns the problems field by field: fix them and call it again.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Slug: 2–48 lowercase letters, digits or hyphens. An existing id of the same kind means adjusting it.' },
+        description: { type: 'string', description: 'One concrete line: what it does and when to use it.' },
+        body: { type: 'string', description: 'The markdown body, following the protocol.' },
+        docIds: { type: 'array', items: { type: 'string' }, description: 'Specs and ADRs to attach (ids from the document index).' },
+        global: { type: 'boolean', description: 'true = global (all projects). Default: the project of the conversation.' },
+      },
+      required: ['id', 'description', 'body'],
+      additionalProperties: false,
+    },
+    execute: async (args, context) => {
+      const kind = builderKindOf(context?.agentId)
+      if (!kind) return { status: 'error', result: `${PROPOSE_DRAFT_TOOL} is only for the core builder.` }
+      const draft = {
+        kind,
+        id: typeof args.id === 'string' ? args.id : undefined,
+        description: typeof args.description === 'string' ? args.description : undefined,
+        body: typeof args.body === 'string' ? args.body : undefined,
+        docIds: Array.isArray(args.docIds) ? args.docIds.filter((id): id is string => typeof id === 'string') : undefined,
+        global: args.global === true,
+      }
+      const { issues, updates, resource } = drafts.draftIssues(draft, context?.conversationProjectId)
+      if (issues.length)
+        return { status: 'error', result: `The draft has problems — fix and call again:\n${issues.map((issue) => `- ${issue.field}: ${issue.message}`).join('\n')}` }
+      const scope = resource.projectId ? `project ${resource.projectId}` : 'global'
+      return {
+        status: 'success',
+        result: `Draft delivered (${updates ? `adjusts the existing ${kind} ${resource.id}` : `new ${kind} ${resource.id}`}, ${scope}). Nothing was saved: the person reviews it next to the conversation and saves.`,
+      }
+    },
+  }
 }
 
 /**

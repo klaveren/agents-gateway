@@ -33,6 +33,7 @@ import { ProjectsController } from './Projects.Controller'
 import { GuidanceController } from './Guidance.Controller'
 import { GuidanceService } from '@application/Guidance.Service'
 import { SqliteGuidanceRepository } from '@infra/persistence/Sqlite.GuidanceRepository'
+import { builderAgent } from '@domain/Builder.Agents'
 
 /**
  * Projetos de ponta a ponta: o membro de um projeto não vê nada do outro, o agente global aparece nos dois,
@@ -105,7 +106,7 @@ describe('Projetos (integração)', () => {
   const resumed: string[] = []
 
   const folders = mkdtempSync(join(tmpdir(), 'gw-projects-test-'))
-  const agents = testAgentCatalog()
+  const agents = testAgentCatalog(undefined, undefined, () => [builderAgent('skill', { provider: EProvider.CLAUDE, models: ['m'] })])
   const projects = new ProjectsService(
     new SqliteProjectRepository(':memory:'),
     () => agents.list(),
@@ -342,5 +343,40 @@ describe('Projetos (integração)', () => {
     assert.match(received.at(-1)!.text, /Diga olá para Maria\.$/)
     const turns = (await call(ANA, 'GET', `/conversations/${id}/turns`)).body.result.turns as Array<{ request: string }>
     assert.strictEqual(turns.at(-1)!.request, '/saudar Maria')
+  })
+
+  it('⛔ o construtor: só o admin abre; a conversa nasce marcada (a marca do corpo não vale) e fica fora da caixa de entrada', async () => {
+    assert.strictEqual((await call(ANA, 'POST', '/sessions', { agentId: 'builder-skill', projectId: 'alfa' })).status, 404)
+    assert.ok(!(await agentIds(ADMIN)).includes('builder-skill'), 'o construtor não aparece em Agentes')
+
+    const opened = await call(ADMIN, 'POST', '/sessions', { agentId: 'builder-skill', projectId: 'alfa' })
+    assert.strictEqual(opened.status, 201)
+    const id = opened.body.result.id as string
+    assert.deepStrictEqual([sessions.get(id)?.metadata?.builder, sessions.get(id)?.metadata?.project], ['skill', 'alfa'])
+    await call(ADMIN, 'POST', `/sessions/${id}/messages`, { message: 'quero uma skill' })
+
+    const forged = await call(ADMIN, 'POST', '/sessions', { agentId: GOOGLE_TEST_AGENT.id, projectId: 'alfa', metadata: { builder: 'skill' } })
+    assert.strictEqual(sessions.get(forged.body.result.id)?.metadata?.builder, undefined)
+
+    // O turno chega ao banco um instante depois do stream.
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    const inbox = (await call(ADMIN, 'GET', '/conversations?project=alfa')).body.result.sessions as Array<{ id: string }>
+    assert.ok(!inbox.some((session) => session.id === id))
+    const builds = (await call(ADMIN, 'GET', '/conversations?project=alfa&builder=skill')).body.result.sessions as Array<{ id: string }>
+    assert.deepStrictEqual(
+      builds.map((session) => session.id),
+      [id],
+    )
+  })
+
+  it('⛔ o protocolo é do admin: o do core e o complemento por escopo; para o membro, 404', async () => {
+    const core = await call(ADMIN, 'GET', '/protocols/skill?project=alfa')
+    assert.strictEqual(core.status, 200)
+    assert.match(core.body.result.core.body, /Protocolo de construção de skill/)
+    const saved = await call(ADMIN, 'PUT', '/protocols/skill/addendum', { projectId: 'alfa', body: 'O id começa com alfa-.' })
+    assert.deepStrictEqual([saved.status, saved.body.result.addenda.project.body], [200, 'O id começa com alfa-.'])
+    assert.strictEqual((await call(ADMIN, 'GET', '/protocols/agente')).status, 422)
+    assert.strictEqual((await call(ANA, 'GET', '/protocols/skill')).status, 404)
+    assert.strictEqual((await call(ANA, 'PUT', '/protocols/skill/addendum', { body: 'x' })).status, 404)
   })
 })

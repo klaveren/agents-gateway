@@ -22,6 +22,9 @@ const model = ref('')
 const classifier = ref('')
 const classifierOptions = ref<Array<{ value: string; provider: string; model: string }>>([])
 const classifyTurns = ref(false)
+/** `provider::modelo` do construtor de skills e commands — vazio = o do Atlas. Lane agent: assinatura serve. */
+const builder = ref('')
+const builderOptions = ref<Array<{ value: string; provider: string; model: string }>>([])
 const saved = ref<string>()
 const failure = ref<string>()
 /** Os problemas de um 422, campo a campo — mostrados junto do Salvar. */
@@ -73,6 +76,12 @@ async function loadClassifierOptions() {
       .map(async (provider) => (await providers.models(provider.id).catch(() => [])).filter((model) => model.enabled).map((model) => ({ value: `${provider.id}::${model.modelId}`, provider: provider.id, model: model.modelId }))),
   )
   classifierOptions.value = lists.flat()
+  const runnable = await Promise.all(
+    providers.list
+      .filter((provider) => provider.enabled && (provider.subscription || provider.credential.configured))
+      .map(async (provider) => (await providers.models(provider.id).catch(() => [])).filter((model) => model.enabled).map((model) => ({ value: `${provider.id}::${model.modelId}`, provider: provider.id, model: model.modelId }))),
+  )
+  builderOptions.value = runnable.flat()
 }
 
 watch(
@@ -85,6 +94,7 @@ watch(
     model.value = current.model ? `${current.provider ?? providerOfModel(current.model)}|${current.model}` : ''
     classifier.value = current.classifierModel ? `${current.classifierProvider ?? ''}::${current.classifierModel}` : ''
     classifyTurns.value = current.classifyTurns ?? false
+    builder.value = current.builderModel ? `${current.builderProvider ?? ''}::${current.builderModel}` : ''
     limitDrafts.value = Object.fromEntries(LIMITS.map(({ name }) => [name, current.limits?.[name] ?? ''])) as Partial<Record<TLimitName, number | ''>>
   },
   { immediate: true },
@@ -107,6 +117,7 @@ async function saveSettings() {
   try {
     // Vazio vira `null`: volta ao padrão em vez de gravar texto em branco.
     const [classifierProvider, classifierModel] = classifier.value ? classifier.value.split('::') : ['', '']
+    const [builderProvider, builderModel] = builder.value ? builder.value.split('::') : ['', '']
     await settings.save({
       audience: audience.value,
       agentId: agentId.value || null,
@@ -115,6 +126,8 @@ async function saveSettings() {
       classifierModel: classifierModel || null,
       classifierProvider: classifierProvider || null,
       classifyTurns: classifyTurns.value,
+      builderProvider: builderProvider || null,
+      builderModel: builderModel || null,
       // Vazio = `null`: o limite volta ao padrão do `.env`.
       limits: Object.fromEntries(LIMITS.map(({ name }) => [name, limitDrafts.value[name] === '' || limitDrafts.value[name] === undefined ? null : Number(limitDrafts.value[name])])),
     })
@@ -176,6 +189,15 @@ async function saveSettings() {
           </label>
           <label class="flex items-center gap-2 self-end pb-2 text-sm text-zinc-300">
             <input v-model="classifyTurns" type="checkbox" class="accent-emerald-500" /> Classificar cada turno
+          </label>
+          <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
+            Modelo do construtor
+            <select v-model="builder" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2 text-sm">
+              <option value="">O do Atlas</option>
+              <option v-if="builder && !builderOptions.some((option) => option.value === builder)" :value="builder">{{ builder.replace('::', ' · ') }} (não ativado)</option>
+              <option v-for="option in builderOptions" :key="option.value" :value="option.value">{{ protocols.providerName(option.provider) }} · {{ option.model }}</option>
+            </select>
+            <small class="text-xs text-zinc-500">O agente do sistema que redige skills e commands (guia Construir). Prefira um modelo forte: ele segue o protocolo e pergunta o que falta.</small>
           </label>
         </div>
 

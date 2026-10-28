@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import { makeLocalTools, type IExecOptions, type TExec } from './Local.Tools'
 import { ILocalTool } from './Tool.Types'
+import { GuidanceService } from '@application/Guidance.Service'
+import { SqliteGuidanceRepository } from '@infra/persistence/Sqlite.GuidanceRepository'
 
 describe('LocalTools', () => {
   const policy = { timeoutMs: 1234, maxOutputChars: 50, cwd: '/tmp/sandbox' }
@@ -198,5 +200,37 @@ describe('LocalTools — use_skill', () => {
     )!
     assert.deepStrictEqual(await tool.execute({ id: 'tabela' }, { agentId: 'dev' }), { status: 'success', result: '# Skill: tabela' })
     assert.deepStrictEqual(await tool.execute({ id: 'tabela' }, { agentId: 'outro' }), { status: 'error', result: 'Skill not found: tabela' })
+  })
+})
+
+describe('LocalTools — propose_draft', () => {
+  const guidance = () => {
+    const service = new GuidanceService(new SqliteGuidanceRepository(':memory:'), (id) => id === 'xpto')
+    service.createResource({ id: 'resumir', kind: 'command', description: 'Resume', body: 'Resuma $ARGUMENTS' }, 'root')
+    return service
+  }
+  const toolOf = (service: GuidanceService) => makeLocalTools({ drafts: service }).find((item) => item.name === 'propose_draft')!
+
+  it('só existe com o conferente, e só o construtor propõe (o tipo vem do agente)', async () => {
+    assert.ok(!makeLocalTools().some((tool) => tool.name === 'propose_draft'))
+    const result = await toolOf(guidance()).execute({ id: 'nova', description: 'd', body: 'b' }, { agentId: 'atlas' })
+    assert.deepStrictEqual(result, { status: 'error', result: 'propose_draft is only for the core builder.' })
+  })
+
+  it('⛔ devolve os problemas ao modelo; aceita o rascunho válido — e nada é gravado', async () => {
+    const service = guidance()
+    const tool = toolOf(service)
+    const wrong = await tool.execute({ id: 'resumir', description: '', body: 'b' }, { agentId: 'builder-skill', conversationProjectId: 'xpto' })
+    assert.strictEqual(wrong.status, 'error')
+    assert.match(String(wrong.result), /- id: already taken by a command: resumir\n- description: required/)
+
+    const right = await tool.execute({ id: 'xpto-revisar', description: 'Revisa', body: 'Passos' }, { agentId: 'builder-skill', conversationProjectId: 'xpto' })
+    assert.deepStrictEqual(right.status, 'success')
+    assert.match(String(right.result), /new skill xpto-revisar, project xpto\)\. Nothing was saved/)
+    assert.deepStrictEqual(service.resources('xpto'), [])
+
+    const adjust = await toolOf(service).execute({ id: 'resumir', description: 'Resume melhor', body: 'Resuma $ARGUMENTS', global: true }, { agentId: 'builder-command' })
+    assert.match(String(adjust.result), /adjusts the existing command resumir, global/)
+    assert.strictEqual(service.resource('resumir').description, 'Resume')
   })
 })

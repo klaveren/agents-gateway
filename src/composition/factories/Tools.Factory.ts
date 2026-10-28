@@ -43,7 +43,7 @@ export function makeTools(): ITools {
       servers,
       catalog: new ToolCatalog(
         mcp,
-        makeLocalTools({ docs: makeGuidance(), skills: makeGuidance() }),
+        makeLocalTools({ docs: makeGuidance(), skills: makeGuidance(), drafts: makeGuidance() }),
         (allowed) => makeDelegateTool(runnableTargets(allowed), delegation),
         containerProxy,
       ),

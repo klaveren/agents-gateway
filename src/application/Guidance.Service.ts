@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { builderKindOf, PROTOCOLS } from '@domain/Builder.Agents'
 import { estimateTokens } from '@domain/Token.Estimate'
 import { AgentNotFoundError, GuidanceNotFoundError, InvalidGuidanceError, ProjectNotFoundError } from '@domain/errors/Domain.Error'
 import { DOC_BODY_MAX, DOC_ID_PATTERN, DOC_KINDS, DOC_SUMMARY_MAX, DOC_TITLE_MAX, IProjectDoc, READ_DOC_TOOL, TDocKind } from '@domain/models/ProjectDoc.Model'
@@ -6,6 +7,7 @@ import {
   ALL_RESOURCES,
   IAgentResources,
   IResource,
+  IResourceDraft,
   RESOURCE_BODY_MAX,
   RESOURCE_DESCRIPTION_MAX,
   RESOURCE_ID_PATTERN,
@@ -13,6 +15,7 @@ import {
   TResourceKind,
   USE_SKILL_TOOL,
 } from '@domain/models/Resource.Model'
+import { IProtocolAddendum, IProtocolView, PROTOCOL_ADDENDUM_MAX, TProtocolKind } from '@domain/models/Protocol.Model'
 import { IRule, RULE_BODY_MAX, RULE_TITLE_MAX } from '@domain/models/Rule.Model'
 import { IGuidanceRepository, TGuidanceScope } from '@domain/ports/GuidanceRepository.Port'
 
@@ -54,7 +57,13 @@ export interface IEnvironmentParts {
   index?: string
   skills?: string
   commands?: string
+  /** Só no construtor: o complemento do protocolo (o global, depois o do projeto). */
+  protocol?: string
+  /** Só no construtor: o que já existe do tipo que ele constrói (id e descrição). */
+  existing?: string
 }
+
+export type { IResourceDraft }
 
 export interface IResourceInput {
   id?: string
@@ -309,7 +318,9 @@ export class GuidanceService {
    */
   environmentFor(projectId?: string, agentId?: string): string | undefined {
     const parts = this.environmentParts(projectId, agentId)
-    const sections = [parts.rules, parts.projectSpecs, parts.agentSpecs, parts.skills, parts.commands, parts.index].filter((part): part is string => !!part)
+    const sections = [parts.rules, parts.projectSpecs, parts.agentSpecs, parts.skills, parts.commands, parts.index, parts.protocol, parts.existing].filter(
+      (part): part is string => !!part,
+    )
     return sections.length ? sections.join('\n\n') : undefined
   }
 
@@ -363,6 +374,74 @@ export class GuidanceService {
         ...docs.map((doc) => `- [${doc.kind}] ${doc.id} — ${doc.title}${doc.summary ? `: ${doc.summary}` : ''}`),
       ].join('\n')
     }
+    const building = builderKindOf(agentId)
+    if (building) Object.assign(parts, this.builderParts(building, projectId))
+    return parts
+  }
+
+  /** O protocolo como vale no escopo: o do core e os complementos (o global e, com projeto, o dele). */
+  protocol(kind: TProtocolKind, projectId?: string): IProtocolView {
+    this.requireKind(kind)
+    if (projectId) this.requireProject(projectId)
+    const global = this.repository.protocolAddendum(kind, null)
+    const project = projectId ? this.repository.protocolAddendum(kind, projectId) : undefined
+    return { core: PROTOCOLS[kind], addenda: { ...(global ? { global } : {}), ...(project ? { project } : {}) } }
+  }
+
+  /** Grava o complemento do escopo (`null` = global). Corpo vazio apaga. ⚖️ Soma ao core, nunca o substitui. */
+  setProtocolAddendum(kind: TProtocolKind, projectId: string | null, body: string, by: string): IProtocolView {
+    this.requireKind(kind)
+    const text = body.trim()
+    const issues: TIssues = text.length > PROTOCOL_ADDENDUM_MAX ? [{ field: 'body', message: `at most ${PROTOCOL_ADDENDUM_MAX} characters` }] : []
+    this.check(issues, projectId ?? undefined)
+    const addendum: IProtocolAddendum | undefined = text ? { kind, ...(projectId ? { projectId } : {}), body: text, updatedAt: this.now(), updatedBy: by } : undefined
+    this.repository.setProtocolAddendum(kind, projectId, addendum)
+    return this.protocol(kind, projectId ?? undefined)
+  }
+
+  /**
+   * Os problemas do rascunho, campo a campo, SEM gravar — as mesmas regras de `createResource`/`updateResource`.
+   * ⚖️ Um id que já existe, do mesmo tipo, é o rascunho de um AJUSTE: vale (`updates: true`); de outro tipo, não.
+   */
+  draftIssues(draft: IResourceDraft, projectId?: string): { issues: TIssues; updates: boolean; resource: IResource } {
+    const scope = draft.global ? undefined : projectId
+    const resource: IResource = {
+      id: draft.id?.trim() ?? '',
+      kind: draft.kind,
+      ...(scope ? { projectId: scope } : {}),
+      description: draft.description?.trim() ?? '',
+      body: draft.body ?? '',
+      docIds: draft.docIds ?? [],
+      createdAt: this.now(),
+      updatedAt: this.now(),
+    }
+    const issues = this.resourceIssues(resource)
+    const existing = RESOURCE_ID_PATTERN.test(resource.id) ? this.repository.resource(resource.id) : undefined
+    if (!RESOURCE_ID_PATTERN.test(resource.id)) issues.unshift({ field: 'id', message: 'use 2–48 lowercase letters, digits or hyphens' })
+    else if (existing && existing.kind !== resource.kind) issues.unshift({ field: 'id', message: `already taken by a ${existing.kind}: ${resource.id}` })
+    if (scope && !this.projectExists(scope)) issues.push({ field: 'projectId', message: `no such project: ${scope}` })
+    return { issues, updates: !!existing && existing.kind === resource.kind, resource }
+  }
+
+  /** O que o construtor recebe além do ambiente: o complemento do protocolo e o que já existe do tipo dele. */
+  private builderParts(kind: TProtocolKind, projectId?: string): Pick<IEnvironmentParts, 'protocol' | 'existing'> {
+    const parts: Pick<IEnvironmentParts, 'protocol' | 'existing'> = {}
+    const { global, project } = this.protocol(kind, projectId && this.projectExists(projectId) ? projectId : undefined).addenda
+    if (global || project) {
+      parts.protocol = [
+        '## Complemento do protocolo',
+        'Regras de quem administra este gateway, SOMADAS ao protocolo acima. Em conflito, vale o complemento.',
+        ...(global ? [`### Global\n${global.body}`] : []),
+        ...(project ? [`### Do projeto ${projectId}\n${project.body}`] : []),
+      ].join('\n\n')
+    }
+    const existing = [...this.repository.resources(null, kind), ...(projectId ? this.repository.resources(projectId, kind) : [])]
+    parts.existing = [
+      `## O que já existe (${kind === 'skill' ? 'skills' : 'commands'})`,
+      ...(existing.length
+        ? existing.map((resource) => `- ${kind === 'command' ? '/' : ''}${resource.id} [${resource.projectId ?? 'global'}] — ${resource.description}`)
+        : ['Nada ainda: este será o primeiro.']),
+    ].join('\n')
     return parts
   }
 
@@ -561,6 +640,10 @@ export class GuidanceService {
       else if (doc.projectId && doc.projectId !== resource.projectId) issues.push({ field: 'docIds', message: `${id} belongs to another project (${doc.projectId})` })
     }
     return issues
+  }
+
+  private requireKind(kind: TProtocolKind): void {
+    if (!RESOURCE_KINDS.includes(kind)) throw new InvalidGuidanceError([{ field: 'kind', message: `one of ${RESOURCE_KINDS.join(', ')}` }])
   }
 
   private requireProject(projectId: string): void {

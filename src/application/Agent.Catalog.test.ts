@@ -126,4 +126,13 @@ describe('AgentCatalog', () => {
     catalog.remove('juridico')
     assert.strictEqual(catalog.get('juridico'), undefined)
   })
+
+  it('⚖️ os agentes do core: o get os acha, a lista não (nem o padrão); e o id deles não serve para agente do catálogo', () => {
+    const core: IAgent = { ...base, id: 'builder-skill', name: 'Construtor de skills', adminOnly: true }
+    const catalog = new AgentCatalog(new NullAgentRepository(), undefined, undefined, () => [core])
+    assert.strictEqual(catalog.get('builder-skill')?.name, 'Construtor de skills')
+    assert.deepStrictEqual(catalog.list(), [])
+    assert.strictEqual(catalog.fallback(), undefined)
+    assert.throws(() => catalog.save({ ...base, id: 'builder-skill' }, options(true)), InvalidAgentError)
+  })
 })
