@@ -163,7 +163,7 @@ async function saveSettings() {
         <div class="grid gap-3 sm:grid-cols-2">
           <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
             Agente padrão
-            <select v-model="agentId" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2" @change="onAgentChange">
+            <select v-model="agentId" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9" @change="onAgentChange">
               <option value="">Padrão ({{ settings.current.defaults?.agentId ?? 'nenhum agente ativo' }})</option>
               <!-- Inativo aparece, mas não se escolhe: o servidor recusaria, e o motivo diz o que resolver. -->
               <option v-for="option in agents.conversable" :key="option.id" :value="option.id" :disabled="!!option.unavailable">{{ option.name }}{{ option.unavailable ? ` (${option.unavailable.label})` : '' }}</option>
@@ -171,7 +171,7 @@ async function saveSettings() {
           </label>
           <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
             Modelo padrão
-            <select v-model="model" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2">
+            <select v-model="model" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9">
               <option value="">Padrão do agente</option>
               <optgroup v-for="provider in agent?.providers ?? []" :key="provider.id" :label="provider.name">
                 <option v-for="option in provider.models" :key="option" :value="`${provider.id}|${option}`" :disabled="!!provider.unavailable">{{ option }}{{ provider.unavailable ? ` (${provider.unavailable.label})` : '' }}</option>
@@ -180,7 +180,7 @@ async function saveSettings() {
           </label>
           <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
             Modelo de classificação
-            <select v-model="classifier" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2 text-sm">
+            <select v-model="classifier" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 text-sm">
               <option value="">Nenhum (sem classificação)</option>
               <option v-if="classifier && !classifierOptions.some((option) => option.value === classifier)" :value="classifier">{{ classifier.replace('::', ' · ') }} (não ativado)</option>
               <option v-for="option in classifierOptions" :key="option.value" :value="option.value">{{ protocols.providerName(option.provider) }} · {{ option.model }}</option>
@@ -192,7 +192,7 @@ async function saveSettings() {
           </label>
           <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300 sm:col-span-2">
             Modelo do construtor
-            <select v-model="builder" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2 text-sm">
+            <select v-model="builder" class="w-full min-w-0 rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 text-sm">
               <option value="">Mesmo do Atlas</option>
               <option v-if="builder && !builderOptions.some((option) => option.value === builder)" :value="builder">{{ builder.replace('::', ' · ') }} (não ativado)</option>
               <option v-for="option in builderOptions" :key="option.value" :value="option.value">{{ protocols.providerName(option.provider) }} · {{ option.model }}</option>
@@ -214,7 +214,7 @@ async function saveSettings() {
                 :min="settings.current.limitBounds[limit.name]?.min"
                 :max="settings.current.limitBounds[limit.name]?.max"
                 :placeholder="String(settings.current.limitsInEffect?.[limit.name] ?? '')"
-                class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm tabular-nums"
+                class="h-9 rounded-lg border border-zinc-800 bg-zinc-900 px-3 text-sm tabular-nums"
               />
               <small class="text-xs text-zinc-500">{{ settings.current.limitBounds[limit.name]?.min }} a {{ settings.current.limitBounds[limit.name]?.max }}</small>
             </label>

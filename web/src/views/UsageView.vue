@@ -94,7 +94,7 @@ const go = (query: Record<string, string | undefined>) => router.replace({ query
         </div>
         <select
           v-if="projects.list.length > 1 || selectedProject"
-          class="ml-auto rounded-full bg-zinc-900 px-3 py-1.5 text-sm text-zinc-200 ring-1 ring-zinc-800"
+          class="ml-auto h-9 rounded-full bg-zinc-900 px-3 text-sm text-zinc-200 ring-1 ring-zinc-800"
           aria-label="Projeto"
           :value="selectedProject ?? ''"
           @change="go({ project: ($event.target as HTMLSelectElement).value || undefined })"
@@ -124,7 +124,7 @@ const go = (query: Record<string, string | undefined>) => router.replace({ query
       <template v-else-if="tab === 'keys'">
         <form class="flex flex-wrap items-center gap-2 text-sm" @submit.prevent="applyKey">
           <label class="text-zinc-400" for="metadata-key">Agrupar pelo campo</label>
-          <input id="metadata-key" v-model="keyDraft" class="w-48 rounded-lg bg-zinc-900 px-2 py-1 font-mono text-zinc-100 ring-1 ring-zinc-800" placeholder="accountId" />
+          <input id="metadata-key" v-model="keyDraft" class="w-48 rounded-lg bg-zinc-900 px-2 h-9 font-mono text-zinc-100 ring-1 ring-zinc-800" placeholder="accountId" />
           <button class="btn btn-secondary">Agrupar</button>
         </form>
         <template v-if="groups">

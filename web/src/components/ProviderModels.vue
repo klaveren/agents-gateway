@@ -147,13 +147,13 @@ function context(tokens?: number): string {
     <p v-if="error" class="text-xs text-rose-300">{{ error }}</p>
 
     <form class="flex flex-wrap items-center gap-2" @submit.prevent="addById">
-      <input v-model="newId" autocomplete="off" spellcheck="false" aria-label="Adicionar modelo pelo identificador" placeholder="Adicionar modelo pelo identificador" class="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-sm outline-none focus:border-emerald-500/60" />
+      <input v-model="newId" autocomplete="off" spellcheck="false" aria-label="Adicionar modelo pelo identificador" placeholder="Adicionar modelo pelo identificador" class="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-900 px-3 h-9 font-mono text-sm outline-none focus:border-emerald-500/60" />
       <button type="submit" :disabled="adding || !newId.trim()" class="btn btn-secondary">{{ adding ? 'Adicionando…' : 'Adicionar' }}</button>
       <p v-if="addError" class="w-full text-xs text-rose-300">{{ addError }}</p>
     </form>
 
     <div v-if="models.length" class="flex flex-wrap items-center gap-2">
-      <input v-model="search" type="search" placeholder="Buscar modelo…" class="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-sm outline-none focus:border-emerald-500/60" />
+      <input v-model="search" type="search" placeholder="Buscar modelo…" class="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-900 px-3 h-9 text-sm outline-none focus:border-emerald-500/60" />
       <label class="flex items-center gap-1.5 text-xs text-zinc-400"><input v-model="onlyEnabled" type="checkbox" class="accent-emerald-500" /> só ativados</label>
     </div>
 

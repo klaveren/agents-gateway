@@ -154,11 +154,11 @@ async function send(text: string, files: IOutgoingFile[], settle: (ok: boolean) 
             </div>
             <label class="text-xs font-medium text-zinc-400">
               Modelo
-              <ModelPicker :agent="agent" :value="choice" select-class="mt-1 w-full rounded-lg bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100" @pick="pickModel" />
+              <ModelPicker :agent="agent" :value="choice" select-class="mt-1 w-full rounded-lg bg-zinc-800 px-2 h-9 text-sm text-zinc-100" @pick="pickModel" />
             </label>
             <label v-if="reasoningLevels.length" class="text-xs font-medium text-zinc-400">
               Raciocínio
-              <select v-model="draft.reasoning" class="mt-1 w-full rounded-lg bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100">
+              <select v-model="draft.reasoning" class="mt-1 w-full rounded-lg bg-zinc-800 px-2 h-9 text-sm text-zinc-100">
                 <option :value="undefined">Padrão</option>
                 <option v-for="effort in reasoningLevels" :key="effort" :value="effort">{{ effortLabel(effort) }}</option>
               </select>

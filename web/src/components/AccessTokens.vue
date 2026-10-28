@@ -109,11 +109,11 @@ async function revoke() {
     <form class="flex flex-wrap items-end gap-2" @submit.prevent="create">
       <label class="flex min-w-0 flex-1 basis-40 flex-col gap-1 text-sm text-zinc-300">
         Nome
-        <input v-model="name" required maxlength="60" class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm" placeholder="Claude Code" />
+        <input v-model="name" required maxlength="60" class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 h-9 text-sm" placeholder="Claude Code" />
       </label>
       <label class="flex flex-col gap-1 text-sm text-zinc-300">
         Validade
-        <select v-model="days" class="rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2 text-sm">
+        <select v-model="days" class="rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 text-sm">
           <option v-for="option in DAYS" :key="option.label" :value="option.value">{{ option.label }}</option>
         </select>
       </label>

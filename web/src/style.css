@@ -126,3 +126,14 @@ select:not([multiple]) {
     @apply border-emerald-500/60 bg-emerald-500/15 text-emerald-200;
   }
 }
+
+/*
+ * Os CAMPOS de uma linha (`.input`) têm a altura dos botões de ação (36px): campo e botão lado a lado alinham.
+ * Fora de camada e mais específico que o `.input` de cada tela, de propósito; a área de texto não entra.
+ */
+input.input:not([type='checkbox']):not([type='radio']),
+select.input {
+  height: 2.25rem;
+  padding-top: 0;
+  padding-bottom: 0;
+}
