@@ -1,6 +1,6 @@
 import { IAgent } from '@domain/models/Agent.Model'
 import { mcpSelection } from '@domain/models/McpServer.Model'
-import { READ_DOC_TOOL } from '@domain/models/ProjectDoc.Model'
+import { READ_DOC_TOOL, SEARCH_DOCS_TOOL } from '@domain/models/ProjectDoc.Model'
 import { USE_SKILL_TOOL } from '@domain/models/Resource.Model'
 import { estimateTokens, toolTokens } from '@domain/Token.Estimate'
 import { IEnvironmentParts } from './Guidance.Service'
@@ -66,7 +66,7 @@ export async function agentFootprint(agent: IAgent, projectId: string | undefine
   add('index', 'Índice de documentos', parts.index)
 
   // As ferramentas que a conversa liga sozinha: `read_doc` com índice, `use_skill` com skill liberada (como o `AgentProvider`).
-  const automatic = [...(deps.guidance?.hasDocs(projectId, agent.id) ? [READ_DOC_TOOL] : []), ...(deps.guidance?.hasSkills?.(agent.id) ? [USE_SKILL_TOOL] : [])]
+  const automatic = [...(deps.guidance?.hasDocs(projectId, agent.id) ? [READ_DOC_TOOL, SEARCH_DOCS_TOOL] : []), ...(deps.guidance?.hasSkills?.(agent.id) ? [USE_SKILL_TOOL] : [])]
   const allowed = [...agent.allowedTools, ...automatic.filter((tool) => !agent.allowedTools.includes(tool))]
   const local = deps.localFor(allowed)
   if (local.length) sections.push(toolSection('local', 'Ferramentas locais', local))

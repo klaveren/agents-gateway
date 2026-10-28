@@ -466,4 +466,53 @@ describe('GuidanceService', () => {
       for (const kind of ['skill', 'command', 'rule', 'spec', 'adr'] as const) assert.strictEqual(service.protocol(kind).core.kind, kind)
     })
   })
+
+  describe('busca nos documentos (search_docs)', () => {
+    const seeded = () => {
+      const service = build()
+      service.createDoc(
+        { id: 'feature-flags', kind: 'knowledge', title: 'Feature flags', summary: 'Tipos e ciclo de vida', body: 'Liberação gradual com toggles de experimento e de operação.' },
+        'root',
+      )
+      service.createDoc({ id: 'api-rest', kind: 'spec', title: 'API REST', summary: 'Padrões de rota', body: 'Erros com código e mensagem; paginação por page.' }, 'root')
+      service.createDoc({ id: 'do-xpto', kind: 'spec', title: 'Toggles do XPTO', summary: 'Só do projeto', body: 'Flags de cliente.', projectId: 'xpto' }, 'root')
+      service.createDoc({ id: 'do-crm', kind: 'spec', title: 'Toggles do CRM', summary: 'Outro projeto', body: 'Flags do CRM.', projectId: 'crm' }, 'root')
+      return service
+    }
+    const ids = (hits: Array<{ id: string }>) => hits.map((hit) => hit.id).sort()
+
+    it('acha pelo texto, sem acento e por prefixo; só os globais e os do projeto da conversa', () => {
+      const service = seeded()
+      assert.deepStrictEqual(ids(service.searchDocs('liberacao toggle', 'xpto')), ['do-xpto', 'feature-flags'])
+      assert.deepStrictEqual(ids(service.searchDocs('flag')), ['feature-flags'])
+      assert.match(service.searchDocs('paginação')[0].excerpt, /«paginação»/)
+      assert.deepStrictEqual(ids(service.searchDocs('toggles', 'xpto', 'spec')), ['do-xpto'])
+    })
+
+    it('⛔ o texto do modelo não vira operador do FTS; sem termo, nada', () => {
+      const service = seeded()
+      assert.deepStrictEqual(service.searchDocs('title: NEAR(flags) AND "', undefined), service.searchDocs('title near flags and'))
+      assert.deepStrictEqual(service.searchDocs('  ?! '), [])
+    })
+
+    it('o índice acompanha o cadastro: editar e apagar valem na hora', () => {
+      const service = seeded()
+      service.updateDoc('api-rest', { body: 'Versionamento por cabeçalho.' }, 'root')
+      assert.deepStrictEqual(ids(service.searchDocs('paginação')), [])
+      assert.deepStrictEqual(ids(service.searchDocs('versionamento')), ['api-rest'])
+      service.deleteDoc('feature-flags')
+      assert.deepStrictEqual(ids(service.searchDocs('liberação')), [])
+      service.removeProject('xpto')
+      assert.deepStrictEqual(ids(service.searchDocs('toggles', 'xpto')), [])
+    })
+
+    it('⚖️ com muitos documentos, o índice do prompt lista os recentes e manda buscar o resto', () => {
+      const service = build()
+      for (let index = 0; index < 33; index += 1) service.createDoc({ ...doc(`doc-${String(index).padStart(2, '0')}`) }, 'root')
+      const index = service.environmentParts().index!
+      assert.strictEqual(index.split('\n').filter((line) => line.startsWith('- [spec]')).length, 30)
+      assert.match(index, /- … e mais 3 documento\(s\): ache com search_docs\.$/)
+      assert.match(index, /use search_docs/)
+    })
+  })
 })

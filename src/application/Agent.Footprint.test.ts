@@ -23,7 +23,7 @@ describe('agentFootprint', () => {
       environmentParts: (projectId?: string) => ({ rules: `## Regras do ambiente\n1. de ${projectId}`, index: '## Documentos de referência\n- [spec] a — A' }),
       hasDocs: () => true,
     },
-    localFor: (allowed: readonly string[]) => allowed.filter((name) => ['run_bash', 'read_doc'].includes(name)).map((name) => ({ name, description: `${name}.` })),
+    localFor: (allowed: readonly string[]) => allowed.filter((name) => ['run_bash', 'read_doc', 'search_docs'].includes(name)).map((name) => ({ name, description: `${name}.` })),
     mcpTools: async (server: string) => (server === 'crm' ? [stats, { name: 'outra', description: 'Não escolhida.' }] : undefined),
   }
 
@@ -34,8 +34,8 @@ describe('agentFootprint', () => {
     assert.strictEqual(by.soul.tokens, estimateTokens('## Quem você é\nCalmo.\n\n## Como você trabalha\n'))
     assert.strictEqual(by.instructions.tokens, estimateTokens('Você escreve código.'))
     assert.strictEqual(by.rules.tokens, estimateTokens('## Regras do ambiente\n1. de xpto'))
-    // O `read_doc` entra sozinho quando há índice, como na conversa.
-    assert.deepStrictEqual(by.local.items?.map((item) => item.name).sort(), ['read_doc', 'run_bash'])
+    // O `read_doc` e o `search_docs` entram sozinhos quando há índice, como na conversa.
+    assert.deepStrictEqual(by.local.items?.map((item) => item.name).sort(), ['read_doc', 'run_bash', 'search_docs'])
     assert.deepStrictEqual([by['mcp:crm'].tokens, by['mcp:crm'].items?.length], [toolTokens(stats), 1])
     assert.deepStrictEqual([by['mcp:fora'].tokens, by['mcp:fora'].note], [null, 'fora do ar: não medido'])
     assert.deepStrictEqual([by.sdk.tokens, by.sdk.items?.map((item) => item.name)], [null, ['sdk:Read']])

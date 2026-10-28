@@ -5,7 +5,7 @@ import { IProjectDoc, TDocKind } from '@domain/models/ProjectDoc.Model'
 import { IProtocolAddendum, TProtocolKind } from '@domain/models/Protocol.Model'
 import { IAgentResources, IResource, NO_RESOURCES, TResourceKind } from '@domain/models/Resource.Model'
 import { IRule } from '@domain/models/Rule.Model'
-import { IGuidanceRepository, TDocPatch, TGuidanceScope, TRulePatch } from '@domain/ports/GuidanceRepository.Port'
+import { IDocHit, IGuidanceRepository, TDocPatch, TGuidanceScope, TRulePatch } from '@domain/ports/GuidanceRepository.Port'
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS rules (
@@ -70,6 +70,10 @@ const SCHEMA = `
     added_by     TEXT,
     PRIMARY KEY (agent_id, kind, resource_id)
   );
+  CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(
+    id UNINDEXED, project_id UNINDEXED, kind UNINDEXED, title, summary, body,
+    tokenize = 'unicode61 remove_diacritics 2'
+  );
   CREATE TABLE IF NOT EXISTS protocol_addenda (
     kind        TEXT NOT NULL,
     project_id  TEXT NOT NULL DEFAULT '',
@@ -110,6 +114,47 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
     this.db = new DatabaseSync(path)
     this.db.exec('PRAGMA journal_mode = WAL')
     this.db.exec(SCHEMA)
+    this.reindexIfStale()
+  }
+
+  /**
+   * ⚖️ O ÍNDICE DE BUSCA (FTS5) é derivado de `project_docs`: banco antigo (sem o índice) ou índice fora de sincronia
+   * é reconstruído no boot. Barato: são documentos de texto, na casa das centenas.
+   */
+  private reindexIfStale(): void {
+    const count = (sql: string) => Number((this.db.prepare(sql).get() as TRow).n)
+    if (count('SELECT COUNT(*) AS n FROM docs_fts') === count('SELECT COUNT(*) AS n FROM project_docs')) return
+    this.db.exec('DELETE FROM docs_fts')
+    for (const row of this.db.prepare('SELECT * FROM project_docs').all() as TRow[]) this.indexDoc(toDoc(row))
+  }
+
+  private indexDoc(doc: IProjectDoc): void {
+    this.db.prepare('DELETE FROM docs_fts WHERE id = ?').run(doc.id)
+    this.db
+      .prepare('INSERT INTO docs_fts (id, project_id, kind, title, summary, body) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(doc.id, doc.projectId ?? '', doc.kind, doc.title, doc.summary, doc.body)
+  }
+
+  /**
+   * A busca de texto nos documentos dos escopos dados, os mais relevantes primeiro (bm25, com o título valendo mais
+   * que o resumo, e o resumo mais que o corpo). `match` já vem pronto (ver `GuidanceService.searchDocs`).
+   */
+  searchDocs(match: string, scopes: readonly TGuidanceScope[], kind?: TDocKind, limit = 8): IDocHit[] {
+    const where = [`docs_fts MATCH ?`, `project_id IN (${scopes.map(() => '?').join(', ')})`, ...(kind ? ['kind = ?'] : [])]
+    const rows = this.db
+      .prepare(
+        `SELECT id, kind, project_id, title, summary, snippet(docs_fts, 5, '«', '»', '…', 24) AS excerpt
+         FROM docs_fts WHERE ${where.join(' AND ')} ORDER BY bm25(docs_fts, 0, 0, 0, 10, 4, 1) LIMIT ?`,
+      )
+      .all(match, ...scopes.map((scope) => scope ?? ''), ...(kind ? [kind] : []), limit) as TRow[]
+    return rows.map((row) => ({
+      id: row.id as string,
+      kind: row.kind as TDocKind,
+      ...(row.project_id ? { projectId: row.project_id as string } : {}),
+      title: row.title as string,
+      summary: row.summary as string,
+      excerpt: row.excerpt as string,
+    }))
   }
 
   rules(scope: TGuidanceScope): IRule[] {
@@ -165,11 +210,14 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
     this.db
       .prepare('INSERT INTO project_docs (id, kind, project_id, title, summary, body, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .run(doc.id, doc.kind, doc.projectId ?? null, doc.title, doc.summary, doc.body, doc.createdAt.toISOString(), doc.updatedAt.toISOString(), doc.updatedBy ?? null)
+    this.indexDoc(doc)
   }
 
   updateDoc(id: string, patch: TDocPatch): IProjectDoc | undefined {
     this.patch('project_docs', DOC_COLUMNS, id, patch)
-    return this.doc(id)
+    const doc = this.doc(id)
+    if (doc) this.indexDoc(doc)
+    return doc
   }
 
   deleteDoc(id: string): boolean {
@@ -178,6 +226,7 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
     // O documento sai dos recursos que o anexavam.
     for (const resource of this.allResources().filter((item) => item.docIds.includes(id)))
       this.saveResource({ ...resource, docIds: resource.docIds.filter((docId) => docId !== id) })
+    this.db.prepare('DELETE FROM docs_fts WHERE id = ?').run(id)
     return this.db.prepare('DELETE FROM project_docs WHERE id = ?').run(id).changes > 0
   }
 
@@ -329,6 +378,7 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
   deleteProject(projectId: string): void {
     this.db.prepare('DELETE FROM rules WHERE project_id = ?').run(projectId)
     this.db.prepare('DELETE FROM project_docs WHERE project_id = ?').run(projectId)
+    this.db.prepare('DELETE FROM docs_fts WHERE project_id = ?').run(projectId)
     this.db.prepare('DELETE FROM project_context_docs WHERE project_id = ?').run(projectId)
     this.db.prepare('DELETE FROM protocol_addenda WHERE project_id = ?').run(projectId)
     const ids = (this.db.prepare('SELECT id FROM resources WHERE project_id = ?').all(projectId) as TRow[]).map((row) => row.id as string)

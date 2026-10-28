@@ -2,7 +2,18 @@ import { randomUUID } from 'node:crypto'
 import { builderKindOf, PROTOCOLS } from '@domain/Builder.Agents'
 import { estimateTokens } from '@domain/Token.Estimate'
 import { AgentNotFoundError, GuidanceNotFoundError, InvalidGuidanceError, ProjectNotFoundError } from '@domain/errors/Domain.Error'
-import { DOC_BODY_MAX, DOC_ID_PATTERN, DOC_KINDS, DOC_SUMMARY_MAX, DOC_TITLE_MAX, IProjectDoc, READ_DOC_TOOL, TDocKind } from '@domain/models/ProjectDoc.Model'
+import {
+  DOC_BODY_MAX,
+  DOC_ID_PATTERN,
+  DOC_INDEX_LIMIT,
+  DOC_KINDS,
+  DOC_SUMMARY_MAX,
+  DOC_TITLE_MAX,
+  IProjectDoc,
+  READ_DOC_TOOL,
+  SEARCH_DOCS_TOOL,
+  TDocKind,
+} from '@domain/models/ProjectDoc.Model'
 import {
   ALL_RESOURCES,
   IAgentResources,
@@ -17,7 +28,7 @@ import {
 } from '@domain/models/Resource.Model'
 import { IBuilderDraft, IProtocolAddendum, IProtocolView, PROTOCOL_ADDENDUM_MAX, PROTOCOL_KINDS, TProtocolKind } from '@domain/models/Protocol.Model'
 import { IRule, RULE_BODY_MAX, RULE_TITLE_MAX } from '@domain/models/Rule.Model'
-import { IGuidanceRepository, TGuidanceScope } from '@domain/ports/GuidanceRepository.Port'
+import { IDocHit, IGuidanceRepository, TGuidanceScope } from '@domain/ports/GuidanceRepository.Port'
 
 type TIssues = Array<{ field: string; message: string }>
 
@@ -248,6 +259,18 @@ export class GuidanceService {
   }
 
   /**
+   * ⛔ A busca de texto nos documentos que a conversa pode ler: os globais e os do projeto dela. Termos soltos, em
+   * qualquer ordem e sem acento; cada um casa também como prefixo ("flag" acha "flags"). Os mais relevantes primeiro.
+   */
+  searchDocs(query: string, projectId?: string, kind?: TDocKind): IDocHit[] {
+    const terms = [...new Set((query.toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) ?? []).slice(0, 8))]
+    if (!terms.length) return []
+    // ⛔ O termo vai entre aspas: nada do que o modelo digitar vira operador do FTS5 (AND, NEAR, coluna:).
+    const match = terms.map((term) => `"${term}"*`).join(' OR ')
+    return this.repository.searchDocs(match, [null, ...(projectId ? [projectId] : [])], kind)
+  }
+
+  /**
    * O CONTEXTO INICIAL do projeto: as specs que vão INTEIRAS no prompt de toda conversa dele, na ordem marcada.
    * ⚖️ O que deixou de valer (virou ADR, foi para outro projeto, sumiu) fica de fora sem apagar a marca: voltar a
    * valer, volta a entrar.
@@ -368,10 +391,13 @@ export class GuidanceService {
       ].join('\n')
     }
     if (docs.length) {
+      // ⚖️ Acima do limite, os mais recentes; o resto o agente acha com a busca — o índice não cresce sem fim no prompt.
+      const listed = docs.length > DOC_INDEX_LIMIT ? [...docs].sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime()).slice(0, DOC_INDEX_LIMIT) : docs
       parts.index = [
         '## Documentos de referência',
-        `Specs (como algo deve ser), ADRs (decisões e o porquê) e conhecimento (o estudo de um tema, com as fontes). Antes de decidir algo que um deles cobre, leia-o inteiro com ${READ_DOC_TOOL} (pelo id).`,
-        ...docs.map((doc) => `- [${doc.kind}] ${doc.id} — ${doc.title}${doc.summary ? `: ${doc.summary}` : ''}`),
+        `Specs (como algo deve ser), ADRs (decisões e o porquê) e conhecimento (o estudo de um tema, com as fontes). Antes de decidir algo que um deles cobre, leia-o inteiro com ${READ_DOC_TOOL} (pelo id). Para achar pelo assunto — inclusive no texto, não só no título —, use ${SEARCH_DOCS_TOOL}.`,
+        ...listed.map((doc) => `- [${doc.kind}] ${doc.id} — ${doc.title}${doc.summary ? `: ${doc.summary}` : ''}`),
+        ...(listed.length < docs.length ? [`- … e mais ${docs.length - listed.length} documento(s): ache com ${SEARCH_DOCS_TOOL}.`] : []),
       ].join('\n')
     }
     const building = builderKindOf(agentId)
