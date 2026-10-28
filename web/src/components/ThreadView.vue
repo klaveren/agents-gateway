@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { api } from '@/lib/api'
-import type { IConversation } from '@/lib/types'
+import type { IConversation, TMode } from '@/lib/types'
 import { useRouter } from 'vue-router'
 import { coreAgentName } from '@/lib/builder'
 import { useAgentCommands } from '@/lib/commands'
@@ -19,8 +19,11 @@ import Icon from './Icon.vue'
 import SessionTuner from './SessionTuner.vue'
 import TurnBubbles from './TurnBubbles.vue'
 
-/** `embedded`: dentro de outra tela (a guia Construir) — sem voltar, compartilhar nem "comece uma nova"; apagar avisa quem embute. */
-const props = defineProps<{ embedded?: boolean }>()
+/**
+ * `embedded`: dentro de outra tela (a guia Construir) — sem voltar, compartilhar nem "comece uma nova"; apagar avisa quem
+ * embute. `agentId` e `mode`: o que quem embute já sabe, para o cabeçalho antes do primeiro turno gravado.
+ */
+const props = defineProps<{ embedded?: boolean; agentId?: string; mode?: TMode }>()
 const emit = defineEmits<{ removed: [] }>()
 const router = useRouter()
 const auth = useAuthStore()
@@ -40,7 +43,7 @@ const actionError = ref<string>()
 const header = computed(() => thread.header)
 const agent = computed(() => agents.byId.get(header.value?.agentId ?? thread.draft?.agentId ?? ''))
 /** O nome do agente — o do core (o construtor) não está na lista de agentes. */
-const agentName = computed(() => agent.value?.name ?? coreAgentName(header.value?.agentId ?? thread.agentId) ?? header.value?.agentId)
+const agentName = computed(() => agent.value?.name ?? coreAgentName(header.value?.agentId ?? thread.agentId ?? props.agentId) ?? header.value?.agentId)
 const owner = computed(() => header.value?.metadata?.owner)
 const shareUrl = computed(() => (header.value?.shared && header.value.shareId ? `${location.origin}/v1/shared/${header.value.shareId}` : ''))
 /** Os `/commands` que a pessoa pode usar com este agente (o autocompletar da caixa). */
@@ -171,7 +174,7 @@ async function continueFresh() {
         <div class="truncate font-medium">{{ header?.title || agentName || 'Conversa' }}</div>
         <div class="truncate text-xs text-zinc-400">
           {{ agentName }} · {{ protocols.providerName(currentProvider) }} {{ currentModel }}<template v-if="thread.session?.reasoning"> ({{ thread.session.reasoning }})</template> ·
-          {{ header?.mode === 'agent' ? 'Agents SDK' : 'chat' }}
+          {{ (header?.mode ?? mode) === 'agent' ? 'Agents SDK' : 'chat' }}
           <template v-if="auth.isAdmin && owner"> · {{ owner.email ?? owner.id }}</template>
         </div>
       </div>

@@ -56,6 +56,9 @@ async function loadBuilds() {
   buildsError.value = undefined
   try {
     builds.value = (await api<{ sessions: IConversation[] }>('/conversations', { query: { builder: props.kind, limit: 50, ...projects.query } })).sessions
+    // Aberta antes de a lista chegar (recarregou a página): o cabeçalho ganha o título agora.
+    const open = builds.value.find((build) => build.id === selected.value)
+    if (open && !thread.header) thread.setHeader(open)
   } catch (failure) {
     buildsError.value = describe(failure)
   }
@@ -212,7 +215,7 @@ function describe(failure: unknown): string {
       </aside>
 
       <main class="flex min-h-[24rem] min-w-0 flex-1 flex-col">
-        <ThreadView v-if="selected" :key="selected" embedded @removed="removed" />
+        <ThreadView v-if="selected" :key="selected" embedded :agent-id="builderAgentId(kind)" mode="agent" @removed="removed" />
         <section v-else class="mx-auto flex max-w-xl flex-col gap-3 p-6 text-sm text-zinc-300">
           <h2 class="text-lg font-semibold text-zinc-100">Construir uma {{ noun }}</h2>
           <p>
