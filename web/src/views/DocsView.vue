@@ -48,10 +48,21 @@ const KIND: Record<TDocKind, { title: string; one: string; base: string; short: 
     example: 'O status vai no próprio texto: Proposta, Aceita, Substituída por…',
     placeholder: 'Autenticação por sessão',
   },
+  knowledge: {
+    title: 'Conhecimento',
+    one: 'estudo',
+    base: '/knowledge',
+    short: 'Estudos de um tema, com as fontes: a base antes de escrever spec, skill ou ADR. Globais e do projeto da conversa.',
+    lead: 'Um estudo de conhecimento sintetiza UM tema a partir de fontes canônicas — livros, papers, documentação oficial — com a definição, o problema que resolve, os componentes, onde se aplica aqui e as fontes. É a base sólida e atualizada que vem antes de decidir (ADR), de padronizar (spec) ou de ensinar um modo de fazer (skill).',
+    when: ['Antes de criar uma spec, skill ou ADR de um tema novo', 'Uma tecnologia ou padrão que o time vai adotar', 'Um conceito que vários agentes precisam entender igual'],
+    example: 'Ex.: "Feature flags — tipos (release, experimento, operação, permissão), ciclo de vida e custos, segundo Fowler e o livro de SRE do Google". A guia Construir pesquisa na web por você.',
+    placeholder: 'Feature flags',
+  },
 }
 const TEMPLATE: Record<TDocKind, string> = {
   spec: '# Objetivo\n\n# Requisitos\n- \n\n# Fora do escopo\n- ',
   adr: '**Status:** Proposta\n\n# Contexto\n\n# Decisão\n\n# Consequências\n- ',
+  knowledge: '# Tema\n\n<definição>\n\n## O problema que resolve\n- \n\n## Componentes\n- \n\n## Onde se aplica aqui\n\n## Lacunas\n- \n\n## Fontes\n- ',
 }
 
 const scope = ref<string>(projects.current ?? GLOBAL_SCOPE)

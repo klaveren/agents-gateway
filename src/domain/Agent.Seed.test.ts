@@ -47,7 +47,7 @@ describe('AGENT_SEED', () => {
     for (const agent of AGENT_SEED) {
       assert.deepStrictEqual(
         agent.allowedTools.filter((tool) => tool.startsWith('agent:')),
-        ['agent:builder-skill', 'agent:builder-command', 'agent:builder-rule', 'agent:builder-spec', 'agent:builder-adr'],
+        ['agent:builder-skill', 'agent:builder-command', 'agent:builder-rule', 'agent:builder-spec', 'agent:builder-adr', 'agent:builder-knowledge'],
       )
       assert.ok(
         agent.allowedTools.every((tool) => !/send_message|start_conversation|save_rule|save_doc|save_resource/.test(tool)),
@@ -89,5 +89,15 @@ describe('AGENT_SEED', () => {
     // O agente apagado fica apagado.
     repository.migrateOnce(migration.key, 'atlas-admin', migration.change, 'seed')
     assert.strictEqual(repository.list().length, 1)
+  })
+
+  it('a migração do conhecimento ensina o Atlas que já tinha os construtores a delegar o estudo — uma vez', () => {
+    const repository = new NullAgentRepository()
+    repository.save({ ...AGENT_SEED[0], systemPrompt: 'prompt\n\n## Construtores (sem conhecimento)' }, 'seed')
+    const migration = AGENT_MIGRATIONS.find((item) => item.key === 'atlas-knowledge')!
+    repository.migrateOnce(migration.key, 'atlas', migration.change, 'seed')
+    assert.match(repository.list()[0].systemPrompt, /Construtores \(sem conhecimento\)\nPesquisa ou estudo de um tema[\s\S]*builder-knowledge/)
+    // O Atlas novo já nasce com a linha: a migração não a repete.
+    assert.strictEqual(migration.change(AGENT_SEED[0]), undefined)
   })
 })

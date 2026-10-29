@@ -26,6 +26,7 @@ const section = computed(() => {
   if (name.startsWith('skill')) return 'skills'
   if (name.startsWith('command')) return 'commands'
   if (name.startsWith('adr')) return 'adrs'
+  if (name.startsWith('knowledge')) return 'knowledge'
   // Perfil não tem item no trilho (mora no menu da conta): nada fica aceso.
   if (name === 'packages' || name === 'profile' || name.startsWith('project')) return name.startsWith('project') ? 'projects' : name
   return ['settings', 'users', 'usage'].includes(name) ? name : 'inbox'

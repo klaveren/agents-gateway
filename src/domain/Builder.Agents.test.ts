@@ -23,8 +23,15 @@ describe('Builder.Agents', () => {
     assert.match(spec, /# Protocolo de construção de spec/)
   })
 
+  it('o de conhecimento pesquisa na web e lê a fonte, e começa pesquisando em vez de perguntar', () => {
+    const knowledge = builderAgent('knowledge', { provider: 'claude', models: ['m'] })
+    for (const tool of ['sdk:WebSearch', 'sdk:WebFetch', 'search_web', 'mcp:gateway/save_doc', PROPOSE_DRAFT_TOOL]) assert.ok(knowledge.allowedTools.includes(tool), tool)
+    assert.match(knowledge.systemPrompt, /1\. Classifique o pedido \(é conhecimento\?\) e PESQUISE sem perguntar/)
+    assert.match(knowledge.systemPrompt, /# Protocolo de construção de conhecimento[\s\S]*## Fontes/)
+  })
+
   it('os ids reservados e o caminho de volta, do id ao tipo', () => {
-    assert.deepStrictEqual(CORE_AGENT_IDS, ['builder-skill', 'builder-command', 'builder-rule', 'builder-spec', 'builder-adr'])
+    assert.deepStrictEqual(CORE_AGENT_IDS, ['builder-skill', 'builder-command', 'builder-rule', 'builder-spec', 'builder-adr', 'builder-knowledge'])
     assert.deepStrictEqual([builderKindOf(builderAgentId('skill')), builderKindOf('atlas'), builderKindOf(undefined)], ['skill', undefined, undefined])
   })
 })

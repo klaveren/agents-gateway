@@ -370,7 +370,7 @@ export class GuidanceService {
     if (docs.length) {
       parts.index = [
         '## Documentos de referência',
-        `Specs (como algo deve ser) e ADRs (decisões e o porquê). Antes de decidir algo que um deles cobre, leia-o inteiro com ${READ_DOC_TOOL} (pelo id).`,
+        `Specs (como algo deve ser), ADRs (decisões e o porquê) e conhecimento (o estudo de um tema, com as fontes). Antes de decidir algo que um deles cobre, leia-o inteiro com ${READ_DOC_TOOL} (pelo id).`,
         ...docs.map((doc) => `- [${doc.kind}] ${doc.id} — ${doc.title}${doc.summary ? `: ${doc.summary}` : ''}`),
       ].join('\n')
     }
@@ -411,7 +411,7 @@ export class GuidanceService {
     const id = draft.id?.trim() ?? ''
     if (draft.kind === 'rule') {
       issues.push(...ruleIssues({ title: draft.title?.trim() ?? '', body: draft.body?.trim() ?? '' } as IRule))
-    } else if (draft.kind === 'spec' || draft.kind === 'adr') {
+    } else if (draft.kind === 'spec' || draft.kind === 'adr' || draft.kind === 'knowledge') {
       issues.push(...docIssues({ kind: draft.kind, title: draft.title?.trim() ?? '', summary: draft.summary?.trim() ?? '', body: draft.body ?? '' } as IProjectDoc))
       const existing = DOC_ID_PATTERN.test(id) ? this.repository.doc(id) : undefined
       if (!DOC_ID_PATTERN.test(id)) issues.unshift({ field: 'id', message: 'use 2–64 lowercase letters, digits or hyphens' })
@@ -463,7 +463,7 @@ export class GuidanceService {
       return scopes.flatMap((scope) =>
         this.repository.rules(scope).map((rule) => `- Rule ${rule.position} [${scope ?? 'global'}]${rule.enabled ? '' : ' (desligada)'} — ${rule.title}: ${rule.body}`),
       )
-    if (kind === 'spec' || kind === 'adr')
+    if (kind === 'spec' || kind === 'adr' || kind === 'knowledge')
       return scopes.flatMap((scope) => this.repository.docs(scope, kind).map((doc) => `- ${doc.id} [${scope ?? 'global'}] — ${doc.title}${doc.summary ? `: ${doc.summary}` : ''}`))
     return scopes.flatMap((scope) =>
       this.repository.resources(scope, kind).map((resource) => `- ${kind === 'command' ? '/' : ''}${resource.id} [${scope ?? 'global'}] — ${resource.description}`),
@@ -706,7 +706,7 @@ function effective(stored: IAgentResources): IAgentResources {
   return { skills: of(stored.skills), commands: of(stored.commands) }
 }
 
-const EXISTING_LABEL: Readonly<Record<TProtocolKind, string>> = { skill: 'skills', command: 'commands', rule: 'rules', spec: 'specs', adr: 'ADRs' }
+const EXISTING_LABEL: Readonly<Record<TProtocolKind, string>> = { skill: 'skills', command: 'commands', rule: 'rules', spec: 'specs', adr: 'ADRs', knowledge: 'conhecimento' }
 
 function ruleIssues(rule: IRule): TIssues {
   const issues: TIssues = []

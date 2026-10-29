@@ -337,8 +337,8 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'list_docs',
     {
       description:
-        'The reference documents (specs and ADRs) of one scope, without the body. Conversations get an index (id, title, summary) of the global ones plus those of their project, and agents read one in full with read_doc. Absent projectId = the global ones.',
-      inputSchema: { projectId: z.string().optional(), kind: z.enum(['spec', 'adr']).optional() },
+        'The reference documents (specs, ADRs and knowledge studies) of one scope, without the body. Conversations get an index (id, title, summary) of the global ones plus those of their project, and agents read one in full with read_doc. Absent projectId = the global ones.',
+      inputSchema: { projectId: z.string().optional(), kind: z.enum(['spec', 'adr', 'knowledge']).optional() },
       annotations: { readOnlyHint: true },
     },
     async ({ projectId, kind }) => reply(await api('GET', '/docs', { query: { project: projectId ?? 'global', kind } })),
@@ -387,8 +387,8 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'get_protocol',
     {
       description:
-        'How a skill, command, rule, spec or ADR must be built in this gateway: the core protocol (shipped with the gateway, versioned) and the administrators addenda (global, then the project one), which add to it. Follow both when creating or adjusting one.',
-      inputSchema: { kind: z.enum(['skill', 'command', 'rule', 'spec', 'adr']), projectId: z.string().optional() },
+        'How a skill, command, rule, spec, ADR or knowledge study must be built in this gateway: the core protocol (shipped with the gateway, versioned) and the administrators addenda (global, then the project one), which add to it. Follow both when creating or adjusting one.',
+      inputSchema: { kind: z.enum(['skill', 'command', 'rule', 'spec', 'adr', 'knowledge']), projectId: z.string().optional() },
       annotations: { readOnlyHint: true },
     },
     async ({ kind, projectId }) => reply(await api('GET', `/protocols/${kind}`, { query: { project: projectId } })),
@@ -564,10 +564,10 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'save_doc',
     {
       description:
-        'Create or replace a spec or ADR (markdown). The id is a slug (2–64 lowercase letters, digits or hyphens) that agents pass to read_doc; the summary is the one line shown in the conversation index. For an ADR, write the status (Proposed, Accepted…) in the body. Confirm with the person before saving.',
+        'Create or replace a spec, ADR or knowledge study (markdown). The id is a slug (2–64 lowercase letters, digits or hyphens) that agents pass to read_doc; the summary is the one line shown in the conversation index. For an ADR, write the status (Proposed, Accepted…) in the body. Confirm with the person before saving.',
       inputSchema: {
         id: z.string(),
-        kind: z.enum(['spec', 'adr']),
+        kind: z.enum(['spec', 'adr', 'knowledge']),
         projectId: z.string().nullable().optional().describe('The project it belongs to; null or absent on a new one = global'),
         title: z.string(),
         summary: z.string(),
