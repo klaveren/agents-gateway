@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
-import { forBubblewrap, ProjectSandbox, projectPathIssue } from './Project.Sandbox'
+import { forBubblewrap, ProjectSandbox, projectPathIssue, writeFolders } from './Project.Sandbox'
 
 describe('ProjectSandbox', () => {
   const root = mkdtempSync(join(tmpdir(), 'gw-sandbox-test-'))
@@ -109,5 +109,17 @@ describe('forBubblewrap — o cerco no Linux', () => {
   it('leitura parcial: a raiz segue fechada, só o liberado reabre', () => {
     const linux = forBubblewrap(plan(['/data/tools', `${root}/src/**`]), root, list)
     assert.ok(linux.readDeny.includes(root) && linux.readAllow.includes(`${root}/src/**`))
+  })
+})
+
+describe('writeFolders — as pastas de escrita criadas antes do comando', () => {
+  it('só pasta explícita, sem curinga, dentro da raiz', () => {
+    const plan = {
+      readDeny: [],
+      readAllow: [],
+      writeDeny: [],
+      writeAllow: ['/w/p/.home', '/w/p/notas/**', '/w/p/apps/legado/**', '/w/p/**/*.txt', '/w/p/**', '/w/outro/**', '/w/p/../fora/**', '/w/p/src/*/gen/**'],
+    }
+    assert.deepStrictEqual(writeFolders(plan, '/w/p'), ['/w/p/notas', '/w/p/apps/legado'])
   })
 })
