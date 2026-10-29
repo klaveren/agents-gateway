@@ -6,7 +6,22 @@ import { DELEGATED_BY, DELEGATED_FROM, DELEGATION_CHAIN, DELEGATION_DEPTH } from
  */
 /** ⛔ Só o servidor escreve: quem é o dono, a cadeia de delegação e o projeto da conversa (`PROJECT_METADATA_KEY`). */
 export const PROJECT_METADATA_KEY = 'project'
-export const RESERVED_METADATA_KEYS: readonly string[] = ['owner', DELEGATED_BY, DELEGATED_FROM, DELEGATION_DEPTH, DELEGATION_CHAIN, PROJECT_METADATA_KEY]
+/** O repositório e a worktree em que a conversa trabalha (ver `Work.Folder`): o servidor confere e grava. */
+export const REPOSITORY_METADATA_KEY = 'repository'
+export const WORKTREE_METADATA_KEY = 'worktree'
+/** Para onde vai o aviso de fim de cada turno (ver `Turn.Callbacks`). */
+export const CALLBACK_METADATA_KEY = 'callbackUrl'
+export const RESERVED_METADATA_KEYS: readonly string[] = [
+  'owner',
+  DELEGATED_BY,
+  DELEGATED_FROM,
+  DELEGATION_DEPTH,
+  DELEGATION_CHAIN,
+  PROJECT_METADATA_KEY,
+  REPOSITORY_METADATA_KEY,
+  WORKTREE_METADATA_KEY,
+  CALLBACK_METADATA_KEY,
+]
 
 export const METADATA_MAX_KEYS = 32
 export const METADATA_MAX_BYTES = 8 * 1024

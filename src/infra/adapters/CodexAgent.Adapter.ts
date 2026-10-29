@@ -168,7 +168,8 @@ export class CodexAgentAdapter implements IAgentAdapter {
     record.abort = abort
     yield { type: 'message.started', sessionId, timestamp: now() }
 
-    const workspace = workspaceFor(agent.projectId, sessionId)
+    // A pasta da conversa (repositório ou worktree, ver `Work.Folder`) vence a do projeto inteiro.
+    const workspace = context.workFolder?.dir ?? workspaceFor(agent.projectId, sessionId)
     const { prompt, warnings } = this.buildInput(input, workspace)
     for (const message of warnings) yield { type: 'warning', sessionId, timestamp: now(), payload: { message } }
     // ⛔ O terminal, os arquivos e as tarefas são os do GATEWAY, por MCP, numa concessão que vale só neste turno: quem
@@ -193,7 +194,10 @@ export class CodexAgentAdapter implements IAgentAdapter {
       const home = this.home()
       const codex = new Codex({
         // Num projeto, o HOME é `<projeto>/.home`: os dotfiles do Codex não sujam a pasta do projeto.
-        env: subscriptionEnv({ HOME: agent.projectId ? projectHome(agent.projectId) : workspace, CODEX_HOME: home }),
+        env: subscriptionEnv({
+          HOME: context.workFolder ? join(context.workFolder.projectDir, '.home') : agent.projectId ? projectHome(agent.projectId) : workspace,
+          CODEX_HOME: home,
+        }),
         config: {
           developer_instructions: withMcpHint(record.systemPrompt, remotes, grant ? locals.map((tool) => tool.name) : []),
           features: codexFeatures(agent.allowedTools),

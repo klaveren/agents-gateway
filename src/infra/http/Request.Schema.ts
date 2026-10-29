@@ -30,6 +30,12 @@ export const createSessionSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
   /** O projeto em que a conversa nasce (o seletor da tela). Num agente de projeto vale o dele; num global, este, se quem abre for membro. */
   projectId: z.string().trim().max(32).optional(),
+  /** O repositório do projeto (`<projeto>/repositories/<nome>`) em que o agente trabalha. Fixo na conversa. */
+  repository: z.string().trim().max(100).optional(),
+  /** A worktree desse repositório (o nome da pasta ou o branch). Exige `repository`. */
+  worktree: z.string().trim().max(200).optional(),
+  /** Para onde vai o aviso de fim de cada turno (POST assinado). Só para os hosts de `TURN_CALLBACK_HOSTS`. */
+  callbackUrl: z.string().trim().url().max(500).optional(),
 })
 
 /**

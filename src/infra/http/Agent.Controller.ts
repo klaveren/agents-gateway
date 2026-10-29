@@ -36,14 +36,16 @@ import { IProviderDirectory } from '@domain/ports/ProviderRepository.Port'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { ISettingsRepository } from '@domain/ports/SettingsRepository.Port'
 import { ISessionContextProvider } from '@domain/ports/SessionContextProvider.Port'
-import { SessionNotFoundError } from '@domain/errors/Domain.Error'
+import { SessionBusyError, SessionNotFoundError } from '@domain/errors/Domain.Error'
 import { IProjectCaller, ProjectsService } from '@application/Projects.Service'
 import { agentFootprint } from '@application/Agent.Footprint'
 import { caller as currentCaller } from '@infra/mcp/Caller.Identity'
 import { GuidanceService } from '@application/Guidance.Service'
 import { IDockerStatus } from '@infra/sandbox/Docker.Sandbox'
 import { IProjectSandbox } from '@infra/sandbox/Project.Sandbox'
-import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
+import { CALLBACK_METADATA_KEY, PROJECT_METADATA_KEY, REPOSITORY_METADATA_KEY, WORKTREE_METADATA_KEY } from '@domain/Session.Metadata'
+import { currentBranch, IWorkFolder, resolveWorkFolder, WorkFolderError } from '@infra/workspace/Work.Folder'
+import { deliverCallback } from './Turn.Callbacks'
 import { BUILDER_METADATA_KEY, builderKindOf, CORE_AGENT_IDS } from '@domain/Builder.Agents'
 import { IAgentProviderFacts, toAgentDetailDto, toAgentDto } from './Agent.Dto'
 import { assertNoAdkTemplateCollision } from '@infra/adapters/GoogleAgent.Adapter'
@@ -127,6 +129,10 @@ export interface IAgentControllerDeps {
   models?: ModelCatalogService
   /** Os agentes do banco: o MESMO catálogo do provider (ver `makeAgents`). */
   agents: AgentCatalog
+  /** O agente pode ser ativado neste repositório do projeto (permissão `repository`)? Ausente = sim. */
+  repositoryAllowed?: (agentId: string, projectId: string, repository: string) => boolean
+  /** O aviso de fim de turno pode ir para este endereço (`TURN_CALLBACK_HOSTS`)? Ausente = nunca. */
+  callbackAllowed?: (url: string) => boolean
 }
 
 /**
@@ -149,7 +155,19 @@ function streamsPerOwner(): number {
   return liveLimit('streamsPerOwner') ?? (Number(process.env.STREAMS_PER_OWNER) || 20)
 }
 
+/** Um turno assíncrono rodando: o que já saiu, para o `GET` do estado. */
+interface ILiveTurn {
+  turn: number
+  startedAt: number
+  text: string
+  tools: string[]
+}
+
 export class AgentController {
+  /** Os turnos assíncronos rodando (por conversa) e o resultado do último de cada uma, até o gravado chegar. */
+  private readonly liveTurns = new Map<string, ILiveTurn>()
+  private readonly finishedTurns = new Map<string, Record<string, unknown> & { turn: number }>()
+
   constructor(private readonly usecases: IAgentControllerDeps) {
     this.health = this.health.bind(this)
     this.getAgents = this.getAgents.bind(this)
@@ -162,6 +180,8 @@ export class AgentController {
     this.getSession = this.getSession.bind(this)
     this.deleteSession = this.deleteSession.bind(this)
     this.sendMessage = this.sendMessage.bind(this)
+    this.startTurn = this.startTurn.bind(this)
+    this.turnStatus = this.turnStatus.bind(this)
     this.cancelSession = this.cancelSession.bind(this)
     this.reconfigureSession = this.reconfigureSession.bind(this)
     this.guardCaller = this.guardCaller.bind(this)
@@ -324,6 +344,25 @@ export class AgentController {
   }
 
   /**
+   * ⛔ O repositório e a worktree da conversa, conferidos no servidor: só numa conversa de projeto, com a permissão
+   * `repository` do agente, e a pasta resolvida dentro do projeto (ver `Work.Folder`). Ausentes = a pasta de sempre.
+   */
+  private async workPlace(agentId: string | undefined, project: string | undefined, repository?: string, worktree?: string): Promise<IWorkFolder | undefined> {
+    if (!repository && !worktree) return undefined
+    const invalid = (field: string, message: string) => new HttpError(422, 'validation_error', 'Request body is invalid', [{ field, message }])
+    if (!project || !this.usecases.projects) throw invalid('repository', 'only in a project conversation')
+    const configured = agentId || (await this.usecases.settings.read()).agentId || this.agents.fallback()?.id
+    if (repository && configured && this.usecases.repositoryAllowed && !this.usecases.repositoryAllowed(configured, project, repository))
+      throw invalid('repository', `the agent has no permission for repository ${repository}`)
+    try {
+      return resolveWorkFolder(this.usecases.projects.folderOf(project), repository, worktree)
+    } catch (error: unknown) {
+      if (error instanceof WorkFolderError) throw invalid(error.message.split(':')[0], error.message)
+      throw error
+    }
+  }
+
+  /**
    * A linha de contexto do projeto, na primeira mensagem: em que projeto a conversa está e, para o agente
    * de projeto, onde fica a pasta dele. ⚖️ É o que deixa o Atlas (global) criar agentes no projeto certo.
    * Só texto do servidor (id, nome do cadastro, caminho), nada de quem chama.
@@ -336,6 +375,18 @@ export class AgentController {
     if (typeof projectId !== 'string' || !projects.exists(projectId)) return undefined
     const project = projects.get(projectId)
     const agent = session ? this.agents.get(session.agentId) : undefined
+    // ⛔ Aberta num repositório ou worktree: o ambiente vem pronto (o que a esteira montava no prompt), só com dados.
+    const repository = session?.metadata?.[REPOSITORY_METADATA_KEY]
+    if (typeof repository === 'string') {
+      const worktree = session?.metadata?.[WORKTREE_METADATA_KEY]
+      const place = resolveWorkFolder(projects.folderOf(projectId), repository, typeof worktree === 'string' ? worktree : undefined)
+      const branch = currentBranch(place.dir)
+      return [
+        `Projeto: ${project.name} (${project.id}).`,
+        `Repositório: ${repository}${place.worktree ? `, worktree ${place.worktree}` : ''}${branch ? ` (branch ${branch})` : ''}.`,
+        `Sua pasta de trabalho é ${place.dir}. Fora desta pasta você não lê nem grava; o git dela funciona (status, commit, push).`,
+      ].join(' ')
+    }
     return agent?.projectId === projectId
       ? `Projeto: ${project.name} (${project.id}). Sua pasta de trabalho é ${projects.folderOf(projectId)} — persistente e compartilhada pelas conversas do projeto. Fora desta pasta você não lê nem grava.`
       : `Projeto atual: ${project.name} (projectId "${project.id}"). Agentes, hooks e conversas que você criar aqui pertencem a este projeto.`
@@ -677,8 +728,11 @@ export class AgentController {
         const mine = (await this.usecases.listSessions.execute()).filter((session) => (session.metadata?.owner as { id?: string } | undefined)?.id === owner?.id).length
         if (mine >= sessionsPerOwner()) throw new HttpError(429, 'rate_limited', `At most ${sessionsPerOwner()} live conversations per account: close one first`)
 
-        const { projectId: requested, ...session } = body
+        const { projectId: requested, repository, worktree, callbackUrl, ...session } = body
         const project = await this.sessionProject({ userId: resolved.identity?.id, admin: adminAccess }, body.agentId, requested)
+        const place = await this.workPlace(body.agentId, project, repository, worktree)
+        if (callbackUrl && !this.usecases.callbackAllowed?.(callbackUrl))
+          throw new HttpError(422, 'validation_error', 'Request body is invalid', [{ field: 'callbackUrl', message: 'host not in TURN_CALLBACK_HOSTS' }])
         // ⛔ A marca de construção também é só do servidor: vem do agente, nunca do corpo (esconderia a conversa da caixa).
         const { [BUILDER_METADATA_KEY]: _builder, ...declared } = metadata ?? {}
         const building = builderKindOf(body.agentId)
@@ -687,6 +741,9 @@ export class AgentController {
           ...(owner ? { owner } : {}),
           ...(project ? { [PROJECT_METADATA_KEY]: project } : {}),
           ...(building ? { [BUILDER_METADATA_KEY]: building } : {}),
+          ...(place?.repository ? { [REPOSITORY_METADATA_KEY]: place.repository } : {}),
+          ...(place?.worktree ? { [WORKTREE_METADATA_KEY]: place.worktree } : {}),
+          ...(callbackUrl ? { [CALLBACK_METADATA_KEY]: callbackUrl } : {}),
         }
         return this.usecases.createSession.execute({ ...session, metadata: stamped, adminAccess })
       },
@@ -1134,22 +1191,114 @@ export class AgentController {
       return this.sendFailure(res, error, '[AgentController.sendMessage]')
     }
 
-    // O contexto sai da identidade já resolvida e é aplicado pelo use case, só na primeira mensagem.
-    const context = [this.usecases.sessionContext?.({ ...resolved.identity }), await this.projectContext(sessionId)].filter(Boolean).join('\n\n') || undefined
-    // `/nome argumentos`: o command liberado ao agente vira o texto dele (com os documentos anexados); o turno grava o
-    // que a pessoa digitou. ⛔ Command que existe mas não está liberado para este agente é recusado (422).
-    let expanded
+    let input: IMessageInput
     try {
-      const session = await this.usecases.getSession.execute(sessionId)
-      const project = session.metadata?.[PROJECT_METADATA_KEY]
-      expanded = this.usecases.guidance?.expandCommand(body.message, session.agentId, typeof project === 'string' ? project : undefined)
+      input = await this.turnInput(sessionId, resolved, body)
     } catch (error: unknown) {
       return this.sendFailure(res, error, '[AgentController.sendMessage]')
     }
-    const input: IMessageInput = { text: expanded?.text ?? body.message, files: body.files, context, ...(expanded ? { recordAs: expanded.label } : {}) }
     const wantsJson = req.accepts(['text/event-stream', 'application/json']) === 'application/json'
 
     return wantsJson ? this.sendMessageAsJson(res, sessionId, input) : this.sendMessageAsStream(res, sessionId, input)
+  }
+
+  /**
+   * A mensagem como o turno a recebe: o contexto da primeira (identidade, projeto, repositório e worktree) e o `/command`
+   * expandido. ⛔ Command que existe mas não está liberado para este agente é recusado (422).
+   */
+  private async turnInput(sessionId: string, resolved: IResolvedCaller, body: { message: string; files?: IMessageInput['files'] }): Promise<IMessageInput> {
+    // O contexto sai da identidade já resolvida e é aplicado pelo use case, só na primeira mensagem.
+    const context = [this.usecases.sessionContext?.({ ...resolved.identity }), await this.projectContext(sessionId)].filter(Boolean).join('\n\n') || undefined
+    // `/nome argumentos`: o command liberado ao agente vira o texto dele (com os documentos anexados); o turno grava o
+    // que a pessoa digitou.
+    const session = await this.usecases.getSession.execute(sessionId)
+    const project = session.metadata?.[PROJECT_METADATA_KEY]
+    const expanded = this.usecases.guidance?.expandCommand(body.message, session.agentId, typeof project === 'string' ? project : undefined)
+    return { text: expanded?.text ?? body.message, files: body.files, context, ...(expanded ? { recordAs: expanded.label } : {}) }
+  }
+
+  /**
+   * `POST /sessions/:id/turns` — ⛔ O TURNO ASSÍNCRONO, para quem orquestra agentes (a esteira): responde 202 na hora e o
+   * turno roda no servidor, sem cliente ligado. O estado sai em `GET …/turns/:turn`, e o fim vai para o `callbackUrl` da
+   * conversa (POST assinado). Um turno por conversa: o segundo, com o primeiro rodando, é 409.
+   */
+  async startTurn(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        const sessionId = req.params.id as string
+        const resolved = await this.requireOwnedSession(sessionId, { resume: true })
+        const body = parseBody(sendMessageSchema, req.body)
+        const session = await this.usecases.getSession.execute(sessionId)
+        if (session.status === 'running' || this.liveTurns.has(sessionId)) throw new SessionBusyError(sessionId)
+        const input = await this.turnInput(sessionId, resolved, body)
+        const live: ILiveTurn = { turn: session.turns, startedAt: Date.now(), text: '', tools: [] }
+        this.liveTurns.set(sessionId, live)
+        const callback = session.metadata?.[CALLBACK_METADATA_KEY]
+        void this.runTurn(sessionId, input, live, typeof callback === 'string' ? callback : undefined)
+        return { conversationId: sessionId, turn: live.turn, status: 'running' as const }
+      },
+      { status: 202, message: 'Turn started' },
+    )
+  }
+
+  /** `GET /sessions/:id/turns/:turn` — o estado de um turno: rodando (com o que já saiu) ou terminado (o gravado). */
+  async turnStatus(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const sessionId = req.params.id as string
+      await this.requireOwnedSession(sessionId, { resume: true })
+      const turn = Number(req.params.turn)
+      if (!Number.isInteger(turn) || turn < 0) throw new HttpError(422, 'validation_error', 'turn: a non-negative integer')
+      const live = this.liveTurns.get(sessionId)
+      if (live?.turn === turn) return { conversationId: sessionId, turn, status: 'running' as const, text: live.text, tools: live.tools, durationMs: Date.now() - live.startedAt }
+      const finished = this.finishedTurns.get(sessionId)
+      if (finished?.turn === turn) return finished
+      const stored = (await this.usecases.conversations.listTurns(sessionId)).find((item) => item.index === turn)
+      if (!stored) throw new HttpError(404, 'not_found', `Turn not found: ${turn}`)
+      return {
+        conversationId: sessionId,
+        turn,
+        status: stored.aborted ? ('aborted' as const) : stored.error ? ('error' as const) : ('ok' as const),
+        text: stored.text,
+        tools: stored.toolCalls.map((call) => call.tool),
+        ...(stored.error ? { error: stored.error } : {}),
+        ...(stored.usage ? { usage: stored.usage } : {}),
+        ...(stored.durationMs !== undefined ? { durationMs: stored.durationMs } : {}),
+      }
+    })
+  }
+
+  /** O turno em segundo plano: consome os eventos, guarda o resultado para o `GET` e avisa quem pediu. Nunca lança. */
+  private async runTurn(sessionId: string, input: IMessageInput, live: ILiveTurn, callback: string | undefined): Promise<void> {
+    const events: IAgentEvent[] = []
+    let failure: string | undefined
+    try {
+      for await (const event of this.usecases.sendMessage.execute(sessionId, input)) {
+        if (event.type === 'text.delta') live.text += event.payload.text
+        else if (event.type === 'tool.started') live.tools.push(event.payload.tool)
+        if (event.type !== 'text.delta' && event.type !== 'reasoning.delta') events.push(event)
+      }
+    } catch (error: unknown) {
+      failure = toHttpFailure(error).message
+    }
+    const result = aggregateTurn(sessionId, events)
+    const error = failure ?? result.error
+    const status = result.aborted ? ('aborted' as const) : error ? ('error' as const) : ('ok' as const)
+    const durationMs = Date.now() - live.startedAt
+    // O gravado chega um instante depois (o `record` do use case é assíncrono): o resultado fica aqui para o `GET`.
+    this.finishedTurns.set(sessionId, {
+      conversationId: sessionId,
+      turn: live.turn,
+      status,
+      text: live.text,
+      tools: live.tools,
+      ...(error ? { error } : {}),
+      usage: result.usage,
+      durationMs,
+    })
+    if (this.finishedTurns.size > 2000) this.finishedTurns.delete(this.finishedTurns.keys().next().value!)
+    this.liveTurns.delete(sessionId)
+    if (callback) void deliverCallback(callback, { conversationId: sessionId, turn: live.turn, status, ...(error ? { error } : {}), usage: result.usage, durationMs })
   }
 
   private async sendMessageAsJson(res: Response, sessionId: string, input: IMessageInput) {

@@ -17,11 +17,11 @@ import { basename } from 'node:path'
  * ⛔ Regra vale onde a ferramenta EXECUTA (o terminal, as ferramentas de arquivo, o hook do Claude, o catálogo de
  * MCP), nunca no prompt.
  */
-export type TPermissionCategory = 'terminal' | 'read' | 'write' | 'network' | 'mcp' | 'skill' | 'delegate' | 'account'
+export type TPermissionCategory = 'terminal' | 'read' | 'write' | 'network' | 'mcp' | 'skill' | 'delegate' | 'account' | 'repository'
 export type TPermissionDecision = 'allow' | 'deny'
 export type TPermissionLayer = 'system' | 'agent' | 'project' | 'default'
 
-export const PERMISSION_CATEGORIES: readonly TPermissionCategory[] = ['terminal', 'read', 'write', 'network', 'mcp', 'skill', 'delegate', 'account']
+export const PERMISSION_CATEGORIES: readonly TPermissionCategory[] = ['terminal', 'read', 'write', 'network', 'mcp', 'skill', 'delegate', 'account', 'repository']
 
 export interface IPermissionRule {
   category: TPermissionCategory
@@ -93,6 +93,7 @@ export const CATEGORY_LABEL: Readonly<Record<TPermissionCategory, string>> = {
   skill: 'skill',
   delegate: 'delegação',
   account: 'conta',
+  repository: 'repositório',
 }
 
 export function matches(rule: IPermissionRule, subject: IPermissionSubject): boolean {

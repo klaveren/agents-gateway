@@ -611,7 +611,7 @@ const projectAccountSchema = {
 const permissionRuleSchema = {
   type: 'object',
   properties: {
-    category: { type: 'string', enum: ['terminal', 'read', 'write', 'network', 'mcp', 'skill', 'delegate', 'account'] },
+    category: { type: 'string', enum: ['terminal', 'read', 'write', 'network', 'mcp', 'skill', 'delegate', 'account', 'repository'] },
     pattern: {
       type: 'string',
       description:
@@ -1297,6 +1297,33 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/projects/{id}/repositories': {
+      get: {
+        summary: 'The repositories of a project (`repositories/<name>`, git only) and the worktrees of each one inside the project. For whoever can use the project',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    name: { type: 'string' },
+                    worktrees: {
+                      type: 'array',
+                      items: { type: 'object', properties: { name: { type: 'string' }, branch: { type: 'string' }, path: { type: 'string' } } },
+                    },
+                  },
+                },
+              }),
+            ),
+          },
+          '404': failures['404'],
+        },
+      },
+    },
     '/projects/{id}/members': {
       get: {
         summary: 'The members of a project (account ids). Administrators only',
@@ -1772,7 +1799,7 @@ export const OPENAPI_DOCUMENT = {
                 type: 'object',
                 properties: {
                   agentId: { type: 'string' },
-                  category: { type: 'string', enum: ['terminal', 'read', 'write', 'network', 'mcp', 'skill', 'delegate', 'account'] },
+                  category: { type: 'string', enum: ['terminal', 'read', 'write', 'network', 'mcp', 'skill', 'delegate', 'account', 'repository'] },
                   value: { type: 'string' },
                 },
                 required: ['category', 'value'],
@@ -2379,6 +2406,18 @@ export const OPENAPI_DOCUMENT = {
                     description:
                       'For a global agent: the project the conversation belongs to (you must be able to use it). A project agent always opens in its own project; 404 if you are not a member.',
                   },
+                  repository: {
+                    type: 'string',
+                    description:
+                      'A repository of the project (`<project>/repositories/<name>`). The agent works there: cwd, file tools and sandbox root. Needs the agent permission `repository <name>`. Fixed for the conversation.',
+                  },
+                  worktree: { type: 'string', description: 'A git worktree of that repository, by folder name or branch. Requires `repository`. The gateway does not create it.' },
+                  callbackUrl: {
+                    type: 'string',
+                    format: 'uri',
+                    description:
+                      'Where the end of every turn is POSTed, signed with `X-Gateway-Signature: sha256=<HMAC of the body with TURN_CALLBACK_SECRET>`. Only hosts in `TURN_CALLBACK_HOSTS`.',
+                  },
                 },
               },
             },
@@ -2434,6 +2473,51 @@ export const OPENAPI_DOCUMENT = {
         summary: 'End the session and release it, aborting anything in flight',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: { '200': { description: 'OK', ...json(envelope({ type: 'null' })) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/sessions/{id}/turns': {
+      post: {
+        summary: 'Start a turn without waiting (202): the turn runs on the server with no client attached. One turn per conversation: 409 `session_busy` while one runs',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', properties: { message: { type: 'string' } }, required: ['message'] } } } },
+        responses: {
+          '202': {
+            description: 'Started',
+            ...json(envelope({ type: 'object', properties: { conversationId: { type: 'string' }, turn: { type: 'integer' }, status: { type: 'string', enum: ['running'] } } })),
+          },
+          '404': failures['404'],
+          '409': { description: 'A turn is already running in this conversation' },
+        },
+      },
+    },
+    '/sessions/{id}/turns/{turn}': {
+      get: {
+        summary: 'The state of a turn: running (with the text so far) or finished (ok, error, aborted)',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'turn', in: 'path', required: true, schema: { type: 'integer', minimum: 0 } },
+        ],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  conversationId: { type: 'string' },
+                  turn: { type: 'integer' },
+                  status: { type: 'string', enum: ['running', 'ok', 'error', 'aborted'] },
+                  text: { type: 'string' },
+                  tools: { type: 'array', items: { type: 'string' } },
+                  error: { type: 'string' },
+                  usage: { type: 'object', additionalProperties: true },
+                  durationMs: { type: 'integer' },
+                },
+              }),
+            ),
+          },
+          '404': failures['404'],
+        },
       },
     },
     '/sessions/{id}/messages': {

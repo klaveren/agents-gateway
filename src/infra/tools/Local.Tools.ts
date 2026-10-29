@@ -119,7 +119,12 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
    */
   async function guardedBash(command: string, context: IExecutionContext | undefined, permissions: IPermissionChecker): Promise<IToolResult> {
     const asker = askerOf(context)
-    const root = realOf(context?.projectId ? workspaceFor(context.projectId, '') : policy.cwd || workspaceFor(undefined, context?.sessionId ?? 'run_bash'))
+    const folder = context?.workFolder
+    const root = realOf(folder?.dir ?? (context?.projectId ? workspaceFor(context.projectId, '') : policy.cwd || workspaceFor(undefined, context?.sessionId ?? 'run_bash')))
+    // O rascunho (HOME, caches, as contas) fica na pasta do projeto, fora da worktree; o `.git` comum entra no cerco.
+    const place: { scratchBase?: string; gitCommonDir?: string } = folder
+      ? { scratchBase: realOf(folder.projectDir), ...(folder.gitCommonDir ? { gitCommonDir: realOf(folder.gitCommonDir) } : {}) }
+      : {}
     const refusal = await terminalRefusal(command, root, permissions, asker)
     if (refusal) return { status: 'error', result: `Not permitted: ${refusal}` }
     if (!sandbox.wrapWith) return { status: 'error', result: 'O terminal fica bloqueado: este servidor não monta o cerco das permissões.' }
@@ -139,13 +144,13 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     try {
       let line: string
       try {
-        line = await sandbox.wrapWith(command, root, (base) => cercoPlan(layers, { ...base, system }), token)
+        line = await sandbox.wrapWith(command, root, (base) => cercoPlan(layers, { ...base, system }), token, place)
       } catch (error: unknown) {
         return { status: 'error', result: `${toMessage(error)}. O terminal fica bloqueado até o cerco funcionar.` }
       }
       const env: Record<string, string> = { ...subscriptionEnv({ HOME: root }), ...accounts?.env }
       if (accounts?.ssh?.length) {
-        const home = join(root, '.home')
+        const home = join(place.scratchBase ?? root, '.home')
         sshKit = accountsDir(home, token)
         const { bin } = writeSshKit(sshKit, accounts.ssh, `${process.execPath} ${join(home, '.gateway-connect.cjs')} %h %p`)
         env.PATH = `${bin}:${env.PATH ?? process.env.PATH ?? '/usr/bin:/bin'}`
@@ -240,7 +245,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     ...(deps.accounts?.sign && deps.permissions ? [sshSignTool(deps.accounts.sign.bind(deps.accounts), deps.permissions)] : []),
     // Os arquivos na MESMA pasta do `run_bash`: a do projeto, ou a da conversa (ou o `BASH_CWD`).
     ...makeFileTools({
-      rootFor: (context) => (context?.projectId ? workspaceFor(context.projectId, '') : policy.cwd || workspaceFor(undefined, context?.sessionId ?? 'files')),
+      rootFor: (context) =>
+        context?.workFolder?.dir ?? (context?.projectId ? workspaceFor(context.projectId, '') : policy.cwd || workspaceFor(undefined, context?.sessionId ?? 'files')),
       ...(deps.permissions
         ? {
             access: (context, kind, path, log) => {

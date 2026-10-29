@@ -355,6 +355,8 @@ describe('AgentProvider', () => {
 
       store.get(session.id)!.status = 'running'
       assert.throws(() => provider.reconfigure(session.id, { model: 'gemini-3.7-flash' }), SessionBusyError)
+      // ⛔ Uma segunda mensagem com o turno rodando também: rodaria por cima dele.
+      await assert.rejects(drain(provider.sendMessage(session.id, { text: 'outra' })), SessionBusyError)
     })
   })
 

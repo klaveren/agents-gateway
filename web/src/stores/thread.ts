@@ -15,6 +15,9 @@ export interface IDraft {
   provider?: string
   model?: string
   reasoning?: string
+  /** O repositório do projeto (`repositories/<nome>`) e a worktree dele em que o agente trabalha. */
+  repository?: string
+  worktree?: string
 }
 
 export interface IPendingTool {
@@ -66,7 +69,16 @@ export function reconcileDraft(draft: IDraft, agent: TDraftAgent, lanesOf?: (pro
   const tools = mode === 'chat' && draft.tools && agent.allowedTools.length > 0
   const levels = levelsOf(agent, choice)
   const reasoning = draft.reasoning && levels.includes(draft.reasoning) ? draft.reasoning : undefined
-  return { agentId: draft.agentId, mode, tools, provider: choice?.provider, model: choice?.model, reasoning }
+  return {
+    agentId: draft.agentId,
+    mode,
+    tools,
+    provider: choice?.provider,
+    model: choice?.model,
+    reasoning,
+    ...(draft.repository ? { repository: draft.repository } : {}),
+    ...(draft.repository && draft.worktree ? { worktree: draft.worktree } : {}),
+  }
 }
 
 const isNotFound = (failure: unknown): boolean => failure instanceof ApiError && failure.status === 404
@@ -205,12 +217,12 @@ export const useThreadStore = defineStore('thread', () => {
     try {
       if (!sessionId.value) {
         if (!draft.value) throw new Error('Escolha um agente para começar.')
-        const { agentId, mode, tools, provider, model, reasoning } = draft.value
+        const { agentId, mode, tools, provider, model, reasoning, repository, worktree } = draft.value
         const born = (
           await api<{ id: string }>('/sessions', {
             method: 'POST',
             // O projeto atual: num agente global (o Atlas), é nele que a conversa nasce.
-            body: { agentId, mode, tools: mode === 'chat' && tools, provider, model, reasoning, projectId: useProjectsStore().current },
+            body: { agentId, mode, tools: mode === 'chat' && tools, provider, model, reasoning, projectId: useProjectsStore().current, repository, worktree },
             signal: controller.signal,
           })
         ).id

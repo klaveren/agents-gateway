@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { levelsOf, type IChoice } from '@/lib/agentChoice'
+import { api } from '@/lib/api'
 import { useAgentCommands } from '@/lib/commands'
 import { effortLabel } from '@/lib/format'
 import type { TMode } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
+import { useProjectsStore } from '@/stores/projects'
 import { useProtocolsStore } from '@/stores/protocols'
 import { reconcileDraft, useThreadStore, type IOutgoingFile } from '@/stores/thread'
 import AgentAvatar from './AgentAvatar.vue'
@@ -19,6 +21,23 @@ const router = useRouter()
 const agents = useAgentsStore()
 const protocols = useProtocolsStore()
 const thread = useThreadStore()
+const projects = useProjectsStore()
+
+/** Os repositórios do projeto atual (`repositories/<nome>`) e as worktrees de cada um: onde a conversa pode abrir. */
+const repositories = ref<Array<{ name: string; worktrees: Array<{ name: string; branch?: string; path: string }> }>>([])
+async function loadRepositories() {
+  repositories.value = projects.current ? await api<typeof repositories.value>(`/projects/${encodeURIComponent(projects.current)}/repositories`).catch(() => []) : []
+  if (thread.draft?.repository && !repositories.value.some((item) => item.name === thread.draft?.repository)) thread.draft = { ...thread.draft, repository: undefined, worktree: undefined }
+}
+onMounted(loadRepositories)
+watch(() => projects.current, loadRepositories)
+const worktrees = computed(() => repositories.value.find((item) => item.name === thread.draft?.repository)?.worktrees ?? [])
+function pickRepository(name: string) {
+  if (thread.draft) thread.draft = { ...thread.draft, repository: name || undefined, worktree: undefined }
+}
+function pickWorktree(name: string) {
+  if (thread.draft) thread.draft = { ...thread.draft, worktree: name || undefined }
+}
 
 const MODE_HINT: Record<string, string> = {
   chat: 'Conversa simples, com anexos.',
@@ -89,7 +108,10 @@ function pick(id: string, fresh = false) {
   if (!next) return
   const previous = fresh ? undefined : thread.draft
   // Provider e modelo voltam ao padrão do agente novo; a lane acompanha a anterior quando o agente também a tem.
-  thread.startDraft(reconcileDraft({ agentId: id, mode: previous?.mode ?? 'chat', tools: !!previous?.tools }, next, lanesOf))
+  // O repositório e a worktree escolhidos ficam ao trocar de agente: o lugar é da conversa, não do agente.
+  thread.startDraft(
+    reconcileDraft({ agentId: id, mode: previous?.mode ?? 'chat', tools: !!previous?.tools, repository: previous?.repository, worktree: previous?.worktree }, next, lanesOf),
+  )
 }
 
 /** Outro provider pode não rodar a lane escolhida (assinatura): o rascunho se ajusta na mesma troca. */
@@ -156,6 +178,23 @@ async function send(text: string, files: IOutgoingFile[], settle: (ok: boolean) 
               Modelo
               <ModelPicker :agent="agent" :value="choice" select-class="mt-1 w-full rounded-lg bg-zinc-800 px-2 h-9 text-sm text-zinc-100" @pick="pickModel" />
             </label>
+            <template v-if="repositories.length">
+              <label class="text-xs font-medium text-zinc-400">
+                Repositório
+                <select :value="draft.repository ?? ''" class="mt-1 w-full rounded-lg bg-zinc-800 px-2 h-9 text-sm text-zinc-100" @change="pickRepository(($event.target as HTMLSelectElement).value)">
+                  <option value="">Pasta do projeto</option>
+                  <option v-for="item in repositories" :key="item.name" :value="item.name">{{ item.name }}</option>
+                </select>
+              </label>
+              <label v-if="draft.repository" class="text-xs font-medium text-zinc-400">
+                Worktree
+                <select :value="draft.worktree ?? ''" class="mt-1 w-full rounded-lg bg-zinc-800 px-2 h-9 text-sm text-zinc-100" @change="pickWorktree(($event.target as HTMLSelectElement).value)">
+                  <option value="">O checkout do repositório</option>
+                  <option v-for="item in worktrees" :key="item.path" :value="item.name">{{ item.name }}{{ item.branch ? ` (${item.branch})` : '' }}</option>
+                </select>
+              </label>
+              <p class="text-xs text-zinc-500 sm:col-span-2">O agente lê e grava só nesta pasta; o git dela funciona.</p>
+            </template>
             <label v-if="reasoningLevels.length" class="text-xs font-medium text-zinc-400">
               Raciocínio
               <select v-model="draft.reasoning" class="mt-1 w-full rounded-lg bg-zinc-800 px-2 h-9 text-sm text-zinc-100">

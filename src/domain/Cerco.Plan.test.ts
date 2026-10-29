@@ -14,6 +14,19 @@ describe('Cerco.Plan', () => {
     assert.strictEqual(toSandboxPath('~/.ssh/key', '/w/p'), '~/.ssh/key')
   })
 
+  it('⛔ worktree: a raiz é a worktree, o rascunho no projeto, o .git comum aberto, menos config e hooks', () => {
+    const plan = cercoPlan(
+      { agent: [rule('write', 'apps/**')] },
+      { ...base, root: '/w/p/repositories/abc/_worktrees/EP-1', scratch: ['/w/p/.home', '/w/p/.tmp'], gitCommonDir: '/w/p/repositories/abc/.git' },
+    )
+    assert.ok(plan.readDeny.includes('/w/p/repositories/abc/_worktrees/EP-1'))
+    assert.ok(plan.writeAllow.includes('/w/p/repositories/abc/_worktrees/EP-1/apps/**'))
+    assert.ok(plan.readAllow.includes('/w/p/repositories/abc/.git') && plan.writeAllow.includes('/w/p/repositories/abc/.git'))
+    for (const path of ['/w/p/repositories/abc/.git/config', '/w/p/repositories/abc/.git/hooks', '/w/p/repositories/abc/.git/worktrees/*/config.worktree'])
+      assert.ok(plan.writeDeny.includes(path), path)
+    assert.ok(!plan.readAllow.some((path) => path === '/w/p/repositories/abc'), 'o checkout principal fica fora')
+  })
+
   it('sem regra: a raiz fechada para leitura e escrita, só as pastas de trabalho abertas; segredos sempre negados', () => {
     const plan = cercoPlan({}, base)
     assert.ok(plan.readDeny.includes('/w/p') && plan.readDeny.includes('/home/gw'))

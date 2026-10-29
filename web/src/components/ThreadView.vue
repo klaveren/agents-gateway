@@ -167,7 +167,9 @@ async function remove() {
 async function continueFresh() {
   const source = header.value
   if (!source) return
-  thread.startDraft({ agentId: source.agentId, mode: source.mode, tools: false, provider: source.provider, model: source.model })
+  const repository = typeof source.metadata?.repository === 'string' ? source.metadata.repository : undefined
+  const worktree = typeof source.metadata?.worktree === 'string' ? source.metadata.worktree : undefined
+  thread.startDraft({ agentId: source.agentId, mode: source.mode, tools: false, provider: source.provider, model: source.model, repository, worktree })
   await router.push({ path: '/new', query: { from: source.id } })
 }
 </script>
@@ -181,6 +183,7 @@ async function continueFresh() {
         <div class="truncate font-medium">{{ header?.title || agentName || 'Conversa' }}</div>
         <div class="truncate text-xs text-zinc-400">
           {{ agentName }} · {{ protocols.providerName(currentProvider) }} {{ currentModel }}<template v-if="thread.session?.reasoning"> · raciocínio {{ effortLabel(thread.session.reasoning).toLowerCase() }}</template>
+          <template v-if="typeof header?.metadata?.repository === 'string'"> · {{ header.metadata.repository }}<template v-if="typeof header.metadata.worktree === 'string'"> / {{ header.metadata.worktree }}</template></template>
           <template v-if="auth.isAdmin && owner"> · {{ owner.email ?? owner.id }}</template>
         </div>
       </div>
