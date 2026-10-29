@@ -1,5 +1,5 @@
 import { exec } from 'node:child_process'
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -36,6 +36,9 @@ export interface IProjectSandbox {
 }
 
 export const SANDBOX_UNAVAILABLE = 'cerco indisponível neste servidor'
+
+/** A porta da ponte HTTP que o runtime monta DENTRO do cerco no Linux (`initializeLinuxNetworkBridge`). */
+const LINUX_BRIDGE_PORT = 3128
 
 /** O shell do comando embrulhado: o srt monta a linha para ele. */
 export const SANDBOX_SHELL = '/bin/bash'
@@ -89,7 +92,8 @@ export class ProjectSandbox implements IProjectSandbox {
     if (!status.available) throw new Error(`${SANDBOX_UNAVAILABLE}: ${status.reason ?? 'sem motivo'}`)
     const manager = await this.ready()
     const port = await networkGate().start()
-    const cerco = plan(this.base(root))
+    const planned = plan(this.base(root))
+    const cerco = process.platform === 'linux' ? forBubblewrap(planned, root, listDir) : planned
     const scratch = (name: string) => {
       const dir = join(root, name)
       mkdirSync(dir, { recursive: true, mode: 0o700 })
@@ -97,7 +101,9 @@ export class ProjectSandbox implements IProjectSandbox {
     }
     const home = scratch('.home')
     const cache = scratch('.cache')
-    const proxy = `http://${networkToken}:x@127.0.0.1:${port}`
+    // ⚠️ No Linux o comando roda noutro namespace de rede: o runtime põe lá dentro uma ponte (socat) em `localhost:3128`
+    // que leva à porta do gateway no host. No Mac o seatbelt divide a rede com o host, e a porta é a própria.
+    const proxy = `http://${networkToken}:x@127.0.0.1:${process.platform === 'linux' ? LINUX_BRIDGE_PORT : port}`
     const connector = writeConnector(home)
     const scoped: Record<string, string> = {
       HOME: home,
@@ -198,6 +204,50 @@ export class ProjectSandbox implements IProjectSandbox {
 
   private nested(): boolean {
     return this.env.SANDBOX_NESTED === '1'
+  }
+}
+
+/**
+ * ⚠️ O CERCO NO LINUX (bubblewrap): uma pasta REABERTA para leitura volta só leitura por cima de tudo o que está
+ * abaixo dela, e a escrita liberada ali dentro morre (provado no contêiner: `apps/` gravável sob a raiz reaberta dá
+ * "Read-only file system"). No Mac (seatbelt) a escrita vale. Então, no Linux, nada que contém uma escrita é fechado e
+ * reaberto:
+ * - a raiz que as regras liberam INTEIRA para leitura não é fechada (os segredos seguem negados um a um);
+ * - a pasta fechada que CONTÉM a raiz (os dados do gateway, com o projeto dentro) vira o fechamento de cada vizinho no
+ *   caminho até a raiz — o que é reaberto (as ferramentas) fica de fora.
+ * Leitura parcial com escrita DENTRO do que é lido continua só leitura no Linux: falha fechada.
+ */
+export function forBubblewrap(plan: ICercoPlan, root: string, list: (dir: string) => string[]): ICercoPlan {
+  const bare = (path: string) => path.replace(/\/\*\*$/, '') || '/'
+  const whole = plan.readAllow.some((path) => bare(path) === root)
+  const readAllow = whole ? plan.readAllow.filter((path) => bare(path) !== root) : plan.readAllow
+  const keep = [root, ...readAllow.map(bare)]
+  const readDeny = plan.readDeny.flatMap((path) => {
+    if (whole && path === root) return []
+    return path !== root && isAtOrUnder(root, path) ? denyAllBut(path, keep, list) : [path]
+  })
+  return { ...plan, readAllow, readDeny: [...new Set(readDeny)] }
+}
+
+/** Fecha tudo dentro de `dir` menos o que leva ao que fica aberto (`keep`). */
+function denyAllBut(dir: string, keep: readonly string[], list: (dir: string) => string[]): string[] {
+  return list(dir).flatMap((name) => {
+    const child = join(dir, name)
+    if (keep.includes(child)) return []
+    return keep.some((path) => isAtOrUnder(path, child)) ? denyAllBut(child, keep, list) : [child]
+  })
+}
+
+function isAtOrUnder(path: string, dir: string): boolean {
+  const rel = relative(dir, path)
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+}
+
+function listDir(dir: string): string[] {
+  try {
+    return readdirSync(dir)
+  } catch {
+    return []
   }
 }
 

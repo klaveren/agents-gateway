@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
-import { ProjectSandbox, projectPathIssue } from './Project.Sandbox'
+import { forBubblewrap, ProjectSandbox, projectPathIssue } from './Project.Sandbox'
 
 describe('ProjectSandbox', () => {
   const root = mkdtempSync(join(tmpdir(), 'gw-sandbox-test-'))
@@ -85,5 +85,29 @@ describe('projectPathIssue — o filtro de caminho das ferramentas de arquivo', 
       ['NotebookEdit', { notebook_path: '/tmp/x.ipynb' }],
     ] as Array<[string, Record<string, unknown>]>)
       assert.match(projectPathIssue(project, project, tool, input) ?? '', /fora da pasta do projeto/, `${tool} ${JSON.stringify(input)}`)
+  })
+})
+
+describe('forBubblewrap — o cerco no Linux', () => {
+  // A pasta de dados com o projeto dentro, as ferramentas e outro projeto (o caso do pod).
+  const tree: Record<string, string[]> = { '/data': ['gateway.db', 'secrets.key', 'tools', 'projects'], '/data/projects': ['xpto', 'outro'] }
+  const list = (dir: string) => tree[dir] ?? []
+  const root = '/data/projects/xpto'
+  const plan = (readAllow: string[]) => ({ readDeny: ['/data', '/home/gw', root, `${root}/**/.env`], readAllow, writeAllow: [`${root}/apps/**`], writeDeny: [] })
+
+  it('⛔ a pasta que contém a raiz vira o fechamento de cada vizinho no caminho; as ferramentas reabertas ficam de fora', () => {
+    const linux = forBubblewrap(plan([`${root}/.home`, '/data/tools', `${root}/**`]), root, list)
+    assert.deepStrictEqual(linux.readDeny, ['/data/gateway.db', '/data/secrets.key', '/data/projects/outro', '/home/gw', `${root}/**/.env`])
+  })
+
+  it('a raiz liberada inteira para leitura não é fechada e reaberta (a escrita dentro dela morreria)', () => {
+    const linux = forBubblewrap(plan([`${root}/.home`, '/data/tools', `${root}/**`]), root, list)
+    assert.ok(!linux.readDeny.includes(root) && !linux.readAllow.includes(`${root}/**`))
+    assert.ok(linux.readDeny.includes(`${root}/**/.env`))
+  })
+
+  it('leitura parcial: a raiz segue fechada, só o liberado reabre', () => {
+    const linux = forBubblewrap(plan(['/data/tools', `${root}/src/**`]), root, list)
+    assert.ok(linux.readDeny.includes(root) && linux.readAllow.includes(`${root}/src/**`))
   })
 })
