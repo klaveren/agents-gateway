@@ -3,7 +3,6 @@ import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Codex, CodexOptions, ThreadEvent, ThreadItem, ThreadOptions, UserInput } from '@openai/codex-sdk'
 import { nativeToolsOf } from '@domain/Native.Tools'
-import { sandboxOf, TSandboxLevel } from '@domain/Sandbox.Policy'
 import { reasoningLevel } from '@domain/Reasoning.Levels'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -18,6 +17,7 @@ import { sessionPrefix } from '@infra/session/Session.Key'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
 import { mcpHeaders } from '@infra/tools/bridges/Claude.ToolBridge'
 import { IAgentMcpServer, ToolCatalog } from '@infra/tools/Tool.Catalog'
+import { TurnGrants, turnGrants } from '@infra/tools/Turn.Grants'
 import { untestedCodex } from './support/Codex.Binary'
 import { esmImport } from './support/Esm.Import'
 import { IConnectionSource, UnavailableProviderError } from './support/Keyed.Client'
@@ -46,6 +46,8 @@ export interface ICodexAgentAdapterDeps {
   home?: () => string
   /** A conferência da versão do binário (ver `untestedCodex`). */
   versionIssue?: () => string | undefined
+  /** Onde o Codex chama as ferramentas do gateway (`/v1/turn-tools`). Ausente = sem terminal nem arquivos. */
+  turnTools?: { url: string; grants?: TurnGrants }
 }
 
 /**
@@ -60,15 +62,17 @@ export interface ICodexAgentAdapterDeps {
  */
 /** As features do CLI para o agente: as travadas, menos as que as nativas dele destravam. */
 export function codexFeatures(allowedTools: readonly string[]): Record<string, boolean> {
-  const unlocked = nativeToolsOf(allowedTools, EProvider.CODEX).flatMap((tool) => tool.sdkNames ?? [tool.sdkName])
+  // ⛔ O terminal do Codex nunca destrava: ele não segue as permissões (o terminal é o do gateway, por MCP).
+  const unlocked = nativeToolsOf(allowedTools, EProvider.CODEX)
+    .flatMap((tool) => tool.sdkNames ?? [tool.sdkName])
+    .filter((name) => !CODEX_TERMINAL_FEATURES.includes(name))
   return Object.fromEntries(Object.entries(CODEX_LOCKED_FEATURES).map(([name, value]) => [name, unlocked.includes(name) || value]))
 }
 
-const CODEX_SANDBOX: Readonly<Record<TSandboxLevel, NonNullable<ThreadOptions['sandboxMode']>>> = {
-  'read-only': 'read-only',
-  'workspace-write': 'workspace-write',
-  full: 'danger-full-access',
-}
+const CODEX_TERMINAL_FEATURES: readonly string[] = ['shell_tool', 'unified_exec']
+
+/** O nome do servidor MCP das ferramentas do gateway na config do Codex. */
+export const CODEX_TURN_TOOLS_SERVER = 'gateway_tools'
 
 export const CODEX_LOCKED_FEATURES: Readonly<Record<string, boolean>> = {
   shell_tool: false,
@@ -111,6 +115,7 @@ export class CodexAgentAdapter implements IAgentAdapter {
   private readonly load: () => Promise<TCodexClass>
   private readonly home: () => string
   private readonly versionIssue: () => string | undefined
+  private readonly turnTools?: { url: string; grants?: TurnGrants }
 
   constructor(deps: ICodexAgentAdapterDeps = {}) {
     this.store = deps.store ?? new SessionStore()
@@ -119,6 +124,7 @@ export class CodexAgentAdapter implements IAgentAdapter {
     this.load = deps.load ?? (async () => (await esmImport<{ Codex: TCodexClass }>('@openai/codex-sdk')).Codex)
     this.home = deps.home ?? (() => subscriptionHome('codex'))
     this.versionIssue = deps.versionIssue ?? (deps.load ? () => undefined : () => untestedCodex())
+    this.turnTools = deps.turnTools
   }
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
@@ -165,35 +171,47 @@ export class CodexAgentAdapter implements IAgentAdapter {
     const workspace = workspaceFor(agent.projectId, sessionId)
     const { prompt, warnings } = this.buildInput(input, workspace)
     for (const message of warnings) yield { type: 'warning', sessionId, timestamp: now(), payload: { message } }
-    if (this.catalog?.localFor(agent.allowedTools).length) {
-      yield { type: 'warning', sessionId, timestamp: now(), payload: { message: 'O Codex usa só ferramentas de MCP: as locais deste agente ficam de fora.' } }
-    }
+    // ⛔ O terminal, os arquivos e as tarefas são os do GATEWAY, por MCP, numa concessão que vale só neste turno: quem
+    // executa é o gateway, com as permissões e o cerco do agente.
+    const locals = this.catalog?.localFor(agent.allowedTools) ?? []
+    const grants = this.turnTools?.grants ?? turnGrants()
+    const grant = locals.length && this.turnTools ? grants.register({ tools: locals, context: { ...context, sessionId } }) : undefined
+    if (locals.length && !grant) yield { type: 'warning', sessionId, timestamp: now(), payload: { message: 'As ferramentas do gateway não chegam ao Codex aqui: ficam de fora.' } }
 
     try {
       const remotes = (await this.catalog?.mcpServersFor(agent.allowedTools, context)) ?? []
+      const servers = codexMcpServers(remotes, context.token)
+      if (grant)
+        servers[CODEX_TURN_TOOLS_SERVER] = {
+          url: this.turnTools!.url,
+          http_headers: { 'X-Turn-Grant': grant, ...(context.token ? { 'X-Tool-Authorization': `Bearer ${context.token}` } : {}) },
+          // ⚖️ Sem a aprovação do Codex: quem decide cada chamada são as permissões do agente, no gateway (sem isto, toda
+          // ferramenta que grava é recusada com "requires approval, but approval policy is never").
+          default_tools_approval_mode: 'approve',
+        }
       const Codex = await this.load()
       const home = this.home()
       const codex = new Codex({
         // Num projeto, o HOME é `<projeto>/.home`: os dotfiles do Codex não sujam a pasta do projeto.
         env: subscriptionEnv({ HOME: agent.projectId ? projectHome(agent.projectId) : workspace, CODEX_HOME: home }),
         config: {
-          developer_instructions: withMcpHint(record.systemPrompt, remotes),
+          developer_instructions: withMcpHint(record.systemPrompt, remotes, grant ? locals.map((tool) => tool.name) : []),
           features: codexFeatures(agent.allowedTools),
           // ⛔ Login em ARQUIVO no CODEX_HOME do gateway, nunca no Keychain da pessoa.
           cli_auth_credentials_store: 'file',
-          mcp_servers: codexMcpServers(remotes, context.token),
+          mcp_servers: servers,
         } as NonNullable<CodexOptions['config']>,
       })
 
       const webSearch = nativeToolsOf(agent.allowedTools, EProvider.CODEX).some((tool) => tool.sdkName === 'web_search')
-      const target = agent.providers.find((candidate) => candidate.provider === record.provider)
       const options: ThreadOptions = {
         model: record.model || undefined,
         workingDirectory: workspace,
         skipGitRepoCheck: true,
-        sandboxMode: CODEX_SANDBOX[sandboxOf(EProvider.CODEX, target?.sandbox)],
+        // ⛔ Sempre só leitura e sem rede: o que escreve e roda comando é o gateway (o `apply_patch` do Codex não grava).
+        sandboxMode: 'read-only',
         approvalPolicy: 'never',
-        networkAccessEnabled: !!target?.network,
+        networkAccessEnabled: false,
         webSearchMode: webSearch ? 'live' : 'disabled',
         modelReasoningEffort: reasoningLevel(EProvider.CODEX, record.reasoning) as ThreadOptions['modelReasoningEffort'],
       }
@@ -218,6 +236,7 @@ export class CodexAgentAdapter implements IAgentAdapter {
       yield { type: 'error', sessionId, timestamp: now(), payload: { message } }
     } finally {
       record.abort = undefined
+      if (grant) grants.release(grant)
     }
   }
 
@@ -255,9 +274,12 @@ export class CodexAgentAdapter implements IAgentAdapter {
  * e modelo menor escolhe a interna — verificado com o GPT-5.6 Terra, que respondia "1 agente: /root".
  * Dizer quais vêm do MCP resolve.
  */
-export function withMcpHint(systemPrompt: string, remotes: readonly IAgentMcpServer[]): string {
-  if (!remotes.length) return systemPrompt
-  const lines = remotes.map((remote) => `- servidor MCP \`${remote.config.id}\`: ${remote.tools?.join(', ') ?? 'todas as ferramentas dele'}`)
+export function withMcpHint(systemPrompt: string, remotes: readonly IAgentMcpServer[], gatewayTools: readonly string[] = []): string {
+  if (!remotes.length && !gatewayTools.length) return systemPrompt
+  const lines = [
+    ...(gatewayTools.length ? [`- servidor MCP \`${CODEX_TURN_TOOLS_SERVER}\` (o terminal e os arquivos desta conversa): ${gatewayTools.join(', ')}`] : []),
+    ...remotes.map((remote) => `- servidor MCP \`${remote.config.id}\`: ${remote.tools?.join(', ') ?? 'todas as ferramentas dele'}`),
+  ]
   return `${systemPrompt}\n\n## Ferramentas\nAs ferramentas deste agente chegam por MCP:\n${lines.join('\n')}\nQuando o pedido citar uma delas, chame a do MCP, nunca uma ferramenta interna de mesmo nome.`
 }
 
