@@ -79,7 +79,7 @@ const go = (query: Record<string, string | undefined>) => router.replace({ query
   <div v-if="!auth.signedIn" class="grid h-full place-items-center p-6 text-center text-zinc-400">
     <div>
       <p class="font-medium text-zinc-200">Entre para ver o seu uso.</p>
-      <RouterLink v-if="auth.localAccounts" :to="{ path: '/login', query: { next: '/usage' } }" class="mt-3 inline-block rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950">Entrar</RouterLink>
+      <RouterLink v-if="auth.localAccounts" :to="{ path: '/login', query: { next: '/usage' } }" class="btn btn-primary mt-3">Entrar</RouterLink>
     </div>
   </div>
 
@@ -94,7 +94,7 @@ const go = (query: Record<string, string | undefined>) => router.replace({ query
         </div>
         <select
           v-if="projects.list.length > 1 || selectedProject"
-          class="ml-auto rounded-full bg-zinc-900 px-3 py-1.5 text-sm text-zinc-200 ring-1 ring-zinc-800"
+          class="ml-auto h-9 rounded-full bg-zinc-900 px-3 text-sm text-zinc-200 ring-1 ring-zinc-800"
           aria-label="Projeto"
           :value="selectedProject ?? ''"
           @change="go({ project: ($event.target as HTMLSelectElement).value || undefined })"
@@ -111,7 +111,7 @@ const go = (query: Record<string, string | undefined>) => router.replace({ query
       <p v-if="loading && !mine && !users && !detail && !groups && !valueDetail" class="text-sm text-zinc-500">Carregando…</p>
 
       <template v-if="tab === 'mine' && mine">
-        <p class="text-xs text-zinc-500">Os tokens das suas conversas. O custo fica com quem administra o gateway.</p>
+        <p class="text-xs text-zinc-500">Quanto você usou nas suas conversas. O custo aparece só para quem administra.</p>
         <UsageSummaryView :summary="mine" :show-cost="false" />
       </template>
 
@@ -123,9 +123,9 @@ const go = (query: Record<string, string | undefined>) => router.replace({ query
 
       <template v-else-if="tab === 'keys'">
         <form class="flex flex-wrap items-center gap-2 text-sm" @submit.prevent="applyKey">
-          <label class="text-zinc-400" for="metadata-key">Chave do metadata</label>
-          <input id="metadata-key" v-model="keyDraft" class="w-48 rounded-lg bg-zinc-900 px-2 py-1 font-mono text-zinc-100 ring-1 ring-zinc-800" placeholder="accountId" />
-          <button class="rounded-full bg-zinc-800 px-3 py-1 text-zinc-100 hover:bg-zinc-700">Agrupar</button>
+          <label class="text-zinc-400" for="metadata-key">Agrupar pelo campo</label>
+          <input id="metadata-key" v-model="keyDraft" class="w-48 rounded-lg bg-zinc-900 px-2 h-9 font-mono text-zinc-100 ring-1 ring-zinc-800" placeholder="accountId" />
+          <button class="btn btn-secondary">Agrupar</button>
         </form>
         <template v-if="groups">
           <UsageTiles :figure="groups.totals" :show-cost="true">
@@ -134,7 +134,7 @@ const go = (query: Record<string, string | undefined>) => router.replace({ query
           <p v-if="!groups.groups.length" class="text-sm text-zinc-500">Nenhum uso neste período.</p>
           <table v-else class="w-full overflow-hidden rounded-2xl border border-zinc-800 text-left text-sm">
             <thead class="bg-zinc-900 text-xs text-zinc-500">
-              <tr><th class="px-4 py-2 font-medium">{{ groups.key }}</th><th class="font-medium">Conversas</th><th class="font-medium">Turnos</th><th class="font-medium">Tokens</th><th class="pr-4 text-right font-medium">Custo</th></tr>
+              <tr><th class="px-4 py-2 font-medium">{{ groups.key }}</th><th class="font-medium">Conversas</th><th class="font-medium">Mensagens</th><th class="font-medium">Tokens</th><th class="pr-4 text-right font-medium">Custo</th></tr>
             </thead>
             <tbody>
               <tr v-for="group in groups.groups" :key="group.value ?? NO_VALUE" class="cursor-pointer border-t border-zinc-800 hover:bg-zinc-900/70" @click="go({ value: group.value ?? NO_VALUE })">
@@ -148,14 +148,13 @@ const go = (query: Record<string, string | undefined>) => router.replace({ query
           </table>
         </template>
         <p class="text-xs text-zinc-500">
-          Agrupa pelo <code>metadata</code> que quem cria a sessão envia (<code>POST /sessions</code>) — o gateway não confere esses valores. Para cobrança, crie as sessões pelo seu backend. API:
-          <code>/v1/usage/by/{{ metaKey }}</code>.
+          Agrupa pelo campo que quem cria a conversa informa. Os valores não são conferidos.
         </p>
       </template>
 
       <template v-else-if="tab === 'users' && selectedUser && detail">
         <button class="self-start text-sm text-zinc-400 hover:text-zinc-100" @click="go({ user: undefined })">← Todos os usuários</button>
-        <h2 class="text-lg font-medium">{{ detail.name ?? detail.email ?? (detail.ownerId === 'anonymous' ? 'Sem conta (anônimo)' : detail.ownerId) }} <span v-if="detail.name && detail.email" class="text-sm font-normal text-zinc-500">{{ detail.email }}</span></h2>
+        <h2 class="text-lg font-medium">{{ detail.name ?? detail.email ?? (detail.ownerId === 'anonymous' ? 'Sem conta' : detail.ownerId) }} <span v-if="detail.name && detail.email" class="text-sm font-normal text-zinc-500">{{ detail.email }}</span></h2>
         <UsageSummaryView :summary="detail" :show-cost="true" />
       </template>
 
@@ -166,12 +165,12 @@ const go = (query: Record<string, string | undefined>) => router.replace({ query
         <p v-if="!users.users.length" class="text-sm text-zinc-500">Nenhum uso neste período.</p>
         <table v-else class="w-full overflow-hidden rounded-2xl border border-zinc-800 text-left text-sm">
           <thead class="bg-zinc-900 text-xs text-zinc-500">
-            <tr><th class="px-4 py-2 font-medium">Usuário</th><th class="font-medium">Conversas</th><th class="font-medium">Turnos</th><th class="font-medium">Tokens</th><th class="pr-4 text-right font-medium">Custo</th></tr>
+            <tr><th class="px-4 py-2 font-medium">Usuário</th><th class="font-medium">Conversas</th><th class="font-medium">Mensagens</th><th class="font-medium">Tokens</th><th class="pr-4 text-right font-medium">Custo</th></tr>
           </thead>
           <tbody>
             <tr v-for="user in users.users" :key="user.ownerId ?? 'anonymous'" class="cursor-pointer border-t border-zinc-800 hover:bg-zinc-900/70" @click="go({ user: user.ownerId ?? 'anonymous' })">
               <td class="px-4 py-2">
-                <span class="block text-zinc-200">{{ user.name ?? user.email ?? (user.ownerId ? user.ownerId : 'Sem conta (anônimo)') }}</span>
+                <span class="block text-zinc-200">{{ user.name ?? user.email ?? (user.ownerId ? user.ownerId : 'Sem conta') }}</span>
                 <span v-if="user.name && user.email" class="block text-xs text-zinc-500">{{ user.email }}</span>
               </td>
               <td class="tabular-nums text-zinc-300">{{ user.conversations }}</td>
@@ -181,7 +180,7 @@ const go = (query: Record<string, string | undefined>) => router.replace({ query
             </tr>
           </tbody>
         </table>
-        <p class="text-xs text-zinc-500">Custo estimado pelos preços do catálogo (Modelos). "≥" = algum modelo sem preço: o valor é um piso.</p>
+        <p class="text-xs text-zinc-500">Custo estimado. "≥" indica que algum modelo está sem preço e o valor real pode ser maior.</p>
       </template>
     </div>
   </div>

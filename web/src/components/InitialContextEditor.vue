@@ -77,7 +77,7 @@ async function save() {
     const result = await api<IInitialContext>(props.endpoint, { method: 'PUT', body: { docIds: selected.value } })
     saved.value = result.docs.map((doc) => doc.id)
     selected.value = [...saved.value]
-    note.value = 'Contexto inicial salvo. Vale para as conversas que começarem agora.'
+    note.value = 'Salvo. Vale para as próximas conversas.'
   } catch (failure) {
     error.value = describe(failure)
   } finally {
@@ -96,7 +96,7 @@ function describe(failure: unknown): string {
 
     <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
     <p v-if="!loading && !available.length" class="rounded-xl border border-dashed border-zinc-800 p-4 text-center text-sm text-zinc-500">
-      Nenhuma spec que possa entrar aqui ainda. <RouterLink to="/specs/new" class="text-emerald-400 underline underline-offset-2">Criar uma spec</RouterLink>.
+      Nenhuma Spec ainda. <RouterLink to="/specs/new" class="text-emerald-400 underline underline-offset-2">Criar Spec</RouterLink>.
     </p>
 
     <ul v-if="available.length" class="flex flex-col divide-y divide-zinc-800 rounded-xl border border-zinc-800">
@@ -121,9 +121,9 @@ function describe(failure: unknown): string {
     <div class="flex flex-wrap items-center gap-3 text-sm">
       <span :class="total.warn ? 'text-amber-300' : 'text-zinc-400'">
         {{ selected.length }} spec(s) · ≈ {{ weight.total.toLocaleString('pt-BR') }} tokens<template v-if="baseTokens"> · ≈ {{ total.total.toLocaleString('pt-BR') }} com o contexto do projeto</template> em toda conversa
-        <template v-if="total.warn"> — acima de {{ CONTEXT_WARN_TOKENS.toLocaleString('pt-BR') }}, pesa no custo e no contexto de cada conversa</template>
+        <template v-if="total.warn"> — acima de {{ CONTEXT_WARN_TOKENS.toLocaleString('pt-BR') }}, fica mais caro</template>
       </span>
-      <button type="button" :disabled="busy || !dirty" class="ml-auto rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="save">Salvar</button>
+      <button type="button" :disabled="busy || !dirty" class="btn btn-primary ml-auto" @click="save">Salvar</button>
     </div>
     <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
   </section>

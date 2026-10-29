@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { IProviderConfig, OFFICIAL_PROVIDERS } from '@domain/models/Provider.Model'
+import { IProviderConfig, LEGACY_PROVIDER_NAMES, OFFICIAL_PROVIDERS } from '@domain/models/Provider.Model'
 import { IProviderRepository, TProviderPatch } from '@domain/ports/ProviderRepository.Port'
 
 const SCHEMA = `
@@ -42,6 +42,9 @@ export class SqliteProviderRepository implements IProviderRepository {
     const now = new Date().toISOString()
     const seed = this.db.prepare('INSERT OR IGNORE INTO providers (id, name, protocol, base_url, official, enabled, created_at, updated_at) VALUES (?, ?, ?, NULL, 1, ?, ?, ?)')
     for (const provider of OFFICIAL_PROVIDERS) seed.run(provider.id, provider.name, provider.protocol, provider.enabled ? 1 : 0, now, now)
+    // O nome antigo de um oficial vira o de agora; o que alguém renomeou fica como está.
+    const rename = this.db.prepare('UPDATE providers SET name = ? WHERE id = ? AND official = 1 AND name = ?')
+    for (const provider of OFFICIAL_PROVIDERS) if (LEGACY_PROVIDER_NAMES[provider.id]) rename.run(provider.name, provider.id, LEGACY_PROVIDER_NAMES[provider.id])
   }
 
   list(): IProviderConfig[] {

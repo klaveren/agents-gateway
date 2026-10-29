@@ -40,7 +40,7 @@ const section = computed(() => {
  * Modelos, MCPs, Pacotes, Configuração), no menu Sistema.
  */
 const links = computed<Array<{ to: string; key: string; label: string; short?: string; icon: 'inbox' | 'chart' | 'agents'; badge: number }>>(() => [
-  { to: '/', key: 'inbox', label: 'Conversas', short: 'Chats', icon: 'inbox' as const, badge: conversations.unread.size },
+  { to: '/', key: 'inbox', label: 'Conversas', short: 'Conversas', icon: 'inbox' as const, badge: conversations.unread.size },
   ...(auth.signedIn ? [{ to: '/usage', key: 'usage', label: 'Uso', icon: 'chart' as const, badge: 0 }] : []),
   ...(auth.isAdmin
     ? [

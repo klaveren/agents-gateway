@@ -6,7 +6,7 @@ import { useRouter } from 'vue-router'
 import { coreAgentName } from '@/lib/builder'
 import { useAgentCommands } from '@/lib/commands'
 import { contextMeter } from '@/lib/contextMeter'
-import { fullTime, tokens, usd } from '@/lib/format'
+import { effortLabel, fullTime, tokens, usd } from '@/lib/format'
 import { useAgentsStore } from '@/stores/agents'
 import { useProtocolsStore } from '@/stores/protocols'
 import { useAuthStore } from '@/stores/auth'
@@ -108,7 +108,7 @@ function switchBefore(index: number): string | undefined {
   const provider = turn.provider ?? fallback
   const providerChanged = provider !== (previous.provider ?? fallback)
   if (!providerChanged && turn.model === previous.model && (turn.effort ?? '') === (previous.effort ?? '')) return undefined
-  return `trocou para ${providerChanged ? `${protocols.providerName(provider)} · ` : ''}${turn.model}${turn.effort ? ` · ${turn.effort}` : ''}`
+  return `trocou para ${providerChanged ? `${protocols.providerName(provider)} · ` : ''}${turn.model}${turn.effort ? ` · raciocínio ${effortLabel(turn.effort).toLowerCase()}` : ''}`
 }
 
 watch(
@@ -179,13 +179,12 @@ async function continueFresh() {
       <div class="min-w-0">
         <div class="truncate font-medium">{{ header?.title || agentName || 'Conversa' }}</div>
         <div class="truncate text-xs text-zinc-400">
-          {{ agentName }} · {{ protocols.providerName(currentProvider) }} {{ currentModel }}<template v-if="thread.session?.reasoning"> ({{ thread.session.reasoning }})</template> ·
-          {{ (header?.mode ?? mode) === 'agent' ? 'Agents SDK' : 'chat' }}
+          {{ agentName }} · {{ protocols.providerName(currentProvider) }} {{ currentModel }}<template v-if="thread.session?.reasoning"> · raciocínio {{ effortLabel(thread.session.reasoning).toLowerCase() }}</template>
           <template v-if="auth.isAdmin && owner"> · {{ owner.email ?? owner.id }}</template>
         </div>
       </div>
       <div v-if="header || context" class="ml-auto flex items-center gap-1">
-        <div v-if="context" class="mr-2 grid h-8 w-8 place-items-center" :title="`Contexto ${context.label}`">
+        <div v-if="context" class="mr-2 grid h-8 w-8 place-items-center" :title="`Contexto da conversa: ${context.label.replace(' / ', ' de ').replace(' usados', '')} tokens`">
           <svg v-if="context.percent !== undefined" viewBox="0 0 32 32" class="col-start-1 row-start-1 h-8 w-8 -rotate-90">
             <circle cx="16" cy="16" r="13" fill="none" stroke-width="3" class="stroke-zinc-800" />
             <circle cx="16" cy="16" r="13" fill="none" stroke-width="3" stroke-linecap="round" pathLength="100" :stroke-dasharray="`${context.percent} 100`" :class="context.warn ? 'stroke-amber-400' : 'stroke-emerald-500'" />
@@ -210,7 +209,7 @@ async function continueFresh() {
     </div>
     <div v-if="children.length" class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-zinc-800/80 bg-zinc-900/40 px-4 py-1.5 text-xs text-zinc-400">
       <span>{{ children.length }} delegaç{{ children.length === 1 ? 'ão' : 'ões' }} · {{ tokens(childTokens) }} tokens<template v-if="auth.isAdmin && childCost !== undefined"> · {{ usd(childCost) }}</template></span>
-      <RouterLink v-for="child in children" :key="child.id" :to="`/c/${child.id}`" class="rounded-full bg-zinc-800 px-2 py-0.5 text-zinc-300 hover:bg-zinc-700">{{ agents.byId.get(child.agentId)?.name ?? child.agentId }}</RouterLink>
+      <RouterLink v-for="child in children" :key="child.id" :to="`/c/${child.id}`" class="btn btn-sm btn-secondary">{{ agents.byId.get(child.agentId)?.name ?? child.agentId }}</RouterLink>
     </div>
 
     <div v-if="actionError" class="flex items-center gap-2 border-b border-rose-500/20 bg-rose-500/10 px-4 py-2 text-xs text-rose-200">
@@ -219,9 +218,9 @@ async function continueFresh() {
     </div>
 
     <div v-if="shareUrl" class="flex items-center gap-2 border-b border-emerald-500/20 bg-emerald-500/10 px-4 py-2 text-xs text-emerald-200">
-      Aberta por link — quem tiver o endereço lê as perguntas e respostas.
+      Qualquer pessoa com o link pode ler esta conversa.
       <code class="truncate text-emerald-300">{{ shareUrl }}</code>
-      <button class="ml-auto flex items-center gap-1 hover:text-white" @click="copyShare"><Icon :name="copied ? 'check' : 'copy'" class="h-4 w-4" />{{ copied ? 'Copiado' : 'Copiar' }}</button>
+      <button class="btn btn-sm btn-ghost ml-auto" @click="copyShare"><Icon :name="copied ? 'check' : 'copy'" class="h-4 w-4" />{{ copied ? 'Copiado' : 'Copiar' }}</button>
     </div>
 
     <div ref="scroller" class="scroll-thin min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(circle_at_1px_1px,rgb(39_39_42/0.6)_1px,transparent_0)] [background-size:22px_22px] px-4 py-5">
@@ -240,16 +239,16 @@ async function continueFresh() {
     <ConfirmDialog
       :open="confirming"
       title="Apagar o histórico desta conversa?"
-      :message="deleteError ?? 'Some da lista para todo mundo e não dá para desfazer. Uma sessão ainda viva no gateway não é encerrada.'"
+      :message="deleteError ?? 'Some da lista para todo mundo e não dá para desfazer.'"
       :busy="deleting"
       @confirm="remove"
       @cancel="confirming = false"
     />
     <!-- ⚖️ Sessão encerrada (expirou, ou o gateway reiniciou) não tranca a conversa: ao enviar, o gateway a retoma com o histórico. -->
     <div v-if="resumable" class="flex items-center gap-3 border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-2 text-xs text-zinc-400">
-      <span class="min-w-0 truncate" title="O agente recebe o histórico: o texto e as ferramentas usadas. Anexos não voltam.">Sessão encerrada — ao enviar, a conversa continua de onde parou.</span>
-      <button v-if="!embedded" class="ml-auto flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-zinc-300 hover:bg-zinc-800" @click="continueFresh">
-        <Icon name="refresh" class="h-3.5 w-3.5" /> ou comece uma nova
+      <span class="min-w-0 truncate">A conversa foi encerrada. Ao enviar, ela continua de onde parou.</span>
+      <button v-if="!embedded" class="btn btn-sm btn-ghost ml-auto" @click="continueFresh">
+        <Icon name="refresh" class="h-3.5 w-3.5" /> Começar uma nova
       </button>
     </div>
     <SessionTuner v-if="thread.liveSession && agent" :agent="agent" :mode="header?.mode" :fallback="{ provider: header?.provider, model: header?.model }" />

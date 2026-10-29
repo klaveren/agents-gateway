@@ -28,9 +28,9 @@ const selected = computed(() => (props.id ? providers.list.find((provider) => pr
 
 /** De onde vem o login de cada assinatura, para o texto da tela. */
 const SUBSCRIPTION_HINT: Record<string, string> = {
-  'claude-sub': 'Entra com a sua conta Claude (Pro/Max): o gateway gera um token de um ano e o guarda cifrado. No Mac, sem token, vale o login do Claude Code deste computador.',
-  codex: 'Entra com a sua conta do ChatGPT. O gateway guarda esse login num lugar só dele, separado do seu Codex.',
-  antigravity: 'Entra com a sua conta Google do Antigravity. O gateway guarda esse login num lugar só dele, separado do seu agy.',
+  'claude-sub': 'Entre com a sua conta Claude (Pro/Max).',
+  codex: 'Entre com a sua conta do ChatGPT.',
+  antigravity: 'Entre com a sua conta Google do Antigravity.',
 }
 
 const drafts = ref<Record<string, string>>({})
@@ -138,19 +138,22 @@ async function create() {
   }
 }
 
-/** A linha de baixo na lista: o que falta, ou o resumo. */
+/** Como se paga: por token (chave de API), pela assinatura de alguém, ou por uma API compatível. */
+const billingOf = (provider: Pick<IProviderStatus, 'subscription' | 'official' | 'protocol'>) =>
+  provider.subscription ? 'assinatura' : provider.official ? 'por token' : `compatível ${protocolLabel(provider.protocol)}`
+
+/** A linha de baixo na lista: como se paga, e o que falta ou o resumo. */
 function rowStatus(provider: IProviderStatus): string {
-  if (!provider.enabled) return 'desligado'
-  if (provider.subscription) return `assinatura · ${provider.catalog ? `${provider.catalog.enabled} de ${provider.catalog.total} modelos` : 'modelos não listados'}`
-  if (!provider.credential.configured) return 'sem chave'
   const models = provider.catalog ? `${provider.catalog.enabled} de ${provider.catalog.total} modelos` : 'modelos não listados'
-  return `${provider.official ? 'oficial' : `compatível ${protocolLabel(provider.protocol)}`} · ${models}`
+  if (!provider.enabled) return `${billingOf(provider)} · desligado`
+  if (!provider.subscription && !provider.credential.configured) return `${billingOf(provider)} · sem chave`
+  return `${billingOf(provider)} · ${models}`
 }
 
 function sourceLabel(provider: IProviderStatus): string {
   const credential = provider.credential
-  if (provider.subscription) return credential.source === 'stored' ? `Token salvo pela tela · termina em …${credential.last4}` : 'Pela assinatura, sem chave de API'
-  if (credential.source === 'stored') return `Chave salva pela tela · termina em …${credential.last4}`
+  if (provider.subscription) return credential.source === 'stored' ? `Token salvo · termina em …${credential.last4}` : 'Entra pela assinatura'
+  if (credential.source === 'stored') return `Chave salva · termina em …${credential.last4}`
   return 'Sem chave'
 }
 </script>
@@ -159,7 +162,7 @@ function sourceLabel(provider: IProviderStatus): string {
   <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
     <div>
       <p class="font-medium text-zinc-200">Só quem administra configura os modelos.</p>
-      <RouterLink v-if="!auth.signedIn && auth.localAccounts" :to="{ path: '/login', query: { next: '/models' } }" class="mt-3 inline-block rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950">Entrar</RouterLink>
+      <RouterLink v-if="!auth.signedIn && auth.localAccounts" :to="{ path: '/login', query: { next: '/models' } }" class="mt-3 btn btn-primary">Entrar</RouterLink>
     </div>
   </div>
 
@@ -169,7 +172,7 @@ function sourceLabel(provider: IProviderStatus): string {
         <h1 class="text-xl font-semibold">Modelos</h1>
         <RouterLink to="/models/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Adicionar provedor"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
-      <p class="px-4 pb-3 text-xs text-zinc-500">Os oficiais e qualquer API compatível com OpenAI ou Anthropic. As chaves ficam criptografadas e nunca voltam para a tela.</p>
+      <p class="px-4 pb-3 text-xs text-zinc-500">Provedores oficiais e APIs compatíveis com OpenAI ou Anthropic.</p>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
       <RouterLink
         v-for="provider in providers.list"
@@ -192,31 +195,31 @@ function sourceLabel(provider: IProviderStatus): string {
         <h2 class="mx-auto mb-4 max-w-3xl text-lg font-semibold">Novo provedor</h2>
         <form class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="create">
           <div class="flex flex-wrap gap-1.5">
-            <span class="text-xs text-zinc-400">Qualquer API que imite a da OpenAI ou a da Anthropic — um agregador, um servidor local, um gateway da empresa.</span>
+            <span class="text-xs text-zinc-400">Qualquer API compatível com OpenAI ou Anthropic (agregador, servidor local, da empresa).</span>
           </div>
           <div class="grid gap-3 sm:grid-cols-2">
             <label class="field">Nome<input v-model="form.name" required class="input" /><small v-for="m in formIssues.name" :key="m" class="error">{{ m }}</small></label>
-            <label class="field">Id<input v-model="form.id" required pattern="[a-z0-9][a-z0-9-]{1,31}" class="input font-mono" placeholder="meu-provider" /><small v-for="m in formIssues.id" :key="m" class="error">{{ m }}</small></label>
+            <label class="field">Identificador<input v-model="form.id" required pattern="[a-z0-9][a-z0-9-]{1,31}" class="input font-mono" placeholder="meu-provedor" /><small v-for="m in formIssues.id" :key="m" class="error">{{ m }}</small></label>
             <div class="field">
               Protocolo
               <div class="flex flex-wrap gap-1.5">
                 <button v-for="protocol in (['openai', 'claude'] as TProvider[])" :key="protocol" type="button" class="chip" :class="{ on: form.protocol === protocol }" @click="form.protocol = protocol">{{ protocolLabel(protocol) }}</button>
               </div>
-              <small class="hint">Qual API o provedor imita — é o que decide o formato da URL abaixo. Alguns falam as duas: cadastre um de cada, se quiser usar as duas lanes de SDK.</small>
+              <small class="hint">Qual API o provedor segue. Se ele aceita as duas, cadastre uma vez para cada.</small>
             </div>
             <label class="field">
               URL base
               <input v-model="form.baseUrl" required class="input font-mono" :placeholder="form.protocol === 'claude' ? 'https://api.exemplo.com' : 'https://api.exemplo.com/v1'" />
-              <small class="hint">{{ form.protocol === 'claude' ? 'Sem o /v1: o SDK da Anthropic acrescenta.' : 'Com o /v1: o SDK da OpenAI acrescenta só /chat/completions.' }}</small>
+              <small class="hint">{{ form.protocol === 'claude' ? 'Sem o /v1 no final.' : 'Com o /v1 no final.' }}</small>
               <small v-for="m in formIssues.baseUrl" :key="m" class="error">{{ m }}</small>
             </label>
             <label class="field sm:col-span-2">Chave (opcional agora)<input v-model="form.key" type="password" autocomplete="off" spellcheck="false" class="input font-mono" /></label>
           </div>
-          <p class="text-xs text-amber-300/80">Nos compatíveis, tool use e raciocínio variam por modelo: um agente com ferramentas pode falhar onde o GPT ou o Claude não falham.</p>
+          <p class="text-xs text-amber-300/80">Nos compatíveis, ferramentas e raciocínio variam por modelo e podem falhar.</p>
           <p v-if="formError" class="text-sm text-rose-300">{{ formError }}</p>
           <div class="flex gap-2">
-            <button type="submit" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400">Adicionar</button>
-            <RouterLink to="/models" class="rounded-full px-4 py-2 text-sm hover:bg-zinc-800">Cancelar</RouterLink>
+            <button type="submit" class="btn btn-primary">Adicionar</button>
+            <RouterLink to="/models" class="btn btn-ghost">Cancelar</RouterLink>
           </div>
         </form>
       </template>
@@ -224,7 +227,7 @@ function sourceLabel(provider: IProviderStatus): string {
         <div class="flex items-center gap-3">
           <AgentAvatar :name="selected.name" :provider="selected.id" size="lg" />
           <div class="min-w-0">
-            <h2 class="text-lg font-semibold">{{ selected.name }} <span class="ml-1 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] font-normal text-zinc-400">{{ selected.subscription ? 'assinatura' : selected.official ? 'oficial' : `compatível ${protocolLabel(selected.protocol)}` }}</span></h2>
+            <h2 class="text-lg font-semibold">{{ selected.name }} <span class="ml-1 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] font-normal text-zinc-400">{{ billingOf(selected) }}</span></h2>
             <p class="text-xs break-all" :class="selected.credential.configured || selected.subscription ? 'text-zinc-400' : 'text-amber-300'">
               {{ sourceLabel(selected) }}<template v-if="selected.baseUrl"> · <code>{{ selected.baseUrl }}</code></template>
             </p>
@@ -236,19 +239,18 @@ function sourceLabel(provider: IProviderStatus): string {
         </div>
 
         <p v-if="selected.credential.unreadable" class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-          A chave salva não pôde ser decifrada (a chave-mestra mudou). Cole a chave de novo.
+          Não foi possível ler a chave salva. Cole a chave de novo.
         </p>
         <p v-if="selected.credential.updatedBy && selected.credential.source === 'stored'" class="text-xs text-zinc-500">Chave salva por {{ selected.credential.updatedBy }} em {{ fullTime(selected.credential.updatedAt) }}</p>
 
         <template v-if="selected.subscription">
           <p class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-            Conta pessoal: os agentes usam a SUA assinatura, inclusive nas conversas de quem não administra (para fechar um agente, marque "Só administradores" nele). Cada conversa roda num
-            diretório vazio; o sandbox e o terminal são escolhidos no agente, na guia SDK. Os preços dos modelos são os da API, para mostrar quanto a conversa custaria em tokens.
+            Conta pessoal: os agentes usam a SUA assinatura, inclusive nas conversas de outras pessoas. Para restringir, marque "Só administradores" no agente.
           </p>
           <p class="text-xs text-zinc-400">{{ SUBSCRIPTION_HINT[selected.protocol] }}</p>
           <SubscriptionLogin :provider="selected" @done="loginDone(selected.id)" />
           <div v-if="selected.protocol !== 'claude-sub'" class="flex">
-            <button type="button" :disabled="busy[selected.id]" class="rounded-full bg-zinc-800 px-4 py-2 text-sm hover:bg-zinc-700 disabled:opacity-40" @click="test(selected.id)">{{ busy[selected.id] ? 'Testando…' : 'Testar' }}</button>
+            <button type="button" :disabled="busy[selected.id]" class="btn btn-secondary" @click="test(selected.id)">{{ busy[selected.id] ? 'Testando…' : 'Testar' }}</button>
           </div>
         </template>
 
@@ -258,12 +260,12 @@ function sourceLabel(provider: IProviderStatus): string {
             type="password"
             autocomplete="off"
             spellcheck="false"
-            :placeholder="selected.subscription ? 'Token OAuth (opcional)' : selected.credential.configured ? 'Colar nova chave para trocar' : 'Colar a chave de API'"
-            class="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-sm outline-none focus:border-emerald-500/60"
+            :placeholder="selected.subscription ? 'Token (opcional)' : selected.credential.configured ? 'Colar nova chave para trocar' : 'Colar a chave'"
+            class="h-9 min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 font-mono text-sm outline-none focus:border-emerald-500/60"
           />
-          <button type="button" :disabled="busy[selected.id] || (!drafts[selected.id] && !selected.credential.configured && !selected.subscription)" class="rounded-full bg-zinc-800 px-4 py-2 text-sm hover:bg-zinc-700 disabled:opacity-40" @click="test(selected.id)">Testar</button>
-          <button type="submit" :disabled="busy[selected.id] || !drafts[selected.id]?.trim()" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40">Salvar</button>
-          <button v-if="selected.credential.source === 'stored'" type="button" class="rounded-full px-3 py-2 text-sm text-rose-300 hover:bg-rose-500/10" @click="removingKey = selected">Remover chave</button>
+          <button type="button" :disabled="busy[selected.id] || (!drafts[selected.id] && !selected.credential.configured && !selected.subscription)" class="btn btn-secondary" @click="test(selected.id)">Testar</button>
+          <button type="submit" :disabled="busy[selected.id] || !drafts[selected.id]?.trim()" class="btn btn-primary">Salvar</button>
+          <button v-if="selected.credential.source === 'stored'" type="button" class="btn btn-danger" @click="removingKey = selected">Remover chave</button>
         </form>
 
         <p v-if="results[selected.id]" class="text-sm" :class="results[selected.id].ok ? 'text-emerald-300' : 'text-rose-300'">
@@ -271,7 +273,7 @@ function sourceLabel(provider: IProviderStatus): string {
           <template v-if="results[selected.id].ok && results[selected.id].unverified">⚠ {{ results[selected.id].message }} ({{ results[selected.id].models }} modelos listados)</template>
           <template v-else-if="results[selected.id].ok && results[selected.id].models !== undefined">✓ A chave funciona — {{ results[selected.id].models }} modelos disponíveis.</template>
           <template v-else-if="results[selected.id].ok">{{ results[selected.id].message }}</template>
-          <template v-else>✕ {{ results[selected.id].status ? `HTTP ${results[selected.id].status}: ` : '' }}{{ results[selected.id].message }}</template>
+          <template v-else>✕ {{ results[selected.id].status && !results[selected.id].message ? `HTTP ${results[selected.id].status}: ` : '' }}{{ results[selected.id].message }}</template>
         </p>
 
         <ProviderModels :provider="selected" />
@@ -288,7 +290,7 @@ function sourceLabel(provider: IProviderStatus): string {
       <ConfirmDialog
         :open="!!removingKey"
         :title="`Remover a chave salva de ${removingKey?.name ?? ''}?`"
-        message="A chave é desativada: as conversas com esse provider falham até uma nova ser salva."
+        message="Sem a chave, as conversas com este provedor falham até você salvar outra."
         action="Remover"
         @confirm="confirmRemoveKey"
         @cancel="removingKey = undefined"
@@ -296,7 +298,7 @@ function sourceLabel(provider: IProviderStatus): string {
       <ConfirmDialog
         :open="!!removingProvider"
         :title="`Remover o provedor ${removingProvider?.name ?? ''}?`"
-        message="O provider e a chave dele somem; os modelos dele ficam desligados, não apagados. Se algum agente ainda o usa, o gateway recusa e diz quais."
+        message="O provedor e a chave serão apagados. Não dá se algum agente ainda o usa."
         action="Remover"
         @confirm="confirmRemoveProvider"
         @cancel="removingProvider = undefined"
@@ -319,12 +321,6 @@ function sourceLabel(provider: IProviderStatus): string {
 }
 .error {
   @apply text-xs font-normal text-rose-300;
-}
-.chip {
-  @apply rounded-full border border-zinc-700 px-3 py-1 text-sm font-normal text-zinc-300 hover:bg-zinc-800;
-}
-.chip.on {
-  @apply border-emerald-500/60 bg-emerald-500/15 text-emerald-200;
 }
 .switch {
   @apply relative h-6 w-11 rounded-full bg-zinc-700 transition-colors disabled:opacity-40;

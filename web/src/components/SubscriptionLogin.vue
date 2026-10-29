@@ -26,15 +26,15 @@ let alive = true
 /** O que a tela diz quando não dá para ser nativo — por assinatura. */
 const HELP: Record<string, { note?: string; missing?: string; command?: string; link?: { href: string; label: string } }> = {
   codex: {
-    note: 'Se a página do ChatGPT pedir para ativar o login com código de dispositivo, ative em Configurações → Segurança e clique em Entrar de novo.',
+    note: 'Se o ChatGPT pedir "login por código de dispositivo", ative em Configurações → Segurança e clique em Entrar de novo.',
     link: { href: 'https://chatgpt.com/#settings/Security', label: 'Abrir a segurança do ChatGPT ↗' },
   },
   'claude-sub': {
-    note: 'Sem conseguir pelo Entrar? Gere o token em qualquer máquina com o Claude Code e cole no campo "Token OAuth" abaixo.',
+    note: 'Se o Entrar não funcionar, gere um token com o comando abaixo e cole no campo "Token (opcional)", mais abaixo.',
     command: 'claude setup-token',
   },
   antigravity: {
-    missing: 'O Antigravity CLI não está na máquina do gateway. Na imagem oficial ele já vem; fora dela, instale a versão 1.4.6 (Linux ou macOS) e, se não estiver no PATH como "agy", aponte ANTIGRAVITY_BIN para o binário.',
+    missing: 'O Antigravity CLI não está instalado no servidor. Instale a versão 1.4.6 (Linux ou macOS) e reinicie.',
     link: { href: 'https://github.com/google-antigravity/antigravity-cli/releases/tag/1.4.6', label: 'Baixar o Antigravity CLI 1.4.6 ↗' },
   },
 }
@@ -93,7 +93,7 @@ async function copy(text: string, what: string) {
     copyTimer = setTimeout(() => (copied.value = undefined), 1500)
   } catch {
     copied.value = undefined
-    error.value = 'não foi possível copiar; selecione e copie à mão'
+    error.value = 'Não foi possível copiar; selecione e copie à mão'
   }
 }
 
@@ -133,10 +133,10 @@ onBeforeUnmount(() => {
       <span class="text-sm font-medium">Conta</span>
       <span v-if="login.state === 'done'" class="text-sm text-emerald-300">✓ Conectado</span>
       <span v-else-if="login.state === 'failed' && !login.missing" class="text-sm text-rose-300">✕ {{ login.message }}</span>
-      <button v-if="login.state !== 'waiting'" type="button" :disabled="busy" class="ml-auto rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="start">
+      <button v-if="login.state !== 'waiting'" type="button" :disabled="busy" class="ml-auto btn btn-primary" @click="start">
         {{ busy ? 'Abrindo…' : 'Entrar' }}
       </button>
-      <button v-else type="button" class="ml-auto rounded-full px-3 py-2 text-sm text-zinc-400 hover:bg-zinc-800" @click="act(() => providers.login(provider.id, 'cancel'))">Cancelar</button>
+      <button v-else type="button" class="ml-auto btn btn-ghost" @click="act(() => providers.login(provider.id, 'cancel'))">Cancelar</button>
     </div>
 
     <template v-if="login.state === 'waiting'">
@@ -145,7 +145,7 @@ onBeforeUnmount(() => {
           Abra o link e entre na conta:
           <div v-if="login.url" class="mt-1 flex items-center gap-2">
             <a :href="login.url" target="_blank" rel="noopener noreferrer" class="min-w-0 flex-1 truncate font-mono text-xs text-emerald-400 hover:underline">{{ login.url }}</a>
-            <button type="button" class="shrink-0 rounded-full bg-zinc-800 px-3 py-1 text-xs hover:bg-zinc-700" @click="copy(login.url, 'url')">{{ copied === 'url' ? 'Copiado' : 'Copiar' }}</button>
+            <button type="button" class="btn btn-sm btn-secondary" @click="copy(login.url, 'url')">{{ copied === 'url' ? 'Copiado' : 'Copiar' }}</button>
           </div>
           <p v-else class="text-xs text-zinc-500">aguardando o link…</p>
         </li>
@@ -153,14 +153,14 @@ onBeforeUnmount(() => {
           Digite este código na página:
           <div class="mt-1 flex items-center gap-2">
             <code class="rounded-lg bg-zinc-950 px-3 py-1.5 font-mono text-base tracking-widest">{{ login.userCode }}</code>
-            <button type="button" class="rounded-full bg-zinc-800 px-3 py-1 text-xs hover:bg-zinc-700" @click="copy(login.userCode, 'code')">{{ copied === 'code' ? 'Copiado' : 'Copiar' }}</button>
+            <button type="button" class="btn btn-sm btn-secondary" @click="copy(login.userCode, 'code')">{{ copied === 'code' ? 'Copiado' : 'Copiar' }}</button>
           </div>
         </li>
         <li v-if="login.needsCode">
-          Se a página mostrar um código, cole aqui (abrindo no mesmo computador do gateway, ela conclui sozinha):
+          Se a página mostrar um código, cole aqui:
           <form class="mt-1 flex gap-2" @submit.prevent="send">
             <input v-model="code" autocomplete="off" spellcheck="false" placeholder="código de autorização" class="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono text-sm outline-none focus:border-emerald-500/60" />
-            <button type="submit" :disabled="busy || !code.trim()" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 disabled:opacity-40">Enviar</button>
+            <button type="submit" :disabled="busy || !code.trim()" class="btn btn-primary">Enviar</button>
           </form>
         </li>
       </ol>
@@ -176,7 +176,7 @@ onBeforeUnmount(() => {
       <span>{{ help.note }}</span>
       <div v-if="help.command" class="flex items-center gap-2">
         <code class="rounded bg-zinc-950 px-2 py-1 font-mono text-zinc-300">{{ help.command }}</code>
-        <button type="button" class="rounded-full bg-zinc-800 px-3 py-1 hover:bg-zinc-700" @click="copy(help.command, 'command')">{{ copied === 'command' ? 'Copiado' : 'Copiar' }}</button>
+        <button type="button" class="btn btn-sm btn-secondary" @click="copy(help.command, 'command')">{{ copied === 'command' ? 'Copiado' : 'Copiar' }}</button>
       </div>
       <a v-if="help.link" :href="help.link.href" target="_blank" rel="noopener noreferrer" class="text-emerald-400 hover:underline">{{ help.link.label }}</a>
     </div>

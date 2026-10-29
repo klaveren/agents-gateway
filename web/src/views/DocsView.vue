@@ -27,13 +27,12 @@ const projects = useProjectsStore()
 const agents = useAgentsStore()
 
 /** O que é cada tipo, para quem cadastra: a página explica antes de pedir o texto. */
-const KIND: Record<TDocKind, { title: string; one: string; base: string; short: string; lead: string; when: string[]; example: string; placeholder: string }> = {
+const KIND: Record<TDocKind, { title: string; one: string; masc?: boolean; base: string; lead: string; when: string[]; example: string; placeholder: string }> = {
   spec: {
     title: 'Specs',
     one: 'spec',
     base: '/specs',
-    short: 'Como algo deve ser: o que o agente segue. Globais e do projeto da conversa.',
-    lead: 'Uma spec diz COMO algo deve ser: requisitos, formatos, contratos e critérios de aceite. É o que o agente segue quando constrói ou responde.',
+    lead: 'Uma spec define como algo deve ser: requisitos, formatos e critérios de aceite. O agente a segue ao trabalhar.',
     when: ['Formato de um arquivo, relatório ou resposta', 'Contrato de uma API ou de uma integração', 'Critérios para dar uma tarefa por pronta'],
     example: 'Ex.: "Nomes de arquivo — todo arquivo novo usa AAAA-MM-DD-assunto.md".',
     placeholder: 'Nomes de arquivo',
@@ -42,8 +41,7 @@ const KIND: Record<TDocKind, { title: string; one: string; base: string; short: 
     title: 'ADRs',
     one: 'ADR',
     base: '/adrs',
-    short: 'Decisões tomadas e o porquê: o que o agente não desfaz. Globais e do projeto da conversa.',
-    lead: 'Uma ADR (Architecture Decision Record) registra UMA decisão: o contexto, o que se decidiu, as alternativas e as consequências. É o que impede o agente de desfazer, sem saber, algo que foi escolhido de propósito.',
+    lead: 'Uma ADR registra uma decisão: contexto, o que foi decidido e as consequências. Impede o agente de desfazer o que foi escolhido de propósito.',
     when: ['Uma escolha de tecnologia ou de arquitetura', 'Um caminho descartado, e por quê', 'Uma decisão que troca outra (diga qual no texto)'],
     example: 'O status vai no próprio texto: Proposta, Aceita, Substituída por…',
     placeholder: 'Autenticação por sessão',
@@ -51,11 +49,11 @@ const KIND: Record<TDocKind, { title: string; one: string; base: string; short: 
   knowledge: {
     title: 'Conhecimento',
     one: 'estudo',
+    masc: true,
     base: '/knowledge',
-    short: 'Estudos de um tema, com as fontes: a base antes de escrever spec, skill ou ADR. Globais e do projeto da conversa.',
-    lead: 'Um estudo de conhecimento sintetiza UM tema a partir de fontes canônicas — livros, papers, documentação oficial — com a definição, o problema que resolve, os componentes, onde se aplica aqui e as fontes. É a base sólida e atualizada que vem antes de decidir (ADR), de padronizar (spec) ou de ensinar um modo de fazer (skill).',
+    lead: 'Um estudo resume um tema a partir de fontes confiáveis: o que é, o problema que resolve e onde se aplica aqui. É a base antes de escrever spec, skill ou ADR.',
     when: ['Antes de criar uma spec, skill ou ADR de um tema novo', 'Uma tecnologia ou padrão que o time vai adotar', 'Um conceito que vários agentes precisam entender igual'],
-    example: 'Ex.: "Feature flags — tipos (release, experimento, operação, permissão), ciclo de vida e custos, segundo Fowler e o livro de SRE do Google". A guia Construir pesquisa na web por você.',
+    example: 'Ex.: "Feature flags — tipos, ciclo de vida e custos". A guia Construir pesquisa na web por você.',
     placeholder: 'Feature flags',
   },
 }
@@ -70,6 +68,8 @@ const list = ref<IProjectDoc[]>([])
 const loadError = ref<string>()
 const adding = computed(() => route.name === `${props.kind}-new`)
 const info = computed(() => KIND[props.kind])
+/** As palavras que concordam com o tipo: "Novo estudo", "Nova spec". */
+const g = computed(() => (info.value.masc ? { nova: 'Novo', nenhuma: 'Nenhum', uma: 'um', a: 'o' } : { nova: 'Nova', nenhuma: 'Nenhuma', uma: 'uma', a: 'a' }))
 
 const form = ref({ id: '', kind: 'spec' as TDocKind, title: '', summary: '', body: '', global: true, project: '' })
 const loaded = ref<IProjectDoc>()
@@ -171,7 +171,7 @@ async function save() {
       await router.push(`${info.value.base}/${created.id}`)
     } else {
       loaded.value = await api<IProjectDoc>(`/docs/${encodeURIComponent(form.value.id)}`, { method: 'PUT', body })
-      note.value = 'Documento salvo. Vale para as conversas que começarem agora.'
+      note.value = 'Salvo. Vale para as próximas conversas.'
       await loadList()
     }
   } catch (failure) {
@@ -210,47 +210,44 @@ function describe(failure: unknown): string {
 
 <template>
   <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
-    <p class="font-medium text-zinc-200">Só quem administra cadastra {{ info.title }}.</p>
+    <p class="font-medium text-zinc-200">Só quem administra pode gerenciar {{ info.title }}.</p>
   </div>
 
-  <MasterDetail v-else :open="!!id || adding" :back-to="info.base" :back-label="info.title" :title="adding ? `Nova ${info.one}` : loaded?.title">
+  <MasterDetail v-else :open="!!id || adding" :back-to="info.base" :back-label="info.title" :title="adding ? `${g.nova} ${info.one}` : loaded?.title">
     <template #list>
-      <header class="flex items-center gap-2 px-4 pt-4 pb-1">
+      <header class="flex items-center gap-2 px-4 pt-4 pb-3">
         <h1 class="text-xl font-semibold">{{ info.title }}</h1>
-        <RouterLink :to="`${info.base}/new`" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" :title="`Nova ${info.one}`"><Icon name="plus" class="h-5 w-5" /></RouterLink>
+        <RouterLink :to="`${info.base}/new`" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" :title="`${g.nova} ${info.one}`"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
-      <p class="px-4 pb-2 text-xs text-zinc-500">{{ info.short }}</p>
       <BuildTabs :kind="kind" active="list" class="px-3 pb-2" />
-      <div class="px-4 pb-2">
-        <select v-model="scope" class="input py-1.5 text-sm" aria-label="Escopo">
+      <div class="px-3 pb-2">
+        <select v-model="scope" class="input w-full py-1.5 text-sm" aria-label="Escopo">
           <option v-for="item in scopes" :key="item.id" :value="item.id">{{ item.name }}</option>
         </select>
       </div>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
-      <p v-else-if="!shown.length" class="px-4 py-2 text-sm text-zinc-500">Nenhuma {{ info.one }} em {{ scopeLabel(scope, projects.list) }}.</p>
+      <p v-else-if="!shown.length" class="px-4 py-2 text-sm text-zinc-500">{{ g.nenhuma }} {{ info.one }} em {{ scopeLabel(scope, projects.list) }}.</p>
       <RouterLink v-for="doc in shown" :key="doc.id" :to="`${info.base}/${doc.id}`" class="mx-2 block rounded-xl px-3 py-2" :class="doc.id === id ? 'bg-emerald-500/15' : 'hover:bg-zinc-800/60'">
-        <span class="flex items-center gap-2">
-          <span class="truncate text-sm font-medium">{{ doc.title }}</span>
-          <span v-if="loadedLabel(doc)" class="shrink-0 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-300" :title="`Vai inteira no prompt de: ${loadedLabel(doc)}`">carregada em {{ loadedLabel(doc) }}</span>
-        </span>
+        <span class="block truncate text-sm font-medium">{{ doc.title }}</span>
         <span class="block truncate text-xs text-zinc-500">{{ doc.id }}<template v-if="doc.summary"> · {{ doc.summary }}</template></span>
+        <span v-if="loadedLabel(doc)" class="mt-1 inline-block max-w-full truncate rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-300">usada em {{ loadedLabel(doc) }}</span>
       </RouterLink>
     </template>
 
     <template #detail>
       <form v-if="adding || loaded" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save">
-        <h2 class="text-lg font-semibold">{{ adding ? `Nova ${info.one}` : loaded?.title }}</h2>
+        <h2 class="text-lg font-semibold">{{ adding ? `${g.nova} ${info.one}` : loaded?.title }}</h2>
         <label class="field">Título<input v-model="form.title" required maxlength="160" class="input" :placeholder="info.placeholder" @blur="slug" /><small v-for="m in issues.title" :key="m" class="error">{{ m }}</small></label>
         <label class="field">
-          Id
+          Identificador
           <input v-model="form.id" :disabled="!adding" required pattern="[a-z0-9][a-z0-9-]{1,63}" class="input font-mono disabled:opacity-60" placeholder="autenticacao-por-sessao" />
-          <small class="hint">É por ele que o agente pede o documento (<code>read_doc</code>). Não muda depois.</small>
+          <small class="hint">Identifica o documento. Não muda depois.</small>
           <small v-for="m in issues.id" :key="m" class="error">{{ m }}</small>
         </label>
         <label class="field">
           Resumo
           <input v-model="form.summary" maxlength="300" class="input" placeholder="Uma linha: o que o documento cobre" />
-          <small class="hint">Vai no índice de cada conversa: é o que faz o agente saber quando ler.</small>
+          <small class="hint">É o que o agente lê para saber quando usar este documento.</small>
           <small v-for="m in issues.summary" :key="m" class="error">{{ m }}</small>
         </label>
         <div class="flex flex-wrap items-center gap-3 text-sm">
@@ -263,8 +260,8 @@ function describe(failure: unknown): string {
 
         <div class="flex flex-col gap-1">
           <div class="flex gap-1 text-xs">
-            <button type="button" class="rounded-full px-3 py-1" :class="!preview ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-800/60'" @click="preview = false">Markdown</button>
-            <button type="button" class="rounded-full px-3 py-1" :class="preview ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-800/60'" @click="preview = true">Prévia</button>
+            <button type="button" class="btn btn-sm" :class="!preview ? 'btn-secondary' : 'btn-ghost'" @click="preview = false">Markdown</button>
+            <button type="button" class="btn btn-sm" :class="preview ? 'btn-secondary' : 'btn-ghost'" @click="preview = true">Prévia</button>
           </div>
           <textarea v-if="!preview" v-model="form.body" required rows="18" class="input font-mono text-[13px] leading-relaxed" aria-label="Conteúdo em markdown" />
           <!-- eslint-disable-next-line vue/no-v-html -- renderMarkdown escapa antes de marcar -->
@@ -275,14 +272,14 @@ function describe(failure: unknown): string {
         <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
         <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
         <div class="flex gap-2">
-          <button type="submit" :disabled="busy || !dirty" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50">{{ adding ? 'Criar' : 'Salvar' }}</button>
-          <RouterLink v-if="adding" :to="info.base" class="rounded-full px-4 py-2 text-sm hover:bg-zinc-800">Cancelar</RouterLink>
-          <button v-else type="button" class="ml-auto rounded-full px-4 py-2 text-sm text-rose-300 hover:bg-rose-500/10" @click="removing = true">Apagar</button>
+          <button type="submit" :disabled="busy || !dirty" class="btn btn-primary">{{ adding ? 'Criar' : 'Salvar' }}</button>
+          <RouterLink v-if="adding" :to="info.base" class="btn btn-ghost">Cancelar</RouterLink>
+          <button v-else type="button" class="btn btn-danger ml-auto" @click="removing = true">Apagar</button>
         </div>
       </form>
       <p v-else-if="error" class="mx-auto max-w-3xl text-sm text-rose-300">{{ error }}</p>
       <section v-else class="mx-auto flex max-w-2xl flex-col gap-3 text-sm text-zinc-300">
-        <h2 class="text-lg font-semibold text-zinc-100">O que é uma {{ info.one }}</h2>
+        <h2 class="text-lg font-semibold text-zinc-100">O que é {{ g.uma }} {{ info.one }}</h2>
         <p>{{ info.lead }}</p>
         <div>
           <p class="mb-1 font-medium text-zinc-200">Quando escrever uma</p>
@@ -292,17 +289,17 @@ function describe(failure: unknown): string {
         </div>
         <p class="text-zinc-400">{{ info.example }}</p>
         <p class="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3 text-xs text-zinc-400">
-          Como o agente usa: cada conversa nova recebe o índice — id, título e resumo — das {{ info.title.toLowerCase() }} globais e das do projeto dela. Quando o assunto aparece, o agente lê a {{ info.one }} inteira com <code>read_doc</code>. Por isso o resumo importa: é ele que faz o agente saber quando ler.
+          Como o agente usa: ele vê o título e o resumo de cada documento e lê o inteiro quando o assunto aparece. Por isso o resumo importa.
         </p>
-        <div><RouterLink :to="`${info.base}/new`" class="inline-block rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400">Nova {{ info.one }}</RouterLink></div>
+        <div><RouterLink :to="`${info.base}/new`" class="btn btn-primary">{{ g.nova }} {{ info.one }}</RouterLink></div>
       </section>
     </template>
   </MasterDetail>
 
   <ConfirmDialog
     :open="removing"
-    :title="`Apagar a ${info.one}?`"
-    :message="`${form.title} sai do índice das conversas novas.`"
+    :title="`Apagar ${g.a} ${info.one}?`"
+    :message="`${form.title} sai das próximas conversas.`"
     :busy="busy"
     @confirm="confirmRemove"
     @cancel="removing = false"

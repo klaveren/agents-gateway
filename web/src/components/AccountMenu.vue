@@ -50,7 +50,7 @@ async function logout() {
     >
       <div class="border-b border-zinc-800 px-3 py-2.5">
         <div class="truncate font-medium text-zinc-100">{{ auth.user.name }}</div>
-        <div class="truncate text-xs text-zinc-500">{{ auth.user.email }}<template v-if="auth.isAdmin"> · admin</template></div>
+        <div class="truncate text-xs text-zinc-500">{{ auth.user.email }}<template v-if="auth.isAdmin"> · administrador</template></div>
       </div>
       <RouterLink to="/profile" role="menuitem" class="flex items-center gap-2.5 px-3 py-2.5 text-zinc-200 hover:bg-zinc-800"><Icon name="user" class="h-4 w-4 text-zinc-400" /> Perfil</RouterLink>
       <button type="button" role="menuitem" class="flex w-full items-center gap-2.5 border-t border-zinc-800 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800 hover:text-rose-300" @click="logout">

@@ -141,7 +141,7 @@ const summary = (schedule: ISchedule) => describeCron(schedule.cron) ?? schedule
 <template>
   <div class="flex flex-col gap-4">
     <p class="text-xs text-zinc-500">
-      Em cada horário o agente recebe o texto do agendamento — um <code>/command</code>, uma skill ou um pedido livre —, em nome de quem criou. A conversa aparece na caixa de entrada dessa conta. Horário perdido com o gateway fora do ar não roda depois: fica registrado.
+      Nos horários marcados, o agente recebe o texto abaixo. A conversa aparece na sua caixa de entrada.
     </p>
     <p v-if="loadError" class="text-sm text-rose-300">{{ loadError }}</p>
 
@@ -154,7 +154,7 @@ const summary = (schedule: ISchedule) => describeCron(schedule.cron) ?? schedule
             <span class="block truncate text-xs text-zinc-500">
               {{ summary(schedule) }}
               <template v-if="schedule.nextRunAt"> · próxima: {{ fullTime(schedule.nextRunAt) }}</template>
-              <template v-else> · {{ schedule.pausedReason ? 'pausado pelo sistema' : 'desligado' }}</template>
+              <template v-else> · {{ schedule.pausedReason ? 'pausado' : 'desligado' }}</template>
               <template v-if="schedule.lastRun"> · última: {{ RUN_STATUS[schedule.lastRun.status].label }}</template>
             </span>
           </span>
@@ -163,7 +163,7 @@ const summary = (schedule: ISchedule) => describeCron(schedule.cron) ?? schedule
       </li>
       <li v-if="!list.length && !loadError" class="px-3 py-3 text-xs text-zinc-500">Nenhum agendamento ainda.</li>
     </ul>
-    <button v-if="!addingNew" type="button" class="self-start rounded-full bg-zinc-800 px-4 py-1.5 text-sm hover:bg-zinc-700" @click="openSchedule('')">+ Novo agendamento</button>
+    <button v-if="!addingNew" type="button" class="btn btn-secondary self-start" @click="openSchedule('')">+ Novo agendamento</button>
 
     <div v-if="editing" class="flex flex-col gap-3 rounded-xl border border-zinc-800 p-3">
       <h3 class="text-sm font-medium text-zinc-200">{{ selected ? `Agendamento ${selected.name}` : 'Novo agendamento' }}</h3>
@@ -186,7 +186,7 @@ const summary = (schedule: ISchedule) => describeCron(schedule.cron) ?? schedule
         </div>
         <small class="hint">
           <template v-if="cronText">Roda <strong class="font-medium text-zinc-300">{{ cronText }}</strong> ({{ draft.timezone || 'America/Sao_Paulo' }}).</template>
-          <template v-else>Cron de 5 campos: minuto, hora, dia do mês, mês, dia da semana (0 ou 7 = domingo). No mínimo 5 minutos entre execuções.</template>
+          <template v-else>Cron de 5 campos (minuto, hora, dia, mês, dia da semana). Mínimo de 5 minutos entre execuções.</template>
           <template v-if="selected?.nextRunAt && draft.cron === selected.cron"> Próxima: {{ fullTime(selected.nextRunAt) }}.</template>
         </small>
         <small v-for="m in [...(issues.cron ?? []), ...(issues.timezone ?? [])]" :key="m" class="error">{{ m }}</small>
@@ -194,7 +194,7 @@ const summary = (schedule: ISchedule) => describeCron(schedule.cron) ?? schedule
 
       <label class="field">
         O que o agente faz
-        <textarea v-model="draft.prompt" rows="4" class="input text-sm" placeholder="/resumir as conversas de ontem, ou um pedido livre" />
+        <textarea v-model="draft.prompt" rows="4" class="input text-sm" placeholder="Ex.: resumir as conversas de ontem" />
         <span v-if="slashHints.length" class="flex flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900 text-xs font-normal">
           <button v-for="hint in slashHints" :key="hint.id" type="button" class="flex items-baseline gap-2 px-3 py-1.5 text-left hover:bg-zinc-800" @click="pick(hint.id)">
             <span class="font-mono text-zinc-200">/{{ hint.id }}</span>
@@ -202,7 +202,7 @@ const summary = (schedule: ISchedule) => describeCron(schedule.cron) ?? schedule
             <span class="min-w-0 flex-1 truncate text-zinc-500">{{ hint.description }}</span>
           </button>
         </span>
-        <small class="hint">Como se fosse digitado no chat: comece com <code>/</code> para escolher um command ou uma skill do agente.</small>
+        <small class="hint">Como se você escrevesse na conversa. Comece com <code>/</code> para escolher um Command ou uma Skill.</small>
         <small v-for="m in issues.prompt" :key="m" class="error">{{ m }}</small>
       </label>
 
@@ -221,7 +221,7 @@ const summary = (schedule: ISchedule) => describeCron(schedule.cron) ?? schedule
           <option :value="null">Nenhum (global)</option>
           <option v-for="project in projects.list" :key="project.id" :value="project.id">{{ project.name }}</option>
         </select>
-        <small class="hint">O agente é global: escolha em que projeto a conversa roda (as rules e specs dele valem).</small>
+        <small class="hint">Escolha o projeto em que a conversa roda.</small>
         <small v-for="m in issues.projectId" :key="m" class="error">{{ m }}</small>
       </label>
 
@@ -229,12 +229,12 @@ const summary = (schedule: ISchedule) => describeCron(schedule.cron) ?? schedule
 
       <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
       <div class="flex flex-wrap gap-2">
-        <button v-if="!selected" type="button" :disabled="busy" class="rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="create">Criar agendamento</button>
+        <button v-if="!selected" type="button" :disabled="busy" class="btn btn-primary" @click="create">Criar agendamento</button>
         <template v-else>
-          <button type="button" :disabled="busy" class="rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="save">Salvar agendamento</button>
-          <button type="button" :disabled="busy" class="rounded-full bg-zinc-800 px-4 py-1.5 text-sm hover:bg-zinc-700" @click="runNow">Rodar agora</button>
+          <button type="button" :disabled="busy" class="btn btn-primary" @click="save">Salvar agendamento</button>
+          <button type="button" :disabled="busy" class="btn btn-secondary" @click="runNow">Rodar agora</button>
           <span v-if="started" class="self-center text-xs text-emerald-300">começou — acompanhe abaixo</span>
-          <button type="button" :disabled="busy" class="ml-auto rounded-full px-3 py-1.5 text-sm text-rose-300 hover:bg-rose-500/10" @click="confirm = selected.name">Apagar</button>
+          <button type="button" :disabled="busy" class="btn btn-danger ml-auto" @click="confirm = selected.name">Apagar</button>
         </template>
       </div>
 
@@ -282,11 +282,5 @@ const summary = (schedule: ISchedule) => describeCron(schedule.cron) ?? schedule
 }
 .error {
   @apply text-xs font-normal text-rose-300;
-}
-.chip {
-  @apply rounded-full border border-zinc-700 px-3 py-1 text-sm font-normal text-zinc-300 hover:bg-zinc-800;
-}
-.chip.on {
-  @apply border-emerald-500/60 bg-emerald-500/15 text-emerald-200;
 }
 </style>

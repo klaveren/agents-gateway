@@ -94,6 +94,7 @@ watch(highlighted, () => void nextTick(() => list.value?.querySelector('[aria-se
 /** A guia aberta não tem nada: diz por quê, em vez de a lista ficar muda. */
 const slashEmpty = computed(() => slashOpen.value && !suggestions.value.length)
 const searching = computed(() => text.value !== '/' || !!filter.value.trim())
+const kindLabel = (kind?: string) => SLASH_TABS.find((item) => item.kind === (kind ?? 'command'))?.label ?? kind ?? 'Command'
 const tabLabel = computed(() => SLASH_TABS.find((item) => item.kind === shownTab.value)?.label.toLowerCase() ?? '')
 const KIND_STYLE: Record<TSlashKind, string> = {
   skill: 'bg-violet-500/15 text-violet-300',
@@ -201,7 +202,7 @@ function onKey(event: KeyboardEvent) {
     <!-- ⚖️ Altura FIXA: a lista rola em vez de a caixa crescer e encolher a cada guia ou letra. -->
     <div ref="list" class="scroll-thin h-56 overflow-y-auto">
     <p v-if="slashEmpty" class="px-3 py-2 text-xs text-zinc-400">
-      {{ searching ? `Nenhum item em ${tabLabel} com esse nome.` : `Nada em ${tabLabel} para esta conversa.` }}
+      {{ searching ? `Nada encontrado em ${tabLabel}.` : `Nada em ${tabLabel} por aqui.` }}
     </p>
     <ul v-if="suggestions.length" role="listbox" :aria-label="tabLabel">
       <li v-for="(command, index) in suggestions" :key="command.id" role="option" :aria-selected="index === highlighted">
@@ -213,7 +214,7 @@ function onKey(event: KeyboardEvent) {
           @mouseenter="highlighted = index"
         >
           <code class="shrink-0 text-emerald-300">/{{ command.id }}</code>
-          <span class="shrink-0 rounded-full px-1.5 text-[10px]" :class="KIND_STYLE[command.kind ?? 'command']">{{ command.kind ?? 'command' }}</span>
+          <span class="shrink-0 rounded-full px-1.5 text-[10px]" :class="KIND_STYLE[command.kind ?? 'command']">{{ kindLabel(command.kind) }}</span>
           <span class="min-w-0 truncate text-xs text-zinc-400">{{ command.description }}</span>
         </button>
       </li>

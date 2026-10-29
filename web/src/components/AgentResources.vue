@@ -11,8 +11,8 @@ import type { IAgentResources, IResource, TResourceKind } from '@/lib/types'
 const props = defineProps<{ agentId: string; projectId?: string; projectName?: string }>()
 
 const SECTIONS: Array<{ kind: TResourceKind; field: keyof IAgentResources; title: string; hint: string; base: string }> = [
-  { kind: 'skill', field: 'skills', title: 'Skills', hint: 'Entram no índice do prompt; o agente carrega a inteira com use_skill.', base: '/skills' },
-  { kind: 'command', field: 'commands', title: 'Commands', hint: 'A pessoa usa com /nome na conversa com este agente.', base: '/commands' },
+  { kind: 'skill', field: 'skills', title: 'Skills', hint: 'O agente usa quando for útil.', base: '/skills' },
+  { kind: 'command', field: 'commands', title: 'Commands', hint: 'Use com /nome na conversa.', base: '/commands' },
 ]
 
 const available = ref<IResource[]>([])
@@ -62,7 +62,7 @@ async function save() {
     const result = await api<IAgentResources>(`/agents/${encodeURIComponent(props.agentId)}/resources`, { method: 'PUT', body: selected.value })
     saved.value = { skills: [...result.skills], commands: [...result.commands] }
     selected.value = { skills: [...result.skills], commands: [...result.commands] }
-    note.value = 'Recursos salvos. Valem para as conversas que começarem agora.'
+    note.value = 'Salvo. Vale para as próximas conversas.'
   } catch (failure) {
     error.value = failure instanceof Error ? failure.message : String(failure)
   } finally {
@@ -74,9 +74,9 @@ async function save() {
 <template>
   <section class="flex flex-col gap-4">
     <p class="text-sm text-zinc-400">
-      O que este agente pode usar. Por padrão, todos; desmarque "Todos" para escolher, ou para não usar nenhum. Os liberados entram sozinhos no índice do prompt dele.
+      O que este agente pode usar. Desmarque "Todos" para escolher.
       <template v-if="projectId"> Valem os globais e os do projeto {{ projectName ?? projectId }}.</template>
-      <template v-else> Agente global: só os globais, porque ele roda em qualquer projeto.</template>
+      <template v-else> Agente global: só recursos globais.</template>
     </p>
 
     <div v-for="section in SECTIONS" :key="section.kind" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
@@ -101,6 +101,6 @@ async function save() {
 
     <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
     <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
-    <div><button type="button" :disabled="busy || !dirty" class="rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="save">Salvar</button></div>
+    <div><button type="button" :disabled="busy || !dirty" class="btn btn-primary" @click="save">Salvar</button></div>
   </section>
 </template>

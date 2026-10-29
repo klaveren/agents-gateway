@@ -146,7 +146,7 @@ async function probeTurn(protocol: EProvider, workspace: string, token?: string)
 
   if (protocol === EProvider.CODEX) {
     const home = subscriptionHome('codex')
-    if (!existsSync(join(home, 'auth.json'))) throw new Error('O ChatGPT não está conectado: use Entrar.')
+    if (!existsSync(join(home, 'auth.json'))) throw new Error('O Codex não está conectado: use Entrar.')
     const untested = untestedCodex()
     if (untested) throw new Error(untested)
     const Codex = (await esmImport<{ Codex: new (options?: CodexOptions) => Codex }>('@openai/codex-sdk')).Codex

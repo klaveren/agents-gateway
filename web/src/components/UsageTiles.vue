@@ -18,15 +18,15 @@ const cost = (item: IUsageFigure) => (item.costUsd === undefined ? '—' : `${it
       <div class="tile"><span class="tile-label">Tokens</span><span class="tile-value">{{ tokens(figure.usage.totalTokens) }}</span></div>
       <slot />
       <div class="tile"><span class="tile-label">Conversas</span><span class="tile-value">{{ figure.conversations }}</span></div>
-      <div class="tile"><span class="tile-label">Turnos</span><span class="tile-value">{{ figure.turns }}</span></div>
+      <div class="tile"><span class="tile-label">Mensagens</span><span class="tile-value">{{ figure.turns }}</span></div>
       <div class="tile"><span class="tile-label">Entrada</span><span class="tile-value">{{ tokens(figure.usage.inputTokens) }}</span></div>
       <div class="tile"><span class="tile-label">Saída</span><span class="tile-value">{{ tokens(figure.usage.outputTokens) }}</span></div>
       <div class="tile"><span class="tile-label">Cache lido</span><span class="tile-value">{{ tokens(figure.usage.cacheReadTokens) }}</span></div>
       <div class="tile"><span class="tile-label">Cache gravado</span><span class="tile-value">{{ tokens(figure.usage.cacheWriteTokens) }}</span></div>
     </div>
     <p class="text-xs text-zinc-500">
-      Raciocínio {{ tokens(figure.usage.reasoningTokens) }} (cobrado como saída)
-      <template v-if="showCost && figure.costIsFloor"> · ≥ = há modelo sem preço; o custo é um piso</template>
+      Raciocínio {{ tokens(figure.usage.reasoningTokens) }}
+      <template v-if="showCost && figure.costIsFloor"> · ≥: há modelo sem preço</template>
     </p>
   </div>
 </template>

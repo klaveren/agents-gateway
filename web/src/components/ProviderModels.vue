@@ -32,7 +32,7 @@ const addError = ref<string>()
 /** O mesmo formato que o servidor aceita para o id de um modelo. */
 const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,199}$/
 
-const SOURCE: Record<string, string> = { manual: 'manual', catalog: 'da listagem', default: 'sugerido' }
+const SOURCE: Record<string, string> = { manual: 'manual', catalog: 'da lista', default: 'sugerido' }
 
 const visible = computed(() => {
   const term = search.value.trim().toLowerCase()
@@ -61,7 +61,7 @@ async function sync() {
   try {
     const result = await providers.syncModels(props.provider.id)
     models.value = result.models
-    note.value = `${result.total} modelos na listagem · ${result.added} novos (desligados)${result.missing ? ` · ${result.missing} sumiram da listagem` : ''}.`
+    note.value = `${result.total} modelos na lista · ${result.added} novos (desligados)${result.missing ? ` · ${result.missing} sumiram da lista` : ''}.`
   } catch (failure) {
     error.value = failure instanceof Error ? failure.message : String(failure)
   } finally {
@@ -76,7 +76,7 @@ async function addById() {
   addError.value = undefined
   note.value = undefined
   if (!MODEL_ID.test(modelId)) {
-    addError.value = 'id inválido: letras, números e . _ : / @ -, até 200 caracteres'
+    addError.value = 'identificador inválido: use letras, números e . _ : / @ - (até 200)'
     return
   }
   adding.value = true
@@ -138,7 +138,7 @@ function context(tokens?: number): string {
     <div class="flex flex-wrap items-center gap-2">
       <span class="text-sm font-medium">Modelos</span>
       <span class="text-xs text-zinc-500">{{ enabledCount }} ativados de {{ models.length }}<template v-if="lastSync"> · lista de {{ fullTime(lastSync) }}</template></span>
-      <button type="button" :disabled="syncing || (!provider.credential.configured && !provider.subscription)" class="ml-auto rounded-full bg-zinc-800 px-3 py-1 text-xs hover:bg-zinc-700 disabled:opacity-40" :title="provider.credential.configured || provider.subscription ? '' : 'Salve uma chave antes'" @click="sync">
+      <button type="button" :disabled="syncing || (!provider.credential.configured && !provider.subscription)" class="ml-auto btn btn-sm btn-secondary" :title="provider.credential.configured || provider.subscription ? '' : 'Salve uma chave antes'" @click="sync">
         {{ syncing ? 'Atualizando…' : 'Atualizar lista' }}
       </button>
     </div>
@@ -147,13 +147,13 @@ function context(tokens?: number): string {
     <p v-if="error" class="text-xs text-rose-300">{{ error }}</p>
 
     <form class="flex flex-wrap items-center gap-2" @submit.prevent="addById">
-      <input v-model="newId" autocomplete="off" spellcheck="false" aria-label="Adicionar modelo por id" placeholder="Adicionar modelo por id" class="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-sm outline-none focus:border-emerald-500/60" />
-      <button type="submit" :disabled="adding || !newId.trim()" class="rounded-full bg-zinc-800 px-3 py-1 text-xs hover:bg-zinc-700 disabled:opacity-40">{{ adding ? 'Adicionando…' : 'Adicionar' }}</button>
+      <input v-model="newId" autocomplete="off" spellcheck="false" aria-label="Adicionar modelo pelo identificador" placeholder="Adicionar modelo pelo identificador" class="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-900 px-3 h-9 font-mono text-sm outline-none focus:border-emerald-500/60" />
+      <button type="submit" :disabled="adding || !newId.trim()" class="btn btn-secondary">{{ adding ? 'Adicionando…' : 'Adicionar' }}</button>
       <p v-if="addError" class="w-full text-xs text-rose-300">{{ addError }}</p>
     </form>
 
     <div v-if="models.length" class="flex flex-wrap items-center gap-2">
-      <input v-model="search" type="search" placeholder="Buscar modelo…" class="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-sm outline-none focus:border-emerald-500/60" />
+      <input v-model="search" type="search" placeholder="Buscar modelo…" class="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-900 px-3 h-9 text-sm outline-none focus:border-emerald-500/60" />
       <label class="flex items-center gap-1.5 text-xs text-zinc-400"><input v-model="onlyEnabled" type="checkbox" class="accent-emerald-500" /> só ativados</label>
     </div>
 
@@ -171,10 +171,10 @@ function context(tokens?: number): string {
             <span
               v-if="model.reasoning?.supported"
               class="ml-1 rounded-full bg-violet-500/15 px-1.5 text-[10px] text-violet-300"
-              :title="model.reasoning.levels ? `Níveis: ${model.reasoning.levels.join(', ')}` : model.reasoning.source === 'heuristic' ? 'Estimado pelo id: a listagem deste provedor não diz' : 'Segundo a listagem do provedor'"
+              :title="model.reasoning.levels ? `Níveis: ${model.reasoning.levels.join(', ')}` : model.reasoning.source === 'heuristic' ? 'Estimado pelo nome do modelo' : 'Informado pelo provedor'"
               >raciocina{{ model.reasoning.source === 'heuristic' ? ' (estimado)' : '' }}</span
             >
-            <span v-if="!model.available" class="ml-1 rounded-full bg-zinc-800 px-1.5 text-[10px] text-zinc-400">sumiu da listagem</span>
+            <span v-if="!model.available" class="ml-1 rounded-full bg-zinc-800 px-1.5 text-[10px] text-zinc-400">sumiu da lista</span>
           </div>
         </div>
 
@@ -182,15 +182,15 @@ function context(tokens?: number): string {
           <span v-if="model.price" class="text-zinc-300">${{ model.price.input }} / ${{ model.price.output }} <span class="text-zinc-500">por 1M</span></span>
           <span v-else class="text-zinc-500">sem preço</span>
           <span v-if="model.priceSource" class="rounded-full px-1.5 text-[10px]" :class="model.priceSource === 'manual' ? 'bg-sky-500/15 text-sky-300' : 'bg-zinc-800 text-zinc-400'">{{ SOURCE[model.priceSource] }}</span>
-          <button type="button" class="text-zinc-400 hover:text-zinc-100" @click="edit(model)">editar</button>
+          <button type="button" class="btn btn-sm btn-ghost" @click="edit(model)">Editar</button>
         </div>
         <form v-else class="flex items-center gap-1.5 text-xs" @submit.prevent="savePrice(model)">
           <input v-model="draft.input" inputmode="decimal" placeholder="entrada" class="w-20 rounded border border-zinc-700 bg-zinc-900 px-2 py-1" />
           <input v-model="draft.output" inputmode="decimal" placeholder="saída" class="w-20 rounded border border-zinc-700 bg-zinc-900 px-2 py-1" />
           <span class="text-zinc-500">US$/1M</span>
-          <button type="submit" class="rounded-full bg-emerald-500 px-2.5 py-1 font-medium text-zinc-950">ok</button>
-          <button v-if="model.priceSource === 'manual'" type="button" class="text-zinc-400 hover:text-zinc-100" title="Apaga o preço manual e volta ao da listagem ou ao sugerido" @click="savePrice(model, true)">voltar ao sugerido</button>
-          <button type="button" class="text-zinc-500 hover:text-zinc-200" @click="editing = undefined">cancelar</button>
+          <button type="submit" class="btn btn-sm btn-primary">Salvar</button>
+          <button v-if="model.priceSource === 'manual'" type="button" class="btn btn-sm btn-ghost" title="Remove o preço manual" @click="savePrice(model, true)">Restaurar preço</button>
+          <button type="button" class="btn btn-sm btn-ghost" @click="editing = undefined">Cancelar</button>
         </form>
         <p v-if="rowError[model.modelId]" class="w-full text-xs text-rose-300">{{ rowError[model.modelId] }}</p>
       </li>

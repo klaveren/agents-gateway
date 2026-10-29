@@ -30,6 +30,27 @@ body {
 .prose-agent :where(ul) {
   @apply my-1 list-disc pl-5;
 }
+.prose-agent :where(ol) {
+  @apply my-1 list-decimal pl-5;
+}
+.prose-agent :where(blockquote) {
+  @apply my-2 border-l-2 border-zinc-700 pl-3 text-zinc-400;
+}
+.prose-agent :where(hr) {
+  @apply my-3 border-zinc-800;
+}
+.prose-agent :where(.table-wrap) {
+  @apply my-2 overflow-x-auto rounded-lg border border-zinc-800;
+}
+.prose-agent :where(table) {
+  @apply w-full border-collapse text-[13px];
+}
+.prose-agent :where(th) {
+  @apply bg-zinc-900/60 px-3 py-1.5 text-left font-semibold whitespace-nowrap text-zinc-200;
+}
+.prose-agent :where(td) {
+  @apply border-t border-zinc-800 px-3 py-1.5 align-top;
+}
 .prose-agent :where(h2, h3) {
   @apply mt-3 mb-1 font-semibold text-zinc-100;
 }
@@ -46,4 +67,73 @@ body {
 .scroll-thin {
   scrollbar-width: thin;
   scrollbar-color: rgb(63 63 70) transparent;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Há mais à direita: a borda esmaece. */
+.fade-right {
+  mask-image: linear-gradient(to right, black calc(100% - 3rem), transparent);
+}
+
+/*
+ * A seta dos selects: a nativa cola na borda direita (e muda de navegador para navegador). Fora de camada, de propósito:
+ * vence o `px-*` das utilidades, que senão tiraria o espaço da seta.
+ */
+select:not([multiple]) {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a1a1aa' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.625rem center;
+  background-size: 0.875rem;
+  padding-right: 2rem;
+}
+
+/*
+ * OS BOTÕES: um tamanho por função, em toda a interface.
+ * - `.btn` + variante: a ação de uma tela ou formulário (Salvar, Criar, Apagar, Cancelar) — 36px.
+ * - `.btn-sm`: a ação dentro de uma lista ou barra (Atualizar, Copiar, Prévia) — 28px.
+ * - `.chip`: uma escolha ou um filtro; `.on` = escolhido — 28px.
+ */
+@layer components {
+  .btn {
+    @apply inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-full px-4 text-sm font-medium whitespace-nowrap transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-sm {
+    @apply h-7 gap-1.5 px-3 text-xs;
+  }
+  .btn-primary {
+    @apply bg-emerald-500 text-zinc-950 hover:bg-emerald-400;
+  }
+  .btn-secondary {
+    @apply bg-zinc-800 text-zinc-100 hover:bg-zinc-700;
+  }
+  .btn-ghost {
+    @apply text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100;
+  }
+  .btn-danger {
+    @apply text-rose-300 hover:bg-rose-500/10;
+  }
+  .chip {
+    @apply inline-flex min-h-7 items-center gap-1.5 rounded-full border border-zinc-700 px-3 py-1 text-xs font-normal text-zinc-300 transition-colors hover:bg-zinc-800;
+  }
+  .chip.on {
+    @apply border-emerald-500/60 bg-emerald-500/15 text-emerald-200;
+  }
+}
+
+/*
+ * Os CAMPOS de uma linha (`.input`) têm a altura dos botões de ação (36px): campo e botão lado a lado alinham.
+ * Fora de camada e mais específico que o `.input` de cada tela, de propósito; a área de texto não entra.
+ */
+input.input:not([type='checkbox']):not([type='radio']),
+select.input {
+  height: 2.25rem;
+  padding-top: 0;
+  padding-bottom: 0;
 }

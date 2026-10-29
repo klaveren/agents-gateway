@@ -64,7 +64,7 @@ const agentName = (id: string) => agents.byId.get(id)?.name ?? coreAgentName(id)
       </div>
 
       <section class="card">
-        <h2 class="card-title">Conversas que mais consumiram</h2>
+        <h2 class="card-title">Conversas que mais usaram</h2>
         <ul class="divide-y divide-zinc-800">
           <li v-for="item in summary.top" :key="item.id" class="flex items-center gap-3 py-2 text-sm">
             <RouterLink :to="`/c/${item.id}`" class="min-w-0 flex-1 truncate text-zinc-200 hover:text-emerald-300">{{ item.title || 'Conversa sem título' }}</RouterLink>

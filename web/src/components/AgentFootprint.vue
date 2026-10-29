@@ -51,16 +51,16 @@ const fmt = (value: number) => value.toLocaleString('pt-BR')
     <div class="flex flex-wrap items-end gap-3">
       <div>
         <p class="text-3xl font-semibold tabular-nums">≈ {{ fmt(result?.total ?? 0) }} <span class="text-base font-normal text-zinc-400">tokens</span></p>
-        <p class="text-xs text-zinc-500">antes da primeira mensagem — e em toda chamada ao modelo da conversa</p>
+        <p class="text-xs text-zinc-500">enviados antes de cada mensagem</p>
       </div>
       <label v-if="!projectId" class="ml-auto flex items-center gap-2 text-xs text-zinc-400">
-        Projeto da conversa
+        Projeto
         <select v-model="project" class="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-sm text-zinc-100">
           <option value="">nenhum (só o global)</option>
           <option v-for="item in projects.list" :key="item.id" :value="item.id">{{ item.name }}</option>
         </select>
       </label>
-      <button type="button" class="rounded-full bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700 disabled:opacity-40" :class="projectId ? 'ml-auto' : ''" :disabled="loading" @click="load">{{ loading ? 'Medindo…' : 'Atualizar' }}</button>
+      <button type="button" class="btn btn-secondary" :class="projectId ? 'ml-auto' : ''" :disabled="loading" @click="load">{{ loading ? 'Medindo…' : 'Atualizar' }}</button>
     </div>
 
     <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
@@ -91,7 +91,7 @@ const fmt = (value: number) => value.toLocaleString('pt-BR')
     </ul>
 
     <p class="text-xs text-zinc-500">
-      Medido no que está salvo: alterações ainda não salvas não entram. Estimativa de ≈ 4 caracteres por token; cada provider conta e embrulha do seu jeito.
+      Estimativa com o que está salvo. Alterações não salvas não contam.
       <template v-if="unmeasured.length"> {{ unmeasured.map((item) => item.label).join(', ') }}: {{ unmeasured.length === 1 ? 'entra' : 'entram' }} no prompt, mas não se mede daqui.</template>
     </p>
   </section>

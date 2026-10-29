@@ -27,7 +27,7 @@ onMounted(async () => {
     <section class="mx-auto flex max-w-3xl flex-col gap-4">
       <header>
         <h1 class="text-xl font-semibold">Ambiente{{ project ? ` — ${project.name}` : '' }}</h1>
-        <p class="text-xs text-zinc-500">O que toda conversa do projeto recebe antes de qualquer coisa do agente. Troque de projeto no seletor do topo.</p>
+        <p class="text-xs text-zinc-500">O que todo agente do projeto sabe desde o início.</p>
       </header>
       <ProjectEnvironment v-if="project" :key="project.id" :project-id="project.id" />
       <p v-else class="rounded-xl border border-dashed border-zinc-800 p-4 text-center text-sm text-zinc-500">Escolha um projeto no seletor do topo para ver o ambiente dele.</p>

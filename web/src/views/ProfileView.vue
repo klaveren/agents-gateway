@@ -52,14 +52,14 @@ async function changePassword() {
           <form class="grid gap-3 sm:grid-cols-2" @submit.prevent="changePassword">
             <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
               Senha atual
-              <input v-model="currentPassword" type="password" required autocomplete="current-password" class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm" />
+              <input v-model="currentPassword" type="password" required autocomplete="current-password" class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 h-9 text-sm" />
             </label>
             <label class="flex min-w-0 flex-col gap-1 text-sm text-zinc-300">
               Nova senha
-              <input v-model="nextPassword" type="password" required autocomplete="new-password" class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm" />
+              <input v-model="nextPassword" type="password" required autocomplete="new-password" class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 h-9 text-sm" />
             </label>
             <div class="flex items-center gap-3 sm:col-span-2">
-              <button type="submit" class="rounded-full bg-zinc-800 px-4 py-2 text-sm hover:bg-zinc-700">Trocar senha</button>
+              <button type="submit" class="btn btn-secondary">Trocar senha</button>
               <span v-if="passwordNote" class="text-sm text-emerald-300">{{ passwordNote }}</span>
               <span v-if="passwordError" class="text-sm text-rose-300">{{ passwordError }}</span>
             </div>

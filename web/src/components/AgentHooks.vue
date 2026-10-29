@@ -143,7 +143,7 @@ const STATUS: Record<IHookDelivery['status'], { label: string; tone: string }> =
 <template>
   <div class="flex flex-col gap-4">
     <p class="text-xs text-zinc-500">
-      Cada hook é uma URL que um serviço externo (GitHub, CRM, cron) chama com um evento. O agente executa o prompt do hook com o evento junto, em nome de quem criou o hook, e a conversa aparece na caixa de entrada dessa conta.
+      Um hook é um endereço que outro serviço (GitHub, CRM) chama para acionar o agente. A conversa aparece na sua caixa de entrada.
     </p>
     <p v-if="loadError" class="text-sm text-rose-300">{{ loadError }}</p>
 
@@ -155,13 +155,14 @@ const STATUS: Record<IHookDelivery['status'], { label: string; tone: string }> =
       </div>
       <div class="flex items-center gap-2">
         <code class="min-w-0 flex-1 truncate rounded bg-zinc-950 px-2 py-1 font-mono text-xs text-zinc-100">{{ revealed.secret }}</code>
-        <button type="button" class="rounded-full bg-zinc-800 px-3 py-1 text-xs hover:bg-zinc-700" @click="copy('secret', revealed.secret)">{{ copied === 'secret' ? 'copiada' : 'copiar' }}</button>
+        <button type="button" class="btn btn-sm btn-secondary" @click="copy('secret', revealed.secret)">{{ copied === 'secret' ? 'copiado' : 'copiar' }}</button>
       </div>
       <template v-for="hook in list.filter((entry) => entry.name === revealed?.name)" :key="hook.name">
         <div class="flex items-center gap-2">
           <code class="min-w-0 flex-1 truncate rounded bg-zinc-950 px-2 py-1 font-mono text-xs text-zinc-300">{{ urlOf(hook) }}</code>
-          <button type="button" class="rounded-full bg-zinc-800 px-3 py-1 text-xs hover:bg-zinc-700" @click="copy('url', urlOf(hook))">{{ copied === 'url' ? 'copiada' : 'copiar URL' }}</button>
+          <button type="button" class="btn btn-sm btn-secondary" @click="copy('url', urlOf(hook))">{{ copied === 'url' ? 'copiado' : 'copiar URL' }}</button>
         </div>
+        <p class="text-xs text-zinc-400">Exemplo de chamada</p>
         <pre class="overflow-x-auto rounded bg-zinc-950 p-2 text-[11px] text-zinc-400">{{ curlOf(hook, revealed.secret) }}</pre>
         <p v-if="hook.verify === 'hmac'" class="text-xs text-zinc-400">No GitHub: Settings → Webhooks → Add webhook. Payload URL = a URL acima, Content type = application/json, Secret = esta chave.</p>
       </template>
@@ -174,7 +175,7 @@ const STATUS: Record<IHookDelivery['status'], { label: string; tone: string }> =
           <span class="min-w-0 flex-1">
             <span class="block truncate font-mono text-[13px] text-zinc-200">{{ hook.name }}</span>
             <span class="block truncate text-xs text-zinc-500">
-              {{ hook.verify === 'hmac' ? 'assinatura HMAC' : 'chave no header' }} · {{ hook.session === 'continuous' ? 'conversa contínua' : 'conversa nova por chamada' }}
+              {{ hook.verify === 'hmac' ? 'assinatura (HMAC)' : 'chave no cabeçalho' }} · {{ hook.session === 'continuous' ? 'conversa contínua' : 'conversa nova por chamada' }}
               <template v-if="hook.lastDelivery"> · última: {{ fullTime(hook.lastDelivery.receivedAt) }} ({{ STATUS[hook.lastDelivery.status].label }})</template>
             </span>
           </span>
@@ -183,36 +184,36 @@ const STATUS: Record<IHookDelivery['status'], { label: string; tone: string }> =
       </li>
       <li v-if="!list.length && !loadError" class="px-3 py-3 text-xs text-zinc-500">Nenhum hook ainda.</li>
     </ul>
-    <button v-if="!addingNew" type="button" class="self-start rounded-full bg-zinc-800 px-4 py-1.5 text-sm hover:bg-zinc-700" @click="openHook('')">+ Novo hook</button>
+    <button v-if="!addingNew" type="button" class="btn btn-secondary self-start" @click="openHook('')">+ Novo hook</button>
 
     <div v-if="editing" class="flex flex-col gap-3 rounded-xl border border-zinc-800 p-3">
       <h3 class="text-sm font-medium text-zinc-200">{{ selected ? `Hook ${selected.name}` : 'Novo hook' }}</h3>
       <div v-if="selected" class="flex items-center gap-2">
         <code class="min-w-0 flex-1 truncate rounded bg-zinc-950 px-2 py-1 font-mono text-xs text-zinc-300">POST {{ urlOf(selected) }}</code>
-        <button type="button" class="rounded-full bg-zinc-800 px-3 py-1 text-xs hover:bg-zinc-700" @click="copy('url', urlOf(selected))">{{ copied === 'url' ? 'copiada' : 'copiar' }}</button>
+        <button type="button" class="btn btn-sm btn-secondary" @click="copy('url', urlOf(selected))">{{ copied === 'url' ? 'copiado' : 'copiar' }}</button>
       </div>
       <label v-if="!selected" class="field">
         Nome
         <input v-model="draft.name" class="input font-mono" placeholder="deploy" @keydown.enter.prevent />
-        <small class="hint">Vira o fim da URL: <code>/v1/hook/{{ agentId }}/{{ draft.name || 'nome' }}</code>. Não muda depois.</small>
+        <small class="hint">Faz parte do endereço do hook. Não muda depois.</small>
         <small v-for="m in issues.name" :key="m" class="error">{{ m }}</small>
       </label>
       <label class="field">
-        Prompt
+        Instrução
         <textarea v-model="draft.prompt" rows="5" class="input text-sm" placeholder="Um push chegou. Revise o que mudou e me diga se algo quebra o deploy." />
-        <small class="hint">O que o agente faz quando o evento chega. O evento (corpo, headers x-*, query) vai logo abaixo, sem a chave.</small>
+        <small class="hint">O que o agente faz quando o evento chega. Os dados do evento seguem junto.</small>
         <small v-for="m in issues.prompt" :key="m" class="error">{{ m }}</small>
       </label>
       <div class="field">
-        Verificação
+        Segurança
         <div class="flex flex-wrap gap-1.5">
-          <button type="button" class="chip" :class="{ on: draft.verify === 'key' }" @click="draft.verify = 'key'">Chave no header</button>
-          <button type="button" class="chip" :class="{ on: draft.verify === 'hmac' }" @click="draft.verify = 'hmac'">Assinatura HMAC</button>
+          <button type="button" class="chip" :class="{ on: draft.verify === 'key' }" @click="draft.verify = 'key'">Chave no cabeçalho</button>
+          <button type="button" class="chip" :class="{ on: draft.verify === 'hmac' }" @click="draft.verify = 'hmac'">Assinatura (HMAC)</button>
         </div>
-        <small class="hint">{{ draft.verify === 'key' ? 'Quem chama manda a chave em Authorization: Bearer … ou em X-Hook-Key.' : 'Quem chama assina o corpo com a chave (HMAC-SHA256), como GitHub e Gitea fazem. A chave sozinha não basta.' }}</small>
+        <small class="hint">{{ draft.verify === 'key' ? 'Quem chama envia a chave junto.' : 'Quem chama assina a mensagem com a chave (HMAC), como o GitHub faz.' }}</small>
       </div>
       <div v-if="draft.verify === 'hmac'" class="grid gap-3 sm:grid-cols-3">
-        <label class="field">Header da assinatura<input v-model="draft.signatureHeader" class="input font-mono text-xs" @keydown.enter.prevent /></label>
+        <label class="field">Cabeçalho da assinatura<input v-model="draft.signatureHeader" class="input font-mono text-xs" @keydown.enter.prevent /></label>
         <label class="field">Prefixo<input v-model="draft.signaturePrefix" class="input font-mono text-xs" @keydown.enter.prevent /></label>
         <div class="field">
           Codificação
@@ -228,18 +229,18 @@ const STATUS: Record<IHookDelivery['status'], { label: string; tone: string }> =
           <button type="button" class="chip" :class="{ on: draft.session === 'new' }" @click="draft.session = 'new'">Nova a cada chamada</button>
           <button type="button" class="chip" :class="{ on: draft.session === 'continuous' }" @click="draft.session = 'continuous'">Contínua</button>
         </div>
-        <small class="hint">{{ draft.session === 'new' ? 'Cada evento vira uma conversa; chamadas juntas rodam em paralelo.' : 'Todos os eventos na mesma conversa (o agente lembra dos anteriores); chamadas juntas entram em fila.' }}</small>
+        <small class="hint">{{ draft.session === 'new' ? 'Cada chamada abre uma conversa nova.' : 'Todas as chamadas na mesma conversa.' }}</small>
       </div>
       <label class="flex items-center gap-2 text-sm text-zinc-300"><input v-model="draft.enabled" type="checkbox" class="accent-emerald-500" /> Ligado</label>
 
       <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
       <div class="flex flex-wrap gap-2">
-        <button v-if="!selected" type="button" :disabled="busy" class="rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="create">Criar hook</button>
+        <button v-if="!selected" type="button" :disabled="busy" class="btn btn-primary" @click="create">Criar</button>
         <template v-else>
-          <button type="button" :disabled="busy" class="rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" @click="save">Salvar hook</button>
-          <button type="button" :disabled="busy" class="rounded-full bg-zinc-800 px-4 py-1.5 text-sm hover:bg-zinc-700" @click="confirm = { kind: 'rotate', name: selected.name }">Trocar chave</button>
+          <button type="button" :disabled="busy" class="btn btn-primary" @click="save">Salvar</button>
+          <button type="button" :disabled="busy" class="btn btn-secondary" @click="confirm = { kind: 'rotate', name: selected.name }">Trocar chave</button>
           <span v-if="selected.secretLast4" class="self-center text-xs text-zinc-500">chave termina em …{{ selected.secretLast4 }}</span>
-          <button type="button" :disabled="busy" class="ml-auto rounded-full px-3 py-1.5 text-sm text-rose-300 hover:bg-rose-500/10" @click="confirm = { kind: 'remove', name: selected.name }">Apagar</button>
+          <button type="button" :disabled="busy" class="btn btn-danger ml-auto" @click="confirm = { kind: 'remove', name: selected.name }">Apagar</button>
         </template>
       </div>
 
@@ -263,7 +264,7 @@ const STATUS: Record<IHookDelivery['status'], { label: string; tone: string }> =
     <ConfirmDialog
       :open="!!confirm"
       :title="confirm?.kind === 'rotate' ? `Trocar a chave do hook ${confirm?.name}?` : `Apagar o hook ${confirm?.name ?? ''}?`"
-      :message="confirm?.kind === 'rotate' ? 'A chave atual para de valer na hora: quem chama precisa da nova.' : 'A URL para de responder e a chave some. As conversas que ele abriu continuam.'"
+      :message="confirm?.kind === 'rotate' ? 'A chave atual deixa de valer.' : 'O hook deixa de funcionar. As conversas já feitas continuam.'"
       :action="confirm?.kind === 'rotate' ? 'Trocar' : 'Apagar'"
       :tone="confirm?.kind === 'rotate' ? 'neutral' : 'danger'"
       @confirm="confirmed"
@@ -286,11 +287,5 @@ const STATUS: Record<IHookDelivery['status'], { label: string; tone: string }> =
 }
 .error {
   @apply text-xs font-normal text-rose-300;
-}
-.chip {
-  @apply rounded-full border border-zinc-700 px-3 py-1 text-sm font-normal text-zinc-300 hover:bg-zinc-800;
-}
-.chip.on {
-  @apply border-emerald-500/60 bg-emerald-500/15 text-emerald-200;
 }
 </style>

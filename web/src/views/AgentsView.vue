@@ -22,7 +22,7 @@ const agents = useAgentsStore()
 const providers = useProvidersStore()
 const protocols = useProtocolsStore()
 
-/** "Claude (assinatura) · claude-opus-5 +2": o padrão com o modelo dele, e quantos providers mais o agente tem. */
+/** "Claude · claude-opus-5 +2": o padrão com o modelo dele, e quantos providers mais o agente tem. */
 function providersLine(agent: IAgent): string {
   const [first, ...rest] = agent.providers
   if (!first) return 'sem provedor'
@@ -72,7 +72,7 @@ function takeDraft(id?: string): IAgentDetail | undefined {
   if (pending?.kind !== 'agent' || !pending.agent || (id && pending.id !== id)) return undefined
   pendingDraft.value = undefined
   const extras = [pending.initialContext.length ? `contexto inicial (${pending.initialContext.join(', ')})` : '', pending.resources ? 'recursos' : ''].filter(Boolean)
-  draftNote.value = `Rascunho do construtor aplicado: revise e salve.${extras.length ? ` ${extras.join(' e ')} ficam para as guias do agente depois de salvar — ou peça ao construtor para gravar tudo.` : ''}`
+  draftNote.value = `Rascunho aplicado. Revise e salve.${extras.length ? ` ${extras.join(' e ')} ficam para depois de salvar.` : ''}`
   return fromDraft(pending.agent, id ? detail.value : undefined)
 }
 
@@ -137,7 +137,7 @@ watch(creating, (value) => {
   <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
     <div>
       <p class="font-medium text-zinc-200">Só quem administra cria e edita agentes.</p>
-      <RouterLink v-if="!auth.signedIn && auth.localAccounts" :to="{ path: '/login', query: { next: '/agents' } }" class="mt-3 inline-block rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950">Entrar</RouterLink>
+      <RouterLink v-if="!auth.signedIn && auth.localAccounts" :to="{ path: '/login', query: { next: '/agents' } }" class="btn btn-primary mt-3">Entrar</RouterLink>
     </div>
   </div>
 
@@ -148,7 +148,7 @@ watch(creating, (value) => {
         <RouterLink to="/agents/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Novo agente" @click="template = undefined"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
       <BuildTabs kind="agent" active="list" class="px-3 pb-2" />
-      <template v-for="group in [{ label: 'Criados', items: created }, { label: 'Subagentes', items: subagents }]" :key="group.label">
+      <template v-for="group in [{ label: 'Agentes', items: created }, { label: 'Subagentes', items: subagents }]" :key="group.label">
         <h2 v-if="group.items.length" class="px-4 pt-3 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">{{ group.label }}</h2>
         <RouterLink
           v-for="agent in group.items"
@@ -162,8 +162,8 @@ watch(creating, (value) => {
             <span class="block truncate text-sm font-medium">{{ agent.name }}</span>
             <span class="block truncate text-xs text-zinc-500">{{ providersLine(agent) }}</span>
           </span>
-          <span v-if="agent.unavailable" class="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-300" :title="`Não abre conversa agora: ${agent.unavailable.label}`">{{ agent.unavailable.label }}</span>
-          <span v-if="agent.adminOnly" class="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300" title="Só administradores conversam com este agente">só admin</span>
+          <span v-if="agent.unavailable" class="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-300" :title="`Indisponível agora: ${agent.unavailable.label}`">{{ agent.unavailable.label }}</span>
+          <span v-if="agent.adminOnly" class="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300" title="Só administradores conversam com este agente">só administradores</span>
           <span v-if="!agent.projectId" class="shrink-0 rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] text-sky-300" title="Aparece em todos os projetos">global</span>
         </RouterLink>
       </template>
@@ -184,7 +184,7 @@ watch(creating, (value) => {
             <p class="truncate font-mono text-xs text-zinc-500">{{ detail.id }}</p>
           </div>
           <span v-if="agents.byId.get(detail.id)?.unavailable" class="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-300">{{ agents.byId.get(detail.id)?.unavailable?.label }}</span>
-          <RouterLink v-if="detail.role !== 'subagent'" :to="{ path: '/new', query: { agent: detail.id } }" class="ml-auto shrink-0 rounded-full bg-zinc-800 px-3 py-1.5 text-sm hover:bg-zinc-700">Conversar</RouterLink>
+          <RouterLink v-if="detail.role !== 'subagent'" :to="{ path: '/new', query: { agent: detail.id } }" class="btn btn-secondary ml-auto">Conversar</RouterLink>
         </div>
         <p v-if="draftNote" class="mx-auto mb-4 max-w-3xl text-sm text-emerald-300">{{ draftNote }}</p>
         <AgentForm :agent="detail" :creating="false" @saved="(saved) => loadDetail(saved, true)" @duplicate="duplicate" @removed="router.push('/agents')" />

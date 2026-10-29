@@ -89,11 +89,11 @@ function askRole(user: IUser) {
   pending.value = {
     user,
     change: { role: toAdmin ? 'admin' : 'member' },
-    title: toAdmin ? `Tornar ${user.name} administrador?` : `Tirar o admin de ${user.name}?`,
+    title: toAdmin ? `Tornar ${user.name} administrador?` : `Tirar o administrador de ${user.name}?`,
     message: toAdmin
-      ? 'Administrador cria e edita agentes (inclusive com ferramentas como run_bash), vê todas as conversas e muda a configuração do gateway.'
-      : 'A sessão atual dele cai na hora; ao entrar de novo, volta como membro.',
-    action: toAdmin ? 'Tornar admin' : 'Tirar admin',
+      ? 'Administrador cria agentes, vê todas as conversas e muda a configuração.'
+      : 'Ele sai agora e volta como membro.',
+    action: toAdmin ? 'Tornar administrador' : 'Tirar administrador',
   }
 }
 
@@ -166,7 +166,7 @@ async function doReset() {
   <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
     <div>
       <p class="font-medium text-zinc-200">Só quem administra gerencia usuários.</p>
-      <RouterLink v-if="!auth.signedIn" :to="{ path: '/login', query: { next: '/users' } }" class="mt-3 inline-block rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950">Entrar</RouterLink>
+      <RouterLink v-if="!auth.signedIn" :to="{ path: '/login', query: { next: '/users' } }" class="mt-3 btn btn-primary">Entrar</RouterLink>
     </div>
   </div>
 
@@ -191,7 +191,7 @@ async function doReset() {
             <span class="truncate text-sm font-medium">{{ user.name }}</span>
             <span v-if="user.id === auth.user?.id" class="shrink-0 rounded-full bg-zinc-800 px-1.5 text-[10px] text-zinc-400">você</span>
           </span>
-          <span class="block truncate text-xs text-zinc-500">{{ user.role === 'admin' ? 'admin' : 'membro' }}{{ user.disabled ? ' · desativada' : '' }} · {{ user.email }}</span>
+          <span class="block truncate text-xs text-zinc-500">{{ user.role === 'admin' ? 'administrador' : 'membro' }}{{ user.disabled ? ' · desativada' : '' }} · {{ user.email }}</span>
         </span>
       </RouterLink>
     </template>
@@ -207,7 +207,7 @@ async function doReset() {
           <label class="field">
             Senha inicial
             <input v-model="form.password" type="password" required autocomplete="new-password" class="input" />
-            <small class="text-xs font-normal text-zinc-500">Pelo menos 10 caracteres. A pessoa troca depois em Configuração.</small>
+            <small class="text-xs font-normal text-zinc-500">Pelo menos 10 caracteres. A pessoa troca depois em Perfil.</small>
             <small v-for="m in formIssues.password" :key="m" class="error">{{ m }}</small>
           </label>
           <label class="field">
@@ -219,8 +219,8 @@ async function doReset() {
           </label>
           <p v-if="formError" class="text-sm text-rose-300 sm:col-span-2">{{ formError }}</p>
           <div class="flex gap-2 sm:col-span-2">
-            <button type="submit" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400">Criar</button>
-            <RouterLink to="/users" class="rounded-full px-4 py-2 text-sm hover:bg-zinc-800">Cancelar</RouterLink>
+            <button type="submit" class="btn btn-primary">Criar</button>
+            <RouterLink to="/users" class="btn btn-ghost">Cancelar</RouterLink>
           </div>
         </form>
       </template>
@@ -250,16 +250,16 @@ async function doReset() {
           <label class="flex cursor-pointer items-center gap-3 px-4 py-3">
             <span class="min-w-0 flex-1">
               <span class="block text-sm text-zinc-200">Conta ativa</span>
-              <span class="block text-xs text-zinc-500">Desativada, não entra e a sessão atual cai na hora.</span>
+              <span class="block text-xs text-zinc-500">Desativada, a conta não consegue entrar.</span>
             </span>
             <button type="button" role="switch" :aria-checked="!selected.disabled" :disabled="selected.id === auth.user?.id" class="switch shrink-0 disabled:cursor-not-allowed disabled:opacity-40" :class="{ on: !selected.disabled }" @click="askDisabled(selected)"><span /></button>
           </label>
         </div>
 
         <div class="flex flex-wrap gap-2">
-          <button type="button" class="rounded-full bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-700" @click="(resetting = selected), (resetPassword = ''), (resetError = undefined), (resetDone = undefined)">Redefinir senha</button>
-          <button type="button" class="rounded-full bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-700" @click="(ending = selected), (resetDone = undefined)">Encerrar sessões</button>
-          <RouterLink v-if="auth.isAdmin" :to="{ path: '/usage', query: { tab: 'users', user: selected.id } }" class="rounded-full px-3 py-1.5 text-sm text-emerald-400 hover:bg-zinc-800">Ver uso →</RouterLink>
+          <button type="button" class="btn btn-secondary" @click="(resetting = selected), (resetPassword = ''), (resetError = undefined), (resetDone = undefined)">Redefinir senha</button>
+          <button type="button" class="btn btn-secondary" @click="(ending = selected), (resetDone = undefined)">Encerrar sessões</button>
+          <RouterLink v-if="auth.isAdmin" :to="{ path: '/usage', query: { tab: 'users', user: selected.id } }" class="btn btn-ghost">Ver uso →</RouterLink>
         </div>
       </section>
       <div v-else class="grid h-full place-items-center text-zinc-500">Escolha um usuário ou crie um novo.</div>
@@ -267,7 +267,7 @@ async function doReset() {
       <ConfirmDialog
         :open="!!ending"
         :title="`Encerrar as sessões de ${ending?.name ?? ''}?`"
-        :message="ending?.id === auth.user?.id ? 'Inclui a sua sessão neste navegador: você vai precisar entrar de novo.' : 'Todo aparelho em que a conta está logada sai na hora. A senha continua a mesma.'"
+        :message="ending?.id === auth.user?.id ? 'Inclui a sua sessão neste navegador: você vai precisar entrar de novo.' : 'A pessoa sai de todos os aparelhos. A senha não muda.'"
         action="Encerrar"
         :busy="endingBusy"
         @confirm="endSessions"
@@ -282,8 +282,8 @@ async function doReset() {
             <input v-model="resetPassword" type="password" required autocomplete="new-password" class="input mt-3 w-full" placeholder="Pelo menos 10 caracteres" />
             <p v-if="resetError" class="mt-2 text-xs text-rose-300">{{ resetError }}</p>
             <div class="mt-4 flex justify-end gap-2">
-              <button type="button" class="rounded-full px-4 py-2 text-sm hover:bg-zinc-800" @click="resetting = undefined">Cancelar</button>
-              <button type="submit" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950">Redefinir</button>
+              <button type="button" class="btn btn-ghost" @click="resetting = undefined">Cancelar</button>
+              <button type="submit" class="btn btn-primary">Redefinir</button>
             </div>
           </form>
         </div>

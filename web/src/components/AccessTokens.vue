@@ -89,19 +89,19 @@ async function revoke() {
   <section id="tokens" class="flex scroll-mt-4 flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
     <h2 class="font-medium">Tokens de acesso</h2>
     <p class="text-xs text-zinc-400">
-      Para o Claude Code (MCP do gateway), scripts e integrações. O token age como a sua conta — perdeu o admin, o token perde junto — e não cai ao sair. Revogue aqui quando não usar mais.
+      Para o Claude Code, scripts e integrações. O token age como a sua conta. Revogue quando não usar mais.
     </p>
 
     <div v-if="revealed" class="flex flex-col gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm">
       <p class="text-emerald-200">Token <strong>{{ revealed.name }}</strong> criado. Copie agora: ele não aparece de novo.</p>
       <div class="flex min-w-0 items-center gap-2">
         <code class="min-w-0 flex-1 truncate rounded-lg bg-zinc-950 px-2 py-1.5 font-mono text-xs text-zinc-100">{{ revealed.token }}</code>
-        <button class="flex shrink-0 items-center gap-1 rounded-full bg-zinc-800 px-3 py-1.5 text-xs hover:bg-zinc-700" @click="copy('token', revealed.token)"><Icon :name="copied === 'token' ? 'check' : 'copy'" class="h-3.5 w-3.5" /> Copiar</button>
+        <button class="btn btn-sm btn-secondary" @click="copy('token', revealed.token)"><Icon :name="copied === 'token' ? 'check' : 'copy'" class="h-3.5 w-3.5" /> Copiar</button>
       </div>
       <p class="text-xs text-zinc-400">Para ligar no Claude Code:</p>
       <div class="flex min-w-0 items-start gap-2">
         <code class="min-w-0 flex-1 rounded-lg bg-zinc-950 px-2 py-1.5 font-mono text-[11px] break-all text-zinc-300">{{ mcpCommand }}</code>
-        <button class="flex shrink-0 items-center gap-1 rounded-full bg-zinc-800 px-3 py-1.5 text-xs hover:bg-zinc-700" @click="copy('cmd', mcpCommand)"><Icon :name="copied === 'cmd' ? 'check' : 'copy'" class="h-3.5 w-3.5" /> Copiar</button>
+        <button class="btn btn-sm btn-secondary" @click="copy('cmd', mcpCommand)"><Icon :name="copied === 'cmd' ? 'check' : 'copy'" class="h-3.5 w-3.5" /> Copiar</button>
       </div>
       <button class="self-start text-xs text-zinc-400 hover:text-zinc-100" @click="revealed = undefined">Já copiei — fechar</button>
     </div>
@@ -109,15 +109,15 @@ async function revoke() {
     <form class="flex flex-wrap items-end gap-2" @submit.prevent="create">
       <label class="flex min-w-0 flex-1 basis-40 flex-col gap-1 text-sm text-zinc-300">
         Nome
-        <input v-model="name" required maxlength="60" class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm" placeholder="Claude Code" />
+        <input v-model="name" required maxlength="60" class="rounded-lg border border-zinc-800 bg-zinc-900 px-3 h-9 text-sm" placeholder="Claude Code" />
       </label>
       <label class="flex flex-col gap-1 text-sm text-zinc-300">
         Validade
-        <select v-model="days" class="rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-2 text-sm">
+        <select v-model="days" class="rounded-lg border border-zinc-800 bg-zinc-900 px-2 h-9 text-sm">
           <option v-for="option in DAYS" :key="option.label" :value="option.value">{{ option.label }}</option>
         </select>
       </label>
-      <button type="submit" :disabled="creating" class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50">Criar token</button>
+      <button type="submit" :disabled="creating" class="btn btn-primary">Criar token</button>
     </form>
     <p v-if="createError" class="text-sm text-rose-300">{{ createError }}</p>
     <p v-if="loadError" class="text-sm text-rose-300">{{ loadError }}</p>
@@ -137,7 +137,7 @@ async function revoke() {
             <template v-else>{{ token.expiresAt ? `vale até ${fullTime(token.expiresAt)}` : 'sem validade' }}</template>
           </div>
         </div>
-        <button v-if="!token.revokedAt" class="rounded-full px-3 py-1 text-xs text-rose-300 hover:bg-rose-500/10" @click="revoking = token">Revogar</button>
+        <button v-if="!token.revokedAt" class="btn btn-sm btn-danger" @click="revoking = token">Revogar</button>
       </li>
     </ul>
     <p v-else class="text-xs text-zinc-500">Nenhum token ainda.</p>

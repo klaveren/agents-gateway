@@ -15,7 +15,7 @@ describe('guidance', () => {
   })
 
   it('o markdown da prévia ganha títulos, sem quebra de linha a mais', () => {
-    expect(renderMarkdown('# Contexto\ntexto\n## Decisão')).toBe('<h2>Contexto</h2>texto<br><h3>Decisão</h3>')
+    expect(renderMarkdown('# Contexto\ntexto\n## Decisão')).toBe('<h2>Contexto</h2>texto<h3>Decisão</h3>')
     expect(renderMarkdown('#semtitulo')).toBe('#semtitulo')
   })
 
