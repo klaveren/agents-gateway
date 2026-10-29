@@ -94,6 +94,7 @@ export class ProjectSandbox implements IProjectSandbox {
     const port = await networkGate().start()
     const planned = plan(this.base(root))
     const cerco = process.platform === 'linux' ? forBubblewrap(planned, root, listDir) : planned
+    for (const dir of writeFolders(cerco, root)) mkdirSync(dir, { recursive: true, mode: 0o700 })
     const scratch = (name: string) => {
       const dir = join(root, name)
       mkdirSync(dir, { recursive: true, mode: 0o700 })
@@ -227,6 +228,18 @@ export function forBubblewrap(plan: ICercoPlan, root: string, list: (dir: string
     return path !== root && isAtOrUnder(root, path) ? denyAllBut(path, keep, list) : [path]
   })
   return { ...plan, readAllow, readDeny: [...new Set(readDeny)] }
+}
+
+/**
+ * As PASTAS que as regras de escrita liberam (`notas/**`), dentro da raiz: o gateway as cria antes do comando. Sem
+ * isso, o cerco não abre o que ainda não existe, e criar a pasta pediria escrita na raiz. Só pasta explícita (com `/**`)
+ * e sem curinga no caminho; nada fora da raiz.
+ */
+export function writeFolders(plan: ICercoPlan, root: string): string[] {
+  return plan.writeAllow
+    .filter((path) => path.endsWith('/**'))
+    .map((path) => path.slice(0, -3))
+    .filter((dir) => !/[*?[\]{}]/.test(dir) && dir !== root && isAtOrUnder(dir, root))
 }
 
 /** Fecha tudo dentro de `dir` menos o que leva ao que fica aberto (`keep`). */
