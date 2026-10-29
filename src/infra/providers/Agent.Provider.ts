@@ -29,7 +29,7 @@ import { IAgent, IAgentTarget } from '@domain/models/Agent.Model'
 import { IAgentEvent, IUsage } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
-import { READ_DOC_TOOL } from '@domain/models/ProjectDoc.Model'
+import { READ_DOC_TOOL, SEARCH_DOCS_TOOL } from '@domain/models/ProjectDoc.Model'
 import { USE_SKILL_TOOL } from '@domain/models/Resource.Model'
 import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
@@ -230,9 +230,10 @@ export class AgentProvider implements IAgentProvider {
    * liberada: o prompt manda usar, então a ferramenta vem junto, sem ninguém ter de escolhê-la no cadastro do agente.
    */
   private withDocs(agent: IAgent, projectId: string | undefined): IAgent {
-    const extra = [...(this.guidance?.hasDocs(projectId, agent.id) ? [READ_DOC_TOOL] : []), ...(this.guidance?.hasSkills?.(agent.id) ? [USE_SKILL_TOOL] : [])].filter(
-      (tool) => !agent.allowedTools.includes(tool),
-    )
+    const extra = [
+      ...(this.guidance?.hasDocs(projectId, agent.id) ? [READ_DOC_TOOL, SEARCH_DOCS_TOOL] : []),
+      ...(this.guidance?.hasSkills?.(agent.id) ? [USE_SKILL_TOOL] : []),
+    ].filter((tool) => !agent.allowedTools.includes(tool))
     return extra.length ? { ...agent, allowedTools: [...agent.allowedTools, ...extra] } : agent
   }
 

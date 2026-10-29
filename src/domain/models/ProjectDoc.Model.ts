@@ -27,6 +27,13 @@ export interface IProjectDoc {
 
 /** A ferramenta com que o agente lê um documento do índice (ver `read_doc` em `Local.Tools`). */
 export const READ_DOC_TOOL = 'read_doc'
+/** A ferramenta com que o agente BUSCA nos documentos pelo texto (não só pelo título do índice). */
+export const SEARCH_DOCS_TOOL = 'search_docs'
+/**
+ * Acima disto o índice do prompt lista só os mais recentes e manda buscar o resto: com centenas de documentos, uma linha
+ * por documento pesaria em toda conversa.
+ */
+export const DOC_INDEX_LIMIT = 30
 
 export const DOC_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,63}$/
 export const DOC_TITLE_MAX = 160

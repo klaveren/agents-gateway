@@ -242,3 +242,23 @@ describe('LocalTools — propose_draft', () => {
     assert.deepStrictEqual([rule.status, /- title: required/.test(String(rule.result))], ['error', true])
   })
 })
+
+describe('LocalTools — search_docs', () => {
+  it('só existe quando quem lê também busca; busca no projeto DA CONVERSA e devolve o trecho', async () => {
+    assert.ok(!makeLocalTools({ docs: { readDoc: () => undefined } }).some((tool) => tool.name === 'search_docs'))
+    const asked: Array<[string, string | undefined, string | undefined]> = []
+    const tool = makeLocalTools({
+      docs: {
+        readDoc: () => undefined,
+        searchDocs: (query, projectId, kind) => (
+          asked.push([query, projectId, kind]),
+          [{ id: 'api', kind: 'spec' as const, title: 'API', summary: 'Rotas', excerpt: 'erros com «código»' }]
+        ),
+      },
+    }).find((item) => item.name === 'search_docs')!
+    const result = await tool.execute({ query: 'código', kind: 'spec' }, { conversationProjectId: 'xpto' })
+    assert.deepStrictEqual(result, { status: 'success', result: '- [spec] api — API: Rotas\n  …erros com «código»…' })
+    assert.deepStrictEqual(asked, [['código', 'xpto', 'spec']])
+    assert.strictEqual((await tool.execute({ query: ' ' }, {})).status, 'error')
+  })
+})

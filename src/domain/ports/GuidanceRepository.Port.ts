@@ -10,6 +10,16 @@ export type TGuidanceScope = string | null
 export type TRulePatch = Partial<Pick<IRule, 'title' | 'body' | 'enabled' | 'position' | 'updatedAt' | 'updatedBy'>> & { projectId?: string | null }
 export type TDocPatch = Partial<Pick<IProjectDoc, 'kind' | 'title' | 'summary' | 'body' | 'updatedAt' | 'updatedBy'>> & { projectId?: string | null }
 
+/** Um documento achado pela busca de texto: sem o corpo, com o trecho que casou (entre « »). */
+export interface IDocHit {
+  id: string
+  kind: TDocKind
+  projectId?: string
+  title: string
+  summary: string
+  excerpt: string
+}
+
 /** As rules e os documentos (specs e ADRs). Síncrono, como o resto do cadastro. */
 export interface IGuidanceRepository {
   /** As do escopo, pela posição. */
@@ -25,6 +35,8 @@ export interface IGuidanceRepository {
   insertDoc(doc: IProjectDoc): void
   updateDoc(id: string, patch: TDocPatch): IProjectDoc | undefined
   deleteDoc(id: string): boolean
+  /** A busca de texto (FTS) nos documentos dos escopos, os mais relevantes primeiro. `match` é a expressão FTS5 pronta. */
+  searchDocs(match: string, scopes: readonly TGuidanceScope[], kind?: TDocKind, limit?: number): IDocHit[]
 
   /** O CONTEXTO INICIAL do projeto: as specs que vão inteiras no prompt, na ordem. */
   contextDocs(projectId: string): string[]

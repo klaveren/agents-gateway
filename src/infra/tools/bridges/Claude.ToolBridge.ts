@@ -4,7 +4,12 @@ import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IAgentMcpServer } from '../Tool.Catalog'
 import { ILocalTool } from '../Tool.Types'
 
-export const LOCAL_SERVER_NAME = 'gateway'
+/**
+ * O servidor in-process das ferramentas LOCAIS (as tools viram `mcp__local__<tool>`). ⚠️ Não `gateway`: com o MCP do
+ * próprio gateway montado ao lado (`mcp_gateway`), os nomes quase iguais faziam o modelo chamar
+ * `mcp__mcp_gateway__read_doc` — uma ferramenta que não existe.
+ */
+export const LOCAL_SERVER_NAME = 'local'
 
 /**
  * O Claude Agent SDK quer tools como um MCP server. Para as locais ele oferece um

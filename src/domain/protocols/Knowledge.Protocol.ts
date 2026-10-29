@@ -17,7 +17,7 @@ Conhecimento é a SÍNTESE de um tema a partir de fontes canônicas e externas �
 O código real entra só como VALIDAÇÃO do que as fontes dizem, nunca como o sujeito do estudo. Se não for conhecimento, diga o que é e pare.
 
 ## 1. Não duplique
-Antes de pesquisar, confira o que já existe (o índice "O que já existe" e os documentos de referência). O tema já tem estudo? ATUALIZE o existente (o mesmo id) em vez de criar outro. Um estudo por tema — nunca um documento-mamute com vários.
+Antes de pesquisar, confira o que já existe ("O que já existe" e a busca nos documentos, search_docs, pelo assunto e pelos sinônimos). O tema já tem estudo? ATUALIZE o existente (o mesmo id) em vez de criar outro. Um estudo por tema — nunca um documento-mamute com vários.
 
 ## 2. Fontes, nesta ordem
 1. Livros canônicos (O'Reilly, Addison-Wesley, Pragmatic, IEEE Press).

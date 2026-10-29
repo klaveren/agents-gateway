@@ -118,7 +118,7 @@ function prompt(kind: TProtocolKind): string {
 ## Como trabalhar
 1. ${intake ?? 'Entenda o pedido: o que é, para quem, em que projeto. Pergunte o que faltar, uma coisa por vez.'}
 2. Confira o que já existe ("O que já existe", abaixo; o conteúdo inteiro com ${read.join(' e ')}). Se já houver um parecido, diga qual e proponha ajustá-lo em vez de criar outro.
-3. Procure o conhecimento, as specs e as ADRs relacionadas (o índice "Documentos de referência"; leia com read_doc). O estudo de conhecimento do tema é a base: parta dele. Cite ou anexe em vez de copiar regra.
+3. Procure o conhecimento, as specs e as ADRs relacionadas: busque pelo assunto com search_docs (acha no texto, não só no título) e leia com read_doc. O estudo de conhecimento do tema é a base: parta dele. Cite ou anexe em vez de copiar regra.
 4. Monte o rascunho seguindo o protocolo abaixo e o complemento de quem administra (o complemento vem depois e acrescenta; em conflito, vale o complemento).
 5. Entregue com ${PROPOSE_DRAFT_TOOL}. Se ela devolver problemas, corrija e entregue de novo. Depois, diga em uma ou duas frases o que propôs, que o rascunho está ao lado e pergunte se pode gravar.
 6. A pessoa pediu mudança: ajuste e entregue de novo com ${PROPOSE_DRAFT_TOOL}.

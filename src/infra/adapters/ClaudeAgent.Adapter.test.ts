@@ -228,7 +228,7 @@ describe('ClaudeAgentAdapter', () => {
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
     const servers = seen[0].options?.mcpServers ?? {}
-    assert.deepStrictEqual(Object.keys(servers).sort(), ['gateway', 'mcp_crm'])
+    assert.deepStrictEqual(Object.keys(servers).sort(), ['local', 'mcp_crm'])
     // Built-ins seguem desligados: o agente não ganha Bash/Read sobre a máquina do host.
     assert.deepStrictEqual(seen[0].options?.tools, [])
   })
@@ -239,7 +239,7 @@ describe('ClaudeAgentAdapter', () => {
     const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
     await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
 
-    assert.deepStrictEqual(Object.keys(seen[0].options?.mcpServers ?? {}), ['gateway'])
+    assert.deepStrictEqual(Object.keys(seen[0].options?.mcpServers ?? {}), ['local'])
   })
 
   it('gates tool use through canUseTool instead of allowedTools', async () => {
@@ -254,13 +254,13 @@ describe('ClaudeAgentAdapter', () => {
     assert.strictEqual(seen[0].options?.allowedTools, undefined)
 
     const options = { signal: new AbortController().signal, toolUseID: 't1', requestId: 'r1' }
-    assert.strictEqual((await gate('mcp__gateway__run_bash', {}, options))?.behavior, 'allow')
+    assert.strictEqual((await gate('mcp__local__run_bash', {}, options))?.behavior, 'allow')
     assert.strictEqual((await gate('mcp__mcp_crm__read_file', {}, options))?.behavior, 'allow')
     // ⛔ Do servidor escolhido, só a ferramenta escolhida; de servidor que o agente não tem, nada.
     assert.strictEqual((await gate('mcp__mcp_crm__delete_all', {}, options))?.behavior, 'deny')
     assert.strictEqual((await gate('mcp__mcp_outro__read_file', {}, options))?.behavior, 'deny')
     assert.strictEqual((await gate('Bash', {}, options))?.behavior, 'deny')
-    assert.strictEqual((await gate('mcp__gateway__search_web', {}, options))?.behavior, 'deny')
+    assert.strictEqual((await gate('mcp__local__search_web', {}, options))?.behavior, 'deny')
   })
 
   it('libera a delegate_to_agent de quem pode delegar (ela vem de agent:<id>, não de um nome)', async () => {
@@ -273,8 +273,8 @@ describe('ClaudeAgentAdapter', () => {
 
     const gate = seen[0].options?.canUseTool
     const options = { signal: new AbortController().signal, toolUseID: 't1', requestId: 'r1' }
-    assert.strictEqual((await gate!('mcp__gateway__delegate_to_agent', {}, options))?.behavior, 'allow')
-    assert.strictEqual((await gate!('mcp__gateway__run_bash', {}, options))?.behavior, 'deny')
+    assert.strictEqual((await gate!('mcp__local__delegate_to_agent', {}, options))?.behavior, 'allow')
+    assert.strictEqual((await gate!('mcp__local__run_bash', {}, options))?.behavior, 'deny')
   })
 
   it('reports an error result from the SDK', async () => {

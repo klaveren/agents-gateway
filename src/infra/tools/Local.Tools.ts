@@ -3,7 +3,8 @@ import { promisify } from 'node:util'
 import { bashPolicy, denyReason, truncate, type IBashPolicy } from './Bash.Guard'
 import { subscriptionEnv, workspaceFor } from '@infra/adapters/support/Subscription.Workspace'
 import { IProjectSandbox, projectSandbox, SANDBOX_SHELL } from '@infra/sandbox/Project.Sandbox'
-import { IProjectDoc, READ_DOC_TOOL } from '@domain/models/ProjectDoc.Model'
+import { DOC_KINDS, IProjectDoc, READ_DOC_TOOL, SEARCH_DOCS_TOOL, TDocKind } from '@domain/models/ProjectDoc.Model'
+import { IDocHit } from '@domain/ports/GuidanceRepository.Port'
 import { USE_SKILL_TOOL } from '@domain/models/Resource.Model'
 import { IBuilderDraft } from '@domain/models/Protocol.Model'
 import { builderKindOf, PROPOSE_DRAFT_TOOL } from '@domain/Builder.Agents'
@@ -24,6 +25,8 @@ export type TFetchHtml = (query: string) => Promise<string>
 /** Quem lê um documento para a conversa (o `GuidanceService`). */
 export interface IDocReader {
   readDoc(id: string, projectId?: string): IProjectDoc | undefined
+  /** A busca de texto (ver `GuidanceService.searchDocs`). Ausente = sem `search_docs`. */
+  searchDocs?(query: string, projectId?: string, kind?: TDocKind): IDocHit[]
 }
 
 /** Quem confere o rascunho do construtor sem gravar (o `GuidanceService`). */
@@ -148,6 +151,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       },
     },
     ...(deps.docs ? [readDocTool(deps.docs)] : []),
+    ...(deps.docs?.searchDocs ? [searchDocsTool(deps.docs)] : []),
     ...(deps.skills ? [useSkillTool(deps.skills)] : []),
     ...(deps.drafts ? [proposeDraftTool(deps.drafts)] : []),
   ]
@@ -226,6 +230,40 @@ function useSkillTool(skills: ISkillLoader): ILocalTool {
       const skill = id ? skills.loadSkill(id, context?.agentId) : undefined
       if (!skill) return { status: 'error', result: `Skill not found: ${id || '(no id)'}` }
       return { status: 'success', result: skill }
+    },
+  }
+}
+
+/**
+ * `search_docs`: acha documentos pelo ASSUNTO — no título, no resumo e no texto —, com o trecho que casou. O índice do
+ * prompt só tem título e resumo (e, com muitos documentos, só os recentes): é por aqui que o agente chega no resto.
+ * ⛔ Só os globais e os do projeto da conversa, como o `read_doc`.
+ */
+function searchDocsTool(docs: IDocReader): ILocalTool {
+  return {
+    origin: 'local',
+    name: SEARCH_DOCS_TOOL,
+    description:
+      'Searches the reference documents (specs, ADRs and knowledge studies) by subject — in the title, the summary and the full text — and returns the best matches with the excerpt that matched. Then read one in full with read_doc.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Words about the subject, in any order (accents optional)' },
+        kind: { type: 'string', description: 'Optional: only spec, adr or knowledge' },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+    execute: async (args, context) => {
+      const query = typeof args.query === 'string' ? args.query.trim() : ''
+      if (!query) return { status: 'error', result: 'search_docs requires a non-empty query.' }
+      const kind = DOC_KINDS.find((item) => item === args.kind)
+      const hits = docs.searchDocs!(query, context?.conversationProjectId, kind)
+      if (!hits.length) return { status: 'success', result: `No document matches "${query}".` }
+      return {
+        status: 'success',
+        result: hits.map((hit) => `- [${hit.kind}] ${hit.id} — ${hit.title}${hit.summary ? `: ${hit.summary}` : ''}\n  …${hit.excerpt}…`).join('\n'),
+      }
     },
   }
 }

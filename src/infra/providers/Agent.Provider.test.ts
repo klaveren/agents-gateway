@@ -742,6 +742,7 @@ describe('AgentProvider — rules e documentos', () => {
     assert.deepStrictEqual(asked, [`xpto/${SEED.list()[0].id}`])
     assert.strictEqual(seen.environment, '## Regras do ambiente\n1. **de xpto**')
     assert.ok(seen.created.includes('read_doc') && seen.turn.includes('read_doc'))
+    assert.ok(seen.created.includes('search_docs') && seen.turn.includes('search_docs'))
     assert.strictEqual(seen.project, 'xpto')
 
     await provider.createSession({ agentId: SEED.list()[0].id, metadata: { project: 'crm' } })
