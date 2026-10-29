@@ -515,8 +515,10 @@ the rules, so they are never enabled.
   - every call runs in the gateway, with the agent's permissions and sandbox.
 - **Gemini (`agy`)** always runs with `--sandbox`. Tested on 1.4.5, it refuses the terminal, writes
   and reads outside its folder, but reads anything inside it, `.env` included. So it always runs in
-  the conversation's empty folder. It gets the gateway's terminal, files and to-do list through the
-  same turn grant:
+  the conversation's empty folder. It gets the gateway's terminal, files and to-do list, and the
+  agent's MCP tools, through the same turn grant. The MCP tools go through the agent's toolbox, so
+  `agy` never sees an MCP server's URL or credential, and each call is checked against the
+  permissions again:
   - each turn writes a plugin into that folder (`.agents/plugins/gateway/mcp_config.json`, read by
     `agy` 1.4.9) pointing at `/v1/turn-tools` with the grant token, and removes it when the turn ends;
   - headless `agy` refuses every MCP call without an allow rule in `HOME`, so the gateway adds

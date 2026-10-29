@@ -140,11 +140,18 @@ describe('AntigravityAgentAdapter', () => {
     assert.match(antigravityFailure('', null), /ANTIGRAVITY_BIN/)
   })
 
-  it('⛔ as ferramentas do gateway: plugin na pasta da conversa com o token do turno, que morre no fim', async () => {
+  it('⛔ as ferramentas do gateway e os MCPs do agente: plugin na pasta da conversa com o token do turno, que morre no fim', async () => {
     const home = mkdtempSync(join(tmpdir(), 'agy-home-'))
     const grants = new TurnGrants()
-    const local = (name: string) => ({ name, description: name, inputSchema: { type: 'object' }, execute: async () => ({ status: 'success', result: 'ok' }) })
-    const catalog = { localFor: () => [local('run_bash'), local('read_file')] }
+    const invoked: string[] = []
+    const tool = (name: string, origin: string) => ({ name, description: name, inputSchema: { type: 'object' }, origin })
+    // A caixa do agente: as locais e as do MCP escolhido; a chamada passa pelo `invoke` dela (que confere as permissões).
+    const catalog = {
+      toolbox: async () => ({
+        tools: [tool('run_bash', 'local'), tool('read_file', 'local'), tool('list_agents', 'mcp')],
+        invoke: async (name: string) => (invoked.push(name), { status: 'success', result: 'ok' }),
+      }),
+    }
     let during: { url?: string; headers?: Record<string, string> } = {}
     let granted: unknown
     const calls: ISpawned[] = []
@@ -168,8 +175,11 @@ describe('AntigravityAgentAdapter', () => {
     assert.strictEqual(during.headers?.['X-Tool-Authorization'], 'Bearer tok-de-quem-conversa')
     assert.deepStrictEqual(
       (granted as { tools: Array<{ name: string }> }).tools.map((tool) => tool.name),
-      ['run_bash', 'read_file'],
+      ['run_bash', 'read_file', 'list_agents'],
     )
+    await (granted as { tools: Array<{ execute: (args: object) => Promise<unknown> }> }).tools[2].execute({})
+    assert.deepStrictEqual(invoked, ['list_agents'])
+    assert.ok(!readFileSync(join(home, '.gemini', 'antigravity-cli', 'settings.json'), 'utf8').includes('list_agents'), 'um servidor só: o do gateway')
     assert.strictEqual(grants.get(during.headers?.['X-Turn-Grant']), undefined, 'acabou o turno, a concessão morre')
     assert.ok(!existsSync(turnToolsPluginDir(calls[0].options.cwd!)), 'e o plugin sai da pasta')
     const settings = JSON.parse(readFileSync(join(home, '.gemini', 'antigravity-cli', 'settings.json'), 'utf8'))
@@ -201,7 +211,9 @@ describe('AntigravityAgentAdapter', () => {
     let registered = 0
     grants.register = (grant) => (registered++, register(grant))
     const calls: ISpawned[] = []
-    const catalog = { localFor: () => [{ name: 'run_bash', description: '', inputSchema: {}, execute: async () => ({ status: 'success', result: '' }) }] }
+    const catalog = {
+      toolbox: async () => ({ tools: [{ name: 'run_bash', description: '', inputSchema: {}, origin: 'local' }], invoke: async () => ({ status: 'success', result: '' }) }),
+    }
     const adapter = new AntigravityAgentAdapter({
       store: new SessionStore(),
       spawn: fakeSpawn(calls, turn),

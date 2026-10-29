@@ -16,7 +16,7 @@ import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { sessionPrefix } from '@infra/session/Session.Key'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
-import { TurnGrants, turnGrants } from '@infra/tools/Turn.Grants'
+import { ITurnTool, TurnGrants, turnGrants } from '@infra/tools/Turn.Grants'
 import { IConnectionSource, UnavailableProviderError } from './support/Keyed.Client'
 import { composeSystemPrompt, maxToolTurns } from './support/Prompt.Helper'
 import { subscriptionEnv, subscriptionHome, workspaceFor } from './support/Subscription.Workspace'
@@ -75,8 +75,8 @@ export function antigravityArgs(prompt: string, model: string, conversationId?: 
  * Lane `agent` do Google pela ASSINATURA, sobre o Antigravity CLI (`agy -p --output-format stream-json`).
  *
  * ⛔ HOME próprio do gateway (o login feito pela tela; nunca o `~/.gemini` da pessoa, com os MCPs e as
- * regras dela), diretório vazio por conversa, ambiente mínimo. O terminal, os arquivos e as tarefas são os do GATEWAY,
- * por MCP, num plugin gravado na pasta da conversa a cada turno (ver `writeTurnToolsPlugin`).
+ * regras dela), diretório vazio por conversa, ambiente mínimo. O terminal, os arquivos, as tarefas e os MCPs do agente
+ * chegam pelo GATEWAY, num plugin gravado na pasta da conversa a cada turno (ver `writeTurnToolsPlugin`).
  *
  * ⚠️ O CLI não tem flag de system prompt: as instruções do agente vão no PRIMEIRO turno, antes da
  * mensagem; a conversa retomada já as tem.
@@ -139,10 +139,10 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
     // ⛔ A pasta VAZIA da conversa, nunca a do projeto: o `agy` lê tudo o que está na pasta dele, sem as permissões do
     // agente (o `.env` inclusive). O projeto chega ao Gemini só pelas ferramentas do gateway, que seguem as permissões.
     const workspace = workspaceFor(undefined, sessionId)
-    const locals = this.catalog?.localFor(agent.allowedTools) ?? []
+    const tools = await this.turnToolsOf(agent, { ...context, sessionId })
     const grants = this.turnTools?.grants ?? turnGrants()
-    const grant = locals.length && this.turnTools && allowTurnTools(home) ? grants.register({ tools: locals, context: { ...context, sessionId } }) : undefined
-    if (locals.length && !grant) yield { type: 'warning', sessionId, timestamp: now(), payload: { message: 'As ferramentas do gateway não chegam ao Gemini aqui: ficam de fora.' } }
+    const grant = tools.length && this.turnTools && allowTurnTools(home) ? grants.register({ tools, context: { ...context, sessionId } }) : undefined
+    if (tools.length && !grant) yield { type: 'warning', sessionId, timestamp: now(), payload: { message: 'As ferramentas do gateway não chegam ao Gemini aqui: ficam de fora.' } }
     const plugin = turnToolsPluginDir(workspace)
     rmSync(plugin, { recursive: true, force: true })
     if (grant) writeTurnToolsPlugin(workspace, this.turnTools!.url, { 'X-Turn-Grant': grant, ...(context.token ? { 'X-Tool-Authorization': `Bearer ${context.token}` } : {}) })
@@ -198,6 +198,21 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
 
   async cancel(sessionId: string): Promise<void> {
     this.store.get(sessionId)?.abort?.abort()
+  }
+
+  /**
+   * ⛔ TUDO PELO GATEWAY: as locais e as dos MCPs que o agente escolheu, pela caixa dele (`toolbox`). O `agy` só fala com
+   * o `/v1/turn-tools`: nunca recebe a URL nem a credencial de um MCP, e cada chamada passa de novo pelas permissões.
+   */
+  private async turnToolsOf(agent: IAgent, context: IExecutionContext): Promise<ITurnTool[]> {
+    if (!this.catalog || !this.turnTools) return []
+    const box = await this.catalog.toolbox(agent.allowedTools, context)
+    return box.tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      execute: (args, callContext) => box.invoke(tool.name, args, callContext),
+    }))
   }
 
   private nativeOf(record: ISessionRecord): IAntigravityNative {
