@@ -1,7 +1,11 @@
-import type { IPermissionChecker } from '@application/Permissions.Service'
+import type { IPermissionAsker, IPermissionChecker } from '@application/Permissions.Service'
+import { cercoPlan } from '@domain/Cerco.Plan'
 import type { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { exec } from 'node:child_process'
+import { isAbsolute, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
+import { networkGate } from '@infra/permissions/Network.Gate'
+import { analyzeShell } from '@infra/permissions/Shell.Parse'
 import { bashPolicy, denyReason, truncate, type IBashPolicy } from './Bash.Guard'
 import { subscriptionEnv, workspaceFor } from '@infra/adapters/support/Subscription.Workspace'
 import { IProjectSandbox, projectSandbox, SANDBOX_SHELL } from '@infra/sandbox/Project.Sandbox'
@@ -11,7 +15,7 @@ import { USE_SKILL_TOOL } from '@domain/models/Resource.Model'
 import { IBuilderDraft } from '@domain/models/Protocol.Model'
 import { builderKindOf, PROPOSE_DRAFT_TOOL } from '@domain/Builder.Agents'
 import { ITodoItem, todoIssues, todoText, UPDATE_TODOS_TOOL } from '@domain/models/ConversationTodo.Model'
-import { makeFileTools } from './File.Tools'
+import { makeFileTools, realOf } from './File.Tools'
 import { ILocalTool, IToolResult } from './Tool.Types'
 
 export interface IExecOptions {
@@ -98,6 +102,49 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
   const policy = deps.policy ?? bashPolicy()
   const sandbox = deps.sandbox ?? projectSandbox()
 
+  /**
+   * ⛔ O TERMINAL COM PERMISSÕES, em duas travas:
+   * 1. a ANÁLISE: cada comando da linha (`git status; rm -rf x` são dois) passa pela regra de terminal, e cada
+   *    redirecionamento pela de leitura ou escrita; o que não dá para analisar (`eval`, nome vindo de variável) é negado;
+   * 2. o CERCO montado das mesmas regras (`Cerco.Plan`): o que rodou só lê e grava o que elas liberam — um `node -e`
+   *    lendo o `.env` falha no sistema operacional —, e a rede só sai pela porta do gateway, destino a destino.
+   * Vale para TODO agente; sem cerco no servidor, o terminal fica bloqueado.
+   */
+  async function guardedBash(command: string, context: IExecutionContext | undefined, permissions: IPermissionChecker): Promise<IToolResult> {
+    const asker = askerOf(context)
+    const root = realOf(context?.projectId ? workspaceFor(context.projectId, '') : policy.cwd || workspaceFor(undefined, context?.sessionId ?? 'run_bash'))
+    const refusal = await terminalRefusal(command, root, permissions, asker)
+    if (refusal) return { status: 'error', result: `Not permitted: ${refusal}` }
+    if (!sandbox.wrapWith) return { status: 'error', result: 'O terminal fica bloqueado: este servidor não monta o cerco das permissões.' }
+    const { system, ...layers } = permissions.layers?.(asker) ?? { system: [] }
+    const gate = networkGate()
+    const token = gate.register((host, port) => permissions.check(asker, { category: 'network', value: `${host}:${port}` }, { log: true }))
+    try {
+      let line: string
+      try {
+        line = await sandbox.wrapWith(command, root, (base) => cercoPlan(layers, { ...base, system }), token)
+      } catch (error: unknown) {
+        return { status: 'error', result: `${toMessage(error)}. O terminal fica bloqueado até o cerco funcionar.` }
+      }
+      const { stdout, stderr } = await run(line, {
+        cwd: root,
+        timeout: policy.timeoutMs,
+        maxBuffer: EXEC_BUFFER_BYTES,
+        env: subscriptionEnv({ HOME: root }),
+        shell: SANDBOX_SHELL,
+      })
+      return { status: 'success', result: truncate(stdout || stderr || 'Command executed successfully with no output.', policy.maxOutputChars) }
+    } catch (error: unknown) {
+      // A linha embrulhada (a política do cerco) não interessa a quem lê; a saída de erro, sim.
+      const failure = error as { stderr?: string; stdout?: string; code?: number }
+      const output = [failure.stdout?.trim(), failure.stderr?.trim()].filter(Boolean).join('\n')
+      if (output) return { status: 'error', result: truncate(`Exit code ${failure.code ?? 1}: ${output}`, policy.maxOutputChars) }
+      return { status: 'error', result: `Execution failed: ${toMessage(error)}` }
+    } finally {
+      gate.release(token)
+    }
+  }
+
   return [
     {
       origin: 'local',
@@ -137,6 +184,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
         if (denied) {
           return { status: 'error', result: `Refused by the gateway tool policy: ${denied}.` }
         }
+        if (deps.permissions) return guardedBash(command, context, deps.permissions)
 
         // ⛔ Agente de projeto: o comando roda PRESO à pasta do projeto, ou não roda (sem cerco, recusa).
         let line = command
@@ -188,6 +236,32 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     ...(deps.drafts ? [proposeDraftTool(deps.drafts)] : []),
     ...(deps.todos?.saveTodos ? [updateTodosTool(deps.todos)] : []),
   ]
+}
+
+/**
+ * A primeira trava do terminal: o motivo da negação, ou nada se cada parte da linha é permitida. Registra cada decisão.
+ * Redirecionamento: o caminho canônico, relativo à pasta de trabalho (ou absoluto, se fora dela).
+ */
+export async function terminalRefusal(command: string, root: string, permissions: IPermissionChecker, asker: IPermissionAsker): Promise<string | undefined> {
+  const analysis = await analyzeShell(command)
+  if (analysis.opaque.length) return `não dá para analisar com segurança (${analysis.opaque.join('; ')})`
+  if (!analysis.commands.length && !analysis.redirects.length) return 'nenhum comando'
+  for (const part of analysis.commands) {
+    const verdict = permissions.check(asker, { category: 'terminal', value: part.text, argv: part.argv }, { log: true })
+    if (!verdict.allowed) return verdict.reason
+  }
+  for (const redirect of analysis.redirects) {
+    const verdict = permissions.check(asker, { category: redirect.kind, value: workPath(root, redirect.target) }, { log: true })
+    if (!verdict.allowed) return verdict.reason
+  }
+  return undefined
+}
+
+function workPath(root: string, target: string): string {
+  if (target.startsWith('~')) return target
+  const abs = realOf(resolve(root, target))
+  const rel = relative(root, abs)
+  return rel === '' ? '.' : !rel.startsWith('..') && !isAbsolute(rel) ? rel : abs
 }
 
 /**

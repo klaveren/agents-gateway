@@ -36,7 +36,9 @@ export const CAPABILITIES: readonly ICapability[] = [
     description: 'Roda comandos na pasta da conversa (ou do projeto), com trava de comandos perigosos e teto de tempo.',
     risk: 'server-exec',
     local: ['run_bash'],
-    runs: { [EProvider.CODEX]: { tools: ['sdk:codex:shell'], note: 'terminal do Codex' }, [EProvider.ANTIGRAVITY]: { builtIn: 'terminal do Gemini' } },
+    // ⛔ O terminal do Codex não segue as permissões (é o cerco dele, não o das regras): desligado até ele receber o
+    // terminal do gateway por MCP.
+    runs: { [EProvider.CODEX]: { unavailable: true }, [EProvider.ANTIGRAVITY]: { builtIn: 'terminal do Gemini' } },
   },
   {
     id: 'files.read',
@@ -112,8 +114,15 @@ export function capability(id: string): ICapability | undefined {
 
 /** Os ids que viraram capacidade (locais e `sdk:`): ninguém os escolhe direto — saem da resolução. */
 export const CAPABILITY_TOOLS: ReadonlySet<string> = new Set(
-  CAPABILITIES.flatMap((item) => [...item.local, ...Object.values(item.runs).flatMap((run) => (run && 'tools' in run ? run.tools : []))]).concat('sdk:Bash', 'sdk:NotebookEdit'),
+  CAPABILITIES.flatMap((item) => [...item.local, ...Object.values(item.runs).flatMap((run) => (run && 'tools' in run ? run.tools : []))]).concat(
+    'sdk:Bash',
+    'sdk:NotebookEdit',
+    'sdk:codex:shell',
+  ),
 )
+
+/** ⛔ Os terminais que NÃO passam pelas permissões (o Bash nativo do Claude, o do Codex): nunca saem da resolução. */
+const UNGUARDED_TERMINALS: ReadonlySet<string> = new Set(['sdk:Bash', 'sdk:codex:shell'])
 
 export interface IResolveTarget {
   protocol: EProvider
@@ -133,7 +142,7 @@ export function resolveCapabilities(allowedTools: readonly string[], target: IRe
   for (const id of allowedTools) {
     const item = capability(id)
     if (!item) {
-      if (!isCapability(id)) resolved.push(id)
+      if (!isCapability(id) && !UNGUARDED_TERMINALS.has(id)) resolved.push(id)
       continue
     }
     const run = item.runs[family]

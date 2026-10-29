@@ -1,10 +1,12 @@
 import { exec } from 'node:child_process'
-import { existsSync, mkdirSync, realpathSync } from 'node:fs'
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { dataDir, projectWorkspace } from '@infra/adapters/support/Subscription.Workspace'
 import { esmImport } from '@infra/adapters/support/Esm.Import'
+import { networkGate } from '@infra/permissions/Network.Gate'
+import type { ICercoBase, ICercoPlan } from '@domain/Cerco.Plan'
 
 const run = promisify(exec)
 
@@ -26,6 +28,11 @@ export interface IProjectSandbox {
   status(): Promise<ISandboxStatus>
   /** O comando preso à pasta do projeto. ⛔ Lança se não há cerco — quem chama recusa. */
   wrap(command: string, projectId: string): Promise<string>
+  /**
+   * O comando no cerco MONTADO DAS REGRAS (`Cerco.Plan`), em qualquer pasta (a do projeto ou a da conversa), com a rede
+   * pela porta do gateway (`Network.Gate`) e o token do comando. ⛔ Lança se não há cerco.
+   */
+  wrapWith?(command: string, root: string, plan: (base: ICercoBase) => ICercoPlan, networkToken: string): Promise<string>
 }
 
 export const SANDBOX_UNAVAILABLE = 'cerco indisponível neste servidor'
@@ -64,6 +71,62 @@ export class ProjectSandbox implements IProjectSandbox {
         denyWrite: [],
       },
     }
+  }
+
+  /** A base do cerco de uma pasta: as de trabalho dentro dela, o que se lê sempre e o que nunca se toca. */
+  base(root: string): ICercoBase {
+    return {
+      root,
+      scratch: ['.home', '.tmp', '.cache'].map((name) => join(root, name)),
+      // A instalação do Node em uso (num Mac com nvm, fica na pasta pessoal, que o cerco fecha) e as ferramentas.
+      alwaysRead: [join(dataDir(this.env), 'tools'), dirname(dirname(process.execPath)), ...runtimeHelpers()],
+      alwaysDeny: [dataDir(this.env), process.cwd(), homedir()],
+    }
+  }
+
+  async wrapWith(command: string, root: string, plan: (base: ICercoBase) => ICercoPlan, networkToken: string): Promise<string> {
+    const status = await this.status()
+    if (!status.available) throw new Error(`${SANDBOX_UNAVAILABLE}: ${status.reason ?? 'sem motivo'}`)
+    const manager = await this.ready()
+    const port = await networkGate().start()
+    const cerco = plan(this.base(root))
+    const scratch = (name: string) => {
+      const dir = join(root, name)
+      mkdirSync(dir, { recursive: true, mode: 0o700 })
+      return dir
+    }
+    const home = scratch('.home')
+    const cache = scratch('.cache')
+    const proxy = `http://${networkToken}:x@127.0.0.1:${port}`
+    const connector = writeConnector(home)
+    const scoped: Record<string, string> = {
+      HOME: home,
+      TMPDIR: scratch('.tmp'),
+      npm_config_cache: join(cache, 'npm'),
+      PIP_CACHE_DIR: join(cache, 'pip'),
+      UV_CACHE_DIR: join(cache, 'uv'),
+      GOCACHE: join(cache, 'go'),
+      // A rede: só pela porta do gateway, com o token deste comando (quem decide é a regra do agente).
+      HTTP_PROXY: proxy,
+      HTTPS_PROXY: proxy,
+      ALL_PROXY: proxy,
+      http_proxy: proxy,
+      https_proxy: proxy,
+      all_proxy: proxy,
+      // O `fetch` do Node só segue o proxy com isto (Node 24+).
+      NODE_USE_ENV_PROXY: '1',
+      NO_PROXY: '',
+      no_proxy: '',
+      // SSH e git por SSH: pelo CONNECT da porta, com o auxiliar (o `nc` do Mac não fala o proxy).
+      GIT_SSH_COMMAND: `ssh -o ControlMaster=no -o ControlPath=none -o ProxyCommand='${process.execPath} ${connector} %h %p'`,
+    }
+    const prelude = Object.entries(scoped)
+      .map(([name, value]) => `export ${name}=${quote(value)}`)
+      .join('; ')
+    return manager.wrapWithSandbox(`${prelude}; ${command}`, SANDBOX_SHELL, {
+      ...(this.nested() ? { enableWeakerNestedSandbox: true } : {}),
+      filesystem: { denyRead: cerco.readDeny, allowRead: cerco.readAllow, allowWrite: cerco.writeAllow, denyWrite: cerco.writeDeny },
+    })
   }
 
   async wrap(command: string, projectId: string): Promise<string> {
@@ -120,14 +183,14 @@ export class ProjectSandbox implements IProjectSandbox {
 
   private ready(): Promise<ISandboxManager> {
     this.manager ??= this.load().then(async ({ SandboxManager }) => {
-      await SandboxManager.initialize(
-        {
-          ...(this.nested() ? { enableWeakerNestedSandbox: true } : {}),
-          network: { allowedDomains: [], deniedDomains: [] },
-          filesystem: { denyRead: [], allowWrite: [], denyWrite: [] },
-        },
-        async () => true,
-      )
+      // ⛔ A rede do cerco é a PORTA DO GATEWAY (`Network.Gate`): o comando só alcança 127.0.0.1:<porta>, e cada
+      // conexão é decidida pelas regras do agente do comando. Sem `ask`: nada passa por fora.
+      const port = await networkGate().start()
+      await SandboxManager.initialize({
+        ...(this.nested() ? { enableWeakerNestedSandbox: true } : {}),
+        network: { allowedDomains: [], deniedDomains: [], httpProxyPort: port, socksProxyPort: port },
+        filesystem: { denyRead: [], allowWrite: [], denyWrite: [] },
+      })
       return SandboxManager
     })
     return this.manager
@@ -148,6 +211,44 @@ function runtimeHelpers(): string[] {
   } catch {
     return []
   }
+}
+
+/**
+ * O auxiliar de ProxyCommand do SSH: abre um CONNECT na porta do gateway (com o token do `HTTPS_PROXY`) e liga a
+ * entrada e a saída do ssh ao túnel. Escrito na HOME do comando (dentro do cerco), que ele pode ler.
+ */
+function writeConnector(home: string): string {
+  const path = join(home, '.gateway-connect.cjs')
+  if (!existsSync(path))
+    writeFileSync(
+      path,
+      [
+        "const net = require('net')",
+        'const [host, port] = process.argv.slice(2)',
+        'const proxy = new URL(process.env.HTTPS_PROXY)',
+        'const socket = net.connect(Number(proxy.port), proxy.hostname, () => {',
+        "  const auth = Buffer.from(decodeURIComponent(proxy.username) + ':' + decodeURIComponent(proxy.password)).toString('base64')",
+        "  socket.write('CONNECT ' + host + ':' + port + ' HTTP/1.1\\r\\nHost: ' + host + ':' + port + '\\r\\nProxy-Authorization: Basic ' + auth + '\\r\\n\\r\\n')",
+        '})',
+        'let buffer = Buffer.alloc(0)',
+        'const onHead = (chunk) => {',
+        '  buffer = Buffer.concat([buffer, chunk])',
+        "  const end = buffer.indexOf('\\r\\n\\r\\n')",
+        '  if (end < 0) return',
+        "  socket.off('data', onHead)",
+        "  if (!/^HTTP\\/1\\.[01] 200/.test(buffer.toString('utf8', 0, end))) { process.stderr.write(buffer.toString('utf8', 0, end) + '\\n'); process.exit(1) }",
+        '  const rest = buffer.subarray(end + 4)',
+        '  if (rest.length) process.stdout.write(rest)',
+        '  socket.pipe(process.stdout)',
+        '  process.stdin.pipe(socket)',
+        '}',
+        "socket.on('data', onHead)",
+        "socket.on('error', (error) => { process.stderr.write(String(error) + '\\n'); process.exit(1) })",
+        '',
+      ].join('\n'),
+      { mode: 0o600 },
+    )
+  return path
 }
 
 function quote(value: string): string {

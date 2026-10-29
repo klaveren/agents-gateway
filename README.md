@@ -484,14 +484,27 @@ it. The project of a conversation is written by the server (`metadata.project`),
 client. On the first boot with projects, the agents that already existed and their conversations
 move to the `geral` project, with every current account as a member.
 
-**The folder confines.** A project agent's shell — the Claude `Bash` tool and `run_bash` — runs
-inside the OS sandbox (`@anthropic-ai/sandbox-runtime`, the Claude Code sandbox: seatbelt on macOS,
-bubblewrap on Linux). It reads and writes only the project folder (plus reads `<data>/tools`); the
-rest of `<data>` (database, keys, logins, other projects), the app folder (`.env`) and the gateway
-`HOME` are invisible. The network stays open. The Claude file tools (Read, Write, Edit, Glob, Grep,
-NotebookEdit) go through a path filter that resolves symlinks, enforced in a `PreToolUse` hook.
-Codex keeps its own `workspace-write` (writes confined, reads not) and a project agent cannot use
-the `full` sandbox. Global agents (the Atlas) are not confined.
+**The terminal is checked twice.** Every agent's `run_bash`, global ones included, goes through
+the permission rules (project → Permissions, and each agent's own rules) in two locks:
+
+1. **The analysis.** The line is parsed (tree-sitter-bash), so `git status; rm x` is two commands. Each
+   command must match a terminal rule, and each redirect a read or write rule. Anything that cannot
+   be analysed (`eval`, a command name from a variable) is refused.
+2. **The sandbox built from the same rules.** The command runs inside the OS sandbox
+   (`@anthropic-ai/sandbox-runtime`: seatbelt on macOS, bubblewrap on Linux) and reaches only:
+   - **Files:** writes only where the write rules allow, and reads in the working folder only what
+     the read rules allow. `<data>`, the app folder and the gateway `HOME` stay out, and so does every
+     secret: `node -e` reading `.env` fails in the OS.
+   - **Network:** only through the gateway's own proxy on 127.0.0.1, with a per-command token. Each
+     connection is decided by that agent's network rules, and git over SSH goes through the same
+     proxy. Loopback, link-local and cloud metadata are always refused; LAN addresses need an exact
+     rule. Direct connections fail.
+
+Every decision is logged (Permissions → Latest decisions). The Claude file tools (Read, Write, Edit)
+go through the same rules and a symlink-resolving path filter in a `PreToolUse` hook. WebFetch goes
+through the network rule for its host. The native Claude `Bash` and the Codex terminal do not follow
+the rules, so they are never enabled: on Codex the Terminal capability is unavailable until it gets
+the gateway terminal over MCP.
 
 **On Linux in a container, bubblewrap needs user namespaces**: Docker's default seccomp profile
 blocks them, so the pod needs `securityContext.seccompProfile.type: Unconfined` (or a profile that

@@ -1,4 +1,4 @@
-import { cleanRules, decide, IPermissionRule, IPermissionSubject, IPermissionVerdict, permissionIssues } from '@domain/Permission.Policy'
+import { cleanRules, decide, IPermissionLayers, IPermissionRule, IPermissionSubject, IPermissionVerdict, permissionIssues } from '@domain/Permission.Policy'
 import { InvalidPermissionsError } from '@domain/errors/Domain.Error'
 import { IPermissionDecision, IPermissionRepository } from '@domain/ports/PermissionRepository.Port'
 
@@ -14,6 +14,8 @@ export interface IPermissionAsker {
 export interface IPermissionChecker {
   /** `log`: registra a decisão (na execução, sim; ao montar a lista de ferramentas, não). */
   check(asker: IPermissionAsker, subject: IPermissionSubject, options?: { log?: boolean }): IPermissionVerdict
+  /** As regras que valem para quem pede (o cerco do terminal é montado delas). Ausente = nenhuma: o cerco mais fechado. */
+  layers?(asker: IPermissionAsker): IPermissionLayers & { system: readonly IPermissionRule[] }
 }
 
 /**
@@ -60,10 +62,15 @@ export class PermissionsService implements IPermissionChecker {
     this.repository.deleteProject(projectId)
   }
 
-  private evaluate(asker: IPermissionAsker, subject: IPermissionSubject): IPermissionVerdict {
+  layers(asker: IPermissionAsker): IPermissionLayers & { system: readonly IPermissionRule[] } {
     const agent = asker.agentId ? this.agentRules(asker.agentId) : undefined
     const project = asker.projectId ? this.repository.projectRules(asker.projectId).rules : undefined
-    return decide(subject, { ...(agent ? { agent } : {}), ...(project ? { project } : {}) }, this.system())
+    return { ...(agent ? { agent } : {}), ...(project ? { project } : {}), system: this.system() }
+  }
+
+  private evaluate(asker: IPermissionAsker, subject: IPermissionSubject): IPermissionVerdict {
+    const { system, ...layers } = this.layers(asker)
+    return decide(subject, layers, system)
   }
 
   private record(asker: IPermissionAsker, subject: IPermissionSubject, verdict: IPermissionVerdict): void {
