@@ -346,6 +346,7 @@ function buildRoutes(
     { method: 'get', path: '/conversations/stats', handler: controller.conversationStats },
     { method: 'get', path: '/conversations/events', handler: controller.conversationEvents },
     { method: 'get', path: '/conversations/:id/turns', handler: controller.getConversationTurns },
+    { method: 'get', path: '/conversations/:id/todos', handler: controller.getConversationTodos },
     { method: 'put', path: '/conversations/:id/share', handler: controller.shareConversation },
     { method: 'delete', path: '/conversations/:id', handler: controller.deleteConversation },
     { method: 'get', path: '/shared/:id', handler: controller.getSharedConversation },

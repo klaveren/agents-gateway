@@ -33,7 +33,9 @@ export function makeAgents(): AgentCatalog {
 
   const repository = build()
   repository.seedOnce(AGENT_SEED, 'seed')
-  for (const migration of AGENT_MIGRATIONS) for (const id of migration.agentIds) repository.migrateOnce(migration.key, id, migration.change, 'seed')
+  for (const migration of AGENT_MIGRATIONS)
+    for (const id of migration.agentIds === '*' ? repository.list().map((agent) => agent.id) : migration.agentIds)
+      repository.migrateOnce(migration.key, id, migration.change, 'seed')
 
   // ⚠️ O catálogo é pedido NA HORA, não aqui: ele próprio lê os agentes ao nascer (para ativar os
   // modelos que eles já usam), e pedi-lo agora seria uma volta sem fim entre as duas fábricas.

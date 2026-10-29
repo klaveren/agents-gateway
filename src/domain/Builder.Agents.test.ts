@@ -1,3 +1,4 @@
+import { UPDATE_TODOS_TOOL } from './models/ConversationTodo.Model'
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import { EMode } from './enums/EMode.Enum'
@@ -14,9 +15,15 @@ describe('Builder.Agents', () => {
 
   it('⛔ cada um com a leitura e a gravação do SEU tipo, e o prompt manda gravar só depois da confirmação', () => {
     const target = { provider: 'claude', models: ['m'] }
-    assert.deepStrictEqual(builderAgent('rule', target).allowedTools, ['mcp:gateway/list_rules', 'mcp:gateway/save_rule', PROPOSE_DRAFT_TOOL])
-    assert.deepStrictEqual(builderAgent('adr', target).allowedTools, ['mcp:gateway/list_docs', 'mcp:gateway/get_doc', 'mcp:gateway/save_doc', PROPOSE_DRAFT_TOOL])
-    assert.deepStrictEqual(builderAgent('skill', target).allowedTools, ['mcp:gateway/list_resources', 'mcp:gateway/save_resource', PROPOSE_DRAFT_TOOL])
+    assert.deepStrictEqual(builderAgent('rule', target).allowedTools, ['mcp:gateway/list_rules', 'mcp:gateway/save_rule', PROPOSE_DRAFT_TOOL, UPDATE_TODOS_TOOL])
+    assert.deepStrictEqual(builderAgent('adr', target).allowedTools, [
+      'mcp:gateway/list_docs',
+      'mcp:gateway/get_doc',
+      'mcp:gateway/save_doc',
+      PROPOSE_DRAFT_TOOL,
+      UPDATE_TODOS_TOOL,
+    ])
+    assert.deepStrictEqual(builderAgent('skill', target).allowedTools, ['mcp:gateway/list_resources', 'mcp:gateway/save_resource', PROPOSE_DRAFT_TOOL, UPDATE_TODOS_TOOL])
     const spec = builderAgent('spec', target).systemPrompt
     assert.match(spec, /Só grave com save_doc DEPOIS que a pessoa disser nesta conversa \(ou o agente que delegou trouxer a confirmação dela\)/)
     assert.match(spec, /A pessoa confirmou: grave o último rascunho/)

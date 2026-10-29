@@ -1,3 +1,4 @@
+import { UPDATE_TODOS_TOOL } from './models/ConversationTodo.Model'
 import { IAgent, IAgentTarget } from './models/Agent.Model'
 import { ICoreProtocol, PROTOCOL_KINDS, TProtocolKind } from './models/Protocol.Model'
 import { EMode } from './enums/EMode.Enum'
@@ -174,7 +175,7 @@ export function builderAgent(kind: TProtocolKind, target: IAgentTarget): IAgent 
     systemPrompt: prompt(kind),
     reasoningEfforts: ['low', 'medium', 'high'],
     modes: [EMode.AGENT],
-    allowedTools: [...[...read, save, ...saveAlso].map((tool) => `mcp:gateway/${tool}`), ...extra, PROPOSE_DRAFT_TOOL],
+    allowedTools: [...[...read, save, ...saveAlso].map((tool) => `mcp:gateway/${tool}`), ...extra, PROPOSE_DRAFT_TOOL, UPDATE_TODOS_TOOL],
     adminOnly: true,
   }
 }

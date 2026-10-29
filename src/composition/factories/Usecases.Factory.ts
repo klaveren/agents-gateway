@@ -8,40 +8,12 @@ import { ListSessionsUseCase } from '@application/ListSessions.Usecase'
 import { SendMessageUseCase } from '@application/SendMessage.Usecase'
 import { InMemoryConversationEvents } from '@infra/events/InMemory.ConversationEvents'
 import { NotifyingConversationRepository } from '@infra/persistence/Notifying.ConversationRepository'
-import { NullConversationRepository } from '@infra/persistence/Null.ConversationRepository'
-import { SqliteConversationRepository, DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
 import { makeClassifier } from './Classifier.Factory'
+import { makeConversationRepository } from './Conversations.Factory'
 import { makeOrchestrator } from './Orchestrator.Factory'
 import { makeTools } from './Tools.Factory'
 import { makeAgents } from './Agents.Factory'
 import { DelegationService } from '@application/Delegation.Service'
-
-/**
- * Onde a conversa é gravada.
- *
- * ⚖️ GRAVA POR PADRÃO. O arquivo é criado sozinho e não custa nada; exigir configuração para
- * registrar faria toda instalação nova rodar sem histórico, e ninguém descobre que falta registro
- * pelo sintoma — descobre no dia em que precisa olhar para trás e não tem o quê.
- *
- * `CONVERSATIONS_DB=off` desliga; qualquer outro valor é o caminho do arquivo.
- *
- * ⚠️ O script `test` do package.json força `:memory:`. Sem isso a suíte grava um `data/gateway.db`
- * de verdade no repositório — três testes montam esta factory, e um teste que deixa arquivo para
- * trás é um teste que muda de resultado conforme a ordem em que roda.
- */
-export function makeConversationRepository() {
-  const configured = process.env.CONVERSATIONS_DB?.trim()
-  if (configured === 'off') return new NullConversationRepository()
-
-  try {
-    return new SqliteConversationRepository(configured || DEFAULT_DB_PATH)
-  } catch (error) {
-    // ⛔ Não poder gravar não pode impedir o gateway de atender. Disco cheio, permissão negada,
-    // caminho inválido: segue sem histórico, dizendo por quê.
-    console.warn('[sqlite] não foi possível abrir o banco; seguindo sem registrar conversa.', error)
-    return new NullConversationRepository()
-  }
-}
 
 export function makeUsecases() {
   const agentProvider = makeOrchestrator()

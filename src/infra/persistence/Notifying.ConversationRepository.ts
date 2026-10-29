@@ -1,3 +1,4 @@
+import { ITodoItem } from '@domain/models/ConversationTodo.Model'
 import { TClassification } from '@domain/models/Classification.Model'
 import {
   IConversationPage,
@@ -94,6 +95,15 @@ export class NotifyingConversationRepository implements IConversationRepository 
 
   async findNative(sessionId: string): Promise<INativeSnapshot | undefined> {
     return this.inner.findNative?.(sessionId)
+  }
+
+  async todos(sessionId: string): Promise<{ items: ITodoItem[]; updatedAt?: Date }> {
+    return (await this.inner.todos?.(sessionId)) ?? { items: [] }
+  }
+
+  async saveTodos(sessionId: string, items: ITodoItem[]): Promise<void> {
+    if (!this.inner.saveTodos) throw new Error('This conversation store has no task list')
+    await this.inner.saveTodos(sessionId, items)
   }
 
   findByShareId(shareId: string): Promise<IConversationSession | undefined> {

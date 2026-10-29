@@ -170,6 +170,7 @@ export class AgentController {
     this.listConversations = this.listConversations.bind(this)
     this.conversationStats = this.conversationStats.bind(this)
     this.getConversationTurns = this.getConversationTurns.bind(this)
+    this.getConversationTodos = this.getConversationTodos.bind(this)
     this.shareConversation = this.shareConversation.bind(this)
     this.deleteConversation = this.deleteConversation.bind(this)
     this.getSharedConversation = this.getSharedConversation.bind(this)
@@ -936,6 +937,16 @@ export class AgentController {
       },
       { message: 'Turns listed' },
     )
+  }
+
+  /** A lista de tarefas da conversa (a do `update_todos`). Dono ou administrador; qualquer outro recebe 404. */
+  async getConversationTodos(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const id = req.params.id as string
+      await this.requireConversationAccess(id)
+      const todos = (await this.usecases.conversations.todos?.(id)) ?? { items: [] }
+      return { sessionId: id, items: todos.items, ...(todos.updatedAt ? { updatedAt: todos.updatedAt } : {}) }
+    })
   }
 
   /**

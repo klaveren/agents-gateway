@@ -127,6 +127,31 @@ describe('send: geração', () => {
     expect(thread.turns.map((turn) => turn.text)).toEqual(['resposta'])
   })
 
+  it('as tarefas: carregam ao abrir e se releem quando o agente roda o update_todos', async () => {
+    let items = [{ title: 'Ler', status: 'in_progress' }]
+    routes({ '/conversations/A/todos': () => ({ items }) })
+    const thread = useThreadStore()
+    await thread.open('A')
+    await tick()
+    expect(thread.todos).toEqual([{ title: 'Ler', status: 'in_progress' }])
+
+    const stream = channel()
+    vi.mocked(openStream).mockImplementationOnce(async (_path, request) => {
+      stream.attach(request?.signal)
+      return new ReadableStream()
+    })
+    vi.mocked(readSse).mockImplementationOnce(() => stream.iterate())
+    const sent = thread.send('faça', [])
+    await tick()
+    items = [{ title: 'Ler', status: 'done' }]
+    stream.push('tool.started', { tool: 'mcp__local__update_todos' })
+    stream.push('tool.result', { tool: 'mcp__local__update_todos' })
+    stream.end()
+    await sent
+    await tick()
+    expect(thread.todos).toEqual([{ title: 'Ler', status: 'done' }])
+  })
+
   it('reset derruba o stream e limpa tudo', async () => {
     routes()
     const thread = useThreadStore()

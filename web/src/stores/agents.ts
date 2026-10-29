@@ -55,6 +55,7 @@ export const useAgentsStore = defineStore('agents', () => {
   function toolLabel(name: string): string {
     // `…_call`: como as conversas gravadas antes da normalização guardaram as hospedadas da OpenAI.
     const base = name.replace(/_call$/, '')
+    if (base === 'update_todos' || base.endsWith('__update_todos')) return 'Atualizou as tarefas'
     return nativeTools.value.find((tool) => tool.sdkName === name || tool.sdkName === base)?.label ?? name
   }
 

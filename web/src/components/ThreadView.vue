@@ -18,6 +18,7 @@ import Composer from './Composer.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import Icon from './Icon.vue'
 import SessionTuner from './SessionTuner.vue'
+import TodoPanel from './TodoPanel.vue'
 import TurnBubbles from './TurnBubbles.vue'
 
 /**
@@ -244,6 +245,7 @@ async function continueFresh() {
       @confirm="remove"
       @cancel="confirming = false"
     />
+    <TodoPanel v-if="thread.todos.length" :items="thread.todos" />
     <!-- ⚖️ Sessão encerrada (expirou, ou o gateway reiniciou) não tranca a conversa: ao enviar, o gateway a retoma com o histórico. -->
     <div v-if="resumable" class="flex items-center gap-3 border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-2 text-xs text-zinc-400">
       <span class="min-w-0 truncate">A conversa foi encerrada. Ao enviar, ela continua de onde parou.</span>

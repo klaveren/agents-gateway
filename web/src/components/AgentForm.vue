@@ -212,7 +212,7 @@ function makeDefaultProvider(id: string) {
 
 /** Ferramentas que mudam algo fora da conversa: quem diz é o servidor (`dangerous` em `GET /tools`). */
 const dangerousNames = computed(() => new Set(agents.tools.filter((tool) => tool.dangerous).map((tool) => tool.name)))
-const dangerousChosen = computed(() => form.value.allowedTools.filter((name) => dangerousNames.value.has(name)))
+const dangerousChosen = computed(() => form.value.allowedTools.filter((name) => dangerousNames.value.has(name)).map((name) => LOCAL_TOOL_LABEL[name] ?? name))
 const dangerousNatives = computed(() => natives.value.filter((tool) => tool.dangerous && form.value.allowedTools.includes(tool.id)).map((tool) => tool.label))
 /** Os providers do agente sem sandbox ou com a rede dele aberta. */
 const openSandboxes = computed(() =>
@@ -276,6 +276,16 @@ const deleting = ref(false)
  */
 type TTab = 'agente' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos'
 // `#agendamentos` no link (a visão geral dos agendamentos) abre direto na guia.
+/** O nome das ferramentas do gateway na guia Ferramentas (o id técnico fica na dica). */
+const LOCAL_TOOL_LABEL: Record<string, string> = {
+  update_todos: 'Lista de tarefas',
+  run_bash: 'Terminal',
+  search_web: 'Busca na web',
+  read_doc: 'Ler documento',
+  search_docs: 'Buscar documentos',
+  use_skill: 'Usar skill',
+}
+
 const tab = ref<TTab>(useRoute().hash === '#agendamentos' ? 'agendamentos' : 'agente')
 
 /** Sobram guias à direita (a barra rola de lado): a borda esmaece, para ninguém achar que acabaram. */
@@ -668,10 +678,10 @@ async function remove() {
             type="button"
             class="chip"
             :class="{ on: form.allowedTools.includes(tool.name), danger: tool.dangerous }"
-            :title="tool.description"
+            :title="`${tool.name} — ${tool.description}`"
             @click="toggle(form.allowedTools, tool.name)"
           >
-            {{ tool.name }} <span class="text-[10px] text-zinc-500">{{ tool.origin }}</span>
+            {{ LOCAL_TOOL_LABEL[tool.name] ?? tool.name }}
           </button>
           <span v-if="!agents.tools.length" class="text-sm text-zinc-500">Nenhuma disponível.</span>
         </div>

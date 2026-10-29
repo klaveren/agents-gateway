@@ -1,3 +1,4 @@
+import { ITodoItem } from '@domain/models/ConversationTodo.Model'
 import { TClassification } from '@domain/models/Classification.Model'
 import { IUsageQuery, IUsageRow } from '@domain/models/Usage.Model'
 import {
@@ -81,6 +82,11 @@ export interface IConversationRepository {
   /** Guarda (ou, com `null`, limpa) o estado do SDK da conversa, para a retomada. Opcional: sem ele, só a transcrição. */
   saveNative?(sessionId: string, snapshot: INativeSnapshot | null): Promise<void>
   findNative?(sessionId: string): Promise<INativeSnapshot | undefined>
+
+  /** A lista de tarefas da conversa (ver `ConversationTodo.Model`). Opcional: sem ela, não há `update_todos`. */
+  todos?(sessionId: string): Promise<{ items: ITodoItem[]; updatedAt?: Date }>
+  /** ⛔ Grava ou falha: a escrita É o que a ferramenta pediu. A conversa já tem de existir. */
+  saveTodos?(sessionId: string, items: ITodoItem[]): Promise<void>
 
   /**
    * Abre ou fecha a conversa por link. `shareId` só entra quando vem: fechar não o apaga, para

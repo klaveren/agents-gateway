@@ -1,11 +1,13 @@
 import { makeGuidance } from './Guidance.Factory'
+import { makeConversationRepository } from './Conversations.Factory'
 import { IMcpServerConfig } from '@domain/models/McpServer.Model'
+import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { IMcpServerRepository } from '@domain/ports/McpServerRepository.Port'
 import { McpRegistry } from '@infra/mcp/Mcp.Registry'
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
 import { SqliteMcpServerRepository } from '@infra/persistence/Sqlite.McpServerRepository'
 import { DelegationSlot, makeDelegateTool } from '@infra/tools/Delegate.Tool'
-import { makeLocalTools } from '@infra/tools/Local.Tools'
+import { ITodoStore, makeLocalTools } from '@infra/tools/Local.Tools'
 import { DEFAULT_MCP_SERVER, ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { makeAgents } from './Agents.Factory'
 import { makeCredentials } from './Credentials.Factory'
@@ -43,13 +45,25 @@ export function makeTools(): ITools {
       servers,
       catalog: new ToolCatalog(
         mcp,
-        makeLocalTools({ docs: makeGuidance(), skills: makeGuidance(), drafts: makeGuidance() }),
+        makeLocalTools({ docs: makeGuidance(), skills: makeGuidance(), drafts: makeGuidance(), todos: todoStore() }),
         (allowed) => makeDelegateTool(runnableTargets(allowed), delegation),
         containerProxy,
       ),
     }
   }
   return instance
+}
+
+/** Onde o `update_todos` grava: o banco das conversas, aberto na primeira tarefa (uma conexão a mais no mesmo arquivo). */
+let todos: IConversationRepository | undefined
+function todoStore(): ITodoStore {
+  return {
+    saveTodos: async (sessionId, items) => {
+      todos ??= makeConversationRepository()
+      if (!todos.saveTodos) throw new Error('Conversations are not being recorded on this gateway')
+      await todos.saveTodos(sessionId, items)
+    },
+  }
 }
 
 /** O MCP do PRÓPRIO gateway (`/v1/mcp`), cadastrado como servidor do sistema: é dele que o Atlas tira as ferramentas. */

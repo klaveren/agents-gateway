@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { api, ApiError, openStream } from '@/lib/api'
 import { readSse } from '@/lib/sse'
-import type { IAgent, IAgentEvent, IConversation, ISessionState, ITurn, IUsage, TMode } from '@/lib/types'
+import type { IAgent, IAgentEvent, IConversation, ISessionState, ITodoItem, ITurn, IUsage, TMode } from '@/lib/types'
 import { levelsOf, resolveChoice } from '@/lib/agentChoice'
 import { useAgentsStore } from './agents'
 import { useProjectsStore } from './projects'
@@ -94,6 +94,8 @@ export const useThreadStore = defineStore('thread', () => {
   const draft = ref<IDraft>()
   const pending = ref<IPendingTurn>()
   const sending = ref(false)
+  /** A lista de tarefas que o agente mantém na conversa (`update_todos`); vazia = nenhuma. */
+  const todos = ref<ITodoItem[]>([])
 
   let inFlight: AbortController | undefined
   /**
@@ -121,6 +123,7 @@ export const useThreadStore = defineStore('thread', () => {
     draft.value = undefined
     pending.value = undefined
     turns.value = []
+    todos.value = []
     liveSession.value = undefined
     session.value = undefined
     error.value = undefined
@@ -129,6 +132,7 @@ export const useThreadStore = defineStore('thread', () => {
     try {
       let unsure = false
       let historyFailure: string | undefined
+      void loadTodos(id, current)
       const [history, live] = await Promise.all([
         api<{ agentId?: string; turns: ITurn[] }>(`/conversations/${encodeURIComponent(id)}/turns`).catch((failure) => {
           if (!isNotFound(failure)) historyFailure = messageOf(failure)
@@ -160,6 +164,7 @@ export const useThreadStore = defineStore('thread', () => {
     sessionId.value = undefined
     header.value = undefined
     turns.value = []
+    todos.value = []
     pending.value = undefined
     error.value = undefined
     liveSession.value = true
@@ -238,7 +243,9 @@ export const useThreadStore = defineStore('thread', () => {
         liveSession.value = true
         void reloadSession(id)
       }
-      setTimeout(() => void refresh(), 600)
+      // O primeiro turno de uma conversa nova grava a conversa só no fim: as tarefas dele se leem depois disso.
+      const usedTodos = turn.tools.some((tool) => isTodoTool(tool.tool))
+      setTimeout(() => void refresh().then(() => (usedTodos ? loadTodos(id) : undefined)), 600)
       ok = true
     } catch (failure) {
       // A conversa mudou no meio: o erro (inclusive o AbortError do `open`) é do stream antigo, não desta tela.
@@ -315,6 +322,7 @@ export const useThreadStore = defineStore('thread', () => {
     sessionId.value = undefined
     header.value = undefined
     turns.value = []
+    todos.value = []
     loading.value = false
     error.value = undefined
     liveSession.value = undefined
@@ -328,6 +336,16 @@ export const useThreadStore = defineStore('thread', () => {
     inFlight?.abort()
     if (id) await api(`/sessions/${encodeURIComponent(id)}/cancel`, { method: 'POST' }).catch(() => undefined)
   }
+
+  /** Relê as tarefas da conversa. `expected`: a geração em que foi pedida — de outra conversa, a resposta não vale. */
+  async function loadTodos(id = sessionId.value, expected = generation): Promise<void> {
+    if (!id) return
+    const result = await api<{ items: ITodoItem[] }>(`/conversations/${encodeURIComponent(id)}/todos`).catch(() => undefined)
+    if (result && expected === generation && sessionId.value === id) todos.value = result.items
+  }
+
+  /** A ferramenta das tarefas, com ou sem o prefixo do servidor MCP local (`mcp__local__update_todos`). */
+  const isTodoTool = (name: unknown) => typeof name === 'string' && (name === 'update_todos' || name.endsWith('__update_todos'))
 
   function applyEvent(turn: IPendingTurn, event: IAgentEvent): void {
     const payload = (event.payload ?? {}) as Record<string, unknown>
@@ -348,6 +366,7 @@ export const useThreadStore = defineStore('thread', () => {
           running.status = event.type === 'tool.result' ? 'done' : 'error'
           running.message = event.type === 'tool.error' ? String(payload.message ?? '') : undefined
         }
+        if (event.type === 'tool.result' && isTodoTool(payload.tool)) void loadTodos()
         break
       }
       case 'usage': {
@@ -371,7 +390,28 @@ export const useThreadStore = defineStore('thread', () => {
     pending.value = { ...turn, tools: [...turn.tools] }
   }
 
-  return { sessionId, header, agentId, turns, loading, error, liveSession, session, draft, pending, sending, open, startDraft, setHeader, refresh, send, reconfigure, stop, reset }
+  return {
+    sessionId,
+    header,
+    agentId,
+    turns,
+    todos,
+    loading,
+    error,
+    liveSession,
+    session,
+    draft,
+    pending,
+    sending,
+    open,
+    startDraft,
+    setHeader,
+    refresh,
+    send,
+    reconfigure,
+    stop,
+    reset,
+  }
 })
 
 /** O turno do stream no formato do gravado, até a releitura trazer o de verdade. */

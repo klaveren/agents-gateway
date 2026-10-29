@@ -279,3 +279,49 @@ describe('LocalTools — propose_draft de agente', () => {
     assert.match(String(right.result), /new agent revisor, project xpto\)\. Nothing was saved/)
   })
 })
+
+describe('update_todos', () => {
+  const tool = (saveTodos: (sessionId: string, items: unknown) => Promise<void>) => makeLocalTools({ todos: { saveTodos } }).find((item) => item.name === 'update_todos')!
+
+  it('grava a lista inteira na conversa e devolve o estado ao modelo', async () => {
+    const saved: unknown[] = []
+    const update = tool(async (sessionId, items) => void saved.push([sessionId, items]))
+    const out = await update.execute(
+      {
+        items: [
+          { title: ' Ler ', status: 'done' },
+          { title: 'Escrever', status: 'in_progress' },
+        ],
+      },
+      { sessionId: 'conv-1' },
+    )
+    assert.deepStrictEqual(out, { status: 'success', result: 'Tasks (1/2 done):\n[x] Ler\n[~] Escrever' })
+    assert.deepStrictEqual(saved, [
+      [
+        'conv-1',
+        [
+          { title: 'Ler', status: 'done' },
+          { title: 'Escrever', status: 'in_progress' },
+        ],
+      ],
+    ])
+  })
+
+  it('⛔ recusa lista inválida sem gravar; fora de conversa é erro; falha ao gravar volta como erro', async () => {
+    let calls = 0
+    const update = tool(async () => void (calls += 1))
+    const invalid = await update.execute({ items: [{ title: 'A', status: 'feito' }] }, { sessionId: 'conv-1' })
+    assert.strictEqual(invalid.status, 'error')
+    assert.match(invalid.result, /status/)
+    assert.strictEqual((await update.execute({ items: [{ title: 'A', status: 'pending' }] })).status, 'error')
+    assert.strictEqual(calls, 0)
+    const broken = tool(async () => {
+      throw new Error('FOREIGN KEY constraint failed')
+    })
+    assert.match((await broken.execute({ items: [{ title: 'A', status: 'pending' }] }, { sessionId: 'x' })).result, /Could not save/)
+  })
+
+  it('sem onde gravar, a ferramenta não existe', () => {
+    assert.ok(!makeLocalTools({}).some((item) => item.name === 'update_todos'))
+  })
+})

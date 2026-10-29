@@ -614,3 +614,9 @@ export interface ISchedule extends TScheduleInput {
   updatedAt?: string
   updatedBy?: string
 }
+
+/** Uma tarefa da lista que o agente mantém na conversa (`update_todos`). */
+export interface ITodoItem {
+  title: string
+  status: 'pending' | 'in_progress' | 'done' | 'cancelled'
+}

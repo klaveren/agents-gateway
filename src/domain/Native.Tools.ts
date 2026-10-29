@@ -60,12 +60,7 @@ const hosted = (protocol: EProvider, sdkName: string, label: string, description
  */
 export const NATIVE_TOOLS: readonly INativeTool[] = [
   claude('WebSearch', 'Busca na web', 'Busca na internet, feita pela Anthropic.', 'hosted'),
-  // ⚠️ O Claude Code 2.1.28x trocou o `TodoWrite` por `TaskCreate/TaskGet/TaskList/TaskUpdate`: pedido por
-  // nome antigo, o CLI não liga nada (e o gateway avisava "não ligou: TodoWrite").
-  {
-    ...claude('TodoWrite', 'Lista de tarefas', 'O agente organiza os próprios passos; não sai da conversa.', 'session'),
-    sdkNames: ['TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate'],
-  },
+  // A lista de tarefas NÃO é nativa: é a do gateway (`update_todos`), igual em todo provedor e visível na conversa.
   claude('WebFetch', 'Abrir página', 'Baixa uma URL A PARTIR DESTE SERVIDOR — alcança a rede interna dele.', 'server-network'),
   claude('Read', 'Ler arquivo', 'Lê qualquer arquivo deste servidor, inclusive .env, chaves e o banco.', 'server-read'),
   claude('Glob', 'Procurar arquivos', 'Lista arquivos deste servidor por padrão de nome.', 'server-read'),

@@ -1,3 +1,4 @@
+import { UPDATE_TODOS_TOOL } from './models/ConversationTodo.Model'
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
 import { agentIssues } from './Agent.Policy'
@@ -19,7 +20,7 @@ describe('AGENT_SEED', () => {
     const [atlas, admin] = AGENT_SEED
 
     assert.ok(!atlas.adminOnly)
-    assert.ok(atlas.allowedTools.every((tool) => tool.startsWith('mcp:gateway/') || tool.startsWith('agent:builder-') || tool === 'sdk:WebSearch'))
+    assert.ok(atlas.allowedTools.every((tool) => tool.startsWith('mcp:gateway/') || tool.startsWith('agent:builder-') || tool === 'sdk:WebSearch' || tool === UPDATE_TODOS_TOOL))
     assert.strictEqual(admin.adminOnly, true)
     for (const tool of ['sdk:Bash', 'sdk:Read', 'sdk:Write', 'sdk:Edit']) assert.ok(admin.allowedTools.includes(tool), tool)
     assert.ok(atlas.allowedTools.every((tool) => admin.allowedTools.includes(tool)))
@@ -62,7 +63,7 @@ describe('AGENT_SEED', () => {
     for (const agent of AGENT_SEED) {
       const issues = agentIssues(agent, {
         takenIds: [],
-        knownTools: [],
+        knownTools: [UPDATE_TODOS_TOOL],
         providerOf: (model) => (model.startsWith('claude') ? EProvider.CLAUDE : undefined),
         mcpServerExists: (server) => server === 'gateway',
         agentExists: (id) => id.startsWith('builder-'),
@@ -111,5 +112,15 @@ describe('AGENT_SEED', () => {
     assert.deepStrictEqual(atlas.allowedTools, ['mcp:gateway/list_agents'])
     assert.match(atlas.systemPrompt, /^antigo\n\n## Agentes\nCriar ou ajustar um AGENTE é com o builder-agent/)
     assert.strictEqual(migration.change(AGENT_SEED[0]), undefined)
+  })
+
+  it('a lista de tarefas virou do gateway: quem tinha o TodoWrite nativo ganha o update_todos — uma vez', () => {
+    const repository = new NullAgentRepository()
+    repository.save({ ...AGENT_SEED[0], id: 'qualquer', allowedTools: ['sdk:TodoWrite', 'sdk:WebSearch'] }, 'seed')
+    const migration = AGENT_MIGRATIONS.find((item) => item.key === 'todos-native')!
+    assert.strictEqual(migration.agentIds, '*')
+    repository.migrateOnce(migration.key, 'qualquer', migration.change, 'seed')
+    assert.deepStrictEqual(repository.list()[0].allowedTools, ['sdk:WebSearch', UPDATE_TODOS_TOOL])
+    assert.strictEqual(migration.change({ ...AGENT_SEED[0], allowedTools: ['sdk:WebSearch'] }), undefined)
   })
 })
