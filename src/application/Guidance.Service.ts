@@ -6,6 +6,7 @@ import { DOC_BODY_MAX, DOC_ID_PATTERN, DOC_KINDS, DOC_SUMMARY_MAX, DOC_TITLE_MAX
 import {
   ALL_RESOURCES,
   IAgentResources,
+  NO_RESOURCES,
   IResource,
   RESOURCE_BODY_MAX,
   RESOURCE_DESCRIPTION_MAX,
@@ -523,10 +524,10 @@ export class GuidanceService {
     this.repository.deleteResource(id)
   }
 
-  /** O que o agente pode usar (a guia Recursos dele). */
+  /** O que o agente pode usar (a guia Recursos dele): sem marcação, `['*']`; "nenhum" de propósito, `[]`. */
   agentResources(agentId: string): IAgentResources {
     this.requireAgent(agentId)
-    return this.repository.agentResources(agentId)
+    return effective(this.repository.agentResources(agentId))
   }
 
   /**
@@ -554,18 +555,20 @@ export class GuidanceService {
       }
     }
     if (issues.length) throw new InvalidGuidanceError(issues)
-    this.repository.setAgentResources(agentId, next, by)
+    // Lista vazia é "nenhum" DE PROPÓSITO: gravada com a marca, senão voltaria ao padrão (todos).
+    this.repository.setAgentResources(agentId, { skills: next.skills.length ? next.skills : [NO_RESOURCES], commands: next.commands.length ? next.commands : [NO_RESOURCES] }, by)
     return next
   }
 
   /**
    * Os recursos que o agente pode usar AGORA: os que ele vê (globais e, num agente de projeto, os do projeto dele) e
-   * que a guia Recursos libera. Sem agente, nenhum.
+   * que a guia Recursos libera (sem marcação, todos). Sem agente, nenhum.
    */
   usableResources(kind: TResourceKind, agentId?: string): IResource[] {
-    const agent = agentId ? this.agentOf(agentId) : undefined
+    // ⛔ O construtor não usa skills nem commands: ele os ESCREVE (e o índice só pesaria no prompt dele).
+    const agent = agentId && !builderKindOf(agentId) ? this.agentOf(agentId) : undefined
     if (!agent) return []
-    const granted = this.repository.agentResources(agent.id)[kind === 'skill' ? 'skills' : 'commands']
+    const granted = effective(this.repository.agentResources(agent.id))[kind === 'skill' ? 'skills' : 'commands']
     if (!granted.length) return []
     const visible = [...this.repository.resources(null, kind), ...(agent.projectId ? this.repository.resources(agent.projectId, kind) : [])]
     return granted.includes(ALL_RESOURCES) ? visible : visible.filter((resource) => granted.includes(resource.id))
@@ -695,6 +698,12 @@ export class GuidanceService {
     if (projectId && !this.projectExists(projectId)) issues.push({ field: 'projectId', message: `no such project: ${projectId}` })
     if (issues.length) throw new InvalidGuidanceError(issues)
   }
+}
+
+/** O que vale para o agente: sem marcação, todos (`*`); a marca de "nenhum", nenhum. */
+function effective(stored: IAgentResources): IAgentResources {
+  const of = (ids: string[]) => (!ids.length ? [ALL_RESOURCES] : ids.filter((id) => id !== NO_RESOURCES))
+  return { skills: of(stored.skills), commands: of(stored.commands) }
 }
 
 const EXISTING_LABEL: Readonly<Record<TProtocolKind, string>> = { skill: 'skills', command: 'commands', rule: 'rules', spec: 'specs', adr: 'ADRs' }

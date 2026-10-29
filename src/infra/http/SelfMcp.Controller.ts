@@ -376,7 +376,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'list_resources',
     {
       description:
-        'The skills and commands of one scope, in full. A skill is a way of doing something that an agent loads with use_skill when the subject comes up; a command is a ready request the person fires with /name args (its body uses $ARGUMENTS). Both can carry specs/ADRs (docIds). Agents only see the ones their Resources tab enables. Absent projectId = the global ones.',
+        'The skills and commands of one scope, in full. A skill is a way of doing something that an agent loads with use_skill when the subject comes up; a command is a ready request the person fires with /name args (its body uses $ARGUMENTS). Both can carry specs/ADRs (docIds). Agents use all of their scope by default (global ones, plus those of their project); the Resources tab of an agent can restrict that. Absent projectId = the global ones.',
       inputSchema: { projectId: z.string().optional(), kind: z.enum(['skill', 'command']).optional() },
       annotations: { readOnlyHint: true },
     },
@@ -397,7 +397,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   server.registerTool(
     'get_agent_resources',
     {
-      description: 'The skills and commands an agent may use: ids, or ["*"] = every global one plus those of its project.',
+      description: 'The skills and commands an agent may use: ids, or ["*"] = every global one plus those of its project (the default, when nothing was set), or [] = none.',
       inputSchema: { agentId: z.string() },
       annotations: { readOnlyHint: true },
     },
@@ -604,7 +604,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'save_resource',
     {
       description:
-        'Create or replace a skill or a command. The id is a slug (2–48 lowercase letters, digits or hyphens) — the skill name in the index, the /name of the command. The description is the one line the agent reads to know when to use it. A command body is what goes to the agent; $ARGUMENTS takes what the person typed after /name. docIds: specs/ADRs that go along in full (global ones or of the same project). Agents only use it once enabled (set_agent_resources). Confirm with the person first.',
+        'Create or replace a skill or a command. The id is a slug (2–48 lowercase letters, digits or hyphens) — the skill name in the index, the /name of the command. The description is the one line the agent reads to know when to use it. A command body is what goes to the agent; $ARGUMENTS takes what the person typed after /name. docIds: specs/ADRs that go along in full (global ones or of the same project). By default every agent of its scope uses it (unless its Resources tab restricts). Confirm with the person first.',
       inputSchema: {
         id: z.string(),
         kind: z.enum(['skill', 'command']),
@@ -630,7 +630,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'set_agent_resources',
     {
       description:
-        'Replace which skills and commands an agent may use: ids, or ["*"] = every global one plus those of its project (a global agent: only global ones). Send both lists; an empty list = none. It applies to conversations started from now on. Confirm with the person first.',
+        'Replace which skills and commands an agent may use: ids, or ["*"] = every global one plus those of its project (a global agent: only global ones). Send both lists; ["*"] = all (the default), an empty list = none on purpose. It applies to conversations started from now on. Confirm with the person first.',
       inputSchema: { agentId: z.string(), skills: z.array(z.string()), commands: z.array(z.string()) },
     },
     async ({ agentId, ...resources }) => reply(await api('PUT', `/agents/${encodeURIComponent(agentId)}/resources`, { body: resources })),

@@ -3,7 +3,7 @@ import { dirname } from 'node:path'
 import { DatabaseSync, SQLInputValue } from 'node:sqlite'
 import { IProjectDoc, TDocKind } from '@domain/models/ProjectDoc.Model'
 import { IProtocolAddendum, TProtocolKind } from '@domain/models/Protocol.Model'
-import { IAgentResources, IResource, TResourceKind } from '@domain/models/Resource.Model'
+import { IAgentResources, IResource, NO_RESOURCES, TResourceKind } from '@domain/models/Resource.Model'
 import { IRule } from '@domain/models/Rule.Model'
 import { IGuidanceRepository, TDocPatch, TGuidanceScope, TRulePatch } from '@domain/ports/GuidanceRepository.Port'
 
@@ -240,8 +240,17 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
       )
   }
 
+  /**
+   * ⚠️ O agente que só tinha ESTE liberado não pode ficar sem marcação nenhuma: sem marcação é "todos", e apagar um
+   * recurso não pode abrir os outros para ele. Fica com a marca de "nenhum".
+   */
   deleteResource(id: string): boolean {
+    const holders = this.db.prepare('SELECT agent_id, kind FROM agent_resources WHERE resource_id = ?').all(id) as TRow[]
     this.db.prepare('DELETE FROM agent_resources WHERE resource_id = ?').run(id)
+    const left = this.db.prepare('SELECT 1 FROM agent_resources WHERE agent_id = ? AND kind = ?')
+    const none = this.db.prepare('INSERT OR IGNORE INTO agent_resources (agent_id, kind, resource_id, added_at, added_by) VALUES (?, ?, ?, ?, ?)')
+    for (const row of holders)
+      if (!left.get(row.agent_id as string, row.kind as string)) none.run(row.agent_id as string, row.kind as string, NO_RESOURCES, new Date().toISOString(), 'system')
     return this.db.prepare('DELETE FROM resources WHERE id = ?').run(id).changes > 0
   }
 

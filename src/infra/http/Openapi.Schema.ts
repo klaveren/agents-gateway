@@ -563,7 +563,7 @@ const resourceSchema = {
 const agentResources = {
   type: 'object',
   properties: { skills: { type: 'array', items: { type: 'string' } }, commands: { type: 'array', items: { type: 'string' } } },
-  description: 'Ids, or ["*"] = every global one plus those of the agent project (a global agent: only global ones).',
+  description: 'Ids, or ["*"] = every global one plus those of the agent project (a global agent: only global ones) — the default when nothing was set; [] = none on purpose.',
 }
 const protocolAddendum = {
   type: 'object',

@@ -176,7 +176,7 @@ async function save() {
     } else {
       loaded.value = await api<IResource>(`/resources/${encodeURIComponent(form.value.id)}`, { method: 'PUT', body })
       form.value.docIds = [...loaded.value.docIds]
-      note.value = 'Salvo. Vale para as conversas que começarem agora — e só nos agentes que o liberam (guia Recursos do agente).'
+      note.value = 'Salvo. Vale para as conversas que começarem agora, nos agentes do escopo (menos os que têm a guia Recursos restrita).'
       await loadList()
     }
   } catch (failure) {
@@ -299,7 +299,7 @@ function describe(failure: unknown): string {
         </div>
         <p class="text-zinc-400">{{ info.example }}</p>
         <p class="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3 text-xs text-zinc-400">
-          Quem pode usar: só os agentes que a liberam, na guia <strong class="text-zinc-300">Recursos</strong> do agente. Global vale em todos os projetos; a de projeto, só nos agentes dele. As liberadas entram sozinhas no índice do prompt do agente.
+          Quem pode usar: por padrão, todo agente do escopo — global vale em todos os projetos; a de projeto, só nos agentes dele. A guia <strong class="text-zinc-300">Recursos</strong> de um agente restringe o que ele usa. As que ele usa entram sozinhas no índice do prompt dele.
         </p>
         <div><RouterLink :to="`${info.base}/new`" class="inline-block rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400">Nova {{ info.one }}</RouterLink></div>
       </section>

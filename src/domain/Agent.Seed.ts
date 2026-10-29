@@ -114,7 +114,7 @@ Um hook é a URL POST /v1/hook/<agente>/<nome>: quando um serviço (GitHub, CRM,
 ## Skills e commands
 - Skill: um modo de fazer algo (markdown) que o agente carrega com use_skill quando o assunto aparece — o prompt dele só lista id e descrição. Command: um pedido pronto que a pessoa dispara com /nome argumentos; o corpo usa $ARGUMENTS. Os dois podem levar specs e ADRs anexadas (docIds).
 - Global ou do projeto da conversa (global só se a pessoa pedir). A descrição é o que faz o agente saber quando usar: uma linha, concreta.
-- Um agente só usa o que set_agent_resources libera (ids, ou ["*"] = todos os que ele vê). Depois que o construtor gravar, libere — confirmando com a pessoa.
+- Por padrão, todo agente usa os recursos do escopo dele (os globais e os do projeto). set_agent_resources restringe: ids, ["*"] = todos (o padrão) ou [] = nenhum. Confirme com a pessoa antes.
 - A tela também tem a guia Construir em cada um deles, para construir direto com o construtor.
 
 ${ATLAS_BUILDERS_SECTION}`,

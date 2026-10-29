@@ -5,8 +5,8 @@ import { GLOBAL_SCOPE } from '@/lib/guidance'
 import type { IAgentResources, IResource, TResourceKind } from '@/lib/types'
 
 /**
- * Os RECURSOS do agente: as skills e os commands que ele pode usar. ⚖️ Sem marcação, nenhum. "Todos" = os globais e
- * os do projeto dele, inclusive os que forem criados depois. ⛔ Agente global: só os globais.
+ * Os RECURSOS do agente: as skills e os commands que ele pode usar. ⚖️ Por padrão, "Todos" = os globais e os do
+ * projeto dele, inclusive os que forem criados depois. Desmarcar tudo é "nenhum". ⛔ Agente global: só os globais.
  */
 const props = defineProps<{ agentId: string; projectId?: string; projectName?: string }>()
 
@@ -74,7 +74,7 @@ async function save() {
 <template>
   <section class="flex flex-col gap-4">
     <p class="text-sm text-zinc-400">
-      O que este agente pode usar. Sem marcação, nenhum. Os liberados entram sozinhos no índice do prompt dele.
+      O que este agente pode usar. Por padrão, todos; desmarque "Todos" para escolher, ou para não usar nenhum. Os liberados entram sozinhos no índice do prompt dele.
       <template v-if="projectId"> Valem os globais e os do projeto {{ projectName ?? projectId }}.</template>
       <template v-else> Agente global: só os globais, porque ele roda em qualquer projeto.</template>
     </p>
