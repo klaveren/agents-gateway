@@ -8,9 +8,9 @@
  *
  * ⚖️ Quem usa cada conta: as permissões (`account <id>`), nas camadas do agente e do projeto. Sem regra, ninguém.
  */
-export type TProjectAccountKind = 'github-app' | 'github-token' | 'gcp-service-account' | 'secret-env'
+export type TProjectAccountKind = 'github-app' | 'github-token' | 'gcp-service-account' | 'ssh-ca' | 'ssh-key' | 'secret-env'
 
-export const PROJECT_ACCOUNT_KINDS: readonly TProjectAccountKind[] = ['github-app', 'github-token', 'gcp-service-account', 'secret-env']
+export const PROJECT_ACCOUNT_KINDS: readonly TProjectAccountKind[] = ['github-app', 'github-token', 'gcp-service-account', 'ssh-ca', 'ssh-key', 'secret-env']
 
 /** O que pode aparecer na tela e no log. O segredo fica à parte, selado. */
 export interface IProjectAccountPublic {
@@ -24,6 +24,15 @@ export interface IProjectAccountPublic {
   /** GCP: o projeto padrão do `gcloud` e a conta de serviço (o e-mail dela, lido do JSON). */
   gcpProject?: string
   clientEmail?: string
+  /** SSH: os usuários remotos do certificado (CA) e por quantos minutos ele vale. */
+  principals?: string[]
+  validityMinutes?: number
+  /** SSH: os padrões de `Host` em que a conta vale (vazio = todos) e os `known_hosts` aceitos. */
+  hostPatterns?: string[]
+  knownHosts?: string
+  /** SSH: a chave pública da CA (para o `TrustedUserCAKeys` do servidor) ou da chave importada, e o certificado dela. */
+  publicKey?: string
+  certificate?: string
   /** Variável secreta: o nome dela no comando. */
   envName?: string
   /** O fim do segredo, para reconhecer qual foi cadastrado. */
@@ -42,8 +51,15 @@ export interface IProjectAccount {
 
 /** O comando recebe o próprio segredo (não um derivado de vida curta). */
 export function exposesSecret(kind: TProjectAccountKind): boolean {
-  return kind !== 'github-app' && kind !== 'gcp-service-account'
+  return kind !== 'github-app' && kind !== 'gcp-service-account' && kind !== 'ssh-ca'
 }
+
+/** O gateway gera o segredo (a chave da CA): no cadastro, ninguém cola nada. */
+export function generatesSecret(kind: TProjectAccountKind): boolean {
+  return kind === 'ssh-ca'
+}
+
+export const SSH_VALIDITY = { default: 10, max: 60 } as const
 
 /** O JSON de uma conta de serviço do GCP, com o que a troca por token precisa. */
 export interface IGcpServiceAccountKey {
@@ -67,6 +83,8 @@ export const ACCOUNT_ID = /^[a-z0-9][a-z0-9-]{0,47}$/
 const ENV_NAME = /^[A-Z][A-Z0-9_]{1,63}$/
 const GITHUB_OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/
 const GITHUB_REPO = /^[A-Za-z0-9._-]{1,100}$/
+const SSH_PRINCIPAL = /^[A-Za-z0-9._@-]{1,64}$/
+const SSH_HOST_PATTERN = /^!?[A-Za-z0-9.*?_:[\]-]{1,253}$/
 
 /**
  * ⛔ Nomes que uma variável secreta não pode tomar: os que o cerco e o gateway montam (HOME, o proxy, o ssh do git) e
@@ -89,11 +107,28 @@ export function accountIssues(kind: TProjectAccountKind, input: IProjectAccountP
     if (input.gcpProject !== undefined && !/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(input.gcpProject)) issues.push('gcpProject: o id do projeto do GCP')
     if (secret !== undefined && !parseGcpKey(secret)) issues.push('secret: o JSON da conta de serviço (type service_account)')
   }
+  if (kind === 'ssh-ca' || kind === 'ssh-key') {
+    const lines = (input.knownHosts ?? '').split('\n').filter((line) => line.trim() && !line.trim().startsWith('#'))
+    if (!lines.length || lines.some((line) => line.trim().split(/\s+/).length < 3)) issues.push('knownHosts: linhas do known_hosts (host tipo chave), como as do ssh-keyscan')
+    if ((input.knownHosts ?? '').length > 16_384) issues.push('knownHosts: grande demais')
+    if ((input.hostPatterns ?? []).some((pattern) => !SSH_HOST_PATTERN.test(pattern))) issues.push('hostPatterns: nomes ou padrões de host (ex.: *.empresa1.com)')
+  }
+  if (kind === 'ssh-ca') {
+    if (!input.principals?.length || input.principals.length > 20 || input.principals.some((name) => !SSH_PRINCIPAL.test(name)))
+      issues.push('principals: os usuários remotos (ex.: deploy)')
+    if (input.validityMinutes !== undefined && (!Number.isInteger(input.validityMinutes) || input.validityMinutes < 1 || input.validityMinutes > SSH_VALIDITY.max))
+      issues.push(`validityMinutes: de 1 a ${SSH_VALIDITY.max}`)
+  }
+  if (kind === 'ssh-key') {
+    if (secret !== undefined && !/-----BEGIN (OPENSSH|RSA|EC) PRIVATE KEY-----/.test(secret)) issues.push('secret: a chave privada SSH (sem senha)')
+    if (input.certificate !== undefined && !/^ssh-[a-z0-9-]+-cert-v01@openssh\.com AAAA[A-Za-z0-9+/=]+( .*)?$/.test(input.certificate.trim()))
+      issues.push('certificate: o conteúdo do -cert.pub')
+  }
   if (kind === 'secret-env') {
     if (!ENV_NAME.test(input.envName ?? '')) issues.push('envName: maiúsculas, números e _ (ex.: GITLAB_TOKEN)')
     else if (RESERVED_ENV.test(input.envName!)) issues.push(`envName: ${input.envName} é do gateway`)
   }
-  if (creating && !secret?.trim()) issues.push('secret: obrigatório')
+  if (creating && !generatesSecret(kind) && !secret?.trim()) issues.push('secret: obrigatório')
   if (secret !== undefined && secret.length > 16_384) issues.push('secret: grande demais')
   return issues
 }

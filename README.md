@@ -506,8 +506,8 @@ through the network rule for its host. The native Claude `Bash` and the Codex te
 the rules, so they are never enabled.
 
 **Project accounts (Project → Accounts).** Each project keeps its own credentials, which its
-agents' terminal receives: a GitHub App, a GitHub token, a GCP service account, or a secret
-variable. They are stored in
+agents' terminal receives: a GitHub App, a GitHub token, a GCP service account, SSH (a
+certificate from the gateway's CA or an imported key), or a secret variable. They are stored in
 the same vault as the provider keys (AES-256-GCM, with `conta:<project>:<id>` as the AAD), and the
 secret goes in and never comes back to the screen.
 
@@ -522,10 +522,23 @@ secret goes in and never comes back to the screen.
   the token exchange always goes to `oauth2.googleapis.com`, whatever `token_uri` the JSON says.
   One GCP account per command. The Google client libraries need the key file, so they are not
   covered.
+- **SSH with the gateway's certificate** (recommended for servers): the gateway generates the
+  project's CA (ed25519; the private key never leaves the vault). Each command gets a brand-new
+  key with a certificate valid for a few minutes, for the chosen remote users. On the server,
+  `TrustedUserCAKeys` (or `cert-authority` in `authorized_keys`) trusts the CA.
+- **SSH with an imported key**: your key (and its certificate, if any) goes to the command. The
+  `ssh_sign` tool signs with it in the `ssh-keygen -Y sign` format without the key entering the
+  sandbox, which is how a token is made from an SSH key.
+- For SSH, the command gets its own folder (`<project>/.home/.accounts/<run>`, removed when it
+  ends) with the key, the certificate, the accepted `known_hosts` and an ssh config. `ssh`, `scp`
+  and `sftp` wrappers in front of `PATH` use that config: the connection goes through the gateway
+  port, only with those identities, and a server outside `known_hosts` is refused
+  (`StrictHostKeyChecking yes`). The file tools never read that folder.
 - GitHub accounts get a git credential helper scoped to `https://github.com/<owner>`, so two
   accounts in one project each serve their own repositories. `GH_TOKEN` is set only when there is
   exactly one.
-- Accounts open no network: `github.com:443` still needs a network rule.
+- Accounts open no network: `github.com:443` or `server:22` still needs a network rule. A LAN
+  address needs an exact rule (no `*`).
 
 **The subscription CLIs.**
 

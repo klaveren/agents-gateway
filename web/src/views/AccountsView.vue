@@ -11,12 +11,27 @@ import { useProjectsStore } from '@/stores/projects'
  * uma variável secreta. O segredo entra e nunca volta para a tela. Quem usa cada conta: a permissão `Contas` (no
  * projeto ou no agente). As contas não liberam rede: o destino precisa da regra de rede.
  */
-type TKind = 'github-app' | 'github-token' | 'gcp-service-account' | 'secret-env'
+type TKind = 'github-app' | 'github-token' | 'gcp-service-account' | 'ssh-ca' | 'ssh-key' | 'secret-env'
 interface IAccount {
   id: string
   kind: TKind
   label: string
-  public: { owner?: string; appId?: string; installationId?: string; repositories?: string[]; envName?: string; gcpProject?: string; clientEmail?: string; last4?: string }
+  public: {
+    owner?: string
+    appId?: string
+    installationId?: string
+    repositories?: string[]
+    envName?: string
+    gcpProject?: string
+    clientEmail?: string
+    principals?: string[]
+    validityMinutes?: number
+    hostPatterns?: string[]
+    knownHosts?: string
+    publicKey?: string
+    certificate?: string
+    last4?: string
+  }
   exposesSecret: boolean
   updatedAt: string
   updatedBy?: string
@@ -30,6 +45,12 @@ const KINDS: Array<{ kind: TKind; label: string; hint: string }> = [
     label: 'GCP (conta de serviço)',
     hint: 'O comando recebe um access token de 1h para o gcloud (CLOUDSDK_AUTH_ACCESS_TOKEN) e o projeto padrão; o JSON da conta fica no gateway.',
   },
+  {
+    kind: 'ssh-ca',
+    label: 'SSH (certificado do gateway)',
+    hint: 'Recomendado para servidores. O gateway gera a CA do projeto; cada comando recebe uma chave nova com certificado de minutos. No servidor, confie na CA (TrustedUserCAKeys).',
+  },
+  { kind: 'ssh-key', label: 'SSH (chave importada)', hint: 'Uma chave sua (sem senha), com o certificado dela se houver. O comando recebe a própria chave; o ssh_sign assina com ela sem expô-la.' },
   { kind: 'secret-env', label: 'Variável secreta', hint: 'Um valor numa variável de ambiente (ex.: GITLAB_TOKEN). O comando recebe o próprio valor.' },
 ]
 
@@ -46,7 +67,7 @@ const editing = ref<string | null>(null)
 const form = ref(blank())
 
 function blank() {
-  return { id: '', kind: 'github-app' as TKind, label: '', owner: '', appId: '', installationId: '', repositories: '', envName: '', gcpProject: '', secret: '' }
+  return { id: '', kind: 'github-app' as TKind, label: '', owner: '', appId: '', installationId: '', repositories: '', envName: '', gcpProject: '', principals: '', validityMinutes: '', hostPatterns: '', knownHosts: '', certificate: '', secret: '' }
 }
 
 const base = computed(() => (project.value ? `/projects/${encodeURIComponent(project.value.id)}/accounts` : ''))
@@ -82,6 +103,11 @@ function startEdit(account: IAccount) {
     repositories: (account.public.repositories ?? []).join(', '),
     envName: account.public.envName ?? '',
     gcpProject: account.public.gcpProject ?? '',
+    principals: (account.public.principals ?? []).join(', '),
+    validityMinutes: account.public.validityMinutes ? String(account.public.validityMinutes) : '',
+    hostPatterns: (account.public.hostPatterns ?? []).join(' '),
+    knownHosts: account.public.knownHosts ?? '',
+    certificate: account.public.certificate ?? '',
   }
   notice.value = undefined
 }
@@ -91,7 +117,9 @@ async function save() {
   busy.value = true
   error.value = undefined
   try {
-    const { id, kind, label, owner, appId, installationId, repositories, envName, gcpProject, secret } = form.value
+    const { id, kind, label, owner, appId, installationId, repositories, envName, gcpProject, principals, validityMinutes, hostPatterns, knownHosts, certificate, secret } = form.value
+    const isSsh = kind === 'ssh-ca' || kind === 'ssh-key'
+    const list = (value: string) => value.split(/[\s,]+/).filter(Boolean)
     const isGitHub = kind === 'github-app' || kind === 'github-token'
     await api(`${base.value}/${encodeURIComponent(id.trim())}`, {
       method: 'PUT',
@@ -103,8 +131,11 @@ async function save() {
           ...(kind === 'github-app' ? { appId, installationId, repositories: repositories.split(/[\s,]+/).filter(Boolean) } : {}),
           ...(kind === 'secret-env' ? { envName: envName.trim() } : {}),
           ...(kind === 'gcp-service-account' && gcpProject.trim() ? { gcpProject: gcpProject.trim() } : {}),
+          ...(isSsh ? { knownHosts, hostPatterns: list(hostPatterns) } : {}),
+          ...(kind === 'ssh-ca' ? { principals: list(principals), ...(validityMinutes.trim() ? { validityMinutes: Number(validityMinutes) } : {}) } : {}),
+          ...(kind === 'ssh-key' && certificate.trim() ? { certificate: certificate.trim() } : {}),
         },
-        ...(secret.trim() ? { secret } : {}),
+        ...(secret.trim() && kind !== 'ssh-ca' ? { secret } : {}),
       },
     })
     notice.value = `Conta ${id} salva. Para um agente usar, libere "${id}" em Contas, nas Permissões.`
@@ -143,7 +174,20 @@ function suggested(account: IAccount): IPermissionRule[] {
   if (account.kind === 'github-app' || account.kind === 'github-token')
     rules.push({ category: 'network', pattern: 'github.com:443', decision: 'allow' }, { category: 'network', pattern: 'api.github.com:443', decision: 'allow' })
   if (account.kind === 'gcp-service-account') rules.push({ category: 'network', pattern: '*.googleapis.com:443', decision: 'allow' })
+  if (account.kind === 'ssh-ca' || account.kind === 'ssh-key')
+    for (const host of knownHostNames(account.public.knownHosts)) rules.push({ category: 'network', pattern: `${host}:22`, decision: 'allow' })
   return rules
+}
+
+/** Os hosts dos known_hosts (o primeiro campo, sem `[...]:porta` nem os hasheados), para sugerir a regra de rede. */
+function knownHostNames(knownHosts = ''): string[] {
+  const names = knownHosts
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#') && !line.startsWith('|'))
+    .flatMap((line) => line.split(/\s+/)[0].split(','))
+    .filter((name) => !name.startsWith('['))
+  return [...new Set(names)]
 }
 
 async function addRules(account: IAccount) {
@@ -213,7 +257,22 @@ watch(
           </div>
           <p class="text-xs text-zinc-500">{{ kindHint }}</p>
 
-          <label v-if="form.kind === 'gcp-service-account'" class="field">
+          <template v-if="form.kind === 'ssh-ca' || form.kind === 'ssh-key'">
+            <div class="grid gap-3 sm:grid-cols-2">
+              <label v-if="form.kind === 'ssh-ca'" class="field">Usuários remotos (principals)<input v-model="form.principals" class="input font-mono" placeholder="deploy, app" /></label>
+              <label v-if="form.kind === 'ssh-ca'" class="field">Validade do certificado (minutos, até 60)<input v-model="form.validityMinutes" class="input font-mono" inputmode="numeric" placeholder="10" /></label>
+              <label class="field sm:col-span-2">Hosts em que vale (vazio = todos)<input v-model="form.hostPatterns" class="input font-mono" placeholder="*.empresa1.com git.empresa1.com" /></label>
+            </div>
+            <label class="field">
+              known_hosts aceitos (servidor fora da lista é recusado)
+              <textarea v-model="form.knownHosts" class="input font-mono text-xs" rows="3" placeholder="servidor.empresa1.com ssh-ed25519 AAAA… (a saída do ssh-keyscan)" spellcheck="false" />
+            </label>
+            <label v-if="form.kind === 'ssh-key'" class="field">
+              Certificado da chave (-cert.pub, se houver)
+              <textarea v-model="form.certificate" class="input font-mono text-xs" rows="2" spellcheck="false" />
+            </label>
+          </template>
+          <label v-else-if="form.kind === 'gcp-service-account'" class="field">
             Projeto do GCP (vazio = o do JSON)<input v-model="form.gcpProject" class="input font-mono" placeholder="projeto-empresa-1" />
           </label>
           <div v-else-if="form.kind !== 'secret-env'" class="grid gap-3 sm:grid-cols-2">
@@ -226,9 +285,10 @@ watch(
           </div>
           <label v-else class="field">Nome da variável<input v-model="form.envName" class="input font-mono" placeholder="GITLAB_TOKEN" /></label>
 
-          <label class="field">
-            {{ { 'github-app': 'Chave privada do App (.pem)', 'github-token': 'Token', 'gcp-service-account': 'JSON da conta de serviço', 'secret-env': 'Valor' }[form.kind] }}
-            <textarea v-model="form.secret" class="input font-mono text-xs" :rows="form.kind === 'github-app' || form.kind === 'gcp-service-account' ? 6 : 2" :placeholder="editing ? 'Em branco: mantém o guardado' : ''" autocomplete="off" spellcheck="false" />
+          <p v-if="form.kind === 'ssh-ca'" class="text-xs text-zinc-500">A chave da CA nasce no gateway ao salvar e não sai dele; a pública aparece na lista, para os servidores.</p>
+          <label v-else class="field">
+            {{ { 'github-app': 'Chave privada do App (.pem)', 'github-token': 'Token', 'gcp-service-account': 'JSON da conta de serviço', 'ssh-key': 'Chave privada SSH (sem senha)', 'ssh-ca': '', 'secret-env': 'Valor' }[form.kind] }}
+            <textarea v-model="form.secret" class="input font-mono text-xs" :rows="form.kind === 'github-app' || form.kind === 'gcp-service-account' || form.kind === 'ssh-key' ? 6 : 2" :placeholder="editing ? 'Em branco: mantém o guardado' : ''" autocomplete="off" spellcheck="false" />
           </label>
           <div class="flex gap-2">
             <button type="submit" class="btn btn-primary btn-sm" :disabled="busy || !form.id.trim()">Salvar</button>
@@ -256,9 +316,15 @@ watch(
               <template v-if="account.public.envName">variável {{ account.public.envName }} · </template>
               <template v-if="account.public.clientEmail">{{ account.public.clientEmail }} · </template>
               <template v-if="account.public.gcpProject">projeto {{ account.public.gcpProject }} · </template>
+              <template v-if="account.public.principals?.length">usuários {{ account.public.principals.join(', ') }} · </template>
+              <template v-if="account.public.hostPatterns?.length">hosts {{ account.public.hostPatterns.join(' ') }} · </template>
               <template v-if="account.public.last4">…{{ account.public.last4 }} · </template>
               alterada por {{ account.updatedBy ?? '—' }} em {{ fullTime(account.updatedAt) }}
             </p>
+            <div v-if="account.kind === 'ssh-ca' && account.public.publicKey" class="flex flex-col gap-1 rounded-lg bg-zinc-900 px-2 py-1.5 text-xs">
+              <span class="text-zinc-400">No servidor: grave em <code>/etc/ssh/ca.pub</code> e ponha <code>TrustedUserCAKeys /etc/ssh/ca.pub</code> no sshd_config. Ou, num usuário, a linha no authorized_keys:</span>
+              <code class="break-all text-zinc-200">cert-authority {{ account.public.publicKey }}</code>
+            </div>
             <p v-if="tests[account.id]" class="text-xs" :class="tests[account.id].ok ? 'text-emerald-300' : 'text-rose-300'">{{ tests[account.id].detail }}</p>
             <p class="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
               Regras:

@@ -54,7 +54,10 @@ export function makeTools(): ITools {
           drafts: makeGuidance(),
           todos: todoStore(),
           permissions: lazyPermissions,
-          accounts: { commandEnv: (projectId, allowed) => makeProjectAccounts().commandEnv(projectId, allowed) },
+          accounts: {
+            commandEnv: (projectId, allowed) => makeProjectAccounts().commandEnv(projectId, allowed),
+            sign: (projectId, id, namespace, data) => makeProjectAccounts().sign(projectId, id, namespace, data),
+          },
         }),
         (allowed) => makeDelegateTool(runnableTargets(allowed), delegation, lazyPermissions),
         containerProxy,

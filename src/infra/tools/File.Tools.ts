@@ -67,6 +67,8 @@ export function deniedPath(absPath: string, root: string): string | undefined {
   if (name.endsWith('.key') || name.endsWith('.pem')) return 'key file'
   if (name.startsWith('id_rsa')) return 'SSH key'
   if (name.startsWith('secrets.')) return 'secrets file'
+  // As credenciais de um comando (Projeto → Contas): o comando as usa; a ferramenta de arquivo não as lê.
+  if (/(^|[\\/])\.home[\\/]\.accounts([\\/]|$)/.test(absPath)) return 'account credentials'
   const real = realOf(resolve(absPath))
   if (isInside(realOf(dataDir()), real) && !isInside(realOf(resolve(root)), real)) return 'gateway data'
   return undefined
