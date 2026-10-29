@@ -65,6 +65,8 @@ export interface ILocalToolDeps {
   todos?: ITodoStore
   /** As permissões dos agentes (ver `Permission.Policy`). Ausente = sem regras (só as travas fixas valem). */
   permissions?: IPermissionChecker
+  /** As contas do projeto que vão para cada comando (ver `ProjectAccounts.Service`). Ausente = nenhuma. */
+  accounts?: { commandEnv(projectId: string, allowed: (id: string) => boolean): Promise<{ env: Record<string, string>; problems: string[] }> }
 }
 
 /** Quem pede, a partir do contexto do turno: o agente e o projeto da CONVERSA. */
@@ -117,6 +119,11 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     if (refusal) return { status: 'error', result: `Not permitted: ${refusal}` }
     if (!sandbox.wrapWith) return { status: 'error', result: 'O terminal fica bloqueado: este servidor não monta o cerco das permissões.' }
     const { system, ...layers } = permissions.layers?.(asker) ?? { system: [] }
+    // ⛔ As contas do projeto DA CONVERSA que este agente pode usar (`account <id>`), em variáveis do processo — nunca na
+    // linha do comando, que aparece na lista de processos.
+    const accounts =
+      asker.projectId && deps.accounts ? await deps.accounts.commandEnv(asker.projectId, (id) => permissions.check(asker, { category: 'account', value: id }).allowed) : undefined
+    const notes = accounts?.problems.length ? `${accounts.problems.map((problem) => `⚠️ ${problem}`).join('\n')}\n` : ''
     const gate = networkGate()
     const token = gate.register((host, port) => permissions.check(asker, { category: 'network', value: `${host}:${port}` }, { log: true }))
     try {
@@ -130,15 +137,15 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
         cwd: root,
         timeout: policy.timeoutMs,
         maxBuffer: EXEC_BUFFER_BYTES,
-        env: subscriptionEnv({ HOME: root }),
+        env: { ...subscriptionEnv({ HOME: root }), ...accounts?.env },
         shell: SANDBOX_SHELL,
       })
-      return { status: 'success', result: truncate(stdout || stderr || 'Command executed successfully with no output.', policy.maxOutputChars) }
+      return { status: 'success', result: truncate(notes + (stdout || stderr || 'Command executed successfully with no output.'), policy.maxOutputChars) }
     } catch (error: unknown) {
       // A linha embrulhada (a política do cerco) não interessa a quem lê; a saída de erro, sim.
       const failure = error as { stderr?: string; stdout?: string; code?: number }
       const output = [failure.stdout?.trim(), failure.stderr?.trim()].filter(Boolean).join('\n')
-      if (output) return { status: 'error', result: truncate(`Exit code ${failure.code ?? 1}: ${output}`, policy.maxOutputChars) }
+      if (output) return { status: 'error', result: truncate(`${notes}Exit code ${failure.code ?? 1}: ${output}`, policy.maxOutputChars) }
       return { status: 'error', result: `Execution failed: ${toMessage(error)}` }
     } finally {
       gate.release(token)

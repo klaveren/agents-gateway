@@ -13,6 +13,7 @@ import RulesView from './views/RulesView.vue'
 import EnvironmentView from './views/EnvironmentView.vue'
 import SchedulesView from './views/SchedulesView.vue'
 import PermissionsView from './views/PermissionsView.vue'
+import AccountsView from './views/AccountsView.vue'
 import ProvidersView from './views/ProvidersView.vue'
 import SettingsView from './views/SettingsView.vue'
 import UsageView from './views/UsageView.vue'
@@ -51,6 +52,7 @@ export const router = createRouter({
     { path: '/environment', name: 'environment', component: EnvironmentView },
     { path: '/schedules', name: 'schedules', component: SchedulesView },
     { path: '/permissions', name: 'permissions', component: PermissionsView },
+    { path: '/accounts', name: 'accounts', component: AccountsView },
     { path: '/specs', name: 'specs', component: DocsView, props: { kind: 'spec' } },
     { path: '/specs/new', name: 'spec-new', component: DocsView, props: { kind: 'spec' } },
     { path: '/specs/build', name: 'spec-build', component: BuildView, props: { kind: 'spec', tab: 'build' } },

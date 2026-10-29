@@ -590,10 +590,28 @@ const scheduleInput = {
     enabled: { type: 'boolean' },
   },
 }
+const projectAccountSchema = {
+  type: 'object',
+  properties: {
+    projectId: { type: 'string' },
+    id: { type: 'string' },
+    kind: { type: 'string', enum: ['github-app', 'github-token', 'secret-env'] },
+    label: { type: 'string' },
+    public: {
+      type: 'object',
+      additionalProperties: true,
+      description: 'What may be shown: owner, app and installation ids, repositories, variable name, last 4 chars of the secret',
+    },
+    exposesSecret: { type: 'boolean', description: 'The command receives the secret itself (not a short-lived derivative)' },
+    updatedAt: { type: 'string', format: 'date-time' },
+    updatedBy: { type: 'string' },
+  },
+}
+
 const permissionRuleSchema = {
   type: 'object',
   properties: {
-    category: { type: 'string', enum: ['terminal', 'read', 'write', 'network', 'mcp', 'skill', 'delegate'] },
+    category: { type: 'string', enum: ['terminal', 'read', 'write', 'network', 'mcp', 'skill', 'delegate', 'account'] },
     pattern: {
       type: 'string',
       description:
@@ -1615,6 +1633,78 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/projects/{projectId}/accounts': {
+      get: {
+        summary: "The accounts of a project: the credentials its agents' terminal receives (GitHub, secret variables). Never the secret. Administrators only (404 otherwise)",
+        description:
+          'Each command gets only the accounts the permissions let that agent use (`account <id>`). A GitHub App goes in as a 1-hour installation token; its private key stays in the gateway.',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(envelope({ type: 'object', properties: { projectId: { type: 'string' }, accounts: { type: 'array', items: projectAccountSchema } } })),
+          },
+          '404': failures['404'],
+        },
+      },
+    },
+    '/projects/{projectId}/accounts/{accountId}': {
+      put: {
+        summary: 'Create or update an account. The secret goes in and never comes back; left out on an update, the stored one stays. Administrators only',
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'accountId', in: 'path', required: true, schema: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{0,47}$' } },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  kind: { type: 'string', enum: ['github-app', 'github-token', 'secret-env'] },
+                  label: { type: 'string' },
+                  public: {
+                    type: 'object',
+                    properties: {
+                      owner: { type: 'string' },
+                      appId: { type: 'string' },
+                      installationId: { type: 'string' },
+                      repositories: { type: 'array', items: { type: 'string' } },
+                      envName: { type: 'string' },
+                    },
+                  },
+                  secret: { type: 'string', description: 'The App private key (.pem), the token or the value' },
+                },
+                required: ['kind'],
+              },
+            },
+          },
+        },
+        responses: { '200': { description: 'Saved', ...json(envelope(projectAccountSchema)) }, '422': failures['422'], '404': failures['404'] },
+      },
+      delete: {
+        summary: 'Remove an account: the agents stop receiving it at once. Administrators only',
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'accountId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: { '200': { description: 'Removed', ...json(envelope({ type: 'object', properties: { removed: { type: 'string' } } })) }, '404': failures['404'] },
+      },
+    },
+    '/projects/{projectId}/accounts/{accountId}/test': {
+      post: {
+        summary: 'Mint the token (or check the secret) and say what it reaches, without returning it. Administrators only',
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'accountId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { ok: { type: 'boolean' }, detail: { type: 'string' } } })) },
+          '404': failures['404'],
+        },
+      },
+    },
     '/projects/{projectId}/permissions': {
       get: {
         summary: 'The permission rules of a project (the project layer), plus the fixed system rules. Administrators only (404 otherwise)',
@@ -1672,7 +1762,7 @@ export const OPENAPI_DOCUMENT = {
                 type: 'object',
                 properties: {
                   agentId: { type: 'string' },
-                  category: { type: 'string', enum: ['terminal', 'read', 'write', 'network', 'mcp', 'skill', 'delegate'] },
+                  category: { type: 'string', enum: ['terminal', 'read', 'write', 'network', 'mcp', 'skill', 'delegate', 'account'] },
                   value: { type: 'string' },
                 },
                 required: ['category', 'value'],

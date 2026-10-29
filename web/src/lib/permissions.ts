@@ -14,6 +14,7 @@ export const PERMISSION_SECTIONS: ReadonlyArray<{ category: TPermissionCategory;
   { category: 'mcp', label: 'MCP', hint: 'Ferramentas como servidor/ferramenta.', example: 'logiccus/ticket_*' },
   { category: 'skill', label: 'Skills', hint: 'Pelo id da skill.', example: 'akm-*' },
   { category: 'delegate', label: 'Delegação', hint: 'Pelo id do agente a quem pode pedir ajuda.', example: 'agent-*' },
+  { category: 'account', label: 'Contas', hint: 'Pelo id da conta do projeto (Projeto → Contas) que o terminal recebe.', example: 'github-*' },
 ]
 
 export const LAYER_LABEL: Readonly<Record<string, string>> = { system: 'sistema', agent: 'agente', project: 'projeto', default: 'sem regra' }

@@ -2,7 +2,7 @@ import { basename } from 'node:path'
 
 /**
  * AS PERMISSÕES DOS AGENTES: o que cada um pode fazer dentro das ferramentas — que comandos roda, que arquivos lê e
- * escreve, que destinos de rede, que ferramentas de MCP, skills e delegações. As capacidades (`cap:`) dizem QUE
+ * escreve, que destinos de rede, que ferramentas de MCP, skills, delegações e contas do projeto. As capacidades (`cap:`) dizem QUE
  * ferramenta o agente tem; as permissões, O QUE ele faz com ela.
  *
  * ⚖️ CAMADAS (ver docs/research/agent-permissions-research.md):
@@ -17,11 +17,11 @@ import { basename } from 'node:path'
  * ⛔ Regra vale onde a ferramenta EXECUTA (o terminal, as ferramentas de arquivo, o hook do Claude, o catálogo de
  * MCP), nunca no prompt.
  */
-export type TPermissionCategory = 'terminal' | 'read' | 'write' | 'network' | 'mcp' | 'skill' | 'delegate'
+export type TPermissionCategory = 'terminal' | 'read' | 'write' | 'network' | 'mcp' | 'skill' | 'delegate' | 'account'
 export type TPermissionDecision = 'allow' | 'deny'
 export type TPermissionLayer = 'system' | 'agent' | 'project' | 'default'
 
-export const PERMISSION_CATEGORIES: readonly TPermissionCategory[] = ['terminal', 'read', 'write', 'network', 'mcp', 'skill', 'delegate']
+export const PERMISSION_CATEGORIES: readonly TPermissionCategory[] = ['terminal', 'read', 'write', 'network', 'mcp', 'skill', 'delegate', 'account']
 
 export interface IPermissionRule {
   category: TPermissionCategory
@@ -92,6 +92,7 @@ export const CATEGORY_LABEL: Readonly<Record<TPermissionCategory, string>> = {
   mcp: 'MCP',
   skill: 'skill',
   delegate: 'delegação',
+  account: 'conta',
 }
 
 export function matches(rule: IPermissionRule, subject: IPermissionSubject): boolean {
