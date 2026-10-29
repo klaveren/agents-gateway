@@ -142,7 +142,8 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
     const tools = await this.turnToolsOf(agent, { ...context, sessionId })
     const grants = this.turnTools?.grants ?? turnGrants()
     const grant = tools.length && this.turnTools && allowTurnTools(home) ? grants.register({ tools, context: { ...context, sessionId } }) : undefined
-    if (tools.length && !grant) yield { type: 'warning', sessionId, timestamp: now(), payload: { message: 'As ferramentas do gateway não chegam ao Gemini aqui: ficam de fora.' } }
+    if (tools.length && !grant)
+      yield { type: 'warning', sessionId, timestamp: now(), payload: { message: 'As ferramentas do gateway não chegam ao Antigravity aqui: ficam de fora.' } }
     const plugin = turnToolsPluginDir(workspace)
     rmSync(plugin, { recursive: true, force: true })
     if (grant) writeTurnToolsPlugin(workspace, this.turnTools!.url, { 'X-Turn-Grant': grant, ...(context.token ? { 'X-Tool-Authorization': `Bearer ${context.token}` } : {}) })
@@ -273,7 +274,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /** A falha sem resultado, com a correção quando é o login. */
 export function antigravityFailure(stderr: string, code: number | null): string {
-  if (/Authentication required|authentication failed/i.test(stderr)) return 'O Gemini não está conectado: entre em Sistema → Modelos → Gemini → Entrar.'
+  if (/Authentication required|authentication failed/i.test(stderr)) return 'O Antigravity não está conectado: entre em Sistema → Modelos → Antigravity → Entrar.'
   if (code === null) return `Não consegui rodar o Antigravity (${antigravityBin()}). Instale o agy ou defina ANTIGRAVITY_BIN.`
   return stderr.trim().split('\n').slice(-3).join(' ') || `agy saiu com código ${code}`
 }

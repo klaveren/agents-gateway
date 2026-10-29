@@ -44,7 +44,7 @@ export class SqliteProviderRepository implements IProviderRepository {
     for (const provider of OFFICIAL_PROVIDERS) seed.run(provider.id, provider.name, provider.protocol, provider.enabled ? 1 : 0, now, now)
     // O nome antigo de um oficial vira o de agora; o que alguém renomeou fica como está.
     const rename = this.db.prepare('UPDATE providers SET name = ? WHERE id = ? AND official = 1 AND name = ?')
-    for (const provider of OFFICIAL_PROVIDERS) if (LEGACY_PROVIDER_NAMES[provider.id]) rename.run(provider.name, provider.id, LEGACY_PROVIDER_NAMES[provider.id])
+    for (const provider of OFFICIAL_PROVIDERS) for (const legacy of [LEGACY_PROVIDER_NAMES[provider.id] ?? []].flat()) rename.run(provider.name, provider.id, legacy)
   }
 
   list(): IProviderConfig[] {

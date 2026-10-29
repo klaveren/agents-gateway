@@ -35,7 +35,7 @@ export interface IProviderConnection {
 
 /**
  * Os nomes dizem COMO se paga: pela empresa (Anthropic, OpenAI, Google) é por token, com chave de API; pelo produto
- * (Claude, Codex, Gemini) é pela assinatura de uma pessoa. ⚖️ Os de assinatura nascem DESLIGADOS: usam a conta pessoal
+ * (Claude, Codex, Antigravity) é pela assinatura de uma pessoa. ⚖️ Os de assinatura nascem DESLIGADOS: usam a conta pessoal
  * de quem fez o login no host.
  */
 export const OFFICIAL_PROVIDERS: ReadonlyArray<Pick<IProviderConfig, 'id' | 'name' | 'protocol' | 'enabled'>> = [
@@ -44,14 +44,15 @@ export const OFFICIAL_PROVIDERS: ReadonlyArray<Pick<IProviderConfig, 'id' | 'nam
   { id: 'google', name: 'Google', protocol: EProvider.GOOGLE, enabled: true },
   { id: 'claude-sub', name: 'Claude', protocol: EProvider.CLAUDE_SUB, enabled: false },
   { id: 'codex', name: 'Codex', protocol: EProvider.CODEX, enabled: false },
-  { id: 'antigravity', name: 'Gemini', protocol: EProvider.ANTIGRAVITY, enabled: false },
+  { id: 'antigravity', name: 'Antigravity', protocol: EProvider.ANTIGRAVITY, enabled: false },
 ]
 
 /** Os nomes de antes dos oficiais: quem ainda tem um deles (não renomeou) passa ao nome de agora. */
-export const LEGACY_PROVIDER_NAMES: Readonly<Record<string, string>> = {
+export const LEGACY_PROVIDER_NAMES: Readonly<Record<string, string | readonly string[]>> = {
   claude: 'Claude (Anthropic)',
   google: 'Gemini (Google)',
   'claude-sub': 'Claude (assinatura)',
   codex: 'ChatGPT (assinatura)',
-  antigravity: 'Antigravity (assinatura)',
+  // "Gemini" confundia com o provedor por token do Google: o produto da assinatura é o Antigravity.
+  antigravity: ['Antigravity (assinatura)', 'Gemini'],
 }

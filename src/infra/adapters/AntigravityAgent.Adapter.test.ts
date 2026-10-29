@@ -225,6 +225,6 @@ describe('AntigravityAgentAdapter', () => {
     const events = await collect(adapter.sendMessage(agent, session.id, { text: 'olá' }, {}))
     assert.strictEqual(registered, 0)
     assert.ok(!existsSync(turnToolsPluginDir(calls[0].options.cwd!)))
-    assert.match(JSON.stringify(events.find((event) => event.type === 'warning')), /não chegam ao Gemini/)
+    assert.match(JSON.stringify(events.find((event) => event.type === 'warning')), /não chegam ao Antigravity/)
   })
 })

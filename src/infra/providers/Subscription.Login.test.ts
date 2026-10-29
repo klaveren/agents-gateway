@@ -99,6 +99,32 @@ describe('a saída é lida na tela renderizada', () => {
   })
 })
 
+describe('login do Antigravity pela tela', () => {
+  it('⛔ o link maior que as 400 colunas sai inteiro, e só depois de terminado (cortado, o Google dava `invalid_request`)', async () => {
+    const google = `https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=1071006060591.apps.googleusercontent.com&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&scope=${'https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform+'.repeat(10)}openid&state=fim`
+    const previous = process.env.ANTIGRAVITY_BIN
+    process.env.ANTIGRAVITY_BIN = '/bin/sh'
+    try {
+      const logins = new SubscriptionLogins(
+        fakeSpawn(
+          [
+            'Authentication required. Please visit the URL to log in:\r\n  ',
+            google.slice(0, 380),
+            `${google.slice(380)}\r\n\r\nOr, paste the authorization code here and press Enter:`,
+          ],
+          null,
+        ),
+      )
+      const view = await logins.start(EProvider.ANTIGRAVITY)
+      assert.ok(google.length > 400)
+      assert.strictEqual(view.url, google)
+    } finally {
+      if (previous === undefined) delete process.env.ANTIGRAVITY_BIN
+      else process.env.ANTIGRAVITY_BIN = previous
+    }
+  })
+})
+
 describe('pseudo-terminal e binário', () => {
   it('macOS e Linux têm cada um o seu `script`, sempre largo (o link e o token não quebram de linha)', () => {
     const mac = inTerminal(['/x/claude', 'setup-token'], 'darwin')

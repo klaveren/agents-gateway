@@ -683,7 +683,7 @@ async function remove() {
         <div v-if="reasoningLevels.length" class="flex flex-wrap gap-1.5">
           <button v-for="level in reasoningLevels" :key="level" type="button" class="chip" :class="{ on: form.reasoningEfforts?.includes(level) }" @click="toggle((form.reasoningEfforts ??= []), level)">{{ effortLabel(level) }}</button>
         </div>
-        <small v-else class="hint">O Gemini não permite escolher o nível de raciocínio.</small>
+        <small v-else class="hint">O Antigravity não permite escolher o nível de raciocínio.</small>
         <small v-if="reasoningLevels.length" class="hint">Os níveis que a pessoa pode escolher na conversa.</small>
         <small v-for="message in issues.reasoningEfforts" :key="message" class="error">{{ message }}</small>
       </div>
