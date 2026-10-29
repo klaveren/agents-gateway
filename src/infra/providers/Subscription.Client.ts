@@ -286,7 +286,8 @@ export class SubscriptionLogins {
           const token = CLAUDE_TOKEN_DONE.exec(`${rendered(screen, true)}\n`)?.[0]
           if (token) current.token = token
           current.output = text.replace(ANY_SECRET, '[token]').slice(-20_000)
-          current.view.url ??= LOGIN_URL[protocol]?.exec(current.output)?.[0]
+          // ⛔ Só nas linhas que o cursor JÁ DEIXOU, como o token: o link pela metade não vale.
+          current.view.url ??= LOGIN_URL[protocol]?.exec(rendered(screen, true))?.[0]
           // ⚠️ O `claude setup-token` NÃO SAI sozinho: depois do token (ou de um erro) ele espera um Enter.
           // Esperar o `close` deixava a tela em "aguardando" para sempre — termina aqui, pelo que apareceu.
           if (protocol === EProvider.CLAUDE_SUB && current.view.state === 'waiting') {
@@ -437,7 +438,14 @@ function rendered(screen: Terminal, finishedOnly = false): string {
   // `finishedOnly`: só até a linha ANTES do cursor (as que o cliente já terminou de escrever).
   const end = finishedOnly ? buffer.baseY + buffer.cursorY : buffer.length
   const lines: string[] = []
-  for (let index = 0; index < end; index++) lines.push(buffer.getLine(index)?.translateToString(true) ?? '')
+  for (let index = 0; index < end; index++) {
+    const line = buffer.getLine(index)
+    const text = line?.translateToString(true) ?? ''
+    // ⚠️ A linha que o terminal QUEBROU por largura continua a anterior: o link do `agy` 1.4.9 tem ~700 caracteres, e
+    // cortado nas 400 colunas o Google recusava com `invalid_request`.
+    if (line?.isWrapped && lines.length) lines[lines.length - 1] += text
+    else lines.push(text)
+  }
   return lines.join('\n').replace(/\n+$/, '')
 }
 
