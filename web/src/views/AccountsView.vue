@@ -11,12 +11,12 @@ import { useProjectsStore } from '@/stores/projects'
  * uma variável secreta. O segredo entra e nunca volta para a tela. Quem usa cada conta: a permissão `Contas` (no
  * projeto ou no agente). As contas não liberam rede: o destino precisa da regra de rede.
  */
-type TKind = 'github-app' | 'github-token' | 'secret-env'
+type TKind = 'github-app' | 'github-token' | 'gcp-service-account' | 'secret-env'
 interface IAccount {
   id: string
   kind: TKind
   label: string
-  public: { owner?: string; appId?: string; installationId?: string; repositories?: string[]; envName?: string; last4?: string }
+  public: { owner?: string; appId?: string; installationId?: string; repositories?: string[]; envName?: string; gcpProject?: string; clientEmail?: string; last4?: string }
   exposesSecret: boolean
   updatedAt: string
   updatedBy?: string
@@ -25,6 +25,11 @@ interface IAccount {
 const KINDS: Array<{ kind: TKind; label: string; hint: string }> = [
   { kind: 'github-app', label: 'GitHub App', hint: 'Recomendado. O comando recebe um token de 1h, só dos repositórios escolhidos; a chave do App fica no gateway.' },
   { kind: 'github-token', label: 'GitHub token', hint: 'Um token pessoal (PAT). O comando recebe o próprio token.' },
+  {
+    kind: 'gcp-service-account',
+    label: 'GCP (conta de serviço)',
+    hint: 'O comando recebe um access token de 1h para o gcloud (CLOUDSDK_AUTH_ACCESS_TOKEN) e o projeto padrão; o JSON da conta fica no gateway.',
+  },
   { kind: 'secret-env', label: 'Variável secreta', hint: 'Um valor numa variável de ambiente (ex.: GITLAB_TOKEN). O comando recebe o próprio valor.' },
 ]
 
@@ -41,7 +46,7 @@ const editing = ref<string | null>(null)
 const form = ref(blank())
 
 function blank() {
-  return { id: '', kind: 'github-app' as TKind, label: '', owner: '', appId: '', installationId: '', repositories: '', envName: '', secret: '' }
+  return { id: '', kind: 'github-app' as TKind, label: '', owner: '', appId: '', installationId: '', repositories: '', envName: '', gcpProject: '', secret: '' }
 }
 
 const base = computed(() => (project.value ? `/projects/${encodeURIComponent(project.value.id)}/accounts` : ''))
@@ -76,6 +81,7 @@ function startEdit(account: IAccount) {
     installationId: account.public.installationId ?? '',
     repositories: (account.public.repositories ?? []).join(', '),
     envName: account.public.envName ?? '',
+    gcpProject: account.public.gcpProject ?? '',
   }
   notice.value = undefined
 }
@@ -85,8 +91,8 @@ async function save() {
   busy.value = true
   error.value = undefined
   try {
-    const { id, kind, label, owner, appId, installationId, repositories, envName, secret } = form.value
-    const isGitHub = kind !== 'secret-env'
+    const { id, kind, label, owner, appId, installationId, repositories, envName, gcpProject, secret } = form.value
+    const isGitHub = kind === 'github-app' || kind === 'github-token'
     await api(`${base.value}/${encodeURIComponent(id.trim())}`, {
       method: 'PUT',
       body: {
@@ -96,6 +102,7 @@ async function save() {
           ...(isGitHub && owner.trim() ? { owner: owner.trim() } : {}),
           ...(kind === 'github-app' ? { appId, installationId, repositories: repositories.split(/[\s,]+/).filter(Boolean) } : {}),
           ...(kind === 'secret-env' ? { envName: envName.trim() } : {}),
+          ...(kind === 'gcp-service-account' && gcpProject.trim() ? { gcpProject: gcpProject.trim() } : {}),
         },
         ...(secret.trim() ? { secret } : {}),
       },
@@ -133,7 +140,9 @@ async function test(account: IAccount) {
 /** As regras que a conta pede: a de uso (`Contas`) e a de rede do GitHub. */
 function suggested(account: IAccount): IPermissionRule[] {
   const rules: IPermissionRule[] = [{ category: 'account', pattern: account.id, decision: 'allow' }]
-  if (account.kind !== 'secret-env') rules.push({ category: 'network', pattern: 'github.com:443', decision: 'allow' }, { category: 'network', pattern: 'api.github.com:443', decision: 'allow' })
+  if (account.kind === 'github-app' || account.kind === 'github-token')
+    rules.push({ category: 'network', pattern: 'github.com:443', decision: 'allow' }, { category: 'network', pattern: 'api.github.com:443', decision: 'allow' })
+  if (account.kind === 'gcp-service-account') rules.push({ category: 'network', pattern: '*.googleapis.com:443', decision: 'allow' })
   return rules
 }
 
@@ -204,7 +213,10 @@ watch(
           </div>
           <p class="text-xs text-zinc-500">{{ kindHint }}</p>
 
-          <div v-if="form.kind !== 'secret-env'" class="grid gap-3 sm:grid-cols-2">
+          <label v-if="form.kind === 'gcp-service-account'" class="field">
+            Projeto do GCP (vazio = o do JSON)<input v-model="form.gcpProject" class="input font-mono" placeholder="projeto-empresa-1" />
+          </label>
+          <div v-else-if="form.kind !== 'secret-env'" class="grid gap-3 sm:grid-cols-2">
             <label class="field">Dono (organização ou usuário)<input v-model="form.owner" class="input font-mono" placeholder="empresa1" /></label>
             <template v-if="form.kind === 'github-app'">
               <label class="field">App ID<input v-model="form.appId" class="input font-mono" inputmode="numeric" /></label>
@@ -215,8 +227,8 @@ watch(
           <label v-else class="field">Nome da variável<input v-model="form.envName" class="input font-mono" placeholder="GITLAB_TOKEN" /></label>
 
           <label class="field">
-            {{ form.kind === 'github-app' ? 'Chave privada do App (.pem)' : form.kind === 'github-token' ? 'Token' : 'Valor' }}
-            <textarea v-model="form.secret" class="input font-mono text-xs" :rows="form.kind === 'github-app' ? 6 : 2" :placeholder="editing ? 'Em branco: mantém o guardado' : ''" autocomplete="off" spellcheck="false" />
+            {{ { 'github-app': 'Chave privada do App (.pem)', 'github-token': 'Token', 'gcp-service-account': 'JSON da conta de serviço', 'secret-env': 'Valor' }[form.kind] }}
+            <textarea v-model="form.secret" class="input font-mono text-xs" :rows="form.kind === 'github-app' || form.kind === 'gcp-service-account' ? 6 : 2" :placeholder="editing ? 'Em branco: mantém o guardado' : ''" autocomplete="off" spellcheck="false" />
           </label>
           <div class="flex gap-2">
             <button type="submit" class="btn btn-primary btn-sm" :disabled="busy || !form.id.trim()">Salvar</button>
@@ -242,6 +254,8 @@ watch(
               <template v-if="account.public.appId">App {{ account.public.appId }}, instalação {{ account.public.installationId }} · </template>
               <template v-if="account.public.repositories?.length">repositórios {{ account.public.repositories.join(', ') }} · </template>
               <template v-if="account.public.envName">variável {{ account.public.envName }} · </template>
+              <template v-if="account.public.clientEmail">{{ account.public.clientEmail }} · </template>
+              <template v-if="account.public.gcpProject">projeto {{ account.public.gcpProject }} · </template>
               <template v-if="account.public.last4">…{{ account.public.last4 }} · </template>
               alterada por {{ account.updatedBy ?? '—' }} em {{ fullTime(account.updatedAt) }}
             </p>

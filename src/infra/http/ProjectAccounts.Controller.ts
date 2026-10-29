@@ -24,6 +24,7 @@ const saveSchema = z.object({
       installationId: z.string().trim().max(15).optional(),
       repositories: z.array(z.string().trim().max(100)).max(100).optional(),
       envName: z.string().trim().max(64).optional(),
+      gcpProject: z.string().trim().max(30).optional(),
     })
     .default({}),
   secret: z.string().max(16_384).optional(),

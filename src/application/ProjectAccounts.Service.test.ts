@@ -12,6 +12,8 @@ function service(tokens: Partial<IAccountTokens> = {}) {
   const all: IAccountTokens = {
     githubApp: async (key) => (minted.push(key), { token: 'ghs_de_1h', expiresAt: new Date(Date.now() + 3_600_000) }),
     describeGitHub: async () => 'ok',
+    gcp: async (key) => (minted.push(key), { token: 'ya29.de_1h', expiresAt: new Date(Date.now() + 3_600_000) }),
+    describeGcp: async () => 'ok',
     ...tokens,
   }
   return { accounts: new ProjectAccountsService(new SqliteProjectAccountRepository(new SecretBox(randomBytes(32))), all), minted }
@@ -59,5 +61,19 @@ describe('ProjectAccountsService', () => {
       assert.throws(() => accounts.save('p1', 'x', { kind: 'secret-env', label: '', public: { envName }, secret: 'v' }, 'admin'), AccountValidationError)
     assert.throws(() => accounts.save('p1', 'y', { kind: 'github-app', label: '', public: { appId: '1', installationId: '2' }, secret: 'não é pem' }, 'admin'), /chave privada/)
     assert.throws(() => accounts.save('p1', 'z', { kind: 'github-token', label: '', public: {} }, 'admin'), /secret: obrigatório/)
+  })
+
+  it('⛔ GCP: o comando recebe só o token de 1h e o projeto; o e-mail sai do JSON; uma conta do GCP por comando', async () => {
+    const { accounts } = service()
+    const json = (email: string) => JSON.stringify({ type: 'service_account', client_email: email, private_key: 'PEM-DA-CONTA', project_id: 'proj-empresa-1' })
+    const saved = accounts.save('p1', 'gcp-1', { kind: 'gcp-service-account', label: 'GCP', public: {}, secret: json('sa@proj-empresa-1.iam.gserviceaccount.com') }, 'admin')
+    assert.deepStrictEqual([saved.public.clientEmail, saved.public.gcpProject, saved.public.last4], ['sa@proj-empresa-1.iam.gserviceaccount.com', 'proj-empresa-1', undefined])
+    accounts.save('p1', 'gcp-2', { kind: 'gcp-service-account', label: 'GCP 2', public: { gcpProject: 'outro-projeto' }, secret: json('sa2@x.iam.gserviceaccount.com') }, 'admin')
+
+    const { env, problems } = await accounts.commandEnv('p1', () => true)
+    assert.deepStrictEqual([env.CLOUDSDK_AUTH_ACCESS_TOKEN, env.CLOUDSDK_CORE_PROJECT, env.GOOGLE_CLOUD_PROJECT], ['ya29.de_1h', 'proj-empresa-1', 'proj-empresa-1'])
+    assert.ok(!JSON.stringify(env).includes('PEM-DA-CONTA'))
+    assert.deepStrictEqual(problems, ['conta gcp-2: só uma conta do GCP por comando (vale gcp-1)'])
+    assert.throws(() => accounts.save('p1', 'gcp-3', { kind: 'gcp-service-account', label: '', public: {}, secret: '{"type":"authorized_user"}' }, 'admin'), /conta de serviço/)
   })
 })

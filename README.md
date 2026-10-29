@@ -506,7 +506,8 @@ through the network rule for its host. The native Claude `Bash` and the Codex te
 the rules, so they are never enabled.
 
 **Project accounts (Project → Accounts).** Each project keeps its own credentials, which its
-agents' terminal receives: a GitHub App, a GitHub token, or a secret variable. They are stored in
+agents' terminal receives: a GitHub App, a GitHub token, a GCP service account, or a secret
+variable. They are stored in
 the same vault as the provider keys (AES-256-GCM, with `conta:<project>:<id>` as the AAD), and the
 secret goes in and never comes back to the screen.
 
@@ -516,6 +517,11 @@ secret goes in and never comes back to the screen.
   chosen repositories. The App's private key never enters the sandbox.
 - A **GitHub token** or a **secret variable** is the secret itself, and the screen says so: what
   the shell uses, the shell can print.
+- A **GCP service account** goes in as a 1-hour access token for `gcloud`
+  (`CLOUDSDK_AUTH_ACCESS_TOKEN`, plus the default project). The JSON key stays in the gateway, and
+  the token exchange always goes to `oauth2.googleapis.com`, whatever `token_uri` the JSON says.
+  One GCP account per command. The Google client libraries need the key file, so they are not
+  covered.
 - GitHub accounts get a git credential helper scoped to `https://github.com/<owner>`, so two
   accounts in one project each serve their own repositories. `GH_TOKEN` is set only when there is
   exactly one.

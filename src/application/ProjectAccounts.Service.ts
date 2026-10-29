@@ -1,10 +1,12 @@
-import { accountIssues, IProjectAccount } from '@domain/models/ProjectAccount.Model'
+import { accountIssues, IGcpServiceAccountKey, IProjectAccount, parseGcpKey } from '@domain/models/ProjectAccount.Model'
 import { IProjectAccountRepository, IProjectAccountSave } from '@domain/ports/ProjectAccountRepository.Port'
 
 /** Quem gera e confere os tokens do GitHub (fora do cerco, no gateway). */
 export interface IAccountTokens {
   githubApp(cacheKey: string, grant: { appId: string; installationId: string; privateKey: string; repositories?: readonly string[] }): Promise<{ token: string; expiresAt: Date }>
   describeGitHub(token: string, installation: boolean): Promise<string>
+  gcp(cacheKey: string, key: IGcpServiceAccountKey): Promise<{ token: string; expiresAt: Date }>
+  describeGcp(token: string): Promise<string>
 }
 
 export class AccountValidationError extends Error {
@@ -44,7 +46,10 @@ export class ProjectAccountsService {
     const current = this.repository.get(projectId, id)
     const issues = accountIssues(input.kind, input.public, input.secret, !current || current.kind !== input.kind)
     if (issues.length) throw new AccountValidationError(issues)
-    return this.repository.save(projectId, id, { ...input, label: input.label.trim() || id }, by)
+    // GCP: o e-mail da conta e o projeto padrão saem do próprio JSON (o projeto escolhido na tela vence).
+    const key = input.kind === 'gcp-service-account' && input.secret ? parseGcpKey(input.secret) : undefined
+    const visible = key ? { ...input.public, clientEmail: key.client_email, gcpProject: input.public.gcpProject ?? key.project_id } : input.public
+    return this.repository.save(projectId, id, { ...input, public: visible, label: input.label.trim() || id }, by)
   }
 
   remove(projectId: string, id: string): boolean {
@@ -62,6 +67,7 @@ export class ProjectAccountsService {
     if (!account || !secret) throw new Error(account ? 'o segredo não abre com a chave-mestra de agora: cadastre de novo' : `Conta não encontrada: ${id}`)
     if (account.kind === 'secret-env') return `a variável ${account.public.envName} vai para os comandos`
     if (account.kind === 'github-token') return this.tokens.describeGitHub(secret, false)
+    if (account.kind === 'gcp-service-account') return this.tokens.describeGcp((await this.gcpToken(account, secret)).token)
     const { token, expiresAt } = await this.githubToken(account, secret)
     return `${await this.tokens.describeGitHub(token, true)} — token até ${expiresAt.toISOString().slice(11, 16)} UTC`
   }
@@ -77,6 +83,7 @@ export class ProjectAccountsService {
     const problems: string[] = []
     const config: Array<[string, string]> = []
     const github: string[] = []
+    let gcp: string | undefined
     for (const account of this.repository.list(projectId).filter((item) => allowed(item.id))) {
       const secret = this.repository.secret(projectId, account.id)
       if (!secret) {
@@ -85,6 +92,21 @@ export class ProjectAccountsService {
       }
       if (account.kind === 'secret-env' && account.public.envName) {
         env[account.public.envName] = secret
+        continue
+      }
+      if (account.kind === 'gcp-service-account') {
+        // O `gcloud` usa o token direto; as bibliotecas do Google, não (pedem o arquivo da conta, que não entra no cerco).
+        if (gcp) {
+          problems.push(`conta ${account.id}: só uma conta do GCP por comando (vale ${gcp})`)
+          continue
+        }
+        try {
+          env.CLOUDSDK_AUTH_ACCESS_TOKEN = (await this.gcpToken(account, secret)).token
+          gcp = account.id
+          if (account.public.gcpProject) env.CLOUDSDK_CORE_PROJECT = env.GOOGLE_CLOUD_PROJECT = account.public.gcpProject
+        } catch (error: unknown) {
+          problems.push(`conta ${account.id}: ${error instanceof Error ? error.message : String(error)}`)
+        }
         continue
       }
       let token = secret
@@ -113,6 +135,12 @@ export class ProjectAccountsService {
       })
     }
     return { env, problems }
+  }
+
+  private async gcpToken(account: IProjectAccount, secret: string) {
+    const key = parseGcpKey(secret)
+    if (!key) throw new Error('o JSON da conta de serviço não é válido: cadastre de novo')
+    return this.tokens.gcp(`${account.projectId}:${account.id}:${account.updatedAt.toISOString()}`, key)
   }
 
   private githubToken(account: IProjectAccount, privateKey: string) {

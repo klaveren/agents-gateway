@@ -595,7 +595,7 @@ const projectAccountSchema = {
   properties: {
     projectId: { type: 'string' },
     id: { type: 'string' },
-    kind: { type: 'string', enum: ['github-app', 'github-token', 'secret-env'] },
+    kind: { type: 'string', enum: ['github-app', 'github-token', 'gcp-service-account', 'secret-env'] },
     label: { type: 'string' },
     public: {
       type: 'object',
@@ -1662,7 +1662,7 @@ export const OPENAPI_DOCUMENT = {
               schema: {
                 type: 'object',
                 properties: {
-                  kind: { type: 'string', enum: ['github-app', 'github-token', 'secret-env'] },
+                  kind: { type: 'string', enum: ['github-app', 'github-token', 'gcp-service-account', 'secret-env'] },
                   label: { type: 'string' },
                   public: {
                     type: 'object',
@@ -1672,9 +1672,10 @@ export const OPENAPI_DOCUMENT = {
                       installationId: { type: 'string' },
                       repositories: { type: 'array', items: { type: 'string' } },
                       envName: { type: 'string' },
+                      gcpProject: { type: 'string' },
                     },
                   },
-                  secret: { type: 'string', description: 'The App private key (.pem), the token or the value' },
+                  secret: { type: 'string', description: 'The App private key (.pem), the token, the service account JSON or the value' },
                 },
                 required: ['kind'],
               },
