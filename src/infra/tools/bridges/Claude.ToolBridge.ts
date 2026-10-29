@@ -80,7 +80,17 @@ function toZodShape(item: ILocalTool): ZodRawShape {
     const description = typeof property.description === 'string' ? property.description : ''
 
     // Lista: de texto (o que as nossas declaram — `docIds`); antes virava texto, e o modelo mandava a lista como string.
-    const base = type === 'number' ? z.number() : type === 'boolean' ? z.boolean() : type === 'array' ? z.array(z.string()) : z.string()
+    // Objeto: livre (o registro do agente no rascunho); a validação é da própria ferramenta.
+    const base =
+      type === 'number'
+        ? z.number()
+        : type === 'boolean'
+          ? z.boolean()
+          : type === 'array'
+            ? z.array(z.string())
+            : type === 'object'
+              ? z.record(z.string(), z.unknown())
+              : z.string()
     const described = description ? base.describe(description) : base
     return [key, item.inputSchema.required.includes(key) ? described : described.optional()] as const
   })

@@ -32,6 +32,23 @@ const base = computed(() => info.value.base)
 const title = computed(() => info.value.title)
 const isDoc = computed(() => props.kind === 'spec' || props.kind === 'adr' || props.kind === 'knowledge')
 const isResource = computed(() => props.kind === 'skill' || props.kind === 'command')
+const isAgent = computed(() => props.kind === 'agent')
+/** Agente: "claude · claude-sonnet-5, haiku" por provider, para o painel. */
+const agentProviders = computed(() => {
+  const providers = draft.value?.agent?.providers
+  if (!Array.isArray(providers)) return []
+  return providers.map((target) => {
+    const item = target as { provider?: unknown; models?: unknown }
+    return `${String(item.provider ?? '?')} · ${Array.isArray(item.models) ? item.models.join(', ') : ''}`
+  })
+})
+const agentTools = computed(() => (Array.isArray(draft.value?.agent?.allowedTools) ? (draft.value!.agent!.allowedTools as unknown[]).map(String) : []))
+/** Agente: o que ele usa de skills e commands, em uma linha ("todos" é o padrão). */
+const agentResources = computed(() => {
+  const resources = draft.value?.resources
+  const line = (ids?: string[]) => (!ids || ids.includes('*') ? 'todos' : ids.length ? ids.join(', ') : 'nenhum')
+  return resources ? `skills: ${line(resources.skills)} · commands: ${line(resources.commands)}` : 'skills e commands: todos (o padrão)'
+})
 
 onMounted(async () => {
   if (!auth.isAdmin) return
@@ -45,7 +62,7 @@ const buildsError = ref<string>()
 const starting = ref(false)
 const selected = computed(() => (typeof route.query.c === 'string' && route.query.c ? route.query.c : undefined))
 const selectedBuild = computed(() => builds.value.find((build) => build.id === selected.value))
-/** O projeto da construção: o da conversa (o servidor o carimbou), senão o atual. */
+/** O projeto da conversa com o construtor: o da conversa (o servidor o carimbou), senão o atual. */
 const buildProject = computed(() => {
   const stamped = selectedBuild.value?.metadata?.project
   return typeof stamped === 'string' ? stamped : (projects.current ?? undefined)
@@ -78,7 +95,7 @@ watch(
   },
   { immediate: true },
 )
-// O título e o resumo da construção nascem no primeiro turno: relê a lista quando um turno termina.
+// O título e o resumo da conversa nascem no primeiro turno: relê a lista quando um turno termina.
 watch(
   () => thread.turns.length,
   () => {
@@ -133,6 +150,10 @@ async function openInEditor() {
 /** O id já é um registro DESTE tipo? */
 async function exists(id: string): Promise<boolean> {
   if (!id) return false
+  if (isAgent.value)
+    return api(`/agents/${encodeURIComponent(id)}`)
+      .then(() => true)
+      .catch(() => false)
   const path = isDoc.value ? `/docs/${encodeURIComponent(id)}` : `/resources/${encodeURIComponent(id)}`
   return api<IProjectDoc | IResource>(path)
     .then((item) => item.kind === props.kind)
@@ -211,7 +232,7 @@ function describe(failure: unknown): string {
       <BuildTabs :kind="kind" :active="tab" />
     </header>
 
-    <!-- CONSTRUIR: as construções, a conversa e o rascunho. -->
+    <!-- CONSTRUIR: as conversas com o construtor, a conversa aberta e o rascunho. -->
     <div v-if="tab === 'build'" class="flex min-h-0 flex-1 flex-col lg:flex-row">
       <aside class="flex shrink-0 flex-col gap-1 border-b border-zinc-800/80 p-3 lg:w-64 lg:border-r lg:border-b-0">
         <button
@@ -220,10 +241,11 @@ function describe(failure: unknown): string {
           @click="startBuild"
         >
           <Icon name="plus" class="h-4 w-4" />
-          Nova construção
+          Criar com o construtor
         </button>
         <p v-if="buildsError" class="px-1 text-xs text-rose-300">{{ buildsError }}</p>
-        <p v-else-if="!builds.length" class="px-1 pt-2 text-xs text-zinc-500">Nenhuma construção{{ projects.current ? ' neste projeto' : '' }} ainda.</p>
+        <h2 v-else-if="builds.length" class="px-1 pt-2 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Conversas com o construtor</h2>
+        <p v-else class="px-1 pt-2 text-xs text-zinc-500">Nenhuma conversa com o construtor{{ projects.current ? ' neste projeto' : '' }} ainda.</p>
         <div class="scroll-thin flex max-h-40 flex-col gap-0.5 overflow-y-auto lg:max-h-none">
           <RouterLink
             v-for="build in builds"
@@ -232,7 +254,7 @@ function describe(failure: unknown): string {
             class="rounded-xl px-3 py-2"
             :class="build.id === selected ? 'bg-emerald-500/15' : 'hover:bg-zinc-800/60'"
           >
-            <span class="block truncate text-sm">{{ build.title || 'Construção' }}</span>
+            <span class="block truncate text-sm">{{ build.title || 'Conversa com o construtor' }}</span>
             <span class="block truncate text-xs text-zinc-500">{{ shortTime(build.updatedAt) }} · {{ build.turns }} turno(s)</span>
           </RouterLink>
         </div>
@@ -259,7 +281,7 @@ function describe(failure: unknown): string {
               class="rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50"
               @click="startBuild"
             >
-              Nova construção
+              Criar com o construtor
             </button>
           </div>
         </section>
@@ -271,6 +293,11 @@ function describe(failure: unknown): string {
         <template v-else>
           <div>
             <p v-if="kind === 'rule'" class="text-base font-medium text-zinc-100">{{ draft.title }}</p>
+            <template v-else-if="isAgent">
+              <p class="text-base font-medium text-zinc-100">{{ draft.title }}</p>
+              <p class="font-mono text-xs text-zinc-500">{{ draft.id }}</p>
+              <p v-if="draft.description" class="mt-1 text-sm text-zinc-300 italic">{{ draft.description }}</p>
+            </template>
             <template v-else>
               <p class="font-mono text-base text-zinc-100">{{ kind === 'command' ? '/' : '' }}{{ draft.id }}</p>
               <p v-if="isDoc" class="text-sm font-medium text-zinc-200">{{ draft.title }}</p>
@@ -282,6 +309,30 @@ function describe(failure: unknown): string {
             <Icon name="check" class="h-4 w-4" /> Salvo pelo construtor.
             <RouterLink :to="savedLink" class="ml-auto text-emerald-300 underline underline-offset-2">Abrir</RouterLink>
           </p>
+          <dl v-if="isAgent" class="flex flex-col gap-1.5 text-xs">
+            <div>
+              <dt class="text-zinc-500">Modelos</dt>
+              <dd v-for="line in agentProviders" :key="line" class="font-mono text-zinc-300">{{ line }}</dd>
+            </div>
+            <div v-if="agentTools.length">
+              <dt class="text-zinc-500">Ferramentas</dt>
+              <dd class="mt-0.5 flex flex-wrap gap-1">
+                <span v-for="tool in agentTools" :key="tool" class="rounded-full bg-zinc-800 px-2 py-0.5 font-mono text-[11px] text-zinc-300">{{ tool }}</span>
+              </dd>
+            </div>
+            <div v-if="draft.initialContext.length">
+              <dt class="text-zinc-500">Contexto inicial</dt>
+              <dd class="font-mono text-zinc-300">{{ draft.initialContext.join(', ') }}</dd>
+            </div>
+            <div>
+              <dt class="text-zinc-500">Recursos</dt>
+              <dd class="text-zinc-300">{{ agentResources }}</dd>
+            </div>
+            <div class="flex flex-wrap gap-1">
+              <span v-if="draft.agent?.adminOnly" class="rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300">só admin</span>
+              <span v-if="draft.agent?.role === 'subagent'" class="rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300">subagente</span>
+            </div>
+          </dl>
           <div v-if="isResource && draft.docIds.length" class="flex flex-wrap gap-1">
             <span v-for="docId in draft.docIds" :key="docId" class="rounded-full bg-zinc-800 px-2 py-0.5 font-mono text-[11px] text-zinc-300">{{ docId }}</span>
           </div>
@@ -352,7 +403,7 @@ function describe(failure: unknown): string {
               >
                 Salvar
               </button>
-              <span v-if="saved === 'global'" class="text-xs text-emerald-300">Salvo. Vale para as construções que começarem agora.</span>
+              <span v-if="saved === 'global'" class="text-xs text-emerald-300">Salvo. Vale para as conversas com o construtor que começarem agora.</span>
               <span v-else-if="protocol.addenda.global" class="text-xs text-zinc-500">
                 {{ shortTime(protocol.addenda.global.updatedAt) }} · {{ protocol.addenda.global.updatedBy }}
               </span>
@@ -361,7 +412,7 @@ function describe(failure: unknown): string {
 
           <section v-if="projects.current" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-4">
             <h2 class="font-semibold">Complemento do projeto {{ currentProjectName }}</h2>
-            <p class="text-xs text-zinc-500">Só nas construções deste projeto, depois do global.</p>
+            <p class="text-xs text-zinc-500">Só nas conversas com o construtor deste projeto, depois do global.</p>
             <textarea v-model="addenda.project" rows="6" class="input font-mono text-[13px]" />
             <div class="flex items-center gap-3">
               <button
@@ -371,7 +422,7 @@ function describe(failure: unknown): string {
               >
                 Salvar
               </button>
-              <span v-if="saved === 'project'" class="text-xs text-emerald-300">Salvo. Vale para as construções que começarem agora.</span>
+              <span v-if="saved === 'project'" class="text-xs text-emerald-300">Salvo. Vale para as conversas com o construtor que começarem agora.</span>
               <span v-else-if="protocol.addenda.project" class="text-xs text-zinc-500">
                 {{ shortTime(protocol.addenda.project.updatedAt) }} · {{ protocol.addenda.project.updatedBy }}
               </span>

@@ -1,4 +1,4 @@
-import { ATLAS_BUILDERS_SECTION, ATLAS_KNOWLEDGE_LINE, BUILDER_DELEGATIONS, RETIRED_ATLAS_TOOLS } from './Agent.Seed'
+import { ATLAS_AGENT_LINE, ATLAS_BUILDERS_SECTION, ATLAS_KNOWLEDGE_LINE, BUILDER_DELEGATIONS, RETIRED_ATLAS_AGENT_TOOL, RETIRED_ATLAS_TOOLS } from './Agent.Seed'
 import { IAgent } from './models/Agent.Model'
 
 /** Uma mudança que o gateway aplica UMA VEZ num agente da semente que já está no banco (ver `migrateOnce`). */
@@ -33,5 +33,15 @@ export const AGENT_MIGRATIONS: readonly IAgentMigration[] = [
     key: 'atlas-knowledge',
     agentIds: ['atlas', 'atlas-admin'],
     change: (agent) => (agent.systemPrompt.includes('builder-knowledge') ? undefined : { ...agent, systemPrompt: `${agent.systemPrompt.trimEnd()}\n${ATLAS_KNOWLEDGE_LINE}` }),
+  },
+  {
+    // O construtor de agentes: o Atlas deixa de gravar agente (perde o save_agent) e delega criar e ajustar a ele.
+    key: 'atlas-agent-builder',
+    agentIds: ['atlas', 'atlas-admin'],
+    change: (agent) => {
+      const allowedTools = agent.allowedTools.filter((tool) => tool !== RETIRED_ATLAS_AGENT_TOOL)
+      const systemPrompt = agent.systemPrompt.includes('builder-agent') ? agent.systemPrompt : `${agent.systemPrompt.trimEnd()}\n\n## Agentes\n${ATLAS_AGENT_LINE}`
+      return allowedTools.length === agent.allowedTools.length && systemPrompt === agent.systemPrompt ? undefined : { ...agent, allowedTools, systemPrompt }
+    },
   },
 ]

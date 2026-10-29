@@ -30,7 +30,7 @@ export function makeController(): AgentController {
   const usecases = makeUsecases()
   const { catalog } = makeTools()
 
-  return new AgentController({
+  const controller = new AgentController({
     catalog,
     proof: makeAuth().proof,
     settings: makeSettings(),
@@ -58,6 +58,9 @@ export function makeController(): AgentController {
     docker: () => dockerStatus(),
     guidance: makeGuidance(),
   })
+  // O rascunho de agente do construtor é conferido com as MESMAS regras do cadastro, que moram aqui.
+  makeGuidance().useAgentChecker((agent) => controller.agentDraftIssues(agent))
+  return controller
 }
 
 export function makeAuthController(): AuthController {

@@ -13,7 +13,7 @@ import { aggregateTurn } from '@application/Turn.Aggregator'
 import { randomBytes } from 'node:crypto'
 import { AgentCatalog } from '@application/Agent.Catalog'
 import { ModelCatalogService } from '@application/ModelCatalog.Service'
-import { IAgentRules, offers, targetFor } from '@domain/Agent.Policy'
+import { agentIssues, IAgentRules, offers, targetFor } from '@domain/Agent.Policy'
 import { NATIVE_TOOLS } from '@domain/Native.Tools'
 import { dangerousToolsOf } from '@domain/Tool.Policy'
 import { isSubscription } from '@domain/Subscription.Policy'
@@ -501,6 +501,26 @@ export class AgentController {
       },
       { status: 201, message: 'Agent created' },
     )
+  }
+
+  /**
+   * Os problemas de um registro de agente, SEM gravar — as mesmas regras de `createAgent`/`updateAgent` (o corpo, o
+   * projeto, as ferramentas, os modelos ativados, a delegação). É o que o construtor usa para conferir o rascunho.
+   * ⚖️ Id que já existe é ajuste (`exists`): vale a regra da atualização, não a do id livre.
+   */
+  async agentDraftIssues(body: Record<string, unknown>): Promise<{ issues: Array<{ field: string; message: string }>; exists: boolean }> {
+    let parsed: TAgentBody
+    try {
+      parsed = parseBody(agentBodySchema, body)
+    } catch (error: unknown) {
+      const details = error instanceof HttpError && Array.isArray(error.details) ? (error.details as Array<{ field: string; message: string }>) : undefined
+      return { issues: details ?? [{ field: 'agent', message: error instanceof Error ? error.message : String(error) }], exists: false }
+    }
+    const id = parsed.id ?? ''
+    const exists = !!this.agents.entry(id)
+    const input = toAgentInput(id, parsed)
+    const takenIds = exists ? [] : [...this.agents.list().map((agent) => agent.id), ...CORE_AGENT_IDS]
+    return { issues: [...this.projectIssues(input), ...agentIssues(input, { ...(await this.agentRules()), takenIds })], exists }
   }
 
   /** Substitui um agente. */

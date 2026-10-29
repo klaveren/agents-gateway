@@ -27,6 +27,8 @@ export const router = createRouter({
     { path: '/new', name: 'new', component: InboxView },
     { path: '/agents', name: 'agents', component: AgentsView },
     { path: '/agents/new', name: 'agent-new', component: AgentsView },
+    { path: '/agents/build', name: 'agent-build', component: BuildView, props: { kind: 'agent', tab: 'build' } },
+    { path: '/agents/protocol', name: 'agent-protocol', component: BuildView, props: { kind: 'agent', tab: 'protocol' } },
     { path: '/agents/:id', name: 'agent', component: AgentsView, props: true },
     // ⚠️ `/settings#conta` era o "Perfil" antes de ele ter página: o link antigo (favorito) cai no lugar certo.
     { path: '/settings', name: 'settings', component: SettingsView, beforeEnter: (to) => (to.hash === '#conta' ? { path: '/profile', replace: true } : true) },

@@ -76,6 +76,9 @@ export interface IEnvironmentParts {
 
 export type { IBuilderDraft }
 
+/** O conferente do registro de agente (ver `GuidanceService.useAgentChecker`). */
+export type TAgentChecker = (agent: Record<string, unknown>) => Promise<{ issues: Array<{ field: string; message: string }>; exists: boolean }>
+
 export interface IResourceInput {
   id?: string
   kind?: TResourceKind
@@ -443,7 +446,7 @@ export class GuidanceService {
       if (!DOC_ID_PATTERN.test(id)) issues.unshift({ field: 'id', message: 'use 2–64 lowercase letters, digits or hyphens' })
       else if (existing && existing.kind !== draft.kind) issues.unshift({ field: 'id', message: `already taken by an ${existing.kind}: ${id}` })
       updates = !!existing && existing.kind === draft.kind
-    } else {
+    } else if (draft.kind === 'skill' || draft.kind === 'command') {
       issues.push(
         ...this.resourceIssues({
           id,
@@ -460,9 +463,47 @@ export class GuidanceService {
       if (!RESOURCE_ID_PATTERN.test(id)) issues.unshift({ field: 'id', message: 'use 2–48 lowercase letters, digits or hyphens' })
       else if (existing && existing.kind !== draft.kind) issues.unshift({ field: 'id', message: `already taken by a ${existing.kind}: ${id}` })
       updates = !!existing && existing.kind === draft.kind
-    }
+    } else issues.push({ field: 'kind', message: `${draft.kind} drafts are checked by agentDraftIssues` })
     if (scope && !this.projectExists(scope)) issues.push({ field: 'projectId', message: `no such project: ${scope}` })
     return { issues, updates, ...(draft.kind !== 'rule' ? { id } : {}), ...(scope ? { projectId: scope } : {}) }
+  }
+
+  /**
+   * Quem confere o REGISTRO do agente com as regras do cadastro (as mesmas do `POST /agents`): o controller, que tem o
+   * catálogo de ferramentas, os providers e os modelos. Ligado na composição; sem ele, o rascunho de agente é recusado.
+   */
+  useAgentChecker(checker: TAgentChecker): void {
+    this.agentChecker = checker
+  }
+
+  private agentChecker?: TAgentChecker
+
+  /**
+   * Os problemas do rascunho de AGENTE, sem gravar: o registro (como o `save_agent` recebe), o contexto inicial e os
+   * recursos — cada um com a regra do seu cadastro, todos de uma vez. ⚖️ Id que já existe é o rascunho de um AJUSTE.
+   */
+  async agentDraftIssues(draft: IBuilderDraft): Promise<{ issues: TIssues; updates: boolean; id?: string; projectId?: string }> {
+    const agent = draft.agent
+    if (!agent || typeof agent !== 'object') return { issues: [{ field: 'agent', message: 'required: the agent record, as save_agent takes it' }], updates: false }
+    if (!this.agentChecker) return { issues: [{ field: 'agent', message: 'agent drafts cannot be checked here' }], updates: false }
+    const checked = await this.agentChecker(agent)
+    const issues: TIssues = checked.issues.map((issue) => ({ field: `agent.${issue.field}`, message: issue.message }))
+    const projectId = typeof agent.projectId === 'string' && agent.projectId ? agent.projectId : undefined
+    if (draft.initialContext?.length)
+      issues.push(
+        ...this.specIssues(draft.initialContext, projectId, projectId ? 'another project' : 'a project (a global agent loads only global specs)').map((issue) => ({
+          ...issue,
+          field: 'initialContext',
+        })),
+      )
+    if (draft.resources)
+      issues.push(
+        ...this.grantIssues({ skills: draft.resources.skills ?? [ALL_RESOURCES], commands: draft.resources.commands ?? [ALL_RESOURCES] }, projectId).map((issue) => ({
+          ...issue,
+          field: `resources.${issue.field}`,
+        })),
+      )
+    return { issues, updates: checked.exists, ...(typeof agent.id === 'string' ? { id: agent.id } : {}), ...(projectId ? { projectId } : {}) }
   }
 
   /** O que o construtor recebe além do ambiente: o complemento do protocolo e o que já existe do tipo dele. */
@@ -484,6 +525,8 @@ export class GuidanceService {
 
   /** Uma linha por registro do tipo, globais e do projeto da conversa — o bastante para não duplicar. */
   private existingLines(kind: TProtocolKind, projectId?: string): string[] {
+    // Os agentes vêm da ferramenta (o catálogo de agentes não mora aqui).
+    if (kind === 'agent') return ['- Consulte com list_agents (do projeto e os globais) e get_agent para um inteiro.']
     const scopes: TGuidanceScope[] = [null, ...(projectId ? [projectId] : [])]
     if (kind === 'rule')
       return scopes.flatMap((scope) =>
@@ -491,6 +534,7 @@ export class GuidanceService {
       )
     if (kind === 'spec' || kind === 'adr' || kind === 'knowledge')
       return scopes.flatMap((scope) => this.repository.docs(scope, kind).map((doc) => `- ${doc.id} [${scope ?? 'global'}] — ${doc.title}${doc.summary ? `: ${doc.summary}` : ''}`))
+    if (kind !== 'skill' && kind !== 'command') return []
     return scopes.flatMap((scope) =>
       this.repository.resources(scope, kind).map((resource) => `- ${kind === 'command' ? '/' : ''}${resource.id} [${scope ?? 'global'}] — ${resource.description}`),
     )
@@ -563,6 +607,15 @@ export class GuidanceService {
   setAgentResources(agentId: string, input: Partial<IAgentResources>, by: string): IAgentResources {
     const agent = this.requireAgent(agentId)
     const next: IAgentResources = { skills: input.skills ?? [], commands: input.commands ?? [] }
+    const issues = this.grantIssues(next, agent.projectId)
+    if (issues.length) throw new InvalidGuidanceError(issues)
+    // Lista vazia é "nenhum" DE PROPÓSITO: gravada com a marca, senão voltaria ao padrão (todos).
+    this.repository.setAgentResources(agentId, { skills: next.skills.length ? next.skills : [NO_RESOURCES], commands: next.commands.length ? next.commands : [NO_RESOURCES] }, by)
+    return next
+  }
+
+  /** Os problemas de uma liberação de recursos para um agente do projeto dado (ausente = agente global). */
+  private grantIssues(next: IAgentResources, projectId: string | undefined): TIssues {
     const issues: TIssues = []
     for (const [field, kind] of [
       ['skills', 'skill'],
@@ -573,17 +626,14 @@ export class GuidanceService {
       for (const id of ids.filter((item) => item !== ALL_RESOURCES)) {
         const resource = this.repository.resource(id)
         if (!resource || resource.kind !== kind) issues.push({ field, message: `no such ${kind}: ${id}` })
-        else if (resource.projectId && resource.projectId !== agent.projectId)
+        else if (resource.projectId && resource.projectId !== projectId)
           issues.push({
             field,
-            message: agent.projectId ? `${id} belongs to another project (${resource.projectId})` : `${id} belongs to a project (a global agent uses only global resources)`,
+            message: projectId ? `${id} belongs to another project (${resource.projectId})` : `${id} belongs to a project (a global agent uses only global resources)`,
           })
       }
     }
-    if (issues.length) throw new InvalidGuidanceError(issues)
-    // Lista vazia é "nenhum" DE PROPÓSITO: gravada com a marca, senão voltaria ao padrão (todos).
-    this.repository.setAgentResources(agentId, { skills: next.skills.length ? next.skills : [NO_RESOURCES], commands: next.commands.length ? next.commands : [NO_RESOURCES] }, by)
-    return next
+    return issues
   }
 
   /**
@@ -681,6 +731,12 @@ export class GuidanceService {
 
   /** ⛔ Só spec, global ou do escopo dado, sem repetir. Todos os problemas de uma vez. */
   private checkSpecs(docIds: readonly string[], projectId: string | undefined, outside: string): void {
+    const issues = this.specIssues(docIds, projectId, outside)
+    if (issues.length) throw new InvalidGuidanceError(issues)
+  }
+
+  /** Os problemas de uma lista de contexto inicial: só spec, global ou do escopo dado, sem repetir. */
+  private specIssues(docIds: readonly string[], projectId: string | undefined, outside: string): TIssues {
     const issues: TIssues = []
     const seen = new Set<string>()
     for (const id of docIds) {
@@ -691,7 +747,7 @@ export class GuidanceService {
       else if (doc.projectId && doc.projectId !== projectId) issues.push({ field: 'docIds', message: `${id} belongs to ${outside} (${doc.projectId})` })
       seen.add(id)
     }
-    if (issues.length) throw new InvalidGuidanceError(issues)
+    return issues
   }
 
   /** Os documentos anexados a um recurso, inteiros (os que ainda existem). */
@@ -753,7 +809,15 @@ function effective(stored: IAgentResources): IAgentResources {
   return { skills: of(stored.skills), commands: of(stored.commands) }
 }
 
-const EXISTING_LABEL: Readonly<Record<TProtocolKind, string>> = { skill: 'skills', command: 'commands', rule: 'rules', spec: 'specs', adr: 'ADRs', knowledge: 'conhecimento' }
+const EXISTING_LABEL: Readonly<Record<TProtocolKind, string>> = {
+  skill: 'skills',
+  command: 'commands',
+  rule: 'rules',
+  spec: 'specs',
+  adr: 'ADRs',
+  knowledge: 'conhecimento',
+  agent: 'agentes',
+}
 
 function ruleIssues(rule: IRule): TIssues {
   const issues: TIssues = []

@@ -477,6 +477,46 @@ describe('GuidanceService', () => {
     })
   })
 
+  describe('rascunho de agente', () => {
+    const seeded = () => {
+      const service = new GuidanceService(new SqliteGuidanceRepository(':memory:'), (id) => ['xpto', 'crm'].includes(id))
+      service.createDoc({ ...doc('padrao'), title: 'Padrão' }, 'root')
+      service.createDoc({ ...doc('so-crm', 'crm'), title: 'Só CRM' }, 'root')
+      service.createDoc({ ...doc('decisao'), kind: 'adr', title: 'Decisão' }, 'root')
+      service.createResource({ id: 'tabela', kind: 'skill', description: 'Tabelas', body: 'x' }, 'root')
+      service.createResource({ id: 'do-crm', kind: 'command', projectId: 'crm', description: 'CRM', body: 'x' }, 'root')
+      return service
+    }
+
+    it('⛔ sem o conferente do cadastro, ou sem o registro, é recusado', async () => {
+      const service = seeded()
+      assert.match((await service.agentDraftIssues({ kind: 'agent', agent: { id: 'x' } })).issues[0].message, /cannot be checked/)
+      service.useAgentChecker(async () => ({ issues: [], exists: false }))
+      assert.deepStrictEqual(
+        (await service.agentDraftIssues({ kind: 'agent' })).issues.map((issue) => issue.field),
+        ['agent'],
+      )
+    })
+
+    it('junta os problemas do registro, do contexto inicial e dos recursos, no escopo do projeto do agente', async () => {
+      const service = seeded()
+      const seen: unknown[] = []
+      service.useAgentChecker(async (agent) => (seen.push(agent), { issues: [{ field: 'name', message: 'required' }], exists: true }))
+      const result = await service.agentDraftIssues({
+        kind: 'agent',
+        agent: { id: 'revisor', projectId: 'xpto' },
+        initialContext: ['padrao', 'so-crm', 'decisao'],
+        resources: { skills: ['tabela'], commands: ['do-crm'] },
+      })
+      assert.deepStrictEqual(seen, [{ id: 'revisor', projectId: 'xpto' }])
+      assert.deepStrictEqual(
+        result.issues.map((issue) => issue.field),
+        ['agent.name', 'initialContext', 'initialContext', 'resources.commands'],
+      )
+      assert.deepStrictEqual([result.updates, result.id, result.projectId], [true, 'revisor', 'xpto'])
+    })
+  })
+
   describe('busca nos documentos (search_docs)', () => {
     const seeded = () => {
       const service = build()

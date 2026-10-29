@@ -262,3 +262,20 @@ describe('LocalTools — search_docs', () => {
     assert.strictEqual((await tool.execute({ query: ' ' }, {})).status, 'error')
   })
 })
+
+describe('LocalTools — propose_draft de agente', () => {
+  it('confere o registro, o contexto inicial e os recursos; aceita o válido sem gravar', async () => {
+    const drafts = {
+      draftIssues: () => ({ issues: [], updates: false }),
+      agentDraftIssues: async (draft: { agent?: Record<string, unknown> }) =>
+        draft.agent?.name
+          ? { issues: [], updates: false, id: String(draft.agent.id), projectId: 'xpto' }
+          : { issues: [{ field: 'agent.name', message: 'required' }], updates: false },
+    }
+    const tool = makeLocalTools({ drafts }).find((item) => item.name === 'propose_draft')!
+    const wrong = await tool.execute({ agent: { id: 'revisor' } }, { agentId: 'builder-agent' })
+    assert.match(String(wrong.result), /- agent\.name: required/)
+    const right = await tool.execute({ agent: { id: 'revisor', name: 'Revisor' }, initialContext: ['api'], resources: { skills: ['*'] } }, { agentId: 'builder-agent' })
+    assert.match(String(right.result), /new agent revisor, project xpto\)\. Nothing was saved/)
+  })
+})

@@ -32,6 +32,8 @@ export interface IDocReader {
 /** Quem confere o rascunho do construtor sem gravar (o `GuidanceService`). */
 export interface IDraftChecker {
   draftIssues(draft: IBuilderDraft, projectId?: string): { issues: Array<{ field: string; message: string }>; updates: boolean; id?: string; projectId?: string }
+  /** O rascunho de agente (assíncrono: confere o registro com as regras do cadastro). Ausente = sem rascunho de agente. */
+  agentDraftIssues?(draft: IBuilderDraft): Promise<{ issues: Array<{ field: string; message: string }>; updates: boolean; id?: string; projectId?: string }>
 }
 
 /** Quem carrega uma skill para o agente (o `GuidanceService`). */
@@ -168,7 +170,7 @@ function proposeDraftTool(drafts: IDraftChecker): ILocalTool {
     origin: 'local',
     name: PROPOSE_DRAFT_TOOL,
     description:
-      'Hands the draft to the person, who reviews it next to the conversation. Nothing is saved by this tool. It checks the draft with the same rules as saving and returns the problems field by field: fix them and call it again. Fields by kind — rule: title, body; spec/adr: id, title, summary, body; skill/command: id, description, body, docIds.',
+      'Hands the draft to the person, who reviews it next to the conversation. Nothing is saved by this tool. It checks the draft with the same rules as saving and returns the problems field by field: fix them and call it again. Fields by kind — rule: title, body; spec/adr/knowledge: id, title, summary, body; skill/command: id, description, body, docIds; agent: agent (the record exactly as save_agent takes it), initialContext, resources.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -179,13 +181,40 @@ function proposeDraftTool(drafts: IDraftChecker): ILocalTool {
         body: { type: 'string', description: 'The body, following the protocol (markdown; a rule is one or two imperative sentences).' },
         docIds: { type: 'array', items: { type: 'string' }, description: 'skill/command: specs and ADRs to attach (ids from the document index).' },
         global: { type: 'boolean', description: 'true = global (all projects). Default: the project of the conversation.' },
+        agent: {
+          type: 'object',
+          description:
+            'agent: the record exactly as save_agent takes it (id, name, soul, systemPrompt, providers, modes, reasoningEfforts, allowedTools, role, adminOnly, projectId).',
+        },
+        initialContext: { type: 'array', items: { type: 'string' }, description: 'agent: spec ids it loads in full, in order (set_agent_initial_context).' },
+        resources: { type: 'object', description: 'agent: { skills, commands } — ids, ["*"] = all, [] = none (set_agent_resources). Absent = the default (all).' },
       },
-      required: ['body'],
+      required: [],
       additionalProperties: false,
     },
     execute: async (args, context) => {
       const kind = builderKindOf(context?.agentId)
       if (!kind) return { status: 'error', result: `${PROPOSE_DRAFT_TOOL} is only for the core builder.` }
+      const record = (value: unknown) => (value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined)
+      const ids = (value: unknown) => (Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : undefined)
+      if (kind === 'agent') {
+        if (!drafts.agentDraftIssues) return { status: 'error', result: 'Agent drafts are not available here.' }
+        const resources = record(args.resources)
+        const draft = {
+          kind,
+          agent: record(args.agent),
+          initialContext: ids(args.initialContext),
+          ...(resources ? { resources: { skills: ids(resources.skills), commands: ids(resources.commands) } } : {}),
+        }
+        const checked = await drafts.agentDraftIssues(draft)
+        if (checked.issues.length)
+          return { status: 'error', result: `The draft has problems — fix and call again:\n${checked.issues.map((issue) => `- ${issue.field}: ${issue.message}`).join('\n')}` }
+        return {
+          status: 'success',
+          result: `Draft delivered (${checked.updates ? `adjusts the existing agent ${checked.id}` : `new agent ${checked.id}`}, ${checked.projectId ? `project ${checked.projectId}` : 'global'}). Nothing was saved: the person reviews it next to the conversation. Save it only after they confirm here.`,
+        }
+      }
+      if (typeof args.body !== 'string') return { status: 'error', result: 'The draft has problems — fix and call again:\n- body: required' }
       const draft = {
         kind,
         id: text(args.id),

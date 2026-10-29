@@ -5,8 +5,8 @@
  * administra só SOMA um complemento (global ou do projeto), que vem DEPOIS do core e nunca o substitui: a próxima
  * versão do core continua valendo onde houver complemento.
  */
-export type TProtocolKind = 'skill' | 'command' | 'rule' | 'spec' | 'adr' | 'knowledge'
-export const PROTOCOL_KINDS: readonly TProtocolKind[] = ['skill', 'command', 'rule', 'spec', 'adr', 'knowledge']
+export type TProtocolKind = 'skill' | 'command' | 'rule' | 'spec' | 'adr' | 'knowledge' | 'agent'
+export const PROTOCOL_KINDS: readonly TProtocolKind[] = ['skill', 'command', 'rule', 'spec', 'adr', 'knowledge', 'agent']
 
 export interface ICoreProtocol {
   kind: TProtocolKind
@@ -48,4 +48,10 @@ export interface IBuilderDraft {
   docIds?: string[]
   /** Ausente = o do projeto da conversa (sem projeto, global). */
   global?: boolean
+  /** Agente: o registro como o `save_agent` recebe (id, nome, soul, prompt, providers, lanes, ferramentas…). */
+  agent?: Record<string, unknown>
+  /** Agente: as specs do contexto inicial dele, na ordem. */
+  initialContext?: string[]
+  /** Agente: as skills e os commands que ele usa (ids, `["*"]` = todos, `[]` = nenhum). Ausente = o padrão (todos). */
+  resources?: { skills?: string[]; commands?: string[] }
 }

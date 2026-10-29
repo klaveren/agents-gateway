@@ -22,7 +22,6 @@ const ATLAS_TOOLS = [
   'set_project_members',
   'list_agents',
   'get_agent',
-  'save_agent',
   'list_providers',
   'list_models',
   'set_model_enabled',
@@ -56,6 +55,12 @@ const ATLAS_TOOLS = [
 export const BUILDER_DELEGATIONS: readonly string[] = PROTOCOL_KINDS.map((kind) => `agent:${builderAgentId(kind)}`)
 /** As ferramentas de gravar conteúdo que o Atlas deixou de ter (a migração as tira do Atlas que já está no banco). */
 export const RETIRED_ATLAS_TOOLS: readonly string[] = ['save_rule', 'save_doc', 'save_resource'].map((tool) => `mcp:gateway/${tool}`)
+/** E o de gravar agente, que saiu depois (migração `atlas-agent-builder`). */
+export const RETIRED_ATLAS_AGENT_TOOL = 'mcp:gateway/save_agent'
+
+/** O construtor de agentes: o que a migração acrescenta ao Atlas que já existe (ele perdeu o `save_agent`). */
+export const ATLAS_AGENT_LINE =
+  'Criar ou ajustar um AGENTE é com o builder-agent: ele segue o protocolo de agente, confere o registro com as regras do cadastro e grava o agente, o contexto inicial e os recursos depois da confirmação da pessoa — o mesmo fluxo de delegação dos construtores. Você não tem mais o save_agent.'
 
 /** O construtor de conhecimento: o que a migração acrescenta ao Atlas que já recebeu a seção dos construtores. */
 export const ATLAS_KNOWLEDGE_LINE =
@@ -63,7 +68,7 @@ export const ATLAS_KNOWLEDGE_LINE =
 
 /** Como o Atlas cria conteúdo: delegando ao construtor. Também é o que a migração acrescenta ao prompt do Atlas que já existe. */
 export const ATLAS_BUILDERS_SECTION = `## Construtores: rules, specs, ADRs, conhecimento, skills e commands
-Você NÃO grava esse conteúdo: quem cria ou ajusta é o construtor do tipo (builder-rule, builder-spec, builder-adr, builder-knowledge, builder-skill, builder-command), que segue o protocolo do core. Delegue com delegate_to_agent.
+Você NÃO grava esse conteúdo: quem cria ou ajusta é o construtor do tipo (builder-rule, builder-spec, builder-adr, builder-knowledge, builder-skill, builder-command, builder-agent), que segue o protocolo do core. Delegue com delegate_to_agent.
 ${ATLAS_KNOWLEDGE_LINE}
 1. Entenda o que a pessoa quer (o quê, para quem, em que projeto) e mande ao construtor o pedido COMPLETO, com o projectId da conversa — ele não vê esta conversa.
 2. Ele devolve o rascunho: mostre-o à pessoa por inteiro e pergunte se pode gravar.
@@ -87,12 +92,9 @@ Agentes, conversas e hooks pertencem a um PROJETO, com a sua pasta; modelos, MCP
 - Um agente de projeto só trabalha na pasta do projeto e só os membros dele o veem. Delegação (agent:<id>) só entre agentes do mesmo projeto, ou para um global.
 - Criar projeto (save_project) e trocar membros (set_project_members) é de quem administra; confirme antes.
 
-## Criar ou ajustar um agente
-1. Entenda o objetivo (para quê, quem vai usar, que dados acessa). Pergunte o que faltar, uma coisa por vez.
-2. Consulte list_providers, list_models (só modelos ATIVADOS podem ser usados) e list_tools (ferramentas locais, nativas sdk:… por protocolo, e mcp:<servidor>/<ferramenta>).
-3. Proponha: id (minúsculas e hífens), nome, soul (quem o agente é: identidade, tom, valores), prompt (o que ele faz: função e regras), providers (um ou mais, cada um com os seus modelos; o primeiro provider e o primeiro modelo são o padrão), lanes (chat e/ou agent; nativas sdk:… só rodam na lane agent), níveis de raciocínio e ferramentas — o mínimo necessário.
-4. Só grave com save_agent DEPOIS que a pessoa confirmar. Se o gateway recusar, mostre os problemas campo a campo e corrija.
-5. Ao terminar, devolva o link /agents/<id>.
+## Agentes
+${ATLAS_AGENT_LINE}
+Você continua consultando: list_agents, get_agent, list_providers, list_models (só os ATIVADOS servem) e list_tools.
 
 ## Atualizar os preços dos modelos
 1. Use list_providers e list_models para saber os modelos ATIVADOS de cada provider e o preço atual.
