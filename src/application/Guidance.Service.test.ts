@@ -327,6 +327,16 @@ describe('GuidanceService', () => {
       assert.throws(() => service.expandCommand('/resumir x', 'resumo'), /not enabled for this agent/)
     })
 
+    it('/spec:<id>: o documento escolhido vai inteiro, com o pedido; ⛔ o de outro projeto, ou de outro tipo, segue como texto', () => {
+      const service = seeded()
+      service.createDoc({ ...doc('so-crm', 'crm'), title: 'Só CRM' }, 'root')
+      const expanded = service.expandCommand('/spec:padrao monte a tabela', 'dev', 'xpto')!
+      assert.match(expanded.text, /anexou o documento padrao \(spec\)[\s\S]*# Padrão \[spec\]\n\nUse tabelas\.\n\n# Pedido\n\nmonte a tabela$/)
+      assert.deepStrictEqual([expanded.label, expanded.command], ['/spec:padrao monte a tabela', 'spec:padrao'])
+      assert.strictEqual(service.expandCommand('/spec:so-crm x', 'dev', 'xpto'), undefined)
+      assert.strictEqual(service.expandCommand('/adr:padrao x', 'dev', 'xpto'), undefined)
+    })
+
     it('/skill: a skill escolhida vai inteira, já carregada, com o pedido depois; ⛔ não liberada é recusada', () => {
       const service = seeded()
       service.setAgentResources('dev', { skills: ['tabela'], commands: [] }, 'root')

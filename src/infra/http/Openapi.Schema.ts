@@ -1417,15 +1417,21 @@ export const OPENAPI_DOCUMENT = {
     '/agents/{agentId}/commands': {
       get: {
         summary:
-          'The /commands and skills the caller may use with this agent — id, kind and description only (the composer autocomplete; a skill picked with /name goes in full, already loaded). Anyone who can talk to the agent',
-        parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
+          'The /commands, skills and documents the caller may use with this agent — id, kind and description only (the composer autocomplete). A skill picked with /name goes in full, already loaded; a document is /<kind>:<id> (spec, adr, knowledge) and goes in full too. Documents: the global ones plus those of `project` (the conversation project). Anyone who can talk to the agent',
+        parameters: [
+          { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'project', in: 'query', required: false, schema: { type: 'string' } },
+        ],
         responses: {
           '200': {
             description: 'OK',
             ...json(
               envelope({
                 type: 'array',
-                items: { type: 'object', properties: { id: { type: 'string' }, kind: { type: 'string', enum: ['command', 'skill'] }, description: { type: 'string' } } },
+                items: {
+                  type: 'object',
+                  properties: { id: { type: 'string' }, kind: { type: 'string', enum: ['command', 'skill', 'spec', 'adr', 'knowledge'] }, description: { type: 'string' } },
+                },
               }),
             ),
           },

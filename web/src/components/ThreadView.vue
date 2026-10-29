@@ -11,6 +11,7 @@ import { useAgentsStore } from '@/stores/agents'
 import { useProtocolsStore } from '@/stores/protocols'
 import { useAuthStore } from '@/stores/auth'
 import { useConversationsStore } from '@/stores/conversations'
+import { useProjectsStore } from '@/stores/projects'
 import { useThreadStore, type IOutgoingFile } from '@/stores/thread'
 import AgentAvatar from './AgentAvatar.vue'
 import Composer from './Composer.vue'
@@ -31,6 +32,7 @@ const agents = useAgentsStore()
 const protocols = useProtocolsStore()
 const conversations = useConversationsStore()
 const thread = useThreadStore()
+const projects = useProjectsStore()
 
 const scroller = ref<HTMLElement>()
 const copied = ref(false)
@@ -49,7 +51,11 @@ const shareUrl = computed(() => (header.value?.shared && header.value.shareId ? 
 /** Os `/commands` que a pessoa pode usar com este agente (o autocompletar da caixa). */
 // ⚠️ Pelo agente da CONVERSA (o cabeçalho), não só pela lista de agentes: ela vem recortada pelo projeto atual, e a
 // conversa pode ser de outro projeto. Quem diz o que a pessoa pode usar é o servidor.
-const commands = useAgentCommands(computed(() => agent.value?.id ?? header.value?.agentId ?? thread.agentId))
+const commands = useAgentCommands(
+  computed(() => agent.value?.id ?? header.value?.agentId ?? thread.agentId),
+  // Os documentos do `/` são os do projeto DA CONVERSA (o do cabeçalho); conversa nova, o projeto atual.
+  computed(() => (typeof header.value?.metadata?.project === 'string' ? header.value.metadata.project : (projects.current ?? undefined))),
+)
 /** A sessão não está viva, mas a conversa volta ao enviar (o gateway a retoma do histórico gravado). */
 const resumable = computed(() => thread.liveSession === false)
 

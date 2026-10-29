@@ -335,7 +335,10 @@ describe('Projetos (integração)', () => {
     assert.strictEqual((await call(ADMIN, 'PUT', `/agents/${GOOGLE_TEST_AGENT.id}/resources`, { skills: [], commands: ['saudar'] })).status, 200)
 
     const listed = await call(ANA, 'GET', `/agents/${GOOGLE_TEST_AGENT.id}/commands`)
-    assert.deepStrictEqual([listed.status, listed.body.result], [200, [{ id: 'saudar', kind: 'command', description: 'Cumprimenta alguém' }]])
+    assert.deepStrictEqual(
+      [listed.status, (listed.body.result as Array<{ kind: string }>).filter((item) => item.kind === 'command' || item.kind === 'skill')],
+      [200, [{ id: 'saudar', kind: 'command', description: 'Cumprimenta alguém' }]],
+    )
 
     const opened = await call(ANA, 'POST', '/sessions', { agentId: GOOGLE_TEST_AGENT.id, projectId: 'alfa' })
     const id = opened.body.result.id as string
@@ -343,6 +346,15 @@ describe('Projetos (integração)', () => {
     assert.match(received.at(-1)!.text, /Diga olá para Maria\.$/)
     const turns = (await call(ANA, 'GET', `/conversations/${id}/turns`)).body.result.turns as Array<{ request: string }>
     assert.strictEqual(turns.at(-1)!.request, '/saudar Maria')
+
+    // Os documentos da conversa também: os globais e os do projeto pedido (o alheio, não).
+    await call(ADMIN, 'POST', '/docs', { id: 'tom', kind: 'spec', title: 'Tom de voz', summary: 'Como falar', body: 'Seja breve.', projectId: 'alfa' })
+    const withDocs = (await call(ANA, 'GET', `/agents/${GOOGLE_TEST_AGENT.id}/commands?project=alfa`)).body.result as Array<{ id: string; kind: string }>
+    assert.ok(withDocs.some((item) => item.id === 'spec:tom' && item.kind === 'spec'))
+    const elsewhere = (await call(ANA, 'GET', `/agents/${GOOGLE_TEST_AGENT.id}/commands?project=beta`)).body.result as Array<{ id: string }>
+    assert.ok(!elsewhere.some((item) => item.id === 'spec:tom'))
+    await call(ANA, 'POST', `/sessions/${id}/messages`, { message: '/spec:tom responda oi' })
+    assert.match(received.at(-1)!.text, /# Tom de voz \[spec\]\n\nSeja breve\.\n\n# Pedido\n\nresponda oi$/)
   })
 
   it('⛔ o construtor: só o admin abre; a conversa nasce marcada (a marca do corpo não vale) e fica fora da caixa de entrada', async () => {
@@ -362,6 +374,8 @@ describe('Projetos (integração)', () => {
     await new Promise((resolve) => setTimeout(resolve, 50))
     const inbox = (await call(ADMIN, 'GET', '/conversations?project=alfa')).body.result.sessions as Array<{ id: string }>
     assert.ok(!inbox.some((session) => session.id === id))
+    const monitor = (await call(ADMIN, 'GET', '/conversations?scope=all&page=1&project=alfa')).body.result.sessions as Array<{ id: string }>
+    assert.ok(!monitor.some((session) => session.id === id), 'nem na lista paginada do admin')
     const builds = (await call(ADMIN, 'GET', '/conversations?project=alfa&builder=skill')).body.result.sessions as Array<{ id: string }>
     assert.deepStrictEqual(
       builds.map((session) => session.id),

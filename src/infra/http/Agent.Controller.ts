@@ -444,11 +444,19 @@ export class AgentController {
       if (!agent || !this.agentVisible(agent, { userId: resolved.identity?.id, admin })) throw new AgentNotFoundError(req.params.agentId as string)
       // Os commands e as skills: a caixa sugere os dois ao digitar `/` (a skill escolhida vai inteira, já carregada).
       const guidance = this.usecases.guidance
-      return [...(guidance?.usableResources('command', agent.id) ?? []), ...(guidance?.usableResources('skill', agent.id) ?? [])].map((resource) => ({
+      const resources = [...(guidance?.usableResources('command', agent.id) ?? []), ...(guidance?.usableResources('skill', agent.id) ?? [])].map((resource) => ({
         id: resource.id,
         kind: resource.kind,
         description: resource.description,
       }))
+      // E os documentos da conversa (os globais e os do projeto dela, como o índice do prompt): `/spec:<id>` o anexa inteiro.
+      // ⚖️ Título e resumo só — o mesmo que o agente já vê no índice. O projeto vem da tela, e só vale o que a pessoa usa.
+      const requested = typeof req.query.project === 'string' && req.query.project ? req.query.project : undefined
+      const project =
+        agent.projectId ??
+        (requested && this.usecases.projects?.exists(requested) && this.usecases.projects.canUse({ userId: resolved.identity?.id, admin }, requested) ? requested : undefined)
+      const docs = guidance ? [...guidance.docs(null), ...(project ? guidance.docs(project) : [])] : []
+      return [...resources, ...docs.map((doc) => ({ id: `${doc.kind}:${doc.id}`, kind: doc.kind, description: doc.summary ? `${doc.title} — ${doc.summary}` : doc.title }))]
     })
   }
 
@@ -1077,7 +1085,9 @@ export class AgentController {
     // que a pessoa digitou. ⛔ Command que existe mas não está liberado para este agente é recusado (422).
     let expanded
     try {
-      expanded = this.usecases.guidance?.expandCommand(body.message, (await this.usecases.getSession.execute(sessionId)).agentId)
+      const session = await this.usecases.getSession.execute(sessionId)
+      const project = session.metadata?.[PROJECT_METADATA_KEY]
+      expanded = this.usecases.guidance?.expandCommand(body.message, session.agentId, typeof project === 'string' ? project : undefined)
     } catch (error: unknown) {
       return this.sendFailure(res, error, '[AgentController.sendMessage]')
     }
