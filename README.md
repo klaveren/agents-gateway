@@ -515,8 +515,14 @@ the rules, so they are never enabled.
   - every call runs in the gateway, with the agent's permissions and sandbox.
 - **Gemini (`agy`)** always runs with `--sandbox`. Tested on 1.4.5, it refuses the terminal, writes
   and reads outside its folder, but reads anything inside it, `.env` included. So it always runs in
-  the conversation's empty folder, and Terminal and the file capabilities are unavailable on it.
-  Its MCP is configured per installation, in `HOME`, which on macOS is the user's own.
+  the conversation's empty folder. It gets the gateway's terminal, files and to-do list through the
+  same turn grant:
+  - each turn writes a plugin into that folder (`.agents/plugins/gateway/mcp_config.json`, read by
+    `agy` 1.4.9) pointing at `/v1/turn-tools` with the grant token, and removes it when the turn ends;
+  - headless `agy` refuses every MCP call without an allow rule in `HOME`, so the gateway adds
+    `mcp(gateway_tools/*)` to `<HOME>/.gemini/antigravity-cli/settings.json`, and only to its own
+    `HOME` (`<data>/antigravity-home`). On macOS `HOME` is the user's own (the Keychain), so there
+    the gateway writes nothing and Gemini runs without these tools.
 
 **On Linux in a container, bubblewrap needs user namespaces**: Docker's default seccomp profile
 blocks them, so the pod needs `securityContext.seccompProfile.type: Unconfined` (or a profile that

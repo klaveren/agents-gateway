@@ -9,7 +9,7 @@ import { TNativeToolRisk } from './Native.Tools'
  *
  * ⚖️ Terminal é SEMPRE o `run_bash` (a trava, o teto de tempo e de saída valem em todo provedor). Arquivos no Claude são
  * as nativas dele (o modelo foi treinado nelas; o filtro de caminho do gateway vale); nos provedores por token, as do
- * gateway. O Codex e o Gemini por assinatura rodam o CLI do fornecedor: lá, o que ele já traz, dentro do nível de acesso.
+ * gateway. O Codex e o Gemini por assinatura recebem o terminal, os arquivos e as tarefas do gateway por MCP (`Turn.Grants`).
  */
 export const CAPABILITY_PREFIX = 'cap:'
 
@@ -36,10 +36,8 @@ export const CAPABILITIES: readonly ICapability[] = [
     description: 'Roda comandos na pasta da conversa (ou do projeto), com trava de comandos perigosos e teto de tempo.',
     risk: 'server-exec',
     local: ['run_bash'],
-    // ⛔ O terminal do Codex não segue as permissões: o Codex recebe o do gateway, por MCP (`Turn.Grants`).
-    // ⛔ O Gemini por assinatura roda com o `--sandbox` dele, que nega o terminal; o do gateway não chega a ele (o MCP do
-    // `agy` é da instalação inteira).
-    runs: { [EProvider.ANTIGRAVITY]: { unavailable: true } },
+    // ⛔ Os terminais do Codex e do Gemini não seguem as permissões: os dois recebem o do gateway, por MCP (`Turn.Grants`).
+    runs: {},
   },
   {
     id: 'files.read',
@@ -51,8 +49,6 @@ export const CAPABILITIES: readonly ICapability[] = [
       // ⛔ Sem o Glob e o Grep nativos: varrem a pasta inteira e devolveriam o conteúdo de arquivo negado (o `.env`
       // num Grep). A busca e a listagem são as do gateway, que conferem arquivo por arquivo; o Read (um arquivo) é o dele.
       [EProvider.CLAUDE]: { tools: ['sdk:Read', 'list_files', 'search_files'], note: 'Read do Claude, busca do gateway' },
-      // O Gemini só lê a pasta vazia da conversa: os arquivos do projeto não chegam a ele.
-      [EProvider.ANTIGRAVITY]: { unavailable: true },
     },
   },
   {
@@ -63,7 +59,6 @@ export const CAPABILITIES: readonly ICapability[] = [
     local: ['write_file', 'edit_file'],
     runs: {
       [EProvider.CLAUDE]: { tools: ['sdk:Write', 'sdk:Edit'], note: 'nativa do Claude' },
-      [EProvider.ANTIGRAVITY]: { unavailable: true },
     },
   },
   {
@@ -100,7 +95,7 @@ export const CAPABILITIES: readonly ICapability[] = [
     description: 'O agente organiza os passos de um trabalho longo; a lista aparece na conversa.',
     risk: 'session',
     local: [UPDATE_TODOS_TOOL],
-    runs: { [EProvider.ANTIGRAVITY]: { unavailable: true } },
+    runs: {},
   },
 ]
 

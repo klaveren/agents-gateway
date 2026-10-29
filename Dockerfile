@@ -4,7 +4,7 @@
 # shell continua rodando como o seu usuário, no seu $HOME. Este container é a contenção.
 
 # Globais: valem nas linhas `FROM` (o estágio do Antigravity escolhe o download pela arquitetura).
-ARG AGY_VERSION=1.4.6
+ARG AGY_VERSION=1.4.9
 ARG MICROMAMBA_VERSION=2.9.0-0
 ARG TARGETARCH
 
@@ -38,11 +38,11 @@ RUN pnpm install --frozen-lockfile --prod
 # pelo próprio BuildKit (`ADD --checksum`) — download que não bate com o hash derruba o build.
 FROM scratch AS agy-arm64
 ARG AGY_VERSION
-ADD --checksum=sha256:ef88c996178b55a3c5416f2c8b67a9c343ac0a62c900e7b7158ee2ff1135ad96 \
+ADD --checksum=sha256:0e75190d5aa48b0f7623b201cfef542cd36a1279b3d28afa7fa099983a073493 \
     https://github.com/google-antigravity/antigravity-cli/releases/download/${AGY_VERSION}/agy_cli_linux_arm64.tar.gz /agy.tar.gz
 FROM scratch AS agy-amd64
 ARG AGY_VERSION
-ADD --checksum=sha256:513c74ad3e70323839a65d8dccc6f9977b0903e5facd914cbb06be283c2bb640 \
+ADD --checksum=sha256:3d84e3a461b9cbf9ffc9deede155a01921380e964f51a82c0bc505db80ae8525 \
     https://github.com/google-antigravity/antigravity-cli/releases/download/${AGY_VERSION}/agy_cli_linux_x64.tar.gz /agy.tar.gz
 # `TARGETARCH` (do buildx: amd64 / arm64) escolhe o download da plataforma.
 FROM agy-${TARGETARCH} AS agy-download

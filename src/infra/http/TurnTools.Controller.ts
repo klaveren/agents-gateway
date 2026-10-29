@@ -27,7 +27,8 @@ export class TurnToolsController {
 
     const server = new Server({ name: 'gateway-turn-tools', version: '1.0.0' }, { capabilities: { tools: {} } })
     server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: grant.tools.map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema })),
+      // `antigravity/alwaysLoad`: o `agy` entrega a ferramenta direto ao modelo, em vez de ele ter que descobri-la.
+      tools: grant.tools.map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema, _meta: { 'antigravity/alwaysLoad': true } })),
     }))
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const tool = grant.tools.find((candidate) => candidate.name === request.params.name)

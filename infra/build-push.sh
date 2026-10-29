@@ -36,4 +36,8 @@ build() {
     --build-arg BUILD_REVISION="$REVISION"
 }
 
+# 🧹 O cache do builder enche o disco ("no space left on device" no meio do build, duas vezes): limpa antes de
+# cada publicação. O build sai do zero, mais lento, mas não para no meio.
+docker buildx prune --builder "${BUILDX_BUILDER:-logiccus-builder}" -af
+
 build "$TAG" aggressive

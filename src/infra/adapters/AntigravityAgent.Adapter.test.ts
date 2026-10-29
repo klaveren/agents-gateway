@@ -1,12 +1,16 @@
 import assert from 'node:assert'
 import { EventEmitter } from 'node:events'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { describe, it } from 'node:test'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { SessionStore } from '@infra/session/Session.Store'
-import { AntigravityAgentAdapter, antigravityArgs, antigravityFailure } from './AntigravityAgent.Adapter'
+import { TurnGrants } from '@infra/tools/Turn.Grants'
+import { AntigravityAgentAdapter, allowTurnTools, antigravityArgs, antigravityFailure, turnToolsPluginDir } from './AntigravityAgent.Adapter'
 
 interface ISpawned {
   command: string
@@ -134,5 +138,81 @@ describe('AntigravityAgentAdapter', () => {
     assert.strictEqual(events.at(-1)?.type, 'error')
     assert.match(JSON.stringify(events.at(-1)?.payload), /não está conectado/)
     assert.match(antigravityFailure('', null), /ANTIGRAVITY_BIN/)
+  })
+
+  it('⛔ as ferramentas do gateway: plugin na pasta da conversa com o token do turno, que morre no fim', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'agy-home-'))
+    const grants = new TurnGrants()
+    const local = (name: string) => ({ name, description: name, inputSchema: { type: 'object' }, execute: async () => ({ status: 'success', result: 'ok' }) })
+    const catalog = { localFor: () => [local('run_bash'), local('read_file')] }
+    let during: { url?: string; headers?: Record<string, string> } = {}
+    let granted: unknown
+    const calls: ISpawned[] = []
+    const spawn = fakeSpawn(calls, (n) => {
+      const config = JSON.parse(readFileSync(join(turnToolsPluginDir(calls[n - 1].options.cwd!), 'mcp_config.json'), 'utf8'))
+      during = config.mcpServers.tools
+      granted = grants.get(during.headers?.['X-Turn-Grant'])
+      return turn(n)
+    })
+    const adapter = new AntigravityAgentAdapter({
+      store: new SessionStore(),
+      spawn,
+      home: () => home,
+      catalog: catalog as never,
+      turnTools: { url: 'http://127.0.0.1:3000/v1/turn-tools', grants },
+    })
+    const session = await adapter.createSession(agent, {})
+    await collect(adapter.sendMessage(agent, session.id, { text: 'olá' }, { token: 'tok-de-quem-conversa' }))
+
+    assert.strictEqual(during.url, 'http://127.0.0.1:3000/v1/turn-tools')
+    assert.strictEqual(during.headers?.['X-Tool-Authorization'], 'Bearer tok-de-quem-conversa')
+    assert.deepStrictEqual(
+      (granted as { tools: Array<{ name: string }> }).tools.map((tool) => tool.name),
+      ['run_bash', 'read_file'],
+    )
+    assert.strictEqual(grants.get(during.headers?.['X-Turn-Grant']), undefined, 'acabou o turno, a concessão morre')
+    assert.ok(!existsSync(turnToolsPluginDir(calls[0].options.cwd!)), 'e o plugin sai da pasta')
+    const settings = JSON.parse(readFileSync(join(home, '.gemini', 'antigravity-cli', 'settings.json'), 'utf8'))
+    assert.deepStrictEqual(settings.permissions.allow, ['mcp(gateway_tools/*)'])
+  })
+
+  it('⛔ a liberação só no HOME do gateway: mescla com o que existe, nunca no HOME da pessoa, nunca sobre um arquivo ilegível', () => {
+    assert.strictEqual(allowTurnTools(homedir()), false)
+
+    const home = mkdtempSync(join(tmpdir(), 'agy-home-'))
+    const file = join(home, '.gemini', 'antigravity-cli', 'settings.json')
+    mkdirSync(join(home, '.gemini', 'antigravity-cli'), { recursive: true })
+    writeFileSync(file, JSON.stringify({ queuedMessages: 'queue', permissions: { allow: ['read_file(*)'], deny: ['command(*)'] } }))
+    assert.ok(allowTurnTools(home))
+    assert.ok(allowTurnTools(home))
+    assert.deepStrictEqual(JSON.parse(readFileSync(file, 'utf8')), {
+      queuedMessages: 'queue',
+      permissions: { allow: ['read_file(*)', 'mcp(gateway_tools/*)'], deny: ['command(*)'] },
+    })
+
+    writeFileSync(file, '{ // comentário\n}')
+    assert.strictEqual(allowTurnTools(home), false)
+    assert.strictEqual(readFileSync(file, 'utf8'), '{ // comentário\n}')
+  })
+
+  it('sem a liberação (HOME da pessoa), nada de plugin nem concessão, e o aviso diz', async () => {
+    const grants = new TurnGrants()
+    const register = grants.register.bind(grants)
+    let registered = 0
+    grants.register = (grant) => (registered++, register(grant))
+    const calls: ISpawned[] = []
+    const catalog = { localFor: () => [{ name: 'run_bash', description: '', inputSchema: {}, execute: async () => ({ status: 'success', result: '' }) }] }
+    const adapter = new AntigravityAgentAdapter({
+      store: new SessionStore(),
+      spawn: fakeSpawn(calls, turn),
+      home: () => homedir(),
+      catalog: catalog as never,
+      turnTools: { url: 'http://x', grants },
+    })
+    const session = await adapter.createSession(agent, {})
+    const events = await collect(adapter.sendMessage(agent, session.id, { text: 'olá' }, {}))
+    assert.strictEqual(registered, 0)
+    assert.ok(!existsSync(turnToolsPluginDir(calls[0].options.cwd!)))
+    assert.match(JSON.stringify(events.find((event) => event.type === 'warning')), /não chegam ao Gemini/)
   })
 })

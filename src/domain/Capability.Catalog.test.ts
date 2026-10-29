@@ -52,7 +52,7 @@ describe('Capability.Catalog', () => {
     assert.ok(!allowedTools.some((tool) => tool.startsWith('sdk:')))
   })
 
-  it('assinaturas por CLI: o Codex com o terminal, os arquivos e as tarefas do gateway (por MCP); o Gemini sem eles', () => {
+  it('assinaturas por CLI: o Codex e o Gemini com o terminal, os arquivos e as tarefas do gateway (por MCP)', () => {
     const codex = resolve(EProvider.CODEX)
     assert.deepStrictEqual(codex.allowedTools, [
       'run_bash',
@@ -68,10 +68,10 @@ describe('Capability.Catalog', () => {
     assert.deepStrictEqual(codex.unavailable, ['Abrir página'])
     // ⛔ O terminal do próprio Codex nunca sai da resolução, nem escolhido direto.
     assert.ok(!resolveCapabilities(['sdk:codex:shell'], { protocol: EProvider.CODEX, official: true, mode: EMode.AGENT }).allowedTools.length)
-    // ⛔ O Gemini sem terminal nem arquivos: o `--sandbox` dele nega o terminal, e ele só vê a pasta vazia da conversa.
+    // O Gemini também: o `--sandbox` dele nega o próprio terminal, e o projeto chega só pelas ferramentas do gateway.
     const gemini = resolve(EProvider.ANTIGRAVITY)
-    assert.deepStrictEqual(gemini.allowedTools, ['mcp:gateway/list_agents'])
-    assert.deepStrictEqual(gemini.unavailable, ['Terminal', 'Ler arquivos', 'Escrever arquivos', 'Busca na web', 'Abrir página', 'Lista de tarefas'])
+    assert.deepStrictEqual(gemini.allowedTools, ['run_bash', 'read_file', 'list_files', 'search_files', 'write_file', 'edit_file', 'update_todos', 'mcp:gateway/list_agents'])
+    assert.deepStrictEqual(gemini.unavailable, ['Busca na web', 'Abrir página'])
   })
 
   it('a tela diz como roda; os ids antigos viram capacidade sem repetir', () => {
