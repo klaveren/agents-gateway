@@ -420,7 +420,8 @@ function defaultSchedules(): SchedulesController {
 
 /** Sem composição: contas em memória, sem projetos. */
 function defaultAccounts(): ProjectAccountsController {
-  const tokens = { githubApp: async () => Promise.reject(new Error('sem GitHub aqui')), describeGitHub: async () => '' }
+  const none = async () => Promise.reject(new Error('sem rede de contas aqui'))
+  const tokens = { githubApp: none, describeGitHub: none, gcp: none, describeGcp: none }
   return new ProjectAccountsController({
     accounts: new ProjectAccountsService(new SqliteProjectAccountRepository(new SecretBox(randomBytes(32))), tokens),
     projectExists: () => false,

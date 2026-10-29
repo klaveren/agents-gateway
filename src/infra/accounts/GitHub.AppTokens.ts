@@ -25,7 +25,7 @@ export function appJwt(appId: string, privateKey: string, now = Date.now()): str
   const seconds = Math.floor(now / 1000)
   // `iat` 60s no passado: o relógio do GitHub pode estar adiantado em relação ao nosso.
   const body = `${encode({ alg: 'RS256', typ: 'JWT' })}.${encode({ iat: seconds - 60, exp: seconds + 540, iss: appId })}`
-  return `${body}.${sign('RSA-SHA256', Buffer.from(body), createPrivateKey(privateKey)).toString('base64url')}`
+  return `${body}.${sign('RSA-SHA256', Buffer.from(body), privateKeyOf(privateKey)).toString('base64url')}`
 }
 
 /**
@@ -72,4 +72,13 @@ export async function describeGitHubToken(token: string, installation: boolean, 
   if (!installation) return `conta ${body.login ?? '?'}`
   const names = (body.repositories ?? []).map((repo) => repo.full_name).filter(Boolean)
   return `${body.total_count ?? names.length} repositório(s): ${names.slice(0, 5).join(', ')}${names.length > 5 ? '…' : ''}`
+}
+
+/** A chave privada, com um erro que diz o que fazer (o do OpenSSL é "DECODER routines::unsupported"). */
+function privateKeyOf(pem: string) {
+  try {
+    return createPrivateKey(pem)
+  } catch {
+    throw new Error('a chave privada do App não abre: cadastre de novo')
+  }
 }
