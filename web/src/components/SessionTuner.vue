@@ -94,6 +94,16 @@ function pickReasoning(event: Event) {
         <option v-for="level in levels" :key="level" :value="level">{{ effortLabel(level) }}</option>
       </select>
     </label>
+    <span
+      v-if="thread.session?.place"
+      class="flex items-center gap-1.5"
+      :title="thread.session.place.worktree ? `worktree ${thread.session.place.worktree}` : 'checkout do repositório'"
+    >
+      Repositório <code class="rounded-md bg-zinc-800 px-1.5 py-0.5 text-zinc-100">{{ thread.session.place.repository }}</code>
+      <template v-if="thread.session.place.branch">
+        Branch <code class="rounded-md bg-zinc-800 px-1.5 py-0.5 text-zinc-100">{{ thread.session.place.branch }}</code>
+      </template>
+    </span>
     <span v-if="saving" class="text-zinc-500">trocando…</span>
     <span v-else-if="failure" class="text-rose-300">{{ failure }}</span>
     <span v-else-if="switched" class="text-amber-300/90">agora em {{ switched }}; vale a partir da próxima mensagem</span>

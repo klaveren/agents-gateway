@@ -362,6 +362,20 @@ export class AgentController {
     }
   }
 
+  /** Onde a conversa trabalha, para a tela: o repositório, a worktree e o branch de agora. Pasta que sumiu: sem branch. */
+  private placeOf(metadata: Record<string, unknown> | undefined): { repository: string; worktree?: string; branch?: string } | undefined {
+    const repository = metadata?.[REPOSITORY_METADATA_KEY]
+    const projectId = metadata?.[PROJECT_METADATA_KEY]
+    if (typeof repository !== 'string' || typeof projectId !== 'string' || !this.usecases.projects?.exists(projectId)) return undefined
+    const worktree = typeof metadata?.[WORKTREE_METADATA_KEY] === 'string' ? (metadata[WORKTREE_METADATA_KEY] as string) : undefined
+    try {
+      const branch = currentBranch(resolveWorkFolder(this.usecases.projects.folderOf(projectId), repository, worktree).dir)
+      return { repository, ...(worktree ? { worktree } : {}), ...(branch ? { branch } : {}) }
+    } catch {
+      return { repository, ...(worktree ? { worktree } : {}) }
+    }
+  }
+
   /**
    * A linha de contexto do projeto, na primeira mensagem: em que projeto a conversa está e, para o agente
    * de projeto, onde fica a pasta dele. ⚖️ É o que deixa o Atlas (global) criar agentes no projeto certo.
@@ -1115,7 +1129,9 @@ export class AgentController {
       const id = req.params.id as string
       await this.requireOwnedSession(id)
 
-      return toSessionDto(await this.usecases.getSession.execute(id))
+      const session = await this.usecases.getSession.execute(id)
+      const place = this.placeOf(session.metadata)
+      return { ...toSessionDto(session), ...(place ? { place } : {}) }
     })
   }
 

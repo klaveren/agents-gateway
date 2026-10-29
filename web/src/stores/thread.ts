@@ -160,7 +160,7 @@ export const useThreadStore = defineStore('thread', () => {
       turns.value = history.turns
       agentId.value = 'agentId' in history ? history.agentId : undefined
       liveSession.value = !!live || unsure
-      session.value = live ? { provider: live.provider, model: live.model, reasoning: live.reasoning } : undefined
+      session.value = live ? { provider: live.provider, model: live.model, reasoning: live.reasoning, place: live.place } : undefined
       if (historyFailure) error.value = `Não foi possível carregar o histórico: ${historyFailure}`
       else if (unsure) error.value = 'Não foi possível confirmar se a sessão está ativa. Tente de novo em instantes.'
     } catch (failure) {
@@ -295,7 +295,7 @@ export const useThreadStore = defineStore('thread', () => {
   /** O provider e o modelo da sessão (retomada agora), para o cabeçalho e o seletor de modelo. */
   async function reloadSession(id: string): Promise<void> {
     const live = await api<ISessionState>(`/sessions/${encodeURIComponent(id)}`).catch(() => undefined)
-    if (live && sessionId.value === id) session.value = { provider: live.provider, model: live.model, reasoning: live.reasoning }
+    if (live && sessionId.value === id) session.value = { provider: live.provider, model: live.model, reasoning: live.reasoning, place: live.place }
   }
 
   /** O texto do erro de envio — e o que ele implica: 404 = sessão encerrada; 409 `model_disabled` = relê os agentes. */

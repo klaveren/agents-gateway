@@ -54,6 +54,11 @@ const sessionSchema = {
     language: { type: 'string' },
     tools: { type: 'boolean' },
     status: { type: 'string', enum: ['idle', 'running'] },
+    place: {
+      type: 'object',
+      description: 'Only on GET /sessions/{id}, for a conversation opened in a repository: where it works now.',
+      properties: { repository: { type: 'string' }, worktree: { type: 'string' }, branch: { type: 'string' } },
+    },
     turns: { type: 'integer' },
     usage: {
       type: 'object',

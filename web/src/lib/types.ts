@@ -44,6 +44,8 @@ export interface ISessionState {
   model: string
   reasoning?: string
   status?: string
+  /** Onde a conversa trabalha: o repositório do projeto, a worktree e o branch de agora. */
+  place?: { repository: string; worktree?: string; branch?: string }
 }
 
 export interface IToolCall {
