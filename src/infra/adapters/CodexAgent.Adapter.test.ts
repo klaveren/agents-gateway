@@ -7,7 +7,7 @@ import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { SessionStore } from '@infra/session/Session.Store'
 import { TurnGrants } from '@infra/tools/Turn.Grants'
-import { CODEX_LOCKED_FEATURES, CodexAgentAdapter, codexMcpServers, withMcpHint } from './CodexAgent.Adapter'
+import { CODEX_LOCKED_FEATURES, CodexAgentAdapter, codexEvents, codexMcpServers, withMcpHint } from './CodexAgent.Adapter'
 
 interface ICall {
   options: CodexOptions
@@ -207,5 +207,28 @@ describe('CodexAgentAdapter', () => {
     assert.strictEqual(withMcpHint('base', []), 'base')
     const hinted = withMcpHint('base', [{ config: { id: 'gateway' } as never, tools: ['list_agents'] }])
     assert.match(hinted, /servidor MCP `gateway`: list_agents/)
+  })
+
+  it('⛔ a chamada de MCP recusada vira erro na tela (o Codex manda `failed` com o motivo em `result`)', () => {
+    const call = (status: string, text: string) =>
+      codexEvents(
+        {
+          type: 'item.completed',
+          item: {
+            id: 'i',
+            type: 'mcp_tool_call',
+            server: 'gateway_tools',
+            tool: 'run_bash',
+            arguments: {},
+            result: { content: [{ type: 'text', text }], structured_content: null },
+            status,
+          },
+        } as never,
+        's',
+        {},
+      )
+    const [denied] = call('failed', 'Not permitted: negado')
+    assert.deepStrictEqual([denied.type, denied.payload], ['tool.error', { tool: 'run_bash', message: 'Not permitted: negado' }])
+    assert.strictEqual(call('completed', 'Linux')[0].type, 'tool.result')
   })
 })

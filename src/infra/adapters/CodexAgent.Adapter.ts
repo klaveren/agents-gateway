@@ -342,8 +342,18 @@ function itemEvents(item: ThreadItem, sessionId: string, timestamp: Date, turn: 
     }
     case 'reasoning':
       return [{ type: 'reasoning.delta', sessionId, timestamp, payload: { text: item.text } }]
-    case 'mcp_tool_call':
-      return [{ type: 'tool.result', sessionId, timestamp, payload: { tool: item.tool, result: item.error?.message ?? item.result?.content ?? null } }]
+    case 'mcp_tool_call': {
+      // ⚠️ A recusa (`isError` do MCP) vem com `status: 'failed'` e o motivo em `result`, não em `error` (verificado na
+      // 0.163): sem olhar o status, a ferramenta negada aparecia como sucesso na tela.
+      if (item.status === 'failed' || item.error) {
+        const text = item.result?.content
+          ?.map((block) => ('text' in block ? block.text : ''))
+          .join('')
+          .trim()
+        return [{ type: 'tool.error', sessionId, timestamp, payload: { tool: item.tool, message: item.error?.message ?? (text || 'tool failed') } }]
+      }
+      return [{ type: 'tool.result', sessionId, timestamp, payload: { tool: item.tool, result: item.result?.content ?? null } }]
+    }
     case 'command_execution':
       return [
         { type: 'tool.started', sessionId, timestamp, payload: { tool: 'command', args: { command: item.command } } },
