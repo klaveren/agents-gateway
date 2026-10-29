@@ -13,6 +13,7 @@ import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { CLAUDE_TEST_AGENT } from '../../testing/Agents.Fixture'
 import { ILocalTool } from '@infra/tools/Tool.Types'
 import { ClaudeAgentAdapter, cliEnv } from './ClaudeAgent.Adapter'
+import { SessionStore } from '@infra/session/Session.Store'
 
 type TQuery = typeof query
 type TQueryParams = Parameters<TQuery>[0]
@@ -549,5 +550,39 @@ describe('ClaudeAgentAdapter — a memória do CLI na retomada', () => {
 
     for await (const _event of adapter.sendMessage(agent, session.id, { text: 'continua' }, {})) void _event
     assert.strictEqual(seen[0].options?.resume, SDK_ID)
+  })
+
+  const sub: IAgent = { ...agent, providers: [{ provider: 'claude-sub', models: ['claude-sonnet-5-5'] }] }
+  const connections = { connection: () => ({ providerId: 'claude-sub', name: 'Claude', protocol: EProvider.CLAUDE_SUB, key: 'tok-do-cofre' }) } as never
+
+  it('⛔ assinatura com o token do cofre: as conversas do CLI no volume de dados (no pod o HOME é só leitura)', async () => {
+    const seen: TQueryParams[] = []
+    const adapter = new ClaudeAgentAdapter({ query: queryWith(seen), subscription: true, connections })
+    const session = await adapter.createSession(sub, { agentId: sub.id })
+    for await (const _event of adapter.sendMessage(sub, session.id, { text: 'oi' }, {})) void _event
+    assert.strictEqual(seen[0].options?.env?.CLAUDE_CONFIG_DIR, join(dir, 'claude-cli'))
+    assert.strictEqual(seen[0].options?.env?.CLAUDE_CODE_OAUTH_TOKEN, 'tok-do-cofre')
+  })
+
+  it('⚠️ o CLI perdeu a conversa: em vez do `resume` que falharia ("No conversation found"), outra, com a transcrição', async () => {
+    const LOST = '99999999-2222-4333-8444-555555555555'
+    const seen: TQueryParams[] = []
+    const lostQuery = ((params: TQueryParams) => {
+      seen.push(params)
+      return (async function* () {
+        yield { type: 'system', subtype: 'init', session_id: LOST }
+        yield { type: 'result', subtype: 'success', is_error: false, result: 'ok', usage: { input_tokens: 1, output_tokens: 1 } }
+      })()
+    }) as unknown as TQuery
+    const store = new SessionStore()
+    const adapter = new ClaudeAgentAdapter({ query: lostQuery, subscription: true, connections, store })
+    const session = await adapter.createSession(sub, { agentId: sub.id })
+    for await (const _event of adapter.sendMessage(sub, session.id, { text: 'salva o teste' }, {})) void _event
+    store.get(session.id)!.transcript = [{ request: 'salva o teste', text: 'Salvo?', tools: [], by: 'claude-sub · claude-sonnet-5-5' }]
+
+    for await (const _event of adapter.sendMessage(sub, session.id, { text: 'sim pode salvar' }, {})) void _event
+    assert.strictEqual(seen[1].options?.resume, undefined)
+    assert.match(String(seen[1].options?.sessionId), /^[0-9a-f-]{36}$/)
+    assert.match(String(seen[1].prompt), /salva o teste[\s\S]*sim pode salvar$/)
   })
 })

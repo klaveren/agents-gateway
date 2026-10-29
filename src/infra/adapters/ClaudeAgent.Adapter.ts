@@ -1,6 +1,8 @@
 import { sessionChoice } from '@domain/Agent.Policy'
+import { HANDOFF_MAX_CHARS, handoffText } from '@domain/Handoff.Policy'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readdirSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { nativeToolsOf } from '@domain/Native.Tools'
 import { IConnectionSource, requireConnection, UnavailableProviderError } from './support/Keyed.Client'
@@ -124,11 +126,14 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       return
     }
 
-    const native = this.nativeOf(record)
+    let native = this.nativeOf(record)
     const abort = new AbortController()
     record.abort = abort
 
-    const { blocks, warnings } = this.buildBlocks(input)
+    let turnInput = input
+    const built = this.buildBlocks(input)
+    const warnings = built.warnings
+    let blocks = built.blocks
 
     yield { type: 'message.started', sessionId, timestamp: new Date() }
     for (const message of warnings) {
@@ -146,6 +151,19 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     } catch (error: unknown) {
       yield { type: 'error', sessionId, timestamp: new Date(), payload: { message: error instanceof Error ? error.message : String(error) } }
       return
+    }
+
+    // ⚠️ O CLI já não tem a conversa (o turno caiu antes de ele gravar, ou a pasta se perdeu): o `resume` falharia com
+    // "No conversation found". Começa outra, com a transcrição na frente, como na retomada depois de um reinício.
+    const configDir = env?.CLAUDE_CONFIG_DIR ?? (this.protocol === EProvider.CLAUDE_SUB ? join(homedir(), '.claude') : undefined)
+    if (native.started && configDir && !cliSessionExists(native.sdkSessionId, configDir)) {
+      record.native = undefined
+      native = this.nativeOf(record)
+      const handoff = handoffText(record.transcript ?? [], HANDOFF_MAX_CHARS, 'resume')
+      if (handoff) {
+        turnInput = { ...input, text: `${handoff}\n\n${input.text}` }
+        blocks = this.buildBlocks(turnInput).blocks
+      }
     }
 
     const local = this.catalog?.localFor(agent.allowedTools) ?? []
@@ -190,7 +208,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     const effort = this.toEffort(record.reasoning)
     if (effort) options.effort = effort
 
-    const stream = this.query({ prompt: this.buildPrompt(input, blocks), options })
+    const stream = this.query({ prompt: this.buildPrompt(turnInput, blocks), options })
 
     // O bloco `tool_result` só traz o `tool_use_id`. Sem guardar o nome da chamada, o
     // evento de resultado sairia identificado por um id opaco.
@@ -463,7 +481,15 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     if (this.connections && !connection) throw new UnavailableProviderError(providerId)
     // ⛔ Sem os conectores da conta claude.ai de quem fez o login (Docs, Drive…): com o login do host o CLI
     // os carregava, e eles apareciam para os agentes do gateway.
-    return subscriptionEnv({ HOME: process.env.HOME, CLAUDE_CODE_OAUTH_TOKEN: connection?.key, ENABLE_CLAUDEAI_MCP_SERVERS: 'false' })
+    // ⛔ Com o token do cofre, as conversas do CLI vão para o volume de dados (`claudeConfigDir`): no pod o HOME é só
+    // leitura, o CLI não gravava a conversa e a mensagem seguinte falhava com "No conversation found". Com o login do
+    // host (sem token), a pasta padrão: no macOS o Keychain procura o login por ela.
+    return subscriptionEnv({
+      HOME: process.env.HOME,
+      CLAUDE_CODE_OAUTH_TOKEN: connection?.key,
+      CLAUDE_CONFIG_DIR: connection?.key ? claudeConfigDir() : undefined,
+      ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
+    })
   }
 
   async cancel(sessionId: string): Promise<void> {
