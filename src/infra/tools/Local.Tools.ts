@@ -2,12 +2,13 @@ import type { IPermissionAsker, IPermissionChecker } from '@application/Permissi
 import { cercoPlan } from '@domain/Cerco.Plan'
 import type { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { exec } from 'node:child_process'
-import { isAbsolute, relative, resolve } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { networkGate } from '@infra/permissions/Network.Gate'
 import { analyzeShell } from '@infra/permissions/Shell.Parse'
 import { bashPolicy, denyReason, truncate, type IBashPolicy } from './Bash.Guard'
 import { subscriptionEnv, workspaceFor } from '@infra/adapters/support/Subscription.Workspace'
+import { accountsDir, ISshKitIdentity, removeSshKit, writeSshKit } from '@infra/accounts/Ssh.Kit'
 import { IProjectSandbox, projectSandbox, SANDBOX_SHELL } from '@infra/sandbox/Project.Sandbox'
 import { DOC_KINDS, IProjectDoc, READ_DOC_TOOL, SEARCH_DOCS_TOOL, TDocKind } from '@domain/models/ProjectDoc.Model'
 import { IDocHit } from '@domain/ports/GuidanceRepository.Port'
@@ -66,7 +67,11 @@ export interface ILocalToolDeps {
   /** As permissões dos agentes (ver `Permission.Policy`). Ausente = sem regras (só as travas fixas valem). */
   permissions?: IPermissionChecker
   /** As contas do projeto que vão para cada comando (ver `ProjectAccounts.Service`). Ausente = nenhuma. */
-  accounts?: { commandEnv(projectId: string, allowed: (id: string) => boolean): Promise<{ env: Record<string, string>; problems: string[] }> }
+  accounts?: {
+    commandEnv(projectId: string, allowed: (id: string) => boolean): Promise<{ env: Record<string, string>; problems: string[]; ssh?: ISshKitIdentity[] }>
+    /** A assinatura com a chave SSH importada (`ssh_sign`). Ausente = sem a ferramenta. */
+    sign?(projectId: string, id: string, namespace: string, data: string): Promise<string>
+  }
 }
 
 /** Quem pede, a partir do contexto do turno: o agente e o projeto da CONVERSA. */
@@ -125,7 +130,12 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       asker.projectId && deps.accounts ? await deps.accounts.commandEnv(asker.projectId, (id) => permissions.check(asker, { category: 'account', value: id }).allowed) : undefined
     const notes = accounts?.problems.length ? `${accounts.problems.map((problem) => `⚠️ ${problem}`).join('\n')}\n` : ''
     const gate = networkGate()
-    const token = gate.register((host, port) => permissions.check(asker, { category: 'network', value: `${host}:${port}` }, { log: true }))
+    let sshKit: string | undefined
+    const token = gate.register((host, port) => {
+      // O portão quer o PADRÃO que liberou: rede local só passa com regra exata (sem `*`).
+      const verdict = permissions.check(asker, { category: 'network', value: `${host}:${port}` }, { log: true })
+      return { allowed: verdict.allowed, reason: verdict.reason, ...(verdict.rule ? { pattern: verdict.rule.pattern } : {}) }
+    })
     try {
       let line: string
       try {
@@ -133,13 +143,14 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       } catch (error: unknown) {
         return { status: 'error', result: `${toMessage(error)}. O terminal fica bloqueado até o cerco funcionar.` }
       }
-      const { stdout, stderr } = await run(line, {
-        cwd: root,
-        timeout: policy.timeoutMs,
-        maxBuffer: EXEC_BUFFER_BYTES,
-        env: { ...subscriptionEnv({ HOME: root }), ...accounts?.env },
-        shell: SANDBOX_SHELL,
-      })
+      const env: Record<string, string> = { ...subscriptionEnv({ HOME: root }), ...accounts?.env }
+      if (accounts?.ssh?.length) {
+        const home = join(root, '.home')
+        sshKit = accountsDir(home, token)
+        const { bin } = writeSshKit(sshKit, accounts.ssh, `${process.execPath} ${join(home, '.gateway-connect.cjs')} %h %p`)
+        env.PATH = `${bin}:${env.PATH ?? process.env.PATH ?? '/usr/bin:/bin'}`
+      }
+      const { stdout, stderr } = await run(line, { cwd: root, timeout: policy.timeoutMs, maxBuffer: EXEC_BUFFER_BYTES, env, shell: SANDBOX_SHELL })
       return { status: 'success', result: truncate(notes + (stdout || stderr || 'Command executed successfully with no output.'), policy.maxOutputChars) }
     } catch (error: unknown) {
       // A linha embrulhada (a política do cerco) não interessa a quem lê; a saída de erro, sim.
@@ -149,6 +160,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       return { status: 'error', result: `Execution failed: ${toMessage(error)}` }
     } finally {
       gate.release(token)
+      if (sshKit) removeSshKit(sshKit)
     }
   }
 
@@ -225,6 +237,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
         }
       },
     },
+    ...(deps.accounts?.sign && deps.permissions ? [sshSignTool(deps.accounts.sign.bind(deps.accounts), deps.permissions)] : []),
     // Os arquivos na MESMA pasta do `run_bash`: a do projeto, ou a da conversa (ou o `BASH_CWD`).
     ...makeFileTools({
       rootFor: (context) => (context?.projectId ? workspaceFor(context.projectId, '') : policy.cwd || workspaceFor(undefined, context?.sessionId ?? 'files')),
@@ -512,4 +525,41 @@ function stripTags(html: string): string {
 
 function toMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * `ssh_sign`: assina com a chave SSH importada de uma conta do projeto (Projeto → Contas) sem ela entrar no cerco — o
+ * formato do `ssh-keygen -Y sign`, para gerar um token ou provar quem pede. ⛔ A permissão `account <id>` decide, e a
+ * decisão fica registrada.
+ */
+function sshSignTool(sign: (projectId: string, id: string, namespace: string, data: string) => Promise<string>, permissions: IPermissionChecker): ILocalTool {
+  return {
+    origin: 'local',
+    name: 'ssh_sign',
+    description: 'Signs data with an SSH key of this project (Project → Accounts) without exposing it. Returns the signature in the `ssh-keygen -Y sign` format.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        account: { type: 'string', description: 'The id of the SSH key account' },
+        namespace: { type: 'string', description: 'The signature namespace (e.g. "git", "file", or the one the verifier expects)' },
+        data: { type: 'string', description: 'The exact text to sign' },
+      },
+      required: ['account', 'namespace', 'data'],
+      additionalProperties: false,
+    },
+    async execute(args, context): Promise<IToolResult> {
+      const asker = askerOf(context)
+      const account = String(args.account ?? '').trim()
+      const namespace = String(args.namespace ?? '').trim()
+      if (!asker.projectId) return { status: 'error', result: 'ssh_sign só funciona numa conversa de projeto.' }
+      if (!/^[A-Za-z0-9@._-]{1,64}$/.test(namespace)) return { status: 'error', result: 'namespace: letras, números, @ . _ -' }
+      const verdict = permissions.check(asker, { category: 'account', value: account }, { log: true })
+      if (!verdict.allowed) return { status: 'error', result: `Not permitted: ${verdict.reason}` }
+      try {
+        return { status: 'success', result: await sign(asker.projectId, account, namespace, String(args.data ?? '')) }
+      } catch (error: unknown) {
+        return { status: 'error', result: toMessage(error) }
+      }
+    },
+  }
 }

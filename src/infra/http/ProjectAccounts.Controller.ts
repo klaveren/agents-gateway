@@ -25,6 +25,11 @@ const saveSchema = z.object({
       repositories: z.array(z.string().trim().max(100)).max(100).optional(),
       envName: z.string().trim().max(64).optional(),
       gcpProject: z.string().trim().max(30).optional(),
+      principals: z.array(z.string().trim().max(64)).max(20).optional(),
+      validityMinutes: z.number().int().optional(),
+      hostPatterns: z.array(z.string().trim().max(253)).max(50).optional(),
+      knownHosts: z.string().max(16_384).optional(),
+      certificate: z.string().trim().max(16_384).optional(),
     })
     .default({}),
   secret: z.string().max(16_384).optional(),
@@ -59,7 +64,7 @@ export class ProjectAccountsController {
       const publicInput = Object.fromEntries(Object.entries(body.public).filter(([, value]) => value !== undefined && value !== ''))
       try {
         return view(
-          this.deps.accounts.save(projectId, id, { kind: body.kind, label: body.label, public: publicInput, ...(body.secret?.trim() ? { secret: body.secret } : {}) }, by),
+          await this.deps.accounts.save(projectId, id, { kind: body.kind, label: body.label, public: publicInput, ...(body.secret?.trim() ? { secret: body.secret } : {}) }, by),
         )
       } catch (error: unknown) {
         if (error instanceof AccountValidationError)

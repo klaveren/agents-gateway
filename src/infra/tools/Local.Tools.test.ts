@@ -1,5 +1,5 @@
 import assert from 'node:assert'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
@@ -230,6 +230,15 @@ describe('LocalTools', () => {
       assert.ok(seen.plan?.readDeny.includes(realOf(root)) && seen.plan.readDeny.includes('/home/gw'))
     })
 
+    it('⛔ rede local: a regra EXATA libera (o portão recebe o padrão); com curinga, não', async () => {
+      const verdicts: boolean[] = []
+      const { run } = setup([rule('terminal', 'ssh *'), rule('network', '10.1.2.3:22'), rule('network', '10.9.*:22')], async (token) => {
+        for (const host of ['10.1.2.3', '10.9.0.1']) verdicts.push((await networkGate().decide(token, host, 22)).allowed)
+      })
+      assert.strictEqual((await run('ssh deploy@10.1.2.3 uptime')).status, 'success')
+      assert.deepStrictEqual(verdicts, [true, false])
+    })
+
     it('a rede do comando: o destino que a regra libera passa, o resto não; acabou o comando, o token morre', async () => {
       const verdicts: boolean[] = []
       const { seen, run } = setup([rule('terminal', 'curl *'), rule('network', '93.184.215.14:443')], async (token) => {
@@ -264,6 +273,51 @@ describe('LocalTools', () => {
       assert.strictEqual(seen.env?.GH_TOKEN, 'ghs_segredo')
       assert.ok(!seen.line?.includes('ghs_segredo'))
       assert.match(outcome.result, /⚠️ conta gh-app: Bad credentials\nok/)
+    })
+
+    it('⛔ SSH: o kit do comando (chave, config, ssh à frente do PATH) existe só enquanto ele roda', async () => {
+      const seen: { path?: string; kit?: string; during?: boolean } = {}
+      const tools = makeLocalTools({
+        exec: async (_command, options) => {
+          seen.path = options.env?.PATH
+          seen.kit = seen.path?.split(':')[0].replace(/\/bin$/, '')
+          seen.during = existsSync(join(seen.kit!, 'ident-0'))
+          return { stdout: 'ok', stderr: '' }
+        },
+        policy: { ...policy, cwd: root },
+        sandbox: { status: async () => ({ available: true, mechanism: 'seatbelt' }), wrap: async () => 'x', wrapWith: async (command) => `cercado(${command})` },
+        permissions: checker([rule('terminal', 'ssh *'), rule('account', 'servidores')]),
+        accounts: {
+          commandEnv: async () => ({
+            env: {},
+            problems: [],
+            ssh: [{ id: 'servidores', privateKey: 'EFEMERA', certificate: 'ssh-ed25519-cert-v01@openssh.com AAAA', hostPatterns: [], knownHosts: 'srv ssh-ed25519 AAAA' }],
+          }),
+        },
+      })
+      assert.strictEqual(
+        (await find(tools, 'run_bash').execute({ command: 'ssh deploy@srv uptime' }, { sessionId: 's1', agentId: 'dev', conversationProjectId: 'p1' })).status,
+        'success',
+      )
+      assert.ok(seen.kit?.startsWith(join(realOf(root), '.home', '.accounts')))
+      assert.ok(seen.during, 'a chave estava lá durante o comando')
+      assert.ok(!existsSync(seen.kit!), 'e saiu no fim')
+    })
+
+    it('⛔ ssh_sign: só com a permissão da conta, e a chave nunca volta na resposta', async () => {
+      const signed: string[] = []
+      const tools = makeLocalTools({
+        policy: { ...policy, cwd: root },
+        permissions: checker([rule('account', 'chave')]),
+        accounts: {
+          commandEnv: async () => ({ env: {}, problems: [] }),
+          sign: async (projectId, id, namespace, data) => (signed.push(`${projectId}/${id}/${namespace}/${data}`), 'SIG'),
+        },
+      })
+      const sign = (account: string) => find(tools, 'ssh_sign').execute({ account, namespace: 'token', data: 'x' }, { agentId: 'dev', conversationProjectId: 'p1' })
+      assert.deepStrictEqual(await sign('chave'), { status: 'success', result: 'SIG' })
+      assert.match((await sign('outra')).result, /Not permitted/)
+      assert.deepStrictEqual(signed, ['p1/chave/token/x'])
     })
 
     it('sem o cerco das regras no servidor, o terminal fica bloqueado', async () => {

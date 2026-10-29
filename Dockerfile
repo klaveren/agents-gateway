@@ -87,10 +87,11 @@ ENV NODE_ENV=production \
 # `chromium` + `fonts-liberation`: o navegador dos MCPs `process` como o Playwright (`--executable-path=/usr/bin/chromium`).
 # O pod não tem root para instalar as bibliotecas dele depois; o pacote npm do MCP o gateway instala na tela.
 # `bubblewrap socat ripgrep`: o cerco dos agentes de projeto (`@anthropic-ai/sandbox-runtime`, o sandbox do
-# Claude Code). ⚠️ Num contêiner ele precisa de user namespaces: o seccomp do pod tem de liberá-los
+# Claude Code). `git openssh-client`: o terminal dos agentes e as contas SSH do projeto (o gateway assina os certificados
+# com o `ssh-keygen`). ⚠️ Num contêiner ele precisa de user namespaces: o seccomp do pod tem de liberá-los
 # (`seccompProfile: Unconfined`, ou um perfil que permita `unshare`). Sem isso o Bash de projeto fica bloqueado.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates chromium fonts-liberation bubblewrap socat ripgrep \
+    && apt-get install -y --no-install-recommends ca-certificates chromium fonts-liberation bubblewrap socat ripgrep git openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin gateway \
