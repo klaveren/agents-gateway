@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { LIMIT_BOUNDS, LIMIT_NAMES, TLimitName } from '@domain/models/Limits.Model'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { AUDIENCES } from '@domain/models/Settings.Model'
+import { PERMISSION_CATEGORIES, TPermissionCategory } from '@domain/Permission.Policy'
 
 /** Base64 infla ~33%, então o teto em caracteres é maior que o tamanho real do arquivo. */
 const MAX_FILE_CHARS = 8 * 1024 * 1024
@@ -141,7 +142,7 @@ export const agentBodySchema = z.object({
   permissions: z
     .array(
       z.object({
-        category: z.enum(['terminal', 'read', 'write', 'network', 'mcp', 'skill', 'delegate']),
+        category: z.enum(PERMISSION_CATEGORIES as [TPermissionCategory, ...TPermissionCategory[]]),
         pattern: z.string().trim().min(1).max(300),
         decision: z.enum(['allow', 'deny']),
         note: z.string().max(200).optional(),

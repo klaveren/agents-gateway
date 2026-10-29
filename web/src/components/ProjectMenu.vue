@@ -4,7 +4,8 @@ import RailMenu, { type IRailMenuItem } from './RailMenu.vue'
 /**
  * O menu PROJETO (só admin): o que vale para as conversas do projeto em uso — o Ambiente (o que toda conversa recebe:
  * rules e specs inteiras, com o peso), as Rules (o cadastro, globais e do projeto, com o construtor) e os Agendamentos
- * (o que os agentes rodam sozinhos no projeto, pela próxima execução).
+ * (o que os agentes rodam sozinhos no projeto, pela próxima execução), as Permissões e as Contas (as credenciais do
+ * terminal do projeto).
  */
 defineProps<{ placement: 'side' | 'up'; active?: string }>()
 
@@ -12,6 +13,7 @@ const ITEMS: IRailMenuItem[] = [
   { to: '/environment', key: 'environment', label: 'Ambiente', hint: 'O que toda conversa do projeto recebe', icon: 'folder' },
   { to: '/rules', key: 'rules', label: 'Rules', hint: 'Regras que todo agente respeita', icon: 'rule' },
   { to: '/permissions', key: 'permissions', label: 'Permissões', hint: 'O que os agentes podem fazer: comandos, arquivos, MCP', icon: 'key' },
+  { to: '/accounts', key: 'accounts', label: 'Contas', hint: 'As credenciais que o terminal do projeto recebe: GitHub, variáveis', icon: 'key' },
   { to: '/schedules', key: 'schedules', label: 'Agendamentos', hint: 'O que os agentes rodam sozinhos, e quando', icon: 'clock' },
 ]
 </script>

@@ -17,15 +17,22 @@ let instance: ICredentialStore | undefined
  */
 export function makeCredentials(): ICredentialStore {
   if (instance) return instance
+  const configured = process.env.CONVERSATIONS_DB?.trim()
+  instance = new SqliteCredentialStore(makeSecretBox(), configured === 'off' ? undefined : configured || DEFAULT_DB_PATH)
+  return instance
+}
 
+let box: SecretBox | undefined
+
+/** O cofre (a chave-mestra): o mesmo das chaves dos providers e das contas dos projetos. */
+export function makeSecretBox(): SecretBox {
+  if (box) return box
   const configured = process.env.CONVERSATIONS_DB?.trim()
   const dbPath = configured || DEFAULT_DB_PATH
-
   // Sem arquivo de banco (`off`, ou `:memory:` dos testes), nada fica guardado: uma chave-mestra de
   // passagem basta, e nenhum `secrets.key` é deixado para trás.
   const ephemeral = configured === 'off' || dbPath === ':memory:'
   const key = ephemeral && !process.env.SECRETS_KEY ? randomBytes(32) : masterKey(process.env.SECRETS_KEY_FILE?.trim() || join(dirname(dbPath), 'secrets.key'))
-
-  instance = new SqliteCredentialStore(new SecretBox(key), configured === 'off' ? undefined : dbPath)
-  return instance
+  box = new SecretBox(key)
+  return box
 }

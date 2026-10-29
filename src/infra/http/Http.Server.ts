@@ -1,6 +1,9 @@
 import { PermissionsService } from '@application/Permissions.Service'
 import { SqlitePermissionRepository } from '@infra/persistence/Sqlite.PermissionRepository'
+import { ProjectAccountsService } from '@application/ProjectAccounts.Service'
+import { SqliteProjectAccountRepository } from '@infra/persistence/Sqlite.ProjectAccountRepository'
 import { PermissionsController } from './Permissions.Controller'
+import { ProjectAccountsController } from './ProjectAccounts.Controller'
 import { SchedulesController } from './Schedules.Controller'
 import { AgentSchedulesService } from '@application/AgentSchedules.Service'
 import { ScheduleRunner } from '@application/Schedule.Runner'
@@ -94,6 +97,7 @@ export class HttpServer {
     guidance?: GuidanceController,
     schedules?: SchedulesController,
     permissions?: PermissionsController,
+    accounts?: ProjectAccountsController,
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
@@ -126,6 +130,7 @@ export class HttpServer {
       guidance ?? new GuidanceController({ guidance: new GuidanceService(new SqliteGuidanceRepository(), () => false) }),
       schedules ?? defaultSchedules(),
       permissions ?? defaultPermissions(),
+      accounts ?? defaultAccounts(),
     )
     this.setupRoutes()
     this.setupFrontend()
@@ -236,8 +241,13 @@ function buildRoutes(
   guidance: GuidanceController,
   schedules: SchedulesController,
   permissions: PermissionsController,
+  accounts: ProjectAccountsController,
 ): IRoute[] {
   return [
+    { method: 'get', path: '/projects/:projectId/accounts', handler: accounts.list },
+    { method: 'put', path: '/projects/:projectId/accounts/:accountId', handler: accounts.save },
+    { method: 'delete', path: '/projects/:projectId/accounts/:accountId', handler: accounts.remove },
+    { method: 'post', path: '/projects/:projectId/accounts/:accountId/test', handler: accounts.test },
     { method: 'get', path: '/projects/:projectId/permissions', handler: permissions.get },
     { method: 'put', path: '/projects/:projectId/permissions', handler: permissions.save },
     { method: 'post', path: '/projects/:projectId/permissions/test', handler: permissions.test },
@@ -406,6 +416,15 @@ function defaultSchedules(): SchedulesController {
     () => false,
   )
   return new SchedulesController({ schedules, runner: new ScheduleRunner(schedules, async () => ({})), agentProject: () => undefined })
+}
+
+/** Sem composição: contas em memória, sem projetos. */
+function defaultAccounts(): ProjectAccountsController {
+  const tokens = { githubApp: async () => Promise.reject(new Error('sem GitHub aqui')), describeGitHub: async () => '' }
+  return new ProjectAccountsController({
+    accounts: new ProjectAccountsService(new SqliteProjectAccountRepository(new SecretBox(randomBytes(32))), tokens),
+    projectExists: () => false,
+  })
 }
 
 /** Sem composição: permissões em memória, sem projetos. */

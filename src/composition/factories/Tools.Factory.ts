@@ -1,5 +1,6 @@
 import type { IPermissionChecker } from '@application/Permissions.Service'
 import { makePermissions } from './Permissions.Factory'
+import { makeProjectAccounts } from './ProjectAccounts.Factory'
 import { makeGuidance } from './Guidance.Factory'
 import { makeConversationRepository } from './Conversations.Factory'
 import { IMcpServerConfig } from '@domain/models/McpServer.Model'
@@ -47,7 +48,14 @@ export function makeTools(): ITools {
       servers,
       catalog: new ToolCatalog(
         mcp,
-        makeLocalTools({ docs: makeGuidance(), skills: makeGuidance(), drafts: makeGuidance(), todos: todoStore(), permissions: lazyPermissions }),
+        makeLocalTools({
+          docs: makeGuidance(),
+          skills: makeGuidance(),
+          drafts: makeGuidance(),
+          todos: todoStore(),
+          permissions: lazyPermissions,
+          accounts: { commandEnv: (projectId, allowed) => makeProjectAccounts().commandEnv(projectId, allowed) },
+        }),
         (allowed) => makeDelegateTool(runnableTargets(allowed), delegation, lazyPermissions),
         containerProxy,
         lazyPermissions,

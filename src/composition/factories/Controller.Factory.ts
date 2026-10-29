@@ -1,4 +1,6 @@
 import { installationRules, makePermissions } from './Permissions.Factory'
+import { makeProjectAccounts } from './ProjectAccounts.Factory'
+import { ProjectAccountsController } from '@infra/http/ProjectAccounts.Controller'
 import { PermissionsController } from '@infra/http/Permissions.Controller'
 import { SchedulesController } from '@infra/http/Schedules.Controller'
 import { makeScheduleRunner, makeSchedules } from './Schedules.Factory'
@@ -87,6 +89,14 @@ export function makePermissionsController(): PermissionsController {
     projectExists: (projectId) => makeProjects().exists(projectId),
     agentExists: (agentId) => !!makeAgents().get(agentId),
     installationRules: () => installationRules(),
+    proof: makeAuth().proof,
+  })
+}
+
+export function makeProjectAccountsController(): ProjectAccountsController {
+  return new ProjectAccountsController({
+    accounts: makeProjectAccounts(),
+    projectExists: (projectId) => makeProjects().exists(projectId),
     proof: makeAuth().proof,
   })
 }

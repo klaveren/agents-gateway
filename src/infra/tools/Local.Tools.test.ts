@@ -245,6 +245,27 @@ describe('LocalTools', () => {
       assert.strictEqual((await networkGate().decide(seen.token, '93.184.215.14', 443)).allowed, false)
     })
 
+    it('⛔ as contas do projeto da conversa vão no ambiente do processo, só as que a regra libera, nunca na linha', async () => {
+      const seen: { line?: string; env?: Record<string, string | undefined>; asked: string[] } = { asked: [] }
+      const tools = makeLocalTools({
+        exec: async (command, options) => ((seen.line = command), (seen.env = options.env), { stdout: 'ok', stderr: '' }),
+        policy: { ...policy, cwd: root },
+        sandbox: { status: async () => ({ available: true, mechanism: 'seatbelt' }), wrap: async () => 'x', wrapWith: async (command) => `cercado(${command})` },
+        permissions: checker([rule('terminal', 'gh *'), rule('account', 'github-empresa1')]),
+        accounts: {
+          commandEnv: async (projectId, allowed) => {
+            seen.asked = ['github-empresa1', 'github-empresa2'].filter(allowed).map((id) => `${projectId}/${id}`)
+            return { env: { GH_TOKEN: 'ghs_segredo' }, problems: ['conta gh-app: Bad credentials'] }
+          },
+        },
+      })
+      const outcome = await find(tools, 'run_bash').execute({ command: 'gh api user' }, { sessionId: 's1', agentId: 'dev', conversationProjectId: 'p1' })
+      assert.deepStrictEqual(seen.asked, ['p1/github-empresa1'])
+      assert.strictEqual(seen.env?.GH_TOKEN, 'ghs_segredo')
+      assert.ok(!seen.line?.includes('ghs_segredo'))
+      assert.match(outcome.result, /⚠️ conta gh-app: Bad credentials\nok/)
+    })
+
     it('sem o cerco das regras no servidor, o terminal fica bloqueado', async () => {
       const tools = makeLocalTools({
         exec: async () => assert.fail('não roda'),
