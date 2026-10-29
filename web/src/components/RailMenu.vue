@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { usePopover } from '@/lib/popover'
 import Icon from './Icon.vue'
 
-export type TRailIcon = 'users' | 'key' | 'plug' | 'box' | 'settings' | 'agents' | 'rule' | 'doc' | 'bolt' | 'slash' | 'folder'
+export type TRailIcon = 'users' | 'key' | 'plug' | 'box' | 'settings' | 'agents' | 'rule' | 'doc' | 'bolt' | 'slash' | 'folder' | 'clock'
 export interface IRailMenuItem {
   to: string
   key: string

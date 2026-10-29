@@ -1,4 +1,12 @@
-import { ATLAS_AGENT_LINE, ATLAS_BUILDERS_SECTION, ATLAS_KNOWLEDGE_LINE, BUILDER_DELEGATIONS, RETIRED_ATLAS_AGENT_TOOL, RETIRED_ATLAS_TOOLS } from './Agent.Seed'
+import {
+  ATLAS_SCHEDULES_SECTION,
+  ATLAS_AGENT_LINE,
+  ATLAS_BUILDERS_SECTION,
+  ATLAS_KNOWLEDGE_LINE,
+  BUILDER_DELEGATIONS,
+  RETIRED_ATLAS_AGENT_TOOL,
+  RETIRED_ATLAS_TOOLS,
+} from './Agent.Seed'
 import { IAgent } from './models/Agent.Model'
 
 /** Uma mudança que o gateway aplica UMA VEZ num agente da semente que já está no banco (ver `migrateOnce`). */
@@ -43,5 +51,12 @@ export const AGENT_MIGRATIONS: readonly IAgentMigration[] = [
       const systemPrompt = agent.systemPrompt.includes('builder-agent') ? agent.systemPrompt : `${agent.systemPrompt.trimEnd()}\n\n## Agentes\n${ATLAS_AGENT_LINE}`
       return allowedTools.length === agent.allowedTools.length && systemPrompt === agent.systemPrompt ? undefined : { ...agent, allowedTools, systemPrompt }
     },
+  },
+  {
+    // Os agendamentos: o Atlas que já existe aprende a cuidar deles (as ferramentas chegam pela semente).
+    key: 'atlas-schedules',
+    agentIds: ['atlas', 'atlas-admin'],
+    change: (agent) =>
+      agent.systemPrompt.includes('save_schedule') ? undefined : { ...agent, systemPrompt: `${agent.systemPrompt.trimEnd()}\n\n## Agendamentos\n${ATLAS_SCHEDULES_SECTION}` },
   },
 ]

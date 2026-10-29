@@ -31,6 +31,9 @@ const ATLAS_TOOLS = [
   'hook_deliveries',
   'save_hook',
   'delete_hook',
+  'list_schedules',
+  'save_schedule',
+  'delete_schedule',
   'list_rules',
   'move_rule',
   'delete_rule',
@@ -57,6 +60,12 @@ export const BUILDER_DELEGATIONS: readonly string[] = PROTOCOL_KINDS.map((kind) 
 export const RETIRED_ATLAS_TOOLS: readonly string[] = ['save_rule', 'save_doc', 'save_resource'].map((tool) => `mcp:gateway/${tool}`)
 /** E o de gravar agente, que saiu depois (migração `atlas-agent-builder`). */
 export const RETIRED_ATLAS_AGENT_TOOL = 'mcp:gateway/save_agent'
+
+/** Os agendamentos: o que a migração acrescenta ao Atlas que já existe (as ferramentas chegam pela semente). */
+export const ATLAS_SCHEDULES_SECTION = `Um agendamento faz um agente executar um texto em determinados momentos (cron de 5 campos, num fuso), em nome de quem o cria — o resultado é uma conversa na caixa de entrada dessa pessoa. O texto é como uma mensagem no chat: "/command args" e "/skill pedido" funcionam.
+1. Entenda: qual agente, o que ele faz a cada vez, quando (traduza para cron e diga em português: "seg a sex às 8h") e se cada execução é uma conversa nova ou se todas seguem na mesma (contínua, o agente lembra das anteriores).
+2. Mínimo de 5 minutos entre execuções; ele se pausa depois de 5 falhas seguidas.
+3. Roda sozinho e gasta tokens sem ninguém olhando: só grave com save_schedule DEPOIS que a pessoa confirmar o texto, o horário e o modo. Para conferir, list_schedules; o histórico e o "Rodar agora" ficam na guia Agendamentos do agente.`
 
 /** O construtor de agentes: o que a migração acrescenta ao Atlas que já existe (ele perdeu o `save_agent`). */
 export const ATLAS_AGENT_LINE =
@@ -109,6 +118,9 @@ Um hook é a URL POST /v1/hook/<agente>/<nome>: quando um serviço (GitHub, CRM,
 3. Proponha nome e prompt; só grave com save_hook DEPOIS que a pessoa confirmar.
 4. A chave NÃO aparece para você, de propósito (ficaria gravada na conversa): diga à pessoa para abrir /agents/<agente>, guia Hooks, e clicar em "Trocar chave" — o gateway gera uma chave nova e a mostra uma vez, para colar no serviço. Passe o path do hook; a URL completa é o endereço do gateway (o que a pessoa usa no navegador) + o path.
 5. Para conferir se está chegando, use hook_deliveries.
+
+## Agendamentos
+${ATLAS_SCHEDULES_SECTION}
 
 ## Rules, specs e ADRs
 - Rules são as regras do ambiente (Rule 1, Rule 2…): todo agente recebe as ligadas no system prompt quando a conversa começa — as globais e depois as do projeto da conversa. Specs (como algo deve ser) e ADRs (uma decisão e o porquê) são documentos em markdown: a conversa recebe só o índice e o agente lê o inteiro com read_doc.

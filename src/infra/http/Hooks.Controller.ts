@@ -9,6 +9,7 @@ import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
 import { parseBody } from './Request.Parser'
 import { selfApi, selfBase, TSelfApi } from './Self.Api'
+import { openConversation as openSelfConversation, runTurn, SelfCallError } from './Self.Run'
 
 export interface IHooksControllerDeps {
   hooks: AgentHooksService
@@ -93,7 +94,7 @@ export class HooksController {
 
       res.status(202).json(ok({ conversationId, hook: name, queued }, 'Hook accepted'))
     } catch (error: unknown) {
-      const failure = error instanceof HookCallError ? error : undefined
+      const failure = error instanceof SelfCallError ? error : undefined
       this.deps.hooks.finishDelivery(delivery.id, { status: 'error', error: failure?.message ?? String(error) })
       res.status(failure?.status ?? 500).json(fail(failure?.message ?? 'Could not open the conversation', (failure?.code as never) ?? 'internal_error'))
     }
@@ -212,58 +213,9 @@ export class HooksController {
   }
 }
 
-/** A API recusou abrir a conversa: o mesmo status e a mesma mensagem voltam a quem chamou o hook. */
-class HookCallError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string | undefined,
-    message: string,
-  ) {
-    super(message)
-  }
-}
-
-async function openConversation(api: TSelfApi, hook: IAgentHook): Promise<string> {
-  const created = await api('POST', '/sessions', { body: { agentId: hook.agentId, metadata: { hook: { agentId: hook.agentId, name: hook.name } } } })
-  const id = (created.result as { id?: string } | undefined)?.id
-  if (!created.ok || !id) throw new HookCallError(created.status || 500, created.code, created.message ?? 'Could not open the conversation')
-  return id
-}
-
-/**
- * O turno, pelo stream da API: os headers chegam na hora, então um turno longo não estoura o prazo de
- * resposta do `fetch`. Devolve o erro do turno, ou `undefined` se terminou bem.
- */
-async function runTurn(base: string, credentials: Record<string, string>, conversationId: string, message: string): Promise<string | undefined> {
-  const response = await fetch(`${base}/sessions/${encodeURIComponent(conversationId)}/messages`, {
-    method: 'POST',
-    headers: { ...credentials, Accept: 'text/event-stream', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message }),
-  })
-  const text = await response.text()
-  if (!response.ok) {
-    const envelope = (() => {
-      try {
-        return JSON.parse(text) as { message?: string }
-      } catch {
-        return {}
-      }
-    })()
-    return envelope.message ?? `HTTP ${response.status}`
-  }
-  // O último `error` do stream é o motivo; sem nenhum, o turno terminou bem.
-  const errors = text
-    .split('\n\n')
-    .filter((frame) => /^event: error$/m.test(frame))
-    .map((frame) => {
-      const data = /^data: (.*)$/m.exec(frame)?.[1]
-      try {
-        return (JSON.parse(data ?? '{}') as { payload?: { message?: string } }).payload?.message ?? 'turn failed'
-      } catch {
-        return 'turn failed'
-      }
-    })
-  return errors.at(-1)
+/** A conversa do hook, aberta pela API em nome da conta: carimbada com o hook, para a caixa de entrada mostrar a origem. */
+function openConversation(api: TSelfApi, hook: IAgentHook): Promise<string> {
+  return openSelfConversation(api, { agentId: hook.agentId, metadata: { hook: { agentId: hook.agentId, name: hook.name } } })
 }
 
 function verified(hook: IAgentHook, secret: string, req: Request, raw: Buffer): boolean {

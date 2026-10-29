@@ -323,6 +323,17 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   )
 
   server.registerTool(
+    'list_schedules',
+    {
+      description:
+        "An agent's schedules (or every schedule, without agentId): at the times of a cron expression the agent runs a text, as the account that created it — the result is a conversation in that account's inbox. Shows cron, timezone, the text, the next run, failures and the last run.",
+      inputSchema: { agentId: z.string().optional() },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ agentId }) => reply(await api('GET', agentId ? `/agents/${encodeURIComponent(agentId)}/schedules` : '/schedules')),
+  )
+
+  server.registerTool(
     'list_rules',
     {
       description:
@@ -467,6 +478,38 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
       inputSchema: { agentId: z.string(), name: z.string() },
     },
     async ({ agentId, name }) => reply(await api('DELETE', `/agents/${encodeURIComponent(agentId)}/hooks/${encodeURIComponent(name)}`)),
+  )
+
+  server.registerTool(
+    'save_schedule',
+    {
+      description:
+        'Create a schedule on an agent, or change the one with the same name (the name can\'t change). It runs as YOU, the person in this conversation, and spends tokens with nobody watching: confirm the text, the times and the mode with the person first. cron has 5 fields (minute hour day month weekday, e.g. "0 8 * * 1-5" = weekdays at 8:00); at least 5 minutes between runs. prompt is what the agent gets, as typed in the chat — "/command args" and "/skill request" work. session: new (one conversation per run) or continuous (the same conversation; the agent remembers previous runs). It pauses itself after 5 failures in a row.',
+      inputSchema: {
+        agentId: z.string(),
+        name: z.string().describe('2–48 lowercase letters, digits or hyphens'),
+        cron: z.string(),
+        timezone: z.string().optional().describe('IANA; default America/Sao_Paulo'),
+        prompt: z.string(),
+        session: z.enum(['new', 'continuous']).optional(),
+        projectId: z.string().nullable().optional().describe('Global agent only: the project its conversations run in'),
+        enabled: z.boolean().optional(),
+      },
+    },
+    async ({ agentId, name, ...fields }) => {
+      const path = `/agents/${encodeURIComponent(agentId)}/schedules`
+      const exists = ((await api('GET', path)).result as Array<{ name: string }> | undefined)?.some((schedule) => schedule.name === name)
+      return reply(exists ? await api('PUT', `${path}/${encodeURIComponent(name)}`, { body: fields }) : await api('POST', path, { body: { name, ...fields } }))
+    },
+  )
+
+  server.registerTool(
+    'delete_schedule',
+    {
+      description: 'Delete a schedule and its run history. Conversations it opened stay. Confirm with the person first.',
+      inputSchema: { agentId: z.string(), name: z.string() },
+    },
+    async ({ agentId, name }) => reply(await api('DELETE', `/agents/${encodeURIComponent(agentId)}/schedules/${encodeURIComponent(name)}`)),
   )
 
   server.registerTool(

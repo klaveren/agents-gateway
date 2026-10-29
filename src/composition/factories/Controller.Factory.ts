@@ -1,3 +1,5 @@
+import { SchedulesController } from '@infra/http/Schedules.Controller'
+import { makeScheduleRunner, makeSchedules } from './Schedules.Factory'
 import { dockerStatus } from '@infra/sandbox/Docker.Sandbox'
 import { GuidanceController } from '@infra/http/Guidance.Controller'
 import { makeGuidance } from './Guidance.Factory'
@@ -52,6 +54,7 @@ export function makeController(): AgentController {
     agentRemoved: (agentId) => {
       makeHooks().removeAgent(agentId)
       makeGuidance().removeAgent(agentId)
+      makeSchedules().removeAgent(agentId)
     },
     projects: makeProjects(),
     sandbox: projectSandbox(),
@@ -61,6 +64,15 @@ export function makeController(): AgentController {
   // O rascunho de agente do construtor é conferido com as MESMAS regras do cadastro, que moram aqui.
   makeGuidance().useAgentChecker((agent) => controller.agentDraftIssues(agent))
   return controller
+}
+
+export function makeSchedulesController(): SchedulesController {
+  return new SchedulesController({
+    schedules: makeSchedules(),
+    runner: makeScheduleRunner(),
+    agentProject: (agentId) => makeAgents().get(agentId)?.projectId,
+    proof: makeAuth().proof,
+  })
 }
 
 export function makeAuthController(): AuthController {

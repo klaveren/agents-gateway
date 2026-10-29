@@ -565,6 +565,46 @@ const agentResources = {
   properties: { skills: { type: 'array', items: { type: 'string' } }, commands: { type: 'array', items: { type: 'string' } } },
   description: 'Ids, or ["*"] = every global one plus those of the agent project (a global agent: only global ones) — the default when nothing was set; [] = none on purpose.',
 }
+const scheduleRunSchema = {
+  type: 'object',
+  properties: {
+    id: { type: 'string' },
+    trigger: { type: 'string', enum: ['cron', 'manual'] },
+    scheduledFor: { type: 'string', format: 'date-time' },
+    startedAt: { type: 'string', format: 'date-time' },
+    finishedAt: { type: 'string', format: 'date-time' },
+    status: { type: 'string', enum: ['running', 'ok', 'error', 'skipped', 'missed'] },
+    sessionId: { type: 'string' },
+    error: { type: 'string' },
+  },
+}
+const scheduleInput = {
+  type: 'object',
+  properties: {
+    name: { type: 'string', description: 'Slug (create only).' },
+    cron: { type: 'string', description: '5 fields: minute hour day month weekday ("0 8 * * 1-5").' },
+    timezone: { type: 'string', description: 'IANA; default America/Sao_Paulo.' },
+    prompt: { type: 'string', description: 'What the agent gets, as typed in the chat (/command args works).' },
+    session: { type: 'string', enum: ['new', 'continuous'] },
+    projectId: { type: 'string', nullable: true, description: 'For a global agent: the project its conversation runs in.' },
+    enabled: { type: 'boolean' },
+  },
+}
+const scheduleSchema = {
+  type: 'object',
+  properties: {
+    ...scheduleInput.properties,
+    agentId: { type: 'string' },
+    sessionId: { type: 'string' },
+    runAs: { type: 'string' },
+    failures: { type: 'integer' },
+    pausedReason: { type: 'string' },
+    nextRunAt: { type: 'string', format: 'date-time' },
+    lastRun: scheduleRunSchema,
+  },
+}
+const agentIdParam = { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }
+const scheduleNameParam = { name: 'scheduleName', in: 'path', required: true, schema: { type: 'string' } }
 const protocolAddendum = {
   type: 'object',
   properties: {
@@ -1558,6 +1598,54 @@ export const OPENAPI_DOCUMENT = {
           '401': failures['401'],
           '404': failures['404'],
         },
+      },
+    },
+    '/schedules': {
+      get: {
+        summary: 'Every schedule — or, with ?project=, those of the project agents plus those of global agents that run in it — ordered by the next run. Administrators only',
+        parameters: [{ name: 'project', in: 'query', required: false, schema: { type: 'string' } }],
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: scheduleSchema })) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/agents/{agentId}/schedules': {
+      get: {
+        summary:
+          'The schedules of an agent: it runs a text (as typed in the chat — /command args works) at the times of a cron expression, as the account that created it. Administrators only',
+        parameters: [agentIdParam],
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: scheduleSchema })) }, '401': failures['401'], '404': failures['404'] },
+      },
+      post: {
+        summary: 'Create a schedule. It runs as you; at least 5 minutes between runs; pauses itself after 5 failures in a row. Administrators only',
+        parameters: [agentIdParam],
+        requestBody: { required: true, ...json(scheduleInput) },
+        responses: { '201': { description: 'Created', ...json(envelope(scheduleSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/agents/{agentId}/schedules/{scheduleName}': {
+      put: {
+        summary: 'Change a schedule (the name stays). Turning it back on clears the failures. Administrators only',
+        parameters: [agentIdParam, scheduleNameParam],
+        requestBody: { required: true, ...json(scheduleInput) },
+        responses: { '200': { description: 'OK', ...json(envelope(scheduleSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+      delete: {
+        summary: 'Delete a schedule and its run history. Administrators only',
+        parameters: [agentIdParam, scheduleNameParam],
+        responses: { '200': { description: 'OK' }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/agents/{agentId}/schedules/{scheduleName}/run': {
+      post: {
+        summary: 'Run a schedule now, outside its times (it does not move the clock). Answers at once; the run history shows how it goes. Administrators only',
+        parameters: [agentIdParam, scheduleNameParam],
+        responses: { '202': { description: 'Started' }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/agents/{agentId}/schedules/{scheduleName}/runs': {
+      get: {
+        summary: 'The last 20 runs of a schedule: when, trigger (cron, manual), status (running, ok, error, skipped, missed) and the conversation. Administrators only',
+        parameters: [agentIdParam, scheduleNameParam],
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: scheduleRunSchema })) }, '401': failures['401'], '404': failures['404'] },
       },
     },
     '/packages': {

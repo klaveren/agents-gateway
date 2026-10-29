@@ -294,6 +294,21 @@ export class GuidanceNotFoundError extends DomainError {
   }
 }
 
+export class InvalidScheduleError extends DomainError {
+  constructor(public readonly issues: Array<{ field: string; message: string }>) {
+    super(`Schedule is invalid: ${issues.map((issue) => `${issue.field} (${issue.message})`).join('; ')}`)
+  }
+}
+
+export class ScheduleNotFoundError extends DomainError {
+  constructor(
+    public readonly agentId: string,
+    public readonly scheduleName: string,
+  ) {
+    super(`Schedule not found: ${agentId}/${scheduleName}`)
+  }
+}
+
 export class HookNotFoundError extends DomainError {
   constructor(
     public readonly agentId: string,
