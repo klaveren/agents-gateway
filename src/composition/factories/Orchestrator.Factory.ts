@@ -47,6 +47,8 @@ export function makeOrchestrator(): AgentProvider {
   // O MESMO diretório da tela de Providers: chave e URL salvas lá valem na próxima chamada de qualquer lane.
   const connections = makeProviders()
 
+  // O terminal e os arquivos do gateway para os CLIs por assinatura (Codex, Gemini), por MCP.
+  const turnTools = { url: selfUrl().replace(/\/v1\/mcp$/, '/v1/turn-tools') }
   const adapters = new Map<string, IAgentAdapter>([
     [adapterKey(EProvider.CLAUDE, EMode.CHAT), new ClaudeChatAdapter({ store: sessions, catalog, connections })],
     [adapterKey(EProvider.OPENAI, EMode.CHAT), new OpenAIChatAdapter({ store: sessions, catalog, connections })],
@@ -56,11 +58,8 @@ export function makeOrchestrator(): AgentProvider {
     [adapterKey(EProvider.GOOGLE, EMode.AGENT), new GoogleAgentAdapter({ store: sessions, catalog, connections })],
     // As assinaturas: só a lane agent (ver `Subscription.Policy`).
     [adapterKey(EProvider.CLAUDE_SUB, EMode.AGENT), new ClaudeAgentAdapter({ store: sessions, catalog, connections, subscription: true, permissions: makePermissions() })],
-    [
-      adapterKey(EProvider.CODEX, EMode.AGENT),
-      new CodexAgentAdapter({ store: sessions, catalog, connections, turnTools: { url: selfUrl().replace(/\/v1\/mcp$/, '/v1/turn-tools') } }),
-    ],
-    [adapterKey(EProvider.ANTIGRAVITY, EMode.AGENT), new AntigravityAgentAdapter({ store: sessions, connections })],
+    [adapterKey(EProvider.CODEX, EMode.AGENT), new CodexAgentAdapter({ store: sessions, catalog, connections, turnTools })],
+    [adapterKey(EProvider.ANTIGRAVITY, EMode.AGENT), new AntigravityAgentAdapter({ store: sessions, catalog, connections, turnTools })],
   ])
 
   /**

@@ -1,10 +1,15 @@
 import { randomBytes } from 'node:crypto'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
-import { ILocalTool } from './Tool.Types'
+import { IToolDefinition, IToolResult } from './Tool.Types'
+
+/** Uma ferramenta da concessão: local, ou de MCP pela caixa do agente (que confere as permissões na chamada). */
+export type ITurnTool = Pick<IToolDefinition, 'name' | 'description' | 'inputSchema'> & {
+  execute(args: Record<string, unknown>, context?: IExecutionContext): Promise<IToolResult>
+}
 
 /** O que um turno concedeu: as ferramentas do gateway e o contexto em que elas rodam. */
 export interface ITurnGrant {
-  tools: readonly ILocalTool[]
+  tools: readonly ITurnTool[]
   context: IExecutionContext
 }
 

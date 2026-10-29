@@ -1,5 +1,8 @@
 import { sessionChoice } from '@domain/Agent.Policy'
 import { spawn as nodeSpawn } from 'node:child_process'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -12,6 +15,8 @@ import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { sessionPrefix } from '@infra/session/Session.Key'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
+import { ToolCatalog } from '@infra/tools/Tool.Catalog'
+import { ITurnTool, TurnGrants, turnGrants } from '@infra/tools/Turn.Grants'
 import { IConnectionSource, UnavailableProviderError } from './support/Keyed.Client'
 import { composeSystemPrompt, maxToolTurns } from './support/Prompt.Helper'
 import { subscriptionEnv, subscriptionHome, workspaceFor } from './support/Subscription.Workspace'
@@ -29,6 +34,9 @@ export interface IAntigravityAgentAdapterDeps {
   /** Injetável para o teste não subir o binário. */
   spawn?: TSpawn
   home?: () => string
+  catalog?: ToolCatalog
+  /** Onde o `agy` chama as ferramentas do gateway (`/v1/turn-tools`). Ausente = sem terminal nem arquivos. */
+  turnTools?: { url: string; grants?: TurnGrants }
 }
 
 /** O binário: `ANTIGRAVITY_BIN`, ou `agy` do PATH. */
@@ -67,8 +75,8 @@ export function antigravityArgs(prompt: string, model: string, conversationId?: 
  * Lane `agent` do Google pela ASSINATURA, sobre o Antigravity CLI (`agy -p --output-format stream-json`).
  *
  * ⛔ HOME próprio do gateway (o login feito pela tela; nunca o `~/.gemini` da pessoa, com os MCPs e as
- * regras dela), diretório vazio por conversa, ambiente mínimo. ⚠️ Sem MCP nesta versão: o `agy mcp` é
- * da instalação inteira, não por conversa — misturaria um cliente com outro.
+ * regras dela), diretório vazio por conversa, ambiente mínimo. O terminal, os arquivos, as tarefas e os MCPs do agente
+ * chegam pelo GATEWAY, num plugin gravado na pasta da conversa a cada turno (ver `writeTurnToolsPlugin`).
  *
  * ⚠️ O CLI não tem flag de system prompt: as instruções do agente vão no PRIMEIRO turno, antes da
  * mensagem; a conversa retomada já as tem.
@@ -78,12 +86,16 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
   private readonly connections?: IConnectionSource
   private readonly spawn: TSpawn
   private readonly home: () => string
+  private readonly catalog?: ToolCatalog
+  private readonly turnTools?: { url: string; grants?: TurnGrants }
 
   constructor(deps: IAntigravityAgentAdapterDeps = {}) {
     this.store = deps.store ?? new SessionStore()
     this.connections = deps.connections
     this.spawn = deps.spawn ?? nodeSpawn
     this.home = deps.home ?? (() => subscriptionHome('antigravity'))
+    this.catalog = deps.catalog
+    this.turnTools = deps.turnTools
   }
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
@@ -104,7 +116,7 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
     return { id: record.id, provider: record.provider, mode: record.mode, createdAt: record.createdAt, metadata: record.metadata }
   }
 
-  async *sendMessage(agent: IAgent, sessionId: string, input: IMessageInput, _context: IExecutionContext): AsyncIterable<IAgentEvent> {
+  async *sendMessage(agent: IAgent, sessionId: string, input: IMessageInput, context: IExecutionContext): AsyncIterable<IAgentEvent> {
     const now = () => new Date()
     const record = this.store.get(sessionId)
     if (!record) {
@@ -125,9 +137,17 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
     const prompt = native.conversationId ? input.text : `${record.systemPrompt}\n\n---\n\n${input.text}`
     const home = this.home()
     // ⛔ A pasta VAZIA da conversa, nunca a do projeto: o `agy` lê tudo o que está na pasta dele, sem as permissões do
-    // agente (o `.env` inclusive). O terminal e os arquivos do projeto não chegam ao Gemini.
+    // agente (o `.env` inclusive). O projeto chega ao Gemini só pelas ferramentas do gateway, que seguem as permissões.
+    const workspace = workspaceFor(undefined, sessionId)
+    const tools = await this.turnToolsOf(agent, { ...context, sessionId })
+    const grants = this.turnTools?.grants ?? turnGrants()
+    const grant = tools.length && this.turnTools && allowTurnTools(home) ? grants.register({ tools, context: { ...context, sessionId } }) : undefined
+    if (tools.length && !grant) yield { type: 'warning', sessionId, timestamp: now(), payload: { message: 'As ferramentas do gateway não chegam ao Gemini aqui: ficam de fora.' } }
+    const plugin = turnToolsPluginDir(workspace)
+    rmSync(plugin, { recursive: true, force: true })
+    if (grant) writeTurnToolsPlugin(workspace, this.turnTools!.url, { 'X-Turn-Grant': grant, ...(context.token ? { 'X-Tool-Authorization': `Bearer ${context.token}` } : {}) })
     const child = this.spawn(antigravityBin(), antigravityArgs(prompt, record.model, native.conversationId), {
-      cwd: workspaceFor(undefined, sessionId),
+      cwd: workspace,
       env: subscriptionEnv({ HOME: home }),
       stdio: ['ignore', 'pipe', 'pipe'],
       signal: abort.signal,
@@ -171,6 +191,8 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
     } finally {
       record.abort = undefined
       if (child.exitCode === null) child.kill('SIGTERM')
+      if (grant) grants.release(grant)
+      rmSync(plugin, { recursive: true, force: true })
     }
   }
 
@@ -178,10 +200,75 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
     this.store.get(sessionId)?.abort?.abort()
   }
 
+  /**
+   * ⛔ TUDO PELO GATEWAY: as locais e as dos MCPs que o agente escolheu, pela caixa dele (`toolbox`). O `agy` só fala com
+   * o `/v1/turn-tools`: nunca recebe a URL nem a credencial de um MCP, e cada chamada passa de novo pelas permissões.
+   */
+  private async turnToolsOf(agent: IAgent, context: IExecutionContext): Promise<ITurnTool[]> {
+    if (!this.catalog || !this.turnTools) return []
+    const box = await this.catalog.toolbox(agent.allowedTools, context)
+    return box.tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      execute: (args, callContext) => box.invoke(tool.name, args, callContext),
+    }))
+  }
+
   private nativeOf(record: ISessionRecord): IAntigravityNative {
     if (!record.native) record.native = {}
     return record.native as IAntigravityNative
   }
+}
+
+/** O plugin e o servidor do gateway: o `agy` junta os dois no nome do servidor (`gateway_tools`). */
+const TURN_TOOLS_PLUGIN = 'gateway'
+const TURN_TOOLS_SERVER = 'tools'
+export const ANTIGRAVITY_TURN_TOOLS_SERVER = `${TURN_TOOLS_PLUGIN}_${TURN_TOOLS_SERVER}`
+const ALLOW_TURN_TOOLS = `mcp(${ANTIGRAVITY_TURN_TOOLS_SERVER}/*)`
+
+export function turnToolsPluginDir(workspace: string): string {
+  return join(workspace, '.agents', 'plugins', TURN_TOOLS_PLUGIN)
+}
+
+/**
+ * ⛔ O MCP DO GATEWAY POR CONVERSA: o `agy` só tem MCP da instalação inteira (`~/.gemini/config`) e o dos plugins da
+ * pasta (`<pasta>/.agents/plugins/<nome>/mcp_config.json`). O plugin vai na pasta VAZIA da conversa, com o token do turno
+ * (`Turn.Grants`), e sai no fim do turno. Verificado no `agy` 1.4.9: ele conecta e manda os headers.
+ */
+export function writeTurnToolsPlugin(workspace: string, url: string, headers: Record<string, string>): string {
+  const dir = turnToolsPluginDir(workspace)
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  writeFileSync(join(dir, 'plugin.json'), JSON.stringify({ name: TURN_TOOLS_PLUGIN, version: '1.0.0', description: 'As ferramentas do gateway nesta conversa.' }), { mode: 0o600 })
+  writeFileSync(join(dir, 'mcp_config.json'), JSON.stringify({ mcpServers: { [TURN_TOOLS_SERVER]: { url, headers } } }), { mode: 0o600 })
+  return dir
+}
+
+/**
+ * ⛔ A LIBERAÇÃO DAS CHAMADAS: no modo headless, o `agy` nega toda chamada de MCP sem regra `mcp(<servidor>/<ferramenta>)`
+ * no `settings.json` do HOME. A regra libera SÓ o servidor do gateway (quem decide cada chamada são as permissões do
+ * agente, no gateway) e só se grava no HOME DO GATEWAY: no macOS o HOME é o da pessoa (o Keychain, ver
+ * `subscriptionHome`), e lá o gateway não escreve; o Gemini fica sem as ferramentas. Um `settings.json` que não é JSON
+ * também fica como está.
+ */
+export function allowTurnTools(home: string): boolean {
+  if (resolve(home) === resolve(homedir())) return false
+  const file = join(home, '.gemini', 'antigravity-cli', 'settings.json')
+  try {
+    const settings = existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>) : {}
+    const permissions = isRecord(settings.permissions) ? settings.permissions : {}
+    const allow = Array.isArray(permissions.allow) ? (permissions.allow as unknown[]) : []
+    if (allow.includes(ALLOW_TURN_TOOLS)) return true
+    mkdirSync(dirname(file), { recursive: true, mode: 0o700 })
+    writeFileSync(file, JSON.stringify({ ...settings, permissions: { ...permissions, allow: [...allow, ALLOW_TURN_TOOLS] } }, null, 2), { mode: 0o600 })
+    return true
+  } catch {
+    return false
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /** A falha sem resultado, com a correção quando é o login. */
