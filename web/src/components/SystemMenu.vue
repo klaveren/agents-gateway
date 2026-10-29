@@ -4,7 +4,7 @@ import RailMenu, { type IRailMenuItem } from './RailMenu.vue'
 /**
  * O menu do SISTEMA (só admin): Projetos, Usuários, Modelos, MCPs, Pacotes e Configuração num botão só, como o da conta.
  * ⚖️ O trilho fica com o que se usa todo dia (conversas, uso, agentes); o que se configura de vez em
- * quando mora aqui. Rules, specs e ADRs moram no menu Docs.
+ * quando mora aqui. Specs, ADRs e conhecimento moram no menu Docs; as rules e o ambiente, no menu Projeto.
  */
 defineProps<{ placement: 'side' | 'up'; active?: string }>()
 

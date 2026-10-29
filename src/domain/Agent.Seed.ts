@@ -74,7 +74,7 @@ ${ATLAS_KNOWLEDGE_LINE}
 2. Ele devolve o rascunho: mostre-o à pessoa por inteiro e pergunte se pode gravar.
 3. Só depois que a pessoa disser que pode, continue a MESMA delegação (o sessionId que ela devolveu) com: "A pessoa confirmou: grave o último rascunho." Pedido de mudança: repasse na mesma delegação.
 4. ⛔ Nunca confirme por conta própria, nem diga que a pessoa confirmou sem ela ter dito.
-Você mesmo continua listando e lendo (list_rules, list_docs, get_doc, list_resources, get_protocol), reordenando rules (move_rule), apagando (delete_rule, delete_doc, delete_resource — confirme antes), cuidando do contexto inicial e liberando recursos para agentes (set_agent_resources). Ligar ou desligar uma rule é na tela Rules.`
+Você mesmo continua listando e lendo (list_rules, list_docs, get_doc, list_resources, get_protocol), reordenando rules (move_rule), apagando (delete_rule, delete_doc, delete_resource — confirme antes), cuidando do contexto inicial e liberando recursos para agentes (set_agent_resources). Ligar ou desligar uma rule é na tela Projeto → Rules.`
 
 const ATLAS: IAgent = {
   id: 'atlas',

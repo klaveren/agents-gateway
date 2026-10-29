@@ -246,9 +246,9 @@ async function continueFresh() {
       @cancel="confirming = false"
     />
     <!-- ⚖️ Sessão encerrada (expirou, ou o gateway reiniciou) não tranca a conversa: ao enviar, o gateway a retoma com o histórico. -->
-    <div v-if="resumable" class="flex flex-wrap items-center gap-3 border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-2 text-xs text-zinc-400">
-      <span>Sessão encerrada — ao enviar, a conversa continua de onde parou: o agente recebe o histórico (o texto e as ferramentas usadas; anexos não voltam).</span>
-      <button v-if="!embedded" class="ml-auto flex items-center gap-1.5 rounded-full px-3 py-1 text-zinc-300 hover:bg-zinc-800" @click="continueFresh">
+    <div v-if="resumable" class="flex items-center gap-3 border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-2 text-xs text-zinc-400">
+      <span class="min-w-0 truncate" title="O agente recebe o histórico: o texto e as ferramentas usadas. Anexos não voltam.">Sessão encerrada — ao enviar, a conversa continua de onde parou.</span>
+      <button v-if="!embedded" class="ml-auto flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-zinc-300 hover:bg-zinc-800" @click="continueFresh">
         <Icon name="refresh" class="h-3.5 w-3.5" /> ou comece uma nova
       </button>
     </div>
