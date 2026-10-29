@@ -987,7 +987,12 @@ describe('AgentController', () => {
         limits: { delegationMaxDepth: number }
       }
 
-      assert.deepStrictEqual(result.tools, [{ origin: 'local', name: 'search_web', description: '', inputSchema: {}, dangerous: false }])
+      // `search_web` virou a capacidade Busca na web: sai das soltas e vem em `capabilities`, com o que roda em cada provedor.
+      assert.deepStrictEqual(result.tools, [])
+      const search = (result as unknown as { capabilities: Array<{ id: string; dangerous: boolean; runs: Record<string, string> }> }).capabilities.find(
+        (item) => item.id === 'cap:web.search',
+      )
+      assert.deepStrictEqual([search?.dangerous, search?.runs.claude, search?.runs.antigravity], [false, 'da Anthropic', 'indisponível'])
       for (const tool of result.native) assert.strictEqual(tool.dangerous, tool.risk.startsWith('server-'), tool.id)
       assert.strictEqual(result.limits.delegationMaxDepth, 2)
     })

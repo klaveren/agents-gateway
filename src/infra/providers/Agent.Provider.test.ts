@@ -892,4 +892,41 @@ describe('AgentProvider — retomar com a memória do SDK', () => {
     for await (const _event of stale.provider.sendMessage(stored.id, { text: 'Qual número?' })) void _event
     assert.match(stale.sent[0], /esta conversa foi retomada/)
   })
+
+  it('⚖️ o adapter nunca vê cap:: recebe o que roda no provedor, e o que não roda vira aviso no primeiro turno', async () => {
+    const store = new SessionStore()
+    const seen: { created: string[]; turn: string[] } = { created: [], turn: [] }
+    const adapter: IAgentAdapter = {
+      async createSession(agent, input) {
+        seen.created = agent.allowedTools
+        const record = store.create('g', {
+          agentId: agent.id,
+          provider: EProvider.GOOGLE,
+          protocol: EProvider.GOOGLE,
+          mode: EMode.CHAT,
+          model: input.model ?? 'model-x',
+          tools: true,
+          systemPrompt: agent.systemPrompt,
+        })
+        return { id: record.id, provider: EProvider.GOOGLE, mode: record.mode, createdAt: record.createdAt }
+      },
+      async *sendMessage(agent, sessionId) {
+        seen.turn = agent.allowedTools
+        yield { type: 'message.completed', sessionId, timestamp: new Date() } as IAgentEvent
+      },
+      async cancel() {},
+    }
+    const base = SEED.list()[0]
+    const agents = { list: () => [{ ...base, allowedTools: ['cap:files.read', 'cap:web.fetch'] }], get: () => ({ ...base, allowedTools: ['cap:files.read', 'cap:web.fetch'] }) }
+    const provider = new AgentProvider(new Map([[adapterKey(EProvider.GOOGLE, EMode.CHAT), adapter]]), store, undefined, agents)
+
+    const session = await provider.createSession({ agentId: base.id })
+    const events: IAgentEvent[] = []
+    for await (const event of provider.sendMessage(session.id, { text: 'oi' })) events.push(event)
+
+    // Modo Conversa: os arquivos do gateway; a página não roda aqui.
+    assert.deepStrictEqual(seen.created, ['read_file', 'list_files', 'search_files'])
+    assert.deepStrictEqual(seen.turn, seen.created)
+    assert.ok(events.some((event) => event.type === 'warning' && /Abrir página/.test(String((event.payload as { message?: string }).message))))
+  })
 })

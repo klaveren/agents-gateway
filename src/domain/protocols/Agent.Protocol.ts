@@ -3,7 +3,7 @@ import { ICoreProtocol } from '@domain/models/Protocol.Model'
 /** O protocolo do core para construir um AGENTE. ⚠️ Mudou o texto, sobe a versão. */
 export const AGENT_PROTOCOL: ICoreProtocol = {
   kind: 'agent',
-  version: '1.0.0',
+  version: '1.1.0',
   title: 'Protocolo de construção de agente',
   body: `# Protocolo de construção de agente
 
@@ -20,9 +20,9 @@ Um agente do gateway é um registro: id, nome, soul, prompt, providers e modelos
 ## O checklist de nascimento
 - **Projeto:** o da conversa (o agente só trabalha na pasta dele e só os membros o veem). Global só se ele servir a todos os projetos.
 - **Providers e modelos:** só os ATIVADOS (list_providers, list_models). O primeiro provider e o primeiro modelo são o padrão; ofereça um segundo provider quando fizer sentido trocar no meio da conversa.
-- **Lanes:** agent quando ele usa ferramentas nativas (sdk:…) ou trabalha em vários passos; chat para conversa pura. Assinatura só roda agent.
+- **Lanes:** agent quando ele trabalha em vários passos ou usa o que o provedor tem de nativo; chat para conversa pura. Assinatura só roda agent.
 - **Raciocínio:** os níveis que o trabalho pede (low, medium, high).
-- **Ferramentas:** as locais, as nativas sdk:… do protocolo e as de MCP (mcp:<servidor>/<ferramenta>) — confira com list_tools.
+- **Ferramentas:** as CAPACIDADES (cap:terminal, cap:files.read, cap:files.write, cap:web.search, cap:web.fetch, cap:todos — o gateway decide o que roda em cada provedor), os extras de um provedor (sdk:…) e as de MCP (mcp:<servidor>/<ferramenta>) — confira com list_tools. cap:todos para quem faz trabalho de muitos passos.
 - **Delegação:** agent:<id> só para quem é do mesmo projeto ou global; subagente (role subagent) é quem só é chamado por outro agente.
 - **Recursos:** por padrão ele usa todas as skills e commands do escopo dele; restrinja (ids, ou nenhum) quando o papel pedir.
 - **Contexto inicial:** as specs que ele carrega inteiras além das do projeto. Diga quantos tokens isso soma: pesa em toda conversa.

@@ -1,3 +1,4 @@
+import { capability, isCapability } from './Capability.Catalog'
 import { EMode } from './enums/EMode.Enum'
 import { SANDBOX_NETWORK, sandboxLevelsOf } from './Sandbox.Policy'
 import { isSubscription, lanesOf, nativeFamily } from './Subscription.Policy'
@@ -129,6 +130,15 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
     for (const mode of agent.modes) if (!protocols.some((protocol) => lanesOf(protocol).includes(mode))) issue('modes', `${protocols.join(', ')} runs only in the agent lane`)
 
   for (const tool of agent.allowedTools) {
+    // Capacidade (`cap:terminal`…): basta existir — o que roda em cada provedor é decidido no turno (`Capability.Catalog`).
+    // ⛔ O perímetro do servidor (`LOCAL_TOOLS_ENABLED`) vale para ela: sem nenhuma das ferramentas do gateway que a
+    // implementam, a capacidade não está disponível.
+    if (isCapability(tool)) {
+      const item = capability(tool)
+      if (!item) issue('allowedTools', `unknown capability: ${tool}`)
+      else if (item.local.length && !item.local.some((local) => rules.knownTools.includes(local))) issue('allowedTools', `not available: ${item.label}`)
+      continue
+    }
     // ⚖️ MCP: o servidor tem de existir; a ferramenta, não — o servidor pode estar fora do ar ao salvar.
     // ⛔ Delegação: a outro agente que exista — nunca a si mesmo (a volta mais curta de uma recursão).
     if (isAgentToolRef(tool)) {

@@ -166,6 +166,16 @@ export interface IAgentInput {
 /** O sandbox do cliente agêntico (`Sandbox.Policy` no servidor). */
 export type TSandboxLevel = 'read-only' | 'workspace-write' | 'full'
 
+/** Uma capacidade do gateway (`cap:terminal`…): escolhida uma vez; `runs` diz o que roda em cada protocolo. */
+export interface ICapability {
+  id: string
+  label: string
+  description: string
+  risk: TNativeRisk
+  dangerous: boolean
+  runs: Record<string, string>
+}
+
 export interface ITool {
   name: string
   description: string

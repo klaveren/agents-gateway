@@ -20,10 +20,10 @@ describe('LocalTools', () => {
     return tool
   }
 
-  it('exposes exactly the two built-in tools', () => {
+  it('exposes exactly the built-in tools: web, terminal and the files', () => {
     assert.deepStrictEqual(
       toolsWith().map((tool) => tool.name),
-      ['search_web', 'run_bash'],
+      ['search_web', 'run_bash', 'read_file', 'list_files', 'search_files', 'write_file', 'edit_file'],
     )
   })
 

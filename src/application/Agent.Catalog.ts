@@ -1,3 +1,4 @@
+import { toCapabilities } from '@domain/Capability.Catalog'
 import { agentIssues, IAgentRules } from '@domain/Agent.Policy'
 import { AgentInUseError, AgentNotFoundError, InvalidAgentError } from '@domain/errors/Domain.Error'
 import { IAgent, IAgentTarget } from '@domain/models/Agent.Model'
@@ -103,7 +104,10 @@ export class AgentCatalog implements IAgentDirectory {
     return target.models.length > 0 && (this.runnable ? this.runnable(agent, target) : true)
   }
 
-  save(agent: IAgent, options: ISaveAgentOptions): IStoredAgent {
+  save(input: IAgent, options: ISaveAgentOptions): IStoredAgent {
+    // ⚖️ Os ids antigos (`run_bash`, `sdk:Read`…) viram a capacidade: quem salva pelo MCP ou pela API com o formato de
+    // antes continua funcionando, e o agente fica gravado do jeito novo.
+    const agent = { ...input, allowedTools: toCapabilities(input.allowedTools) }
     if (!options.creating && !this.repository.list().some((stored) => stored.id === agent.id)) throw new AgentNotFoundError(agent.id)
 
     // Na criação nenhum id existente serve; na atualização, o próprio é este.

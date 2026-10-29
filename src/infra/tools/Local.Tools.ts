@@ -9,6 +9,7 @@ import { USE_SKILL_TOOL } from '@domain/models/Resource.Model'
 import { IBuilderDraft } from '@domain/models/Protocol.Model'
 import { builderKindOf, PROPOSE_DRAFT_TOOL } from '@domain/Builder.Agents'
 import { ITodoItem, todoIssues, todoText, UPDATE_TODOS_TOOL } from '@domain/models/ConversationTodo.Model'
+import { makeFileTools } from './File.Tools'
 import { ILocalTool, IToolResult } from './Tool.Types'
 
 export interface IExecOptions {
@@ -159,6 +160,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
         }
       },
     },
+    // Os arquivos na MESMA pasta do `run_bash`: a do projeto, ou a da conversa (ou o `BASH_CWD`).
+    ...makeFileTools({ rootFor: (context) => (context?.projectId ? workspaceFor(context.projectId, '') : policy.cwd || workspaceFor(undefined, context?.sessionId ?? 'files')) }),
     ...(deps.docs ? [readDocTool(deps.docs)] : []),
     ...(deps.docs?.searchDocs ? [searchDocsTool(deps.docs)] : []),
     ...(deps.skills ? [useSkillTool(deps.skills)] : []),

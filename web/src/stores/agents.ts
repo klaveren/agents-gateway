@@ -1,12 +1,13 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api } from '@/lib/api'
-import type { IAgent, IAgentDetail, IAgentInput, INativeTool, ITool } from '@/lib/types'
+import type { IAgent, IAgentDetail, IAgentInput, ICapability, INativeTool, ITool } from '@/lib/types'
 import { useProjectsStore } from './projects'
 
 export const useAgentsStore = defineStore('agents', () => {
   const list = ref<IAgent[]>([])
   const tools = ref<ITool[]>([])
+  const capabilities = ref<ICapability[]>([])
   const nativeTools = ref<INativeTool[]>([])
   const mcpConnected = ref(false)
   /** Limites do servidor que a tela cita em texto (`GET /tools`). */
@@ -25,8 +26,11 @@ export const useAgentsStore = defineStore('agents', () => {
   }
 
   async function loadTools(): Promise<void> {
-    const result = await api<{ mcp: { connected: boolean }; tools: ITool[]; native?: INativeTool[]; limits?: { delegationMaxDepth: number } }>('/tools')
+    const result = await api<{ mcp: { connected: boolean }; tools: ITool[]; capabilities?: ICapability[]; native?: INativeTool[]; limits?: { delegationMaxDepth: number } }>(
+      '/tools',
+    )
     tools.value = result.tools
+    capabilities.value = result.capabilities ?? []
     nativeTools.value = result.native ?? []
     mcpConnected.value = result.mcp.connected
     if (result.limits) limits.value = result.limits
@@ -59,5 +63,5 @@ export const useAgentsStore = defineStore('agents', () => {
     return nativeTools.value.find((tool) => tool.sdkName === name || tool.sdkName === base)?.label ?? name
   }
 
-  return { list, conversable, tools, nativeTools, mcpConnected, limits, toolsLoaded, toolLabel, loaded, byId, load, loadTools, detail, save, remove }
+  return { list, conversable, tools, capabilities, nativeTools, mcpConnected, limits, toolsLoaded, toolLabel, loaded, byId, load, loadTools, detail, save, remove }
 })

@@ -1,3 +1,4 @@
+import { capability } from './Capability.Catalog'
 import { nativeTool } from './Native.Tools'
 
 /**
@@ -8,5 +9,5 @@ import { nativeTool } from './Native.Tools'
 export const DANGEROUS_LOCAL_TOOLS: readonly string[] = ['run_bash']
 
 export function dangerousToolsOf(allowedTools: readonly string[]): string[] {
-  return allowedTools.filter((tool) => DANGEROUS_LOCAL_TOOLS.includes(tool) || !!nativeTool(tool)?.risk.startsWith('server-'))
+  return allowedTools.filter((tool) => DANGEROUS_LOCAL_TOOLS.includes(tool) || !!nativeTool(tool)?.risk.startsWith('server-') || !!capability(tool)?.risk.startsWith('server-'))
 }

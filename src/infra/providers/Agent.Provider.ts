@@ -1,4 +1,5 @@
 import { offers, targetFor } from '@domain/Agent.Policy'
+import { resolveCapabilities } from '@domain/Capability.Catalog'
 import { HANDOFF_MAX_CHARS, handoffText } from '@domain/Handoff.Policy'
 import { resolveSessionMode } from '@domain/Session.Policy'
 import { EMode } from '@domain/enums/EMode.Enum'
@@ -143,7 +144,7 @@ export class AgentProvider implements IAgentProvider {
     const { adminAccess: _access, delegated: _delegated, parentSessionId: _parent, environment: _environment, ...rest } = input
     // ⚖️ O projeto da CONVERSA (o controller o carimba), não o do agente: o Atlas no XPTO recebe as do XPTO.
     const environment = this.guidance?.environmentFor(projectOf(input.metadata), agent.id)
-    const created = await this.getAdapter(protocol, mode).createSession(this.withDocs(agent, projectOf(input.metadata)), {
+    const created = await this.getAdapter(protocol, mode).createSession(this.prepare(agent, projectOf(input.metadata), choice.provider, protocol, mode).agent, {
       ...rest,
       ...(environment ? { environment } : {}),
       agentId: agent.id,
@@ -167,7 +168,7 @@ export class AgentProvider implements IAgentProvider {
   async *sendMessage(sessionId: string, input: IMessageInput): AsyncIterable<IAgentEvent> {
     const record = this.requireSession(sessionId)
     const conversationProject = projectOf(record.metadata)
-    const agent = this.withDocs(this.getAgent(record.agentId), conversationProject)
+    const { agent, unavailable } = this.prepare(this.getAgent(record.agentId), conversationProject, record.provider, record.protocol, record.mode)
     // ⛔ O modelo da conversa foi desativado (ou sumiu do provider) depois que ela começou: erro claro, em
     // vez de seguir usando um modelo que quem administra tirou. `agent.models` já vem só com os utilizáveis.
     if (record.model && !offers(agent, record.provider, record.model)) throw new ModelDisabledError(record.provider, record.model)
@@ -198,6 +199,10 @@ export class AgentProvider implements IAgentProvider {
         ...(conversationProject ? { conversationProjectId: conversationProject } : {}),
       }
 
+      // O que o agente tem e não roda neste provedor: avisa no primeiro turno e quando a conversa troca de provedor.
+      if (unavailable.length && (record.turns === 1 || handoff))
+        yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: `Indisponível em ${record.provider}: ${unavailable.join(', ')}.` } }
+
       for await (const event of adapter.sendMessage(agent, sessionId, sent, context)) {
         // Somar o usage aqui vale para as seis implementações de uma vez.
         if (event.type === 'usage') this.sessions.addUsage(record, event.payload)
@@ -223,6 +228,16 @@ export class AgentProvider implements IAgentProvider {
         }
       }
     }
+  }
+
+  /**
+   * O agente como o adapter o recebe: com as ferramentas implícitas (`withDocs`) e as CAPACIDADES (`cap:`) já trocadas
+   * pelo que roda neste provedor e modo (`Capability.Catalog`). Os adapters nunca veem `cap:`.
+   */
+  private prepare(agent: IAgent, projectId: string | undefined, providerId: string, protocol: EProvider, mode: EMode): { agent: IAgent; unavailable: string[] } {
+    const official = this.providers?.get(providerId)?.official ?? Object.values(EProvider).includes(providerId as EProvider)
+    const { allowedTools, unavailable } = resolveCapabilities(this.withDocs(agent, projectId).allowedTools, { protocol, official, mode })
+    return { agent: { ...agent, allowedTools }, unavailable }
   }
 
   /**

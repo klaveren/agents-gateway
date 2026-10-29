@@ -9,6 +9,7 @@ import {
 } from './Agent.Seed'
 import { IAgent } from './models/Agent.Model'
 import { UPDATE_TODOS_TOOL } from './models/ConversationTodo.Model'
+import { toCapabilities } from './Capability.Catalog'
 
 /** A nativa que saiu do catálogo (a lista de tarefas agora é do gateway). */
 export const RETIRED_TODO_NATIVE = 'sdk:TodoWrite'
@@ -72,6 +73,16 @@ export const AGENT_MIGRATIONS: readonly IAgentMigration[] = [
       if (!agent.allowedTools.includes(RETIRED_TODO_NATIVE)) return undefined
       const tools = agent.allowedTools.filter((tool) => tool !== RETIRED_TODO_NATIVE)
       return { ...agent, allowedTools: tools.includes(UPDATE_TODOS_TOOL) ? tools : [...tools, UPDATE_TODOS_TOOL] }
+    },
+  },
+  {
+    // As CAPACIDADES: os ids de antes (`run_bash`, `sdk:Read`, `search_web`…) viram `cap:`. O Bash nativo do Claude vira o
+    // Terminal do gateway (o `run_bash`, com a trava); o resto roda como antes, decidido no turno.
+    key: 'capabilities',
+    agentIds: '*',
+    change: (agent) => {
+      const allowedTools = toCapabilities(agent.allowedTools)
+      return allowedTools.length === agent.allowedTools.length && allowedTools.every((tool, index) => tool === agent.allowedTools[index]) ? undefined : { ...agent, allowedTools }
     },
   },
 ]
