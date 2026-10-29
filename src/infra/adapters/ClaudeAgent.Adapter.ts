@@ -1,13 +1,15 @@
 import { sessionChoice } from '@domain/Agent.Policy'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readdirSync } from 'node:fs'
-import { isAbsolute, join, resolve } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import { nativeToolsOf } from '@domain/Native.Tools'
 import { IConnectionSource, requireConnection, UnavailableProviderError } from './support/Keyed.Client'
 import { dataDir, workspaceFor, subscriptionEnv } from './support/Subscription.Workspace'
 import { query, type CanUseTool, type EffortLevel, type Options, type HookCallback, type PermissionResult, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { IProjectSandbox, PATH_FIELDS, projectPathIssue, projectSandbox } from '@infra/sandbox/Project.Sandbox'
-import { deniedPath } from '@infra/tools/File.Tools'
+import { deniedPath, realOf } from '@infra/tools/File.Tools'
+import { askerOf } from '@infra/tools/Local.Tools'
+import type { IPermissionChecker } from '@application/Permissions.Service'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { reasoningLevel } from '@domain/Reasoning.Levels'
@@ -49,6 +51,8 @@ export interface IClaudeAgentAdapterDeps {
   connections?: IConnectionSource
   store?: SessionStore
   catalog?: ToolCatalog
+  /** As permissões dos agentes: o portão confere as regras de leitura e escrita nas nativas de arquivo. */
+  permissions?: IPermissionChecker
   /**
    * Pela ASSINATURA (Claude Pro/Max), protocolo `claude-sub`: nenhuma chave de API vai ao CLI, que usa o
    * login do host — ou o `CLAUDE_CODE_OAUTH_TOKEN` (de `claude setup-token`) salvo no lugar da chave.
@@ -71,6 +75,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
   private readonly store: SessionStore
   private readonly catalog?: ToolCatalog
   private readonly sandbox: IProjectSandbox
+  private readonly permissions?: IPermissionChecker
 
   private readonly connections?: IConnectionSource
   private readonly protocol: EProvider
@@ -82,6 +87,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     this.store = deps.store ?? new SessionStore()
     this.catalog = deps.catalog
     this.sandbox = deps.sandbox ?? projectSandbox()
+    this.permissions = deps.permissions
   }
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
@@ -147,7 +153,10 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     const remotes = (await this.catalog?.mcpServersFor(agent.allowedTools, context)) ?? []
 
     const project = agent.projectId ? { projectId: agent.projectId, dir: workspaceFor(agent.projectId, sessionId) } : undefined
-    const gate = this.makeGate([...agent.allowedTools, ...natives, ...local.map((tool) => tool.name)], remotes, project)
+    const gate = this.makeGate([...agent.allowedTools, ...natives, ...local.map((tool) => tool.name)], remotes, project, {
+      asker: askerOf(context),
+      cwd: workspaceFor(agent.projectId, sessionId),
+    })
     const options: Options = {
       model: record.model,
       systemPrompt: record.systemPrompt,
@@ -363,7 +372,12 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
    * ⛔ O portão: tool local ou nativa só se o agente a tem; de servidor MCP, só as escolhidas nele (ou
    * todas, com `mcp:<id>/*`). Servidor que o agente não escolheu nem é montado.
    */
-  private makeGate(allowed: string[], remotes: readonly IAgentMcpServer[] = [], project?: { projectId: string; dir: string }): CanUseTool {
+  private makeGate(
+    allowed: string[],
+    remotes: readonly IAgentMcpServer[] = [],
+    project?: { projectId: string; dir: string },
+    who?: { asker: ReturnType<typeof askerOf>; cwd: string },
+  ): CanUseTool {
     const byServer = new Map(remotes.map((remote) => [claudeMcpServerName(remote.config.id), remote]))
     // Os comandos que ESTE portão já embrulhou: o hook e o `canUseTool` podem passar pelo mesmo Bash, e um
     // cerco dentro do outro falharia. ⛔ Pela linha exata, nunca por um marcador no texto (o modelo forjaria).
@@ -374,16 +388,39 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       const bare = this.bareToolName(toolName)
 
       const remote = isMcp ? byServer.get(server) : undefined
-      if (remote && (!remote.tools || remote.tools.includes(bare))) return { behavior: 'allow' }
+      if (remote && (!remote.tools || remote.tools.includes(bare))) {
+        // ⛔ De novo na chamada (mediação completa): a lista já veio filtrada, mas a regra é conferida e registrada aqui.
+        const verdict = who && this.permissions ? this.permissions.check(who.asker, { category: 'mcp', value: `${remote.config.id}/${bare}` }, { log: true }) : undefined
+        return verdict && !verdict.allowed ? { behavior: 'deny', message: `${bare}: ${verdict.reason}.` } : { behavior: 'allow' }
+      }
       if (!remote && allowed.includes(bare)) {
         // ⛔ Em qualquer agente, de projeto ou global: as nativas de arquivo nunca tocam .env, chaves nem os dados do gateway.
         const protectedPath = protectedPathOf(bare, input, project?.dir)
         if (protectedPath) return { behavior: 'deny', message: `${protectedPath}: este arquivo é protegido.` }
+        const refused = who && this.permissions ? this.fileRefusal(bare, input, who) : undefined
+        if (refused) return { behavior: 'deny', message: refused }
         return project ? this.confined(bare, input, project, wrapped) : { behavior: 'allow' }
       }
 
       return { behavior: 'deny', message: `Tool "${bare}" is not enabled for this agent.` }
     }
+  }
+
+  /** As regras de leitura e escrita (`Permission.Policy`) nas nativas de arquivo: o caminho canônico, relativo à pasta. */
+  private fileRefusal(bare: string, input: Record<string, unknown>, who: { asker: ReturnType<typeof askerOf>; cwd: string }): string | undefined {
+    const kind = bare === 'Read' ? 'read' : ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(bare) ? 'write' : undefined
+    if (!kind) return undefined
+    for (const field of PATH_FIELDS[bare] ?? []) {
+      const value = input[field]
+      if (typeof value !== 'string' || !value) continue
+      const root = realOf(who.cwd)
+      const target = realOf(resolve(who.cwd, value))
+      const inside = relative(root, target)
+      const path = inside && !inside.startsWith('..') && !isAbsolute(inside) ? inside : target
+      const verdict = this.permissions!.check(who.asker, { category: kind, value: path }, { log: true })
+      if (!verdict.allowed) return `${bare}: ${verdict.reason}.`
+    }
+    return undefined
   }
 
   /**

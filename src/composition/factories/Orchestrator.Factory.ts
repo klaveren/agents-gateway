@@ -1,3 +1,4 @@
+import { makePermissions } from './Permissions.Factory'
 import { makeGuidance } from './Guidance.Factory'
 import { setTracingDisabled } from '@openai/agents'
 import { EMode } from '@domain/enums/EMode.Enum'
@@ -50,11 +51,11 @@ export function makeOrchestrator(): AgentProvider {
     [adapterKey(EProvider.CLAUDE, EMode.CHAT), new ClaudeChatAdapter({ store: sessions, catalog, connections })],
     [adapterKey(EProvider.OPENAI, EMode.CHAT), new OpenAIChatAdapter({ store: sessions, catalog, connections })],
     [adapterKey(EProvider.GOOGLE, EMode.CHAT), new GoogleChatAdapter({ store: sessions, catalog, connections })],
-    [adapterKey(EProvider.CLAUDE, EMode.AGENT), new ClaudeAgentAdapter({ store: sessions, catalog, connections })],
+    [adapterKey(EProvider.CLAUDE, EMode.AGENT), new ClaudeAgentAdapter({ store: sessions, catalog, connections, permissions: makePermissions() })],
     [adapterKey(EProvider.OPENAI, EMode.AGENT), new OpenAIAgentAdapter({ store: sessions, catalog, connections })],
     [adapterKey(EProvider.GOOGLE, EMode.AGENT), new GoogleAgentAdapter({ store: sessions, catalog, connections })],
     // As assinaturas: só a lane agent (ver `Subscription.Policy`).
-    [adapterKey(EProvider.CLAUDE_SUB, EMode.AGENT), new ClaudeAgentAdapter({ store: sessions, catalog, connections, subscription: true })],
+    [adapterKey(EProvider.CLAUDE_SUB, EMode.AGENT), new ClaudeAgentAdapter({ store: sessions, catalog, connections, subscription: true, permissions: makePermissions() })],
     [adapterKey(EProvider.CODEX, EMode.AGENT), new CodexAgentAdapter({ store: sessions, catalog, connections })],
     [adapterKey(EProvider.ANTIGRAVITY, EMode.AGENT), new AntigravityAgentAdapter({ store: sessions, connections })],
   ])

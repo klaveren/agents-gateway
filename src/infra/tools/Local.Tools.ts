@@ -1,3 +1,5 @@
+import type { IPermissionChecker } from '@application/Permissions.Service'
+import type { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
 import { bashPolicy, denyReason, truncate, type IBashPolicy } from './Bash.Guard'
@@ -57,6 +59,14 @@ export interface ILocalToolDeps {
   drafts?: IDraftChecker
   /** Onde fica a lista de tarefas da conversa (o repositório de conversas). Ausente = sem `update_todos`. */
   todos?: ITodoStore
+  /** As permissões dos agentes (ver `Permission.Policy`). Ausente = sem regras (só as travas fixas valem). */
+  permissions?: IPermissionChecker
+}
+
+/** Quem pede, a partir do contexto do turno: o agente e o projeto da CONVERSA. */
+export function askerOf(context: IExecutionContext | undefined) {
+  const projectId = context?.conversationProjectId ?? context?.projectId
+  return { ...(context?.agentId ? { agentId: context.agentId } : {}), ...(projectId ? { projectId } : {}), ...(context?.sessionId ? { sessionId: context.sessionId } : {}) }
 }
 
 export interface ITodoStore {
@@ -161,10 +171,20 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       },
     },
     // Os arquivos na MESMA pasta do `run_bash`: a do projeto, ou a da conversa (ou o `BASH_CWD`).
-    ...makeFileTools({ rootFor: (context) => (context?.projectId ? workspaceFor(context.projectId, '') : policy.cwd || workspaceFor(undefined, context?.sessionId ?? 'files')) }),
+    ...makeFileTools({
+      rootFor: (context) => (context?.projectId ? workspaceFor(context.projectId, '') : policy.cwd || workspaceFor(undefined, context?.sessionId ?? 'files')),
+      ...(deps.permissions
+        ? {
+            access: (context, kind, path, log) => {
+              const verdict = deps.permissions!.check(askerOf(context), { category: kind, value: path }, { log })
+              return verdict.allowed ? undefined : verdict.reason
+            },
+          }
+        : {}),
+    }),
     ...(deps.docs ? [readDocTool(deps.docs)] : []),
     ...(deps.docs?.searchDocs ? [searchDocsTool(deps.docs)] : []),
-    ...(deps.skills ? [useSkillTool(deps.skills)] : []),
+    ...(deps.skills ? [useSkillTool(deps.skills, deps.permissions)] : []),
     ...(deps.drafts ? [proposeDraftTool(deps.drafts)] : []),
     ...(deps.todos?.saveTodos ? [updateTodosTool(deps.todos)] : []),
   ]
@@ -298,7 +318,7 @@ function proposeDraftTool(drafts: IDraftChecker): ILocalTool {
  * `use_skill`: a skill inteira (e os documentos anexados a ela), das que o índice "## Skills" do prompt lista.
  * ⛔ Só uma skill liberada a ESTE agente (o `agentId` do contexto); outra responde como inexistente.
  */
-function useSkillTool(skills: ISkillLoader): ILocalTool {
+function useSkillTool(skills: ISkillLoader, permissions?: IPermissionChecker): ILocalTool {
   return {
     origin: 'local',
     name: USE_SKILL_TOOL,
@@ -312,6 +332,8 @@ function useSkillTool(skills: ISkillLoader): ILocalTool {
     },
     execute: async (args, context) => {
       const id = typeof args.id === 'string' ? args.id.trim() : ''
+      const verdict = id ? permissions?.check(askerOf(context), { category: 'skill', value: id }, { log: true }) : undefined
+      if (verdict && !verdict.allowed) return { status: 'error', result: `Not permitted: ${verdict.reason}` }
       const skill = id ? skills.loadSkill(id, context?.agentId) : undefined
       if (!skill) return { status: 'error', result: `Skill not found: ${id || '(no id)'}` }
       return { status: 'success', result: skill }

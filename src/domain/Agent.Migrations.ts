@@ -1,4 +1,6 @@
 import {
+  ATLAS_ADMIN_PERMISSIONS,
+  ATLAS_PERMISSIONS,
   ATLAS_SCHEDULES_SECTION,
   ATLAS_AGENT_LINE,
   ATLAS_BUILDERS_SECTION,
@@ -74,6 +76,13 @@ export const AGENT_MIGRATIONS: readonly IAgentMigration[] = [
       const tools = agent.allowedTools.filter((tool) => tool !== RETIRED_TODO_NATIVE)
       return { ...agent, allowedTools: tools.includes(UPDATE_TODOS_TOOL) ? tools : [...tools, UPDATE_TODOS_TOOL] }
     },
+  },
+  {
+    // As PERMISSÕES chegaram com "sem regra = negar": o Atlas que já existe ganha as regras de que precisa para gerir o
+    // gateway (as ferramentas dele e a delegação aos construtores). Quem já tem regras fica como está.
+    key: 'permissions-atlas',
+    agentIds: ['atlas', 'atlas-admin'],
+    change: (agent) => (agent.permissions?.length ? undefined : { ...agent, permissions: agent.id === 'atlas-admin' ? ATLAS_ADMIN_PERMISSIONS : ATLAS_PERMISSIONS }),
   },
   {
     // As CAPACIDADES: os ids de antes (`run_bash`, `sdk:Read`, `search_web`…) viram `cap:`. O Bash nativo do Claude vira o

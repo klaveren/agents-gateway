@@ -140,6 +140,7 @@ export interface IAgent {
 export interface IAgentDetail extends IAgent {
   /** Quem o agente é (personalidade). */
   soul?: string
+  permissions?: IPermissionRule[]
   systemPrompt: string
   updatedAt?: string
   updatedBy?: string
@@ -161,6 +162,38 @@ export interface IAgentInput {
   adminOnly?: boolean
   /** `null` = global. */
   projectId?: string | null
+  /** As regras de permissão do agente (a camada dele, por cima das do projeto). */
+  permissions?: IPermissionRule[]
+}
+
+export type TPermissionCategory = 'terminal' | 'read' | 'write' | 'network' | 'mcp' | 'skill' | 'delegate'
+
+/** Uma regra de permissão: o padrão, Permitir ou Negar, e uma nota. */
+export interface IPermissionRule {
+  category: TPermissionCategory
+  pattern: string
+  decision: 'allow' | 'deny'
+  note?: string
+}
+
+/** O que decidiu um pedido (o testador e as últimas decisões). */
+export interface IPermissionPart {
+  category: TPermissionCategory
+  value: string
+  allowed: boolean
+  layer: 'system' | 'agent' | 'project' | 'default'
+  reason: string
+}
+
+export interface IPermissionDecision {
+  at: string
+  agentId?: string
+  sessionId?: string
+  category: TPermissionCategory
+  subject: string
+  allowed: boolean
+  layer: IPermissionPart['layer']
+  pattern?: string
 }
 
 /** O sandbox do cliente agêntico (`Sandbox.Policy` no servidor). */

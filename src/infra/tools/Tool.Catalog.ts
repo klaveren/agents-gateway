@@ -4,6 +4,9 @@ import { IMcpServerConfig, isLaunchedMcp, MCP_ALL_TOOLS, mcpSelection, parseMcpT
 import { McpRegistry } from '@infra/mcp/Mcp.Registry'
 import { delegatesOf } from '@domain/models/Delegation.Model'
 import { ILocalTool, IToolDefinition, IToolResult } from './Tool.Types'
+import type { IPermissionChecker } from '@application/Permissions.Service'
+import type { IPermissionVerdict } from '@domain/Permission.Policy'
+import { askerOf } from './Local.Tools'
 
 /** Quem executa uma ferramenta pelo nome com que o modelo a pediu. */
 export interface IToolInvoker {
@@ -54,7 +57,15 @@ export class ToolCatalog {
      * contêiner — eles nunca falam com o Docker. Ausente = contêiner só nas lanes que usam a caixa.
      */
     private readonly containerProxy?: { base: string },
+    /** As permissões dos agentes: ferramenta de MCP negada nem aparece para o modelo, e a chamada é recusada de novo. */
+    private readonly permissions?: IPermissionChecker,
   ) {}
+
+  /** A ferramenta `servidor/ferramenta` pode ser usada por quem pede? Sem permissões configuradas, pode. */
+  private mcpAllowed(server: string, tool: string, context: IExecutionContext | undefined, log = false): IPermissionVerdict | undefined {
+    if (!this.permissions) return undefined
+    return this.permissions.check(askerOf(context), { category: 'mcp', value: `${server}/${tool}` }, { log })
+  }
 
   /** Algum servidor MCP ligado está conectado agora (para health e relatório). */
   get mcpConnected(): boolean {
@@ -94,7 +105,7 @@ export class ToolCatalog {
       // Contêiner: a instância DESTA conversa (o `sessionId` do contexto); sem conversa, não há instância.
       // A credencial de quem conversa: um MCP `caller` (o do próprio gateway) recusa até a listagem sem ela.
       const tools = await this.mcp.tools(server, context?.sessionId, context?.token).catch(() => [])
-      for (const tool of tools) if (choice.all || choice.tools.has(tool.name)) remote.push({ server, tool })
+      for (const tool of tools) if ((choice.all || choice.tools.has(tool.name)) && this.mcpAllowed(server, tool.name, context)?.allowed !== false) remote.push({ server, tool })
     }
 
     const counts = new Map<string, number>()
@@ -113,6 +124,9 @@ export class ToolCatalog {
         if (own) return own.execute(args, context)
         const route = routes.get(name)
         if (!route) return { status: 'error', result: `Tool not available to this agent: ${name}` }
+        // ⛔ De novo na chamada: o modelo pode chamar um nome que não estava na lista.
+        const verdict = this.mcpAllowed(route.server, route.tool, context, true)
+        if (verdict && !verdict.allowed) return { status: 'error', result: `Not permitted: ${verdict.reason}` }
         return this.callMcp(route.server, route.tool, args, context)
       },
     }
@@ -122,6 +136,19 @@ export class ToolCatalog {
   private viaProxy(config: IMcpServerConfig): IMcpServerConfig | undefined {
     if (!this.containerProxy) return undefined
     return { ...config, kind: 'remote', url: `${this.containerProxy.base}/${config.id}`, transport: 'http', auth: 'caller', headerName: 'X-Tool-Authorization' }
+  }
+
+  /**
+   * O que o SDK que conecta por conta própria pode usar do servidor: a escolha do agente MENOS o que as permissões negam
+   * (`tools` ausente = todas). ⛔ Com permissões e sem conseguir listar o servidor, nenhuma: falha fechada.
+   */
+  private async visibleOf(id: string, choice: { all: boolean; tools: ReadonlySet<string> }, context?: IExecutionContext): Promise<{ tools?: string[]; hidden: string[] }> {
+    if (!this.permissions) return choice.all ? { hidden: [] } : { tools: [...choice.tools], hidden: await this.hiddenOf(id, choice.tools, context) }
+    const listed = await this.mcp.tools(id, context?.sessionId, context?.token).catch(() => undefined)
+    if (!listed) return { tools: [], hidden: [] }
+    const names = listed.map((tool) => tool.name)
+    const tools = names.filter((name) => (choice.all || choice.tools.has(name)) && this.mcpAllowed(id, name, context)?.allowed !== false)
+    return { tools, hidden: names.filter((name) => !tools.includes(name)) }
   }
 
   /** As ferramentas do servidor que ficaram fora da escolha. Sem conseguir listar, nenhuma (o portão segue recusando). */
@@ -138,10 +165,10 @@ export class ToolCatalog {
       if (stored && isLaunchedMcp(stored)) {
         const proxied = stored.enabled && context?.sessionId ? this.viaProxy(stored) : undefined
         if (!proxied || !context?.sessionId) continue
-        const hidden = choice.all ? [] : await this.hiddenOf(id, choice.tools, context)
+        const { tools, hidden } = await this.visibleOf(id, choice, context)
         servers.push({
           config: proxied,
-          ...(choice.all ? {} : { tools: [...choice.tools] }),
+          ...(tools ? { tools } : {}),
           ...(hidden.length ? { hidden } : {}),
           callerHeader: 'X-Tool-Authorization',
           fixed: { 'X-Gateway-Session': context.sessionId },
@@ -152,10 +179,10 @@ export class ToolCatalog {
       const config = stored
       if (!client || !config) continue
       const fixed = this.mcp.fixedHeaders(config)
-      const hidden = choice.all ? [] : await this.hiddenOf(id, choice.tools, context)
+      const { tools, hidden } = await this.visibleOf(id, choice, context)
       servers.push({
         config,
-        ...(choice.all ? {} : { tools: [...choice.tools] }),
+        ...(tools ? { tools } : {}),
         ...(hidden.length ? { hidden } : {}),
         ...(config.auth === 'header' ? { header: this.mcp.header(id) } : {}),
         ...(config.auth === 'caller' && config.headerName ? { callerHeader: config.headerName } : {}),

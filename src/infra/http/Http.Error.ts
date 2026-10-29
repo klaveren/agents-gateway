@@ -15,6 +15,7 @@ import {
   InvalidHookError,
   HookNotFoundError,
   InvalidScheduleError,
+  InvalidPermissionsError,
   ScheduleNotFoundError,
   McpServerNotFoundError,
   McpServerInUseError,
@@ -175,6 +176,10 @@ export function toHttpFailure(error: unknown): IHttpFailure {
 
   if (error instanceof InvalidScheduleError) {
     return { status: 422, code: 'validation_error', message: 'Schedule is invalid', details: error.issues }
+  }
+
+  if (error instanceof InvalidPermissionsError) {
+    return { status: 422, code: 'validation_error', message: 'Permissions are invalid', details: error.issues }
   }
 
   if (error instanceof ScheduleNotFoundError) {

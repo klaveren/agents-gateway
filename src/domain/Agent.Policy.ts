@@ -1,3 +1,4 @@
+import { permissionIssues } from './Permission.Policy'
 import { capability, isCapability } from './Capability.Catalog'
 import { EMode } from './enums/EMode.Enum'
 import { SANDBOX_NETWORK, sandboxLevelsOf } from './Sandbox.Policy'
@@ -71,6 +72,7 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
   const issues: IAgentIssue[] = []
   const issue = (field: string, message: string) => issues.push({ field, message })
 
+  for (const item of permissionIssues(agent.permissions)) issue(item.field, item.message)
   if (!AGENT_ID_PATTERN.test(agent.id)) issue('id', 'use 2–48 lowercase letters, digits or hyphens')
   else if (rules.takenIds.includes(agent.id)) issue('id', `already exists: ${agent.id}`)
 

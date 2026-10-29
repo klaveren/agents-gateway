@@ -129,4 +129,23 @@ describe('File.Tools', () => {
     assert.equal(out.status, 'error')
     assert.match(out.result, /binary/)
   })
+
+  it('⛔ as permissões valem por arquivo: leitura negada recusa, a listagem e a busca escondem; escrita só onde a regra deixa', async () => {
+    const decide = (kind: 'read' | 'write', path: string) =>
+      kind === 'read' ? (path.startsWith('src/') || path === 'src' || path === '.' ? undefined : 'negado') : path.startsWith('src/') ? undefined : 'negado'
+    const asked: string[] = []
+    const guarded = makeFileTools({ rootFor: () => dir, access: (_context, kind, path, log) => (log && asked.push(`${kind}:${path}`), decide(kind, path)) })
+    const call = (name: string, args: Record<string, unknown>) => guarded.find((tool) => tool.name === name)!.execute(args)
+
+    assert.match((await call('read_file', { path: 'a.txt' })).result, /Not permitted: negado/)
+    assert.strictEqual((await call('read_file', { path: 'src/b.ts' })).status, 'success')
+    const listed = (await call('list_files', { pattern: '**/*' })).result
+    assert.ok(listed.includes('src/b.ts') && !listed.includes('a.txt'), listed)
+    const found = (await call('search_files', { pattern: 'foo|one' })).result
+    assert.ok(found.includes('src/b.ts') && !found.includes('a.txt'), found)
+    assert.match((await call('write_file', { path: 'novo.txt', content: 'x' })).result, /Not permitted/)
+    assert.strictEqual((await call('write_file', { path: 'src/novo.txt', content: 'x' })).status, 'success')
+    // Só o arquivo pedido é registrado, não cada item de uma listagem.
+    assert.deepStrictEqual(asked, ['read:a.txt', 'read:src/b.ts', 'write:novo.txt', 'write:src/novo.txt'])
+  })
 })

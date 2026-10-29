@@ -533,7 +533,10 @@ export class AgentController {
       async () => {
         const admin = await this.requireAdmin('updateAgent')
         const body = parseBody(agentBodySchema, req.body)
-        const input = toAgentInput(req.params.agentId as string, body)
+        const parsed = toAgentInput(req.params.agentId as string, body)
+        // ⚖️ Quem edita sem mandar as permissões (o MCP, um script) não as apaga: ficam as que o agente já tem.
+        const current = body.permissions === undefined ? this.agents.get(parsed.id)?.permissions : undefined
+        const input = current ? { ...parsed, permissions: current } : parsed
         const issues = this.projectIssues(input)
         if (issues.length) throw new HttpError(422, 'validation_error', 'Request body is invalid', issues)
 
@@ -1346,6 +1349,7 @@ function toAgentInput(id: string, body: TAgentBody): IAgent {
     ...(body.role ? { role: body.role } : {}),
     ...(body.adminOnly ? { adminOnly: true } : {}),
     ...(body.projectId ? { projectId: body.projectId } : {}),
+    ...(body.permissions ? { permissions: body.permissions } : {}),
   }
 }
 

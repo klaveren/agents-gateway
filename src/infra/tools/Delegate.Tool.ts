@@ -1,6 +1,8 @@
 import { DelegationService } from '@application/Delegation.Service'
 import { DELEGATE_TOOL_NAME } from '@domain/models/Delegation.Model'
 import { ILocalTool } from './Tool.Types'
+import type { IPermissionChecker } from '@application/Permissions.Service'
+import { askerOf } from './Local.Tools'
 
 /**
  * Onde a ferramenta encontra o serviço de delegação. ⚖️ PREENCHIDO DEPOIS: o serviço precisa do provider
@@ -20,7 +22,7 @@ export class DelegationSlot {
 }
 
 /** A ferramenta `delegate_to_agent` de UM agente: o `agentId` só aceita os que ele pode chamar. */
-export function makeDelegateTool(allowed: readonly string[], slot: DelegationSlot): ILocalTool {
+export function makeDelegateTool(allowed: readonly string[], slot: DelegationSlot, permissions?: IPermissionChecker): ILocalTool {
   return {
     origin: 'local',
     name: DELEGATE_TOOL_NAME,
@@ -39,6 +41,9 @@ export function makeDelegateTool(allowed: readonly string[], slot: DelegationSlo
     async execute(args, context) {
       const service = slot.get()
       if (!service) return { status: 'error', result: 'delegation is not available in this process' }
+      // ⛔ A regra de delegação do projeto e do agente (ver `Permission.Policy`), na hora de delegar.
+      const verdict = permissions?.check(askerOf(context), { category: 'delegate', value: String(args.agentId ?? '') }, { log: true })
+      if (verdict && !verdict.allowed) return { status: 'error', result: `Not permitted: ${verdict.reason}` }
       const outcome = await service.delegate(
         {
           allowed,

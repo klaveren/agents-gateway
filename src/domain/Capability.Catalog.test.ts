@@ -13,8 +13,8 @@ describe('Capability.Catalog', () => {
     assert.deepStrictEqual(allowedTools, [
       'run_bash',
       'sdk:Read',
-      'sdk:Glob',
-      'sdk:Grep',
+      'list_files',
+      'search_files',
       'sdk:Write',
       'sdk:Edit',
       'sdk:WebSearch',
@@ -60,7 +60,7 @@ describe('Capability.Catalog', () => {
   })
 
   it('a tela diz como roda; os ids antigos viram capacidade sem repetir', () => {
-    assert.strictEqual(capabilityRuns(capability('cap:files.read')!, EProvider.CLAUDE_SUB), 'nativa do Claude')
+    assert.strictEqual(capabilityRuns(capability('cap:files.read')!, EProvider.CLAUDE_SUB), 'Read do Claude, busca do gateway')
     assert.strictEqual(capabilityRuns(capability('cap:files.read')!, EProvider.GOOGLE), 'do gateway')
     assert.strictEqual(capabilityRuns(capability('cap:web.fetch')!, EProvider.OPENAI), 'indisponível')
     assert.deepStrictEqual(toCapabilities(['sdk:Bash', 'run_bash', 'sdk:Read', 'sdk:Grep', 'sdk:openai:code_interpreter', 'update_todos']), [

@@ -11,6 +11,7 @@ defineProps<{ placement: 'side' | 'up'; active?: string }>()
 const ITEMS: IRailMenuItem[] = [
   { to: '/environment', key: 'environment', label: 'Ambiente', hint: 'O que toda conversa do projeto recebe', icon: 'folder' },
   { to: '/rules', key: 'rules', label: 'Rules', hint: 'Regras que todo agente respeita', icon: 'rule' },
+  { to: '/permissions', key: 'permissions', label: 'Permissões', hint: 'O que os agentes podem fazer: comandos, arquivos, MCP', icon: 'key' },
   { to: '/schedules', key: 'schedules', label: 'Agendamentos', hint: 'O que os agentes rodam sozinhos, e quando', icon: 'clock' },
 ]
 </script>

@@ -300,6 +300,12 @@ export class InvalidScheduleError extends DomainError {
   }
 }
 
+export class InvalidPermissionsError extends DomainError {
+  constructor(public readonly issues: Array<{ field: string; message: string }>) {
+    super(`Permissions are invalid: ${issues.map((issue) => `${issue.field} (${issue.message})`).join('; ')}`)
+  }
+}
+
 export class ScheduleNotFoundError extends DomainError {
   constructor(
     public readonly agentId: string,
