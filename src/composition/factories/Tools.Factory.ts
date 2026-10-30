@@ -67,7 +67,7 @@ export function makeTools(): ITools {
         mcp,
         makeLocalTools({
           docs: makeGuidance(),
-          skills: makeGuidance(),
+          resources: makeGuidance(),
           drafts: makeGuidance(),
           todos: todoStore(),
           permissions: lazyPermissions,

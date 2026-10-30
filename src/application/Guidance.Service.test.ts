@@ -249,8 +249,9 @@ describe('GuidanceService', () => {
   })
 
   describe('skills e commands', () => {
-    const agents: Record<string, { id: string; projectId?: string }> = {
+    const agents: Record<string, { id: string; projectId?: string; triggers?: Array<{ id: string; when: string; body: string }> }> = {
       dev: { id: 'dev', projectId: 'xpto' },
+      maya: { id: 'maya', projectId: 'xpto', triggers: [{ id: 'morning-brief', when: 'a pessoa diz bom dia', body: 'Devolva o briefing em bullets.' }] },
       resumo: { id: 'resumo', projectId: 'xpto' },
       atlas: { id: 'atlas' },
     }
@@ -304,14 +305,28 @@ describe('GuidanceService', () => {
       assert.match(prompt, /## Skills[\s\S]*- tabela — Montar tabelas em markdown/)
       assert.match(prompt, /## Commands[\s\S]*- \/resumir — Resume um arquivo/)
       assert.doesNotMatch(service.environmentFor('xpto', 'resumo') ?? '', /## Skills|## Commands/)
-      assert.deepStrictEqual([service.hasSkills('dev'), service.hasSkills('resumo')], [true, false])
+      assert.deepStrictEqual([service.hasResources('dev'), service.hasResources('resumo')], [true, false])
     })
 
-    it('use_skill: a skill inteira com os docs anexados, só para o agente liberado', () => {
+    it('use_resource: a skill inteira com os docs anexados, só para o agente liberado; o command como está', () => {
       const service = seeded()
-      service.setAgentResources('dev', { skills: ['tabela'], commands: [] }, 'root')
-      assert.match(service.loadSkill('tabela', 'dev')!, /# Skill: tabela\n\nSempre com cabeçalho\.\n\n## Documentos anexados\n\n### Padrão \[spec\]\nUse tabelas\./)
-      assert.strictEqual(service.loadSkill('tabela', 'resumo'), undefined)
+      service.setAgentResources('dev', { skills: ['tabela'], commands: ['resumir'] }, 'root')
+      assert.match(service.loadResource('skill', 'tabela', 'dev')!, /# Skill: tabela\n\nSempre com cabeçalho\.\n\n## Documentos anexados\n\n### Padrão \[spec\]\nUse tabelas\./)
+      assert.strictEqual(service.loadResource('skill', 'tabela', 'resumo'), undefined)
+      assert.match(service.loadResource('command', 'resumir', 'dev')!, /# Command: resumir\n\nResuma \$ARGUMENTS em 3 linhas\./)
+    })
+
+    it('triggers: o índice "## Triggers" no prompt, o corpo só pelo use_resource, e só do próprio agente', () => {
+      const service = seeded()
+      service.setAgentResources('maya', { skills: [], commands: [] }, 'root')
+      const prompt = service.environmentFor('xpto', 'maya')!
+      assert.match(prompt, /## Triggers — ações sob demanda[\s\S]*- morning-brief — a pessoa diz bom dia/)
+      assert.ok(!prompt.includes('Devolva o briefing'), 'o corpo não vai no prompt')
+      assert.ok(service.hasResources('maya'), 'só com trigger, as ferramentas ligam')
+      assert.match(service.loadResource('trigger', 'morning-brief', 'maya')!, /^# Trigger: morning-brief\n\nQuando: a pessoa diz bom dia\n\nDevolva o briefing em bullets\.$/)
+      assert.strictEqual(service.loadResource('trigger', 'morning-brief', 'dev'), undefined, 'trigger de outro agente não existe para ele')
+      assert.deepStrictEqual(service.searchResources('bom dia', undefined, 'maya'), [{ kind: 'trigger', id: 'morning-brief', description: 'a pessoa diz bom dia' }])
+      assert.deepStrictEqual(service.searchResources('bom dia', 'skill', 'maya'), [])
     })
 
     it('/command: $ARGUMENTS e os docs; desconhecido segue como texto; ⛔ não liberado é recusado', () => {

@@ -28,6 +28,18 @@ describe('agentIssues', () => {
     assert.deepStrictEqual(agentIssues(agent(), rules), [])
   })
 
+  it('triggers: id em slug e único, "quando" numa linha só, corpo obrigatório', () => {
+    const ok = { id: 'morning-brief', when: 'a pessoa diz bom dia', body: 'Briefing em bullets.' }
+    assert.deepStrictEqual(agentIssues(agent({ triggers: [ok] }), rules), [])
+    const messages = agentIssues(agent({ triggers: [ok, ok, { id: 'Ruim', when: 'a\nb', body: ' ' }] }), rules).map((issue) => issue.message)
+    assert.deepStrictEqual(messages, [
+      'id "morning-brief" listed twice',
+      'id "Ruim": lowercase letters, digits and hyphens, 2 to 64',
+      'Ruim: when is one line',
+      'Ruim: body is required',
+    ])
+  })
+
   it('⚖️ o tamanho do prompt e da soul é de quem cria; só Codex e Antigravity têm o teto do argumento do Linux', () => {
     const big = 'x'.repeat(200_000)
     assert.deepStrictEqual(agentIssues(agent({ systemPrompt: big, soul: big }), rules), [], 'sem teto do sistema')

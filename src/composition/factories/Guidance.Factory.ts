@@ -15,7 +15,7 @@ export function makeGuidance(): GuidanceService {
     (projectId) => makeProjects().exists(projectId),
     (agentId) => {
       const agent = makeAgents().get(agentId)
-      return agent ? { id: agent.id, ...(agent.projectId ? { projectId: agent.projectId } : {}) } : undefined
+      return agent ? { id: agent.id, ...(agent.projectId ? { projectId: agent.projectId } : {}), ...(agent.triggers?.length ? { triggers: agent.triggers } : {}) } : undefined
     },
   )
   return instance

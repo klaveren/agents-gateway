@@ -158,6 +158,8 @@ export interface IAgentDetail extends IAgent {
   terminal?: IAgentTerminal
   /** O diagnóstico depois de editar. Ausente = desligado. */
   diagnostics?: IAgentDiagnostics
+  /** As ações ativadas sob demanda (guia Triggers). */
+  triggers?: IAgentTrigger[]
   fallback?: IAgentFallback
   systemPrompt: string
   updatedAt?: string
@@ -174,6 +176,13 @@ export interface IFallbackStep {
 export interface IAgentFallback {
   mode: 'global' | 'own' | 'off'
   chain?: IFallbackStep[]
+}
+
+/** Um trigger do agente: o nome, quando usar (vai no índice do prompt) e o procedimento (carregado sob demanda). */
+export interface IAgentTrigger {
+  id: string
+  when: string
+  body: string
 }
 
 /** O tsc, o eslint e o prettier do pacote, depois de cada edição (ver `Edit.Diagnostics` no servidor). */
@@ -210,6 +219,8 @@ export interface IAgentInput {
   terminal?: IAgentTerminal | null
   /** `null` desliga. */
   diagnostics?: IAgentDiagnostics | null
+  /** Vazio apaga todos. */
+  triggers?: IAgentTrigger[]
   /** `null` volta à cadeia global. */
   fallback?: IAgentFallback | null
 }

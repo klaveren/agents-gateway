@@ -737,6 +737,21 @@ sets `SANDBOX_NESTED=1` (no fresh `/proc` mount, which containers refuse). Witho
 status says why (Settings → Deployment, and the Projects page) and **a project agent's shell is
 refused** — it never runs unconfined.
 
+### Agent triggers: actions on demand
+
+Each agent has a **Triggers** tab: its own procedures, run on demand. A trigger has a name, a
+one-line "when to use it" and the procedure itself.
+
+- The agent's prompt lists only the name and "when" of each trigger (a `## Triggers` index, next to
+  the skills one). The procedure enters when the request fits: the agent loads it with
+  `use_resource`.
+- `use_resource(kind, id)` loads a skill, a command or one of the agent's triggers;
+  `search_resources(query, kind?)` finds them by words in the id and description. Both turn on by
+  themselves when the agent has something to load. They replace `use_skill`.
+- A trigger belongs to its agent: no other agent sees or loads it. It is saved with the agent.
+- A skill is a shared way of doing something, from the catalog; a trigger is the agent's own
+  subcommand. They load the same way, but stay apart in data, screen and permissions.
+
 ### Agent hooks: an event becomes a conversation
 
 Each agent has a **Hooks** tab. A hook is `POST /v1/hook/<agent>/<hook>` with its own key and a

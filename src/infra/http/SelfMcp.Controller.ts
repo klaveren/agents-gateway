@@ -388,7 +388,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'list_resources',
     {
       description:
-        'The skills and commands of one scope, in full. A skill is a way of doing something that an agent loads with use_skill when the subject comes up; a command is a ready request the person fires with /name args (its body uses $ARGUMENTS). Both can carry specs/ADRs (docIds). Agents use all of their scope by default (global ones, plus those of their project); the Resources tab of an agent can restrict that. Absent projectId = the global ones.',
+        'The skills and commands of one scope, in full. A skill is a way of doing something that an agent loads with use_resource when the subject comes up; a command is a ready request the person fires with /name args (its body uses $ARGUMENTS). Both can carry specs/ADRs (docIds). Agents use all of their scope by default (global ones, plus those of their project); the Resources tab of an agent can restrict that. Absent projectId = the global ones.',
       inputSchema: { projectId: z.string().optional(), kind: z.enum(['skill', 'command']).optional() },
       annotations: { readOnlyHint: true },
     },

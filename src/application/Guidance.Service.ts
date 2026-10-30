@@ -24,7 +24,8 @@ import {
   RESOURCE_ID_PATTERN,
   RESOURCE_KINDS,
   TResourceKind,
-  USE_SKILL_TOOL,
+  TUsableKind,
+  USE_RESOURCE_TOOL,
 } from '@domain/models/Resource.Model'
 import { IBuilderDraft, IProtocolAddendum, IProtocolView, PROTOCOL_ADDENDUM_MAX, PROTOCOL_KINDS, TProtocolKind } from '@domain/models/Protocol.Model'
 import { IRule, RULE_BODY_MAX, RULE_TITLE_MAX } from '@domain/models/Rule.Model'
@@ -52,6 +53,8 @@ export interface IContextDoc {
 export interface IContextAgent {
   id: string
   projectId?: string
+  /** Os triggers do agente (ver `IAgent.triggers`): o índice "## Triggers" e o `use_resource`. */
+  triggers?: ReadonlyArray<{ id: string; when: string; body: string }>
 }
 
 /** Quem carrega uma spec inteira: os projetos e os agentes (o selo da página Specs). */
@@ -68,6 +71,7 @@ export interface IEnvironmentParts {
   index?: string
   skills?: string
   commands?: string
+  triggers?: string
   /** Só no construtor: o complemento do protocolo (o global, depois o do projeto). */
   protocol?: string
   /** Só no construtor: o que já existe do tipo que ele constrói (id e descrição). */
@@ -344,7 +348,7 @@ export class GuidanceService {
    */
   environmentFor(projectId?: string, agentId?: string): string | undefined {
     const parts = this.environmentParts(projectId, agentId)
-    const sections = [parts.rules, parts.projectSpecs, parts.agentSpecs, parts.skills, parts.commands, parts.index, parts.protocol, parts.existing].filter(
+    const sections = [parts.rules, parts.projectSpecs, parts.agentSpecs, parts.skills, parts.triggers, parts.commands, parts.index, parts.protocol, parts.existing].filter(
       (part): part is string => !!part,
     )
     return sections.length ? sections.join('\n\n') : undefined
@@ -381,8 +385,16 @@ export class GuidanceService {
     if (skills.length) {
       parts.skills = [
         '## Skills',
-        `Modos de fazer prontos para o seu trabalho. Antes de fazer algo que uma delas cobre, carregue-a inteira com ${USE_SKILL_TOOL} (pelo id) e siga o que ela diz.`,
+        `Modos de fazer prontos para o seu trabalho. Antes de fazer algo que uma delas cobre, carregue-a inteira com ${USE_RESOURCE_TOOL} (tipo skill, pelo id) e siga o que ela diz.`,
         ...skills.map((skill) => `- ${skill.id} — ${skill.description}`),
+      ].join('\n')
+    }
+    const triggers = this.triggersOf(agentId)
+    if (triggers.length) {
+      parts.triggers = [
+        '## Triggers — ações sob demanda',
+        `Procedimentos seus. Quando o pedido se encaixar num deles, carregue-o com ${USE_RESOURCE_TOOL} (tipo trigger, pelo id) e siga o que ele diz; não carregue os outros.`,
+        ...triggers.map((trigger) => `- ${trigger.id} — ${trigger.when.trim()}`),
       ].join('\n')
     }
     const commands = this.usableResources('command', agentId)
@@ -656,22 +668,46 @@ export class GuidanceService {
     return granted.includes(ALL_RESOURCES) ? visible : visible.filter((resource) => granted.includes(resource.id))
   }
 
-  /** Há skill para o `use_skill` carregar? É o que liga a ferramenta no agente. */
-  hasSkills(agentId?: string): boolean {
-    return this.usableResources('skill', agentId).length > 0
+  /** Os triggers do agente (o construtor não tem: ele escreve recursos, não os usa). */
+  private triggersOf(agentId?: string): ReadonlyArray<{ id: string; when: string; body: string }> {
+    if (!agentId || builderKindOf(agentId)) return []
+    return this.agentOf(agentId)?.triggers ?? []
   }
 
-  /** ⛔ A skill inteira, com os documentos anexados — só uma que o agente pode usar; outra responde como inexistente. */
-  loadSkill(id: string, agentId?: string): string | undefined {
-    const skill = this.usableResources('skill', agentId).find((resource) => resource.id === id)
-    return skill ? `# Skill: ${skill.id}\n\n${skill.body.trim()}${this.attachments(skill)}` : undefined
+  /** Há recurso para o `use_resource` carregar (skill, command ou trigger)? É o que liga as ferramentas no agente. */
+  hasResources(agentId?: string): boolean {
+    return this.usableResources('skill', agentId).length > 0 || this.usableResources('command', agentId).length > 0 || this.triggersOf(agentId).length > 0
+  }
+
+  /**
+   * ⛔ O recurso inteiro — só um que o agente pode usar; outro responde como inexistente. A skill e o command vêm com os
+   * documentos anexados; o command, como está (o `$ARGUMENTS` é de quem o dispara pelo `/`).
+   */
+  loadResource(kind: TUsableKind, id: string, agentId?: string): string | undefined {
+    if (kind === 'trigger') {
+      const trigger = this.triggersOf(agentId).find((item) => item.id === id)
+      return trigger ? `# Trigger: ${trigger.id}\n\nQuando: ${trigger.when.trim()}\n\n${trigger.body.trim()}` : undefined
+    }
+    const resource = this.usableResources(kind, agentId).find((item) => item.id === id)
+    return resource ? `# ${kind === 'skill' ? 'Skill' : 'Command'}: ${resource.id}\n\n${resource.body.trim()}${this.attachments(resource)}` : undefined
+  }
+
+  /** A busca por id e descrição (o "quando", no trigger) entre o que o agente pode carregar: cada palavra tem de aparecer. */
+  searchResources(query: string, kind: TUsableKind | undefined, agentId?: string): Array<{ kind: TUsableKind; id: string; description: string }> {
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean)
+    const all = [
+      ...(!kind || kind === 'skill' ? this.usableResources('skill', agentId).map((item) => ({ kind: 'skill' as const, id: item.id, description: item.description })) : []),
+      ...(!kind || kind === 'command' ? this.usableResources('command', agentId).map((item) => ({ kind: 'command' as const, id: item.id, description: item.description })) : []),
+      ...(!kind || kind === 'trigger' ? this.triggersOf(agentId).map((item) => ({ kind: 'trigger' as const, id: item.id, description: item.when.trim() })) : []),
+    ]
+    return all.filter((item) => words.every((word) => `${item.id} ${item.description}`.toLowerCase().includes(word)))
   }
 
   /**
    * `/nome argumentos` → o que vai ao modelo, com os documentos anexados. `undefined` quando a mensagem não é um
    * recurso conhecido (segue como texto). ⛔ O que existe mas não está liberado para este agente é recusado com o motivo.
    * - COMMAND: o texto dele, com `$ARGUMENTS` trocado (sem ele, os argumentos vão no fim).
-   * - SKILL: a pessoa a escolheu de propósito — ela vai inteira, já carregada, com o pedido depois (sem o `use_skill`).
+   * - SKILL: a pessoa a escolheu de propósito — ela vai inteira, já carregada, com o pedido depois (sem o `use_resource`).
    */
   expandCommand(text: string, agentId?: string, projectId?: string): IExpandedCommand | undefined {
     const doc = this.expandDoc(text, projectId)

@@ -161,6 +161,7 @@ function toAgent(stored: IStoredAgent): IAgent {
     ...(stored.permissions?.length ? { permissions: stored.permissions } : {}),
     ...(stored.terminal && (stored.terminal.timeoutSeconds || stored.terminal.maxOutputChars) ? { terminal: { ...stored.terminal } } : {}),
     ...(diagnosticsOn(stored.diagnostics) ? { diagnostics: { ...stored.diagnostics } } : {}),
+    ...(stored.triggers?.length ? { triggers: stored.triggers.map((trigger) => ({ id: trigger.id, when: trigger.when, body: trigger.body })) } : {}),
     ...(stored.fallback
       ? { fallback: { mode: stored.fallback.mode, ...(stored.fallback.chain?.length ? { chain: stored.fallback.chain.map((step) => ({ ...step })) } : {}) } }
       : {}),

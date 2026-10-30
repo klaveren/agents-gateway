@@ -244,6 +244,7 @@
 
   /** O nome que a pessoa vê de cada campo, para o resumo do erro perto do Salvar. */
   const FIELD_LABEL: Record<string, string> = {
+    triggers: 'Triggers',
     id: 'Identificador',
     name: 'Nome',
     providers: 'Provedores',
@@ -272,6 +273,7 @@
     adminOnly: false,
     projectId: projects.current ?? null,
     permissions: [],
+    triggers: [],
   })
   const form = ref<IAgentInput>(blank())
 
@@ -316,7 +318,7 @@
    * As guias do formulário: o texto do agente na primeira, e cada grupo de capacidades na sua. A contagem diz
    * quanto está escolhido sem abrir a guia; o ponto vermelho, que o servidor recusou algo ali.
    */
-  type TTab = 'agente' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos'
+  type TTab = 'agente' | 'triggers' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos'
   // `#agendamentos` no link (a visão geral dos agendamentos) abre direto na guia.
   /** O nome das ferramentas do gateway na guia Ferramentas (o id técnico fica na dica). */
   const LOCAL_TOOL_LABEL: Record<string, string> = {
@@ -325,7 +327,8 @@
     search_web: 'Busca na web',
     read_doc: 'Ler documento',
     search_docs: 'Buscar documentos',
-    use_skill: 'Usar skill',
+    use_resource: 'Usar recurso (skill, command, trigger)',
+    search_resources: 'Buscar recursos',
   }
 
   const tab = ref<TTab>(useRoute().hash === '#agendamentos' ? 'agendamentos' : 'agente')
@@ -350,6 +353,7 @@
   })
   const TAB_FIELDS: Record<TTab, string[]> = {
     agente: ['id', 'name', 'soul', 'systemPrompt', 'role', 'adminOnly', 'projectId'],
+    triggers: ['triggers'],
     modelos: ['providers', 'models', 'modes', 'reasoningEfforts'],
     ferramentas: ['allowedTools'],
     mcps: [],
@@ -365,6 +369,7 @@
     const alert = (id: TTab) => (TAB_FIELDS[id].some((field) => issues.value[field]?.length) ? 'Corrija os campos desta guia.' : undefined)
     const all: Array<{ id: TTab; label: string; count?: number; alert?: string }> = [
       { id: 'agente', label: 'Agente', alert: alert('agente') },
+      { id: 'triggers', label: 'Triggers', count: form.value.triggers?.length ?? 0, alert: alert('triggers') },
       { id: 'modelos', label: 'Modelos', count: form.value.providers.reduce((total, target) => total + target.models.length, 0), alert: alert('modelos') },
       {
         id: 'ferramentas',
@@ -503,6 +508,7 @@
             permissions: (agent.permissions ?? []).map((rule) => ({ ...rule })),
             terminal: agent.terminal ? { ...agent.terminal } : null,
             diagnostics: agent.diagnostics ? { ...agent.diagnostics } : null,
+            triggers: (agent.triggers ?? []).map((trigger) => ({ ...trigger })),
             fallback: agent.fallback ? { mode: agent.fallback.mode, chain: (agent.fallback.chain ?? []).map((step) => ({ ...step })) } : null,
           }
         : blank()
@@ -536,6 +542,12 @@
     return `${text.length.toLocaleString('pt-BR')} caracteres · cerca de ${tokens < 1000 ? tokens : `${Math.round(tokens / 100) / 10} mil`} tokens a cada turno`
   }
 
+  /** O trigger custa só quando o agente o carrega. */
+  function triggerSize(text: string): string {
+    const tokens = Math.round(text.length / 4)
+    return `${text.length.toLocaleString('pt-BR')} caracteres · cerca de ${tokens < 1000 ? tokens : `${Math.round(tokens / 100) / 10} mil`} tokens quando carregado`
+  }
+
   /** O que será gravado, em uma linha, para a confirmação do Salvar. */
   const saveSummary = computed(() => {
     const { providers: targets, modes, allowedTools } = form.value
@@ -558,6 +570,8 @@
         // Vazio volta ao global (Sistema → Limites).
         terminal: form.value.terminal?.timeoutSeconds || form.value.terminal?.maxOutputChars ? form.value.terminal : null,
         // Nada ligado = desligado.
+        // Vazio apaga todos.
+        triggers: form.value.triggers ?? [],
         diagnostics: form.value.diagnostics?.typecheck || form.value.diagnostics?.lint || form.value.diagnostics?.format ? form.value.diagnostics : null,
         // `global` é o padrão: vai como `null`.
         fallback: form.value.fallback && form.value.fallback.mode !== 'global' ? form.value.fallback : null,
@@ -681,6 +695,50 @@
         <small v-if="anyGoogle" class="hint">Com Gemini, evite {chaves} no texto: viram variáveis e dão erro.</small>
         <small v-for="message in issues.systemPrompt" :key="message" class="error">{{ message }}</small>
       </label>
+    </fieldset>
+    <fieldset v-show="tab === 'triggers'" class="flex flex-col gap-4">
+      <div class="flex flex-col gap-1">
+        <h3 class="text-sm font-medium text-zinc-200">Triggers — ações ativadas sob demanda</h3>
+        <p class="text-xs text-zinc-500">
+          Procedimentos deste agente, e de mais ninguém. O prompt lista só o nome e o "quando usar" de cada um; o procedimento entra quando o pedido se encaixa (o agente o carrega
+          com use_resource).
+        </p>
+      </div>
+      <div v-for="(trigger, index) in form.triggers" :key="index" class="flex flex-col gap-2 rounded-xl border border-zinc-800 px-3 py-3">
+        <div class="grid gap-2 sm:grid-cols-[14rem_1fr_auto]">
+          <input
+            :id="`trigger-id-${index}`"
+            v-model="trigger.id"
+            class="input font-mono text-[13px]"
+            placeholder="morning-brief"
+            aria-label="Nome do trigger"
+            @keydown.enter.prevent
+          />
+          <input
+            :id="`trigger-when-${index}`"
+            v-model="trigger.when"
+            class="input"
+            placeholder="Quando usar: a pessoa diz bom dia"
+            aria-label="Quando usar"
+            @keydown.enter.prevent
+          />
+          <button type="button" class="btn btn-sm btn-danger" @click="form.triggers!.splice(index, 1)">Remover</button>
+        </div>
+        <textarea
+          :id="`trigger-body-${index}`"
+          v-model="trigger.body"
+          rows="8"
+          class="input scroll-thin font-mono text-[13px] leading-relaxed"
+          placeholder="O procedimento: o que fazer, passo a passo."
+          aria-label="Procedimento"
+        />
+        <small v-if="trigger.body" class="hint">{{ triggerSize(trigger.body) }}</small>
+      </div>
+      <p v-if="!form.triggers?.length" class="text-sm text-zinc-500">
+        Nenhum trigger. Um trigger é um subcomando do agente: o "quando usar" vai no índice do prompt, e o procedimento só quando precisa.
+      </p>
+      <button type="button" class="btn btn-sm btn-ghost self-start" @click="form.triggers = [...(form.triggers ?? []), { id: '', when: '', body: '' }]">+ Trigger</button>
+      <small v-for="message in issues.triggers" :key="message" class="error">{{ message }}</small>
     </fieldset>
     <fieldset v-show="tab === 'modelos'" class="grid gap-4 sm:grid-cols-2">
       <div class="field sm:col-span-2">

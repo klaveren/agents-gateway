@@ -15,7 +15,7 @@ import { BACKGROUND_LIMITS, BackgroundProcesses, backgroundProcesses, clipOutput
 import { IProjectSandbox, projectSandbox, SANDBOX_SHELL } from '@infra/sandbox/Project.Sandbox'
 import { DOC_KINDS, IProjectDoc, READ_DOC_TOOL, SEARCH_DOCS_TOOL, TDocKind } from '@domain/models/ProjectDoc.Model'
 import { IDocHit } from '@domain/ports/GuidanceRepository.Port'
-import { USE_SKILL_TOOL } from '@domain/models/Resource.Model'
+import { SEARCH_RESOURCES_TOOL, TUsableKind, USABLE_KINDS, USE_RESOURCE_TOOL } from '@domain/models/Resource.Model'
 import { IBuilderDraft } from '@domain/models/Protocol.Model'
 import { builderKindOf, PROPOSE_DRAFT_TOOL } from '@domain/Builder.Agents'
 import { ITodoItem, todoIssues, todoText, UPDATE_TODOS_TOOL } from '@domain/models/ConversationTodo.Model'
@@ -50,9 +50,10 @@ export interface IDraftChecker {
   agentDraftIssues?(draft: IBuilderDraft): Promise<{ issues: Array<{ field: string; message: string }>; updates: boolean; id?: string; projectId?: string }>
 }
 
-/** Quem carrega uma skill para o agente (o `GuidanceService`). */
-export interface ISkillLoader {
-  loadSkill(id: string, agentId?: string): string | undefined
+/** Quem carrega e busca os recursos do agente: skills, commands e triggers (o `GuidanceService`). */
+export interface IResourceLoader {
+  loadResource(kind: TUsableKind, id: string, agentId?: string): string | undefined
+  searchResources?(query: string, kind: TUsableKind | undefined, agentId?: string): Array<{ kind: TUsableKind; id: string; description: string }>
 }
 
 export interface ILocalToolDeps {
@@ -61,8 +62,8 @@ export interface ILocalToolDeps {
   policy?: IBashPolicy
   /** O cerco do agente de projeto (ver `Project.Sandbox`). Ausente = o do processo. */
   sandbox?: IProjectSandbox
-  /** As skills liberadas ao agente. Ausente = sem `use_skill`. */
-  skills?: ISkillLoader
+  /** Os recursos do agente (skills, commands, triggers). Ausente = sem `use_resource` nem `search_resources`. */
+  resources?: IResourceLoader
   /** Os documentos (specs e ADRs). Ausente = sem `read_doc`. */
   docs?: IDocReader
   /** O conferente dos rascunhos do construtor. Ausente = sem `propose_draft`. */
@@ -376,7 +377,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     }),
     ...(deps.docs ? [readDocTool(deps.docs)] : []),
     ...(deps.docs?.searchDocs ? [searchDocsTool(deps.docs)] : []),
-    ...(deps.skills ? [useSkillTool(deps.skills, deps.permissions)] : []),
+    ...(deps.resources ? [useResourceTool(deps.resources, deps.permissions)] : []),
+    ...(deps.resources?.searchResources ? [searchResourcesTool(deps.resources)] : []),
     ...(deps.drafts ? [proposeDraftTool(deps.drafts)] : []),
     ...(deps.todos?.saveTodos ? [updateTodosTool(deps.todos)] : []),
   ]
@@ -553,28 +555,61 @@ function proposeDraftTool(drafts: IDraftChecker): ILocalTool {
 }
 
 /**
- * `use_skill`: a skill inteira (e os documentos anexados a ela), das que o índice "## Skills" do prompt lista.
- * ⛔ Só uma skill liberada a ESTE agente (o `agentId` do contexto); outra responde como inexistente.
+ * `use_resource`: um recurso inteiro, dos que o índice do prompt lista — a skill e o command liberados (com os documentos
+ * anexados) ou um trigger do próprio agente. ⛔ Só o que ESTE agente (o `agentId` do contexto) pode usar; o resto responde
+ * como inexistente. A skill ainda passa pela regra de permissão `skill`.
  */
-function useSkillTool(skills: ISkillLoader, permissions?: IPermissionChecker): ILocalTool {
+function useResourceTool(resources: IResourceLoader, permissions?: IPermissionChecker): ILocalTool {
   return {
     origin: 'local',
-    name: USE_SKILL_TOOL,
+    name: USE_RESOURCE_TOOL,
     description:
-      'Loads the full instructions of a skill listed under "Skills" in your instructions, by its id, with the documents attached to it. Load it before doing what the skill covers.',
+      'Loads, by kind and id, a resource listed in your instructions: a skill (a way of doing something), a command or one of your triggers (an action you run on demand). Load it before doing what it covers, and follow it.',
     inputSchema: {
       type: 'object',
-      properties: { id: { type: 'string', description: 'The skill id, as listed' } },
-      required: ['id'],
+      properties: {
+        kind: { type: 'string', enum: [...USABLE_KINDS], description: 'skill, command or trigger' },
+        id: { type: 'string', description: 'The id, as listed' },
+      },
+      required: ['kind', 'id'],
       additionalProperties: false,
     },
     execute: async (args, context) => {
+      const kind = USABLE_KINDS.find((item) => item === args.kind)
       const id = typeof args.id === 'string' ? args.id.trim() : ''
-      const verdict = id ? permissions?.check(askerOf(context), { category: 'skill', value: id }, { log: true }) : undefined
-      if (verdict && !verdict.allowed) return { status: 'error', result: `Not permitted: ${verdict.reason}` }
-      const skill = id ? skills.loadSkill(id, context?.agentId) : undefined
-      if (!skill) return { status: 'error', result: `Skill not found: ${id || '(no id)'}` }
-      return { status: 'success', result: skill }
+      if (!kind) return { status: 'error', result: `kind: one of ${USABLE_KINDS.join(', ')}` }
+      if (kind === 'skill' && id) {
+        const verdict = permissions?.check(askerOf(context), { category: 'skill', value: id }, { log: true })
+        if (verdict && !verdict.allowed) return { status: 'error', result: `Not permitted: ${verdict.reason}` }
+      }
+      const body = id ? resources.loadResource(kind, id, context?.agentId) : undefined
+      if (!body) return { status: 'error', result: `${kind} not found: ${id || '(no id)'}` }
+      return { status: 'success', result: body }
+    },
+  }
+}
+
+/** `search_resources`: acha, por palavras no id e na descrição, o recurso que o agente pode carregar (o índice pode não bastar). */
+function searchResourcesTool(resources: IResourceLoader): ILocalTool {
+  return {
+    origin: 'local',
+    name: SEARCH_RESOURCES_TOOL,
+    description: 'Finds the skills, commands and triggers you can load, by words in their id and description. Then load one with use_resource.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Words to look for (every word must appear)' },
+        kind: { type: 'string', enum: [...USABLE_KINDS], description: 'Only this kind (optional)' },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+    execute: async (args, context) => {
+      const query = typeof args.query === 'string' ? args.query : ''
+      const kind = USABLE_KINDS.find((item) => item === args.kind)
+      const found = resources.searchResources?.(query, kind, context?.agentId) ?? []
+      if (!found.length) return { status: 'success', result: 'Nothing found.' }
+      return { status: 'success', result: found.map((item) => `- ${item.kind} ${item.id} — ${item.description}`).join('\n') }
     },
   }
 }

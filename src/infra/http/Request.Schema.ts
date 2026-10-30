@@ -184,6 +184,12 @@ export const agentBodySchema = z.object({
     })
     .nullable()
     .optional(),
+  /** Os triggers do agente (ações sob demanda). Ausente na edição = mantém; `[]` ou `null` apaga todos. */
+  triggers: z
+    .array(z.object({ id: z.string(), when: z.string(), body: z.string() }))
+    .max(200)
+    .nullable()
+    .optional(),
   /** O diagnóstico depois de editar. Ausente na edição = mantém; `null` desliga. */
   diagnostics: z
     .object({

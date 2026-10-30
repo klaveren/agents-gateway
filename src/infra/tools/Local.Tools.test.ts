@@ -355,14 +355,24 @@ describe('LocalTools — read_doc', () => {
   })
 })
 
-describe('LocalTools — use_skill', () => {
-  it('só existe com o carregador de skills; carrega pelo agente DA CHAMADA', async () => {
-    assert.ok(!makeLocalTools().some((tool) => tool.name === 'use_skill'))
-    const tool = makeLocalTools({ skills: { loadSkill: (id, agentId) => (id === 'tabela' && agentId === 'dev' ? '# Skill: tabela' : undefined) } }).find(
-      (item) => item.name === 'use_skill',
-    )!
-    assert.deepStrictEqual(await tool.execute({ id: 'tabela' }, { agentId: 'dev' }), { status: 'success', result: '# Skill: tabela' })
-    assert.deepStrictEqual(await tool.execute({ id: 'tabela' }, { agentId: 'outro' }), { status: 'error', result: 'Skill not found: tabela' })
+describe('LocalTools — use_resource e search_resources', () => {
+  it('só existem com o carregador; carregam pelo agente DA CHAMADA, por tipo', async () => {
+    assert.ok(!makeLocalTools().some((tool) => tool.name === 'use_resource' || tool.name === 'search_resources'))
+    const tools = makeLocalTools({
+      resources: {
+        loadResource: (kind, id, agentId) =>
+          agentId !== 'dev' ? undefined : kind === 'skill' && id === 'tabela' ? '# Skill: tabela' : kind === 'trigger' && id === 'brief' ? '# Trigger: brief' : undefined,
+        searchResources: (query, kind, agentId) => (agentId === 'dev' && query === 'bom dia' && kind !== 'skill' ? [{ kind: 'trigger', id: 'brief', description: 'bom dia' }] : []),
+      },
+    })
+    const use = tools.find((item) => item.name === 'use_resource')!
+    const search = tools.find((item) => item.name === 'search_resources')!
+    assert.deepStrictEqual(await use.execute({ kind: 'skill', id: 'tabela' }, { agentId: 'dev' }), { status: 'success', result: '# Skill: tabela' })
+    assert.deepStrictEqual(await use.execute({ kind: 'trigger', id: 'brief' }, { agentId: 'dev' }), { status: 'success', result: '# Trigger: brief' })
+    assert.deepStrictEqual(await use.execute({ kind: 'skill', id: 'tabela' }, { agentId: 'outro' }), { status: 'error', result: 'skill not found: tabela' })
+    assert.deepStrictEqual(await use.execute({ kind: 'plugin', id: 'x' }, { agentId: 'dev' }), { status: 'error', result: 'kind: one of skill, command, trigger' })
+    assert.deepStrictEqual(await search.execute({ query: 'bom dia' }, { agentId: 'dev' }), { status: 'success', result: '- trigger brief — bom dia' })
+    assert.deepStrictEqual(await search.execute({ query: 'bom dia' }, { agentId: 'outro' }), { status: 'success', result: 'Nothing found.' })
   })
 })
 

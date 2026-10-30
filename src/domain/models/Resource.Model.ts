@@ -41,5 +41,13 @@ export const RESOURCE_BODY_MAX = 100_000
 export const ALL_RESOURCES = '*'
 /** A marca gravada de "nenhum, de propósito" — sem ela, a lista vazia seria o padrão (todos). */
 export const NO_RESOURCES = '-'
-/** A ferramenta com que o agente carrega uma skill liberada. */
-export const USE_SKILL_TOOL = 'use_skill'
+/**
+ * A ferramenta com que o agente carrega, sob demanda, um recurso que o índice do prompt lista: uma skill liberada, um
+ * command liberado ou um trigger dele. ⚖️ Um carregador só; cada tipo segue com os seus dados, a sua tela e a sua regra.
+ */
+export const USE_RESOURCE_TOOL = 'use_resource'
+/** A busca por nome e descrição entre os recursos que o agente pode carregar. */
+export const SEARCH_RESOURCES_TOOL = 'search_resources'
+/** Os tipos que o `use_resource` carrega. */
+export const USABLE_KINDS = ['skill', 'command', 'trigger'] as const
+export type TUsableKind = (typeof USABLE_KINDS)[number]
