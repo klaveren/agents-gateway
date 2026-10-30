@@ -33,6 +33,8 @@ export interface IAgentProvider {
   reconfigure(sessionId: string, change: ISessionChange): ISession
   /** O próximo turno começa compactando o contexto (ver `Compaction.Policy`). */
   requestCompaction?(sessionId: string): ISession
+  /** A mensagem para o turno rodando (ver `Interjection.Policy`): a posição na fila, ou nada se a conversa não está rodando. */
+  enqueue?(sessionId: string, text: string): number | undefined
   list(): ISession[]
   /**
    * Reabre a sessão de uma conversa gravada que já não está na memória (expirou, ou o gateway reiniciou), com o MESMO

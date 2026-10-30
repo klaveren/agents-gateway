@@ -8,6 +8,7 @@ import {
   InvalidModelError,
   InvalidSessionChangeError,
   SessionBusyError,
+  InterjectionQueueFullError,
   ModelNotFoundError,
   InvalidProviderError,
   ProviderInUseError,
@@ -68,6 +69,7 @@ export type TErrorCode =
   | 'login_locked'
   | 'session_not_found'
   | 'session_busy'
+  | 'queue_full'
   | 'package_busy'
   | 'hook_unauthorized'
   | 'hook_owner_inactive'
@@ -144,6 +146,10 @@ export function toHttpFailure(error: unknown): IHttpFailure {
 
   if (error instanceof SessionBusyError) {
     return { status: 409, code: 'session_busy', message: error.message }
+  }
+
+  if (error instanceof InterjectionQueueFullError) {
+    return { status: 409, code: 'queue_full', message: error.message }
   }
 
   if (error instanceof InvalidModelError) {

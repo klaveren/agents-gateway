@@ -103,6 +103,12 @@ export interface IConversationPreview {
   text: string
 }
 
+/** Uma mensagem que entrou no meio do turno: `at` é a posição no texto da resposta em que ela entrou. */
+export interface ITurnInterjection {
+  at: number
+  text: string
+}
+
 /** Um turno: o que foi perguntado, o que foi respondido, e o que o agente fez no caminho. */
 export interface IConversationTurn {
   sessionId: string
@@ -126,6 +132,8 @@ export interface IConversationTurn {
   /** Do envio ao primeiro pedaço de texto da resposta, em ms. Ausente quando não houve texto. */
   firstTextMs?: number
   warnings?: string[]
+  /** O que a pessoa mandou com o turno rodando, e onde entrou (ver `Interjection.Policy`). */
+  interjections?: ITurnInterjection[]
   aborted?: boolean
   error?: string
   /** Como este turno foi rotulado. Ausente enquanto ninguém classificou (ou a classificação falhou). */

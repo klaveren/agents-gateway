@@ -539,7 +539,7 @@ describe('ClaudeAgentAdapter', () => {
         await drain(adapter.sendMessage(agent, session.id, { text: 'oi' }, { workFolder: { dir: '/w', projectDir: '/p' } } as never))
         return seen[0].options!.hooks!
       }
-      assert.strictEqual((await turnOf({ ...getAgent(), allowedTools: ['sdk:Edit'] })).PostToolUse, undefined)
+      assert.deepStrictEqual((await turnOf({ ...getAgent(), allowedTools: ['sdk:Edit'] })).PostToolUse, [])
 
       const hooks = await turnOf({ ...getAgent(), allowedTools: ['sdk:Edit'], diagnostics: { typecheck: true, timeoutSeconds: 30 } })
       const matcher = hooks.PostToolUse![0]
@@ -551,6 +551,25 @@ describe('ClaudeAgentAdapter', () => {
       })
       assert.deepStrictEqual(await post('NotebookEdit', { notebook_path: 'x.ipynb' }), {}, 'o matcher é regex: o nome é conferido de novo')
       assert.deepStrictEqual(asked, [{ file: '/w/src/a.ts', root: '/w' }])
+    })
+
+    it('mensagem durante o turno: o PostToolUse de toda ferramenta leva o que chegou, uma vez', async () => {
+      const seen: TQueryParams[] = []
+      const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog: catalogWith(true), sandbox: sandbox(true) })
+      const agent = { ...getAgent(), allowedTools: ['sdk:Bash'] }
+      const session = await adapter.createSession(agent, { agentId: CLAUDE_TEST_AGENT.id })
+      const queue = ['use o banco B']
+      await drain(adapter.sendMessage(agent, session.id, { text: 'oi', interjections: () => queue.splice(0) }, {}))
+      const hook = seen[0].options!.hooks!.PostToolUse![0]
+      assert.strictEqual(hook.matcher, undefined, 'toda ferramenta')
+      const post = () =>
+        hook.hooks[0]({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: {}, tool_response: {}, tool_use_id: 't' } as never, 't', {
+          signal: options.signal,
+        }) as Promise<{
+          hookSpecificOutput?: { additionalContext?: string }
+        }>
+      assert.match((await post()).hookSpecificOutput?.additionalContext ?? '', /^\[Mensagem nova da pessoa[^\]]*\]\n\nuse o banco B$/)
+      assert.deepStrictEqual(await post(), {}, 'a fila já foi tirada')
     })
   })
 })

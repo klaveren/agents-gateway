@@ -12,6 +12,7 @@ export type TAgentEventType =
   | 'warning'
   | 'message.completed'
   | 'message.aborted'
+  | 'message.injected'
   | 'session.completed'
   | 'error'
 
@@ -68,6 +69,8 @@ export type IAgentEvent =
   | { type: 'warning'; sessionId: string; timestamp: Date; payload: { message: string } }
   | { type: 'message.completed'; sessionId: string; timestamp: Date; payload?: never }
   | { type: 'message.aborted'; sessionId: string; timestamp: Date; payload?: never }
+  /** Uma mensagem que a pessoa mandou com o turno rodando entrou nele (ver `Interjection.Policy`). */
+  | { type: 'message.injected'; sessionId: string; timestamp: Date; payload: { text: string } }
   | { type: 'session.completed'; sessionId: string; timestamp: Date; payload?: never }
   /** `kind`: por que o provedor falhou (ver `Provider.Failure`); cota e limite levam ao próximo da cadeia. */
   | { type: 'error'; sessionId: string; timestamp: Date; payload: { message: string; kind?: TProviderFailure; resetsAt?: string } }

@@ -11,6 +11,7 @@ import {
   INativeSnapshot,
   IConversationStats,
   IConversationTurn,
+  ITurnInterjection,
   IOwnerFilter,
   IStoredUsage,
   PREVIEW_MAX,
@@ -132,6 +133,8 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   // O contexto em uso na última chamada ao modelo (não se soma; `NULL` = o provider não informa).
   { table: 'conversations', column: 'context_tokens', definition: 'INTEGER' },
   { table: 'conversation_turns', column: 'context_tokens', definition: 'INTEGER' },
+  // As mensagens que a pessoa mandou com o turno rodando (JSON: `[{ at, text }]`); `NULL` = nenhuma.
+  { table: 'conversation_turns', column: 'interjections', definition: 'TEXT' },
 ]
 
 /**
@@ -355,11 +358,11 @@ export class SqliteConversationRepository implements IConversationRepository {
       const stored = this.db
         .prepare(
           `INSERT INTO conversation_turns
-             (conversation_id, idx, at, request, files, response, reasoning, tool_calls, warnings, input_tokens, output_tokens, reasoning_tokens, total_tokens, cache_read_tokens, cache_write_tokens, context_tokens, duration_ms, first_text_ms, aborted, error, classification, model, effort, provider)
+             (conversation_id, idx, at, request, files, response, reasoning, tool_calls, warnings, input_tokens, output_tokens, reasoning_tokens, total_tokens, cache_read_tokens, cache_write_tokens, context_tokens, duration_ms, first_text_ms, aborted, error, classification, model, effort, provider, interjections)
            VALUES (?, CASE WHEN EXISTS (SELECT 1 FROM conversation_turns WHERE conversation_id = ? AND idx = ?)
                         THEN (SELECT MAX(idx) + 1 FROM conversation_turns WHERE conversation_id = ?)
                         ELSE ? END,
-                   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            RETURNING idx`,
         )
         .get(
@@ -392,6 +395,7 @@ export class SqliteConversationRepository implements IConversationRepository {
           turn.model ?? null,
           turn.effort ?? null,
           turn.provider ?? null,
+          turn.interjections?.length ? JSON.stringify(turn.interjections) : null,
         ) as TRow
       return Number(stored.idx)
     })
@@ -802,6 +806,7 @@ export class SqliteConversationRepository implements IConversationRepository {
       durationMs: optionalCount(row.duration_ms),
       firstTextMs: optionalCount(row.first_text_ms),
       warnings: json<string[] | undefined>(row.warnings, undefined),
+      ...(typeof row.interjections === 'string' ? { interjections: json<ITurnInterjection[]>(row.interjections, []) } : {}),
       aborted: count(row.aborted) === 1 || undefined,
       error: typeof row.error === 'string' ? row.error : undefined,
       classification: isClassification(row.classification) ? row.classification : undefined,

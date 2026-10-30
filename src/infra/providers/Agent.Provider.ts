@@ -4,6 +4,7 @@ import { COMPACT_REQUEST, compactHandoff, shouldCompact } from '@domain/Compacti
 import { DEFAULT_COOLDOWN_MINUTES, fallbackChain, IFallbackStep, nextStep } from '@domain/Fallback.Policy'
 import { HANDOFF_MAX_CHARS, handoffText, ITranscriptTurn } from '@domain/Handoff.Policy'
 import { FALLBACK_FAILURES } from '@domain/Provider.Failure'
+import { INTERJECTION_QUEUE_MAX, interjectionRound } from '@domain/Interjection.Policy'
 import { resolveSessionMode } from '@domain/Session.Policy'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -21,6 +22,7 @@ import {
   ProviderNotOfferedError,
   ProviderUnavailableError,
   SessionBusyError,
+  InterjectionQueueFullError,
   SessionNotFoundError,
 } from '@domain/errors/Domain.Error'
 import { REASONING_LEVELS } from '@domain/Reasoning.Levels'
@@ -208,6 +210,25 @@ export class AgentProvider implements IAgentProvider {
     record.turns += 1
     // Os provedores já tentados neste turno: a cota é da conta, então o provedor inteiro sai, não só o modelo.
     const tried = new Set<string>([record.provider])
+    // As mensagens que a pessoa mandou com o turno rodando (ver `Interjection.Policy`): as que entraram, e as que entraram
+    // e ainda não saíram como evento (a lane as tira da fila no meio da chamada; o evento sai antes do próximo dela).
+    const interjections: string[] = []
+    const unannounced: string[] = []
+    const take = (): string[] => {
+      const texts = record.queued ?? []
+      record.queued = undefined
+      interjections.push(...texts)
+      unannounced.push(...texts)
+      return texts
+    }
+    const announce = (): IAgentEvent[] => unannounced.splice(0).map((text) => ({ type: 'message.injected', sessionId, timestamp: new Date(), payload: { text } }))
+    /** Já houve rodada a mais: o `message.started` dela não sai (o turno é um só). */
+    let extraRound = false
+    const discard = (why: string): IAgentEvent[] => {
+      const left = record.queued?.length ?? 0
+      record.queued = undefined
+      return left ? [{ type: 'warning', sessionId, timestamp: new Date(), payload: { message: `${left} mensagem(ns) que esperavam o turno não entraram: ${why}.` } }] : []
+    }
 
     /** Passa a conversa para o próximo passo da cadeia: o mesmo pedido, com a transcrição e o que o turno já fez. */
     const switchTo = (next: IFallbackStep, partial: boolean): string => {
@@ -284,7 +305,10 @@ export class AgentProvider implements IAgentProvider {
 
       for (;;) {
         let exhausted: { message: string; resetsAt?: string; next: IFallbackStep } | undefined
-        for await (const event of adapter.sendMessage(agent, sessionId, sent, context)) {
+        // O fim da rodada fica retido: com mensagem na fila, o turno ainda não acabou.
+        let completed: IAgentEvent | undefined
+        let stopped = false
+        for await (const event of adapter.sendMessage(agent, sessionId, { ...sent, interjections: take }, context)) {
           // ⚖️ COTA OU LIMITE com um próximo na cadeia: o erro não sai, o turno segue no próximo (ver `Fallback.Policy`).
           if (event.type === 'error' && event.payload.kind && FALLBACK_FAILURES.includes(event.payload.kind)) {
             const next = this.nextFallback(record, tried)
@@ -293,11 +317,18 @@ export class AgentProvider implements IAgentProvider {
               break
             }
           }
+          yield* announce()
+          if (event.type === 'message.started' && extraRound) continue
+          if (event.type === 'message.completed') {
+            turn.completed = true
+            completed = event
+            continue
+          }
+          if (event.type === 'message.aborted' || event.type === 'error') stopped = true
           // Somar o usage aqui vale para as seis implementações de uma vez.
           if (event.type === 'usage') this.sessions.addUsage(record, event.payload)
           else if (event.type === 'text.delta') turn.text += event.payload.text
           else if (event.type === 'tool.started') turn.tools.push(event.payload.tool)
-          else if (event.type === 'message.completed') turn.completed = true
           if (event.type === 'tool.started') this.loops?.observe(sessionId, { type: 'tool.started', tool: event.payload.tool, args: event.payload.args })
           else if (event.type === 'tool.error' || event.type === 'tool.result') this.loops?.observe(sessionId, { type: event.type })
           yield event
@@ -306,11 +337,28 @@ export class AgentProvider implements IAgentProvider {
           if (loop) {
             await adapter.cancel(sessionId).catch(() => undefined)
             yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: loop } }
+            yield* discard('o turno parou')
             yield { type: 'message.aborted', sessionId, timestamp: new Date() }
             return
           }
         }
-        if (!exhausted) break
+        if (!exhausted) {
+          yield* announce()
+          if (stopped || !completed) {
+            yield* discard('o turno parou')
+            break
+          }
+          // ⚖️ O modelo terminou com mensagem na fila: mais uma rodada no MESMO turno, com elas como a próxima fala.
+          const rest = take()
+          if (rest.length) {
+            yield* announce()
+            sent = { text: interjectionRound(rest) }
+            extraRound = true
+            continue
+          }
+          yield completed
+          break
+        }
 
         this.benchProvider(record.provider, exhausted.resetsAt)
         const from = switchTo(exhausted.next, true)
@@ -324,10 +372,21 @@ export class AgentProvider implements IAgentProvider {
       }
     } finally {
       record.status = 'idle'
+      record.queued = undefined
       this.loops?.close(sessionId)
       // ⚖️ O turno entra na transcrição mesmo interrompido (o que saiu, saiu).
       if (turn.text || turn.tools.length) {
-        record.transcript = [...(record.transcript ?? []), { request: input.text, files: input.files?.map((file) => file.name), text: turn.text, tools: turn.tools, by: turn.by }]
+        record.transcript = [
+          ...(record.transcript ?? []),
+          {
+            request: input.text,
+            files: input.files?.map((file) => file.name),
+            text: turn.text,
+            tools: turn.tools,
+            by: turn.by,
+            ...(interjections.length ? { interjections } : {}),
+          },
+        ]
       }
       // O repasse só se dá por entregue quando o provider novo CONCLUIU um turno. Falhou antes: o estado
       // nativo é zerado de novo e o próximo turno leva a transcrição de agora — com o que falhou dentro, e
@@ -345,6 +404,19 @@ export class AgentProvider implements IAgentProvider {
         }
       }
     }
+  }
+
+  /**
+   * A mensagem para o turno que está rodando (ver `Interjection.Policy`): a posição dela na fila, ou nada quando a conversa
+   * não está rodando (aí quem chamou manda como um turno normal).
+   */
+  enqueue(sessionId: string, text: string): number | undefined {
+    const record = this.requireSession(sessionId)
+    if (record.status !== 'running') return undefined
+    const queue = (record.queued ??= [])
+    if (queue.length >= INTERJECTION_QUEUE_MAX) throw new InterjectionQueueFullError(sessionId, INTERJECTION_QUEUE_MAX)
+    queue.push(text)
+    return queue.length
   }
 
   /**

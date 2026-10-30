@@ -21,4 +21,10 @@ export interface IMessageInput {
    * grava e o título usa. Ausente = o próprio `text`.
    */
   recordAs?: string
+  /**
+   * As mensagens que a pessoa mandou com o turno rodando (ver `Interjection.Policy`): cada chamada TIRA da fila o que
+   * chegou desde a anterior. A lane que tem onde pôr no meio do turno (entre uma ferramenta e a próxima chamada ao
+   * modelo) chama; a que não tem, não — o que sobrar vira mais uma rodada no fim do turno. Quem preenche é o provider.
+   */
+  interjections?: () => string[]
 }

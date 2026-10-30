@@ -78,10 +78,17 @@ export interface ITurn {
   durationMs?: number
   firstTextMs?: number
   warnings?: string[]
+  /** O que a pessoa mandou com o turno rodando, e onde entrou na resposta (`at`, a posição no texto). */
+  interjections?: ITurnInterjection[]
   aborted?: boolean
   error?: string
   classification?: TClassification
   costUsd?: number
+}
+
+export interface ITurnInterjection {
+  at: number
+  text: string
 }
 
 export interface IConversationPage {

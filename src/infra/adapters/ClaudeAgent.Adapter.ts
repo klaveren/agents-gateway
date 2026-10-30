@@ -17,6 +17,7 @@ import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { reasoningLevel } from '@domain/Reasoning.Levels'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
+import { interjectionNote } from '@domain/Interjection.Policy'
 import { DEFAULT_DIAGNOSTICS_SECONDS, diagnosticsOn, IAgent } from '@domain/models/Agent.Model'
 import type { IEditDiagnostics } from '@infra/tools/Edit.Diagnostics'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
@@ -210,19 +211,21 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       // O detector de laço (ver `Loop.Guard`) vale aqui para as nativas e as do MCP; as locais já passam por ele ao rodar.
       hooks: {
         PreToolUse: [{ hooks: [preToolUse(gate, (tool, args) => (tool.startsWith(`mcp__${LOCAL_SERVER_NAME}__`) ? undefined : this.loops?.check(sessionId, tool, args)))] }],
-        // O diagnóstico depois de editar nas nativas (as locais já o trazem no resultado).
-        ...(this.diagnostics && diagnosticsOn(agent.diagnostics)
-          ? {
-              PostToolUse: [
+        PostToolUse: [
+          // A mensagem que a pessoa mandou com o turno rodando entra depois da próxima ferramenta (ver `Interjection.Policy`).
+          ...(input.interjections ? [{ hooks: [postInterjection(input.interjections)] }] : []),
+          // O diagnóstico depois de editar nas nativas (as locais já o trazem no resultado).
+          ...(this.diagnostics && diagnosticsOn(agent.diagnostics)
+            ? [
                 {
                   matcher: [...EDIT_NATIVES].join('|'),
                   // As ferramentas rodam juntas: o tempo de uma, e uma folga.
                   timeout: (agent.diagnostics.timeoutSeconds ?? DEFAULT_DIAGNOSTICS_SECONDS) + 15,
                   hooks: [postEdit((file) => this.diagnostics!.after(resolve(workDir, file), workDir, agent.diagnostics, context))],
                 },
-              ],
-            }
-          : {}),
+              ]
+            : []),
+        ],
       },
       // Isolamento: sem isto o subprocesso lê o ~/.claude e o CLAUDE.md da máquina.
       settingSources: [],
@@ -629,6 +632,15 @@ function preToolUse(gate: CanUseTool, loop: (tool: string, args: unknown) => str
     return {
       hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: decision && 'message' in decision ? decision.message : 'denied' },
     }
+  }
+}
+
+/** O `PostToolUse` de toda ferramenta: a mensagem que chegou com o turno rodando vai ao modelo como contexto do resultado. */
+function postInterjection(take: () => string[]): HookCallback {
+  return async (input) => {
+    if (input.hook_event_name !== 'PostToolUse') return {}
+    const arrived = take()
+    return arrived.length ? { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: interjectionNote(arrived) } } : {}
   }
 }
 

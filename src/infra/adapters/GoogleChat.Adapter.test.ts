@@ -6,7 +6,7 @@ import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { GOOGLE_TEST_AGENT } from '../../testing/Agents.Fixture'
-import { GoogleChatAdapter } from './GoogleChat.Adapter'
+import { GoogleChatAdapter, toFunctionDeclaration } from './GoogleChat.Adapter'
 
 interface ISingleRequestOptions {
   signal?: AbortSignal
@@ -31,6 +31,22 @@ describe('GoogleChatAdapter', () => {
     for await (const event of events) collected.push(event)
     return collected
   }
+
+  it('⛔ a declaração de função sai sem o que a API do Gemini recusa (additionalProperties, em todo nível)', () => {
+    const declared = toFunctionDeclaration({
+      origin: 'local',
+      name: 'run_bash',
+      description: 'd',
+      inputSchema: {
+        type: 'object',
+        properties: { command: { type: 'string' }, env: { type: 'object', properties: { a: { type: 'string' } }, additionalProperties: false } },
+        required: ['command'],
+        additionalProperties: false,
+      },
+    })
+    assert.ok(!JSON.stringify(declared).includes('additionalProperties'))
+    assert.deepStrictEqual((declared.parameters as unknown as { required: string[] }).required, ['command'])
+  })
 
   it('creates a chat session on the chat lane', async () => {
     const adapter = new GoogleChatAdapter({ client: clientWith(async () => ({ stream: [], response: {} })) })

@@ -175,6 +175,54 @@ describe('send: geração', () => {
   })
 })
 
+describe('send: mensagem durante o turno', () => {
+  it('com o turno rodando, vai para a fila; entra no turno pelo message.injected; a que sobrou volta para a caixa', async () => {
+    const posted: unknown[] = []
+    routes({
+      '/sessions/A/messages': () => {
+        posted.push(vi.mocked(api).mock.lastCall?.[1]?.body)
+        return { queued: true, position: posted.length }
+      },
+    })
+    const thread = useThreadStore()
+    await thread.open('A')
+    const stream = channel()
+    vi.mocked(openStream).mockImplementation(async (_path, request) => {
+      stream.attach(request?.signal)
+      return new ReadableStream()
+    })
+    vi.mocked(readSse).mockImplementation(() => stream.iterate())
+
+    const sent = thread.send('migre', [])
+    await tick()
+    stream.push('text.delta', { text: 'rodando. ' })
+    await tick()
+    expect(await thread.send('use o banco B', [])).toEqual({ ok: true })
+    expect(await thread.send('e sem pressa', [])).toEqual({ ok: true })
+    expect(posted).toEqual([
+      { message: 'use o banco B', whileBusy: 'queue' },
+      { message: 'e sem pressa', whileBusy: 'queue' },
+    ])
+    expect(thread.queued).toEqual(['use o banco B', 'e sem pressa'])
+    // Anexo não entra na fila.
+    expect(await thread.send('veja', [{ name: 'a.txt', mimeType: 'text/plain', data: 'eA==' }])).toEqual({ ok: false })
+    expect(thread.error).toMatch(/Anexo só vai com o turno parado/)
+
+    stream.push('message.injected', { text: 'use o banco B' })
+    stream.push('text.delta', { text: 'ok, banco B.' })
+    await tick()
+    expect(thread.queued).toEqual(['e sem pressa'])
+    expect(thread.pending?.interjections).toEqual([{ at: 'rodando. '.length, text: 'use o banco B' }])
+
+    stream.push('message.completed')
+    stream.end()
+    await sent
+    expect(thread.turns.at(-1)?.interjections).toEqual([{ at: 'rodando. '.length, text: 'use o banco B' }])
+    expect(thread.queued).toEqual([])
+    expect(thread.leftover).toBe('e sem pressa')
+  })
+})
+
 describe('send: retomada', () => {
   it('⚖️ sessão encerrada não tranca: o envio vai, o gateway a retoma, e ela volta a contar como viva', async () => {
     routes({ '/sessions/': () => Promise.reject(new ApiError(404, 'not_found', 'Session not found')) })

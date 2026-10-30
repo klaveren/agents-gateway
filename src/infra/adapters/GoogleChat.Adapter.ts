@@ -15,6 +15,7 @@ import { sessionPrefix } from '@infra/session/Session.Key'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { IToolDefinition } from '@infra/tools/Tool.Types'
+import { sanitizeProperty } from '@infra/tools/bridges/Adk.ToolBridge'
 import { IManualLoopProvider, IManualToolCall, IManualTurnOutcome, runManualToolLoop } from './support/ManualTool.Loop'
 import { composeSystemPrompt, maxOutputTokens, maxToolTurns } from './support/Prompt.Helper'
 
@@ -114,6 +115,7 @@ export class GoogleChatAdapter implements IAgentAdapter {
         provider: this.loopProvider(record, sessionId),
         signal: abort.signal,
         maxTurns: maxToolTurns(),
+        ...(input.interjections ? { interjections: input.interjections } : {}),
       })
 
       if (abort.signal.aborted) {
@@ -224,12 +226,15 @@ export class GoogleChatAdapter implements IAgentAdapter {
         if (parts.length > 0) history.push({ role: 'model', parts })
       },
 
-      appendToolResults(history, results) {
+      appendToolResults(history, results, note) {
         history.push({
           role: 'user',
-          parts: results.map((entry) => ({
-            functionResponse: { name: entry.call.name, response: { result: entry.outcome.result } },
-          })),
+          parts: [
+            ...results.map((entry) => ({
+              functionResponse: { name: entry.call.name, response: { result: entry.outcome.result } },
+            })),
+            ...(note ? [{ text: note }] : []),
+          ],
         })
       },
     }
@@ -245,10 +250,11 @@ export class GoogleChatAdapter implements IAgentAdapter {
   }
 }
 
-function toFunctionDeclaration(tool: IToolDefinition): FunctionDeclaration {
+/** ⛔ O schema passa pela mesma limpeza do ADK (`sanitizeProperty`): a API do Gemini recusa `additionalProperties` com 400. */
+export function toFunctionDeclaration(tool: IToolDefinition): FunctionDeclaration {
   return {
     name: tool.name,
     description: tool.description,
-    parameters: tool.inputSchema as unknown as FunctionDeclaration['parameters'],
+    parameters: sanitizeProperty(tool.inputSchema as unknown as Record<string, unknown>) as unknown as FunctionDeclaration['parameters'],
   }
 }

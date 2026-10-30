@@ -1,173 +1,189 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import type { IOutgoingFile } from '@/stores/thread'
-import { shownSlashTab, SLASH_TABS, slashSuggestions, type ICommandHint, type TSlashKind } from '@/lib/commands'
-import Icon from './Icon.vue'
+  import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+  import type { IOutgoingFile } from '@/stores/thread'
+  import { shownSlashTab, SLASH_TABS, slashSuggestions, type ICommandHint, type TSlashKind } from '@/lib/commands'
+  import Icon from './Icon.vue'
 
-const props = defineProps<{ sending: boolean; disabled?: boolean; placeholder?: string; commands?: ICommandHint[] }>()
-/** `settle(false)`: o envio falhou — o texto e os anexos voltam para a caixa. */
-const emit = defineEmits<{ send: [text: string, files: IOutgoingFile[], settle: (ok: boolean) => void]; stop: [] }>()
+  /**
+   * `sending`: um turno roda — a mensagem vai para a FILA dele (entra no mesmo turno). `queued`: as que esperam.
+   * `restore`: o que estava na fila quando o turno parou, de volta para a caixa.
+   */
+  const props = defineProps<{ sending: boolean; disabled?: boolean; placeholder?: string; commands?: ICommandHint[]; queued?: string[]; restore?: string }>()
+  /** `settle(false)`: o envio falhou — o texto e os anexos voltam para a caixa. */
+  const emit = defineEmits<{ send: [text: string, files: IOutgoingFile[], settle: (ok: boolean) => void]; stop: []; restored: [] }>()
 
-const text = ref('')
-const files = ref<IOutgoingFile[]>([])
-const area = ref<HTMLTextAreaElement>()
-const picker = ref<HTMLInputElement>()
+  const text = ref('')
+  const files = ref<IOutgoingFile[]>([])
+  const area = ref<HTMLTextAreaElement>()
+  const picker = ref<HTMLInputElement>()
 
-/**
- * No celular o texto de exemplo vira só "Mensagem": "Mensagem para <agente>" quebrava em duas linhas e
- * dobrava a altura da caixa vazia. O agente já está no cabeçalho.
- */
-const narrowQuery = typeof window !== 'undefined' ? window.matchMedia('(max-width: 767px)') : undefined
-const narrow = ref(narrowQuery?.matches ?? false)
-const onNarrow = (event: MediaQueryListEvent) => (narrow.value = event.matches)
-narrowQuery?.addEventListener('change', onNarrow)
-onBeforeUnmount(() => narrowQuery?.removeEventListener('change', onNarrow))
-const shownPlaceholder = computed(() => (narrow.value || !props.placeholder ? 'Mensagem' : props.placeholder))
+  /**
+   * No celular o texto de exemplo vira só "Mensagem": "Mensagem para <agente>" quebrava em duas linhas e
+   * dobrava a altura da caixa vazia. O agente já está no cabeçalho.
+   */
+  const narrowQuery = typeof window !== 'undefined' ? window.matchMedia('(max-width: 767px)') : undefined
+  const narrow = ref(narrowQuery?.matches ?? false)
+  const onNarrow = (event: MediaQueryListEvent) => (narrow.value = event.matches)
+  narrowQuery?.addEventListener('change', onNarrow)
+  onBeforeUnmount(() => narrowQuery?.removeEventListener('change', onNarrow))
+  const shownPlaceholder = computed(() => (narrow.value || !props.placeholder ? 'Mensagem' : props.placeholder))
 
-/** O conteúdo vai em base64 (`files[].data`), como a API espera. */
-async function attach(event: Event) {
-  const input = event.target as HTMLInputElement
-  for (const file of Array.from(input.files ?? [])) {
-    const data = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '')
-      reader.onerror = () => reject(reader.error)
-      reader.readAsDataURL(file)
-    })
-    files.value.push({ name: file.name, mimeType: file.type || 'application/octet-stream', data })
+  /** O conteúdo vai em base64 (`files[].data`), como a API espera. */
+  async function attach(event: Event) {
+    const input = event.target as HTMLInputElement
+    for (const file of Array.from(input.files ?? [])) {
+      const data = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '')
+        reader.onerror = () => reject(reader.error)
+        reader.readAsDataURL(file)
+      })
+      files.value.push({ name: file.name, mimeType: file.type || 'application/octet-stream', data })
+    }
+    input.value = ''
   }
-  input.value = ''
-}
 
-function grow() {
-  const element = area.value
-  if (!element) return
-  element.style.height = 'auto'
-  element.style.height = `${Math.min(element.scrollHeight, 200)}px`
-}
+  function grow() {
+    const element = area.value
+    if (!element) return
+    element.style.height = 'auto'
+    element.style.height = `${Math.min(element.scrollHeight, 200)}px`
+  }
 
-function submit() {
-  if (props.sending || props.disabled) return
-  const message = text.value.trim()
-  if (!message && !files.value.length) return
-  const sentFiles = files.value
-  // ⚠️ Limpa na hora (a resposta chega em streaming), mas devolve se o envio falhar: o texto digitado não se perde.
-  // Se já digitou outra coisa por cima, não sobrescreve.
-  const settle = (ok: boolean) => {
-    if (ok || text.value || files.value.length) return
-    text.value = message
-    files.value = sentFiles
+  // A fila que não entrou volta para a caixa (sem apagar o que já está digitado).
+  watch(
+    () => props.restore,
+    (restore) => {
+      if (!restore) return
+      text.value = text.value ? `${restore}\n\n${text.value}` : restore
+      emit('restored')
+      void nextTick(grow)
+    },
+    { immediate: true },
+  )
+
+  function submit() {
+    if (props.disabled) return
+    const message = text.value.trim()
+    if (!message && !files.value.length) return
+    const sentFiles = files.value
+    // ⚠️ Limpa na hora (a resposta chega em streaming), mas devolve se o envio falhar: o texto digitado não se perde.
+    // Se já digitou outra coisa por cima, não sobrescreve.
+    const settle = (ok: boolean) => {
+      if (ok || text.value || files.value.length) return
+      text.value = message
+      files.value = sentFiles
+      void nextTick(grow)
+    }
+    emit('send', message, sentFiles, settle)
+    text.value = ''
+    files.value = []
     void nextTick(grow)
   }
-  emit('send', message, sentFiles, settle)
-  text.value = ''
-  files.value = []
-  void nextTick(grow)
-}
 
-/**
- * A busca de `/`: skills, commands e os documentos da conversa (specs, ADRs, conhecimento), pelo nome e pela descrição,
- * enquanto a mensagem começa com `/` e o nome ainda está sendo digitado. Uma guia por tipo — as skills primeiro —, e
- * ← → trocam de guia (com o cursor no fim). ↑ ↓ escolhem, Enter ou Tab completam (`/nome `, para o pedido), Esc
- * fecha até o texto mudar. A skill e o documento escolhidos vão inteiros para o agente.
- */
-const dismissed = ref<string>()
-const highlighted = ref(0)
-const tab = ref<TSlashKind>('skill')
-/** O campo de busca do seletor: recorta os itens da guia, além do que vem depois da barra. */
-const filter = ref('')
-const filterInput = ref<HTMLInputElement>()
-const list = ref<HTMLElement>()
-const slashOpen = computed(() => dismissed.value !== text.value && /^\/\S*$/.test(text.value))
-const matches = computed(() => slashSuggestions(text.value, props.commands ?? [], filter.value))
-const shownTab = computed(() => shownSlashTab(tab.value, text.value, matches.value))
-const suggestions = computed(() => (slashOpen.value ? matches.value[shownTab.value] : []))
-watch(suggestions, () => (highlighted.value = 0))
-// Fechou o `/`: a próxima vez abre nas skills de novo, sem busca.
-watch(slashOpen, (open) => {
-  if (open) return
-  tab.value = 'skill'
-  filter.value = ''
-})
-// O escolhido fica à vista quando a lista rola.
-watch(highlighted, () => void nextTick(() => list.value?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })))
-/** A guia aberta não tem nada: diz por quê, em vez de a lista ficar muda. */
-const slashEmpty = computed(() => slashOpen.value && !suggestions.value.length)
-const searching = computed(() => text.value !== '/' || !!filter.value.trim())
-const kindLabel = (kind?: string) => SLASH_TABS.find((item) => item.kind === (kind ?? 'command'))?.label ?? kind ?? 'Command'
-const tabLabel = computed(() => SLASH_TABS.find((item) => item.kind === shownTab.value)?.label.toLowerCase() ?? '')
-const KIND_STYLE: Record<TSlashKind, string> = {
-  skill: 'bg-violet-500/15 text-violet-300',
-  command: 'bg-zinc-800 text-zinc-400',
-  spec: 'bg-sky-500/15 text-sky-300',
-  adr: 'bg-amber-500/15 text-amber-300',
-  knowledge: 'bg-emerald-500/15 text-emerald-300',
-}
-
-function moveTab(step: number) {
-  const index = SLASH_TABS.findIndex((item) => item.kind === shownTab.value)
-  tab.value = SLASH_TABS[(index + step + SLASH_TABS.length) % SLASH_TABS.length].kind
-}
-
-function complete(id: string) {
-  text.value = `/${id} `
-  void nextTick(() => {
-    grow()
-    area.value?.focus()
-  })
-}
-
-/** As teclas do campo de busca: as mesmas da lista; Esc limpa a busca e volta para a caixa de mensagem. */
-function onFilterKey(event: KeyboardEvent) {
-  if (event.isComposing) return
-  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-    event.preventDefault()
-    if (suggestions.value.length) highlighted.value = (highlighted.value + (event.key === 'ArrowDown' ? 1 : -1) + suggestions.value.length) % suggestions.value.length
-  } else if (event.key === 'Enter' || event.key === 'Tab') {
-    event.preventDefault()
-    if (suggestions.value.length) complete(suggestions.value[highlighted.value].id)
-  } else if (event.key === 'Escape') {
-    event.preventDefault()
+  /**
+   * A busca de `/`: skills, commands e os documentos da conversa (specs, ADRs, conhecimento), pelo nome e pela descrição,
+   * enquanto a mensagem começa com `/` e o nome ainda está sendo digitado. Uma guia por tipo — as skills primeiro —, e
+   * ← → trocam de guia (com o cursor no fim). ↑ ↓ escolhem, Enter ou Tab completam (`/nome `, para o pedido), Esc
+   * fecha até o texto mudar. A skill e o documento escolhidos vão inteiros para o agente.
+   */
+  const dismissed = ref<string>()
+  const highlighted = ref(0)
+  const tab = ref<TSlashKind>('skill')
+  /** O campo de busca do seletor: recorta os itens da guia, além do que vem depois da barra. */
+  const filter = ref('')
+  const filterInput = ref<HTMLInputElement>()
+  const list = ref<HTMLElement>()
+  const slashOpen = computed(() => dismissed.value !== text.value && /^\/\S*$/.test(text.value))
+  const matches = computed(() => slashSuggestions(text.value, props.commands ?? [], filter.value))
+  const shownTab = computed(() => shownSlashTab(tab.value, text.value, matches.value))
+  const suggestions = computed(() => (slashOpen.value ? matches.value[shownTab.value] : []))
+  watch(suggestions, () => (highlighted.value = 0))
+  // Fechou o `/`: a próxima vez abre nas skills de novo, sem busca.
+  watch(slashOpen, (open) => {
+    if (open) return
+    tab.value = 'skill'
     filter.value = ''
-    area.value?.focus()
+  })
+  // O escolhido fica à vista quando a lista rola.
+  watch(highlighted, () => void nextTick(() => list.value?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })))
+  /** A guia aberta não tem nada: diz por quê, em vez de a lista ficar muda. */
+  const slashEmpty = computed(() => slashOpen.value && !suggestions.value.length)
+  const searching = computed(() => text.value !== '/' || !!filter.value.trim())
+  const kindLabel = (kind?: string) => SLASH_TABS.find((item) => item.kind === (kind ?? 'command'))?.label ?? kind ?? 'Command'
+  const tabLabel = computed(() => SLASH_TABS.find((item) => item.kind === shownTab.value)?.label.toLowerCase() ?? '')
+  const KIND_STYLE: Record<TSlashKind, string> = {
+    skill: 'bg-violet-500/15 text-violet-300',
+    command: 'bg-zinc-800 text-zinc-400',
+    spec: 'bg-sky-500/15 text-sky-300',
+    adr: 'bg-amber-500/15 text-amber-300',
+    knowledge: 'bg-emerald-500/15 text-emerald-300',
   }
-}
 
-function onKey(event: KeyboardEvent) {
-  const atEnd = area.value?.selectionStart === text.value.length && area.value?.selectionEnd === text.value.length
-  if (slashOpen.value && !event.isComposing && atEnd && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
-    event.preventDefault()
-    moveTab(event.key === 'ArrowRight' ? 1 : -1)
-    return
+  function moveTab(step: number) {
+    const index = SLASH_TABS.findIndex((item) => item.kind === shownTab.value)
+    tab.value = SLASH_TABS[(index + step + SLASH_TABS.length) % SLASH_TABS.length].kind
   }
-  if (slashOpen.value && !suggestions.value.length && event.key === 'Escape') {
-    event.preventDefault()
-    dismissed.value = text.value
-    return
+
+  function complete(id: string) {
+    text.value = `/${id} `
+    void nextTick(() => {
+      grow()
+      area.value?.focus()
+    })
   }
-  if (suggestions.value.length && !event.isComposing) {
+
+  /** As teclas do campo de busca: as mesmas da lista; Esc limpa a busca e volta para a caixa de mensagem. */
+  function onFilterKey(event: KeyboardEvent) {
+    if (event.isComposing) return
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
-      const step = event.key === 'ArrowDown' ? 1 : -1
-      highlighted.value = (highlighted.value + step + suggestions.value.length) % suggestions.value.length
-      return
-    }
-    if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab') {
+      if (suggestions.value.length) highlighted.value = (highlighted.value + (event.key === 'ArrowDown' ? 1 : -1) + suggestions.value.length) % suggestions.value.length
+    } else if (event.key === 'Enter' || event.key === 'Tab') {
       event.preventDefault()
-      complete(suggestions.value[highlighted.value].id)
+      if (suggestions.value.length) complete(suggestions.value[highlighted.value].id)
+    } else if (event.key === 'Escape') {
+      event.preventDefault()
+      filter.value = ''
+      area.value?.focus()
+    }
+  }
+
+  function onKey(event: KeyboardEvent) {
+    const atEnd = area.value?.selectionStart === text.value.length && area.value?.selectionEnd === text.value.length
+    if (slashOpen.value && !event.isComposing && atEnd && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+      event.preventDefault()
+      moveTab(event.key === 'ArrowRight' ? 1 : -1)
       return
     }
-    if (event.key === 'Escape') {
+    if (slashOpen.value && !suggestions.value.length && event.key === 'Escape') {
       event.preventDefault()
       dismissed.value = text.value
       return
     }
+    if (suggestions.value.length && !event.isComposing) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        const step = event.key === 'ArrowDown' ? 1 : -1
+        highlighted.value = (highlighted.value + step + suggestions.value.length) % suggestions.value.length
+        return
+      }
+      if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab') {
+        event.preventDefault()
+        complete(suggestions.value[highlighted.value].id)
+        return
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        dismissed.value = text.value
+        return
+      }
+    }
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault()
+      submit()
+    }
   }
-  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
-    event.preventDefault()
-    submit()
-  }
-}
 </script>
 
 <template>
@@ -179,50 +195,76 @@ function onKey(event: KeyboardEvent) {
       </span>
     </div>
     <div v-if="slashOpen" class="mb-2 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-lg shadow-black/30">
-    <div class="flex items-center gap-1 border-b border-zinc-800 px-2 py-1.5 text-xs">
-    <div class="scroll-thin flex min-w-0 gap-1 overflow-x-auto" role="tablist" aria-label="Tipo">
-      <button
-        v-for="item in SLASH_TABS"
-        :key="item.kind"
-        type="button"
-        role="tab"
-        :aria-selected="item.kind === shownTab"
-        class="shrink-0 rounded-full px-2.5 py-0.5"
-        :class="item.kind === shownTab ? 'bg-zinc-800 text-zinc-100' : matches[item.kind].length ? 'text-zinc-400 hover:bg-zinc-800/60' : 'text-zinc-600 hover:bg-zinc-800/60'"
-        @mousedown.prevent="tab = item.kind"
+      <div class="flex items-center gap-1 border-b border-zinc-800 px-2 py-1.5 text-xs">
+        <div class="scroll-thin flex min-w-0 gap-1 overflow-x-auto" role="tablist" aria-label="Tipo">
+          <button
+            v-for="item in SLASH_TABS"
+            :key="item.kind"
+            type="button"
+            role="tab"
+            :aria-selected="item.kind === shownTab"
+            class="shrink-0 rounded-full px-2.5 py-0.5"
+            :class="item.kind === shownTab ? 'bg-zinc-800 text-zinc-100' : matches[item.kind].length ? 'text-zinc-400 hover:bg-zinc-800/60' : 'text-zinc-600 hover:bg-zinc-800/60'"
+            @mousedown.prevent="tab = item.kind"
+          >
+            {{ item.label }}
+            <span v-if="searching && matches[item.kind].length" class="ml-1 text-zinc-500">{{ matches[item.kind].length }}</span>
+          </button>
+        </div>
+        <label class="ml-auto flex w-40 shrink-0 items-center gap-1.5 rounded-full bg-zinc-800 px-2.5 py-1 text-zinc-300 focus-within:ring-1 focus-within:ring-emerald-500/60">
+          <Icon name="search" class="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+          <input
+            ref="filterInput"
+            v-model="filter"
+            type="search"
+            class="min-w-0 flex-1 bg-transparent outline-none placeholder:text-zinc-500"
+            :placeholder="`Buscar em ${tabLabel}`"
+            :aria-label="`Buscar em ${tabLabel}`"
+            @keydown="onFilterKey"
+          />
+        </label>
+      </div>
+      <!-- ⚖️ Altura FIXA: a lista rola em vez de a caixa crescer e encolher a cada guia ou letra. -->
+      <div ref="list" class="scroll-thin h-56 overflow-y-auto">
+        <p v-if="slashEmpty" class="px-3 py-2 text-xs text-zinc-400">
+          {{ searching ? `Nada encontrado em ${tabLabel}.` : `Nada em ${tabLabel} por aqui.` }}
+        </p>
+        <ul v-if="suggestions.length" role="listbox" :aria-label="tabLabel">
+          <li v-for="(command, index) in suggestions" :key="command.id" role="option" :aria-selected="index === highlighted">
+            <button
+              type="button"
+              class="flex w-full items-baseline gap-3 px-3 py-2 text-left"
+              :class="index === highlighted ? 'bg-zinc-800' : 'hover:bg-zinc-800/60'"
+              @mousedown.prevent="complete(command.id)"
+              @mouseenter="highlighted = index"
+            >
+              <code class="shrink-0 text-emerald-300">/{{ command.id }}</code>
+              <span class="shrink-0 rounded-full px-1.5 text-[10px]" :class="KIND_STYLE[command.kind ?? 'command']">{{ kindLabel(command.kind) }}</span>
+              <span class="min-w-0 truncate text-xs text-zinc-400">{{ command.description }}</span>
+            </button>
+          </li>
+        </ul>
+      </div>
+    </div>
+    <div v-if="queued?.length" class="mb-2 flex flex-col gap-1">
+      <p
+        v-for="(item, index) in queued"
+        :key="index"
+        class="ml-auto max-w-[78%] truncate rounded-2xl rounded-br-md border border-emerald-600/40 px-3 py-1 text-xs text-emerald-200/80"
+        :title="item"
       >
-        {{ item.label }}<span v-if="searching && matches[item.kind].length" class="ml-1 text-zinc-500">{{ matches[item.kind].length }}</span>
-      </button>
-    </div>
-    <label class="ml-auto flex w-40 shrink-0 items-center gap-1.5 rounded-full bg-zinc-800 px-2.5 py-1 text-zinc-300 focus-within:ring-1 focus-within:ring-emerald-500/60">
-      <Icon name="search" class="h-3.5 w-3.5 shrink-0 text-zinc-500" />
-      <input ref="filterInput" v-model="filter" type="search" class="min-w-0 flex-1 bg-transparent outline-none placeholder:text-zinc-500" :placeholder="`Buscar em ${tabLabel}`" :aria-label="`Buscar em ${tabLabel}`" @keydown="onFilterKey" />
-    </label>
-    </div>
-    <!-- ⚖️ Altura FIXA: a lista rola em vez de a caixa crescer e encolher a cada guia ou letra. -->
-    <div ref="list" class="scroll-thin h-56 overflow-y-auto">
-    <p v-if="slashEmpty" class="px-3 py-2 text-xs text-zinc-400">
-      {{ searching ? `Nada encontrado em ${tabLabel}.` : `Nada em ${tabLabel} por aqui.` }}
-    </p>
-    <ul v-if="suggestions.length" role="listbox" :aria-label="tabLabel">
-      <li v-for="(command, index) in suggestions" :key="command.id" role="option" :aria-selected="index === highlighted">
-        <button
-          type="button"
-          class="flex w-full items-baseline gap-3 px-3 py-2 text-left"
-          :class="index === highlighted ? 'bg-zinc-800' : 'hover:bg-zinc-800/60'"
-          @mousedown.prevent="complete(command.id)"
-          @mouseenter="highlighted = index"
-        >
-          <code class="shrink-0 text-emerald-300">/{{ command.id }}</code>
-          <span class="shrink-0 rounded-full px-1.5 text-[10px]" :class="KIND_STYLE[command.kind ?? 'command']">{{ kindLabel(command.kind) }}</span>
-          <span class="min-w-0 truncate text-xs text-zinc-400">{{ command.description }}</span>
-        </button>
-      </li>
-    </ul>
-    </div>
+        <span class="text-emerald-400/70">na fila ·</span>
+        {{ item }}
+      </p>
     </div>
     <div class="flex items-end gap-2">
-      <button type="button" class="grid h-10 w-10 shrink-0 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-40" :disabled="disabled" title="Anexar" @click="picker?.click()">
+      <button
+        type="button"
+        class="grid h-10 w-10 shrink-0 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-40"
+        :disabled="disabled"
+        title="Anexar"
+        @click="picker?.click()"
+      >
         <Icon name="clip" class="h-5 w-5" />
       </button>
       <input ref="picker" type="file" multiple class="hidden" @change="attach" />
@@ -236,10 +278,22 @@ function onKey(event: KeyboardEvent) {
         @input="grow"
         @keydown="onKey"
       />
-      <button v-if="sending" type="button" class="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-rose-500 text-white hover:bg-rose-400" title="Parar" @click="emit('stop')">
+      <button
+        v-if="sending"
+        type="button"
+        class="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-rose-500 text-white hover:bg-rose-400"
+        title="Parar"
+        @click="emit('stop')"
+      >
         <Icon name="stop" class="h-5 w-5" />
       </button>
-      <button v-else type="submit" class="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400 disabled:opacity-40" :disabled="disabled" title="Enviar">
+      <button
+        v-if="!sending || text.trim()"
+        type="submit"
+        class="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400 disabled:opacity-40"
+        :disabled="disabled"
+        :title="sending ? 'Enviar para o turno em andamento' : 'Enviar'"
+      >
         <Icon name="send" class="h-5 w-5" />
       </button>
     </div>
