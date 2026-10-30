@@ -499,8 +499,12 @@ the permission rules (project → Permissions, and each agent's own rules) in tw
      secret: `node -e` reading `.env` fails in the OS.
    - **Network:** only through the gateway's own proxy on 127.0.0.1, with a per-command token. Each
      connection is decided by that agent's network rules, and git over SSH goes through the same
-     proxy. Loopback, link-local and cloud metadata are always refused; LAN addresses need an exact
-     rule. Direct connections fail.
+     proxy. Link-local, cloud metadata and the gateway's own ports are always refused. LAN addresses
+     and local services need an exact rule: `localhost:27017` opens the host's Mongo, and
+     `localhost:*` opens nothing. On Linux each exact `localhost:<port>` rule also gets a `socat`
+     forwarder inside the sandbox, through the proxy, so database clients that do not speak HTTP
+     proxy connect to `localhost:<port>` as usual. On macOS only proxy-aware clients reach them.
+     Direct connections fail.
 
 Every decision is logged (Permissions → Latest decisions). The Claude file tools (Read, Write, Edit)
 go through the same rules and a symlink-resolving path filter in a `PreToolUse` hook. WebFetch goes

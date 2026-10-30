@@ -43,6 +43,21 @@ describe('Network.Gate', () => {
     gate.release(token)
   })
 
+  it('⛔ serviço local só com a regra EXATA localhost:<porta>; as portas do gateway, nunca', async () => {
+    const exact = gate.register((host, port) => ({ allowed: host === 'localhost' && port === 27017, reason: 'o mongo', pattern: 'localhost:27017' }))
+    for (const host of ['localhost', '127.0.0.1', '::1']) {
+      const verdict = await gate.decide(exact, host, 27017)
+      assert.deepStrictEqual([verdict.allowed, verdict.address], [true, '127.0.0.1'], host)
+    }
+    assert.strictEqual((await gate.decide(exact, 'localhost', 6379)).allowed, false, 'outra porta')
+    const wildcard = gate.register(() => ({ allowed: true, reason: 'tudo', pattern: 'localhost:*' }))
+    assert.strictEqual((await gate.decide(wildcard, 'localhost', 27017)).allowed, false, 'curinga não abre o loopback')
+    const gatewayPort = Number(process.env.PORT) || 3000
+    const own = gate.register(() => ({ allowed: true, reason: 'x', pattern: `localhost:${gatewayPort}` }))
+    assert.match((await gate.decide(own, 'localhost', gatewayPort)).reason, /do próprio gateway/)
+    for (const token of [exact, wildcard, own]) gate.release(token)
+  })
+
   it('rede local só com regra exata, nunca por curinga', async () => {
     const wildcard = gate.register(() => ({ allowed: true, reason: 'tudo', pattern: '*' }))
     const exact = gate.register(() => ({ allowed: true, reason: 'o servidor', pattern: '10.0.0.5:22' }))

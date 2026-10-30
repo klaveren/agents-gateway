@@ -40,6 +40,24 @@ export interface ICercoPlace {
   /** A pasta do projeto: o rascunho mora nela, nunca dentro da worktree (sujaria o `git status`). Ausente = a raiz. */
   scratchBase?: string
   gitCommonDir?: string
+  /** As portas de serviço LOCAL que as regras liberam exatas (`localhost:<porta>`): no Linux ganham um encaminhador. */
+  localPorts?: readonly number[]
+}
+
+/**
+ * ⛔ OS SERVIÇOS LOCAIS NO LINUX: lá o comando tem a própria rede (`--unshare-net`) e o `localhost` dele é outro. Um
+ * cliente de banco não fala proxy, então cada porta liberada ganha, dentro do cerco, um `socat` ouvindo em
+ * `127.0.0.1:<porta>` que leva a conexão pelo PORTÃO (com o token do comando) ao serviço do host. Quem decide continua
+ * sendo a regra, conexão a conexão. Os encaminhadores morrem com o comando.
+ */
+export function localForwards(ports: readonly number[], token: string, bridgePort: number): string {
+  if (!ports.length) return ''
+  const unique = [...new Set(ports)].filter((port) => Number.isInteger(port) && port > 0 && port < 65536)
+  const forwards = unique.map(
+    (port) => `socat TCP-LISTEN:${port},bind=127.0.0.1,reuseaddr,fork PROXY:127.0.0.1:localhost:${port},proxyport=${bridgePort},proxyauth=${token}:x >/dev/null 2>&1 &`,
+  )
+  // O `trap` derruba os encaminhadores quando o comando acaba; a espera curta deixa eles abrirem a porta antes do uso.
+  return `${forwards.join(' ')} trap 'kill $(jobs -p) 2>/dev/null' EXIT; sleep 0.2;`
 }
 
 export const SANDBOX_UNAVAILABLE = 'cerco indisponível neste servidor'
@@ -138,7 +156,9 @@ export class ProjectSandbox implements IProjectSandbox {
     const prelude = Object.entries(scoped)
       .map(([name, value]) => `export ${name}=${quote(value)}`)
       .join('; ')
-    return manager.wrapWithSandbox(`${prelude}; ${command}`, SANDBOX_SHELL, {
+    // No Mac o seatbelt divide a rede com o host: lá só o cliente que fala proxy chega ao serviço local.
+    const forwards = process.platform === 'linux' ? localForwards(place.localPorts ?? [], networkToken, LINUX_BRIDGE_PORT) : ''
+    return manager.wrapWithSandbox(`${prelude}; ${forwards} ${command}`, SANDBOX_SHELL, {
       ...(this.nested() ? { enableWeakerNestedSandbox: true } : {}),
       filesystem: { denyRead: cerco.readDeny, allowRead: cerco.readAllow, allowWrite: cerco.writeAllow, denyWrite: cerco.writeDeny },
     })
