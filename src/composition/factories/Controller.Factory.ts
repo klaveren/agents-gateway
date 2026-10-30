@@ -22,6 +22,8 @@ import { makeProjects } from './Projects.Factory'
 import { projectSandbox } from '@infra/sandbox/Project.Sandbox'
 import { ProjectsController } from '@infra/http/Projects.Controller'
 import { ImportController } from '@infra/http/Import.Controller'
+import { CatalogController } from '@infra/http/Catalog.Controller'
+import { makeCatalogHistoryQuery } from './CatalogHistory.Factory'
 import { catalogFinder, ImportScanUseCase } from '@application/ImportScan.Usecase'
 import { readRepoTree } from '@infra/import/Repo.Tree'
 import { AgentsDirDetector } from '@infra/import/AgentsDir.Detector'
@@ -167,6 +169,11 @@ export function makeProjectsController(): ProjectsController {
 
 export function makeGuidanceController(): GuidanceController {
   return new GuidanceController({ guidance: makeGuidance(), proof: makeAuth().proof })
+}
+
+/** O histórico do catálogo (só leitura): admin lê tudo; o membro, só o MCP dos projetos dele. */
+export function makeCatalogController(): CatalogController {
+  return new CatalogController({ history: makeCatalogHistoryQuery(), proof: makeAuth().proof, projects: makeProjects() })
 }
 
 /** O importador: a varredura lê o repositório DO projeto (`resolveWorkFolder`, a mesma contenção da conversa) e não grava. */
