@@ -13,6 +13,7 @@ import { GoogleChatAdapter } from '@infra/adapters/GoogleChat.Adapter'
 import { OpenAIAgentAdapter } from '@infra/adapters/OpenAIAgent.Adapter'
 import { OpenAIChatAdapter } from '@infra/adapters/OpenAIChat.Adapter'
 import { adapterKey, AgentProvider } from '@infra/providers/Agent.Provider'
+import { ProviderBench } from '@infra/providers/Provider.Bench'
 import { SessionStore } from '@infra/session/Session.Store'
 import { makeAgents } from './Agents.Factory'
 import { makeProviders } from './Providers.Factory'
@@ -66,5 +67,12 @@ export function makeOrchestrator(): AgentProvider {
    * A MESMA instância que o controller recebe (ver `makeSettings`): a tela salva num repositório e o
    * provider escuta o mesmo, e é isso que faz a mudança valer no instante em que é gravada.
    */
-  return new AgentProvider(adapters, sessions, makeSettings(), makeAgents(), connections, makeGuidance())
+  return new AgentProvider(adapters, sessions, makeSettings(), makeAgents(), connections, makeGuidance(), providerBench())
+}
+
+let bench: ProviderBench | undefined
+/** O banco de reservas (ver `Provider.Bench`): um só, para o provider e para a tela de configurações. */
+export function providerBench(): ProviderBench {
+  bench ??= new ProviderBench()
+  return bench
 }

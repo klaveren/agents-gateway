@@ -1,4 +1,5 @@
 import { sessionChoice } from '@domain/Agent.Policy'
+import { errorPayload } from '@domain/Provider.Failure'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Codex, CodexOptions, ThreadEvent, ThreadItem, ThreadOptions, UserInput } from '@openai/codex-sdk'
@@ -237,7 +238,7 @@ export class CodexAgentAdapter implements IAgentAdapter {
       }
       const message = error instanceof Error ? error.message : String(error)
       console.error('[CodexAgent] Error:', message)
-      yield { type: 'error', sessionId, timestamp: now(), payload: { message } }
+      yield { type: 'error', sessionId, timestamp: now(), payload: errorPayload(error, message) }
     } finally {
       record.abort = undefined
       if (grant) grants.release(grant)
@@ -329,9 +330,9 @@ export function codexEvents(event: ThreadEvent, sessionId: string, native: ICode
         },
       ]
     case 'turn.failed':
-      return [{ type: 'error', sessionId, timestamp, payload: { message: event.error.message } }]
+      return [{ type: 'error', sessionId, timestamp, payload: errorPayload(event.error.message) }]
     case 'error':
-      return [{ type: 'error', sessionId, timestamp, payload: { message: event.message } }]
+      return [{ type: 'error', sessionId, timestamp, payload: errorPayload(event.message) }]
     default:
       return []
   }

@@ -1,4 +1,5 @@
 import { sessionChoice } from '@domain/Agent.Policy'
+import { errorPayload } from '@domain/Provider.Failure'
 import { HANDOFF_MAX_CHARS, handoffText } from '@domain/Handoff.Policy'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readdirSync } from 'node:fs'
@@ -217,6 +218,8 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     const toolNames = new Map<string, string>()
     /** A entrada da última chamada ao modelo neste turno (ver `IUsage.contextTokens`). */
     let lastContext: number | undefined
+    /** O limite do plano (ou da API) que o CLI avisou: a falha do turno é ela, e diz quando a cota volta. */
+    let rateLimit: Error | undefined
 
     try {
       for await (const message of stream) {
@@ -230,6 +233,13 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
           const enabled = new Set((message as { tools?: string[] }).tools ?? [])
           const missing = natives.filter((name) => !enabled.has(name))
           if (missing.length) yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: `O SDK do Claude não ligou: ${missing.join(', ')}.` } }
+          continue
+        }
+
+        if (message.type === 'rate_limit_event') {
+          const info = message.rate_limit_info
+          if (info.status === 'rejected')
+            rateLimit = Object.assign(new Error(`usage limit reached (${info.rateLimitType ?? 'plan'})`), info.resetsAt ? { resetsAt: info.resetsAt } : {})
           continue
         }
 
@@ -249,6 +259,8 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
         if (message.type === 'assistant') {
           // O consumo DESTA chamada ao modelo: a entrada dela (com cache) é o contexto em uso agora. O `result`
           // traz a soma do turno, que não serve para isso.
+          const failed = (message as { error?: string }).error
+          if (failed === 'rate_limit' || failed === 'billing_error') rateLimit ??= new Error(failed === 'rate_limit' ? 'rate limit' : 'usage limit reached (billing)')
           const call = message.message.usage
           if (call) lastContext = call.input_tokens + (call.cache_creation_input_tokens ?? 0) + (call.cache_read_input_tokens ?? 0)
           for (const block of message.message.content) {
@@ -320,7 +332,8 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
               type: 'error',
               sessionId,
               timestamp: new Date(),
-              payload: { message: detail || `Claude Agent SDK stopped: ${message.subtype}` },
+              // O limite do plano chega como texto no `result`; o `rate_limit_event` (acima) traz quando a cota volta.
+              payload: errorPayload(rateLimit ?? detail ?? '', detail || `Claude Agent SDK stopped: ${message.subtype}`),
             }
             return
           }
@@ -336,7 +349,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
 
       const message = error instanceof Error ? error.message : String(error)
       console.error('[ClaudeAgent] Error:', message)
-      yield { type: 'error', sessionId, timestamp: new Date(), payload: { message } }
+      yield { type: 'error', sessionId, timestamp: new Date(), payload: errorPayload(rateLimit ?? error, message) }
     } finally {
       record.abort = undefined
       stream.return(undefined).catch(() => undefined)

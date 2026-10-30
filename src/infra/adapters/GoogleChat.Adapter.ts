@@ -1,4 +1,5 @@
 import { sessionChoice } from '@domain/Agent.Policy'
+import { errorPayload } from '@domain/Provider.Failure'
 import { Content, FunctionDeclaration, GoogleGenerativeAI, Part, Tool } from '@google/generative-ai'
 import { IConnectionSource, KeyedClient } from './support/Keyed.Client'
 import { EMode } from '@domain/enums/EMode.Enum'
@@ -132,7 +133,7 @@ export class GoogleChatAdapter implements IAgentAdapter {
 
       const message = error instanceof Error ? error.message : String(error)
       console.error('[GoogleChat] Error:', message)
-      yield { type: 'error', sessionId, timestamp: new Date(), payload: { message } }
+      yield { type: 'error', sessionId, timestamp: new Date(), payload: errorPayload(error, message) }
     } finally {
       record.abort = undefined
     }

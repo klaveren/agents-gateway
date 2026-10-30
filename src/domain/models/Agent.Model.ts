@@ -1,3 +1,4 @@
+import type { IAgentFallback } from '@domain/Fallback.Policy'
 import type { IPermissionRule } from '@domain/Permission.Policy'
 import { EMode } from '../enums/EMode.Enum'
 import type { TSandboxLevel } from '../Sandbox.Policy'
@@ -49,6 +50,8 @@ export interface IAgent {
    * (Sistema → Limites). Para quem builda e roda teste (minutos, logs grandes).
    */
   terminal?: IAgentTerminal
+  /** A troca de provedor quando a cota acaba (ver `Fallback.Policy`). Ausente = a cadeia global. */
+  fallback?: IAgentFallback
 }
 
 export interface IAgentTerminal {

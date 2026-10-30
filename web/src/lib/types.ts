@@ -145,9 +145,22 @@ export interface IAgentDetail extends IAgent {
   permissions?: IPermissionRule[]
   /** O terminal deste agente: tempo por comando e saída. Ausente = o global. */
   terminal?: IAgentTerminal
+  fallback?: IAgentFallback
   systemPrompt: string
   updatedAt?: string
   updatedBy?: string
+}
+
+/** Um passo da troca de provedor (ver `Fallback.Policy` no servidor). */
+export interface IFallbackStep {
+  provider: string
+  model: string
+}
+
+/** A troca de provedor do agente. Ausente = `global`. */
+export interface IAgentFallback {
+  mode: 'global' | 'own' | 'off'
+  chain?: IFallbackStep[]
 }
 
 export interface IAgentTerminal {
@@ -174,6 +187,8 @@ export interface IAgentInput {
   /** As regras de permissão do agente (a camada dele, por cima das do projeto). */
   permissions?: IPermissionRule[]
   terminal?: IAgentTerminal | null
+  /** `null` volta à cadeia global. */
+  fallback?: IAgentFallback | null
 }
 
 export type TPermissionCategory = 'terminal' | 'read' | 'write' | 'network' | 'mcp' | 'skill' | 'delegate' | 'account'
@@ -258,6 +273,10 @@ export interface ISettings {
   builderProvider?: string
   builderModel?: string
   classifyTurns?: boolean
+  /** A troca de provedor global: para onde o turno vai quando a cota acaba. */
+  fallback?: { chain: IFallbackStep[]; cooldownMinutes?: number }
+  /** Os provedores sem cota agora, e quando voltam (só leitura). */
+  benched?: Array<{ provider: string; until: string }>
   updatedAt?: string
   updatedBy?: string
   defaults?: { agentId?: string; provider?: string; model?: string }
