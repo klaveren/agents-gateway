@@ -21,6 +21,12 @@ import { makeHooks } from './Hooks.Factory'
 import { makeProjects } from './Projects.Factory'
 import { projectSandbox } from '@infra/sandbox/Project.Sandbox'
 import { ProjectsController } from '@infra/http/Projects.Controller'
+import { ImportController } from '@infra/http/Import.Controller'
+import { catalogFinder, ImportScanUseCase } from '@application/ImportScan.Usecase'
+import { readRepoTree } from '@infra/import/Repo.Tree'
+import { AgentsDirDetector } from '@infra/import/AgentsDir.Detector'
+import { OpencodeDetector } from '@infra/import/Opencode.Detector'
+import { resolveWorkFolder } from '@infra/workspace/Work.Folder'
 import { AgentController } from '@infra/http/Agent.Controller'
 import { AuthController } from '@infra/http/Auth.Controller'
 import { ProvidersController } from '@infra/http/Providers.Controller'
@@ -167,4 +173,33 @@ export function makeProjectsController(): ProjectsController {
 
 export function makeGuidanceController(): GuidanceController {
   return new GuidanceController({ guidance: makeGuidance(), proof: makeAuth().proof })
+}
+
+/** O importador: a varredura lê o repositório DO projeto (`resolveWorkFolder`, a mesma contenção da conversa) e não grava. */
+export function makeImportController(): ImportController {
+  const projects = makeProjects()
+  const guidance = makeGuidance()
+  const masker = makeSecretMasker()
+  const quietly = <T>(read: () => T): T | undefined => {
+    try {
+      return read()
+    } catch {
+      return undefined
+    }
+  }
+  return new ImportController({
+    scan: new ImportScanUseCase({
+      readTree: (projectId, repository) => readRepoTree(resolveWorkFolder(projects.folderOf(projectId), repository).dir, { mask: (text) => masker.text(text) }),
+      detectors: [new AgentsDirDetector(), new OpencodeDetector()],
+      findInCatalog: catalogFinder({
+        doc: (id) => quietly(() => guidance.doc(id)),
+        resource: (id) => quietly(() => guidance.resource(id)),
+        rules: (scope) => guidance.rules(scope),
+        agent: (id) => makeAgents().get(id),
+        mcpServer: (id) => !!makeTools().servers.get(id),
+      }),
+    }),
+    projectExists: (projectId) => projects.exists(projectId),
+    proof: makeAuth().proof,
+  })
 }

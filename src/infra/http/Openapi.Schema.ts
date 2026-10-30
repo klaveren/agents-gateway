@@ -1356,6 +1356,90 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/projects/{id}/import/scan': {
+      post: {
+        summary:
+          'Inventory of the agentic resources a repository of the project already has (`.agents/`, opencode): probable kind, sources with size, ≈tokens and sha256, cross references (found or broken), generated and secret marks, and whether the id already exists in the catalog. READ ONLY: nothing is saved and no content is returned. Administrators only (404 for the others)',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          ...json({ type: 'object', properties: { repository: { type: 'string', description: 'The folder name in `<project>/repositories/`' } }, required: ['repository'] }),
+        },
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  projectId: { type: 'string' },
+                  repository: { type: 'string' },
+                  head: { type: 'string' },
+                  dirty: { type: 'boolean' },
+                  scannedAt: { type: 'string', format: 'date-time' },
+                  formats: { type: 'array', items: { type: 'string' } },
+                  totals: { type: 'object', additionalProperties: true },
+                  ignored: {
+                    type: 'object',
+                    properties: {
+                      dirs: { type: 'object', additionalProperties: { type: 'integer' } },
+                      binaries: { type: 'array', items: { type: 'string' } },
+                      links: {
+                        type: 'array',
+                        items: { type: 'object', properties: { path: { type: 'string' }, reason: { type: 'string', enum: ['outside', 'cycle', 'broken'] } } },
+                      },
+                    },
+                  },
+                  items: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        key: { type: 'string' },
+                        kind: { type: 'string', enum: ['skill', 'command', 'rule', 'spec', 'adr', 'knowledge', 'agent', 'trigger', 'mcp', 'config', 'unknown', 'skip'] },
+                        parent: { type: 'string' },
+                        candidateId: { type: 'string' },
+                        title: { type: 'string' },
+                        detectors: { type: 'array', items: { type: 'string' } },
+                        sources: {
+                          type: 'array',
+                          items: {
+                            type: 'object',
+                            properties: {
+                              path: { type: 'string' },
+                              aliases: { type: 'array', items: { type: 'string' } },
+                              bytes: { type: 'integer' },
+                              tokens: { type: 'integer' },
+                              sha256: { type: 'string' },
+                              role: { type: 'string' },
+                              generated: { type: 'array', items: { type: 'string' } },
+                              secret: { type: 'boolean' },
+                            },
+                          },
+                        },
+                        refs: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, item: { type: 'string' } } } },
+                        unresolved: { type: 'array', items: { type: 'string' } },
+                        catalog: { type: 'string', enum: ['new', 'same-project', 'global', 'other-project'] },
+                        notes: {
+                          type: 'array',
+                          items: {
+                            type: 'object',
+                            properties: { level: { type: 'string', enum: ['info', 'attention', 'untranslatable'] }, code: { type: 'string' }, text: { type: 'string' } },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
     '/projects/{id}/members': {
       get: {
         summary: 'The members of a project (account ids). Administrators only',

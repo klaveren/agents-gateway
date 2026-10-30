@@ -21,6 +21,8 @@ import { TurnToolsController } from './TurnTools.Controller'
 import { PackagesController } from './Packages.Controller'
 import { HOOK_PATH, HooksController } from './Hooks.Controller'
 import { ProjectsController } from './Projects.Controller'
+import { ImportController } from './Import.Controller'
+import { ImportScanUseCase } from '@application/ImportScan.Usecase'
 import { GuidanceController } from './Guidance.Controller'
 import { GuidanceService } from '@application/Guidance.Service'
 import { SqliteGuidanceRepository } from '@infra/persistence/Sqlite.GuidanceRepository'
@@ -113,6 +115,7 @@ export class HttpServer {
     permissions?: PermissionsController,
     accounts?: ProjectAccountsController,
     secretMask?: SecretMaskController,
+    importer?: ImportController,
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
@@ -153,6 +156,7 @@ export class HttpServer {
       permissions ?? defaultPermissions(),
       accounts ?? defaultAccounts(),
       secretMask ?? new SecretMaskController({ masker: new SecretMasker(new SecretBox(randomBytes(32))) }),
+      importer ?? defaultImporter(),
     )
     this.setupRoutes()
     this.setupFrontend()
@@ -265,6 +269,7 @@ function buildRoutes(
   permissions: PermissionsController,
   accounts: ProjectAccountsController,
   secretMask: SecretMaskController,
+  importer: ImportController,
 ): IRoute[] {
   return [
     { method: 'get', path: '/secret-mask', handler: secretMask.get },
@@ -309,6 +314,7 @@ function buildRoutes(
     { method: 'delete', path: '/projects/:id', handler: projects.remove },
     { method: 'get', path: '/projects/:id/members', handler: projects.members },
     { method: 'get', path: '/projects/:id/repositories', handler: projects.repositories },
+    { method: 'post', path: '/projects/:id/import/scan', handler: importer.scan },
     { method: 'put', path: '/projects/:id/members', handler: projects.setMembers },
     { method: 'post', path: HOOK_PATH, handler: hooks.receive },
     { method: 'get', path: '/agents/:agentId/hooks', handler: hooks.list },
@@ -479,6 +485,20 @@ function defaultHooks(): AgentHooksService {
 }
 
 /** Sem composição: projetos em memória, sem agentes nem contas, e a pasta só no nome. */
+/** Sem a fiação do composition root (os testes): nenhum projeto existe, então a varredura responde 404. */
+function defaultImporter(): ImportController {
+  return new ImportController({
+    scan: new ImportScanUseCase({
+      readTree: () => {
+        throw new Error('importador sem fiação')
+      },
+      detectors: [],
+      findInCatalog: () => undefined,
+    }),
+    projectExists: () => false,
+  })
+}
+
 function defaultProjects(): ProjectsService {
   return new ProjectsService(
     new SqliteProjectRepository(),
