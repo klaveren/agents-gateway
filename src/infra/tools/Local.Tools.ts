@@ -41,6 +41,11 @@ export type TFetchHtml = (query: string) => Promise<string>
 /** Quem lê um documento para a conversa (o `GuidanceService`). */
 export interface IDocReader {
   readDoc(id: string, projectId?: string): IProjectDoc | undefined
+  /**
+   * O documento anexado a uma skill ou command que o agente pode carregar, e por quais (ver
+   * `GuidanceService.attachedDoc`): o anexo por referência continua legível por quem carrega o recurso.
+   */
+  attachedDoc?(id: string, agentId?: string): { doc: IProjectDoc; via: Array<{ kind: 'skill' | 'command'; id: string }> } | undefined
   /** A busca de texto (ver `GuidanceService.searchDocs`). Ausente = sem `search_docs`. */
   searchDocs?(query: string, projectId?: string, kind?: TDocKind): IDocHit[]
 }
@@ -395,7 +400,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
           }
         : {}),
     }),
-    ...(deps.docs ? [readDocTool(deps.docs)] : []),
+    ...(deps.docs ? [readDocTool(deps.docs, deps.permissions)] : []),
     ...(deps.docs?.searchDocs ? [searchDocsTool(deps.docs)] : []),
     ...(deps.resources ? [useResourceTool(deps.resources, deps.permissions)] : []),
     ...(deps.resources?.searchResources ? [searchResourcesTool(deps.resources)] : []),
@@ -507,7 +512,7 @@ function proposeDraftTool(drafts: IDraftChecker): ILocalTool {
     origin: 'local',
     name: PROPOSE_DRAFT_TOOL,
     description:
-      'Hands the draft to the person, who reviews it next to the conversation. Nothing is saved by this tool. It checks the draft with the same rules as saving and returns the problems field by field: fix them and call it again. Fields by kind — rule: title, body; spec/adr/knowledge: id, title, summary, body; skill/command: id, description, body, docIds; agent: agent (the record exactly as save_agent takes it), initialContext, resources.',
+      'Hands the draft to the person, who reviews it next to the conversation. Nothing is saved by this tool. It checks the draft with the same rules as saving and returns the problems field by field: fix them and call it again. Fields by kind — rule: title, body; spec/adr/knowledge: id, title, summary, body; skill/command: id, description, body, docIds, docRefs; agent: agent (the record exactly as save_agent takes it), initialContext, resources.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -517,6 +522,11 @@ function proposeDraftTool(drafts: IDraftChecker): ILocalTool {
         description: { type: 'string', description: 'skill/command: one concrete line — what it does and when to use it.' },
         body: { type: 'string', description: 'The body, following the protocol (markdown; a rule is one or two imperative sentences).' },
         docIds: { type: 'array', items: { type: 'string' }, description: 'skill/command: specs and ADRs to attach (ids from the document index).' },
+        docRefs: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'skill/command: which of docIds go by reference (listed with id, title and size; read with read_doc only if needed) instead of in full. For large docs.',
+        },
         global: { type: 'boolean', description: 'true = global (all projects). Default: the project of the conversation.' },
         agent: {
           type: 'object',
@@ -560,6 +570,7 @@ function proposeDraftTool(drafts: IDraftChecker): ILocalTool {
         description: text(args.description),
         body: text(args.body),
         docIds: Array.isArray(args.docIds) ? args.docIds.filter((id): id is string => typeof id === 'string') : undefined,
+        docRefs: ids(args.docRefs),
         global: args.global === true,
       }
       const { issues, updates, id, projectId } = drafts.draftIssues(draft, context?.conversationProjectId)
@@ -735,9 +746,11 @@ function searchDocsTool(docs: IDocReader): ILocalTool {
 
 /**
  * `read_doc`: o documento inteiro (markdown) de uma spec ou ADR do índice que a conversa recebeu no prompt.
- * ⛔ Só o global ou o do projeto da conversa; o de outro projeto responde como inexistente.
+ * ⛔ Só o global ou o do projeto da conversa; o de outro projeto responde como inexistente — a não ser que esteja
+ * anexado a uma skill ou command que ESTE agente pode carregar (o anexo por referência). Pela skill, vale ainda a regra
+ * de permissão `skill`, como no `use_resource`: o anexo não abre mais do que o recurso carregado entregaria.
  */
-function readDocTool(docs: IDocReader): ILocalTool {
+function readDocTool(docs: IDocReader, permissions?: IPermissionChecker): ILocalTool {
   return {
     origin: 'local',
     name: READ_DOC_TOOL,
@@ -750,7 +763,12 @@ function readDocTool(docs: IDocReader): ILocalTool {
     },
     execute: async (args, context) => {
       const id = typeof args.id === 'string' ? args.id.trim() : ''
-      const doc = id ? docs.readDoc(id, context?.conversationProjectId) : undefined
+      const attached = (docId: string) => {
+        const found = docs.attachedDoc?.(docId, context?.agentId)
+        const open = found?.via.some((item) => item.kind === 'command' || !permissions || permissions.check(askerOf(context), { category: 'skill', value: item.id }).allowed)
+        return open ? found!.doc : undefined
+      }
+      const doc = id ? (docs.readDoc(id, context?.conversationProjectId) ?? attached(id)) : undefined
       if (!doc) return { status: 'error', result: `Document not found: ${id || '(no id)'}` }
       return { status: 'success', result: `# ${doc.title} [${doc.kind}]\n\n${doc.body}` }
     },

@@ -152,7 +152,7 @@ export const agentBodySchema = z.object({
   soul: z.string().optional(),
   reasoningEfforts: z.array(z.string().trim().min(1)).max(10).optional(),
   modes: z.array(z.enum(EMode)).min(1),
-  allowedTools: z.array(z.string().trim().min(1)).max(100).default([]),
+  allowedTools: z.array(z.string().trim().min(1)).default([]),
   /** `subagent`: só chamado por outro agente; `null` volta a agente normal. */
   role: z.enum(['subagent']).nullable().optional(),
   /** Só administrador conversa com o agente. Decisão de quem o cria; ausente ou `false` = aberto a todos. */

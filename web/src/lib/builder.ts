@@ -43,6 +43,8 @@ export interface IBuilderDraft {
   description: string
   body: string
   docIds: string[]
+  /** Skill/command: dos anexados, os que vão por referência. */
+  docRefs: string[]
   global: boolean
   /** Agente: o registro como o `save_agent` recebe. `id`, `title` (o nome), `description` (a soul) e `body` (o prompt) saem dele. */
   agent?: Record<string, unknown>
@@ -95,6 +97,7 @@ function draftOf(raw: unknown): IBuilderDraft | undefined {
       description: text(agent.soul),
       body: typeof agent.systemPrompt === 'string' ? agent.systemPrompt : '',
       docIds: [],
+      docRefs: [],
       global: !agent.projectId,
       agent,
       initialContext: ids(value.initialContext),
@@ -109,13 +112,15 @@ function draftOf(raw: unknown): IBuilderDraft | undefined {
     }
   }
   if (typeof value.body !== 'string') return undefined
+  const docIds = ids(value.docIds)
   return {
     id: text(value.id),
     title: text(value.title),
     summary: text(value.summary),
     description: text(value.description),
     body: value.body,
-    docIds: ids(value.docIds),
+    docIds,
+    docRefs: ids(value.docRefs).filter((id) => docIds.includes(id)),
     global: value.global === true,
     initialContext: [],
   }

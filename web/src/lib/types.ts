@@ -604,6 +604,8 @@ export interface IResource {
   description: string
   body: string
   docIds: string[]
+  /** Dos anexados, os que vão por referência (o agente lê com `read_doc` se precisar). Ausente = todos inteiros. */
+  docRefs?: string[]
   createdAt: string
   updatedAt: string
   updatedBy?: string

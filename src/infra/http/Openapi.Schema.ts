@@ -588,7 +588,12 @@ const resourceSchema = {
     projectId: { type: 'string', description: 'Absent = global.' },
     description: { type: 'string', description: 'One line: what the agent (and the autocomplete) reads to know when to use it.' },
     body: { type: 'string', description: 'Skill: markdown. Command: the request sent to the agent; $ARGUMENTS takes what follows /name.' },
-    docIds: { type: 'array', items: { type: 'string' }, description: 'Specs/ADRs that go along in full.' },
+    docIds: { type: 'array', items: { type: 'string' }, description: 'Specs/ADRs attached, in order. They go along in full, unless listed in docRefs.' },
+    docRefs: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Which of docIds go by reference: the loaded resource lists id, title and size, and the agent reads them with read_doc if needed. Absent on update = keep.',
+    },
     createdAt: { type: 'string', format: 'date-time' },
     updatedAt: { type: 'string', format: 'date-time' },
     updatedBy: { type: 'string' },

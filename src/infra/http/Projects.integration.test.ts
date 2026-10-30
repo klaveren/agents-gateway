@@ -245,15 +245,16 @@ describe('Projetos (integração)', () => {
     const session = sessions.get(opened.body.result.id)!
     assert.deepStrictEqual([session.metadata?.project, session.metadata?.origem], ['alfa', 'tela'])
 
+    // O projeto e a pasta vão no system prompt ("## Ambiente", ver `Agent.Provider.Ambient.test`), não na mensagem.
     await call(ANA, 'POST', `/sessions/${opened.body.result.id}/messages`, { message: 'oi' })
-    assert.match(received.at(-1)!.text, /Projeto: Alfa \(alfa\)\. Sua pasta de trabalho é .*alfa/)
+    assert.doesNotMatch(received.at(-1)!.text, /Projeto|pasta de trabalho/)
   })
 
   it('o agente global aberto dentro de um projeto fica nele; num projeto alheio, 404', async () => {
     const opened = await call(ANA, 'POST', '/sessions', { agentId: GOOGLE_TEST_AGENT.id, projectId: 'alfa' })
     assert.strictEqual(sessions.get(opened.body.result.id)?.metadata?.project, 'alfa')
     await call(ANA, 'POST', `/sessions/${opened.body.result.id}/messages`, { message: 'crie um agente' })
-    assert.match(received.at(-1)!.text, /Projeto atual: Alfa \(projectId "alfa"\)/)
+    assert.doesNotMatch(received.at(-1)!.text, /Projeto atual/)
 
     assert.strictEqual((await call(ANA, 'POST', '/sessions', { agentId: GOOGLE_TEST_AGENT.id, projectId: 'beta' })).status, 404)
     const loose = await call(ANA, 'POST', '/sessions', { agentId: GOOGLE_TEST_AGENT.id })

@@ -376,6 +376,41 @@ describe('LocalTools — read_doc', () => {
   })
 })
 
+describe('LocalTools — read_doc do anexo por referência', () => {
+  const big = { id: 'grande', kind: 'spec' as const, projectId: 'xpto', title: 'Grande', summary: '', body: 'O contrato.', createdAt: new Date(), updatedAt: new Date() }
+  const setup = (allowedSkills: string[]) =>
+    makeLocalTools({
+      docs: {
+        readDoc: () => undefined,
+        attachedDoc: (id, agentId) =>
+          id !== 'grande'
+            ? undefined
+            : agentId === 'dev'
+              ? { doc: big, via: [{ kind: 'skill', id: 'contrato' }] }
+              : agentId === 'ops'
+                ? { doc: big, via: [{ kind: 'command', id: 'deploy' }] }
+                : undefined,
+      },
+      permissions: {
+        check: (_asker, subject) =>
+          subject.category === 'skill' && allowedSkills.includes(subject.value)
+            ? { allowed: true, layer: 'agent', reason: 'ok' }
+            : { allowed: false, layer: 'default', reason: 'negado' },
+      },
+    }).find((item) => item.name === 'read_doc')!
+
+  it('quem pode carregar a skill lê o anexo, mesmo fora do projeto da conversa; o outro agente, não', async () => {
+    const tool = setup(['contrato'])
+    assert.deepStrictEqual(await tool.execute({ id: 'grande' }, { agentId: 'dev' }), { status: 'success', result: '# Grande [spec]\n\nO contrato.' })
+    assert.deepStrictEqual(await tool.execute({ id: 'grande' }, { agentId: 'outro' }), { status: 'error', result: 'Document not found: grande' })
+    assert.deepStrictEqual(await tool.execute({ id: 'grande' }, { agentId: 'ops' }), { status: 'success', result: '# Grande [spec]\n\nO contrato.' }, 'pelo command')
+  })
+
+  it('⛔ a regra de permissão `skill` vale também para o anexo dela', async () => {
+    assert.deepStrictEqual(await setup([]).execute({ id: 'grande' }, { agentId: 'dev' }), { status: 'error', result: 'Document not found: grande' })
+  })
+})
+
 describe('LocalTools — use_resource e search_resources', () => {
   it('só existem com o carregador; carregam pelo agente DA CHAMADA, por tipo', async () => {
     assert.ok(!makeLocalTools().some((tool) => tool.name === 'use_resource' || tool.name === 'search_resources'))

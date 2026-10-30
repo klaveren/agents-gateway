@@ -3,11 +3,11 @@ import { ICoreProtocol } from '@domain/models/Protocol.Model'
 /** O protocolo do core para construir um AGENTE. ⚠️ Mudou o texto, sobe a versão. */
 export const AGENT_PROTOCOL: ICoreProtocol = {
   kind: 'agent',
-  version: '1.2.1',
+  version: '1.2.2',
   title: 'Protocolo de construção de agente',
   body: `# Protocolo de construção de agente
 
-Um agente do gateway é um registro: id, nome, soul, prompt, providers e modelos, lanes, níveis de raciocínio, ferramentas, projeto e papel. Em toda conversa nova o prompt dele leva a soul, o prompt, as rules, as specs do contexto inicial e os índices (documentos, skills, commands) — e isso pesa em TODA conversa. O resto ele carrega sob demanda.
+Um agente do gateway é um registro: id, nome, soul, prompt, providers e modelos, lanes, níveis de raciocínio, ferramentas, projeto e papel. Em toda conversa nova o prompt dele leva a soul, o prompt, as rules, as specs do contexto inicial e os índices (documentos, skills, commands) — e isso pesa em TODA conversa. O resto ele carrega sob demanda. O gateway já lhe dá o id da conversa e o diretório de trabalho: o prompt não precisa de passo para descobrir isso.
 
 ## Princípios
 1. **O prompt é leve.** Só o que o agente precisa em todo turno. Padrão, contrato e regra moram em specs (no índice; read_doc/search_docs quando o assunto aparece); modo de fazer mora em skill (use_resource); o procedimento do próprio agente, ativado sob demanda, mora num TRIGGER dele (guia Triggers do agente: o prompt lista id e "quando", e ele carrega com use_resource). Spec inteira no contexto inicial só quando ela é lei para TUDO o que o agente faz.

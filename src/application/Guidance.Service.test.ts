@@ -329,6 +329,68 @@ describe('GuidanceService', () => {
       assert.match(service.loadResource('command', 'resumir', 'dev')!, /# Command: resumir\n\nResuma \$ARGUMENTS em 3 linhas\./)
     })
 
+    it('anexo inteiro: sem docRefs, o use_resource sai exatamente como antes', () => {
+      const service = seeded()
+      service.setAgentResources('dev', { skills: ['tabela'], commands: [] }, 'root')
+      assert.strictEqual(service.resource('tabela').docRefs, undefined)
+      assert.strictEqual(service.loadResource('skill', 'tabela', 'dev'), '# Skill: tabela\n\nSempre com cabeçalho.\n\n## Documentos anexados\n\n### Padrão [spec]\nUse tabelas.')
+    })
+
+    it('anexo por referência: lista id, título e tamanho, sem o conteúdo; o inteiro continua inteiro', () => {
+      const service = seeded()
+      service.createDoc({ ...doc('grande', 'xpto'), title: 'Spec grande', summary: 'O contrato todo', body: `SEGREDO-DO-CORPO ${'x'.repeat(40_000)}` }, 'root')
+      service.updateResource('tabela', { projectId: 'xpto', docIds: ['padrao', 'grande'], docRefs: ['grande'] }, 'root')
+      service.setAgentResources('dev', { skills: ['tabela'], commands: [] }, 'root')
+      const loaded = service.loadResource('skill', 'tabela', 'dev')!
+      assert.match(loaded, /## Documentos anexados\n\n### Padrão \[spec\]\nUse tabelas\./)
+      assert.match(
+        loaded,
+        /## Documentos anexados por referência\n\nNão vieram inteiros\. Leia com read_doc \(pelo id\)[\s\S]*- grande — Spec grande \[spec\] · ≈ 10\.005 tokens: O contrato todo$/,
+      )
+      assert.ok(!loaded.includes('SEGREDO-DO-CORPO'), 'o corpo do anexo por referência não vai')
+      // Só referência: a seção dos inteiros nem aparece.
+      service.updateResource('tabela', { docRefs: ['padrao', 'grande'] }, 'root')
+      assert.doesNotMatch(service.loadResource('skill', 'tabela', 'dev')!, /## Documentos anexados\n|Use tabelas/)
+    })
+
+    it('⛔ docRefs só entre os anexados, sem repetir; tirar o anexo tira a referência; apagar o doc também', () => {
+      const service = seeded()
+      assert.throws(
+        () => service.updateResource('tabela', { docRefs: ['outro', 'padrao', 'padrao'] }, 'root'),
+        (error: unknown) =>
+          error instanceof InvalidGuidanceError &&
+          error.issues.map((issue) => issue.message).join('|') === 'not attached: outro (by reference only goes one of docIds)|repeated: padrao',
+      )
+      service.updateResource('tabela', { docRefs: ['padrao'] }, 'root')
+      assert.deepStrictEqual(service.updateResource('tabela', { description: 'outra' }, 'root').docRefs, ['padrao'], 'sem docRefs na edição, ficam')
+      assert.strictEqual(service.updateResource('tabela', { docIds: [] }, 'root').docRefs, undefined)
+      service.updateResource('tabela', { docIds: ['padrao'], docRefs: ['padrao'] }, 'root')
+      service.deleteDoc('padrao')
+      assert.deepStrictEqual([service.resource('tabela').docIds, service.resource('tabela').docRefs], [[], undefined])
+    })
+
+    it('⛔ attachedDoc: o anexo é legível por quem pode carregar o recurso, e só por ele; liga o read_doc', () => {
+      const service = seeded()
+      service.createDoc({ ...doc('grande', 'xpto'), title: 'Spec grande' }, 'root')
+      service.createResource(
+        { id: 'contrato', kind: 'skill', projectId: 'xpto', description: 'Aplica o contrato', body: 'Passos.', docIds: ['grande'], docRefs: ['grande'] },
+        'root',
+      )
+      service.setAgentResources('dev', { skills: ['contrato'], commands: [] }, 'root')
+      assert.deepStrictEqual(service.attachedDoc('grande', 'dev')?.via, [{ kind: 'skill', id: 'contrato' }])
+      assert.strictEqual(service.attachedDoc('grande', 'dev')?.doc.id, 'grande')
+      assert.strictEqual(service.attachedDoc('grande', 'resumo'), undefined, 'agente sem a skill')
+      assert.strictEqual(service.attachedDoc('grande', 'atlas'), undefined, 'agente global não vê a skill do projeto')
+      assert.strictEqual(service.attachedDoc('padrao', 'dev'), undefined, 'não anexado a nada que ele usa')
+      assert.strictEqual(service.attachedDoc('grande'), undefined, 'sem agente, nada')
+      // A regra da conversa não abre o doc do projeto numa conversa sem projeto; o anexo abre (e liga o read_doc).
+      assert.strictEqual(service.readDoc('grande'), undefined)
+      // Tudo no contexto inicial do projeto: o índice da conversa fica vazio.
+      service.setInitialContext('xpto', ['grande', 'padrao'], 'root')
+      assert.ok(!service.hasDocs('xpto', 'resumo'), 'o índice está vazio para quem não tem a skill')
+      assert.ok(service.hasDocs('xpto', 'dev'), 'a referência liga o read_doc mesmo com o índice vazio')
+    })
+
     it('triggers: o índice "## Triggers" no prompt, o corpo só pelo use_resource, e só do próprio agente', () => {
       const service = seeded()
       service.setAgentResources('maya', { skills: [], commands: [] }, 'root')
