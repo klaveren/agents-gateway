@@ -8,6 +8,10 @@ const cmd = (text: string) => ({ category: 'terminal' as const, value: text, arg
 describe('Permission.Policy', () => {
   it('sem regra, negado; o projeto fecha e o agente libera; dentro da camada, negar vence permitir', () => {
     assert.strictEqual(decide(cmd('git status'), {}).layer, 'default')
+    // O repositório do projeto vale sem regra; Negar restringe.
+    const repo = { category: 'repository' as const, value: 'logiccus' }
+    assert.deepStrictEqual([decide(repo, {}).allowed, decide(repo, {}).layer], [true, 'default'])
+    assert.strictEqual(decide(repo, { agent: [{ category: 'repository', pattern: 'logiccus', decision: 'deny' }] }).allowed, false)
     assert.strictEqual(decide(cmd('git status'), {}).allowed, false)
 
     const project = [rule('terminal', 'git *'), rule('terminal', 'git push *', 'deny')]

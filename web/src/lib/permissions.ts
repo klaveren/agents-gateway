@@ -18,7 +18,7 @@ export const PERMISSION_SECTIONS: ReadonlyArray<{ category: TPermissionCategory;
   {
     category: 'repository',
     label: 'Repositórios',
-    hint: 'Em que repositório do projeto (a pasta em repositories/) o agente pode abrir conversa, pelo nome.',
+    hint: 'Os repositórios do projeto já são liberados: use Negar para tirar o agente de um deles, pelo nome.',
     example: 'logiccus',
   },
 ]
