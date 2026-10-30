@@ -19,6 +19,7 @@ import { NATIVE_TOOLS } from '@domain/Native.Tools'
 import { dangerousToolsOf } from '@domain/Tool.Policy'
 import { isSubscription } from '@domain/Subscription.Policy'
 import { delegationMaxDepth } from '@domain/models/Delegation.Model'
+import { mcpServerKey, mcpServesProject } from '@domain/models/McpServer.Model'
 import { compactAtPercent } from '@domain/Compaction.Policy'
 import { loopLimits } from '@domain/Loop.Policy'
 import { maxOutputTokens, maxToolTurns } from '@infra/adapters/support/Prompt.Helper'
@@ -568,8 +569,10 @@ export class AgentController {
       return agentFootprint(entry.agent, projectId, {
         guidance: this.usecases.guidance,
         localFor: (allowed) => catalog.localFor(allowed),
+        // ⛔ O servidor do escopo do AGENTE (não o do projeto pedido na tela): global só vê global.
         mcpTools: async (server) => {
-          const tools = await catalog.mcp.probeTools(server, token).catch(() => [])
+          const config = catalog.mcp.resolve(server, entry.agent.projectId)
+          const tools = config ? await catalog.mcp.probeTools(mcpServerKey(config), token).catch(() => []) : []
           return tools.length ? tools : undefined
         },
       })
@@ -688,8 +691,9 @@ export class AgentController {
 
     return {
       knownTools: tools.map((tool) => tool.name),
-      // ⛔ Servidor DESLIGADO não serve: o agente o perdia em silêncio na hora de rodar.
-      mcpServerExists: (id) => this.usecases.catalog.mcp.get(id)?.enabled === true,
+      // ⛔ Servidor DESLIGADO não serve: o agente o perdia em silêncio na hora de rodar. E só o do escopo do agente:
+      // o global ou o do projeto dele — nunca o de outro projeto.
+      mcpServerExists: (id, projectId) => this.usecases.catalog.mcp.resolve(id, projectId)?.enabled === true,
       // ⛔ Delegar só para quem pode abrir conversa agora; um alvo inativo devolvia erro ao modelo-pai.
       agentExists: (id) => {
         const target = this.agents.get(id)
@@ -713,25 +717,34 @@ export class AgentController {
 
   async getAgentTools(req: Request, res: Response) {
     await this.respond(res, async () => {
-      await this.requireCaller()
+      const resolved = await this.requireCaller()
+      const admin = (await checkAdminAccess(this.usecases.proof)).allowed
       const agentId = req.params.agentId as string
       const agent = this.agents.get(agentId)
-      if (!agent) throw new AgentNotFoundError(agentId)
+      // ⛔ O agente de um projeto (e os MCPs dele) não existe para quem não é do projeto.
+      if (!agent || !this.agentVisible(agent, { userId: resolved.identity?.id, admin })) throw new AgentNotFoundError(agentId)
 
       // As capacidades entram pelas ferramentas do gateway que as implementam (a lista é a mesma em todo provedor).
-      return this.catalogFor([...agent.allowedTools, ...agent.allowedTools.flatMap((tool) => capability(tool)?.local ?? [])])
+      // ⛔ Os MCPs: só os do escopo do agente (os globais e os do projeto dele).
+      return this.catalogFor([...agent.allowedTools, ...agent.allowedTools.flatMap((tool) => capability(tool)?.local ?? [])], (server) => mcpServesProject(server, agent.projectId))
     })
   }
 
-  async getTools(_req: Request, res: Response) {
+  async getTools(req: Request, res: Response) {
     await this.respond(res, async () => {
-      await this.requireCaller()
+      const resolved = await this.requireCaller()
+      const caller = { userId: resolved.identity?.id, admin: (await checkAdminAccess(this.usecases.proof)).allowed }
+      const project = typeof req.query.project === 'string' && req.query.project ? req.query.project : undefined
+      if (project) this.requireProject(caller, project)
+      // ⛔ MCP de projeto só para quem é do projeto: com `?project`, os globais e os dele; sem, os dos projetos da pessoa.
+      const serves = (server: { projectId?: string }) =>
+        !server.projectId || (project ? server.projectId === project : !this.usecases.projects || this.usecases.projects.canUse(caller, server.projectId))
       // As nativas vão junto, todas liberadas. `dangerous`: alcança este servidor — a tela avisa quem configura.
       const dangerous = (id: string) => dangerousToolsOf([id]).length > 0
       // ⚖️ O que virou CAPACIDADE (Terminal, Arquivos, Busca…) não aparece solto: vem em `capabilities`, com o que roda em
       // cada provedor. Ficam as nativas que só um provedor tem (os "extras") e as locais que não são capacidade.
       const native = NATIVE_TOOLS.filter((tool) => !CAPABILITY_TOOLS.has(tool.id)).map((tool) => ({ ...tool, dangerous: dangerous(tool.id) }))
-      const catalog = await this.catalogFor(this.localTools)
+      const catalog = await this.catalogFor(this.localTools, serves)
       // As que o servidor oferece de fato (o perímetro `LOCAL_TOOLS_ENABLED` já aplicado).
       const perimeter = catalog.tools.filter((tool) => tool.origin === 'local').map((tool) => tool.name)
       const capabilities = CAPABILITIES.filter((item) => !item.local.length || item.local.some((tool) => perimeter.includes(tool))).map((item) => ({
@@ -1695,15 +1708,16 @@ export class AgentController {
    * A listagem vem primeiro de propósito: é ela que pode reconectar, e ler o status antes
    * devolvia um `connected` sempre um passo atrás das tools que a própria resposta trazia.
    */
-  private async catalogFor(allowed: string[]) {
+  private async catalogFor(allowed: string[], serves: (server: { projectId?: string }) => boolean) {
     const { catalog } = this.usecases
     const tools = await catalog.list(allowed)
     // Sem `lastError`: a mensagem pode trazer endereço interno, e esta rota é de qualquer chamador.
     // ⛔ Só os LIGADOS: o desligado não roda, e o nome dele não é assunto de quem não administra.
+    // ⛔ E só os do escopo pedido (`serves`): o MCP de um projeto não aparece para quem não é dele.
     const servers = catalog.mcp
       .status()
-      .filter((server) => server.enabled)
-      .map(({ id, name, enabled, connected }) => ({ id, name, enabled, connected }))
+      .filter((server) => server.enabled && serves(server))
+      .map(({ key, id, projectId, name, enabled, connected }) => ({ key, id, ...(projectId ? { projectId } : {}), name, enabled, connected }))
 
     return { mcp: { connected: servers.some((server) => server.connected), servers }, tools }
   }

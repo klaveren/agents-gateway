@@ -499,7 +499,12 @@ export interface IMcpProcess {
 export type TMcpKind = 'remote' | 'container' | 'process'
 
 export interface IMcpServer {
+  /** A chave das rotas: o id no global, `<projeto>.<id>` no de projeto. */
+  key: string
+  /** O que o agente cita (`mcp:<id>/…`). Dois projetos podem ter o mesmo. */
   id: string
+  /** O projeto dono. Ausente = global (serve a todo agente); de projeto, só aos agentes dele. */
+  projectId?: string
   name: string
   kind: TMcpKind
   container?: IMcpContainer
