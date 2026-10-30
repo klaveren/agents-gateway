@@ -59,9 +59,11 @@ describe('LocalTools', () => {
         fetchHtml: async () => '',
         policy: { ...policy, cwd: '' },
       })
-      await find(tools, 'run_bash').execute({ command: 'env' }, { sessionId: 'conv-1' })
+      await find(tools, 'run_bash').execute({ command: 'env' }, { sessionId: 'conv-1', agentId: 'maya' })
 
       assert.ok(seen?.env.PATH)
+      // A identidade de quem chama vai para o terminal (ver `Agent.Identity`).
+      assert.deepStrictEqual([seen?.env.GATEWAY_AGENT_ID, seen?.env.GATEWAY_CONVERSATION_ID], ['maya', 'conv-1'])
       assert.ok(!JSON.stringify(seen?.env).includes('nao-pode-vazar'))
       assert.match(seen?.cwd ?? '', /gateway-sub\/conv-1$/)
     } finally {

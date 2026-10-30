@@ -65,4 +65,20 @@ describe('CallerTokenScope', () => {
 
     assert.deepStrictEqual(seen, ['Bearer token-a', null, null])
   })
+
+  it('⛔ identidade: cada chamada leva a SUA, e fora do escopo nada vai', async () => {
+    const scope = new CallerTokenScope()
+    const seen: Array<string | null> = []
+    const base = (async (_input: unknown, init?: RequestInit) => {
+      seen.push(new Headers(init?.headers).get('x-gateway-conversation'))
+      return new Response('ok')
+    }) as typeof fetch
+    const wrapped = scope.wrapIdentity(base)
+    await Promise.all([
+      scope.run(undefined, async () => void (await wrapped('http://x')), { 'x-gateway-conversation': 'conv-A' }),
+      scope.run(undefined, async () => void (await wrapped('http://x')), { 'x-gateway-conversation': 'conv-B' }),
+    ])
+    await wrapped('http://x')
+    assert.deepStrictEqual(seen, ['conv-A', 'conv-B', null])
+  })
 })

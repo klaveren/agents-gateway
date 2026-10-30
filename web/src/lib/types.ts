@@ -508,6 +508,8 @@ export interface IMcpServer {
   transport: TMcpTransport
   auth: TMcpAuth
   headerName?: string
+  /** Envia a identidade de quem chama em cabeçalhos (`x-gateway-agent`, `-conversation`, `-project`). */
+  identity?: boolean
   enabled: boolean
   secret: { configured: boolean; last4?: string; unreadable?: boolean; updatedAt?: string; updatedBy?: string }
   status: { connected: boolean; lastError?: string; instances?: number }

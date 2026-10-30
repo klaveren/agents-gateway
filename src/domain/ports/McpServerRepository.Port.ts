@@ -1,7 +1,7 @@
 import { IMcpServerConfig } from '@domain/models/McpServer.Model'
 
 export type TMcpServerPatch = Partial<
-  Pick<IMcpServerConfig, 'name' | 'url' | 'container' | 'process' | 'transport' | 'auth' | 'headerName' | 'enabled' | 'updatedAt' | 'updatedBy'>
+  Pick<IMcpServerConfig, 'name' | 'url' | 'container' | 'process' | 'transport' | 'auth' | 'headerName' | 'identity' | 'enabled' | 'updatedAt' | 'updatedBy'>
 >
 
 /** Onde ficam os servidores MCP. Síncrono, como providers: é lido no caminho de cada turno. ⛔ Escrever lança. */

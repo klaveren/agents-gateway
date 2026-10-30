@@ -1,3 +1,4 @@
+import { identityHeaders } from '@domain/Agent.Identity'
 import { createSdkMcpServer, tool, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk'
 import { z, type ZodRawShape, type ZodTypeAny } from 'zod'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
@@ -44,7 +45,7 @@ export function buildClaudeMcpServers(local: ILocalTool[], remotes: readonly IAg
      * portanto não herda o `fetch` que injeta a credencial lá. Sem isto, com `auth: caller`, o agente do
      * Claude falaria com o MCP sem token: toda tool responderia "chamada sem credencial".
      */
-    const headers = mcpHeaders(remote, token)
+    const headers = mcpHeaders(remote, token, context)
     servers[claudeMcpServerName(remote.config.id)] = {
       type: remote.config.transport === 'sse' ? 'sse' : 'http',
       url: remote.config.url,
@@ -64,8 +65,9 @@ export function claudeHiddenTools(remotes: readonly IAgentMcpServer[]): string[]
 }
 
 /** Os headers de um servidor MCP para quem conecta por conta própria (os SDKs agênticos). */
-export function mcpHeaders(remote: IAgentMcpServer, token?: string): Record<string, string> | undefined {
-  const headers: Record<string, string> = { ...remote.fixed }
+export function mcpHeaders(remote: IAgentMcpServer, token?: string, context?: IExecutionContext): Record<string, string> | undefined {
+  // A identidade de quem chama, só no servidor que a pediu (ver `Agent.Identity`).
+  const headers: Record<string, string> = { ...remote.fixed, ...(remote.config.identity ? identityHeaders(context) : {}) }
   if (remote.config.auth === 'caller' && token) headers[remote.callerHeader ?? 'authorization'] = `Bearer ${token}`
   if (remote.config.auth === 'header' && remote.header) headers[remote.header.name] = remote.header.value
   return Object.keys(headers).length ? headers : undefined

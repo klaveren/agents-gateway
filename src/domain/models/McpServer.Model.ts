@@ -90,6 +90,8 @@ export interface IMcpServerConfig {
   auth: TMcpAuth
   /** O header do segredo quando `auth: header`. Padrão `Authorization`. */
   headerName?: string
+  /** Envia a identidade de quem chama (agente, conversa, projeto) em cabeçalhos (ver `Agent.Identity`). Ausente = não. */
+  identity?: boolean
   enabled: boolean
   createdAt: Date
   updatedAt: Date

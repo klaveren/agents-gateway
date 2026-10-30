@@ -29,11 +29,13 @@ export interface IMcpServerInput {
   transport?: TMcpTransport
   auth?: TMcpAuth
   headerName?: string
+  /** Envia a identidade do agente em cabeçalhos (ver `Agent.Identity`). */
+  identity?: boolean
   /** O segredo de `auth: header`, na criação. Depois, por `saveSecret`. */
   secret?: string
 }
 
-export type TMcpServerChange = Partial<Pick<IMcpServerConfig, 'name' | 'url' | 'transport' | 'auth' | 'headerName' | 'enabled'>> & {
+export type TMcpServerChange = Partial<Pick<IMcpServerConfig, 'name' | 'url' | 'transport' | 'auth' | 'headerName' | 'identity' | 'enabled'>> & {
   container?: Partial<IMcpContainer>
   process?: Partial<IMcpProcess>
 }
@@ -94,6 +96,7 @@ export class McpServersService {
       // e isso é escolha consciente de quem o cadastra, nunca o default.
       auth: input.auth ?? 'none',
       headerName: (input.auth ?? 'none') === 'none' ? undefined : input.headerName?.trim() || undefined,
+      ...(input.identity ? { identity: true } : {}),
       enabled: true,
       createdAt: this.now(),
       updatedAt: this.now(),
@@ -133,6 +136,7 @@ export class McpServersService {
       transport: next.transport,
       auth: next.auth,
       headerName: next.headerName,
+      identity: next.identity === true,
       enabled: next.enabled,
       ...(next.container ? { container: next.container } : {}),
       ...(next.process ? { process: next.process } : {}),

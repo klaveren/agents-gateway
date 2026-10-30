@@ -6,6 +6,7 @@ import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { TMcpAuth, TMcpTransport } from '@domain/models/McpServer.Model'
 import { IToolDefinition, IToolResult, IToolSchema } from '@infra/tools/Tool.Types'
 import { CallerTokenScope } from './Caller.TokenScope'
+import { identityHeaders } from '@domain/Agent.Identity'
 
 const CLIENT_INFO = { name: 'agents-gateway', version: '1.0.0-alpha' }
 
@@ -34,6 +35,8 @@ export interface IMcpClientOptions {
   callerHeader?: string
   /** Headers fixos de toda requisição (ex.: `X-Gateway-Session`, no proxy dos MCPs em contêiner). */
   fixedHeaders?: () => Record<string, string> | undefined
+  /** Envia a identidade de quem chama (agente, conversa, projeto) em cabeçalhos (ver `Agent.Identity`). */
+  identity?: boolean
   /** O nome no log (o id do servidor). */
   label?: string
   /** Em vez de HTTP: um processo (o `docker run` de um MCP em contêiner, ou o próprio MCP) falando MCP pelo stdio. */
@@ -180,17 +183,21 @@ export class McpServerClient {
     const client = this.client
 
     // A credencial vai pelo escopo da chamada, nunca por campo compartilhado (`Caller.TokenScope`).
-    return this.tokenScope.run(context?.token, async () => {
-      try {
-        const response = await client.callTool({ name, arguments: args })
-        const text = readText(response.content)
+    return this.tokenScope.run(
+      context?.token,
+      async () => {
+        try {
+          const response = await client.callTool({ name, arguments: args })
+          const text = readText(response.content)
 
-        return response.isError ? { status: 'error', result: text || 'Unknown MCP error' } : { status: 'success', result: text }
-      } catch (error: unknown) {
-        await this.markDisconnected()
-        return { status: 'error', result: `MCP call failed: ${toMessage(error)}` }
-      }
-    })
+          return response.isError ? { status: 'error', result: text || 'Unknown MCP error' } : { status: 'success', result: text }
+        } catch (error: unknown) {
+          await this.markDisconnected()
+          return { status: 'error', result: `MCP call failed: ${toMessage(error)}` }
+        }
+      },
+      this.options.identity ? identityHeaders(context) : undefined,
+    )
   }
 
   async close(): Promise<void> {
@@ -289,15 +296,16 @@ export class McpServerClient {
   private credentialFetch(): typeof fetch {
     const auth = this.options.auth ?? 'caller'
     const fixed = this.options.fixedHeaders
+    const plain: typeof fetch = this.options.identity ? this.tokenScope.wrapIdentity(this.baseFetch) : this.baseFetch
     const base: typeof fetch = fixed
       ? (input, init) => {
           const extra = fixed()
-          if (!extra) return this.baseFetch(input, init)
+          if (!extra) return plain(input, init)
           const headers = new Headers(init?.headers)
           for (const [name, value] of Object.entries(extra)) headers.set(name, value)
-          return this.baseFetch(input, { ...init, headers })
+          return plain(input, { ...init, headers })
         }
-      : this.baseFetch
+      : plain
     if (auth === 'caller') return this.tokenScope.wrap(base, this.options.callerHeader)
     if (auth === 'none') return base
 
