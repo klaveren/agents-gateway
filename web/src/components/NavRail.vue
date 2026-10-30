@@ -3,6 +3,7 @@
   import { useRoute } from 'vue-router'
   import { useAuthStore } from '@/stores/auth'
   import { useConversationsStore } from '@/stores/conversations'
+  import { useProjectsStore } from '@/stores/projects'
   import AccountMenu from './AccountMenu.vue'
   import Icon from './Icon.vue'
   import ProjectSwitcher from './ProjectSwitcher.vue'
@@ -14,6 +15,9 @@
   const route = useRoute()
   const auth = useAuthStore()
   const conversations = useConversationsStore()
+  const projects = useProjectsStore()
+  /** O menu Projeto: o admin sempre; o membro, quando está num projeto (lá ele vê os MCPs do projeto, só leitura). */
+  const projectMenu = computed(() => auth.isAdmin || (!!auth.user && !!projects.current))
 
   const section = computed(() => {
     const name = String(route.name ?? '')
@@ -22,7 +26,7 @@
     if (name.startsWith('mcp')) return 'mcp'
     if (name === 'user' || name.startsWith('user-')) return 'users'
     if (name === 'rules' || name.startsWith('rule-')) return 'rules'
-    if (name === 'environment' || name === 'schedules' || name === 'permissions' || name === 'accounts') return name
+    if (name === 'environment' || name === 'schedules' || name === 'permissions' || name === 'accounts' || name === 'import') return name
     if (name.startsWith('spec')) return 'specs'
     if (name.startsWith('skill')) return 'skills'
     if (name.startsWith('command')) return 'commands'
@@ -79,8 +83,8 @@
       </span>
     </RouterLink>
     <!-- Duas instâncias (barra do celular abre para cima; trilho, para o lado), cada uma só no seu tamanho. -->
-    <div v-if="auth.isAdmin" class="flex min-w-0 flex-1 md:hidden"><ProjectMenu placement="up" :active="section" /></div>
-    <div v-if="auth.isAdmin" class="hidden md:block"><ProjectMenu placement="side" :active="section" /></div>
+    <div v-if="projectMenu" class="flex min-w-0 flex-1 md:hidden"><ProjectMenu placement="up" :active="section" /></div>
+    <div v-if="projectMenu" class="hidden md:block"><ProjectMenu placement="side" :active="section" /></div>
     <div v-if="auth.isAdmin" class="flex min-w-0 flex-1 md:hidden"><ResourcesMenu placement="up" :active="section" /></div>
     <div v-if="auth.isAdmin" class="hidden md:block"><ResourcesMenu placement="side" :active="section" /></div>
     <div v-if="auth.isAdmin" class="flex min-w-0 flex-1 md:hidden"><DocsMenu placement="up" :active="section" /></div>

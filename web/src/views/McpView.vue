@@ -5,6 +5,7 @@
   import Icon from '@/components/Icon.vue'
   import MasterDetail from '@/components/MasterDetail.vue'
   import McpContainerFields from '@/components/McpContainerFields.vue'
+  import McpProjectReadOnly from '@/components/McpProjectReadOnly.vue'
   import McpProcessFields from '@/components/McpProcessFields.vue'
   import { ApiError } from '@/lib/api'
   import { fullTime, initials } from '@/lib/format'
@@ -17,7 +18,8 @@
 
   /**
    * A guia MCPs: os servidores de onde os agentes tiram ferramentas. Cada agente escolhe, no formulário
-   * dele, quais servidores e ferramentas usa.
+   * dele, quais servidores e ferramentas usa. ⚖️ O admin gerencia todos; o membro de um projeto vê, só leitura, os
+   * MCPs do projeto atual (`McpProjectReadOnly`).
    */
   const props = defineProps<{ id?: string }>()
 
@@ -128,7 +130,8 @@
   watch(
     selected,
     (server, previous) => {
-      if (!server) return (edit.value = undefined)
+      // ⛔ O membro só lê (`McpProjectReadOnly`): sem edição, e as ferramentas são do admin (a API responde 404).
+      if (!server || !auth.isAdmin) return (edit.value = undefined)
       const switched = server.key !== previous?.key
       if (switched) {
         testResult.value = undefined
@@ -329,7 +332,9 @@
 </script>
 
 <template>
-  <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
+  <McpProjectReadOnly v-if="!auth.isAdmin && auth.signedIn" :id="id" />
+
+  <div v-else-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
     <div>
       <p class="font-medium text-zinc-200">Só quem administra cadastra os MCPs.</p>
       <RouterLink v-if="!auth.signedIn && auth.localAccounts" :to="{ path: '/login', query: { next: '/mcp' } }" class="mt-3 btn btn-primary">Entrar</RouterLink>

@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import AgentsView from './views/AgentsView.vue'
 import InboxView from './views/InboxView.vue'
+import ImportView from './views/ImportView.vue'
 import AuthView from './views/AuthView.vue'
 import McpView from './views/McpView.vue'
 import PackagesView from './views/PackagesView.vue'
@@ -65,6 +66,7 @@ export const router = createRouter({
     { path: '/schedules', name: 'schedules', component: SchedulesView },
     { path: '/permissions', name: 'permissions', component: PermissionsView },
     { path: '/accounts', name: 'accounts', component: AccountsView },
+    { path: '/import', name: 'import', component: ImportView },
     { path: '/specs', name: 'specs', component: DocsView, props: { kind: 'spec' } },
     { path: '/specs/new', name: 'spec-new', component: DocsView, props: { kind: 'spec' } },
     { path: '/specs/build', name: 'spec-build', component: BuildView, props: { kind: 'spec', tab: 'build' } },
