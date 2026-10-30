@@ -43,7 +43,8 @@ describe('AgentProvider — mensagem durante o turno', () => {
         return { id: record.id, provider: EProvider.CLAUDE, mode: record.mode, createdAt: record.createdAt }
       },
       async *sendMessage(_agent, sessionId, input): AsyncIterable<IAgentEvent> {
-        seen.push(input.text)
+        // O id da conversa abre o primeiro turno (ver `Ambient.Policy`); aqui interessa só o que a pessoa mandou.
+        seen.push(input.text.replace(/^<contexto>[^<]*<\/contexto>\n\n/, ''))
         const now = () => new Date()
         yield { type: 'message.started', sessionId, timestamp: now() }
         if (seen.length === 1) {

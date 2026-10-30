@@ -48,6 +48,7 @@ import { IDockerStatus } from '@infra/sandbox/Docker.Sandbox'
 import { IProjectSandbox } from '@infra/sandbox/Project.Sandbox'
 import { CALLBACK_METADATA_KEY, PROJECT_METADATA_KEY, REPOSITORY_METADATA_KEY, START_COMMIT_METADATA_KEY, WORKTREE_METADATA_KEY } from '@domain/Session.Metadata'
 import { CHANGE_SCOPES, changesOf, fileDiff, headOf, TChangeScope } from '@infra/workspace/Git.Changes'
+import { projectWorkspacePath } from '@infra/adapters/support/Subscription.Workspace'
 import { currentBranch, IWorkFolder, resolveWorkFolder, WorkFolderError } from '@infra/workspace/Work.Folder'
 import { deliverCallback } from './Turn.Callbacks'
 import { BUILDER_METADATA_KEY, builderKindOf, CORE_AGENT_IDS } from '@domain/Builder.Agents'
@@ -405,36 +406,6 @@ export class AgentController {
     }
   }
 
-  /**
-   * A linha de contexto do projeto, na primeira mensagem: em que projeto a conversa está e, para o agente
-   * de projeto, onde fica a pasta dele. ⚖️ É o que deixa o Atlas (global) criar agentes no projeto certo.
-   * Só texto do servidor (id, nome do cadastro, caminho), nada de quem chama.
-   */
-  private async projectContext(sessionId: string): Promise<string | undefined> {
-    const projects = this.usecases.projects
-    if (!projects) return undefined
-    const session = await this.usecases.getSession.execute(sessionId).catch(() => undefined)
-    const projectId = session?.metadata?.[PROJECT_METADATA_KEY]
-    if (typeof projectId !== 'string' || !projects.exists(projectId)) return undefined
-    const project = projects.get(projectId)
-    const agent = session ? this.agents.get(session.agentId) : undefined
-    // ⛔ Aberta num repositório ou worktree: o ambiente vem pronto (o que a esteira montava no prompt), só com dados.
-    const repository = session?.metadata?.[REPOSITORY_METADATA_KEY]
-    if (typeof repository === 'string') {
-      const worktree = session?.metadata?.[WORKTREE_METADATA_KEY]
-      const place = resolveWorkFolder(projects.folderOf(projectId), repository, typeof worktree === 'string' ? worktree : undefined)
-      const branch = currentBranch(place.dir)
-      return [
-        `Projeto: ${project.name} (${project.id}).`,
-        `Repositório: ${repository}${place.worktree ? `, worktree ${place.worktree}` : ''}${branch ? ` (branch ${branch})` : ''}.`,
-        `Sua pasta de trabalho é ${place.dir}. Fora desta pasta você não lê nem grava; o git dela funciona (status, commit, push).`,
-      ].join(' ')
-    }
-    return agent?.projectId === projectId
-      ? `Projeto: ${project.name} (${project.id}). Sua pasta de trabalho é ${projects.folderOf(projectId)} — persistente e compartilhada pelas conversas do projeto. Fora desta pasta você não lê nem grava.`
-      : `Projeto atual: ${project.name} (projectId "${project.id}"). Agentes, hooks e conversas que você criar aqui pertencem a este projeto.`
-  }
-
   /** O agente aparece para esta pessoa (neste projeto, se pedido)? O global aparece em todos. */
   private agentVisible(agent: IAgent, caller: IProjectCaller, project?: string): boolean {
     if (!agent.projectId) return true
@@ -568,6 +539,8 @@ export class AgentController {
       return agentFootprint(entry.agent, projectId, {
         guidance: this.usecases.guidance,
         localFor: (allowed) => catalog.localFor(allowed),
+        projectName: (id) => (this.usecases.projects?.exists(id) ? this.usecases.projects.get(id).name : undefined),
+        projectDir: (id) => projectWorkspacePath(id),
         mcpTools: async (server) => {
           const tools = await catalog.mcp.probeTools(server, token).catch(() => [])
           return tools.length ? tools : undefined
@@ -1398,12 +1371,13 @@ export class AgentController {
   }
 
   /**
-   * A mensagem como o turno a recebe: o contexto da primeira (identidade, projeto, repositório e worktree) e o `/command`
-   * expandido. ⛔ Command que existe mas não está liberado para este agente é recusado (422).
+   * A mensagem como o turno a recebe: o contexto da primeira (a identidade) e o `/command` expandido. O projeto, o
+   * repositório e o diretório vão no system prompt ("## Ambiente", ver `Ambient.Policy`). ⛔ Command que existe mas não
+   * está liberado para este agente é recusado (422).
    */
   private async turnInput(sessionId: string, resolved: IResolvedCaller, body: { message: string; files?: IMessageInput['files'] }): Promise<IMessageInput> {
     // O contexto sai da identidade já resolvida e é aplicado pelo use case, só na primeira mensagem.
-    const context = [this.usecases.sessionContext?.({ ...resolved.identity }), await this.projectContext(sessionId)].filter(Boolean).join('\n\n') || undefined
+    const context = this.usecases.sessionContext?.({ ...resolved.identity }) || undefined
     // `/nome argumentos`: o command liberado ao agente vira o texto dele (com os documentos anexados); o turno grava o
     // que a pessoa digitou.
     const session = await this.usecases.getSession.execute(sessionId)
