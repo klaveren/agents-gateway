@@ -22,6 +22,9 @@ import { PackagesController } from './Packages.Controller'
 import { HOOK_PATH, HooksController } from './Hooks.Controller'
 import { ProjectsController } from './Projects.Controller'
 import { ImportController } from './Import.Controller'
+import { CatalogController } from './Catalog.Controller'
+import { CatalogHistoryQuery } from '@application/CatalogHistory.Query'
+import { SqliteCatalogHistoryRepository } from '@infra/persistence/Sqlite.CatalogHistoryRepository'
 import { ImportScanUseCase } from '@application/ImportScan.Usecase'
 import { GuidanceController } from './Guidance.Controller'
 import { GuidanceService } from '@application/Guidance.Service'
@@ -116,6 +119,7 @@ export class HttpServer {
     accounts?: ProjectAccountsController,
     secretMask?: SecretMaskController,
     importer?: ImportController,
+    catalog?: CatalogController,
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
@@ -157,6 +161,7 @@ export class HttpServer {
       accounts ?? defaultAccounts(),
       secretMask ?? new SecretMaskController({ masker: new SecretMasker(new SecretBox(randomBytes(32))) }),
       importer ?? defaultImporter(),
+      catalog ?? defaultCatalog(),
     )
     this.setupRoutes()
     this.setupFrontend()
@@ -270,8 +275,13 @@ function buildRoutes(
   accounts: ProjectAccountsController,
   secretMask: SecretMaskController,
   importer: ImportController,
+  catalog: CatalogController,
 ): IRoute[] {
   return [
+    // O histórico do catálogo (só leitura). O item vai na query: o id do complemento de protocolo tem barra.
+    { method: 'get', path: '/catalog/history', handler: catalog.history },
+    { method: 'get', path: '/catalog/history/diff', handler: catalog.diff },
+    { method: 'get', path: '/catalog/history/revisions/:revision', handler: catalog.revision },
     { method: 'get', path: '/secret-mask', handler: secretMask.get },
     { method: 'put', path: '/secret-mask/values/:id', handler: secretMask.saveValue },
     { method: 'delete', path: '/secret-mask/values/:id', handler: secretMask.removeValue },
@@ -488,6 +498,11 @@ function defaultHooks(): AgentHooksService {
 }
 
 /** Sem composição: projetos em memória, sem agentes nem contas, e a pasta só no nome. */
+/** Sem composição: histórico vazio em memória, nenhum item existe agora, sem projetos (só o admin lê). */
+function defaultCatalog(): CatalogController {
+  return new CatalogController({ history: new CatalogHistoryQuery(new SqliteCatalogHistoryRepository(), { read: () => undefined }) })
+}
+
 /** Sem a fiação do composition root (os testes): nenhum projeto existe, então a varredura responde 404. */
 function defaultImporter(): ImportController {
   return new ImportController({

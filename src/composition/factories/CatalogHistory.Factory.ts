@@ -1,3 +1,4 @@
+import { CatalogHistoryQuery } from '@application/CatalogHistory.Query'
 import { CatalogHistoryService } from '@application/CatalogHistory.Service'
 import { CatalogReader } from '@application/Catalog.Reader'
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
@@ -8,7 +9,7 @@ import { permissionRepository } from './Permissions.Factory'
 import { projectRepository } from './Projects.Factory'
 import { makeTools } from './Tools.Factory'
 
-let instance: CatalogHistoryService | undefined
+let instance: { service: CatalogHistoryService; query: CatalogHistoryQuery } | undefined
 
 /**
  * O histórico do catálogo: UM serviço, no mesmo arquivo das conversas. O leitor usa os MESMOS repositórios dos serviços
@@ -17,6 +18,15 @@ let instance: CatalogHistoryService | undefined
  * ⚠️ Pedido NA HORA (pelo gancho de cada serviço, ou no boot), nunca ao nascer de outra fábrica: ele depende de todas.
  */
 export function makeCatalogHistory(): CatalogHistoryService {
+  return build().service
+}
+
+/** A leitura do histórico (a API): o MESMO repositório e o MESMO leitor do serviço que grava. */
+export function makeCatalogHistoryQuery(): CatalogHistoryQuery {
+  return build().query
+}
+
+function build() {
   if (instance) return instance
   const configured = process.env.CONVERSATIONS_DB?.trim()
   const reader = new CatalogReader({
@@ -26,7 +36,8 @@ export function makeCatalogHistory(): CatalogHistoryService {
     mcps: makeTools().servers,
     projects: projectRepository(),
   })
-  instance = new CatalogHistoryService(new SqliteCatalogHistoryRepository(configured === 'off' ? ':memory:' : configured || DEFAULT_DB_PATH), reader)
+  const repository = new SqliteCatalogHistoryRepository(configured === 'off' ? ':memory:' : configured || DEFAULT_DB_PATH)
+  instance = { service: new CatalogHistoryService(repository, reader), query: new CatalogHistoryQuery(repository, reader) }
   return instance
 }
 
