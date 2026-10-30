@@ -40,6 +40,28 @@ export interface ICatalogRevision {
 
 export type TNewRevision = Omit<ICatalogRevision, 'id' | 'revision'>
 
+/** A revisão sem o documento: a linha das listas (o documento vem na leitura de uma revisão). */
+export type TRevisionSummary = Omit<ICatalogRevision, 'document'>
+
+/**
+ * O recorte de uma lista:
+ * - `kind` + `itemId`: as revisões de um item;
+ * - `projectId`: o escopo NA revisão (`''` = global); ausente = todos;
+ * - `kinds`: só estes tipos (a visão do membro de projeto).
+ */
+export interface IRevisionFilter {
+  kind?: TCatalogKind
+  itemId?: string
+  projectId?: string
+  kinds?: readonly TCatalogKind[]
+}
+
+/** Uma página, da mais nova para a mais velha, e o total do recorte. */
+export interface IRevisionPage {
+  revisions: TRevisionSummary[]
+  total: number
+}
+
 /** O histórico do catálogo: uma tabela só, para todos os tipos. ⚖️ SÓ ACRESCENTA: revisão nunca é apagada nem editada. */
 export interface ICatalogHistoryRepository {
   /** A última revisão do item. */
@@ -48,6 +70,10 @@ export interface ICatalogHistoryRepository {
   latestAll(): ICatalogRevision[]
   /** As revisões do item, da primeira à última. */
   revisions(kind: TCatalogKind, itemId: string): ICatalogRevision[]
+  /** A revisão `revision` do item. */
+  revision(kind: TCatalogKind, itemId: string, revision: number): ICatalogRevision | undefined
+  /** Uma página do recorte, da mais nova para a mais velha, sem o documento. */
+  page(filter: IRevisionFilter, paging: { offset: number; limit: number }): IRevisionPage
   /** Grava a próxima revisão do item (`revision` = última + 1). */
   append(revision: TNewRevision): ICatalogRevision
 }
