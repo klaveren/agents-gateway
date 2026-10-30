@@ -653,8 +653,8 @@ export class AgentController {
     await this.respond(
       res,
       async () => {
-        await this.requireAdmin('deleteAgent')
-        this.agents.remove(req.params.agentId as string, { defaultAgentId: (await this.usecases.settings.read()).agentId })
+        const admin = await this.requireAdmin('deleteAgent')
+        this.agents.remove(req.params.agentId as string, admin.email ?? admin.id ?? 'admin', { defaultAgentId: (await this.usecases.settings.read()).agentId })
         this.usecases.agentRemoved?.(req.params.agentId as string)
 
         return null

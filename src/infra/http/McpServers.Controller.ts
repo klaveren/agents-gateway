@@ -151,10 +151,10 @@ export class McpServersController {
     await this.respond(
       res,
       async () => {
-        await this.requireAdmin('deleteMcpServer')
+        const by = await this.requireAdmin('deleteMcpServer')
         const id = this.idOf(req)
         const kind = this.deps.service.get(id).kind
-        this.deps.service.remove(id)
+        this.deps.service.remove(id, by)
         this.deps.registry.forget(id)
         await this.deps.registry.closeInstances({ serverId: id })
         if (kind === 'process') removeInstall(id)

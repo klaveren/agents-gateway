@@ -70,8 +70,7 @@ export class ProjectsController {
     await this.respond(
       res,
       async () => {
-        await this.requireAdmin('deleteProject')
-        this.deps.projects.remove(req.params.id as string)
+        this.deps.projects.remove(req.params.id as string, await this.requireAdmin('deleteProject'))
         return null
       },
       { message: 'Project deleted' },

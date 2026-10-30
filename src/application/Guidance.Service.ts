@@ -19,6 +19,8 @@ import {
 import { IBuilderDraft, IProtocolAddendum, IProtocolView, PROTOCOL_KINDS, TProtocolKind } from '@domain/models/Protocol.Model'
 import { IRule, RULE_TITLE_MAX } from '@domain/models/Rule.Model'
 import { IDocHit, IGuidanceRepository, TGuidanceScope } from '@domain/ports/GuidanceRepository.Port'
+import { protocolItemId } from '@domain/Catalog.Document'
+import { CatalogHistoryHook, ICatalogItemKey } from './CatalogHistory.Service'
 
 type TIssues = Array<{ field: string; message: string }>
 
@@ -138,6 +140,9 @@ const INLINE_DEPTH = 1
  * conversa do projeto XPTO recebe as do XPTO). Fixado na criação: editar uma rule vale para as próximas.
  */
 export class GuidanceService {
+  /** O histórico do catálogo: toda escrita grava a revisão dos itens que mudaram (ver `CatalogHistory.Service`). */
+  readonly history = new CatalogHistoryHook()
+
   constructor(
     private readonly repository: IGuidanceRepository,
     /** O projeto existe? (rule e documento de projeto apontam para um que exista). */
@@ -173,6 +178,7 @@ export class GuidanceService {
     }
     this.check(ruleIssues(rule), rule.projectId)
     this.repository.insertRule(rule)
+    this.history.record([ruleKey(rule.id)], { by })
     return rule
   }
 
@@ -188,6 +194,8 @@ export class GuidanceService {
       ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
     }
     this.check(ruleIssues(next), scope ?? undefined)
+    // Trocar de escopo renumera o antigo: as vizinhas também mudam.
+    const touched = moved ? this.history.withDependents(ruleKey(id)) : [ruleKey(id)]
     const saved = this.repository.updateRule(id, {
       title: next.title,
       body: next.body,
@@ -197,13 +205,16 @@ export class GuidanceService {
       updatedBy: by,
     })!
     if (moved) this.renumber(current.projectId ?? null)
+    this.history.record(touched, { by })
     return saved
   }
 
-  deleteRule(id: string): void {
+  deleteRule(id: string, by: string): void {
     const rule = this.rule(id)
+    const touched = this.history.withDependents(ruleKey(id))
     this.repository.deleteRule(id)
     this.renumber(rule.projectId ?? null)
+    this.history.record(touched, { by })
   }
 
   /** Sobe ou desce uma posição, trocando com a vizinha. Na ponta, fica onde está. */
@@ -215,6 +226,7 @@ export class GuidanceService {
     if (other) {
       this.repository.updateRule(rule.id, { position: other.position, updatedAt: this.now(), updatedBy: by })
       this.repository.updateRule(other.id, { position: rule.position })
+      this.history.record([ruleKey(rule.id), ruleKey(other.id)], { by })
     }
     return this.repository.rules(rule.projectId ?? null)
   }
@@ -248,6 +260,7 @@ export class GuidanceService {
     else if (this.repository.doc(doc.id)) issues.unshift({ field: 'id', message: `already exists: ${doc.id}` })
     this.check(issues, doc.projectId)
     this.repository.insertDoc(doc)
+    this.history.record([{ kind: doc.kind, id: doc.id }], { by })
     return doc
   }
 
@@ -270,7 +283,7 @@ export class GuidanceService {
     if (refs.length) next.docRefs = refs
     else delete next.docRefs
     this.check([...docIssues(next), ...this.attachIssues(next, id)], scope ?? undefined)
-    return this.repository.updateDoc(id, {
+    const saved = this.repository.updateDoc(id, {
       kind: next.kind,
       title: next.title,
       summary: next.summary,
@@ -281,11 +294,23 @@ export class GuidanceService {
       updatedAt: this.now(),
       updatedBy: by,
     })!
+    // O tipo faz parte da chave: spec que vira ADR sai de um e entra no outro.
+    this.history.record(
+      [
+        { kind: current.kind, id },
+        { kind: saved.kind, id },
+      ],
+      { by },
+    )
+    return saved
   }
 
-  deleteDoc(id: string): void {
-    this.doc(id)
+  /** Apaga e tira o documento de quem o citava; cada um desses ganha revisão também, com o mesmo autor. */
+  deleteDoc(id: string, by: string): void {
+    const doc = this.doc(id)
+    const touched = this.history.withDependents({ kind: doc.kind, id })
     this.repository.deleteDoc(id)
+    this.history.record(touched, { by })
   }
 
   /**
@@ -338,6 +363,7 @@ export class GuidanceService {
     this.requireProject(projectId)
     this.checkSpecs(docIds, projectId, 'another project')
     this.repository.setContextDocs(projectId, docIds, by)
+    this.history.record([{ kind: 'project', id: projectId }], { by })
     return this.initialContextView(projectId)
   }
 
@@ -360,6 +386,7 @@ export class GuidanceService {
     const agent = this.requireAgent(agentId)
     this.checkSpecs(docIds, agent.projectId, agent.projectId ? 'another project' : 'a project (a global agent loads only global specs)')
     this.repository.setAgentContextDocs(agentId, docIds, by)
+    this.history.record([{ kind: 'agent', id: agentId }], { by })
     return this.agentContextView(agentId)
   }
 
@@ -520,6 +547,7 @@ export class GuidanceService {
     this.check([], projectId ?? undefined)
     const addendum: IProtocolAddendum | undefined = text ? { kind, ...(projectId ? { projectId } : {}), body: text, updatedAt: this.now(), updatedBy: by } : undefined
     this.repository.setProtocolAddendum(kind, projectId, addendum)
+    this.history.record([{ kind: 'protocol', id: protocolItemId(kind, projectId ?? undefined) }], { by })
     return this.protocol(kind, projectId ?? undefined)
   }
 
@@ -679,6 +707,7 @@ export class GuidanceService {
     else if (this.repository.resource(resource.id)) issues.unshift({ field: 'id', message: `already exists: ${resource.id}` })
     this.check(issues, resource.projectId)
     this.repository.saveResource(resource)
+    this.history.record([{ kind: resource.kind, id: resource.id }], { by })
     return resource
   }
 
@@ -702,12 +731,16 @@ export class GuidanceService {
     if (!next.projectId) delete next.projectId
     this.check(this.resourceIssues(next), next.projectId)
     this.repository.saveResource(next)
+    this.history.record([{ kind: next.kind, id }], { by })
     return next
   }
 
-  deleteResource(id: string): void {
-    this.resource(id)
+  /** Apaga e tira o recurso dos agentes que o liberavam; cada agente atingido ganha revisão também, com o mesmo autor. */
+  deleteResource(id: string, by: string): void {
+    const resource = this.resource(id)
+    const touched = this.history.withDependents({ kind: resource.kind, id })
     this.repository.deleteResource(id)
+    this.history.record(touched, { by })
   }
 
   /** O que o agente pode usar (a guia Recursos dele): sem marcação, `['*']`; "nenhum" de propósito, `[]`. */
@@ -727,6 +760,7 @@ export class GuidanceService {
     if (issues.length) throw new InvalidGuidanceError(issues)
     // Lista vazia é "nenhum" DE PROPÓSITO: gravada com a marca, senão voltaria ao padrão (todos).
     this.repository.setAgentResources(agentId, { skills: next.skills.length ? next.skills : [NO_RESOURCES], commands: next.commands.length ? next.commands : [NO_RESOURCES] }, by)
+    this.history.record([{ kind: 'agent', id: agentId }], { by })
     return next
   }
 
@@ -1054,3 +1088,5 @@ function contextView(docs: readonly IProjectDoc[]): { docs: IContextDoc[]; total
   }))
   return { docs: view, totalTokens: view.reduce((sum, doc) => sum + doc.tokens, 0) }
 }
+
+const ruleKey = (id: string): ICatalogItemKey => ({ kind: 'rule', id })

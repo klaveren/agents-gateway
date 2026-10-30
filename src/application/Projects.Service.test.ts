@@ -49,7 +49,7 @@ describe('ProjectsService', () => {
     assert.throws(() => service.create({ id: 'alfa', name: 'De novo' }, 'root'), InvalidProjectError)
     assert.throws(() => service.setMembers('alfa', ['fantasma'], 'root'), InvalidProjectError)
     agents.moveToProject(CLAUDE_TEST_AGENT.id, 'alfa', 'root')
-    assert.throws(() => service.remove('alfa'), ProjectInUseError)
+    assert.throws(() => service.remove('alfa', 'admin'), ProjectInUseError)
   })
 
   it('a migração põe os agentes antigos e as conversas deles no `geral`, com todos como membros — uma vez só; a semente fica global', async () => {

@@ -1,6 +1,7 @@
 import { cleanRules, decide, IPermissionLayers, IPermissionRule, IPermissionSubject, IPermissionVerdict, permissionIssues } from '@domain/Permission.Policy'
 import { InvalidPermissionsError } from '@domain/errors/Domain.Error'
 import { IPermissionDecision, IPermissionRepository } from '@domain/ports/PermissionRepository.Port'
+import { CatalogHistoryHook } from './CatalogHistory.Service'
 
 /** Quem pede: o agente que está respondendo, na conversa de que projeto. */
 export interface IPermissionAsker {
@@ -23,6 +24,9 @@ export interface IPermissionChecker {
  * A política (camadas, quem vence) mora em `Permission.Policy`; aqui, de onde vêm as regras e para onde vai a decisão.
  */
 export class PermissionsService implements IPermissionChecker {
+  /** O histórico do catálogo: salvar as regras do projeto grava a revisão delas (ver `CatalogHistory.Service`). */
+  readonly history = new CatalogHistoryHook()
+
   constructor(
     private readonly repository: IPermissionRepository,
     private readonly agentRules: (agentId: string) => readonly IPermissionRule[] | undefined,
@@ -40,6 +44,7 @@ export class PermissionsService implements IPermissionChecker {
     if (issues.length) throw new InvalidPermissionsError(issues)
     const clean = cleanRules(rules as IPermissionRule[])
     this.repository.saveProjectRules(projectId, clean, by)
+    this.history.record([{ kind: 'project-permissions', id: projectId }], { by })
     return clean
   }
 

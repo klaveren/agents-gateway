@@ -54,13 +54,13 @@ describe('McpServersService', () => {
     const using = build([agent(['mcp:crm/stats'])])
     using.service.create({ id: 'crm', name: 'CRM', url: 'https://x.com/mcp' }, 'root')
     assert.throws(
-      () => using.service.remove('crm'),
+      () => using.service.remove('crm', 'admin'),
       (error: McpServerInUseError) => error.agents.join() === 'Agente A',
     )
 
     const free = build()
     free.service.create({ id: 'crm', name: 'CRM', url: 'https://x.com/mcp', auth: 'header', secret: 'x' }, 'root')
-    free.service.remove('crm')
+    free.service.remove('crm', 'admin')
     assert.deepStrictEqual([free.service.list(), free.secrets.get('mcp:crm')], [[], undefined])
   })
 
@@ -110,7 +110,7 @@ describe('McpServersService', () => {
     assert.deepStrictEqual(service.envStatus('pw'), [{ name: 'API_TOKEN', configured: true }])
     assert.throws(() => service.saveEnv('pw', 'OUTRA', 'x', 'root'), InvalidMcpServerError)
 
-    service.remove('pw')
+    service.remove('pw', 'admin')
     assert.strictEqual(secrets.get('mcp:pw:env:API_TOKEN'), undefined)
   })
 
@@ -144,7 +144,7 @@ describe('McpServersService', () => {
 
     service.saveEnv('pw', 'NODE_OPTIONS', '--max-old-space-size=512', 'root')
     assert.deepStrictEqual(service.envStatus('pw'), [{ name: 'NODE_OPTIONS', configured: true }])
-    service.remove('pw')
+    service.remove('pw', 'admin')
     assert.strictEqual(secrets.get('mcp:pw:env:NODE_OPTIONS'), undefined)
   })
 
