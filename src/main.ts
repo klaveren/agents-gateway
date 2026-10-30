@@ -14,6 +14,7 @@ import {
   makeSchedulesController,
   makePermissionsController,
   makeProjectAccountsController,
+  makeSecretMaskController,
   makeMcpServersController,
   makeProvidersController,
   makeUsageController,
@@ -94,6 +95,7 @@ async function bootstrap() {
     makeSchedulesController(),
     makePermissionsController(),
     makeProjectAccountsController(),
+    makeSecretMaskController(),
   )
   server.start(Number.parseInt(process.env.PORT || '3000', 10))
   // O relógio dos agendamentos: depois de o servidor subir — ele executa pela API deste processo.

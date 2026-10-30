@@ -74,6 +74,8 @@ export class SendMessageUseCase {
     private conversations: IConversationRepository,
     /** Opcional: sem classificador, a conversa é gravada sem rótulo e nada mais muda. */
     private classifier?: ITurnClassifier,
+    /** A máscara de segredos (ver `Secret.Mask`): vale para o que a tela recebe e para o que se grava. */
+    private mask?: ITurnMask,
   ) {}
 
   /**
@@ -107,8 +109,10 @@ export class SendMessageUseCase {
 
     try {
       for await (const event of this.agentProvider.sendMessage(sessionId, sent)) {
-        events.push(event)
-        yield event
+        // ⛔ O que sai daqui (a tela, o histórico) já sai mascarado: o argumento e o resultado das ferramentas e o texto.
+        const shown = this.mask ? maskEvent(event, this.mask, sessionId) : event
+        events.push(shown)
+        yield shown
       }
     } finally {
       // `void`: gravação não segura a resposta de quem está lendo o stream, e o repositório já
@@ -141,6 +145,11 @@ export class SendMessageUseCase {
     if (!events.length) return
 
     const turn = aggregateTurn(sessionId, events)
+    // Um segredo partido entre dois pedaços do stream escapa da máscara por pedaço: o texto inteiro passa de novo.
+    if (this.mask) {
+      turn.text = this.mask.text(turn.text, sessionId)
+      turn.reasoning = this.mask.text(turn.reasoning, sessionId)
+    }
     const session = this.describeQuietly(sessionId)
 
     // Cabeçalho gravado a cada turno: é o que mantém `updatedAt` e o acumulado em dia, e cria a
@@ -237,5 +246,25 @@ export class SendMessageUseCase {
     } catch {
       return undefined
     }
+  }
+}
+
+/** Quem mascara o turno (ver `Secret.Masker`). */
+export interface ITurnMask {
+  text(text: string, sessionId?: string): string
+  deep<T>(value: T, sessionId?: string): T
+}
+
+function maskEvent(event: IAgentEvent, mask: ITurnMask, sessionId: string): IAgentEvent {
+  switch (event.type) {
+    case 'text.delta':
+    case 'reasoning.delta':
+      return { ...event, payload: { ...event.payload, text: mask.text(event.payload.text, sessionId) } }
+    case 'tool.started':
+    case 'tool.result':
+    case 'tool.error':
+      return { ...event, payload: mask.deep(event.payload, sessionId) } as IAgentEvent
+    default:
+      return event
   }
 }

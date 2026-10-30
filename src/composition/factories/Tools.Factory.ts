@@ -1,6 +1,7 @@
 import type { IPermissionChecker } from '@application/Permissions.Service'
 import { makePermissions } from './Permissions.Factory'
 import { makeProjectAccounts } from './ProjectAccounts.Factory'
+import { makeSecretMasker } from './SecretMask.Factory'
 import { makeGuidance } from './Guidance.Factory'
 import { makeConversationRepository } from './Conversations.Factory'
 import { IMcpServerConfig } from '@domain/models/McpServer.Model'
@@ -55,6 +56,7 @@ export function makeTools(): ITools {
           todos: todoStore(),
           permissions: lazyPermissions,
           agentTerminal: (agentId) => makeAgents().get(agentId)?.terminal,
+          mask: makeSecretMasker(),
           accounts: {
             commandEnv: (projectId, allowed) => makeProjectAccounts().commandEnv(projectId, allowed),
             sign: (projectId, id, namespace, data) => makeProjectAccounts().sign(projectId, id, namespace, data),
@@ -65,6 +67,8 @@ export function makeTools(): ITools {
         lazyPermissions,
       ),
     }
+    const masker = makeSecretMasker()
+    instance.catalog.useMask((text, sessionId) => masker.text(text, sessionId))
   }
   return instance
 }

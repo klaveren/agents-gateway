@@ -205,7 +205,19 @@ export class ToolCatalog {
     return this.callMcp(ref.server, ref.tool, args, context)
   }
 
+  private mask?: (text: string, sessionId?: string) => string
+
+  /** ⛔ A máscara de segredos no resultado das ferramentas de MCP que passam pelo gateway (ver `Secret.Mask`). */
+  useMask(mask: (text: string, sessionId?: string) => string): void {
+    this.mask = mask
+  }
+
   private async callMcp(server: string, tool: string, args: Record<string, unknown>, context?: IExecutionContext): Promise<IToolResult> {
+    const outcome = await this.callMcpRaw(server, tool, args, context)
+    return this.mask ? { ...outcome, result: this.mask(outcome.result, context?.sessionId) } : outcome
+  }
+
+  private async callMcpRaw(server: string, tool: string, args: Record<string, unknown>, context?: IExecutionContext): Promise<IToolResult> {
     let client
     try {
       client = await this.mcp.clientFor(server, context?.sessionId)

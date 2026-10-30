@@ -1,3 +1,4 @@
+import { makeSecretMasker } from './SecretMask.Factory'
 import { ResumeSessionUseCase } from '@application/ResumeSession.Usecase'
 import { CancelSessionUseCase } from '@application/CancelSession.Usecase'
 import { ReconfigureSessionUseCase } from '@application/ReconfigureSession.Usecase'
@@ -23,7 +24,7 @@ export function makeUsecases() {
   const conversations = new NotifyingConversationRepository(makeConversationRepository(), events)
 
   const createSession = new CreateSessionUseCase(agentProvider)
-  const sendMessage = new SendMessageUseCase(agentProvider, conversations, makeClassifier())
+  const sendMessage = new SendMessageUseCase(agentProvider, conversations, makeClassifier(), makeSecretMasker())
   // A delegação usa os MESMOS casos de uso: a conversa filha é gravada e avisada como qualquer outra.
   makeTools().delegation.bind(new DelegationService(agentProvider, createSession, sendMessage, undefined, (id) => makeAgents().get(id)?.modes))
   // Os MCPs em contêiner leem a conversa (agente e `metadata`) para os domínios `{meta:…}` e para o proxy.

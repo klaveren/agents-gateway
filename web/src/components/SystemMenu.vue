@@ -14,6 +14,7 @@ const ITEMS: IRailMenuItem[] = [
   { to: '/models', key: 'providers', label: 'Modelos', hint: 'Provedores, chaves, assinaturas e modelos', icon: 'key' },
   { to: '/mcp', key: 'mcp', label: 'MCPs', hint: 'Servidores de ferramentas', icon: 'plug' },
   { to: '/packages', key: 'packages', label: 'Pacotes', hint: 'Ferramentas do servidor', icon: 'box' },
+  { to: '/secrets', key: 'secrets', label: 'Segredos', hint: 'O que a máscara esconde da saída das ferramentas', icon: 'key' },
   { to: '/settings', key: 'settings', label: 'Configuração', hint: 'Operação, limites e implantação', icon: 'settings' },
 ]
 </script>
