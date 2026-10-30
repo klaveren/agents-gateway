@@ -27,6 +27,8 @@ const SCHEMA = `
     title       TEXT NOT NULL,
     summary     TEXT NOT NULL,
     body        TEXT NOT NULL,
+    doc_ids     TEXT NOT NULL DEFAULT '[]',
+    doc_refs    TEXT NOT NULL DEFAULT '[]',
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL,
     updated_by  TEXT
@@ -89,7 +91,11 @@ const SCHEMA = `
  * As colunas que chegaram depois da tabela: o `CREATE TABLE IF NOT EXISTS` não mexe num arquivo antigo, e o SQLite não
  * tem `ADD COLUMN IF NOT EXISTS` — daí a checagem em `PRAGMA table_info`. O padrão de cada uma é o comportamento de antes.
  */
-const ADDED_COLUMNS: ReadonlyArray<{ table: string; column: string; definition: string }> = [{ table: 'resources', column: 'doc_refs', definition: "TEXT NOT NULL DEFAULT '[]'" }]
+const ADDED_COLUMNS: ReadonlyArray<{ table: string; column: string; definition: string }> = [
+  { table: 'resources', column: 'doc_refs', definition: "TEXT NOT NULL DEFAULT '[]'" },
+  { table: 'project_docs', column: 'doc_ids', definition: "TEXT NOT NULL DEFAULT '[]'" },
+  { table: 'project_docs', column: 'doc_refs', definition: "TEXT NOT NULL DEFAULT '[]'" },
+]
 
 type TRow = Record<string, unknown>
 
@@ -108,6 +114,8 @@ const DOC_COLUMNS: Record<keyof TDocPatch, string> = {
   title: 'title',
   summary: 'summary',
   body: 'body',
+  docIds: 'doc_ids',
+  docRefs: 'doc_refs',
   updatedAt: 'updated_at',
   updatedBy: 'updated_by',
 }
@@ -219,8 +227,22 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
 
   insertDoc(doc: IProjectDoc): void {
     this.db
-      .prepare('INSERT INTO project_docs (id, kind, project_id, title, summary, body, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(doc.id, doc.kind, doc.projectId ?? null, doc.title, doc.summary, doc.body, doc.createdAt.toISOString(), doc.updatedAt.toISOString(), doc.updatedBy ?? null)
+      .prepare(
+        'INSERT INTO project_docs (id, kind, project_id, title, summary, body, doc_ids, doc_refs, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(
+        doc.id,
+        doc.kind,
+        doc.projectId ?? null,
+        doc.title,
+        doc.summary,
+        doc.body,
+        JSON.stringify(doc.docIds ?? []),
+        JSON.stringify(doc.docRefs ?? []),
+        doc.createdAt.toISOString(),
+        doc.updatedAt.toISOString(),
+        doc.updatedBy ?? null,
+      )
     this.indexDoc(doc)
   }
 
@@ -237,8 +259,19 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
     // O documento sai dos recursos que o anexavam.
     for (const resource of this.allResources().filter((item) => item.docIds.includes(id)))
       this.saveResource({ ...resource, docIds: resource.docIds.filter((docId) => docId !== id), docRefs: (resource.docRefs ?? []).filter((docId) => docId !== id) })
+    // E dos documentos que o anexavam.
+    for (const parent of this.docsAttaching(id))
+      this.patch('project_docs', DOC_COLUMNS, parent.id, {
+        docIds: (parent.docIds ?? []).filter((docId) => docId !== id),
+        docRefs: (parent.docRefs ?? []).filter((docId) => docId !== id),
+      } satisfies TDocPatch)
     this.db.prepare('DELETE FROM docs_fts WHERE id = ?').run(id)
     return this.db.prepare('DELETE FROM project_docs WHERE id = ?').run(id).changes > 0
+  }
+
+  docsAttaching(id: string): IProjectDoc[] {
+    const rows = this.db.prepare('SELECT * FROM project_docs WHERE EXISTS (SELECT 1 FROM json_each(project_docs.doc_ids) WHERE json_each.value = ?) ORDER BY id').all(id) as TRow[]
+    return rows.map(toDoc)
   }
 
   contextDocs(projectId: string): string[] {
@@ -404,6 +437,8 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
       const value = patch[key] as unknown
       if (value instanceof Date) return value.toISOString()
       if (typeof value === 'boolean') return value ? 1 : 0
+      // As listas de ids (os anexos) vão em JSON, como na gravação.
+      if (Array.isArray(value)) return JSON.stringify(value)
       return value as SQLInputValue
     })
     this.db.prepare(`UPDATE ${table} SET ${keys.map((key) => `${columns[key]} = ?`).join(', ')} WHERE id = ?`).run(...values, id)
@@ -425,6 +460,8 @@ function toRule(row: TRow): IRule {
 }
 
 function toDoc(row: TRow): IProjectDoc {
+  const docIds = idList(row.doc_ids)
+  const docRefs = idList(row.doc_refs).filter((id) => docIds.includes(id))
   return {
     id: row.id as string,
     kind: row.kind as TDocKind,
@@ -432,6 +469,8 @@ function toDoc(row: TRow): IProjectDoc {
     title: row.title as string,
     summary: row.summary as string,
     body: row.body as string,
+    docIds,
+    ...(docRefs.length ? { docRefs } : {}),
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
     ...(row.updated_by ? { updatedBy: row.updated_by as string } : {}),

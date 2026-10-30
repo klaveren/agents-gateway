@@ -411,6 +411,42 @@ describe('LocalTools — read_doc do anexo por referência', () => {
   })
 })
 
+describe('LocalTools — read_doc do anexo de documento', () => {
+  const detail = { id: 'detalhe', kind: 'spec' as const, projectId: 'xpto', title: 'Detalhe', summary: '', body: 'Portas.', createdAt: new Date(), updatedAt: new Date() }
+  const setup = (via: Array<{ kind: 'skill' | 'command' | 'doc'; id: string }>) => {
+    const asked: Array<[string, string | undefined, string | undefined]> = []
+    const tool = makeLocalTools({
+      docs: {
+        readDoc: () => undefined,
+        attachedDoc: (id, agentId, projectId) => {
+          asked.push([id, agentId, projectId])
+          return id === 'detalhe' && via.length ? { doc: detail, via } : undefined
+        },
+        docText: (doc) => `# ${doc.title} [${doc.kind}]\n\n${doc.body}\n\n## Documentos anexados por referência\n\n- outro`,
+      },
+      permissions: { check: () => ({ allowed: false, layer: 'default', reason: 'negado' }) },
+    }).find((item) => item.name === 'read_doc')!
+    return { tool, asked }
+  }
+
+  it('pelo documento pai que o agente lê, abre sem a regra de skill; o texto traz os anexos dele', async () => {
+    const { tool, asked } = setup([{ kind: 'doc', id: 'arq' }])
+    assert.deepStrictEqual(await tool.execute({ id: 'detalhe' }, { agentId: 'dev', conversationProjectId: 'crm' }), {
+      status: 'success',
+      result: '# Detalhe [spec]\n\nPortas.\n\n## Documentos anexados por referência\n\n- outro',
+    })
+    assert.deepStrictEqual(asked, [['detalhe', 'dev', 'crm']], 'o projeto da conversa vai junto: decide que pai ela lê')
+  })
+
+  it('⛔ sem acesso ao pai (nenhum caminho), ou só por uma skill negada, responde como inexistente', async () => {
+    assert.deepStrictEqual(await setup([]).tool.execute({ id: 'detalhe' }, { agentId: 'dev' }), { status: 'error', result: 'Document not found: detalhe' })
+    assert.deepStrictEqual(await setup([{ kind: 'skill', id: 'hex' }]).tool.execute({ id: 'detalhe' }, { agentId: 'dev' }), {
+      status: 'error',
+      result: 'Document not found: detalhe',
+    })
+  })
+})
+
 describe('LocalTools — use_resource e search_resources', () => {
   it('só existem com o carregador; carregam pelo agente DA CHAMADA, por tipo', async () => {
     assert.ok(!makeLocalTools().some((tool) => tool.name === 'use_resource' || tool.name === 'search_resources'))

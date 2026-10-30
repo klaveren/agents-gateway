@@ -38,6 +38,8 @@ const docSchema = z.object({
   title: z.string().max(400).optional(),
   summary: z.string().max(1_000).optional(),
   body: z.string().optional(),
+  docIds: z.array(z.string().max(80)).max(50).optional(),
+  docRefs: z.array(z.string().max(80)).max(50).optional(),
 })
 
 /**

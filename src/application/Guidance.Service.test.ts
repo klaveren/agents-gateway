@@ -455,6 +455,150 @@ describe('GuidanceService', () => {
     })
   })
 
+  describe('anexo de documento a documento', () => {
+    const agents: Record<string, { id: string; projectId?: string }> = { dev: { id: 'dev', projectId: 'xpto' }, atlas: { id: 'atlas' } }
+    const seeded = () => {
+      const service = new GuidanceService(
+        new SqliteGuidanceRepository(':memory:'),
+        (id) => ['xpto', 'crm'].includes(id),
+        (id) => agents[id],
+      )
+      service.createDoc({ ...doc('erros'), title: 'Erros', body: 'Códigos de erro.' }, 'root')
+      service.createDoc({ ...doc('adr-rest'), kind: 'adr', title: 'REST', body: 'Decidimos REST.' }, 'root')
+      service.createDoc({ ...doc('api'), title: 'API', body: 'Contrato REST.', docIds: ['erros', 'adr-rest'], docRefs: ['adr-rest'] }, 'root')
+      service.createDoc({ ...doc('detalhe', 'xpto'), title: 'Detalhe', body: 'Portas e adaptadores.' }, 'root')
+      service.createDoc({ ...doc('arq', 'xpto'), title: 'Arquitetura', body: 'Hexagonal.', docIds: ['detalhe'], docRefs: ['detalhe'] }, 'root')
+      service.createDoc({ ...doc('do-crm', 'crm') }, 'root')
+      return service
+    }
+    const count = (text: string, part: string) => text.split(part).length - 1
+
+    it('read_doc: o anexo inteiro vira seção; o por referência, uma linha com id, título, tokens e resumo', () => {
+      const service = seeded()
+      assert.deepStrictEqual([service.doc('api').docIds, service.doc('api').docRefs], [['erros', 'adr-rest'], ['adr-rest']])
+      assert.strictEqual(
+        service.docText(service.doc('api')),
+        '# API [spec]\n\nContrato REST.\n\n## Documentos anexados\n\n### Erros [spec]\nCódigos de erro.\n\n' +
+          '## Documentos anexados por referência\n\nNão vieram inteiros. Leia com read_doc (pelo id) só o que o passo pedir.\n\n' +
+          '- adr-rest — REST [adr] · ≈ 4 tokens: resumo adr-rest',
+      )
+      // Sem anexo, o texto de sempre.
+      assert.strictEqual(service.docText(service.doc('erros')), '# Erros [spec]\n\nCódigos de erro.')
+    })
+
+    it('⚖️ ciclo (A↔B, e A→B→C→A): cada documento entra uma vez, sem recursão', () => {
+      const service = seeded()
+      service.updateDoc('erros', { docIds: ['api'] }, 'root')
+      const text = service.docText(service.doc('api'))
+      assert.deepStrictEqual([count(text, 'Contrato REST.'), count(text, 'Códigos de erro.'), count(text, '- api —')], [1, 1, 0])
+      assert.strictEqual(count(service.docText(service.doc('erros')), 'Códigos de erro.'), 1)
+      // Três: api → erros → adr-rest → api, todos inteiros.
+      service.updateDoc('api', { docRefs: [] }, 'root')
+      service.updateDoc('erros', { docIds: ['adr-rest'] }, 'root')
+      service.updateDoc('adr-rest', { docIds: ['api'] }, 'root')
+      for (const id of ['api', 'erros', 'adr-rest']) {
+        const read = service.docText(service.doc(id))
+        assert.deepStrictEqual(
+          [count(read, 'Contrato REST.'), count(read, 'Códigos de erro.'), count(read, 'Decidimos REST.')].filter((n) => n > 1),
+          [],
+          id,
+        )
+      }
+    })
+
+    it('⚖️ profundidade: inteiro só no 1º nível; o 2º vira referência (anexo de quem); o 3º não entra', () => {
+      const service = seeded()
+      service.createDoc({ ...doc('dd'), title: 'D', body: 'Corpo D.' }, 'root')
+      service.createDoc({ ...doc('cc'), title: 'C', body: 'Corpo C.', docIds: ['dd'] }, 'root')
+      service.createDoc({ ...doc('bb'), title: 'B', body: 'Corpo B.', docIds: ['cc'] }, 'root')
+      service.createDoc({ ...doc('aa'), title: 'A', body: 'Corpo A.', docIds: ['bb'] }, 'root')
+      const text = service.docText(service.doc('aa'))
+      assert.match(text, /## Documentos anexados\n\n### B \[spec\]\nCorpo B\./)
+      assert.match(text, /- cc — C \[spec\] · ≈ \d+ tokens: resumo cc \(anexo de bb\)$/)
+      assert.ok(!text.includes('Corpo C.') && !text.includes('- dd —'))
+      // O que o pai anexa direto não vira referência por também vir de um filho.
+      service.updateDoc('aa', { docIds: ['bb', 'cc'] }, 'root')
+      const both = service.docText(service.doc('aa'))
+      assert.deepStrictEqual([count(both, 'Corpo C.'), count(both, '- cc —')], [1, 0])
+    })
+
+    it('⛔ escopo: o global só anexa global; o do projeto, global ou do mesmo; sem si mesmo, sem repetir; referência só entre os anexados', () => {
+      const service = seeded()
+      assert.throws(
+        () => service.updateDoc('api', { docIds: ['arq', 'api', 'erros', 'erros', 'nada'], docRefs: ['outro'] }, 'root'),
+        (error: unknown) =>
+          error instanceof InvalidGuidanceError &&
+          error.issues.map((issue) => issue.message).join('|') ===
+            'arq belongs to a project (xpto): a global document attaches only global ones|a document does not attach itself: api|repeated: erros|no such document: nada|not attached: outro (by reference only goes one of docIds)',
+      )
+      assert.throws(() => service.updateDoc('arq', { docIds: ['do-crm'] }, 'root'), /do-crm belongs to another project \(crm\)/)
+      assert.deepStrictEqual(service.updateDoc('arq', { docIds: ['detalhe', 'api'] }, 'root').docIds, ['detalhe', 'api'], 'o do projeto anexa o global')
+      // O global que vira de projeto deixa de caber no global que o anexava: sai da leitura (a marca fica).
+      service.updateDoc('erros', { projectId: 'xpto' }, 'root')
+      assert.ok(!service.docText(service.doc('api')).includes('Códigos de erro.'))
+      // E o global não muda para um projeto levando anexo de outro.
+      assert.throws(() => service.updateDoc('arq', { projectId: 'crm' }, 'root'), /detalhe belongs to another project/)
+    })
+
+    it('sem docRefs na edição, ficam; tirar o anexo tira a referência; apagar o doc limpa os anexos que apontam para ele', () => {
+      const service = seeded()
+      assert.deepStrictEqual(service.updateDoc('api', { title: 'API v2' }, 'root').docRefs, ['adr-rest'])
+      assert.strictEqual(service.updateDoc('api', { docIds: ['erros'] }, 'root').docRefs, undefined)
+      service.updateDoc('api', { docIds: ['erros', 'adr-rest'], docRefs: ['adr-rest'] }, 'root')
+      service.createResource({ id: 'rest', kind: 'skill', description: 'Faz API', body: 'Passos.', docIds: ['adr-rest'], docRefs: ['adr-rest'] }, 'root')
+      service.deleteDoc('adr-rest')
+      assert.deepStrictEqual([service.doc('api').docIds, service.doc('api').docRefs], [['erros'], undefined])
+      assert.deepStrictEqual(service.resource('rest').docIds, [])
+    })
+
+    it('o anexo vem também no contexto inicial (uma vez por carga), no anexo de recurso (2º nível = referência) e no /spec:', () => {
+      const service = seeded()
+      service.setInitialContext('xpto', ['arq', 'api'], 'root')
+      service.updateDoc('arq', { docIds: ['detalhe', 'api'], docRefs: ['detalhe'] }, 'root')
+      const prompt = service.environmentFor('xpto')!
+      assert.match(prompt, /### Arquitetura\nHexagonal\.\n\n#### Documentos anexados por referência\n\nNão vieram inteiros\.[\s\S]*- detalhe — Detalhe \[spec\]/)
+      assert.strictEqual(count(prompt, 'Contrato REST.'), 1, 'a api já está no contexto: não repete como anexo da arq')
+      assert.match(prompt, /### API\nContrato REST\.\n\n#### Documentos anexados\n\n##### Erros \[spec\]\nCódigos de erro\./)
+
+      service.createResource({ id: 'rest', kind: 'skill', description: 'Faz API', body: 'Passos.', docIds: ['api'] }, 'root')
+      const skill = service.loadResource('skill', 'rest', 'atlas')!
+      assert.match(skill, /## Documentos anexados\n\n### API \[spec\]\nContrato REST\./)
+      assert.match(skill, /- erros — Erros \[spec\] · ≈ \d+ tokens: resumo erros \(anexo de api\)/)
+      assert.match(skill, /- adr-rest — REST \[adr\] · ≈ \d+ tokens: resumo adr-rest \(anexo de api\)/)
+      assert.ok(!skill.includes('Códigos de erro.'), 'o anexo do anexo vai por referência')
+
+      const asked = service.expandCommand('/spec:api revise', 'atlas')!
+      assert.match(asked.text, /Contrato REST\.\n\n## Documentos anexados\n\n### Erros \[spec\]\nCódigos de erro\.[\s\S]*# Pedido\n\nrevise$/)
+    })
+
+    it('⛔ attachedDoc: lê o anexo de um doc que o agente já lê (contexto inicial, recurso); sem acesso ao pai, nada', () => {
+      const service = seeded()
+      // Conversa sem projeto: a regra da conversa não abre os do XPTO.
+      assert.strictEqual(service.readDoc('detalhe'), undefined)
+      assert.strictEqual(service.attachedDoc('detalhe', 'dev'), undefined, 'sem acesso à arq, o anexo dela fica fechado')
+      // A arq no contexto inicial do agente: o anexo dela abre por ela.
+      service.setAgentContext('dev', ['arq'], 'root')
+      assert.deepStrictEqual(service.attachedDoc('detalhe', 'dev')?.via, [{ kind: 'doc', id: 'arq' }])
+      assert.strictEqual(service.attachedDoc('detalhe', 'atlas'), undefined, 'outro agente, não')
+      assert.ok(service.hasDocs(undefined, 'dev'), 'a referência liga o read_doc mesmo sem índice')
+      service.setAgentContext('dev', [], 'root')
+      // A arq anexada (por referência) a uma skill do agente: o anexo da arq abre pela skill — a permissão fica com o read_doc.
+      service.createResource({ id: 'hex', kind: 'skill', projectId: 'xpto', description: 'Hexagonal', body: 'Passos.', docIds: ['arq'], docRefs: ['arq'] }, 'root')
+      assert.deepStrictEqual(service.attachedDoc('detalhe', 'dev')?.via, [{ kind: 'skill', id: 'hex' }])
+      assert.deepStrictEqual(service.attachedDoc('arq', 'dev')?.via, [{ kind: 'skill', id: 'hex' }])
+      // Ciclo na subida não trava.
+      service.updateDoc('detalhe', { docIds: ['arq'] }, 'root')
+      assert.deepStrictEqual(service.attachedDoc('detalhe', 'dev')?.via, [{ kind: 'skill', id: 'hex' }])
+    })
+
+    it('o rascunho do construtor confere os anexos do documento', () => {
+      const service = seeded()
+      const { issues } = service.draftIssues({ kind: 'spec', id: 'nova', title: 'Nova', summary: 's', body: 'b', docIds: ['arq'], global: true })
+      assert.deepStrictEqual(issues, [{ field: 'docIds', message: 'arq belongs to a project (xpto): a global document attaches only global ones' }])
+      assert.deepStrictEqual(service.draftIssues({ kind: 'spec', id: 'nova', title: 'Nova', summary: 's', body: 'b', docIds: ['arq'], docRefs: ['arq'] }, 'xpto').issues, [])
+    })
+  })
+
   describe('protocolos e o construtor', () => {
     const seeded = () => {
       const service = new GuidanceService(

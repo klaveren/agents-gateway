@@ -564,6 +564,10 @@ export interface IProjectDoc {
   title: string
   summary: string
   body?: string
+  /** Outros documentos anexados, na ordem: vão junto quando este é lido. Globais ou do mesmo projeto (o global só anexa global). */
+  docIds?: string[]
+  /** Dos anexados, os que vão por referência (o agente lê com `read_doc` se precisar). Ausente = todos inteiros. */
+  docRefs?: string[]
   /** Só na lista: quem carrega a spec inteira (o contexto inicial dos projetos e dos agentes). */
   loadedIn?: { projects: string[]; agents: string[] }
   /** Só na lista: o peso estimado do corpo. */

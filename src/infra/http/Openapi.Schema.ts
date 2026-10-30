@@ -541,6 +541,9 @@ const ruleBody = {
     enabled: { type: 'boolean' },
   },
 }
+const DOC_IDS_DESCRIPTION =
+  'Other documents attached to this one, in order (global ones, or of the same project; a global document attaches only global ones). They go along when this one is read: in full, unless listed in docRefs.'
+const DOC_REFS_DESCRIPTION = 'Which of docIds go by reference: listed with id, title and size, and the agent reads them with read_doc if needed.'
 const docSchema = {
   type: 'object',
   properties: {
@@ -550,6 +553,8 @@ const docSchema = {
     title: { type: 'string' },
     summary: { type: 'string', description: 'One line: what the conversation index shows.' },
     body: { type: 'string', description: 'Markdown. Absent in the list.' },
+    docIds: { type: 'array', items: { type: 'string' }, description: DOC_IDS_DESCRIPTION },
+    docRefs: { type: 'array', items: { type: 'string' }, description: DOC_REFS_DESCRIPTION },
     loadedIn: {
       type: 'object',
       description: 'List only: who loads this spec in full (their initial context).',
@@ -570,6 +575,8 @@ const docBody = {
     title: { type: 'string' },
     summary: { type: 'string' },
     body: { type: 'string' },
+    docIds: { type: 'array', items: { type: 'string' }, description: `${DOC_IDS_DESCRIPTION} Absent on update = keep.` },
+    docRefs: { type: 'array', items: { type: 'string' }, description: `${DOC_REFS_DESCRIPTION} Absent on update = keep.` },
   },
 }
 const idParam = [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }]
