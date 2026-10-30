@@ -214,7 +214,7 @@ export interface IAgentInput {
   fallback?: IAgentFallback | null
 }
 
-export type TPermissionCategory = 'terminal' | 'read' | 'write' | 'network' | 'mcp' | 'skill' | 'delegate' | 'account'
+export type TPermissionCategory = 'terminal' | 'read' | 'write' | 'network' | 'mcp' | 'skill' | 'delegate' | 'account' | 'repository'
 
 /** Uma regra de permissão: o padrão, Permitir ou Negar, e uma nota. */
 export interface IPermissionRule {

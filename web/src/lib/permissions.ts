@@ -15,6 +15,12 @@ export const PERMISSION_SECTIONS: ReadonlyArray<{ category: TPermissionCategory;
   { category: 'skill', label: 'Skills', hint: 'Pelo id da skill.', example: 'akm-*' },
   { category: 'delegate', label: 'Delegação', hint: 'Pelo id do agente a quem pode pedir ajuda.', example: 'agent-*' },
   { category: 'account', label: 'Contas', hint: 'Pelo id da conta do projeto (Projeto → Contas) que o terminal recebe.', example: 'github-*' },
+  {
+    category: 'repository',
+    label: 'Repositórios',
+    hint: 'Em que repositório do projeto (a pasta em repositories/) o agente pode abrir conversa, pelo nome.',
+    example: 'logiccus',
+  },
 ]
 
 export const LAYER_LABEL: Readonly<Record<string, string>> = { system: 'sistema', agent: 'agente', project: 'projeto', default: 'sem regra' }
