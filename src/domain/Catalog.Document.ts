@@ -181,6 +181,9 @@ export const DOC_SHAPE: TShape<IProjectDoc> = {
   title: 'value',
   summary: 'value',
   body: 'value',
+  // Os anexos do doc (doc → doc), como os da skill: a ordem é a da carga; `docRefs` só diz quais vão por referência.
+  docIds: 'list',
+  docRefs: 'set',
   createdAt: { omit: META },
   updatedAt: { omit: META },
   updatedBy: { omit: META },
