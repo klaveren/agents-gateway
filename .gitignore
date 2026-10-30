@@ -29,3 +29,6 @@ data/
 *.db-wal
 *.db-shm
 secrets.key
+
+# Notas locais de integração (a esteira, adiada): fora do git.
+docs/integration/
