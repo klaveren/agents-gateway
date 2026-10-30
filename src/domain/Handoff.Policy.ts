@@ -17,6 +17,8 @@ export interface ITranscriptTurn {
   tools?: string[]
   /** Quem respondeu: `provider · modelo`. */
   by?: string
+  /** O que a pessoa mandou com o turno rodando (ver `Interjection.Policy`). */
+  interjections?: string[]
 }
 
 /** ⚖️ ~40 mil caracteres: cabe com folga no contexto de qualquer modelo e não paga uma conversa inteira de volta. */
@@ -70,6 +72,7 @@ function turnBlock(turn: ITranscriptTurn, number: number): string {
   const lines = [`### Turno ${number}${turn.by ? ` (${turn.by})` : ''}`, `Pessoa: ${turn.request.trim() || '(sem texto)'}`]
   if (turn.files?.length) lines.push(`Arquivos anexados: ${turn.files.join(', ')}`)
   if (turn.tools?.length) lines.push(`Ferramentas usadas: ${[...new Set(turn.tools)].join(', ')}`)
+  for (const text of turn.interjections ?? []) lines.push(`Pessoa (durante o turno): ${text.trim()}`)
   lines.push(`Assistente: ${turn.text.trim() || '(sem texto)'}`)
   return lines.join('\n')
 }

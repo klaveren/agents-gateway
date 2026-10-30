@@ -114,6 +114,7 @@ export class OpenAIChatAdapter implements IAgentAdapter {
         provider: this.loopProvider(record, sessionId),
         signal: abort.signal,
         maxTurns: maxToolTurns(),
+        ...(input.interjections ? { interjections: input.interjections } : {}),
       })
 
       if (abort.signal.aborted) {
@@ -236,11 +237,12 @@ export class OpenAIChatAdapter implements IAgentAdapter {
         history.push(message)
       },
 
-      appendToolResults(history, results) {
-        // No GPT cada resultado é uma mensagem própria, amarrada pelo tool_call_id.
+      appendToolResults(history, results, note) {
+        // No GPT cada resultado é uma mensagem própria, amarrada pelo tool_call_id; a fala da pessoa vem depois deles.
         for (const entry of results) {
           history.push({ role: 'tool', tool_call_id: entry.call.id, content: entry.outcome.result })
         }
+        if (note) history.push({ role: 'user', content: note })
       },
     }
   }

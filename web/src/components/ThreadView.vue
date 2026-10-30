@@ -1,236 +1,254 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
-import { api } from '@/lib/api'
-import type { IConversation, TMode } from '@/lib/types'
-import { useRouter } from 'vue-router'
-import { coreAgentName } from '@/lib/builder'
-import { useAgentCommands } from '@/lib/commands'
-import { contextMeter } from '@/lib/contextMeter'
-import { effortLabel, fullTime, tokens, usd } from '@/lib/format'
-import { useAgentsStore } from '@/stores/agents'
-import { useProtocolsStore } from '@/stores/protocols'
-import { useAuthStore } from '@/stores/auth'
-import { useConversationsStore } from '@/stores/conversations'
-import { useProjectsStore } from '@/stores/projects'
-import { useThreadStore, type IOutgoingFile } from '@/stores/thread'
-import AgentAvatar from './AgentAvatar.vue'
-import Composer from './Composer.vue'
-import ConfirmDialog from './ConfirmDialog.vue'
-import Icon from './Icon.vue'
-import SessionTuner from './SessionTuner.vue'
-import TodoPanel from './TodoPanel.vue'
-import TurnBubbles from './TurnBubbles.vue'
+  import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
+  import { api } from '@/lib/api'
+  import type { IConversation, TMode } from '@/lib/types'
+  import { useRouter } from 'vue-router'
+  import { coreAgentName } from '@/lib/builder'
+  import { useAgentCommands } from '@/lib/commands'
+  import { contextMeter } from '@/lib/contextMeter'
+  import { effortLabel, fullTime, tokens, usd } from '@/lib/format'
+  import { useAgentsStore } from '@/stores/agents'
+  import { useProtocolsStore } from '@/stores/protocols'
+  import { useAuthStore } from '@/stores/auth'
+  import { useConversationsStore } from '@/stores/conversations'
+  import { useProjectsStore } from '@/stores/projects'
+  import { useThreadStore, type IOutgoingFile } from '@/stores/thread'
+  import AgentAvatar from './AgentAvatar.vue'
+  import Composer from './Composer.vue'
+  import ConfirmDialog from './ConfirmDialog.vue'
+  import Icon from './Icon.vue'
+  import SessionTuner from './SessionTuner.vue'
+  import TodoPanel from './TodoPanel.vue'
+  import TurnBubbles from './TurnBubbles.vue'
 
-/**
- * `embedded`: dentro de outra tela (a guia Construir) — sem voltar, compartilhar nem "comece uma nova"; apagar avisa quem
- * embute. `agentId` e `mode`: o que quem embute já sabe, para o cabeçalho antes do primeiro turno gravado.
- */
-const props = defineProps<{ embedded?: boolean; agentId?: string; mode?: TMode }>()
-const emit = defineEmits<{ removed: [] }>()
-const router = useRouter()
-const auth = useAuthStore()
-const agents = useAgentsStore()
-const protocols = useProtocolsStore()
-const conversations = useConversationsStore()
-const thread = useThreadStore()
+  /**
+   * `embedded`: dentro de outra tela (a guia Construir) — sem voltar, compartilhar nem "comece uma nova"; apagar avisa quem
+   * embute. `agentId` e `mode`: o que quem embute já sabe, para o cabeçalho antes do primeiro turno gravado.
+   */
+  const props = defineProps<{ embedded?: boolean; agentId?: string; mode?: TMode }>()
+  const emit = defineEmits<{ removed: [] }>()
+  const router = useRouter()
+  const auth = useAuthStore()
+  const agents = useAgentsStore()
+  const protocols = useProtocolsStore()
+  const conversations = useConversationsStore()
+  const thread = useThreadStore()
 
-const projects = useProjectsStore()
+  const projects = useProjectsStore()
 
-const scroller = ref<HTMLElement>()
-const copied = ref(false)
-const confirming = ref(false)
-const deleting = ref(false)
-const deleteError = ref<string>()
-/** Falha de compartilhar ou de copiar o link: aparece numa faixa, em vez de morrer calada. */
-const actionError = ref<string>()
+  const scroller = ref<HTMLElement>()
+  const copied = ref(false)
+  const confirming = ref(false)
+  const deleting = ref(false)
+  const deleteError = ref<string>()
+  /** Falha de compartilhar ou de copiar o link: aparece numa faixa, em vez de morrer calada. */
+  const actionError = ref<string>()
 
-const header = computed(() => thread.header)
+  const header = computed(() => thread.header)
 
-/** As alterações (o painel tipo IDE): só numa conversa aberta num repositório. O diff (e o destaque) só carrega ao abrir. */
-const ChangesPanel = defineAsyncComponent(() => import('./ChangesPanel.vue'))
-const changesOpen = ref(false)
-const changesCount = ref<number>()
-const changesRefresh = ref(0)
-const inRepository = computed(() => typeof header.value?.metadata?.repository === 'string' && !!thread.sessionId)
-async function loadChangesCount() {
-  if (!inRepository.value || !thread.sessionId) return void (changesCount.value = undefined)
-  const result = await api<{ files: unknown[] }>(`/sessions/${encodeURIComponent(thread.sessionId)}/changes`, { query: { scope: 'conversation' } }).catch(() => undefined)
-  changesCount.value = result?.files.length
-}
-watch(inRepository, () => void loadChangesCount(), { immediate: true })
-// Terminou um turno: o agente pode ter mudado arquivos (a contagem e o painel aberto se atualizam).
-watch(
-  () => !!thread.pending,
-  (running, before) => {
-    if (before && !running) {
-      changesRefresh.value += 1
-      void loadChangesCount()
+  /** As alterações (o painel tipo IDE): só numa conversa aberta num repositório. O diff (e o destaque) só carrega ao abrir. */
+  const ChangesPanel = defineAsyncComponent(() => import('./ChangesPanel.vue'))
+  const changesOpen = ref(false)
+  const changesCount = ref<number>()
+  const changesRefresh = ref(0)
+  const inRepository = computed(() => typeof header.value?.metadata?.repository === 'string' && !!thread.sessionId)
+  async function loadChangesCount() {
+    if (!inRepository.value || !thread.sessionId) return void (changesCount.value = undefined)
+    const result = await api<{ files: unknown[] }>(`/sessions/${encodeURIComponent(thread.sessionId)}/changes`, { query: { scope: 'conversation' } }).catch(() => undefined)
+    changesCount.value = result?.files.length
+  }
+  watch(inRepository, () => void loadChangesCount(), { immediate: true })
+  // Terminou um turno: o agente pode ter mudado arquivos (a contagem e o painel aberto se atualizam).
+  watch(
+    () => !!thread.pending,
+    (running, before) => {
+      if (before && !running) {
+        changesRefresh.value += 1
+        void loadChangesCount()
+      }
+    },
+  )
+  const agent = computed(() => agents.byId.get(header.value?.agentId ?? thread.draft?.agentId ?? ''))
+  /** O nome do agente — o do core (o construtor) não está na lista de agentes. */
+  const agentName = computed(() => agent.value?.name ?? coreAgentName(header.value?.agentId ?? thread.agentId ?? props.agentId) ?? header.value?.agentId)
+  const owner = computed(() => header.value?.metadata?.owner)
+  const shareUrl = computed(() => (header.value?.shared && header.value.shareId ? `${location.origin}/v1/shared/${header.value.shareId}` : ''))
+  /** Os `/commands` que a pessoa pode usar com este agente (o autocompletar da caixa). */
+  // ⚠️ Pelo agente da CONVERSA (o cabeçalho), não só pela lista de agentes: ela vem recortada pelo projeto atual, e a
+  // conversa pode ser de outro projeto. Quem diz o que a pessoa pode usar é o servidor.
+  const commands = useAgentCommands(
+    computed(() => agent.value?.id ?? header.value?.agentId ?? thread.agentId),
+    // Os documentos do `/` são os do projeto DA CONVERSA (o do cabeçalho); conversa nova, o projeto atual.
+    computed(() => (typeof header.value?.metadata?.project === 'string' ? header.value.metadata.project : (projects.current ?? undefined))),
+  )
+  /** A sessão não está viva, mas a conversa volta ao enviar (o gateway a retoma do histórico gravado). */
+  const resumable = computed(() => thread.liveSession === false)
+
+  /** De quem esta conversa é filha (delegada por outro agente) e as filhas que ela abriu. */
+  const parentId = computed(() => (typeof header.value?.metadata?.delegatedBy === 'string' ? header.value.metadata.delegatedBy : undefined))
+  const parentAgent = computed(() => {
+    const from = header.value?.metadata?.delegatedFrom
+    return typeof from === 'string' ? (agents.byId.get(from)?.name ?? from) : 'outro agente'
+  })
+  const children = ref<IConversation[]>([])
+  watch(
+    () => [header.value?.id, thread.turns.length] as const,
+    async ([id]) => {
+      if (!id) return (children.value = [])
+      const page = await api<{ sessions: IConversation[] }>('/conversations', { query: { delegatedBy: id, limit: 50 } }).catch(() => ({ sessions: [] }))
+      if (id === header.value?.id) children.value = page.sessions
+    },
+    { immediate: true },
+  )
+  const childTokens = computed(() => children.value.reduce((total, child) => total + (child.usage.totalTokens ?? 0), 0))
+  const childCost = computed(() =>
+    children.value.some((child) => child.costUsd !== undefined) ? children.value.reduce((total, child) => total + (child.costUsd ?? 0), 0) : undefined,
+  )
+  /** O provider e o modelo em vigor: os da sessão viva (podem ter trocado), senão os da conversa. */
+  const currentModel = computed(() => thread.session?.model ?? header.value?.model)
+  const currentProvider = computed(() => thread.session?.provider ?? header.value?.provider ?? agent.value?.providers[0]?.id ?? '')
+
+  /**
+   * ⚖️ O CONTEXTO EM USO é o da última chamada ao modelo (`contextTokens`), não a soma do turno: o do turno em
+   * andamento, senão o do último turno que o informou, senão o da conversa.
+   */
+  const contextUsed = computed(() => {
+    if (thread.pending?.usage?.contextTokens) return thread.pending.usage.contextTokens
+    for (let index = thread.turns.length - 1; index >= 0; index -= 1) {
+      const value = thread.turns[index].usage?.contextTokens
+      if (value) return value
     }
-  },
-)
-const agent = computed(() => agents.byId.get(header.value?.agentId ?? thread.draft?.agentId ?? ''))
-/** O nome do agente — o do core (o construtor) não está na lista de agentes. */
-const agentName = computed(() => agent.value?.name ?? coreAgentName(header.value?.agentId ?? thread.agentId ?? props.agentId) ?? header.value?.agentId)
-const owner = computed(() => header.value?.metadata?.owner)
-const shareUrl = computed(() => (header.value?.shared && header.value.shareId ? `${location.origin}/v1/shared/${header.value.shareId}` : ''))
-/** Os `/commands` que a pessoa pode usar com este agente (o autocompletar da caixa). */
-// ⚠️ Pelo agente da CONVERSA (o cabeçalho), não só pela lista de agentes: ela vem recortada pelo projeto atual, e a
-// conversa pode ser de outro projeto. Quem diz o que a pessoa pode usar é o servidor.
-const commands = useAgentCommands(
-  computed(() => agent.value?.id ?? header.value?.agentId ?? thread.agentId),
-  // Os documentos do `/` são os do projeto DA CONVERSA (o do cabeçalho); conversa nova, o projeto atual.
-  computed(() => (typeof header.value?.metadata?.project === 'string' ? header.value.metadata.project : (projects.current ?? undefined))),
-)
-/** A sessão não está viva, mas a conversa volta ao enviar (o gateway a retoma do histórico gravado). */
-const resumable = computed(() => thread.liveSession === false)
+    return header.value?.usage.contextTokens
+  })
+  const contextWindow = computed(() => agent.value?.providers.find((provider) => provider.id === currentProvider.value)?.contextLength?.[currentModel.value ?? ''])
+  const context = computed(() => contextMeter(contextUsed.value, contextWindow.value))
 
-/** De quem esta conversa é filha (delegada por outro agente) e as filhas que ela abriu. */
-const parentId = computed(() => (typeof header.value?.metadata?.delegatedBy === 'string' ? header.value.metadata.delegatedBy : undefined))
-const parentAgent = computed(() => {
-  const from = header.value?.metadata?.delegatedFrom
-  return typeof from === 'string' ? (agents.byId.get(from)?.name ?? from) : 'outro agente'
-})
-const children = ref<IConversation[]>([])
-watch(
-  () => [header.value?.id, thread.turns.length] as const,
-  async ([id]) => {
-    if (!id) return (children.value = [])
-    const page = await api<{ sessions: IConversation[] }>('/conversations', { query: { delegatedBy: id, limit: 50 } }).catch(() => ({ sessions: [] }))
-    if (id === header.value?.id) children.value = page.sessions
-  },
-  { immediate: true },
-)
-const childTokens = computed(() => children.value.reduce((total, child) => total + (child.usage.totalTokens ?? 0), 0))
-const childCost = computed(() => (children.value.some((child) => child.costUsd !== undefined) ? children.value.reduce((total, child) => total + (child.costUsd ?? 0), 0) : undefined))
-/** O provider e o modelo em vigor: os da sessão viva (podem ter trocado), senão os da conversa. */
-const currentModel = computed(() => thread.session?.model ?? header.value?.model)
-const currentProvider = computed(() => thread.session?.provider ?? header.value?.provider ?? agent.value?.providers[0]?.id ?? '')
-
-/**
- * ⚖️ O CONTEXTO EM USO é o da última chamada ao modelo (`contextTokens`), não a soma do turno: o do turno em
- * andamento, senão o do último turno que o informou, senão o da conversa.
- */
-const contextUsed = computed(() => {
-  if (thread.pending?.usage?.contextTokens) return thread.pending.usage.contextTokens
-  for (let index = thread.turns.length - 1; index >= 0; index -= 1) {
-    const value = thread.turns[index].usage?.contextTokens
-    if (value) return value
+  /**
+   * O aviso antes do turno que mudou de provider, de modelo ou de nível em relação ao anterior. Só compara
+   * turnos que registram o modelo (os antigos não registram); o provider ausente é o da conversa.
+   */
+  function switchBefore(index: number): string | undefined {
+    const turn = thread.turns[index]
+    const previous = thread.turns[index - 1]
+    if (!turn?.model || !previous?.model) return undefined
+    const fallback = header.value?.provider ?? ''
+    const provider = turn.provider ?? fallback
+    const providerChanged = provider !== (previous.provider ?? fallback)
+    if (!providerChanged && turn.model === previous.model && (turn.effort ?? '') === (previous.effort ?? '')) return undefined
+    return `trocou para ${providerChanged ? `${protocols.providerName(provider)} · ` : ''}${turn.model}${turn.effort ? ` · raciocínio ${effortLabel(turn.effort).toLowerCase()}` : ''}`
   }
-  return header.value?.usage.contextTokens
-})
-const contextWindow = computed(() => agent.value?.providers.find((provider) => provider.id === currentProvider.value)?.contextLength?.[currentModel.value ?? ''])
-const context = computed(() => contextMeter(contextUsed.value, contextWindow.value))
 
-/**
- * O aviso antes do turno que mudou de provider, de modelo ou de nível em relação ao anterior. Só compara
- * turnos que registram o modelo (os antigos não registram); o provider ausente é o da conversa.
- */
-function switchBefore(index: number): string | undefined {
-  const turn = thread.turns[index]
-  const previous = thread.turns[index - 1]
-  if (!turn?.model || !previous?.model) return undefined
-  const fallback = header.value?.provider ?? ''
-  const provider = turn.provider ?? fallback
-  const providerChanged = provider !== (previous.provider ?? fallback)
-  if (!providerChanged && turn.model === previous.model && (turn.effort ?? '') === (previous.effort ?? '')) return undefined
-  return `trocou para ${providerChanged ? `${protocols.providerName(provider)} · ` : ''}${turn.model}${turn.effort ? ` · raciocínio ${effortLabel(turn.effort).toLowerCase()}` : ''}`
-}
+  watch(
+    () => [thread.turns.length, thread.pending?.text.length, thread.pending?.tools.length],
+    () => void nextTick(() => scroller.value?.scrollTo({ top: scroller.value.scrollHeight })),
+  )
 
-watch(
-  () => [thread.turns.length, thread.pending?.text.length, thread.pending?.tools.length],
-  () => void nextTick(() => scroller.value?.scrollTo({ top: scroller.value.scrollHeight })),
-)
-
-async function send(text: string, files: IOutgoingFile[], settle: (ok: boolean) => void) {
-  const { ok, created } = await thread.send(text, files)
-  settle(ok)
-  if (created) await router.replace(`/c/${created}`)
-}
-
-/** Compactar à mão: só com a conversa viva, perto do limite, numa lane que o gateway compacta (as de SDK compactam sozinhas). */
-const compacting = ref(false)
-const canCompact = computed(() => thread.liveSession === true && !thread.session?.compactsItself && (!!thread.session?.compactNext || !!context.value?.warn))
-async function compactNow() {
-  compacting.value = true
-  actionError.value = undefined
-  try {
-    await thread.compact()
-  } catch (error) {
-    actionError.value = `Não foi possível compactar: ${error instanceof Error ? error.message : String(error)}`
-  } finally {
-    compacting.value = false
+  async function send(text: string, files: IOutgoingFile[], settle: (ok: boolean) => void) {
+    const { ok, created } = await thread.send(text, files)
+    settle(ok)
+    if (created) await router.replace(`/c/${created}`)
   }
-}
 
-async function toggleShare() {
-  if (!header.value) return
-  actionError.value = undefined
-  try {
-    await conversations.share(header.value.id, !header.value.shared)
-  } catch (error) {
-    actionError.value = `Não foi possível ${header.value.shared ? 'parar de compartilhar' : 'compartilhar'}: ${error instanceof Error ? error.message : String(error)}`
+  /** Compactar à mão: só com a conversa viva, perto do limite, numa lane que o gateway compacta (as de SDK compactam sozinhas). */
+  const compacting = ref(false)
+  const canCompact = computed(() => thread.liveSession === true && !thread.session?.compactsItself && (!!thread.session?.compactNext || !!context.value?.warn))
+  async function compactNow() {
+    compacting.value = true
+    actionError.value = undefined
+    try {
+      await thread.compact()
+    } catch (error) {
+      actionError.value = `Não foi possível compactar: ${error instanceof Error ? error.message : String(error)}`
+    } finally {
+      compacting.value = false
+    }
   }
-}
 
-async function copyShare() {
-  actionError.value = undefined
-  try {
-    // ⚠️ `navigator.clipboard` some fora de HTTPS e pode recusar a permissão: só é "Copiado" se a escrita deu certo.
-    if (!navigator.clipboard) throw new Error('o navegador não permite copiar aqui')
-    await navigator.clipboard.writeText(shareUrl.value)
-    copied.value = true
-    setTimeout(() => (copied.value = false), 1500)
-  } catch (error) {
-    copied.value = false
-    actionError.value = `Não foi possível copiar o link: ${error instanceof Error ? error.message : String(error)}`
+  async function toggleShare() {
+    if (!header.value) return
+    actionError.value = undefined
+    try {
+      await conversations.share(header.value.id, !header.value.shared)
+    } catch (error) {
+      actionError.value = `Não foi possível ${header.value.shared ? 'parar de compartilhar' : 'compartilhar'}: ${error instanceof Error ? error.message : String(error)}`
+    }
   }
-}
 
-async function remove() {
-  if (!header.value) return
-  deleting.value = true
-  deleteError.value = undefined
-  try {
-    await conversations.remove(header.value.id)
-    confirming.value = false
-    if (props.embedded) emit('removed')
-    else await router.push('/')
-  } catch (error) {
-    deleteError.value = error instanceof Error ? error.message : String(error)
-  } finally {
-    deleting.value = false
+  async function copyShare() {
+    actionError.value = undefined
+    try {
+      // ⚠️ `navigator.clipboard` some fora de HTTPS e pode recusar a permissão: só é "Copiado" se a escrita deu certo.
+      if (!navigator.clipboard) throw new Error('o navegador não permite copiar aqui')
+      await navigator.clipboard.writeText(shareUrl.value)
+      copied.value = true
+      setTimeout(() => (copied.value = false), 1500)
+    } catch (error) {
+      copied.value = false
+      actionError.value = `Não foi possível copiar o link: ${error instanceof Error ? error.message : String(error)}`
+    }
   }
-}
 
-/** Sessão nova com o mesmo agente, modelo e lane — o histórico anterior NÃO vai junto. */
-async function continueFresh() {
-  const source = header.value
-  if (!source) return
-  const repository = typeof source.metadata?.repository === 'string' ? source.metadata.repository : undefined
-  const worktree = typeof source.metadata?.worktree === 'string' ? source.metadata.worktree : undefined
-  thread.startDraft({ agentId: source.agentId, mode: source.mode, tools: false, provider: source.provider, model: source.model, repository, worktree })
-  await router.push({ path: '/new', query: { from: source.id } })
-}
+  async function remove() {
+    if (!header.value) return
+    deleting.value = true
+    deleteError.value = undefined
+    try {
+      await conversations.remove(header.value.id)
+      confirming.value = false
+      if (props.embedded) emit('removed')
+      else await router.push('/')
+    } catch (error) {
+      deleteError.value = error instanceof Error ? error.message : String(error)
+    } finally {
+      deleting.value = false
+    }
+  }
+
+  /** Sessão nova com o mesmo agente, modelo e lane — o histórico anterior NÃO vai junto. */
+  async function continueFresh() {
+    const source = header.value
+    if (!source) return
+    const repository = typeof source.metadata?.repository === 'string' ? source.metadata.repository : undefined
+    const worktree = typeof source.metadata?.worktree === 'string' ? source.metadata.worktree : undefined
+    thread.startDraft({ agentId: source.agentId, mode: source.mode, tools: false, provider: source.provider, model: source.model, repository, worktree })
+    await router.push({ path: '/new', query: { from: source.id } })
+  }
 </script>
 
 <template>
   <section class="flex h-full flex-col">
     <header class="flex items-center gap-3 border-b border-zinc-800/80 bg-zinc-900/40 px-4 py-2.5">
-      <RouterLink v-if="!embedded" to="/" class="grid h-9 w-9 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 lg:hidden" title="Voltar"><Icon name="back" class="h-5 w-5" /></RouterLink>
+      <RouterLink v-if="!embedded" to="/" class="grid h-9 w-9 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 lg:hidden" title="Voltar">
+        <Icon name="back" class="h-5 w-5" />
+      </RouterLink>
       <AgentAvatar :name="agentName ?? '?'" :provider="currentProvider || 'claude'" size="sm" />
       <div class="min-w-0">
         <div class="truncate font-medium">{{ header?.title || agentName || 'Conversa' }}</div>
         <div class="truncate text-xs text-zinc-400">
-          {{ agentName }} · {{ protocols.providerName(currentProvider) }} {{ currentModel }}<template v-if="thread.session?.reasoning"> · raciocínio {{ effortLabel(thread.session.reasoning).toLowerCase() }}</template>
-          <template v-if="typeof header?.metadata?.repository === 'string'"> · {{ header.metadata.repository }}<template v-if="typeof header.metadata.worktree === 'string'"> / {{ header.metadata.worktree }}</template></template>
-          <template v-if="auth.isAdmin && owner"> · {{ owner.email ?? owner.id }}</template>
+          {{ agentName }} · {{ protocols.providerName(currentProvider) }} {{ currentModel }}
+          <template v-if="thread.session?.reasoning">· raciocínio {{ effortLabel(thread.session.reasoning).toLowerCase() }}</template>
+          <template v-if="typeof header?.metadata?.repository === 'string'">
+            · {{ header.metadata.repository }}
+            <template v-if="typeof header.metadata.worktree === 'string'">/ {{ header.metadata.worktree }}</template>
+          </template>
+          <template v-if="auth.isAdmin && owner">· {{ owner.email ?? owner.id }}</template>
         </div>
       </div>
       <div v-if="header || context" class="ml-auto flex items-center gap-1">
         <div v-if="context" class="mr-2 grid h-8 w-8 place-items-center" :title="`Contexto da conversa: ${context.label.replace(' / ', ' de ').replace(' usados', '')} tokens`">
           <svg v-if="context.percent !== undefined" viewBox="0 0 32 32" class="col-start-1 row-start-1 h-8 w-8 -rotate-90">
             <circle cx="16" cy="16" r="13" fill="none" stroke-width="3" class="stroke-zinc-800" />
-            <circle cx="16" cy="16" r="13" fill="none" stroke-width="3" stroke-linecap="round" pathLength="100" :stroke-dasharray="`${context.percent} 100`" :class="context.warn ? 'stroke-amber-400' : 'stroke-emerald-500'" />
+            <circle
+              cx="16"
+              cy="16"
+              r="13"
+              fill="none"
+              stroke-width="3"
+              stroke-linecap="round"
+              pathLength="100"
+              :stroke-dasharray="`${context.percent} 100`"
+              :class="context.warn ? 'stroke-amber-400' : 'stroke-emerald-500'"
+            />
           </svg>
           <span class="col-start-1 row-start-1 text-[9px] tabular-nums" :class="context.warn ? 'text-amber-300' : 'text-zinc-400'">{{ context.short }}</span>
         </div>
@@ -245,7 +263,9 @@ async function continueFresh() {
           {{ thread.session?.compactNext ? 'Compacta na próxima' : 'Compactar' }}
         </button>
         <template v-if="header">
-          <span v-if="auth.isAdmin && header.costUsd !== undefined" class="mr-2 hidden text-xs text-zinc-400 sm:inline">{{ tokens(header.usage.totalTokens) }} tokens · {{ header.costIsFloor ? '≥ ' : '' }}{{ usd(header.costUsd) }}</span>
+          <span v-if="auth.isAdmin && header.costUsd !== undefined" class="mr-2 hidden text-xs text-zinc-400 sm:inline">
+            {{ tokens(header.usage.totalTokens) }} tokens · {{ header.costIsFloor ? '≥ ' : '' }}{{ usd(header.costUsd) }}
+          </span>
           <button
             v-if="inRepository"
             class="flex h-9 items-center gap-1.5 rounded-full px-2.5 text-xs text-zinc-300 hover:bg-zinc-800"
@@ -253,9 +273,16 @@ async function continueFresh() {
             @click="changesOpen = true"
           >
             <Icon name="git" class="h-4 w-4" />
-            Alterações<span v-if="changesCount" class="rounded-full bg-emerald-500/20 px-1.5 text-emerald-300">{{ changesCount }}</span>
+            Alterações
+            <span v-if="changesCount" class="rounded-full bg-emerald-500/20 px-1.5 text-emerald-300">{{ changesCount }}</span>
           </button>
-          <button v-if="!embedded" class="grid h-9 w-9 place-items-center rounded-full hover:bg-zinc-800" :class="header.shared ? 'text-emerald-400' : 'text-zinc-400'" :title="header.shared ? 'Parar de compartilhar' : 'Compartilhar por link'" @click="toggleShare">
+          <button
+            v-if="!embedded"
+            class="grid h-9 w-9 place-items-center rounded-full hover:bg-zinc-800"
+            :class="header.shared ? 'text-emerald-400' : 'text-zinc-400'"
+            :title="header.shared ? 'Parar de compartilhar' : 'Compartilhar por link'"
+            @click="toggleShare"
+          >
             <Icon name="share" class="h-5 w-5" />
           </button>
           <button class="grid h-9 w-9 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 hover:text-rose-300" title="Apagar histórico" @click="confirming = true">
@@ -270,8 +297,13 @@ async function continueFresh() {
       <RouterLink :to="`/c/${parentId}`" class="ml-auto hover:text-white">Abrir a conversa original →</RouterLink>
     </div>
     <div v-if="children.length" class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-zinc-800/80 bg-zinc-900/40 px-4 py-1.5 text-xs text-zinc-400">
-      <span>{{ children.length }} delegaç{{ children.length === 1 ? 'ão' : 'ões' }} · {{ tokens(childTokens) }} tokens<template v-if="auth.isAdmin && childCost !== undefined"> · {{ usd(childCost) }}</template></span>
-      <RouterLink v-for="child in children" :key="child.id" :to="`/c/${child.id}`" class="btn btn-sm btn-secondary">{{ agents.byId.get(child.agentId)?.name ?? child.agentId }}</RouterLink>
+      <span>
+        {{ children.length }} delegaç{{ children.length === 1 ? 'ão' : 'ões' }} · {{ tokens(childTokens) }} tokens
+        <template v-if="auth.isAdmin && childCost !== undefined">· {{ usd(childCost) }}</template>
+      </span>
+      <RouterLink v-for="child in children" :key="child.id" :to="`/c/${child.id}`" class="btn btn-sm btn-secondary">
+        {{ agents.byId.get(child.agentId)?.name ?? child.agentId }}
+      </RouterLink>
     </div>
 
     <div v-if="actionError" class="flex items-center gap-2 border-b border-rose-500/20 bg-rose-500/10 px-4 py-2 text-xs text-rose-200">
@@ -282,10 +314,16 @@ async function continueFresh() {
     <div v-if="shareUrl" class="flex items-center gap-2 border-b border-emerald-500/20 bg-emerald-500/10 px-4 py-2 text-xs text-emerald-200">
       Qualquer pessoa com o link pode ler esta conversa.
       <code class="truncate text-emerald-300">{{ shareUrl }}</code>
-      <button class="btn btn-sm btn-ghost ml-auto" @click="copyShare"><Icon :name="copied ? 'check' : 'copy'" class="h-4 w-4" />{{ copied ? 'Copiado' : 'Copiar' }}</button>
+      <button class="btn btn-sm btn-ghost ml-auto" @click="copyShare">
+        <Icon :name="copied ? 'check' : 'copy'" class="h-4 w-4" />
+        {{ copied ? 'Copiado' : 'Copiar' }}
+      </button>
     </div>
 
-    <div ref="scroller" class="scroll-thin min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(circle_at_1px_1px,rgb(39_39_42/0.6)_1px,transparent_0)] [background-size:22px_22px] px-4 py-5">
+    <div
+      ref="scroller"
+      class="scroll-thin min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(circle_at_1px_1px,rgb(39_39_42/0.6)_1px,transparent_0)] [background-size:22px_22px] px-4 py-5"
+    >
       <div class="mx-auto flex max-w-3xl flex-col gap-5">
         <p v-if="thread.loading" class="text-center text-sm text-zinc-500">Carregando conversa…</p>
         <p v-if="header" class="mx-auto rounded-full bg-zinc-900/80 px-3 py-1 text-xs text-zinc-400">Começou em {{ fullTime(header.createdAt) }}</p>
@@ -312,10 +350,20 @@ async function continueFresh() {
     <div v-if="resumable" class="flex items-center gap-3 border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-2 text-xs text-zinc-400">
       <span class="min-w-0 truncate">A conversa foi encerrada. Ao enviar, ela continua de onde parou.</span>
       <button v-if="!embedded" class="btn btn-sm btn-ghost ml-auto" @click="continueFresh">
-        <Icon name="refresh" class="h-3.5 w-3.5" /> Começar uma nova
+        <Icon name="refresh" class="h-3.5 w-3.5" />
+        Começar uma nova
       </button>
     </div>
     <SessionTuner v-if="thread.liveSession && agent" :agent="agent" :mode="header?.mode" :fallback="{ provider: header?.provider, model: header?.model }" />
-    <Composer :sending="thread.sending || thread.following" :disabled="thread.liveSession === undefined" :commands="commands" @send="send" @stop="thread.stop" />
+    <Composer
+      :sending="thread.sending || thread.following"
+      :disabled="thread.liveSession === undefined"
+      :commands="commands"
+      :queued="thread.queued"
+      :restore="thread.leftover"
+      @send="send"
+      @stop="thread.stop"
+      @restored="thread.leftover = undefined"
+    />
   </section>
 </template>

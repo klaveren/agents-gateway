@@ -46,12 +46,17 @@ export interface ISessionRecord {
   compactSummary?: string
   /** Pedida à mão (`compact`): o próximo turno compacta, passe ou não do gatilho. */
   compactNext?: boolean
+  /** As mensagens que esperam o turno rodando (ver `Interjection.Policy`). */
+  queued?: string[]
   metadata?: Record<string, unknown>
   abort?: AbortController
   native?: unknown
 }
 
-export type TSessionSeed = Omit<ISessionRecord, 'id' | 'createdAt' | 'lastActivityAt' | 'status' | 'turns' | 'usage' | 'transcript' | 'handoff' | 'compactSummary' | 'compactNext'>
+export type TSessionSeed = Omit<
+  ISessionRecord,
+  'id' | 'createdAt' | 'lastActivityAt' | 'status' | 'turns' | 'usage' | 'transcript' | 'handoff' | 'compactSummary' | 'compactNext' | 'queued'
+>
 
 export interface ISessionStoreOptions {
   /** Tempo sem atividade após o qual a sessão é descartada. Default: 8h (ver `DEFAULT_TTL_MS`). */

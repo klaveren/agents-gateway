@@ -62,6 +62,8 @@ export const sendMessageSchema = z
   .object({
     message: z.string().default(''),
     files: z.array(fileSchema).max(MAX_FILES).optional(),
+    /** Com o turno rodando: `queue` põe a mensagem na fila dele (202) em vez do 409. Só texto (ver `Interjection.Policy`). */
+    whileBusy: z.enum(['reject', 'queue']).optional(),
   })
   .refine((body) => body.message.trim().length > 0 || (body.files?.length ?? 0) > 0, {
     message: 'send text, an attachment, or both',

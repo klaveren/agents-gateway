@@ -1,43 +1,65 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { CLASSIFICATION_COLOR, CLASSIFICATION_LABEL, shortTime, tokens, usd } from '@/lib/format'
-import { renderMarkdown } from '@/lib/markdown'
-import type { ITurn } from '@/lib/types'
-import { useAgentsStore } from '@/stores/agents'
-import type { IPendingTurn } from '@/stores/thread'
+  import { computed } from 'vue'
+  import { CLASSIFICATION_COLOR, CLASSIFICATION_LABEL, shortTime, tokens, usd } from '@/lib/format'
+  import { renderMarkdown } from '@/lib/markdown'
+  import type { ITurn } from '@/lib/types'
+  import { useAgentsStore } from '@/stores/agents'
+  import type { IPendingTurn } from '@/stores/thread'
 
-/** Um turno vira dois balões: a pergunta (direita) e a resposta do agente (esquerda). */
-const props = defineProps<{ turn?: ITurn; pending?: IPendingTurn; showCost: boolean }>()
-const agents = useAgentsStore()
+  /** Um turno vira dois balões: a pergunta (direita) e a resposta do agente (esquerda). */
+  const props = defineProps<{ turn?: ITurn; pending?: IPendingTurn; showCost: boolean }>()
+  const agents = useAgentsStore()
 
-const request = computed(() => props.turn?.request ?? props.pending?.request ?? '')
-const files = computed(() => props.turn?.files?.length ?? props.pending?.files ?? 0)
-const text = computed(() => props.turn?.text ?? props.pending?.text ?? '')
-const reasoning = computed(() => props.turn?.reasoning ?? props.pending?.reasoning ?? '')
-const tools = computed(() => {
-  if (props.pending) return props.pending.tools
-  return (props.turn?.toolCalls ?? []).map((call) => ({ tool: call.tool, status: call.error ? ('error' as const) : ('done' as const), message: call.error, delegation: delegationOf(call) }))
-})
+  const request = computed(() => props.turn?.request ?? props.pending?.request ?? '')
+  const files = computed(() => props.turn?.files?.length ?? props.pending?.files ?? 0)
+  const text = computed(() => props.turn?.text ?? props.pending?.text ?? '')
+  const reasoning = computed(() => props.turn?.reasoning ?? props.pending?.reasoning ?? '')
+  const tools = computed(() => {
+    if (props.pending) return props.pending.tools
+    return (props.turn?.toolCalls ?? []).map((call) => ({
+      tool: call.tool,
+      status: call.error ? ('error' as const) : ('done' as const),
+      message: call.error,
+      delegation: delegationOf(call),
+    }))
+  })
 
-/**
- * A delegação de um turno: a quem foi e a conversa filha. O resultado vem como o SDK o entregou (texto,
- * blocos ou JSON aninhado), então o id é procurado no texto serializado.
- */
-const delegated = (tool: object) => (tool as { delegation?: { agentId?: string; sessionId: string } }).delegation
+  /**
+   * A delegação de um turno: a quem foi e a conversa filha. O resultado vem como o SDK o entregou (texto,
+   * blocos ou JSON aninhado), então o id é procurado no texto serializado.
+   */
+  const delegated = (tool: object) => (tool as { delegation?: { agentId?: string; sessionId: string } }).delegation
 
-function delegationOf(call: { tool: string; args?: unknown; result?: unknown }): { agentId?: string; sessionId: string } | undefined {
-  if (!call.tool.endsWith('delegate_to_agent')) return undefined
-  const serialized = JSON.stringify(call.result ?? '')
-  const sessionId = /sessionId\\*"\s*:\s*\\*"([^"\\]+)/.exec(serialized)?.[1]
-  if (!sessionId) return undefined
-  const agentId = (call.args as { agentId?: string } | undefined)?.agentId ?? /agentId\\*"\s*:\s*\\*"([^"\\]+)/.exec(serialized)?.[1]
-  return { agentId, sessionId }
-}
-const warnings = computed(() => props.turn?.warnings ?? props.pending?.warnings ?? [])
-const aborted = computed(() => props.turn?.aborted ?? props.pending?.aborted ?? false)
-const error = computed(() => props.turn?.error ?? props.pending?.error)
-const usage = computed(() => props.turn?.usage ?? props.pending?.usage)
-const thinking = computed(() => !!props.pending && !text.value && !props.pending.error)
+  function delegationOf(call: { tool: string; args?: unknown; result?: unknown }): { agentId?: string; sessionId: string } | undefined {
+    if (!call.tool.endsWith('delegate_to_agent')) return undefined
+    const serialized = JSON.stringify(call.result ?? '')
+    const sessionId = /sessionId\\*"\s*:\s*\\*"([^"\\]+)/.exec(serialized)?.[1]
+    if (!sessionId) return undefined
+    const agentId = (call.args as { agentId?: string } | undefined)?.agentId ?? /agentId\\*"\s*:\s*\\*"([^"\\]+)/.exec(serialized)?.[1]
+    return { agentId, sessionId }
+  }
+  const warnings = computed(() => props.turn?.warnings ?? props.pending?.warnings ?? [])
+  const aborted = computed(() => props.turn?.aborted ?? props.pending?.aborted ?? false)
+  const error = computed(() => props.turn?.error ?? props.pending?.error)
+  const usage = computed(() => props.turn?.usage ?? props.pending?.usage)
+  /**
+   * A resposta em pedaços, com as mensagens que a pessoa mandou no meio do turno onde elas entraram (`at`, a posição no
+   * texto). Sem nenhuma, um pedaço só.
+   */
+  const segments = computed(() => {
+    const full = text.value
+    const parts: Array<{ kind: 'text' | 'person'; text: string }> = []
+    let from = 0
+    for (const item of [...(props.turn?.interjections ?? props.pending?.interjections ?? [])].sort((a, b) => a.at - b.at)) {
+      const at = Math.min(Math.max(item.at, from), full.length)
+      if (at > from) parts.push({ kind: 'text', text: full.slice(from, at) })
+      parts.push({ kind: 'person', text: item.text })
+      from = at
+    }
+    if (from < full.length) parts.push({ kind: 'text', text: full.slice(from) })
+    return parts
+  })
+  const thinking = computed(() => !!props.pending && !text.value && !props.pending.error)
 </script>
 
 <template>
@@ -75,14 +97,23 @@ const thinking = computed(() => !!props.pending && !text.value && !props.pending
         </span>
       </div>
 
-      <div v-if="text || thinking || error || aborted" class="rounded-2xl rounded-bl-md bg-zinc-800/90 px-3.5 py-2 text-sm leading-relaxed shadow">
+      <div v-if="text || thinking || error || aborted || segments.length" class="rounded-2xl rounded-bl-md bg-zinc-800/90 px-3.5 py-2 text-sm leading-relaxed shadow">
         <div v-if="thinking" class="flex h-5 items-center gap-1">
           <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400 [animation-delay:-0.3s]" />
           <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400 [animation-delay:-0.15s]" />
           <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400" />
         </div>
-        <!-- eslint-disable-next-line vue/no-v-html -- renderMarkdown escapa antes de marcar -->
-        <div v-if="text" class="prose-agent break-words" v-html="renderMarkdown(text)" />
+        <template v-for="(part, index) in segments" :key="index">
+          <!-- eslint-disable-next-line vue/no-v-html -- renderMarkdown escapa antes de marcar -->
+          <div v-if="part.kind === 'text'" class="prose-agent break-words" v-html="renderMarkdown(part.text)" />
+          <div
+            v-else
+            class="my-2 ml-auto w-fit max-w-[90%] rounded-2xl rounded-br-md bg-emerald-600/90 px-3 py-1.5 text-sm whitespace-pre-wrap text-white"
+            title="Mandada durante o turno"
+          >
+            {{ part.text }}
+          </div>
+        </template>
         <p v-if="error" class="mt-1 text-sm text-rose-300">Algo deu errado: {{ error }}</p>
         <p v-if="aborted" class="mt-1 text-xs text-zinc-400 italic">Interrompido.</p>
         <div v-if="turn" class="mt-1 flex items-center justify-end gap-2 text-[11px] text-zinc-500">

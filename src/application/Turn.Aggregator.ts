@@ -14,6 +14,8 @@ export interface ITurnResult {
   toolCalls: ITurnToolCall[]
   usage: IUsage
   warnings: string[]
+  /** As mensagens que entraram no meio do turno, com a posição no texto (ver `Interjection.Policy`). */
+  interjections: Array<{ at: number; text: string }>
   aborted: boolean
   error?: string
 }
@@ -32,6 +34,7 @@ export function aggregateTurn(sessionId: string, events: Iterable<IAgentEvent>):
     toolCalls: [],
     usage: {},
     warnings: [],
+    interjections: [],
     aborted: false,
   }
 
@@ -67,6 +70,10 @@ export function aggregateTurn(sessionId: string, events: Iterable<IAgentEvent>):
 
       case 'message.aborted':
         turn.aborted = true
+        break
+
+      case 'message.injected':
+        turn.interjections.push({ at: turn.text.length, text: event.payload.text })
         break
 
       case 'error':

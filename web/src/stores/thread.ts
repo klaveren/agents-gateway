@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { api, ApiError, openStream } from '@/lib/api'
 import { readSse } from '@/lib/sse'
-import type { IAgent, IAgentEvent, IConversation, ISessionState, ITodoItem, ITurn, IUsage, TMode } from '@/lib/types'
+import type { IAgent, IAgentEvent, IConversation, ISessionState, ITodoItem, ITurn, ITurnInterjection, IUsage, TMode } from '@/lib/types'
 import { levelsOf, resolveChoice } from '@/lib/agentChoice'
 import { useAgentsStore } from './agents'
 import { useConversationsStore, type TTurnFrame } from './conversations'
@@ -36,6 +36,8 @@ export interface IPendingTurn {
   tools: IPendingTool[]
   usage?: IUsage
   warnings: string[]
+  /** As mensagens que entraram no meio do turno (`message.injected`), na posição do texto em que entraram. */
+  interjections: ITurnInterjection[]
   aborted: boolean
   error?: string
 }
@@ -111,6 +113,10 @@ export const useThreadStore = defineStore('thread', () => {
   const following = ref(false)
   /** A lista de tarefas que o agente mantém na conversa (`update_todos`); vazia = nenhuma. */
   const todos = ref<ITodoItem[]>([])
+  /** As mensagens mandadas com o turno rodando que ainda não entraram nele (`whileBusy: 'queue'`). */
+  const queued = ref<string[]>([])
+  /** O que estava na fila quando o turno parou: volta para a caixa de texto (o servidor descartou). */
+  const leftover = ref<string>()
 
   let inFlight: AbortController | undefined
   /** O turno de fora que a tela está montando (ver `onLive`), pelo stream da caixa de entrada. */
@@ -134,6 +140,8 @@ export const useThreadStore = defineStore('thread', () => {
     following.value = false
     sending.value = false
     unrouted = undefined
+    queued.value = []
+    leftover.value = undefined
     return ++generation
   }
 
@@ -217,7 +225,7 @@ export const useThreadStore = defineStore('thread', () => {
    * (`ok: false`) e o erro aparece. Só a parada pedida pelo usuário mantém o turno, marcado como interrompido.
    */
   async function send(text: string, files: IOutgoingFile[]): Promise<ISendResult> {
-    if (sending.value) return { ok: false }
+    if (sending.value || following.value) return enqueue(text, files)
     const mine = generation
     const stale = () => mine !== generation
     sending.value = true
@@ -247,7 +255,7 @@ export const useThreadStore = defineStore('thread', () => {
       }
 
       const id = sessionId.value
-      turn = { request: text, files: files.length, text: '', reasoning: '', tools: [], warnings: [], aborted: false }
+      turn = { request: text, files: files.length, text: '', reasoning: '', tools: [], warnings: [], interjections: [], aborted: false }
       pending.value = turn
 
       const body = await openStream(`/sessions/${encodeURIComponent(id)}/messages`, { method: 'POST', body: { message: text, files }, signal: controller.signal })
@@ -295,6 +303,7 @@ export const useThreadStore = defineStore('thread', () => {
       if (!stale()) {
         if (inFlight === controller) inFlight = undefined
         sending.value = false
+        settleQueue()
       }
     }
 
@@ -305,11 +314,44 @@ export const useThreadStore = defineStore('thread', () => {
     return { ok, created }
   }
 
+  /**
+   * A mensagem com o turno rodando: entra NELE (o servidor a põe na fila, 202), e aparece como "na fila" até o
+   * `message.injected`. ⚠️ Anexo não entra na fila: só fora do turno.
+   */
+  async function enqueue(text: string, files: IOutgoingFile[]): Promise<ISendResult> {
+    const id = sessionId.value
+    if (!id) return { ok: false }
+    if (files.length) {
+      error.value = 'Anexo só vai com o turno parado: espere ele acabar, ou pare.'
+      return { ok: false }
+    }
+    error.value = undefined
+    try {
+      const result = await api<{ queued?: boolean }>(`/sessions/${encodeURIComponent(id)}/messages`, { method: 'POST', body: { message: text, whileBusy: 'queue' } })
+      if (result?.queued && id === sessionId.value) queued.value = [...queued.value, text]
+      return { ok: true }
+    } catch (failure) {
+      // O turno acabou no caminho: a mensagem rodou como um turno normal (a resposta era o stream dele).
+      if (failure instanceof ApiError && failure.status === 200) {
+        void refresh()
+        return { ok: true }
+      }
+      error.value = describe(failure)
+      return { ok: false }
+    }
+  }
+
+  /** O turno acabou: o que ainda estava na fila não entrou (o servidor descartou, com aviso) e volta para a caixa. */
+  function settleQueue(): void {
+    if (queued.value.length) leftover.value = queued.value.join('\n\n')
+    queued.value = []
+  }
+
   /** O turno que outro começou (a API, um agendamento, outra aba). O desta aba chega pelo próprio stream. */
   function onLive(frame: TTurnFrame): void {
     if (sending.value || frame.sessionId !== sessionId.value) return
     if (frame.type === 'turn.started') {
-      const turn: IPendingTurn = { request: frame.turn.request, files: 0, text: '', reasoning: '', tools: [], warnings: [], aborted: false }
+      const turn: IPendingTurn = { request: frame.turn.request, files: 0, text: '', reasoning: '', tools: [], warnings: [], interjections: [], aborted: false }
       followed = turn
       following.value = true
       if (liveSession.value === false) {
@@ -317,12 +359,13 @@ export const useThreadStore = defineStore('thread', () => {
         void reloadSession(frame.sessionId)
       }
       for (const event of frame.turn.events) applyEvent(turn, event)
-      pending.value = { ...turn, tools: [...turn.tools] }
+      pending.value = { ...turn, tools: [...turn.tools], interjections: [...turn.interjections] }
     } else if (frame.type === 'turn.event' && followed) {
       applyEvent(followed, frame.event)
     } else if ((frame.type === 'turn.finished' || frame.type === 'turn.idle') && followed) {
       followed = undefined
       following.value = false
+      settleQueue()
       // O turno já está gravado: a releitura o traz, e só então o pendente sai (sem piscar).
       void refresh().finally(() => {
         if (!following.value && !sending.value) pending.value = undefined
@@ -442,12 +485,19 @@ export const useThreadStore = defineStore('thread', () => {
       case 'message.aborted':
         turn.aborted = true
         break
+      case 'message.injected': {
+        const text = String(payload.text ?? '')
+        turn.interjections.push({ at: turn.text.length, text })
+        const waiting = queued.value.indexOf(text)
+        if (waiting !== -1) queued.value = queued.value.filter((_item, index) => index !== waiting)
+        break
+      }
       case 'error':
         turn.error = String(payload.message ?? 'erro')
         break
     }
     // Força o Vue a ver a mudança no objeto aninhado.
-    pending.value = { ...turn, tools: [...turn.tools] }
+    pending.value = { ...turn, tools: [...turn.tools], interjections: [...turn.interjections] }
   }
 
   return {
@@ -464,6 +514,8 @@ export const useThreadStore = defineStore('thread', () => {
     pending,
     sending,
     following,
+    queued,
+    leftover,
     open,
     startDraft,
     setHeader,
@@ -491,6 +543,7 @@ function settled(sessionId: string, turn: IPendingTurn, index: number, state?: I
     toolCalls: turn.tools.map((tool) => ({ tool: tool.tool, error: tool.status === 'error' ? tool.message : undefined })),
     usage: turn.usage,
     warnings: turn.warnings.length ? turn.warnings : undefined,
+    ...(turn.interjections.length ? { interjections: turn.interjections } : {}),
     aborted: turn.aborted || undefined,
     error: turn.error,
   }

@@ -1,3 +1,4 @@
+import { interjectionNote } from '@domain/Interjection.Policy'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IToolInvoker } from '@infra/tools/Tool.Catalog'
@@ -31,7 +32,8 @@ export interface IManualLoopProvider<TMessage> {
   /** Uma volta: manda o history, emite os eventos do turno e devolve o que o modelo pediu. */
   runTurn(history: TMessage[], tools: IToolDefinition[], signal: AbortSignal): AsyncGenerator<IAgentEvent, IManualTurnOutcome>
   appendAssistant(history: TMessage[], outcome: IManualTurnOutcome): void
-  appendToolResults(history: TMessage[], results: IManualToolResult[]): void
+  /** `note`: a mensagem que a pessoa mandou com o turno rodando, no MESMO envio dos resultados (ver `Interjection.Policy`). */
+  appendToolResults(history: TMessage[], results: IManualToolResult[], note?: string): void
 }
 
 export interface IManualLoopParams<TMessage> {
@@ -45,6 +47,8 @@ export interface IManualLoopParams<TMessage> {
   context: IExecutionContext
   signal: AbortSignal
   maxTurns: number
+  /** As mensagens que chegaram com o turno rodando (`IMessageInput.interjections`). */
+  interjections?: () => string[]
 }
 
 /**
@@ -57,7 +61,7 @@ export interface IManualLoopParams<TMessage> {
  * Devolve o texto acumulado do turno.
  */
 export async function* runManualToolLoop<TMessage>(params: IManualLoopParams<TMessage>): AsyncGenerator<IAgentEvent, string> {
-  const { sessionId, history, tools, provider, catalog, context, signal, maxTurns } = params
+  const { sessionId, history, tools, provider, catalog, context, signal, maxTurns, interjections } = params
   let answer = ''
 
   for (let turn = 1; turn <= maxTurns; turn += 1) {
@@ -88,7 +92,9 @@ export async function* runManualToolLoop<TMessage>(params: IManualLoopParams<TMe
 
     // O resultado volta para o modelo mesmo quando a tool falhou: é assim que ele tem
     // chance de corrigir o rumo em vez de ficar esperando.
-    provider.appendToolResults(history, results)
+    // A mensagem que a pessoa mandou enquanto isso vai junto, antes da próxima chamada ao modelo.
+    const arrived = interjections?.() ?? []
+    provider.appendToolResults(history, results, arrived.length ? interjectionNote(arrived) : undefined)
 
     if (signal.aborted) return answer
   }

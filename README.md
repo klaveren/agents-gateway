@@ -639,6 +639,24 @@ the gateway checks the edited file and adds the result to what the model gets ba
   asks for) do not apply to it.
 - **Timeout:** each tool has a time limit (60 s by default, `timeoutSeconds` up to 600).
 
+**Messages during a turn.** With a turn running, `POST /v1/sessions/:id/messages` (or `/turns`)
+with `whileBusy: "queue"` answers 202 `{ queued: true, position }` instead of 409. The message
+enters the same turn:
+
+- **Mid-turn**, between a tool and the next model call, where the lane allows it: the chat lanes
+  (sent with the tool results) and the Claude Agent SDK (a `PostToolUse` hook, after the next tool).
+- **Otherwise**, as one more round when the model finishes: OpenAI Agents, Google ADK, Codex and
+  Antigravity, and whatever is still waiting on any lane.
+- **Record:** the turn streams a `message.injected` event and stores the message in
+  `interjections` (`[{ at, text }]`, where `at` is the position in the answer). A provider switch
+  carries it in the transcript.
+- **Limits:** text only, no attachments (those still get 409). Up to 10 waiting per conversation
+  (409 `queue_full`).
+- **A stopped turn** (cancelled, failed, or stopped in a loop) drops what is still waiting, with a
+  warning. The screen puts that text back in the message box.
+- **On screen:** while a turn runs, Enter sends to the queue and the stop button stays. The message
+  shows as "na fila" until it enters, then as a bubble inside the answer.
+
 **Asynchronous turns**, for an orchestrator that drives agents:
 
 - `POST /v1/sessions/:id/turns` answers 202 at once, and the turn runs on the server with no

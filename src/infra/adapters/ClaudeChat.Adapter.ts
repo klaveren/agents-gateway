@@ -118,6 +118,7 @@ export class ClaudeChatAdapter implements IAgentAdapter {
         provider: this.loopProvider(record, sessionId),
         signal: abort.signal,
         maxTurns: maxToolTurns(),
+        ...(input.interjections ? { interjections: input.interjections } : {}),
       })
 
       if (abort.signal.aborted) {
@@ -232,9 +233,9 @@ export class ClaudeChatAdapter implements IAgentAdapter {
         history.push({ role: 'assistant', content: content.length > 0 ? content : [{ type: 'text', text: '…' }] })
       },
 
-      appendToolResults(history, results) {
-        // No Claude o resultado da tool volta como mensagem do usuário.
-        history.push({ role: 'user', content: results.map(toToolResultBlock) })
+      appendToolResults(history, results, note) {
+        // No Claude o resultado da tool volta como mensagem do usuário — e a fala da pessoa, junto, depois dele.
+        history.push({ role: 'user', content: [...results.map(toToolResultBlock), ...(note ? [{ type: 'text' as const, text: note }] : [])] })
       },
     }
   }

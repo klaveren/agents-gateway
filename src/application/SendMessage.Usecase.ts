@@ -134,6 +134,14 @@ export class SendMessageUseCase {
   }
 
   /**
+   * A mensagem para o turno que está rodando (ver `Interjection.Policy`): a posição na fila, ou nada quando a conversa não
+   * está rodando (aí é um turno normal). Entra crua: o evento `message.injected` é que sai mascarado, como o resto.
+   */
+  enqueue(sessionId: string, text: string): number | undefined {
+    return this.agentProvider.enqueue?.(sessionId, text)
+  }
+
+  /**
    * O contexto do sistema vai na PRIMEIRA mensagem só: dali em diante ele já está no histórico do
    * modelo, e repeti-lo pagaria os mesmos tokens a cada turno para dizer a mesma coisa.
    *
@@ -212,6 +220,7 @@ export class SendMessageUseCase {
       usage: usageOf(turn.usage),
       ...timingOf(startedAt, events),
       warnings: turn.warnings?.length ? turn.warnings : undefined,
+      ...(turn.interjections.length ? { interjections: turn.interjections } : {}),
       aborted: turn.aborted || undefined,
       error: turn.error,
     })
@@ -273,6 +282,7 @@ function maskEvent(event: IAgentEvent, mask: ITurnMask, sessionId: string): IAge
   switch (event.type) {
     case 'text.delta':
     case 'reasoning.delta':
+    case 'message.injected':
       return { ...event, payload: { ...event.payload, text: mask.text(event.payload.text, sessionId) } }
     case 'tool.started':
     case 'tool.result':

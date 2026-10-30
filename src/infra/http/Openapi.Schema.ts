@@ -2571,13 +2571,42 @@ export const OPENAPI_DOCUMENT = {
     },
     '/sessions/{id}/turns': {
       post: {
-        summary: 'Start a turn without waiting (202): the turn runs on the server with no client attached. One turn per conversation: 409 `session_busy` while one runs',
+        summary:
+          'Start a turn without waiting (202): the turn runs on the server with no client attached. One turn per conversation: 409 `session_busy` while one runs, unless `whileBusy: queue` (the text enters the running turn)',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', properties: { message: { type: 'string' } }, required: ['message'] } } } },
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  message: { type: 'string' },
+                  whileBusy: {
+                    type: 'string',
+                    enum: ['reject', 'queue'],
+                    description: 'With a turn running: `queue` puts the text in that turn (202) instead of 409 `session_busy`. Text only; up to 10 waiting (409 `queue_full`)',
+                  },
+                },
+                required: ['message'],
+              },
+            },
+          },
+        },
         responses: {
           '202': {
             description: 'Started',
-            ...json(envelope({ type: 'object', properties: { conversationId: { type: 'string' }, turn: { type: 'integer' }, status: { type: 'string', enum: ['running'] } } })),
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  conversationId: { type: 'string' },
+                  turn: { type: 'integer' },
+                  status: { type: 'string', enum: ['running', 'queued'] },
+                  position: { type: 'integer' },
+                },
+              }),
+            ),
           },
           '404': failures['404'],
           '409': { description: 'A turn is already running in this conversation' },
@@ -2650,6 +2679,8 @@ export const OPENAPI_DOCUMENT = {
     '/sessions/{id}/messages': {
       post: {
         summary: 'Run a turn. Accept decides the format: SSE stream or aggregated JSON',
+        description:
+          'With a turn running, 409 `session_busy`; with `whileBusy: queue`, 202 `{ queued: true, position }` and the text enters that turn: between a tool and the next model call where the lane allows it (chat lanes, Claude Agent SDK), else as one more round when the model finishes. The turn shows it as a `message.injected` event and records it in `interjections`. A stopped turn drops what is still waiting, with a warning.',
         parameters: [
           { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
           {
@@ -2666,6 +2697,11 @@ export const OPENAPI_DOCUMENT = {
                 type: 'object',
                 properties: {
                   message: { type: 'string' },
+                  whileBusy: {
+                    type: 'string',
+                    enum: ['reject', 'queue'],
+                    description: 'With a turn running: `queue` puts the text in that turn (202) instead of 409 `session_busy`. Text only; up to 10 waiting (409 `queue_full`)',
+                  },
                   files: {
                     type: 'array',
                     items: {
@@ -2691,8 +2727,13 @@ export const OPENAPI_DOCUMENT = {
               'application/json': { schema: envelope({ type: 'object' }) },
             },
           },
+          '202': {
+            description: 'Queued for the running turn (`whileBusy: queue`)',
+            ...json(envelope({ type: 'object', properties: { queued: { type: 'boolean' }, position: { type: 'integer' } } })),
+          },
           '401': failures['401'],
           '404': failures['404'],
+          '409': { description: '`session_busy` (a turn is running) or `queue_full`', ...json(failureEnvelope) },
           '422': failures['422'],
         },
       },

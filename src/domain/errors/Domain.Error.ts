@@ -241,6 +241,16 @@ export class SessionBusyError extends DomainError {
   }
 }
 
+/** A fila das mensagens durante o turno está cheia (ver `Interjection.Policy`). */
+export class InterjectionQueueFullError extends DomainError {
+  constructor(
+    public readonly sessionId: string,
+    public readonly max: number,
+  ) {
+    super(`Session ${sessionId} already has ${max} messages waiting for the turn; wait for it to take them.`)
+  }
+}
+
 /** O token de acesso pedido não vale (nome, validade, limite por conta). */
 export class InvalidAccessTokenError extends DomainError {
   constructor(public readonly issues: Array<{ field: string; message: string }>) {

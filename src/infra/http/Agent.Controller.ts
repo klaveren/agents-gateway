@@ -1380,6 +1380,14 @@ export class AgentController {
     } catch (error: unknown) {
       return this.sendFailure(res, error, '[AgentController.sendMessage]')
     }
+    // ⚖️ Com o turno rodando e `whileBusy: 'queue'`, a mensagem espera na fila dele e entra no MESMO turno (ver
+    // `Interjection.Policy`). Conversa parada: segue como um turno normal.
+    try {
+      const position = body.whileBusy === 'queue' ? this.queue(sessionId, body, input) : undefined
+      if (position !== undefined) return res.status(202).json(ok({ queued: true, position }, 'Message queued for the running turn'))
+    } catch (error: unknown) {
+      return this.sendFailure(res, error, '[AgentController.sendMessage]')
+    }
     const wantsJson = req.accepts(['text/event-stream', 'application/json']) === 'application/json'
 
     return wantsJson ? this.sendMessageAsJson(res, sessionId, input) : this.sendMessageAsStream(res, sessionId, input)
@@ -1400,6 +1408,12 @@ export class AgentController {
     return { text: expanded?.text ?? body.message, files: body.files, context, ...(expanded ? { recordAs: expanded.label } : {}) }
   }
 
+  /** A mensagem na fila do turno rodando: a posição, ou nada (conversa parada). Anexo não entra na fila: segue o 409. */
+  private queue(sessionId: string, body: { files?: unknown[] }, input: IMessageInput): number | undefined {
+    if (body.files?.length) return undefined
+    return this.usecases.sendMessage.enqueue(sessionId, input.text)
+  }
+
   /**
    * `POST /sessions/:id/turns` — ⛔ O TURNO ASSÍNCRONO, para quem orquestra agentes (a esteira): responde 202 na hora e o
    * turno roda no servidor, sem cliente ligado. O estado sai em `GET …/turns/:turn`, e o fim vai para o `callbackUrl` da
@@ -1413,8 +1427,10 @@ export class AgentController {
         const resolved = await this.requireOwnedSession(sessionId, { resume: true })
         const body = parseBody(sendMessageSchema, req.body)
         const session = await this.usecases.getSession.execute(sessionId)
-        if (session.status === 'running' || this.liveTurns.has(sessionId)) throw new SessionBusyError(sessionId)
         const input = await this.turnInput(sessionId, resolved, body)
+        const position = body.whileBusy === 'queue' ? this.queue(sessionId, body, input) : undefined
+        if (position !== undefined) return { conversationId: sessionId, turn: this.liveTurns.get(sessionId)?.turn ?? session.turns - 1, status: 'queued' as const, position }
+        if (session.status === 'running' || this.liveTurns.has(sessionId)) throw new SessionBusyError(sessionId)
         const live: ILiveTurn = { turn: session.turns, startedAt: Date.now(), text: '', tools: [] }
         this.liveTurns.set(sessionId, live)
         const callback = session.metadata?.[CALLBACK_METADATA_KEY]
