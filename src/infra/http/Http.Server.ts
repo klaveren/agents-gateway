@@ -315,6 +315,7 @@ function buildRoutes(
     { method: 'get', path: '/projects/:id/members', handler: projects.members },
     { method: 'get', path: '/projects/:id/repositories', handler: projects.repositories },
     { method: 'post', path: '/projects/:id/import/scan', handler: importer.scan },
+    { method: 'post', path: '/projects/:id/import/plan', handler: importer.plan },
     { method: 'get', path: '/projects/:id/import/ignore', handler: importer.getIgnore },
     { method: 'put', path: '/projects/:id/import/ignore', handler: importer.setIgnore },
     { method: 'put', path: '/projects/:id/members', handler: projects.setMembers },

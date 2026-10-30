@@ -11,7 +11,7 @@ import {
   TCatalogState,
   TInventoryKind,
 } from '@domain/models/ImportInventory.Model'
-import { IDetectedItem, IFormatDetector, IRepoTree } from '@domain/ports/FormatDetector.Port'
+import { IDetectedItem, IDetectedReach, IFormatDetector, IRepoTree } from '@domain/ports/FormatDetector.Port'
 
 /** O que já existe no catálogo com o mesmo id (rule: com o mesmo título; trigger: no agente `parent`). */
 export interface IImportCatalogQuery {
@@ -38,6 +38,21 @@ export interface IImportScanOptions {
   ignore?: readonly string[]
 }
 
+/**
+ * O inventário e o que fica SÓ no servidor, para o lote: o alcance cru de cada item (o `permission`/`tools` de um
+ * agente do opencode e o `permission` global, na chave `config:opencode`) e os nomes de origem de cada agente.
+ * ⛔ Nada disto vai para a resposta da varredura.
+ */
+export interface IImportInventory {
+  scan: IImportScan
+  /** Chave do item → o alcance como está na origem e o nome do bloco que o trouxe. */
+  reach: ReadonlyMap<string, IDetectedReach & { name: string }>
+  /** Nome do agente na origem (pasta, bloco do opencode…) → a chave do item. */
+  agentByName: ReadonlyMap<string, string>
+  /** As `instructions` da configuração (o opencode as dá a todo agente): os caminhos achados e as citações quebradas. */
+  instructions?: { from: string; paths: string[]; unresolved: string[] }
+}
+
 /** Os ids que dividem o mesmo espaço no gateway: um doc e um recurso são únicos entre os do seu grupo. */
 const NAMESPACE: Partial<Record<TInventoryKind, string>> = { spec: 'doc', adr: 'doc', knowledge: 'doc', skill: 'resource', command: 'resource', agent: 'agent', mcp: 'mcp' }
 
@@ -56,6 +71,11 @@ export class ImportScanUseCase {
   constructor(private readonly deps: IImportScanDeps) {}
 
   execute(projectId: string, repository: string, options: IImportScanOptions = {}): IImportScan {
+    return this.inventory(projectId, repository, options).scan
+  }
+
+  /** A varredura, com o que o lote precisa e a resposta não leva (`IImportInventory`). */
+  inventory(projectId: string, repository: string, options: IImportScanOptions = {}): IImportInventory {
     const full = this.deps.readTree(projectId, repository)
     const project = normalizeIgnore(this.deps.projectIgnore?.(projectId) ?? [])
     const request = normalizeIgnore(options.ignore ?? []).filter((pattern) => !project.includes(pattern))
@@ -87,6 +107,22 @@ export class ImportScanUseCase {
       item.catalog = this.catalogState({ kind: 'trigger', id: item.candidateId, projectId, parent: parentKey.slice('agent:'.length) })
     }
 
+    const reach = new Map<string, IDetectedReach & { name: string }>()
+    let instructions: IImportInventory['instructions']
+    for (const { item, group } of built) {
+      const part = group.parts.find(({ item: one }) => one.reach)
+      if (part) reach.set(item.key, { ...part.item.reach, name: part.item.name })
+      for (const { item: one } of group.parts) {
+        if (!one.instructions) continue
+        instructions ??= { from: item.key, paths: [], unresolved: [] }
+        for (const cited of one.instructions) {
+          const found = resolveCitation(cited, one.sources[0]?.path ?? '', (path) => full.resolve(path))
+          if (found) instructions.paths.push(found)
+          else instructions.unresolved.push(cited)
+        }
+      }
+    }
+
     const items = built.map(({ item }) => item)
     // A citação resolve na árvore inteira: arquivo ignorado e citado não é referência quebrada (só não tem item).
     this.refs(full, built)
@@ -98,7 +134,7 @@ export class ImportScanUseCase {
     const byKind: Partial<Record<TInventoryKind, number>> = {}
     for (const item of items) byKind[item.kind] = (byKind[item.kind] ?? 0) + 1
 
-    return {
+    const scan: IImportScan = {
       projectId,
       repository,
       ...(tree.head ? { head: tree.head } : {}),
@@ -109,6 +145,7 @@ export class ImportScanUseCase {
       ignored: { dirs: tree.ignoredDirs(), binaries: [...binaries].sort(), links: [...tree.refusedLinks()], patterns },
       items,
     }
+    return { scan, reach, agentByName: agentKeyByName, ...(instructions ? { instructions } : {}) }
   }
 
   /**
@@ -125,12 +162,15 @@ export class ImportScanUseCase {
     }
     const byKey = new Map<string, number>()
     const byAnchor = new Map<string, number>()
+    // De que tipos é cada arquivo (fonte própria): a fonte declarada por um gerado só liga itens do MESMO tipo.
+    const kindsOf = new Map<string, Set<string>>()
+    for (const { item } of detected) for (const source of item.sources) if (!source.shared) kindsOf.set(source.path, (kindsOf.get(source.path) ?? new Set()).add(item.kind))
     detected.forEach(({ item }, index) => {
       if (item.kind === 'unknown' || item.kind === 'skip') return
       const key = `${item.kind}:${item.parent ? `${item.parent}/` : ''}${candidateId(item.kind, item.name).id}`
       if (byKey.has(key)) union(byKey.get(key)!, index)
       else byKey.set(key, index)
-      for (const anchor of this.anchors(tree, item)) {
+      for (const anchor of this.anchors(tree, item, kindsOf)) {
         const at = `${item.kind}:${anchor}`
         if (byAnchor.has(at)) union(byAnchor.get(at)!, index)
         else byAnchor.set(at, index)
@@ -146,14 +186,18 @@ export class ImportScanUseCase {
     return [...groups.entries()].sort(([a], [b]) => a - b).map(([, group]) => group)
   }
 
-  private anchors(tree: IRepoTree, item: IDetectedItem): string[] {
+  /**
+   * As âncoras da junção: as fontes próprias e as fontes que um arquivo gerado declara. ⚖️ A declarada só liga se não é
+   * fonte de item de OUTRO tipo: dois bootstraps que incluem a mesma spec não são o mesmo agente.
+   */
+  private anchors(tree: IRepoTree, item: IDetectedItem, kindsOf: ReadonlyMap<string, ReadonlySet<string>>): string[] {
     const anchors: string[] = []
     for (const source of item.sources) {
       if (source.shared) continue
       anchors.push(source.path)
       for (const cited of tree.read(source.path)?.generated ?? []) {
         const found = resolveCitation(cited, source.path, (path) => tree.resolve(path))
-        if (found) anchors.push(found)
+        if (found && [...(kindsOf.get(found) ?? [])].every((kind) => kind === item.kind)) anchors.push(found)
       }
     }
     return anchors
@@ -227,7 +271,8 @@ export class ImportScanUseCase {
     }
   }
 
-  private catalogState(query: IImportCatalogQuery): TCatalogState {
+  /** Existe no catálogo um item com este id (ou título, ou trigger no agente)? E onde. */
+  catalogState(query: IImportCatalogQuery): TCatalogState {
     const found = this.deps.findInCatalog(query)
     if (!found) return 'new'
     if (!found.projectId) return 'global'

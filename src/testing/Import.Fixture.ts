@@ -113,3 +113,68 @@ export function writeClaudeFixture(root: string): void {
   file('.agents/benchmark/results/run-2.json', '{}\n')
   file('tmp/results/saida.md', '# saída\n')
 }
+
+/**
+ * Um repositório SINTÉTICO para o LOTE de um agente (`ana`): bootstrap gerado, ledger e memória (fora do catálogo),
+ * triggers, specs citadas (com ciclo e citação quebrada),
+ * skill citada e outra só liberada pelo glob de permissão, command com `agent:`, rule, `instructions` com glob (dentro,
+ * para fora e vazio), delegação em ciclo (`ana` ↔ `bia`) e a alvo que já existe (`caio`), MCP usado e o `permission`
+ * global com `skill * allow`. Nada copiado de projeto real.
+ */
+export function writeBatchFixture(root: string): void {
+  const file = (path: string, body: string) => {
+    mkdirSync(dirname(join(root, path)), { recursive: true })
+    writeFileSync(join(root, path), body)
+  }
+  file('.agents/agents/ana/identity.md', '# Ana\nLeia `.agents/specs/base.md`, `.agents/specs/sumiu.md` e `.agents/agents/bia/soul.md`. Siga `.agents/rules.md`.\n')
+  file('.agents/agents/ana/soul.md', 'A alma da Ana.\n')
+  // O bootstrap GERADO das fontes da Ana; o da Bia declara a mesma spec — e nem por isso os dois são o mesmo agente.
+  file('.agents/agents/ana/bootstrap.md', `<!-- NÃO EDITAR — edite as fontes: identity.md soul.md .agents/specs/base.md -->\n${'montado '.repeat(400)}\n`)
+  file('.agents/agents/bia/bootstrap.md', '<!-- NÃO EDITAR — edite as fontes: soul.md .agents/specs/base.md -->\nmontado\n')
+  // Memória e histórico com o nome do agente: fora do catálogo.
+  file('.agents/agents/ana/ana-ledger/2026-10.md', `# Ledger\n${'registro '.repeat(400)}\n`)
+  file('.agents/agents/ana/ana-memory.md', '# Memória\n')
+  file('.agents/agents/ana/triggers/README.md', '# Índice dos triggers\n')
+  file('.agents/agents/ana/triggers/01-revisar.md', '# Revisar\nUse skills/akm-revisar/SKILL.md, skills/solta/SKILL.md e commands/publicar.md.\n')
+  file('.agents/agents/ana/triggers/02-ciclo.md', '# Ciclo\nVeja specs/ciclo-a.md.\n')
+  file('.agents/agents/bia/soul.md', 'A alma da Bia.\n')
+  file('.agents/skills/akm-revisar/SKILL.md', '# Revisar\nVer `.agents/specs/guia.md`.\n')
+  file('.agents/skills/akm-outra/SKILL.md', `# Outra\n${'texto '.repeat(100)}\n`)
+  file('.agents/skills/solta/SKILL.md', '# Solta\n')
+  file('.agents/skills/biz/SKILL.md', '# Biz\n')
+  file('.agents/commands/publicar.md', '---\nagent: ana\ndescription: publica\n---\nPublique. Ver specs/guia.md.\n')
+  file('.agents/specs/base.md', '# Base\nVer specs/colide.md.\n')
+  file('.agents/specs/colide.md', '# Colide\n')
+  file('.agents/specs/guia.md', '# Guia\nVer knowledge/fila.md.\n')
+  file('.agents/specs/ciclo-a.md', '# A\nVer specs/ciclo-b.md.\n')
+  file('.agents/specs/ciclo-b.md', '# B\nVer specs/ciclo-a.md.\n')
+  file('.agents/specs/inst-um.md', '# Instrução um\n')
+  file('.agents/knowledge/fila.md', '# Fila\n')
+  file('.agents/rules.md', '# Regras\n1. Seja direto.\n')
+  file(
+    'opencode.json',
+    JSON.stringify(
+      {
+        instructions: ['.agents/specs/inst-*.md', '../*.md', 'nada/*.md'],
+        agent: {
+          ana: {
+            prompt: '{file:./.agents/agents/ana/bootstrap.md}',
+            permission: {
+              skill: { '*': 'deny', 'akm-*': 'allow' },
+              task: { bia: 'allow', caio: 'allow' },
+              bash: { '*': 'allow', 'git push*': 'deny' },
+              mcp: { 'github_*': 'allow' },
+            },
+            tools: { github_list: true, bash: true },
+          },
+          bia: { prompt: '{file:./.agents/agents/bia/bootstrap.md}', permission: { task: { ana: 'allow' } } },
+          caio: { description: 'já existe no gateway' },
+        },
+        mcp: { github: { type: 'remote', url: 'https://x.test/mcp' }, slack: { type: 'remote', url: 'https://y.test/mcp' } },
+        permission: { skill: 'allow', bash: { 'rm *': 'deny' } },
+      },
+      null,
+      2,
+    ),
+  )
+}

@@ -11,8 +11,11 @@ export function under(entry: IRepoEntry, prefix: string): string | undefined {
 const ROOT = '.agents/'
 const DOC = /\.(md|mdx|markdown|txt)$/i
 const INDEX = /^(readme|index)\.(md|mdx|markdown|txt)$/i
-/** O que mora na pasta de um agente e fica fora do catálogo (memória, histórico, scripts). */
-const OUT_OF_CATALOG = /^(memory|memories|ledger|evolution|improvements|scripts|logs?|sessions|state)$/i
+/**
+ * O que mora na pasta de um agente e fica fora do catálogo (memória, histórico, scripts): a pasta ou o arquivo com o
+ * nome, sozinho ou como sufixo (`memory/`, `maya-ledger/`, `maya-memory.md`, `maya-evolution.md`).
+ */
+const OUT_OF_CATALOG = /(^|[-_.])(memory|memories|ledger|evolution|improvements|scripts|logs?|sessions|state)$/i
 const ADR_DIR = /^(adrs?|adr[-_].*|decisions?)$/i
 const KNOWLEDGE_DIR = /^(knowledge|research)$/i
 
@@ -82,6 +85,14 @@ export class AgentsDirDetector implements IFormatDetector {
         }
         if (parts.length > 3 && OUT_OF_CATALOG.test(parts[2])) {
           skip(`${ROOT}agents/${agentName}/${parts[2]}`, entry.path, 'memória, histórico e scripts do agente ficam fora do catálogo')
+          continue
+        }
+        if (parts.length === 3 && OUT_OF_CATALOG.test(stripExt(base))) {
+          skip(`${ROOT}agents/${agentName}/${base}`, entry.path, 'memória e histórico do agente ficam fora do catálogo')
+          continue
+        }
+        if (parts[2] === 'triggers' && parts.length === 4 && INDEX.test(base)) {
+          skip(`${ROOT}agents/${agentName}/triggers/${base}`, entry.path, 'índice dos triggers: pulado')
           continue
         }
         const role = agentRole(base)

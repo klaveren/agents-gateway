@@ -75,7 +75,7 @@ describe('ImportScanUseCase — o inventário de um repositório (só leitura)',
     assert.ok(maya.sources.some((source) => source.path === 'opencode.json' && source.role === 'opencode'))
     assert.ok(maya.sources.some((source) => source.path === '.agents/agents/maya/bootstrap.md'))
     assert.ok(maya.notes.some((note) => note.code === 'field-conflict' && note.text.includes('modelo-a') && note.text.includes('modelo-b')))
-    assert.ok(maya.notes.some((note) => note.code === 'reach-pending'))
+    assert.ok(maya.notes.some((note) => note.code === 'reach'))
     // Nome diferente: o `{file:}` aponta um arquivo gerado das fontes da Lia, e o bloco entra no agente da pasta.
     const lia = item('agent:lia')
     assert.deepStrictEqual(lia.detectors, ['agents-dir', 'opencode'])
@@ -88,7 +88,7 @@ describe('ImportScanUseCase — o inventário de um repositório (só leitura)',
     assert.strictEqual(item('mcp:github').catalog, 'global')
     const config = item('config:opencode')
     assert.ok(config.refs.some((ref) => ref.path === 'docs/guia.md' && !ref.item))
-    assert.ok(config.notes.some((note) => note.code === 'project-permissions-pending'))
+    assert.ok(config.notes.some((note) => note.code === 'project-permissions'))
   })
 
   it('link para dentro deduplica: o command aparece uma vez, com o caminho do link como alias', () => {

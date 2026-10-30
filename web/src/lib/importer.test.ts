@@ -6,14 +6,19 @@ import {
   countByKind,
   EMPTY_FILTERS,
   effectiveKind,
+  exclusionsByReason,
   filterItems,
   groupByKind,
+  type IImportPlan,
   type IInventoryItem,
   ignoredDirs,
   itemTokens,
   noteCodes,
+  prefixIssue,
+  reachRows,
   searchIndex,
   sortItems,
+  stepsByPhase,
 } from './importer'
 
 function item(partial: Partial<IInventoryItem> & Pick<IInventoryItem, 'key' | 'kind'>): IInventoryItem {
@@ -158,5 +163,47 @@ describe('contagens', () => {
     expect(effectiveKind(ITEMS[3], {})).toBe('unknown')
     expect(bytesLabel(512)).toBe('512 B')
     expect(bytesLabel(2048)).toBe('2,0 KB')
+  })
+})
+
+describe('o lote', () => {
+  const plan = {
+    phases: [
+      { phase: 1, label: 'docs', steps: 1 },
+      { phase: 2, label: 'skills', steps: 0 },
+      { phase: 4, label: 'agente', steps: 1 },
+    ],
+    steps: [
+      { phase: 4, key: 'agent:ana' },
+      { phase: 1, key: 'spec:a' },
+    ],
+    reach: { translation: { lines: [{ key: 'bash' }], added: [{ key: 'read' }] } },
+    project: { lines: [{ key: 'skill' }] },
+  } as unknown as IImportPlan
+
+  it('agrupa os passos por fase, só as fases com passo', () => {
+    expect(stepsByPhase(plan).map((group) => [group.phase, group.steps.map((step) => step.key)])).toEqual([
+      [1, ['spec:a']],
+      [4, ['agent:ana']],
+    ])
+  })
+
+  it('o alcance numa tabela só, com a camada', () => {
+    expect(reachRows(plan).map((row) => `${row.layer} ${row.key}`)).toEqual(['agente bash', 'acrescentada read', 'projeto skill'])
+  })
+
+  it('o que fica de fora por motivo, o grave primeiro', () => {
+    const groups = exclusionsByReason([
+      { from: 'a', reason: 'config', text: '' },
+      { from: 'b', reason: 'broken', text: '' },
+    ])
+    expect(groups.map((group) => group.reason)).toEqual(['broken', 'config'])
+  })
+
+  it('o prefixo segue o padrão do servidor', () => {
+    expect(prefixIssue('')).toBeUndefined()
+    expect(prefixIssue('akm-')).toBeUndefined()
+    expect(prefixIssue('a b')).toBeTruthy()
+    expect(prefixIssue('x'.repeat(17))).toBeTruthy()
   })
 })

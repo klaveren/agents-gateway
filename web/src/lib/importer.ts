@@ -246,3 +246,185 @@ export function bytesLabel(value: number): string {
 
 /** O que a pessoa pode escolher ao reclassificar: todos os tipos. */
 export const RECLASSIFY_KINDS: readonly TInventoryKind[] = KIND_ORDER
+
+// ── O LOTE de um agente (`POST /projects/:id/import/plan`, espelho de `ImportPlan.Model.ts`). ⛔ Só leitura. ─────────
+
+export type TPlanPhase = 1 | 2 | 3 | 4 | 5 | 6 | 7
+export type TPlanIdState = 'new' | 'update' | 'conflict' | 'duplicate'
+export type TReachStatus = 'direct' | 'changed' | 'none'
+
+export interface IPermissionRuleView {
+  category: string
+  pattern: string
+  decision: 'allow' | 'deny'
+  note?: string
+}
+
+export interface IReachLine {
+  origin: 'agent' | 'project' | 'option'
+  key: string
+  pattern: string
+  action: string
+  rules: IPermissionRuleView[]
+  status: TReachStatus
+  reason: string
+  widening?: string
+}
+
+export interface IReachToolLine {
+  key: string
+  enabled: boolean
+  tools: string[]
+  status: TReachStatus
+  reason: string
+}
+
+export interface IReachWidening {
+  rule: IPermissionRuleView
+  reason: string
+}
+
+export interface IReachTranslation {
+  lines: IReachLine[]
+  added: IReachLine[]
+  rules: IPermissionRuleView[]
+  widenings: IReachWidening[]
+  tools: IReachToolLine[]
+  allowedTools: string[]
+  totals: Record<TReachStatus, number>
+}
+
+export interface IPlanStep {
+  phase: TPlanPhase
+  key: string
+  kind: TInventoryKind
+  id: string
+  title?: string
+  why: 'agent' | 'trigger' | 'cited' | 'instructions'
+  citedBy: string[]
+  dependsOn: string[]
+  forward: string[]
+  tokens: { sources: number; protocol: number }
+  state: TPlanIdState
+  notes: IInventoryNote[]
+}
+
+export interface IPlanIdEntry {
+  key: string
+  kind: TInventoryKind
+  sourceId: string
+  id: string
+  title?: string
+  parent?: string
+  prefixed: boolean
+  cut: boolean
+  catalog?: TCatalogState
+  state: TPlanIdState
+  reason?: string
+}
+
+export interface IPlanExclusion {
+  from: string
+  reason: 'broken' | 'no-item' | 'other-agent' | 'unclassified' | 'out-of-catalog' | 'config' | 'untranslatable'
+  path?: string
+  item?: string
+  code?: string
+  text: string
+}
+
+export interface IPlanLink {
+  name: string
+  key?: string
+  id: string
+  state: 'exists' | 'pending' | 'unknown'
+  cycle: boolean
+  text: string
+}
+
+export interface IPlanReach {
+  format: 'opencode'
+  sourceName: string
+  translation: IReachTranslation
+  skills: { proposed: string[]; from: 'agent-rules' | 'cited'; notReleased: string[]; pending: string[]; note: string }
+  notes: IInventoryNote[]
+}
+
+export interface IPlanEstimateEntry {
+  conversations: number
+  inputTokens: number
+}
+
+export interface IImportPlan {
+  projectId: string
+  repository: string
+  head?: string
+  dirty?: boolean
+  plannedAt: string
+  agent: string
+  prefix: string
+  phases: Array<{ phase: TPlanPhase; label: string; steps: number }>
+  steps: IPlanStep[]
+  links: IPlanLink[]
+  reach?: IPlanReach
+  project?: { lines: IReachLine[]; widenings: IReachWidening[]; notes: IInventoryNote[] }
+  idMap: IPlanIdEntry[]
+  excluded: IPlanExclusion[]
+  released: Array<{ key: string; id: string; tokens: number; catalog?: TCatalogState }>
+  mcps: Array<{ name: string; key?: string; id: string; exists: boolean }>
+  cycles: Array<{ keys: string[]; brokenBy: 'order'; text: string }>
+  estimate: IPlanEstimateEntry & {
+    sourceTokens: number
+    protocolTokens: number
+    byKind: Partial<Record<TInventoryKind, IPlanEstimateEntry>>
+    released: IPlanEstimateEntry
+    note: string
+  }
+  blocked: string[]
+  notes: IInventoryNote[]
+}
+
+export const REACH_MARK: Record<TReachStatus, string> = { direct: '✅', changed: '⚠️', none: '❌' }
+export const REACH_STATUS_LABEL: Record<TReachStatus, string> = { direct: 'traduz direto', changed: 'traduz com mudança', none: 'não entra' }
+
+export const ID_STATE_LABEL: Record<TPlanIdState, string> = { new: 'novo', update: 'atualiza', conflict: 'conflito', duplicate: 'duplicado' }
+
+export const WHY_LABEL: Record<IPlanStep['why'], string> = { agent: 'o agente', trigger: 'trigger do agente', cited: 'citado', instructions: 'instructions do opencode' }
+
+export const EXCLUSION_LABEL: Record<IPlanExclusion['reason'], string> = {
+  broken: 'citação quebrada',
+  'no-item': 'arquivo sem item',
+  'other-agent': 'outro agente',
+  unclassified: 'desconhecido',
+  'out-of-catalog': 'fora do catálogo',
+  config: 'configuração',
+  untranslatable: 'não traduz',
+}
+
+/** O prefixo de id: o mesmo padrão do servidor (`IMPORT_PREFIX_PATTERN`). Vazio vale (sem prefixo). */
+export function prefixIssue(prefix: string): string | undefined {
+  const clean = prefix.trim().toLowerCase()
+  if (!clean || /^[a-z0-9][a-z0-9-]{0,15}$/.test(clean)) return undefined
+  return 'minúsculas, dígitos e "-", até 16 caracteres'
+}
+
+/** Os passos agrupados por fase (só as fases com passo), na ordem do lote. */
+export function stepsByPhase(plan: IImportPlan): Array<{ phase: TPlanPhase; label: string; steps: IPlanStep[] }> {
+  return plan.phases
+    .map((phase) => ({ phase: phase.phase, label: phase.label, steps: plan.steps.filter((step) => step.phase === phase.phase) }))
+    .filter((group) => group.steps.length)
+}
+
+/** O que fica de fora, por motivo (os mais graves primeiro). */
+export function exclusionsByReason(excluded: readonly IPlanExclusion[]): Array<{ reason: IPlanExclusion['reason']; entries: IPlanExclusion[] }> {
+  const order: Array<IPlanExclusion['reason']> = ['broken', 'untranslatable', 'other-agent', 'unclassified', 'no-item', 'out-of-catalog', 'config']
+  return order.map((reason) => ({ reason, entries: excluded.filter((entry) => entry.reason === reason) })).filter((group) => group.entries.length)
+}
+
+/** As linhas do alcance numa tabela só: as do agente, as acrescentadas e as do projeto, cada uma com a origem. */
+export function reachRows(plan: IImportPlan): Array<IReachLine & { layer: 'agente' | 'acrescentada' | 'projeto' }> {
+  return [
+    ...(plan.reach?.translation.lines ?? []).map((line) => ({ ...line, layer: 'agente' as const })),
+    ...(plan.reach?.translation.added ?? []).map((line) => ({ ...line, layer: 'acrescentada' as const })),
+    ...(plan.project?.lines ?? []).map((line) => ({ ...line, layer: 'projeto' as const })),
+  ]
+}

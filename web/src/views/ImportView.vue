@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, shallowRef, watch } from 'vue'
+import ImportBatch from '@/components/ImportBatch.vue'
 import ImportItemDetail from '@/components/ImportItemDetail.vue'
 import { api, ApiError } from '@/lib/api'
 import { fullTime, tokens } from '@/lib/format'
@@ -14,6 +15,7 @@ import {
   filterItems,
   groupByKind,
   type IImportFilters,
+  type IImportPlan,
   type IImportScan,
   type IInventoryItem,
   ignoredDirs,
@@ -53,6 +55,18 @@ const sort = ref<TImportSort>('kind')
 const overrides = ref<Record<string, TInventoryKind>>({})
 const selectedKey = ref<string>()
 const limit = ref(PAGE)
+/** O lote do agente escolhido (só leitura) e o prefixo dos ids. */
+const plan = shallowRef<IImportPlan>()
+const prefix = ref('')
+const planning = ref(false)
+const planError = ref<string>()
+/** O ignorar do projeto: um padrão por linha, como está salvo e como está no campo. */
+const ignoreSaved = ref<string[]>([])
+const ignoreText = ref('')
+const ignoreBusy = ref(false)
+const ignoreMessage = ref<string>()
+const ignoreError = ref<string>()
+const ignoreDirty = computed(() => parseIgnore(ignoreText.value).join('\n') !== ignoreSaved.value.join('\n'))
 
 const items = computed(() => scan.value?.items ?? [])
 const index = computed(() => searchIndex(items.value))
@@ -82,10 +96,62 @@ function message(failure: unknown): string {
   return failure instanceof Error ? failure.message : String(failure)
 }
 
+function parseIgnore(text: string): string[] {
+  return [...new Set(text.split('\n').map((line) => line.trim()).filter(Boolean))]
+}
+
+async function loadIgnore() {
+  ignoreSaved.value = []
+  ignoreText.value = ''
+  ignoreMessage.value = undefined
+  ignoreError.value = undefined
+  if (!project.value) return
+  try {
+    const result = await api<{ patterns: string[] }>(`/projects/${encodeURIComponent(project.value.id)}/import/ignore`)
+    ignoreSaved.value = result.patterns
+    ignoreText.value = result.patterns.join('\n')
+  } catch (failure) {
+    ignoreError.value = message(failure)
+  }
+}
+
+async function saveIgnore() {
+  if (!project.value) return
+  ignoreBusy.value = true
+  ignoreMessage.value = undefined
+  ignoreError.value = undefined
+  try {
+    const result = await api<{ patterns: string[] }>(`/projects/${encodeURIComponent(project.value.id)}/import/ignore`, { method: 'PUT', body: { patterns: parseIgnore(ignoreText.value) } })
+    ignoreSaved.value = result.patterns
+    ignoreText.value = result.patterns.join('\n')
+    ignoreMessage.value = scan.value ? 'Salvo. Analise de novo para aplicar.' : 'Salvo.'
+  } catch (failure) {
+    ignoreError.value = message(failure)
+  } finally {
+    ignoreBusy.value = false
+  }
+}
+
+async function buildPlan(agent: string, nextPrefix = prefix.value) {
+  if (!project.value || !scan.value) return
+  planning.value = true
+  planError.value = undefined
+  try {
+    const body = { repository: scan.value.repository, agent, ...(nextPrefix ? { prefix: nextPrefix } : {}) }
+    plan.value = await api<IImportPlan>(`/projects/${encodeURIComponent(project.value.id)}/import/plan`, { method: 'POST', body })
+    prefix.value = plan.value.prefix
+  } catch (failure) {
+    planError.value = message(failure)
+  } finally {
+    planning.value = false
+  }
+}
+
 async function loadRepositories() {
   repositories.value = []
   repository.value = ''
   if (!project.value) return
+  void loadIgnore()
   try {
     const list = await api<Array<{ name: string }>>(`/projects/${encodeURIComponent(project.value.id)}/repositories`)
     repositories.value = list.map((item) => item.name)
@@ -103,6 +169,8 @@ async function analyze() {
     scan.value = await api<IImportScan>(`/projects/${encodeURIComponent(project.value.id)}/import/scan`, { method: 'POST', body: { repository: repository.value } })
     overrides.value = {}
     selectedKey.value = undefined
+    plan.value = undefined
+    planError.value = undefined
     filters.value = { ...EMPTY_FILTERS }
     limit.value = PAGE
   } catch (failure) {
@@ -114,6 +182,8 @@ async function analyze() {
 
 function reset() {
   scan.value = undefined
+  plan.value = undefined
+  planError.value = undefined
   overrides.value = {}
   selectedKey.value = undefined
   filters.value = { ...EMPTY_FILTERS }
@@ -186,6 +256,21 @@ watch(
         </form>
         <p v-if="!repositories.length && !error" class="text-xs text-zinc-500">Este projeto não tem repositório (pasta <code>repositories/</code> com git).</p>
         <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
+
+        <details class="rounded-xl border border-zinc-800 px-3 py-2 text-xs" data-test="ignore-editor">
+          <summary class="cursor-pointer text-zinc-400">Ignorar neste projeto ({{ ignoreSaved.length }} padrão(ões))</summary>
+          <form class="mt-2 flex flex-col gap-2" @submit.prevent="saveIgnore">
+            <label class="field">
+              Um padrão por linha, como no .gitignore: sem <code>/</code> casa o nome em qualquer pasta; com <code>/</code>, a partir da raiz do repositório.
+              <textarea v-model="ignoreText" class="input min-h-24 font-mono" rows="4" placeholder=".agents/benchmark/results&#10;*.log" data-test="ignore-patterns" />
+            </label>
+            <div class="flex flex-wrap items-center gap-2">
+              <button type="submit" class="btn btn-secondary btn-sm" :disabled="ignoreBusy || !ignoreDirty" data-test="ignore-save">{{ ignoreBusy ? 'Salvando…' : 'Salvar padrões' }}</button>
+              <span v-if="ignoreMessage" class="text-emerald-300">{{ ignoreMessage }}</span>
+              <span v-if="ignoreError" class="text-rose-300" data-test="ignore-error">{{ ignoreError }}</span>
+            </div>
+          </form>
+        </details>
 
         <template v-if="scan">
           <section class="flex flex-col gap-3 rounded-xl border border-zinc-800 p-3" data-test="summary">
@@ -292,6 +377,9 @@ watch(
             <button v-if="filtering" type="button" class="btn btn-ghost btn-sm mb-1" @click="filters = { ...EMPTY_FILTERS }">Limpar</button>
           </section>
 
+          <p v-if="planError" class="text-sm text-rose-300" data-test="plan-error">Lote: {{ planError }}</p>
+          <ImportBatch v-if="plan" :plan="plan" :busy="planning" @close="plan = undefined" @select="selectedKey = $event" @replan="buildPlan(plan.agent, $event)" />
+
           <div class="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)]">
             <section class="flex min-w-0 flex-col gap-2">
               <p class="text-xs text-zinc-500" data-test="count">{{ filtered.length.toLocaleString('pt-BR') }} de {{ items.length.toLocaleString('pt-BR') }} itens</p>
@@ -338,6 +426,8 @@ watch(
                 :kind="effectiveKind(selected, overrides)"
                 :cited-by="citations.get(selected.key) ?? []"
                 :known="known"
+                :planning="planning"
+                @plan="buildPlan(selected.key)"
                 @select="selectedKey = $event"
                 @reclassify="reclassify(selected.key, $event)"
                 @close="selectedKey = undefined"
