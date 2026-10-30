@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { renderMarkdown } from './markdown'
-import { attachedRefs, contextWeight, docSlug, rulesTokens, scopeLabel, scopeToProjectId, setAttachMode } from './guidance'
+import { attachableDocs, attachedRefs, attachmentsChanged, contextWeight, docSlug, rulesTokens, scopeLabel, scopeToProjectId, setAttachMode } from './guidance'
 
 describe('guidance', () => {
   const projects = [{ id: 'xpto', name: 'Loja XPTO', createdAt: '', updatedAt: '' }]
@@ -15,6 +15,23 @@ describe('guidance', () => {
     expect(setAttachMode(['api', 'dados'], 'api', 'inline')).toEqual(['dados'])
     expect(setAttachMode(['api'], 'api', 'reference')).toEqual(['api'])
     expect(attachedRefs(['dados', 'api'], ['api', 'sumiu', 'dados'])).toEqual(['dados', 'api'])
+  })
+
+  it('editor de doc: o que ele pode anexar — o global só global; o de projeto, global ou do mesmo; nunca ele mesmo', () => {
+    const docs = [{ id: 'api' }, { id: 'arq', projectId: 'xpto' }, { id: 'crm', projectId: 'crm' }, { id: 'eu', projectId: 'xpto' }]
+    expect(attachableDocs(docs, null, 'api').map((doc) => doc.id)).toEqual([])
+    expect(attachableDocs(docs, null).map((doc) => doc.id)).toEqual(['api'])
+    expect(attachableDocs(docs, 'xpto', 'eu').map((doc) => doc.id)).toEqual(['api', 'arq'])
+  })
+
+  it('editor de doc: anexos mudaram (lista, ordem ou modo) liga o Salvar; referência solta não conta', () => {
+    const saved = { docIds: ['api', 'erros'], docRefs: ['erros'] }
+    expect(attachmentsChanged({ docIds: ['api', 'erros'], docRefs: ['erros'] }, saved)).toBe(false)
+    expect(attachmentsChanged({ docIds: ['api', 'erros'], docRefs: ['erros', 'sumiu'] }, saved)).toBe(false)
+    expect(attachmentsChanged({ docIds: ['api', 'erros'], docRefs: [] }, saved)).toBe(true)
+    expect(attachmentsChanged({ docIds: ['erros', 'api'], docRefs: ['erros'] }, saved)).toBe(true)
+    expect(attachmentsChanged({ docIds: [], docRefs: [] }, {})).toBe(false)
+    expect(attachmentsChanged({ docIds: ['api'], docRefs: [] }, {})).toBe(true)
   })
 
   it('o id do documento a partir do título', () => {

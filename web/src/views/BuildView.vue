@@ -353,7 +353,7 @@ function describe(failure: unknown): string {
                 <span v-if="draft.agent?.role === 'subagent'" class="rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300">subagente</span>
               </div>
             </dl>
-            <div v-if="isResource && draft.docIds.length" class="flex flex-wrap gap-1">
+            <div v-if="draft.docIds.length" class="flex flex-wrap gap-1">
               <span v-for="docId in draft.docIds" :key="docId" class="rounded-full bg-zinc-800 px-2 py-0.5 font-mono text-[11px] text-zinc-300">
                 {{ docId }}<template v-if="draft.docRefs.includes(docId)"> · ref</template>
               </span>

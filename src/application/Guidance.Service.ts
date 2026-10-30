@@ -83,10 +83,20 @@ export interface IResourceInput {
   docRefs?: string[]
 }
 
-/** Um documento anexado a um recurso que o agente pode carregar, e por quais recursos (ver `attachedDoc`). */
+/**
+ * Um documento que o agente lê pelo ANEXO, e por onde (ver `attachedDoc`): uma skill ou command que ele pode carregar,
+ * ou um documento que ele já pode ler (`doc`) — o pai na cadeia de anexos.
+ */
 export interface IAttachedDoc {
   doc: IProjectDoc
-  via: Array<{ kind: TResourceKind; id: string }>
+  via: Array<{ kind: TResourceKind | 'doc'; id: string }>
+}
+
+/** Quem anexa documentos: um recurso (skill/command) ou outro documento. Os dois com a mesma semântica. */
+interface IAttacher {
+  projectId?: string
+  docIds?: readonly string[]
+  docRefs?: readonly string[]
 }
 
 /** Um `/command` expandido: o que vai ao modelo e o que a conversa grava (o que a pessoa digitou). */
@@ -105,7 +115,21 @@ export interface IDocInput {
   title?: string
   summary?: string
   body?: string
+  /** Outros documentos anexados (ver `IProjectDoc.docIds`). Ausente na edição = mantém. */
+  docIds?: string[]
+  /** Dos anexados, os que vão por referência (ver `IProjectDoc.docRefs`). Ausente na edição = mantém os de antes. */
+  docRefs?: string[]
 }
+
+/**
+ * ⚖️ ANEXO DE DOCUMENTO A DOCUMENTO — a profundidade. Inteiro, só no PRIMEIRO nível a partir da raiz da carga (o
+ * documento lido, a spec do contexto inicial, o recurso carregado); do segundo nível em diante, tudo vira referência, e
+ * a referência não se expande (o agente a lê com `read_doc`, que mostra os anexos DELA). Assim a carga tem teto
+ * conhecido — a raiz, os anexos dela, e uma lista de referências — e um encadeamento longo não infla o prompt sem
+ * ninguém ter escolhido. ⛔ Cada documento entra no máximo UMA vez por carga (o conjunto de visitados começa com as
+ * raízes): A anexa B que anexa A não repete nem recursa.
+ */
+const INLINE_DEPTH = 1
 
 /**
  * As RULES e os DOCUMENTOS (specs e ADRs) do ambiente: o cadastro, que é de admin, e o que a conversa recebe.
@@ -213,11 +237,13 @@ export class GuidanceService {
       title: input.title?.trim() ?? '',
       summary: input.summary?.trim() ?? '',
       body: input.body ?? '',
+      docIds: input.docIds ?? [],
+      ...(input.docRefs?.length ? { docRefs: input.docRefs } : {}),
       createdAt: this.now(),
       updatedAt: this.now(),
       updatedBy: by,
     }
-    const issues = docIssues(doc)
+    const issues = [...docIssues(doc), ...this.attachIssues(doc, doc.id)]
     if (!DOC_ID_PATTERN.test(doc.id)) issues.unshift({ field: 'id', message: 'use 2–64 lowercase letters, digits or hyphens' })
     else if (this.repository.doc(doc.id)) issues.unshift({ field: 'id', message: `already exists: ${doc.id}` })
     this.check(issues, doc.projectId)
@@ -234,13 +260,23 @@ export class GuidanceService {
       ...(input.title !== undefined ? { title: input.title.trim() } : {}),
       ...(input.summary !== undefined ? { summary: input.summary.trim() } : {}),
       ...(input.body !== undefined ? { body: input.body } : {}),
+      ...(input.docIds !== undefined ? { docIds: input.docIds } : {}),
     }
-    this.check(docIssues(next), scope ?? undefined)
+    if (scope) next.projectId = scope
+    else delete next.projectId
+    // Sem `docRefs` na edição, ficam os de antes — menos os que deixaram de estar anexados.
+    const docIds = next.docIds ?? []
+    const refs = input.docRefs ?? (current.docRefs ?? []).filter((docId) => docIds.includes(docId))
+    if (refs.length) next.docRefs = refs
+    else delete next.docRefs
+    this.check([...docIssues(next), ...this.attachIssues(next, id)], scope ?? undefined)
     return this.repository.updateDoc(id, {
       kind: next.kind,
       title: next.title,
       summary: next.summary,
       body: next.body,
+      docIds,
+      docRefs: next.docRefs ?? [],
       ...(input.projectId !== undefined ? { projectId: scope } : {}),
       updatedAt: this.now(),
       updatedBy: by,
@@ -260,6 +296,14 @@ export class GuidanceService {
     const doc = this.repository.doc(id)
     if (!doc) return undefined
     return !doc.projectId || doc.projectId === projectId ? doc : undefined
+  }
+
+  /**
+   * O documento como o agente o recebe ao lê-lo (`read_doc`): o texto inteiro e, depois, os anexos dele — os inteiros
+   * como seção, os por referência numa lista (ver `INLINE_DEPTH` para a profundidade e os ciclos).
+   */
+  docText(doc: IProjectDoc): string {
+    return `# ${doc.title} [${doc.kind}]\n\n${doc.body}${this.attachments(doc, new Set([doc.id]))}`
   }
 
   /**
@@ -339,23 +383,43 @@ export class GuidanceService {
    */
   hasDocs(projectId?: string, agentId?: string): boolean {
     if (this.visibleDocs(projectId, agentId).length > 0) return true
-    return RESOURCE_KINDS.some((kind) => this.usableResources(kind, agentId).some((resource) => this.referencedDocs(resource).length > 0))
+    const resources = RESOURCE_KINDS.flatMap((kind) => this.usableResources(kind, agentId))
+    if (resources.some((resource) => this.attachedTo(resource).some((doc) => (resource.docRefs ?? []).includes(doc.id)))) return true
+    // O anexo de um documento que já vem inteiro (contexto inicial, anexo de recurso) chega por referência no 2º nível.
+    const { project, agent } = this.loadedFor(projectId, agentId)
+    const whole = [...project, ...agent, ...resources.flatMap((resource) => this.attachedTo(resource).filter((doc) => !(resource.docRefs ?? []).includes(doc.id)))]
+    return whole.some((doc) => this.attachedTo(doc).length > 0)
   }
 
   /**
-   * ⛔ O documento anexado a um recurso (skill ou command) que ESTE agente pode carregar — o caminho do `read_doc` para o
-   * anexo por referência quando a regra da conversa (global ou do projeto dela) não o abre. Vale a regra do anexo: o
-   * documento global ou do projeto do recurso. Nada além do que o recurso, carregado, já entregaria inteiro. A permissão
-   * `skill` fica com quem chama (`via` diz por quais recursos).
+   * ⛔ O documento que o agente lê pelo ANEXO — o caminho do `read_doc` quando a regra da conversa (global ou do projeto
+   * dela) não o abre. Sobe a cadeia de anexos até achar uma raiz que o agente já pode ler:
+   * - uma skill ou command que ESTE agente pode carregar e que o anexa (a permissão `skill` fica com quem chama);
+   * - um documento que a conversa lê (global, do projeto dela, ou no contexto inicial do projeto ou do agente).
+   * Cada elo vale só se cabe (o anexado é global ou do projeto de quem anexa). Nada além do que o agente alcançaria
+   * lendo a cadeia de cima para baixo; cada documento é visitado uma vez (ciclo não trava). `via` diz por onde.
    */
-  attachedDoc(id: string, agentId?: string): IAttachedDoc | undefined {
+  attachedDoc(id: string, agentId?: string, projectId?: string): IAttachedDoc | undefined {
     const doc = this.repository.doc(id)
     if (!doc) return undefined
-    const via = RESOURCE_KINDS.flatMap((kind) =>
-      this.usableResources(kind, agentId)
-        .filter((resource) => resource.docIds.includes(id) && attachable(doc, resource))
-        .map((resource) => ({ kind, id: resource.id })),
-    )
+    const resources = RESOURCE_KINDS.flatMap((kind) => this.usableResources(kind, agentId).map((resource) => ({ kind, resource })))
+    const { project, agent } = this.loadedFor(projectId, agentId)
+    const inPrompt = new Set([...project, ...agent].map((item) => item.id))
+    const via: IAttachedDoc['via'] = []
+    const seen = new Set([id])
+    const queue = [doc]
+    for (let node = queue.shift(); node; node = queue.shift()) {
+      const child = node
+      for (const { kind, resource } of resources)
+        if (resource.docIds.includes(child.id) && attachable(child, resource) && !via.some((item) => item.kind === kind && item.id === resource.id))
+          via.push({ kind, id: resource.id })
+      for (const parent of this.repository.docsAttaching(child.id)) {
+        if (seen.has(parent.id) || !attachable(child, parent)) continue
+        seen.add(parent.id)
+        if (inPrompt.has(parent.id) || this.readDoc(parent.id, projectId)) via.push({ kind: 'doc', id: parent.id })
+        else queue.push(parent)
+      }
+    }
     return via.length ? { doc, via } : undefined
   }
 
@@ -377,6 +441,8 @@ export class GuidanceService {
     const rules = [...this.repository.rules(null), ...(projectId ? this.repository.rules(projectId) : [])].filter((rule) => rule.enabled)
     const { project: loaded, agent: own } = this.loadedFor(projectId, agentId)
     const docs = this.visibleDocs(projectId, agentId)
+    // Uma carga só: o anexo de uma spec que já está no prompt (ou de duas specs) entra uma vez.
+    const seen = new Set([...loaded, ...own].map((doc) => doc.id))
     const parts: IEnvironmentParts = {}
     if (rules.length) {
       parts.rules = [
@@ -389,14 +455,14 @@ export class GuidanceService {
       parts.projectSpecs = [
         '## Specs do projeto',
         'Carregadas inteiras: valem como as regras do ambiente. Siga-as em toda resposta e em toda ferramenta que você usar.',
-        ...loaded.map((doc) => `### ${doc.title}\n${doc.body.trim()}`),
+        ...loaded.map((doc) => `### ${doc.title}\n${doc.body.trim()}${this.attachments(doc, seen, 4)}`),
       ].join('\n\n')
     }
     if (own.length) {
       parts.agentSpecs = [
         '## Specs do agente',
         'Carregadas inteiras para o seu papel, além das do projeto: valem como as regras do ambiente.',
-        ...own.map((doc) => `### ${doc.title}\n${doc.body.trim()}`),
+        ...own.map((doc) => `### ${doc.title}\n${doc.body.trim()}${this.attachments(doc, seen, 4)}`),
       ].join('\n\n')
     }
     const skills = this.usableResources('skill', agentId).filter((skill) => !this.skillFilter || this.skillFilter(agentId, projectId, skill.id))
@@ -470,7 +536,16 @@ export class GuidanceService {
     if (draft.kind === 'rule') {
       issues.push(...ruleIssues({ title: draft.title?.trim() ?? '', body: draft.body?.trim() ?? '' } as IRule))
     } else if (draft.kind === 'spec' || draft.kind === 'adr' || draft.kind === 'knowledge') {
-      issues.push(...docIssues({ kind: draft.kind, title: draft.title?.trim() ?? '', summary: draft.summary?.trim() ?? '', body: draft.body ?? '' } as IProjectDoc))
+      const doc = {
+        kind: draft.kind,
+        ...(scope ? { projectId: scope } : {}),
+        title: draft.title?.trim() ?? '',
+        summary: draft.summary?.trim() ?? '',
+        body: draft.body ?? '',
+        docIds: draft.docIds ?? [],
+        ...(draft.docRefs?.length ? { docRefs: draft.docRefs } : {}),
+      } as IProjectDoc
+      issues.push(...docIssues(doc), ...this.attachIssues(doc, id))
       const existing = DOC_ID_PATTERN.test(id) ? this.repository.doc(id) : undefined
       if (!DOC_ID_PATTERN.test(id)) issues.unshift({ field: 'id', message: 'use 2–64 lowercase letters, digits or hyphens' })
       else if (existing && existing.kind !== draft.kind) issues.unshift({ field: 'id', message: `already taken by an ${existing.kind}: ${id}` })
@@ -712,7 +787,7 @@ export class GuidanceService {
       return trigger ? `# Trigger: ${trigger.id}\n\nQuando: ${trigger.when.trim()}\n\n${trigger.body.trim()}` : undefined
     }
     const resource = this.usableResources(kind, agentId).find((item) => item.id === id)
-    return resource ? `# ${kind === 'skill' ? 'Skill' : 'Command'}: ${resource.id}\n\n${resource.body.trim()}${this.attachments(resource)}` : undefined
+    return resource ? `# ${kind === 'skill' ? 'Skill' : 'Command'}: ${resource.id}\n\n${resource.body.trim()}${this.attachments(resource, new Set())}` : undefined
   }
 
   /** A busca por id e descrição (o "quando", no trigger) entre o que o agente pode carregar: cada palavra tem de aparecer. */
@@ -744,11 +819,11 @@ export class GuidanceService {
     if (!resource) throw new InvalidGuidanceError([{ field: 'message', message: `${existing.kind} /${id} is not enabled for this agent` }])
     const args = (rawArgs ?? '').trim()
     if (resource.kind === 'skill') {
-      const skill = `[A pessoa pediu a skill ${resource.id}: ela já está carregada abaixo — siga-a.]\n\n# Skill: ${resource.id}\n\n${resource.body.trim()}${this.attachments(resource)}`
+      const skill = `[A pessoa pediu a skill ${resource.id}: ela já está carregada abaixo — siga-a.]\n\n# Skill: ${resource.id}\n\n${resource.body.trim()}${this.attachments(resource, new Set())}`
       return { text: `${skill}\n\n# Pedido\n\n${args || '(sem texto: aplique a skill ao que estamos fazendo)'}`, label: text.trim(), command: id }
     }
     const body = resource.body.includes('$ARGUMENTS') ? resource.body.replace(/\$ARGUMENTS/g, args) : `${resource.body.trim()}${args ? `\n\nArgumentos: ${args}` : ''}`
-    return { text: `${body.trim()}${this.attachments(resource)}`, label: text.trim(), command: id }
+    return { text: `${body.trim()}${this.attachments(resource, new Set())}`, label: text.trim(), command: id }
   }
 
   /**
@@ -764,7 +839,7 @@ export class GuidanceService {
     if (!doc || doc.kind !== kind) return undefined
     const args = (rawArgs ?? '').trim()
     return {
-      text: `[A pessoa anexou o documento ${doc.id} (${doc.kind}): ele está abaixo, inteiro.]\n\n# ${doc.title} [${doc.kind}]\n\n${doc.body.trim()}\n\n# Pedido\n\n${args || '(sem texto: use o documento no que estamos fazendo)'}`,
+      text: `[A pessoa anexou o documento ${doc.id} (${doc.kind}): ele está abaixo, inteiro.]\n\n# ${doc.title} [${doc.kind}]\n\n${doc.body.trim()}${this.attachments(doc, new Set([doc.id]))}\n\n# Pedido\n\n${args || '(sem texto: use o documento no que estamos fazendo)'}`,
       label: text.trim(),
       command: `${kind}:${id}`,
     }
@@ -816,31 +891,70 @@ export class GuidanceService {
   }
 
   /**
-   * Os documentos anexados a um recurso (os que ainda existem): os inteiros, como sempre; os por referência, numa lista
-   * com id, título e tamanho — o agente os lê com `read_doc` só se precisar.
+   * Os documentos anexados a um recurso ou a um documento (os que existem e ainda cabem nele): os inteiros como seção;
+   * os por referência numa lista com id, título, tamanho e resumo — o agente os lê com `read_doc` só se precisar.
+   * ⚖️ Profundidade e ciclos: ver `INLINE_DEPTH`. `seen` é a carga inteira (as raízes já entram nele): quem já está
+   * fica de fora, e quem entra aqui passa a estar. `level` é o nível do título das seções (`##` no recurso e no
+   * `read_doc`; mais fundo quando a raiz já é uma seção do prompt).
    */
-  private attachments(resource: IResource): string {
-    const refs = new Set(resource.docRefs ?? [])
-    const docs = resource.docIds
-      .filter((id) => !refs.has(id))
-      .map((id) => this.repository.doc(id))
-      .filter((doc): doc is IProjectDoc => !!doc)
-    const referenced = this.referencedDocs(resource)
-    const inline = docs.length ? `\n\n## Documentos anexados\n\n${docs.map((doc) => `### ${doc.title} [${doc.kind}]\n${doc.body.trim()}`).join('\n\n')}` : ''
-    if (!referenced.length) return inline
+  private attachments(owner: IAttacher, seen: Set<string>, level = 2): string {
+    const heading = '#'.repeat(level)
+    const inline: IProjectDoc[] = []
+    const referenced: Array<{ doc: IProjectDoc; from?: IProjectDoc }> = []
+    const take = (parent: IAttacher, depth: number, from?: IProjectDoc): IProjectDoc[] => {
+      const refs = parent.docRefs ?? []
+      const fresh = this.attachedTo(parent).filter((doc) => !seen.has(doc.id))
+      for (const doc of fresh) {
+        seen.add(doc.id)
+        if (depth <= INLINE_DEPTH && !refs.includes(doc.id)) inline.push(doc)
+        else referenced.push({ doc, ...(from ? { from } : {}) })
+      }
+      return fresh
+    }
+    // O primeiro nível inteiro, antes de descer: o que o dono anexa direto não vira referência por ter vindo de um filho.
+    const first = take(owner, 1)
+    for (const doc of first.filter((item) => inline.includes(item))) take(doc, 2, doc)
+    const whole = inline.length ? `\n\n${heading} Documentos anexados\n\n${inline.map((doc) => `${heading}# ${doc.title} [${doc.kind}]\n${doc.body.trim()}`).join('\n\n')}` : ''
+    if (!referenced.length) return whole
     const lines = referenced.map(
-      (doc) => `- ${doc.id} — ${doc.title} [${doc.kind}] · ≈ ${estimateTokens(doc.body).toLocaleString('pt-BR')} tokens${doc.summary ? `: ${doc.summary}` : ''}`,
+      ({ doc, from }) =>
+        `- ${doc.id} — ${doc.title} [${doc.kind}] · ≈ ${estimateTokens(doc.body).toLocaleString('pt-BR')} tokens${doc.summary ? `: ${doc.summary}` : ''}${from ? ` (anexo de ${from.id})` : ''}`,
     )
-    return `${inline}\n\n## Documentos anexados por referência\n\nNão vieram inteiros. Leia com ${READ_DOC_TOOL} (pelo id) só o que o passo pedir.\n\n${lines.join('\n')}`
+    return `${whole}\n\n${heading} Documentos anexados por referência\n\nNão vieram inteiros. Leia com ${READ_DOC_TOOL} (pelo id) só o que o passo pedir.\n\n${lines.join('\n')}`
   }
 
-  /** Os anexados por referência que ainda existem e ainda cabem no recurso (globais ou do projeto dele). */
-  private referencedDocs(resource: IResource): IProjectDoc[] {
-    const refs = resource.docRefs ?? []
-    return resource.docIds
-      .filter((id) => refs.includes(id))
-      .map((id) => this.repository.doc(id))
-      .filter((doc): doc is IProjectDoc => !!doc && attachable(doc, resource))
+  /** Os anexados que ainda existem e ainda cabem em quem anexa (globais ou do projeto dele), na ordem. */
+  private attachedTo(owner: IAttacher): IProjectDoc[] {
+    return (owner.docIds ?? []).map((id) => this.repository.doc(id)).filter((doc): doc is IProjectDoc => !!doc && attachable(doc, owner))
+  }
+
+  /**
+   * Os problemas dos anexos de um documento: existe, não é ele mesmo, cabe nele (global ou do mesmo projeto — o global
+   * só anexa global), sem repetir; e a referência é um dos anexados. ⚖️ Ciclo (A anexa B que anexa A) é permitido: a
+   * leitura visita cada um uma vez.
+   */
+  private attachIssues(doc: IProjectDoc, selfId: string): TIssues {
+    const issues: TIssues = []
+    const ids = doc.docIds ?? []
+    for (const [index, id] of ids.entries()) {
+      const attached = this.repository.doc(id)
+      if (ids.indexOf(id) !== index) issues.push({ field: 'docIds', message: `repeated: ${id}` })
+      else if (id === selfId) issues.push({ field: 'docIds', message: `a document does not attach itself: ${id}` })
+      else if (!attached) issues.push({ field: 'docIds', message: `no such document: ${id}` })
+      else if (!attachable(attached, doc))
+        issues.push({
+          field: 'docIds',
+          message: doc.projectId
+            ? `${id} belongs to another project (${attached.projectId})`
+            : `${id} belongs to a project (${attached.projectId}): a global document attaches only global ones`,
+        })
+    }
+    const refs = doc.docRefs ?? []
+    for (const [index, id] of refs.entries()) {
+      if (refs.indexOf(id) !== index) issues.push({ field: 'docRefs', message: `repeated: ${id}` })
+      else if (!ids.includes(id)) issues.push({ field: 'docRefs', message: `not attached: ${id} (by reference only goes one of docIds)` })
+    }
+    return issues
   }
 
   private resourceIssues(resource: IResource): TIssues {
@@ -893,9 +1007,9 @@ export class GuidanceService {
   }
 }
 
-/** O documento cabe no recurso: global ou do projeto dele (a regra do anexo). */
-function attachable(doc: IProjectDoc, resource: IResource): boolean {
-  return !doc.projectId || doc.projectId === resource.projectId
+/** O documento cabe em quem o anexa (recurso ou outro documento): global ou do projeto dele (a regra do anexo). */
+function attachable(doc: IProjectDoc, owner: IAttacher): boolean {
+  return !doc.projectId || doc.projectId === owner.projectId
 }
 
 const EXISTING_LABEL: Readonly<Record<TProtocolKind, string>> = {

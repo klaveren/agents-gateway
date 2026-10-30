@@ -56,6 +56,20 @@ export function attachedRefs(docIds: readonly string[], docRefs: readonly string
   return docIds.filter((id) => docRefs.includes(id))
 }
 
+/**
+ * Os documentos que um documento do escopo dado pode anexar (`null` = global): os globais e, num de projeto, os do mesmo
+ * projeto — o global só anexa global. Nunca ele mesmo. A mesma regra do servidor.
+ */
+export function attachableDocs<T extends { id: string; projectId?: string }>(docs: readonly T[], projectId: string | null, selfId?: string): T[] {
+  return docs.filter((doc) => doc.id !== selfId && (!doc.projectId || doc.projectId === projectId))
+}
+
+/** Os anexos mudaram (a lista, a ordem ou o modo de algum)? É o que liga o "Salvar". */
+export function attachmentsChanged(form: { docIds: readonly string[]; docRefs: readonly string[] }, saved: { docIds?: readonly string[]; docRefs?: readonly string[] }): boolean {
+  const docIds = saved.docIds ?? []
+  return form.docIds.join() !== docIds.join() || attachedRefs(form.docIds, form.docRefs).join() !== attachedRefs(docIds, saved.docRefs ?? []).join()
+}
+
 /** Troca o modo de um anexo: a lista de referências com ou sem ele. */
 export function setAttachMode(docRefs: readonly string[], id: string, mode: TAttachMode): string[] {
   const others = docRefs.filter((item) => item !== id)

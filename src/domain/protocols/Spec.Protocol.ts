@@ -3,7 +3,7 @@ import { ICoreProtocol } from '@domain/models/Protocol.Model'
 /** O protocolo do core para construir uma SPEC. ⚠️ Mudou o texto, sobe a versão. */
 export const SPEC_PROTOCOL: ICoreProtocol = {
   kind: 'spec',
-  version: '1.1.0',
+  version: '1.1.1',
   title: 'Protocolo de construção de spec',
   body: `# Protocolo de construção de spec
 
@@ -41,5 +41,6 @@ Uma spec diz COMO ALGO DEVE SER: um padrão, um contrato, um conceito. A convers
 \`\`\`
 
 ## Escopo
-- Global vale em todos os projetos; a do projeto, só nele. Na dúvida, do projeto.`,
+- Global vale em todos os projetos; a do projeto, só nele. Na dúvida, do projeto.
+- Relação com outro documento é ANEXO no painel (docIds; o grande, por referência em docRefs), nunca caminho de arquivo citado no texto.`,
 }
