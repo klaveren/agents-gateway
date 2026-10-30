@@ -113,6 +113,15 @@ export function resolveCommand(serverId: string, config: Pick<IMcpProcess, 'pack
   return path
 }
 
+/** O servidor trocou de escopo (e de chave): a instalação vai junto, sem reinstalar. Sem instalação, nada. */
+export function moveInstall(fromKey: string, toKey: string, root = mcpRoot()): void {
+  const from = installDir(fromKey, root)
+  if (!existsSync(from)) return
+  removeInstall(toKey, root)
+  renameSync(from, installDir(toKey, root))
+  rmSync(`${from}.installing`, { recursive: true, force: true })
+}
+
 export function removeInstall(serverId: string, root = mcpRoot()): void {
   rmSync(installDir(serverId, root), { recursive: true, force: true })
   rmSync(`${installDir(serverId, root)}.installing`, { recursive: true, force: true })

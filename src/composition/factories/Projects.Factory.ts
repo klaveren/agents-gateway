@@ -9,6 +9,7 @@ import { makeAgents } from './Agents.Factory'
 import { makeAuth } from './Auth.Factory'
 import { makeGuidance } from './Guidance.Factory'
 import { makeProjectAccounts } from './ProjectAccounts.Factory'
+import { removeProjectMcpServers } from './McpServers.Factory'
 
 let instance: { service: ProjectsService; repository: SqliteProjectRepository } | undefined
 
@@ -34,12 +35,13 @@ function build() {
         .some((user) => user.id === userId),
     {
       create: (id) => projectWorkspace(id),
-      // As rules, os documentos, as permissões e as contas do projeto vão junto com a pasta.
+      // As rules, os documentos, as permissões, as contas e os MCPs do projeto vão junto com a pasta.
       remove: (id) => {
         removeProjectWorkspace(id)
         makeGuidance().removeProject(id)
         makePermissions().removeProject(id)
         makeProjectAccounts().removeProject(id)
+        removeProjectMcpServers(id)
       },
     },
   )

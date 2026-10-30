@@ -3,7 +3,7 @@ import { ICoreProtocol } from '@domain/models/Protocol.Model'
 /** O protocolo do core para construir uma ADR. ⚠️ Mudou o texto, sobe a versão. */
 export const ADR_PROTOCOL: ICoreProtocol = {
   kind: 'adr',
-  version: '1.1.0',
+  version: '1.1.1',
   title: 'Protocolo de construção de ADR',
   body: `# Protocolo de construção de ADR
 
@@ -41,5 +41,6 @@ Uma ADR registra UMA DECISÃO e o PORQUÊ. A conversa recebe só o índice e o a
 \`\`\`
 
 ## Escopo
-- Global vale em todos os projetos; a do projeto, só nele. Na dúvida, do projeto.`,
+- Global vale em todos os projetos; a do projeto, só nele. Na dúvida, do projeto.
+- Relação com outro documento é ANEXO no painel (docIds; o grande, por referência em docRefs), nunca caminho de arquivo citado no texto.`,
 }

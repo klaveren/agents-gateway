@@ -13,7 +13,7 @@ import { GuidanceController } from '@infra/http/Guidance.Controller'
 import { makeGuidance } from './Guidance.Factory'
 import { SubscriptionLogins } from '@infra/providers/Subscription.Client'
 import { McpProxyController } from '@infra/http/McpProxy.Controller'
-import { McpServersService } from '@application/McpServers.Service'
+import { makeMcpServers } from './McpServers.Factory'
 import { McpServersController } from '@infra/http/McpServers.Controller'
 import { PackagesController } from '@infra/http/Packages.Controller'
 import { HooksController } from '@infra/http/Hooks.Controller'
@@ -142,21 +142,13 @@ export function makeUsageController(conversations: AgentController['conversation
 }
 
 export function makeMcpServersController(): McpServersController {
-  const { mcp, servers } = makeTools()
-  return new McpServersController({
-    service: new McpServersService(servers, makeCredentials(), () =>
-      makeAgents()
-        .rawEntries()
-        .map((entry) => entry.agent),
-    ),
-    registry: mcp,
-    proof: makeAuth().proof,
-  })
+  const { mcp } = makeTools()
+  return new McpServersController({ service: makeMcpServers(), registry: mcp, proof: makeAuth().proof, projects: makeProjects() })
 }
 
 export function makeMcpProxyController(): McpProxyController {
   const { mcp } = makeTools()
-  return new McpProxyController({ registry: mcp, proof: makeAuth().proof, session: (id) => mcp.session(id), agentTools: (id) => makeAgents().entry(id)?.agent.allowedTools })
+  return new McpProxyController({ registry: mcp, proof: makeAuth().proof, session: (id) => mcp.session(id), agent: (id) => makeAgents().entry(id)?.agent })
 }
 
 export function makePackagesController(): PackagesController {

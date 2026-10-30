@@ -20,6 +20,18 @@ export interface IProjectDoc {
   summary: string
   /** Markdown. */
   body: string
+  /**
+   * Outros documentos ANEXADOS a este, na ordem (spec que cita spec, ADR que aponta a spec): vão junto quando este é
+   * lido — no `read_doc`, no contexto inicial, no anexo de um recurso. ⛔ Global ou do mesmo projeto deste (o global só
+   * anexa global). É o relacionamento entre documentos: feito no painel, nunca por caminho citado no texto.
+   * Ausente = nenhum.
+   */
+  docIds?: string[]
+  /**
+   * Dos anexados, os que vão POR REFERÊNCIA (id, título, tamanho e resumo; o agente lê com `read_doc` se precisar).
+   * Sempre um subconjunto de `docIds`. Ausente ou vazio = todos inteiros — a mesma semântica de `IResource.docRefs`.
+   */
+  docRefs?: string[]
   createdAt: Date
   updatedAt: Date
   updatedBy?: string

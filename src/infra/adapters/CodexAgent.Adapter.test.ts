@@ -199,6 +199,33 @@ describe('CodexAgentAdapter', () => {
     assert.deepStrictEqual(events.at(-1), { type: 'error', sessionId: session.id, timestamp: events.at(-1)?.timestamp, payload: { message: 'não autenticado' } })
   })
 
+  it('⛔ prompt acima do limite do Linux: recusa antes de subir o Codex, com o tamanho, o limite e o que pesa', async () => {
+    let loaded = 0
+    const calls: ICall[] = []
+    const adapter = new CodexAgentAdapter({
+      store: new SessionStore(),
+      load: async () => {
+        loaded++
+        return fakeCodex(calls, turnEvents) as never
+      },
+      home: () => '/gw',
+    })
+    const big = { ...agent, systemPrompt: 'Seja breve.', soul: 'Calmo.' }
+    const session = await adapter.createSession(big, { environment: `## Specs do projeto\n${'x'.repeat(140_000)}\n\n## Skills\n- s — S` })
+    const events = await collect(adapter.sendMessage(big, session.id, { text: 'oi' }, {}))
+    const error = events.find((event) => event.type === 'error')
+    assert.strictEqual(loaded, 0)
+    assert.strictEqual(calls.length, 0)
+    assert.match(String(error?.payload?.message), /não cabe no Codex: .* bytes\) num argumento de linha de comando, e o Linux aceita até 128 KiB \(131\.071 bytes\)/)
+    assert.match(String(error?.payload?.message), /O que mais pesa: Specs do projeto \(136,7 KiB\)/)
+
+    // Abaixo do limite, segue normal.
+    const ok = await adapter.createSession(big, { environment: `## Specs do projeto\n${'x'.repeat(100_000)}` })
+    const fine = await collect(adapter.sendMessage(big, ok.id, { text: 'oi' }, {}))
+    assert.ok(!fine.some((event) => event.type === 'error'))
+    assert.strictEqual(calls.length, 1)
+  })
+
   it('os MCPs do agente viram `mcp_servers`, com a credencial de quem conversa e o filtro de ferramentas', () => {
     const servers = codexMcpServers(
       [

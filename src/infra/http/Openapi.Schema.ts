@@ -401,6 +401,11 @@ const mcpServerBody = {
   type: 'object',
   properties: {
     id: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{1,31}$', description: 'Only on create.' },
+    projectId: {
+      type: ['string', 'null'],
+      description:
+        'The owning project (absent = global). A project server serves only agents of that project. Two projects may share an id; a project id never collides with a global one. On update, a project or null (global) moves it — refused (409) if an agent would lose it.',
+    },
     name: { type: 'string' },
     kind: {
       type: 'string',
@@ -431,7 +436,9 @@ const mcpServerBody = {
 const mcpServerSchema = {
   type: 'object',
   properties: {
+    key: { type: 'string', description: 'The path key: the id for a global server, <projectId>.<id> for a project one.' },
     id: { type: 'string' },
+    projectId: { type: 'string', description: 'Absent = global.' },
     name: { type: 'string' },
     url: { type: 'string' },
     transport: { type: 'string', enum: ['auto', 'http', 'sse'] },
@@ -541,6 +548,9 @@ const ruleBody = {
     enabled: { type: 'boolean' },
   },
 }
+const DOC_IDS_DESCRIPTION =
+  'Other documents attached to this one, in order (global ones, or of the same project; a global document attaches only global ones). They go along when this one is read: in full, unless listed in docRefs.'
+const DOC_REFS_DESCRIPTION = 'Which of docIds go by reference: listed with id, title and size, and the agent reads them with read_doc if needed.'
 const docSchema = {
   type: 'object',
   properties: {
@@ -550,6 +560,8 @@ const docSchema = {
     title: { type: 'string' },
     summary: { type: 'string', description: 'One line: what the conversation index shows.' },
     body: { type: 'string', description: 'Markdown. Absent in the list.' },
+    docIds: { type: 'array', items: { type: 'string' }, description: DOC_IDS_DESCRIPTION },
+    docRefs: { type: 'array', items: { type: 'string' }, description: DOC_REFS_DESCRIPTION },
     loadedIn: {
       type: 'object',
       description: 'List only: who loads this spec in full (their initial context).',
@@ -570,6 +582,8 @@ const docBody = {
     title: { type: 'string' },
     summary: { type: 'string' },
     body: { type: 'string' },
+    docIds: { type: 'array', items: { type: 'string' }, description: `${DOC_IDS_DESCRIPTION} Absent on update = keep.` },
+    docRefs: { type: 'array', items: { type: 'string' }, description: `${DOC_REFS_DESCRIPTION} Absent on update = keep.` },
   },
 }
 const idParam = [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }]
@@ -1229,8 +1243,9 @@ export const OPENAPI_DOCUMENT = {
     },
     '/mcp-servers': {
       get: {
+        parameters: [{ name: 'project', in: 'query', required: false, schema: { type: 'string' } }],
         summary:
-          'The MCP servers agents can use tools from: URL, transport, authentication (caller credential, a fixed secret header, or none), status and the agents using each. The secret is never returned. Administrators only',
+          'The MCP servers agents can use tools from: URL, transport, authentication (caller credential, a fixed secret header, or none), status and the agents using each. The secret is never returned. Administrators (all; with ?project, the global ones and that project ones); a project member only with ?project=<own project>, and only that project servers',
         responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: mcpServerSchema })) }, '401': failures['401'], '404': failures['404'] },
       },
       post: {
@@ -1553,6 +1568,18 @@ export const OPENAPI_DOCUMENT = {
                         items: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, tokens: { type: 'integer' } } } },
                         note: { type: 'string' },
                       },
+                    },
+                  },
+                  cli: {
+                    type: 'object',
+                    description:
+                      'Only when the agent offers Codex or Antigravity: they get the assembled prompt as one command-line argument, and Linux refuses one above 128 KiB. `bytes` is the estimated argument (the larger among the agent CLIs), `warnAt` is where the screen warns (never blocks), `parts` are the raw prompt parts in bytes.',
+                    properties: {
+                      providers: { type: 'array', items: { type: 'string' } },
+                      bytes: { type: 'integer' },
+                      limit: { type: 'integer' },
+                      warnAt: { type: 'integer' },
+                      parts: { type: 'array', items: { type: 'object', properties: { key: { type: 'string' }, label: { type: 'string' }, bytes: { type: 'integer' } } } },
                     },
                   },
                 },

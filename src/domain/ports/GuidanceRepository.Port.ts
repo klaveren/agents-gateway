@@ -8,7 +8,7 @@ export type TGuidanceScope = string | null
 
 /** `projectId: null` move para o global. */
 export type TRulePatch = Partial<Pick<IRule, 'title' | 'body' | 'enabled' | 'position' | 'updatedAt' | 'updatedBy'>> & { projectId?: string | null }
-export type TDocPatch = Partial<Pick<IProjectDoc, 'kind' | 'title' | 'summary' | 'body' | 'updatedAt' | 'updatedBy'>> & { projectId?: string | null }
+export type TDocPatch = Partial<Pick<IProjectDoc, 'kind' | 'title' | 'summary' | 'body' | 'docIds' | 'docRefs' | 'updatedAt' | 'updatedBy'>> & { projectId?: string | null }
 
 /** Um documento achado pela busca de texto: sem o corpo, com o trecho que casou (entre « »). */
 export interface IDocHit {
@@ -34,7 +34,10 @@ export interface IGuidanceRepository {
   doc(id: string): IProjectDoc | undefined
   insertDoc(doc: IProjectDoc): void
   updateDoc(id: string, patch: TDocPatch): IProjectDoc | undefined
+  /** Apaga e tira o documento dos anexos que apontavam para ele (recursos e outros documentos). */
   deleteDoc(id: string): boolean
+  /** Os documentos que anexam este (os "pais" dele, ver `IProjectDoc.docIds`). */
+  docsAttaching(id: string): IProjectDoc[]
   /** A busca de texto (FTS) nos documentos dos escopos, os mais relevantes primeiro. `match` é a expressão FTS5 pronta. */
   searchDocs(match: string, scopes: readonly TGuidanceScope[], kind?: TDocKind, limit?: number): IDocHit[]
 

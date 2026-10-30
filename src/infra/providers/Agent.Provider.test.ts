@@ -810,7 +810,7 @@ describe('AgentProvider — retomar a conversa gravada', () => {
     for await (const _event of provider.sendMessage(stored.id, { text: 'E da Espanha?' })) void _event
     assert.match(
       sent[0],
-      /^\[Contexto do sistema: esta conversa foi retomada[\s\S]*E da Itália\?[\s\S]*Ferramentas usadas: search_web[\s\S]*\[Fim da transcrição\. Mensagem nova:\]\n\nE da Espanha\?$/,
+      /^<contexto>id desta conversa: google-chat-antiga<\/contexto>\n\n\[Contexto do sistema: esta conversa foi retomada[\s\S]*E da Itália\?[\s\S]*Ferramentas usadas: search_web[\s\S]*\[Fim da transcrição\. Mensagem nova:\]\n\nE da Espanha\?$/,
     )
     assert.deepStrictEqual([store.get(stored.id)!.turns, store.get(stored.id)!.usage.inputTokens], [3, 950])
 

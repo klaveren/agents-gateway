@@ -147,7 +147,7 @@ export class HttpServer {
       usage ?? new UsageController({ conversations: controller.conversations }),
       mcpServers,
       mcpProxy ??
-        new McpProxyController({ registry: new McpRegistry(new SqliteMcpServerRepository(), { get: () => undefined }), session: () => undefined, agentTools: () => undefined }),
+        new McpProxyController({ registry: new McpRegistry(new SqliteMcpServerRepository(), { get: () => undefined }), session: () => undefined, agent: () => undefined }),
       packages,
       hooks ?? new HooksController({ hooks: defaultHooks(), sessionFor: () => undefined }),
       projects ?? new ProjectsController({ projects: defaultProjects() }),

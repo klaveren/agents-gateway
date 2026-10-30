@@ -8,7 +8,7 @@ import MasterDetail from '@/components/MasterDetail.vue'
 import { api, ApiError } from '@/lib/api'
 import { sizeHint } from '@/lib/format'
 import { pendingDraft } from '@/lib/builder'
-import { docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId } from '@/lib/guidance'
+import { attachableDocs, attachedRefs, attachmentsChanged, docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId, setAttachMode, type TAttachMode } from '@/lib/guidance'
 import { renderMarkdown } from '@/lib/markdown'
 import type { IProjectDoc, TDocKind } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
@@ -19,6 +19,8 @@ import { useProjectsStore } from '@/stores/projects'
  * SPECS ou ADRs (só admin), uma página para cada (`kind`): documentos em markdown que os agentes consultam.
  * ⚖️ A conversa recebe só o índice (id, título, resumo) — os globais e os do projeto dela — e o agente lê o
  * documento inteiro com `read_doc` quando precisa. O status de uma ADR fica no próprio texto.
+ * ⚖️ Relação com outro documento (spec que cita spec, ADR → spec) é ANEXO, feito aqui — não caminho citado no texto. O
+ * anexado vai junto quando o documento é lido: inteiro ou por referência, como no anexo de skill.
  */
 const props = defineProps<{ kind: TDocKind; id?: string }>()
 const route = useRoute()
@@ -72,7 +74,9 @@ const info = computed(() => KIND[props.kind])
 /** As palavras que concordam com o tipo: "Novo estudo", "Nova spec". */
 const g = computed(() => (info.value.masc ? { nova: 'Novo', nenhuma: 'Nenhum', uma: 'um', a: 'o' } : { nova: 'Nova', nenhuma: 'Nenhuma', uma: 'uma', a: 'a' }))
 
-const form = ref({ id: '', kind: 'spec' as TDocKind, title: '', summary: '', body: '', global: true, project: '' })
+const form = ref({ id: '', kind: 'spec' as TDocKind, title: '', summary: '', body: '', global: true, project: '', docIds: [] as string[], docRefs: [] as string[] })
+/** Os documentos que este pode anexar: os globais e os do projeto do formulário (a lista não segue o filtro de escopo). */
+const docs = ref<IProjectDoc[]>([])
 const loaded = ref<IProjectDoc>()
 const preview = ref(false)
 const issues = ref<Record<string, string[]>>({})
@@ -84,6 +88,7 @@ const removing = ref(false)
 const scopes = computed(() => [{ id: GLOBAL_SCOPE, name: 'Global — todos os projetos' }, ...projects.list.map((project) => ({ id: project.id, name: project.name }))])
 const shown = computed(() => list.value.filter((doc) => doc.kind === props.kind))
 const formScope = computed(() => (form.value.global ? GLOBAL_SCOPE : form.value.project))
+const attachable = computed(() => attachableDocs(docs.value, scopeToProjectId(formScope.value), form.value.id || undefined))
 const dirty = computed(() => {
   const doc = loaded.value
   if (!doc) return true
@@ -91,7 +96,8 @@ const dirty = computed(() => {
     form.value.title !== doc.title ||
     form.value.summary !== doc.summary ||
     form.value.body !== (doc.body ?? '') ||
-    formScope.value !== (doc.projectId ?? GLOBAL_SCOPE)
+    formScope.value !== (doc.projectId ?? GLOBAL_SCOPE) ||
+    attachmentsChanged(form.value, doc)
   )
 })
 
@@ -103,6 +109,7 @@ onMounted(async () => {
   await loadList()
 })
 watch(scope, () => void loadList())
+watch(formScope, () => void loadDocs(), { immediate: true })
 
 watch(
   () => [props.id, adding.value, props.kind] as const,
@@ -113,7 +120,17 @@ watch(
     preview.value = false
     if (isNew) {
       loaded.value = undefined
-      form.value = { id: '', kind, title: '', summary: '', body: TEMPLATE[kind], global: scope.value === GLOBAL_SCOPE, project: scope.value === GLOBAL_SCOPE ? (projects.current ?? '') : scope.value }
+      form.value = {
+        id: '',
+        kind,
+        title: '',
+        summary: '',
+        body: TEMPLATE[kind],
+        global: scope.value === GLOBAL_SCOPE,
+        project: scope.value === GLOBAL_SCOPE ? (projects.current ?? '') : scope.value,
+        docIds: [],
+        docRefs: [],
+      }
       applyDraft(kind)
       return
     }
@@ -123,7 +140,17 @@ watch(
       // O endereço é da outra página (uma ADR aberta em /specs): vai para a certa.
       if (doc.kind !== kind) return void router.replace(`${KIND[doc.kind].base}/${doc.id}`)
       loaded.value = doc
-      form.value = { id: doc.id, kind: doc.kind, title: doc.title, summary: doc.summary, body: doc.body ?? '', global: !doc.projectId, project: doc.projectId ?? projects.current ?? '' }
+      form.value = {
+        id: doc.id,
+        kind: doc.kind,
+        title: doc.title,
+        summary: doc.summary,
+        body: doc.body ?? '',
+        global: !doc.projectId,
+        project: doc.projectId ?? projects.current ?? '',
+        docIds: [...(doc.docIds ?? [])],
+        docRefs: [...(doc.docRefs ?? [])],
+      }
       applyDraft(kind, doc.id)
     } catch (failure) {
       loaded.value = undefined
@@ -141,7 +168,17 @@ function applyDraft(kind: TDocKind, id?: string) {
   const draft = pendingDraft.value
   if (!draft || draft.kind !== kind || (id && draft.id !== id)) return
   pendingDraft.value = undefined
-  form.value = { id: id ?? draft.id, kind, title: draft.title, summary: draft.summary, body: draft.body, global: !draft.projectId, project: draft.projectId ?? projects.current ?? '' }
+  form.value = {
+    id: id ?? draft.id,
+    kind,
+    title: draft.title,
+    summary: draft.summary,
+    body: draft.body,
+    global: !draft.projectId,
+    project: draft.projectId ?? projects.current ?? '',
+    docIds: [...draft.docIds],
+    docRefs: [...draft.docRefs],
+  }
   note.value = 'Rascunho do construtor aplicado: revise e salve.'
 }
 
@@ -154,6 +191,27 @@ async function loadList() {
   }
 }
 
+async function loadDocs() {
+  const project = scopeToProjectId(formScope.value)
+  const [globals, local] = await Promise.all([
+    api<IProjectDoc[]>('/docs', { query: { project: GLOBAL_SCOPE } }).catch(() => []),
+    project ? api<IProjectDoc[]>('/docs', { query: { project } }).catch(() => []) : Promise.resolve([]),
+  ])
+  docs.value = [...local, ...globals]
+}
+
+function toggleDoc(id: string) {
+  form.value.docIds = form.value.docIds.includes(id) ? form.value.docIds.filter((item) => item !== id) : [...form.value.docIds, id]
+}
+
+function attachMode(id: string): TAttachMode {
+  return form.value.docRefs.includes(id) ? 'reference' : 'inline'
+}
+
+function setMode(id: string, mode: TAttachMode) {
+  form.value.docRefs = setAttachMode(form.value.docRefs, id, mode)
+}
+
 function slug() {
   if (!form.value.id && form.value.title) form.value.id = docSlug(form.value.title)
 }
@@ -163,7 +221,17 @@ async function save() {
   error.value = undefined
   note.value = undefined
   busy.value = true
-  const body = { kind: form.value.kind, title: form.value.title, summary: form.value.summary, body: form.value.body, projectId: scopeToProjectId(formScope.value) }
+  // Um doc de outro projeto não vai junto quando o escopo muda.
+  const docIds = form.value.docIds.filter((id) => attachable.value.some((doc) => doc.id === id))
+  const body = {
+    kind: form.value.kind,
+    title: form.value.title,
+    summary: form.value.summary,
+    body: form.value.body,
+    projectId: scopeToProjectId(formScope.value),
+    docIds,
+    docRefs: attachedRefs(docIds, form.value.docRefs),
+  }
   try {
     if (adding.value) {
       const created = await api<IProjectDoc>('/docs', { method: 'POST', body: { id: form.value.id, ...body } })
@@ -172,6 +240,8 @@ async function save() {
       await router.push(`${info.value.base}/${created.id}`)
     } else {
       loaded.value = await api<IProjectDoc>(`/docs/${encodeURIComponent(form.value.id)}`, { method: 'PUT', body })
+      form.value.docIds = [...(loaded.value.docIds ?? [])]
+      form.value.docRefs = [...(loaded.value.docRefs ?? [])]
       note.value = 'Salvo. Vale para as próximas conversas.'
       await loadList()
     }
@@ -269,6 +339,35 @@ function describe(failure: unknown): string {
           <div v-else class="prose-agent min-h-[18rem] rounded-xl border border-zinc-800 p-4 text-sm break-words" v-html="renderMarkdown(form.body)" />
           <small v-if="form.body" class="hint">{{ sizeHint(form.body, 'quando lido') }}</small>
           <small v-for="m in issues.body" :key="m" class="error">{{ m }}</small>
+        </div>
+
+        <div class="flex flex-col gap-1.5 rounded-xl border border-zinc-800 p-3">
+          <p class="text-sm font-medium text-zinc-200">Documentos anexados <span class="text-xs font-normal text-zinc-500">— vão junto quando este documento é lido</span></p>
+          <p v-if="!attachable.length" class="text-xs text-zinc-500">Nenhum outro documento {{ form.global ? 'global' : 'global ou deste projeto' }}.</p>
+          <div v-for="doc in attachable" :key="doc.id" class="flex flex-wrap items-center gap-2 text-sm">
+            <label class="flex min-w-0 flex-1 items-center gap-2">
+              <input type="checkbox" class="accent-emerald-500" :checked="form.docIds.includes(doc.id)" @change="toggleDoc(doc.id)" />
+              <span class="rounded bg-zinc-800 px-1 text-[10px] text-zinc-400 uppercase">{{ doc.kind }}</span>
+              <span class="min-w-0 truncate">{{ doc.title }}</span>
+              <span class="ml-auto shrink-0 text-xs text-zinc-500 tabular-nums">≈ {{ (doc.tokens ?? 0).toLocaleString('pt-BR') }} tokens</span>
+            </label>
+            <select
+              v-if="form.docIds.includes(doc.id)"
+              :value="attachMode(doc.id)"
+              class="input w-auto py-1 text-xs"
+              :aria-label="`Como ${doc.title} vai junto`"
+              @change="setMode(doc.id, ($event.target as HTMLSelectElement).value as TAttachMode)"
+            >
+              <option value="inline">inteiro</option>
+              <option value="reference">por referência</option>
+            </select>
+          </div>
+          <small class="hint">
+            A relação com outro documento (spec que cita spec, ADR que aponta a spec) é anexo aqui, não caminho no texto. Inteiro: o texto vai junto. Por referência: vão só id, título e
+            tamanho, e o agente lê com read_doc se precisar. O anexo de um anexo vai sempre por referência.
+          </small>
+          <small v-for="m in issues.docIds" :key="m" class="error">{{ m }}</small>
+          <small v-for="m in issues.docRefs" :key="m" class="error">{{ m }}</small>
         </div>
 
         <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>

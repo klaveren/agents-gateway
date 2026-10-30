@@ -1,4 +1,5 @@
 import { permissionIssues } from './Permission.Policy'
+import { CLI_ARG_PROTOCOLS } from './CliArgument.Policy'
 import { capability, isCapability } from './Capability.Catalog'
 import { EMode } from './enums/EMode.Enum'
 import { SANDBOX_NETWORK, sandboxLevelsOf } from './Sandbox.Policy'
@@ -20,8 +21,6 @@ export const AGENT_NAME_MAX = 80
  * prompt (rules, índice de skills e de documentos).
  */
 export const CLI_PROMPT_MAX_BYTES = 120_000
-/** As lanes que passam o prompt como argumento de linha de comando. */
-const CLI_PROMPT_PROTOCOLS: readonly string[] = [EProvider.CODEX, EProvider.ANTIGRAVITY]
 
 export interface IAgentIssue {
   field: string
@@ -58,10 +57,11 @@ export interface IAgentRules {
    */
   modelEnabled?(providerId: string, modelId: string): boolean
   /**
-   * O servidor MCP existe? (`mcp:<servidor>/…`). Ausente = nenhum servidor cadastrado, e toda referência
-   * a MCP é recusada.
+   * O servidor MCP existe NO ESCOPO do agente (`mcp:<servidor>/…`)? `projectId`: o do agente (ausente = global).
+   * ⛔ O agente de um projeto enxerga os globais e os do projeto dele; o global, só os globais. Ausente = nenhum
+   * servidor cadastrado, e toda referência a MCP é recusada.
    */
-  mcpServerExists?(serverId: string): boolean
+  mcpServerExists?(serverId: string, projectId: string | undefined): boolean
   /** O agente existe? (`agent:<id>`, a quem este pode delegar). Ausente = nenhuma delegação vale. */
   agentExists?(agentId: string): boolean
   /** Problema do prompt para aquele provider (ex.: chaves que o ADK lê como variável). */
@@ -163,7 +163,8 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
     if (isMcpToolRef(tool)) {
       const ref = parseMcpToolRef(tool)
       if (!ref) issue('allowedTools', `invalid MCP tool (use mcp:<server>/<tool> or mcp:<server>/*): ${tool}`)
-      else if (!rules.mcpServerExists?.(ref.server)) issue('allowedTools', `unknown MCP server: ${ref.server}`)
+      else if (!rules.mcpServerExists?.(ref.server, agent.projectId))
+        issue('allowedTools', `unknown MCP server: ${ref.server} (${agent.projectId ? `not global nor in project ${agent.projectId}` : 'not a global server'})`)
       continue
     }
     if (!isNativeTool(tool)) {
@@ -186,7 +187,7 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
   if (!agent.systemPrompt.trim()) issue('systemPrompt', 'required')
   else {
     const bytes = Buffer.byteLength(agent.systemPrompt) + Buffer.byteLength(agent.soul ?? '')
-    const cli = targets.filter((target) => target.protocol && CLI_PROMPT_PROTOCOLS.includes(target.protocol)).map((target) => target.provider)
+    const cli = targets.filter((target) => target.protocol && CLI_ARG_PROTOCOLS.includes(target.protocol)).map((target) => target.provider)
     if (cli.length && bytes > CLI_PROMPT_MAX_BYTES)
       issue(
         'systemPrompt',

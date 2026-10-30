@@ -246,7 +246,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'list_tools',
     {
       description:
-        'Everything an agent can be given in allowedTools: capabilities (`cap:terminal`, `cap:files.read`, `cap:files.write`, `cap:web.search`, `cap:web.fetch`, `cap:todos` — the gateway decides per provider what runs; `runs` says how), other local tools (by name), provider-only SDK extras (`sdk:…`, with risk) and the MCP servers with their tools (`mcp:<server>/<tool>` or `mcp:<server>/*`). Prefer capabilities over the old ids (run_bash, sdk:Read…), which are converted on save.',
+        'Everything an agent can be given in allowedTools: capabilities (`cap:terminal`, `cap:files.read`, `cap:files.write`, `cap:web.search`, `cap:web.fetch`, `cap:todos` — the gateway decides per provider what runs; `runs` says how), other local tools (by name), provider-only SDK extras (`sdk:…`, with risk) and the MCP servers with their tools (`mcp:<server>/<tool>` or `mcp:<server>/*`; a server with `projectId` serves only agents of that project). Prefer capabilities over the old ids (run_bash, sdk:Read…), which are converted on save.',
       annotations: { readOnlyHint: true },
     },
     async () => {
@@ -260,14 +260,15 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
       const servers = await api('GET', '/mcp-servers')
       const mcp = servers.ok
         ? await Promise.all(
-            ((servers.result as Array<{ id: string; name: string; enabled: boolean }>) ?? [])
+            ((servers.result as Array<{ key?: string; id: string; projectId?: string; name: string; enabled: boolean }>) ?? [])
               .filter((entry) => entry.enabled)
               .map(async (entry) => {
-                const listed = await api('GET', `/mcp-servers/${encodeURIComponent(entry.id)}/tools`)
+                const listed = await api('GET', `/mcp-servers/${encodeURIComponent(entry.key ?? entry.id)}/tools`)
                 const names = listed.ok
                   ? ((listed.result as Array<{ name: string; description: string }>) ?? []).map((tool) => ({ ref: `mcp:${entry.id}/${tool.name}`, description: tool.description }))
                   : []
-                return { server: entry.id, name: entry.name, all: `mcp:${entry.id}/*`, tools: names }
+                // `projectId`: o servidor só serve a agente daquele projeto (ausente = global).
+                return { server: entry.id, ...(entry.projectId ? { projectId: entry.projectId } : {}), name: entry.name, all: `mcp:${entry.id}/*`, tools: names }
               }),
           )
         : []
@@ -358,7 +359,11 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
 
   server.registerTool(
     'get_doc',
-    { description: 'One spec or ADR in full, markdown body included.', inputSchema: { id: z.string() }, annotations: { readOnlyHint: true } },
+    {
+      description: 'One spec or ADR in full, markdown body included, with its attachments (docIds, and docRefs: those by reference).',
+      inputSchema: { id: z.string() },
+      annotations: { readOnlyHint: true },
+    },
     async ({ id }) => reply(await api('GET', `/docs/${encodeURIComponent(id)}`)),
   )
 
@@ -608,7 +613,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'save_doc',
     {
       description:
-        'Create or replace a spec, ADR or knowledge study (markdown). The id is a slug (2–64 lowercase letters, digits or hyphens) that agents pass to read_doc; the summary is the one line shown in the conversation index. For an ADR, write the status (Proposed, Accepted…) in the body. Confirm with the person before saving.',
+        'Create or replace a spec, ADR or knowledge study (markdown). The id is a slug (2–64 lowercase letters, digits or hyphens) that agents pass to read_doc; the summary is the one line shown in the conversation index. For an ADR, write the status (Proposed, Accepted…) in the body. A relation to another document (a spec citing a spec, an ADR pointing to a spec) is an attachment, never a path in the text: docIds lists the attached documents (global ones or of the same project; a global document attaches only global ones), which go along in full when this one is read; docRefs, which of them go by reference instead (id, title and size; read with read_doc only if needed). Absent on update = keep. Confirm with the person before saving.',
       inputSchema: {
         id: z.string(),
         kind: z.enum(['spec', 'adr', 'knowledge']),
@@ -616,6 +621,8 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
         title: z.string(),
         summary: z.string(),
         body: z.string().describe('Markdown'),
+        docIds: z.array(z.string()).optional().describe('Other documents attached to this one, in order'),
+        docRefs: z.array(z.string()).optional().describe('Which of docIds go by reference instead of in full'),
       },
     },
     async ({ id, ...doc }) => {
