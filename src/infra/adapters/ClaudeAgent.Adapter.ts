@@ -1,4 +1,4 @@
-import { identityEnv } from '@domain/Agent.Identity'
+import { terminalEnv } from '@domain/Agent.Identity'
 import { sessionChoice } from '@domain/Agent.Policy'
 import { errorPayload } from '@domain/Provider.Failure'
 import { HANDOFF_MAX_CHARS, handoffText } from '@domain/Handoff.Policy'
@@ -233,8 +233,8 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       maxTurns: maxToolTurns(),
       abortController: abort,
       ...(native.started ? { resume: native.sdkSessionId } : { sessionId: native.sdkSessionId }),
-      // A identidade de quem chama vai para o terminal do CLI (o Bash nativo) — ver `Agent.Identity`.
-      ...(env ? { env: { ...env, ...identityEnv(context) } } : {}),
+      // As variáveis do agente e a identidade de quem chama vão para o terminal do CLI (o Bash nativo) — ver `Agent.Identity`.
+      ...(env ? { env: terminalEnv(agent.env, env, context) } : {}),
       // Toda lane num diretório vazio por conversa: o `cwd` do processo é a pasta do gateway (`.env`, banco).
       cwd: workDir,
     }

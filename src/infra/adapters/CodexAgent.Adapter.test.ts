@@ -87,6 +87,22 @@ describe('CodexAgentAdapter', () => {
     }
   })
 
+  it('as variáveis do agente chegam ao shell do Codex; o HOME, o CODEX_HOME e a identidade do gateway vencem', async () => {
+    const calls: ICall[] = []
+    const adapter = new CodexAgentAdapter({ store: new SessionStore(), load: async () => fakeCodex(calls, turnEvents) as never, home: () => '/gw/codex-home' })
+    // Os nomes reservados entram aqui por baixo da regra (agente gravado antes dela): a ordem ainda protege.
+    const maya = { ...agent, env: { GIT_AUTHOR_NAME: 'Maya', GIT_AUTHOR_EMAIL: 'maya@x.test', HOME: '/agente', CODEX_HOME: '/agente', GATEWAY_AGENT_ID: 'impostora' } }
+    const session = await adapter.createSession(maya, { model: 'gpt-6.1-sol' })
+    await collect(adapter.sendMessage(maya, session.id, { text: 'oi' }, { agentId: 'maya', sessionId: session.id }))
+
+    const env = calls[0].options.env
+    assert.strictEqual(env?.GIT_AUTHOR_NAME, 'Maya')
+    assert.strictEqual(env?.GIT_AUTHOR_EMAIL, 'maya@x.test')
+    assert.strictEqual(env?.CODEX_HOME, '/gw/codex-home')
+    assert.strictEqual(env?.HOME, calls[0].thread.workingDirectory)
+    assert.strictEqual(env?.GATEWAY_AGENT_ID, 'maya')
+  })
+
   it('⛔ sempre só leitura, sem rede e sem o terminal do Codex, mesmo com o nível, a rede e a nativa escolhidos', async () => {
     const calls: ICall[] = []
     const open: IAgent = {

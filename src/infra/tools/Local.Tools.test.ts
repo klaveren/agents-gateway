@@ -77,6 +77,25 @@ describe('LocalTools', () => {
     }
   })
 
+  it('as variáveis fixas do agente chegam ao run_bash; a identidade e o HOME do gateway vencem', async () => {
+    let seen: IExecOptions | undefined
+    const tools = makeLocalTools({
+      exec: async (_command, options) => ((seen = options), { stdout: 'ok', stderr: '' }),
+      fetchHtml: async () => '',
+      policy: { ...policy, cwd: '' },
+      agentEnv: (agentId) => (agentId === 'maya' ? { GIT_AUTHOR_NAME: 'Maya', GIT_COMMITTER_EMAIL: 'maya@x.test', HOME: '/agente', GATEWAY_AGENT_ID: 'impostora' } : undefined),
+    })
+    await find(tools, 'run_bash').execute({ command: 'git commit' }, { sessionId: 'conv-1', agentId: 'maya' })
+    assert.strictEqual(seen?.env.GIT_AUTHOR_NAME, 'Maya')
+    assert.strictEqual(seen?.env.GIT_COMMITTER_EMAIL, 'maya@x.test')
+    assert.strictEqual(seen?.env.GATEWAY_AGENT_ID, 'maya')
+    assert.strictEqual(seen?.env.HOME, seen?.cwd)
+
+    // Outro agente não leva as variáveis da Maya.
+    await find(tools, 'run_bash').execute({ command: 'git commit' }, { sessionId: 'conv-2', agentId: 'leo' })
+    assert.strictEqual(seen?.env.GIT_AUTHOR_NAME, undefined)
+  })
+
   it('refuses a destructive command without ever reaching the shell', async () => {
     let called = false
     const tools = toolsWith(async () => {

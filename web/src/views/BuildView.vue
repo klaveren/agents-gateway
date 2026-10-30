@@ -6,7 +6,7 @@ import BuildTabs from '@/components/BuildTabs.vue'
 import ThreadView from '@/components/ThreadView.vue'
 import { api } from '@/lib/api'
 import { BUILD_KINDS, builderAgentId, latestDraft, pendingDraft, type TBuildKind } from '@/lib/builder'
-import { shortTime } from '@/lib/format'
+import { shortTime, sizeHint } from '@/lib/format'
 import { renderMarkdown } from '@/lib/markdown'
 import type { IConversation, IProjectDoc, IResource } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
@@ -416,6 +416,7 @@ function describe(failure: unknown): string {
               class="input font-mono text-[13px]"
               placeholder="Ex.: a descrição é sempre em português; o id começa pelo tema (infra-, api-…)."
             />
+            <small v-if="addenda.global" class="hint">{{ sizeHint(addenda.global, 'em cada conversa do construtor') }}</small>
             <div class="flex items-center gap-3">
               <button
                 :disabled="saving === 'global'"
@@ -435,6 +436,7 @@ function describe(failure: unknown): string {
             <h2 class="font-semibold">Complemento do projeto {{ currentProjectName }}</h2>
             <p class="text-xs text-zinc-500">Vale só neste projeto.</p>
             <textarea v-model="addenda.project" rows="6" class="input font-mono text-[13px]" />
+            <small v-if="addenda.project" class="hint">{{ sizeHint(addenda.project, 'em cada conversa do construtor') }}</small>
             <div class="flex items-center gap-3">
               <button
                 :disabled="saving === 'project'"

@@ -40,6 +40,20 @@ describe('agentIssues', () => {
     ])
   })
 
+  it('env: nome em maiúsculas; recusa os reservados do gateway e os com cara de segredo', () => {
+    const maya = { GIT_AUTHOR_NAME: 'Maya', GIT_AUTHOR_EMAIL: 'maya@x.test', GIT_COMMITTER_NAME: 'Maya', GIT_COMMITTER_EMAIL: 'maya@x.test', _LANG: 'pt_BR' }
+    assert.deepStrictEqual(agentIssues(agent({ env: maya }), rules), [])
+    const messages = (env: Record<string, string>) => agentIssues(agent({ env }), rules).map((issue) => `${issue.field}: ${issue.message}`)
+    assert.deepStrictEqual(messages({ 'git-author': 'x', '1ABC': 'x', lower: 'x', ['A'.repeat(65)]: 'x' }).length, 4, 'nome inválido')
+    for (const name of ['GATEWAY_AGENT_ID', 'GATEWAY_QUALQUER', 'PATH', 'HOME', 'SHELL', 'USER', 'NODE_OPTIONS', 'LD_PRELOAD', 'DYLD_INSERT_LIBRARIES'])
+      assert.deepStrictEqual(messages({ [name]: 'x' }), [`env: ${name}: reserved by the gateway`], name)
+    for (const name of ['OPENAI_API_KEY', 'GH_TOKEN', 'CLIENT_SECRET', 'DB_PASSWORD', 'GOOGLE_APPLICATION_CREDENTIALS'])
+      assert.deepStrictEqual(messages({ [name]: 'x' }), [`env: ${name}: looks like a secret — keep it in Secrets, not in the agent`], name)
+    assert.deepStrictEqual(messages({ GIT_AUTHOR_NAME: 'a\0b' }), ['env: GIT_AUTHOR_NAME: the value cannot have a NUL character'])
+    // `USERNAME` não é `USER`: só o nome exato é reservado.
+    assert.deepStrictEqual(messages({ USERNAME: 'maya' }), [])
+  })
+
   it('⚖️ o tamanho do prompt e da soul é de quem cria; só Codex e Antigravity têm o teto do argumento do Linux', () => {
     const big = 'x'.repeat(200_000)
     assert.deepStrictEqual(agentIssues(agent({ systemPrompt: big, soul: big }), rules), [], 'sem teto do sistema')

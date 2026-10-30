@@ -2,9 +2,22 @@
   import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
   import { useRoute } from 'vue-router'
   import { ApiError } from '@/lib/api'
-  import { effortLabel } from '@/lib/format'
+  import { effortLabel, sizeHint } from '@/lib/format'
   import { BUILD_KINDS, builderAgentId, type TBuildKind } from '@/lib/builder'
-  import { defaultLanes, findOrphans, isUsableProvider, pruneModels, pruneNatives, summarizeIssues, unionLanes, unionLevels } from '@/lib/agentForm'
+  import {
+    defaultLanes,
+    envDuplicates,
+    envRecord,
+    envRows,
+    findOrphans,
+    isUsableProvider,
+    pruneModels,
+    pruneNatives,
+    summarizeIssues,
+    unionLanes,
+    unionLevels,
+    type IEnvRow,
+  } from '@/lib/agentForm'
   import { useProvidersStore } from '@/stores/providers'
   import FallbackChain from './FallbackChain.vue'
   import { useProtocolsStore } from '@/stores/protocols'
@@ -257,6 +270,7 @@
     role: 'Só subagente',
     adminOnly: 'Só administradores',
     projectId: 'Projeto',
+    env: 'Variáveis de ambiente',
   }
 
   // Agente novo nasce no projeto atual (o seletor do trilho); global só se alguém escolher.
@@ -276,6 +290,9 @@
     triggers: [],
   })
   const form = ref<IAgentInput>(blank())
+  /** As variáveis de ambiente do agente, em linhas (o par nome/valor): viram o registro só ao salvar. */
+  const envList = ref<IEnvRow[]>([])
+  const envRepeated = computed(() => envDuplicates(envList.value))
 
   const DIAGNOSTIC_CHECKS: Array<{ key: 'typecheck' | 'lint' | 'format'; label: string }> = [
     { key: 'typecheck', label: 'Tipos (tsc)' },
@@ -358,7 +375,7 @@
     modelos: ['providers', 'models', 'modes', 'reasoningEfforts'],
     ferramentas: ['allowedTools'],
     mcps: [],
-    sdk: [],
+    sdk: ['env'],
     recursos: [],
     contexto: [],
     tamanho: [],
@@ -513,6 +530,7 @@
             fallback: agent.fallback ? { mode: agent.fallback.mode, chain: (agent.fallback.chain ?? []).map((step) => ({ ...step })) } : null,
           }
         : blank()
+      envList.value = envRows(agent?.env)
       issues.value = {}
       failure.value = undefined
       applyDefaultProvider()
@@ -537,18 +555,6 @@
       .slice(0, 48)
   }
 
-  /** O tamanho é de quem cria o agente: a tela só mostra quanto custa (cerca de 4 caracteres por token, a cada turno). */
-  function sizeHint(text: string): string {
-    const tokens = Math.round(text.length / 4)
-    return `${text.length.toLocaleString('pt-BR')} caracteres · cerca de ${tokens < 1000 ? tokens : `${Math.round(tokens / 100) / 10} mil`} tokens a cada turno`
-  }
-
-  /** O trigger custa só quando o agente o carrega. */
-  function triggerSize(text: string): string {
-    const tokens = Math.round(text.length / 4)
-    return `${text.length.toLocaleString('pt-BR')} caracteres · cerca de ${tokens < 1000 ? tokens : `${Math.round(tokens / 100) / 10} mil`} tokens quando carregado`
-  }
-
   /** O que será gravado, em uma linha, para a confirmação do Salvar. */
   const saveSummary = computed(() => {
     const { providers: targets, modes, allowedTools } = form.value
@@ -563,6 +569,12 @@
     saving.value = true
     issues.value = {}
     failure.value = undefined
+    if (envRepeated.value.length) {
+      issues.value = { env: envRepeated.value.map((name) => `${name} aparece mais de uma vez`) }
+      failure.value = 'Corrija as variáveis de ambiente.'
+      saving.value = false
+      return
+    }
     try {
       const input: IAgentInput = {
         ...form.value,
@@ -574,6 +586,8 @@
         // Vazio apaga todos.
         triggers: form.value.triggers ?? [],
         diagnostics: form.value.diagnostics?.typecheck || form.value.diagnostics?.lint || form.value.diagnostics?.format ? form.value.diagnostics : null,
+        // Nenhuma apaga todas.
+        env: envRecord(envList.value),
         // `global` é o padrão: vai como `null`.
         fallback: form.value.fallback && form.value.fallback.mode !== 'global' ? form.value.fallback : null,
       }
@@ -683,7 +697,7 @@
           class="input scroll-thin text-[13px] leading-relaxed"
           placeholder="Você é a Íris: gentil, direta, explica sem jargão e admite quando não sabe."
         />
-        <small v-if="form.soul" class="hint">{{ sizeHint(form.soul) }}</small>
+        <small v-if="form.soul" class="hint">{{ sizeHint(form.soul, 'a cada turno') }}</small>
         <small v-for="message in issues.soul" :key="message" class="error">{{ message }}</small>
       </label>
       <label class="field sm:col-span-2">
@@ -692,7 +706,7 @@
           <em class="font-normal text-zinc-500">— o que o agente faz: função, regras, como usar as ferramentas</em>
         </span>
         <textarea v-model="form.systemPrompt" required rows="10" class="input scroll-thin font-mono text-[13px] leading-relaxed" placeholder="Você é o agente…" />
-        <small v-if="form.systemPrompt" class="hint">{{ sizeHint(form.systemPrompt) }}</small>
+        <small v-if="form.systemPrompt" class="hint">{{ sizeHint(form.systemPrompt, 'a cada turno') }}</small>
         <small v-if="anyGoogle" class="hint">Com Gemini, evite {chaves} no texto: viram variáveis e dão erro.</small>
         <small v-for="message in issues.systemPrompt" :key="message" class="error">{{ message }}</small>
       </label>
@@ -733,7 +747,7 @@
           placeholder="O procedimento: o que fazer, passo a passo."
           aria-label="Procedimento"
         />
-        <small v-if="trigger.body" class="hint">{{ triggerSize(trigger.body) }}</small>
+        <small v-if="trigger.body" class="hint">{{ sizeHint(trigger.body, 'quando carregado') }}</small>
       </div>
       <p v-if="!form.triggers?.length" class="text-sm text-zinc-500">
         Nenhum trigger. Um trigger é um subcomando do agente: o "quando usar" vai no índice do prompt, e o procedimento só quando precisa.
@@ -1032,6 +1046,21 @@
             />
           </label>
         </div>
+      </div>
+      <div class="flex flex-col gap-2">
+        <h3 class="text-sm font-medium text-zinc-200">Variáveis de ambiente</h3>
+        <p class="text-xs text-zinc-500">
+          Fixas, em todo terminal deste agente — o dele e o dos CLIs. Para a autoria do git (GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL…), idioma, região. Segredo não mora aqui: use
+          Segredos ou as contas do projeto. O que o gateway monta (HOME, PATH, a identidade) vence.
+        </p>
+        <div v-for="(row, index) in envList" :key="index" class="flex flex-wrap items-center gap-2">
+          <input v-model="row.name" class="input w-56 font-mono text-xs" placeholder="GIT_AUTHOR_NAME" :aria-label="`Nome da variável ${index + 1}`" />
+          <input v-model="row.value" class="input min-w-0 flex-1 font-mono text-xs" placeholder="valor" :aria-label="`Valor da variável ${index + 1}`" />
+          <button type="button" class="btn btn-sm btn-danger" @click="envList.splice(index, 1)">Remover</button>
+        </div>
+        <button type="button" class="btn btn-sm btn-ghost self-start" @click="envList.push({ name: '', value: '' })">+ Variável</button>
+        <small v-for="name in envRepeated" :key="`dup-${name}`" class="error">{{ name }} aparece mais de uma vez</small>
+        <small v-for="message in issues.env" :key="message" class="error">{{ message }}</small>
       </div>
       <div class="flex flex-col gap-2">
         <h3 class="text-sm font-medium text-zinc-200">Diagnóstico depois de editar</h3>

@@ -38,4 +38,3 @@ export const DOC_INDEX_LIMIT = 30
 export const DOC_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,63}$/
 export const DOC_TITLE_MAX = 160
 export const DOC_SUMMARY_MAX = 300
-export const DOC_BODY_MAX = 200_000

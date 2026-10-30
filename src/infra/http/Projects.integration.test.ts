@@ -383,6 +383,20 @@ describe('Projetos (integração)', () => {
     )
   })
 
+  it('⚖️ o conteúdo não tem teto: rule, documento, skill e complemento de 300 KB passam pela rota e voltam inteiros', async () => {
+    const big = 'x'.repeat(300_000)
+    const rule = await call(ADMIN, 'POST', '/rules', { title: 'Grande', body: big })
+    assert.strictEqual(rule.status, 201)
+    assert.strictEqual((await call(ADMIN, 'GET', '/rules')).body.result.find((item: { id: string }) => item.id === rule.body.result.id).body, big)
+    assert.strictEqual((await call(ADMIN, 'POST', '/docs', { id: 'enorme', kind: 'spec', title: 'Enorme', summary: 'grande', body: big })).status, 201)
+    assert.strictEqual((await call(ADMIN, 'GET', '/docs/enorme')).body.result.body, big)
+    assert.strictEqual((await call(ADMIN, 'POST', '/resources', { id: 'longa', kind: 'skill', description: 'Uma skill longa', body: big })).status, 201)
+    assert.strictEqual((await call(ADMIN, 'GET', '/resources/longa')).body.result.body, big)
+    assert.strictEqual((await call(ADMIN, 'PUT', '/protocols/skill/addendum', { body: big })).body.result.addenda.global.body, big)
+    // ⛔ O corpo grande é só das rotas de conteúdo: o resto continua com o teto pequeno.
+    assert.strictEqual((await call(ADMIN, 'POST', '/projects', { id: 'grande', name: 'Grande', description: big })).status, 413)
+  })
+
   it('⛔ o protocolo é do admin: o do core e o complemento por escopo; para o membro, 404', async () => {
     const core = await call(ADMIN, 'GET', '/protocols/skill?project=alfa')
     assert.strictEqual(core.status, 200)

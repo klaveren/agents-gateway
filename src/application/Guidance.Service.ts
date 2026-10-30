@@ -2,24 +2,12 @@ import { randomUUID } from 'node:crypto'
 import { builderKindOf, PROTOCOLS } from '@domain/Builder.Agents'
 import { estimateTokens } from '@domain/Token.Estimate'
 import { AgentNotFoundError, GuidanceNotFoundError, InvalidGuidanceError, ProjectNotFoundError } from '@domain/errors/Domain.Error'
-import {
-  DOC_BODY_MAX,
-  DOC_ID_PATTERN,
-  DOC_INDEX_LIMIT,
-  DOC_KINDS,
-  DOC_SUMMARY_MAX,
-  DOC_TITLE_MAX,
-  IProjectDoc,
-  READ_DOC_TOOL,
-  SEARCH_DOCS_TOOL,
-  TDocKind,
-} from '@domain/models/ProjectDoc.Model'
+import { DOC_ID_PATTERN, DOC_INDEX_LIMIT, DOC_KINDS, DOC_SUMMARY_MAX, DOC_TITLE_MAX, IProjectDoc, READ_DOC_TOOL, SEARCH_DOCS_TOOL, TDocKind } from '@domain/models/ProjectDoc.Model'
 import {
   ALL_RESOURCES,
   IAgentResources,
   NO_RESOURCES,
   IResource,
-  RESOURCE_BODY_MAX,
   RESOURCE_DESCRIPTION_MAX,
   RESOURCE_ID_PATTERN,
   RESOURCE_KINDS,
@@ -27,8 +15,8 @@ import {
   TUsableKind,
   USE_RESOURCE_TOOL,
 } from '@domain/models/Resource.Model'
-import { IBuilderDraft, IProtocolAddendum, IProtocolView, PROTOCOL_ADDENDUM_MAX, PROTOCOL_KINDS, TProtocolKind } from '@domain/models/Protocol.Model'
-import { IRule, RULE_BODY_MAX, RULE_TITLE_MAX } from '@domain/models/Rule.Model'
+import { IBuilderDraft, IProtocolAddendum, IProtocolView, PROTOCOL_KINDS, TProtocolKind } from '@domain/models/Protocol.Model'
+import { IRule, RULE_TITLE_MAX } from '@domain/models/Rule.Model'
 import { IDocHit, IGuidanceRepository, TGuidanceScope } from '@domain/ports/GuidanceRepository.Port'
 
 type TIssues = Array<{ field: string; message: string }>
@@ -462,8 +450,7 @@ export class GuidanceService {
   setProtocolAddendum(kind: TProtocolKind, projectId: string | null, body: string, by: string): IProtocolView {
     this.requireKind(kind)
     const text = body.trim()
-    const issues: TIssues = text.length > PROTOCOL_ADDENDUM_MAX ? [{ field: 'body', message: `at most ${PROTOCOL_ADDENDUM_MAX} characters` }] : []
-    this.check(issues, projectId ?? undefined)
+    this.check([], projectId ?? undefined)
     const addendum: IProtocolAddendum | undefined = text ? { kind, ...(projectId ? { projectId } : {}), body: text, updatedAt: this.now(), updatedBy: by } : undefined
     this.repository.setProtocolAddendum(kind, projectId, addendum)
     return this.protocol(kind, projectId ?? undefined)
@@ -861,7 +848,6 @@ export class GuidanceService {
     if (!resource.description) issues.push({ field: 'description', message: 'required: it is what the agent reads to know when to use it' })
     else if (resource.description.length > RESOURCE_DESCRIPTION_MAX) issues.push({ field: 'description', message: `at most ${RESOURCE_DESCRIPTION_MAX} characters` })
     if (!resource.body.trim()) issues.push({ field: 'body', message: 'required' })
-    else if (resource.body.length > RESOURCE_BODY_MAX) issues.push({ field: 'body', message: `at most ${RESOURCE_BODY_MAX} characters` })
     for (const id of resource.docIds) {
       const doc = this.repository.doc(id)
       if (!doc) issues.push({ field: 'docIds', message: `no such document: ${id}` })
@@ -927,12 +913,15 @@ const EXISTING_LABEL: Readonly<Record<TProtocolKind, string>> = {
   agent: 'agentes',
 }
 
+/**
+ * ⚖️ O CORPO NÃO TEM TETO (rule, documento, skill/command, complemento de protocolo): o tamanho é de quem escreve, e a
+ * tela mostra quanto pesa em tokens. Título, resumo e descrição têm, porque são uma linha de índice ou de lista.
+ */
 function ruleIssues(rule: IRule): TIssues {
   const issues: TIssues = []
   if (!rule.title) issues.push({ field: 'title', message: 'required' })
   else if (rule.title.length > RULE_TITLE_MAX) issues.push({ field: 'title', message: `at most ${RULE_TITLE_MAX} characters` })
   if (!rule.body) issues.push({ field: 'body', message: 'required' })
-  else if (rule.body.length > RULE_BODY_MAX) issues.push({ field: 'body', message: `at most ${RULE_BODY_MAX} characters` })
   return issues
 }
 
@@ -943,7 +932,6 @@ function docIssues(doc: IProjectDoc): TIssues {
   else if (doc.title.length > DOC_TITLE_MAX) issues.push({ field: 'title', message: `at most ${DOC_TITLE_MAX} characters` })
   if (doc.summary.length > DOC_SUMMARY_MAX) issues.push({ field: 'summary', message: `at most ${DOC_SUMMARY_MAX} characters` })
   if (!doc.body.trim()) issues.push({ field: 'body', message: 'required' })
-  else if (doc.body.length > DOC_BODY_MAX) issues.push({ field: 'body', message: `at most ${DOC_BODY_MAX} characters` })
   return issues
 }
 

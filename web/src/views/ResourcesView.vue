@@ -7,6 +7,7 @@ import MasterDetail from '@/components/MasterDetail.vue'
 import BuildTabs from '@/components/BuildTabs.vue'
 import { pendingDraft } from '@/lib/builder'
 import { api, ApiError } from '@/lib/api'
+import { sizeHint } from '@/lib/format'
 import { attachedRefs, docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId, setAttachMode, type TAttachMode } from '@/lib/guidance'
 import { renderMarkdown } from '@/lib/markdown'
 import type { IProjectDoc, IResource, TResourceKind } from '@/lib/types'
@@ -279,6 +280,7 @@ function describe(failure: unknown): string {
           <!-- eslint-disable-next-line vue/no-v-html -- renderMarkdown escapa antes de marcar -->
           <div v-else class="prose-agent min-h-[14rem] rounded-xl border border-zinc-800 p-4 text-sm break-words" v-html="renderMarkdown(form.body)" />
           <small class="hint">{{ info.bodyHint }}</small>
+          <small v-if="form.body" class="hint">{{ sizeHint(form.body, kind === 'command' ? 'quando usado' : 'quando carregada') }}</small>
           <small v-for="m in issues.body" :key="m" class="error">{{ m }}</small>
         </div>
 

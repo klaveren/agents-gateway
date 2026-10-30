@@ -76,6 +76,19 @@ describe('GuidanceService', () => {
     )
   })
 
+  it('⚖️ o corpo não tem teto: rule, documento, skill e complemento de 300 KB são aceitos e voltam inteiros do banco', () => {
+    const service = build()
+    const big = 'x'.repeat(300_000)
+    const created = service.createRule({ title: 'grande', body: big }, 'root')
+    assert.strictEqual(service.rule(created.id).body, big)
+    service.createDoc({ ...doc('enorme'), body: big }, 'root')
+    assert.strictEqual(service.doc('enorme').body, big)
+    service.createResource({ id: 'longa', kind: 'skill', description: 'Uma skill longa', body: big }, 'root')
+    assert.strictEqual(service.resource('longa').body, big)
+    service.setProtocolAddendum('skill', null, big, 'root')
+    assert.strictEqual(service.protocol('skill').addenda.global?.body, big)
+  })
+
   it('o prompt: rules ligadas (globais e depois as do projeto) e o índice de documentos; nada cadastrado, nada', () => {
     const service = build()
     assert.strictEqual(service.environmentFor('xpto'), undefined)

@@ -181,6 +181,7 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
   }
 
   for (const item of triggerIssues(agent.triggers)) issue(item.field, item.message)
+  for (const item of envIssues(agent.env)) issue(item.field, item.message)
 
   if (!agent.systemPrompt.trim()) issue('systemPrompt', 'required')
   else {
@@ -211,6 +212,31 @@ export function triggerIssues(triggers: readonly IAgentTrigger[] | undefined): I
     if (!trigger.when?.trim()) issue(`${trigger.id}: when is required (one line: when to use it)`)
     else if (/\n/.test(trigger.when.trim())) issue(`${trigger.id}: when is one line`)
     if (!trigger.body?.trim()) issue(`${trigger.id}: body is required`)
+  }
+  return issues
+}
+
+/** O nome de uma variável do agente: maiúsculas, dígitos e `_`, como as do MCP e das contas do projeto. */
+export const AGENT_ENV_NAME = /^[A-Z_][A-Z0-9_]{0,63}$/
+/**
+ * ⛔ Nomes que o agente não fixa: a identidade do gateway (`GATEWAY_*`, ver `Agent.Identity`) e os que mudam onde o
+ * terminal procura e executa (HOME, PATH, o shell, o carregador do sistema, o Node).
+ */
+const RESERVED_AGENT_ENV = /^(PATH|HOME|SHELL|USER|NODE_OPTIONS)$|^(GATEWAY_|LD_|DYLD_)/
+/** ⛔ Nome com cara de segredo: a config do agente aparece na tela e no banco em claro — segredo mora em Segredos. */
+const SECRET_LIKE_ENV = /KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL/
+
+/** O que está errado nas variáveis de ambiente de um agente: o nome, os reservados, os com cara de segredo, o valor. */
+export function envIssues(env: Readonly<Record<string, string>> | undefined): IAgentIssue[] {
+  const issues: IAgentIssue[] = []
+  const issue = (message: string) => issues.push({ field: 'env', message })
+  for (const [name, value] of Object.entries(env ?? {})) {
+    if (!AGENT_ENV_NAME.test(name)) issue(`${name}: uppercase letters, digits and _, starting with a letter or _ (up to 64)`)
+    else if (RESERVED_AGENT_ENV.test(name)) issue(`${name}: reserved by the gateway`)
+    else if (SECRET_LIKE_ENV.test(name)) issue(`${name}: looks like a secret — keep it in Secrets, not in the agent`)
+    // O processo não nasce com um NUL no ambiente (o `spawn` recusa): o comando falharia em todo turno.
+    if (typeof value !== 'string') issue(`${name}: the value must be text`)
+    else if (value.includes('\0')) issue(`${name}: the value cannot have a NUL character`)
   }
   return issues
 }

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { ApiError } from '@/lib/api'
-import { fullTime } from '@/lib/format'
+import { fullTime, sizeHint } from '@/lib/format'
 import type { IAgentHook, IHookDelivery, THookInput } from '@/lib/types'
 import { useHooksStore } from '@/stores/hooks'
 import ConfirmDialog from './ConfirmDialog.vue'
@@ -202,6 +202,7 @@ const STATUS: Record<IHookDelivery['status'], { label: string; tone: string }> =
         Instrução
         <textarea v-model="draft.prompt" rows="5" class="input text-sm" placeholder="Um push chegou. Revise o que mudou e me diga se algo quebra o deploy." />
         <small class="hint">O que o agente faz quando o evento chega. Os dados do evento seguem junto.</small>
+        <small v-if="draft.prompt" class="hint">{{ sizeHint(draft.prompt, 'a cada evento') }}</small>
         <small v-for="m in issues.prompt" :key="m" class="error">{{ m }}</small>
       </label>
       <div class="field">

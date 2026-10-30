@@ -32,8 +32,6 @@ export interface IProtocolView {
   addenda: { global?: IProtocolAddendum; project?: IProtocolAddendum }
 }
 
-export const PROTOCOL_ADDENDUM_MAX = 20_000
-
 /**
  * O rascunho que o construtor entrega (`propose_draft`): ainda não é registro. Os campos valem conforme o tipo — rule:
  * título e corpo; spec/ADR: id, título, resumo e corpo; skill/command: id, descrição, corpo e documentos anexados.
