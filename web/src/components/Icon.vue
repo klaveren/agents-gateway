@@ -1,11 +1,12 @@
 <script setup lang="ts">
 /** Ícones de traço (24×24), desenhados inline: nenhuma dependência para meia dúzia de símbolos. */
-defineProps<{ name: 'inbox' | 'agents' | 'settings' | 'plus' | 'search' | 'send' | 'stop' | 'clip' | 'back' | 'share' | 'trash' | 'copy' | 'bolt' | 'check' | 'x' | 'refresh' | 'users' | 'logout' | 'key' | 'chart' | 'user' | 'plug' | 'box' | 'rule' | 'doc' | 'slash' | 'folder' | 'clock' }>()
+defineProps<{ name: 'inbox' | 'agents' | 'settings' | 'plus' | 'search' | 'send' | 'stop' | 'clip' | 'back' | 'share' | 'trash' | 'copy' | 'bolt' | 'check' | 'x' | 'refresh' | 'users' | 'logout' | 'key' | 'chart' | 'user' | 'plug' | 'box' | 'rule' | 'doc' | 'slash' | 'folder' | 'clock' | 'git' }>()
 </script>
 
 <template>
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     <template v-if="name === 'inbox'"><path d="M4 13h4l1.5 3h5L16 13h4" /><path d="M5.5 5h13L21 13v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5z" /></template>
+    <template v-else-if="name === 'git'"><circle cx="6" cy="6" r="2.2" /><circle cx="6" cy="18" r="2.2" /><circle cx="18" cy="8" r="2.2" /><path d="M6 8.2v7.6M18 10.2c0 4-6 3.5-11 6.3" /></template>
     <template v-else-if="name === 'clock'"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></template>
     <template v-else-if="name === 'folder'"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></template>
     <template v-else-if="name === 'slash'"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M14 8l-4 8" /></template>

@@ -2495,6 +2495,25 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/sessions/{id}/changes': {
+      get: {
+        summary:
+          'What the agent changed, like an IDE: the files (status, +/-, binary, protected) and commits of a scope, or of one commit; with `file`, that file diff. Only for a conversation opened in a repository',
+        description:
+          'Scopes: `conversation` (since the commit the conversation started on, committed and not), `uncommitted` (vs HEAD), `branch` (vs the merge base with origin/HEAD, main, master or automation). Read-only git with no external diff, textconv or fsmonitor. Secrets (`.env`, keys) are listed without content.',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'scope', in: 'query', schema: { type: 'string', enum: ['conversation', 'uncommitted', 'branch'] } },
+          { name: 'commit', in: 'query', schema: { type: 'string' } },
+          { name: 'file', in: 'query', schema: { type: 'string' }, description: 'A path from the files of the same scope' },
+        ],
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', additionalProperties: true })) },
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
     '/sessions/{id}/turns/{turn}': {
       get: {
         summary: 'The state of a turn: running (with the text so far) or finished (ok, error, aborted)',

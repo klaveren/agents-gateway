@@ -43,7 +43,8 @@ import { caller as currentCaller } from '@infra/mcp/Caller.Identity'
 import { GuidanceService } from '@application/Guidance.Service'
 import { IDockerStatus } from '@infra/sandbox/Docker.Sandbox'
 import { IProjectSandbox } from '@infra/sandbox/Project.Sandbox'
-import { CALLBACK_METADATA_KEY, PROJECT_METADATA_KEY, REPOSITORY_METADATA_KEY, WORKTREE_METADATA_KEY } from '@domain/Session.Metadata'
+import { CALLBACK_METADATA_KEY, PROJECT_METADATA_KEY, REPOSITORY_METADATA_KEY, START_COMMIT_METADATA_KEY, WORKTREE_METADATA_KEY } from '@domain/Session.Metadata'
+import { CHANGE_SCOPES, changesOf, fileDiff, headOf, TChangeScope } from '@infra/workspace/Git.Changes'
 import { currentBranch, IWorkFolder, resolveWorkFolder, WorkFolderError } from '@infra/workspace/Work.Folder'
 import { deliverCallback } from './Turn.Callbacks'
 import { BUILDER_METADATA_KEY, builderKindOf, CORE_AGENT_IDS } from '@domain/Builder.Agents'
@@ -182,6 +183,7 @@ export class AgentController {
     this.sendMessage = this.sendMessage.bind(this)
     this.startTurn = this.startTurn.bind(this)
     this.turnStatus = this.turnStatus.bind(this)
+    this.changes = this.changes.bind(this)
     this.cancelSession = this.cancelSession.bind(this)
     this.reconfigureSession = this.reconfigureSession.bind(this)
     this.guardCaller = this.guardCaller.bind(this)
@@ -745,6 +747,7 @@ export class AgentController {
         const { projectId: requested, repository, worktree, callbackUrl, ...session } = body
         const project = await this.sessionProject({ userId: resolved.identity?.id, admin: adminAccess }, body.agentId, requested)
         const place = await this.workPlace(body.agentId, project, repository, worktree)
+        const startCommit = place ? await headOf(place.dir) : undefined
         if (callbackUrl && !this.usecases.callbackAllowed?.(callbackUrl))
           throw new HttpError(422, 'validation_error', 'Request body is invalid', [{ field: 'callbackUrl', message: 'host not in TURN_CALLBACK_HOSTS' }])
         // ⛔ A marca de construção também é só do servidor: vem do agente, nunca do corpo (esconderia a conversa da caixa).
@@ -757,6 +760,7 @@ export class AgentController {
           ...(building ? { [BUILDER_METADATA_KEY]: building } : {}),
           ...(place?.repository ? { [REPOSITORY_METADATA_KEY]: place.repository } : {}),
           ...(place?.worktree ? { [WORKTREE_METADATA_KEY]: place.worktree } : {}),
+          ...(startCommit ? { [START_COMMIT_METADATA_KEY]: startCommit } : {}),
           ...(callbackUrl ? { [CALLBACK_METADATA_KEY]: callbackUrl } : {}),
         }
         return this.usecases.createSession.execute({ ...session, metadata: stamped, adminAccess })
@@ -1256,6 +1260,49 @@ export class AgentController {
       },
       { status: 202, message: 'Turn started' },
     )
+  }
+
+  /**
+   * `GET /sessions/:id/changes` — ⛔ O QUE O AGENTE MUDOU, como nas IDEs: os arquivos e os commits do recorte (`scope`:
+   * nesta conversa, não commitado, o branch inteiro) ou de um `commit`; com `file`, o diff daquele arquivo. Só numa
+   * conversa aberta num repositório, para o dono dela; git só de leitura (ver `Git.Changes`).
+   */
+  async changes(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const sessionId = req.params.id as string
+      await this.requireOwnedSession(sessionId, { resume: true })
+      const session = await this.usecases.getSession.execute(sessionId)
+      const metadata = session.metadata
+      const repository = metadata?.[REPOSITORY_METADATA_KEY]
+      const projectId = metadata?.[PROJECT_METADATA_KEY]
+      if (typeof repository !== 'string' || typeof projectId !== 'string' || !this.usecases.projects?.exists(projectId))
+        throw new HttpError(404, 'not_found', 'Esta conversa não foi aberta num repositório')
+      const worktree = typeof metadata?.[WORKTREE_METADATA_KEY] === 'string' ? (metadata[WORKTREE_METADATA_KEY] as string) : undefined
+      let dir: string
+      try {
+        dir = resolveWorkFolder(this.usecases.projects.folderOf(projectId), repository, worktree).dir
+      } catch (error: unknown) {
+        throw new HttpError(404, 'not_found', error instanceof Error ? error.message : String(error))
+      }
+      const scope = String(req.query.scope ?? 'conversation') as TChangeScope
+      if (!CHANGE_SCOPES.includes(scope)) throw new HttpError(422, 'validation_error', `scope: one of ${CHANGE_SCOPES.join(', ')}`)
+      const commit = typeof req.query.commit === 'string' && /^[0-9a-f]{7,40}$/i.test(req.query.commit) ? req.query.commit : undefined
+      if (req.query.commit !== undefined && !commit) throw new HttpError(422, 'validation_error', 'commit: a commit sha')
+      const startCommit = typeof metadata?.[START_COMMIT_METADATA_KEY] === 'string' ? (metadata[START_COMMIT_METADATA_KEY] as string) : undefined
+      let changes
+      try {
+        changes = await changesOf(dir, scope, { ...(startCommit ? { startCommit } : {}), ...(commit ? { commit } : {}) })
+      } catch (error: unknown) {
+        throw new HttpError(422, 'validation_error', error instanceof Error ? error.message : String(error))
+      }
+      const file = typeof req.query.file === 'string' ? req.query.file : undefined
+      if (!file) return changes
+      try {
+        return { file, ...(await fileDiff(dir, changes, file)) }
+      } catch (error: unknown) {
+        throw new HttpError(404, 'not_found', error instanceof Error ? error.message : String(error))
+      }
+    })
   }
 
   /** `GET /sessions/:id/turns/:turn` — o estado de um turno: rodando (com o que já saiu) ou terminado (o gravado). */

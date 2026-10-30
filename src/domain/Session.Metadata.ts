@@ -9,6 +9,8 @@ export const PROJECT_METADATA_KEY = 'project'
 /** O repositório e a worktree em que a conversa trabalha (ver `Work.Folder`): o servidor confere e grava. */
 export const REPOSITORY_METADATA_KEY = 'repository'
 export const WORKTREE_METADATA_KEY = 'worktree'
+/** O HEAD da pasta quando a conversa nasceu: o começo do recorte "nesta conversa" (ver `Git.Changes`). */
+export const START_COMMIT_METADATA_KEY = 'startCommit'
 /** Para onde vai o aviso de fim de cada turno (ver `Turn.Callbacks`). */
 export const CALLBACK_METADATA_KEY = 'callbackUrl'
 export const RESERVED_METADATA_KEYS: readonly string[] = [
@@ -20,6 +22,7 @@ export const RESERVED_METADATA_KEYS: readonly string[] = [
   PROJECT_METADATA_KEY,
   REPOSITORY_METADATA_KEY,
   WORKTREE_METADATA_KEY,
+  START_COMMIT_METADATA_KEY,
   CALLBACK_METADATA_KEY,
 ]
 
