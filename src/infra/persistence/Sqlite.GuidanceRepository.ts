@@ -57,6 +57,7 @@ const SCHEMA = `
     description TEXT NOT NULL,
     body        TEXT NOT NULL,
     doc_ids     TEXT NOT NULL DEFAULT '[]',
+    doc_refs    TEXT NOT NULL DEFAULT '[]',
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL,
     updated_by  TEXT
@@ -83,6 +84,12 @@ const SCHEMA = `
     PRIMARY KEY (kind, project_id)
   );
 `
+
+/**
+ * As colunas que chegaram depois da tabela: o `CREATE TABLE IF NOT EXISTS` não mexe num arquivo antigo, e o SQLite não
+ * tem `ADD COLUMN IF NOT EXISTS` — daí a checagem em `PRAGMA table_info`. O padrão de cada uma é o comportamento de antes.
+ */
+const ADDED_COLUMNS: ReadonlyArray<{ table: string; column: string; definition: string }> = [{ table: 'resources', column: 'doc_refs', definition: "TEXT NOT NULL DEFAULT '[]'" }]
 
 type TRow = Record<string, unknown>
 
@@ -114,6 +121,10 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
     this.db = new DatabaseSync(path)
     this.db.exec('PRAGMA journal_mode = WAL')
     this.db.exec(SCHEMA)
+    for (const { table, column, definition } of ADDED_COLUMNS) {
+      const existing = this.db.prepare(`PRAGMA table_info(${table})`).all() as TRow[]
+      if (!existing.some((row) => row.name === column)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+    }
     this.reindexIfStale()
   }
 
@@ -225,7 +236,7 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
     this.db.prepare('DELETE FROM agent_context_docs WHERE doc_id = ?').run(id)
     // O documento sai dos recursos que o anexavam.
     for (const resource of this.allResources().filter((item) => item.docIds.includes(id)))
-      this.saveResource({ ...resource, docIds: resource.docIds.filter((docId) => docId !== id) })
+      this.saveResource({ ...resource, docIds: resource.docIds.filter((docId) => docId !== id), docRefs: (resource.docRefs ?? []).filter((docId) => docId !== id) })
     this.db.prepare('DELETE FROM docs_fts WHERE id = ?').run(id)
     return this.db.prepare('DELETE FROM project_docs WHERE id = ?').run(id).changes > 0
   }
@@ -272,9 +283,9 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
   saveResource(resource: IResource): void {
     this.db
       .prepare(
-        `INSERT INTO resources (id, kind, project_id, description, body, doc_ids, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO resources (id, kind, project_id, description, body, doc_ids, doc_refs, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, project_id = excluded.project_id, description = excluded.description, body = excluded.body,
-           doc_ids = excluded.doc_ids, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+           doc_ids = excluded.doc_ids, doc_refs = excluded.doc_refs, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
       )
       .run(
         resource.id,
@@ -283,6 +294,7 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
         resource.description,
         resource.body,
         JSON.stringify(resource.docIds),
+        JSON.stringify(resource.docRefs ?? []),
         resource.createdAt.toISOString(),
         resource.updatedAt.toISOString(),
         resource.updatedBy ?? null,
@@ -427,12 +439,8 @@ function toDoc(row: TRow): IProjectDoc {
 }
 
 function toResource(row: TRow): IResource {
-  let docIds: string[]
-  try {
-    docIds = JSON.parse(String(row.doc_ids ?? '[]')) as string[]
-  } catch {
-    docIds = []
-  }
+  const docIds = idList(row.doc_ids)
+  const docRefs = idList(row.doc_refs).filter((id) => docIds.includes(id))
   return {
     id: row.id as string,
     kind: row.kind as TResourceKind,
@@ -440,8 +448,19 @@ function toResource(row: TRow): IResource {
     description: row.description as string,
     body: row.body as string,
     docIds,
+    ...(docRefs.length ? { docRefs } : {}),
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
     ...(row.updated_by ? { updatedBy: row.updated_by as string } : {}),
+  }
+}
+
+/** Uma lista de ids gravada em JSON; o que não for lista de texto vale vazio. */
+function idList(raw: unknown): string[] {
+  try {
+    const value: unknown = JSON.parse(String(raw ?? '[]'))
+    return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : []
+  } catch {
+    return []
   }
 }

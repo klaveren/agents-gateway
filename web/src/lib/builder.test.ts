@@ -22,10 +22,16 @@ describe('latestDraft', () => {
       description: 'Revisa',
       body: 'passos',
       docIds: ['api'],
+      docRefs: [],
       global: true,
       initialContext: [],
       saved: false,
     })
+  })
+
+  it('skill: os anexos por referência, só entre os anexados', () => {
+    const call = { tool: 'propose_draft', args: { id: 'contrato', description: 'd', body: 'b', docIds: ['api', 'dados'], docRefs: ['dados', 'sumiu'] } }
+    expect(latestDraft([turn(0, [call])])).toMatchObject({ docIds: ['api', 'dados'], docRefs: ['dados'] })
   })
 
   it('os campos de doc e de rule; gravado = um save que deu certo DEPOIS do último rascunho', () => {

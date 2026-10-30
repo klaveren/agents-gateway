@@ -27,6 +27,7 @@ const resourceSchema = z.object({
   description: z.string().max(1_000).optional(),
   body: z.string().optional(),
   docIds: z.array(z.string().max(80)).max(50).optional(),
+  docRefs: z.array(z.string().max(80)).max(50).optional(),
 })
 const addendumSchema = z.object({ projectId: project, body: z.string() })
 const agentResourcesSchema = z.object({ skills: z.array(z.string().max(80)).max(200).optional(), commands: z.array(z.string().max(80)).max(200).optional() })
