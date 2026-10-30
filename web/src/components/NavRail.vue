@@ -26,7 +26,7 @@
     if (name.startsWith('mcp')) return 'mcp'
     if (name === 'user' || name.startsWith('user-')) return 'users'
     if (name === 'rules' || name.startsWith('rule-')) return 'rules'
-    if (name === 'environment' || name === 'schedules' || name === 'permissions' || name === 'accounts') return name
+    if (name === 'environment' || name === 'schedules' || name === 'permissions' || name === 'accounts' || name === 'import') return name
     if (name.startsWith('spec')) return 'specs'
     if (name.startsWith('skill')) return 'skills'
     if (name.startsWith('command')) return 'commands'
