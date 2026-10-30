@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
-import { forBubblewrap, ProjectSandbox, projectPathIssue, writeFolders } from './Project.Sandbox'
+import { forBubblewrap, localForwards, ProjectSandbox, projectPathIssue, writeFolders } from './Project.Sandbox'
 
 describe('ProjectSandbox', () => {
   const root = mkdtempSync(join(tmpdir(), 'gw-sandbox-test-'))
@@ -121,5 +121,13 @@ describe('writeFolders — as pastas de escrita criadas antes do comando', () =>
       writeAllow: ['/w/p/.home', '/w/p/notas/**', '/w/p/apps/legado/**', '/w/p/**/*.txt', '/w/p/**', '/w/outro/**', '/w/p/../fora/**', '/w/p/src/*/gen/**'],
     }
     assert.deepStrictEqual(writeFolders(plan, '/w/p'), ['/w/p/notas', '/w/p/apps/legado'])
+  })
+
+  it('⛔ serviços locais no Linux: um socat por porta liberada, pelo portão, com o token do comando', () => {
+    const line = localForwards([27017, 27017, 6379, 0, 70000], 'tok123', 3128)
+    assert.strictEqual(line.match(/socat /g)?.length, 2)
+    assert.match(line, /socat TCP-LISTEN:27017,bind=127\.0\.0\.1,reuseaddr,fork PROXY:127\.0\.0\.1:localhost:27017,proxyport=3128,proxyauth=tok123:x/)
+    assert.match(line, /trap 'kill \$\(jobs -p\) 2>\/dev\/null' EXIT/)
+    assert.strictEqual(localForwards([], 't', 3128), '')
   })
 })

@@ -20,14 +20,20 @@ export type TNetworkDecide = (host: string, port: number) => INetworkVerdict
  * Cada comando recebe um TOKEN aleatório (no `HTTPS_PROXY` dele); cada conexão chega com o token e é decidida pelas
  * regras do agente daquele comando — o runtime do cerco só sabe aplicar UMA lista de destinos para o processo inteiro.
  *
- * ⛔ Sempre negado, sem exceção: o próprio servidor (loopback), endereços de link-local e o de metadados da nuvem
- * (169.254.169.254). Rede local (10/8, 172.16/12, 192.168/16, fc00::/7) só com regra exata, nunca por curinga.
+ * ⛔ Sempre negado, sem exceção: as portas do próprio gateway, endereços de link-local e o de metadados da nuvem
+ * (169.254.169.254). Serviço no loopback (`localhost:<porta>`) e rede local (10/8, 172.16/12, 192.168/16, fc00::/7) só
+ * com regra EXATA, nunca por curinga.
  * Fala HTTP (URL absoluta) e CONNECT (HTTPS, e SSH por um auxiliar de ProxyCommand). Token desconhecido: 407.
  */
 export class NetworkGate {
   private server?: Server
   private port?: number
   private readonly runs = new Map<string, TNetworkDecide>()
+
+  /** As portas do loopback que nenhum comando alcança: a do gateway (`PORT`) e a deste portão. */
+  private protectedPorts(): number[] {
+    return [Number(process.env.PORT) || 3000, ...(this.port ? [this.port] : [])]
+  }
 
   async start(): Promise<number> {
     if (this.port) return this.port
@@ -63,10 +69,20 @@ export class NetworkGate {
   async decide(token: string | undefined, host: string, port: number): Promise<INetworkVerdict & { address?: string }> {
     const decide = token ? this.runs.get(token) : undefined
     if (!decide) return { allowed: false, reason: 'comando sem autorização de rede' }
-    const name = host.replace(/^\[|\]$/g, '').toLowerCase()
-    if (name === 'localhost' || name.endsWith('.localhost') || name === 'metadata.google.internal') return { allowed: false, reason: `${name} é sempre negado` }
+    const raw = host.replace(/^\[|\]$/g, '').toLowerCase()
+    if (raw === 'metadata.google.internal' || raw.endsWith('.localhost')) return { allowed: false, reason: `${raw} é sempre negado` }
+    // O loopback tem um nome só para as regras: `localhost` (127.0.0.1 e ::1 também chegam aqui).
+    const loopbackName = raw === 'localhost' || raw === '::1' || /^127\./.test(raw)
+    const name = loopbackName ? 'localhost' : raw
+    if (loopbackName && this.protectedPorts().includes(port)) return { allowed: false, reason: `localhost:${port} é do próprio gateway: sempre negado` }
     const verdict = decide(name, port)
     if (!verdict.allowed) return verdict
+    if (loopbackName) {
+      // ⛔ Serviço LOCAL (o Mongo, o Redis, a API no mesmo host) só com a regra EXATA dele: `localhost:<porta>`.
+      if (verdict.pattern !== `localhost:${port}` && verdict.pattern !== `127.0.0.1:${port}`)
+        return { allowed: false, reason: `localhost:${port} só com a regra exata localhost:${port}` }
+      return { ...verdict, address: '127.0.0.1' }
+    }
     let address: string
     try {
       address = isIP(name) ? name : (await lookup(name)).address

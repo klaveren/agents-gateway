@@ -149,6 +149,14 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     if (refusal) return { status: 'error', result: `Not permitted: ${refusal}` }
     if (!sandbox.wrapWith) return { status: 'error', result: 'O terminal fica bloqueado: este servidor não monta o cerco das permissões.' }
     const { system, ...layers } = permissions.layers?.(asker) ?? { system: [] }
+    // Os serviços locais que as regras liberam EXATOS (`localhost:27017`): no Linux, um encaminhador por porta.
+    const localPorts = [...(layers.agent ?? []), ...(layers.project ?? [])]
+      .filter((rule) => rule.category === 'network' && rule.decision === 'allow')
+      .map((rule) => /^(?:localhost|127\.0\.0\.1):(\d{1,5})$/.exec(rule.pattern.trim())?.[1])
+      .filter((port): port is string => !!port)
+      .map(Number)
+      // ⛔ A porta do próprio gateway nunca ganha encaminhador (o portão também a nega): o cliente recebe a recusa.
+      .filter((port) => port !== (Number(process.env.PORT) || 3000))
     // ⛔ As contas do projeto DA CONVERSA que este agente pode usar (`account <id>`), em variáveis do processo — nunca na
     // linha do comando, que aparece na lista de processos.
     const accounts =
@@ -166,7 +174,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       if (sshKit) removeSshKit(sshKit)
     }
     try {
-      const line = await sandbox.wrapWith(command, root, (base) => cercoPlan(layers, { ...base, system }), token, place)
+      const line = await sandbox.wrapWith(command, root, (base) => cercoPlan(layers, { ...base, system }), token, { ...place, localPorts })
       const env: Record<string, string> = { ...subscriptionEnv({ HOME: root }), ...accounts?.env }
       if (accounts?.ssh?.length) {
         const home = join(place.scratchBase ?? root, '.home')
