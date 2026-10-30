@@ -15,7 +15,7 @@ import { adapterKey, AgentProvider } from './Agent.Provider'
 
 /** A mensagem mandada com o turno rodando (ver `Interjection.Policy`), com um adapter falso que espera um sinal no meio. */
 describe('AgentProvider — mensagem durante o turno', () => {
-  function setup(options: { takes: boolean; ending?: 'error' | 'aborted' }) {
+  function setup(options: { takes: boolean | 'before-result'; ending?: 'error' | 'aborted' }) {
     const agent: IAgent = {
       id: 'dev',
       name: 'Dev',
@@ -52,9 +52,11 @@ describe('AgentProvider — mensagem durante o turno', () => {
             release = resolve
             reached()
           })
+          // O Claude tira da fila no `PostToolUse`, antes de o resultado chegar ao fluxo; as de chat, depois.
+          const early = options.takes === 'before-result' ? (input.interjections?.() ?? []) : []
           yield { type: 'tool.result', sessionId, timestamp: now(), payload: { tool: 'run_bash', result: 'ok' } }
           // A lane com onde pôr: entre a ferramenta e a próxima chamada ao modelo.
-          const arrived = options.takes ? (input.interjections?.() ?? []) : []
+          const arrived = options.takes === true ? (input.interjections?.() ?? []) : early
           yield { type: 'text.delta', sessionId, timestamp: now(), payload: { text: arrived.length ? `vi: ${arrived.join('+')}. ` : 'feito. ' } }
           if (options.ending === 'error') {
             yield { type: 'error', sessionId, timestamp: now(), payload: { message: 'caiu' } }
@@ -122,6 +124,13 @@ describe('AgentProvider — mensagem durante o turno', () => {
       { at: 0, text: 'use o banco B' },
       { at: 0, text: 'e sem pressa' },
     ])
+  })
+
+  it('tirada da fila antes de o resultado chegar (o PostToolUse do Claude), a mensagem sai DEPOIS do resultado', async () => {
+    const env = setup({ takes: 'before-result' })
+    const session = await env.provider.createSession({ agentId: 'dev' })
+    const events = await turn(env, session.id, () => env.provider.enqueue(session.id, 'use o banco B'))
+    assert.deepStrictEqual(kinds(events), ['message.started', 'tool.started', 'tool.result', 'message.injected', 'text:vi: use o banco B.', 'message.completed'])
   })
 
   it('a lane sem onde pôr (Codex, Antigravity): uma rodada a mais no mesmo turno, com um só fim', async () => {
