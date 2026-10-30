@@ -22,7 +22,11 @@ export function fileTokens(text: string): string[] {
 export function extractCitations(text: string): string[] {
   const found = new Set<string>()
   const add = (raw: string) => {
-    const clean = raw.trim().replace(/^<|>$/g, '')
+    // `@arquivo` é a importação do Claude Code (`@AGENTS.md`): o caminho é o que vem depois do `@`.
+    const clean = raw
+      .trim()
+      .replace(/^<|>$/g, '')
+      .replace(/^@(?=[\w.])/, '')
     if (!clean || URL.test(clean) || clean.startsWith('#')) return
     found.add(clean)
   }

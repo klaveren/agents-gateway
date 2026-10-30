@@ -2,6 +2,7 @@ import assert from 'node:assert'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { describe, it } from 'node:test'
 import { InvalidProjectError, ProjectInUseError } from '@domain/errors/Domain.Error'
 import { SqliteConversationRepository } from '@infra/persistence/Sqlite.ConversationRepository'
@@ -78,5 +79,40 @@ describe('ProjectsService', () => {
     assert.strictEqual(agents.get(GOOGLE_TEST_AGENT.id)?.projectId, undefined, 'a semente fica global')
     assert.strictEqual((await conversations.listSessions({ filter: { project: 'geral' } })).length, 1)
     assert.strictEqual(await migrateLegacyToProjects({ service, repository, agents, conversations, userIds: () => [], seedIds: [] }), undefined, 'roda uma vez só')
+  })
+
+  it('ignorar do importador: guarda normalizado, troca a lista inteira, recusa absoluto e `..`', () => {
+    const { service } = build()
+    service.create({ id: 'alfa', name: 'Alfa' }, 'root')
+    assert.deepStrictEqual(service.importIgnore('alfa'), [])
+    assert.deepStrictEqual(service.setImportIgnore('alfa', [' ./.agents/benchmark/results/ ', 'results', 'results', '**/*.log'], 'root'), [
+      '.agents/benchmark/results',
+      'results',
+      '**/*.log',
+    ])
+    assert.deepStrictEqual(service.get('alfa').importIgnore, ['.agents/benchmark/results', 'results', '**/*.log'])
+    for (const bad of ['/etc/**', '~/x', 'a/../../b', ''])
+      assert.throws(
+        () => service.setImportIgnore('alfa', [bad], 'root'),
+        (error: unknown) => error instanceof InvalidProjectError && error.issues[0].field === 'patterns.0',
+        bad,
+      )
+    assert.deepStrictEqual(service.importIgnore('alfa'), ['.agents/benchmark/results', 'results', '**/*.log'], 'a recusa não mexe no guardado')
+    assert.deepStrictEqual(service.setImportIgnore('alfa', [], 'root'), [])
+    assert.strictEqual(service.get('alfa').importIgnore, undefined)
+  })
+
+  it('banco antigo, sem a coluna do ignorar, ganha a coluna na abertura e mantém os projetos', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gw-projects-old-'))
+    const path = join(dir, 'old.db')
+    const old = new DatabaseSync(path)
+    old.exec(
+      "CREATE TABLE projects (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL, description TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT); INSERT INTO projects VALUES ('alfa', 'Alfa', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL)",
+    )
+    old.close()
+    const repository = new SqliteProjectRepository(path)
+    assert.strictEqual(repository.get('alfa')?.importIgnore, undefined)
+    assert.deepStrictEqual(repository.update('alfa', { importIgnore: ['results'] })?.importIgnore, ['results'])
+    rmSync(dir, { recursive: true, force: true })
   })
 })

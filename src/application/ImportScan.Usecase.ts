@@ -1,5 +1,16 @@
+import { ignoreMatcher, normalizeIgnore } from '@domain/Import.Ignore'
 import { candidateId, extractCitations, resolveCitation } from '@domain/Import.Refs'
-import { CATALOG_KINDS, IImportScan, IInventoryItem, IInventoryNote, IInventoryRef, IInventorySource, TCatalogState, TInventoryKind } from '@domain/models/ImportInventory.Model'
+import {
+  CATALOG_KINDS,
+  IImportScan,
+  IInventoryIgnored,
+  IInventoryItem,
+  IInventoryNote,
+  IInventoryRef,
+  IInventorySource,
+  TCatalogState,
+  TInventoryKind,
+} from '@domain/models/ImportInventory.Model'
 import { IDetectedItem, IFormatDetector, IRepoTree } from '@domain/ports/FormatDetector.Port'
 
 /** O que já existe no catálogo com o mesmo id (rule: com o mesmo título; trigger: no agente `parent`). */
@@ -17,7 +28,14 @@ export interface IImportScanDeps {
   detectors: readonly IFormatDetector[]
   /** O item do catálogo com o mesmo id, e de que projeto é (`projectId` ausente = global). */
   findInCatalog: (query: IImportCatalogQuery) => { projectId?: string } | undefined
+  /** Os padrões de ignorar guardados no projeto (o admin define). */
+  projectIgnore?: (projectId: string) => readonly string[]
   now?: () => Date
+}
+
+export interface IImportScanOptions {
+  /** Padrões de ignorar só desta varredura, somados aos do projeto. */
+  ignore?: readonly string[]
 }
 
 /** Os ids que dividem o mesmo espaço no gateway: um doc e um recurso são únicos entre os do seu grupo. */
@@ -37,11 +55,17 @@ interface IGroup {
 export class ImportScanUseCase {
   constructor(private readonly deps: IImportScanDeps) {}
 
-  execute(projectId: string, repository: string): IImportScan {
-    const tree = this.deps.readTree(projectId, repository)
+  execute(projectId: string, repository: string, options: IImportScanOptions = {}): IImportScan {
+    const full = this.deps.readTree(projectId, repository)
+    const project = normalizeIgnore(this.deps.projectIgnore?.(projectId) ?? [])
+    const request = normalizeIgnore(options.ignore ?? []).filter((pattern) => !project.includes(pattern))
+    const { tree, patterns } = withIgnore(full, [
+      ...project.map((pattern) => ({ pattern, origin: 'project' as const })),
+      ...request.map((pattern) => ({ pattern, origin: 'request' as const })),
+    ])
     const active = this.deps.detectors.filter((detector) => detector.detects(tree))
     const detected = active.flatMap((detector) => detector.scan(tree).map((item) => ({ detector: detector.id, item })))
-    const groups = this.join(tree, detected)
+    const groups = dropClaimedUnknowns(this.join(tree, detected))
 
     const binaries = new Set<string>()
     const agentKeyByName = new Map<string, string>()
@@ -64,7 +88,8 @@ export class ImportScanUseCase {
     }
 
     const items = built.map(({ item }) => item)
-    this.refs(tree, built)
+    // A citação resolve na árvore inteira: arquivo ignorado e citado não é referência quebrada (só não tem item).
+    this.refs(full, built)
     this.duplicates(items)
     items.sort((a, b) => a.key.localeCompare(b.key))
 
@@ -81,7 +106,7 @@ export class ImportScanUseCase {
       scannedAt: (this.deps.now ?? (() => new Date()))(),
       formats: active.map((detector) => detector.id),
       totals: { files: tree.entries().length, items: items.length, tokens: [...counted.values()].reduce((sum, value) => sum + value, 0), byKind },
-      ignored: { dirs: tree.ignoredDirs(), binaries: [...binaries].sort(), links: [...tree.refusedLinks()] },
+      ignored: { dirs: tree.ignoredDirs(), binaries: [...binaries].sort(), links: [...tree.refusedLinks()], patterns },
       items,
     }
   }
@@ -220,6 +245,7 @@ export class ImportScanUseCase {
       if (item.kind === 'skip') continue
       const own = new Set(item.sources.map((source) => source.path))
       const shared = new Set(group.parts.flatMap(({ item: part }) => part.sources.filter((source) => source.shared).map((source) => source.path)))
+      const structured = new Set(group.parts.flatMap(({ item: part }) => part.sources.filter((source) => source.structured).map((source) => source.path)))
       const refs = new Map<string, IInventoryRef>()
       const unresolved = new Set<string>()
       const cite = (cited: string, from: string) => {
@@ -231,7 +257,7 @@ export class ImportScanUseCase {
       }
       for (const source of item.sources) {
         // O arquivo dividido (o `opencode.json`) é citado pela estrutura, não pelo texto inteiro.
-        if (shared.has(source.path) && item.kind !== 'config') continue
+        if ((shared.has(source.path) && item.kind !== 'config') || structured.has(source.path)) continue
         const text = tree.read(source.path)?.text ?? ''
         for (const cited of extractCitations(text)) cite(cited, source.path)
       }
@@ -263,6 +289,62 @@ export class ImportScanUseCase {
               .join(', ')}`,
           })
   }
+}
+
+/**
+ * A árvore SEM o que os padrões ignoram, para os detectores: o arquivo cujo caminho real (ou uma pasta acima dele) casa
+ * some; o link que casa sai dos `aliases` (e não resolve), mas o arquivo segue pelo caminho real. Conta, por padrão, os
+ * arquivos tirados (o primeiro padrão que casa leva a conta).
+ */
+function withIgnore(tree: IRepoTree, rules: ReadonlyArray<{ pattern: string; origin: IInventoryIgnored['origin'] }>): { tree: IRepoTree; patterns: IInventoryIgnored[] } {
+  const patterns = rules.map((rule) => ({ ...rule, files: 0 }))
+  if (!rules.length) return { tree, patterns }
+  const matchers = rules.map((rule) => ignoreMatcher(rule.pattern))
+  const firstMatch = (path: string) => matchers.findIndex((matcher) => matcher.matches(path))
+  const hidden = new Set<string>()
+  const entries = tree.entries().flatMap((entry) => {
+    const at = firstMatch(entry.path)
+    if (at >= 0) {
+      patterns[at].files++
+      hidden.add(entry.path)
+      return []
+    }
+    return [{ ...entry, aliases: entry.aliases.filter((alias) => firstMatch(alias) < 0) }]
+  })
+  const resolve = (path: string) => {
+    const real = tree.resolve(path)
+    if (!real || hidden.has(real)) return undefined
+    return real === path.replace(/^\.\//, '') || firstMatch(path) < 0 ? real : undefined
+  }
+  return {
+    patterns,
+    tree: {
+      ...(tree.head ? { head: tree.head } : {}),
+      ...(tree.dirty !== undefined ? { dirty: tree.dirty } : {}),
+      entries: () => entries,
+      resolve,
+      read: (path) => {
+        const file = resolve(path) ? tree.read(path) : undefined
+        return file && { ...file, aliases: file.aliases.filter((alias) => firstMatch(alias) < 0) }
+      },
+      ignoredDirs: () => tree.ignoredDirs(),
+      refusedLinks: () => tree.refusedLinks(),
+    },
+  }
+}
+
+/**
+ * Um detector deixa `unknown` o que é da pasta dele e nenhuma regra dele classifica (o `.agents/AGENTS.md`); outro
+ * detector pode classificar o mesmo arquivo (o `agents-md`). Aí o desconhecido sai: o arquivo já tem item.
+ */
+function dropClaimedUnknowns(groups: IGroup[]): IGroup[] {
+  const claimed = new Set<string>()
+  for (const group of groups)
+    if (group.parts[0].item.kind !== 'unknown') for (const { item } of group.parts) for (const source of item.sources) if (!source.shared) claimed.add(source.path)
+  return groups.filter((group) => {
+    const head = group.parts[0].item
+    return head.kind !== 'unknown' || !head.sources.length || !head.sources.every((source) => claimed.has(source.path))
+  })
 }
 
 /** O que o `catalogFinder` consulta: só leitura. */
