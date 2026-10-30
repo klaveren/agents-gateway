@@ -1,6 +1,7 @@
 import { terminalEnv } from '@domain/Agent.Identity'
 import { sessionChoice } from '@domain/Agent.Policy'
 import { errorPayload } from '@domain/Provider.Failure'
+import { cliArgumentIssue, promptParts } from '@domain/CliArgument.Policy'
 import { spawn as nodeSpawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -132,12 +133,20 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
     }
 
     const native = this.nativeOf(record)
+    const prompt = native.conversationId ? input.text : `${record.systemPrompt}\n\n---\n\n${input.text}`
+    // ⛔ O prompt vai no `-p=`: acima do limite do Linux, o `spawn` falha com `E2BIG` e a pessoa leria "instale o agy".
+    // Recusa antes, dizendo o tamanho e o que pesa (no primeiro turno, o prompt do agente e a mensagem).
+    const parts = native.conversationId ? [] : promptParts(record.systemPrompt)
+    const tooBig = cliArgumentIssue('Antigravity', Buffer.byteLength(antigravityArgs(prompt, '')[0]), [...parts, { label: 'Mensagem', bytes: Buffer.byteLength(input.text) }])
+    if (tooBig) {
+      yield { type: 'error', sessionId, timestamp: now(), payload: { message: tooBig } }
+      return
+    }
     const abort = new AbortController()
     record.abort = abort
     yield { type: 'message.started', sessionId, timestamp: now() }
     if (input.files?.length) yield { type: 'warning', sessionId, timestamp: now(), payload: { message: 'O Antigravity não recebe anexos por aqui: eles ficaram de fora.' } }
 
-    const prompt = native.conversationId ? input.text : `${record.systemPrompt}\n\n---\n\n${input.text}`
     const home = this.home()
     // ⛔ A pasta VAZIA da conversa, nunca a do projeto: o `agy` lê tudo o que está na pasta dele, sem as permissões do
     // agente (o `.env` inclusive). O projeto chega ao Gemini só pelas ferramentas do gateway, que seguem as permissões.
