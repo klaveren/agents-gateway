@@ -4,7 +4,7 @@ import { EMode } from './enums/EMode.Enum'
 import { SANDBOX_NETWORK, sandboxLevelsOf } from './Sandbox.Policy'
 import { isSubscription, lanesOf, nativeFamily } from './Subscription.Policy'
 import { EProvider } from './enums/EProvider.Enum'
-import { IAgent, IAgentTarget } from './models/Agent.Model'
+import { IAgent, IAgentTarget, TRIGGER_ID_PATTERN } from './models/Agent.Model'
 import { isNativeTool, nativeTool } from './Native.Tools'
 import { REASONING_LEVELS } from './Reasoning.Levels'
 import { isMcpToolRef, parseMcpToolRef } from './models/McpServer.Model'
@@ -178,6 +178,16 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
     if (!native || !family) issue('allowedTools', `unknown SDK tool: ${tool}`)
     else if (!family.length) issue('allowedTools', `${native.label} is a ${native.protocol} SDK tool`)
     else if (native.officialOnly && !family.some((target) => target.official)) issue('allowedTools', `${native.label} works only with the official provider`)
+  }
+
+  const triggerIds = new Set<string>()
+  for (const trigger of agent.triggers ?? []) {
+    if (!TRIGGER_ID_PATTERN.test(trigger.id ?? '')) issue('triggers', `id "${trigger.id}": lowercase letters, digits and hyphens, 2 to 64`)
+    else if (triggerIds.has(trigger.id)) issue('triggers', `id "${trigger.id}" listed twice`)
+    triggerIds.add(trigger.id)
+    if (!trigger.when?.trim()) issue('triggers', `${trigger.id}: when is required (one line: when to use it)`)
+    else if (/\n/.test(trigger.when.trim())) issue('triggers', `${trigger.id}: when is one line`)
+    if (!trigger.body?.trim()) issue('triggers', `${trigger.id}: body is required`)
   }
 
   if (!agent.systemPrompt.trim()) issue('systemPrompt', 'required')

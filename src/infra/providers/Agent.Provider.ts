@@ -36,7 +36,7 @@ import { IAgentEvent, IUsage } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { READ_DOC_TOOL, SEARCH_DOCS_TOOL } from '@domain/models/ProjectDoc.Model'
-import { USE_SKILL_TOOL } from '@domain/models/Resource.Model'
+import { SEARCH_RESOURCES_TOOL, USE_RESOURCE_TOOL } from '@domain/models/Resource.Model'
 import { PROJECT_METADATA_KEY, REPOSITORY_METADATA_KEY, WORKTREE_METADATA_KEY } from '@domain/Session.Metadata'
 import { projectWorkspace } from '@infra/adapters/support/Subscription.Workspace'
 import { resolveWorkFolder } from '@infra/workspace/Work.Folder'
@@ -92,7 +92,7 @@ export class AgentProvider implements IAgentProvider {
     private readonly guidance?: {
       environmentFor(projectId?: string, agentId?: string): string | undefined
       hasDocs(projectId?: string, agentId?: string): boolean
-      hasSkills?(agentId?: string): boolean
+      hasResources?(agentId?: string): boolean
     },
 
     /** Os provedores sem cota agora (ver `Provider.Bench`). Ausente = sem troca de provedor. */
@@ -506,13 +506,14 @@ export class AgentProvider implements IAgentProvider {
   }
 
   /**
-   * O agente com o `read_doc` quando a conversa tem documento no índice, e com o `use_skill` quando ele tem skill
-   * liberada: o prompt manda usar, então a ferramenta vem junto, sem ninguém ter de escolhê-la no cadastro do agente.
+   * O agente com o `read_doc` quando a conversa tem documento no índice, e com o `use_resource` e o `search_resources`
+   * quando ele tem skill, command ou trigger: o prompt manda usar, então a ferramenta vem junto, sem ninguém ter de
+   * escolhê-la no cadastro do agente.
    */
   private withDocs(agent: IAgent, projectId: string | undefined): IAgent {
     const extra = [
       ...(this.guidance?.hasDocs(projectId, agent.id) ? [READ_DOC_TOOL, SEARCH_DOCS_TOOL] : []),
-      ...(this.guidance?.hasSkills?.(agent.id) ? [USE_SKILL_TOOL] : []),
+      ...(this.guidance?.hasResources?.(agent.id) ? [USE_RESOURCE_TOOL, SEARCH_RESOURCES_TOOL] : []),
     ].filter((tool) => !agent.allowedTools.includes(tool))
     return extra.length ? { ...agent, allowedTools: [...agent.allowedTools, ...extra] } : agent
   }

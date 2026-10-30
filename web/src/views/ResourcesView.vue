@@ -15,7 +15,7 @@ import { useProjectsStore } from '@/stores/projects'
 
 /**
  * SKILLS ou COMMANDS (só admin), uma página para cada (`kind`). ⚖️ O agente só usa o que a guia Recursos dele libera.
- * A skill entra no índice do prompt (nome e descrição) e o agente a carrega com `use_skill`; o command a pessoa dispara
+ * A skill entra no índice do prompt (nome e descrição) e o agente a carrega com `use_resource`; o command a pessoa dispara
  * com `/nome argumentos`, e o gateway troca pelo texto dele. Os dois levam as specs e ADRs anexadas.
  */
 const props = defineProps<{ kind: TResourceKind; id?: string }>()

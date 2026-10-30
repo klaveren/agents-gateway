@@ -2,7 +2,7 @@
 import RailMenu, { type IRailMenuItem } from './RailMenu.vue'
 
 /**
- * O menu RECURSOS (só admin): o que os agentes usam para trabalhar — as skills (carregadas com `use_skill`) e os
+ * O menu RECURSOS (só admin): o que os agentes usam para trabalhar — as skills (carregadas com `use_resource`) e os
  * commands (`/nome` na caixa de mensagem).
  */
 defineProps<{ placement: 'side' | 'up'; active?: string }>()

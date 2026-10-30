@@ -55,6 +55,11 @@ export interface IAgent {
    * edição, e o resultado volta junto da ferramenta. Ausente = desligado.
    */
   diagnostics?: IAgentDiagnostics
+  /**
+   * Os triggers do agente: AÇÕES ATIVADAS SOB DEMANDA, dele e de mais ninguém. O prompt lista o id e o "quando" de cada
+   * um (o índice "## Triggers"), e o corpo só entra quando o agente o carrega (`use_resource`, tipo trigger).
+   */
+  triggers?: IAgentTrigger[]
   /** A troca de provedor quando a cota acaba (ver `Fallback.Policy`). Ausente = a cadeia global. */
   fallback?: IAgentFallback
 }
@@ -63,6 +68,16 @@ export interface IAgentTerminal {
   timeoutSeconds?: number
   maxOutputChars?: number
 }
+
+/** Um trigger: o id, quando usar (uma linha, vai no índice do prompt) e o procedimento (o corpo, carregado sob demanda). */
+export interface IAgentTrigger {
+  id: string
+  when: string
+  body: string
+}
+
+/** O id de um trigger: minúsculas, dígitos e hífen. */
+export const TRIGGER_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,63}$/
 
 export interface IAgentDiagnostics {
   typecheck?: boolean

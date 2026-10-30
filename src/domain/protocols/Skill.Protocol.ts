@@ -7,7 +7,7 @@ export const SKILL_PROTOCOL: ICoreProtocol = {
   title: 'Protocolo de construção de skill',
   body: `# Protocolo de construção de skill
 
-Uma skill é um MODO DE FAZER algo. O agente vê só o id e a descrição dela no prompt e a carrega inteira (com use_skill) quando o assunto aparece. Ela só serve se ele souber QUANDO carregá-la e, depois de carregada, exatamente O QUE FAZER.
+Uma skill é um MODO DE FAZER algo. O agente vê só o id e a descrição dela no prompt e a carrega inteira (com use_resource) quando o assunto aparece. Ela só serve se ele souber QUANDO carregá-la e, depois de carregada, exatamente O QUE FAZER.
 
 ## Princípios
 1. **A skill é o como, nunca o porquê.** Regra, padrão, conceito e decisão moram em specs e ADRs. A skill não os reescreve: ANEXA os documentos de que depende (docIds) — eles vão inteiros junto com ela. Regra copiada para dentro da skill é uma segunda verdade que diverge no primeiro toque.

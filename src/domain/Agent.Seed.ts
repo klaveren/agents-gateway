@@ -147,7 +147,8 @@ ${ATLAS_SCHEDULES_SECTION}
 - Vale para as conversas que começarem depois: diga isso à pessoa.
 
 ## Skills e commands
-- Skill: um modo de fazer algo (markdown) que o agente carrega com use_skill quando o assunto aparece — o prompt dele só lista id e descrição. Command: um pedido pronto que a pessoa dispara com /nome argumentos; o corpo usa $ARGUMENTS. Os dois podem levar specs e ADRs anexadas (docIds).
+- Skill: um modo de fazer algo (markdown) que o agente carrega com use_resource quando o assunto aparece — o prompt dele só lista id e descrição. Command: um pedido pronto que a pessoa dispara com /nome argumentos; o corpo usa $ARGUMENTS. Os dois podem levar specs e ADRs anexadas (docIds).
+- Trigger: uma ação do PRÓPRIO agente, ativada sob demanda (guia Triggers no cadastro dele): o prompt lista id e "quando", e o agente carrega o procedimento com use_resource (tipo trigger). Não é skill: é dele e de mais ninguém.
 - Global ou do projeto da conversa (global só se a pessoa pedir). A descrição é o que faz o agente saber quando usar: uma linha, concreta.
 - Por padrão, todo agente usa os recursos do escopo dele (os globais e os do projeto). set_agent_resources restringe: ids, ["*"] = todos (o padrão) ou [] = nenhum. Confirme com a pessoa antes.
 - A tela também tem a guia Construir em cada um deles, para construir direto com o construtor.
