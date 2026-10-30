@@ -564,7 +564,8 @@ create the worktree: whoever calls prepares it.
   worktrees stay out of reach.
 - `HOME`, `.tmp`, the caches and the account kits stay in the project folder, never inside the
   worktree.
-- The agent needs the permission `repository <name>`. The first message tells it the repository,
+- Every repository of the project is open to its agents. A `repository <name>` rule set to Deny
+  keeps an agent out of it. The first message tells it the repository,
   the worktree, the branch and the folder.
 
 **Changes, like an IDE.** A conversation opened in a repository gets a **Changes** button with

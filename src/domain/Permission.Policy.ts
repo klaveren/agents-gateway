@@ -81,8 +81,16 @@ export function decide(subject: IPermissionSubject, layers: IPermissionLayers, s
     const where = layer === 'agent' ? 'do agente' : 'do projeto'
     return { allowed: rule.decision === 'allow', layer, rule, reason: `${rule.decision === 'allow' ? 'permitido' : 'negado'} pela regra ${where} "${rule.pattern}"` }
   }
+  if (OPEN_BY_DEFAULT.includes(subject.category))
+    return { allowed: true, layer: 'default', reason: `permitido: sem regra, ${CATEGORY_LABEL[subject.category]} do projeto vale para os agentes dele` }
   return { allowed: false, layer: 'default', reason: `negado: nenhuma regra de ${CATEGORY_LABEL[subject.category]} permite "${subject.value}"` }
 }
+
+/**
+ * ⚖️ O que vale SEM regra. O repositório é escopo, não ação: o projeto já delimita onde o agente trabalha, e o que ele
+ * faz lá dentro (ler, gravar, rodar) segue negado sem regra. A regra `repository` só serve para RESTRINGIR (Negar).
+ */
+const OPEN_BY_DEFAULT: readonly TPermissionCategory[] = ['repository']
 
 export const CATEGORY_LABEL: Readonly<Record<TPermissionCategory, string>> = {
   terminal: 'terminal',
