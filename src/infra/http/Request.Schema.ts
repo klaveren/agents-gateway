@@ -149,7 +149,7 @@ export const agentBodySchema = z.object({
     .min(1)
     .max(10),
   systemPrompt: z.string().min(1),
-  soul: z.string().max(20_000).optional(),
+  soul: z.string().optional(),
   reasoningEfforts: z.array(z.string().trim().min(1)).max(10).optional(),
   modes: z.array(z.enum(EMode)).min(1),
   allowedTools: z.array(z.string().trim().min(1)).max(100).default([]),

@@ -13,8 +13,15 @@ import { AGENT_TOOL_PREFIX, isAgentToolRef } from './models/Delegation.Model'
 /** Minúsculas, dígitos e hífen; começa por letra ou dígito. Vira parte de URL e de nome no ADK. */
 export const AGENT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,47}$/
 export const AGENT_NAME_MAX = 80
-export const AGENT_PROMPT_MAX = 20_000
-export const AGENT_SOUL_MAX = 8_000
+/**
+ * ⚖️ O TAMANHO DO PROMPT É DE QUEM CRIA O AGENTE: o sistema não impõe teto (custa tokens a cada turno, e a tela mostra
+ * quanto). A trava que existe é técnica: o Codex e o Antigravity recebem o prompt como ARGUMENTO de linha de comando, e
+ * o Linux recusa um argumento acima de 128 KiB (`MAX_ARG_STRLEN`). A conta deixa folga para o que o gateway junta ao
+ * prompt (rules, índice de skills e de documentos).
+ */
+export const CLI_PROMPT_MAX_BYTES = 120_000
+/** As lanes que passam o prompt como argumento de linha de comando. */
+const CLI_PROMPT_PROTOCOLS: readonly string[] = [EProvider.CODEX, EProvider.ANTIGRAVITY]
 
 export interface IAgentIssue {
   field: string
@@ -173,11 +180,16 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
     else if (native.officialOnly && !family.some((target) => target.official)) issue('allowedTools', `${native.label} works only with the official provider`)
   }
 
-  if (agent.soul && agent.soul.length > AGENT_SOUL_MAX) issue('soul', `at most ${AGENT_SOUL_MAX} characters`)
-
   if (!agent.systemPrompt.trim()) issue('systemPrompt', 'required')
-  else if (agent.systemPrompt.length > AGENT_PROMPT_MAX) issue('systemPrompt', `at most ${AGENT_PROMPT_MAX} characters`)
   else {
+    const bytes = Buffer.byteLength(agent.systemPrompt) + Buffer.byteLength(agent.soul ?? '')
+    const cli = targets.filter((target) => target.protocol && CLI_PROMPT_PROTOCOLS.includes(target.protocol)).map((target) => target.provider)
+    if (cli.length && bytes > CLI_PROMPT_MAX_BYTES)
+      issue(
+        'systemPrompt',
+        `${cli.join(', ')} receive the prompt as a command-line argument, and Linux refuses one above 128 KiB: keep soul + prompt under ${CLI_PROMPT_MAX_BYTES / 1000} KB (now ${Math.round(bytes / 1000)} KB) or remove those providers from this agent`,
+      )
+
     const promptIssue = rules.promptIssue?.(agent)
     if (promptIssue) issue('systemPrompt', promptIssue)
   }
