@@ -57,10 +57,11 @@ export interface IAgentRules {
    */
   modelEnabled?(providerId: string, modelId: string): boolean
   /**
-   * O servidor MCP existe? (`mcp:<servidor>/…`). Ausente = nenhum servidor cadastrado, e toda referência
-   * a MCP é recusada.
+   * O servidor MCP existe NO ESCOPO do agente (`mcp:<servidor>/…`)? `projectId`: o do agente (ausente = global).
+   * ⛔ O agente de um projeto enxerga os globais e os do projeto dele; o global, só os globais. Ausente = nenhum
+   * servidor cadastrado, e toda referência a MCP é recusada.
    */
-  mcpServerExists?(serverId: string): boolean
+  mcpServerExists?(serverId: string, projectId: string | undefined): boolean
   /** O agente existe? (`agent:<id>`, a quem este pode delegar). Ausente = nenhuma delegação vale. */
   agentExists?(agentId: string): boolean
   /** Problema do prompt para aquele provider (ex.: chaves que o ADK lê como variável). */
@@ -162,7 +163,8 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
     if (isMcpToolRef(tool)) {
       const ref = parseMcpToolRef(tool)
       if (!ref) issue('allowedTools', `invalid MCP tool (use mcp:<server>/<tool> or mcp:<server>/*): ${tool}`)
-      else if (!rules.mcpServerExists?.(ref.server)) issue('allowedTools', `unknown MCP server: ${ref.server}`)
+      else if (!rules.mcpServerExists?.(ref.server, agent.projectId))
+        issue('allowedTools', `unknown MCP server: ${ref.server} (${agent.projectId ? `not global nor in project ${agent.projectId}` : 'not a global server'})`)
       continue
     }
     if (!isNativeTool(tool)) {

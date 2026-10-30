@@ -16,6 +16,7 @@ import { adapterKey, AgentProvider } from '@infra/providers/Agent.Provider'
 import { ProviderBench } from '@infra/providers/Provider.Bench'
 import { SessionStore } from '@infra/session/Session.Store'
 import { makeAgents } from './Agents.Factory'
+import { makeProjects } from './Projects.Factory'
 import { makeProviders } from './Providers.Factory'
 import { makeSettings } from './Settings.Factory'
 import { makeModelCatalog } from './Catalog.Factory'
@@ -85,6 +86,10 @@ export function makeOrchestrator(): AgentProvider {
     providerBench(),
     (provider, model) => models.contextOf(provider, model),
     loopGuard(),
+    (projectId) => {
+      const projects = makeProjects()
+      return projects.exists(projectId) ? projects.get(projectId).name : undefined
+    },
   )
 }
 

@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { IMcpContainer, IMcpProcess, IMcpServerConfig, TMcpAuth, TMcpKind, TMcpTransport } from '@domain/models/McpServer.Model'
+import { IMcpContainer, IMcpProcess, IMcpServerConfig, MCP_SCOPE_SEPARATOR, mcpServerKey, TMcpAuth, TMcpKind, TMcpTransport } from '@domain/models/McpServer.Model'
 import { IMcpServerRepository, TMcpServerPatch } from '@domain/ports/McpServerRepository.Port'
 
 const SCHEMA = `
@@ -31,6 +31,8 @@ const ADDED_COLUMNS: Array<{ column: string; definition: string }> = [
   { column: 'container', definition: 'TEXT' },
   { column: 'process', definition: 'TEXT' },
   { column: 'identity', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  // Ausente (NULL) = global: o banco antigo continua todo global, sem migração.
+  { column: 'project_id', definition: 'TEXT' },
 ]
 
 const COLUMNS: Record<keyof TMcpServerPatch, string> = {
@@ -47,7 +49,13 @@ const COLUMNS: Record<keyof TMcpServerPatch, string> = {
   updatedBy: 'updated_by',
 }
 
-/** Os servidores MCP, no mesmo arquivo das conversas. Sem arquivo, em memória (`:memory:`). */
+/**
+ * Os servidores MCP, no mesmo arquivo das conversas. Sem arquivo, em memória (`:memory:`).
+ *
+ * ⚖️ A COLUNA `id` GUARDA A CHAVE (`mcpServerKey`), e `project_id` o escopo: a chave primária continua uma coluna só
+ * (o SQLite não troca chave primária com `ALTER`), o banco antigo vale como está (tudo global, chave = id), e o mesmo
+ * id em dois projetos são duas linhas (`a.n8n`, `b.n8n`).
+ */
 export class SqliteMcpServerRepository implements IMcpServerRepository {
   private readonly db: DatabaseSync
 
@@ -66,18 +74,19 @@ export class SqliteMcpServerRepository implements IMcpServerRepository {
     return (this.db.prepare('SELECT * FROM mcp_servers ORDER BY created_at ASC, id ASC').all() as TRow[]).map(toServer)
   }
 
-  get(id: string): IMcpServerConfig | undefined {
-    const row = this.db.prepare('SELECT * FROM mcp_servers WHERE id = ?').get(id) as TRow | undefined
+  get(key: string): IMcpServerConfig | undefined {
+    const row = this.db.prepare('SELECT * FROM mcp_servers WHERE id = ?').get(key) as TRow | undefined
     return row ? toServer(row) : undefined
   }
 
   insert(server: IMcpServerConfig): void {
     this.db
       .prepare(
-        'INSERT INTO mcp_servers (id, name, kind, container, process, url, transport, auth, header_name, identity, enabled, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO mcp_servers (id, project_id, name, kind, container, process, url, transport, auth, header_name, identity, enabled, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
-        server.id,
+        mcpServerKey(server),
+        server.projectId ?? null,
         server.name,
         server.kind ?? 'remote',
         server.container ? JSON.stringify(server.container) : null,
@@ -94,7 +103,7 @@ export class SqliteMcpServerRepository implements IMcpServerRepository {
       )
   }
 
-  update(id: string, patch: TMcpServerPatch): IMcpServerConfig | undefined {
+  update(key: string, patch: TMcpServerPatch): IMcpServerConfig | undefined {
     const keys = (Object.keys(patch) as Array<keyof TMcpServerPatch>).filter((key) => key in COLUMNS && (patch[key] !== undefined || key === 'headerName'))
     if (keys.length) {
       const values = keys.map((key) => {
@@ -105,13 +114,21 @@ export class SqliteMcpServerRepository implements IMcpServerRepository {
         if (typeof value === 'object') return JSON.stringify(value)
         return value as string
       })
-      this.db.prepare(`UPDATE mcp_servers SET ${keys.map((key) => `${COLUMNS[key]} = ?`).join(', ')} WHERE id = ?`).run(...values, id)
+      this.db.prepare(`UPDATE mcp_servers SET ${keys.map((column) => `${COLUMNS[column]} = ?`).join(', ')} WHERE id = ?`).run(...values, key)
     }
-    return this.get(id)
+    return this.get(key)
   }
 
-  delete(id: string): boolean {
-    return this.db.prepare('DELETE FROM mcp_servers WHERE id = ?').run(id).changes > 0
+  move(key: string, projectId: string | undefined, at: Date, by: string): IMcpServerConfig | undefined {
+    const current = this.get(key)
+    if (!current) return undefined
+    const next = mcpServerKey({ id: current.id, projectId })
+    this.db.prepare('UPDATE mcp_servers SET id = ?, project_id = ?, updated_at = ?, updated_by = ? WHERE id = ?').run(next, projectId ?? null, at.toISOString(), by, key)
+    return this.get(next)
+  }
+
+  delete(key: string): boolean {
+    return this.db.prepare('DELETE FROM mcp_servers WHERE id = ?').run(key).changes > 0
   }
 
   /**
@@ -123,15 +140,19 @@ export class SqliteMcpServerRepository implements IMcpServerRepository {
     for (const server of servers) {
       const key = `seeded:${server.id}`
       if (this.db.prepare('SELECT 1 FROM mcp_meta WHERE key = ?').get(key) || (legacy && server.id === 'default')) continue
-      if (!this.get(server.id)) this.insert(server)
+      // ⛔ Nem se um projeto já usa o id: global e de projeto com o mesmo id deixariam `mcp:<id>/…` ambíguo.
+      if (!this.list().some((existing) => existing.id === server.id)) this.insert(server)
       this.db.prepare('INSERT INTO mcp_meta (key, value) VALUES (?, ?)').run(key, new Date().toISOString())
     }
   }
 }
 
 function toServer(row: TRow): IMcpServerConfig {
+  const projectId = typeof row.project_id === 'string' && row.project_id ? row.project_id : undefined
+  const key = String(row.id)
   return {
-    id: String(row.id),
+    id: projectId && key.startsWith(`${projectId}${MCP_SCOPE_SEPARATOR}`) ? key.slice(projectId.length + 1) : key,
+    ...(projectId ? { projectId } : {}),
     name: String(row.name),
     kind: (typeof row.kind === 'string' ? row.kind : 'remote') as TMcpKind,
     ...(typeof row.container === 'string' ? { container: JSON.parse(row.container) as IMcpContainer } : {}),

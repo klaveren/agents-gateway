@@ -1,6 +1,6 @@
 import { PROPOSE_DRAFT_TOOL } from '@domain/Builder.Agents'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
-import { IMcpServerConfig, isLaunchedMcp, MCP_ALL_TOOLS, mcpSelection, parseMcpToolRef } from '@domain/models/McpServer.Model'
+import { IMcpServerConfig, isLaunchedMcp, MCP_ALL_TOOLS, mcpSelection, mcpServerKey, mcpServesProject, parseMcpToolRef } from '@domain/models/McpServer.Model'
 import { McpRegistry } from '@infra/mcp/Mcp.Registry'
 import { delegatesOf } from '@domain/models/Delegation.Model'
 import { ILocalTool, IToolDefinition, IToolResult } from './Tool.Types'
@@ -45,6 +45,10 @@ export const DEFAULT_MCP_SERVER = 'default'
  * ⛔ UM AGENTE SÓ VÊ O QUE ESCOLHEU: locais pelo nome, MCP por `mcp:<servidor>/<ferramenta>` ou
  * `mcp:<servidor>/*` (ver `toolbox`). Antes dos servidores virarem cadastro, toda ferramenta do MCP
  * passava para todo agente.
+ *
+ * ⛔ E SÓ DO ESCOPO DELE: o `<servidor>` é resolvido com o projeto do agente (`context.projectId`) — o global ou o do
+ * projeto dele, nunca o de outro projeto, em toda lane (`toolbox`, `mcpServersFor`, `invoke`). É a segunda trava:
+ * a primeira é o cadastro do agente, que recusa `mcp:` fora do escopo. Sem contexto, só os globais.
  */
 export class ToolCatalog {
   constructor(
@@ -99,21 +103,26 @@ export class ToolCatalog {
    */
   async toolbox(allowed: readonly string[], context?: IExecutionContext): Promise<IToolbox> {
     const local = this.localFor(allowed)
-    const remote: Array<{ server: string; tool: IToolDefinition }> = []
+    const remote: Array<{ server: string; key: string; tool: IToolDefinition }> = []
+    const scope = context?.projectId
 
     for (const [server, choice] of mcpSelection(allowed)) {
+      const config = this.mcp.resolve(server, scope)
+      if (!config) continue
+      const key = mcpServerKey(config)
       // Contêiner: a instância DESTA conversa (o `sessionId` do contexto); sem conversa, não há instância.
       // A credencial de quem conversa: um MCP `caller` (o do próprio gateway) recusa até a listagem sem ela.
-      const tools = await this.mcp.tools(server, context?.sessionId, context?.token).catch(() => [])
-      for (const tool of tools) if ((choice.all || choice.tools.has(tool.name)) && this.mcpAllowed(server, tool.name, context)?.allowed !== false) remote.push({ server, tool })
+      const tools = await this.mcp.tools(key, context?.sessionId, context?.token).catch(() => [])
+      for (const tool of tools)
+        if ((choice.all || choice.tools.has(tool.name)) && this.mcpAllowed(server, tool.name, context)?.allowed !== false) remote.push({ server, key, tool })
     }
 
     const counts = new Map<string, number>()
     for (const name of [...local.map((tool) => tool.name), ...remote.map(({ tool }) => tool.name)]) counts.set(name, (counts.get(name) ?? 0) + 1)
-    const routes = new Map<string, { server: string; tool: string }>()
-    const exposed = remote.map(({ server, tool }) => {
+    const routes = new Map<string, { server: string; key: string; tool: string }>()
+    const exposed = remote.map(({ server, key, tool }) => {
       const name = counts.get(tool.name) === 1 ? tool.name : `${server}__${tool.name}`.slice(0, 64)
-      routes.set(name, { server, tool: tool.name })
+      routes.set(name, { server, key, tool: tool.name })
       return { ...tool, name, origin: 'mcp' as const }
     })
 
@@ -127,7 +136,8 @@ export class ToolCatalog {
         // ⛔ De novo na chamada: o modelo pode chamar um nome que não estava na lista.
         const verdict = this.mcpAllowed(route.server, route.tool, context, true)
         if (verdict && !verdict.allowed) return { status: 'error', result: `Not permitted: ${verdict.reason}` }
-        return this.callMcp(route.server, route.tool, args, context)
+        // O escopo é o do agente desta caixa (a do turno), não o que vier na chamada.
+        return this.callMcp(route.key, route.tool, args, context, scope)
       },
     }
   }
@@ -135,16 +145,22 @@ export class ToolCatalog {
   /** O servidor de um contêiner ou processo, visto por um SDK agêntico: o proxy do gateway, preso à conversa. */
   private viaProxy(config: IMcpServerConfig): IMcpServerConfig | undefined {
     if (!this.containerProxy) return undefined
-    return { ...config, kind: 'remote', url: `${this.containerProxy.base}/${config.id}`, transport: 'http', auth: 'caller', headerName: 'X-Tool-Authorization' }
+    // Pela CHAVE: o proxy confere de novo que o agente da conversa enxerga este servidor.
+    return { ...config, kind: 'remote', url: `${this.containerProxy.base}/${mcpServerKey(config)}`, transport: 'http', auth: 'caller', headerName: 'X-Tool-Authorization' }
   }
 
   /**
    * O que o SDK que conecta por conta própria pode usar do servidor: a escolha do agente MENOS o que as permissões negam
    * (`tools` ausente = todas). ⛔ Com permissões e sem conseguir listar o servidor, nenhuma: falha fechada.
    */
-  private async visibleOf(id: string, choice: { all: boolean; tools: ReadonlySet<string> }, context?: IExecutionContext): Promise<{ tools?: string[]; hidden: string[] }> {
-    if (!this.permissions) return choice.all ? { hidden: [] } : { tools: [...choice.tools], hidden: await this.hiddenOf(id, choice.tools, context) }
-    const listed = await this.mcp.tools(id, context?.sessionId, context?.token).catch(() => undefined)
+  private async visibleOf(
+    id: string,
+    key: string,
+    choice: { all: boolean; tools: ReadonlySet<string> },
+    context?: IExecutionContext,
+  ): Promise<{ tools?: string[]; hidden: string[] }> {
+    if (!this.permissions) return choice.all ? { hidden: [] } : { tools: [...choice.tools], hidden: await this.hiddenOf(key, choice.tools, context) }
+    const listed = await this.mcp.tools(key, context?.sessionId, context?.token).catch(() => undefined)
     if (!listed) return { tools: [], hidden: [] }
     const names = listed.map((tool) => tool.name)
     const tools = names.filter((name) => (choice.all || choice.tools.has(name)) && this.mcpAllowed(id, name, context)?.allowed !== false)
@@ -152,8 +168,8 @@ export class ToolCatalog {
   }
 
   /** As ferramentas do servidor que ficaram fora da escolha. Sem conseguir listar, nenhuma (o portão segue recusando). */
-  private async hiddenOf(id: string, chosen: ReadonlySet<string>, context?: IExecutionContext): Promise<string[]> {
-    const tools = await this.mcp.tools(id, context?.sessionId, context?.token).catch(() => [])
+  private async hiddenOf(key: string, chosen: ReadonlySet<string>, context?: IExecutionContext): Promise<string[]> {
+    const tools = await this.mcp.tools(key, context?.sessionId, context?.token).catch(() => [])
     return tools.map((tool) => tool.name).filter((name) => !chosen.has(name))
   }
 
@@ -161,11 +177,14 @@ export class ToolCatalog {
   async mcpServersFor(allowed: readonly string[], context?: IExecutionContext): Promise<IAgentMcpServer[]> {
     const servers: IAgentMcpServer[] = []
     for (const [id, choice] of mcpSelection(allowed)) {
-      const stored = this.mcp.get(id)
-      if (stored && isLaunchedMcp(stored)) {
+      // ⛔ Só o do escopo do agente: config, URL e credencial de servidor de outro projeto nunca chegam ao SDK.
+      const stored = this.mcp.resolve(id, context?.projectId)
+      if (!stored) continue
+      const key = mcpServerKey(stored)
+      if (isLaunchedMcp(stored)) {
         const proxied = stored.enabled && context?.sessionId ? this.viaProxy(stored) : undefined
         if (!proxied || !context?.sessionId) continue
-        const { tools, hidden } = await this.visibleOf(id, choice, context)
+        const { tools, hidden } = await this.visibleOf(id, key, choice, context)
         servers.push({
           config: proxied,
           ...(tools ? { tools } : {}),
@@ -175,16 +194,16 @@ export class ToolCatalog {
         })
         continue
       }
-      const client = await this.mcp.connected(id, undefined, context?.token)
+      const client = await this.mcp.connected(key, undefined, context?.token)
       const config = stored
-      if (!client || !config) continue
+      if (!client) continue
       const fixed = this.mcp.fixedHeaders(config)
-      const { tools, hidden } = await this.visibleOf(id, choice, context)
+      const { tools, hidden } = await this.visibleOf(id, key, choice, context)
       servers.push({
         config,
         ...(tools ? { tools } : {}),
         ...(hidden.length ? { hidden } : {}),
-        ...(config.auth === 'header' ? { header: this.mcp.header(id) } : {}),
+        ...(config.auth === 'header' ? { header: this.mcp.header(key) } : {}),
         ...(config.auth === 'caller' && config.headerName ? { callerHeader: config.headerName } : {}),
         ...(fixed ? { fixed } : {}),
       })
@@ -202,7 +221,9 @@ export class ToolCatalog {
 
     const ref = parseMcpToolRef(name.startsWith('mcp:') ? name : `mcp:${name.includes('/') ? name : `${DEFAULT_MCP_SERVER}/${name}`}`)
     if (!ref || ref.tool === MCP_ALL_TOOLS) return { status: 'error', result: `Unknown tool: ${name}` }
-    return this.callMcp(ref.server, ref.tool, args, context)
+    const config = this.mcp.resolve(ref.server, context?.projectId)
+    if (!config) return { status: 'error', result: `MCP server unavailable: ${ref.server}` }
+    return this.callMcp(mcpServerKey(config), ref.tool, args, context, context?.projectId)
   }
 
   private mask?: (text: string, sessionId?: string) => string
@@ -212,19 +233,23 @@ export class ToolCatalog {
     this.mask = mask
   }
 
-  private async callMcp(server: string, tool: string, args: Record<string, unknown>, context?: IExecutionContext): Promise<IToolResult> {
-    const outcome = await this.callMcpRaw(server, tool, args, context)
+  /** `key`: a chave do servidor, já resolvida; `scope`: o projeto do agente — conferido de novo aqui. */
+  private async callMcp(key: string, tool: string, args: Record<string, unknown>, context: IExecutionContext | undefined, scope: string | undefined): Promise<IToolResult> {
+    const outcome = await this.callMcpRaw(key, tool, args, context, scope)
     return this.mask ? { ...outcome, result: this.mask(outcome.result, context?.sessionId) } : outcome
   }
 
-  private async callMcpRaw(server: string, tool: string, args: Record<string, unknown>, context?: IExecutionContext): Promise<IToolResult> {
+  private async callMcpRaw(key: string, tool: string, args: Record<string, unknown>, context: IExecutionContext | undefined, scope: string | undefined): Promise<IToolResult> {
+    const config = this.mcp.get(key)
+    // ⛔ Defesa em profundidade: o servidor pode ter mudado de projeto depois que a caixa foi montada.
+    if (!config || !mcpServesProject(config, scope)) return { status: 'error', result: `MCP server unavailable: ${config?.id ?? key}` }
     let client
     try {
-      client = await this.mcp.clientFor(server, context?.sessionId)
+      client = await this.mcp.clientFor(key, context?.sessionId)
     } catch (error: unknown) {
       return { status: 'error', result: error instanceof Error ? error.message : String(error) }
     }
-    if (!client) return { status: 'error', result: `MCP server unavailable: ${server}` }
+    if (!client) return { status: 'error', result: `MCP server unavailable: ${config.id}` }
     return client.callTool(tool, args, context)
   }
 }

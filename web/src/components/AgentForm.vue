@@ -11,6 +11,7 @@
     envRows,
     findOrphans,
     isUsableProvider,
+    mcpServersFor,
     pruneModels,
     pruneNatives,
     summarizeIssues,
@@ -21,7 +22,7 @@
   import { useProvidersStore } from '@/stores/providers'
   import FallbackChain from './FallbackChain.vue'
   import { useProtocolsStore } from '@/stores/protocols'
-  import type { IAgentDetail, IAgentInput, ICatalogModel, INativeTool, TMode, TSandboxLevel } from '@/lib/types'
+  import type { IAgentDetail, IAgentInput, ICatalogModel, IMcpServer, INativeTool, TMode, TSandboxLevel } from '@/lib/types'
   import { useAgentsStore } from '@/stores/agents'
   import { useMcpStore } from '@/stores/mcp'
   import { useProjectsStore } from '@/stores/projects'
@@ -74,11 +75,20 @@
       () => true,
       () => false,
     )
-    await Promise.all(mcp.list.filter((server) => server.enabled).map((server) => mcp.loadTools(server.id).catch(() => [])))
+    await Promise.all(mcp.list.filter((server) => server.enabled).map((server) => mcp.loadTools(server.key).catch(() => [])))
     mcpReady.value = loaded
   })
   const mcpRef = (server: string, tool: string) => `mcp:${server}/${tool}`
-  const enabledMcp = computed(() => mcp.list.filter((server) => server.enabled))
+  /**
+   * ⛔ Só os do escopo do agente: os globais e os do projeto DELE (o agente global, só os globais). O servidor recusa o
+   * resto ao salvar; aqui nem aparece.
+   */
+  const enabledMcp = computed(() =>
+    mcpServersFor(
+      mcp.list.filter((server) => server.enabled),
+      form.value.projectId,
+    ),
+  )
   /**
    * ⚖️ Órfã de MCP é só a de um servidor que não existe ou está desligado — a mesma regra do servidor, que
    * não exige a ferramenta. A listagem que a tela recebe não prova que ela sumiu: o servidor pode estar fora
@@ -90,19 +100,19 @@
     return enabledMcp.value.some((candidate) => candidate.id === server)
   }
   /** As ferramentas de um servidor na tela: as que ele lista agora e as escolhidas que ele não listou. */
-  function mcpChips(server: string): Array<{ name: string; description?: string; inputSchema?: unknown; unlisted?: boolean }> {
-    const listed = mcp.tools[server] ?? []
+  function mcpChips(server: IMcpServer): Array<{ name: string; description?: string; inputSchema?: unknown; unlisted?: boolean }> {
+    const listed = mcp.tools[server.key] ?? []
     const chosen = form.value.allowedTools
-      .filter((entry) => entry.startsWith(`mcp:${server}/`) && !entry.endsWith('/*'))
-      .map((entry) => entry.slice(`mcp:${server}/`.length))
+      .filter((entry) => entry.startsWith(`mcp:${server.id}/`) && !entry.endsWith('/*'))
+      .map((entry) => entry.slice(`mcp:${server.id}/`.length))
       .filter((name) => !listed.some((tool) => tool.name === name))
     return [...listed, ...chosen.map((name) => ({ name, unlisted: true }))]
   }
   /** O peso, por chamada ao modelo, das ferramentas deste servidor que o agente tem (todas, com `*`). */
-  function mcpWeight(server: string): number {
-    const listed = mcp.tools[server] ?? []
-    if (form.value.allowedTools.includes(mcpRef(server, '*'))) return toolsTokens(listed)
-    return toolsTokens(listed.filter((tool) => form.value.allowedTools.includes(mcpRef(server, tool.name))))
+  function mcpWeight(server: IMcpServer): number {
+    const listed = mcp.tools[server.key] ?? []
+    if (form.value.allowedTools.includes(mcpRef(server.id, '*'))) return toolsTokens(listed)
+    return toolsTokens(listed.filter((tool) => form.value.allowedTools.includes(mcpRef(server.id, tool.name))))
   }
   function toggleAllMcp(server: string) {
     const all = mcpRef(server, '*')
@@ -985,12 +995,13 @@
           <em class="font-normal text-zinc-500">— o agente usa só o que estiver marcado.</em>
         </span>
         <div v-if="enabledMcp.length" class="flex flex-col gap-2">
-          <div v-for="server in enabledMcp" :key="server.id" class="rounded-xl border border-zinc-800 px-3 py-2 font-normal">
+          <div v-for="server in enabledMcp" :key="server.key" class="rounded-xl border border-zinc-800 px-3 py-2 font-normal">
             <div class="flex flex-wrap items-center gap-2">
               <span class="text-sm text-zinc-200">{{ server.name }}</span>
+              <span v-if="server.projectId" class="text-[11px] text-zinc-500">do projeto</span>
               <span v-if="!server.status.connected" class="text-[11px] text-amber-300">sem conexão</span>
-              <span v-if="mcpWeight(server.id)" class="text-[11px] text-zinc-500" title="Tamanho das ferramentas escolhidas, enviado a cada mensagem">
-                ≈ {{ mcpWeight(server.id).toLocaleString('pt-BR') }} tokens por mensagem
+              <span v-if="mcpWeight(server)" class="text-[11px] text-zinc-500" title="Tamanho das ferramentas escolhidas, enviado a cada mensagem">
+                ≈ {{ mcpWeight(server).toLocaleString('pt-BR') }} tokens por mensagem
               </span>
               <label class="ml-auto flex items-center gap-1.5 text-xs text-zinc-400">
                 <input type="checkbox" class="accent-emerald-500" :checked="form.allowedTools.includes(mcpRef(server.id, '*'))" @change="toggleAllMcp(server.id)" />
@@ -999,7 +1010,7 @@
             </div>
             <div v-if="!form.allowedTools.includes(mcpRef(server.id, '*'))" class="mt-2 flex flex-wrap gap-1.5">
               <button
-                v-for="tool in mcpChips(server.id)"
+                v-for="tool in mcpChips(server)"
                 :key="tool.name"
                 type="button"
                 class="chip font-mono text-xs"
@@ -1010,7 +1021,7 @@
                 {{ tool.name }}
                 <span v-if="tool.unlisted" class="ml-1 text-[10px] text-zinc-500">não listada</span>
               </button>
-              <span v-if="!mcpChips(server.id).length" class="text-xs text-zinc-500">Nenhuma ferramenta listada agora.</span>
+              <span v-if="!mcpChips(server).length" class="text-xs text-zinc-500">Nenhuma ferramenta listada agora.</span>
             </div>
           </div>
         </div>

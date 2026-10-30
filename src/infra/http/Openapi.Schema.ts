@@ -401,6 +401,11 @@ const mcpServerBody = {
   type: 'object',
   properties: {
     id: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{1,31}$', description: 'Only on create.' },
+    projectId: {
+      type: ['string', 'null'],
+      description:
+        'The owning project (absent = global). A project server serves only agents of that project. Two projects may share an id; a project id never collides with a global one. On update, a project or null (global) moves it — refused (409) if an agent would lose it.',
+    },
     name: { type: 'string' },
     kind: {
       type: 'string',
@@ -431,7 +436,9 @@ const mcpServerBody = {
 const mcpServerSchema = {
   type: 'object',
   properties: {
+    key: { type: 'string', description: 'The path key: the id for a global server, <projectId>.<id> for a project one.' },
     id: { type: 'string' },
+    projectId: { type: 'string', description: 'Absent = global.' },
     name: { type: 'string' },
     url: { type: 'string' },
     transport: { type: 'string', enum: ['auto', 'http', 'sse'] },
@@ -1229,8 +1236,9 @@ export const OPENAPI_DOCUMENT = {
     },
     '/mcp-servers': {
       get: {
+        parameters: [{ name: 'project', in: 'query', required: false, schema: { type: 'string' } }],
         summary:
-          'The MCP servers agents can use tools from: URL, transport, authentication (caller credential, a fixed secret header, or none), status and the agents using each. The secret is never returned. Administrators only',
+          'The MCP servers agents can use tools from: URL, transport, authentication (caller credential, a fixed secret header, or none), status and the agents using each. The secret is never returned. Administrators (all; with ?project, the global ones and that project ones); a project member only with ?project=<own project>, and only that project servers',
         responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: mcpServerSchema })) }, '401': failures['401'], '404': failures['404'] },
       },
       post: {

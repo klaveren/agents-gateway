@@ -246,7 +246,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'list_tools',
     {
       description:
-        'Everything an agent can be given in allowedTools: capabilities (`cap:terminal`, `cap:files.read`, `cap:files.write`, `cap:web.search`, `cap:web.fetch`, `cap:todos` — the gateway decides per provider what runs; `runs` says how), other local tools (by name), provider-only SDK extras (`sdk:…`, with risk) and the MCP servers with their tools (`mcp:<server>/<tool>` or `mcp:<server>/*`). Prefer capabilities over the old ids (run_bash, sdk:Read…), which are converted on save.',
+        'Everything an agent can be given in allowedTools: capabilities (`cap:terminal`, `cap:files.read`, `cap:files.write`, `cap:web.search`, `cap:web.fetch`, `cap:todos` — the gateway decides per provider what runs; `runs` says how), other local tools (by name), provider-only SDK extras (`sdk:…`, with risk) and the MCP servers with their tools (`mcp:<server>/<tool>` or `mcp:<server>/*`; a server with `projectId` serves only agents of that project). Prefer capabilities over the old ids (run_bash, sdk:Read…), which are converted on save.',
       annotations: { readOnlyHint: true },
     },
     async () => {
@@ -260,14 +260,15 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
       const servers = await api('GET', '/mcp-servers')
       const mcp = servers.ok
         ? await Promise.all(
-            ((servers.result as Array<{ id: string; name: string; enabled: boolean }>) ?? [])
+            ((servers.result as Array<{ key?: string; id: string; projectId?: string; name: string; enabled: boolean }>) ?? [])
               .filter((entry) => entry.enabled)
               .map(async (entry) => {
-                const listed = await api('GET', `/mcp-servers/${encodeURIComponent(entry.id)}/tools`)
+                const listed = await api('GET', `/mcp-servers/${encodeURIComponent(entry.key ?? entry.id)}/tools`)
                 const names = listed.ok
                   ? ((listed.result as Array<{ name: string; description: string }>) ?? []).map((tool) => ({ ref: `mcp:${entry.id}/${tool.name}`, description: tool.description }))
                   : []
-                return { server: entry.id, name: entry.name, all: `mcp:${entry.id}/*`, tools: names }
+                // `projectId`: o servidor só serve a agente daquele projeto (ausente = global).
+                return { server: entry.id, ...(entry.projectId ? { projectId: entry.projectId } : {}), name: entry.name, all: `mcp:${entry.id}/*`, tools: names }
               }),
           )
         : []

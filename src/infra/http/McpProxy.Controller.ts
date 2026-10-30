@@ -1,7 +1,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
-import { mcpSelection } from '@domain/models/McpServer.Model'
+import { mcpSelection, mcpServesProject } from '@domain/models/McpServer.Model'
 import { ISession } from '@domain/models/Session.Model'
 import { McpRegistry } from '@infra/mcp/Mcp.Registry'
 import { Request, Response } from 'express'
@@ -15,8 +15,8 @@ export interface IMcpProxyDeps {
   proof?: ICallerProof
   /** A sessão viva (do provider). `undefined` = não existe mais. */
   session: (sessionId: string) => Pick<ISession, 'agentId' | 'metadata'> | undefined
-  /** O `allowedTools` do agente (como gravado). */
-  agentTools: (agentId: string) => readonly string[] | undefined
+  /** O agente como gravado: as escolhas (`allowedTools`) e o projeto dele (ausente = global). */
+  agent: (agentId: string) => { allowedTools: readonly string[]; projectId?: string } | undefined
 }
 
 /**
@@ -26,8 +26,9 @@ export interface IMcpProxyDeps {
  * recebe a conexão, descobre DE QUE CONVERSA ela é (`X-Gateway-Session`) e encaminha `tools/list` e
  * `tools/call` à instância daquela conversa — com o esquema inteiro e a resposta inteira (imagens inclusas).
  *
- * ⛔ TRÊS CONFERÊNCIAS: a conversa é de quem chama (a mesma regra de dono das rotas — de outro, 404); o
- * agente da conversa escolheu este servidor; e, se escolheu só algumas ferramentas, só elas existem.
+ * ⛔ QUATRO CONFERÊNCIAS: a conversa é de quem chama (a mesma regra de dono das rotas — de outro, 404); o
+ * servidor (`:serverId` é a CHAVE, ver `mcpServerKey`) serve ao projeto do agente da conversa — o de outro projeto é
+ * 404; o agente escolheu este servidor; e, se escolheu só algumas ferramentas, só elas existem.
  */
 export class McpProxyController {
   constructor(private readonly deps: IMcpProxyDeps) {
@@ -46,7 +47,10 @@ export class McpProxyController {
     const session = this.deps.session(sessionId)
     if (!resolved || !session || !ownsSession(resolved, session.metadata)) return void deny(404, 'Not found')
 
-    const choice = mcpSelection(this.deps.agentTools(session.agentId) ?? []).get(serverId)
+    const agent = this.deps.agent(session.agentId)
+    const config = this.deps.registry.get(serverId)
+    if (!agent || !config || !mcpServesProject(config, agent.projectId)) return void deny(404, 'Not found')
+    const choice = mcpSelection(agent.allowedTools).get(config.id)
     if (!choice) return void deny(404, 'Not found')
     const allowed = (name: string) => choice.all || choice.tools.has(name)
 

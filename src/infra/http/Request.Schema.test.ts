@@ -14,4 +14,11 @@ describe('agentBodySchema', () => {
     }
     assert.strictEqual(agentBodySchema.safeParse(body).success, true)
   })
+
+  it('aceita quantas ferramentas o agente precisar: quem decide é quem cria (o teto de 100 barrava um agente com o MCP inteiro)', () => {
+    const allowedTools = Array.from({ length: 250 }, (_, index) => `mcp:logiccus/tool_${index}`)
+    const body = { name: 'A', providers: [{ provider: 'claude', models: ['m'] }], systemPrompt: 'x', modes: ['agent'], allowedTools }
+    const parsed = agentBodySchema.safeParse(body)
+    assert.strictEqual(parsed.success && parsed.data.allowedTools.length, 250)
+  })
 })

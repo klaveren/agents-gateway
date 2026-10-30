@@ -104,3 +104,11 @@ export function envDuplicates(rows: readonly IEnvRow[]): string[] {
   const names = rows.map((row) => row.name.trim()).filter(Boolean)
   return [...new Set(names.filter((name, index) => names.indexOf(name) !== index))]
 }
+
+/**
+ * ⛔ Os MCPs que um agente deste projeto pode escolher (`null`/ausente = agente global): os globais e os do projeto dele —
+ * nunca os de outro projeto, e o agente global só os globais. A mesma regra do servidor (`mcpServesProject`).
+ */
+export function mcpServersFor<T extends { projectId?: string }>(servers: readonly T[], projectId: string | null | undefined): T[] {
+  return servers.filter((server) => !server.projectId || server.projectId === projectId)
+}

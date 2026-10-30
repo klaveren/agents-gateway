@@ -1,5 +1,6 @@
 import { CLI_ARG_MAX_BYTES, CLI_ARG_WARN_RATIO, cliArgumentBytes } from '@domain/CliArgument.Policy'
 import { EProvider } from '@domain/enums/EProvider.Enum'
+import { ambientSection } from '@domain/Ambient.Policy'
 import { IAgent } from '@domain/models/Agent.Model'
 import { mcpSelection } from '@domain/models/McpServer.Model'
 import { READ_DOC_TOOL, SEARCH_DOCS_TOOL } from '@domain/models/ProjectDoc.Model'
@@ -58,11 +59,14 @@ export interface IFootprintDeps {
   mcpTools(server: string): Promise<TToolShape[] | undefined>
   /** Os provedores do agente que rodam num CLI (Codex, Antigravity) e os protocolos deles. Vazio ou ausente = sem a conta do CLI. */
   cli?: { providers: string[]; protocols: EProvider[] }
+  /** O nome do projeto e a pasta dele, para o "## Ambiente" (como o `AgentProvider` o compõe). Ausentes = só o id, sem pasta. */
+  projectName?(projectId: string): string | undefined
+  projectDir?(projectId: string): string
 }
 
 /**
  * O TAMANHO do agente: o que ele carrega antes da primeira mensagem, parte a parte, em tokens estimados.
- * ⚖️ Monta as MESMAS peças da conversa — o soul e a instrução como o `composeSystemPrompt` junta, as seções do
+ * ⚖️ Monta as MESMAS peças da conversa — o soul, a instrução e o "## Ambiente" como o `composeSystemPrompt` junta, as seções do
  * ambiente do `GuidanceService`, as ferramentas locais e as dos MCPs (com o `read_doc` quando há índice, como o
  * `AgentProvider`) —, para o número bater com o que vai ao modelo, e não com uma reconstrução da tela.
  */
@@ -79,6 +83,18 @@ export async function agentFootprint(agent: IAgent, projectId: string | undefine
   const soul = agent.soul?.trim()
   add('soul', 'Soul', soul ? `## Quem você é\n${soul}\n\n## Como você trabalha\n` : undefined)
   add('instructions', 'Instrução do sistema', agent.systemPrompt)
+  // O "## Ambiente" de uma conversa no projeto, fora de repositório (o repositório e o branch só a conversa sabe).
+  const name = projectId ? deps.projectName?.(projectId) : undefined
+  const directory = agent.projectId ? deps.projectDir?.(agent.projectId) : undefined
+  add(
+    'ambient',
+    'Ambiente',
+    ambientSection({
+      agentId: agent.id,
+      ...(projectId ? { project: { id: projectId, ...(name ? { name } : {}), own: agent.projectId === projectId } } : {}),
+      ...(directory ? { directory } : {}),
+    }),
+  )
 
   const parts = deps.guidance?.environmentParts(projectId, agent.id) ?? {}
   add('rules', 'Rules', parts.rules)

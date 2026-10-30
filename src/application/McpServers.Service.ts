@@ -11,6 +11,8 @@ import {
   mcpEnvSecretKey,
   mcpSecretKey,
   mcpSelection,
+  mcpServerKey,
+  mcpServesProject,
   mcpUrlIssue,
   TMcpAuth,
   TMcpKind,
@@ -21,6 +23,8 @@ import { IMcpServerRepository } from '@domain/ports/McpServerRepository.Port'
 
 export interface IMcpServerInput {
   id: string
+  /** O projeto dono. Ausente = global. */
+  projectId?: string
   name: string
   kind?: TMcpKind
   container?: Partial<IMcpContainer>
@@ -38,6 +42,8 @@ export interface IMcpServerInput {
 export type TMcpServerChange = Partial<Pick<IMcpServerConfig, 'name' | 'url' | 'transport' | 'auth' | 'headerName' | 'identity' | 'enabled'>> & {
   container?: Partial<IMcpContainer>
   process?: Partial<IMcpProcess>
+  /** Troca o escopo: um projeto, ou `null` para global. Ausente = fica onde está. */
+  projectId?: string | null
 }
 
 const NAME_MAX = 80
@@ -53,6 +59,8 @@ const AUTHS: TMcpAuth[] = ['caller', 'header', 'none']
  */
 /** O id do servidor MCP do próprio gateway (ver `Tools.Factory`). */
 const SELF_MCP_SERVER_ID = 'gateway'
+/** Os ids das sementes globais (o MCP do gateway e o do `.env`): projeto não os toma, ou a semente colidiria. */
+const RESERVED_GLOBAL_IDS = [SELF_MCP_SERVER_ID, 'default']
 
 export class McpServersService {
   constructor(
@@ -60,6 +68,8 @@ export class McpServersService {
     private readonly secrets: ICredentialStore,
     /** Os agentes como gravados (todas as escolhas, inclusive de servidor desligado). */
     private readonly agents: () => readonly IAgent[],
+    /** O projeto existe? Sem projetos ligados, nenhum: só há servidor global. */
+    private readonly projectExists: (projectId: string) => boolean = () => false,
     private readonly now: () => Date = () => new Date(),
   ) {}
 
@@ -67,25 +77,54 @@ export class McpServersService {
     return this.servers.list()
   }
 
-  get(id: string): IMcpServerConfig {
-    const server = this.servers.get(id)
-    if (!server) throw new McpServerNotFoundError(id)
+  /** Por CHAVE (`mcpServerKey`): global é o id; de projeto, `<projeto>.<id>`. */
+  get(key: string): IMcpServerConfig {
+    const server = this.servers.get(key)
+    if (!server) throw new McpServerNotFoundError(key)
     return server
   }
 
-  secretStatus(id: string): ICredentialStatus {
-    return this.secrets.status([mcpSecretKey(id)])[0]
+  secretStatus(key: string): ICredentialStatus {
+    return this.secrets.status([mcpSecretKey(key)])[0]
   }
 
-  /** Os agentes que escolheram alguma ferramenta deste servidor. */
-  usedBy(id: string): IAgent[] {
-    return this.agents().filter((agent) => mcpSelection(agent.allowedTools).has(id))
+  /**
+   * Os agentes que escolheram alguma ferramenta deste servidor — ⛔ só os que o ENXERGAM: `mcp:n8n/…` num agente do
+   * projeto B não é uso do `n8n` do projeto A.
+   */
+  usedBy(key: string): IAgent[] {
+    const server = this.servers.get(key)
+    if (!server) return []
+    return this.agents().filter((agent) => mcpServesProject(server, agent.projectId) && mcpSelection(agent.allowedTools).has(server.id))
+  }
+
+  /**
+   * ⛔ O ID NUNCA FICA AMBÍGUO PARA UM AGENTE: dois projetos podem ter o mesmo id (cada um vê só o seu), mas global e de
+   * projeto com o mesmo id, não — nos dois sentidos. `except`: a chave do próprio servidor (numa troca de escopo).
+   */
+  private scopeIssue(id: string, projectId: string | undefined, except?: string): string | undefined {
+    const others = this.servers.list().filter((server) => server.id === id && mcpServerKey(server) !== except)
+    if (projectId) {
+      if (others.some((server) => !server.projectId)) return `already exists as a global server: ${id}`
+      if (others.some((server) => server.projectId === projectId)) return `already exists in this project: ${id}`
+      if (RESERVED_GLOBAL_IDS.includes(id)) return `reserved for the global server: ${id}`
+      return undefined
+    }
+    if (others.some((server) => !server.projectId)) return `already exists: ${id}`
+    const projects = [...new Set(others.flatMap((server) => (server.projectId ? [server.projectId] : [])))]
+    return projects.length ? `already exists in project ${projects.join(', ')}: a global server with this id would be ambiguous` : undefined
+  }
+
+  private projectIssue(projectId: string | undefined): string | undefined {
+    return projectId !== undefined && !this.projectExists(projectId) ? `no such project: ${projectId}` : undefined
   }
 
   create(input: IMcpServerInput, by: string): IMcpServerConfig {
     const kind = input.kind ?? 'remote'
+    const projectId = input.projectId?.trim() || undefined
     const config: IMcpServerConfig = {
       id: input.id.trim(),
+      ...(projectId ? { projectId } : {}),
       name: input.name.trim(),
       kind,
       ...(kind === 'container' ? { container: containerOf(input.container) } : {}),
@@ -103,18 +142,30 @@ export class McpServersService {
       updatedBy: by,
     }
     const issues = issuesOf(config)
+    const projectIssue = this.projectIssue(projectId)
+    if (projectIssue) issues.unshift({ field: 'projectId', message: projectIssue })
+    const scopeIssue = MCP_SERVER_ID_PATTERN.test(config.id) ? this.scopeIssue(config.id, projectId) : undefined
     if (!MCP_SERVER_ID_PATTERN.test(config.id)) issues.unshift({ field: 'id', message: 'use 2–32 lowercase letters, digits or hyphens' })
-    else if (this.servers.get(config.id)) issues.unshift({ field: 'id', message: `already exists: ${config.id}` })
+    else if (scopeIssue) issues.unshift({ field: 'id', message: scopeIssue })
     if (issues.length) throw new InvalidMcpServerError(issues)
 
     this.servers.insert(config)
-    if (input.secret?.trim()) this.secrets.save(mcpSecretKey(config.id), input.secret.trim(), by)
+    if (input.secret?.trim()) this.secrets.save(mcpSecretKey(mcpServerKey(config)), input.secret.trim(), by)
     return config
   }
 
-  update(id: string, change: TMcpServerChange, by: string): IMcpServerConfig {
-    const current = this.get(id)
-    const { container, process: proc, ...rest } = change
+  /**
+   * Edita pela chave. Com `projectId` (ou `null`), troca o escopo — e a chave, o segredo e as variáveis vão junto.
+   *
+   * ⛔ TROCA QUE DEIXARIA REFERÊNCIA CRUZADA É RECUSADA (409, com quem usa): o agente de fora do escopo novo perderia o
+   * servidor — ou pior, um agente global passaria a citar um servidor de projeto. Tira-se a ferramenta do agente antes.
+   */
+  update(key: string, change: TMcpServerChange, by: string): IMcpServerConfig {
+    const current = this.get(key)
+    const { container, process: proc, projectId: scope, ...rest } = change
+    const id = current.id
+    const target = scope === undefined ? current.projectId : scope?.trim() || undefined
+    const moving = target !== current.projectId
     const next: IMcpServerConfig = {
       ...current,
       ...definedOnly(rest),
@@ -128,9 +179,24 @@ export class McpServersService {
     if (id === SELF_MCP_SERVER_ID && next.url !== current.url) issues.push({ field: 'url', message: 'the gateway server URL is fixed' })
     if (id === SELF_MCP_SERVER_ID && (next.auth !== current.auth || next.headerName !== current.headerName))
       issues.push({ field: 'auth', message: "the gateway server always uses the caller's credential" })
+    if (moving) {
+      const projectIssue = this.projectIssue(target)
+      const scopeIssue = this.scopeIssue(id, target, key)
+      if (!current.projectId && RESERVED_GLOBAL_IDS.includes(id)) issues.push({ field: 'projectId', message: `the ${id} server is global` })
+      else if (projectIssue) issues.push({ field: 'projectId', message: projectIssue })
+      else if (scopeIssue) issues.push({ field: 'projectId', message: scopeIssue })
+    }
     if (issues.length) throw new InvalidMcpServerError(issues)
+    if (moving) {
+      const stranded = this.usedBy(key).filter((agent) => !mcpServesProject({ projectId: target }, agent.projectId))
+      if (stranded.length)
+        throw new McpServerInUseError(
+          id,
+          stranded.map((agent) => `${agent.name} (${agent.projectId ? `project ${agent.projectId}` : 'global'})`),
+        )
+    }
 
-    return this.servers.update(id, {
+    const saved = this.servers.update(key, {
       name: next.name,
       url: next.url,
       transport: next.transport,
@@ -143,45 +209,70 @@ export class McpServersService {
       updatedAt: this.now(),
       updatedBy: by,
     })!
+    if (!moving) return saved
+
+    const moved = this.servers.move(key, target, this.now(), by)!
+    const nextKey = mcpServerKey(moved)
+    // O segredo é do servidor: muda de chave com ele (e a chave velha não fica valendo para ninguém).
+    for (const [from, to] of [[mcpSecretKey(key), mcpSecretKey(nextKey)], ...mcpEnvNames(moved).map((name) => [mcpEnvSecretKey(key, name), mcpEnvSecretKey(nextKey, name)])]) {
+      const value = this.secrets.get(from)
+      if (value) this.secrets.save(to, value, by)
+      this.secrets.clear(from)
+    }
+    return moved
   }
 
-  saveSecret(id: string, secret: string, by: string): void {
-    this.get(id)
+  saveSecret(key: string, secret: string, by: string): void {
+    this.get(key)
     if (!secret.trim()) throw new InvalidMcpServerError([{ field: 'secret', message: 'required' }])
-    this.secrets.save(mcpSecretKey(id), secret.trim(), by)
+    this.secrets.save(mcpSecretKey(key), secret.trim(), by)
   }
 
-  clearSecret(id: string): void {
-    this.get(id)
-    this.secrets.clear(mcpSecretKey(id))
+  clearSecret(key: string): void {
+    this.get(key)
+    this.secrets.clear(mcpSecretKey(key))
   }
 
   /** As variáveis secretas do contêiner ou do processo: o NOME e se há valor — ⛔ nunca o valor. */
-  envStatus(id: string): Array<{ name: string; configured: boolean }> {
-    const server = this.get(id)
-    return mcpEnvNames(server).map((name) => ({ name, configured: this.secrets.status([mcpEnvSecretKey(id, name)])[0].configured }))
+  envStatus(key: string): Array<{ name: string; configured: boolean }> {
+    const server = this.get(key)
+    return mcpEnvNames(server).map((name) => ({ name, configured: this.secrets.status([mcpEnvSecretKey(key, name)])[0].configured }))
   }
 
-  saveEnv(id: string, name: string, value: string, by: string): void {
-    const server = this.get(id)
+  saveEnv(key: string, name: string, value: string, by: string): void {
+    const server = this.get(key)
     if (!mcpEnvNames(server).includes(name)) throw new InvalidMcpServerError([{ field: 'env', message: `not a declared variable: ${name}` }])
     if (!value) throw new InvalidMcpServerError([{ field: 'env', message: 'required' }])
-    this.secrets.save(mcpEnvSecretKey(id, name), value, by)
+    this.secrets.save(mcpEnvSecretKey(key, name), value, by)
   }
 
   /** ⛔ Com agente usando, recusa e diz quais (409) — apagar deixaria ferramentas apontando para o nada. */
-  remove(id: string): void {
-    this.get(id)
-    const using = this.usedBy(id)
+  remove(key: string): void {
+    const server = this.get(key)
+    const using = this.usedBy(key)
     if (using.length)
       throw new McpServerInUseError(
-        id,
+        server.id,
         using.map((agent) => agent.name),
       )
-    const server = this.servers.get(id)
-    this.servers.delete(id)
-    this.secrets.clear(mcpSecretKey(id))
-    for (const name of server ? mcpEnvNames(server) : []) this.secrets.clear(mcpEnvSecretKey(id, name))
+    this.forget(server)
+  }
+
+  /**
+   * O projeto foi apagado: os servidores dele (e as credenciais) vão junto. ⛔ Ficarem órfãos daria a um projeto novo
+   * com o mesmo id as chaves do antigo. Devolve os que saíram (para fechar cliente, instâncias e pacote).
+   */
+  removeProject(projectId: string): IMcpServerConfig[] {
+    const gone = this.servers.list().filter((server) => server.projectId === projectId)
+    for (const server of gone) this.forget(server)
+    return gone
+  }
+
+  private forget(server: IMcpServerConfig): void {
+    const key = mcpServerKey(server)
+    this.servers.delete(key)
+    this.secrets.clear(mcpSecretKey(key))
+    for (const name of mcpEnvNames(server)) this.secrets.clear(mcpEnvSecretKey(key, name))
   }
 }
 
