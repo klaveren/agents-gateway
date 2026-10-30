@@ -30,3 +30,18 @@ export function identityEnv(context: IExecutionContext | undefined): Record<stri
 export function identityHeaders(context: IExecutionContext | undefined): Record<string, string> {
   return Object.fromEntries(Object.entries(identityOf(context)).map(([key, value]) => [IDENTITY_HEADERS[key as keyof TIdentity], value]))
 }
+
+/**
+ * O ambiente do terminal do agente, na ordem em que um vence o outro: as variáveis FIXAS do agente por baixo (ver
+ * `IAgent.env`), o que o gateway monta por cima (HOME, PATH, a conexão do CLI) e a identidade por último.
+ *
+ * ⛔ O agente só ACRESCENTA: a regra já recusa os nomes reservados (`envIssues`), e a ordem garante o resto — nem um
+ * nome que a regra deixou passar troca o que o gateway pôs, e a identidade de quem chama nunca é a que o agente diz.
+ */
+export function terminalEnv<T extends Record<string, string | undefined>>(
+  agentEnv: Readonly<Record<string, string>> | undefined,
+  gateway: T,
+  context: IExecutionContext | undefined,
+): T & Record<string, string> {
+  return { ...agentEnv, ...gateway, ...identityEnv(context) } as T & Record<string, string>
+}

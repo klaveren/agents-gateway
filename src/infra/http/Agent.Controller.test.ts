@@ -1035,6 +1035,25 @@ describe('AgentController', () => {
       assert.strictEqual(out.statusCode, 422)
     })
 
+    it('as variáveis de ambiente: só o admin as vê; editar sem elas mantém, `null` apaga; nome reservado é 422', async () => {
+      const controller = controllerWith({}, toolsCatalog(), proof)
+      const params = { agentId: 'juridico' }
+      const env = { GIT_AUTHOR_NAME: 'Maya', GIT_AUTHOR_EMAIL: 'maya@x.test' }
+      await as(ADMIN, controller, (res) => controller.createAgent(mockRequest({ body: { ...body, env } }), res))
+      const envOf = async () => (((await as(ADMIN, controller, (res) => controller.getAgent(mockRequest({ params }), res))).body?.result ?? {}) as { env?: unknown }).env
+      assert.deepStrictEqual(await envOf(), env)
+
+      const listed = await as(MEMBER, controller, (res) => controller.getAgents(mockRequest(), res))
+      assert.strictEqual('env' in ((listed.body?.result as Array<Record<string, unknown>>).find((agent) => agent.id === 'juridico') ?? {}), false)
+
+      await as(ADMIN, controller, (res) => controller.updateAgent(mockRequest({ params, body: { ...body, name: 'Jurídico 2' } }), res))
+      assert.deepStrictEqual(await envOf(), env)
+      const refused = await as(ADMIN, controller, (res) => controller.updateAgent(mockRequest({ params, body: { ...body, env: { GATEWAY_AGENT_ID: 'x' } } }), res))
+      assert.strictEqual(refused.statusCode, 422)
+      await as(ADMIN, controller, (res) => controller.updateAgent(mockRequest({ params, body: { ...body, env: null } }), res))
+      assert.strictEqual(await envOf(), undefined)
+    })
+
     it('editar troca o agente criado; apagar tira da lista', async () => {
       const controller = controllerWith({}, toolsCatalog(), proof)
       const params = { agentId: 'juridico' }

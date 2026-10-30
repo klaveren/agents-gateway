@@ -32,6 +32,13 @@ describe('SqliteAgentRepository', () => {
     assert.ok(updated.updatedAt.getTime() > created.updatedAt.getTime())
   })
 
+  it('as variáveis de ambiente do agente vão e voltam no documento', () => {
+    const repo = new SqliteAgentRepository(':memory:')
+    const env = { GIT_AUTHOR_NAME: 'Maya', GIT_AUTHOR_EMAIL: 'maya@x.test' }
+    repo.save({ ...agent, env }, 'x')
+    assert.deepStrictEqual(repo.list()[0].env, env)
+  })
+
   it('apagar diz se havia o que apagar', () => {
     const repo = new SqliteAgentRepository(':memory:')
     repo.save(agent, 'x')

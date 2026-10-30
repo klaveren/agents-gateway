@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { defaultLanes, findOrphans, isUsableProvider, pruneModels, pruneNatives, summarizeIssues, unionLanes, unionLevels } from './agentForm'
+import { defaultLanes, envDuplicates, envRecord, envRows, findOrphans, isUsableProvider, pruneModels, pruneNatives, summarizeIssues, unionLanes, unionLevels } from './agentForm'
 
 const natives = [
   { id: 'sdk:Read', protocol: 'claude' },
@@ -77,5 +77,30 @@ describe('unionLanes e unionLevels', () => {
   })
   it('os níveis de todos os protocolos, sem repetir', () => {
     expect(unionLevels([{ reasoningLevels: ['low', 'high'] }, { reasoningLevels: [] }, { reasoningLevels: ['none', 'low'] }])).toEqual(['low', 'high', 'none'])
+  })
+})
+
+describe('variáveis de ambiente', () => {
+  it('ida e volta entre o registro e as linhas da tela', () => {
+    const env = { GIT_AUTHOR_NAME: 'Maya', GIT_AUTHOR_EMAIL: 'maya@x.test' }
+    expect(envRows(env)).toEqual([
+      { name: 'GIT_AUTHOR_NAME', value: 'Maya' },
+      { name: 'GIT_AUTHOR_EMAIL', value: 'maya@x.test' },
+    ])
+    expect(envRecord(envRows(env))).toEqual(env)
+    expect(envRows(undefined)).toEqual([])
+  })
+  it('linha sem nome não vai; nenhuma = null (apaga todas); o nome é aparado', () => {
+    expect(envRecord([{ name: '  ', value: 'x' }])).toBeNull()
+    expect(envRecord([{ name: ' LANG ', value: 'pt_BR' }])).toEqual({ LANG: 'pt_BR' })
+  })
+  it('acha os nomes repetidos', () => {
+    expect(
+      envDuplicates([
+        { name: 'A', value: '1' },
+        { name: 'B', value: '2' },
+        { name: 'A ', value: '3' },
+      ]),
+    ).toEqual(['A'])
   })
 })
