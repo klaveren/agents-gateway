@@ -29,6 +29,15 @@ const SCHEMA = `
 
 type TRow = Record<string, unknown>
 
+/**
+ * Colunas que entraram depois da tabela: o banco antigo ganha a coluna na abertura. SQLite não tem
+ * `ADD COLUMN IF NOT EXISTS`, por isso a checagem em `PRAGMA table_info`.
+ */
+const ADDED_COLUMNS: ReadonlyArray<{ column: string; definition: string }> = [
+  // JSON com a lista de globs; NULL = nenhum.
+  { column: 'import_ignore', definition: 'TEXT' },
+]
+
 /** Os projetos e os membros, no mesmo arquivo das conversas. Sem arquivo, em memória (`:memory:`). */
 export class SqliteProjectRepository implements IProjectRepository {
   private readonly db: DatabaseSync
@@ -38,6 +47,10 @@ export class SqliteProjectRepository implements IProjectRepository {
     this.db = new DatabaseSync(path)
     this.db.exec('PRAGMA journal_mode = WAL')
     this.db.exec(SCHEMA)
+    const existing = this.db.prepare('PRAGMA table_info(projects)').all() as TRow[]
+    for (const { column, definition } of ADDED_COLUMNS) {
+      if (!existing.some((row) => row.name === column)) this.db.exec(`ALTER TABLE projects ADD COLUMN ${column} ${definition}`)
+    }
   }
 
   list(): IProject[] {
@@ -55,9 +68,11 @@ export class SqliteProjectRepository implements IProjectRepository {
       .run(project.id, project.name, project.description ?? null, project.createdAt.toISOString(), project.updatedAt.toISOString(), project.updatedBy ?? null)
   }
 
-  update(id: string, patch: Partial<Pick<IProject, 'name' | 'description' | 'updatedAt' | 'updatedBy'>>): IProject | undefined {
+  update(id: string, patch: Partial<Pick<IProject, 'name' | 'description' | 'importIgnore' | 'updatedAt' | 'updatedBy'>>): IProject | undefined {
     if (patch.name !== undefined) this.db.prepare('UPDATE projects SET name = ? WHERE id = ?').run(patch.name, id)
     if ('description' in patch) this.db.prepare('UPDATE projects SET description = ? WHERE id = ?').run(patch.description ?? null, id)
+    if ('importIgnore' in patch)
+      this.db.prepare('UPDATE projects SET import_ignore = ? WHERE id = ?').run(patch.importIgnore?.length ? JSON.stringify(patch.importIgnore) : null, id)
     if (patch.updatedAt) this.db.prepare('UPDATE projects SET updated_at = ?, updated_by = ? WHERE id = ?').run(patch.updatedAt.toISOString(), patch.updatedBy ?? null, id)
     return this.get(id)
   }
@@ -104,8 +119,19 @@ function toProject(row: TRow): IProject {
     id: String(row.id),
     name: String(row.name),
     ...(typeof row.description === 'string' && row.description ? { description: row.description } : {}),
+    ...(importIgnoreOf(row.import_ignore).length ? { importIgnore: importIgnoreOf(row.import_ignore) } : {}),
     createdAt: new Date(String(row.created_at)),
     updatedAt: new Date(String(row.updated_at)),
     ...(typeof row.updated_by === 'string' ? { updatedBy: row.updated_by } : {}),
+  }
+}
+
+function importIgnoreOf(value: unknown): string[] {
+  if (typeof value !== 'string' || !value) return []
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed.filter((pattern): pattern is string => typeof pattern === 'string') : []
+  } catch {
+    return []
   }
 }

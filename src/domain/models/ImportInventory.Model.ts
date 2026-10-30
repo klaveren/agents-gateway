@@ -73,6 +73,13 @@ export interface IInventoryLink {
   reason: 'outside' | 'cycle' | 'broken'
 }
 
+export interface IInventoryIgnored {
+  pattern: string
+  /** `project`: guardado no projeto pelo admin; `request`: só nesta varredura. */
+  origin: 'project' | 'request'
+  files: number
+}
+
 export interface IImportScan {
   projectId: string
   repository: string
@@ -89,6 +96,8 @@ export interface IImportScan {
     binaries: string[]
     /** Links recusados: para fora do repositório, em ciclo ou quebrados. */
     links: IInventoryLink[]
+    /** Os padrões de ignorar (do projeto e da chamada) e quantos arquivos cada um tirou (o primeiro que casa conta). */
+    patterns: IInventoryIgnored[]
   }
   items: IInventoryItem[]
 }

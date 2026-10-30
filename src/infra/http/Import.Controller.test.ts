@@ -27,6 +27,7 @@ describe('POST /projects/:id/import/scan', () => {
   const base = mkdtempSync(join(tmpdir(), 'gw-import-route-'))
   const folderOf = (projectId: string) => join(base, projectId)
   let controller: ImportController
+  const stored = new Map<string, string[]>()
 
   before(() => {
     for (const [project, repository] of [
@@ -43,14 +44,19 @@ describe('POST /projects/:id/import/scan', () => {
         readTree: (projectId, repository) => readRepoTree(resolveWorkFolder(folderOf(projectId), repository).dir, { mask: (text) => maskText(text, []) }),
         detectors: [new AgentsDirDetector(), new OpencodeDetector()],
         findInCatalog: () => undefined,
+        projectIgnore: (projectId) => stored.get(projectId) ?? [],
       }),
       projectExists: (projectId) => ['alfa', 'beta'].includes(projectId),
+      ignore: {
+        get: (projectId) => stored.get(projectId) ?? [],
+        set: (projectId, patterns) => (stored.set(projectId, [...patterns]), [...patterns]),
+      },
       proof,
     })
   })
   after(() => rmSync(base, { recursive: true, force: true }))
 
-  const call = (as: string, projectId: string, body: unknown) =>
+  const call = (as: string, projectId: string, body: unknown, handler: 'scan' | 'getIgnore' | 'setIgnore' = 'scan') =>
     withCaller({ token: as, ...identityFromToken(as) }, async () => {
       const reply: { status: number; body?: { ok: boolean; result?: any; code?: string; details?: any } } = { status: 0 } // eslint-disable-line @typescript-eslint/no-explicit-any
       const res = {
@@ -63,7 +69,7 @@ describe('POST /projects/:id/import/scan', () => {
           return this
         },
       } as unknown as Response
-      await controller.scan({ params: { id: projectId }, body } as unknown as Request, res)
+      await controller[handler]({ params: { id: projectId }, body } as unknown as Request, res)
       return reply
     })
 
@@ -95,5 +101,29 @@ describe('POST /projects/:id/import/scan', () => {
   it('projeto inexistente é 404; corpo sem repositório é 422', async () => {
     assert.strictEqual((await call(ADMIN, 'gama', { repository: 'app' })).status, 404)
     assert.strictEqual((await call(ADMIN, 'alfa', {})).status, 422)
+  })
+
+  it('o ignorar do projeto: o admin lê e grava; a varredura aplica o do projeto e o da chamada', async () => {
+    assert.deepStrictEqual((await call(ADMIN, 'alfa', undefined, 'getIgnore')).body?.result, { patterns: [] })
+    const saved = await call(ADMIN, 'alfa', { patterns: ['.agents/specs'] }, 'setIgnore')
+    assert.deepStrictEqual([saved.status, saved.body?.result], [200, { patterns: ['.agents/specs'] }])
+    const reply = await call(ADMIN, 'alfa', { repository: 'app', ignore: ['misc'] })
+    assert.strictEqual(reply.status, 200)
+    assert.deepStrictEqual(reply.body?.result.ignored.patterns, [
+      { pattern: '.agents/specs', origin: 'project', files: 2 },
+      { pattern: 'misc', origin: 'request', files: 1 },
+    ])
+    assert.ok(!(reply.body?.result.items as Array<{ kind: string }>).some((item) => item.kind === 'spec'))
+    stored.clear()
+  })
+
+  it('⛔ o ignorar é só do admin; padrão para fora do repositório é 422', async () => {
+    assert.strictEqual((await call(MEMBER, 'alfa', undefined, 'getIgnore')).status, 404)
+    assert.strictEqual((await call(MEMBER, 'alfa', { patterns: ['x'] }, 'setIgnore')).status, 404)
+    assert.strictEqual(stored.size, 0)
+    assert.strictEqual((await call(ADMIN, 'gama', undefined, 'getIgnore')).status, 404)
+    const bad = await call(ADMIN, 'alfa', { repository: 'app', ignore: ['../fora'] })
+    assert.deepStrictEqual([bad.status, bad.body?.details?.[0]?.field], [422, 'ignore.0'])
+    assert.strictEqual((await call(ADMIN, 'alfa', { patterns: 'x' }, 'setIgnore')).status, 422)
   })
 })

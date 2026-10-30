@@ -163,7 +163,7 @@ export function pathMatches(pattern: string, path: string): boolean {
   return globToRegex(target).test(clean)
 }
 
-function globToRegex(pattern: string): RegExp {
+export function globToRegex(pattern: string): RegExp {
   let source = ''
   for (let i = 0; i < pattern.length; i += 1) {
     const char = pattern[i]

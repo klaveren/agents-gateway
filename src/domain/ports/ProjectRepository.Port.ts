@@ -5,7 +5,7 @@ export interface IProjectRepository {
   list(): IProject[]
   get(id: string): IProject | undefined
   insert(project: IProject): void
-  update(id: string, patch: Partial<Pick<IProject, 'name' | 'description' | 'updatedAt' | 'updatedBy'>>): IProject | undefined
+  update(id: string, patch: Partial<Pick<IProject, 'name' | 'description' | 'importIgnore' | 'updatedAt' | 'updatedBy'>>): IProject | undefined
   delete(id: string): boolean
   members(projectId: string): IProjectMember[]
   /** Os projetos de que a conta é membro. */
