@@ -46,6 +46,12 @@ export const RESOURCE_DESCRIPTION_MAX = 300
 export const ALL_RESOURCES = '*'
 /** A marca gravada de "nenhum, de propósito" — sem ela, a lista vazia seria o padrão (todos). */
 export const NO_RESOURCES = '-'
+
+/** O que vale para o agente, do que está gravado: sem marcação, todos (`*`); a marca de "nenhum", nenhum (`[]`). */
+export function effectiveResources(stored: IAgentResources): IAgentResources {
+  const of = (ids: string[]) => (!ids.length ? [ALL_RESOURCES] : ids.filter((id) => id !== NO_RESOURCES))
+  return { skills: of(stored.skills), commands: of(stored.commands) }
+}
 /**
  * A ferramenta com que o agente carrega, sob demanda, um recurso que o índice do prompt lista: uma skill liberada, um
  * command liberado ou um trigger dele. ⚖️ Um carregador só; cada tipo segue com os seus dados, a sua tela e a sua regra.
