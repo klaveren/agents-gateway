@@ -75,6 +75,8 @@ export interface ILocalToolDeps {
   processes?: BackgroundProcesses
   /** A máscara de segredos (ver `Secret.Masker`). Ausente = a saída vai como saiu. */
   mask?: ILocalMask
+  /** O detector de laço (ver `Loop.Guard`): recusa a chamada repetida antes de ela rodar. Ausente = sem detector. */
+  loops?: { check(sessionId: string | undefined, tool: string, args: unknown): string | undefined }
   /** As contas do projeto que vão para cada comando (ver `ProjectAccounts.Service`). Ausente = nenhuma. */
   accounts?: {
     commandEnv(projectId: string, allowed: (id: string) => boolean): Promise<{ env: Record<string, string>; problems: string[]; ssh?: ISshKitIdentity[] }>
@@ -369,14 +371,17 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     ...(deps.drafts ? [proposeDraftTool(deps.drafts)] : []),
     ...(deps.todos?.saveTodos ? [updateTodosTool(deps.todos)] : []),
   ]
-  // ⛔ Toda saída de ferramenta local passa pela máscara (ver `Secret.Mask`): o `read_file` de uma config, a busca, os logs.
-  if (!deps.mask) return tools
-  const mask = deps.mask
+  // ⛔ A chamada repetida é recusada antes de rodar (ver `Loop.Policy`), e toda saída passa pela máscara (ver
+  // `Secret.Mask`): o `read_file` de uma config, a busca, os logs.
+  const { mask, loops } = deps
+  if (!mask && !loops) return tools
   return tools.map((tool) => ({
     ...tool,
     async execute(args: Record<string, unknown>, context?: IExecutionContext) {
+      const refusal = loops?.check(context?.sessionId, tool.name, args)
+      if (refusal) return { status: 'error' as const, result: refusal }
       const outcome = await tool.execute(args, context)
-      return { ...outcome, result: mask.text(outcome.result, context?.sessionId) }
+      return mask ? { ...outcome, result: mask.text(outcome.result, context?.sessionId) } : outcome
     },
   }))
 }

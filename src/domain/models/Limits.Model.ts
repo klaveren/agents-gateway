@@ -8,7 +8,17 @@
  * ajuste, é desligar ou abrir a torneira; a faixa recusa os dois (ver `LIMIT_BOUNDS`).
  */
 export type TLimitName =
-  'maxToolTurns' | 'maxOutputTokens' | 'delegationMaxDepth' | 'bashTimeoutMs' | 'bashMaxOutputChars' | 'sessionsPerOwner' | 'streamsPerOwner' | 'compactAtPercent'
+  | 'maxToolTurns'
+  | 'maxOutputTokens'
+  | 'delegationMaxDepth'
+  | 'bashTimeoutMs'
+  | 'bashMaxOutputChars'
+  | 'sessionsPerOwner'
+  | 'streamsPerOwner'
+  | 'compactAtPercent'
+  | 'loopRefuseAt'
+  | 'loopStopAt'
+  | 'loopMaxErrors'
 
 export type ILimits = Partial<Record<TLimitName, number>>
 
@@ -21,6 +31,9 @@ export const LIMIT_BOUNDS: Readonly<Record<TLimitName, { min: number; max: numbe
   sessionsPerOwner: { min: 1, max: 1_000, env: 'SESSIONS_PER_OWNER' },
   streamsPerOwner: { min: 1, max: 500, env: 'STREAMS_PER_OWNER' },
   compactAtPercent: { min: 50, max: 95, env: 'COMPACT_AT_PERCENT' },
+  loopRefuseAt: { min: 2, max: 50, env: 'LOOP_REFUSE_AT' },
+  loopStopAt: { min: 3, max: 100, env: 'LOOP_STOP_AT' },
+  loopMaxErrors: { min: 3, max: 100, env: 'LOOP_MAX_ERRORS' },
 }
 
 export const LIMIT_NAMES = Object.keys(LIMIT_BOUNDS) as TLimitName[]

@@ -262,7 +262,7 @@ export interface IProtocolInfo {
   envName?: string
 }
 
-export type TLimitName = 'maxToolTurns' | 'maxOutputTokens' | 'delegationMaxDepth' | 'bashTimeoutMs' | 'bashMaxOutputChars' | 'sessionsPerOwner' | 'streamsPerOwner' | 'compactAtPercent'
+export type TLimitName = 'maxToolTurns' | 'maxOutputTokens' | 'delegationMaxDepth' | 'bashTimeoutMs' | 'bashMaxOutputChars' | 'sessionsPerOwner' | 'streamsPerOwner' | 'compactAtPercent' | 'loopRefuseAt' | 'loopStopAt' | 'loopMaxErrors'
 
 export type TAudience = 'off' | 'restricted' | 'all'
 

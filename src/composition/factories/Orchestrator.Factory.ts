@@ -19,7 +19,7 @@ import { makeAgents } from './Agents.Factory'
 import { makeProviders } from './Providers.Factory'
 import { makeSettings } from './Settings.Factory'
 import { makeModelCatalog } from './Catalog.Factory'
-import { makeTools, selfUrl } from './Tools.Factory'
+import { loopGuard, makeTools, selfUrl } from './Tools.Factory'
 
 let store: SessionStore | undefined
 
@@ -55,11 +55,14 @@ export function makeOrchestrator(): AgentProvider {
     [adapterKey(EProvider.CLAUDE, EMode.CHAT), new ClaudeChatAdapter({ store: sessions, catalog, connections })],
     [adapterKey(EProvider.OPENAI, EMode.CHAT), new OpenAIChatAdapter({ store: sessions, catalog, connections })],
     [adapterKey(EProvider.GOOGLE, EMode.CHAT), new GoogleChatAdapter({ store: sessions, catalog, connections })],
-    [adapterKey(EProvider.CLAUDE, EMode.AGENT), new ClaudeAgentAdapter({ store: sessions, catalog, connections, permissions: makePermissions() })],
+    [adapterKey(EProvider.CLAUDE, EMode.AGENT), new ClaudeAgentAdapter({ store: sessions, catalog, connections, permissions: makePermissions(), loops: loopGuard() })],
     [adapterKey(EProvider.OPENAI, EMode.AGENT), new OpenAIAgentAdapter({ store: sessions, catalog, connections })],
     [adapterKey(EProvider.GOOGLE, EMode.AGENT), new GoogleAgentAdapter({ store: sessions, catalog, connections })],
     // As assinaturas: só a lane agent (ver `Subscription.Policy`).
-    [adapterKey(EProvider.CLAUDE_SUB, EMode.AGENT), new ClaudeAgentAdapter({ store: sessions, catalog, connections, subscription: true, permissions: makePermissions() })],
+    [
+      adapterKey(EProvider.CLAUDE_SUB, EMode.AGENT),
+      new ClaudeAgentAdapter({ store: sessions, catalog, connections, subscription: true, permissions: makePermissions(), loops: loopGuard() }),
+    ],
     [adapterKey(EProvider.CODEX, EMode.AGENT), new CodexAgentAdapter({ store: sessions, catalog, connections, turnTools })],
     [adapterKey(EProvider.ANTIGRAVITY, EMode.AGENT), new AntigravityAgentAdapter({ store: sessions, catalog, connections, turnTools })],
   ])
@@ -69,7 +72,17 @@ export function makeOrchestrator(): AgentProvider {
    * provider escuta o mesmo, e é isso que faz a mudança valer no instante em que é gravada.
    */
   const models = makeModelCatalog()
-  return new AgentProvider(adapters, sessions, makeSettings(), makeAgents(), connections, makeGuidance(), providerBench(), (provider, model) => models.contextOf(provider, model))
+  return new AgentProvider(
+    adapters,
+    sessions,
+    makeSettings(),
+    makeAgents(),
+    connections,
+    makeGuidance(),
+    providerBench(),
+    (provider, model) => models.contextOf(provider, model),
+    loopGuard(),
+  )
 }
 
 let bench: ProviderBench | undefined

@@ -12,6 +12,7 @@ import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepositor
 import { SqliteMcpServerRepository } from '@infra/persistence/Sqlite.McpServerRepository'
 import { DelegationSlot, makeDelegateTool } from '@infra/tools/Delegate.Tool'
 import { ITodoStore, makeLocalTools } from '@infra/tools/Local.Tools'
+import { LoopGuard } from '@infra/tools/Loop.Guard'
 import { DEFAULT_MCP_SERVER, ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { makeAgents } from './Agents.Factory'
 import { makeCredentials } from './Credentials.Factory'
@@ -25,6 +26,13 @@ export interface ITools {
 }
 
 let instance: ITools | undefined
+
+let loops: LoopGuard | undefined
+/** O detector de laço (ver `Loop.Guard`): um só, para as ferramentas locais, o Claude e o provider. */
+export function loopGuard(): LoopGuard {
+  loops ??= new LoopGuard()
+  return loops
+}
 
 /**
  * Uma instância só, compartilhada: o catálogo, o cadastro de servidores MCP e os clientes deles.
@@ -57,6 +65,7 @@ export function makeTools(): ITools {
           permissions: lazyPermissions,
           agentTerminal: (agentId) => makeAgents().get(agentId)?.terminal,
           mask: makeSecretMasker(),
+          loops: loopGuard(),
           accounts: {
             commandEnv: (projectId, allowed) => makeProjectAccounts().commandEnv(projectId, allowed),
             sign: (projectId, id, namespace, data) => makeProjectAccounts().sign(projectId, id, namespace, data),

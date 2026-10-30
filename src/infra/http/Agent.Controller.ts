@@ -20,6 +20,7 @@ import { dangerousToolsOf } from '@domain/Tool.Policy'
 import { isSubscription } from '@domain/Subscription.Policy'
 import { delegationMaxDepth } from '@domain/models/Delegation.Model'
 import { compactAtPercent } from '@domain/Compaction.Policy'
+import { loopLimits } from '@domain/Loop.Policy'
 import { maxOutputTokens, maxToolTurns } from '@infra/adapters/support/Prompt.Helper'
 import { bashPolicy } from '@infra/tools/Bash.Guard'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -836,6 +837,7 @@ export class AgentController {
       const fallback = this.agents.fallback()
 
       const bash = bashPolicy()
+      const loop = loopLimits()
 
       return {
         ...(await this.usecases.settings.read()),
@@ -850,6 +852,9 @@ export class AgentController {
           sessionsPerOwner: sessionsPerOwner(),
           streamsPerOwner: streamsPerOwner(),
           compactAtPercent: compactAtPercent(),
+          loopRefuseAt: loop.refuseAt,
+          loopStopAt: loop.stopAt,
+          loopMaxErrors: loop.maxErrors,
         },
         limitBounds: LIMIT_BOUNDS,
         // Os provedores sem cota agora (ver `Provider.Bench`) e quando voltam.
