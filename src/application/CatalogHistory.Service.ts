@@ -20,6 +20,8 @@ export interface ICatalogChange {
   op?: Extract<TRevisionOp, 'restore' | 'import'>
   batchId?: string
   note?: string
+  /** As ampliações que quem grava aceitou (as chaves do `confirm`). */
+  widenings?: readonly string[]
 }
 
 /** O que os serviços de escrita pedem ao histórico. */
@@ -55,6 +57,9 @@ const keyText = (key: { kind: TCatalogKind; id: string }) => `${key.kind}\0${key
  * do boot (`reconcile`) pega a deriva.
  */
 export class CatalogHistoryService implements ICatalogRecorder {
+  /** Dentro de `within`: as chaves que as escritas pediram, gravadas juntas no fim. */
+  private pending?: ICatalogItemKey[]
+
   constructor(
     private readonly repository: ICatalogHistoryRepository,
     private readonly reader: Pick<CatalogReader, 'read' | 'list'>,
@@ -62,6 +67,10 @@ export class CatalogHistoryService implements ICatalogRecorder {
   ) {}
 
   record(keys: readonly ICatalogItemKey[], change: ICatalogChange): ICatalogRevision[] {
+    if (this.pending) {
+      this.pending.push(...keys)
+      return []
+    }
     const at = this.now()
     const seen = new Set<string>()
     const written: ICatalogRevision[] = []
@@ -77,10 +86,45 @@ export class CatalogHistoryService implements ICatalogRecorder {
         written.push(this.repository.append({ ...base, ...scopeOf(current.projectId), op, document: current.text, hash: current.hash }))
       } else {
         if (last && last.document === undefined) continue
+        // ⚖️ Apagar nunca é `restore`: o rollback que apaga grava `delete` (com `source` e nota dele).
         written.push(this.repository.append({ ...base, ...scopeOf(last ? last.projectId : key.projectId), op: 'delete' }))
       }
     }
     return written
+  }
+
+  /**
+   * UMA ESCRITA COMPOSTA, UMA REVISÃO POR ITEM: o rollback grava o item por vários serviços (o agente, os recursos dele e
+   * o contexto inicial), e cada um pediria a sua revisão. Aqui elas esperam o fim de `work` e saem juntas: o `target`
+   * com a `change` inteira (`op`, nota, ampliações aceitas); os outros itens que mudaram junto (a cascata, a renumeração
+   * das rules) com quem, por onde e o lote, e a operação da comparação de sempre.
+   *
+   * ⛔ SÍNCRONO, de propósito: as escritas do SQLite são síncronas, então nada de outra requisição entra no meio e é
+   * gravado com a nota de outra pessoa. O que é assíncrono (as regras do momento) se resolve ANTES.
+   */
+  within<T>(target: ICatalogItemKey, change: ICatalogChange, work: () => T): { result: T; revisions: ICatalogRevision[] } {
+    if (this.pending) throw new Error('catalog history: nested composite write')
+    const pending: ICatalogItemKey[] = []
+    this.pending = pending
+    const others: ICatalogChange = { by: change.by, ...(change.source ? { source: change.source } : {}), ...(change.batchId ? { batchId: change.batchId } : {}) }
+    let result: T
+    try {
+      result = work()
+    } catch (error) {
+      // Parou no meio: o que já foi gravado ganha a revisão de sempre (sem a nota do rollback, que não terminou).
+      this.pending = undefined
+      this.record(pending, others)
+      throw error
+    }
+    this.pending = undefined
+    const revisions = [
+      ...this.record([target], change),
+      ...this.record(
+        pending.filter((key) => keyText(key) !== keyText(target)),
+        others,
+      ),
+    ]
+    return { result, revisions }
   }
 
   /**
@@ -209,6 +253,10 @@ function scopeOf(projectId: string | undefined): { projectId?: string } {
   return projectId ? { projectId } : {}
 }
 
-function extras(change: ICatalogChange): { batchId?: string; note?: string } {
-  return { ...(change.batchId ? { batchId: change.batchId } : {}), ...(change.note ? { note: change.note } : {}) }
+function extras(change: ICatalogChange): { batchId?: string; note?: string; widenings?: string[] } {
+  return {
+    ...(change.batchId ? { batchId: change.batchId } : {}),
+    ...(change.note ? { note: change.note } : {}),
+    ...(change.widenings?.length ? { widenings: [...change.widenings] } : {}),
+  }
 }

@@ -3,12 +3,17 @@ import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { TCatalogKind } from '@domain/Catalog.Document'
 import {
+  IBatchWidening,
+  ICatalogBatch,
+  ICatalogBatchRepository,
   ICatalogHistoryRepository,
   ICatalogRevision,
   IRevisionFilter,
   IRevisionPage,
   TNewRevision,
   TRevisionOp,
+  TBatchKind,
+  TBatchStatus,
   TRevisionSource,
 } from '@domain/ports/CatalogHistoryRepository.Port'
 
@@ -34,16 +39,31 @@ const SCHEMA = `
     UNIQUE (kind, item_id, revision)
   );
   CREATE INDEX IF NOT EXISTS catalog_revisions_scope ON catalog_revisions (project_id, at DESC);
+  CREATE INDEX IF NOT EXISTS catalog_revisions_batch ON catalog_revisions (batch_id) WHERE batch_id IS NOT NULL;
+
+  CREATE TABLE IF NOT EXISTS catalog_batches (
+    id          TEXT PRIMARY KEY,
+    at          TEXT NOT NULL,
+    by          TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    scope       TEXT NOT NULL,
+    summary     TEXT NOT NULL,
+    widenings   TEXT NOT NULL,
+    status      TEXT NOT NULL
+  );
 `
+
+/** As colunas que vieram depois da tabela (bancos antigos ganham na subida). */
+const ADDED_COLUMNS: ReadonlyArray<[string, string]> = [['widenings', 'TEXT']]
 
 type TRow = Record<string, unknown>
 type TParam = string | number
 
 /** As colunas da lista: tudo menos o documento (pode ter centenas de KB). */
-const SUMMARY_COLUMNS = 'id, kind, item_id, project_id, revision, op, hash, at, by, source, batch_id, note'
+const SUMMARY_COLUMNS = 'id, kind, item_id, project_id, revision, op, hash, at, by, source, batch_id, note, widenings'
 
 /** O histórico do catálogo, no mesmo arquivo das conversas. Sem arquivo, em memória. */
-export class SqliteCatalogHistoryRepository implements ICatalogHistoryRepository {
+export class SqliteCatalogHistoryRepository implements ICatalogHistoryRepository, ICatalogBatchRepository {
   private readonly db: DatabaseSync
 
   constructor(path = ':memory:') {
@@ -52,6 +72,8 @@ export class SqliteCatalogHistoryRepository implements ICatalogHistoryRepository
     this.db.exec('PRAGMA journal_mode = WAL')
     this.db.exec('PRAGMA busy_timeout = 5000')
     this.db.exec(SCHEMA)
+    const columns = new Set((this.db.prepare('PRAGMA table_info(catalog_revisions)').all() as TRow[]).map((row) => row.name as string))
+    for (const [name, type] of ADDED_COLUMNS) if (!columns.has(name)) this.db.exec(`ALTER TABLE catalog_revisions ADD COLUMN ${name} ${type}`)
   }
 
   latest(kind: TCatalogKind, itemId: string): ICatalogRevision | undefined {
@@ -110,8 +132,8 @@ export class SqliteCatalogHistoryRepository implements ICatalogHistoryRepository
   append(revision: TNewRevision): ICatalogRevision {
     const row = this.db
       .prepare(
-        `INSERT INTO catalog_revisions (kind, item_id, project_id, revision, op, document, hash, at, by, source, batch_id, note)
-         VALUES (?, ?, ?, (SELECT COALESCE(MAX(revision), 0) + 1 FROM catalog_revisions WHERE kind = ? AND item_id = ?), ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO catalog_revisions (kind, item_id, project_id, revision, op, document, hash, at, by, source, batch_id, note, widenings)
+         VALUES (?, ?, ?, (SELECT COALESCE(MAX(revision), 0) + 1 FROM catalog_revisions WHERE kind = ? AND item_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING *`,
       )
       .get(
@@ -128,8 +150,46 @@ export class SqliteCatalogHistoryRepository implements ICatalogHistoryRepository
         revision.source,
         revision.batchId ?? null,
         revision.note ?? null,
+        revision.widenings?.length ? JSON.stringify(revision.widenings) : null,
       ) as TRow
     return toRevision(row)
+  }
+
+  createBatch(batch: ICatalogBatch): ICatalogBatch {
+    this.db
+      .prepare('INSERT INTO catalog_batches (id, at, by, kind, scope, summary, widenings, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(batch.id, batch.at.toISOString(), batch.by, batch.kind, batch.scope, JSON.stringify(batch.summary), JSON.stringify(batch.widenings), batch.status)
+    return batch
+  }
+
+  batch(id: string): ICatalogBatch | undefined {
+    const row = this.db.prepare('SELECT * FROM catalog_batches WHERE id = ?').get(id) as TRow | undefined
+    return row ? toBatch(row) : undefined
+  }
+
+  finishBatch(id: string, change: { status: TBatchStatus; summary: Record<string, unknown> }): void {
+    this.db.prepare('UPDATE catalog_batches SET status = ?, summary = ? WHERE id = ?').run(change.status, JSON.stringify(change.summary), id)
+  }
+
+  markReverted(id: string): void {
+    this.db.prepare("UPDATE catalog_batches SET status = 'reverted' WHERE id = ?").run(id)
+  }
+
+  batchRevisions(batchId: string): ICatalogRevision[] {
+    return (this.db.prepare('SELECT * FROM catalog_revisions WHERE batch_id = ? ORDER BY id').all(batchId) as TRow[]).map(toRevision)
+  }
+}
+
+function toBatch(row: TRow): ICatalogBatch {
+  return {
+    id: row.id as string,
+    at: new Date(row.at as string),
+    by: row.by as string,
+    kind: row.kind as TBatchKind,
+    scope: row.scope as string,
+    summary: JSON.parse(row.summary as string) as Record<string, unknown>,
+    widenings: JSON.parse(row.widenings as string) as IBatchWidening[],
+    status: row.status as TBatchStatus,
   }
 }
 
@@ -148,5 +208,6 @@ function toRevision(row: TRow): ICatalogRevision {
     source: row.source as TRevisionSource,
     ...(typeof row.batch_id === 'string' ? { batchId: row.batch_id } : {}),
     ...(typeof row.note === 'string' ? { note: row.note } : {}),
+    ...(typeof row.widenings === 'string' ? { widenings: JSON.parse(row.widenings) as string[] } : {}),
   }
 }

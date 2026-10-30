@@ -9,7 +9,7 @@ import { permissionRepository } from './Permissions.Factory'
 import { projectRepository } from './Projects.Factory'
 import { makeTools } from './Tools.Factory'
 
-let instance: { service: CatalogHistoryService; query: CatalogHistoryQuery } | undefined
+let instance: { service: CatalogHistoryService; query: CatalogHistoryQuery; repository: SqliteCatalogHistoryRepository; reader: CatalogReader } | undefined
 
 /**
  * O histórico do catálogo: UM serviço, no mesmo arquivo das conversas. O leitor usa os MESMOS repositórios dos serviços
@@ -37,8 +37,14 @@ function build() {
     projects: projectRepository(),
   })
   const repository = new SqliteCatalogHistoryRepository(configured === 'off' ? ':memory:' : configured || DEFAULT_DB_PATH)
-  instance = { service: new CatalogHistoryService(repository, reader), query: new CatalogHistoryQuery(repository, reader) }
+  instance = { service: new CatalogHistoryService(repository, reader), query: new CatalogHistoryQuery(repository, reader), repository, reader }
   return instance
+}
+
+/** O repositório e o leitor do histórico (o rollback): os MESMOS do serviço que grava. */
+export function catalogHistoryParts(): { repository: SqliteCatalogHistoryRepository; reader: CatalogReader } {
+  const { repository, reader } = build()
+  return { repository, reader }
 }
 
 /**

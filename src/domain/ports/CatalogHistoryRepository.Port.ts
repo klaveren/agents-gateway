@@ -6,7 +6,9 @@ import type { TCatalogKind } from '@domain/Catalog.Document'
  * - `create`/`update`/`delete`: as escritas pela aplicação;
  * - `drift`: o boot achou o item diferente da última revisão (semente, migração, edição direta no banco ou a janela
  *   entre gravar o item e gravar a revisão);
- * - `restore`/`import`: o rollback e o import (PRs seguintes).
+ * - `restore`: o rollback (restaurar uma revisão, reverter um lote) que deixa o item existindo; o que o apaga grava
+ *   `delete` com `source = restore`;
+ * - `import`: o import (PR seguinte).
  */
 export type TRevisionOp = 'baseline' | 'create' | 'update' | 'delete' | 'restore' | 'import' | 'drift'
 
@@ -36,6 +38,8 @@ export interface ICatalogRevision {
   source: TRevisionSource
   batchId?: string
   note?: string
+  /** As chaves das ampliações de permissão que quem gravou ACEITOU nesta troca (o `confirm`; ver `Catalog.Widening`). */
+  widenings?: string[]
 }
 
 export type TNewRevision = Omit<ICatalogRevision, 'id' | 'revision'>
@@ -76,4 +80,50 @@ export interface ICatalogHistoryRepository {
   page(filter: IRevisionFilter, paging: { offset: number; limit: number }): IRevisionPage
   /** Grava a próxima revisão do item (`revision` = última + 1). */
   append(revision: TNewRevision): ICatalogRevision
+}
+
+/** O que o lote foi: um import (PR 9) ou a reversão de um lote. */
+export type TBatchKind = 'import' | 'revert'
+
+/**
+ * - `partial`: começou e não terminou (parou num erro, pulou conflito, ou o processo caiu no meio — é o estado gravado
+ *   ao abrir o lote);
+ * - `applied`: tudo aplicado;
+ * - `reverted`: um lote de reversão posterior o desfez por inteiro.
+ */
+export type TBatchStatus = 'applied' | 'partial' | 'reverted'
+
+/** Uma ampliação aceita no lote, item a item (a chave estável e o texto que a pessoa viu). */
+export interface IBatchWidening {
+  kind: TCatalogKind
+  itemId: string
+  key: string
+  description: string
+}
+
+/** Um lote: várias escritas de catálogo que andam juntas (as revisões dele levam o `batchId`). */
+export interface ICatalogBatch {
+  id: string
+  at: Date
+  by: string
+  kind: TBatchKind
+  /** `all`, `global` ou `project:<id>`. */
+  scope: string
+  /** O plano aplicado (o que entrou, o que pulou e por quê, o erro): JSON livre de quem grava. */
+  summary: Record<string, unknown>
+  /** As ampliações aceitas, item a item. */
+  widenings: IBatchWidening[]
+  status: TBatchStatus
+}
+
+/** ⚖️ Lote também só acrescenta: muda o `status` e o `summary` ao fechar; nunca se apaga. */
+export interface ICatalogBatchRepository {
+  createBatch(batch: ICatalogBatch): ICatalogBatch
+  batch(id: string): ICatalogBatch | undefined
+  /** Fecha o lote: o estado final e o resumo. */
+  finishBatch(id: string, change: { status: TBatchStatus; summary: Record<string, unknown> }): void
+  /** Marca o lote como desfeito (a reversão dele terminou inteira). */
+  markReverted(id: string): void
+  /** As revisões gravadas com este `batchId`, na ordem em que foram gravadas. */
+  batchRevisions(batchId: string): ICatalogRevision[]
 }

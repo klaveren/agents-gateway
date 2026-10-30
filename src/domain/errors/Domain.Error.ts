@@ -372,3 +372,50 @@ export class McpServerInUseError extends DomainError {
     super(`MCP server ${serverId} is used by: ${agents.join(', ')}`)
   }
 }
+
+/** A revisão (ou o lote) pedida para restaurar não existe. */
+export class CatalogRevisionNotFoundError extends DomainError {
+  constructor(what: string) {
+    super(`Not found: ${what}`)
+  }
+}
+
+/**
+ * ⛔ CONCORRÊNCIA OTIMISTA: alguém mexeu no item depois da revisão que a pessoa viu (`expectedRevision`), ou ele mudou
+ * fora do histórico. Volta o estado atual para ela rever o diff antes de tentar de novo.
+ */
+export class CatalogRevisionConflictError extends DomainError {
+  constructor(
+    message: string,
+    public readonly current: { revision: number; exists: boolean; hash?: string } | Record<string, unknown>,
+  ) {
+    super(message)
+  }
+}
+
+/** Uma ampliação de permissão a confirmar: a chave estável e o texto para quem confirma (ver `Catalog.Widening`). */
+export interface IWideningRef {
+  key: string
+  description: string
+}
+
+/** ⛔ A troca amplia acesso e o `confirm` do pedido não é EXATAMENTE o conjunto calculado (ausente, a mais ou a menos). */
+export class CatalogWideningConfirmationError extends DomainError {
+  constructor(public readonly widenings: readonly IWideningRef[]) {
+    super(`This change widens access: confirm exactly these keys: ${widenings.map((item) => item.key).join(', ')}`)
+  }
+}
+
+/** ⛔ Ampliação só por um admin na tela (sessão de login): token de acesso (CI) não aceita, nem com `confirm`. */
+export class CatalogWideningForbiddenError extends DomainError {
+  constructor(public readonly widenings: readonly IWideningRef[]) {
+    super('This change widens access: only an administrator signed in on the screen can accept it; an access token cannot')
+  }
+}
+
+/** A versão a restaurar não passa mais nas regras de hoje (ou o item não pode ser restaurado assim). Todos os problemas. */
+export class CatalogRestoreInvalidError extends DomainError {
+  constructor(public readonly issues: Array<{ field: string; message: string }>) {
+    super(`The version cannot be restored: ${issues.map((issue) => `${issue.field} (${issue.message})`).join('; ')}`)
+  }
+}

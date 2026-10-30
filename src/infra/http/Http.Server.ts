@@ -282,6 +282,9 @@ function buildRoutes(
     { method: 'get', path: '/catalog/history', handler: catalog.history },
     { method: 'get', path: '/catalog/history/diff', handler: catalog.diff },
     { method: 'get', path: '/catalog/history/revisions/:revision', handler: catalog.revision },
+    // O rollback (só admin): restaurar uma revisão (o item vai no corpo, como na query acima) e reverter um lote.
+    { method: 'post', path: '/catalog/history/restore', handler: catalog.restore },
+    { method: 'post', path: '/catalog/batches/:batchId/revert', handler: catalog.revertBatch },
     { method: 'get', path: '/secret-mask', handler: secretMask.get },
     { method: 'put', path: '/secret-mask/values/:id', handler: secretMask.saveValue },
     { method: 'delete', path: '/secret-mask/values/:id', handler: secretMask.removeValue },

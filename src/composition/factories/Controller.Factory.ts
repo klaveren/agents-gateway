@@ -23,7 +23,11 @@ import { projectSandbox } from '@infra/sandbox/Project.Sandbox'
 import { ProjectsController } from '@infra/http/Projects.Controller'
 import { ImportController } from '@infra/http/Import.Controller'
 import { CatalogController } from '@infra/http/Catalog.Controller'
-import { makeCatalogHistoryQuery } from './CatalogHistory.Factory'
+import { catalogHistoryParts, makeCatalogHistory, makeCatalogHistoryQuery } from './CatalogHistory.Factory'
+import { CatalogRestoreUseCase } from '@application/CatalogRestore.Usecase'
+import { CatalogWriter } from '@application/Catalog.Writer'
+import { isLaunchedMcp, mcpServerKey } from '@domain/models/McpServer.Model'
+import { removeInstall } from '@infra/mcp/Mcp.Install'
 import { catalogFinder, ImportScanUseCase } from '@application/ImportScan.Usecase'
 import { ImportJobService } from '@application/ImportJob.Service'
 import { readRepoTree } from '@infra/import/Repo.Tree'
@@ -48,6 +52,9 @@ import { makeAuth } from './Auth.Factory'
 import { importJobRepository } from './ImportJobs.Factory'
 import { makeSettings } from './Settings.Factory'
 import { makeUsecases } from './Usecases.Factory'
+
+/** O último controller de agentes montado: as regras do cadastro de agente moram nele (o rollback as usa). */
+let agentController: AgentController | undefined
 
 export function makeController(): AgentController {
   const usecases = makeUsecases()
@@ -89,6 +96,7 @@ export function makeController(): AgentController {
   })
   // O rascunho de agente do construtor é conferido com as MESMAS regras do cadastro, que moram aqui.
   makeGuidance().useAgentChecker((agent) => controller.agentDraftIssues(agent))
+  agentController = controller
   makeGuidance().useSkillFilter(
     (agentId, projectId, skillId) =>
       makePermissions().test({ ...(agentId ? { agentId } : {}), ...(projectId ? { projectId } : {}) }, { category: 'skill', value: skillId }).allowed,
@@ -173,9 +181,47 @@ export function makeGuidanceController(): GuidanceController {
   return new GuidanceController({ guidance: makeGuidance(), proof: makeAuth().proof })
 }
 
-/** O histórico do catálogo (só leitura): admin lê tudo; o membro, só o MCP dos projetos dele. */
+/** O histórico do catálogo: admin lê tudo e faz o rollback; o membro, só lê o MCP dos projetos dele. */
 export function makeCatalogController(): CatalogController {
-  return new CatalogController({ history: makeCatalogHistoryQuery(), proof: makeAuth().proof, projects: makeProjects() })
+  return new CatalogController({ history: makeCatalogHistoryQuery(), proof: makeAuth().proof, projects: makeProjects(), restore: makeCatalogRestore() })
+}
+
+/**
+ * O rollback do catálogo: o documento volta pelos MESMOS serviços (e com os mesmos efeitos colaterais) das rotas de
+ * cada tipo — as regras do agente são as do controller de agentes; o MCP fecha a instância de pé e, ao sair, leva
+ * cliente e pacote.
+ */
+function makeCatalogRestore(): CatalogRestoreUseCase {
+  const agents = () => agentController ?? makeController()
+  const { mcp } = makeTools()
+  const { repository, reader } = catalogHistoryParts()
+  const writer = new CatalogWriter({
+    guidance: makeGuidance(),
+    permissions: makePermissions(),
+    mcps: makeMcpServers(),
+    projects: makeProjects(),
+    agents: {
+      catalog: makeAgents(),
+      rules: () => agents().agentRules(),
+      issues: (agent) => agents().projectIssues(agent),
+      defaultAgentId: async () => (await makeSettings().read()).agentId,
+      removed: (agentId) => {
+        makeHooks().removeAgent(agentId)
+        makeGuidance().removeAgent(agentId)
+        makeSchedules().removeAgent(agentId)
+      },
+    },
+    mcpChanged: async (server) => {
+      if (isLaunchedMcp(server)) await mcp.closeInstances({ serverId: mcpServerKey(server) })
+    },
+    mcpRemoved: async (server) => {
+      const key = mcpServerKey(server)
+      mcp.forget(key)
+      await mcp.closeInstances({ serverId: key })
+      if (server.kind === 'process') removeInstall(key)
+    },
+  })
+  return new CatalogRestoreUseCase({ repository, history: makeCatalogHistory(), reader, writer })
 }
 
 /**

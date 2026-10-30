@@ -1,26 +1,47 @@
 import { Request, Response } from 'express'
+import { z } from 'zod'
+import { CatalogRestoreUseCase, IRestoreCaller } from '@application/CatalogRestore.Usecase'
 import { CatalogHistoryQuery, IHistoryItem, IHistoryPaging, THistoryScope, TRevisionRef } from '@application/CatalogHistory.Query'
 import type { IProjectCaller } from '@application/Projects.Service'
 import { CATALOG_KINDS, protocolItemId, TCatalogKind } from '@domain/Catalog.Document'
 import { mcpServerKey, parseMcpServerKey } from '@domain/models/McpServer.Model'
 import { TProtocolKind } from '@domain/models/Protocol.Model'
+import { viaAccessToken } from './Auth.Controller'
 import { resolveCaller } from './Caller.Access'
 import { checkAdminAccess } from './Caller.Admin'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
+import { parseBody } from './Request.Parser'
 
 export interface ICatalogControllerDeps {
   history: CatalogHistoryQuery
   proof?: ICallerProof
   /** Quem é membro de quê (a regra única dos projetos). Ausente = sem projetos: só o admin lê o histórico. */
   projects?: { canUse(caller: IProjectCaller, projectId: string): boolean }
+  /** O rollback (restaurar, reverter lote). Ausente = sem escrita: as rotas respondem 404. */
+  restore?: CatalogRestoreUseCase
 }
 
 export const HISTORY_PAGE_SIZE_DEFAULT = 20
 export const HISTORY_PAGE_SIZE_MAX = 100
 const CONTEXT_MAX = 50
 const ID_MAX = 200
+/** Teto das listas do pedido (`confirm`, `overwrite`): um lote grande ainda cabe; um corpo absurdo, não. */
+const KEYS_MAX = 5000
+
+const keyList = z.array(z.string().min(1).max(2000)).max(KEYS_MAX)
+
+const restoreSchema = z.object({
+  kind: z.string(),
+  id: z.string(),
+  project: z.string().optional(),
+  revision: z.number().int().min(1),
+  expectedRevision: z.number().int().min(0),
+  confirm: keyList.optional(),
+})
+
+const revertSchema = z.object({ confirm: keyList.optional(), overwrite: keyList.optional() })
 
 /**
  * ⛔ O que o MEMBRO de um projeto lê do histórico: só o que ele já vê hoje do projeto dele, por inteiro. É só o MCP do
@@ -32,8 +53,8 @@ const MEMBER_KINDS: readonly TCatalogKind[] = ['mcp']
 type TViewer = { admin: true } | { admin: false; userId: string }
 
 /**
- * O HISTÓRICO DO CATÁLOGO, só leitura: as revisões de um item ou de um escopo, uma revisão inteira e o diff de linhas
- * (ver docs/integration/plano-catalogo-historico.md §3, PR 3).
+ * O HISTÓRICO DO CATÁLOGO: as revisões de um item ou de um escopo, uma revisão inteira, o diff de linhas e o rollback
+ * (ver docs/integration/plano-catalogo-historico.md §3, PRs 3 e 5).
  *
  * ⚖️ O ITEM VAI NA QUERY (`kind` + `id`), não no caminho: o id do complemento de protocolo tem barra (`<projeto>/<tipo>`).
  * `project` completa a chave quando precisa: no MCP, `id=n8n&project=cliente-a` é `cliente-a.n8n` (que também vale
@@ -44,7 +65,43 @@ type TViewer = { admin: true } | { admin: false; userId: string }
  */
 export class CatalogController {
   constructor(private readonly deps: ICatalogControllerDeps) {
-    for (const name of ['history', 'revision', 'diff'] as const) this[name] = this[name].bind(this)
+    for (const name of ['history', 'revision', 'diff', 'restore', 'revertBatch'] as const) this[name] = this[name].bind(this)
+  }
+
+  /**
+   * RESTAURA uma revisão do item: grava uma revisão NOVA com o conteúdo dela (`op = restore`), nunca apaga revisão.
+   * `expectedRevision` é a última que a pessoa viu (409 se alguém mexeu); a ampliação de permissão pede `confirm`
+   * (409 com a lista certa) e só por admin na tela (403 para token de acesso). ⛔ Só admin; os outros, 404.
+   */
+  async restore(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const { restore, caller } = await this.writer('catalogRestore', res)
+      const body = parseBody(restoreSchema, req.body)
+      const item = requiredItem({ kind: body.kind, id: body.id, ...(body.project !== undefined ? { project: body.project } : {}) })
+      return restore.restore({ item, revision: body.revision, expectedRevision: body.expectedRevision, ...(body.confirm ? { confirm: body.confirm } : {}) }, caller)
+    })
+  }
+
+  /**
+   * REVERTE UM LOTE: cada item volta ao estado de antes do lote, em ordem inversa e segura, como um lote novo. Item que
+   * mudou depois do lote é pulado (`conflicts`) a não ser que venha em `overwrite`. Mesma trava de ampliação, sobre o
+   * conjunto. ⛔ Só admin; os outros, 404.
+   */
+  async revertBatch(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const { restore, caller } = await this.writer('catalogRevertBatch', res)
+      const body = parseBody(revertSchema, req.body ?? {})
+      const batchId = text(req.params.batchId, 'batchId')!
+      return restore.revert({ batchId, ...(body.confirm ? { confirm: body.confirm } : {}), ...(body.overwrite ? { overwrite: body.overwrite } : {}) }, caller)
+    })
+  }
+
+  /** ⛔ Escrita: só admin provado. Quem aceita a ampliação é ele — e só pela tela (`viaAccessToken` recusa). */
+  private async writer(operation: string, res: Response): Promise<{ restore: CatalogRestoreUseCase; caller: IRestoreCaller }> {
+    const access = await checkAdminAccess(this.deps.proof)
+    if (!access.allowed || !this.deps.restore) throw this.deny(operation, access.reason ?? 'restore is not wired')
+    const by = access.identity?.email ?? access.identity?.id ?? 'admin'
+    return { restore: this.deps.restore, caller: { by, viaAccessToken: viaAccessToken(res) } }
   }
 
   /** Com `kind` e `id`: as revisões do item. Sem eles: as do escopo (`project=<id>`, `project=global`, ou tudo). */

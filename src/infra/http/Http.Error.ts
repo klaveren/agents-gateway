@@ -45,6 +45,11 @@ import {
   ModeNotSupportedError,
   SessionNotFoundError,
   ToolsNotSupportedError,
+  CatalogRestoreInvalidError,
+  CatalogRevisionConflictError,
+  CatalogRevisionNotFoundError,
+  CatalogWideningConfirmationError,
+  CatalogWideningForbiddenError,
 } from '@domain/errors/Domain.Error'
 
 export type TErrorCode =
@@ -80,6 +85,8 @@ export type TErrorCode =
   | 'unauthorized'
   | 'forbidden'
   | 'not_found'
+  | 'revision_conflict'
+  | 'widening_confirmation_required'
   | 'import_job_outdated'
   | 'import_state_conflict'
   | 'internal_error'
@@ -113,6 +120,26 @@ export class HttpError extends Error {
 export function toHttpFailure(error: unknown): IHttpFailure {
   if (error instanceof HttpError) {
     return { status: error.status, code: error.code, message: error.message, details: error.details }
+  }
+
+  if (error instanceof CatalogRevisionNotFoundError) {
+    return { status: 404, code: 'not_found', message: error.message }
+  }
+
+  if (error instanceof CatalogRevisionConflictError) {
+    return { status: 409, code: 'revision_conflict', message: error.message, details: { current: error.current } }
+  }
+
+  if (error instanceof CatalogWideningConfirmationError) {
+    return { status: 409, code: 'widening_confirmation_required', message: error.message, details: { widenings: error.widenings } }
+  }
+
+  if (error instanceof CatalogWideningForbiddenError) {
+    return { status: 403, code: 'forbidden', message: error.message, details: { widenings: error.widenings } }
+  }
+
+  if (error instanceof CatalogRestoreInvalidError) {
+    return { status: 422, code: 'validation_error', message: 'The version cannot be restored', details: error.issues }
   }
 
   if (error instanceof AgentNotFoundError) {

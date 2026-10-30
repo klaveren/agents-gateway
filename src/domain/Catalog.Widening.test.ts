@@ -168,19 +168,12 @@ describe('Catalog.Widening — agente', () => {
     assert.deepStrictEqual(keysOf(agentDoc(), agentDoc({ env: {} })), [])
   })
 
-  it('triggers: novo ou com o "quando" alterado amplia; corpo alterado ou removido não', () => {
-    const keys = keysOf(
-      agentDoc(),
-      agentDoc({
-        triggers: [
-          { id: 'deploy', when: 'Sempre', body: 'Rode o deploy.' },
-          { id: 'abrir-pr', when: 'Ao abrir PR', body: 'Abra.' },
-        ],
-      }),
-    )
-    assert.strictEqual(keys.length, 2)
-    assert.ok(keys.includes('agent/theo@alfa#triggers+abrir-pr'))
-    assert.ok(keys.some((key) => key.startsWith('agent/theo@alfa#triggers~deploy=h:')))
+  it('triggers não ampliam (são texto, como o prompt): novo, "quando" ou corpo alterado, removido', () => {
+    const triggers = [
+      { id: 'deploy', when: 'Sempre', body: 'Rode o deploy.' },
+      { id: 'abrir-pr', when: 'Ao abrir PR', body: 'Abra.' },
+    ]
+    assert.deepStrictEqual(keysOf(agentDoc(), agentDoc({ triggers })), [])
     assert.deepStrictEqual(keysOf(agentDoc(), agentDoc({ triggers: [{ id: 'deploy', when: 'Ao subir', body: 'Outro corpo.' }] })), [])
     assert.deepStrictEqual(keysOf(agentDoc(), agentDoc({ triggers: [] })), [])
   })
@@ -198,7 +191,7 @@ describe('Catalog.Widening — item novo e apagado', () => {
       'agent/theo@alfa#resources.skills+revisar',
     ])
     // Triggers e lane são conteúdo do agente novo; adminOnly e subagent só fecham.
-    assert.ok(!widenings.some((item) => item.category === 'trigger' || item.category === 'exposure'))
+    assert.ok(!widenings.some((item) => item.category === 'exposure'))
   })
 
   it('agente novo sem acesso nenhum → nada', () => {
