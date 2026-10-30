@@ -1,5 +1,6 @@
+import { posix } from 'node:path'
 import { ignoreMatcher, normalizeIgnore } from '@domain/Import.Ignore'
-import { candidateId, extractCitations, resolveCitation } from '@domain/Import.Refs'
+import { candidateId, citationsIn, ICitation, locateCitation, REF_SKIP_TEXT, resolveCitation, TRefSkip } from '@domain/Import.Refs'
 import {
   CATALOG_KINDS,
   IImportScan,
@@ -279,13 +280,20 @@ export class ImportScanUseCase {
     return found.projectId === query.projectId ? 'same-project' : 'other-project'
   }
 
-  /** As citações: caminho citado no texto (e pela estrutura) → o arquivo achado e o item dele, ou referência quebrada. */
+  /**
+   * As citações: caminho citado no texto (e pela estrutura) → o arquivo achado e o item dele, ou referência quebrada. O
+   * que não resolve e não é quebrada (exemplo, marcador, glob…) vira contagem por motivo (`ignored-ref`); o que só achou
+   * pelo nome fica dito (`ref-by-name`).
+   */
   private refs(tree: IRepoTree, built: Array<{ item: IInventoryItem; group: IGroup }>): void {
     const owner = new Map<string, string>()
     for (const { item, group } of built) {
       const shared = new Set(group.parts.flatMap(({ item: part }) => part.sources.filter((source) => source.shared).map((source) => source.path)))
       for (const source of item.sources) if (!shared.has(source.path) || item.kind === 'config') owner.set(source.path, item.key)
     }
+    const names = new Map<string, string[]>()
+    for (const entry of tree.entries()) names.set(posix.basename(entry.path), [...(names.get(posix.basename(entry.path)) ?? []), entry.path])
+    const byName = (name: string) => names.get(name) ?? []
     for (const { item, group } of built) {
       if (item.kind === 'skip') continue
       const own = new Set(item.sources.map((source) => source.path))
@@ -293,23 +301,34 @@ export class ImportScanUseCase {
       const structured = new Set(group.parts.flatMap(({ item: part }) => part.sources.filter((source) => source.structured).map((source) => source.path)))
       const refs = new Map<string, IInventoryRef>()
       const unresolved = new Set<string>()
-      const cite = (cited: string, from: string) => {
-        const found = resolveCitation(cited, from, (path) => tree.resolve(path))
-        if (!found) return unresolved.add(cited)
-        if (own.has(found)) return
-        const target = owner.get(found)
-        refs.set(found, { path: found, ...(target && target !== item.key ? { item: target } : {}) })
+      const skipped = new Map<TRefSkip, Set<string>>()
+      const named = new Map<string, string>()
+      const cite = (citation: ICitation, from: string) => {
+        const result = locateCitation(citation, from, (path) => tree.resolve(path), byName)
+        if ('broken' in result) return unresolved.add(citation.cited)
+        if ('skip' in result) return skipped.set(result.skip, (skipped.get(result.skip) ?? new Set()).add(citation.cited))
+        if (own.has(result.found)) return
+        if (result.byName) named.set(citation.cited, result.found)
+        const target = owner.get(result.found)
+        refs.set(result.found, { path: result.found, ...(target && target !== item.key ? { item: target } : {}) })
       }
       for (const source of item.sources) {
         // O arquivo dividido (o `opencode.json`) é citado pela estrutura, não pelo texto inteiro.
         if ((shared.has(source.path) && item.kind !== 'config') || structured.has(source.path)) continue
         const text = tree.read(source.path)?.text ?? ''
-        for (const cited of extractCitations(text)) cite(cited, source.path)
+        for (const citation of citationsIn(text)) cite(citation, source.path)
       }
-      for (const { item: part } of group.parts) for (const cited of part.cites ?? []) cite(cited, part.sources[0]?.path ?? '')
+      for (const { item: part } of group.parts) for (const cited of part.cites ?? []) cite({ cited }, part.sources[0]?.path ?? '')
       item.refs = [...refs.values()].sort((a, b) => a.path.localeCompare(b.path))
       item.unresolved = [...unresolved].sort()
       if (item.unresolved.length) item.notes.push({ level: 'attention', code: 'broken-ref', text: `referência quebrada: ${item.unresolved.join(', ')}` })
+      if (named.size) item.notes.push({ level: 'info', code: 'ref-by-name', text: `achada só pelo nome: ${sample([...named].map(([cited, path]) => `${cited} → ${path}`))}` })
+      if (skipped.size) {
+        const parts = (Object.keys(REF_SKIP_TEXT) as TRefSkip[])
+          .filter((reason) => skipped.has(reason))
+          .map((reason) => `${skipped.get(reason)!.size} ${REF_SKIP_TEXT[reason]} (${sample([...skipped.get(reason)!])})`)
+        item.notes.push({ level: 'info', code: 'ignored-ref', text: `citações que não são referência: ${parts.join('; ')}` })
+      }
     }
   }
 
@@ -334,6 +353,11 @@ export class ImportScanUseCase {
               .join(', ')}`,
           })
   }
+}
+
+/** Até 5 exemplos, e quantos mais. */
+function sample(values: string[]): string {
+  return values.length > 5 ? `${values.slice(0, 5).join(', ')} +${values.length - 5}` : values.join(', ')
 }
 
 /**
