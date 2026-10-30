@@ -624,6 +624,21 @@ not matter), within one turn:
 - The three numbers live in Configuração → Limites (`LOOP_REFUSE_AT`, `LOOP_STOP_AT`,
   `LOOP_MAX_ERRORS`).
 
+**Diagnostics after an edit.** Per agent (agent form → "Diagnóstico depois de editar"; off by
+default): after a successful `write_file`/`edit_file`, or a Claude native `Write`/`Edit`/`MultiEdit`,
+the gateway checks the edited file and adds the result to what the model gets back.
+
+- **What runs:** only what the file's package already has in `node_modules/.bin` (that package, or
+  a parent up to the work folder). `tsc --noEmit -p` uses the nearest `tsconfig.json`, then
+  `eslint` and `prettier --check` run on the file. Nothing is downloaded (no `npx`). A missing tool
+  is reported, not installed.
+- **Output:** only the file's own errors are listed. tsc errors in other files are counted, since
+  an edit can break whoever imports it.
+- **Where it runs:** in the same sandbox as `run_bash`, built from the agent's rules, with no
+  network. The command comes from the gateway, so the `terminal` rules (which cover what the model
+  asks for) do not apply to it.
+- **Timeout:** each tool has a time limit (60 s by default, `timeoutSeconds` up to 600).
+
 **Asynchronous turns**, for an orchestrator that drives agents:
 
 - `POST /v1/sessions/:id/turns` answers 202 at once, and the turn runs on the server with no

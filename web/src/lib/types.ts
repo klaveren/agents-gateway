@@ -149,6 +149,8 @@ export interface IAgentDetail extends IAgent {
   permissions?: IPermissionRule[]
   /** O terminal deste agente: tempo por comando e saída. Ausente = o global. */
   terminal?: IAgentTerminal
+  /** O diagnóstico depois de editar. Ausente = desligado. */
+  diagnostics?: IAgentDiagnostics
   fallback?: IAgentFallback
   systemPrompt: string
   updatedAt?: string
@@ -165,6 +167,14 @@ export interface IFallbackStep {
 export interface IAgentFallback {
   mode: 'global' | 'own' | 'off'
   chain?: IFallbackStep[]
+}
+
+/** O tsc, o eslint e o prettier do pacote, depois de cada edição (ver `Edit.Diagnostics` no servidor). */
+export interface IAgentDiagnostics {
+  typecheck?: boolean
+  lint?: boolean
+  format?: boolean
+  timeoutSeconds?: number
 }
 
 export interface IAgentTerminal {
@@ -191,6 +201,8 @@ export interface IAgentInput {
   /** As regras de permissão do agente (a camada dele, por cima das do projeto). */
   permissions?: IPermissionRule[]
   terminal?: IAgentTerminal | null
+  /** `null` desliga. */
+  diagnostics?: IAgentDiagnostics | null
   /** `null` volta à cadeia global. */
   fallback?: IAgentFallback | null
 }
@@ -262,7 +274,18 @@ export interface IProtocolInfo {
   envName?: string
 }
 
-export type TLimitName = 'maxToolTurns' | 'maxOutputTokens' | 'delegationMaxDepth' | 'bashTimeoutMs' | 'bashMaxOutputChars' | 'sessionsPerOwner' | 'streamsPerOwner' | 'compactAtPercent' | 'loopRefuseAt' | 'loopStopAt' | 'loopMaxErrors'
+export type TLimitName =
+  | 'maxToolTurns'
+  | 'maxOutputTokens'
+  | 'delegationMaxDepth'
+  | 'bashTimeoutMs'
+  | 'bashMaxOutputChars'
+  | 'sessionsPerOwner'
+  | 'streamsPerOwner'
+  | 'compactAtPercent'
+  | 'loopRefuseAt'
+  | 'loopStopAt'
+  | 'loopMaxErrors'
 
 export type TAudience = 'off' | 'restricted' | 'all'
 

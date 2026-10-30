@@ -1,7 +1,7 @@
 import { toCapabilities } from '@domain/Capability.Catalog'
 import { agentIssues, IAgentRules } from '@domain/Agent.Policy'
 import { AgentInUseError, AgentNotFoundError, InvalidAgentError } from '@domain/errors/Domain.Error'
-import { IAgent, IAgentTarget } from '@domain/models/Agent.Model'
+import { diagnosticsOn, IAgent, IAgentTarget } from '@domain/models/Agent.Model'
 import { IAgentDirectory, IAgentRepository, IStoredAgent } from '@domain/ports/AgentRepository.Port'
 
 /** Um agente na lista da tela, com quem mexeu por último. */
@@ -160,6 +160,7 @@ function toAgent(stored: IStoredAgent): IAgent {
     ...(stored.projectId ? { projectId: stored.projectId } : {}),
     ...(stored.permissions?.length ? { permissions: stored.permissions } : {}),
     ...(stored.terminal && (stored.terminal.timeoutSeconds || stored.terminal.maxOutputChars) ? { terminal: { ...stored.terminal } } : {}),
+    ...(diagnosticsOn(stored.diagnostics) ? { diagnostics: { ...stored.diagnostics } } : {}),
     ...(stored.fallback
       ? { fallback: { mode: stored.fallback.mode, ...(stored.fallback.chain?.length ? { chain: stored.fallback.chain.map((step) => ({ ...step })) } : {}) } }
       : {}),

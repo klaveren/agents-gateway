@@ -13,6 +13,7 @@ import { SqliteMcpServerRepository } from '@infra/persistence/Sqlite.McpServerRe
 import { DelegationSlot, makeDelegateTool } from '@infra/tools/Delegate.Tool'
 import { ITodoStore, makeLocalTools } from '@infra/tools/Local.Tools'
 import { LoopGuard } from '@infra/tools/Loop.Guard'
+import { IEditDiagnostics, makeEditDiagnostics } from '@infra/tools/Edit.Diagnostics'
 import { DEFAULT_MCP_SERVER, ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { makeAgents } from './Agents.Factory'
 import { makeCredentials } from './Credentials.Factory'
@@ -32,6 +33,13 @@ let loops: LoopGuard | undefined
 export function loopGuard(): LoopGuard {
   loops ??= new LoopGuard()
   return loops
+}
+
+let diagnostics: IEditDiagnostics | undefined
+/** O diagnóstico depois de editar (ver `Edit.Diagnostics`): um só, para as ferramentas locais e o Claude. */
+export function editDiagnostics(): IEditDiagnostics {
+  diagnostics ??= makeEditDiagnostics({ permissions: lazyPermissions })
+  return diagnostics
 }
 
 /**
@@ -66,6 +74,8 @@ export function makeTools(): ITools {
           agentTerminal: (agentId) => makeAgents().get(agentId)?.terminal,
           mask: makeSecretMasker(),
           loops: loopGuard(),
+          diagnostics: editDiagnostics(),
+          agentDiagnostics: (agentId) => makeAgents().get(agentId)?.diagnostics,
           accounts: {
             commandEnv: (projectId, allowed) => makeProjectAccounts().commandEnv(projectId, allowed),
             sign: (projectId, id, namespace, data) => makeProjectAccounts().sign(projectId, id, namespace, data),

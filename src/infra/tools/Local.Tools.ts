@@ -20,6 +20,8 @@ import { IBuilderDraft } from '@domain/models/Protocol.Model'
 import { builderKindOf, PROPOSE_DRAFT_TOOL } from '@domain/Builder.Agents'
 import { ITodoItem, todoIssues, todoText, UPDATE_TODOS_TOOL } from '@domain/models/ConversationTodo.Model'
 import { makeFileTools, realOf } from './File.Tools'
+import type { IEditDiagnostics } from './Edit.Diagnostics'
+import type { IAgentDiagnostics } from '@domain/models/Agent.Model'
 import { ILocalTool, IToolResult } from './Tool.Types'
 
 export interface IExecOptions {
@@ -77,6 +79,10 @@ export interface ILocalToolDeps {
   mask?: ILocalMask
   /** O detector de laço (ver `Loop.Guard`): recusa a chamada repetida antes de ela rodar. Ausente = sem detector. */
   loops?: { check(sessionId: string | undefined, tool: string, args: unknown): string | undefined }
+  /** O diagnóstico depois de editar (ver `Edit.Diagnostics`): vai junto do `write_file`/`edit_file`. Ausente = nenhum. */
+  diagnostics?: IEditDiagnostics
+  /** O diagnóstico de cada agente (o campo `diagnostics` dele). Ausente = desligado. */
+  agentDiagnostics?: (agentId: string) => IAgentDiagnostics | undefined
   /** As contas do projeto que vão para cada comando (ver `ProjectAccounts.Service`). Ausente = nenhuma. */
   accounts?: {
     commandEnv(projectId: string, allowed: (id: string) => boolean): Promise<{ env: Record<string, string>; problems: string[]; ssh?: ISshKitIdentity[] }>
@@ -96,6 +102,8 @@ export interface ITodoStore {
 }
 
 const EXEC_BUFFER_BYTES = 1024 * 1024
+/** As ferramentas que editam arquivo: as que ganham o diagnóstico. */
+const EDIT_TOOLS = new Set(['write_file', 'edit_file'])
 
 const defaultExec: TExec = promisify(exec) as unknown as TExec
 
@@ -129,6 +137,9 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
    *    lendo o `.env` falha no sistema operacional —, e a rede só sai pela porta do gateway, destino a destino.
    * Vale para TODO agente; sem cerco no servidor, o terminal fica bloqueado.
    */
+  // Os arquivos na MESMA pasta do `run_bash`: a do projeto, ou a da conversa (ou o `BASH_CWD`).
+  const fileRoot = (context?: IExecutionContext) =>
+    context?.workFolder?.dir ?? (context?.projectId ? workspaceFor(context.projectId, '') : policy.cwd || workspaceFor(undefined, context?.sessionId ?? 'files'))
   const masked = (text: string, context: IExecutionContext | undefined) => (deps.mask ? deps.mask.text(text, context?.sessionId) : text)
 
   /** O tempo e a saída deste agente (o campo `terminal` dele), ou o global. */
@@ -352,10 +363,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     },
     ...(deps.permissions && !deps.exec ? backgroundTools(processes, (command, name, context) => startBackground(command, name, context, deps.permissions!)) : []),
     ...(deps.accounts?.sign && deps.permissions ? [sshSignTool(deps.accounts.sign.bind(deps.accounts), deps.permissions)] : []),
-    // Os arquivos na MESMA pasta do `run_bash`: a do projeto, ou a da conversa (ou o `BASH_CWD`).
     ...makeFileTools({
-      rootFor: (context) =>
-        context?.workFolder?.dir ?? (context?.projectId ? workspaceFor(context.projectId, '') : policy.cwd || workspaceFor(undefined, context?.sessionId ?? 'files')),
+      rootFor: fileRoot,
       ...(deps.permissions
         ? {
             access: (context, kind, path, log) => {
@@ -371,16 +380,23 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     ...(deps.drafts ? [proposeDraftTool(deps.drafts)] : []),
     ...(deps.todos?.saveTodos ? [updateTodosTool(deps.todos)] : []),
   ]
-  // ⛔ A chamada repetida é recusada antes de rodar (ver `Loop.Policy`), e toda saída passa pela máscara (ver
-  // `Secret.Mask`): o `read_file` de uma config, a busca, os logs.
-  const { mask, loops } = deps
-  if (!mask && !loops) return tools
+  // ⛔ A chamada repetida é recusada antes de rodar (ver `Loop.Policy`); a edição que deu certo ganha o diagnóstico do
+  // pacote (ver `Edit.Diagnostics`); e toda saída passa pela máscara (ver `Secret.Mask`): o `read_file` de uma config, a
+  // busca, os logs, a saída do tsc.
+  const { mask, loops, diagnostics } = deps
+  if (!mask && !loops && !diagnostics) return tools
   return tools.map((tool) => ({
     ...tool,
     async execute(args: Record<string, unknown>, context?: IExecutionContext) {
       const refusal = loops?.check(context?.sessionId, tool.name, args)
       if (refusal) return { status: 'error' as const, result: refusal }
-      const outcome = await tool.execute(args, context)
+      let outcome = await tool.execute(args, context)
+      if (diagnostics && EDIT_TOOLS.has(tool.name) && outcome.status === 'success' && typeof args.path === 'string') {
+        const root = fileRoot(context)
+        const settings = context?.agentId ? deps.agentDiagnostics?.(context.agentId) : undefined
+        const note = await diagnostics.after(resolve(root, args.path), root, settings, context)
+        if (note) outcome = { ...outcome, result: `${outcome.result}\n\n${note}` }
+      }
       return mask ? { ...outcome, result: mask.text(outcome.result, context?.sessionId) } : outcome
     },
   }))

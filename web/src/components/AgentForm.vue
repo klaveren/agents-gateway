@@ -1,568 +1,587 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import { ApiError } from '@/lib/api'
-import { effortLabel } from '@/lib/format'
-import { BUILD_KINDS, builderAgentId, type TBuildKind } from '@/lib/builder'
-import { defaultLanes, findOrphans, isUsableProvider, pruneModels, pruneNatives, summarizeIssues, unionLanes, unionLevels } from '@/lib/agentForm'
-import { useProvidersStore } from '@/stores/providers'
-import FallbackChain from './FallbackChain.vue'
-import { useProtocolsStore } from '@/stores/protocols'
-import type { IAgentDetail, IAgentInput, ICatalogModel, INativeTool, TMode, TSandboxLevel } from '@/lib/types'
-import { useAgentsStore } from '@/stores/agents'
-import { useMcpStore } from '@/stores/mcp'
-import { useProjectsStore } from '@/stores/projects'
-import { toolsTokens, toolTokens } from '@/lib/toolTokens'
-import AgentFootprint from './AgentFootprint.vue'
-import AgentHooks from './AgentHooks.vue'
-import AgentSchedules from './AgentSchedules.vue'
-import PermissionRules from './PermissionRules.vue'
-import PermissionTester from './PermissionTester.vue'
-import AgentInitialContext from './AgentInitialContext.vue'
-import AgentResources from './AgentResources.vue'
-import ConfirmDialog from './ConfirmDialog.vue'
+  import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+  import { useRoute } from 'vue-router'
+  import { ApiError } from '@/lib/api'
+  import { effortLabel } from '@/lib/format'
+  import { BUILD_KINDS, builderAgentId, type TBuildKind } from '@/lib/builder'
+  import { defaultLanes, findOrphans, isUsableProvider, pruneModels, pruneNatives, summarizeIssues, unionLanes, unionLevels } from '@/lib/agentForm'
+  import { useProvidersStore } from '@/stores/providers'
+  import FallbackChain from './FallbackChain.vue'
+  import { useProtocolsStore } from '@/stores/protocols'
+  import type { IAgentDetail, IAgentInput, ICatalogModel, INativeTool, TMode, TSandboxLevel } from '@/lib/types'
+  import { useAgentsStore } from '@/stores/agents'
+  import { useMcpStore } from '@/stores/mcp'
+  import { useProjectsStore } from '@/stores/projects'
+  import { toolsTokens, toolTokens } from '@/lib/toolTokens'
+  import AgentFootprint from './AgentFootprint.vue'
+  import AgentHooks from './AgentHooks.vue'
+  import AgentSchedules from './AgentSchedules.vue'
+  import PermissionRules from './PermissionRules.vue'
+  import PermissionTester from './PermissionTester.vue'
+  import AgentInitialContext from './AgentInitialContext.vue'
+  import AgentResources from './AgentResources.vue'
+  import ConfirmDialog from './ConfirmDialog.vue'
 
-const props = defineProps<{ agent?: IAgentDetail; creating: boolean }>()
-/** Os construtores do core como alvos de delegação (fora da lista de agentes). */
-const CORE_BUILDERS = (Object.keys(BUILD_KINDS) as TBuildKind[]).map((kind) => ({ id: builderAgentId(kind), name: BUILD_KINDS[kind].builder, noun: BUILD_KINDS[kind].noun }))
-const emit = defineEmits<{ saved: [id: string]; duplicate: [agent: IAgentDetail]; removed: [] }>()
+  const props = defineProps<{ agent?: IAgentDetail; creating: boolean }>()
+  /** Os construtores do core como alvos de delegação (fora da lista de agentes). */
+  const CORE_BUILDERS = (Object.keys(BUILD_KINDS) as TBuildKind[]).map((kind) => ({ id: builderAgentId(kind), name: BUILD_KINDS[kind].builder, noun: BUILD_KINDS[kind].noun }))
+  const emit = defineEmits<{ saved: [id: string]; duplicate: [agent: IAgentDetail]; removed: [] }>()
 
-const agents = useAgentsStore()
-const projects = useProjectsStore()
-const providers = useProvidersStore()
-const protocols = useProtocolsStore()
-const mcp = useMcpStore()
+  const agents = useAgentsStore()
+  const projects = useProjectsStore()
+  const providers = useProvidersStore()
+  const protocols = useProtocolsStore()
+  const mcp = useMcpStore()
 
-/**
- * Providers e protocolos carregados: sem eles o formulário não sabe lanes, níveis nem nativas, e o Salvar
- * fica desligado (⚠️ antes ele salvava com o que estivesse na tela, que podia ser o provider errado).
- */
-const ready = ref(false)
-const loadError = ref<string>()
-async function loadBase() {
-  loadError.value = undefined
-  try {
-    await Promise.all([providers.load(), protocols.loaded ? undefined : protocols.load()])
-    ready.value = true
-  } catch (error) {
-    loadError.value = error instanceof Error ? error.message : String(error)
+  /**
+   * Providers e protocolos carregados: sem eles o formulário não sabe lanes, níveis nem nativas, e o Salvar
+   * fica desligado (⚠️ antes ele salvava com o que estivesse na tela, que podia ser o provider errado).
+   */
+  const ready = ref(false)
+  const loadError = ref<string>()
+  async function loadBase() {
+    loadError.value = undefined
+    try {
+      await Promise.all([providers.load(), protocols.loaded ? undefined : protocols.load()])
+      ready.value = true
+    } catch (error) {
+      loadError.value = error instanceof Error ? error.message : String(error)
+    }
   }
-}
 
-/**
- * Os MCPs: por servidor ligado, "todas as ferramentas" (`mcp:<id>/*`) ou uma a uma (`mcp:<id>/<tool>`).
- * As ferramentas de cada servidor são lidas ao abrir o formulário.
- */
-const mcpReady = ref(false)
-onMounted(async () => {
-  void loadBase()
-  const loaded = await mcp.load().then(
-    () => true,
-    () => false,
+  /**
+   * Os MCPs: por servidor ligado, "todas as ferramentas" (`mcp:<id>/*`) ou uma a uma (`mcp:<id>/<tool>`).
+   * As ferramentas de cada servidor são lidas ao abrir o formulário.
+   */
+  const mcpReady = ref(false)
+  onMounted(async () => {
+    void loadBase()
+    const loaded = await mcp.load().then(
+      () => true,
+      () => false,
+    )
+    await Promise.all(mcp.list.filter((server) => server.enabled).map((server) => mcp.loadTools(server.id).catch(() => [])))
+    mcpReady.value = loaded
+  })
+  const mcpRef = (server: string, tool: string) => `mcp:${server}/${tool}`
+  const enabledMcp = computed(() => mcp.list.filter((server) => server.enabled))
+  /**
+   * ⚖️ Órfã de MCP é só a de um servidor que não existe ou está desligado — a mesma regra do servidor, que
+   * não exige a ferramenta. A listagem que a tela recebe não prova que ela sumiu: o servidor pode estar fora
+   * do ar, só listar dentro de uma conversa, ou (o MCP do próprio gateway) listar para a tela só as
+   * ferramentas que não são de admin. As escolhidas e não listadas aparecem no servidor delas, marcadas.
+   */
+  function mcpOffered(entry: string): boolean {
+    const [server] = entry.slice(4).split('/')
+    return enabledMcp.value.some((candidate) => candidate.id === server)
+  }
+  /** As ferramentas de um servidor na tela: as que ele lista agora e as escolhidas que ele não listou. */
+  function mcpChips(server: string): Array<{ name: string; description?: string; inputSchema?: unknown; unlisted?: boolean }> {
+    const listed = mcp.tools[server] ?? []
+    const chosen = form.value.allowedTools
+      .filter((entry) => entry.startsWith(`mcp:${server}/`) && !entry.endsWith('/*'))
+      .map((entry) => entry.slice(`mcp:${server}/`.length))
+      .filter((name) => !listed.some((tool) => tool.name === name))
+    return [...listed, ...chosen.map((name) => ({ name, unlisted: true }))]
+  }
+  /** O peso, por chamada ao modelo, das ferramentas deste servidor que o agente tem (todas, com `*`). */
+  function mcpWeight(server: string): number {
+    const listed = mcp.tools[server] ?? []
+    if (form.value.allowedTools.includes(mcpRef(server, '*'))) return toolsTokens(listed)
+    return toolsTokens(listed.filter((tool) => form.value.allowedTools.includes(mcpRef(server, tool.name))))
+  }
+  function toggleAllMcp(server: string) {
+    const all = mcpRef(server, '*')
+    if (form.value.allowedTools.includes(all)) form.value.allowedTools = form.value.allowedTools.filter((entry) => entry !== all)
+    // "Todas" substitui as escolhidas uma a uma do mesmo servidor.
+    else form.value.allowedTools = [...form.value.allowedTools.filter((entry) => !entry.startsWith(`mcp:${server}/`)), all]
+  }
+
+  /** Os providers configurados e ligados; um desligado só aparece se for deste agente. */
+  const providerOptions = computed(() => providers.list.filter((provider) => provider.enabled || chosen.value.includes(provider.id)))
+  /** Os providers do agente, na ordem — o primeiro é o padrão. */
+  const chosen = computed(() => form.value.providers.map((target) => target.provider))
+  /** Cada provider escolhido com o seu protocolo (o do banco) e o que o servidor diz dele (`GET /protocols`). */
+  const selected = computed(() =>
+    form.value.providers.map((target) => {
+      const protocol = protocols.protocolOf(target.provider) ?? target.provider
+      const status = providers.list.find((provider) => provider.id === target.provider)
+      const info = protocols.get(protocol)
+      return { target, protocol, info, status, compatible: !!status?.baseUrl, official: protocol === target.provider && !info?.subscription }
+    }),
   )
-  await Promise.all(mcp.list.filter((server) => server.enabled).map((server) => mcp.loadTools(server.id).catch(() => [])))
-  mcpReady.value = loaded
-})
-const mcpRef = (server: string, tool: string) => `mcp:${server}/${tool}`
-const enabledMcp = computed(() => mcp.list.filter((server) => server.enabled))
-/**
- * ⚖️ Órfã de MCP é só a de um servidor que não existe ou está desligado — a mesma regra do servidor, que
- * não exige a ferramenta. A listagem que a tela recebe não prova que ela sumiu: o servidor pode estar fora
- * do ar, só listar dentro de uma conversa, ou (o MCP do próprio gateway) listar para a tela só as
- * ferramentas que não são de admin. As escolhidas e não listadas aparecem no servidor delas, marcadas.
- */
-function mcpOffered(entry: string): boolean {
-  const [server] = entry.slice(4).split('/')
-  return enabledMcp.value.some((candidate) => candidate.id === server)
-}
-/** As ferramentas de um servidor na tela: as que ele lista agora e as escolhidas que ele não listou. */
-function mcpChips(server: string): Array<{ name: string; description?: string; inputSchema?: unknown; unlisted?: boolean }> {
-  const listed = mcp.tools[server] ?? []
-  const chosen = form.value.allowedTools
-    .filter((entry) => entry.startsWith(`mcp:${server}/`) && !entry.endsWith('/*'))
-    .map((entry) => entry.slice(`mcp:${server}/`.length))
-    .filter((name) => !listed.some((tool) => tool.name === name))
-  return [...listed, ...chosen.map((name) => ({ name, unlisted: true }))]
-}
-/** O peso, por chamada ao modelo, das ferramentas deste servidor que o agente tem (todas, com `*`). */
-function mcpWeight(server: string): number {
-  const listed = mcp.tools[server] ?? []
-  if (form.value.allowedTools.includes(mcpRef(server, '*'))) return toolsTokens(listed)
-  return toolsTokens(listed.filter((tool) => form.value.allowedTools.includes(mcpRef(server, tool.name))))
-}
-function toggleAllMcp(server: string) {
-  const all = mcpRef(server, '*')
-  if (form.value.allowedTools.includes(all)) form.value.allowedTools = form.value.allowedTools.filter((entry) => entry !== all)
-  // "Todas" substitui as escolhidas uma a uma do mesmo servidor.
-  else form.value.allowedTools = [...form.value.allowedTools.filter((entry) => !entry.startsWith(`mcp:${server}/`)), all]
-}
+  const infos = computed(() => selected.value.map((entry) => entry.info))
+  /** ⚖️ Quem manda é o servidor (`GET /protocols`): assinatura só tem a lane agent (as APIs de chat exigem chave). */
+  const lanesAllowed = computed<TMode[]>(() => unionLanes(infos.value))
+  const anySubscription = computed(() => selected.value.some((entry) => entry.info?.subscription))
+  const anyCompatible = computed(() => selected.value.some((entry) => entry.compatible))
+  const anyGoogle = computed(() => selected.value.some((entry) => entry.protocol === 'google'))
+  const families = computed(() => [...new Set(selected.value.flatMap((entry) => (entry.info ? [entry.info.nativeFamily] : [])))])
 
-/** Os providers configurados e ligados; um desligado só aparece se for deste agente. */
-const providerOptions = computed(() => providers.list.filter((provider) => provider.enabled || chosen.value.includes(provider.id)))
-/** Os providers do agente, na ordem — o primeiro é o padrão. */
-const chosen = computed(() => form.value.providers.map((target) => target.provider))
-/** Cada provider escolhido com o seu protocolo (o do banco) e o que o servidor diz dele (`GET /protocols`). */
-const selected = computed(() =>
-  form.value.providers.map((target) => {
-    const protocol = protocols.protocolOf(target.provider) ?? target.provider
-    const status = providers.list.find((provider) => provider.id === target.provider)
-    const info = protocols.get(protocol)
-    return { target, protocol, info, status, compatible: !!status?.baseUrl, official: protocol === target.provider && !info?.subscription }
-  }),
-)
-const infos = computed(() => selected.value.map((entry) => entry.info))
-/** ⚖️ Quem manda é o servidor (`GET /protocols`): assinatura só tem a lane agent (as APIs de chat exigem chave). */
-const lanesAllowed = computed<TMode[]>(() => unionLanes(infos.value))
-const anySubscription = computed(() => selected.value.some((entry) => entry.info?.subscription))
-const anyCompatible = computed(() => selected.value.some((entry) => entry.compatible))
-const anyGoogle = computed(() => selected.value.some((entry) => entry.protocol === 'google'))
-const families = computed(() => [...new Set(selected.value.flatMap((entry) => (entry.info ? [entry.info.nativeFamily] : [])))])
+  /** As ferramentas nativas do SDK dos providers escolhidos (pela família do protocolo), na ordem do risco. */
+  const RISK_ORDER = ['hosted', 'session', 'server-network', 'server-read', 'server-exec']
+  /** Os níveis que algum protocolo escolhido aceita (Google: nenhum). Cada provider usa os do seu. */
+  const reasoningLevels = computed(() => unionLevels(infos.value))
 
-/** As ferramentas nativas do SDK dos providers escolhidos (pela família do protocolo), na ordem do risco. */
-const RISK_ORDER = ['hosted', 'session', 'server-network', 'server-read', 'server-exec']
-/** Os níveis que algum protocolo escolhido aceita (Google: nenhum). Cada provider usa os do seu. */
-const reasoningLevels = computed(() => unionLevels(infos.value))
+  const natives = computed(() =>
+    agents.nativeTools.filter((tool) => families.value.includes(tool.protocol)).sort((a, b) => RISK_ORDER.indexOf(a.risk) - RISK_ORDER.indexOf(b.risk)),
+  )
+  const RISK_LABEL: Record<string, string> = {
+    hosted: 'no provedor',
+    session: 'só a conversa',
+    'server-network': 'usa a internet',
+    'server-read': 'lê arquivos',
+    'server-exec': 'escreve e executa',
+  }
+  const RISK_CLASS: Record<string, string> = {
+    hosted: 'bg-zinc-800 text-zinc-300',
+    session: 'bg-zinc-800 text-zinc-300',
+    'server-network': 'bg-amber-500/15 text-amber-300',
+    'server-read': 'bg-amber-500/15 text-amber-300',
+    'server-exec': 'bg-rose-500/15 text-rose-300',
+  }
 
-const natives = computed(() => agents.nativeTools.filter((tool) => families.value.includes(tool.protocol)).sort((a, b) => RISK_ORDER.indexOf(a.risk) - RISK_ORDER.indexOf(b.risk)))
-const RISK_LABEL: Record<string, string> = {
-  hosted: 'no provedor',
-  session: 'só a conversa',
-  'server-network': 'usa a internet',
-  'server-read': 'lê arquivos',
-  'server-exec': 'escreve e executa',
-}
-const RISK_CLASS: Record<string, string> = {
-  hosted: 'bg-zinc-800 text-zinc-300',
-  session: 'bg-zinc-800 text-zinc-300',
-  'server-network': 'bg-amber-500/15 text-amber-300',
-  'server-read': 'bg-amber-500/15 text-amber-300',
-  'server-exec': 'bg-rose-500/15 text-rose-300',
-}
+  type TSelected = (typeof selected.value)[number]
 
-type TSelected = (typeof selected.value)[number]
+  /**
+   * A guia SDK, um bloco por provider do agente: cada um tem o seu nível de acesso. As nativas são as da
+   * família do protocolo (o Claude da assinatura roda as do Claude), e o sandbox, nos que o têm (Codex,
+   * Antigravity), é escolhido aqui, por agente.
+   */
+  const sdkSections = computed(() =>
+    selected.value.map((entry) => {
+      const family = entry.info?.nativeFamily
+      const tools = family ? natives.value.filter((tool) => tool.protocol === family) : []
+      // A mesma nativa vale em todos os providers da família: marcar num marca no outro.
+      const shared = family
+        ? selected.value.filter((other) => other !== entry && other.info?.nativeFamily === family).map((other) => protocols.providerName(other.target.provider))
+        : []
+      return { entry, tools, shared, levels: entry.info?.sandboxLevels ?? [], network: !!entry.info?.sandboxNetwork }
+    }),
+  )
 
-/**
- * A guia SDK, um bloco por provider do agente: cada um tem o seu nível de acesso. As nativas são as da
- * família do protocolo (o Claude da assinatura roda as do Claude), e o sandbox, nos que o têm (Codex,
- * Antigravity), é escolhido aqui, por agente.
- */
-const sdkSections = computed(() =>
-  selected.value.map((entry) => {
-    const family = entry.info?.nativeFamily
-    const tools = family ? natives.value.filter((tool) => tool.protocol === family) : []
-    // A mesma nativa vale em todos os providers da família: marcar num marca no outro.
-    const shared = family ? selected.value.filter((other) => other !== entry && other.info?.nativeFamily === family).map((other) => protocols.providerName(other.target.provider)) : []
-    return { entry, tools, shared, levels: entry.info?.sandboxLevels ?? [], network: !!entry.info?.sandboxNetwork }
-  }),
-)
+  /** Por que uma nativa não roda neste provider — ou nada, se roda. */
+  function nativeBlock(tool: INativeTool, entry: TSelected): string | undefined {
+    return tool.officialOnly && !entry.official ? 'Só no provedor oficial.' : undefined
+  }
 
-/** Por que uma nativa não roda neste provider — ou nada, se roda. */
-function nativeBlock(tool: INativeTool, entry: TSelected): string | undefined {
-  return tool.officialOnly && !entry.official ? 'Só no provedor oficial.' : undefined
-}
+  const SANDBOX_LABEL: Record<TSandboxLevel, string> = {
+    'read-only': 'Só leitura',
+    'workspace-write': 'Escreve na pasta da conversa',
+    full: 'Acesso total',
+  }
+  const SANDBOX_HINT: Record<TSandboxLevel, string> = {
+    'read-only': 'Lê o disco, não escreve.',
+    'workspace-write': 'Escreve só na pasta da conversa.',
+    full: 'Lê, escreve e executa no servidor, sem limites.',
+  }
+  function sandboxLabel(protocol: string, level: TSandboxLevel): string {
+    // No Antigravity é ligado/desligado: com sandbox, nega o que pede permissão.
+    return protocol === 'antigravity' && level === 'read-only' ? 'Restrito' : SANDBOX_LABEL[level]
+  }
+  function sandboxHint(protocol: string, level: TSandboxLevel): string {
+    return protocol === 'antigravity' && level === 'read-only' ? 'Não executa comandos nem lê arquivos.' : SANDBOX_HINT[level]
+  }
+  /** O padrão (o primeiro nível) não é gravado: o agente segue o padrão do protocolo. */
+  function setSandbox(entry: TSelected, levels: TSandboxLevel[], level: TSandboxLevel) {
+    entry.target.sandbox = level === levels[0] ? undefined : level
+  }
 
-const SANDBOX_LABEL: Record<TSandboxLevel, string> = {
-  'read-only': 'Só leitura',
-  'workspace-write': 'Escreve na pasta da conversa',
-  full: 'Acesso total',
-}
-const SANDBOX_HINT: Record<TSandboxLevel, string> = {
-  'read-only': 'Lê o disco, não escreve.',
-  'workspace-write': 'Escreve só na pasta da conversa.',
-  full: 'Lê, escreve e executa no servidor, sem limites.',
-}
-function sandboxLabel(protocol: string, level: TSandboxLevel): string {
-  // No Antigravity é ligado/desligado: com sandbox, nega o que pede permissão.
-  return protocol === 'antigravity' && level === 'read-only' ? 'Restrito' : SANDBOX_LABEL[level]
-}
-function sandboxHint(protocol: string, level: TSandboxLevel): string {
-  return protocol === 'antigravity' && level === 'read-only' ? 'Não executa comandos nem lê arquivos.' : SANDBOX_HINT[level]
-}
-/** O padrão (o primeiro nível) não é gravado: o agente segue o padrão do protocolo. */
-function setSandbox(entry: TSelected, levels: TSandboxLevel[], level: TSandboxLevel) {
-  entry.target.sandbox = level === levels[0] ? undefined : level
-}
+  /**
+   * Os modelos que cada provider PODE oferecer ao agente: os ativados no catálogo dele. Sem nenhum ativado,
+   * o formulário manda para Modelos.
+   */
+  const catalogs = ref<Record<string, ICatalogModel[] | undefined>>({})
+  /** Os catálogos a caminho: o watcher dispara de novo antes de a resposta chegar. */
+  const fetching = new Set<string>()
+  const modelSearch = ref('')
+  function visibleModels(providerId: string): ICatalogModel[] {
+    const term = modelSearch.value.trim().toLowerCase()
+    return (catalogs.value[providerId] ?? []).filter((model) => !term || model.modelId.toLowerCase().includes(term) || model.label?.toLowerCase().includes(term))
+  }
+  const manyModels = computed(() => Object.values(catalogs.value).some((models) => (models?.length ?? 0) > 8))
 
-/**
- * Os modelos que cada provider PODE oferecer ao agente: os ativados no catálogo dele. Sem nenhum ativado,
- * o formulário manda para Modelos.
- */
-const catalogs = ref<Record<string, ICatalogModel[] | undefined>>({})
-/** Os catálogos a caminho: o watcher dispara de novo antes de a resposta chegar. */
-const fetching = new Set<string>()
-const modelSearch = ref('')
-function visibleModels(providerId: string): ICatalogModel[] {
-  const term = modelSearch.value.trim().toLowerCase()
-  return (catalogs.value[providerId] ?? []).filter((model) => !term || model.modelId.toLowerCase().includes(term) || model.label?.toLowerCase().includes(term))
-}
-const manyModels = computed(() => Object.values(catalogs.value).some((models) => (models?.length ?? 0) > 8))
+  /** Marca/desmarca; o primeiro marcado é o padrão daquele provider (e "tornar padrão" o leva para o topo). */
+  function toggleModel(target: { models: string[] }, modelId: string) {
+    const at = target.models.indexOf(modelId)
+    if (at === -1) target.models.push(modelId)
+    else target.models.splice(at, 1)
+  }
 
-/** Marca/desmarca; o primeiro marcado é o padrão daquele provider (e "tornar padrão" o leva para o topo). */
-function toggleModel(target: { models: string[] }, modelId: string) {
-  const at = target.models.indexOf(modelId)
-  if (at === -1) target.models.push(modelId)
-  else target.models.splice(at, 1)
-}
+  function makeDefault(target: { models: string[] }, modelId: string) {
+    target.models = [modelId, ...target.models.filter((model) => model !== modelId)]
+  }
 
-function makeDefault(target: { models: string[] }, modelId: string) {
-  target.models = [modelId, ...target.models.filter((model) => model !== modelId)]
-}
+  /** O provider vira o padrão do agente: vai para o topo. */
+  function makeDefaultProvider(id: string) {
+    const target = form.value.providers.find((candidate) => candidate.provider === id)
+    if (target) form.value.providers = [target, ...form.value.providers.filter((candidate) => candidate !== target)]
+  }
 
-/** O provider vira o padrão do agente: vai para o topo. */
-function makeDefaultProvider(id: string) {
-  const target = form.value.providers.find((candidate) => candidate.provider === id)
-  if (target) form.value.providers = [target, ...form.value.providers.filter((candidate) => candidate !== target)]
-}
+  /** Ferramentas que mudam algo fora da conversa: quem diz é o servidor (`dangerous` em `GET /tools`). */
+  const dangerousNames = computed(() => new Set(agents.tools.filter((tool) => tool.dangerous).map((tool) => tool.name)))
+  const dangerousChosen = computed(() => [
+    ...agents.capabilities.filter((item) => item.dangerous && form.value.allowedTools.includes(item.id)).map((item) => item.label),
+    ...form.value.allowedTools.filter((name) => dangerousNames.value.has(name)).map((name) => LOCAL_TOOL_LABEL[name] ?? name),
+  ])
+  /** As capacidades escolhidas e como cada uma roda nos provedores do agente ("Anthropic: nativa do Claude · Google: do gateway"). */
+  const capabilityRows = computed(() =>
+    agents.capabilities
+      .filter((item) => form.value.allowedTools.includes(item.id))
+      .map((item) => ({
+        id: item.id,
+        label: item.label,
+        runs: form.value.providers
+          .map((target) => `${protocols.providerName(target.provider)}: ${item.runs[protocols.protocolOf(target.provider) ?? target.provider] ?? 'indisponível'}`)
+          .join(' · '),
+      })),
+  )
+  const dangerousNatives = computed(() => natives.value.filter((tool) => tool.dangerous && form.value.allowedTools.includes(tool.id)).map((tool) => tool.label))
+  /** Os providers do agente sem sandbox ou com a rede dele aberta. */
+  const openSandboxes = computed(() =>
+    form.value.providers.filter((target) => target.sandbox === 'full' || target.network).map((target) => protocols.providerName(target.provider)),
+  )
 
-/** Ferramentas que mudam algo fora da conversa: quem diz é o servidor (`dangerous` em `GET /tools`). */
-const dangerousNames = computed(() => new Set(agents.tools.filter((tool) => tool.dangerous).map((tool) => tool.name)))
-const dangerousChosen = computed(() => [
-  ...agents.capabilities.filter((item) => item.dangerous && form.value.allowedTools.includes(item.id)).map((item) => item.label),
-  ...form.value.allowedTools.filter((name) => dangerousNames.value.has(name)).map((name) => LOCAL_TOOL_LABEL[name] ?? name),
-])
-/** As capacidades escolhidas e como cada uma roda nos provedores do agente ("Anthropic: nativa do Claude · Google: do gateway"). */
-const capabilityRows = computed(() =>
-  agents.capabilities
-    .filter((item) => form.value.allowedTools.includes(item.id))
-    .map((item) => ({
-      id: item.id,
-      label: item.label,
-      runs: form.value.providers.map((target) => `${protocols.providerName(target.provider)}: ${item.runs[protocols.protocolOf(target.provider) ?? target.provider] ?? 'indisponível'}`).join(' · '),
-    })),
-)
-const dangerousNatives = computed(() => natives.value.filter((tool) => tool.dangerous && form.value.allowedTools.includes(tool.id)).map((tool) => tool.label))
-/** Os providers do agente sem sandbox ou com a rede dele aberta. */
-const openSandboxes = computed(() =>
-  form.value.providers.filter((target) => target.sandbox === 'full' || target.network).map((target) => protocols.providerName(target.provider)),
-)
+  /** O nome que a pessoa vê de cada campo, para o resumo do erro perto do Salvar. */
+  const FIELD_LABEL: Record<string, string> = {
+    id: 'Identificador',
+    name: 'Nome',
+    providers: 'Provedores',
+    models: 'Modelos',
+    modes: 'Modos',
+    reasoningEfforts: 'Raciocínio',
+    allowedTools: 'Ferramentas',
+    soul: 'Personalidade',
+    systemPrompt: 'Instrução do sistema',
+    role: 'Só subagente',
+    adminOnly: 'Só administradores',
+    projectId: 'Projeto',
+  }
 
-/** O nome que a pessoa vê de cada campo, para o resumo do erro perto do Salvar. */
-const FIELD_LABEL: Record<string, string> = {
-  id: 'Identificador',
-  name: 'Nome',
-  providers: 'Provedores',
-  models: 'Modelos',
-  modes: 'Modos',
-  reasoningEfforts: 'Raciocínio',
-  allowedTools: 'Ferramentas',
-  soul: 'Personalidade',
-  systemPrompt: 'Instrução do sistema',
-  role: 'Só subagente',
-  adminOnly: 'Só administradores',
-  projectId: 'Projeto',
-}
+  // Agente novo nasce no projeto atual (o seletor do trilho); global só se alguém escolher.
+  const blank = (): IAgentInput => ({
+    id: '',
+    name: '',
+    providers: [],
+    soul: '',
+    systemPrompt: '',
+    reasoningEfforts: [],
+    modes: ['chat', 'agent'],
+    allowedTools: [],
+    role: null,
+    adminOnly: false,
+    projectId: projects.current ?? null,
+    permissions: [],
+  })
+  const form = ref<IAgentInput>(blank())
 
-// Agente novo nasce no projeto atual (o seletor do trilho); global só se alguém escolher.
-const blank = (): IAgentInput => ({
-  id: '',
-  name: '',
-  providers: [],
-  soul: '',
-  systemPrompt: '',
-  reasoningEfforts: [],
-  modes: ['chat', 'agent'],
-  allowedTools: [],
-  role: null,
-  adminOnly: false,
-  projectId: projects.current ?? null,
-  permissions: [],
-})
-const form = ref<IAgentInput>(blank())
-
-const FALLBACK_MODES: Array<{ value: 'global' | 'own' | 'off'; label: string }> = [
-  { value: 'global', label: 'A lista global' },
-  { value: 'own', label: 'Lista própria' },
-  { value: 'off', label: 'Desligada' },
-]
-/** Os pares que a lista própria pode ter: os provedores e modelos deste agente. */
-const ownSteps = computed(() => form.value.providers.flatMap((target) => target.models.map((model) => ({ provider: target.provider, model }))))
-function setFallbackMode(mode: 'global' | 'own' | 'off') {
-  form.value.fallback = mode === 'global' ? null : { mode, chain: mode === 'own' ? (form.value.fallback?.chain ?? []) : [] }
-}
-
-/** Entradas `sdk:`/`agent:`/`mcp:` que nenhuma lista oferece: sem checkbox, mas o servidor recusa o salvamento. */
-const orphans = computed(() =>
-  findOrphans(form.value.allowedTools, {
-    natives: agents.toolsLoaded && protocols.loaded ? new Set(natives.value.map((tool) => tool.id)) : undefined,
-    agents: agents.loaded ? new Set([...agents.list.filter((candidate) => candidate.id !== form.value.id).map((candidate) => candidate.id), ...CORE_BUILDERS.map((builder) => builder.id)]) : undefined,
-    mcp: mcpReady.value ? mcpOffered : undefined,
-  }),
-)
-
-/** Modelos que o agente declarava e que estão desligados no catálogo, por provider: saem ao salvar. */
-const droppedModels = ref<Record<string, string[]>>({})
-const dropped = computed(() => Object.entries(droppedModels.value).filter(([, models]) => models.length))
-const issues = ref<Record<string, string[]>>({})
-const failure = ref<string>()
-const saving = ref(false)
-const confirmingSave = ref(false)
-const confirming = ref(false)
-const deleting = ref(false)
-
-/**
- * As guias do formulário: o texto do agente na primeira, e cada grupo de capacidades na sua. A contagem diz
- * quanto está escolhido sem abrir a guia; o ponto vermelho, que o servidor recusou algo ali.
- */
-type TTab = 'agente' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos'
-// `#agendamentos` no link (a visão geral dos agendamentos) abre direto na guia.
-/** O nome das ferramentas do gateway na guia Ferramentas (o id técnico fica na dica). */
-const LOCAL_TOOL_LABEL: Record<string, string> = {
-  update_todos: 'Lista de tarefas',
-  run_bash: 'Terminal',
-  search_web: 'Busca na web',
-  read_doc: 'Ler documento',
-  search_docs: 'Buscar documentos',
-  use_skill: 'Usar skill',
-}
-
-const tab = ref<TTab>(useRoute().hash === '#agendamentos' ? 'agendamentos' : 'agente')
-
-/** Sobram guias à direita (a barra rola de lado): a borda esmaece, para ninguém achar que acabaram. */
-const tabBar = ref<HTMLElement>()
-const moreTabs = ref(false)
-const measureTabs = () => {
-  const bar = tabBar.value
-  moreTabs.value = !!bar && bar.scrollLeft + bar.clientWidth < bar.scrollWidth - 4
-}
-const tabObserver = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measureTabs)
-watch(tabBar, (bar, old) => {
-  if (old) tabObserver?.unobserve(old)
-  if (bar) tabObserver?.observe(bar)
-  measureTabs()
-})
-onBeforeUnmount(() => tabObserver?.disconnect())
-// A guia escolhida (inclusive a que veio no link) fica à vista.
-watch(
-  [tab, tabBar],
-  () => void nextTick(() => tabBar.value?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })),
-  { immediate: true },
-)
-const TAB_FIELDS: Record<TTab, string[]> = {
-  agente: ['id', 'name', 'soul', 'systemPrompt', 'role', 'adminOnly', 'projectId'],
-  modelos: ['providers', 'models', 'modes', 'reasoningEfforts'],
-  ferramentas: ['allowedTools'],
-  mcps: [],
-  sdk: [],
-  recursos: [],
-  contexto: [],
-  tamanho: [],
-  hooks: [],
-  agendamentos: [],
-}
-const tabs = computed(() => {
-  const tools = form.value.allowedTools
-  const alert = (id: TTab) => (TAB_FIELDS[id].some((field) => issues.value[field]?.length) ? 'Corrija os campos desta guia.' : undefined)
-  const all: Array<{ id: TTab; label: string; count?: number; alert?: string }> = [
-    { id: 'agente', label: 'Agente', alert: alert('agente') },
-    { id: 'modelos', label: 'Modelos', count: form.value.providers.reduce((total, target) => total + target.models.length, 0), alert: alert('modelos') },
-    {
-      id: 'ferramentas',
-      label: 'Ferramentas',
-      count: tools.filter((entry) => !entry.startsWith('mcp:') && !entry.startsWith('sdk:')).length,
-      alert: alert('ferramentas') ?? (orphans.value.length ? 'Há ferramentas indisponíveis' : undefined),
-    },
-    { id: 'mcps', label: 'MCPs', count: tools.filter((entry) => entry.startsWith('mcp:')).length },
-    { id: 'sdk', label: 'Permissões', count: (form.value.permissions?.length ?? 0) + tools.filter((entry) => entry.startsWith('sdk:')).length },
-    { id: 'recursos', label: 'Recursos' },
-    { id: 'contexto', label: 'Contexto inicial' },
-    { id: 'tamanho', label: 'Tamanho' },
-    { id: 'hooks', label: 'Hooks' },
-    { id: 'agendamentos', label: 'Agendamentos' },
+  const DIAGNOSTIC_CHECKS: Array<{ key: 'typecheck' | 'lint' | 'format'; label: string }> = [
+    { key: 'typecheck', label: 'Tipos (tsc)' },
+    { key: 'lint', label: 'Lint (eslint)' },
+    { key: 'format', label: 'Formato (prettier)' },
   ]
-  // A guia Permissões aparece sempre: as regras do agente moram nela, haja ou não nível de acesso ou extras.
-  return all
-})
-// A guia que sumiu (tirou o provider das nativas) não fica aberta vazia.
-watch(tabs, (list) => {
-  if (!list.some((item) => item.id === tab.value)) tab.value = 'agente'
-})
-
-/** O padrão de um agente novo: o primeiro provider que já abre conversa (ligado, com chave ou assinatura). */
-const defaultProvider = computed(() => providers.list.find((provider) => isUsableProvider(provider, protocols.get(provider.protocol)))?.id ?? '')
-function applyDefaultProvider() {
-  if (props.creating && !props.agent && !form.value.providers.length && defaultProvider.value) toggleProvider(defaultProvider.value)
-}
-watch(defaultProvider, applyDefaultProvider)
-
-/**
- * Os providers que a PESSOA acabou de pôr: quando o catálogo deles chega, o primeiro modelo ativado vira o
- * padrão. Carregar um agente existente não pode mexer no que ele declara.
- */
-const added = new Set<string>()
-
-/**
- * A pessoa pôs ou tirou um provider.
- *
- * Pôr: entra no fim (o primeiro continua o padrão); os modelos chegam com o catálogo (watcher abaixo). Sendo
- * o único, as lanes e os níveis partem do protocolo dele.
- *
- * Tirar: o que só ele sustentava sai já — a nativa `sdk:` de uma família que ficou sem provider, a lane e o
- * nível que nenhum protocolo restante aceita fariam o servidor recusar.
- */
-function toggleProvider(id: string) {
-  const existing = form.value.providers.find((target) => target.provider === id)
-  if (existing) {
-    form.value.providers = form.value.providers.filter((target) => target !== existing)
-    added.delete(id)
-    delete droppedModels.value[id]
-  } else {
-    form.value.providers = [...form.value.providers, { provider: id, models: [] }]
-    added.add(id)
-    if (form.value.providers.length === 1) {
-      const info = protocols.get(protocols.protocolOf(id) ?? id)
-      form.value.modes = defaultLanes(info)
-      form.value.reasoningEfforts = protocols.levelsFor(info?.id ?? id, form.value.reasoningEfforts ?? [])
-    }
+  const FALLBACK_MODES: Array<{ value: 'global' | 'own' | 'off'; label: string }> = [
+    { value: 'global', label: 'A lista global' },
+    { value: 'own', label: 'Lista própria' },
+    { value: 'off', label: 'Desligada' },
+  ]
+  /** Os pares que a lista própria pode ter: os provedores e modelos deste agente. */
+  const ownSteps = computed(() => form.value.providers.flatMap((target) => target.models.map((model) => ({ provider: target.provider, model }))))
+  function setFallbackMode(mode: 'global' | 'own' | 'off') {
+    form.value.fallback = mode === 'global' ? null : { mode, chain: mode === 'own' ? (form.value.fallback?.chain ?? []) : [] }
   }
-  const lanes = lanesAllowed.value
-  form.value.modes = form.value.modes.filter((mode) => lanes.includes(mode))
-  if (!form.value.modes.length) form.value.modes = [...lanes]
-  if (existing) {
-    const levels = reasoningLevels.value
-    form.value.reasoningEfforts = (form.value.reasoningEfforts ?? []).filter((level) => levels.includes(level))
-    if (agents.toolsLoaded && protocols.loaded) form.value.allowedTools = pruneNatives(form.value.allowedTools, agents.nativeTools, families.value)
-  }
-}
 
-watch(
-  chosen,
-  (ids) => {
-    // Em paralelo: um catálogo lento (o do Google lista centenas) não segura o dos outros.
-    for (const id of ids) {
-      if (catalogs.value[id] !== undefined) {
-        settleAdded(id)
-        continue
+  /** Entradas `sdk:`/`agent:`/`mcp:` que nenhuma lista oferece: sem checkbox, mas o servidor recusa o salvamento. */
+  const orphans = computed(() =>
+    findOrphans(form.value.allowedTools, {
+      natives: agents.toolsLoaded && protocols.loaded ? new Set(natives.value.map((tool) => tool.id)) : undefined,
+      agents: agents.loaded
+        ? new Set([...agents.list.filter((candidate) => candidate.id !== form.value.id).map((candidate) => candidate.id), ...CORE_BUILDERS.map((builder) => builder.id)])
+        : undefined,
+      mcp: mcpReady.value ? mcpOffered : undefined,
+    }),
+  )
+
+  /** Modelos que o agente declarava e que estão desligados no catálogo, por provider: saem ao salvar. */
+  const droppedModels = ref<Record<string, string[]>>({})
+  const dropped = computed(() => Object.entries(droppedModels.value).filter(([, models]) => models.length))
+  const issues = ref<Record<string, string[]>>({})
+  const failure = ref<string>()
+  const saving = ref(false)
+  const confirmingSave = ref(false)
+  const confirming = ref(false)
+  const deleting = ref(false)
+
+  /**
+   * As guias do formulário: o texto do agente na primeira, e cada grupo de capacidades na sua. A contagem diz
+   * quanto está escolhido sem abrir a guia; o ponto vermelho, que o servidor recusou algo ali.
+   */
+  type TTab = 'agente' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos'
+  // `#agendamentos` no link (a visão geral dos agendamentos) abre direto na guia.
+  /** O nome das ferramentas do gateway na guia Ferramentas (o id técnico fica na dica). */
+  const LOCAL_TOOL_LABEL: Record<string, string> = {
+    update_todos: 'Lista de tarefas',
+    run_bash: 'Terminal',
+    search_web: 'Busca na web',
+    read_doc: 'Ler documento',
+    search_docs: 'Buscar documentos',
+    use_skill: 'Usar skill',
+  }
+
+  const tab = ref<TTab>(useRoute().hash === '#agendamentos' ? 'agendamentos' : 'agente')
+
+  /** Sobram guias à direita (a barra rola de lado): a borda esmaece, para ninguém achar que acabaram. */
+  const tabBar = ref<HTMLElement>()
+  const moreTabs = ref(false)
+  const measureTabs = () => {
+    const bar = tabBar.value
+    moreTabs.value = !!bar && bar.scrollLeft + bar.clientWidth < bar.scrollWidth - 4
+  }
+  const tabObserver = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measureTabs)
+  watch(tabBar, (bar, old) => {
+    if (old) tabObserver?.unobserve(old)
+    if (bar) tabObserver?.observe(bar)
+    measureTabs()
+  })
+  onBeforeUnmount(() => tabObserver?.disconnect())
+  // A guia escolhida (inclusive a que veio no link) fica à vista.
+  watch([tab, tabBar], () => void nextTick(() => tabBar.value?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })), {
+    immediate: true,
+  })
+  const TAB_FIELDS: Record<TTab, string[]> = {
+    agente: ['id', 'name', 'soul', 'systemPrompt', 'role', 'adminOnly', 'projectId'],
+    modelos: ['providers', 'models', 'modes', 'reasoningEfforts'],
+    ferramentas: ['allowedTools'],
+    mcps: [],
+    sdk: [],
+    recursos: [],
+    contexto: [],
+    tamanho: [],
+    hooks: [],
+    agendamentos: [],
+  }
+  const tabs = computed(() => {
+    const tools = form.value.allowedTools
+    const alert = (id: TTab) => (TAB_FIELDS[id].some((field) => issues.value[field]?.length) ? 'Corrija os campos desta guia.' : undefined)
+    const all: Array<{ id: TTab; label: string; count?: number; alert?: string }> = [
+      { id: 'agente', label: 'Agente', alert: alert('agente') },
+      { id: 'modelos', label: 'Modelos', count: form.value.providers.reduce((total, target) => total + target.models.length, 0), alert: alert('modelos') },
+      {
+        id: 'ferramentas',
+        label: 'Ferramentas',
+        count: tools.filter((entry) => !entry.startsWith('mcp:') && !entry.startsWith('sdk:')).length,
+        alert: alert('ferramentas') ?? (orphans.value.length ? 'Há ferramentas indisponíveis' : undefined),
+      },
+      { id: 'mcps', label: 'MCPs', count: tools.filter((entry) => entry.startsWith('mcp:')).length },
+      { id: 'sdk', label: 'Permissões', count: (form.value.permissions?.length ?? 0) + tools.filter((entry) => entry.startsWith('sdk:')).length },
+      { id: 'recursos', label: 'Recursos' },
+      { id: 'contexto', label: 'Contexto inicial' },
+      { id: 'tamanho', label: 'Tamanho' },
+      { id: 'hooks', label: 'Hooks' },
+      { id: 'agendamentos', label: 'Agendamentos' },
+    ]
+    // A guia Permissões aparece sempre: as regras do agente moram nela, haja ou não nível de acesso ou extras.
+    return all
+  })
+  // A guia que sumiu (tirou o provider das nativas) não fica aberta vazia.
+  watch(tabs, (list) => {
+    if (!list.some((item) => item.id === tab.value)) tab.value = 'agente'
+  })
+
+  /** O padrão de um agente novo: o primeiro provider que já abre conversa (ligado, com chave ou assinatura). */
+  const defaultProvider = computed(() => providers.list.find((provider) => isUsableProvider(provider, protocols.get(provider.protocol)))?.id ?? '')
+  function applyDefaultProvider() {
+    if (props.creating && !props.agent && !form.value.providers.length && defaultProvider.value) toggleProvider(defaultProvider.value)
+  }
+  watch(defaultProvider, applyDefaultProvider)
+
+  /**
+   * Os providers que a PESSOA acabou de pôr: quando o catálogo deles chega, o primeiro modelo ativado vira o
+   * padrão. Carregar um agente existente não pode mexer no que ele declara.
+   */
+  const added = new Set<string>()
+
+  /**
+   * A pessoa pôs ou tirou um provider.
+   *
+   * Pôr: entra no fim (o primeiro continua o padrão); os modelos chegam com o catálogo (watcher abaixo). Sendo
+   * o único, as lanes e os níveis partem do protocolo dele.
+   *
+   * Tirar: o que só ele sustentava sai já — a nativa `sdk:` de uma família que ficou sem provider, a lane e o
+   * nível que nenhum protocolo restante aceita fariam o servidor recusar.
+   */
+  function toggleProvider(id: string) {
+    const existing = form.value.providers.find((target) => target.provider === id)
+    if (existing) {
+      form.value.providers = form.value.providers.filter((target) => target !== existing)
+      added.delete(id)
+      delete droppedModels.value[id]
+    } else {
+      form.value.providers = [...form.value.providers, { provider: id, models: [] }]
+      added.add(id)
+      if (form.value.providers.length === 1) {
+        const info = protocols.get(protocols.protocolOf(id) ?? id)
+        form.value.modes = defaultLanes(info)
+        form.value.reasoningEfforts = protocols.levelsFor(info?.id ?? id, form.value.reasoningEfforts ?? [])
       }
-      if (fetching.has(id)) continue
-      fetching.add(id)
-      void providers
-        .models(id)
-        .then(
-          (models) => models.filter((model) => model.enabled),
-          () => [] as ICatalogModel[],
-        )
-        .then((models) => {
-          fetching.delete(id)
-          catalogs.value = { ...catalogs.value, [id]: models }
-          settleAdded(id)
-        })
     }
-  },
-  { immediate: true },
-)
+    const lanes = lanesAllowed.value
+    form.value.modes = form.value.modes.filter((mode) => lanes.includes(mode))
+    if (!form.value.modes.length) form.value.modes = [...lanes]
+    if (existing) {
+      const levels = reasoningLevels.value
+      form.value.reasoningEfforts = (form.value.reasoningEfforts ?? []).filter((level) => levels.includes(level))
+      if (agents.toolsLoaded && protocols.loaded) form.value.allowedTools = pruneNatives(form.value.allowedTools, agents.nativeTools, families.value)
+    }
+  }
 
-/** O catálogo de um provider que a pessoa acabou de pôr chegou: o primeiro ativado vira o padrão dele. */
-function settleAdded(id: string) {
-  if (!added.has(id)) return
-  const target = form.value.providers.find((candidate) => candidate.provider === id)
-  const offered = catalogs.value[id]
-  if (!target || !offered) return
-  added.delete(id)
-  target.models = pruneModels(target.models, offered.map((model) => model.modelId))
-}
-
-watch(
-  () => [props.agent, props.creating] as const,
-  ([agent]) => {
-    added.clear()
-    modelSearch.value = ''
-    // Os desligados no catálogo não entram no formulário: salvar com eles seria recusado.
-    droppedModels.value = Object.fromEntries((agent?.providers ?? []).map((provider) => [provider.id, provider.disabledModels ?? []]))
-    form.value = agent
-      ? {
-          id: agent.id,
-          name: agent.name,
-          providers: agent.providers.map((provider) => ({
-            provider: provider.id,
-            models: provider.models.filter((model) => !provider.disabledModels?.includes(model)),
-            ...(provider.sandbox ? { sandbox: provider.sandbox } : {}),
-            ...(provider.network ? { network: true } : {}),
-          })),
-          soul: agent.soul ?? '',
-          systemPrompt: agent.systemPrompt,
-          reasoningEfforts: [...(agent.reasoningEfforts ?? [])],
-          modes: [...agent.modes],
-          allowedTools: [...agent.allowedTools],
-          role: agent.role ?? null,
-          adminOnly: !!agent.adminOnly,
-          projectId: agent.projectId ?? null,
-          permissions: (agent.permissions ?? []).map((rule) => ({ ...rule })),
-          terminal: agent.terminal ? { ...agent.terminal } : null,
-          fallback: agent.fallback ? { mode: agent.fallback.mode, chain: (agent.fallback.chain ?? []).map((step) => ({ ...step })) } : null,
+  watch(
+    chosen,
+    (ids) => {
+      // Em paralelo: um catálogo lento (o do Google lista centenas) não segura o dos outros.
+      for (const id of ids) {
+        if (catalogs.value[id] !== undefined) {
+          settleAdded(id)
+          continue
         }
-      : blank()
+        if (fetching.has(id)) continue
+        fetching.add(id)
+        void providers
+          .models(id)
+          .then(
+            (models) => models.filter((model) => model.enabled),
+            () => [] as ICatalogModel[],
+          )
+          .then((models) => {
+            fetching.delete(id)
+            catalogs.value = { ...catalogs.value, [id]: models }
+            settleAdded(id)
+          })
+      }
+    },
+    { immediate: true },
+  )
+
+  /** O catálogo de um provider que a pessoa acabou de pôr chegou: o primeiro ativado vira o padrão dele. */
+  function settleAdded(id: string) {
+    if (!added.has(id)) return
+    const target = form.value.providers.find((candidate) => candidate.provider === id)
+    const offered = catalogs.value[id]
+    if (!target || !offered) return
+    added.delete(id)
+    target.models = pruneModels(
+      target.models,
+      offered.map((model) => model.modelId),
+    )
+  }
+
+  watch(
+    () => [props.agent, props.creating] as const,
+    ([agent]) => {
+      added.clear()
+      modelSearch.value = ''
+      // Os desligados no catálogo não entram no formulário: salvar com eles seria recusado.
+      droppedModels.value = Object.fromEntries((agent?.providers ?? []).map((provider) => [provider.id, provider.disabledModels ?? []]))
+      form.value = agent
+        ? {
+            id: agent.id,
+            name: agent.name,
+            providers: agent.providers.map((provider) => ({
+              provider: provider.id,
+              models: provider.models.filter((model) => !provider.disabledModels?.includes(model)),
+              ...(provider.sandbox ? { sandbox: provider.sandbox } : {}),
+              ...(provider.network ? { network: true } : {}),
+            })),
+            soul: agent.soul ?? '',
+            systemPrompt: agent.systemPrompt,
+            reasoningEfforts: [...(agent.reasoningEfforts ?? [])],
+            modes: [...agent.modes],
+            allowedTools: [...agent.allowedTools],
+            role: agent.role ?? null,
+            adminOnly: !!agent.adminOnly,
+            projectId: agent.projectId ?? null,
+            permissions: (agent.permissions ?? []).map((rule) => ({ ...rule })),
+            terminal: agent.terminal ? { ...agent.terminal } : null,
+            diagnostics: agent.diagnostics ? { ...agent.diagnostics } : null,
+            fallback: agent.fallback ? { mode: agent.fallback.mode, chain: (agent.fallback.chain ?? []).map((step) => ({ ...step })) } : null,
+          }
+        : blank()
+      issues.value = {}
+      failure.value = undefined
+      applyDefaultProvider()
+    },
+    { immediate: true },
+  )
+
+  function toggle<T>(values: T[], value: T) {
+    const at = values.indexOf(value)
+    if (at === -1) values.push(value)
+    else values.splice(at, 1)
+  }
+
+  function slugify() {
+    if (!props.creating || form.value.id) return
+    form.value.id = form.value.name
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 48)
+  }
+
+  /** O que será gravado, em uma linha, para a confirmação do Salvar. */
+  const saveSummary = computed(() => {
+    const { providers: targets, modes, allowedTools } = form.value
+    const list = targets.map(
+      (target, index) => `${protocols.providerName(target.provider)} (${target.models.length} modelo(s)${index === 0 && target.models[0] ? `, padrão ${target.models[0]}` : ''})`,
+    )
+    return `${targets.length > 1 ? 'Provedores' : 'Provedor'} ${list.join(', ') || 'nenhum'}; modos ${modes.map((mode) => (mode === 'chat' ? 'Conversa' : 'Agente')).join(' + ') || 'nenhum'}; ${allowedTools.length} ferramenta(s).`
+  })
+
+  async function save() {
+    confirmingSave.value = false
+    saving.value = true
     issues.value = {}
     failure.value = undefined
-    applyDefaultProvider()
-  },
-  { immediate: true },
-)
-
-function toggle<T>(values: T[], value: T) {
-  const at = values.indexOf(value)
-  if (at === -1) values.push(value)
-  else values.splice(at, 1)
-}
-
-function slugify() {
-  if (!props.creating || form.value.id) return
-  form.value.id = form.value.name
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 48)
-}
-
-/** O que será gravado, em uma linha, para a confirmação do Salvar. */
-const saveSummary = computed(() => {
-  const { providers: targets, modes, allowedTools } = form.value
-  const list = targets.map((target, index) => `${protocols.providerName(target.provider)} (${target.models.length} modelo(s)${index === 0 && target.models[0] ? `, padrão ${target.models[0]}` : ''})`)
-  return `${targets.length > 1 ? 'Provedores' : 'Provedor'} ${list.join(', ') || 'nenhum'}; modos ${modes.map((mode) => (mode === 'chat' ? 'Conversa' : 'Agente')).join(' + ') || 'nenhum'}; ${allowedTools.length} ferramenta(s).`
-})
-
-async function save() {
-  confirmingSave.value = false
-  saving.value = true
-  issues.value = {}
-  failure.value = undefined
-  try {
-    const input: IAgentInput = {
-      ...form.value,
-      reasoningEfforts: (form.value.reasoningEfforts ?? []).filter((level) => reasoningLevels.value.includes(level)),
-      permissions: (form.value.permissions ?? []).filter((rule) => rule.pattern.trim()),
-      // Vazio volta ao global (Sistema → Limites).
-      terminal: form.value.terminal?.timeoutSeconds || form.value.terminal?.maxOutputChars ? form.value.terminal : null,
-      // `global` é o padrão: vai como `null`.
-      fallback: form.value.fallback && form.value.fallback.mode !== 'global' ? form.value.fallback : null,
+    try {
+      const input: IAgentInput = {
+        ...form.value,
+        reasoningEfforts: (form.value.reasoningEfforts ?? []).filter((level) => reasoningLevels.value.includes(level)),
+        permissions: (form.value.permissions ?? []).filter((rule) => rule.pattern.trim()),
+        // Vazio volta ao global (Sistema → Limites).
+        terminal: form.value.terminal?.timeoutSeconds || form.value.terminal?.maxOutputChars ? form.value.terminal : null,
+        // Nada ligado = desligado.
+        diagnostics: form.value.diagnostics?.typecheck || form.value.diagnostics?.lint || form.value.diagnostics?.format ? form.value.diagnostics : null,
+        // `global` é o padrão: vai como `null`.
+        fallback: form.value.fallback && form.value.fallback.mode !== 'global' ? form.value.fallback : null,
+      }
+      const saved = await agents.save(input, props.creating)
+      emit('saved', saved.id)
+    } catch (error) {
+      // ⚠️ Todo 422 vira resumo perto do Salvar: o campo com problema pode nem ter input na tela.
+      if (error instanceof ApiError && error.status === 422) issues.value = error.fieldIssues
+      failure.value = error instanceof Error ? error.message : String(error)
+    } finally {
+      saving.value = false
     }
-    const saved = await agents.save(input, props.creating)
-    emit('saved', saved.id)
-  } catch (error) {
-    // ⚠️ Todo 422 vira resumo perto do Salvar: o campo com problema pode nem ter input na tela.
-    if (error instanceof ApiError && error.status === 422) issues.value = error.fieldIssues
-    failure.value = error instanceof Error ? error.message : String(error)
-  } finally {
-    saving.value = false
   }
-}
 
-async function remove() {
-  if (!props.agent) return
-  deleting.value = true
-  try {
-    await agents.remove(props.agent.id)
-    confirming.value = false
-    emit('removed')
-  } catch (error) {
-    // 409 `agent_in_use`: a mensagem do servidor diz quem ainda referencia o agente.
-    failure.value = error instanceof Error ? error.message : String(error)
-    confirming.value = false
-  } finally {
-    deleting.value = false
+  async function remove() {
+    if (!props.agent) return
+    deleting.value = true
+    try {
+      await agents.remove(props.agent.id)
+      confirming.value = false
+      emit('removed')
+    } catch (error) {
+      // 409 `agent_in_use`: a mensagem do servidor diz quem ainda referencia o agente.
+      failure.value = error instanceof Error ? error.message : String(error)
+      confirming.value = false
+    } finally {
+      deleting.value = false
+    }
   }
-}
 </script>
 
 <template>
@@ -608,26 +627,49 @@ async function remove() {
       </label>
       <div class="field">
         <label class="flex items-center gap-3">
-          <button type="button" role="switch" :aria-checked="form.role === 'subagent'" class="switch" :class="{ on: form.role === 'subagent' }" @click="form.role = form.role === 'subagent' ? null : 'subagent'"><span /></button>
+          <button
+            type="button"
+            role="switch"
+            :aria-checked="form.role === 'subagent'"
+            class="switch"
+            :class="{ on: form.role === 'subagent' }"
+            @click="form.role = form.role === 'subagent' ? null : 'subagent'"
+          >
+            <span />
+          </button>
           <span>Só subagente</span>
         </label>
         <small class="hint">Só outros agentes o chamam (em "Pode delegar a"). Não aparece em Nova conversa.</small>
       </div>
       <div class="field">
         <label class="flex items-center gap-3">
-          <button type="button" role="switch" :aria-checked="!!form.adminOnly" class="switch" :class="{ on: form.adminOnly }" @click="form.adminOnly = !form.adminOnly"><span /></button>
+          <button type="button" role="switch" :aria-checked="!!form.adminOnly" class="switch" :class="{ on: form.adminOnly }" @click="form.adminOnly = !form.adminOnly">
+            <span />
+          </button>
           <span>Só administradores</span>
         </label>
         <small class="hint">Desligado, qualquer pessoa com conta pode conversar com este agente.</small>
       </div>
 
       <label class="field sm:col-span-2">
-        <span>Personalidade <em class="font-normal text-zinc-500">— quem o agente é: identidade, tom e jeito de falar.</em></span>
-        <textarea v-model="form.soul" rows="4" maxlength="8000" class="input scroll-thin text-[13px] leading-relaxed" placeholder="Você é a Íris: gentil, direta, explica sem jargão e admite quando não sabe." />
+        <span>
+          Personalidade
+          <em class="font-normal text-zinc-500">— quem o agente é: identidade, tom e jeito de falar.</em>
+        </span>
+        <textarea
+          v-model="form.soul"
+          rows="4"
+          maxlength="8000"
+          class="input scroll-thin text-[13px] leading-relaxed"
+          placeholder="Você é a Íris: gentil, direta, explica sem jargão e admite quando não sabe."
+        />
         <small v-for="message in issues.soul" :key="message" class="error">{{ message }}</small>
       </label>
       <label class="field sm:col-span-2">
-        <span>Instrução do sistema <em class="font-normal text-zinc-500">— o que o agente faz: função, regras, como usar as ferramentas</em></span>
+        <span>
+          Instrução do sistema
+          <em class="font-normal text-zinc-500">— o que o agente faz: função, regras, como usar as ferramentas</em>
+        </span>
         <textarea v-model="form.systemPrompt" required rows="10" class="input scroll-thin font-mono text-[13px] leading-relaxed" placeholder="Você é o agente…" />
         <small v-if="anyGoogle" class="hint">Com Gemini, evite {chaves} no texto: viram variáveis e dão erro.</small>
         <small v-for="message in issues.systemPrompt" :key="message" class="error">{{ message }}</small>
@@ -635,21 +677,42 @@ async function remove() {
     </fieldset>
     <fieldset v-show="tab === 'modelos'" class="grid gap-4 sm:grid-cols-2">
       <div class="field sm:col-span-2">
-        <span>Provedores <em class="font-normal text-zinc-500">— onde o agente roda. O primeiro é o padrão.</em></span>
+        <span>
+          Provedores
+          <em class="font-normal text-zinc-500">— onde o agente roda. O primeiro é o padrão.</em>
+        </span>
         <div class="flex flex-wrap gap-1.5">
-          <button v-for="provider in providerOptions" :key="provider.id" type="button" class="chip" :class="{ on: chosen.includes(provider.id) }" @click="toggleProvider(provider.id)">
-            {{ provider.name }}<span v-if="chosen[0] === provider.id" class="ml-1 text-[10px] text-emerald-300">padrão</span><span v-if="!provider.enabled" class="text-[10px] text-zinc-500"> desligado</span>
+          <button
+            v-for="provider in providerOptions"
+            :key="provider.id"
+            type="button"
+            class="chip"
+            :class="{ on: chosen.includes(provider.id) }"
+            @click="toggleProvider(provider.id)"
+          >
+            {{ provider.name }}
+            <span v-if="chosen[0] === provider.id" class="ml-1 text-[10px] text-emerald-300">padrão</span>
+            <span v-if="!provider.enabled" class="text-[10px] text-zinc-500">desligado</span>
           </button>
-          <span v-if="!providerOptions.length" class="text-sm text-zinc-500">{{ chosen.length ? chosen.map((id) => protocols.providerName(id)).join(', ') : 'Nenhum provedor pronto. Configure em Modelos.' }}</span>
+          <span v-if="!providerOptions.length" class="text-sm text-zinc-500">
+            {{ chosen.length ? chosen.map((id) => protocols.providerName(id)).join(', ') : 'Nenhum provedor pronto. Configure em Modelos.' }}
+          </span>
         </div>
         <small v-for="message in issues.providers" :key="message" class="error">{{ message }}</small>
       </div>
 
       <div v-if="form.providers.length" class="field sm:col-span-2">
-        <span>Modelos <em class="font-normal text-zinc-500">— o padrão é o usado quando ninguém escolhe.</em></span>
+        <span>
+          Modelos
+          <em class="font-normal text-zinc-500">— o padrão é o usado quando ninguém escolhe.</em>
+        </span>
         <p v-if="dropped.length" class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-normal text-amber-200">
           Estes modelos foram desligados e saem ao salvar:
-          <template v-for="([providerId, models], index) in dropped" :key="providerId">{{ index ? '; ' : '' }}{{ protocols.providerName(providerId) }}: <code>{{ models.join(', ') }}</code></template>. Para manter, ative em Modelos.
+          <template v-for="([providerId, models], index) in dropped" :key="providerId">
+            {{ index ? '; ' : '' }}{{ protocols.providerName(providerId) }}:
+            <code>{{ models.join(', ') }}</code>
+          </template>
+          . Para manter, ative em Modelos.
         </p>
         <input v-if="manyModels" v-model="modelSearch" type="search" placeholder="Buscar modelo…" class="input text-sm" />
         <div v-for="(target, index) in form.providers" :key="target.provider" class="flex flex-col gap-1.5">
@@ -660,7 +723,9 @@ async function remove() {
           </div>
           <p v-if="catalogs[target.provider] === undefined" class="text-xs font-normal text-zinc-500">Carregando modelos…</p>
           <p v-else-if="!catalogs[target.provider]?.length" class="text-sm font-normal text-amber-300">
-            Nenhum modelo ativado neste provedor. <RouterLink to="/models" class="underline">Ative em Modelos</RouterLink>.
+            Nenhum modelo ativado neste provedor.
+            <RouterLink to="/models" class="underline">Ative em Modelos</RouterLink>
+            .
           </p>
           <ul v-else class="scroll-thin max-h-64 divide-y divide-zinc-800/70 overflow-y-auto rounded-lg border border-zinc-800">
             <li v-for="model in visibleModels(target.provider)" :key="model.modelId" class="flex items-center gap-3 px-3 py-2 font-normal">
@@ -670,7 +735,9 @@ async function remove() {
                 <span v-if="model.price" class="text-xs text-zinc-500">${{ model.price.input }} / ${{ model.price.output }} por 1M</span>
               </span>
               <span v-if="target.models[0] === model.modelId" class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-300">padrão</span>
-              <button v-else-if="target.models.includes(model.modelId)" type="button" class="text-xs text-zinc-400 hover:text-zinc-100" @click="makeDefault(target, model.modelId)">tornar padrão</button>
+              <button v-else-if="target.models.includes(model.modelId)" type="button" class="text-xs text-zinc-400 hover:text-zinc-100" @click="makeDefault(target, model.modelId)">
+                tornar padrão
+              </button>
             </li>
           </ul>
         </div>
@@ -682,7 +749,7 @@ async function remove() {
         <span>Modos</span>
         <div class="flex flex-wrap gap-1.5">
           <button
-            v-for="mode in (['chat', 'agent'] as TMode[])"
+            v-for="mode in ['chat', 'agent'] as TMode[]"
             :key="mode"
             type="button"
             class="chip disabled:opacity-40"
@@ -699,17 +766,28 @@ async function remove() {
       <div class="field">
         <span>Níveis de raciocínio</span>
         <div v-if="reasoningLevels.length" class="flex flex-wrap gap-1.5">
-          <button v-for="level in reasoningLevels" :key="level" type="button" class="chip" :class="{ on: form.reasoningEfforts?.includes(level) }" @click="toggle((form.reasoningEfforts ??= []), level)">{{ effortLabel(level) }}</button>
+          <button
+            v-for="level in reasoningLevels"
+            :key="level"
+            type="button"
+            class="chip"
+            :class="{ on: form.reasoningEfforts?.includes(level) }"
+            @click="toggle((form.reasoningEfforts ??= []), level)"
+          >
+            {{ effortLabel(level) }}
+          </button>
         </div>
         <small v-else class="hint">O Antigravity não permite escolher o nível de raciocínio.</small>
         <small v-if="reasoningLevels.length" class="hint">Os níveis que a pessoa pode escolher na conversa.</small>
         <small v-for="message in issues.reasoningEfforts" :key="message" class="error">{{ message }}</small>
       </div>
-
     </fieldset>
     <fieldset v-show="tab === 'ferramentas'" class="grid gap-4 sm:grid-cols-2">
       <div class="field sm:col-span-2">
-        <span>Capacidades <em class="font-normal text-zinc-500">— o que o agente pode fazer; o gateway decide como roda em cada provedor.</em></span>
+        <span>
+          Capacidades
+          <em class="font-normal text-zinc-500">— o que o agente pode fazer; o gateway decide como roda em cada provedor.</em>
+        </span>
         <div class="flex flex-wrap gap-1.5">
           <button
             v-for="item in agents.capabilities"
@@ -724,7 +802,10 @@ async function remove() {
           </button>
         </div>
         <ul v-if="capabilityRows.length && form.providers.length" class="flex flex-col gap-0.5 text-xs text-zinc-500">
-          <li v-for="row in capabilityRows" :key="row.id"><span class="text-zinc-300">{{ row.label }}</span> — {{ row.runs }}</li>
+          <li v-for="row in capabilityRows" :key="row.id">
+            <span class="text-zinc-300">{{ row.label }}</span>
+            — {{ row.runs }}
+          </li>
         </ul>
       </div>
       <div v-if="agents.tools.length" class="field sm:col-span-2">
@@ -743,13 +824,17 @@ async function remove() {
           </button>
         </div>
         <small v-if="dangerousChosen.length" class="text-amber-300">
-          ⚠ {{ dangerousChosen.join(', ') }} dá acesso ao servidor. Quem conversar com este agente também terá esse acesso.<template v-if="!form.adminOnly"> Marque "Só administradores" na guia Agente se não for para todos.</template>
+          ⚠ {{ dangerousChosen.join(', ') }} dá acesso ao servidor. Quem conversar com este agente também terá esse acesso.
+          <template v-if="!form.adminOnly">Marque "Só administradores" na guia Agente se não for para todos.</template>
         </small>
         <small v-for="message in issues.allowedTools" :key="message" class="error">{{ message }}</small>
       </div>
 
       <div class="field sm:col-span-2">
-        <span>Pode delegar a <em class="font-normal text-zinc-500">— outros agentes a quem este pode pedir ajuda.</em></span>
+        <span>
+          Pode delegar a
+          <em class="font-normal text-zinc-500">— outros agentes a quem este pode pedir ajuda.</em>
+        </span>
         <div class="flex flex-wrap gap-1.5">
           <button
             v-for="other in agents.list.filter((candidate) => candidate.id !== form.id)"
@@ -759,7 +844,8 @@ async function remove() {
             :class="{ on: form.allowedTools.includes(`agent:${other.id}`) }"
             @click="toggle(form.allowedTools, `agent:${other.id}`)"
           >
-            {{ other.name }}<span v-if="other.role === 'subagent'" class="ml-1 text-[10px] text-zinc-500">subagente</span>
+            {{ other.name }}
+            <span v-if="other.role === 'subagent'" class="ml-1 text-[10px] text-zinc-500">subagente</span>
           </button>
           <!-- Os construtores do core: não estão na lista de agentes, mas recebem delegação (o Atlas cria conteúdo por eles). -->
           <button
@@ -771,31 +857,47 @@ async function remove() {
             :title="`Agente do sistema, só para administradores`"
             @click="toggle(form.allowedTools, `agent:${builder.id}`)"
           >
-            {{ builder.name }}<span class="ml-1 text-[10px] text-zinc-500">sistema</span>
+            {{ builder.name }}
+            <span class="ml-1 text-[10px] text-zinc-500">sistema</span>
           </button>
         </div>
         <small v-if="form.allowedTools.some((entry) => entry.startsWith('agent:')) && !form.modes.includes('agent')" class="hint">A delegação só funciona no modo Agente.</small>
       </div>
 
       <div v-if="orphans.length" class="field sm:col-span-2">
-        <span>Indisponíveis <em class="font-normal text-zinc-500">— escolhidas, mas não oferecidas pelos provedores. Remova para salvar.</em></span>
+        <span>
+          Indisponíveis
+          <em class="font-normal text-zinc-500">— escolhidas, mas não oferecidas pelos provedores. Remova para salvar.</em>
+        </span>
         <div class="flex flex-wrap gap-1.5">
-          <button v-for="entry in orphans" :key="entry" type="button" class="chip on danger font-mono text-xs" title="Clique para tirar do agente" @click="toggle(form.allowedTools, entry)">
-            <span class="mr-1 rounded-full bg-amber-500/20 px-1.5 text-[10px] text-amber-200">indisponível</span>{{ entry }} ✕
+          <button
+            v-for="entry in orphans"
+            :key="entry"
+            type="button"
+            class="chip on danger font-mono text-xs"
+            title="Clique para tirar do agente"
+            @click="toggle(form.allowedTools, entry)"
+          >
+            <span class="mr-1 rounded-full bg-amber-500/20 px-1.5 text-[10px] text-amber-200">indisponível</span>
+            {{ entry }} ✕
           </button>
         </div>
       </div>
-
     </fieldset>
     <fieldset v-show="tab === 'mcps'" class="grid gap-4 sm:grid-cols-2">
       <div class="field sm:col-span-2">
-        <span>MCPs <em class="font-normal text-zinc-500">— o agente usa só o que estiver marcado.</em></span>
+        <span>
+          MCPs
+          <em class="font-normal text-zinc-500">— o agente usa só o que estiver marcado.</em>
+        </span>
         <div v-if="enabledMcp.length" class="flex flex-col gap-2">
           <div v-for="server in enabledMcp" :key="server.id" class="rounded-xl border border-zinc-800 px-3 py-2 font-normal">
             <div class="flex flex-wrap items-center gap-2">
               <span class="text-sm text-zinc-200">{{ server.name }}</span>
               <span v-if="!server.status.connected" class="text-[11px] text-amber-300">sem conexão</span>
-              <span v-if="mcpWeight(server.id)" class="text-[11px] text-zinc-500" title="Tamanho das ferramentas escolhidas, enviado a cada mensagem">≈ {{ mcpWeight(server.id).toLocaleString('pt-BR') }} tokens por mensagem</span>
+              <span v-if="mcpWeight(server.id)" class="text-[11px] text-zinc-500" title="Tamanho das ferramentas escolhidas, enviado a cada mensagem">
+                ≈ {{ mcpWeight(server.id).toLocaleString('pt-BR') }} tokens por mensagem
+              </span>
               <label class="ml-auto flex items-center gap-1.5 text-xs text-zinc-400">
                 <input type="checkbox" class="accent-emerald-500" :checked="form.allowedTools.includes(mcpRef(server.id, '*'))" @change="toggleAllMcp(server.id)" />
                 Todas as ferramentas
@@ -811,15 +913,19 @@ async function remove() {
                 :title="tool.unlisted ? 'Escolhida, mas o servidor não a mostra agora' : `${tool.description ?? ''} (≈ ${toolTokens(tool)} tokens)`"
                 @click="toggle(form.allowedTools, mcpRef(server.id, tool.name))"
               >
-                {{ tool.name }}<span v-if="tool.unlisted" class="ml-1 text-[10px] text-zinc-500">não listada</span>
+                {{ tool.name }}
+                <span v-if="tool.unlisted" class="ml-1 text-[10px] text-zinc-500">não listada</span>
               </button>
               <span v-if="!mcpChips(server.id).length" class="text-xs text-zinc-500">Nenhuma ferramenta listada agora.</span>
             </div>
           </div>
         </div>
-        <span v-else class="text-sm font-normal text-zinc-500">Nenhum MCP ligado. <RouterLink to="/mcp" class="text-emerald-400 hover:underline">Cadastre em MCPs</RouterLink>.</span>
+        <span v-else class="text-sm font-normal text-zinc-500">
+          Nenhum MCP ligado.
+          <RouterLink to="/mcp" class="text-emerald-400 hover:underline">Cadastre em MCPs</RouterLink>
+          .
+        </span>
       </div>
-
     </fieldset>
     <fieldset v-show="tab === 'sdk'" class="flex flex-col gap-4">
       <div class="flex flex-col gap-2">
@@ -833,7 +939,9 @@ async function remove() {
       </div>
       <div class="flex flex-col gap-2">
         <h3 class="text-sm font-medium text-zinc-200">Terminal</h3>
-        <p class="text-xs text-zinc-500">Para quem builda e roda teste: quanto um comando pode levar e quanto da saída volta ao modelo (o começo e o fim; o resto fica no log). Vazio = o padrão do sistema.</p>
+        <p class="text-xs text-zinc-500">
+          Para quem builda e roda teste: quanto um comando pode levar e quanto da saída volta ao modelo (o começo e o fim; o resto fica no log). Vazio = o padrão do sistema.
+        </p>
         <div class="grid gap-3 sm:grid-cols-2">
           <label class="field">
             Tempo por comando (segundos, até 7200)
@@ -860,8 +968,40 @@ async function remove() {
         </div>
       </div>
       <div class="flex flex-col gap-2">
+        <h3 class="text-sm font-medium text-zinc-200">Diagnóstico depois de editar</h3>
+        <p class="text-xs text-zinc-500">
+          Depois de cada edição de arquivo, o gateway roda o que o pacote já tem em node_modules/.bin, no mesmo cerco do terminal e sem rede, e o resultado volta ao modelo junto da
+          ferramenta.
+        </p>
+        <div class="flex flex-wrap gap-4 text-sm">
+          <label v-for="check in DIAGNOSTIC_CHECKS" :key="check.key" class="flex items-center gap-2">
+            <input
+              type="checkbox"
+              class="accent-emerald-500"
+              :checked="!!form.diagnostics?.[check.key]"
+              @change="form.diagnostics = { ...(form.diagnostics ?? {}), [check.key]: ($event.target as HTMLInputElement).checked }"
+            />
+            {{ check.label }}
+          </label>
+        </div>
+        <label class="field sm:max-w-xs">
+          Tempo de cada ferramenta (segundos, 5 a 600)
+          <input
+            class="input"
+            type="number"
+            min="5"
+            max="600"
+            placeholder="60"
+            :value="form.diagnostics?.timeoutSeconds ?? ''"
+            @input="form.diagnostics = { ...(form.diagnostics ?? {}), timeoutSeconds: Number(($event.target as HTMLInputElement).value) || undefined }"
+          />
+        </label>
+      </div>
+      <div class="flex flex-col gap-2">
         <h3 class="text-sm font-medium text-zinc-200">Troca de provedor</h3>
-        <p class="text-xs text-zinc-500">Quando a cota de um provedor acaba no meio do turno, o turno segue no próximo da lista, com a transcrição. Só entre os provedores deste agente.</p>
+        <p class="text-xs text-zinc-500">
+          Quando a cota de um provedor acaba no meio do turno, o turno segue no próximo da lista, com a transcrição. Só entre os provedores deste agente.
+        </p>
         <div class="flex flex-wrap gap-3 text-sm">
           <label v-for="option in FALLBACK_MODES" :key="option.value" class="flex items-center gap-2">
             <input type="radio" class="accent-emerald-500" :checked="(form.fallback?.mode ?? 'global') === option.value" @change="setFallbackMode(option.value)" />
@@ -890,12 +1030,18 @@ async function remove() {
               :title="sandboxHint(section.entry.protocol, level)"
               @click="setSandbox(section.entry, section.levels, level)"
             >
-              {{ sandboxLabel(section.entry.protocol, level) }}<span v-if="level === section.levels[0]" class="ml-1 text-[10px] text-zinc-500">padrão</span>
+              {{ sandboxLabel(section.entry.protocol, level) }}
+              <span v-if="level === section.levels[0]" class="ml-1 text-[10px] text-zinc-500">padrão</span>
             </button>
           </div>
           <small class="hint">{{ sandboxHint(section.entry.protocol, section.entry.target.sandbox ?? section.levels[0]) }}</small>
           <label v-if="section.network" class="flex items-center gap-2 text-xs text-zinc-300">
-            <input type="checkbox" class="accent-emerald-500" :checked="!!section.entry.target.network" @change="section.entry.target.network = !section.entry.target.network || undefined" />
+            <input
+              type="checkbox"
+              class="accent-emerald-500"
+              :checked="!!section.entry.target.network"
+              @change="section.entry.target.network = !section.entry.target.network || undefined"
+            />
             Acesso à internet
           </label>
         </div>
@@ -903,9 +1049,18 @@ async function remove() {
         <span v-if="section.tools.length" class="text-xs text-zinc-400">Extras do provedor</span>
         <ul v-if="section.tools.length" class="divide-y divide-zinc-800/70 rounded-lg border border-zinc-800">
           <li v-for="tool in section.tools" :key="tool.id" class="flex items-center gap-3 px-3 py-2" :class="{ 'opacity-50': nativeBlock(tool, section.entry) }">
-            <input type="checkbox" class="accent-emerald-500" :checked="form.allowedTools.includes(tool.id)" :disabled="!!nativeBlock(tool, section.entry) && !form.allowedTools.includes(tool.id)" @change="toggle(form.allowedTools, tool.id)" />
+            <input
+              type="checkbox"
+              class="accent-emerald-500"
+              :checked="form.allowedTools.includes(tool.id)"
+              :disabled="!!nativeBlock(tool, section.entry) && !form.allowedTools.includes(tool.id)"
+              @change="toggle(form.allowedTools, tool.id)"
+            />
             <span class="min-w-0 flex-1">
-              <span class="block text-sm">{{ tool.label }} <code class="text-[11px] text-zinc-500">{{ tool.sdkName }}</code></span>
+              <span class="block text-sm">
+                {{ tool.label }}
+                <code class="text-[11px] text-zinc-500">{{ tool.sdkName }}</code>
+              </span>
               <span class="block text-xs text-zinc-500">{{ tool.description }}</span>
               <span v-if="nativeBlock(tool, section.entry)" class="block text-xs text-zinc-500">{{ nativeBlock(tool, section.entry) }}</span>
             </span>
@@ -915,25 +1070,36 @@ async function remove() {
         <p v-else-if="!section.levels.length" class="text-xs text-zinc-500">Nada a ajustar neste provedor.</p>
       </section>
       <small v-if="dangerousNatives.length || openSandboxes.length" class="text-amber-300">
-        ⚠ <template v-if="dangerousNatives.length">{{ dangerousNatives.join(', ') }} dá acesso ao disco, à internet e aos comandos do servidor. </template>
-        <template v-if="openSandboxes.length">{{ openSandboxes.join(', ') }}: acesso total. </template>Quem conversar com este agente também terá esse acesso.<template v-if="!form.adminOnly"> Marque "Só administradores" na guia Agente se não for para todos.</template>
+        ⚠
+        <template v-if="dangerousNatives.length">{{ dangerousNatives.join(', ') }} dá acesso ao disco, à internet e aos comandos do servidor.</template>
+        <template v-if="openSandboxes.length">{{ openSandboxes.join(', ') }}: acesso total.</template>
+        Quem conversar com este agente também terá esse acesso.
+        <template v-if="!form.adminOnly">Marque "Só administradores" na guia Agente se não for para todos.</template>
       </small>
     </fieldset>
 
     <p v-if="failure && !Object.keys(issues).length" class="text-sm whitespace-pre-line text-rose-300">{{ failure }}</p>
     <!-- O erro de campo aparece junto do campo, que pode estar fora da tela: aqui, perto do Salvar, o resumo. -->
-    <p v-else-if="Object.keys(issues).length" class="text-sm text-rose-300">
-      Não foi possível salvar. Corrija: {{ summarizeIssues(issues, FIELD_LABEL) }}
-    </p>
+    <p v-else-if="Object.keys(issues).length" class="text-sm text-rose-300">Não foi possível salvar. Corrija: {{ summarizeIssues(issues, FIELD_LABEL) }}</p>
     <!-- ⚖️ Os recursos (skills e commands) têm o próprio cadastro (fora do Salvar do agente): só para agente já gravado. -->
     <section v-if="tab === 'recursos'">
-      <AgentResources v-if="agent && !creating" :agent-id="agent.id" :project-id="agent.projectId" :project-name="projects.list.find((item) => item.id === agent?.projectId)?.name" />
+      <AgentResources
+        v-if="agent && !creating"
+        :agent-id="agent.id"
+        :project-id="agent.projectId"
+        :project-name="projects.list.find((item) => item.id === agent?.projectId)?.name"
+      />
       <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
     </section>
 
     <!-- ⚖️ O contexto inicial também tem o próprio cadastro (fora do Salvar do agente): só para agente já gravado. -->
     <section v-if="tab === 'contexto'">
-      <AgentInitialContext v-if="agent && !creating" :agent-id="agent.id" :project-id="agent.projectId" :project-name="projects.list.find((item) => item.id === agent?.projectId)?.name" />
+      <AgentInitialContext
+        v-if="agent && !creating"
+        :agent-id="agent.id"
+        :project-id="agent.projectId"
+        :project-name="projects.list.find((item) => item.id === agent?.projectId)?.name"
+      />
       <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
     </section>
 
@@ -955,7 +1121,9 @@ async function remove() {
       <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
     </section>
 
-    <p v-if="agent?.updatedBy" class="text-xs text-zinc-500">Alterado por {{ agent.updatedBy }} em {{ agent.updatedAt ? new Date(agent.updatedAt).toLocaleString('pt-BR') : '' }}</p>
+    <p v-if="agent?.updatedBy" class="text-xs text-zinc-500">
+      Alterado por {{ agent.updatedBy }} em {{ agent.updatedAt ? new Date(agent.updatedAt).toLocaleString('pt-BR') : '' }}
+    </p>
 
     <p v-if="loadError" class="text-sm text-rose-300">
       Não foi possível carregar os provedores ({{ loadError }}), então não dá para salvar.
@@ -964,7 +1132,9 @@ async function remove() {
     <p v-else-if="!ready" class="text-xs text-zinc-500">Carregando provedores…</p>
 
     <div v-show="tab !== 'hooks' && tab !== 'agendamentos'" class="flex gap-2">
-      <button type="submit" :disabled="saving || !ready || !!loadError || !form.providers.length" class="btn btn-primary">{{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar' }}</button>
+      <button type="submit" :disabled="saving || !ready || !!loadError || !form.providers.length" class="btn btn-primary">
+        {{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar' }}
+      </button>
       <button v-if="!creating && agent" type="button" class="btn btn-secondary" @click="emit('duplicate', agent)">Duplicar</button>
       <button v-if="!creating && agent" type="button" class="btn btn-danger ml-auto" @click="confirming = true">Apagar</button>
     </div>
@@ -989,33 +1159,33 @@ async function remove() {
 </template>
 
 <style scoped>
-@reference '../style.css';
+  @reference '../style.css';
 
-.field {
-  @apply flex flex-col gap-1.5 text-sm font-medium text-zinc-300;
-}
-.input {
-  @apply rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 font-normal text-zinc-100 outline-none focus:border-emerald-500/60;
-}
-.hint {
-  @apply text-xs font-normal text-zinc-500;
-}
-.error {
-  @apply text-xs font-normal text-rose-300;
-}
-.chip.danger.on {
-  @apply border-amber-500/60 bg-amber-500/15 text-amber-200;
-}
-.switch {
-  @apply relative h-6 w-11 shrink-0 rounded-full bg-zinc-700 transition-colors;
-}
-.switch span {
-  @apply absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform;
-}
-.switch.on {
-  @apply bg-emerald-500;
-}
-.switch.on span {
-  @apply translate-x-5;
-}
+  .field {
+    @apply flex flex-col gap-1.5 text-sm font-medium text-zinc-300;
+  }
+  .input {
+    @apply rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 font-normal text-zinc-100 outline-none focus:border-emerald-500/60;
+  }
+  .hint {
+    @apply text-xs font-normal text-zinc-500;
+  }
+  .error {
+    @apply text-xs font-normal text-rose-300;
+  }
+  .chip.danger.on {
+    @apply border-amber-500/60 bg-amber-500/15 text-amber-200;
+  }
+  .switch {
+    @apply relative h-6 w-11 shrink-0 rounded-full bg-zinc-700 transition-colors;
+  }
+  .switch span {
+    @apply absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform;
+  }
+  .switch.on {
+    @apply bg-emerald-500;
+  }
+  .switch.on span {
+    @apply translate-x-5;
+  }
 </style>

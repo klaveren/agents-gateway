@@ -523,6 +523,35 @@ describe('ClaudeAgentAdapter', () => {
       await call('mcp__local__run_bash', { command: 'ls' })
       assert.notStrictEqual((await call('mcp__local__run_bash', { command: 'ls' })).permissionDecisionReason?.includes('laço'), true)
     })
+
+    it('diagnóstico: o PostToolUse das nativas de edição devolve o diagnóstico como contexto; desligado, nem entra', async () => {
+      const asked: Array<{ file: string; root: string }> = []
+      const diagnostics = {
+        async after(file: string, root: string) {
+          asked.push({ file, root })
+          return 'Diagnóstico: tsc ok'
+        },
+      }
+      const turnOf = async (agent: ReturnType<typeof getAgent>) => {
+        const seen: TQueryParams[] = []
+        const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog: catalogWith(true), sandbox: sandbox(true), diagnostics })
+        const session = await adapter.createSession(agent, { agentId: CLAUDE_TEST_AGENT.id })
+        await drain(adapter.sendMessage(agent, session.id, { text: 'oi' }, { workFolder: { dir: '/w', projectDir: '/p' } } as never))
+        return seen[0].options!.hooks!
+      }
+      assert.strictEqual((await turnOf({ ...getAgent(), allowedTools: ['sdk:Edit'] })).PostToolUse, undefined)
+
+      const hooks = await turnOf({ ...getAgent(), allowedTools: ['sdk:Edit'], diagnostics: { typecheck: true, timeoutSeconds: 30 } })
+      const matcher = hooks.PostToolUse![0]
+      assert.deepStrictEqual([matcher.matcher, matcher.timeout], ['Write|Edit|MultiEdit', 45])
+      const post = (tool: string, input: unknown) =>
+        matcher.hooks[0]({ hook_event_name: 'PostToolUse', tool_name: tool, tool_input: input, tool_response: {}, tool_use_id: 't' } as never, 't', { signal: options.signal })
+      assert.deepStrictEqual(await post('Edit', { file_path: 'src/a.ts', old_string: 'a', new_string: 'b' }), {
+        hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: 'Diagnóstico: tsc ok' },
+      })
+      assert.deepStrictEqual(await post('NotebookEdit', { notebook_path: 'x.ipynb' }), {}, 'o matcher é regex: o nome é conferido de novo')
+      assert.deepStrictEqual(asked, [{ file: '/w/src/a.ts', root: '/w' }])
+    })
   })
 })
 
