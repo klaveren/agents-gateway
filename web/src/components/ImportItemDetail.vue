@@ -1,11 +1,28 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { tokens } from '@/lib/format'
-import { bytesLabel, CATALOG_HINT, CATALOG_LABEL, type IInventoryItem, itemBytes, itemTokens, KIND_LABEL, RECLASSIFY_KINDS, type TInventoryKind } from '@/lib/importer'
+import { fullTime, tokens } from '@/lib/format'
+import {
+  bytesLabel,
+  CATALOG_HINT,
+  CATALOG_LABEL,
+  EXCLUDABLE_STATES,
+  type IImportItemStatus,
+  type IInventoryItem,
+  INCLUDABLE_STATES,
+  itemBytes,
+  itemTokens,
+  KIND_LABEL,
+  RECLASSIFIABLE_STATES,
+  RECLASSIFY_KINDS,
+  STATE_HINT,
+  STATE_LABEL,
+  type TInventoryKind,
+} from '@/lib/importer'
 
 /**
  * O DETALHE de um item do inventário: as fontes (caminho, aliases, tamanho, ≈tokens, gerado, segredo — ⛔ nunca o
- * conteúdo), o que ele cita e quem o cita, as notas e o "não traduz" em destaque. Reclassificar vale SÓ NA TELA.
+ * conteúdo), o que ele cita e quem o cita, as notas e o "não traduz" em destaque. O estado no trabalho de importação,
+ * com excluir/incluir, e a reclassificação ficam gravados no trabalho (⛔ nada vai ao catálogo).
  */
 const props = defineProps<{
   item: IInventoryItem
@@ -17,8 +34,20 @@ const props = defineProps<{
   known: ReadonlySet<string>
   /** O lote deste agente está sendo montado. */
   planning?: boolean
+  /** O estado do item no trabalho aberto. */
+  status?: IImportItemStatus
+  /** O trabalho é registro (há análise mais nova): nada muda. */
+  readonly?: boolean
+  /** Uma mudança do item está a caminho do servidor. */
+  busy?: boolean
+  error?: string
 }>()
-const emit = defineEmits<{ select: [key: string]; reclassify: [kind: TInventoryKind | undefined]; close: []; plan: [] }>()
+const emit = defineEmits<{ select: [key: string]; reclassify: [kind: TInventoryKind | undefined]; state: [state: 'pending' | 'skipped']; close: []; plan: [] }>()
+
+const state = computed(() => props.status?.state ?? 'pending')
+const canExclude = computed(() => !props.readonly && EXCLUDABLE_STATES.includes(state.value))
+const canInclude = computed(() => !props.readonly && INCLUDABLE_STATES.includes(state.value))
+const canReclassify = computed(() => !props.readonly && RECLASSIFIABLE_STATES.includes(state.value))
 
 const untranslatable = computed(() => props.item.notes.filter((note) => note.level === 'untranslatable'))
 const others = computed(() => props.item.notes.filter((note) => note.level !== 'untranslatable'))
@@ -54,6 +83,19 @@ function onReclassify(event: Event) {
       </div>
       <button type="button" class="btn btn-ghost btn-sm" title="Fechar o detalhe" @click="emit('close')">Fechar</button>
     </header>
+
+    <section class="flex flex-col gap-1.5 rounded-xl border px-3 py-2" :class="state === 'stale' ? 'border-amber-500/40' : 'border-zinc-800'" data-test="item-state">
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="text-xs text-zinc-500">No trabalho:</span>
+        <span class="rounded-full px-2 text-[11px]" :class="state === 'stale' ? 'bg-amber-500/15 text-amber-200' : 'bg-zinc-800 text-zinc-200'" :title="STATE_HINT[state]">{{ STATE_LABEL[state] }}</span>
+        <span v-if="status?.staleFrom" class="text-xs text-amber-100/80">era {{ STATE_LABEL[status.staleFrom] }}</span>
+        <span class="flex-1" />
+        <button v-if="canExclude" type="button" class="btn btn-secondary btn-sm" :disabled="busy" data-test="exclude" @click="emit('state', 'skipped')">Excluir</button>
+        <button v-if="canInclude" type="button" class="btn btn-secondary btn-sm" :disabled="busy" data-test="include" @click="emit('state', 'pending')">Incluir</button>
+      </div>
+      <p class="text-xs text-zinc-500">{{ STATE_HINT[state] }}.<template v-if="status?.by"> Última mudança por {{ status.by }}<template v-if="status.at"> em {{ fullTime(status.at) }}</template>.</template></p>
+      <p v-if="error" class="text-xs text-rose-300" data-test="item-error">{{ error }}</p>
+    </section>
 
     <section v-if="item.kind === 'agent'" class="flex flex-col gap-1.5 rounded-xl border border-emerald-500/30 px-3 py-2">
       <button type="button" class="btn btn-primary btn-sm self-start" :disabled="planning" data-test="plan" @click="emit('plan')">{{ planning ? 'Montando…' : 'Montar lote' }}</button>
@@ -140,13 +182,13 @@ function onReclassify(event: Event) {
     <section class="flex flex-col gap-1.5 rounded-xl border border-zinc-800 px-3 py-2">
       <label class="field">
         Reclassificar
-        <select class="input" :value="kind" data-test="reclassify" @change="onReclassify">
+        <select class="input" :value="kind" :disabled="!canReclassify || busy" data-test="reclassify" @change="onReclassify">
           <option v-for="option in RECLASSIFY_KINDS" :key="option" :value="option">{{ KIND_LABEL[option] }}{{ option === item.kind ? ' (detectado)' : '' }}</option>
         </select>
       </label>
       <p class="text-xs text-zinc-500">
-        Vale só para esta análise, nesta tela: nada é gravado, e analisar de novo volta ao tipo detectado.
-        <button v-if="reclassified" type="button" class="text-emerald-300 hover:underline" @click="emit('reclassify', undefined)">Voltar a {{ KIND_LABEL[item.kind] }}</button>
+        Fica gravado no trabalho, e analisar de novo mantém. Com rascunho no caminho, não muda.
+        <button v-if="reclassified && canReclassify" type="button" class="text-emerald-300 hover:underline" :disabled="busy" @click="emit('reclassify', undefined)">Voltar a {{ KIND_LABEL[item.kind] }}</button>
       </p>
     </section>
   </article>

@@ -2,7 +2,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick } from 'vue'
 import { api } from '@/lib/api'
-import type { IImportPlan, IImportScan, IInventoryItem } from '@/lib/importer'
+import type { IImportItemStatus, IImportJob, IImportJobSummary, IImportPlan, IImportScan, IInventoryItem } from '@/lib/importer'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectsStore } from '@/stores/projects'
 import ImportView from './ImportView.vue'
@@ -193,16 +193,69 @@ const PLAN: IImportPlan = {
 }
 
 let ignoreStored: string[] = []
+/** O "servidor" dos trabalhos: os salvos (com os itens) e o estado de cada item. */
+let saved: IImportJob[] = []
 
-async function mount(items: IInventoryItem[]): Promise<HTMLElement> {
+function summary(job: IImportJob): IImportJobSummary {
+  const { scan: _scan, states, ...rest } = job
+  const byState: IImportJobSummary['byState'] = {}
+  for (const entry of states) byState[entry.state] = (byState[entry.state] ?? 0) + 1
+  return { ...rest, byState }
+}
+
+function savedJob(id: string, items: IInventoryItem[], extra: Partial<IImportJob> = {}, states: Record<string, Partial<IImportItemStatus>> = {}): IImportJob {
+  return {
+    id,
+    projectId: 'alfa',
+    repository: 'app',
+    head: '0123456789abcdef',
+    dirty: true,
+    scannedAt: '2026-10-30T12:00:00.000Z',
+    by: 'ana@x.test',
+    items: items.length,
+    byState: {},
+    latest: true,
+    scan: scan(items),
+    states: items.map((entry) => ({ key: entry.key, state: 'pending', fingerprint: 'f', ...states[entry.key] })),
+    ...extra,
+  }
+}
+
+async function mount(items: IInventoryItem[], options: { jobs?: IImportJob[]; analyze?: boolean } = {}): Promise<HTMLElement> {
   ignoreStored = ['.agents/benchmark']
+  saved = options.jobs ?? []
   vi.mocked(api).mockImplementation(async (path: string, request?: { method?: string; body?: unknown }) => {
     if (path.endsWith('/repositories'))
       return [
         { name: 'app', worktrees: [] },
         { name: 'lib', worktrees: [] },
       ]
-    if (path.endsWith('/import/scan')) return scan(items)
+    if (path.endsWith('/import/jobs') && request?.method === 'POST') {
+      const previous = saved.find((entry) => entry.latest)
+      const created = savedJob(
+        `j${saved.length + 1}`,
+        items,
+        previous ? { previousId: previous.id, reuse: { from: previous.id, kept: items.length, stale: [], restored: [], added: [], gone: [] } } : {},
+      )
+      saved = [created, ...saved.map((entry) => ({ ...entry, latest: false }))]
+      return created
+    }
+    if (path.endsWith('/import/jobs')) return saved.map(summary)
+    const items_ = path.match(/\/import\/jobs\/([^/]+)\/items$/)
+    if (items_ && request?.method === 'PATCH') {
+      const body = request.body as { key: string; state?: IImportItemStatus['state']; kind?: IInventoryItem['kind'] | null }
+      const job = saved.find((entry) => entry.id === items_[1])!
+      const current = job.states.find((entry) => entry.key === body.key)!
+      const next: IImportItemStatus = { ...current, ...(body.state ? { state: body.state } : {}), by: 'root@x.test', at: '2026-10-30T13:00:00.000Z' }
+      if (body.kind !== undefined) {
+        if (body.kind) next.kind = body.kind
+        else delete next.kind
+      }
+      job.states = job.states.map((entry) => (entry.key === body.key ? next : entry))
+      return next
+    }
+    const opened = path.match(/\/import\/jobs\/([^/]+)$/)
+    if (opened) return saved.find((entry) => entry.id === opened[1])
     if (path.endsWith('/import/ignore')) {
       if (request?.method === 'PUT') ignoreStored = (request.body as { patterns: string[] }).patterns
       return { patterns: ignoreStored }
@@ -225,6 +278,7 @@ async function mount(items: IInventoryItem[]): Promise<HTMLElement> {
   projects.loaded = true
   createApp(ImportView).use(pinia).mount(host)
   await flush()
+  if (options.analyze === false) return host
   host.querySelector<HTMLButtonElement>('[data-test="analyze"]')!.click()
   await flush()
   return host
@@ -246,9 +300,10 @@ describe('ImportView', () => {
     document.body.innerHTML = ''
   })
 
-  it('analisa o repositório escolhido e mostra o topo', async () => {
+  it('analisa o repositório escolhido, salva o trabalho e mostra o topo', async () => {
     const host = await mount(SMALL)
-    expect(api).toHaveBeenCalledWith('/projects/alfa/import/scan', { method: 'POST', body: { repository: 'app' } })
+    expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs', { method: 'POST', body: { repository: 'app' } })
+    expect(host.querySelectorAll('[data-test="job"]')).toHaveLength(1)
     const summary = host.querySelector('[data-test="summary"]')!.textContent!
     expect(summary).toContain('0123456789ab')
     expect(summary).toContain('árvore suja')
@@ -295,19 +350,88 @@ describe('ImportView', () => {
     expect(host.querySelector('[data-test="unresolved"]')!.textContent).toContain('docs/sumiu.md')
   })
 
-  it('reclassificar muda o tipo só na tela, sem chamar a API', async () => {
+  it('reclassificar grava no trabalho e sobrevive a reabrir', async () => {
     const host = await mount(SMALL)
     ;[...host.querySelectorAll<HTMLButtonElement>('[data-test="row"]')].find((row) => row.textContent!.includes('notes/x.md'))!.click()
     await flush()
-    const calls = vi.mocked(api).mock.calls.length
     choose(host, 'reclassify', 'spec')
     await flush()
-    expect(vi.mocked(api).mock.calls.length).toBe(calls)
+    expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j1/items', { method: 'PATCH', body: { key: 'unknown:notes/x.md', kind: 'spec' } })
     choose(host, 'kind', 'spec')
     await flush()
     expect(rows(host)).toHaveLength(1)
     expect(rows(host)[0]).toContain('Spec')
     expect(host.querySelector('[data-test="summary"]')!.textContent).toContain('1 reclassificado(s)')
+
+    // Reabrir o trabalho pela lista: o tipo veio do servidor.
+    host.querySelector<HTMLButtonElement>('[data-test="job"]')!.click()
+    await flush()
+    expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j1')
+    choose(host, 'kind', 'spec')
+    await flush()
+    expect(rows(host)).toHaveLength(1)
+
+    // Voltar ao detectado manda `null`.
+    ;[...host.querySelectorAll<HTMLButtonElement>('[data-test="row"]')].find((row) => row.textContent!.includes('notes/x.md'))!.click()
+    await flush()
+    choose(host, 'reclassify', 'unknown')
+    await flush()
+    expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/jobs/j1/items', { method: 'PATCH', body: { key: 'unknown:notes/x.md', kind: null } })
+  })
+
+  it('a lista abre um trabalho salvo, com o estado de cada item; excluir e incluir gravam', async () => {
+    const stale = savedJob(
+      'j7',
+      SMALL,
+      { reuse: { from: 'j6', kept: 2, stale: ['skill:deploy'], restored: [], added: [], gone: [] }, previousId: 'j6' },
+      {
+        'skill:deploy': { state: 'stale', staleFrom: 'skipped', by: 'bia@x.test', at: '2026-10-30T11:00:00.000Z' },
+        'command:ship': { state: 'skipped' },
+      },
+    )
+    const host = await mount(SMALL, { jobs: [stale], analyze: false })
+    expect(host.querySelector('[data-test="summary"]')).toBeNull()
+    expect(host.querySelector('[data-test="job"]')!.textContent).toContain('fonte mudou 1')
+    host.querySelector<HTMLButtonElement>('[data-test="job"]')!.click()
+    await flush()
+    expect(host.querySelector('[data-test="reuse"]')!.textContent).toContain('1 com fonte mudada')
+    expect([...host.querySelectorAll('[data-test="row-state"]')].map((chip) => chip.textContent!.trim()).sort()).toEqual(['excluído', 'fonte mudou'])
+
+    choose(host, 'state', 'stale')
+    await flush()
+    expect(rows(host)).toHaveLength(1)
+    host.querySelector<HTMLButtonElement>('[data-test="row"]')!.click()
+    await flush()
+    const detail = host.querySelector('[data-test="item-state"]')!
+    expect(detail.textContent).toContain('era excluído')
+    expect(detail.textContent).toContain('bia@x.test')
+    host.querySelector<HTMLButtonElement>('[data-test="include"]')!.click()
+    await flush()
+    expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/jobs/j7/items', { method: 'PATCH', body: { key: 'skill:deploy', state: 'pending' } })
+    expect(rows(host)).toHaveLength(0)
+
+    choose(host, 'state', '')
+    await flush()
+    ;[...host.querySelectorAll<HTMLButtonElement>('[data-test="row"]')].find((row) => row.textContent!.includes('deploy'))!.click()
+    await flush()
+    host.querySelector<HTMLButtonElement>('[data-test="exclude"]')!.click()
+    await flush()
+    expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/jobs/j7/items', { method: 'PATCH', body: { key: 'skill:deploy', state: 'skipped' } })
+    expect(host.querySelector('[data-test="item-state"]')!.textContent).toContain('excluído')
+    expect(host.querySelector('[data-test="job"]')!.textContent).toContain('excluído 2')
+  })
+
+  it('⛔ o trabalho antigo é registro: sem excluir, incluir nem reclassificar', async () => {
+    const old = savedJob('j1', SMALL, { latest: false })
+    const host = await mount(SMALL, { jobs: [savedJob('j2', SMALL), old], analyze: false })
+    ;[...host.querySelectorAll<HTMLButtonElement>('[data-test="job"]')].find((button) => button.textContent!.includes('registro'))!.click()
+    await flush()
+    expect(host.querySelector('[data-test="readonly"]')).not.toBeNull()
+    host.querySelector<HTMLButtonElement>('[data-test="row"]')!.click()
+    await flush()
+    expect(host.querySelector('[data-test="exclude"]')).toBeNull()
+    expect(host.querySelector('[data-test="include"]')).toBeNull()
+    expect(host.querySelector<HTMLSelectElement>('[data-test="reclassify"]')!.disabled).toBe(true)
   })
 
   it('um inventário grande abre só a primeira página', async () => {
