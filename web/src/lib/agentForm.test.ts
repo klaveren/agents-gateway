@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { defaultLanes, envDuplicates, envRecord, envRows, findOrphans, isUsableProvider, pruneModels, pruneNatives, summarizeIssues, unionLanes, unionLevels } from './agentForm'
+import {
+  defaultLanes,
+  envDuplicates,
+  envRecord,
+  envRows,
+  findOrphans,
+  isUsableProvider,
+  mcpServersFor,
+  pruneModels,
+  pruneNatives,
+  summarizeIssues,
+  unionLanes,
+  unionLevels,
+} from './agentForm'
 
 const natives = [
   { id: 'sdk:Read', protocol: 'claude' },
@@ -102,5 +115,15 @@ describe('variáveis de ambiente', () => {
         { name: 'A ', value: '3' },
       ]),
     ).toEqual(['A'])
+  })
+})
+
+describe('mcpServersFor', () => {
+  const servers = [{ key: 'pw' }, { key: 'a.n8n', projectId: 'a' }, { key: 'b.n8n', projectId: 'b' }]
+  it('⛔ agente de projeto: os globais e os do projeto dele; agente global: só os globais', () => {
+    expect(mcpServersFor(servers, 'a').map((server) => server.key)).toEqual(['pw', 'a.n8n'])
+    expect(mcpServersFor(servers, 'b').map((server) => server.key)).toEqual(['pw', 'b.n8n'])
+    expect(mcpServersFor(servers, null).map((server) => server.key)).toEqual(['pw'])
+    expect(mcpServersFor(servers, undefined).map((server) => server.key)).toEqual(['pw'])
   })
 })

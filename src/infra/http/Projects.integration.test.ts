@@ -28,6 +28,12 @@ import { SqliteProjectRepository } from '@infra/persistence/Sqlite.ProjectReposi
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { CLAUDE_TEST_AGENT, GOOGLE_TEST_AGENT, OPENAI_TEST_AGENT, testAgentCatalog } from '../../testing/Agents.Fixture'
 import { AgentController } from './Agent.Controller'
+import { McpServersService } from '@application/McpServers.Service'
+import { McpRegistry } from '@infra/mcp/Mcp.Registry'
+import { SqliteCredentialStore } from '@infra/persistence/Sqlite.CredentialStore'
+import { SqliteMcpServerRepository } from '@infra/persistence/Sqlite.McpServerRepository'
+import { SecretBox } from '@infra/secrets/Aes.SecretBox'
+import { McpServersController } from './McpServers.Controller'
 import { HttpServer } from './Http.Server'
 import { ProjectsController } from './Projects.Controller'
 import { GuidanceController } from './Guidance.Controller'
@@ -130,9 +136,17 @@ describe('Projetos (integração)', () => {
 
   before(async () => {
     const conversations = new SqliteConversationRepository(':memory:')
+    const mcpRepository = new SqliteMcpServerRepository(':memory:')
+    const mcpSecrets = new SqliteCredentialStore(new SecretBox(randomBytes(32)), ':memory:')
+    const mcpRegistry = new McpRegistry(mcpRepository, mcpSecrets)
     const controller = new AgentController({
       agents,
-      catalog: { mcpConnected: false, list: async () => [], localFor: () => [], mcp: { list: () => [], probeTools: async () => [] } } as unknown as ToolCatalog,
+      catalog: {
+        mcpConnected: false,
+        list: async () => [],
+        localFor: () => [],
+        mcp: { list: () => [], probeTools: async () => [], resolve: (id: string, projectId?: string) => mcpRegistry.resolve(id, projectId) },
+      } as unknown as ToolCatalog,
       createSession: new CreateSessionUseCase(provider),
       sendMessage: new SendMessageUseCase(provider, conversations),
       cancelSession: new CancelSessionUseCase(provider),
@@ -147,12 +161,23 @@ describe('Projetos (integração)', () => {
       projects,
       guidance,
     })
+    const mcpServers = new McpServersController({
+      service: new McpServersService(
+        mcpRepository,
+        mcpSecrets,
+        () => agents.list(),
+        (id) => projects.exists(id),
+      ),
+      registry: mcpRegistry,
+      proof,
+      projects,
+    })
     const server = new HttpServer(
       controller,
       undefined,
       undefined,
       undefined,
-      undefined,
+      mcpServers,
       undefined,
       undefined,
       undefined,
@@ -411,5 +436,58 @@ describe('Projetos (integração)', () => {
     assert.strictEqual(rule.body.result.addenda.project.body, 'Rule em português.')
     assert.strictEqual((await call(ANA, 'GET', '/protocols/skill')).status, 404)
     assert.strictEqual((await call(ANA, 'PUT', '/protocols/skill/addendum', { body: 'x' })).status, 404)
+  })
+
+  it('⛔ MCP de projeto: o mesmo id em dois projetos; o membro vê só os do projeto dele; colisão com global, 422', async () => {
+    const n8n = (projectId?: string) => ({
+      id: 'n8n',
+      name: 'n8n',
+      url: 'https://n8n.x.com/mcp',
+      auth: 'header',
+      secret: `chave-${projectId ?? 'global'}`,
+      ...(projectId ? { projectId } : {}),
+    })
+    assert.strictEqual((await call(ADMIN, 'POST', '/mcp-servers', n8n('alfa'))).status, 201)
+    assert.strictEqual((await call(ADMIN, 'POST', '/mcp-servers', n8n('beta'))).status, 201)
+    assert.strictEqual((await call(ADMIN, 'POST', '/mcp-servers', n8n())).status, 422)
+    assert.strictEqual((await call(ADMIN, 'POST', '/mcp-servers', { ...n8n('gama'), id: 'outro' })).status, 422)
+    assert.strictEqual((await call(ADMIN, 'POST', '/mcp-servers', { id: 'pw', name: 'Playwright', url: 'https://pw.x.com/mcp' })).status, 201)
+    assert.strictEqual((await call(ANA, 'POST', '/mcp-servers', { ...n8n('alfa'), id: 'meu' })).status, 404, 'membro não cadastra')
+
+    const keys = async (as: string, query = '') =>
+      ((await call(as, 'GET', `/mcp-servers${query}`)).body.result as Array<{ key: string }> | undefined)?.map((server) => server.key).sort()
+    assert.deepStrictEqual(await keys(ADMIN), ['alfa.n8n', 'beta.n8n', 'pw'])
+    assert.deepStrictEqual(await keys(ADMIN, '?project=alfa'), ['alfa.n8n', 'pw'])
+    // ⛔ O membro: só o projeto dele, só os MCPs dele (nem o global); sem projeto ou em projeto alheio, 404.
+    assert.deepStrictEqual(await keys(ANA, '?project=alfa'), ['alfa.n8n'])
+    assert.strictEqual((await call(ANA, 'GET', '/mcp-servers?project=beta')).status, 404)
+    assert.strictEqual((await call(ANA, 'GET', '/mcp-servers')).status, 404)
+    const listed = await call(ANA, 'GET', '/mcp-servers?project=alfa')
+    assert.ok(!JSON.stringify(listed.body).includes('chave-alfa'), 'a credencial continua mascarada')
+    assert.strictEqual(listed.body.result[0].secret.last4, 'alfa')
+    assert.strictEqual((await call(ANA, 'PUT', '/mcp-servers/alfa.n8n', { name: 'x' })).status, 404, 'membro não edita')
+    assert.strictEqual((await call(ANA, 'GET', '/mcp-servers/alfa.n8n/tools')).status, 404)
+
+    assert.strictEqual((await call(ADMIN, 'PUT', '/mcp-servers/alfa.n8n', { name: 'n8n do Alfa' })).status, 200)
+    assert.strictEqual((await call(ADMIN, 'PUT', '/mcp-servers/alfa.n8n', { projectId: 'beta' })).status, 422, 'beta já tem n8n')
+
+    // O agente: `mcp:n8n/…` resolve no projeto DELE; global não tem n8n; mudar o agente de projeto revalida.
+    const detail = (await call(ADMIN, 'GET', `/agents/${CLAUDE_TEST_AGENT.id}`)).body.result
+    const body = { ...detail, providers: detail.providers.map((target: { id: string; models: string[] }) => ({ provider: target.id, models: target.models })) }
+    const save = (change: object) => call(ADMIN, 'PUT', `/agents/${CLAUDE_TEST_AGENT.id}`, { ...body, ...change })
+    assert.strictEqual((await save({ projectId: 'alfa', allowedTools: ['mcp:n8n/*', 'mcp:pw/*'] })).status, 200)
+    assert.strictEqual((await save({ projectId: 'beta', allowedTools: ['mcp:n8n/*'] })).status, 200, 'beta tem o seu n8n')
+    const global = await save({ projectId: null, allowedTools: ['mcp:n8n/*'] })
+    assert.strictEqual(global.status, 422, 'agente global não usa MCP de projeto')
+    assert.ok((global.body.details as Array<{ message: string }>).some((issue) => /unknown MCP server: n8n/.test(issue.message)))
+    assert.strictEqual((await save({ projectId: 'alfa', allowedTools: ['mcp:n8n/*', 'mcp:pw/*'] })).status, 200)
+    // ⛔ Mover o MCP global para beta deixaria o agente de alfa sem ele: 409, dizendo quem.
+    const stranded = await call(ADMIN, 'PUT', '/mcp-servers/pw', { projectId: 'beta' })
+    assert.deepStrictEqual([stranded.status, stranded.body.code], [409, 'mcp_server_in_use'])
+    assert.ok(JSON.stringify(stranded.body).includes('alfa'))
+    assert.strictEqual((await save({ allowedTools: [], projectId: detail.projectId ?? null })).status, 200)
+
+    assert.strictEqual((await call(ADMIN, 'DELETE', '/mcp-servers/beta.n8n')).status, 200)
+    assert.deepStrictEqual(await keys(ADMIN), ['alfa.n8n', 'pw'])
   })
 })

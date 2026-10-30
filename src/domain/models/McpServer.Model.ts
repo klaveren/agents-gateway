@@ -1,4 +1,5 @@
 import { isCloudMetadataHost } from '../Url.Policy'
+import { PROJECT_ID_PATTERN } from './Project.Model'
 /**
  * Um servidor MCP cadastrado pela tela, de onde os agentes tiram ferramentas.
  *
@@ -73,10 +74,17 @@ export const mcpEnvNames = (server: Pick<IMcpServerConfig, 'container' | 'proces
 /** Contêiner e processo não têm cliente compartilhado: sobem instâncias (por conversa, ou uma só em `shared`). */
 export const isLaunchedMcp = (server: Pick<IMcpServerConfig, 'kind'> | undefined): boolean => server?.kind === 'container' || server?.kind === 'process'
 
-export const mcpEnvSecretKey = (serverId: string, name: string) => `mcp:${serverId}:env:${name}`
+/** ⛔ `serverKey` é a CHAVE do servidor (`mcpServerKey`), nunca o id solto: dois projetos com o mesmo id não dividem segredo. */
+export const mcpEnvSecretKey = (serverKey: string, name: string) => `mcp:${serverKey}:env:${name}`
 
 export interface IMcpServerConfig {
+  /** O id que o agente cita (`mcp:<id>/…`). Único no escopo visível a um agente, não no gateway (ver `mcpServerKey`). */
   id: string
+  /**
+   * O projeto dono do servidor (e das credenciais dele). Ausente = GLOBAL: serve a todo agente.
+   * ⛔ De projeto, serve só a agente do MESMO projeto — nunca a global, nunca a de outro (ver `mcpServesProject`).
+   */
+  projectId?: string
   name: string
   /** Padrão `remote`. */
   kind?: TMcpKind
@@ -99,12 +107,36 @@ export interface IMcpServerConfig {
 }
 
 export const MCP_SERVER_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,31}$/
+
+/**
+ * ⚖️ A CHAVE DE ARMAZENAMENTO: global é o próprio id (`n8n`, como sempre foi — banco antigo não migra); de projeto,
+ * `<projeto>.<id>` (`cliente-a.n8n`). O ponto não cabe em id de servidor nem de projeto, então a chave é única e
+ * reversível, e um id solto (o de `mcp:<id>/…`) nunca acerta a chave de um servidor de projeto por engano. É ela que
+ * separa tudo o que é por servidor: a linha do banco, o segredo no cofre, a pasta do pacote, o cliente e as instâncias.
+ */
+export const MCP_SCOPE_SEPARATOR = '.'
+
+export const mcpServerKey = (server: Pick<IMcpServerConfig, 'id' | 'projectId'>): string => (server.projectId ? `${server.projectId}${MCP_SCOPE_SEPARATOR}${server.id}` : server.id)
+
+/** `undefined` = não é uma chave válida. */
+export function parseMcpServerKey(key: string): { id: string; projectId?: string } | undefined {
+  const parts = key.split(MCP_SCOPE_SEPARATOR)
+  if (parts.length === 1) return MCP_SERVER_ID_PATTERN.test(key) ? { id: key } : undefined
+  if (parts.length !== 2 || !MCP_SERVER_ID_PATTERN.test(parts[1]) || !PROJECT_ID_PATTERN.test(parts[0])) return undefined
+  return { id: parts[1], projectId: parts[0] }
+}
+
+/**
+ * ⛔ O servidor serve a um agente deste projeto (`undefined` = agente global)? Global serve a todos; de projeto, só ao
+ * agente do MESMO projeto. É a regra do cadastro do agente, do turno (todas as lanes) e do proxy.
+ */
+export const mcpServesProject = (server: Pick<IMcpServerConfig, 'projectId'>, projectId: string | undefined): boolean => !server.projectId || server.projectId === projectId
 export const MCP_TOOL_PREFIX = 'mcp:'
 /** `mcp:<servidor>/*` = todas as ferramentas do servidor. */
 export const MCP_ALL_TOOLS = '*'
 
-/** A chave do segredo do servidor no cofre de credenciais (o mesmo das chaves dos providers). */
-export const mcpSecretKey = (serverId: string) => `mcp:${serverId}`
+/** A chave do segredo do servidor no cofre de credenciais (o mesmo das chaves dos providers). `serverKey`: ver `mcpServerKey`. */
+export const mcpSecretKey = (serverKey: string) => `mcp:${serverKey}`
 
 /** Uma escolha de ferramenta MCP num agente: `mcp:<servidor>/<ferramenta>` ou `mcp:<servidor>/*`. */
 export interface IMcpToolRef {

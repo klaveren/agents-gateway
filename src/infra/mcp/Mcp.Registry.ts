@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { IMcpServerConfig, isLaunchedMcp, mcpEnvSecretKey, mcpSecretKey } from '@domain/models/McpServer.Model'
+import { IMcpServerConfig, isLaunchedMcp, mcpEnvSecretKey, mcpSecretKey, mcpServerKey, mcpServesProject } from '@domain/models/McpServer.Model'
 import { containerArgs, instanceName, openEgress } from '@infra/sandbox/Docker.Sandbox'
 import { resolveAllowedHosts } from '@infra/sandbox/Egress.Proxy'
 import { ICredentialSource } from '@domain/ports/CredentialStore.Port'
@@ -13,7 +13,10 @@ import { installDir, resolveCommand } from './Mcp.Install'
 import { IMcpClientOptions, McpServerClient } from './McpServer.Client'
 
 export interface IMcpServerStatus {
+  /** A chave (`mcpServerKey`). */
+  key: string
   id: string
+  projectId?: string
   name: string
   enabled: boolean
   connected: boolean
@@ -50,6 +53,9 @@ export type TMcpClientFactory = (config: IMcpServerConfig, options: IMcpClientOp
 /**
  * Os servidores MCP cadastrados, cada um com o SEU cliente (conexão, backoff e credencial próprios).
  *
+ * ⛔ TUDO AQUI É PELA CHAVE (`mcpServerKey`), nunca pelo id solto: cliente, instâncias, segredo e pacote do `n8n` do
+ * projeto A não são os do `n8n` do projeto B. Quem parte de um `mcp:<id>/…` passa por `resolve`, com o projeto do agente.
+ *
  * ⚖️ O CADASTRO É LIDO NA HORA: trocar URL, transporte ou credencial pela tela recria o cliente daquele
  * servidor na próxima chamada (a impressão digital da configuração mudou); desligar o some. Sem reiniciar.
  * O segredo de `auth: header` é lido a cada requisição, então trocá-lo nem reconecta.
@@ -84,17 +90,34 @@ export class McpRegistry {
     return this.sessionLookup(sessionId)
   }
 
-  /** O cliente certo: o compartilhado (remoto) ou a instância DESTA conversa (contêiner, processo). */
-  async clientFor(id: string, sessionId?: string): Promise<McpServerClient | undefined> {
-    const config = this.servers.get(id)
-    if (!config || !isLaunchedMcp(config)) return this.client(id)
-    const key = config.kind === 'process' && config.process?.scope === 'shared' ? SHARED : sessionId
-    if (!config.enabled || !key) return undefined
-    return (await this.instance(config, key))?.client
+  /**
+   * O servidor que um agente deste projeto (`undefined` = global) chama de `id`: o do projeto dele ou o global.
+   * ⛔ Nunca o de outro projeto. O cadastro proíbe global e de projeto com o mesmo id; se ainda assim houver os dois,
+   * vale o do projeto (nenhum dos dois vaza para fora do escopo).
+   */
+  resolve(id: string, projectId: string | undefined): IMcpServerConfig | undefined {
+    const own = projectId ? this.servers.get(mcpServerKey({ id, projectId })) : undefined
+    if (own) return own
+    const global = this.servers.get(id)
+    return global && mcpServesProject(global, projectId) ? global : undefined
+  }
+
+  /** Os servidores que um agente deste projeto enxerga: os globais e os do projeto dele. */
+  visibleTo(projectId: string | undefined): IMcpServerConfig[] {
+    return this.servers.list().filter((server) => mcpServesProject(server, projectId))
+  }
+
+  /** O cliente certo: o compartilhado (remoto) ou a instância DESTA conversa (contêiner, processo). `key`: ver `mcpServerKey`. */
+  async clientFor(key: string, sessionId?: string): Promise<McpServerClient | undefined> {
+    const config = this.servers.get(key)
+    if (!config || !isLaunchedMcp(config)) return this.client(key)
+    const instance = config.kind === 'process' && config.process?.scope === 'shared' ? SHARED : sessionId
+    if (!config.enabled || !instance) return undefined
+    return (await this.instance(config, instance))?.client
   }
 
   private async instance(config: IMcpServerConfig, sessionId: string): Promise<IInstance | undefined> {
-    const key = `${config.id}\u0000${sessionId}`
+    const key = `${mcpServerKey(config)}\u0000${sessionId}`
     const current = this.instances.get(key)
     if (current) {
       current.lastUsed = Date.now()
@@ -114,7 +137,7 @@ export class McpRegistry {
     if (!(await client.connect())) {
       await client.close()
       await cleanup()
-      throw new Error(client.lastError ?? `could not start the ${config.id} MCP`)
+      throw new Error(client.lastError ?? `could not start the ${mcpServerKey(config)} MCP`)
     }
 
     const entry: IInstance = {
@@ -134,13 +157,14 @@ export class McpRegistry {
 
   private async launchContainer(config: IMcpServerConfig, sessionId: string): Promise<{ client: McpServerClient; cleanup: () => Promise<void> }> {
     const container = config.container!
+    const serverKey = mcpServerKey(config)
     const instance = instanceName()
     const egress =
-      container.network === 'allowlist' ? await openEgress(config.id, instance, resolveAllowedHosts(container.allowedHosts, this.sessionLookup(sessionId)?.metadata)) : undefined
+      container.network === 'allowlist' ? await openEgress(serverKey, instance, resolveAllowedHosts(container.allowedHosts, this.sessionLookup(sessionId)?.metadata)) : undefined
 
     const env = dockerEnv()
     for (const name of container.env) {
-      const value = this.secrets.get(mcpEnvSecretKey(config.id, name))
+      const value = this.secrets.get(mcpEnvSecretKey(serverKey, name))
       if (value) env[name] = value
     }
     const args = containerArgs({
@@ -151,10 +175,10 @@ export class McpRegistry {
       cpus: container.cpus,
       envNames: container.env,
       network: egress ? { mode: 'allowlist', name: egress.name, proxyUrl: egress.proxyUrl } : { mode: 'none' },
-      serverId: config.id,
+      serverId: serverKey,
       instance,
     })
-    const client = new McpServerClient(`container://${config.id}`, {}, { auth: 'none', label: config.id, stdio: { command: 'docker', args, env } })
+    const client = new McpServerClient(`container://${serverKey}`, {}, { auth: 'none', label: serverKey, stdio: { command: 'docker', args, env } })
     return { client, cleanup: async () => void (await egress?.close()) }
   }
 
@@ -165,25 +189,26 @@ export class McpRegistry {
    */
   private launchProcess(config: IMcpServerConfig, sessionId: string): { client: McpServerClient; cleanup: () => Promise<void> } {
     const proc = config.process!
-    const command = resolveCommand(config.id, proc)
+    const serverKey = mcpServerKey(config)
+    const command = resolveCommand(serverKey, proc)
     const env: Record<string, string> = { ...getDefaultEnvironment() }
     // Onde os gerenciadores instalam (o PVC): um `npx` dentro do MCP acha o que o `npm i -g` deixou.
     for (const name of INSTALL_PASSTHROUGH) if (process.env[name]) env[name] = process.env[name] as string
     for (const name of proc.env) {
-      const value = this.secrets.get(mcpEnvSecretKey(config.id, name))
+      const value = this.secrets.get(mcpEnvSecretKey(serverKey, name))
       if (value) env[name] = value
     }
     const shared = sessionId === SHARED
-    const cwd = shared ? join(installDir(config.id), 'work') : mkdtempSync(join(tmpdir(), `gw-mcp-${config.id}-`))
+    const cwd = shared ? join(installDir(serverKey), 'work') : mkdtempSync(join(tmpdir(), `gw-mcp-${serverKey}-`))
     mkdirSync(cwd, { recursive: true, mode: 0o700 })
     // ⚠️ No pod o HOME é só leitura (`readOnlyRootFilesystem`), e MCP grava nele (o Playwright, em `~/.cache`).
     // Sem HOME gravável, o processo ganha um próprio: a pasta de trabalho dele.
     if (!isWritable(env.HOME)) env.HOME = cwd
-    const client = new McpServerClient(`process://${config.id}`, {}, { auth: 'none', label: config.id, stdio: { command, args: proc.args, env, cwd } })
+    const client = new McpServerClient(`process://${serverKey}`, {}, { auth: 'none', label: serverKey, stdio: { command, args: proc.args, env, cwd } })
     return { client, cleanup: async () => (shared ? undefined : rmSync(cwd, { recursive: true, force: true })) }
   }
 
-  /** Encerra as instâncias ociosas (ou todas, de um servidor). */
+  /** Encerra as instâncias ociosas (ou todas, de um servidor — `serverId` é a chave). */
   async closeInstances(filter: { serverId?: string; idleOnly?: boolean } = {}): Promise<number> {
     const now = Date.now()
     const victims = [...this.instances.entries()].filter(
@@ -203,63 +228,64 @@ export class McpRegistry {
     return this.servers.list()
   }
 
-  get(id: string): IMcpServerConfig | undefined {
-    return this.servers.get(id)
+  /** Pela chave (`mcpServerKey`): um id solto só acha o global. */
+  get(key: string): IMcpServerConfig | undefined {
+    return this.servers.get(key)
   }
 
   /** O cliente de um servidor LIGADO; `undefined` se não existe ou está desligado. */
-  client(id: string): McpServerClient | undefined {
-    const config = this.servers.get(id)
+  client(key: string): McpServerClient | undefined {
+    const config = this.servers.get(key)
     // Contêiner e processo não têm cliente compartilhado: sobem instâncias (`clientFor`).
     if (!config?.enabled || isLaunchedMcp(config)) {
-      this.forget(id)
+      this.forget(key)
       return undefined
     }
 
     const fingerprint = [config.url, config.transport, config.auth, config.headerName ?? '', config.identity ? 'identity' : ''].join('\u0000')
-    const current = this.clients.get(id)
+    const current = this.clients.get(key)
     if (current?.fingerprint === fingerprint) return current.client
 
     if (current) void current.client.close()
     const client = this.make(config, {
       auth: config.auth,
       transport: config.transport,
-      label: config.id,
+      label: key,
       callerHeader: config.auth === 'caller' ? config.headerName : undefined,
       ...(config.identity ? { identity: true } : {}),
-      header: () => this.header(config.id),
-      fixedHeaders: () => this.fixedHeaders(this.servers.get(config.id) ?? config),
+      header: () => this.header(key),
+      fixedHeaders: () => this.fixedHeaders(this.servers.get(key) ?? config),
     })
-    this.clients.set(id, { fingerprint, client })
+    this.clients.set(key, { fingerprint, client })
     return client
   }
 
   /** O header de `auth: header` agora, ou nada sem segredo salvo. */
-  header(id: string): { name: string; value: string } | undefined {
-    const config = this.servers.get(id)
-    const value = this.secrets.get(mcpSecretKey(id))
+  header(key: string): { name: string; value: string } | undefined {
+    const config = this.servers.get(key)
+    const value = this.secrets.get(mcpSecretKey(key))
     if (config?.auth !== 'header' || !value) return undefined
     return { name: config.headerName || 'Authorization', value }
   }
 
   /** O cliente, conectado agora (respeitando o backoff), ou `undefined`. Com `token`, conecta como quem chama (ver `ensureConnectedAs`). */
-  async connected(id: string, sessionId?: string, token?: string): Promise<McpServerClient | undefined> {
-    const client = await this.clientFor(id, sessionId).catch(() => undefined)
-    const auth = this.servers.get(id)?.auth
+  async connected(key: string, sessionId?: string, token?: string): Promise<McpServerClient | undefined> {
+    const client = await this.clientFor(key, sessionId).catch(() => undefined)
+    const auth = this.servers.get(key)?.auth
     return client && (await client.ensureConnectedAs(auth === 'caller' ? token : undefined)) ? client : undefined
   }
 
   /** As ferramentas do servidor. `token`: a credencial de quem pede, que um servidor `caller` exige até para listar. */
-  async tools(id: string, sessionId?: string, token?: string): Promise<IToolDefinition[]> {
-    const caller = this.servers.get(id)?.auth === 'caller' ? token : undefined
-    return (await this.connected(id, sessionId, caller))?.listToolsAs(caller) ?? []
+  async tools(key: string, sessionId?: string, token?: string): Promise<IToolDefinition[]> {
+    const caller = this.servers.get(key)?.auth === 'caller' ? token : undefined
+    return (await this.connected(key, sessionId, caller))?.listToolsAs(caller) ?? []
   }
 
   /** Para a tela: as ferramentas de um contêiner ou processo numa instância DESCARTÁVEL (aberta e fechada aqui). */
-  async probeTools(id: string, token?: string): Promise<IToolDefinition[]> {
-    const config = this.servers.get(id)
-    if (!isLaunchedMcp(config)) return this.tools(id, undefined, token)
-    const result = await this.test(id, token)
+  async probeTools(key: string, token?: string): Promise<IToolDefinition[]> {
+    const config = this.servers.get(key)
+    if (!isLaunchedMcp(config)) return this.tools(key, undefined, token)
+    const result = await this.test(key, token)
     return result.tools
   }
 
@@ -268,8 +294,8 @@ export class McpRegistry {
    * ⚖️ `token`: a credencial de quem está na tela. Um servidor `caller` (o MCP do próprio gateway) recusa a conexão
    * anônima — sem ela, o teste dava sempre "Error POSTing to endpoint", embora nas conversas funcionasse.
    */
-  async test(id: string, token?: string): Promise<{ ok: boolean; tools: IToolDefinition[]; message?: string }> {
-    const config = this.servers.get(id)
+  async test(key: string, token?: string): Promise<{ ok: boolean; tools: IToolDefinition[]; message?: string }> {
+    const config = this.servers.get(key)
     if (config && isLaunchedMcp(config)) {
       if (!config.enabled) return { ok: false, tools: [], message: 'server is disabled' }
       const probe = `probe:${instanceName()}`
@@ -282,7 +308,7 @@ export class McpRegistry {
         return { ok: false, tools: [], message: error instanceof Error ? error.message : String(error) }
       }
     }
-    const client = this.client(id)
+    const client = this.client(key)
     if (!client) return { ok: false, tools: [], message: 'server is disabled or does not exist' }
     const caller = config?.auth === 'caller' ? token : undefined
     await client.close()
@@ -298,25 +324,27 @@ export class McpRegistry {
       this.servers
         .list()
         .filter((config) => !isLaunchedMcp(config))
-        .map((config) => this.client(config.id)?.connect()),
+        .map((config) => this.client(mcpServerKey(config))?.connect()),
     )
   }
 
   status(): IMcpServerStatus[] {
     return this.servers.list().map((config) => {
+      const key = mcpServerKey(config)
+      const scope = { key, id: config.id, ...(config.projectId ? { projectId: config.projectId } : {}) }
       if (isLaunchedMcp(config)) {
-        const instances = [...this.instances.keys()].filter((key) => key.startsWith(`${config.id}\u0000`)).length
-        return { id: config.id, name: config.name, enabled: config.enabled, connected: config.enabled, instances }
+        const instances = [...this.instances.keys()].filter((entry) => entry.startsWith(`${key}\u0000`)).length
+        return { ...scope, name: config.name, enabled: config.enabled, connected: config.enabled, instances }
       }
-      const client = config.enabled ? this.client(config.id) : undefined
-      return { id: config.id, name: config.name, enabled: config.enabled, connected: client?.isConnected() ?? false, ...(client?.lastError ? { lastError: client.lastError } : {}) }
+      const client = config.enabled ? this.client(key) : undefined
+      return { ...scope, name: config.name, enabled: config.enabled, connected: client?.isConnected() ?? false, ...(client?.lastError ? { lastError: client.lastError } : {}) }
     })
   }
 
-  forget(id: string): void {
-    const current = this.clients.get(id)
+  forget(key: string): void {
+    const current = this.clients.get(key)
     if (!current) return
-    this.clients.delete(id)
+    this.clients.delete(key)
     void current.client.close()
   }
 }
