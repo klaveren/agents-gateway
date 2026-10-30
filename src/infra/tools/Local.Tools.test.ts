@@ -376,6 +376,51 @@ describe('LocalTools — use_resource e search_resources', () => {
   })
 })
 
+describe('LocalTools — agent_trigger', () => {
+  const setup = (allowed: string[]) => {
+    const stored: Record<string, Array<{ id: string; when: string; body: string }>> = { maya: [], theo: [{ id: 'build', when: 'pedem o build', body: 'Rode pnpm build.' }] }
+    const saves: string[] = []
+    const tool = makeLocalTools({
+      triggers: {
+        triggersOf: (agentId) => stored[agentId],
+        saveTriggers: (agentId, triggers, by) => {
+          if (triggers.some((item) => !item.when)) throw Object.assign(new Error('invalid'), { issues: [{ message: `${triggers.at(-1)?.id}: when is required` }] })
+          stored[agentId] = triggers
+          saves.push(`${agentId} by ${by}`)
+        },
+      },
+      permissions: {
+        check: (_asker, subject) =>
+          allowed.includes(subject.value)
+            ? { allowed: true, layer: 'agent', reason: 'ok' }
+            : { allowed: false, layer: 'default', reason: `negado: nenhuma regra de trigger permite "${subject.value}"` },
+      },
+    }).find((item) => item.name === 'agent_trigger')!
+    return { tool, stored, saves }
+  }
+  const ctx = { agentId: 'maya', sessionId: 's1' }
+
+  it('⛔ sem regra, negado, inclusive no próprio agente', async () => {
+    const { tool } = setup([])
+    assert.match((await tool.execute({ action: 'list' }, ctx)).result, /^Not permitted: negado: nenhuma regra de trigger permite "maya"/)
+  })
+
+  it('cria, edita, lê, lista e apaga, no próprio (sem agentId) e em outro com regra; grava quem mudou', async () => {
+    const { tool, stored, saves } = setup(['maya', 'theo'])
+    assert.match((await tool.execute({ action: 'create', id: 'brief', when: 'bom dia', body: 'Bullets.' }, ctx)).result, /^Created trigger brief of maya/)
+    assert.match((await tool.execute({ action: 'create', id: 'brief', when: 'x', body: 'y' }, ctx)).result, /already exists/)
+    await tool.execute({ action: 'update', id: 'brief', body: 'Bullets curtos.' }, ctx)
+    assert.deepStrictEqual(stored.maya, [{ id: 'brief', when: 'bom dia', body: 'Bullets curtos.' }])
+    assert.strictEqual((await tool.execute({ action: 'list', agentId: 'theo' }, ctx)).result, '- build — pedem o build')
+    assert.match((await tool.execute({ action: 'get', agentId: 'theo', id: 'build' }, ctx)).result, /^# Trigger: build\n\nQuando: pedem o build\n\nRode pnpm build\.$/)
+    await tool.execute({ action: 'delete', agentId: 'theo', id: 'build' }, ctx)
+    assert.deepStrictEqual(stored.theo, [])
+    assert.deepStrictEqual(saves, ['maya by agent:maya (conversa s1)', 'maya by agent:maya (conversa s1)', 'theo by agent:maya (conversa s1)'])
+    assert.match((await tool.execute({ action: 'create', id: 'vazio', body: 'x' }, ctx)).result, /when is required/)
+    assert.match((await tool.execute({ action: 'list', agentId: 'ninguem' }, { ...ctx })).result, /^Not permitted/)
+  })
+})
+
 describe('LocalTools — propose_draft', () => {
   const guidance = () => {
     const service = new GuidanceService(new SqliteGuidanceRepository(':memory:'), (id) => id === 'xpto')

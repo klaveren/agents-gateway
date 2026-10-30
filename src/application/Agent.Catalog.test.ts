@@ -46,6 +46,20 @@ describe('AgentCatalog', () => {
     assert.deepStrictEqual(catalog.get('juridico')?.terminal, { timeoutSeconds: 600, maxOutputChars: 20_000 })
   })
 
+  it('saveTriggers: só os triggers mudam, passando pela regra; o agente de fábrica não existe para isso', () => {
+    const catalog = build()
+    catalog.save(custom, options(true))
+    const brief = { id: 'morning-brief', when: 'a pessoa diz bom dia', body: 'Briefing.' }
+    catalog.saveTriggers('juridico', [brief], 'agent:maya')
+    assert.deepStrictEqual(catalog.get('juridico')?.triggers, [brief])
+    assert.strictEqual(catalog.entry('juridico')?.updatedBy, 'agent:maya')
+    assert.strictEqual(catalog.get('juridico')?.systemPrompt, 'pesquise')
+    assert.throws(() => catalog.saveTriggers('juridico', [brief, brief], 'x'), InvalidAgentError)
+    catalog.saveTriggers('juridico', [], 'agent:maya')
+    assert.strictEqual(catalog.get('juridico')?.triggers, undefined)
+    assert.throws(() => catalog.saveTriggers('nao-existe', [brief], 'x'), AgentNotFoundError)
+  })
+
   it('todo agente é editável e apagável, inclusive o primeiro', () => {
     const repository = new NullAgentRepository()
     repository.save(base, 'seed')

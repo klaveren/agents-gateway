@@ -749,6 +749,10 @@ one-line "when to use it" and the procedure itself.
   `search_resources(query, kind?)` finds them by words in the id and description. Both turn on by
   themselves when the agent has something to load. They replace `use_skill`.
 - A trigger belongs to its agent: no other agent sees or loads it. It is saved with the agent.
+- **Editing triggers from a conversation:** the "Editar triggers" capability gives an agent the
+  `agent_trigger` tool (list, get, create, update, delete). Each call needs a `trigger <agent id>`
+  rule. With no rule, nothing is allowed, not even on its own triggers, because an agent that
+  rewrites its triggers changes its own behavior. A governance agent gets `trigger *`.
 - A skill is a shared way of doing something, from the catalog; a trigger is the agent's own
   subcommand. They load the same way, but stay apart in data, screen and permissions.
 

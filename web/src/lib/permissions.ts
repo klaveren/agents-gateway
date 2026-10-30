@@ -21,6 +21,12 @@ export const PERMISSION_SECTIONS: ReadonlyArray<{ category: TPermissionCategory;
     hint: 'Os repositórios do projeto já são liberados: use Negar para tirar o agente de um deles, pelo nome.',
     example: 'logiccus',
   },
+  {
+    category: 'trigger',
+    label: 'Triggers',
+    hint: 'De quais agentes este pode criar, editar e apagar triggers (a capacidade "Editar triggers"), pelo id. O próprio também precisa de regra.',
+    example: 'agent-*',
+  },
 ]
 
 /**

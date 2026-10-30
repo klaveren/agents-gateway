@@ -329,6 +329,7 @@
     search_docs: 'Buscar documentos',
     use_resource: 'Usar recurso (skill, command, trigger)',
     search_resources: 'Buscar recursos',
+    agent_trigger: 'Editar triggers',
   }
 
   const tab = ref<TTab>(useRoute().hash === '#agendamentos' ? 'agendamentos' : 'agente')
