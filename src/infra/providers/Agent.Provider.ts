@@ -317,7 +317,10 @@ export class AgentProvider implements IAgentProvider {
               break
             }
           }
-          yield* announce()
+          // ⚖️ A mensagem que entrou junto do resultado de uma ferramenta (o `PostToolUse` do Claude a tira da fila ANTES de o
+          // resultado chegar aqui) sai depois dele: na tela, o balão vem depois da ferramenta concluída.
+          const toolEnd = event.type === 'tool.result' || event.type === 'tool.error'
+          if (!toolEnd) yield* announce()
           if (event.type === 'message.started' && extraRound) continue
           if (event.type === 'message.completed') {
             turn.completed = true
@@ -332,6 +335,7 @@ export class AgentProvider implements IAgentProvider {
           if (event.type === 'tool.started') this.loops?.observe(sessionId, { type: 'tool.started', tool: event.payload.tool, args: event.payload.args })
           else if (event.type === 'tool.error' || event.type === 'tool.result') this.loops?.observe(sessionId, { type: event.type })
           yield event
+          if (toolEnd) yield* announce()
           // ⛔ LAÇO: a mesma chamada repetida (ou erros seguidos) além do limite para o turno (ver `Loop.Policy`).
           const loop = this.loops?.stopReason(sessionId)
           if (loop) {
