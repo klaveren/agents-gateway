@@ -110,6 +110,8 @@ export const CODEX_LOCKED_FEATURES: Readonly<Record<string, boolean>> = {
  * in-process (busca, delegação) não existem para o Codex.
  */
 export class CodexAgentAdapter implements IAgentAdapter {
+  /** O CLI compacta o próprio contexto (ver `Compaction.Policy`). */
+  readonly compactsItself = true
   private readonly store: SessionStore
   private readonly catalog?: ToolCatalog
   private readonly connections?: IConnectionSource

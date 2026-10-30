@@ -42,12 +42,16 @@ export interface ISessionRecord {
   handoff?: string
   /** Por que o `handoff` vai: a falha do turno o refaz com o mesmo aviso. Ausente = troca de provider. */
   handoffKind?: THandoffKind
+  /** O resumo da última compactação (ver `Compaction.Policy`): a falha do turno refaz o `handoff` com ele. */
+  compactSummary?: string
+  /** Pedida à mão (`compact`): o próximo turno compacta, passe ou não do gatilho. */
+  compactNext?: boolean
   metadata?: Record<string, unknown>
   abort?: AbortController
   native?: unknown
 }
 
-export type TSessionSeed = Omit<ISessionRecord, 'id' | 'createdAt' | 'lastActivityAt' | 'status' | 'turns' | 'usage' | 'transcript' | 'handoff'>
+export type TSessionSeed = Omit<ISessionRecord, 'id' | 'createdAt' | 'lastActivityAt' | 'status' | 'turns' | 'usage' | 'transcript' | 'handoff' | 'compactSummary' | 'compactNext'>
 
 export interface ISessionStoreOptions {
   /** Tempo sem atividade após o qual a sessão é descartada. Default: 8h (ver `DEFAULT_TTL_MS`). */

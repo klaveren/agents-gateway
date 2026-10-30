@@ -335,7 +335,7 @@ export const useThreadStore = defineStore('thread', () => {
   /** O provider e o modelo da sessão (retomada agora), para o cabeçalho e o seletor de modelo. */
   async function reloadSession(id: string): Promise<void> {
     const live = await api<ISessionState>(`/sessions/${encodeURIComponent(id)}`).catch(() => undefined)
-    if (live && sessionId.value === id) session.value = { provider: live.provider, model: live.model, reasoning: live.reasoning, place: live.place }
+    if (live && sessionId.value === id) session.value = sessionState(live)
   }
 
   /** O texto do erro de envio — e o que ele implica: 404 = sessão encerrada; 409 `model_disabled` = relê os agentes. */
@@ -365,7 +365,15 @@ export const useThreadStore = defineStore('thread', () => {
     const id = sessionId.value
     if (!id || sending.value) return
     const updated = await api<ISessionState>(`/sessions/${encodeURIComponent(id)}`, { method: 'PATCH', body: change })
-    if (id === sessionId.value) session.value = { provider: updated.provider, model: updated.model, reasoning: updated.reasoning }
+    if (id === sessionId.value) session.value = { ...sessionState(updated), place: session.value?.place }
+  }
+
+  /** Compacta o contexto da conversa no início da próxima mensagem (o servidor resume e recomeça). */
+  async function compact(): Promise<void> {
+    const id = sessionId.value
+    if (!id) return
+    const updated = await api<ISessionState>(`/sessions/${encodeURIComponent(id)}/compact`, { method: 'POST' })
+    if (id === sessionId.value) session.value = { ...sessionState(updated), place: session.value?.place }
   }
 
   /** Logout: esquece tudo da conversa aberta e derruba o stream, para a próxima conta não herdar nada. */
@@ -462,6 +470,7 @@ export const useThreadStore = defineStore('thread', () => {
     refresh,
     send,
     reconfigure,
+    compact,
     stop,
     reset,
   }
@@ -484,5 +493,17 @@ function settled(sessionId: string, turn: IPendingTurn, index: number, state?: I
     warnings: turn.warnings.length ? turn.warnings : undefined,
     aborted: turn.aborted || undefined,
     error: turn.error,
+  }
+}
+
+/** O que a tela guarda da sessão viva. */
+function sessionState(live: ISessionState): ISessionState {
+  return {
+    provider: live.provider,
+    model: live.model,
+    reasoning: live.reasoning,
+    place: live.place,
+    ...(live.compactNext ? { compactNext: true } : {}),
+    ...(live.compactsItself ? { compactsItself: true } : {}),
   }
 }

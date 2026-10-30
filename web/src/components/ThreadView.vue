@@ -147,6 +147,21 @@ async function send(text: string, files: IOutgoingFile[], settle: (ok: boolean) 
   if (created) await router.replace(`/c/${created}`)
 }
 
+/** Compactar à mão: só com a conversa viva, perto do limite, numa lane que o gateway compacta (as de SDK compactam sozinhas). */
+const compacting = ref(false)
+const canCompact = computed(() => thread.liveSession === true && !thread.session?.compactsItself && (!!thread.session?.compactNext || !!context.value?.warn))
+async function compactNow() {
+  compacting.value = true
+  actionError.value = undefined
+  try {
+    await thread.compact()
+  } catch (error) {
+    actionError.value = `Não foi possível compactar: ${error instanceof Error ? error.message : String(error)}`
+  } finally {
+    compacting.value = false
+  }
+}
+
 async function toggleShare() {
   if (!header.value) return
   actionError.value = undefined
@@ -219,6 +234,16 @@ async function continueFresh() {
           </svg>
           <span class="col-start-1 row-start-1 text-[9px] tabular-nums" :class="context.warn ? 'text-amber-300' : 'text-zinc-400'">{{ context.short }}</span>
         </div>
+        <button
+          v-if="canCompact"
+          class="mr-1 h-9 whitespace-nowrap rounded-full px-2.5 text-xs hover:bg-zinc-800 disabled:hover:bg-transparent"
+          :class="thread.session?.compactNext ? 'text-zinc-500' : 'text-amber-300'"
+          :disabled="thread.session?.compactNext || compacting"
+          :title="thread.session?.compactNext ? 'A próxima mensagem começa com um resumo da conversa' : 'Resumir a conversa e recomeçar com o resumo, na próxima mensagem'"
+          @click="compactNow"
+        >
+          {{ thread.session?.compactNext ? 'Compacta na próxima' : 'Compactar' }}
+        </button>
         <template v-if="header">
           <span v-if="auth.isAdmin && header.costUsd !== undefined" class="mr-2 hidden text-xs text-zinc-400 sm:inline">{{ tokens(header.usage.totalTokens) }} tokens · {{ header.costIsFloor ? '≥ ' : '' }}{{ usd(header.costUsd) }}</span>
           <button

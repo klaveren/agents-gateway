@@ -7,7 +7,8 @@
  * ⛔ OS LIMITES TÊM FAIXA. Um teto de 0 turnos de ferramenta, ou de um milhão de tokens de saída, não é
  * ajuste, é desligar ou abrir a torneira; a faixa recusa os dois (ver `LIMIT_BOUNDS`).
  */
-export type TLimitName = 'maxToolTurns' | 'maxOutputTokens' | 'delegationMaxDepth' | 'bashTimeoutMs' | 'bashMaxOutputChars' | 'sessionsPerOwner' | 'streamsPerOwner'
+export type TLimitName =
+  'maxToolTurns' | 'maxOutputTokens' | 'delegationMaxDepth' | 'bashTimeoutMs' | 'bashMaxOutputChars' | 'sessionsPerOwner' | 'streamsPerOwner' | 'compactAtPercent'
 
 export type ILimits = Partial<Record<TLimitName, number>>
 
@@ -19,6 +20,7 @@ export const LIMIT_BOUNDS: Readonly<Record<TLimitName, { min: number; max: numbe
   bashMaxOutputChars: { min: 500, max: 200_000, env: 'BASH_MAX_OUTPUT_CHARS' },
   sessionsPerOwner: { min: 1, max: 1_000, env: 'SESSIONS_PER_OWNER' },
   streamsPerOwner: { min: 1, max: 500, env: 'STREAMS_PER_OWNER' },
+  compactAtPercent: { min: 50, max: 95, env: 'COMPACT_AT_PERCENT' },
 }
 
 export const LIMIT_NAMES = Object.keys(LIMIT_BOUNDS) as TLimitName[]

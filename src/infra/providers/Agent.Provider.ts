@@ -1,5 +1,6 @@
 import { offers, targetFor } from '@domain/Agent.Policy'
 import { resolveCapabilities } from '@domain/Capability.Catalog'
+import { COMPACT_REQUEST, compactHandoff, shouldCompact } from '@domain/Compaction.Policy'
 import { DEFAULT_COOLDOWN_MINUTES, fallbackChain, IFallbackStep, nextStep } from '@domain/Fallback.Policy'
 import { HANDOFF_MAX_CHARS, handoffText, ITranscriptTurn } from '@domain/Handoff.Policy'
 import { FALLBACK_FAILURES } from '@domain/Provider.Failure'
@@ -93,6 +94,9 @@ export class AgentProvider implements IAgentProvider {
 
     /** Os provedores sem cota agora (ver `Provider.Bench`). Ausente = sem troca de provedor. */
     private readonly bench?: ProviderBench,
+
+    /** A janela de contexto do modelo (`ModelCatalogService.contextOf`): é o que dispara a compactação. Ausente = não compacta sozinho. */
+    private readonly contextOf?: (provider: string, model: string) => number | undefined,
   ) {
     /**
      * Uma leitura no boot, e depois só quando muda.
@@ -184,7 +188,11 @@ export class AgentProvider implements IAgentProvider {
     // Acabou de trocar de provider: a transcrição vai antes da mensagem, só para o modelo — o turno
     // gravado continua o que a pessoa escreveu (quem grava é o `SendMessageUseCase`, com o input dele).
     let handoff = record.handoff
-    let sent = handoff ? { ...input, text: `${handoff}\n\n${input.text}` } : input
+    // O contexto do sistema que não foi na mensagem (ver `SendMessageUseCase.withContext`): volta com o repasse feito
+    // no meio do turno, quando o modelo recomeça do zero. O adapter nunca o recebe solto.
+    const { context: systemContext, ...message } = input
+    const opening = (block: string | undefined): IMessageInput => (block ? { ...message, text: [block, systemContext, message.text].filter(Boolean).join('\n\n') } : message)
+    let sent = handoff ? { ...message, text: `${handoff}\n\n${message.text}` } : message
     const turn = { text: '', tools: [] as string[], by: `${record.provider} · ${record.model}`, completed: false }
     // ⛔ UM TURNO POR VEZ: o segundo rodaria por cima do primeiro (o cancelar só alcançava o último, e a transcrição e o
     // estado nativo se misturavam). A tela e a API recebem 409 `session_busy`.
@@ -204,7 +212,7 @@ export class AgentProvider implements IAgentProvider {
       handoff = handoffText([...(record.transcript ?? []), ...done], HANDOFF_MAX_CHARS, partial ? 'quota' : 'switch')
       record.handoff = handoff
       record.handoffKind = partial ? 'quota' : 'switch'
-      sent = handoff ? { ...input, text: `${handoff}\n\n${input.text}` } : input
+      sent = opening(handoff)
       turn.by = `${record.provider} · ${record.model}`
       tried.add(record.provider)
       ;({ agent, unavailable } = this.prepare(this.getAgent(record.agentId), conversationProject, record.provider, record.protocol, record.mode))
@@ -236,6 +244,32 @@ export class AgentProvider implements IAgentProvider {
         if (next) {
           const from = switchTo(next, false)
           yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: `${from} está sem cota agora; a conversa segue em ${turn.by}.` } }
+        }
+      }
+
+      // O contexto passou do gatilho, ou a compactação foi pedida: o turno começa com o resumo (ver `Compaction.Policy`).
+      // Com repasse pendente não: o provedor novo já recomeça só com a transcrição.
+      const window = this.contextOf?.(record.provider, record.model)
+      if (!handoff && !adapter.compactsItself && record.native !== undefined && (record.compactNext || shouldCompact(record.usage.contextTokens, window))) {
+        const share = window && record.usage.contextTokens ? ` (${Math.round((record.usage.contextTokens / window) * 100)}% da janela de ${window} tokens)` : ''
+        yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: `Compactando o contexto${share}…` } }
+        const summary = yield* this.summarize(record, agent, adapter, context)
+        record.compactNext = false
+        record.native = undefined
+        record.compactSummary = summary
+        handoff = summary ? compactHandoff(summary, record.transcript ?? []) : handoffText(record.transcript ?? [], HANDOFF_MAX_CHARS, 'compact')
+        record.handoff = handoff
+        record.handoffKind = 'compact'
+        sent = opening(handoff)
+        yield {
+          type: 'warning',
+          sessionId,
+          timestamp: new Date(),
+          payload: {
+            message: summary
+              ? 'Contexto compactado: a conversa segue com um resumo e os últimos turnos por extenso.'
+              : 'O resumo do contexto falhou: a conversa segue com a transcrição dos turnos mais recentes.',
+          },
         }
       }
 
@@ -283,13 +317,51 @@ export class AgentProvider implements IAgentProvider {
       // nativo é zerado de novo e o próximo turno leva a transcrição de agora — com o que falhou dentro, e
       // sem o risco de o SDK já ter guardado metade do repasse e recebê-lo duas vezes.
       if (handoff && record.handoff === handoff) {
-        if (turn.completed) record.handoff = undefined
-        else {
+        if (turn.completed) {
+          record.handoff = undefined
+          record.compactSummary = undefined
+        } else {
           record.native = undefined
-          record.handoff = handoffText(record.transcript ?? [], HANDOFF_MAX_CHARS, record.handoffKind === 'quota' ? 'switch' : record.handoffKind)
+          record.handoff =
+            record.handoffKind === 'compact' && record.compactSummary
+              ? compactHandoff(record.compactSummary, record.transcript ?? [])
+              : handoffText(record.transcript ?? [], HANDOFF_MAX_CHARS, record.handoffKind === 'quota' ? 'switch' : record.handoffKind)
         }
       }
     }
+  }
+
+  /**
+   * O TURNO OCULTO da compactação: o mesmo adapter, com o histórico inteiro, pede o resumo. Nada dele sai nem é gravado
+   * como turno, só o consumo. ⛔ Ferramenta ou erro no meio: desiste, e vale a transcrição recortada. Nas lanes de chat o
+   * `return` encerra o gerador antes de a ferramenta rodar; nas de SDK (OpenAI Agents, ADK) ela pode já ter rodado.
+   */
+  private async *summarize(record: ISessionRecord, agent: IAgent, adapter: IAgentAdapter, context: IExecutionContext): AsyncGenerator<IAgentEvent, string | undefined> {
+    let text = ''
+    try {
+      for await (const event of adapter.sendMessage(agent, record.id, { text: COMPACT_REQUEST }, context)) {
+        if (event.type === 'usage') {
+          this.sessions.addUsage(record, event.payload)
+          yield event
+        } else if (event.type === 'text.delta') text += event.payload.text
+        else if (event.type === 'tool.started' || event.type === 'error') return undefined
+      }
+    } catch {
+      return undefined
+    }
+    return text.trim() || undefined
+  }
+
+  /**
+   * Pede a compactação À MÃO: o próximo turno começa com o resumo, passe ou não do gatilho. ⛔ A lane que compacta sozinha
+   * (Claude Agent SDK, Codex, Antigravity) recusa: o gateway não mexe no contexto dela.
+   */
+  requestCompaction(sessionId: string): ISession {
+    const record = this.requireSession(sessionId)
+    if (this.getAdapter(record.protocol, record.mode).compactsItself)
+      throw new InvalidSessionChangeError([{ field: 'session', message: `${record.provider} (${record.mode}) compacts its own context` }])
+    record.compactNext = true
+    return this.view(record)
   }
 
   /** O próximo passo da cadeia que pode rodar agora, ou nada (aí o erro sai como sempre). */
@@ -420,11 +492,17 @@ export class AgentProvider implements IAgentProvider {
   }
 
   describe(sessionId: string): ISession {
-    return toSession(this.requireSession(sessionId))
+    return this.view(this.requireSession(sessionId))
   }
 
   list(): ISession[] {
-    return this.sessions.list().map(toSession)
+    return this.sessions.list().map((record) => this.view(record))
+  }
+
+  /** A sessão para fora, com o que só o adapter sabe: se a lane compacta o próprio contexto. */
+  private view(record: ISessionRecord): ISession {
+    const session = toSession(record)
+    return this.adapters.get(adapterKey(record.protocol, record.mode))?.compactsItself ? { ...session, compactsItself: true } : session
   }
 
   /**
@@ -577,6 +655,7 @@ function toSession(record: ISessionRecord): ISession {
     usage: record.usage,
     usageByModel: record.usageByModel,
     ...(record.handoff ? { handoff: true } : {}),
+    ...(record.compactNext ? { compactNext: true } : {}),
     createdAt: record.createdAt,
     lastActivityAt: new Date(record.lastActivityAt),
     metadata: record.metadata,

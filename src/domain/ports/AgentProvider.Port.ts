@@ -31,6 +31,8 @@ export interface IAgentProvider {
   describe(sessionId: string): ISession
   /** Troca o modelo e/ou o nível de raciocínio de uma sessão viva; vale a partir do próximo turno. */
   reconfigure(sessionId: string, change: ISessionChange): ISession
+  /** O próximo turno começa compactando o contexto (ver `Compaction.Policy`). */
+  requestCompaction?(sessionId: string): ISession
   list(): ISession[]
   /**
    * Reabre a sessão de uma conversa gravada que já não está na memória (expirou, ou o gateway reiniciou), com o MESMO

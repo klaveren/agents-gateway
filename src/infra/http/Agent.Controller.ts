@@ -19,6 +19,7 @@ import { NATIVE_TOOLS } from '@domain/Native.Tools'
 import { dangerousToolsOf } from '@domain/Tool.Policy'
 import { isSubscription } from '@domain/Subscription.Policy'
 import { delegationMaxDepth } from '@domain/models/Delegation.Model'
+import { compactAtPercent } from '@domain/Compaction.Policy'
 import { maxOutputTokens, maxToolTurns } from '@infra/adapters/support/Prompt.Helper'
 import { bashPolicy } from '@infra/tools/Bash.Guard'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -202,6 +203,7 @@ export class AgentController {
     this.changes = this.changes.bind(this)
     this.cancelSession = this.cancelSession.bind(this)
     this.reconfigureSession = this.reconfigureSession.bind(this)
+    this.compactSession = this.compactSession.bind(this)
     this.guardCaller = this.guardCaller.bind(this)
     this.availability = this.availability.bind(this)
     this.getSettings = this.getSettings.bind(this)
@@ -847,6 +849,7 @@ export class AgentController {
           bashMaxOutputChars: bash.maxOutputChars,
           sessionsPerOwner: sessionsPerOwner(),
           streamsPerOwner: streamsPerOwner(),
+          compactAtPercent: compactAtPercent(),
         },
         limitBounds: LIMIT_BOUNDS,
         // Os provedores sem cota agora (ver `Provider.Bench`) e quando voltam.
@@ -1303,6 +1306,19 @@ export class AgentController {
         return toSessionDto(this.usecases.reconfigureSession.execute(id, body))
       },
       { message: 'Session updated' },
+    )
+  }
+
+  /** Compacta o contexto da conversa no início do próximo turno (ver `Compaction.Policy`). Mesma regra de dono. */
+  async compactSession(req: Request, res: Response) {
+    await this.respond(
+      res,
+      async () => {
+        const id = req.params.id as string
+        await this.requireOwnedSession(id)
+        return toSessionDto(this.usecases.reconfigureSession.compact(id))
+      },
+      { message: 'Context compacts at the start of the next turn' },
     )
   }
 

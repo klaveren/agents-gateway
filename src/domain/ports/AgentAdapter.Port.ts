@@ -22,4 +22,6 @@ export interface IAgentAdapter {
   exportNative?(sessionId: string): unknown
   /** Planta o estado guardado na sessão reaberta. `false` = não serve mais (o arquivo do SDK sumiu): vale a transcrição. */
   restoreNative?(sessionId: string, data: unknown): boolean
+  /** O SDK compacta o contexto sozinho (Claude Agent SDK, Codex, Antigravity): o gateway não compacta (ver `Compaction.Policy`). */
+  readonly compactsItself?: boolean
 }
