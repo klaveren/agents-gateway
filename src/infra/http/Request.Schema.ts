@@ -4,7 +4,7 @@ import { LIMIT_BOUNDS, LIMIT_NAMES, TLimitName } from '@domain/models/Limits.Mod
 import { EMode } from '@domain/enums/EMode.Enum'
 import { AUDIENCES } from '@domain/models/Settings.Model'
 import { PERMISSION_CATEGORIES, TPermissionCategory } from '@domain/Permission.Policy'
-import { AGENT_TERMINAL_BOUNDS } from '@domain/models/Agent.Model'
+import { AGENT_DIAGNOSTICS_BOUNDS, AGENT_TERMINAL_BOUNDS } from '@domain/models/Agent.Model'
 
 /** Base64 infla ~33%, então o teto em caracteres é maior que o tamanho real do arquivo. */
 const MAX_FILE_CHARS = 8 * 1024 * 1024
@@ -179,6 +179,16 @@ export const agentBodySchema = z.object({
     .object({
       timeoutSeconds: z.number().int().min(AGENT_TERMINAL_BOUNDS.timeoutSeconds.min).max(AGENT_TERMINAL_BOUNDS.timeoutSeconds.max).optional(),
       maxOutputChars: z.number().int().min(AGENT_TERMINAL_BOUNDS.maxOutputChars.min).max(AGENT_TERMINAL_BOUNDS.maxOutputChars.max).optional(),
+    })
+    .nullable()
+    .optional(),
+  /** O diagnóstico depois de editar. Ausente na edição = mantém; `null` desliga. */
+  diagnostics: z
+    .object({
+      typecheck: z.boolean().optional(),
+      lint: z.boolean().optional(),
+      format: z.boolean().optional(),
+      timeoutSeconds: z.number().int().min(AGENT_DIAGNOSTICS_BOUNDS.timeoutSeconds.min).max(AGENT_DIAGNOSTICS_BOUNDS.timeoutSeconds.max).optional(),
     })
     .nullable()
     .optional(),

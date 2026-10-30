@@ -24,7 +24,7 @@ import { loopLimits } from '@domain/Loop.Policy'
 import { maxOutputTokens, maxToolTurns } from '@infra/adapters/support/Prompt.Helper'
 import { bashPolicy } from '@infra/tools/Bash.Guard'
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { IAgent, IAgentTarget } from '@domain/models/Agent.Model'
+import { diagnosticsOn, IAgent, IAgentTarget } from '@domain/models/Agent.Model'
 import { AgentUnavailableError } from '@domain/errors/Domain.Error'
 import { AgentNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
@@ -633,7 +633,14 @@ export class AgentController {
         // O mesmo para o terminal: ausente mantém; `null` volta ao global.
         const terminal = body.terminal === undefined ? this.agents.get(parsed.id)?.terminal : undefined
         const fallback = body.fallback === undefined ? this.agents.get(parsed.id)?.fallback : undefined
-        const input = { ...parsed, ...(current ? { permissions: current } : {}), ...(terminal ? { terminal } : {}), ...(fallback ? { fallback } : {}) }
+        const diagnostics = body.diagnostics === undefined ? this.agents.get(parsed.id)?.diagnostics : undefined
+        const input = {
+          ...parsed,
+          ...(current ? { permissions: current } : {}),
+          ...(terminal ? { terminal } : {}),
+          ...(fallback ? { fallback } : {}),
+          ...(diagnostics ? { diagnostics } : {}),
+        }
         const issues = this.projectIssues(input)
         if (issues.length) throw new HttpError(422, 'validation_error', 'Request body is invalid', issues)
 
@@ -1719,6 +1726,7 @@ function toAgentInput(id: string, body: TAgentBody): IAgent {
     ...(body.projectId ? { projectId: body.projectId } : {}),
     ...(body.permissions ? { permissions: body.permissions } : {}),
     ...(body.terminal && (body.terminal.timeoutSeconds || body.terminal.maxOutputChars) ? { terminal: body.terminal } : {}),
+    ...(body.diagnostics && diagnosticsOn(body.diagnostics) ? { diagnostics: body.diagnostics } : {}),
     // `global` é o padrão: não se grava.
     ...(body.fallback && body.fallback.mode !== 'global'
       ? { fallback: { mode: body.fallback.mode, ...(body.fallback.mode === 'own' ? { chain: body.fallback.chain ?? [] } : {}) } }

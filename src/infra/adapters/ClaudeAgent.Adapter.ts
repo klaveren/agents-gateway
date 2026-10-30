@@ -17,7 +17,8 @@ import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { reasoningLevel } from '@domain/Reasoning.Levels'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
-import { IAgent } from '@domain/models/Agent.Model'
+import { DEFAULT_DIAGNOSTICS_SECONDS, diagnosticsOn, IAgent } from '@domain/models/Agent.Model'
+import type { IEditDiagnostics } from '@infra/tools/Edit.Diagnostics'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
@@ -58,6 +59,8 @@ export interface IClaudeAgentAdapterDeps {
   permissions?: IPermissionChecker
   /** O detector de laço (ver `Loop.Guard`): o `PreToolUse` recusa a chamada repetida. Ausente = sem detector. */
   loops?: { check(sessionId: string | undefined, tool: string, args: unknown): string | undefined }
+  /** O diagnóstico depois de editar (ver `Edit.Diagnostics`): o `PostToolUse` das nativas de edição. Ausente = nenhum. */
+  diagnostics?: IEditDiagnostics
   /**
    * Pela ASSINATURA (Claude Pro/Max), protocolo `claude-sub`: nenhuma chave de API vai ao CLI, que usa o
    * login do host — ou o `CLAUDE_CODE_OAUTH_TOKEN` (de `claude setup-token`) salvo no lugar da chave.
@@ -84,6 +87,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
   private readonly sandbox: IProjectSandbox
   private readonly permissions?: IPermissionChecker
   private readonly loops?: IClaudeAgentAdapterDeps['loops']
+  private readonly diagnostics?: IEditDiagnostics
 
   private readonly connections?: IConnectionSource
   private readonly protocol: EProvider
@@ -97,6 +101,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     this.sandbox = deps.sandbox ?? projectSandbox()
     this.permissions = deps.permissions
     this.loops = deps.loops
+    this.diagnostics = deps.diagnostics
   }
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
@@ -205,6 +210,19 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       // O detector de laço (ver `Loop.Guard`) vale aqui para as nativas e as do MCP; as locais já passam por ele ao rodar.
       hooks: {
         PreToolUse: [{ hooks: [preToolUse(gate, (tool, args) => (tool.startsWith(`mcp__${LOCAL_SERVER_NAME}__`) ? undefined : this.loops?.check(sessionId, tool, args)))] }],
+        // O diagnóstico depois de editar nas nativas (as locais já o trazem no resultado).
+        ...(this.diagnostics && diagnosticsOn(agent.diagnostics)
+          ? {
+              PostToolUse: [
+                {
+                  matcher: [...EDIT_NATIVES].join('|'),
+                  // As ferramentas rodam juntas: o tempo de uma, e uma folga.
+                  timeout: (agent.diagnostics.timeoutSeconds ?? DEFAULT_DIAGNOSTICS_SECONDS) + 15,
+                  hooks: [postEdit((file) => this.diagnostics!.after(resolve(workDir, file), workDir, agent.diagnostics, context))],
+                },
+              ],
+            }
+          : {}),
       },
       // Isolamento: sem isto o subprocesso lê o ~/.claude e o CLAUDE.md da máquina.
       settingSources: [],
@@ -611,6 +629,20 @@ function preToolUse(gate: CanUseTool, loop: (tool: string, args: unknown) => str
     return {
       hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: decision && 'message' in decision ? decision.message : 'denied' },
     }
+  }
+}
+
+/** As nativas do Claude que editam arquivo: as que ganham o diagnóstico. */
+const EDIT_NATIVES = new Set(['Write', 'Edit', 'MultiEdit'])
+
+/** O `PostToolUse` das nativas de edição: o diagnóstico do arquivo vai ao modelo como contexto do resultado. */
+function postEdit(diagnose: (file: string) => Promise<string | undefined>): HookCallback {
+  return async (input) => {
+    if (input.hook_event_name !== 'PostToolUse' || !EDIT_NATIVES.has(input.tool_name)) return {}
+    const file = (input.tool_input as { file_path?: unknown } | undefined)?.file_path
+    if (typeof file !== 'string' || !file) return {}
+    const note = await diagnose(file)
+    return note ? { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: note } } : {}
   }
 }
 

@@ -50,6 +50,11 @@ export interface IAgent {
    * (Sistema → Limites). Para quem builda e roda teste (minutos, logs grandes).
    */
   terminal?: IAgentTerminal
+  /**
+   * O diagnóstico depois de editar (ver `Edit.Diagnostics`): o tsc, o eslint e o prettier do pacote rodam depois de cada
+   * edição, e o resultado volta junto da ferramenta. Ausente = desligado.
+   */
+  diagnostics?: IAgentDiagnostics
   /** A troca de provedor quando a cota acaba (ver `Fallback.Policy`). Ausente = a cadeia global. */
   fallback?: IAgentFallback
 }
@@ -57,6 +62,22 @@ export interface IAgent {
 export interface IAgentTerminal {
   timeoutSeconds?: number
   maxOutputChars?: number
+}
+
+export interface IAgentDiagnostics {
+  typecheck?: boolean
+  lint?: boolean
+  format?: boolean
+  /** O tempo de cada ferramenta. Ausente = `DEFAULT_DIAGNOSTICS_SECONDS`. */
+  timeoutSeconds?: number
+}
+
+export const AGENT_DIAGNOSTICS_BOUNDS = { timeoutSeconds: { min: 5, max: 600 } } as const
+export const DEFAULT_DIAGNOSTICS_SECONDS = 60
+
+/** Algum diagnóstico ligado. */
+export function diagnosticsOn(settings: IAgentDiagnostics | undefined): settings is IAgentDiagnostics {
+  return !!(settings?.typecheck || settings?.lint || settings?.format)
 }
 
 export const AGENT_TERMINAL_BOUNDS = { timeoutSeconds: { min: 1, max: 7200 }, maxOutputChars: { min: 500, max: 200_000 } } as const
