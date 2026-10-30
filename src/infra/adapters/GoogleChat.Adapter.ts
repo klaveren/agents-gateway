@@ -178,9 +178,12 @@ export class GoogleChatAdapter implements IAgentAdapter {
 
         let text = ''
         const calls: IManualToolCall[] = []
+        // ⛔ As partes como vieram: o Gemini 3 recusa (400) o `functionCall` que volta sem o `thoughtSignature`.
+        const parts: Part[] = []
 
         for await (const chunk of result.stream) {
           for (const part of chunk.candidates?.[0]?.content?.parts ?? []) {
+            parts.push(part)
             if (part.text) {
               text += part.text
               yield { type: 'text.delta', sessionId, timestamp: new Date(), payload: { text: part.text } }
@@ -213,14 +216,17 @@ export class GoogleChatAdapter implements IAgentAdapter {
           }
         }
 
-        return { text, calls }
+        return { text, calls, native: parts }
       },
 
       appendAssistant(history, outcome) {
-        const parts: Part[] = []
-        if (outcome.text) parts.push({ text: outcome.text })
-        for (const call of outcome.calls) {
-          parts.push({ functionCall: { name: call.name, args: call.args } })
+        const original = outcome.native as Part[] | undefined
+        const parts: Part[] = original?.length ? [...original] : []
+        if (!original) {
+          if (outcome.text) parts.push({ text: outcome.text })
+          for (const call of outcome.calls) {
+            parts.push({ functionCall: { name: call.name, args: call.args } })
+          }
         }
 
         if (parts.length > 0) history.push({ role: 'model', parts })

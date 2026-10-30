@@ -6,6 +6,7 @@ import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { GOOGLE_TEST_AGENT } from '../../testing/Agents.Fixture'
+import type { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { GoogleChatAdapter, toFunctionDeclaration } from './GoogleChat.Adapter'
 
 interface ISingleRequestOptions {
@@ -214,5 +215,56 @@ describe('GoogleChatAdapter', () => {
     await drain(adapter.sendMessage(getAgent(), session.id, { text: '', files: [{ name: 'a.png', mimeType: 'image/png', data: 'aaa' }] }, {}))
 
     assert.deepStrictEqual(sent?.contents[0].parts, [{ inlineData: { data: 'aaa', mimeType: 'image/png' } }])
+  })
+
+  it('⛔ devolve ao history as partes do modelo com o thoughtSignature (o Gemini 3 recusa a chamada sem ele)', async () => {
+    const requests: GenerateContentRequest[] = []
+    const calls = [
+      {
+        stream: [
+          {
+            candidates: [
+              {
+                content: {
+                  parts: [
+                    { text: 'vou rodar', thoughtSignature: 'sig-text' },
+                    { functionCall: { name: 'run_bash', args: { command: 'ls' } }, thoughtSignature: 'sig-call' },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      },
+      { stream: [chunk('pronto')] },
+    ]
+    const catalog = {
+      toolbox: async () => ({
+        tools: [{ origin: 'local', name: 'run_bash', description: 'd', inputSchema: { type: 'object', properties: { command: { type: 'string' } } } }],
+        invoke: async () => ({ status: 'success', result: 'a.txt' }),
+      }),
+    } as unknown as ToolCatalog
+
+    const adapter = new GoogleChatAdapter({
+      catalog,
+      client: clientWith(async (request) => {
+        // O history é mutado depois da chamada: o teste guarda uma cópia do que foi enviado.
+        requests.push(structuredClone(request))
+        const next = calls[requests.length - 1]
+        return { stream: next.stream, response: Promise.resolve({}) }
+      }),
+    })
+
+    const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id, tools: true })
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'Hi' }, {}))
+
+    assert.strictEqual(events[events.length - 1].type, 'message.completed')
+    assert.strictEqual(requests.length, 2)
+
+    const model = requests[1].contents.find((content) => content.role === 'model')
+    assert.deepStrictEqual(model?.parts, [
+      { text: 'vou rodar', thoughtSignature: 'sig-text' },
+      { functionCall: { name: 'run_bash', args: { command: 'ls' } }, thoughtSignature: 'sig-call' },
+    ])
   })
 })
