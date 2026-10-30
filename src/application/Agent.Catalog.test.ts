@@ -40,6 +40,12 @@ describe('AgentCatalog', () => {
     assert.strictEqual(catalog.fallback()?.id, 'pesquisa')
   })
 
+  it('o terminal do agente (tempo e saída) atravessa o cadastro', () => {
+    const catalog = build()
+    catalog.save({ ...custom, terminal: { timeoutSeconds: 600, maxOutputChars: 20_000 } }, options(true))
+    assert.deepStrictEqual(catalog.get('juridico')?.terminal, { timeoutSeconds: 600, maxOutputChars: 20_000 })
+  })
+
   it('todo agente é editável e apagável, inclusive o primeiro', () => {
     const repository = new NullAgentRepository()
     repository.save(base, 'seed')

@@ -2,6 +2,7 @@ import type { IPermissionAsker, IPermissionChecker } from '@application/Permissi
 import { cercoPlan } from '@domain/Cerco.Plan'
 import type { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { exec } from 'node:child_process'
+import { rmSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { networkGate } from '@infra/permissions/Network.Gate'
@@ -9,6 +10,7 @@ import { analyzeShell } from '@infra/permissions/Shell.Parse'
 import { bashPolicy, denyReason, truncate, type IBashPolicy } from './Bash.Guard'
 import { subscriptionEnv, workspaceFor } from '@infra/adapters/support/Subscription.Workspace'
 import { accountsDir, ISshKitIdentity, removeSshKit, writeSshKit } from '@infra/accounts/Ssh.Kit'
+import { BACKGROUND_LIMITS, BackgroundProcesses, backgroundProcesses, clipOutput, startCommand, tailOf } from './Background.Processes'
 import { IProjectSandbox, projectSandbox, SANDBOX_SHELL } from '@infra/sandbox/Project.Sandbox'
 import { DOC_KINDS, IProjectDoc, READ_DOC_TOOL, SEARCH_DOCS_TOOL, TDocKind } from '@domain/models/ProjectDoc.Model'
 import { IDocHit } from '@domain/ports/GuidanceRepository.Port'
@@ -66,6 +68,10 @@ export interface ILocalToolDeps {
   todos?: ITodoStore
   /** As permissões dos agentes (ver `Permission.Policy`). Ausente = sem regras (só as travas fixas valem). */
   permissions?: IPermissionChecker
+  /** O tempo e a saída do terminal de cada agente (o campo `terminal` dele). Ausente = o global. */
+  agentTerminal?: (agentId: string) => { timeoutSeconds?: number; maxOutputChars?: number } | undefined
+  /** Os processos em segundo plano (ver `Background.Processes`). Ausente = o do processo. */
+  processes?: BackgroundProcesses
   /** As contas do projeto que vão para cada comando (ver `ProjectAccounts.Service`). Ausente = nenhuma. */
   accounts?: {
     commandEnv(projectId: string, allowed: (id: string) => boolean): Promise<{ env: Record<string, string>; problems: string[]; ssh?: ISshKitIdentity[] }>
@@ -108,6 +114,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
   const fetchHtml = deps.fetchHtml ?? defaultFetchHtml
   const policy = deps.policy ?? bashPolicy()
   const sandbox = deps.sandbox ?? projectSandbox()
+  const processes = deps.processes ?? backgroundProcesses()
 
   /**
    * ⛔ O TERMINAL COM PERMISSÕES, em duas travas:
@@ -117,7 +124,20 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
    *    lendo o `.env` falha no sistema operacional —, e a rede só sai pela porta do gateway, destino a destino.
    * Vale para TODO agente; sem cerco no servidor, o terminal fica bloqueado.
    */
-  async function guardedBash(command: string, context: IExecutionContext | undefined, permissions: IPermissionChecker): Promise<IToolResult> {
+  /** O tempo e a saída deste agente (o campo `terminal` dele), ou o global. */
+  function terminalOf(context: IExecutionContext | undefined): { timeoutMs: number; maxOutputChars: number } {
+    const own = context?.agentId ? deps.agentTerminal?.(context.agentId) : undefined
+    return {
+      timeoutMs: own?.timeoutSeconds ? own.timeoutSeconds * 1000 : policy.timeoutMs,
+      maxOutputChars: own?.maxOutputChars ?? policy.maxOutputChars,
+    }
+  }
+
+  /**
+   * O comando pronto para rodar CERCADO: a análise por partes, o cerco das regras, as contas do projeto e o token de rede.
+   * ⛔ Quem recebe é dono de chamar `release` quando o processo sair (o token morre, o kit SSH sai).
+   */
+  async function prepareSandboxed(command: string, context: IExecutionContext | undefined, permissions: IPermissionChecker): Promise<IPrepared | IToolResult> {
     const asker = askerOf(context)
     const folder = context?.workFolder
     const root = realOf(folder?.dir ?? (context?.projectId ? workspaceFor(context.projectId, '') : policy.cwd || workspaceFor(undefined, context?.sessionId ?? 'run_bash')))
@@ -141,13 +161,12 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       const verdict = permissions.check(asker, { category: 'network', value: `${host}:${port}` }, { log: true })
       return { allowed: verdict.allowed, reason: verdict.reason, ...(verdict.rule ? { pattern: verdict.rule.pattern } : {}) }
     })
+    const release = () => {
+      gate.release(token)
+      if (sshKit) removeSshKit(sshKit)
+    }
     try {
-      let line: string
-      try {
-        line = await sandbox.wrapWith(command, root, (base) => cercoPlan(layers, { ...base, system }), token, place)
-      } catch (error: unknown) {
-        return { status: 'error', result: `${toMessage(error)}. O terminal fica bloqueado até o cerco funcionar.` }
-      }
+      const line = await sandbox.wrapWith(command, root, (base) => cercoPlan(layers, { ...base, system }), token, place)
       const env: Record<string, string> = { ...subscriptionEnv({ HOME: root }), ...accounts?.env }
       if (accounts?.ssh?.length) {
         const home = join(place.scratchBase ?? root, '.home')
@@ -155,17 +174,70 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
         const { bin } = writeSshKit(sshKit, accounts.ssh, `${process.execPath} ${join(home, '.gateway-connect.cjs')} %h %p`)
         env.PATH = `${bin}:${env.PATH ?? process.env.PATH ?? '/usr/bin:/bin'}`
       }
-      const { stdout, stderr } = await run(line, { cwd: root, timeout: policy.timeoutMs, maxBuffer: EXEC_BUFFER_BYTES, env, shell: SANDBOX_SHELL })
-      return { status: 'success', result: truncate(notes + (stdout || stderr || 'Command executed successfully with no output.'), policy.maxOutputChars) }
+      return { line, root, env, notes, release, logDir: join(place.scratchBase ?? root, '.cache', 'logs') }
+    } catch (error: unknown) {
+      release()
+      return { status: 'error', result: `${toMessage(error)}. O terminal fica bloqueado até o cerco funcionar.` }
+    }
+  }
+
+  async function guardedBash(command: string, context: IExecutionContext | undefined, permissions: IPermissionChecker, askedSeconds?: number): Promise<IToolResult> {
+    const prepared = await prepareSandboxed(command, context, permissions)
+    if ('status' in prepared) return prepared
+    const limits = terminalOf(context)
+    // O modelo pode pedir menos tempo, ou mais até o teto do agente.
+    const timeoutMs = askedSeconds && askedSeconds > 0 ? Math.min(askedSeconds * 1000, Math.max(limits.timeoutMs, policy.timeoutMs)) : limits.timeoutMs
+    if (deps.exec) return legacyRun(prepared, timeoutMs, limits.maxOutputChars)
+    const id = processes.newId()
+    const logFile = join(prepared.logDir, `${id}.log`)
+    const result = await startCommand(prepared.line, { cwd: prepared.root, env: prepared.env, shell: SANDBOX_SHELL, timeoutMs, logFile, onExit: prepared.release }).done
+    const raw = result.output || (result.timedOut ? '' : 'Command executed successfully with no output.')
+    const long = raw.length > limits.maxOutputChars
+    if (long && context?.sessionId)
+      processes.remember({ id, sessionId: context.sessionId, name: command.slice(0, 80), command, startedAt: new Date(), code: result.code, timedOut: result.timedOut, logFile })
+    else rmSync(logFile, { force: true })
+    const body = clipOutput(raw, limits.maxOutputChars, long && context?.sessionId ? `o log inteiro: bash_logs id ${id}` : undefined)
+    if (result.timedOut)
+      return { status: 'error', result: `${prepared.notes}Tempo esgotado (${Math.round(timeoutMs / 1000)}s): o comando e os filhos dele foram parados.\n${body}` }
+    if (result.code !== 0) return { status: 'error', result: `${prepared.notes}Exit code ${result.code ?? 1}: ${body.trim()}` }
+    return { status: 'success', result: prepared.notes + body }
+  }
+
+  /** O caminho do `exec` injetado (os testes): a mesma preparação, a saída de uma vez. */
+  async function legacyRun(prepared: IPrepared, timeoutMs: number, maxOutputChars: number): Promise<IToolResult> {
+    try {
+      const { stdout, stderr } = await run(prepared.line, { cwd: prepared.root, timeout: timeoutMs, maxBuffer: EXEC_BUFFER_BYTES, env: prepared.env, shell: SANDBOX_SHELL })
+      return { status: 'success', result: clipOutput(prepared.notes + (stdout || stderr || 'Command executed successfully with no output.'), maxOutputChars) }
     } catch (error: unknown) {
       // A linha embrulhada (a política do cerco) não interessa a quem lê; a saída de erro, sim.
       const failure = error as { stderr?: string; stdout?: string; code?: number }
       const output = [failure.stdout?.trim(), failure.stderr?.trim()].filter(Boolean).join('\n')
-      if (output) return { status: 'error', result: truncate(`${notes}Exit code ${failure.code ?? 1}: ${output}`, policy.maxOutputChars) }
+      if (output) return { status: 'error', result: clipOutput(`${prepared.notes}Exit code ${failure.code ?? 1}: ${output}`, maxOutputChars) }
       return { status: 'error', result: `Execution failed: ${toMessage(error)}` }
     } finally {
-      gate.release(token)
-      if (sshKit) removeSshKit(sshKit)
+      prepared.release()
+    }
+  }
+
+  /** `bash_start`: o comando em segundo plano, com o mesmo cerco e as mesmas regras do `run_bash`. */
+  async function startBackground(command: string, name: string | undefined, context: IExecutionContext | undefined, permissions: IPermissionChecker): Promise<IToolResult> {
+    const sessionId = context?.sessionId
+    if (!sessionId) return { status: 'error', result: 'bash_start só funciona dentro de uma conversa.' }
+    if (processes.running(sessionId).length >= BACKGROUND_LIMITS.perSession)
+      return { status: 'error', result: `Já há ${BACKGROUND_LIMITS.perSession} processos em segundo plano nesta conversa: pare um com bash_stop.` }
+    const prepared = await prepareSandboxed(command, context, permissions)
+    if ('status' in prepared) return prepared
+    const id = processes.newId()
+    const entry = processes.start(sessionId, id, (name ?? command).slice(0, 80), command, prepared.line, {
+      cwd: prepared.root,
+      env: prepared.env,
+      shell: SANDBOX_SHELL,
+      logFile: join(prepared.logDir, `${id}.log`),
+      onExit: prepared.release,
+    })
+    return {
+      status: 'success',
+      result: `${prepared.notes}Iniciado em segundo plano: id ${entry.id} (${entry.name}). Leia com bash_logs id ${entry.id}; pare com bash_stop id ${entry.id}. Vive até 8 h.`,
     }
   }
 
@@ -194,10 +266,14 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     {
       origin: 'local',
       name: 'run_bash',
-      description: 'Executes a bash command on the host system.',
+      description:
+        'Executes a bash command in the working folder. Long outputs keep the start and the end (where errors are); the full log is readable with bash_logs. For long jobs (builds, test suites) pass timeoutSeconds; for servers and watchers use bash_start.',
       inputSchema: {
         type: 'object',
-        properties: { command: { type: 'string', description: 'The bash command to run' } },
+        properties: {
+          command: { type: 'string', description: 'The bash command to run' },
+          timeoutSeconds: { type: 'number', description: 'Optional time limit for this command (up to the agent limit)' },
+        },
         required: ['command'],
         additionalProperties: false,
       },
@@ -208,7 +284,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
         if (denied) {
           return { status: 'error', result: `Refused by the gateway tool policy: ${denied}.` }
         }
-        if (deps.permissions) return guardedBash(command, context, deps.permissions)
+        const asked = Number(args.timeoutSeconds)
+        if (deps.permissions) return guardedBash(command, context, deps.permissions, Number.isFinite(asked) ? asked : undefined)
 
         // ⛔ Agente de projeto: o comando roda PRESO à pasta do projeto, ou não roda (sem cerco, recusa).
         let line = command
@@ -242,6 +319,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
         }
       },
     },
+    ...(deps.permissions && !deps.exec ? backgroundTools(processes, (command, name, context) => startBackground(command, name, context, deps.permissions!)) : []),
     ...(deps.accounts?.sign && deps.permissions ? [sshSignTool(deps.accounts.sign.bind(deps.accounts), deps.permissions)] : []),
     // Os arquivos na MESMA pasta do `run_bash`: a do projeto, ou a da conversa (ou o `BASH_CWD`).
     ...makeFileTools({
@@ -568,4 +646,93 @@ function sshSignTool(sign: (projectId: string, id: string, namespace: string, da
       }
     },
   }
+}
+
+/** O comando cercado e pronto, e quem solta o que ele segura (o token de rede, o kit SSH). */
+interface IPrepared {
+  line: string
+  root: string
+  env: Record<string, string>
+  notes: string
+  release: () => void
+  logDir: string
+}
+
+/** `bash_logs`, `bash_stop` e `bash_list`: os processos da conversa (cada uma só vê os seus). */
+function backgroundTools(
+  processes: BackgroundProcesses,
+  start: (command: string, name: string | undefined, context: IExecutionContext | undefined) => Promise<IToolResult>,
+): ILocalTool[] {
+  const describe = (entry: { id: string; name: string; status: string; code?: number | null; startedAt: Date; background: boolean }) =>
+    `${entry.id} · ${entry.background ? 'segundo plano' : 'comando'} · ${entry.status}${entry.code !== undefined && entry.code !== null ? ` (código ${entry.code})` : ''} · ${entry.name} · desde ${entry.startedAt.toISOString().slice(11, 19)}`
+  return [
+    {
+      origin: 'local',
+      name: 'bash_start',
+      description: 'Starts a long-running command in the background (a dev server, a watcher, a long test run), with the same rules and sandbox as run_bash. Returns an id.',
+      inputSchema: {
+        type: 'object',
+        properties: { command: { type: 'string', description: 'The bash command' }, name: { type: 'string', description: 'A short label' } },
+        required: ['command'],
+        additionalProperties: false,
+      },
+      async execute(args, context) {
+        const command = String(args.command ?? '')
+        const denied = denyReason(command)
+        if (denied) return { status: 'error', result: `Refused by the gateway tool policy: ${denied}.` }
+        return start(command, typeof args.name === 'string' ? args.name : undefined, context)
+      },
+    },
+    {
+      origin: 'local',
+      name: 'bash_logs',
+      description: 'Reads the output of a background process (bash_start) or the full log of a long run_bash output, by id. Use tail for the last lines and grep to filter.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          tail: { type: 'number', description: 'How many last lines (default 200, max 2000)' },
+          grep: { type: 'string', description: 'Only the lines containing this text' },
+        },
+        required: ['id'],
+        additionalProperties: false,
+      },
+      async execute(args, context) {
+        const entry = context?.sessionId ? processes.get(context.sessionId, String(args.id ?? '')) : undefined
+        if (!entry?.logFile) return { status: 'error', result: `Não há processo com o id ${String(args.id)} nesta conversa.` }
+        const lines = Math.min(Math.max(Number(args.tail) || 200, 1), 2000)
+        const grep = typeof args.grep === 'string' && args.grep ? args.grep : undefined
+        const text = tailOf(entry.logFile, grep ? 20_000 : lines)
+        const picked = grep
+          ? text
+              .split('\n')
+              .filter((line) => line.includes(grep))
+              .slice(-lines)
+              .join('\n')
+          : text
+        return { status: 'success', result: `${describe(entry)}\n${clipOutput(picked || '(sem saída ainda)', 20_000)}` }
+      },
+    },
+    {
+      origin: 'local',
+      name: 'bash_stop',
+      description: 'Stops a background process (and its children) by id.',
+      inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'], additionalProperties: false },
+      async execute(args, context) {
+        const entry = context?.sessionId ? processes.stop(context.sessionId, String(args.id ?? '')) : undefined
+        if (!entry) return { status: 'error', result: `Não há processo com o id ${String(args.id)} nesta conversa.` }
+        return { status: 'success', result: describe(entry) }
+      },
+    },
+    {
+      origin: 'local',
+      name: 'bash_list',
+      description: 'Lists the background processes and saved logs of this conversation.',
+      inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false },
+      async execute(_args, context) {
+        const entries = context?.sessionId ? processes.list(context.sessionId) : []
+        return { status: 'success', result: entries.length ? entries.map(describe).join('\n') : 'Nenhum processo nesta conversa.' }
+      },
+    },
+  ]
 }

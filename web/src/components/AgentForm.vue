@@ -475,6 +475,7 @@ watch(
           adminOnly: !!agent.adminOnly,
           projectId: agent.projectId ?? null,
           permissions: (agent.permissions ?? []).map((rule) => ({ ...rule })),
+          terminal: agent.terminal ? { ...agent.terminal } : null,
         }
       : blank()
     issues.value = {}
@@ -518,6 +519,8 @@ async function save() {
       ...form.value,
       reasoningEfforts: (form.value.reasoningEfforts ?? []).filter((level) => reasoningLevels.value.includes(level)),
       permissions: (form.value.permissions ?? []).filter((rule) => rule.pattern.trim()),
+      // Vazio volta ao global (Sistema → Limites).
+      terminal: form.value.terminal?.timeoutSeconds || form.value.terminal?.maxOutputChars ? form.value.terminal : null,
     }
     const saved = await agents.save(input, props.creating)
     emit('saved', saved.id)
@@ -812,6 +815,34 @@ async function remove() {
         <PermissionRules v-model="form.permissions!" />
         <PermissionTester v-if="agent && !creating && (agent.projectId ?? projects.current)" :project-id="(agent.projectId ?? projects.current)!" :agent-id="agent.id" />
         <small class="hint">O teste usa as regras já salvas.</small>
+      </div>
+      <div class="flex flex-col gap-2">
+        <h3 class="text-sm font-medium text-zinc-200">Terminal</h3>
+        <p class="text-xs text-zinc-500">Para quem builda e roda teste: quanto um comando pode levar e quanto da saída volta ao modelo (o começo e o fim; o resto fica no log). Vazio = o padrão do sistema.</p>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="field">
+            Tempo por comando (segundos, até 7200)
+            <input
+              class="input"
+              type="number"
+              min="1"
+              max="7200"
+              :value="form.terminal?.timeoutSeconds ?? ''"
+              @input="form.terminal = { ...(form.terminal ?? {}), timeoutSeconds: Number(($event.target as HTMLInputElement).value) || undefined }"
+            />
+          </label>
+          <label class="field">
+            Saída (caracteres, até 200000)
+            <input
+              class="input"
+              type="number"
+              min="500"
+              max="200000"
+              :value="form.terminal?.maxOutputChars ?? ''"
+              @input="form.terminal = { ...(form.terminal ?? {}), maxOutputChars: Number(($event.target as HTMLInputElement).value) || undefined }"
+            />
+          </label>
+        </div>
       </div>
       <p class="text-xs text-zinc-500">Só no modo Agente: o nível de acesso das assinaturas e os extras que só um provedor tem. Terminal, arquivos e busca ficam em Ferramentas.</p>
       <p v-if="!form.modes.includes('agent')" class="text-xs text-amber-300">O modo Agente está desligado: nada daqui é usado.</p>

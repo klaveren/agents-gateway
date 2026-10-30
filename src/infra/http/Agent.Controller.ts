@@ -132,6 +132,8 @@ export interface IAgentControllerDeps {
   agents: AgentCatalog
   /** O agente pode ser ativado neste repositório do projeto (permissão `repository`)? Ausente = sim. */
   repositoryAllowed?: (agentId: string, projectId: string, repository: string) => boolean
+  /** A conversa foi apagada: o que roda por ela (os processos em segundo plano) para. */
+  sessionEnded?: (sessionId: string) => void
   /** O aviso de fim de turno pode ir para este endereço (`TURN_CALLBACK_HOSTS`)? Ausente = nunca. */
   callbackAllowed?: (url: string) => boolean
 }
@@ -603,7 +605,9 @@ export class AgentController {
         const parsed = toAgentInput(req.params.agentId as string, body)
         // ⚖️ Quem edita sem mandar as permissões (o MCP, um script) não as apaga: ficam as que o agente já tem.
         const current = body.permissions === undefined ? this.agents.get(parsed.id)?.permissions : undefined
-        const input = current ? { ...parsed, permissions: current } : parsed
+        // O mesmo para o terminal: ausente mantém; `null` volta ao global.
+        const terminal = body.terminal === undefined ? this.agents.get(parsed.id)?.terminal : undefined
+        const input = { ...parsed, ...(current ? { permissions: current } : {}), ...(terminal ? { terminal } : {}) }
         const issues = this.projectIssues(input)
         if (issues.length) throw new HttpError(422, 'validation_error', 'Request body is invalid', issues)
 
@@ -1147,6 +1151,8 @@ export class AgentController {
         await this.requireOwnedSession(id)
 
         await this.usecases.deleteSession.execute(id)
+        // Os processos em segundo plano da conversa vão junto.
+        this.usecases.sessionEnded?.(id)
         return null
       },
       { message: 'Session deleted successfully' },
@@ -1562,6 +1568,7 @@ function toAgentInput(id: string, body: TAgentBody): IAgent {
     ...(body.adminOnly ? { adminOnly: true } : {}),
     ...(body.projectId ? { projectId: body.projectId } : {}),
     ...(body.permissions ? { permissions: body.permissions } : {}),
+    ...(body.terminal && (body.terminal.timeoutSeconds || body.terminal.maxOutputChars) ? { terminal: body.terminal } : {}),
   }
 }
 

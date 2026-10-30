@@ -507,6 +507,21 @@ go through the same rules and a symlink-resolving path filter in a `PreToolUse` 
 through the network rule for its host. The native Claude `Bash` and the Codex terminal do not follow
 the rules, so they are never enabled.
 
+**A terminal for long work.** `run_bash` runs with `spawn` in its own process group.
+
+- **Timeout:** a timeout stops the whole group, grandchildren included (SIGTERM, then SIGKILL).
+- **Long output:** the reply keeps the first 20% and the last 80%, where builds and tests say
+  what failed. The full output stays in a log the agent reads with `bash_logs <id>` (`tail`,
+  `grep`).
+- **Per-agent limits:** each agent may get its own limits (`terminal: { timeoutSeconds, maxOutputChars }`,
+  up to 2 h and 200 000 characters). The model can ask for a different `timeoutSeconds` per
+  command, up to that limit.
+- **Background:** `bash_start`, `bash_logs`, `bash_stop` and `bash_list` keep a command running
+  in the background (a watcher, a long test run), with the same rules and sandbox. Limits: 5 per
+  conversation, 8 hours, and they die with the conversation and with the gateway. On Linux each
+  command has its own network, so a server started in the background is not reachable from
+  another command: run the server and its tests in one command.
+
 **Repositories and worktrees.** A conversation can be opened in a repository of its project
 (`<project>/repositories/<name>`) or in one of that repository's git worktrees: `repository` and
 `worktree` on `POST /v1/sessions`, or the two lists in New conversation. The gateway finds the

@@ -44,7 +44,19 @@ export interface IAgent {
    * das regras do projeto. Ausente = nenhuma: valem as do projeto.
    */
   permissions?: IPermissionRule[]
+  /**
+   * O terminal DESTE agente: quanto tempo um comando pode levar e quanto da saída volta ao modelo. Ausente = o global
+   * (Sistema → Limites). Para quem builda e roda teste (minutos, logs grandes).
+   */
+  terminal?: IAgentTerminal
 }
+
+export interface IAgentTerminal {
+  timeoutSeconds?: number
+  maxOutputChars?: number
+}
+
+export const AGENT_TERMINAL_BOUNDS = { timeoutSeconds: { min: 1, max: 7200 }, maxOutputChars: { min: 500, max: 200_000 } } as const
 
 /** Um provider do agente e os modelos que ele usa ali. */
 export interface IAgentTarget {
