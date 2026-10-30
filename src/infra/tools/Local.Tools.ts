@@ -1,4 +1,4 @@
-import { identityEnv } from '@domain/Agent.Identity'
+import { terminalEnv } from '@domain/Agent.Identity'
 import type { IPermissionAsker, IPermissionChecker } from '@application/Permissions.Service'
 import { cercoPlan } from '@domain/Cerco.Plan'
 import type { IExecutionContext } from '@domain/models/ExecutionContext.Model'
@@ -84,6 +84,8 @@ export interface ILocalToolDeps {
   todos?: ITodoStore
   /** As permissões dos agentes (ver `Permission.Policy`). Ausente = sem regras (só as travas fixas valem). */
   permissions?: IPermissionChecker
+  /** As variáveis de ambiente fixas de cada agente (o campo `env` dele). Ausente = nenhuma. */
+  agentEnv?: (agentId: string) => Readonly<Record<string, string>> | undefined
   /** O tempo e a saída do terminal de cada agente (o campo `terminal` dele). Ausente = o global. */
   agentTerminal?: (agentId: string) => { timeoutSeconds?: number; maxOutputChars?: number } | undefined
   /** Os processos em segundo plano (ver `Background.Processes`). Ausente = o do processo. */
@@ -155,6 +157,11 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     context?.workFolder?.dir ?? (context?.projectId ? workspaceFor(context.projectId, '') : policy.cwd || workspaceFor(undefined, context?.sessionId ?? 'files'))
   const masked = (text: string, context: IExecutionContext | undefined) => (deps.mask ? deps.mask.text(text, context?.sessionId) : text)
 
+  /** As variáveis fixas do agente que chama (ver `IAgent.env`). */
+  function envOf(context: IExecutionContext | undefined): Readonly<Record<string, string>> | undefined {
+    return context?.agentId ? deps.agentEnv?.(context.agentId) : undefined
+  }
+
   /** O tempo e a saída deste agente (o campo `terminal` dele), ou o global. */
   function terminalOf(context: IExecutionContext | undefined): { timeoutMs: number; maxOutputChars: number } {
     const own = context?.agentId ? deps.agentTerminal?.(context.agentId) : undefined
@@ -220,8 +227,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     }
     try {
       const line = await sandbox.wrapWith(command, root, (base) => cercoPlan(layers, { ...base, system }), token, { ...place, localPorts })
-      // A identidade de quem chama (ver `Agent.Identity`); as contas do projeto vêm depois.
-      const env: Record<string, string> = { ...subscriptionEnv({ HOME: root }), ...identityEnv(context), ...accounts?.env }
+      // As variáveis do agente por baixo, a identidade de quem chama por cima (ver `Agent.Identity`); as contas do projeto vêm depois.
+      const env: Record<string, string> = { ...terminalEnv(envOf(context), subscriptionEnv({ HOME: root }), context), ...accounts?.env }
       if (accounts?.ssh?.length) {
         const home = join(place.scratchBase ?? root, '.home')
         sshKit = accountsDir(home, token)
@@ -362,7 +369,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
             cwd,
             timeout: policy.timeoutMs,
             maxBuffer: EXEC_BUFFER_BYTES,
-            env: subscriptionEnv({ HOME: cwd, ...identityEnv(context) }),
+            env: terminalEnv(envOf(context), subscriptionEnv({ HOME: cwd }), context),
             ...(context?.projectId ? { shell: SANDBOX_SHELL } : {}),
           })
           const output = stdout || stderr || 'Command executed successfully with no output.'

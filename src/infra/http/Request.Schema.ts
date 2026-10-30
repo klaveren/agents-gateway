@@ -190,6 +190,11 @@ export const agentBodySchema = z.object({
     .max(200)
     .nullable()
     .optional(),
+  /**
+   * As variáveis de ambiente fixas do agente (nome → valor). O que vale de nome é regra do domínio (`envIssues`). Ausente
+   * na edição = mantém; `{}` ou `null` apaga todas.
+   */
+  env: z.record(z.string(), z.string()).nullable().optional(),
   /** O diagnóstico depois de editar. Ausente na edição = mantém; `null` desliga. */
   diagnostics: z
     .object({

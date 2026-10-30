@@ -62,6 +62,14 @@ export interface IAgent {
   triggers?: IAgentTrigger[]
   /** A troca de provedor quando a cota acaba (ver `Fallback.Policy`). Ausente = a cadeia global. */
   fallback?: IAgentFallback
+  /**
+   * As variáveis de ambiente FIXAS do agente, em todo terminal dele (o `run_bash`, o Bash do Claude, o shell do Codex e
+   * do Antigravity): a autoria do git (`GIT_AUTHOR_NAME`…), um idioma, uma região. ⛔ Nunca segredo — a regra recusa
+   * nome com cara de chave (ver `envIssues`); segredo mora em Segredos e nas contas do projeto. ⚖️ O agente só
+   * ACRESCENTA: o que o gateway monta (HOME, PATH, a conexão do CLI, a identidade) vence (ver `terminalEnv`).
+   * Ausente = nenhuma.
+   */
+  env?: Record<string, string>
 }
 
 export interface IAgentTerminal {

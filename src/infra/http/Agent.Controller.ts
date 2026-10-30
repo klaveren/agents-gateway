@@ -635,6 +635,7 @@ export class AgentController {
         const fallback = body.fallback === undefined ? this.agents.get(parsed.id)?.fallback : undefined
         const diagnostics = body.diagnostics === undefined ? this.agents.get(parsed.id)?.diagnostics : undefined
         const triggers = body.triggers === undefined ? this.agents.get(parsed.id)?.triggers : undefined
+        const env = body.env === undefined ? this.agents.get(parsed.id)?.env : undefined
         const input = {
           ...parsed,
           ...(current ? { permissions: current } : {}),
@@ -642,6 +643,7 @@ export class AgentController {
           ...(fallback ? { fallback } : {}),
           ...(diagnostics ? { diagnostics } : {}),
           ...(triggers?.length ? { triggers } : {}),
+          ...(env && Object.keys(env).length ? { env } : {}),
         }
         const issues = this.projectIssues(input)
         if (issues.length) throw new HttpError(422, 'validation_error', 'Request body is invalid', issues)
@@ -1746,6 +1748,7 @@ function toAgentInput(id: string, body: TAgentBody): IAgent {
     ...(body.terminal && (body.terminal.timeoutSeconds || body.terminal.maxOutputChars) ? { terminal: body.terminal } : {}),
     ...(body.diagnostics && diagnosticsOn(body.diagnostics) ? { diagnostics: body.diagnostics } : {}),
     ...(body.triggers?.length ? { triggers: body.triggers.map((trigger) => ({ id: trigger.id.trim(), when: trigger.when.trim(), body: trigger.body })) } : {}),
+    ...(body.env && Object.keys(body.env).length ? { env: { ...body.env } } : {}),
     // `global` é o padrão: não se grava.
     ...(body.fallback && body.fallback.mode !== 'global'
       ? { fallback: { mode: body.fallback.mode, ...(body.fallback.mode === 'own' ? { chain: body.fallback.chain ?? [] } : {}) } }

@@ -82,6 +82,7 @@ export function makeTools(): ITools {
           todos: todoStore(),
           permissions: lazyPermissions,
           agentTerminal: (agentId) => makeAgents().get(agentId)?.terminal,
+          agentEnv: (agentId) => makeAgents().get(agentId)?.env,
           mask: makeSecretMasker(),
           loops: loopGuard(),
           diagnostics: editDiagnostics(),

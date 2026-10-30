@@ -46,6 +46,17 @@ describe('AgentCatalog', () => {
     assert.deepStrictEqual(catalog.get('juridico')?.terminal, { timeoutSeconds: 600, maxOutputChars: 20_000 })
   })
 
+  it('as variáveis de ambiente do agente atravessam o cadastro; nome reservado é recusado', () => {
+    const catalog = build()
+    const env = { GIT_AUTHOR_NAME: 'Maya', GIT_AUTHOR_EMAIL: 'maya@x.test' }
+    catalog.save({ ...custom, env }, options(true))
+    assert.deepStrictEqual(catalog.get('juridico')?.env, env)
+    assert.throws(() => catalog.save({ ...custom, env: { GATEWAY_AGENT_ID: 'outro' } }, options(false)), InvalidAgentError)
+    // Sem variáveis, o campo some (e não fica `{}` gravado).
+    catalog.save({ ...custom, env: {} }, options(false))
+    assert.strictEqual(catalog.get('juridico')?.env, undefined)
+  })
+
   it('saveTriggers: só os triggers mudam, passando pela regra; o agente de fábrica não existe para isso', () => {
     const catalog = build()
     catalog.save(custom, options(true))

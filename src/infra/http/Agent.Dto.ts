@@ -87,6 +87,8 @@ export interface IAgentDetailDto extends IAgentDto {
   /** Os triggers do agente (o corpo também): só para quem administra, como o prompt. */
   triggers?: IAgentTrigger[]
   fallback?: IAgentFallback
+  /** As variáveis de ambiente fixas do agente: só para quem administra, como o prompt. */
+  env?: Record<string, string>
   updatedAt?: Date
   updatedBy?: string
 }
@@ -154,6 +156,7 @@ export function toAgentDetailDto(
     ...(entry.agent.diagnostics ? { diagnostics: entry.agent.diagnostics } : {}),
     ...(entry.agent.triggers?.length ? { triggers: entry.agent.triggers } : {}),
     ...(entry.agent.fallback ? { fallback: entry.agent.fallback } : {}),
+    ...(entry.agent.env && Object.keys(entry.agent.env).length ? { env: entry.agent.env } : {}),
     updatedAt: entry.updatedAt,
     updatedBy: entry.updatedBy,
   }

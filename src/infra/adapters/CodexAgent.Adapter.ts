@@ -1,4 +1,4 @@
-import { identityEnv } from '@domain/Agent.Identity'
+import { terminalEnv } from '@domain/Agent.Identity'
 import { sessionChoice } from '@domain/Agent.Policy'
 import { errorPayload } from '@domain/Provider.Failure'
 import { writeFileSync } from 'node:fs'
@@ -197,12 +197,15 @@ export class CodexAgentAdapter implements IAgentAdapter {
       const home = this.home()
       const codex = new Codex({
         // Num projeto, o HOME é `<projeto>/.home`: os dotfiles do Codex não sujam a pasta do projeto.
-        env: subscriptionEnv({
-          HOME: context.workFolder ? join(context.workFolder.projectDir, '.home') : agent.projectId ? projectHome(agent.projectId) : workspace,
-          CODEX_HOME: home,
-          // A identidade de quem chama, para o shell do Codex (ver `Agent.Identity`).
-          ...identityEnv(context),
-        }),
+        // As variáveis do agente e a identidade de quem chama, para o shell do Codex (ver `Agent.Identity`).
+        env: terminalEnv(
+          agent.env,
+          subscriptionEnv({
+            HOME: context.workFolder ? join(context.workFolder.projectDir, '.home') : agent.projectId ? projectHome(agent.projectId) : workspace,
+            CODEX_HOME: home,
+          }),
+          context,
+        ),
         config: {
           developer_instructions: withMcpHint(record.systemPrompt, remotes, grant ? locals.map((tool) => tool.name) : []),
           features: codexFeatures(agent.allowedTools),

@@ -161,6 +161,8 @@ export interface IAgentDetail extends IAgent {
   /** As ações ativadas sob demanda (guia Triggers). */
   triggers?: IAgentTrigger[]
   fallback?: IAgentFallback
+  /** As variáveis de ambiente fixas do agente, em todo terminal dele. */
+  env?: Record<string, string>
   systemPrompt: string
   updatedAt?: string
   updatedBy?: string
@@ -223,6 +225,8 @@ export interface IAgentInput {
   triggers?: IAgentTrigger[]
   /** `null` volta à cadeia global. */
   fallback?: IAgentFallback | null
+  /** `null` apaga todas. */
+  env?: Record<string, string> | null
 }
 
 export type TPermissionCategory = 'terminal' | 'read' | 'write' | 'network' | 'mcp' | 'skill' | 'delegate' | 'account' | 'repository' | 'trigger'

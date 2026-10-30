@@ -78,3 +78,29 @@ export function summarizeIssues(issues: Record<string, string[]>, labels: Record
     })
     .join(' · ')
 }
+
+/** Uma variável de ambiente do agente na tela: a linha do par nome/valor. */
+export interface IEnvRow {
+  name: string
+  value: string
+}
+
+/** As variáveis gravadas viram linhas, na ordem em que vieram. */
+export function envRows(env: Readonly<Record<string, string>> | undefined): IEnvRow[] {
+  return Object.entries(env ?? {}).map(([name, value]) => ({ name, value }))
+}
+
+/**
+ * As linhas viram o que vai ao servidor: sem as de nome vazio, com o nome aparado. Nenhuma = `null` (apaga todas).
+ * ⚠️ Nome repetido não vai: o segundo apagaria o primeiro em silêncio — a tela o mostra (`envDuplicates`).
+ */
+export function envRecord(rows: readonly IEnvRow[]): Record<string, string> | null {
+  const entries = rows.filter((row) => row.name.trim()).map((row) => [row.name.trim(), row.value] as const)
+  return entries.length ? Object.fromEntries(entries) : null
+}
+
+/** Os nomes que aparecem mais de uma vez. */
+export function envDuplicates(rows: readonly IEnvRow[]): string[] {
+  const names = rows.map((row) => row.name.trim()).filter(Boolean)
+  return [...new Set(names.filter((name, index) => names.indexOf(name) !== index))]
+}
