@@ -170,10 +170,12 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     const natives = nativeToolsOf(agent.allowedTools, EProvider.CLAUDE).flatMap((tool) => tool.sdkNames ?? [tool.sdkName])
     const remotes = (await this.catalog?.mcpServersFor(agent.allowedTools, context)) ?? []
 
-    const project = agent.projectId ? { projectId: agent.projectId, dir: workspaceFor(agent.projectId, sessionId) } : undefined
+    // A pasta da conversa (repositório ou worktree, ver `Work.Folder`) vence a do projeto inteiro.
+    const workDir = context.workFolder?.dir ?? workspaceFor(agent.projectId, sessionId)
+    const project = agent.projectId || context.workFolder ? { projectId: agent.projectId ?? context.conversationProjectId ?? '', dir: workDir } : undefined
     const gate = this.makeGate([...agent.allowedTools, ...natives, ...local.map((tool) => tool.name)], remotes, project, {
       asker: askerOf(context),
-      cwd: workspaceFor(agent.projectId, sessionId),
+      cwd: workDir,
     })
     const options: Options = {
       model: record.model,
@@ -202,7 +204,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       ...(native.started ? { resume: native.sdkSessionId } : { sessionId: native.sdkSessionId }),
       ...(env ? { env } : {}),
       // Toda lane num diretório vazio por conversa: o `cwd` do processo é a pasta do gateway (`.env`, banco).
-      cwd: workspaceFor(agent.projectId, sessionId),
+      cwd: workDir,
     }
 
     const effort = this.toEffort(record.reasoning)

@@ -196,6 +196,8 @@ tools and is retried with exponential backoff (1s up to 60s). No restart either 
 | `BASH_MAX_OUTPUT_CHARS` | `4000`                      | `run_bash` output cap.                                                                                 |
 | `CONVERSATIONS_DB`      | `data/gateway.db`           | SQLite file for conversations **and** settings. `off` disables recording and keeps settings in memory. |
 | `GEMINI_API_KEY`        | _(none)_                    | Alternative to `GOOGLE_GENAI_API_KEY` for the agent lane (`@google/adk`).                              |
+| `TURN_CALLBACK_HOSTS`   | _(none)_                    | Hosts (`host` or `host:port`, comma-separated) a conversation's `callbackUrl` may point to.            |
+| `TURN_CALLBACK_SECRET`  | _(none)_                    | HMAC key for `X-Gateway-Signature` on turn callbacks. Without it, no callback is accepted or sent.     |
 
 ### Before you run it
 
@@ -504,6 +506,35 @@ Every decision is logged (Permissions → Latest decisions). The Claude file too
 go through the same rules and a symlink-resolving path filter in a `PreToolUse` hook. WebFetch goes
 through the network rule for its host. The native Claude `Bash` and the Codex terminal do not follow
 the rules, so they are never enabled.
+
+**Repositories and worktrees.** A conversation can be opened in a repository of its project
+(`<project>/repositories/<name>`) or in one of that repository's git worktrees: `repository` and
+`worktree` on `POST /v1/sessions`, or the two lists in New conversation. The gateway finds the
+worktree with `git worktree list`, by folder name or branch, so any layout works. It does not
+create the worktree: whoever calls prepares it.
+
+- That folder becomes the agent's whole world: the `cwd`, the file tools and the sandbox root.
+  Relative rules (`apps/**`) count from it, so they mean the same in the repository and in each
+  worktree.
+- The worktree's git works (`status`, `commit`, `push`): the repository's common `.git` is opened
+  to the sandbox. Its `config`, the worktree `config.worktree` and `hooks/` stay write-denied,
+  because they run code in the next `git` outside the sandbox. The main checkout and the other
+  worktrees stay out of reach.
+- `HOME`, `.tmp`, the caches and the account kits stay in the project folder, never inside the
+  worktree.
+- The agent needs the permission `repository <name>`. The first message tells it the repository,
+  the worktree, the branch and the folder.
+
+**Asynchronous turns**, for an orchestrator that drives agents:
+
+- `POST /v1/sessions/:id/turns` answers 202 at once, and the turn runs on the server with no
+  client attached.
+- `GET /v1/sessions/:id/turns/:turn` says `running` (with the text so far) or `ok`, `error` or
+  `aborted`.
+- One turn per conversation: a second one while the first runs gets 409 `session_busy`, on this
+  route and on `/messages`.
+- With `callbackUrl` on the conversation, the end of every turn is POSTed there, signed with
+  `X-Gateway-Signature`. Only hosts in `TURN_CALLBACK_HOSTS` are accepted, and it tries 3 times.
 
 **Project accounts (Project → Accounts).** Each project keeps its own credentials, which its
 agents' terminal receives: a GitHub App, a GitHub token, a GCP service account, SSH (a

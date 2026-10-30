@@ -32,8 +32,10 @@ import { IAgentSession } from '@domain/models/AgentSession.Model'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { READ_DOC_TOOL, SEARCH_DOCS_TOOL } from '@domain/models/ProjectDoc.Model'
 import { USE_SKILL_TOOL } from '@domain/models/Resource.Model'
-import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
-import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
+import { PROJECT_METADATA_KEY, REPOSITORY_METADATA_KEY, WORKTREE_METADATA_KEY } from '@domain/Session.Metadata'
+import { projectWorkspace } from '@infra/adapters/support/Subscription.Workspace'
+import { resolveWorkFolder } from '@infra/workspace/Work.Folder'
+import { IContextWorkFolder, IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { caller } from '@infra/mcp/Caller.Identity'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { INativeSnapshot, IStoredUsage } from '@domain/models/Conversation.Model'
@@ -178,6 +180,10 @@ export class AgentProvider implements IAgentProvider {
     const handoff = record.handoff
     const sent = handoff ? { ...input, text: `${handoff}\n\n${input.text}` } : input
     const turn = { text: '', tools: [] as string[], by: `${record.provider} · ${record.model}`, completed: false }
+    // ⛔ UM TURNO POR VEZ: o segundo rodaria por cima do primeiro (o cancelar só alcançava o último, e a transcrição e o
+    // estado nativo se misturavam). A tela e a API recebem 409 `session_busy`.
+    if (record.status === 'running') throw new SessionBusyError(sessionId)
+    const workFolder = workFolderOf(record.metadata, conversationProject)
 
     record.status = 'running'
     record.turns += 1
@@ -197,6 +203,7 @@ export class AgentProvider implements IAgentProvider {
         agentId: record.agentId,
         ...(agent.projectId ? { projectId: agent.projectId } : {}),
         ...(conversationProject ? { conversationProjectId: conversationProject } : {}),
+        ...(workFolder ? { workFolder } : {}),
       }
 
       // O que o agente tem e não roda neste provedor: avisa no primeiro turno e quando a conversa troca de provedor.
@@ -491,4 +498,18 @@ function projectOf(metadata: Record<string, unknown> | undefined): string | unde
 function liveUsage(stored: IStoredUsage | undefined): IUsage {
   const { totalTokens: _total, ...usage } = stored ?? {}
   return usage
+}
+
+/**
+ * ⛔ A PASTA DE TRABALHO da conversa aberta num repositório ou worktree (gravados na metadata pelo servidor): resolvida
+ * de novo a cada turno, pela mesma regra da criação. A worktree que sumiu falha o turno com o motivo, nunca cai na
+ * pasta do projeto inteiro.
+ */
+function workFolderOf(metadata: Record<string, unknown> | undefined, projectId: string | undefined): IContextWorkFolder | undefined {
+  const repository = metadata?.[REPOSITORY_METADATA_KEY]
+  if (typeof repository !== 'string' || !projectId) return undefined
+  const worktree = metadata?.[WORKTREE_METADATA_KEY]
+  const projectDir = projectWorkspace(projectId)
+  const folder = resolveWorkFolder(projectDir, repository, typeof worktree === 'string' ? worktree : undefined)
+  return { ...folder, projectDir }
 }

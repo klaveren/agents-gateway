@@ -17,11 +17,11 @@ import { basename } from 'node:path'
  * ⛔ Regra vale onde a ferramenta EXECUTA (o terminal, as ferramentas de arquivo, o hook do Claude, o catálogo de
  * MCP), nunca no prompt.
  */
-export type TPermissionCategory = 'terminal' | 'read' | 'write' | 'network' | 'mcp' | 'skill' | 'delegate' | 'account'
+export type TPermissionCategory = 'terminal' | 'read' | 'write' | 'network' | 'mcp' | 'skill' | 'delegate' | 'account' | 'repository'
 export type TPermissionDecision = 'allow' | 'deny'
 export type TPermissionLayer = 'system' | 'agent' | 'project' | 'default'
 
-export const PERMISSION_CATEGORIES: readonly TPermissionCategory[] = ['terminal', 'read', 'write', 'network', 'mcp', 'skill', 'delegate', 'account']
+export const PERMISSION_CATEGORIES: readonly TPermissionCategory[] = ['terminal', 'read', 'write', 'network', 'mcp', 'skill', 'delegate', 'account', 'repository']
 
 export interface IPermissionRule {
   category: TPermissionCategory
@@ -93,6 +93,7 @@ export const CATEGORY_LABEL: Readonly<Record<TPermissionCategory, string>> = {
   skill: 'skill',
   delegate: 'delegação',
   account: 'conta',
+  repository: 'repositório',
 }
 
 export function matches(rule: IPermissionRule, subject: IPermissionSubject): boolean {
@@ -102,6 +103,9 @@ export function matches(rule: IPermissionRule, subject: IPermissionSubject): boo
       return commandMatches(rule.pattern, subject.argv ?? subject.value.trim().split(/\s+/))
     case 'read':
     case 'write':
+      // ⛔ Liberação RELATIVA vale só dentro da pasta: `**` não alcança `/outra/pasta` nem `~/.ssh` (fora dela, o caminho
+      // chega absoluto). Para liberar fora, a regra é absoluta. A negação vale em qualquer lugar (`**/.env`).
+      if (rule.decision === 'allow' && isOutsidePath(subject.value) && !isOutsidePath(rule.pattern.trim())) return false
       return pathMatches(rule.pattern, subject.value)
     case 'network':
       return hostMatches(rule.pattern, subject.value)
@@ -136,6 +140,11 @@ function wordMatches(pattern: string, word: string): boolean {
  * Padrão sem `/` casa o nome em qualquer pasta (`*.env`), como no `.gitignore`. Absoluto (`/srv/x/**`, `~/.ssh/k`):
  * fora da pasta de trabalho.
  */
+/** Caminho de fora da pasta de trabalho: absoluto ou da casa (`~`). Os de dentro chegam relativos. */
+function isOutsidePath(path: string): boolean {
+  return path.startsWith('/') || path.startsWith('~') || /^[A-Za-z]:[\\/]/.test(path)
+}
+
 export function pathMatches(pattern: string, path: string): boolean {
   const clean = path.replace(/\\/g, '/').replace(/^\.\//, '')
   const target = pattern.trim().replace(/^\.\//, '')

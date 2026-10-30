@@ -29,4 +29,21 @@ export interface IExecutionContext {
    * É por ele que o `read_doc` sabe que documentos a conversa pode ler.
    */
   conversationProjectId?: string
+  /**
+   * ⛔ A PASTA DE TRABALHO da conversa, já resolvida no servidor (ver `Work.Folder`): o repositório ou a worktree em que
+   * ela foi aberta. Presente, vale em todo lugar que antes era a pasta do projeto: o `cwd`, as ferramentas de arquivo e
+   * a raiz do cerco.
+   */
+  workFolder?: IContextWorkFolder
+}
+
+/** A pasta resolvida e o git dela (o `.git` comum de uma worktree fica fora da pasta). */
+export interface IContextWorkFolder {
+  dir: string
+  /** A pasta do projeto: o HOME, o rascunho e as contas ficam nela, nunca dentro da worktree. */
+  projectDir: string
+  repository?: string
+  worktree?: string
+  gitCommonDir?: string
+  worktreeGitDir?: string
 }

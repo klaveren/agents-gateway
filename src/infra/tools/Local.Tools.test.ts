@@ -221,6 +221,13 @@ describe('LocalTools', () => {
       assert.deepStrictEqual(seen.ran, [])
     })
 
+    it('⛔ redirecionamento para fora da pasta é negado na análise, mesmo com `write **` (o cerco é a segunda trava)', async () => {
+      const { seen, run } = setup([rule('terminal', 'echo *'), rule('write', '**')])
+      for (const target of ['../fora.txt', '../../.git/hooks/pre-commit', '/tmp/x', '~/.bashrc']) assert.match((await run(`echo x > ${target}`)).result, /Not permitted/, target)
+      assert.deepStrictEqual(seen.ran, [])
+      assert.strictEqual((await run('echo x > dentro.txt')).status, 'success')
+    })
+
     it('o redirecionamento é escrita: sem regra de escrita, negado; com ela, o cerco grava só ali', async () => {
       assert.match((await setup([rule('terminal', 'echo *')]).run('echo oi > notas.txt')).result, /nenhuma regra de escrita/)
       const { seen, run } = setup([rule('terminal', 'echo *'), rule('write', '*.txt')])

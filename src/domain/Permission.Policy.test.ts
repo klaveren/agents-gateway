@@ -45,6 +45,15 @@ describe('Permission.Policy', () => {
     assert.ok(commandMatches('*', ['qualquer', 'coisa']))
   })
 
+  it('⛔ liberação relativa só vale dentro da pasta: `**` não alcança caminho absoluto nem ~; a negação vale em todo lugar', () => {
+    const agent = [rule('write', '**'), rule('read', '**'), rule('read', '/opt/dados/**')]
+    for (const value of ['/etc/passwd', '/app/data/projects/p1/repositories/abc/.git/hooks/pre-commit', '~/.ssh/config'])
+      assert.strictEqual(decide({ category: 'write', value }, { agent }).allowed, false, value)
+    assert.strictEqual(decide({ category: 'write', value: 'apps/x.ts' }, { agent }).allowed, true)
+    assert.strictEqual(decide({ category: 'read', value: '/opt/dados/a.csv' }, { agent }).allowed, true, 'liberação absoluta abre fora')
+    assert.strictEqual(decide({ category: 'read', value: '/srv/x/.env' }, { agent: [rule('read', '/srv/**')] }).allowed, false, 'o segredo continua negado fora')
+  })
+
   it('caminho em glob; sem barra, o nome em qualquer pasta; absoluto e ~ para fora da pasta', () => {
     assert.ok(pathMatches('apps/**', 'apps/web/src/main.ts'))
     assert.ok(!pathMatches('apps/**', 'packages/x.ts'))

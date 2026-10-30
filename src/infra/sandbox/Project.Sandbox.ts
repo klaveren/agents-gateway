@@ -32,7 +32,14 @@ export interface IProjectSandbox {
    * O comando no cerco MONTADO DAS REGRAS (`Cerco.Plan`), em qualquer pasta (a do projeto ou a da conversa), com a rede
    * pela porta do gateway (`Network.Gate`) e o token do comando. ⛔ Lança se não há cerco.
    */
-  wrapWith?(command: string, root: string, plan: (base: ICercoBase) => ICercoPlan, networkToken: string): Promise<string>
+  wrapWith?(command: string, root: string, plan: (base: ICercoBase) => ICercoPlan, networkToken: string, place?: ICercoPlace): Promise<string>
+}
+
+/** Onde ficam o rascunho (HOME, TMPDIR, caches) e o `.git` quando a raiz é um repositório ou uma worktree. */
+export interface ICercoPlace {
+  /** A pasta do projeto: o rascunho mora nela, nunca dentro da worktree (sujaria o `git status`). Ausente = a raiz. */
+  scratchBase?: string
+  gitCommonDir?: string
 }
 
 export const SANDBOX_UNAVAILABLE = 'cerco indisponível neste servidor'
@@ -77,26 +84,27 @@ export class ProjectSandbox implements IProjectSandbox {
   }
 
   /** A base do cerco de uma pasta: as de trabalho dentro dela, o que se lê sempre e o que nunca se toca. */
-  base(root: string): ICercoBase {
+  base(root: string, place: ICercoPlace = {}): ICercoBase {
     return {
       root,
-      scratch: ['.home', '.tmp', '.cache'].map((name) => join(root, name)),
+      scratch: ['.home', '.tmp', '.cache'].map((name) => join(place.scratchBase ?? root, name)),
+      ...(place.gitCommonDir ? { gitCommonDir: place.gitCommonDir } : {}),
       // A instalação do Node em uso (num Mac com nvm, fica na pasta pessoal, que o cerco fecha) e as ferramentas.
       alwaysRead: [join(dataDir(this.env), 'tools'), dirname(dirname(process.execPath)), ...runtimeHelpers()],
       alwaysDeny: [dataDir(this.env), process.cwd(), homedir()],
     }
   }
 
-  async wrapWith(command: string, root: string, plan: (base: ICercoBase) => ICercoPlan, networkToken: string): Promise<string> {
+  async wrapWith(command: string, root: string, plan: (base: ICercoBase) => ICercoPlan, networkToken: string, place: ICercoPlace = {}): Promise<string> {
     const status = await this.status()
     if (!status.available) throw new Error(`${SANDBOX_UNAVAILABLE}: ${status.reason ?? 'sem motivo'}`)
     const manager = await this.ready()
     const port = await networkGate().start()
-    const planned = plan(this.base(root))
+    const planned = plan(this.base(root, place))
     const cerco = process.platform === 'linux' ? forBubblewrap(planned, root, listDir) : planned
     for (const dir of writeFolders(cerco, root)) mkdirSync(dir, { recursive: true, mode: 0o700 })
     const scratch = (name: string) => {
-      const dir = join(root, name)
+      const dir = join(place.scratchBase ?? root, name)
       mkdirSync(dir, { recursive: true, mode: 0o700 })
       return dir
     }

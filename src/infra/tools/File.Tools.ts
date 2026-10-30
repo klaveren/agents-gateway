@@ -69,6 +69,8 @@ export function deniedPath(absPath: string, root: string): string | undefined {
   if (name.startsWith('secrets.')) return 'secrets file'
   // As credenciais de um comando (Projeto → Contas): o comando as usa; a ferramenta de arquivo não as lê.
   if (/(^|[\\/])\.home[\\/]\.accounts([\\/]|$)/.test(absPath)) return 'account credentials'
+  // O `.git` por dentro (config, hooks, objetos) é do git: editar à mão quebraria o repositório ou plantaria um hook.
+  if (/(^|[\\/])\.git([\\/]|$)/.test(absPath)) return 'git internals'
   const real = realOf(resolve(absPath))
   if (isInside(realOf(dataDir()), real) && !isInside(realOf(resolve(root)), real)) return 'gateway data'
   return undefined

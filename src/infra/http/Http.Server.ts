@@ -280,6 +280,7 @@ function buildRoutes(
     { method: 'put', path: '/projects/:id', handler: projects.update },
     { method: 'delete', path: '/projects/:id', handler: projects.remove },
     { method: 'get', path: '/projects/:id/members', handler: projects.members },
+    { method: 'get', path: '/projects/:id/repositories', handler: projects.repositories },
     { method: 'put', path: '/projects/:id/members', handler: projects.setMembers },
     { method: 'post', path: HOOK_PATH, handler: hooks.receive },
     { method: 'get', path: '/agents/:agentId/hooks', handler: hooks.list },
@@ -381,6 +382,8 @@ function buildRoutes(
     { method: 'delete', path: '/sessions/:id', handler: controller.deleteSession },
     { method: 'patch', path: '/sessions/:id', handler: controller.reconfigureSession },
     { method: 'post', path: '/sessions/:id/messages', handler: controller.sendMessage },
+    { method: 'post', path: '/sessions/:id/turns', handler: controller.startTurn },
+    { method: 'get', path: '/sessions/:id/turns/:turn', handler: controller.turnStatus },
     { method: 'post', path: '/sessions/:id/cancel', handler: controller.cancelSession },
   ]
 }

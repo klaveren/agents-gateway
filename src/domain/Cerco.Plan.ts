@@ -23,7 +23,7 @@ export interface ICercoPlan {
 export interface ICercoBase {
   /** A pasta de trabalho do comando (a do projeto, ou a da conversa no agente global). */
   root: string
-  /** Pastas que o comando sempre lê e escreve: HOME, TMPDIR e caches, dentro da raiz. */
+  /** Pastas que o comando sempre lê e escreve: HOME, TMPDIR e caches (na pasta do projeto, fora de uma worktree). */
   scratch: readonly string[]
   /** O que se lê sempre (o auxiliar do runtime, as ferramentas instaladas pela guia Pacotes). */
   alwaysRead: readonly string[]
@@ -34,6 +34,19 @@ export interface ICercoBase {
   alwaysDeny: readonly string[]
   /** Regras de sistema da instalação (absolutas). */
   system?: readonly IPermissionRule[]
+  /**
+   * O `.git` do repositório quando a pasta é um repositório ou uma worktree (o da worktree fica FORA dela): liberado
+   * para ler e gravar (objetos, refs, locks — `status`, `commit`, `push`), menos o que roda código fora do cerco.
+   */
+  gitCommonDir?: string
+}
+
+/**
+ * ⛔ O que o comando nunca grava no `.git`, mesmo liberado: a config (`core.hooksPath`, `core.fsmonitor`), a config da
+ * worktree e os hooks. Rodam no PRÓXIMO git de quem não está no cerco (a API, o gateway): seria código fora dele.
+ */
+export function gitWriteDenies(gitCommonDir: string): string[] {
+  return [join(gitCommonDir, 'config'), join(gitCommonDir, 'hooks'), join(gitCommonDir, 'worktrees', '*', 'config.worktree')]
 }
 
 /** O padrão de uma regra como caminho para o runtime: relativo vira absoluto na raiz; sem barra vale em qualquer pasta. */
@@ -64,12 +77,13 @@ export function cercoPlan(layers: IPermissionLayers, base: ICercoBase): ICercoPl
   }
   const read = lists('read')
   const write = lists('write')
+  const git = base.gitCommonDir ? [base.gitCommonDir] : []
   return {
     // A raiz fechada para leitura por padrão: só o que as regras liberam (e as pastas de trabalho) se lê dentro dela.
     readDeny: [...new Set([...base.alwaysDeny, base.root, ...read.deny])],
-    readAllow: [...new Set([...base.scratch, ...base.alwaysRead, ...read.allow])],
-    writeAllow: [...new Set([...base.scratch, ...write.allow])],
-    writeDeny: [...new Set([...base.alwaysDeny.filter((path) => !contains(path, base.root)), ...write.deny])],
+    readAllow: [...new Set([...base.scratch, ...base.alwaysRead, ...git, ...read.allow])],
+    writeAllow: [...new Set([...base.scratch, ...git, ...write.allow])],
+    writeDeny: [...new Set([...base.alwaysDeny.filter((path) => !contains(path, base.root)), ...write.deny, ...(base.gitCommonDir ? gitWriteDenies(base.gitCommonDir) : [])])],
   }
 }
 

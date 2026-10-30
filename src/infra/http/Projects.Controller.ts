@@ -8,6 +8,7 @@ import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
 import { parseBody } from './Request.Parser'
+import { listRepositories } from '@infra/workspace/Work.Folder'
 
 export interface IProjectsControllerDeps {
   projects: ProjectsService
@@ -24,7 +25,20 @@ const membersSchema = z.object({ userIds: z.array(z.string().max(64)).max(1000) 
  */
 export class ProjectsController {
   constructor(private readonly deps: IProjectsControllerDeps) {
-    for (const name of ['list', 'create', 'update', 'remove', 'members', 'setMembers'] as const) this[name] = this[name].bind(this)
+    for (const name of ['list', 'create', 'update', 'remove', 'members', 'setMembers', 'repositories'] as const) this[name] = this[name].bind(this)
+  }
+
+  /**
+   * `GET /projects/:id/repositories` — os repositórios do projeto (`repositories/<nome>`) e as worktrees de cada um, para
+   * abrir a conversa num deles. Para quem pode usar o projeto; para os demais, 404 como projeto inexistente.
+   */
+  async repositories(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const id = req.params.id as string
+      const caller = await this.caller()
+      if (!this.deps.projects.exists(id) || !this.deps.projects.canUse(caller, id)) throw new HttpError(404, 'not_found', `Project not found: ${id}`)
+      return listRepositories(this.deps.projects.folderOf(id))
+    })
   }
 
   async list(_req: Request, res: Response): Promise<void> {
