@@ -343,6 +343,20 @@ const settingsSchema = {
     builderProvider: { type: 'string', description: 'Provider of the builder (the core agent that drafts skills and commands). Absent: the one of Atlas.' },
     builderModel: { type: 'string', description: 'Model of the builder — an enabled model of `builderProvider`. Absent: the one of Atlas.' },
     classifyTurns: { type: 'boolean', description: 'Stored only for now: the turn classifier arrives in a later phase.' },
+    fallback: {
+      type: 'object',
+      description:
+        'Provider fallback when a quota or rate limit runs out mid-turn: the next step of the chain the agent offers continues the turn with the transcript. Agents may set their own (`fallback.mode: own`) or turn it off. Empty chain = off.',
+      properties: {
+        chain: { type: 'array', maxItems: 10, items: { type: 'object', required: ['provider', 'model'], properties: { provider: { type: 'string' }, model: { type: 'string' } } } },
+        cooldownMinutes: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 1440,
+          description: 'How long a provider out of quota stays aside when the error does not say when it resets. Default 15.',
+        },
+      },
+    },
     updatedAt: { type: 'string', format: 'date-time' },
     updatedBy: { type: 'string' },
   },

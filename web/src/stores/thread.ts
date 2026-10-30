@@ -264,11 +264,10 @@ export const useThreadStore = defineStore('thread', () => {
         return { ok: false }
       }
       turns.value = [...turns.value, settled(id, turn, turns.value.length, session.value)]
-      // A sessão que estava encerrada foi RETOMADA pelo gateway ao receber a mensagem: volta a contar como viva.
-      if (liveSession.value === false) {
-        liveSession.value = true
-        void reloadSession(id)
-      }
+      // A sessão que estava encerrada foi RETOMADA pelo gateway ao receber a mensagem: volta a contar como viva. E relê o
+      // provedor e o modelo: a troca de provedor (cota esgotada) pode tê-los mudado no meio do turno.
+      if (liveSession.value === false) liveSession.value = true
+      void reloadSession(id)
       // O primeiro turno de uma conversa nova grava a conversa só no fim: as tarefas dele se leem depois disso.
       const usedTodos = turn.tools.some((tool) => isTodoTool(tool.tool))
       setTimeout(() => void refresh().then(() => (usedTodos ? loadTodos(id) : undefined)), 600)
@@ -329,6 +328,7 @@ export const useThreadStore = defineStore('thread', () => {
         if (!following.value && !sending.value) pending.value = undefined
         void loadTodos()
       })
+      void reloadSession(frame.sessionId)
     }
   }
 

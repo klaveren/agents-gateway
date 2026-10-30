@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { FALLBACK_BOUNDS, FALLBACK_MODES, TFallbackMode } from '@domain/Fallback.Policy'
 import { LIMIT_BOUNDS, LIMIT_NAMES, TLimitName } from '@domain/models/Limits.Model'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { AUDIENCES } from '@domain/models/Settings.Model'
@@ -76,6 +77,9 @@ export const sendMessageSchema = z
  */
 const clearable = z.string().trim().nullable().optional()
 
+/** Um passo da troca de provedor: provedor + modelo. */
+const fallbackStep = z.object({ provider: z.string().trim().min(1).max(100), model: z.string().trim().min(1).max(200) })
+
 /**
  * Alteração PARCIAL das configurações: só o que mudou vem no corpo. Exigir o objeto inteiro faria
  * qualquer alteração de um campo depender de reenviar corretamente todos os outros — e um deles
@@ -104,6 +108,14 @@ export const updateSettingsSchema = z.object({
       >,
     )
     .strict()
+    .nullable()
+    .optional(),
+  /** A cadeia global da troca de provedor; `null` desliga. */
+  fallback: z
+    .object({
+      chain: z.array(fallbackStep).max(FALLBACK_BOUNDS.chain),
+      cooldownMinutes: z.number().int().min(FALLBACK_BOUNDS.cooldownMinutes.min).max(FALLBACK_BOUNDS.cooldownMinutes.max).optional(),
+    })
     .nullable()
     .optional(),
 })
@@ -156,6 +168,11 @@ export const agentBodySchema = z.object({
       }),
     )
     .max(300)
+    .optional(),
+  /** A troca de provedor deste agente (ver `Fallback.Policy`). Ausente na edição = mantém; `null` volta à global. */
+  fallback: z
+    .object({ mode: z.enum(FALLBACK_MODES as [TFallbackMode, ...TFallbackMode[]]), chain: z.array(fallbackStep).max(FALLBACK_BOUNDS.chain).optional() })
+    .nullable()
     .optional(),
   /** O terminal deste agente (tempo por comando e saída). Ausente na edição = mantém o que ele tem; `null` volta ao global. */
   terminal: z

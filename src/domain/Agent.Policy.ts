@@ -73,6 +73,9 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
   const issue = (field: string, message: string) => issues.push({ field, message })
 
   for (const item of permissionIssues(agent.permissions)) issue(item.field, item.message)
+  // A cadeia própria só com o que o agente oferece: um passo de fora nunca rodaria (ver `Fallback.Policy`).
+  for (const step of agent.fallback?.mode === 'own' ? (agent.fallback.chain ?? []) : [])
+    if (!offers(agent, step.provider, step.model)) issue('fallback', `not offered by this agent: ${step.provider} / ${step.model}`)
   if (!AGENT_ID_PATTERN.test(agent.id)) issue('id', 'use 2–48 lowercase letters, digits or hyphens')
   else if (rules.takenIds.includes(agent.id)) issue('id', `already exists: ${agent.id}`)
 

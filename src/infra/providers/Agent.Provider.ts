@@ -1,6 +1,8 @@
 import { offers, targetFor } from '@domain/Agent.Policy'
 import { resolveCapabilities } from '@domain/Capability.Catalog'
-import { HANDOFF_MAX_CHARS, handoffText } from '@domain/Handoff.Policy'
+import { DEFAULT_COOLDOWN_MINUTES, fallbackChain, IFallbackStep, nextStep } from '@domain/Fallback.Policy'
+import { HANDOFF_MAX_CHARS, handoffText, ITranscriptTurn } from '@domain/Handoff.Policy'
+import { FALLBACK_FAILURES } from '@domain/Provider.Failure'
 import { resolveSessionMode } from '@domain/Session.Policy'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -43,6 +45,7 @@ import { ISession, usageKey } from '@domain/models/Session.Model'
 import { IAgentProvider, IResumeInput, ISessionChange } from '@domain/ports/AgentProvider.Port'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
+import { ProviderBench } from './Provider.Bench'
 
 /** Chave do mapa de adapters: cada provider tem uma implementação por lane. */
 export function adapterKey(provider: EProvider, mode: EMode): string {
@@ -87,6 +90,9 @@ export class AgentProvider implements IAgentProvider {
       hasDocs(projectId?: string, agentId?: string): boolean
       hasSkills?(agentId?: string): boolean
     },
+
+    /** Os provedores sem cota agora (ver `Provider.Bench`). Ausente = sem troca de provedor. */
+    private readonly bench?: ProviderBench,
   ) {
     /**
      * Uma leitura no boot, e depois só quando muda.
@@ -170,15 +176,15 @@ export class AgentProvider implements IAgentProvider {
   async *sendMessage(sessionId: string, input: IMessageInput): AsyncIterable<IAgentEvent> {
     const record = this.requireSession(sessionId)
     const conversationProject = projectOf(record.metadata)
-    const { agent, unavailable } = this.prepare(this.getAgent(record.agentId), conversationProject, record.provider, record.protocol, record.mode)
+    let { agent, unavailable } = this.prepare(this.getAgent(record.agentId), conversationProject, record.provider, record.protocol, record.mode)
     // ⛔ O modelo da conversa foi desativado (ou sumiu do provider) depois que ela começou: erro claro, em
     // vez de seguir usando um modelo que quem administra tirou. `agent.models` já vem só com os utilizáveis.
     if (record.model && !offers(agent, record.provider, record.model)) throw new ModelDisabledError(record.provider, record.model)
-    const adapter = this.getAdapter(record.protocol, record.mode)
+    let adapter = this.getAdapter(record.protocol, record.mode)
     // Acabou de trocar de provider: a transcrição vai antes da mensagem, só para o modelo — o turno
     // gravado continua o que a pessoa escreveu (quem grava é o `SendMessageUseCase`, com o input dele).
-    const handoff = record.handoff
-    const sent = handoff ? { ...input, text: `${handoff}\n\n${input.text}` } : input
+    let handoff = record.handoff
+    let sent = handoff ? { ...input, text: `${handoff}\n\n${input.text}` } : input
     const turn = { text: '', tools: [] as string[], by: `${record.provider} · ${record.model}`, completed: false }
     // ⛔ UM TURNO POR VEZ: o segundo rodaria por cima do primeiro (o cancelar só alcançava o último, e a transcrição e o
     // estado nativo se misturavam). A tela e a API recebem 409 `session_busy`.
@@ -187,6 +193,24 @@ export class AgentProvider implements IAgentProvider {
 
     record.status = 'running'
     record.turns += 1
+    // Os provedores já tentados neste turno: a cota é da conta, então o provedor inteiro sai, não só o modelo.
+    const tried = new Set<string>([record.provider])
+
+    /** Passa a conversa para o próximo passo da cadeia: o mesmo pedido, com a transcrição e o que o turno já fez. */
+    const switchTo = (next: IFallbackStep, partial: boolean): string => {
+      const from = `${record.provider} · ${record.model}`
+      this.moveTo(record, next)
+      const done: ITranscriptTurn[] = partial && (turn.text || turn.tools.length) ? [{ request: '(a mensagem abaixo)', text: turn.text, tools: turn.tools, by: turn.by }] : []
+      handoff = handoffText([...(record.transcript ?? []), ...done], HANDOFF_MAX_CHARS, partial ? 'quota' : 'switch')
+      record.handoff = handoff
+      record.handoffKind = partial ? 'quota' : 'switch'
+      sent = handoff ? { ...input, text: `${handoff}\n\n${input.text}` } : input
+      turn.by = `${record.provider} · ${record.model}`
+      tried.add(record.provider)
+      ;({ agent, unavailable } = this.prepare(this.getAgent(record.agentId), conversationProject, record.provider, record.protocol, record.mode))
+      adapter = this.getAdapter(record.protocol, record.mode)
+      return from
+    }
 
     try {
       /**
@@ -206,17 +230,48 @@ export class AgentProvider implements IAgentProvider {
         ...(workFolder ? { workFolder } : {}),
       }
 
+      // O provedor da conversa ficou sem cota em outra conversa: este turno já começa no próximo da cadeia.
+      if (this.bench?.isBenched(record.provider)) {
+        const next = this.nextFallback(record, tried)
+        if (next) {
+          const from = switchTo(next, false)
+          yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: `${from} está sem cota agora; a conversa segue em ${turn.by}.` } }
+        }
+      }
+
       // O que o agente tem e não roda neste provedor: avisa no primeiro turno e quando a conversa troca de provedor.
       if (unavailable.length && (record.turns === 1 || handoff))
         yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: `Indisponível em ${record.provider}: ${unavailable.join(', ')}.` } }
 
-      for await (const event of adapter.sendMessage(agent, sessionId, sent, context)) {
-        // Somar o usage aqui vale para as seis implementações de uma vez.
-        if (event.type === 'usage') this.sessions.addUsage(record, event.payload)
-        else if (event.type === 'text.delta') turn.text += event.payload.text
-        else if (event.type === 'tool.started') turn.tools.push(event.payload.tool)
-        else if (event.type === 'message.completed') turn.completed = true
-        yield event
+      for (;;) {
+        let exhausted: { message: string; resetsAt?: string; next: IFallbackStep } | undefined
+        for await (const event of adapter.sendMessage(agent, sessionId, sent, context)) {
+          // ⚖️ COTA OU LIMITE com um próximo na cadeia: o erro não sai, o turno segue no próximo (ver `Fallback.Policy`).
+          if (event.type === 'error' && event.payload.kind && FALLBACK_FAILURES.includes(event.payload.kind)) {
+            const next = this.nextFallback(record, tried)
+            if (next) {
+              exhausted = { message: event.payload.message, ...(event.payload.resetsAt ? { resetsAt: event.payload.resetsAt } : {}), next }
+              break
+            }
+          }
+          // Somar o usage aqui vale para as seis implementações de uma vez.
+          if (event.type === 'usage') this.sessions.addUsage(record, event.payload)
+          else if (event.type === 'text.delta') turn.text += event.payload.text
+          else if (event.type === 'tool.started') turn.tools.push(event.payload.tool)
+          else if (event.type === 'message.completed') turn.completed = true
+          yield event
+        }
+        if (!exhausted) break
+
+        this.benchProvider(record.provider, exhausted.resetsAt)
+        const from = switchTo(exhausted.next, true)
+        yield {
+          type: 'warning',
+          sessionId,
+          timestamp: new Date(),
+          payload: { message: `Cota de ${from} esgotada (${exhausted.message.slice(0, 200)}); o turno segue em ${turn.by}.` },
+        }
+        if (unavailable.length) yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: `Indisponível em ${record.provider}: ${unavailable.join(', ')}.` } }
       }
     } finally {
       record.status = 'idle'
@@ -231,10 +286,49 @@ export class AgentProvider implements IAgentProvider {
         if (turn.completed) record.handoff = undefined
         else {
           record.native = undefined
-          record.handoff = handoffText(record.transcript ?? [], HANDOFF_MAX_CHARS, record.handoffKind)
+          record.handoff = handoffText(record.transcript ?? [], HANDOFF_MAX_CHARS, record.handoffKind === 'quota' ? 'switch' : record.handoffKind)
         }
       }
     }
+  }
+
+  /** O próximo passo da cadeia que pode rodar agora, ou nada (aí o erro sai como sempre). */
+  private nextFallback(record: ISessionRecord, tried: ReadonlySet<string>): IFallbackStep | undefined {
+    if (!this.bench) return undefined
+    const agent = this.getAgent(record.agentId)
+    return nextStep(fallbackChain(agent, this.current?.fallback), tried, (step) => this.canRun(agent, record.mode, step))
+  }
+
+  /** O passo roda nesta lane, com chave (ou assinatura), fora do banco de reservas e com o provider ligado. */
+  private canRun(agent: IAgent, mode: EMode, step: IFallbackStep): boolean {
+    if (this.bench?.isBenched(step.provider)) return false
+    try {
+      const protocol = this.protocolOf(step.provider)
+      if (!lanesOf(protocol).includes(mode) || !this.adapters.has(adapterKey(protocol, mode))) return false
+      if (!isSubscription(protocol) && this.providers && !this.providers.connection(step.provider)?.key) return false
+      const target = agent.providers.find((candidate) => candidate.provider === step.provider)
+      return !!target && (this.agents.isTargetRunnable?.(agent, target) ?? true)
+    } catch {
+      return false
+    }
+  }
+
+  /** Fica de lado até a cota voltar (quando o erro diz) ou pelo tempo configurado. */
+  private benchProvider(provider: string, resetsAt: string | undefined): void {
+    const back = resetsAt ? Date.parse(resetsAt) : Number.NaN
+    const cooldown = (this.current?.fallback?.cooldownMinutes ?? DEFAULT_COOLDOWN_MINUTES) * 60_000
+    this.bench?.bench(provider, Number.isFinite(back) && back > Date.now() ? back : Date.now() + cooldown)
+  }
+
+  /** A sessão passa para outro provedor e modelo: o estado nativo do anterior fica para trás (ver `reconfigure`). */
+  private moveTo(record: ISessionRecord, step: IFallbackStep): void {
+    const protocol = this.protocolOf(step.provider)
+    record.provider = step.provider
+    record.protocol = protocol
+    record.model = step.model
+    // O nível que o protocolo novo não aceita cai: o adapter o descartaria em silêncio.
+    if (record.reasoning && !REASONING_LEVELS[protocol].includes(record.reasoning)) record.reasoning = undefined
+    record.native = undefined
   }
 
   /**
@@ -405,7 +499,8 @@ export class AgentProvider implements IAgentProvider {
       throw new ModelDisabledError(input.provider ?? agent.providers[0]?.provider ?? '', input.model)
 
     const asked = input.provider || input.model
-    const runnable = (target: IAgentTarget) => this.agents.isTargetRunnable?.(agent, target) ?? true
+    // O provedor sem cota agora (ver `Provider.Bench`) não abre conversa nova enquanto houver outro.
+    const runnable = (target: IAgentTarget) => !this.bench?.isBenched(target.provider) && (this.agents.isTargetRunnable?.(agent, target) ?? true)
     const choice = asked
       ? targetFor(agent, input.provider, input.model)
       : (targetFor(agent, settings.provider, settings.model, runnable) ?? targetFor(agent, settings.provider, settings.model))

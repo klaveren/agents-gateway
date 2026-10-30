@@ -1,3 +1,5 @@
+import type { TProviderFailure } from '@domain/Provider.Failure'
+
 export type TAgentEventType =
   | 'session.created'
   | 'message.started'
@@ -67,4 +69,5 @@ export type IAgentEvent =
   | { type: 'message.completed'; sessionId: string; timestamp: Date; payload?: never }
   | { type: 'message.aborted'; sessionId: string; timestamp: Date; payload?: never }
   | { type: 'session.completed'; sessionId: string; timestamp: Date; payload?: never }
-  | { type: 'error'; sessionId: string; timestamp: Date; payload: { message: string } }
+  /** `kind`: por que o provedor falhou (ver `Provider.Failure`); cota e limite levam ao próximo da cadeia. */
+  | { type: 'error'; sessionId: string; timestamp: Date; payload: { message: string; kind?: TProviderFailure; resetsAt?: string } }

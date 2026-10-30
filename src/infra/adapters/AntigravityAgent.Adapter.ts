@@ -1,4 +1,5 @@
 import { sessionChoice } from '@domain/Agent.Policy'
+import { errorPayload } from '@domain/Provider.Failure'
 import { spawn as nodeSpawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -179,7 +180,7 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
         return
       }
       if (!state.sawResult) {
-        yield { type: 'error', sessionId, timestamp: now(), payload: { message: antigravityFailure(stderr, code) } }
+        yield { type: 'error', sessionId, timestamp: now(), payload: errorPayload(stderr, antigravityFailure(stderr, code)) }
         return
       }
       yield { type: 'message.completed', sessionId, timestamp: now() }
@@ -188,7 +189,7 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
         yield { type: 'message.aborted', sessionId, timestamp: now() }
         return
       }
-      yield { type: 'error', sessionId, timestamp: now(), payload: { message: error instanceof Error ? error.message : String(error) } }
+      yield { type: 'error', sessionId, timestamp: now(), payload: errorPayload(error) }
     } finally {
       record.abort = undefined
       if (child.exitCode === null) child.kill('SIGTERM')
@@ -367,7 +368,8 @@ export function antigravityEvents(line: string, sessionId: string, state: IAntig
     }
     const denied = (result.denied_actions ?? []).map((action) => action.display_name ?? action.action).filter(Boolean)
     if (denied.length) events.push({ type: 'warning', sessionId, timestamp, payload: { message: `Negado pelo sandbox: ${denied.join(', ')}.` } })
-    if (result.status && result.status !== 'SUCCESS') events.push({ type: 'error', sessionId, timestamp, payload: { message: result.error || `Antigravity: ${result.status}` } })
+    if (result.status && result.status !== 'SUCCESS')
+      events.push({ type: 'error', sessionId, timestamp, payload: errorPayload(result.error || result.status || '', result.error || `Antigravity: ${result.status}`) })
     return events
   }
   return []

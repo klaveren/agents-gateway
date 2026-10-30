@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { ApiError } from '@/lib/api'
-import type { ISettings, TAudience, TLimitName } from '@/lib/types'
+import type { IFallbackStep, TAudience, TLimitName } from '@/lib/types'
+import FallbackChain from '@/components/FallbackChain.vue'
 import { useAgentsStore } from '@/stores/agents'
 import { useAuthStore } from '@/stores/auth'
 import { useProvidersStore } from '@/stores/providers'
@@ -29,6 +30,11 @@ const saved = ref<string>()
 const failure = ref<string>()
 /** Os problemas de um 422, campo a campo — mostrados junto do Salvar. */
 const issues = ref<Array<{ field: string; message: string }>>([])
+/** A troca de provedor global, em edição (ver `FallbackChain`). */
+const fallbackChain = ref<IFallbackStep[]>([])
+const cooldownMinutes = ref<number | ''>('')
+const fallbackSaved = ref<string>()
+const fallbackFailure = ref<string>()
 /** Os limites em edição; vazio = volta ao padrão do `.env` (vai como `null`). */
 const limitDrafts = ref<Partial<Record<TLimitName, number | ''>>>({})
 
@@ -95,6 +101,8 @@ watch(
     classifier.value = current.classifierModel ? `${current.classifierProvider ?? ''}::${current.classifierModel}` : ''
     classifyTurns.value = current.classifyTurns ?? false
     builder.value = current.builderModel ? `${current.builderProvider ?? ''}::${current.builderModel}` : ''
+    fallbackChain.value = (current.fallback?.chain ?? []).map((step) => ({ ...step }))
+    cooldownMinutes.value = current.fallback?.cooldownMinutes ?? ''
     limitDrafts.value = Object.fromEntries(LIMITS.map(({ name }) => [name, current.limits?.[name] ?? ''])) as Partial<Record<TLimitName, number | ''>>
   },
   { immediate: true },
@@ -108,6 +116,18 @@ function providerOfModel(id: string): string {
 /** ⚠️ O modelo é do agente: trocar o agente larga o modelo (volta a "Padrão do agente") em vez de mandar um que ele não tem. */
 function onAgentChange() {
   model.value = ''
+}
+
+/** A troca de provedor salva à parte: é outra decisão, e a cadeia vazia a desliga. */
+async function saveFallback() {
+  fallbackSaved.value = fallbackFailure.value = undefined
+  try {
+    await settings.save({ fallback: fallbackChain.value.length || cooldownMinutes.value !== '' ? { chain: fallbackChain.value, ...(cooldownMinutes.value !== '' ? { cooldownMinutes: Number(cooldownMinutes.value) } : {}) } : null })
+    fallbackSaved.value = 'Troca de provedor salva. Vale no próximo turno.'
+  } catch (error) {
+    fallbackFailure.value =
+      error instanceof ApiError && Array.isArray(error.details) ? (error.details as Array<{ message?: string }>).map((item) => item.message).join('; ') : error instanceof Error ? error.message : String(error)
+  }
 }
 
 async function saveSettings() {
@@ -230,6 +250,29 @@ async function saveSettings() {
           <li v-for="(issue, index) in issues" :key="index"><code v-if="issue.field" class="text-xs text-rose-200">{{ issue.field }}</code><template v-if="issue.field">: </template>{{ issue.message }}</li>
         </ul>
         <p v-if="settings.current.updatedBy" class="text-xs text-zinc-500">Última alteração por {{ settings.current.updatedBy }} em {{ new Date(settings.current.updatedAt ?? '').toLocaleString('pt-BR') }}</p>
+      </section>
+
+      <section v-if="auth.isAdmin && settings.current" class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
+        <h2 class="font-medium">Troca de provedor</h2>
+        <p class="text-xs text-zinc-400">
+          Quando a cota (ou o limite de uso) de um provedor acaba no meio de um turno, o turno segue no próximo da lista, com a transcrição e o que já foi feito. Vale para os agentes sem
+          lista própria, e só com os pares que cada agente oferece.
+        </p>
+        <FallbackChain v-model="fallbackChain" :options="builderOptions.map(({ provider, model }) => ({ provider, model }))" />
+        <label class="flex max-w-xs flex-col gap-1 text-sm text-zinc-300">
+          Tempo de espera do provedor sem cota (minutos)
+          <input v-model="cooldownMinutes" type="number" min="1" max="1440" placeholder="15" class="h-9 rounded-lg border border-zinc-800 bg-zinc-900 px-3 text-sm tabular-nums" />
+          <small class="text-xs text-zinc-500">Quando o erro não diz quando a cota volta.</small>
+        </label>
+        <p v-if="settings.current.benched?.length" class="text-xs text-amber-300">
+          Sem cota agora:
+          {{ settings.current.benched.map((item) => `${protocols.providerName(item.provider)} até ${new Date(item.until).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`).join(', ') }}
+        </p>
+        <div class="flex items-center gap-3">
+          <button class="btn btn-primary" @click="saveFallback">Salvar troca</button>
+          <span v-if="fallbackSaved" class="text-sm text-emerald-300">{{ fallbackSaved }}</span>
+          <span v-if="fallbackFailure" class="text-sm text-rose-300">{{ fallbackFailure }}</span>
+        </div>
       </section>
 
       <section v-if="auth.isAdmin && settings.current?.deployment" class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">

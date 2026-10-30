@@ -1,5 +1,6 @@
 import { InvalidSettingsError } from '@domain/errors/Domain.Error'
 import { ILimits, normalizeLimits } from './Limits.Model'
+import type { IFallbackSettings, IFallbackStep } from '@domain/Fallback.Policy'
 
 /**
  * As decisões que mudam sem deploy.
@@ -75,6 +76,9 @@ export interface IAgentSettings {
   /** Os tetos ajustáveis (ver `Limits.Model`). Ausente, ou um limite ausente = o `.env` ou o padrão. */
   limits?: ILimits
 
+  /** A troca de provedor quando a cota acaba, para os agentes que não têm a própria (ver `Fallback.Policy`). */
+  fallback?: IFallbackSettings
+
   updatedAt?: Date
   updatedBy?: string
 }
@@ -123,12 +127,25 @@ export function normalizeSettings(raw: unknown): IAgentSettings {
     builderProvider: text(stored.builderProvider),
     builderModel: text(stored.builderModel),
     limits: normalizeLimits(stored.limits),
+    fallback: normalizeFallback(stored.fallback),
     updatedAt: date(stored.updatedAt),
     updatedBy: text(stored.updatedBy),
   }
 
   // Sem chaves `undefined`: quem serializa e quem compara só enxerga o que existe.
   return Object.fromEntries(Object.entries(settings).filter(([, value]) => value !== undefined)) as unknown as IAgentSettings
+}
+
+/** A cadeia gravada, só com passos bem formados. Vazia e sem tempo = ausente. */
+function normalizeFallback(raw: unknown): IFallbackSettings | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const stored = raw as Record<string, unknown>
+  const chain = (Array.isArray(stored.chain) ? stored.chain : [])
+    .filter((step): step is IFallbackStep => typeof step?.provider === 'string' && typeof step?.model === 'string' && !!step.provider && !!step.model)
+    .map((step) => ({ provider: step.provider, model: step.model }))
+  const cooldown = typeof stored.cooldownMinutes === 'number' && Number.isFinite(stored.cooldownMinutes) ? stored.cooldownMinutes : undefined
+  if (!chain.length && cooldown === undefined) return undefined
+  return { chain, ...(cooldown !== undefined ? { cooldownMinutes: cooldown } : {}) }
 }
 
 /**
@@ -145,7 +162,19 @@ export type TSettingsChange = {
 } & { limits?: { [K in keyof ILimits]?: number | null } | null }
 
 /** Os campos que quem salva controla. `updatedAt`/`updatedBy` são carimbo, não escolha. */
-const EDITABLE = ['audience', 'agentId', 'provider', 'model', 'classifierModel', 'classifierProvider', 'classifyTurns', 'builderProvider', 'builderModel', 'limits'] as const
+const EDITABLE = [
+  'audience',
+  'agentId',
+  'provider',
+  'model',
+  'classifierModel',
+  'classifierProvider',
+  'classifyTurns',
+  'builderProvider',
+  'builderModel',
+  'limits',
+  'fallback',
+] as const
 const REQUIRED = ['audience'] as const
 
 /**

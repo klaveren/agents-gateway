@@ -6,6 +6,7 @@ import { effortLabel } from '@/lib/format'
 import { BUILD_KINDS, builderAgentId, type TBuildKind } from '@/lib/builder'
 import { defaultLanes, findOrphans, isUsableProvider, pruneModels, pruneNatives, summarizeIssues, unionLanes, unionLevels } from '@/lib/agentForm'
 import { useProvidersStore } from '@/stores/providers'
+import FallbackChain from './FallbackChain.vue'
 import { useProtocolsStore } from '@/stores/protocols'
 import type { IAgentDetail, IAgentInput, ICatalogModel, INativeTool, TMode, TSandboxLevel } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
@@ -268,6 +269,17 @@ const blank = (): IAgentInput => ({
 })
 const form = ref<IAgentInput>(blank())
 
+const FALLBACK_MODES: Array<{ value: 'global' | 'own' | 'off'; label: string }> = [
+  { value: 'global', label: 'A lista global' },
+  { value: 'own', label: 'Lista própria' },
+  { value: 'off', label: 'Desligada' },
+]
+/** Os pares que a lista própria pode ter: os provedores e modelos deste agente. */
+const ownSteps = computed(() => form.value.providers.flatMap((target) => target.models.map((model) => ({ provider: target.provider, model }))))
+function setFallbackMode(mode: 'global' | 'own' | 'off') {
+  form.value.fallback = mode === 'global' ? null : { mode, chain: mode === 'own' ? (form.value.fallback?.chain ?? []) : [] }
+}
+
 /** Entradas `sdk:`/`agent:`/`mcp:` que nenhuma lista oferece: sem checkbox, mas o servidor recusa o salvamento. */
 const orphans = computed(() =>
   findOrphans(form.value.allowedTools, {
@@ -476,6 +488,7 @@ watch(
           projectId: agent.projectId ?? null,
           permissions: (agent.permissions ?? []).map((rule) => ({ ...rule })),
           terminal: agent.terminal ? { ...agent.terminal } : null,
+          fallback: agent.fallback ? { mode: agent.fallback.mode, chain: (agent.fallback.chain ?? []).map((step) => ({ ...step })) } : null,
         }
       : blank()
     issues.value = {}
@@ -521,6 +534,8 @@ async function save() {
       permissions: (form.value.permissions ?? []).filter((rule) => rule.pattern.trim()),
       // Vazio volta ao global (Sistema → Limites).
       terminal: form.value.terminal?.timeoutSeconds || form.value.terminal?.maxOutputChars ? form.value.terminal : null,
+      // `global` é o padrão: vai como `null`.
+      fallback: form.value.fallback && form.value.fallback.mode !== 'global' ? form.value.fallback : null,
     }
     const saved = await agents.save(input, props.creating)
     emit('saved', saved.id)
@@ -843,6 +858,17 @@ async function remove() {
             />
           </label>
         </div>
+      </div>
+      <div class="flex flex-col gap-2">
+        <h3 class="text-sm font-medium text-zinc-200">Troca de provedor</h3>
+        <p class="text-xs text-zinc-500">Quando a cota de um provedor acaba no meio do turno, o turno segue no próximo da lista, com a transcrição. Só entre os provedores deste agente.</p>
+        <div class="flex flex-wrap gap-3 text-sm">
+          <label v-for="option in FALLBACK_MODES" :key="option.value" class="flex items-center gap-2">
+            <input type="radio" class="accent-emerald-500" :checked="(form.fallback?.mode ?? 'global') === option.value" @change="setFallbackMode(option.value)" />
+            {{ option.label }}
+          </label>
+        </div>
+        <FallbackChain v-if="form.fallback?.mode === 'own'" v-model="form.fallback.chain!" :options="ownSteps" />
       </div>
       <p class="text-xs text-zinc-500">Só no modo Agente: o nível de acesso das assinaturas e os extras que só um provedor tem. Terminal, arquivos e busca ficam em Ferramentas.</p>
       <p v-if="!form.modes.includes('agent')" class="text-xs text-amber-300">O modo Agente está desligado: nada daqui é usado.</p>

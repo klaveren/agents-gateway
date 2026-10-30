@@ -1,4 +1,5 @@
 import { sessionChoice } from '@domain/Agent.Policy'
+import { errorPayload } from '@domain/Provider.Failure'
 import { randomUUID } from 'node:crypto'
 import { nativeToolsOf } from '@domain/Native.Tools'
 import { IConnectionSource, requireConnection } from './support/Keyed.Client'
@@ -325,7 +326,7 @@ export class GoogleAgentAdapter implements IAgentAdapter {
 
       const message = error instanceof Error ? error.message : String(error)
       console.error('[GoogleAgent] Error:', message)
-      yield { type: 'error', sessionId, timestamp: new Date(), payload: { message } }
+      yield { type: 'error', sessionId, timestamp: new Date(), payload: errorPayload(error, message) }
     } finally {
       record.abort = undefined
     }

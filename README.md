@@ -579,6 +579,21 @@ Clicking a commit shows only its diff, and the panel refreshes when a turn ends.
 - secrets (`.env`, keys) are listed without content;
 - at most 300 files and 200 KB of diff per file.
 
+**Provider fallback when a quota runs out.** When a provider answers with a quota, usage-limit or
+rate-limit error mid-turn (HTTP 429, `insufficient_quota`, `RESOURCE_EXHAUSTED`, the Claude
+subscription's `rate_limit_event`, Codex's "usage limit"), the turn goes on with the next step of
+the chain instead of stopping on the error:
+
+- **The chain:** the global one is set in Configuração → Troca de provedor. Each agent may use it,
+  keep its own (`fallback: { mode: 'own', chain }`), or turn it off. A step runs only if the agent
+  offers that provider and model, so the global chain never adds a provider to an agent.
+- **The switch:** the new provider gets the transcript plus what the turn already did (text and
+  tools), so it does not repeat work. The turn shows a warning, and the conversation stays on the
+  new provider.
+- **The bench:** the provider out of quota stays aside until the error says it resets (or 15
+  minutes, configurable). New conversations start on the next one, and a conversation still on it
+  switches before its next turn.
+
 **Asynchronous turns**, for an orchestrator that drives agents:
 
 - `POST /v1/sessions/:id/turns` answers 202 at once, and the turn runs on the server with no

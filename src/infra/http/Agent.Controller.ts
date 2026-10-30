@@ -124,6 +124,8 @@ export interface IAgentControllerDeps {
   pricing?: TModelPricing
   /** Por onde chegam as mudanças nas conversas gravadas. Ausente = `/conversations/events` só mantém a conexão. */
   events?: IConversationEvents
+  /** Os provedores sem cota agora (ver `Provider.Bench`), para a tela de configurações. */
+  bench?: { list(): Array<{ provider: string; until: Date }> }
   /** O turno ao vivo (ver `Turn.Live`). Ausente = `/sessions/:id/live` só mantém a conexão. */
   live?: ITurnLive
   /** O agente foi apagado: o que é dele e mora fora do cadastro (os hooks) vai junto. */
@@ -299,8 +301,12 @@ export class AgentController {
     classifierProvider?: string | null
     builderProvider?: string | null
     builderModel?: string | null
+    fallback?: { chain: Array<{ provider: string; model: string }> } | null
   }) {
     const issues: Array<{ field: string; message: string }> = []
+    // A cadeia global: só provedor que existe (o agente ainda filtra pelo que oferece, na hora da troca).
+    for (const step of body.fallback?.chain ?? [])
+      if (this.usecases.providers && !this.usecases.providers.get(step.provider)) issues.push({ field: 'fallback', message: `unknown provider: ${step.provider}` })
     const current = await this.usecases.settings.read()
     const agentId = body.agentId === undefined ? current.agentId : body.agentId || undefined
     const agent = agentId ? this.agents.get(agentId) : this.agents.fallback()
@@ -623,7 +629,8 @@ export class AgentController {
         const current = body.permissions === undefined ? this.agents.get(parsed.id)?.permissions : undefined
         // O mesmo para o terminal: ausente mantém; `null` volta ao global.
         const terminal = body.terminal === undefined ? this.agents.get(parsed.id)?.terminal : undefined
-        const input = { ...parsed, ...(current ? { permissions: current } : {}), ...(terminal ? { terminal } : {}) }
+        const fallback = body.fallback === undefined ? this.agents.get(parsed.id)?.fallback : undefined
+        const input = { ...parsed, ...(current ? { permissions: current } : {}), ...(terminal ? { terminal } : {}), ...(fallback ? { fallback } : {}) }
         const issues = this.projectIssues(input)
         if (issues.length) throw new HttpError(422, 'validation_error', 'Request body is invalid', issues)
 
@@ -842,6 +849,8 @@ export class AgentController {
           streamsPerOwner: streamsPerOwner(),
         },
         limitBounds: LIMIT_BOUNDS,
+        // Os provedores sem cota agora (ver `Provider.Bench`) e quando voltam.
+        benched: this.usecases.bench?.list() ?? [],
         // ⛔ Decisões de implantação e de segurança: a tela MOSTRA, e só o deploy muda.
         deployment: {
           localToolsEnabled: process.env.LOCAL_TOOLS_ENABLED?.trim() || undefined,
@@ -1689,6 +1698,10 @@ function toAgentInput(id: string, body: TAgentBody): IAgent {
     ...(body.projectId ? { projectId: body.projectId } : {}),
     ...(body.permissions ? { permissions: body.permissions } : {}),
     ...(body.terminal && (body.terminal.timeoutSeconds || body.terminal.maxOutputChars) ? { terminal: body.terminal } : {}),
+    // `global` é o padrão: não se grava.
+    ...(body.fallback && body.fallback.mode !== 'global'
+      ? { fallback: { mode: body.fallback.mode, ...(body.fallback.mode === 'own' ? { chain: body.fallback.chain ?? [] } : {}) } }
+      : {}),
   }
 }
 

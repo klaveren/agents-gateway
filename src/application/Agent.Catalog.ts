@@ -160,5 +160,8 @@ function toAgent(stored: IStoredAgent): IAgent {
     ...(stored.projectId ? { projectId: stored.projectId } : {}),
     ...(stored.permissions?.length ? { permissions: stored.permissions } : {}),
     ...(stored.terminal && (stored.terminal.timeoutSeconds || stored.terminal.maxOutputChars) ? { terminal: { ...stored.terminal } } : {}),
+    ...(stored.fallback
+      ? { fallback: { mode: stored.fallback.mode, ...(stored.fallback.chain?.length ? { chain: stored.fallback.chain.map((step) => ({ ...step })) } : {}) } }
+      : {}),
   }
 }

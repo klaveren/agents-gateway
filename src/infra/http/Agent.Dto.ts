@@ -1,4 +1,5 @@
 import type { IPermissionRule } from '@domain/Permission.Policy'
+import type { IAgentFallback } from '@domain/Fallback.Policy'
 import { IAgent, IAgentTerminal } from '@domain/models/Agent.Model'
 import { IModelPrice, MODEL_PRICING, TModelPricing } from '@domain/models/Model.Pricing'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -82,6 +83,7 @@ export interface IAgentDetailDto extends IAgentDto {
   /** As regras de permissão do agente (a camada dele). Só para quem administra. */
   permissions?: IPermissionRule[]
   terminal?: IAgentTerminal
+  fallback?: IAgentFallback
   updatedAt?: Date
   updatedBy?: string
 }
@@ -146,6 +148,7 @@ export function toAgentDetailDto(
     soul: entry.agent.soul,
     ...(entry.agent.permissions?.length ? { permissions: entry.agent.permissions } : {}),
     ...(entry.agent.terminal ? { terminal: entry.agent.terminal } : {}),
+    ...(entry.agent.fallback ? { fallback: entry.agent.fallback } : {}),
     updatedAt: entry.updatedAt,
     updatedBy: entry.updatedBy,
   }

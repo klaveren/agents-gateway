@@ -1,4 +1,5 @@
 import { sessionChoice } from '@domain/Agent.Policy'
+import { errorPayload } from '@domain/Provider.Failure'
 import {
   Agent,
   codeInterpreterTool,
@@ -199,7 +200,7 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
 
       const message = error instanceof Error ? error.message : String(error)
       console.error('[OpenAIAgent] Error:', message)
-      yield { type: 'error', sessionId, timestamp: new Date(), payload: { message } }
+      yield { type: 'error', sessionId, timestamp: new Date(), payload: errorPayload(error, message) }
     } finally {
       record.abort = undefined
       await this.closeMcpServers(mcpServers)
