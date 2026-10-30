@@ -12,6 +12,7 @@ import { fakeMcpRegistry, mcpTool } from '@infra/mcp/Mcp.Fake'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { CLAUDE_TEST_AGENT } from '../../testing/Agents.Fixture'
 import { ILocalTool } from '@infra/tools/Tool.Types'
+import { LoopGuard } from '@infra/tools/Loop.Guard'
 import { ClaudeAgentAdapter, cliEnv } from './ClaudeAgent.Adapter'
 import { SessionStore } from '@infra/session/Session.Store'
 
@@ -497,6 +498,30 @@ describe('ClaudeAgentAdapter', () => {
       assert.ok(seen[0].options?.hooks?.PreToolUse?.length)
       const decision = (await seen[0].options!.canUseTool!('Bash', { command: 'ls' }, options)) as { behavior: string; updatedInput?: unknown }
       assert.deepStrictEqual([decision.behavior, decision.updatedInput, fake.calls], ['allow', undefined, []])
+    })
+
+    it('⛔ laço: o PreToolUse recusa a nativa repetida; as locais ficam para o envoltório delas', async () => {
+      const seen: TQueryParams[] = []
+      const loops = new LoopGuard(() => ({ refuseAt: 2, stopAt: 9, maxErrors: 9 }))
+      const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog: catalogWith(true), sandbox: sandbox(true), loops })
+      const global = { ...getAgent(), allowedTools: ['sdk:Bash'] }
+      const session = await adapter.createSession(global, { agentId: CLAUDE_TEST_AGENT.id })
+      await drain(adapter.sendMessage(global, session.id, { text: 'oi' }, {}))
+      const hook = seen[0].options!.hooks!.PreToolUse![0].hooks[0]
+      const call = async (tool: string, input: Record<string, unknown>) =>
+        (
+          (await hook({ hook_event_name: 'PreToolUse', tool_name: tool, tool_input: input, tool_use_id: 't' } as never, 't', { signal: options.signal })) as {
+            hookSpecificOutput: { permissionDecision: string; permissionDecisionReason?: string }
+          }
+        ).hookSpecificOutput
+
+      loops.open(session.id)
+      assert.strictEqual((await call('Bash', { command: 'cat x' })).permissionDecision, 'allow')
+      const second = await call('Bash', { command: 'cat x' })
+      assert.deepStrictEqual([second.permissionDecision, /detector de laço/.test(second.permissionDecisionReason ?? '')], ['deny', true])
+      assert.strictEqual((await call('Bash', { command: 'cat y' })).permissionDecision, 'allow', 'argumento diferente não conta')
+      await call('mcp__local__run_bash', { command: 'ls' })
+      assert.notStrictEqual((await call('mcp__local__run_bash', { command: 'ls' })).permissionDecisionReason?.includes('laço'), true)
     })
   })
 })

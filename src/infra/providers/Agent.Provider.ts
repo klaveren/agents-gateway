@@ -46,6 +46,7 @@ import { ISession, usageKey } from '@domain/models/Session.Model'
 import { IAgentProvider, IResumeInput, ISessionChange } from '@domain/ports/AgentProvider.Port'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
+import { LoopGuard } from '@infra/tools/Loop.Guard'
 import { ProviderBench } from './Provider.Bench'
 
 /** Chave do mapa de adapters: cada provider tem uma implementação por lane. */
@@ -97,6 +98,9 @@ export class AgentProvider implements IAgentProvider {
 
     /** A janela de contexto do modelo (`ModelCatalogService.contextOf`): é o que dispara a compactação. Ausente = não compacta sozinho. */
     private readonly contextOf?: (provider: string, model: string) => number | undefined,
+
+    /** O detector de laço (ver `Loop.Guard`): aberto a cada turno, para o turno que repete a mesma chamada. Ausente = sem detector. */
+    private readonly loops?: LoopGuard,
   ) {
     /**
      * Uma leitura no boot, e depois só quando muda.
@@ -200,6 +204,7 @@ export class AgentProvider implements IAgentProvider {
     const workFolder = workFolderOf(record.metadata, conversationProject)
 
     record.status = 'running'
+    this.loops?.open(sessionId)
     record.turns += 1
     // Os provedores já tentados neste turno: a cota é da conta, então o provedor inteiro sai, não só o modelo.
     const tried = new Set<string>([record.provider])
@@ -293,7 +298,17 @@ export class AgentProvider implements IAgentProvider {
           else if (event.type === 'text.delta') turn.text += event.payload.text
           else if (event.type === 'tool.started') turn.tools.push(event.payload.tool)
           else if (event.type === 'message.completed') turn.completed = true
+          if (event.type === 'tool.started') this.loops?.observe(sessionId, { type: 'tool.started', tool: event.payload.tool, args: event.payload.args })
+          else if (event.type === 'tool.error' || event.type === 'tool.result') this.loops?.observe(sessionId, { type: event.type })
           yield event
+          // ⛔ LAÇO: a mesma chamada repetida (ou erros seguidos) além do limite para o turno (ver `Loop.Policy`).
+          const loop = this.loops?.stopReason(sessionId)
+          if (loop) {
+            await adapter.cancel(sessionId).catch(() => undefined)
+            yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: loop } }
+            yield { type: 'message.aborted', sessionId, timestamp: new Date() }
+            return
+          }
         }
         if (!exhausted) break
 
@@ -309,6 +324,7 @@ export class AgentProvider implements IAgentProvider {
       }
     } finally {
       record.status = 'idle'
+      this.loops?.close(sessionId)
       // ⚖️ O turno entra na transcrição mesmo interrompido (o que saiu, saiu).
       if (turn.text || turn.tools.length) {
         record.transcript = [...(record.transcript ?? []), { request: input.text, files: input.files?.map((file) => file.name), text: turn.text, tools: turn.tools, by: turn.by }]

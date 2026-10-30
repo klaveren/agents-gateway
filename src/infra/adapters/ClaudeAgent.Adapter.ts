@@ -25,7 +25,7 @@ import { IFileAttachment, IMessageInput } from '@domain/models/MessageInput.Mode
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { sessionPrefix } from '@infra/session/Session.Key'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
-import { buildClaudeMcpServers, claudeHiddenTools, claudeMcpServerName } from '@infra/tools/bridges/Claude.ToolBridge'
+import { buildClaudeMcpServers, claudeHiddenTools, claudeMcpServerName, LOCAL_SERVER_NAME } from '@infra/tools/bridges/Claude.ToolBridge'
 import { IAgentMcpServer, ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { composeSystemPrompt, maxToolTurns } from './support/Prompt.Helper'
 
@@ -56,6 +56,8 @@ export interface IClaudeAgentAdapterDeps {
   catalog?: ToolCatalog
   /** As permissões dos agentes: o portão confere as regras de leitura e escrita nas nativas de arquivo. */
   permissions?: IPermissionChecker
+  /** O detector de laço (ver `Loop.Guard`): o `PreToolUse` recusa a chamada repetida. Ausente = sem detector. */
+  loops?: { check(sessionId: string | undefined, tool: string, args: unknown): string | undefined }
   /**
    * Pela ASSINATURA (Claude Pro/Max), protocolo `claude-sub`: nenhuma chave de API vai ao CLI, que usa o
    * login do host — ou o `CLAUDE_CODE_OAUTH_TOKEN` (de `claude setup-token`) salvo no lugar da chave.
@@ -81,6 +83,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
   private readonly catalog?: ToolCatalog
   private readonly sandbox: IProjectSandbox
   private readonly permissions?: IPermissionChecker
+  private readonly loops?: IClaudeAgentAdapterDeps['loops']
 
   private readonly connections?: IConnectionSource
   private readonly protocol: EProvider
@@ -93,6 +96,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     this.catalog = deps.catalog
     this.sandbox = deps.sandbox ?? projectSandbox()
     this.permissions = deps.permissions
+    this.loops = deps.loops
   }
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
@@ -198,7 +202,10 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       // ⛔ A MESMA decisão também no PreToolUse, que roda em toda ferramenta e em TODO agente — o SDK libera leitura
       // (Read, Glob, Grep) sem passar pelo `canUseTool`, e o filtro de caminho (projeto) e a lista protegida (.env,
       // chaves, dados do gateway) seriam pulados.
-      hooks: { PreToolUse: [{ hooks: [preToolUse(gate)] }] },
+      // O detector de laço (ver `Loop.Guard`) vale aqui para as nativas e as do MCP; as locais já passam por ele ao rodar.
+      hooks: {
+        PreToolUse: [{ hooks: [preToolUse(gate, (tool, args) => (tool.startsWith(`mcp__${LOCAL_SERVER_NAME}__`) ? undefined : this.loops?.check(sessionId, tool, args)))] }],
+      },
       // Isolamento: sem isto o subprocesso lê o ~/.claude e o CLAUDE.md da máquina.
       settingSources: [],
       includePartialMessages: true,
@@ -593,9 +600,11 @@ export function cliEnv(connection: { key: string; baseUrl?: string; compatible: 
 }
 
 /** O `PreToolUse` com a decisão do portão: nega o que o portão nega e aplica o `updatedInput` (o Bash cercado). */
-function preToolUse(gate: CanUseTool): HookCallback {
+function preToolUse(gate: CanUseTool, loop: (tool: string, args: unknown) => string | undefined = () => undefined): HookCallback {
   return async (input, _toolUseId, { signal }) => {
     if (input.hook_event_name !== 'PreToolUse') return {}
+    const repeated = loop(input.tool_name, input.tool_input ?? {})
+    if (repeated) return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: repeated } }
     const decision = await gate(input.tool_name, (input.tool_input ?? {}) as Record<string, unknown>, { signal, toolUseID: input.tool_use_id } as Parameters<CanUseTool>[2])
     if (decision?.behavior === 'allow')
       return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', ...(decision.updatedInput ? { updatedInput: decision.updatedInput } : {}) } }

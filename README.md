@@ -192,6 +192,9 @@ tools and is retried with exponential backoff (1s up to 60s). No restart either 
 | `MAX_OUTPUT_TOKENS`     | `4096`                      | Output cap per model call in the chat lane.                                                            |
 | `MAX_TOOL_TURNS`        | `12`                        | Tool round-trips allowed in one turn.                                                                  |
 | `COMPACT_AT_PERCENT`    | `80`                        | Context use (% of the model window) that compacts the conversation at the start of the next turn.      |
+| `LOOP_REFUSE_AT`        | `4`                         | The identical tool call (same tool and arguments) refused from this time on, within a turn.            |
+| `LOOP_STOP_AT`          | `6`                         | The identical tool call that stops the turn.                                                           |
+| `LOOP_MAX_ERRORS`       | `8`                         | Tool errors in a row that stop the turn.                                                               |
 | `BASH_CWD`              | _(process cwd)_             | Working directory of `run_bash`.                                                                       |
 | `BASH_TIMEOUT_MS`       | `20000`                     | `run_bash` timeout.                                                                                    |
 | `BASH_MAX_OUTPUT_CHARS` | `4000`                      | `run_bash` output cap.                                                                                 |
@@ -608,6 +611,18 @@ turns in full. The summary is not stored as a turn; its usage counts.
   before and after.
 - **If the summary fails** (an error, or the model calls a tool), the session restarts with the
   recent transcript instead.
+
+**Loop detector.** A call is identical when it has the same tool and arguments (key order does
+not matter), within one turn:
+
+- **The 4th identical call is refused** before it runs: the model gets the reason as the tool
+  error and is told to change approach. This covers the gateway tools on every lane (Codex and
+  Antigravity included) and the Claude native tools (`PreToolUse`).
+- **The 6th identical call, or 8 tool errors in a row, stop the turn.** The turn shows the reason
+  and is stored as interrupted. Calls that only show up in the event stream (the Codex natives)
+  count for this.
+- The three numbers live in Configuração → Limites (`LOOP_REFUSE_AT`, `LOOP_STOP_AT`,
+  `LOOP_MAX_ERRORS`).
 
 **Asynchronous turns**, for an orchestrator that drives agents:
 

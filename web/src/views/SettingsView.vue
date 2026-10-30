@@ -47,6 +47,9 @@ const LIMITS: Array<{ name: TLimitName; label: string }> = [
   { name: 'sessionsPerOwner', label: 'Conversas simultâneas por pessoa' },
   { name: 'streamsPerOwner', label: 'Respostas simultâneas por pessoa' },
   { name: 'compactAtPercent', label: 'Compactar o contexto em (% da janela)' },
+  { name: 'loopRefuseAt', label: 'Laço: recusa a chamada repetida na vez' },
+  { name: 'loopStopAt', label: 'Laço: para o turno na chamada repetida' },
+  { name: 'loopMaxErrors', label: 'Laço: para o turno com erros seguidos' },
 ]
 
 const DEPLOYMENT: Array<{ key: 'localToolsEnabled' | 'allowAnonymous'; label: string }> = [
