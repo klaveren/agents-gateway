@@ -317,6 +317,16 @@ describe('send: falhas', () => {
     expect(thread.sessionId).toBeUndefined()
   })
 
+  it('o 422 mostra o motivo que a API mandou, não o "Request body is invalid" genérico', async () => {
+    const reason = 'the agent has no permission for repository logiccus'
+    routes({ '/sessions': () => Promise.reject(new ApiError(422, 'validation_error', 'Request body is invalid', [{ field: 'repository', message: reason }])) })
+    const thread = useThreadStore()
+    thread.startDraft({ agentId: 'x', mode: 'agent', tools: false, model: 'm1', repository: 'logiccus' })
+
+    expect(await thread.send('oi', [])).toEqual({ ok: false })
+    expect(thread.error).toBe(reason)
+  })
+
   it('a sessão criada num envio que falhou ainda troca a rota no próximo que der certo', async () => {
     routes({ '/sessions': () => ({ id: 'novo' }) })
     const thread = useThreadStore()
