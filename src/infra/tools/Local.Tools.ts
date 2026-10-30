@@ -10,6 +10,7 @@ import { analyzeShell } from '@infra/permissions/Shell.Parse'
 import { bashPolicy, denyReason, truncate, type IBashPolicy } from './Bash.Guard'
 import { subscriptionEnv, workspaceFor } from '@infra/adapters/support/Subscription.Workspace'
 import { accountsDir, ISshKitIdentity, removeSshKit, writeSshKit } from '@infra/accounts/Ssh.Kit'
+import { CLUSTER_SECRET_REFUSAL, dumpsClusterSecret } from '@domain/Secret.Mask'
 import { BACKGROUND_LIMITS, BackgroundProcesses, backgroundProcesses, clipOutput, startCommand, tailOf } from './Background.Processes'
 import { IProjectSandbox, projectSandbox, SANDBOX_SHELL } from '@infra/sandbox/Project.Sandbox'
 import { DOC_KINDS, IProjectDoc, READ_DOC_TOOL, SEARCH_DOCS_TOOL, TDocKind } from '@domain/models/ProjectDoc.Model'
@@ -72,6 +73,8 @@ export interface ILocalToolDeps {
   agentTerminal?: (agentId: string) => { timeoutSeconds?: number; maxOutputChars?: number } | undefined
   /** Os processos em segundo plano (ver `Background.Processes`). Ausente = o do processo. */
   processes?: BackgroundProcesses
+  /** A máscara de segredos (ver `Secret.Masker`). Ausente = a saída vai como saiu. */
+  mask?: ILocalMask
   /** As contas do projeto que vão para cada comando (ver `ProjectAccounts.Service`). Ausente = nenhuma. */
   accounts?: {
     commandEnv(projectId: string, allowed: (id: string) => boolean): Promise<{ env: Record<string, string>; problems: string[]; ssh?: ISshKitIdentity[] }>
@@ -124,6 +127,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
    *    lendo o `.env` falha no sistema operacional —, e a rede só sai pela porta do gateway, destino a destino.
    * Vale para TODO agente; sem cerco no servidor, o terminal fica bloqueado.
    */
+  const masked = (text: string, context: IExecutionContext | undefined) => (deps.mask ? deps.mask.text(text, context?.sessionId) : text)
+
   /** O tempo e a saída deste agente (o campo `terminal` dele), ou o global. */
   function terminalOf(context: IExecutionContext | undefined): { timeoutMs: number; maxOutputChars: number } {
     const own = context?.agentId ? deps.agentTerminal?.(context.agentId) : undefined
@@ -161,7 +166,21 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     // linha do comando, que aparece na lista de processos.
     const accounts =
       asker.projectId && deps.accounts ? await deps.accounts.commandEnv(asker.projectId, (id) => permissions.check(asker, { category: 'account', value: id }).allowed) : undefined
-    const notes = accounts?.problems.length ? `${accounts.problems.map((problem) => `⚠️ ${problem}`).join('\n')}\n` : ''
+    // ⛔ O que as contas entregaram a ESTE comando passa a ser mascarado em tudo o que a conversa mostra e grava.
+    if (accounts && context?.sessionId)
+      deps.mask?.register(context.sessionId, [
+        ...Object.entries(accounts.env)
+          .filter(([name]) => !name.startsWith('GIT_CONFIG_'))
+          .map(([name, value]) => ({ value, label: name })),
+        ...(accounts.ssh ?? []).map((identity) => ({ value: identity.privateKey, label: `ssh ${identity.id}` })),
+      ])
+    const literal = deps.mask?.literalIn(command, context?.sessionId)
+    const notes = [
+      ...(accounts?.problems ?? []).map((problem) => `⚠️ ${problem}`),
+      ...(literal ? [`⚠️ o comando tem um segredo escrito por extenso (${literal}): use a variável de ambiente, não o valor.`] : []),
+    ]
+      .map((line) => `${line}\n`)
+      .join('')
     const gate = networkGate()
     let sshKit: string | undefined
     const token = gate.register((host, port) => {
@@ -199,7 +218,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     const id = processes.newId()
     const logFile = join(prepared.logDir, `${id}.log`)
     const result = await startCommand(prepared.line, { cwd: prepared.root, env: prepared.env, shell: SANDBOX_SHELL, timeoutMs, logFile, onExit: prepared.release }).done
-    const raw = result.output || (result.timedOut ? '' : 'Command executed successfully with no output.')
+    // Mascarado ANTES do corte: um segredo partido no limite escaparia.
+    const raw = masked(result.output, context) || (result.timedOut ? '' : 'Command executed successfully with no output.')
     const long = raw.length > limits.maxOutputChars
     if (long && context?.sessionId)
       processes.remember({ id, sessionId: context.sessionId, name: command.slice(0, 80), command, startedAt: new Date(), code: result.code, timedOut: result.timedOut, logFile })
@@ -249,7 +269,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     }
   }
 
-  return [
+  const tools: ILocalTool[] = [
     {
       origin: 'local',
       name: 'search_web',
@@ -292,6 +312,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
         if (denied) {
           return { status: 'error', result: `Refused by the gateway tool policy: ${denied}.` }
         }
+        if (dumpsClusterSecret(command)) return { status: 'error', result: CLUSTER_SECRET_REFUSAL }
         const asked = Number(args.timeoutSeconds)
         if (deps.permissions) return guardedBash(command, context, deps.permissions, Number.isFinite(asked) ? asked : undefined)
 
@@ -348,6 +369,16 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     ...(deps.drafts ? [proposeDraftTool(deps.drafts)] : []),
     ...(deps.todos?.saveTodos ? [updateTodosTool(deps.todos)] : []),
   ]
+  // ⛔ Toda saída de ferramenta local passa pela máscara (ver `Secret.Mask`): o `read_file` de uma config, a busca, os logs.
+  if (!deps.mask) return tools
+  const mask = deps.mask
+  return tools.map((tool) => ({
+    ...tool,
+    async execute(args: Record<string, unknown>, context?: IExecutionContext) {
+      const outcome = await tool.execute(args, context)
+      return { ...outcome, result: mask.text(outcome.result, context?.sessionId) }
+    },
+  }))
 }
 
 /**
@@ -688,6 +719,7 @@ function backgroundTools(
         const command = String(args.command ?? '')
         const denied = denyReason(command)
         if (denied) return { status: 'error', result: `Refused by the gateway tool policy: ${denied}.` }
+        if (dumpsClusterSecret(command)) return { status: 'error', result: CLUSTER_SECRET_REFUSAL }
         return start(command, typeof args.name === 'string' ? args.name : undefined, context)
       },
     },
@@ -743,4 +775,11 @@ function backgroundTools(
       },
     },
   ]
+}
+
+/** A máscara que as ferramentas usam (ver `Secret.Masker`). */
+export interface ILocalMask {
+  text(text: string, sessionId?: string): string
+  register(sessionId: string, secrets: ReadonlyArray<{ value: string; label: string }>): void
+  literalIn(command: string, sessionId?: string): string | undefined
 }

@@ -67,6 +67,36 @@ const stubProvider = (overrides: Partial<IAgentProvider> = {}): IAgentProvider =
 })
 
 describe('SendMessageUseCase', () => {
+  it('⛔ com a máscara, o que a tela recebe e o que se grava saem mascarados (inclusive o segredo partido entre pedaços)', async () => {
+    const repository = new RecordingRepository()
+    const mask = {
+      text: (text: string) => text.split('segredo-xyz-123').join('[segredo:x]'),
+      deep: <T>(value: T) => JSON.parse(JSON.stringify(value).split('segredo-xyz-123').join('[segredo:x]')) as T,
+    }
+    const usecase = new SendMessageUseCase(
+      stubProvider({
+        describe: () => session(),
+        sendMessage: async function* (sessionId) {
+          yield { type: 'tool.started', sessionId, payload: { tool: 'run_bash', args: { command: 'echo segredo-xyz-123' } }, timestamp: new Date() }
+          yield { type: 'tool.result', sessionId, payload: { tool: 'run_bash', result: 'segredo-xyz-123' }, timestamp: new Date() }
+          yield { type: 'text.delta', sessionId, payload: { text: 'o valor é segredo-' }, timestamp: new Date() }
+          yield { type: 'text.delta', sessionId, payload: { text: 'xyz-123' }, timestamp: new Date() }
+          yield { type: 'message.completed', sessionId, timestamp: new Date() }
+        },
+      }),
+      repository,
+      undefined,
+      mask,
+    )
+    const recorded = repository.recorded()
+    const events = []
+    for await (const event of usecase.execute('s', { text: 'oi' })) events.push(event)
+    await recorded
+    assert.ok(!JSON.stringify(events.slice(0, 2)).includes('segredo-xyz-123'))
+    assert.strictEqual(repository.turns[0].text, 'o valor é [segredo:x]')
+    assert.ok(!JSON.stringify(repository.turns[0].toolCalls).includes('segredo-xyz-123'))
+  })
+
   it('passes the stream through in order, keyed only by session id', async () => {
     let seenSessionId: string | undefined
 

@@ -4,6 +4,8 @@ import { ProjectAccountsService } from '@application/ProjectAccounts.Service'
 import { SqliteProjectAccountRepository } from '@infra/persistence/Sqlite.ProjectAccountRepository'
 import { PermissionsController } from './Permissions.Controller'
 import { ProjectAccountsController } from './ProjectAccounts.Controller'
+import { SecretMaskController } from './SecretMask.Controller'
+import { SecretMasker } from '@infra/secrets/Secret.Masker'
 import { SchedulesController } from './Schedules.Controller'
 import { AgentSchedulesService } from '@application/AgentSchedules.Service'
 import { ScheduleRunner } from '@application/Schedule.Runner'
@@ -98,6 +100,7 @@ export class HttpServer {
     schedules?: SchedulesController,
     permissions?: PermissionsController,
     accounts?: ProjectAccountsController,
+    secretMask?: SecretMaskController,
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
@@ -131,6 +134,7 @@ export class HttpServer {
       schedules ?? defaultSchedules(),
       permissions ?? defaultPermissions(),
       accounts ?? defaultAccounts(),
+      secretMask ?? new SecretMaskController({ masker: new SecretMasker(new SecretBox(randomBytes(32))) }),
     )
     this.setupRoutes()
     this.setupFrontend()
@@ -242,8 +246,14 @@ function buildRoutes(
   schedules: SchedulesController,
   permissions: PermissionsController,
   accounts: ProjectAccountsController,
+  secretMask: SecretMaskController,
 ): IRoute[] {
   return [
+    { method: 'get', path: '/secret-mask', handler: secretMask.get },
+    { method: 'put', path: '/secret-mask/values/:id', handler: secretMask.saveValue },
+    { method: 'delete', path: '/secret-mask/values/:id', handler: secretMask.removeValue },
+    { method: 'put', path: '/secret-mask/names', handler: secretMask.saveNames },
+    { method: 'post', path: '/secret-mask/test', handler: secretMask.test },
     { method: 'get', path: '/projects/:projectId/accounts', handler: accounts.list },
     { method: 'put', path: '/projects/:projectId/accounts/:accountId', handler: accounts.save },
     { method: 'delete', path: '/projects/:projectId/accounts/:accountId', handler: accounts.remove },

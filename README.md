@@ -526,6 +526,25 @@ the rules, so they are never enabled.
   command has its own network, so a server started in the background is not reachable from
   another command: run the server and its tests in one command.
 
+**Secrets are masked on the way out.** Whatever a tool returns goes to the model provider, to the
+history and to the screen, so it passes through a mask first (Sistema → Segredos, admin only):
+
+1. **Known value:** the values a project account handed to the command, the provider keys and the
+   ones registered on that screen, also in base64 and as the password inside a URI. They become
+   `[segredo:<label>]`.
+2. **Shape:** a field whose name says secret (`…PASSWORD`, `…TOKEN`, `…API_KEY`) with an opaque
+   value, in JSON, YAML and `.env`. `HOST`, `PORT`, `URL`, `…_ID` never count. Both name lists can
+   be extended on the screen.
+3. **Format:** tokens that identify themselves (GitHub, GitLab, `sk-`, AWS, Google, Slack, JWT,
+   private key blocks).
+
+It applies to `run_bash` and the background logs (before the output is cut, so a split secret does
+not slip through), to the file and MCP tools, to the live turn and to what is recorded. A command
+that spells out a known secret still runs, with a warning to use the variable instead.
+`kubectl get secret -o json|yaml|jsonpath` is refused. Each hit is listed with its layer, label and
+length, never the value. The mask catches the accidental leak, not a model that wants to leak
+(encoded another way, reversed, in pieces); against that one, use short-lived account kinds.
+
 **Repositories and worktrees.** A conversation can be opened in a repository of its project
 (`<project>/repositories/<name>`) or in one of that repository's git worktrees: `repository` and
 `worktree` on `POST /v1/sessions`, or the two lists in New conversation. The gateway finds the

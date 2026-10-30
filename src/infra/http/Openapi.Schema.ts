@@ -1665,6 +1665,56 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/secret-mask': {
+      get: {
+        summary:
+          'The secret mask: values to mask (never returned), extra field names that mean secret or never do, and the latest hits (metadata only). Administrators only (404 otherwise)',
+        description:
+          'Tool output, recorded turns and what the screen receives pass through three layers: known values (accounts, provider keys, these values; also base64 and the password inside a URI), shape (a secret-like field name with an opaque value in JSON, YAML or .env) and known token formats. `kubectl get secret -o json|yaml|jsonpath` is refused.',
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object', additionalProperties: true })) }, '404': failures['404'] },
+      },
+    },
+    '/secret-mask/values/{id}': {
+      put: {
+        summary: 'Add or update a value to mask. The value goes in and never comes back; left out, the stored one stays. Administrators only',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { type: 'object', properties: { label: { type: 'string' }, value: { type: 'string' } }, required: ['label'] } } },
+        },
+        responses: { '200': { description: 'Saved', ...json(envelope({ type: 'object', additionalProperties: true })) }, '404': failures['404'], '422': failures['422'] },
+      },
+      delete: {
+        summary: 'Stop masking a value. Administrators only',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'Removed', ...json(envelope({ type: 'object', additionalProperties: true })) }, '404': failures['404'] },
+      },
+    },
+    '/secret-mask/names': {
+      put: {
+        summary: 'Replace the extra field names that mean secret (`secret`) and those that never do (`safe`). Administrators only',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { secret: { type: 'array', items: { type: 'string' } }, safe: { type: 'array', items: { type: 'string' } } },
+                required: ['secret', 'safe'],
+              },
+            },
+          },
+        },
+        responses: { '200': { description: 'Saved', ...json(envelope({ type: 'object', additionalProperties: true })) }, '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/secret-mask/test': {
+      post: {
+        summary: 'How a text would come out of the mask. Administrators only',
+        requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } } } },
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { masked: { type: 'string' } } })) }, '404': failures['404'] },
+      },
+    },
     '/projects/{projectId}/accounts': {
       get: {
         summary: "The accounts of a project: the credentials its agents' terminal receives (GitHub, secret variables). Never the secret. Administrators only (404 otherwise)",

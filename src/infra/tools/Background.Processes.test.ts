@@ -8,6 +8,9 @@ import { decide, IPermissionRule } from '@domain/Permission.Policy'
 import { IPermissionChecker } from '@application/Permissions.Service'
 import { IProjectSandbox } from '@infra/sandbox/Project.Sandbox'
 import { BackgroundProcesses, clipOutput, startCommand } from './Background.Processes'
+import { SecretBox } from '@infra/secrets/Aes.SecretBox'
+import { SecretMasker } from '@infra/secrets/Secret.Masker'
+import { randomBytes } from 'node:crypto'
 import { makeLocalTools } from './Local.Tools'
 
 const root = mkdtempSync(join(tmpdir(), 'gw-bg-'))
@@ -88,5 +91,27 @@ describe('o terminal com o executor novo (spawn)', () => {
     for (let index = 0; index < 5; index++) await find(list, 'bash_start').execute({ command: 'sleep 30' }, context)
     assert.match((await find(list, 'bash_start').execute({ command: 'sleep 30' }, context)).result, /Já há 5 processos/)
     assert.strictEqual((await find(list, 'run_bash').execute({ command: 'exit 3' }, context)).status, 'error')
+  })
+
+  it('⛔ máscara: a variável da conta sai mascarada, o kubectl que despeja Secret não roda, o literal gera aviso', async () => {
+    const masker = new SecretMasker(new SecretBox(randomBytes(32)), ':memory:', () => [{ value: 'chave-do-provider-XYZ1', label: 'chave openai' }])
+    const list = makeLocalTools({
+      policy: { timeoutMs: 5000, maxOutputChars: 2000, cwd: root },
+      sandbox,
+      permissions: {
+        check: (_asker, subject) => decide(subject, { agent: [...rules, { category: 'account', pattern: 'gitlab', decision: 'allow' }] }),
+        layers: () => ({ agent: rules, system: [] }),
+      },
+      processes,
+      mask: masker,
+      accounts: { commandEnv: async () => ({ env: { GITLAB_TOKEN: 'glpat-valor-da-conta-1234' }, problems: [] }) },
+    })
+    const ctx = { sessionId: 'mask-1', agentId: 'dev', conversationProjectId: 'p1' }
+    const out = await find(list, 'run_bash').execute({ command: 'printenv GITLAB_TOKEN; echo DB_PASSWORD=Zx81kLmnQ2pRt5vWy7' }, ctx)
+    assert.match(out.result, /\[segredo:GITLAB_TOKEN\]\nDB_PASSWORD=\[segredo:DB_PASSWORD\]/)
+    assert.ok(!out.result.includes('glpat-valor'))
+    assert.match((await find(list, 'run_bash').execute({ command: 'kubectl get secret app -o json' }, ctx)).result, /describe secret/)
+    const literal = await find(list, 'run_bash').execute({ command: 'echo chave-do-provider-XYZ1' }, ctx)
+    assert.match(literal.result, /segredo escrito por extenso \(chave openai\)[\s\S]*\[segredo:chave openai\]/)
   })
 })

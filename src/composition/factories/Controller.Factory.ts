@@ -1,6 +1,8 @@
 import { installationRules, makePermissions } from './Permissions.Factory'
 import { makeProjectAccounts } from './ProjectAccounts.Factory'
 import { callbackAllowed } from '@infra/http/Turn.Callbacks'
+import { SecretMaskController } from '@infra/http/SecretMask.Controller'
+import { makeSecretMasker } from './SecretMask.Factory'
 import { backgroundProcesses } from '@infra/tools/Background.Processes'
 import { ProjectAccountsController } from '@infra/http/ProjectAccounts.Controller'
 import { PermissionsController } from '@infra/http/Permissions.Controller'
@@ -104,6 +106,10 @@ export function makeProjectAccountsController(): ProjectAccountsController {
     projectExists: (projectId) => makeProjects().exists(projectId),
     proof: makeAuth().proof,
   })
+}
+
+export function makeSecretMaskController(): SecretMaskController {
+  return new SecretMaskController({ masker: makeSecretMasker(), proof: makeAuth().proof })
 }
 
 export function makeAuthController(): AuthController {
