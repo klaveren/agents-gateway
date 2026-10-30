@@ -32,7 +32,7 @@ describe('AgentProvider — troca de provedor quando a cota acaba', () => {
     const seen: Array<{ provider: string; text: string; native: unknown }> = []
     const answer = (protocol: EProvider): IAgentAdapter => ({
       async createSession(created, input) {
-        const record = store.create(protocol, {
+        const record = store.create({
           agentId: created.id,
           provider: input.provider!,
           protocol,

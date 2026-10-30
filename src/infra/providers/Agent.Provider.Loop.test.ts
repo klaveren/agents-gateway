@@ -25,7 +25,7 @@ describe('AgentProvider — detector de laço', () => {
     const state = { cancelled: 0, ran: 0 }
     const adapter: IAgentAdapter = {
       async createSession(created, input) {
-        const record = store.create(EProvider.CLAUDE, {
+        const record = store.create({
           agentId: created.id,
           provider: input.provider!,
           protocol: EProvider.CLAUDE,

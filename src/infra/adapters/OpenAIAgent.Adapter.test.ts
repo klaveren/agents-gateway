@@ -80,7 +80,7 @@ describe('OpenAIAgentAdapter', () => {
     const adapter = new OpenAIAgentAdapter({ run: runWith(() => []) })
     const session = await adapter.createSession(getAgent(), { agentId: OPENAI_TEST_AGENT.id })
 
-    assert.ok(session.id.startsWith('openai-agent-'))
+    assert.ok(session.id.startsWith('gw_'))
     assert.strictEqual(session.mode, EMode.AGENT)
   })
 

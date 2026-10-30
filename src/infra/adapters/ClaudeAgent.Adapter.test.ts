@@ -81,7 +81,7 @@ describe('ClaudeAgentAdapter', () => {
     const adapter = new ClaudeAgentAdapter({ query: queryWith(() => []) })
     const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
 
-    assert.ok(session.id.startsWith('claude-agent-'))
+    assert.ok(session.id.startsWith('gw_'))
     assert.strictEqual(session.mode, EMode.AGENT)
   })
 

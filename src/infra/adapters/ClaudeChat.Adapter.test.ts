@@ -60,7 +60,7 @@ describe('ClaudeChatAdapter', () => {
       language: 'Portuguese',
     })
 
-    assert.ok(session.id.startsWith('claude-chat-'))
+    assert.ok(session.id.startsWith('gw_'))
     assert.strictEqual(session.provider, EProvider.CLAUDE)
     assert.strictEqual(session.mode, EMode.CHAT)
   })
