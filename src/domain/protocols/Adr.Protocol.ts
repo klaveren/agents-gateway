@@ -3,7 +3,7 @@ import { ICoreProtocol } from '@domain/models/Protocol.Model'
 /** O protocolo do core para construir uma ADR. ⚠️ Mudou o texto, sobe a versão. */
 export const ADR_PROTOCOL: ICoreProtocol = {
   kind: 'adr',
-  version: '1.0.0',
+  version: '1.1.0',
   title: 'Protocolo de construção de ADR',
   body: `# Protocolo de construção de ADR
 
@@ -18,6 +18,7 @@ Uma ADR registra UMA DECISÃO e o PORQUÊ. A conversa recebe só o índice e o a
 6. **As consequências incluem o custo.** O que fica mais fácil, o que fica mais difícil, o que passa a ser obrigatório.
 7. **A regra que sai da decisão mora numa spec.** A ADR explica; a spec manda. Cite a spec pelo id.
 8. **O id diz a decisão.** Minúsculas e hífens ("adr-sqlite-como-banco"). O resumo, uma linha: o que se decidiu.
+9. **A decisão merece spec?** Quatro perguntas: muda como o trabalho é feito? Vale além deste caso? Ficaria escondida se morasse só na ADR? É regra que atravessa o ambiente? 0 ou 1 "sim": fica só na ADR. 2: reforce a spec que já trata do assunto. 3 ou 4: crie ou atualize a spec — e a ADR a cita pelo id.
 
 ## O corpo
 \`\`\`markdown
