@@ -85,7 +85,12 @@ export function reconcileDraft(draft: IDraft, agent: TDraftAgent, lanesOf?: (pro
 }
 
 const isNotFound = (failure: unknown): boolean => failure instanceof ApiError && failure.status === 404
-const messageOf = (failure: unknown): string => (failure instanceof Error ? failure.message : String(failure))
+/** O texto de uma falha. No 422 o motivo vem campo a campo nos detalhes: "Request body is invalid" sozinho não diz o que fazer. */
+const messageOf = (failure: unknown): string => {
+  const reasons = failure instanceof ApiError ? Object.values(failure.fieldIssues).flat() : []
+  if (reasons.length) return reasons.join('; ')
+  return failure instanceof Error ? failure.message : String(failure)
+}
 
 /**
  * A conversa aberta: o histórico gravado, a sessão viva (se houver) e o turno em andamento.
