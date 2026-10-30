@@ -5,11 +5,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import { Request, Response } from 'express'
+import { ImportJobService } from '@application/ImportJob.Service'
 import { ImportScanUseCase } from '@application/ImportScan.Usecase'
 import { maskText } from '@domain/Secret.Mask'
 import { HmacTokenIssuer } from '@infra/auth/Hmac.TokenIssuer'
 import { AgentsDirDetector } from '@infra/import/AgentsDir.Detector'
 import { OpencodeDetector } from '@infra/import/Opencode.Detector'
+import { SqliteImportRepository } from '@infra/persistence/Sqlite.ImportRepository'
 import { readRepoTree } from '@infra/import/Repo.Tree'
 import { identityFromToken, withCaller } from '@infra/mcp/Caller.Identity'
 import { resolveWorkFolder } from '@infra/workspace/Work.Folder'
@@ -43,13 +45,15 @@ describe('POST /projects/:id/import/scan', () => {
     mkdirSync(batch, { recursive: true })
     writeBatchFixture(batch)
     gitInit(batch)
+    const scan = new ImportScanUseCase({
+      readTree: (projectId, repository) => readRepoTree(resolveWorkFolder(folderOf(projectId), repository).dir, { mask: (text) => maskText(text, []) }),
+      detectors: [new AgentsDirDetector(), new OpencodeDetector()],
+      findInCatalog: () => undefined,
+      projectIgnore: (projectId) => stored.get(projectId) ?? [],
+    })
     controller = new ImportController({
-      scan: new ImportScanUseCase({
-        readTree: (projectId, repository) => readRepoTree(resolveWorkFolder(folderOf(projectId), repository).dir, { mask: (text) => maskText(text, []) }),
-        detectors: [new AgentsDirDetector(), new OpencodeDetector()],
-        findInCatalog: () => undefined,
-        projectIgnore: (projectId) => stored.get(projectId) ?? [],
-      }),
+      scan,
+      jobs: new ImportJobService({ repository: new SqliteImportRepository(), scan: (projectId, repository, options) => scan.execute(projectId, repository, options) }),
       projectExists: (projectId) => ['alfa', 'beta'].includes(projectId),
       ignore: {
         get: (projectId) => stored.get(projectId) ?? [],
@@ -60,7 +64,8 @@ describe('POST /projects/:id/import/scan', () => {
   })
   after(() => rmSync(base, { recursive: true, force: true }))
 
-  const call = (as: string, projectId: string, body: unknown, handler: 'scan' | 'plan' | 'getIgnore' | 'setIgnore' = 'scan') =>
+  type THandler = 'scan' | 'plan' | 'getIgnore' | 'setIgnore' | 'listJobs' | 'createJob' | 'getJob' | 'updateItem'
+  const call = (as: string, projectId: string, body: unknown, handler: THandler = 'scan', params: Record<string, string> = {}) =>
     withCaller({ token: as, ...identityFromToken(as) }, async () => {
       const reply: { status: number; body?: { ok: boolean; result?: any; code?: string; details?: any } } = { status: 0 } // eslint-disable-line @typescript-eslint/no-explicit-any
       const res = {
@@ -73,7 +78,7 @@ describe('POST /projects/:id/import/scan', () => {
           return this
         },
       } as unknown as Response
-      await controller[handler]({ params: { id: projectId }, body } as unknown as Request, res)
+      await controller[handler]({ params: { id: projectId, ...params }, body } as unknown as Request, res)
       return reply
     })
 
@@ -165,6 +170,83 @@ describe('POST /projects/:id/import/scan', () => {
       assert.deepStrictEqual([prefix.status, prefix.body?.details?.[0]?.field], [422, 'prefix'])
       assert.strictEqual((await call(ADMIN, 'alfa', { repository: 'lote' }, 'plan')).status, 422)
       assert.strictEqual((await call(ADMIN, 'gama', { repository: 'lote', agent: 'ana' }, 'plan')).status, 404)
+    })
+  })
+  describe('trabalhos de importação (/projects/:id/import/jobs)', () => {
+    it('analisar salva o trabalho; a lista e o abrir o devolvem; excluir e reclassificar persistem com autor; reanalisar mantém', async () => {
+      const created = await call(ADMIN, 'alfa', { repository: 'app' }, 'createJob')
+      assert.strictEqual(created.status, 200)
+      const job = created.body?.result
+      assert.strictEqual(job.repository, 'app')
+      assert.strictEqual(job.latest, true)
+      assert.strictEqual(job.by, 'u_root@x.test')
+      assert.ok((job.scan.items as Array<{ key: string }>).some((item) => item.key === 'agent:maya'))
+      assert.ok((job.states as Array<{ state: string }>).every((entry) => entry.state === 'pending'))
+      const json = JSON.stringify(created.body)
+      assert.ok(!json.includes(FAKE_TOKEN))
+      assert.ok(!json.includes(base), 'nenhum caminho do servidor')
+
+      const list = await call(ADMIN, 'alfa', undefined, 'listJobs')
+      assert.deepStrictEqual(
+        (list.body?.result as Array<{ id: string }>).map((entry) => entry.id),
+        [job.id],
+      )
+
+      const skipped = await call(ADMIN, 'alfa', { key: 'agent:maya', state: 'skipped' }, 'updateItem', { job: job.id })
+      assert.deepStrictEqual([skipped.status, skipped.body?.result.state, skipped.body?.result.by], [200, 'skipped', 'u_root@x.test'])
+      const unknown = (job.scan.items as Array<{ key: string; kind: string }>).find((item) => item.kind !== 'agent')!
+      const kind = await call(ADMIN, 'alfa', { key: unknown.key, kind: 'spec' }, 'updateItem', { job: job.id })
+      assert.strictEqual(kind.body?.result.kind, unknown.kind === 'spec' ? undefined : 'spec')
+
+      const opened = await call(ADMIN, 'alfa', undefined, 'getJob', { job: job.id })
+      assert.strictEqual(opened.status, 200)
+      assert.strictEqual((opened.body?.result.states as Array<{ key: string; state: string }>).find((entry) => entry.key === 'agent:maya')?.state, 'skipped')
+
+      const again = await call(ADMIN, 'alfa', { repository: 'app' }, 'createJob')
+      assert.strictEqual(again.body?.result.previousId, job.id)
+      assert.strictEqual(again.body?.result.reuse.stale.length, 0)
+      assert.strictEqual((again.body?.result.states as Array<{ key: string; state: string }>).find((entry) => entry.key === 'agent:maya')?.state, 'skipped')
+
+      // O antigo é registro: não muda.
+      const outdated = await call(ADMIN, 'alfa', { key: 'agent:maya', state: 'pending' }, 'updateItem', { job: job.id })
+      assert.deepStrictEqual([outdated.status, outdated.body?.code], [409, 'import_job_outdated'])
+    })
+
+    it('⛔ quem não é admin recebe 404 em todas, e nada é salvo', async () => {
+      const before = (await call(ADMIN, 'beta', undefined, 'listJobs')).body?.result.length
+      for (const [handler, body, params] of [
+        ['listJobs', undefined, {}],
+        ['createJob', { repository: 'segredo' }, {}],
+        ['getJob', undefined, { job: 'x' }],
+        ['updateItem', { key: 'agent:maya', state: 'skipped' }, { job: 'x' }],
+      ] as Array<[THandler, unknown, Record<string, string>]>) {
+        const reply = await call(MEMBER, 'beta', body, handler, params)
+        assert.strictEqual(reply.status, 404, handler)
+        assert.strictEqual(reply.body?.result, undefined)
+      }
+      assert.strictEqual((await call(ADMIN, 'beta', undefined, 'listJobs')).body?.result.length, before)
+    })
+
+    it('⛔ repositório de outro projeto é 422; o trabalho de outro projeto não existe aqui (404)', async () => {
+      for (const repository of ['segredo', '../../beta/repositories/segredo', '..']) {
+        const reply = await call(ADMIN, 'alfa', { repository }, 'createJob')
+        assert.deepStrictEqual([reply.status, reply.body?.details?.[0]?.field], [422, 'repository'], repository)
+        assert.ok(!JSON.stringify(reply.body).includes(base))
+      }
+      const theirs = (await call(ADMIN, 'beta', { repository: 'segredo' }, 'createJob')).body?.result
+      assert.strictEqual((await call(ADMIN, 'alfa', undefined, 'getJob', { job: theirs.id })).status, 404)
+      assert.strictEqual((await call(ADMIN, 'alfa', { key: 'agent:maya', state: 'skipped' }, 'updateItem', { job: theirs.id })).status, 404)
+      assert.ok(!(await call(ADMIN, 'alfa', undefined, 'listJobs')).body?.result.some((entry: { id: string }) => entry.id === theirs.id))
+      assert.strictEqual((await call(ADMIN, 'gama', undefined, 'listJobs')).status, 404)
+    })
+
+    it('corpo inválido é 422: sem estado nem tipo, estado fora do que a pessoa marca, tipo desconhecido, chave fora do trabalho', async () => {
+      const job = (await call(ADMIN, 'alfa', { repository: 'app' }, 'createJob')).body?.result
+      for (const body of [{ key: 'agent:maya' }, { key: 'agent:maya', state: 'approved' }, { key: 'agent:maya', kind: 'banana' }, { state: 'skipped' }]) {
+        assert.strictEqual((await call(ADMIN, 'alfa', body, 'updateItem', { job: job.id })).status, 422, JSON.stringify(body))
+      }
+      const missing = await call(ADMIN, 'alfa', { key: 'agent:ninguem', state: 'skipped' }, 'updateItem', { job: job.id })
+      assert.deepStrictEqual([missing.status, missing.body?.details?.[0]?.field], [422, 'key'])
     })
   })
 })

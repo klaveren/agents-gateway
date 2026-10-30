@@ -80,6 +80,8 @@ export type TErrorCode =
   | 'unauthorized'
   | 'forbidden'
   | 'not_found'
+  | 'import_job_outdated'
+  | 'import_state_conflict'
   | 'internal_error'
 
 export interface IHttpFailure {

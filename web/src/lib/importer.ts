@@ -1,11 +1,12 @@
 /**
- * O IMPORTADOR na tela: o inventário que `POST /projects/:id/import/scan` devolve (o espelho de
- * `ImportInventory.Model.ts`) e as contas da tela — filtros, agrupamento, contagens e a reclassificação local.
+ * O IMPORTADOR na tela: o inventário que a varredura devolve (o espelho de `ImportInventory.Model.ts`), o TRABALHO DE
+ * IMPORTAÇÃO (a varredura salva, com o estado de cada item — `ImportJob.Model.ts`) e as contas da tela — filtros,
+ * agrupamento e contagens.
  *
  * ⚖️ Puro e barato: um repositório grande dá ~730 itens e ~9700 arquivos. O texto de busca de cada item é montado
  * uma vez por análise (`searchIndex`), não a cada tecla.
  *
- * ⛔ Reclassificar aqui é SÓ NA TELA: vale para a análise aberta e some ao analisar de novo. Persistir é do PR 6.
+ * A reclassificação e o excluir/incluir são do trabalho (persistem no servidor); a reanálise os reaproveita pela chave.
  */
 
 export type TInventoryKind = 'skill' | 'command' | 'rule' | 'spec' | 'adr' | 'knowledge' | 'agent' | 'trigger' | 'mcp' | 'config' | 'unknown' | 'skip'
@@ -117,9 +118,11 @@ export interface IImportFilters {
   catalog: TCatalogFilter
   note: TNoteFilter
   query: string
+  /** O estado do item no trabalho. */
+  state?: TImportItemState | ''
 }
 
-export const EMPTY_FILTERS: IImportFilters = { kind: '', catalog: '', note: '', query: '' }
+export const EMPTY_FILTERS: IImportFilters = { kind: '', catalog: '', note: '', query: '', state: '' }
 
 /** O texto em que a busca procura: chave, id, título e os caminhos (com os aliases) — em minúsculas. */
 export function searchText(item: IInventoryItem): string {
@@ -139,9 +142,16 @@ function matchesNote(item: IInventoryItem, note: TNoteFilter): boolean {
   return item.notes.some((entry) => entry.code === code)
 }
 
-export function filterItems(items: readonly IInventoryItem[], filters: IImportFilters, overrides: TOverrides = {}, index?: Map<string, string>): IInventoryItem[] {
+export function filterItems(
+  items: readonly IInventoryItem[],
+  filters: IImportFilters,
+  overrides: TOverrides = {},
+  index?: Map<string, string>,
+  states?: ReadonlyMap<string, IImportItemStatus>,
+): IInventoryItem[] {
   const terms = filters.query.toLowerCase().split(/\s+/).filter(Boolean)
   return items.filter((item) => {
+    if (filters.state && (states?.get(item.key)?.state ?? 'pending') !== filters.state) return false
     if (filters.kind && effectiveKind(item, overrides) !== filters.kind) return false
     if (filters.catalog === 'none' ? item.catalog !== undefined : filters.catalog && item.catalog !== filters.catalog) return false
     if (!matchesNote(item, filters.note)) return false
@@ -246,6 +256,100 @@ export function bytesLabel(value: number): string {
 
 /** O que a pessoa pode escolher ao reclassificar: todos os tipos. */
 export const RECLASSIFY_KINDS: readonly TInventoryKind[] = KIND_ORDER
+
+// ── O TRABALHO DE IMPORTAÇÃO (`/projects/:id/import/jobs`, espelho de `ImportJob.Model.ts`). ⛔ Não grava no catálogo. ─
+
+export type TImportItemState = 'pending' | 'drafting' | 'review' | 'approved' | 'rejected' | 'skipped' | 'applied' | 'error' | 'stale'
+
+export const STATE_ORDER: readonly TImportItemState[] = ['pending', 'stale', 'drafting', 'review', 'error', 'approved', 'rejected', 'applied', 'skipped']
+
+export const STATE_LABEL: Record<TImportItemState, string> = {
+  pending: 'a importar',
+  drafting: 'no construtor',
+  review: 'a revisar',
+  approved: 'aprovado',
+  rejected: 'rejeitado',
+  skipped: 'excluído',
+  applied: 'aplicado',
+  error: 'erro',
+  stale: 'fonte mudou',
+}
+
+export const STATE_HINT: Record<TImportItemState, string> = {
+  pending: 'Entra na importação',
+  drafting: 'O construtor está escrevendo o rascunho',
+  review: 'Há rascunho a revisar',
+  approved: 'Aprovado; ainda não gravado no catálogo',
+  rejected: 'O rascunho foi rejeitado',
+  skipped: 'Fica fora da importação',
+  applied: 'Gravado no catálogo',
+  error: 'O construtor falhou',
+  stale: 'A fonte mudou depois da última decisão: decida de novo',
+}
+
+/** Os estados de onde a pessoa exclui o item e de onde o inclui de novo (as transições do servidor, `Import.Job.ts`). */
+export const EXCLUDABLE_STATES: readonly TImportItemState[] = ['pending', 'rejected', 'error', 'stale']
+export const INCLUDABLE_STATES: readonly TImportItemState[] = ['skipped', 'stale']
+/** Reclassificar só sem rascunho no caminho. */
+export const RECLASSIFIABLE_STATES: readonly TImportItemState[] = ['pending', 'skipped', 'rejected', 'error', 'stale']
+
+export interface IImportItemStatus {
+  key: string
+  state: TImportItemState
+  staleFrom?: TImportItemState
+  /** A reclassificação gravada (ausente = o tipo detectado). */
+  kind?: TInventoryKind
+  fingerprint: string
+  by?: string
+  at?: string
+}
+
+export interface IImportReuse {
+  from: string
+  kept: number
+  stale: string[]
+  restored: string[]
+  added: string[]
+  gone: string[]
+}
+
+export interface IImportJobSummary {
+  id: string
+  projectId: string
+  repository: string
+  head?: string
+  dirty?: boolean
+  scannedAt: string
+  by: string
+  previousId?: string
+  items: number
+  byState: Partial<Record<TImportItemState, number>>
+  /** O mais novo do repositório: só ele muda. */
+  latest: boolean
+  reuse?: IImportReuse
+}
+
+export interface IImportJob extends IImportJobSummary {
+  scan: IImportScan
+  states: IImportItemStatus[]
+}
+
+/** O estado de cada item, pela chave. */
+export function statesByKey(states: readonly IImportItemStatus[]): Map<string, IImportItemStatus> {
+  return new Map(states.map((entry) => [entry.key, entry]))
+}
+
+/** As reclassificações gravadas no trabalho, no formato da tela. */
+export function overridesFrom(states: readonly IImportItemStatus[]): Record<string, TInventoryKind> {
+  const out: Record<string, TInventoryKind> = {}
+  for (const entry of states) if (entry.kind) out[entry.key] = entry.kind
+  return out
+}
+
+/** Quantos itens em cada estado, na ordem de `STATE_ORDER` (só os que têm algum). */
+export function countByState(byState: Partial<Record<TImportItemState, number>>): Array<{ state: TImportItemState; count: number }> {
+  return STATE_ORDER.filter((state) => (byState[state] ?? 0) > 0).map((state) => ({ state, count: byState[state]! }))
+}
 
 // ── O LOTE de um agente (`POST /projects/:id/import/plan`, espelho de `ImportPlan.Model.ts`). ⛔ Só leitura. ─────────
 

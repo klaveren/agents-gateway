@@ -570,6 +570,60 @@ const diffLineSchema = {
   },
 }
 
+const importItemStates = ['pending', 'drafting', 'review', 'approved', 'rejected', 'skipped', 'applied', 'error', 'stale']
+const importItemStatus = {
+  type: 'object',
+  properties: {
+    key: { type: 'string' },
+    state: { type: 'string', enum: importItemStates },
+    staleFrom: { type: 'string', enum: importItemStates, description: '`stale`: the state before the sources changed' },
+    kind: { type: 'string', description: 'The kind chosen by a person (absent = the detected kind)' },
+    fingerprint: { type: 'string', description: 'sha256 of the sources (path + sha256) in this job' },
+    targetId: { type: 'string' },
+    conversationId: { type: 'string' },
+    drafts: { type: 'array', items: {} },
+    review: {},
+    approvedBy: { type: 'string' },
+    approvedAt: { type: 'string', format: 'date-time' },
+    batchId: { type: 'string' },
+    by: { type: 'string', description: 'Who changed the item last (state or kind)' },
+    at: { type: 'string', format: 'date-time' },
+  },
+}
+const importJobFields = {
+  id: { type: 'string' },
+  projectId: { type: 'string' },
+  repository: { type: 'string' },
+  head: { type: 'string' },
+  dirty: { type: 'boolean' },
+  scannedAt: { type: 'string', format: 'date-time' },
+  by: { type: 'string' },
+  previousId: { type: 'string' },
+  items: { type: 'integer' },
+  byState: { type: 'object', additionalProperties: { type: 'integer' } },
+  latest: { type: 'boolean', description: 'The newest job of its repository: the only one that changes' },
+  reuse: {
+    type: 'object',
+    description: 'What the analysis reused from the previous job of the same repository',
+    properties: {
+      from: { type: 'string' },
+      kept: { type: 'integer' },
+      stale: { type: 'array', items: { type: 'string' } },
+      restored: { type: 'array', items: { type: 'string' } },
+      added: { type: 'array', items: { type: 'string' } },
+      gone: { type: 'array', items: { type: 'string' } },
+    },
+  },
+}
+const importJobSummary = { type: 'object', properties: importJobFields }
+const importJob = {
+  type: 'object',
+  properties: {
+    ...importJobFields,
+    scan: { type: 'object', additionalProperties: true, description: 'The saved inventory, as `POST /projects/{id}/import/scan` returns it' },
+    states: { type: 'array', items: importItemStatus },
+  },
+}
 const failures = {
   '401': {
     description:
@@ -1609,6 +1663,86 @@ export const OPENAPI_DOCUMENT = {
           '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { patterns: { type: 'array', items: { type: 'string' } } } })) },
           '401': failures['401'],
           '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
+    '/projects/{id}/import/jobs': {
+      get: {
+        summary:
+          'The import JOBS of the project, newest first: one saved scan of a repository at a HEAD, with how many items are in each state and whether it is the newest of its repository (only the newest changes). Administrators only (404 for the others)',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'array', items: importJobSummary })) },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+      post: {
+        summary:
+          'Scan a repository of the project and SAVE it as an import job. The state of each item is reused, by key, from the newest job of the same repository: same sources keep it; sources changed since the last decision become `stale` (with `staleFrom`). Nothing is written to the catalog and no builder runs. Administrators only (404 for the others; a repository of another project is 422)',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            properties: {
+              repository: { type: 'string', description: 'The folder name in `<project>/repositories/`' },
+              ignore: { type: 'array', items: { type: 'string' }, description: 'Glob patterns ignored in this scan only, added to the project ones' },
+            },
+            required: ['repository'],
+          }),
+        },
+        responses: {
+          '200': { description: 'OK', ...json(envelope(importJob)) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
+    '/projects/{id}/import/jobs/{job}': {
+      get: {
+        summary: 'One import job: the saved inventory (as the scan returns it) and the state of each item. A job of another project does not exist here (404). Administrators only',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'job', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'OK', ...json(envelope(importJob)) },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+    },
+    '/projects/{id}/import/jobs/{job}/items': {
+      patch: {
+        summary:
+          'Change one item of the NEWEST job of its repository: exclude (`state: skipped`), include (`state: pending`) and reclassify (`kind`; `null` goes back to the detected kind). Records who and when. An older job is 409; a transition the state does not allow, or reclassifying an item with a draft on the way, is 409. Nothing is written to the catalog. Administrators only',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'job', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            properties: {
+              key: { type: 'string', description: 'The item key (`<kind>:<id>`, `trigger:<agent>/<id>`)' },
+              state: { type: 'string', enum: ['pending', 'skipped'] },
+              kind: { type: 'string', nullable: true, enum: ['skill', 'command', 'rule', 'spec', 'adr', 'knowledge', 'agent', 'trigger', 'mcp', 'config', 'unknown', 'skip'] },
+            },
+            required: ['key'],
+          }),
+        },
+        responses: {
+          '200': { description: 'OK', ...json(envelope(importItemStatus)) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '409': {
+            description: 'Code `import_job_outdated`: a newer analysis of the repository exists. Code `import_state_conflict`: the state does not allow the change',
+            content: { 'application/json': { schema: failureEnvelope } },
+          },
           '422': failures['422'],
         },
       },
