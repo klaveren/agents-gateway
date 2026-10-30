@@ -1,4 +1,4 @@
-import type { TPermissionCategory } from './types'
+import type { IPermissionRule, TPermissionCategory } from './types'
 
 /** As categorias na ordem da tela, com o que o padrão quer dizer em cada uma. */
 export const PERMISSION_SECTIONS: ReadonlyArray<{ category: TPermissionCategory; label: string; hint: string; example: string }> = [
@@ -22,5 +22,21 @@ export const PERMISSION_SECTIONS: ReadonlyArray<{ category: TPermissionCategory;
     example: 'logiccus',
   },
 ]
+
+/**
+ * ⛔ `**` numa regra de terminal: o padrão é por palavras, e só o `*` sozinho vale qualquer sequência de argumentos.
+ * `**` casa UMA palavra (o `ls`, não o `cat arquivo`). O servidor recusa salvar; a tela avisa antes e oferece a troca.
+ */
+const LONE_STARS = /(^|\s)\*{2,}(?=\s|$)/g
+
+export function patternWarning(rule: IPermissionRule): string | undefined {
+  if (rule.category !== 'terminal' || !new RegExp(LONE_STARS.source).test(rule.pattern)) return undefined
+  return 'No terminal, ** casa uma palavra só (o comando sem argumentos). Para qualquer comando ou argumento, use *.'
+}
+
+/** O padrão com cada `**` solto trocado por `*`. */
+export function fixPattern(pattern: string): string {
+  return pattern.replace(LONE_STARS, '$1*')
+}
 
 export const LAYER_LABEL: Readonly<Record<string, string>> = { system: 'sistema', agent: 'agente', project: 'projeto', default: 'sem regra' }
