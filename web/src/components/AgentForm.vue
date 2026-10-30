@@ -27,6 +27,7 @@
   import { useProjectsStore } from '@/stores/projects'
   import { toolsTokens, toolTokens } from '@/lib/toolTokens'
   import AgentFootprint from './AgentFootprint.vue'
+  import CliPromptMeter from './CliPromptMeter.vue'
   import AgentHooks from './AgentHooks.vue'
   import AgentSchedules from './AgentSchedules.vue'
   import PermissionRules from './PermissionRules.vue'
@@ -129,6 +130,9 @@
   const anySubscription = computed(() => selected.value.some((entry) => entry.info?.subscription))
   const anyCompatible = computed(() => selected.value.some((entry) => entry.compatible))
   const anyGoogle = computed(() => selected.value.some((entry) => entry.protocol === 'google'))
+  /** Os que recebem o prompt como argumento de linha de comando (limite do Linux: ver `CliPromptMeter`). */
+  const cliSelected = computed(() => selected.value.filter((entry) => entry.protocol === 'codex' || entry.protocol === 'antigravity'))
+  const savedIdentity = computed(() => (props.agent && !props.creating ? { soul: props.agent.soul, systemPrompt: props.agent.systemPrompt } : undefined))
   const families = computed(() => [...new Set(selected.value.flatMap((entry) => (entry.info ? [entry.info.nativeFamily] : [])))])
 
   /** As ferramentas nativas do SDK dos providers escolhidos (pela família do protocolo), na ordem do risco. */
@@ -708,6 +712,16 @@
         <textarea v-model="form.systemPrompt" required rows="10" class="input scroll-thin font-mono text-[13px] leading-relaxed" placeholder="Você é o agente…" />
         <small v-if="form.systemPrompt" class="hint">{{ sizeHint(form.systemPrompt, 'a cada turno') }}</small>
         <small v-if="anyGoogle" class="hint">Com Gemini, evite {chaves} no texto: viram variáveis e dão erro.</small>
+        <CliPromptMeter
+          v-if="cliSelected.length && form.systemPrompt"
+          :providers="cliSelected.map((entry) => protocols.providerName(entry.target.provider))"
+          :codex="cliSelected.some((entry) => entry.protocol === 'codex')"
+          :soul="form.soul"
+          :system-prompt="form.systemPrompt"
+          :agent-id="savedIdentity ? agent?.id : undefined"
+          :project-id="agent?.projectId"
+          :saved="savedIdentity"
+        />
         <small v-for="message in issues.systemPrompt" :key="message" class="error">{{ message }}</small>
       </label>
     </fieldset>

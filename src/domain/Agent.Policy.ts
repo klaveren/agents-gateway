@@ -1,4 +1,5 @@
 import { permissionIssues } from './Permission.Policy'
+import { CLI_ARG_PROTOCOLS } from './CliArgument.Policy'
 import { capability, isCapability } from './Capability.Catalog'
 import { EMode } from './enums/EMode.Enum'
 import { SANDBOX_NETWORK, sandboxLevelsOf } from './Sandbox.Policy'
@@ -20,8 +21,6 @@ export const AGENT_NAME_MAX = 80
  * prompt (rules, índice de skills e de documentos).
  */
 export const CLI_PROMPT_MAX_BYTES = 120_000
-/** As lanes que passam o prompt como argumento de linha de comando. */
-const CLI_PROMPT_PROTOCOLS: readonly string[] = [EProvider.CODEX, EProvider.ANTIGRAVITY]
 
 export interface IAgentIssue {
   field: string
@@ -186,7 +185,7 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
   if (!agent.systemPrompt.trim()) issue('systemPrompt', 'required')
   else {
     const bytes = Buffer.byteLength(agent.systemPrompt) + Buffer.byteLength(agent.soul ?? '')
-    const cli = targets.filter((target) => target.protocol && CLI_PROMPT_PROTOCOLS.includes(target.protocol)).map((target) => target.provider)
+    const cli = targets.filter((target) => target.protocol && CLI_ARG_PROTOCOLS.includes(target.protocol)).map((target) => target.provider)
     if (cli.length && bytes > CLI_PROMPT_MAX_BYTES)
       issue(
         'systemPrompt',

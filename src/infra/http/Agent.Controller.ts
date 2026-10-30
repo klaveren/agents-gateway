@@ -15,6 +15,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { AgentCatalog } from '@application/Agent.Catalog'
 import { ModelCatalogService } from '@application/ModelCatalog.Service'
 import { agentIssues, IAgentRules, offers, targetFor } from '@domain/Agent.Policy'
+import { CLI_ARG_PROTOCOLS } from '@domain/CliArgument.Policy'
 import { NATIVE_TOOLS } from '@domain/Native.Tools'
 import { dangerousToolsOf } from '@domain/Tool.Policy'
 import { isSubscription } from '@domain/Subscription.Policy'
@@ -565,7 +566,15 @@ export class AgentController {
       const projectId = entry.agent.projectId ?? (requested && this.usecases.projects?.exists(requested) ? requested : undefined)
       const token = currentCaller()?.token
       const catalog = this.usecases.catalog
+      // Os provedores que rodam num CLI (o prompt vai por argumento): com eles, a conta do limite do Linux.
+      const cli = entry.agent.providers
+        .map((target) => ({
+          provider: target.provider,
+          protocol: this.usecases.providers?.get(target.provider)?.protocol ?? Object.values(EProvider).find((value) => value === target.provider),
+        }))
+        .filter((target): target is { provider: string; protocol: EProvider } => !!target.protocol && CLI_ARG_PROTOCOLS.includes(target.protocol))
       return agentFootprint(entry.agent, projectId, {
+        cli: { providers: cli.map((target) => target.provider), protocols: [...new Set(cli.map((target) => target.protocol))] },
         guidance: this.usecases.guidance,
         localFor: (allowed) => catalog.localFor(allowed),
         mcpTools: async (server) => {

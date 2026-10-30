@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
+import { CLI_ARG_MAX_BYTES, cliArgumentBytes } from '@domain/CliArgument.Policy'
 import { estimateTokens, toolTokens } from '@domain/Token.Estimate'
 import { agentFootprint } from './Agent.Footprint'
 
@@ -44,6 +45,44 @@ describe('agentFootprint', () => {
       result.sections.reduce((sum, section) => sum + (section.tokens ?? 0), 0),
     )
     assert.strictEqual(result.project, 'xpto')
+  })
+
+  it('com Codex ou Antigravity, o prompt montado (soul, instrução, rules, índices) em bytes contra o limite do Linux', async () => {
+    const env = {
+      ...deps,
+      guidance: {
+        ...deps.guidance,
+        environmentParts: () => ({ rules: '## Regras do ambiente\n1. "aspas"', skills: '## Skills\n- s — S', index: '## Documentos de referência\n- [spec] a — A' }),
+      },
+    }
+    const result = await agentFootprint(agent, 'xpto', { ...env, cli: { providers: ['codex', 'agy'], protocols: [EProvider.CODEX, EProvider.ANTIGRAVITY] } })
+    const prompt = [
+      '## Quem você é\nCalmo.\n\n## Como você trabalha\nVocê escreve código.',
+      '## Regras do ambiente\n1. "aspas"',
+      '## Skills\n- s — S',
+      '## Documentos de referência\n- [spec] a — A',
+    ].join('\n\n')
+    // O maior dos dois: o escape do Codex pesa mais.
+    assert.strictEqual(result.cli?.bytes, Math.max(cliArgumentBytes(EProvider.CODEX, prompt), cliArgumentBytes(EProvider.ANTIGRAVITY, prompt)))
+    assert.strictEqual(result.cli?.bytes, cliArgumentBytes(EProvider.CODEX, prompt))
+    assert.deepStrictEqual(result.cli?.providers, ['codex', 'agy'])
+    assert.strictEqual(result.cli?.limit, CLI_ARG_MAX_BYTES)
+    assert.strictEqual(result.cli?.warnAt, Math.floor(CLI_ARG_MAX_BYTES * 0.8))
+    assert.deepStrictEqual(
+      result.cli?.parts.map((part) => [part.key, part.bytes]),
+      [
+        ['soul', Buffer.byteLength('## Quem você é\nCalmo.\n\n## Como você trabalha\n')],
+        ['instructions', Buffer.byteLength('Você escreve código.')],
+        ['rules', Buffer.byteLength('## Regras do ambiente\n1. "aspas"')],
+        ['skills', Buffer.byteLength('## Skills\n- s — S')],
+        ['index', Buffer.byteLength('## Documentos de referência\n- [spec] a — A')],
+      ],
+    )
+  })
+
+  it('sem provedor de CLI, sem a conta do argumento', async () => {
+    assert.strictEqual((await agentFootprint(agent, 'xpto', deps)).cli, undefined)
+    assert.strictEqual((await agentFootprint(agent, 'xpto', { ...deps, cli: { providers: [], protocols: [] } })).cli, undefined)
   })
 
   it('sem soul nem ambiente, essas partes nem aparecem', async () => {

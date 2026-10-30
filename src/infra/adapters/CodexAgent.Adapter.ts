@@ -1,6 +1,7 @@
 import { terminalEnv } from '@domain/Agent.Identity'
 import { sessionChoice } from '@domain/Agent.Policy'
 import { errorPayload } from '@domain/Provider.Failure'
+import { cliArgumentBytes, cliArgumentIssue, promptParts } from '@domain/CliArgument.Policy'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Codex, CodexOptions, ThreadEvent, ThreadItem, ThreadOptions, UserInput } from '@openai/codex-sdk'
@@ -193,6 +194,14 @@ export class CodexAgentAdapter implements IAgentAdapter {
           // ferramenta que grava é recusada com "requires approval, but approval policy is never").
           default_tools_approval_mode: 'approve',
         }
+      // ⛔ O SDK passa as instruções como `--config developer_instructions=...`: acima do limite do Linux, o `spawn` morre
+      // com um `E2BIG` mudo. Recusa antes, dizendo o tamanho e o que pesa.
+      const instructions = withMcpHint(record.systemPrompt, remotes, grant ? locals.map((tool) => tool.name) : [])
+      const tooBig = cliArgumentIssue('Codex', cliArgumentBytes(EProvider.CODEX, instructions), promptParts(instructions))
+      if (tooBig) {
+        yield { type: 'error', sessionId, timestamp: now(), payload: { message: tooBig } }
+        return
+      }
       const Codex = await this.load()
       const home = this.home()
       const codex = new Codex({
@@ -207,7 +216,7 @@ export class CodexAgentAdapter implements IAgentAdapter {
           context,
         ),
         config: {
-          developer_instructions: withMcpHint(record.systemPrompt, remotes, grant ? locals.map((tool) => tool.name) : []),
+          developer_instructions: instructions,
           features: codexFeatures(agent.allowedTools),
           // ⛔ Login em ARQUIVO no CODEX_HOME do gateway, nunca no Keychain da pessoa.
           cli_auth_credentials_store: 'file',

@@ -1471,6 +1471,18 @@ export const OPENAPI_DOCUMENT = {
                       },
                     },
                   },
+                  cli: {
+                    type: 'object',
+                    description:
+                      'Only when the agent offers Codex or Antigravity: they get the assembled prompt as one command-line argument, and Linux refuses one above 128 KiB. `bytes` is the estimated argument (the larger among the agent CLIs), `warnAt` is where the screen warns (never blocks), `parts` are the raw prompt parts in bytes.',
+                    properties: {
+                      providers: { type: 'array', items: { type: 'string' } },
+                      bytes: { type: 'integer' },
+                      limit: { type: 'integer' },
+                      warnAt: { type: 'integer' },
+                      parts: { type: 'array', items: { type: 'object', properties: { key: { type: 'string' }, label: { type: 'string' }, bytes: { type: 'integer' } } } },
+                    },
+                  },
                 },
               }),
             ),
