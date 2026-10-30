@@ -29,6 +29,15 @@ function fakeSpawn(chunks: string[], code: number | null = 0) {
   }) as never
 }
 
+/**
+ * Espera a condição valer (até 2 s). A tela (xterm) processa a escrita numa fila com timers: um prazo fixo curto passava
+ * sozinho e falhava com a suíte inteira rodando em paralelo.
+ */
+async function until(condition: () => boolean): Promise<void> {
+  const deadline = Date.now() + 2_000
+  while (!condition() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5))
+}
+
 const ESC = '\u001b'
 const BEL = '\u0007'
 const URL = 'https://claude.com/cai/oauth/authorize?code=true&client_id=abc&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&state=xyz'
@@ -49,7 +58,7 @@ describe('login do Claude pela tela (claude setup-token)', () => {
 
     assert.strictEqual(view.url, URL)
     assert.strictEqual(view.needsCode, true)
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    await until(() => logins.view(EProvider.CLAUDE_SUB).state !== 'waiting')
     assert.deepStrictEqual(saved, [TOKEN])
     const after = logins.view(EProvider.CLAUDE_SUB)
     assert.strictEqual(after.state, 'done')
@@ -59,7 +68,7 @@ describe('login do Claude pela tela (claude setup-token)', () => {
   it('sem token na saída, falha — e a mensagem de erro não carrega token nenhum', async () => {
     const logins = new SubscriptionLogins(fakeSpawn([`${ESC}]8;;${URL}${BEL}x`, 'OAuth error: invalid code\r\n'], 1))
     await logins.start(EProvider.CLAUDE_SUB, { onToken: () => assert.fail('não devia gravar') })
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    await until(() => logins.view(EProvider.CLAUDE_SUB).state !== 'waiting')
     const view = logins.view(EProvider.CLAUDE_SUB)
     assert.strictEqual(view.state, 'failed')
     assert.match(view.message ?? '', /invalid code/)
@@ -71,7 +80,7 @@ describe('login do Claude: o processo não sai sozinho', () => {
     const saved: string[] = []
     const logins = new SubscriptionLogins(fakeSpawn([`${ESC}]8;;${URL}${BEL}x`, `\r\n${TOKEN}\r\nPress Enter to continue`], null))
     await logins.start(EProvider.CLAUDE_SUB, { onToken: (token) => saved.push(token) })
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    await until(() => logins.view(EProvider.CLAUDE_SUB).state !== 'waiting')
     assert.deepStrictEqual(saved, [TOKEN])
     assert.strictEqual(logins.view(EProvider.CLAUDE_SUB).state, 'done')
   })
@@ -81,7 +90,7 @@ describe('login do Claude: o processo não sai sozinho', () => {
       fakeSpawn([`${ESC}]8;;${URL}${BEL}x`, '\r\nOAuth error: Invalid code. Please make sure the full code was copied\r\nPress Enter to retry.'], null),
     )
     await logins.start(EProvider.CLAUDE_SUB)
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    await until(() => logins.view(EProvider.CLAUDE_SUB).state !== 'waiting')
     const view = logins.view(EProvider.CLAUDE_SUB)
     assert.strictEqual(view.state, 'failed')
     assert.match(view.message ?? '', /Invalid code/)
@@ -94,7 +103,7 @@ describe('a saída é lida na tela renderizada', () => {
     // O CLI escreve a linha, volta o cursor e redesenha por cima — como o Ink faz.
     const logins = new SubscriptionLogins(fakeSpawn([`${ESC}]8;;${URL}${BEL}x\r\n`, `sk-ant-o${ESC}[1D${ESC}[1C`, `at01-${'B'.repeat(90)}\r\n`], null))
     await logins.start(EProvider.CLAUDE_SUB, { onToken: (token) => saved.push(token) })
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    await until(() => saved.length > 0)
     assert.deepStrictEqual(saved, [`sk-ant-oat01-${'B'.repeat(90)}`])
   })
 })
