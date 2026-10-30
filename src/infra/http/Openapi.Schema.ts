@@ -60,6 +60,8 @@ const sessionSchema = {
       properties: { repository: { type: 'string' }, worktree: { type: 'string' }, branch: { type: 'string' } },
     },
     turns: { type: 'integer' },
+    compactNext: { type: 'boolean', description: 'Compaction was asked for and runs at the start of the next turn.' },
+    compactsItself: { type: 'boolean', description: 'The lane compacts its own context (Claude Agent SDK, Codex, Antigravity): the gateway does not.' },
     usage: {
       type: 'object',
       properties: {
@@ -2557,6 +2559,14 @@ export const OPENAPI_DOCUMENT = {
         summary: 'End the session and release it, aborting anything in flight',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: { '200': { description: 'OK', ...json(envelope({ type: 'null' })) }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/sessions/{id}/compact': {
+      post: {
+        summary:
+          'Compact the context at the start of the next turn: the model summarizes the conversation, which restarts with the summary and the last turns. It also runs on its own when the context passes `compactAtPercent` of the model window. Lanes that compact themselves answer 422',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'OK', ...json(envelope(sessionSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
     },
     '/sessions/{id}/turns': {

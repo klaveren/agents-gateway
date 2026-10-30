@@ -83,6 +83,8 @@ export function antigravityArgs(prompt: string, model: string, conversationId?: 
  * mensagem; a conversa retomada já as tem.
  */
 export class AntigravityAgentAdapter implements IAgentAdapter {
+  /** O CLI compacta o próprio contexto (ver `Compaction.Policy`). */
+  readonly compactsItself = true
   private readonly store: SessionStore
   private readonly connections?: IConnectionSource
   private readonly spawn: TSpawn

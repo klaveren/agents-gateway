@@ -74,6 +74,8 @@ export interface IClaudeAgentAdapterDeps {
  * `while` de tool aqui, e é esse justamente o ponto do experimento.
  */
 export class ClaudeAgentAdapter implements IAgentAdapter {
+  /** O CLI compacta o próprio contexto (ver `Compaction.Policy`). */
+  readonly compactsItself = true
   private readonly query: TQuery
   private readonly store: SessionStore
   private readonly catalog?: ToolCatalog
@@ -233,6 +235,13 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
           const enabled = new Set((message as { tools?: string[] }).tools ?? [])
           const missing = natives.filter((name) => !enabled.has(name))
           if (missing.length) yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: `O SDK do Claude não ligou: ${missing.join(', ')}.` } }
+          continue
+        }
+
+        // O CLI compactou o próprio contexto (ligado por padrão): aparece no turno, com os tokens de antes e depois.
+        if (message.type === 'system' && message.subtype === 'compact_boundary') {
+          const { pre_tokens: before, post_tokens: after } = message.compact_metadata
+          yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: `Contexto compactado pelo SDK do Claude (${before} → ${after ?? '?'} tokens).` } }
           continue
         }
 

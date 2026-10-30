@@ -46,6 +46,10 @@ export interface ISessionState {
   status?: string
   /** Onde a conversa trabalha: o repositório do projeto, a worktree e o branch de agora. */
   place?: { repository: string; worktree?: string; branch?: string }
+  /** A compactação foi pedida e roda no início do próximo turno. */
+  compactNext?: boolean
+  /** A lane compacta o próprio contexto (Claude Agent SDK, Codex, Antigravity): sem botão de compactar. */
+  compactsItself?: boolean
 }
 
 export interface IToolCall {
@@ -258,7 +262,7 @@ export interface IProtocolInfo {
   envName?: string
 }
 
-export type TLimitName = 'maxToolTurns' | 'maxOutputTokens' | 'delegationMaxDepth' | 'bashTimeoutMs' | 'bashMaxOutputChars' | 'sessionsPerOwner' | 'streamsPerOwner'
+export type TLimitName = 'maxToolTurns' | 'maxOutputTokens' | 'delegationMaxDepth' | 'bashTimeoutMs' | 'bashMaxOutputChars' | 'sessionsPerOwner' | 'streamsPerOwner' | 'compactAtPercent'
 
 export type TAudience = 'off' | 'restricted' | 'all'
 

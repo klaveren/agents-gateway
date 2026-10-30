@@ -12,6 +12,8 @@ export interface ISessionDto {
   status: string
   turns: number
   usage: ISession['usage']
+  compactNext?: boolean
+  compactsItself?: boolean
   createdAt: Date
   lastActivityAt: Date
   metadata?: Record<string, unknown>
@@ -36,6 +38,8 @@ export function toSessionDto(record: ISession): ISessionDto {
     status: record.status,
     turns: record.turns,
     usage: record.usage,
+    ...(record.compactNext ? { compactNext: true } : {}),
+    ...(record.compactsItself ? { compactsItself: true } : {}),
     createdAt: record.createdAt,
     lastActivityAt: record.lastActivityAt,
     metadata: record.metadata,

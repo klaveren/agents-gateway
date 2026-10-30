@@ -30,9 +30,10 @@ export const HANDOFF_MAX_CHARS = 40_000
  */
 /**
  * Por que a transcrição vai: a conversa trocou de provider no meio, foi RETOMADA (a sessão tinha expirado), ou a COTA
- * do provider acabou no meio de um turno e outro o continua (ver `Fallback.Policy`).
+ * do provider acabou no meio de um turno e outro o continua (ver `Fallback.Policy`), ou o contexto foi COMPACTADO (ver
+ * `Compaction.Policy`; aqui, só quando o resumo falhou e a transcrição recortada o substitui).
  */
-export type THandoffKind = 'switch' | 'resume' | 'quota'
+export type THandoffKind = 'switch' | 'resume' | 'quota' | 'compact'
 
 const HANDOFF_INTRO: Record<THandoffKind, string> = {
   switch:
@@ -41,6 +42,8 @@ const HANDOFF_INTRO: Record<THandoffKind, string> = {
     '[Contexto do sistema: esta conversa foi retomada depois de uma pausa — o que você lembrava dela se perdeu. Abaixo, a transcrição dos turnos anteriores — use-a para continuar de onde parou, sem respondê-la de novo. A mensagem nova da pessoa vem depois da transcrição.]',
   quota:
     '[Contexto do sistema: a cota do modelo anterior acabou no meio do turno, e você o continua. Abaixo, a transcrição — o último turno é o que estava em andamento, com o que já foi feito: não repita o que já rodou, continue de onde parou. A mensagem da pessoa vem depois da transcrição.]',
+  compact:
+    '[Contexto do sistema: esta conversa ficou longa e o contexto foi compactado — o que você lembrava dela se perdeu. Abaixo, a transcrição dos turnos mais recentes — use-a para continuar de onde parou, sem respondê-la de novo. A mensagem nova da pessoa vem depois da transcrição.]',
 }
 
 export function handoffText(turns: readonly ITranscriptTurn[], maxChars = HANDOFF_MAX_CHARS, kind: THandoffKind = 'switch'): string | undefined {

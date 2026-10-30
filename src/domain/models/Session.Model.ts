@@ -33,6 +33,10 @@ export interface ISession {
   usageByModel?: Record<string, IUsage>
   /** A sessão trocou de provider e o próximo turno leva a transcrição (ver `Handoff.Policy`). */
   handoff?: boolean
+  /** A compactação foi pedida à mão e roda no início do próximo turno (ver `Compaction.Policy`). */
+  compactNext?: boolean
+  /** A lane compacta o próprio contexto (Claude Agent SDK, Codex, Antigravity): o gateway não compacta. */
+  compactsItself?: boolean
   createdAt: Date
   lastActivityAt: Date
   metadata?: Record<string, unknown>

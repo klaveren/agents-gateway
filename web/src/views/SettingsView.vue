@@ -46,6 +46,7 @@ const LIMITS: Array<{ name: TLimitName; label: string }> = [
   { name: 'bashMaxOutputChars', label: 'Saída máxima do terminal (caracteres)' },
   { name: 'sessionsPerOwner', label: 'Conversas simultâneas por pessoa' },
   { name: 'streamsPerOwner', label: 'Respostas simultâneas por pessoa' },
+  { name: 'compactAtPercent', label: 'Compactar o contexto em (% da janela)' },
 ]
 
 const DEPLOYMENT: Array<{ key: 'localToolsEnabled' | 'allowAnonymous'; label: string }> = [

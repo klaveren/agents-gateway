@@ -392,6 +392,7 @@ function buildRoutes(
     { method: 'get', path: '/sessions/:id', handler: controller.getSession },
     { method: 'delete', path: '/sessions/:id', handler: controller.deleteSession },
     { method: 'patch', path: '/sessions/:id', handler: controller.reconfigureSession },
+    { method: 'post', path: '/sessions/:id/compact', handler: controller.compactSession },
     { method: 'post', path: '/sessions/:id/messages', handler: controller.sendMessage },
     { method: 'post', path: '/sessions/:id/turns', handler: controller.startTurn },
     { method: 'get', path: '/sessions/:id/turns/:turn', handler: controller.turnStatus },

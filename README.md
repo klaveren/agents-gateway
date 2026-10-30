@@ -191,6 +191,7 @@ tools and is retried with exponential backoff (1s up to 60s). No restart either 
 | `MCP_SERVER_URL`        | `http://localhost:8000/mcp` | MCP server whose tools join the catalog.                                                               |
 | `MAX_OUTPUT_TOKENS`     | `4096`                      | Output cap per model call in the chat lane.                                                            |
 | `MAX_TOOL_TURNS`        | `12`                        | Tool round-trips allowed in one turn.                                                                  |
+| `COMPACT_AT_PERCENT`    | `80`                        | Context use (% of the model window) that compacts the conversation at the start of the next turn.      |
 | `BASH_CWD`              | _(process cwd)_             | Working directory of `run_bash`.                                                                       |
 | `BASH_TIMEOUT_MS`       | `20000`                     | `run_bash` timeout.                                                                                    |
 | `BASH_MAX_OUTPUT_CHARS` | `4000`                      | `run_bash` output cap.                                                                                 |
@@ -593,6 +594,20 @@ the chain instead of stopping on the error:
 - **The bench:** the provider out of quota stays aside until the error says it resets (or 15
   minutes, configurable). New conversations start on the next one, and a conversation still on it
   switches before its next turn.
+
+**Context compaction.** When the context of the last model call passes `compactAtPercent` of the
+model window (80% by default; Configuração → Limites, or `COMPACT_AT_PERCENT`), the next turn
+starts with a hidden turn on the same session: the model, which still sees everything (tool
+output included), writes a summary. The session then restarts with the summary and the last two
+turns in full. The summary is not stored as a turn; its usage counts.
+
+- **By hand:** `POST /v1/sessions/:id/compact`, or the "Compactar" button next to the context
+  meter. It runs at the start of the next turn.
+- **Lanes:** the chat lanes, OpenAI Agents and Google ADK. The Claude Agent SDK, Codex and
+  Antigravity compact their own context; the Claude one now shows a warning with the tokens
+  before and after.
+- **If the summary fails** (an error, or the model calls a tool), the session restarts with the
+  recent transcript instead.
 
 **Asynchronous turns**, for an orchestrator that drives agents:
 

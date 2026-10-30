@@ -18,6 +18,7 @@ import { SessionStore } from '@infra/session/Session.Store'
 import { makeAgents } from './Agents.Factory'
 import { makeProviders } from './Providers.Factory'
 import { makeSettings } from './Settings.Factory'
+import { makeModelCatalog } from './Catalog.Factory'
 import { makeTools, selfUrl } from './Tools.Factory'
 
 let store: SessionStore | undefined
@@ -67,7 +68,8 @@ export function makeOrchestrator(): AgentProvider {
    * A MESMA instância que o controller recebe (ver `makeSettings`): a tela salva num repositório e o
    * provider escuta o mesmo, e é isso que faz a mudança valer no instante em que é gravada.
    */
-  return new AgentProvider(adapters, sessions, makeSettings(), makeAgents(), connections, makeGuidance(), providerBench())
+  const models = makeModelCatalog()
+  return new AgentProvider(adapters, sessions, makeSettings(), makeAgents(), connections, makeGuidance(), providerBench(), (provider, model) => models.contextOf(provider, model))
 }
 
 let bench: ProviderBench | undefined
