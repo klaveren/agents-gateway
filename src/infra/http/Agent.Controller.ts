@@ -421,7 +421,7 @@ export class AgentController {
   }
 
   /** O projeto do agente existe e as delegações dele ficam no mesmo projeto (ou vão a um global). */
-  private projectIssues(agent: IAgent): Array<{ field: string; message: string }> {
+  projectIssues(agent: IAgent): Array<{ field: string; message: string }> {
     const issues: Array<{ field: string; message: string }> = []
     if (agent.projectId && this.usecases.projects && !this.usecases.projects.exists(agent.projectId))
       issues.push({ field: 'projectId', message: `no such project: ${agent.projectId}` })
@@ -668,7 +668,7 @@ export class AgentController {
    * pode ter subido ou caído) e o que cada provider recusa no prompt. O modelo é conferido no
    * catálogo do provider (`modelEnabled`), nunca pelo prefixo do id.
    */
-  private async agentRules(): Promise<Omit<IAgentRules, 'takenIds'>> {
+  async agentRules(): Promise<Omit<IAgentRules, 'takenIds'>> {
     const tools = await this.usecases.catalog.list(this.localTools)
 
     return {

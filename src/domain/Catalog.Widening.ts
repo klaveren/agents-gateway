@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { ICatalogDocument, TCatalogKind } from './Catalog.Document'
 import { EMode } from './enums/EMode.Enum'
-import type { IAgentTarget, IAgentTrigger } from './models/Agent.Model'
+import type { IAgentTarget } from './models/Agent.Model'
 import { AGENT_TOOL_PREFIX } from './models/Delegation.Model'
 import type { IMcpContainer, IMcpProcess, TMcpAuth } from './models/McpServer.Model'
 import { MCP_ALL_TOOLS, MCP_TOOL_PREFIX } from './models/McpServer.Model'
@@ -42,8 +42,6 @@ export type TWideningCategory =
   | 'resources'
   /** Variável de ambiente do agente nova ou alterada (muda o que um comando liberado faz). */
   | 'environment'
-  /** Trigger novo ou com o "quando" alterado num agente que já existia. */
-  | 'trigger'
   /** O que o MCP é e alcança: novo, ligado, outro código, rede, gravação, credencial. */
   | 'mcp-reach'
   /** O MCP passa a receber a identidade de quem chama. */
@@ -58,7 +56,6 @@ export const WIDENING_CATEGORY_LABEL: Readonly<Record<TWideningCategory, string>
   sandbox: 'sandbox e rede',
   resources: 'recursos liberados',
   environment: 'ambiente',
-  trigger: 'trigger',
   'mcp-reach': 'alcance do MCP',
   identity: 'identidade enviada',
 }
@@ -127,7 +124,6 @@ interface IAgentBody {
   projectId?: string
   permissions?: IPermissionRule[]
   providers?: IAgentTarget[]
-  triggers?: IAgentTrigger[]
   env?: Record<string, string>
   resources?: IAgentResources
 }
@@ -233,15 +229,7 @@ function agentWidenings(out: Collector, before: IAgentBody | undefined, after: I
     else if (env[name] !== value) out.add('environment', `env~${name}=${digest(value)}`, `variável de ambiente ${name} muda para "${value}"`)
   }
 
-  // Triggers (§2.4): novo ou com o "quando" alterado. No agente novo são conteúdo dele, como o prompt.
-  if (!isNew) {
-    const old = new Map((was.triggers ?? []).map((trigger) => [trigger.id, trigger]))
-    for (const trigger of after.triggers ?? []) {
-      const prev = old.get(trigger.id)
-      if (!prev) out.add('trigger', `triggers+${trigger.id}`, `novo trigger "${trigger.id}"`)
-      else if (prev.when !== trigger.when) out.add('trigger', `triggers~${trigger.id}=${digest(trigger.when)}`, `trigger "${trigger.id}" muda o "quando"`)
-    }
-  }
+  // ⚖️ Triggers NÃO contam (decisão do dono, 30/10): são texto, como o prompt.
 }
 
 // --- MCP ----------------------------------------------------------------------------------------------------------

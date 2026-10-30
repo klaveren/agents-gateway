@@ -3,6 +3,8 @@ import { randomBytes } from 'node:crypto'
 import { before, describe, it } from 'node:test'
 import { Request, Response } from 'express'
 import { CatalogHistoryQuery } from '@application/CatalogHistory.Query'
+import type { CatalogRestoreUseCase, IRestoreCaller } from '@application/CatalogRestore.Usecase'
+import { CatalogWideningConfirmationError, CatalogWideningForbiddenError } from '@domain/errors/Domain.Error'
 import { canonicalize, catalogHash, ICatalogDocument, TCanonicalBody, TCatalogKind } from '@domain/Catalog.Document'
 import { HmacTokenIssuer } from '@infra/auth/Hmac.TokenIssuer'
 import { identityFromToken, withCaller } from '@infra/mcp/Caller.Identity'
@@ -214,5 +216,80 @@ describe('GET /catalog/history (histórico do catálogo, só leitura)', () => {
     assert.strictEqual((await call(undefined, 'history', { kind: 'mcp', id: 'alfa.n8n' })).status, 404)
     const forged = `${MEMBER.slice(0, -4)}AAAA`
     assert.strictEqual((await call(forged, 'history', { project: 'alfa' })).status, 404)
+  })
+})
+
+describe('POST /catalog/history/restore e /catalog/batches/:id/revert (rollback, só admin)', () => {
+  const tokens = new HmacTokenIssuer(randomBytes(32).toString('hex'))
+  const token = (id: string, role: 'admin' | 'member') => tokens.issue({ sub: id, email: `${id}@x.test`, role, ver: 0 }).token
+  const ADMIN = token('u_root', 'admin')
+  const MEMBER = token('u_ana', 'member')
+  const proof = { prove: async (value: string) => !!tokens.verify(value) }
+
+  const seen: Array<{ request: unknown; caller: IRestoreCaller }> = []
+  const restore = {
+    restore: async (request: unknown, caller: IRestoreCaller) => {
+      seen.push({ request, caller })
+      if (caller.viaAccessToken) throw new CatalogWideningForbiddenError([{ key: 'agent/theo#allowedTools+cap:terminal', description: 'ganha o terminal' }])
+      return { unchanged: false }
+    },
+    revert: async (request: unknown, caller: IRestoreCaller) => {
+      seen.push({ request, caller })
+      throw new CatalogWideningConfirmationError([{ key: 'agent/theo#allowedTools+cap:terminal', description: 'ganha o terminal' }])
+    },
+  } as unknown as CatalogRestoreUseCase
+  const controller = new CatalogController({ history: new CatalogHistoryQuery(new SqliteCatalogHistoryRepository(':memory:'), { read: () => undefined }), proof, restore })
+
+  type TReply = { status: number; body?: { ok: boolean; result?: any; code?: string; details?: any } } // eslint-disable-line @typescript-eslint/no-explicit-any
+  const call = (as: string, handler: 'restore' | 'revertBatch', body: unknown, options: { params?: Record<string, string>; viaToken?: boolean } = {}) =>
+    withCaller({ token: as, ...identityFromToken(as) }, async () => {
+      const reply: TReply = { status: 0 }
+      const res = {
+        locals: options.viaToken ? { viaAccessToken: true } : {},
+        status(code: number) {
+          reply.status = code
+          return this
+        },
+        json(payload: TReply['body']) {
+          reply.body = payload
+          return this
+        },
+      } as unknown as Response
+      await controller[handler]({ body, params: options.params ?? {}, query: {} } as unknown as Request, res)
+      return reply
+    })
+  const body = { kind: 'mcp', id: 'n8n', project: 'alfa', revision: 2, expectedRevision: 5, confirm: ['k'] }
+
+  it('quem não é admin recebe 404, e o rollback nem é chamado', async () => {
+    seen.length = 0
+    assert.strictEqual((await call(MEMBER, 'restore', body)).status, 404)
+    assert.strictEqual((await call(MEMBER, 'revertBatch', {}, { params: { batchId: 'lote-1' } })).status, 404)
+    assert.strictEqual(seen.length, 0)
+  })
+
+  it('admin pela tela: a chave do item completa como na leitura, e o pedido chega com quem e por onde', async () => {
+    seen.length = 0
+    const reply = await call(ADMIN, 'restore', body)
+    assert.strictEqual(reply.status, 200)
+    assert.deepStrictEqual(seen[0], {
+      request: { item: { kind: 'mcp', itemId: 'alfa.n8n' }, revision: 2, expectedRevision: 5, confirm: ['k'] },
+      caller: { by: 'u_root@x.test', viaAccessToken: false },
+    })
+  })
+
+  it('token de acesso: o controller o distingue da sessão, e a ampliação vira 403', async () => {
+    seen.length = 0
+    const reply = await call(ADMIN, 'restore', body, { viaToken: true })
+    assert.strictEqual(seen[0].caller.viaAccessToken, true)
+    assert.deepStrictEqual([reply.status, reply.body?.code], [403, 'forbidden'])
+    assert.strictEqual(reply.body?.details.widenings[0].key, 'agent/theo#allowedTools+cap:terminal')
+  })
+
+  it('confirm que não bate: 409 com a lista certa; corpo inválido: 422', async () => {
+    const reply = await call(ADMIN, 'revertBatch', { confirm: [] }, { params: { batchId: 'lote-1' } })
+    assert.deepStrictEqual([reply.status, reply.body?.code], [409, 'widening_confirmation_required'])
+    assert.strictEqual(reply.body?.details.widenings.length, 1)
+    assert.strictEqual((await call(ADMIN, 'restore', { ...body, revision: 0 })).status, 422)
+    assert.strictEqual((await call(ADMIN, 'restore', { ...body, kind: 'nada' })).status, 422)
   })
 })

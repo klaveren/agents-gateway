@@ -217,6 +217,46 @@ export class GuidanceService {
     this.history.record(touched, { by })
   }
 
+  /**
+   * O ROLLBACK de uma rule apagada: volta com o MESMO id (o histórico é por id), no fim da lista do escopo, pelas mesmas
+   * regras de `createRule`. ⚖️ A posição antiga não volta: as vizinhas já foram renumeradas.
+   */
+  restoreRule(input: IRuleInput & { id: string }, by: string): IRule {
+    if (this.repository.rule(input.id)) throw new InvalidGuidanceError([{ field: 'id', message: `already exists: ${input.id}` }])
+    const scope = input.projectId ?? null
+    const rule: IRule = {
+      id: input.id,
+      ...(scope ? { projectId: scope } : {}),
+      position: this.nextPosition(scope),
+      title: input.title?.trim() ?? '',
+      body: input.body?.trim() ?? '',
+      enabled: input.enabled ?? true,
+      createdAt: this.now(),
+      updatedAt: this.now(),
+      updatedBy: by,
+    }
+    this.check(ruleIssues(rule), rule.projectId)
+    this.repository.insertRule(rule)
+    this.history.record([ruleKey(rule.id)], { by })
+    return rule
+  }
+
+  /**
+   * Os problemas dos vínculos de um agente do projeto dado (ausente = global), SEM gravar: as mesmas regras de
+   * `setAgentResources` e `setAgentContext`. O rollback confere antes de gravar o agente, para não parar no meio.
+   */
+  agentLinkIssues(projectId: string | undefined, links: { resources: IAgentResources; initialContext: readonly string[] }): TIssues {
+    return [
+      ...this.grantIssues(links.resources, projectId),
+      ...this.specIssues(links.initialContext, projectId, projectId ? 'another project' : 'a project (a global agent loads only global specs)'),
+    ]
+  }
+
+  /** Os problemas do contexto inicial de um projeto, SEM gravar (as regras de `setInitialContext`). */
+  contextIssues(projectId: string, docIds: readonly string[]): TIssues {
+    return this.specIssues(docIds, projectId, 'another project')
+  }
+
   /** Sobe ou desce uma posição, trocando com a vizinha. Na ponta, fica onde está. */
   moveRule(id: string, direction: 'up' | 'down', by: string): IRule[] {
     const rule = this.rule(id)

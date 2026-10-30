@@ -540,6 +540,7 @@ const revisionFields = {
   source: { type: 'string', enum: ['api', 'agent', 'migration', 'boot', 'import', 'restore'] },
   batchId: { type: 'string' },
   note: { type: 'string' },
+  widenings: { type: 'array', items: { type: 'string' }, description: 'The keys of the access widenings the author (`by`) accepted in this change.' },
 }
 const revisionSummarySchema = { type: 'object', properties: revisionFields }
 const revisionPageFields = {
@@ -557,6 +558,29 @@ const diffSideSchema = {
     op: { type: 'string' },
     at: { type: 'string', format: 'date-time' },
     by: { type: 'string' },
+  },
+}
+const wideningSchema = {
+  type: 'object',
+  properties: {
+    key: { type: 'string', description: 'Stable: `<kind>/<id>[@<project>]#<field><op><value>`, e.g. `agent/theo#allowedTools+cap:terminal`.' },
+    description: { type: 'string' },
+  },
+}
+const restoreFailures = {
+  '403': {
+    description:
+      'Code `forbidden`: the change widens access and the request came with an access token (CI). Only an administrator signed in on the screen accepts a widening, even with `confirm`. `details.widenings` lists them.',
+    content: { 'application/json': { schema: failureEnvelope } },
+  },
+  '409': {
+    description:
+      'Code `revision_conflict`: the item changed after `expectedRevision` (or outside the history); `details.current` has the current revision — review the diff and try again. Code `widening_confirmation_required`: the change widens access and `confirm` is not EXACTLY the set of keys in `details.widenings` (missing, extra or fewer).',
+    content: { 'application/json': { schema: failureEnvelope } },
+  },
+  '422': {
+    description: "Invalid body, or the version does not pass today's rules (a disabled model, a document that no longer exists…): `details` lists the problems.",
+    content: { 'application/json': { schema: failureEnvelope } },
   },
 }
 const diffLineSchema = {
@@ -1748,6 +1772,104 @@ export const OPENAPI_DOCUMENT = {
           },
           '401': failures['401'],
           '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
+    '/catalog/history/restore': {
+      post: {
+        summary:
+          'Restores one revision of an item: writes a NEW revision (`op: restore`, note `restaurado da rev N`) with that content, through the same write path and validations as the screens; no revision is ever deleted. A deleted item comes back (its id must be free); restoring a `delete` revision deletes the item (never a project or its permissions). Optimistic concurrency: `expectedRevision` is the last revision the person saw. Access widenings (new tool, `allow` rule, MCP reach…) apply only when `confirm` is exactly the set the server computes, and only by an administrator signed in on the screen; the accepted keys are recorded in the revision. Secrets are not in the catalog: restoring an MCP never touches the vault, and `missingSecrets` says what to register. Administrators only (404 for the others)',
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            required: ['kind', 'id', 'revision', 'expectedRevision'],
+            properties: {
+              kind: { type: 'string', enum: catalogKinds },
+              id: { type: 'string', description: 'As in GET /catalog/history (MCP: the server key; protocol addendum: `<project>/<kind>`).' },
+              project: { type: 'string', description: 'Completes the MCP or protocol key, as in GET /catalog/history.' },
+              revision: { type: 'integer', minimum: 1, description: 'The revision whose content comes back.' },
+              expectedRevision: { type: 'integer', minimum: 0, description: 'The last revision the person saw (0 = none).' },
+              confirm: { type: 'array', items: { type: 'string' }, description: 'The widening keys being accepted. Absent or empty when there is none.' },
+            },
+          }),
+        },
+        responses: {
+          '200': {
+            description: 'Restored (or `unchanged` when the version is already the current one)',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  kind: { type: 'string', enum: catalogKinds },
+                  itemId: { type: 'string' },
+                  restoredFrom: { type: 'integer' },
+                  unchanged: { type: 'boolean' },
+                  exists: { type: 'boolean' },
+                  revision: revisionSummarySchema,
+                  alsoChanged: { type: 'array', items: revisionSummarySchema, description: 'Other items that changed with it (cascade, rule renumbering).' },
+                  widenings: { type: 'array', items: wideningSchema },
+                  missingSecrets: { type: 'array', items: { type: 'string' }, description: '`env:<NAME>` or `header`: register them on the MCP screen.' },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '403': restoreFailures['403'],
+          '404': failures['404'],
+          '409': restoreFailures['409'],
+          '422': restoreFailures['422'],
+        },
+      },
+    },
+    '/catalog/batches/{batchId}/revert': {
+      post: {
+        summary:
+          'Reverts a batch (an import, or a previous revert): every item it touched goes back to its revision before the batch, in reverse order and, within a kind, what narrows before what widens — as a NEW batch (`kind: revert`) whose revisions carry its id. An item changed after the batch is skipped and listed in `conflicts` unless it is named in `overwrite`; the run stops at the first item that fails (`failed`). The new batch is `applied` when everything went back (the original becomes `reverted`), otherwise `partial`. Same widening rule as the restore, over the whole set. Administrators only (404 for the others)',
+        parameters: [{ name: 'batchId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: false,
+          ...json({
+            type: 'object',
+            properties: {
+              confirm: { type: 'array', items: { type: 'string' }, description: 'The keys of ALL widenings of the revert.' },
+              overwrite: { type: 'array', items: { type: 'string' }, description: 'Items (`<kind>/<itemId>`) changed after the batch to revert anyway, one by one.' },
+            },
+          }),
+        },
+        responses: {
+          '200': {
+            description: 'Reverted (see `batch.status`)',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  batch: {
+                    type: 'object',
+                    properties: {
+                      id: { type: 'string' },
+                      at: { type: 'string', format: 'date-time' },
+                      by: { type: 'string' },
+                      kind: { type: 'string', enum: ['import', 'revert'] },
+                      scope: { type: 'string' },
+                      summary: { type: 'object' },
+                      widenings: { type: 'array', items: { type: 'object', properties: { kind: { type: 'string' }, itemId: { type: 'string' }, ...wideningSchema.properties } } },
+                      status: { type: 'string', enum: ['applied', 'partial', 'reverted'] },
+                    },
+                  },
+                  reverted: { type: 'array', items: { type: 'object' } },
+                  unchanged: { type: 'array', items: { type: 'object' } },
+                  conflicts: { type: 'array', items: { type: 'object' } },
+                  failed: { type: 'object' },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '403': restoreFailures['403'],
+          '404': failures['404'],
+          '409': restoreFailures['409'],
           '422': failures['422'],
         },
       },

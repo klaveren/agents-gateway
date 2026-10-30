@@ -26,6 +26,14 @@ export interface IAuthControllerDeps {
 /** Marca, em `res.locals`, que a requisição chegou com um token de acesso (trocado na porta). */
 const VIA_ACCESS_TOKEN = 'viaAccessToken'
 
+/**
+ * O pedido chegou com um TOKEN DE ACESSO (`agw_…`, o CI), trocado na porta (`accessTokenGate`), e não com a sessão de
+ * login de uma pessoa na tela. ⛔ É a régua das ações que só a pessoa faz: gerir tokens, aceitar ampliação de permissão.
+ */
+export function viaAccessToken(res: Response): boolean {
+  return res.locals[VIA_ACCESS_TOKEN] === true
+}
+
 /** Login, sessão e a tela de Usuários. Separado do `AgentController`: é outro assunto, com outra porta. */
 export class AuthController {
   constructor(private readonly deps: IAuthControllerDeps) {
@@ -254,7 +262,7 @@ export class AuthController {
   /** A conta, provada E logada por sessão — não por token de acesso. */
   private async requireSession(res: Response): Promise<string> {
     const id = await this.requireSelf()
-    if (res.locals[VIA_ACCESS_TOKEN]) throw new HttpError(403, 'forbidden', 'Sign in to manage access tokens; an access token cannot manage tokens')
+    if (viaAccessToken(res)) throw new HttpError(403, 'forbidden', 'Sign in to manage access tokens; an access token cannot manage tokens')
     return id
   }
 

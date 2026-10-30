@@ -381,3 +381,11 @@ export function mcpSecretRefs(server: IMcpServerConfig): string[] {
 export function mcpDocument(server: IMcpServerConfig): ICatalogDocument {
   return documentOf('mcp', server.id, server.projectId, { ...shaped(MCP_SHAPE, server), secrets: mcpSecretRefs(server) })
 }
+
+/**
+ * O documento de volta a partir do texto canônico gravado (uma revisão): `id` é o id do item — no MCP, o do servidor
+ * (o `item_id` do histórico é a chave com o projeto). O texto já é canônico: o `hash` é o mesmo da revisão.
+ */
+export function documentFromText(kind: TCatalogKind, id: string, projectId: string | undefined, text: string): ICatalogDocument {
+  return { kind, id, ...(projectId ? { projectId } : {}), body: JSON.parse(text) as TCanonicalBody, text, hash: catalogHash(text) }
+}
