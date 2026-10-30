@@ -21,7 +21,8 @@ export interface INewMcpServer {
 }
 
 /**
- * Os servidores MCP (só admin) e as ferramentas de cada um, guardadas por servidor depois da 1ª leitura.
+ * Os servidores MCP e as ferramentas de cada um, guardadas por servidor depois da 1ª leitura. O admin gerencia todos;
+ * o membro de um projeto só lê os daquele projeto (`loadProject`).
  * ⚖️ Tudo pela CHAVE (`key`): `n8n` é o global, `cliente-a.n8n` o do projeto — o mesmo id pode estar em dois projetos.
  */
 export const useMcpStore = defineStore('mcp', () => {
@@ -30,6 +31,14 @@ export const useMcpStore = defineStore('mcp', () => {
 
   async function load(): Promise<void> {
     list.value = await api<IMcpServer[]>('/mcp-servers')
+  }
+
+  /**
+   * ⛔ O MEMBRO de um projeto: só os MCPs daquele projeto (`?project=`), sem o erro de conexão. Sem o projeto, ou de
+   * projeto alheio, o servidor responde 404 — a lista global nunca vem.
+   */
+  async function loadProject(projectId: string): Promise<void> {
+    list.value = await api<IMcpServer[]>('/mcp-servers', { query: { project: projectId } })
   }
 
   async function create(input: INewMcpServer): Promise<IMcpServer> {
@@ -93,5 +102,5 @@ export const useMcpStore = defineStore('mcp', () => {
     return result
   }
 
-  return { list, tools, load, create, update, remove, saveSecret, clearSecret, saveEnv, stop, install, test, loadTools }
+  return { list, tools, load, loadProject, create, update, remove, saveSecret, clearSecret, saveEnv, stop, install, test, loadTools }
 })
