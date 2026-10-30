@@ -28,6 +28,20 @@ describe('agentIssues', () => {
     assert.deepStrictEqual(agentIssues(agent(), rules), [])
   })
 
+  it('⚖️ o tamanho do prompt e da soul é de quem cria; só Codex e Antigravity têm o teto do argumento do Linux', () => {
+    const big = 'x'.repeat(200_000)
+    assert.deepStrictEqual(agentIssues(agent({ systemPrompt: big, soul: big }), rules), [], 'sem teto do sistema')
+    const onCli = (protocol: EProvider, soul: string) =>
+      agentIssues(agent({ providers: [{ provider: 'p', models: ['m'] }], modes: [EMode.AGENT], allowedTools: [], soul }), {
+        ...rules,
+        protocolOf: () => protocol,
+        modelEnabled: () => true,
+      }).map((issue) => issue.message)
+    assert.match(onCli(EProvider.CODEX, big).join(' | '), /command-line argument.*128 KiB.*now 200 KB/)
+    assert.match(onCli(EProvider.ANTIGRAVITY, big).join(' | '), /command-line argument/)
+    assert.deepStrictEqual(onCli(EProvider.CODEX, 'x'.repeat(50_000)), [], 'abaixo do teto passa')
+  })
+
   it('⛔ sandbox só no protocolo que o tem, e só nos níveis dele; rede só onde o sandbox a separa', () => {
     const on = (target: Partial<IAgent['providers'][number]>, protocol: EProvider) =>
       agentIssues(agent({ providers: [{ provider: 'p', models: ['m'], ...target }], modes: [EMode.AGENT], allowedTools: [] }), {

@@ -309,7 +309,11 @@ const agentBody = {
       },
     },
     systemPrompt: { type: 'string' },
-    soul: { type: 'string', maxLength: 8000, description: 'Who the agent is (identity, tone, values); the system prompt says what it does.' },
+    soul: {
+      type: 'string',
+      description:
+        'Who the agent is (identity, tone, values); the system prompt says what it does. No size cap: it costs tokens every turn. Agents on Codex or Antigravity keep soul + prompt under 120 KB (Linux command-line argument limit)',
+    },
     role: { type: ['string', 'null'], enum: ['subagent', null], description: '`subagent`: only called by another agent (delegation), never in a direct conversation.' },
     projectId: { type: ['string', 'null'], description: 'The project the agent belongs to: it works in that project folder and only its members see it. Absent or null = global.' },
     adminOnly: {

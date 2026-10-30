@@ -66,6 +66,8 @@ export const API_PREFIX = '/v1'
  */
 /** A mensagem de uma conversa: a única rota com o teto de corpo grande (anexos). */
 const MESSAGE_ROUTE = /^\/v1\/sessions\/[^/]+\/messages\/?$/
+/** O cadastro de agente leva o prompt e a soul inteiros, cujo tamanho é de quem cria (ver `Agent.Policy`). */
+const AGENT_ROUTE = /^\/v1\/agents(?:\/[^/]+)?\/?$/
 const HOOK_ROUTE = /^\/v1\/hook\/[^/]+\/[^/]+\/?$/
 /** As rotas com limite por origem (ver `rateLimit`). */
 export const THROTTLED_PATHS = ['/auth/login', '/auth/setup']
@@ -115,7 +117,9 @@ export class HttpServer {
     const large = express.json({ limit: messageJsonLimit() })
     // ⚖️ O hook lê o corpo CRU: a assinatura HMAC é dos bytes exatos, e o serviço que chama manda o que quiser.
     const raw = express.raw({ type: () => true, limit: '256kb' })
-    this.app.use((req, res, next) => (HOOK_ROUTE.test(req.path) ? raw(req, res, next) : MESSAGE_ROUTE.test(req.path) ? large(req, res, next) : small(req, res, next)))
+    this.app.use((req, res, next) =>
+      HOOK_ROUTE.test(req.path) ? raw(req, res, next) : MESSAGE_ROUTE.test(req.path) || AGENT_ROUTE.test(req.path) ? large(req, res, next) : small(req, res, next),
+    )
     // A sessão da tela chega no cookie HttpOnly; daqui em diante é a mesma credencial do cabeçalho.
     this.app.use(cookieCredential())
 
