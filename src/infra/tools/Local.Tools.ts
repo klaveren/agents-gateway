@@ -15,7 +15,8 @@ import { BACKGROUND_LIMITS, BackgroundProcesses, backgroundProcesses, clipOutput
 import { IProjectSandbox, projectSandbox, SANDBOX_SHELL } from '@infra/sandbox/Project.Sandbox'
 import { DOC_KINDS, IProjectDoc, READ_DOC_TOOL, SEARCH_DOCS_TOOL, TDocKind } from '@domain/models/ProjectDoc.Model'
 import { IDocHit } from '@domain/ports/GuidanceRepository.Port'
-import { SEARCH_RESOURCES_TOOL, TUsableKind, USABLE_KINDS, USE_RESOURCE_TOOL } from '@domain/models/Resource.Model'
+import { AGENT_TRIGGER_TOOL, SEARCH_RESOURCES_TOOL, TUsableKind, USABLE_KINDS, USE_RESOURCE_TOOL } from '@domain/models/Resource.Model'
+import type { IAgentTrigger } from '@domain/models/Agent.Model'
 import { IBuilderDraft } from '@domain/models/Protocol.Model'
 import { builderKindOf, PROPOSE_DRAFT_TOOL } from '@domain/Builder.Agents'
 import { ITodoItem, todoIssues, todoText, UPDATE_TODOS_TOOL } from '@domain/models/ConversationTodo.Model'
@@ -56,12 +57,22 @@ export interface IResourceLoader {
   searchResources?(query: string, kind: TUsableKind | undefined, agentId?: string): Array<{ kind: TUsableKind; id: string; description: string }>
 }
 
+/** Onde moram os triggers dos agentes (o catálogo de agentes). */
+export interface ITriggerStore {
+  /** Os triggers do agente; `undefined` = agente que não existe (ou de fábrica, que não se edita). */
+  triggersOf(agentId: string): IAgentTrigger[] | undefined
+  /** Grava a lista inteira; lança com os problemas quando ela não passa pela regra. */
+  saveTriggers(agentId: string, triggers: IAgentTrigger[], by: string): void
+}
+
 export interface ILocalToolDeps {
   exec?: TExec
   fetchHtml?: TFetchHtml
   policy?: IBashPolicy
   /** O cerco do agente de projeto (ver `Project.Sandbox`). Ausente = o do processo. */
   sandbox?: IProjectSandbox
+  /** Os triggers dos agentes, para o `agent_trigger`. Ausente = sem a ferramenta. */
+  triggers?: ITriggerStore
   /** Os recursos do agente (skills, commands, triggers). Ausente = sem `use_resource` nem `search_resources`. */
   resources?: IResourceLoader
   /** Os documentos (specs e ADRs). Ausente = sem `read_doc`. */
@@ -379,6 +390,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     ...(deps.docs?.searchDocs ? [searchDocsTool(deps.docs)] : []),
     ...(deps.resources ? [useResourceTool(deps.resources, deps.permissions)] : []),
     ...(deps.resources?.searchResources ? [searchResourcesTool(deps.resources)] : []),
+    ...(deps.triggers ? [agentTriggerTool(deps.triggers, deps.permissions)] : []),
     ...(deps.drafts ? [proposeDraftTool(deps.drafts)] : []),
     ...(deps.todos?.saveTodos ? [updateTodosTool(deps.todos)] : []),
   ]
@@ -610,6 +622,70 @@ function searchResourcesTool(resources: IResourceLoader): ILocalTool {
       const found = resources.searchResources?.(query, kind, context?.agentId) ?? []
       if (!found.length) return { status: 'success', result: 'Nothing found.' }
       return { status: 'success', result: found.map((item) => `- ${item.kind} ${item.id} — ${item.description}`).join('\n') }
+    },
+  }
+}
+
+const TRIGGER_ACTIONS = ['list', 'get', 'create', 'update', 'delete'] as const
+
+/**
+ * `agent_trigger`: lista, lê, cria, edita e apaga os triggers de um agente (o próprio, sem `agentId`).
+ * ⛔ Cada ação passa pela regra `trigger <id do agente>` — sem regra, negado, inclusive no próprio: um agente que reescreve
+ * os próprios triggers muda o próprio comportamento. Sem regras de permissão no servidor, a ferramenta recusa tudo.
+ */
+function agentTriggerTool(store: ITriggerStore, permissions?: IPermissionChecker): ILocalTool {
+  return {
+    origin: 'local',
+    name: AGENT_TRIGGER_TOOL,
+    description:
+      "Lists, reads, creates, updates and deletes an agent's triggers (actions run on demand: a name, a one-line 'when' and the procedure). Without agentId it acts on your own. Allowed only where your 'trigger' permission rules allow that agent.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: [...TRIGGER_ACTIONS], description: 'list, get, create, update or delete' },
+        agentId: { type: 'string', description: 'The agent whose triggers to act on. Default: you' },
+        id: { type: 'string', description: 'The trigger id (get, create, update, delete): lowercase letters, digits and hyphens' },
+        when: { type: 'string', description: 'create/update: one line, when to use it (goes into the agent prompt index)' },
+        body: { type: 'string', description: 'create/update: the procedure, in markdown' },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+    execute: async (args, context) => {
+      const action = TRIGGER_ACTIONS.find((item) => item === args.action)
+      if (!action) return { status: 'error', result: `action: one of ${TRIGGER_ACTIONS.join(', ')}` }
+      const target = typeof args.agentId === 'string' && args.agentId.trim() ? args.agentId.trim() : context?.agentId
+      if (!target) return { status: 'error', result: 'agentId is required outside an agent conversation.' }
+      if (!permissions) return { status: 'error', result: 'Not permitted: this server has no permission rules for triggers.' }
+      const verdict = permissions.check(askerOf(context), { category: 'trigger', value: target }, { log: true })
+      if (!verdict.allowed) return { status: 'error', result: `Not permitted: ${verdict.reason}` }
+      const current = store.triggersOf(target)
+      if (!current) return { status: 'error', result: `Agent not found: ${target}` }
+      if (action === 'list') return { status: 'success', result: current.length ? current.map((item) => `- ${item.id} — ${item.when}`).join('\n') : 'No triggers.' }
+      const id = typeof args.id === 'string' ? args.id.trim() : ''
+      if (!id) return { status: 'error', result: 'id is required.' }
+      const existing = current.find((item) => item.id === id)
+      if (action === 'get')
+        return existing
+          ? { status: 'success', result: `# Trigger: ${existing.id}\n\nQuando: ${existing.when}\n\n${existing.body}` }
+          : { status: 'error', result: `Trigger not found: ${id}` }
+      if (action !== 'create' && !existing) return { status: 'error', result: `Trigger not found: ${id}` }
+      if (action === 'create' && existing) return { status: 'error', result: `Trigger already exists: ${id} (use update)` }
+      const text = (value: unknown) => (typeof value === 'string' ? value : undefined)
+      const next =
+        action === 'delete'
+          ? current.filter((item) => item.id !== id)
+          : action === 'create'
+            ? [...current, { id, when: text(args.when)?.trim() ?? '', body: text(args.body) ?? '' }]
+            : current.map((item) => (item.id === id ? { id, when: text(args.when)?.trim() ?? item.when, body: text(args.body) ?? item.body } : item))
+      try {
+        store.saveTriggers(target, next, `agent:${context?.agentId ?? '?'}${context?.sessionId ? ` (conversa ${context.sessionId})` : ''}`)
+      } catch (error: unknown) {
+        const issues = (error as { issues?: Array<{ message: string }> }).issues
+        return { status: 'error', result: issues?.length ? issues.map((issue) => issue.message).join('; ') : toMessage(error) }
+      }
+      const done = { create: 'Created', update: 'Updated', delete: 'Deleted' }[action]
+      return { status: 'success', result: `${done} trigger ${id} of ${target}. It applies to conversations from now on.` }
     },
   }
 }

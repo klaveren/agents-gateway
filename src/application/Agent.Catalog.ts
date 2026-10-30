@@ -1,7 +1,7 @@
 import { toCapabilities } from '@domain/Capability.Catalog'
-import { agentIssues, IAgentRules } from '@domain/Agent.Policy'
+import { agentIssues, IAgentRules, triggerIssues } from '@domain/Agent.Policy'
 import { AgentInUseError, AgentNotFoundError, InvalidAgentError } from '@domain/errors/Domain.Error'
-import { diagnosticsOn, IAgent, IAgentTarget } from '@domain/models/Agent.Model'
+import { diagnosticsOn, IAgent, IAgentTarget, IAgentTrigger } from '@domain/models/Agent.Model'
 import { IAgentDirectory, IAgentRepository, IStoredAgent } from '@domain/ports/AgentRepository.Port'
 
 /** Um agente na lista da tela, com quem mexeu por último. */
@@ -116,6 +116,20 @@ export class AgentCatalog implements IAgentDirectory {
     if (issues.length) throw new InvalidAgentError(issues)
 
     return this.repository.save(agent, options.by)
+  }
+
+  /**
+   * Só os triggers de um agente gravado (a ferramenta `agent_trigger`): o resto do agente fica como está, e só os
+   * triggers passam pela regra. ⛔ Agente de fábrica (o Atlas, os construtores) não é gravado aqui: responde como inexistente.
+   */
+  saveTriggers(id: string, triggers: IAgentTrigger[], by: string): void {
+    const stored = this.repository.list().find((agent) => agent.id === id)
+    if (!stored) throw new AgentNotFoundError(id)
+    const issues = triggerIssues(triggers)
+    if (issues.length) throw new InvalidAgentError(issues)
+    const agent: IAgent = { ...toAgent(stored) }
+    delete agent.triggers
+    this.repository.save(triggers.length ? { ...agent, triggers } : agent, by)
   }
 
   /** Muda o agente de projeto sem passar pela regra do salvamento — só a migração para projetos usa. */

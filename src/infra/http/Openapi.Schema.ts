@@ -636,7 +636,7 @@ const projectAccountSchema = {
 const permissionRuleSchema = {
   type: 'object',
   properties: {
-    category: { type: 'string', enum: ['terminal', 'read', 'write', 'network', 'mcp', 'skill', 'delegate', 'account', 'repository'] },
+    category: { type: 'string', enum: ['terminal', 'read', 'write', 'network', 'mcp', 'skill', 'delegate', 'account', 'repository', 'trigger'] },
     pattern: {
       type: 'string',
       description:
@@ -1874,7 +1874,7 @@ export const OPENAPI_DOCUMENT = {
                 type: 'object',
                 properties: {
                   agentId: { type: 'string' },
-                  category: { type: 'string', enum: ['terminal', 'read', 'write', 'network', 'mcp', 'skill', 'delegate', 'account', 'repository'] },
+                  category: { type: 'string', enum: ['terminal', 'read', 'write', 'network', 'mcp', 'skill', 'delegate', 'account', 'repository', 'trigger'] },
                   value: { type: 'string' },
                 },
                 required: ['category', 'value'],

@@ -68,6 +68,16 @@ export function makeTools(): ITools {
         makeLocalTools({
           docs: makeGuidance(),
           resources: makeGuidance(),
+          triggers: {
+            // Só agente gravado: o de fábrica (Atlas, construtores) não se edita e responde como inexistente.
+            triggersOf: (agentId) => {
+              const entry = makeAgents()
+                .rawEntries()
+                .find((item) => item.agent.id === agentId)
+              return entry ? (entry.agent.triggers ?? []) : undefined
+            },
+            saveTriggers: (agentId, triggers, by) => makeAgents().saveTriggers(agentId, triggers, by),
+          },
           drafts: makeGuidance(),
           todos: todoStore(),
           permissions: lazyPermissions,

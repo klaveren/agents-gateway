@@ -46,6 +46,8 @@ export const NO_RESOURCES = '-'
  * command liberado ou um trigger dele. ⚖️ Um carregador só; cada tipo segue com os seus dados, a sua tela e a sua regra.
  */
 export const USE_RESOURCE_TOOL = 'use_resource'
+/** A ferramenta com que um agente cria, edita e apaga triggers (os dele ou os de outro, pela regra `trigger`). */
+export const AGENT_TRIGGER_TOOL = 'agent_trigger'
 /** A busca por nome e descrição entre os recursos que o agente pode carregar. */
 export const SEARCH_RESOURCES_TOOL = 'search_resources'
 /** Os tipos que o `use_resource` carrega. */
