@@ -12,6 +12,7 @@
   import type { IMcpContainer, IMcpProcess, IMcpServer, TMcpAuth, TMcpKind, TMcpTransport } from '@/lib/types'
   import { useAuthStore } from '@/stores/auth'
   import { useMcpStore, type INewMcpServer } from '@/stores/mcp'
+  import { useProjectsStore } from '@/stores/projects'
   import { useSettingsStore } from '@/stores/settings'
 
   /**
@@ -25,8 +26,9 @@
   const auth = useAuthStore()
   const mcp = useMcpStore()
   const settings = useSettingsStore()
+  const projects = useProjectsStore()
   /** O MCP do próprio gateway: a URL e a credencial são do sistema, não se editam. */
-  const isSelf = computed(() => selected.value?.id === 'gateway')
+  const isSelf = computed(() => selected.value?.key === 'gateway')
   /** Sem Docker neste servidor (o pod do k3s não tem): o "Contêiner isolado" não sobe. `undefined` = não se sabe. */
   const dockerDown = computed(() => {
     const docker = settings.current?.deployment?.docker
@@ -41,13 +43,26 @@
   const TRANSPORT_LABEL: Record<TMcpTransport, string> = { auto: 'Automático', http: 'Streamable HTTP', sse: 'SSE' }
 
   const adding = computed(() => route.name === 'mcp-new')
-  const selected = computed(() => (props.id ? mcp.list.find((server) => server.id === props.id) : undefined))
+  /** ⚖️ A rota leva a CHAVE (`n8n`, `cliente-a.n8n`): o mesmo id pode estar em dois projetos. */
+  const selected = computed(() => (props.id ? mcp.list.find((server) => server.key === props.id) : undefined))
+
+  /** O nome do escopo: Global ou o projeto. */
+  const scopeLabel = (projectId?: string) => (projectId ? (projects.list.find((project) => project.id === projectId)?.name ?? projectId) : 'Global')
+  /** O filtro da lista: todos, só os globais (`''`) ou um projeto. */
+  const scopeFilter = ref<string>('*')
+  const listed = computed(() =>
+    mcp.list.filter((server) => scopeFilter.value === '*' || (scopeFilter.value === '' ? !server.projectId : server.projectId === scopeFilter.value)),
+  )
+  /** O escopo escolhido na edição (`''` = global): mover é um passo à parte, porque muda a chave e quem pode usar. */
+  const moveTo = ref('')
+  const moveDirty = computed(() => !!selected.value && moveTo.value !== (selected.value.projectId ?? ''))
 
   const loadError = ref<string>()
   const blankContainer = (): IMcpContainer => ({ image: '', args: [], writable: [], memoryMb: 1024, cpus: 1, network: 'none', allowedHosts: [], env: [] })
   const blankProcess = (): IMcpProcess => ({ package: '', command: '', args: [], env: [], scope: 'conversation' })
   const blank = (): INewMcpServer => ({
     id: '',
+    projectId: undefined,
     name: '',
     kind: 'process',
     container: blankContainer(),
@@ -92,7 +107,12 @@
   const removeError = ref<string>()
 
   onMounted(async () => {
-    if (auth.isAdmin) await Promise.all([mcp.load().catch((error) => (loadError.value = describe(error))), settings.load().catch(() => undefined)])
+    if (auth.isAdmin)
+      await Promise.all([
+        mcp.load().catch((error) => (loadError.value = describe(error))),
+        settings.load().catch(() => undefined),
+        projects.loaded ? undefined : projects.load().catch(() => undefined),
+      ])
   })
 
   const editOf = (server: IMcpServer): IEdit => ({
@@ -109,7 +129,7 @@
     selected,
     (server, previous) => {
       if (!server) return (edit.value = undefined)
-      const switched = server.id !== previous?.id
+      const switched = server.key !== previous?.key
       if (switched) {
         testResult.value = undefined
         installResult.value = undefined
@@ -118,7 +138,8 @@
         // ⛔ Segredo digitado é de UM servidor: não pode aparecer no formulário de outro.
         secret.value = ''
         envValues.value = {}
-        mcp.loadTools(server.id).catch((error) => (toolsError.value = describe(error)))
+        mcp.loadTools(server.key).catch((error) => (toolsError.value = describe(error)))
+        moveTo.value = server.projectId ?? ''
       }
       // ⚠️ "Testar" e "Ligado" recarregam a lista e o `selected` muda de objeto: a edição não salva só é
       // sobrescrita quando o servidor é outro ou quando o formulário ainda não tinha mudança.
@@ -142,7 +163,7 @@
       (draft.auth === 'header' && draft.headerName !== (server.headerName ?? 'Authorization'))
     )
   })
-  const tools = computed(() => (selected.value ? (mcp.tools[selected.value.id] ?? []) : []))
+  const tools = computed(() => (selected.value ? (mcp.tools[selected.value.key] ?? []) : []))
   /** As mais pesadas primeiro: é por elas que vale começar a cortar. */
   const toolsByWeight = computed(() => [...tools.value].sort((a, b) => toolTokens(b) - toolTokens(a)))
   const pointsToSelf = (url: string) => /\/v1\/mcp\/?$/.test(url.trim())
@@ -173,7 +194,7 @@
 
   function describe(error: unknown): string {
     if (error instanceof ApiError && error.status === 422) return issuesSummary(error)
-    if (error instanceof ApiError && error.code === 'mcp_server_in_use') return `${error.message}. Tire o servidor desses agentes antes.`
+    if (error instanceof ApiError && error.code === 'mcp_server_in_use') return `${error.message}. Tire o servidor desses agentes (ou mude o projeto deles) antes.`
     return error instanceof Error ? error.message : String(error)
   }
 
@@ -195,12 +216,30 @@
       const { secret: value, headerName, container, process: proc, ...rest } = form.value
       const created =
         rest.kind === 'container'
-          ? await mcp.create({ id: rest.id, name: rest.name, kind: 'container', container: container && containerPayload(container), url: '', transport: 'auto', auth: 'none' })
+          ? await mcp.create({
+              id: rest.id,
+              projectId: rest.projectId,
+              name: rest.name,
+              kind: 'container',
+              container: container && containerPayload(container),
+              url: '',
+              transport: 'auto',
+              auth: 'none',
+            })
           : rest.kind === 'process'
-            ? await mcp.create({ id: rest.id, name: rest.name, kind: 'process', process: proc && processPayload(proc), url: '', transport: 'auto', auth: 'none' })
+            ? await mcp.create({
+                id: rest.id,
+                projectId: rest.projectId,
+                name: rest.name,
+                kind: 'process',
+                process: proc && processPayload(proc),
+                url: '',
+                transport: 'auto',
+                auth: 'none',
+              })
             : await mcp.create({ ...rest, ...(rest.auth === 'header' ? { headerName, secret: value?.trim() || undefined } : {}) })
       form.value = blank()
-      await router.push(`/mcp/${created.id}`)
+      await router.push(`/mcp/${created.key}`)
     } catch (error) {
       if (error instanceof ApiError && error.status === 422) formIssues.value = { ...error.fieldIssues, ...containerIssuesOf(error) }
       formError.value = describe(error)
@@ -219,42 +258,60 @@
     }
   }
 
-  const save = () => run(async () => mcp.update(selected.value!.id, { ...edit.value!, headerName: edit.value!.auth === 'header' ? edit.value!.headerName : undefined }))
-  const toggle = () => run(async () => mcp.update(selected.value!.id, { enabled: !selected.value!.enabled }))
+  const save = () =>
+    run(async () => {
+      await mcp.update(selected.value!.key, { ...edit.value!, headerName: edit.value!.auth === 'header' ? edit.value!.headerName : undefined })
+    })
+  const toggle = () =>
+    run(async () => {
+      await mcp.update(selected.value!.key, { enabled: !selected.value!.enabled })
+    })
+  /** ⛔ O servidor recusa (409) se algum agente perderia o MCP: a mensagem diz quem. A chave muda, e a rota vai junto. */
+  const move = () =>
+    run(async () => {
+      const moved = await mcp.update(selected.value!.key, { projectId: moveTo.value || null })
+      await router.replace(`/mcp/${moved.key}`)
+    })
   const containerDirty = computed(() => !!selected.value?.container && JSON.stringify(selected.value.container) !== JSON.stringify(containerPayload(containerDraft.value)))
-  const saveContainer = () => run(async () => mcp.update(selected.value!.id, { name: edit.value!.name, container: containerPayload(containerDraft.value) }))
+  const saveContainer = () =>
+    run(async () => {
+      await mcp.update(selected.value!.key, { name: edit.value!.name, container: containerPayload(containerDraft.value) })
+    })
   const processDirty = computed(
     () => !!selected.value?.process && JSON.stringify(processPayload(withProcessDefaults(selected.value.process))) !== JSON.stringify(processPayload(processDraft.value)),
   )
-  const saveProcess = () => run(async () => mcp.update(selected.value!.id, { name: edit.value!.name, process: processPayload(processDraft.value) }))
+  const saveProcess = () =>
+    run(async () => {
+      await mcp.update(selected.value!.key, { name: edit.value!.name, process: processPayload(processDraft.value) })
+    })
   const install = () =>
     run(async () => {
       installResult.value = undefined
       installing.value = true
       try {
-        installResult.value = await mcp.install(selected.value!.id)
+        installResult.value = await mcp.install(selected.value!.key)
       } finally {
         installing.value = false
       }
     })
   const saveEnv = (name: string) =>
     run(async () => {
-      await mcp.saveEnv(selected.value!.id, name, envValues.value[name] ?? '')
+      await mcp.saveEnv(selected.value!.key, name, envValues.value[name] ?? '')
       envValues.value = { ...envValues.value, [name]: '' }
     })
   const stopAll = () =>
     run(async () => {
-      await mcp.stop(selected.value!.id)
+      await mcp.stop(selected.value!.key)
     })
   const saveSecret = () =>
     run(async () => {
-      await mcp.saveSecret(selected.value!.id, secret.value)
+      await mcp.saveSecret(selected.value!.key, secret.value)
       secret.value = ''
     })
-  const clearSecret = () => run(async () => mcp.clearSecret(selected.value!.id))
+  const clearSecret = () => run(async () => mcp.clearSecret(selected.value!.key))
   const test = () =>
     run(async () => {
-      testResult.value = await mcp.test(selected.value!.id)
+      testResult.value = await mcp.test(selected.value!.key)
     })
 
   async function confirmRemove() {
@@ -262,7 +319,7 @@
     if (!target) return
     removeError.value = undefined
     try {
-      await mcp.remove(target.id)
+      await mcp.remove(target.key)
       removing.value = undefined
       await router.push('/mcp')
     } catch (error) {
@@ -288,19 +345,28 @@
         </RouterLink>
       </header>
       <p class="px-4 pb-3 text-xs text-zinc-500">Servidores que dão ferramentas aos agentes. Cada agente escolhe as que usa.</p>
+      <label v-if="projects.list.length" class="mx-4 mb-2 flex items-center gap-2 text-xs text-zinc-400">
+        Escopo
+        <select v-model="scopeFilter" class="input py-1 text-xs">
+          <option value="*">Todos</option>
+          <option value="">Globais</option>
+          <option v-for="project in projects.list" :key="project.id" :value="project.id">{{ project.name }}</option>
+        </select>
+      </label>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
       <p v-if="!mcp.list.length && !loadError" class="px-4 py-2 text-sm text-zinc-500">Nenhum MCP cadastrado ainda.</p>
       <RouterLink
-        v-for="server in mcp.list"
-        :key="server.id"
-        :to="`/mcp/${server.id}`"
+        v-for="server in listed"
+        :key="server.key"
+        :to="`/mcp/${server.key}`"
         class="mx-2 flex items-center gap-3 rounded-xl px-3 py-2"
-        :class="[server.id === id ? 'bg-emerald-500/15' : 'hover:bg-zinc-800/60', { 'opacity-60': !server.enabled }]"
+        :class="[server.key === id ? 'bg-emerald-500/15' : 'hover:bg-zinc-800/60', { 'opacity-60': !server.enabled }]"
       >
         <span class="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-violet-500/20 text-xs font-semibold text-violet-200">{{ initials(server.name) }}</span>
         <span class="min-w-0 flex-1">
           <span class="block truncate text-sm font-medium">{{ server.name }}</span>
           <span class="block truncate text-xs text-zinc-500">
+            {{ scopeLabel(server.projectId) }} ·
             {{
               !server.enabled
                 ? 'desligado'
@@ -357,6 +423,21 @@
                 . Não muda depois.
               </small>
               <small v-for="m in formIssues.id" :key="m" class="error">{{ m }}</small>
+            </label>
+            <label class="field">
+              Escopo
+              <select v-model="form.projectId" class="input">
+                <option :value="undefined">Global — qualquer agente</option>
+                <option v-for="project in projects.list" :key="project.id" :value="project.id">Projeto {{ project.name }}</option>
+              </select>
+              <small class="hint">
+                {{
+                  form.projectId
+                    ? 'Só os agentes deste projeto usam; as chaves ficam com o projeto. Outro projeto pode ter um MCP com o mesmo identificador.'
+                    : 'Qualquer agente usa. O identificador não pode repetir o de um MCP de projeto.'
+                }}
+              </small>
+              <small v-for="m in formIssues.projectId" :key="m" class="error">{{ m }}</small>
             </label>
             <label v-if="form.kind === 'remote'" class="field sm:col-span-2">
               URL
@@ -418,12 +499,12 @@
         </form>
       </template>
 
-      <section v-else-if="selected && edit" :key="selected.id" class="mx-auto flex max-w-3xl flex-col gap-4">
+      <section v-else-if="selected && edit" :key="selected.key" class="mx-auto flex max-w-3xl flex-col gap-4">
         <div class="flex items-center gap-3">
           <span class="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-violet-500/20 text-base font-semibold text-violet-200">{{ initials(selected.name) }}</span>
           <div class="min-w-0">
             <h2 class="truncate text-lg font-semibold">{{ selected.name }}</h2>
-            <p class="truncate font-mono text-xs text-zinc-500">mcp:{{ selected.id }}/…</p>
+            <p class="truncate font-mono text-xs text-zinc-500">mcp:{{ selected.id }}/… · {{ scopeLabel(selected.projectId) }}</p>
           </div>
           <label class="ml-auto flex shrink-0 items-center gap-2 text-xs text-zinc-400">
             Ligado
@@ -560,7 +641,7 @@
             </div>
             <small class="hint">{{ AUTH_LABEL[edit.auth].hint }}</small>
             <small v-if="isSelf" class="hint">Fixo neste MCP: ele sempre usa o login de quem conversa.</small>
-            <small v-if="edit.auth === 'caller' && selected?.id !== 'gateway'" class="text-xs text-amber-300">
+            <small v-if="edit.auth === 'caller' && !isSelf" class="text-xs text-amber-300">
               ⚠ O servidor passa a agir como a pessoa que conversa. Só use em servidor seu, de confiança.
             </small>
           </div>
@@ -633,6 +714,23 @@
           <p v-else class="text-xs text-zinc-500">
             {{ selected.enabled ? 'Nenhuma ferramenta listada (servidor fora do ar, ou sem ferramentas).' : 'Ligue o servidor para listar as ferramentas.' }}
           </p>
+        </div>
+
+        <div v-if="!isSelf && projects.list.length" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
+          <label class="field">
+            Escopo
+            <div class="flex flex-wrap items-center gap-2">
+              <select v-model="moveTo" class="input sm:w-1/2">
+                <option value="">Global — qualquer agente</option>
+                <option v-for="project in projects.list" :key="project.id" :value="project.id">Projeto {{ project.name }}</option>
+              </select>
+              <button v-if="moveDirty" type="button" class="btn btn-secondary" :disabled="busy" @click="move">Mover</button>
+            </div>
+            <small class="hint">
+              Mover leva junto a chave e as variáveis. ⛔ Recusado se algum agente ficaria sem o MCP — tire dele antes.
+            </small>
+            <small v-if="editError && moveDirty" class="error">{{ editError }}</small>
+          </label>
         </div>
 
         <div class="flex flex-wrap items-center gap-1.5 text-xs text-zinc-500">

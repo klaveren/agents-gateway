@@ -19,6 +19,7 @@ import { NATIVE_TOOLS } from '@domain/Native.Tools'
 import { dangerousToolsOf } from '@domain/Tool.Policy'
 import { isSubscription } from '@domain/Subscription.Policy'
 import { delegationMaxDepth } from '@domain/models/Delegation.Model'
+import { mcpServerKey, mcpServesProject } from '@domain/models/McpServer.Model'
 import { compactAtPercent } from '@domain/Compaction.Policy'
 import { loopLimits } from '@domain/Loop.Policy'
 import { maxOutputTokens, maxToolTurns } from '@infra/adapters/support/Prompt.Helper'
@@ -48,6 +49,7 @@ import { IDockerStatus } from '@infra/sandbox/Docker.Sandbox'
 import { IProjectSandbox } from '@infra/sandbox/Project.Sandbox'
 import { CALLBACK_METADATA_KEY, PROJECT_METADATA_KEY, REPOSITORY_METADATA_KEY, START_COMMIT_METADATA_KEY, WORKTREE_METADATA_KEY } from '@domain/Session.Metadata'
 import { CHANGE_SCOPES, changesOf, fileDiff, headOf, TChangeScope } from '@infra/workspace/Git.Changes'
+import { projectWorkspacePath } from '@infra/adapters/support/Subscription.Workspace'
 import { currentBranch, IWorkFolder, resolveWorkFolder, WorkFolderError } from '@infra/workspace/Work.Folder'
 import { deliverCallback } from './Turn.Callbacks'
 import { BUILDER_METADATA_KEY, builderKindOf, CORE_AGENT_IDS } from '@domain/Builder.Agents'
@@ -405,36 +407,6 @@ export class AgentController {
     }
   }
 
-  /**
-   * A linha de contexto do projeto, na primeira mensagem: em que projeto a conversa está e, para o agente
-   * de projeto, onde fica a pasta dele. ⚖️ É o que deixa o Atlas (global) criar agentes no projeto certo.
-   * Só texto do servidor (id, nome do cadastro, caminho), nada de quem chama.
-   */
-  private async projectContext(sessionId: string): Promise<string | undefined> {
-    const projects = this.usecases.projects
-    if (!projects) return undefined
-    const session = await this.usecases.getSession.execute(sessionId).catch(() => undefined)
-    const projectId = session?.metadata?.[PROJECT_METADATA_KEY]
-    if (typeof projectId !== 'string' || !projects.exists(projectId)) return undefined
-    const project = projects.get(projectId)
-    const agent = session ? this.agents.get(session.agentId) : undefined
-    // ⛔ Aberta num repositório ou worktree: o ambiente vem pronto (o que a esteira montava no prompt), só com dados.
-    const repository = session?.metadata?.[REPOSITORY_METADATA_KEY]
-    if (typeof repository === 'string') {
-      const worktree = session?.metadata?.[WORKTREE_METADATA_KEY]
-      const place = resolveWorkFolder(projects.folderOf(projectId), repository, typeof worktree === 'string' ? worktree : undefined)
-      const branch = currentBranch(place.dir)
-      return [
-        `Projeto: ${project.name} (${project.id}).`,
-        `Repositório: ${repository}${place.worktree ? `, worktree ${place.worktree}` : ''}${branch ? ` (branch ${branch})` : ''}.`,
-        `Sua pasta de trabalho é ${place.dir}. Fora desta pasta você não lê nem grava; o git dela funciona (status, commit, push).`,
-      ].join(' ')
-    }
-    return agent?.projectId === projectId
-      ? `Projeto: ${project.name} (${project.id}). Sua pasta de trabalho é ${projects.folderOf(projectId)} — persistente e compartilhada pelas conversas do projeto. Fora desta pasta você não lê nem grava.`
-      : `Projeto atual: ${project.name} (projectId "${project.id}"). Agentes, hooks e conversas que você criar aqui pertencem a este projeto.`
-  }
-
   /** O agente aparece para esta pessoa (neste projeto, se pedido)? O global aparece em todos. */
   private agentVisible(agent: IAgent, caller: IProjectCaller, project?: string): boolean {
     if (!agent.projectId) return true
@@ -568,8 +540,12 @@ export class AgentController {
       return agentFootprint(entry.agent, projectId, {
         guidance: this.usecases.guidance,
         localFor: (allowed) => catalog.localFor(allowed),
+        projectName: (id) => (this.usecases.projects?.exists(id) ? this.usecases.projects.get(id).name : undefined),
+        projectDir: (id) => projectWorkspacePath(id),
+        // ⛔ O servidor do escopo do AGENTE (não o do projeto pedido na tela): global só vê global.
         mcpTools: async (server) => {
-          const tools = await catalog.mcp.probeTools(server, token).catch(() => [])
+          const config = catalog.mcp.resolve(server, entry.agent.projectId)
+          const tools = config ? await catalog.mcp.probeTools(mcpServerKey(config), token).catch(() => []) : []
           return tools.length ? tools : undefined
         },
       })
@@ -688,8 +664,9 @@ export class AgentController {
 
     return {
       knownTools: tools.map((tool) => tool.name),
-      // ⛔ Servidor DESLIGADO não serve: o agente o perdia em silêncio na hora de rodar.
-      mcpServerExists: (id) => this.usecases.catalog.mcp.get(id)?.enabled === true,
+      // ⛔ Servidor DESLIGADO não serve: o agente o perdia em silêncio na hora de rodar. E só o do escopo do agente:
+      // o global ou o do projeto dele — nunca o de outro projeto.
+      mcpServerExists: (id, projectId) => this.usecases.catalog.mcp.resolve(id, projectId)?.enabled === true,
       // ⛔ Delegar só para quem pode abrir conversa agora; um alvo inativo devolvia erro ao modelo-pai.
       agentExists: (id) => {
         const target = this.agents.get(id)
@@ -713,25 +690,34 @@ export class AgentController {
 
   async getAgentTools(req: Request, res: Response) {
     await this.respond(res, async () => {
-      await this.requireCaller()
+      const resolved = await this.requireCaller()
+      const admin = (await checkAdminAccess(this.usecases.proof)).allowed
       const agentId = req.params.agentId as string
       const agent = this.agents.get(agentId)
-      if (!agent) throw new AgentNotFoundError(agentId)
+      // ⛔ O agente de um projeto (e os MCPs dele) não existe para quem não é do projeto.
+      if (!agent || !this.agentVisible(agent, { userId: resolved.identity?.id, admin })) throw new AgentNotFoundError(agentId)
 
       // As capacidades entram pelas ferramentas do gateway que as implementam (a lista é a mesma em todo provedor).
-      return this.catalogFor([...agent.allowedTools, ...agent.allowedTools.flatMap((tool) => capability(tool)?.local ?? [])])
+      // ⛔ Os MCPs: só os do escopo do agente (os globais e os do projeto dele).
+      return this.catalogFor([...agent.allowedTools, ...agent.allowedTools.flatMap((tool) => capability(tool)?.local ?? [])], (server) => mcpServesProject(server, agent.projectId))
     })
   }
 
-  async getTools(_req: Request, res: Response) {
+  async getTools(req: Request, res: Response) {
     await this.respond(res, async () => {
-      await this.requireCaller()
+      const resolved = await this.requireCaller()
+      const caller = { userId: resolved.identity?.id, admin: (await checkAdminAccess(this.usecases.proof)).allowed }
+      const project = typeof req.query.project === 'string' && req.query.project ? req.query.project : undefined
+      if (project) this.requireProject(caller, project)
+      // ⛔ MCP de projeto só para quem é do projeto: com `?project`, os globais e os dele; sem, os dos projetos da pessoa.
+      const serves = (server: { projectId?: string }) =>
+        !server.projectId || (project ? server.projectId === project : !this.usecases.projects || this.usecases.projects.canUse(caller, server.projectId))
       // As nativas vão junto, todas liberadas. `dangerous`: alcança este servidor — a tela avisa quem configura.
       const dangerous = (id: string) => dangerousToolsOf([id]).length > 0
       // ⚖️ O que virou CAPACIDADE (Terminal, Arquivos, Busca…) não aparece solto: vem em `capabilities`, com o que roda em
       // cada provedor. Ficam as nativas que só um provedor tem (os "extras") e as locais que não são capacidade.
       const native = NATIVE_TOOLS.filter((tool) => !CAPABILITY_TOOLS.has(tool.id)).map((tool) => ({ ...tool, dangerous: dangerous(tool.id) }))
-      const catalog = await this.catalogFor(this.localTools)
+      const catalog = await this.catalogFor(this.localTools, serves)
       // As que o servidor oferece de fato (o perímetro `LOCAL_TOOLS_ENABLED` já aplicado).
       const perimeter = catalog.tools.filter((tool) => tool.origin === 'local').map((tool) => tool.name)
       const capabilities = CAPABILITIES.filter((item) => !item.local.length || item.local.some((tool) => perimeter.includes(tool))).map((item) => ({
@@ -1398,12 +1384,13 @@ export class AgentController {
   }
 
   /**
-   * A mensagem como o turno a recebe: o contexto da primeira (identidade, projeto, repositório e worktree) e o `/command`
-   * expandido. ⛔ Command que existe mas não está liberado para este agente é recusado (422).
+   * A mensagem como o turno a recebe: o contexto da primeira (a identidade) e o `/command` expandido. O projeto, o
+   * repositório e o diretório vão no system prompt ("## Ambiente", ver `Ambient.Policy`). ⛔ Command que existe mas não
+   * está liberado para este agente é recusado (422).
    */
   private async turnInput(sessionId: string, resolved: IResolvedCaller, body: { message: string; files?: IMessageInput['files'] }): Promise<IMessageInput> {
     // O contexto sai da identidade já resolvida e é aplicado pelo use case, só na primeira mensagem.
-    const context = [this.usecases.sessionContext?.({ ...resolved.identity }), await this.projectContext(sessionId)].filter(Boolean).join('\n\n') || undefined
+    const context = this.usecases.sessionContext?.({ ...resolved.identity }) || undefined
     // `/nome argumentos`: o command liberado ao agente vira o texto dele (com os documentos anexados); o turno grava o
     // que a pessoa digitou.
     const session = await this.usecases.getSession.execute(sessionId)
@@ -1695,15 +1682,16 @@ export class AgentController {
    * A listagem vem primeiro de propósito: é ela que pode reconectar, e ler o status antes
    * devolvia um `connected` sempre um passo atrás das tools que a própria resposta trazia.
    */
-  private async catalogFor(allowed: string[]) {
+  private async catalogFor(allowed: string[], serves: (server: { projectId?: string }) => boolean) {
     const { catalog } = this.usecases
     const tools = await catalog.list(allowed)
     // Sem `lastError`: a mensagem pode trazer endereço interno, e esta rota é de qualquer chamador.
     // ⛔ Só os LIGADOS: o desligado não roda, e o nome dele não é assunto de quem não administra.
+    // ⛔ E só os do escopo pedido (`serves`): o MCP de um projeto não aparece para quem não é dele.
     const servers = catalog.mcp
       .status()
-      .filter((server) => server.enabled)
-      .map(({ id, name, enabled, connected }) => ({ id, name, enabled, connected }))
+      .filter((server) => server.enabled && serves(server))
+      .map(({ key, id, projectId, name, enabled, connected }) => ({ key, id, ...(projectId ? { projectId } : {}), name, enabled, connected }))
 
     return { mcp: { connected: servers.some((server) => server.connected), servers }, tools }
   }

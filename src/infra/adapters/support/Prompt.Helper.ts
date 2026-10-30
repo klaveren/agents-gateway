@@ -1,3 +1,4 @@
+import { ambientSection } from '@domain/Ambient.Policy'
 import { liveLimit } from '@domain/models/Limits.Model'
 import { IAgent } from '@domain/models/Agent.Model'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
@@ -21,9 +22,9 @@ export function composeSystemPrompt(agent: IAgent, input: ICreateSessionInput): 
   const instructions = input.systemPrompt?.trim() || agent.systemPrompt
   const soul = agent.soul?.trim()
   const identity = soul ? `## Quem você é\n${soul}\n\n## Como você trabalha\n${instructions}` : instructions
-  // As regras do ambiente e os documentos vêm depois do que o agente faz: valem para qualquer tarefa.
-  const environment = input.environment?.trim()
-  const base = environment ? `${identity}\n\n${environment}` : identity
+  // Onde ele opera (agente, projeto, diretório) e, depois, as regras do ambiente e os documentos: valem para qualquer tarefa.
+  const ambient = input.ambient ? ambientSection(input.ambient) : undefined
+  const base = [identity, ambient, input.environment?.trim()].filter(Boolean).join('\n\n')
   if (!input.language) return base
   return `${base}\n\nIMPORTANT: Please reply exclusively in ${input.language}.`
 }

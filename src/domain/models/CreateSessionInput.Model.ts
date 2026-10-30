@@ -1,3 +1,4 @@
+import { IAmbient } from '../Ambient.Policy'
 import { EMode } from '../enums/EMode.Enum'
 
 export interface ICreateSessionInput {
@@ -39,4 +40,9 @@ export interface ICreateSessionInput {
    * prompt. ⛔ Interno: quem preenche é o `AgentProvider`, nunca o corpo da requisição.
    */
   environment?: string
+  /**
+   * O agente, o projeto e o diretório de operação da conversa (ver `Ambient.Policy`), que vão no system prompt como
+   * "## Ambiente". ⛔ Interno: quem preenche é o `AgentProvider`, nunca o corpo da requisição.
+   */
+  ambient?: IAmbient
 }
