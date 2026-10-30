@@ -18,6 +18,7 @@ import { PROTOCOL_KINDS } from '@domain/models/Protocol.Model'
 import { effectiveResources, RESOURCE_KINDS } from '@domain/models/Resource.Model'
 import { IAgentRepository } from '@domain/ports/AgentRepository.Port'
 import { IGuidanceRepository, TGuidanceScope } from '@domain/ports/GuidanceRepository.Port'
+import { mcpServerKey } from '@domain/models/McpServer.Model'
 import { IMcpServerRepository } from '@domain/ports/McpServerRepository.Port'
 import { IPermissionRepository } from '@domain/ports/PermissionRepository.Port'
 import { IProjectRepository } from '@domain/ports/ProjectRepository.Port'
@@ -50,8 +51,11 @@ export interface ICatalogReaderDeps {
 export class CatalogReader {
   constructor(private readonly deps: ICatalogReaderDeps) {}
 
-  /** O documento de `(kind, id)`; `undefined` se não existe. */
-  read(kind: TCatalogKind, id: string): ICatalogDocument | undefined {
+  /**
+   * O documento de `(kind, id)`; `undefined` se não existe. `projectId` só desambigua o MCP (o mesmo id pode existir em
+   * dois projetos); os outros tipos têm id único no gateway.
+   */
+  read(kind: TCatalogKind, id: string, projectId?: string): ICatalogDocument | undefined {
     const { guidance, projects, mcps, permissions } = this.deps
     switch (kind) {
       case 'agent': {
@@ -86,7 +90,7 @@ export class CatalogReader {
       case 'project-permissions':
         return projects.get(id) ? projectPermissionsDocument(id, permissions.projectRules(id).rules) : undefined
       case 'mcp': {
-        const server = mcps.get(id)
+        const server = mcps.get(mcpServerKey({ id, projectId }))
         return server ? mcpDocument(server) : undefined
       }
     }
@@ -98,7 +102,6 @@ export class CatalogReader {
     const projectIds = scope.kind === 'project' ? (projects.get(scope.projectId) ? [scope.projectId] : []) : projects.list().map((project) => project.id)
     const scopes: TGuidanceScope[] = scope.kind === 'project' ? projectIds : scope.kind === 'global' ? [null] : [null, ...projectIds]
     const withProjects = scope.kind !== 'global'
-    const withSystem = scope.kind !== 'project'
 
     const documents: ICatalogDocument[] = []
     if (withProjects) {
@@ -116,8 +119,9 @@ export class CatalogReader {
         if (addendum) documents.push(protocolDocument(addendum))
       }
     }
-    if (withSystem) documents.push(...mcps.list().map(mcpDocument))
-    const inScope = (agent: IAgent) => (scope.kind === 'all' ? true : scope.kind === 'global' ? !agent.projectId : agent.projectId === scope.projectId)
+    const inScope = (item: { projectId?: string }) => (scope.kind === 'all' ? true : scope.kind === 'global' ? !item.projectId : item.projectId === scope.projectId)
+    // ⛔ MCP de projeto sai no escopo do projeto dele, nunca no global nem no de outro projeto.
+    documents.push(...mcps.list().filter(inScope).map(mcpDocument))
     documents.push(
       ...this.deps.agents
         .list()

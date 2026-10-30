@@ -86,6 +86,20 @@ function build(reverse = false) {
         createdAt: at,
         updatedAt: at,
       }),
+    ...['a', 'b'].map(
+      (projectId) => () =>
+        mcps.insert({
+          id: 'n8n',
+          name: 'n8n',
+          url: `https://n8n.${projectId}.example.com/`,
+          transport: 'auto',
+          auth: 'none',
+          enabled: true,
+          projectId,
+          createdAt: at,
+          updatedAt: at,
+        }),
+    ),
   ]
   for (const step of reverse ? [...steps].reverse() : steps) step()
   return new CatalogReader(deps)
@@ -104,6 +118,7 @@ describe('CatalogReader — por escopo', () => {
       'command:cmd-a',
       'rule:rule-a',
       'protocol:a/skill',
+      'mcp:n8n',
       'agent:agente-a',
       'project-permissions:a',
     ])
@@ -119,8 +134,9 @@ describe('CatalogReader — por escopo', () => {
 
   it('tudo: os globais, os dois projetos e os MCPs, sem repetir', () => {
     const documents = build().list({ kind: 'all' })
-    assert.strictEqual(documents.length, 9 * 2 + 8)
-    assert.strictEqual(new Set(ids(documents)).size, documents.length)
+    assert.strictEqual(documents.length, 10 * 2 + 8)
+    // O mesmo id em dois projetos (o `n8n` de A e o de B): a chave do documento inclui o escopo.
+    assert.strictEqual(new Set(documents.map((doc) => `${doc.kind}:${doc.projectId ?? ''}:${doc.id}`)).size, documents.length)
   })
 
   it('projeto que não existe: vazio', () => {
@@ -177,7 +193,7 @@ describe('CatalogReader — documento de um item', () => {
   })
 
   it('o documento lido sozinho é o mesmo da lista', () => {
-    for (const doc of reader.list({ kind: 'all' })) assert.strictEqual(reader.read(doc.kind, doc.id)?.hash, doc.hash, `${doc.kind}:${doc.id}`)
+    for (const doc of reader.list({ kind: 'all' })) assert.strictEqual(reader.read(doc.kind, doc.id, doc.projectId)?.hash, doc.hash, `${doc.kind}:${doc.id}`)
   })
 
   it('item que não existe: undefined', () => {

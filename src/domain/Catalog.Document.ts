@@ -243,6 +243,7 @@ export const MCP_SHAPE: TShape<IMcpServerConfig> = {
   headerName: 'value',
   identity: 'value',
   enabled: 'value',
+  projectId: 'value',
   createdAt: { omit: META },
   updatedAt: { omit: META },
   updatedBy: { omit: META },
@@ -374,5 +375,5 @@ export function mcpSecretRefs(server: IMcpServerConfig): string[] {
 }
 
 export function mcpDocument(server: IMcpServerConfig): ICatalogDocument {
-  return documentOf('mcp', server.id, undefined, { ...shaped(MCP_SHAPE, server), secrets: mcpSecretRefs(server) })
+  return documentOf('mcp', server.id, server.projectId, { ...shaped(MCP_SHAPE, server), secrets: mcpSecretRefs(server) })
 }
