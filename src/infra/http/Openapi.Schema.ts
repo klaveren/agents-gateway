@@ -1374,11 +1374,18 @@ export const OPENAPI_DOCUMENT = {
     '/projects/{id}/import/scan': {
       post: {
         summary:
-          'Inventory of the agentic resources a repository of the project already has (`.agents/`, opencode): probable kind, sources with size, ≈tokens and sha256, cross references (found or broken), generated and secret marks, and whether the id already exists in the catalog. READ ONLY: nothing is saved and no content is returned. Administrators only (404 for the others)',
+          'Inventory of the agentic resources a repository of the project already has (`.agents/`, opencode, `.claude/` and `CLAUDE.md`, `AGENTS.md`): probable kind, sources with size, ≈tokens and sha256, cross references (found or broken), generated and secret marks, and whether the id already exists in the catalog. READ ONLY: nothing is saved and no content is returned. Administrators only (404 for the others)',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: {
           required: true,
-          ...json({ type: 'object', properties: { repository: { type: 'string', description: 'The folder name in `<project>/repositories/`' } }, required: ['repository'] }),
+          ...json({
+            type: 'object',
+            properties: {
+              repository: { type: 'string', description: 'The folder name in `<project>/repositories/`' },
+              ignore: { type: 'array', items: { type: 'string' }, description: 'Glob patterns ignored in this scan only, added to the project ones' },
+            },
+            required: ['repository'],
+          }),
         },
         responses: {
           '200': {
@@ -1402,6 +1409,13 @@ export const OPENAPI_DOCUMENT = {
                       links: {
                         type: 'array',
                         items: { type: 'object', properties: { path: { type: 'string' }, reason: { type: 'string', enum: ['outside', 'cycle', 'broken'] } } },
+                      },
+                      patterns: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: { pattern: { type: 'string' }, origin: { type: 'string', enum: ['project', 'request'] }, files: { type: 'integer' } },
+                        },
                       },
                     },
                   },
@@ -1449,6 +1463,29 @@ export const OPENAPI_DOCUMENT = {
               }),
             ),
           },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
+    '/projects/{id}/import/ignore': {
+      get: {
+        summary:
+          'The glob patterns the import scan ignores in the repositories of this project (gitignore-like: no `/` matches the name in any folder; with `/`, from the repository root). Administrators only (404 for the others)',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { patterns: { type: 'array', items: { type: 'string' } } } })) },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+      put: {
+        summary: 'Replace the ignore patterns of the import scan for this project (an empty list clears them). Absolute patterns and `..` are refused. Administrators only',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', properties: { patterns: { type: 'array', items: { type: 'string' } } }, required: ['patterns'] }) },
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { patterns: { type: 'array', items: { type: 'string' } } } })) },
           '401': failures['401'],
           '404': failures['404'],
           '422': failures['422'],

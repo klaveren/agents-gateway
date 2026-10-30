@@ -61,3 +61,17 @@ const EFFORT_LABEL: Record<string, string> = { none: 'Nenhum', minimal: 'Mínimo
 export function effortLabel(effort: string): string {
   return EFFORT_LABEL[effort] ?? effort
 }
+
+/**
+ * Uma URL para MOSTRAR, sem o que pode ser segredo: some o `usuário:senha@`, o valor de cada parâmetro (`?token=…`)
+ * e o fragmento. ⚖️ Fica o que diz ONDE o servidor está (esquema, host, caminho) e quais parâmetros ele leva.
+ */
+export function redactUrl(raw: string): string {
+  try {
+    const url = new URL(raw)
+    const keys = [...new Set(url.searchParams.keys())]
+    return `${url.protocol}//${url.host}${url.pathname}${keys.length ? `?${keys.map((key) => `${key}=…`).join('&')}` : ''}`
+  } catch {
+    return raw.replace(/[?#].*$/, '').replace(/\/\/[^/@]*@/, '//')
+  }
+}

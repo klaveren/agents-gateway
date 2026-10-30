@@ -25,6 +25,8 @@ import { ImportController } from '@infra/http/Import.Controller'
 import { catalogFinder, ImportScanUseCase } from '@application/ImportScan.Usecase'
 import { readRepoTree } from '@infra/import/Repo.Tree'
 import { AgentsDirDetector } from '@infra/import/AgentsDir.Detector'
+import { AgentsMdDetector } from '@infra/import/AgentsMd.Detector'
+import { ClaudeDetector } from '@infra/import/Claude.Detector'
 import { OpencodeDetector } from '@infra/import/Opencode.Detector'
 import { resolveWorkFolder } from '@infra/workspace/Work.Folder'
 import { AgentController } from '@infra/http/Agent.Controller'
@@ -182,7 +184,8 @@ export function makeImportController(): ImportController {
   return new ImportController({
     scan: new ImportScanUseCase({
       readTree: (projectId, repository) => readRepoTree(resolveWorkFolder(projects.folderOf(projectId), repository).dir, { mask: (text) => masker.text(text) }),
-      detectors: [new AgentsDirDetector(), new OpencodeDetector()],
+      detectors: [new AgentsDirDetector(), new OpencodeDetector(), new AgentsMdDetector(), new ClaudeDetector()],
+      projectIgnore: (projectId) => projects.importIgnore(projectId),
       findInCatalog: catalogFinder({
         doc: (id) => quietly(() => guidance.doc(id)),
         resource: (id) => quietly(() => guidance.resource(id)),
@@ -192,6 +195,7 @@ export function makeImportController(): ImportController {
       }),
     }),
     projectExists: (projectId) => projects.exists(projectId),
+    ignore: { get: (projectId) => projects.importIgnore(projectId), set: (projectId, patterns, by) => projects.setImportIgnore(projectId, patterns, by) },
     proof: makeAuth().proof,
   })
 }

@@ -3,6 +3,7 @@ import { agentIssues, IAgentRules, triggerIssues } from '@domain/Agent.Policy'
 import { AgentInUseError, AgentNotFoundError, InvalidAgentError } from '@domain/errors/Domain.Error'
 import { diagnosticsOn, IAgent, IAgentTarget, IAgentTrigger } from '@domain/models/Agent.Model'
 import { IAgentDirectory, IAgentRepository, IStoredAgent } from '@domain/ports/AgentRepository.Port'
+import { CatalogHistoryHook } from './CatalogHistory.Service'
 
 /** Um agente na lista da tela, com quem mexeu por último. */
 export interface IAgentEntry {
@@ -26,6 +27,9 @@ export interface ISaveAgentOptions {
  * mudar o agente aqui vale para a PRÓXIMA sessão.
  */
 export class AgentCatalog implements IAgentDirectory {
+  /** O histórico do catálogo: toda escrita grava a revisão do agente (ver `CatalogHistory.Service`). */
+  readonly history = new CatalogHistoryHook()
+
   constructor(
     private readonly repository: IAgentRepository,
     /**
@@ -115,7 +119,9 @@ export class AgentCatalog implements IAgentDirectory {
     const issues = agentIssues(agent, { ...options.rules, takenIds })
     if (issues.length) throw new InvalidAgentError(issues)
 
-    return this.repository.save(agent, options.by)
+    const saved = this.repository.save(agent, options.by)
+    this.history.record([{ kind: 'agent', id: agent.id }], { by: options.by })
+    return saved
   }
 
   /**
@@ -130,19 +136,23 @@ export class AgentCatalog implements IAgentDirectory {
     const agent: IAgent = { ...toAgent(stored) }
     delete agent.triggers
     this.repository.save(triggers.length ? { ...agent, triggers } : agent, by)
+    // Quem grava aqui é a ferramenta `agent_trigger`, nunca a tela.
+    this.history.record([{ kind: 'agent', id }], { by, source: 'agent' })
   }
 
   /** Muda o agente de projeto sem passar pela regra do salvamento — só a migração para projetos usa. */
   moveToProject(id: string, projectId: string, by: string): void {
     const stored = this.repository.list().find((agent) => agent.id === id)
-    if (stored) this.repository.save({ ...toAgent(stored), projectId }, by)
+    if (!stored) return
+    this.repository.save({ ...toAgent(stored), projectId }, by)
+    this.history.record([{ kind: 'agent', id }], { by, source: 'migration' })
   }
 
   /**
    * ⛔ Não apaga agente que outro usa: um `agent:<id>` órfão travava todo salvamento do agente que delega,
    * e o padrão das configurações apagado fazia toda conversa sem agente escolhido falhar.
    */
-  remove(id: string, options: { defaultAgentId?: string } = {}): void {
+  remove(id: string, by: string, options: { defaultAgentId?: string } = {}): void {
     const delegators = this.repository
       .list()
       .filter((agent) => agent.id !== id && agent.allowedTools.includes(`agent:${id}`))
@@ -150,6 +160,7 @@ export class AgentCatalog implements IAgentDirectory {
     const isDefault = options.defaultAgentId === id
     if (delegators.length || isDefault) throw new AgentInUseError(id, delegators, isDefault)
     if (!this.repository.delete(id)) throw new AgentNotFoundError(id)
+    this.history.record([{ kind: 'agent', id }], { by })
   }
 }
 

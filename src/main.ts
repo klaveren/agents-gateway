@@ -23,6 +23,7 @@ import {
 import { cleanupOrphans } from '@infra/sandbox/Docker.Sandbox'
 import { persistInstalls } from '@infra/packages/Persistent.Installs'
 import { migrateToProjects } from '@composition/factories/Projects.Factory'
+import { reconcileCatalogHistory } from '@composition/factories/CatalogHistory.Factory'
 import { projectSandbox } from '@infra/sandbox/Project.Sandbox'
 import { bootIssues, bootWarnings } from '@infra/http/Boot.Checks'
 import { clearSessionWorkspaces } from '@infra/adapters/support/Subscription.Workspace'
@@ -82,6 +83,8 @@ async function bootstrap() {
   void projectSandbox().status()
   // Uma vez: o que existia antes dos projetos vai para o projeto `geral` (ver `migrateToProjects`).
   await migrateToProjects(controller.conversations)
+  // O histórico do catálogo: baseline do que não tem revisão e deriva do que mudou fora dele (semente, migrações, banco).
+  reconcileCatalogHistory()
   const server = new HttpServer(
     controller,
     makeAuthController(),

@@ -1,8 +1,11 @@
+import { ignoreIssues, normalizeIgnore } from '@domain/Import.Ignore'
 import { InvalidProjectError, ProjectInUseError, ProjectNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgent } from '@domain/models/Agent.Model'
 import { DEFAULT_PROJECT_ID, IProject, IProjectMember, PROJECT_ID_PATTERN } from '@domain/models/Project.Model'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { IProjectRepository } from '@domain/ports/ProjectRepository.Port'
+import { TRevisionSource } from '@domain/ports/CatalogHistoryRepository.Port'
+import { CatalogHistoryHook } from './CatalogHistory.Service'
 
 /** Quem pergunta: a conta (id) e se é administrador provado. */
 export interface IProjectCaller {
@@ -20,6 +23,9 @@ const DESCRIPTION_MAX = 2_000
  * lista de agentes, a de conversas, abrir conversa e o hook passam todos por aqui.
  */
 export class ProjectsService {
+  /** O histórico do catálogo: o projeto, as permissões dele e, ao apagar, tudo o que ia junto (ver `CatalogHistory.Service`). */
+  readonly history = new CatalogHistoryHook()
+
   constructor(
     private readonly projects: IProjectRepository,
     /** Os agentes como gravados (para recusar apagar projeto que ainda tem agente). */
@@ -60,7 +66,7 @@ export class ProjectsService {
     return this.workspace.create(projectId)
   }
 
-  create(input: { id: string; name: string; description?: string }, by: string): IProject {
+  create(input: { id: string; name: string; description?: string }, by: string, source: TRevisionSource = 'api'): IProject {
     const project: IProject = {
       id: input.id.trim(),
       name: input.name.trim(),
@@ -75,6 +81,13 @@ export class ProjectsService {
     if (issues.length) throw new InvalidProjectError(issues)
     this.projects.insert(project)
     this.workspace.create(project.id)
+    this.history.record(
+      [
+        { kind: 'project', id: project.id },
+        { kind: 'project-permissions', id: project.id },
+      ],
+      { by, source },
+    )
     return project
   }
 
@@ -87,16 +100,21 @@ export class ProjectsService {
     }
     const issues = issuesOf(next)
     if (issues.length) throw new InvalidProjectError(issues)
-    return this.projects.update(id, {
+    const saved = this.projects.update(id, {
       name: next.name,
       ...(change.description !== undefined ? { description: next.description || undefined } : {}),
       updatedAt: this.now(),
       updatedBy: by,
     })!
+    this.history.record([{ kind: 'project', id }], { by })
+    return saved
   }
 
-  /** ⛔ Com agente dentro, recusa e diz quais (409). Vazio, some com membros e pasta. */
-  remove(id: string): void {
+  /**
+   * ⛔ Com agente dentro, recusa e diz quais (409). Vazio, some com membros e pasta — e com as rules, os docs, os
+   * recursos, os complementos, as permissões e os MCPs dele: cada um ganha a revisão de `delete`, com o mesmo autor.
+   */
+  remove(id: string, by: string): void {
     this.get(id)
     const using = this.agents().filter((agent) => agent.projectId === id)
     if (using.length)
@@ -104,8 +122,24 @@ export class ProjectsService {
         id,
         using.map((agent) => agent.name),
       )
+    const touched = this.history.keysOf({ kind: 'project', projectId: id })
     this.projects.delete(id)
     this.workspace.remove(id)
+    this.history.record(touched, { by })
+  }
+
+  /** Os padrões que a varredura do importador ignora neste projeto. */
+  importIgnore(id: string): string[] {
+    return this.get(id).importIgnore ?? []
+  }
+
+  /** ⛔ Troca a lista inteira (vazia apaga). Padrão absoluto ou com `..` é recusado: o ignorar é dentro do repositório. */
+  setImportIgnore(id: string, patterns: readonly string[], by: string): string[] {
+    this.get(id)
+    const issues = ignoreIssues(patterns)
+    if (issues.length) throw new InvalidProjectError(issues)
+    const clean = normalizeIgnore(patterns)
+    return this.projects.update(id, { importIgnore: clean, updatedAt: this.now(), updatedBy: by })?.importIgnore ?? []
   }
 
   members(id: string): IProjectMember[] {
@@ -154,7 +188,8 @@ export async function migrateLegacyToProjects(deps: {
     .filter((agent) => !seeded.has(agent.id) && !agent.projectId)
   let moved = 0
   if (legacy.length) {
-    if (!deps.service.exists(DEFAULT_PROJECT_ID)) deps.service.create({ id: DEFAULT_PROJECT_ID, name: 'Geral', description: 'O que existia antes dos projetos.' }, 'migração')
+    if (!deps.service.exists(DEFAULT_PROJECT_ID))
+      deps.service.create({ id: DEFAULT_PROJECT_ID, name: 'Geral', description: 'O que existia antes dos projetos.' }, 'migração', 'migration')
     deps.service.setMembers(DEFAULT_PROJECT_ID, deps.userIds(), 'migração')
     for (const agent of legacy) deps.agents.moveToProject(agent.id, DEFAULT_PROJECT_ID, 'migração')
     moved = await deps.conversations.assignProject(

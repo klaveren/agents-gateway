@@ -12,10 +12,12 @@ import { SqliteAgentRepository } from '@infra/persistence/Sqlite.AgentRepository
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
 import { targetUnavailable } from '@domain/Agent.Availability'
 import { makeModelCatalog } from './Catalog.Factory'
+import { makeCatalogHistory } from './CatalogHistory.Factory'
 import { makeProviders } from './Providers.Factory'
 import { makeSettings } from './Settings.Factory'
 
 let instance: AgentCatalog | undefined
+let stored: IAgentRepository | undefined
 
 /**
  * Os agentes do gateway — todos no banco. O Atlas entra como SEMENTE no primeiro boot (`seedOnce`) e
@@ -32,6 +34,7 @@ export function makeAgents(): AgentCatalog {
   if (instance) return instance
 
   const repository = build()
+  stored = repository
   repository.seedOnce(AGENT_SEED, 'seed')
   for (const migration of AGENT_MIGRATIONS)
     for (const id of migration.agentIds === '*' ? repository.list().map((agent) => agent.id) : migration.agentIds)
@@ -48,8 +51,15 @@ export function makeAgents(): AgentCatalog {
     (agent, target) => !targetUnavailable(agent, target, { provider: providers.get(target.provider), hasKey: !!providers.connection(target.provider)?.key, admin: true }),
     (): IAgent[] => coreAgents(catalog),
   )
+  catalog.history.use(() => makeCatalogHistory())
   instance = catalog
   return catalog
+}
+
+/** O repositório dos agentes, para o leitor do catálogo (o histórico lê o agente como gravado). */
+export function agentRepository(): IAgentRepository {
+  makeAgents()
+  return stored!
 }
 
 /** A cópia viva das configurações, para o construtor nascer com o modelo escolhido (o `get` é síncrono). */

@@ -98,8 +98,7 @@ export class GuidanceController {
     await this.respond(
       res,
       async () => {
-        await this.requireAdmin('deleteRule')
-        this.deps.guidance.deleteRule(req.params.id as string)
+        this.deps.guidance.deleteRule(req.params.id as string, await this.requireAdmin('deleteRule'))
         return null
       },
       { message: 'Rule deleted' },
@@ -149,8 +148,7 @@ export class GuidanceController {
     await this.respond(
       res,
       async () => {
-        await this.requireAdmin('deleteDoc')
-        this.deps.guidance.deleteDoc(req.params.id as string)
+        this.deps.guidance.deleteDoc(req.params.id as string, await this.requireAdmin('deleteDoc'))
         return null
       },
       { message: 'Document deleted' },
@@ -222,8 +220,7 @@ export class GuidanceController {
     await this.respond(
       res,
       async () => {
-        await this.requireAdmin('deleteResource')
-        this.deps.guidance.deleteResource(req.params.id as string)
+        this.deps.guidance.deleteResource(req.params.id as string, await this.requireAdmin('deleteResource'))
         return null
       },
       { message: 'Resource deleted' },

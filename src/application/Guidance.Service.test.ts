@@ -17,7 +17,7 @@ describe('GuidanceService', () => {
     const local = service.createRule(rule('x', 'xpto'), 'root')
     assert.deepStrictEqual([a.position, c.position, local.position], [1, 3, 1])
 
-    service.deleteRule(a.id)
+    service.deleteRule(a.id, 'admin')
     assert.deepStrictEqual(
       service.rules(null).map((item) => [item.title, item.position]),
       [
@@ -180,7 +180,7 @@ describe('GuidanceService', () => {
       service.updateDoc('comunicacao', { kind: 'spec' }, 'root')
       assert.strictEqual(service.initialContext('xpto').length, 2)
 
-      service.deleteDoc('seguranca')
+      service.deleteDoc('seguranca', 'admin')
       assert.deepStrictEqual(
         service.initialContext('xpto').map((item) => item.id),
         ['comunicacao'],
@@ -242,7 +242,7 @@ describe('GuidanceService', () => {
     it('apagar o agente ou a spec limpa a lista', () => {
       const service = seeded()
       service.setAgentContext('dev', ['arquitetura', 'seguranca'], 'root')
-      service.deleteDoc('seguranca')
+      service.deleteDoc('seguranca', 'admin')
       assert.deepStrictEqual(
         service.agentContext('dev').map((item) => item.id),
         ['arquitetura'],
@@ -365,7 +365,7 @@ describe('GuidanceService', () => {
       assert.deepStrictEqual(service.updateResource('tabela', { description: 'outra' }, 'root').docRefs, ['padrao'], 'sem docRefs na edição, ficam')
       assert.strictEqual(service.updateResource('tabela', { docIds: [] }, 'root').docRefs, undefined)
       service.updateResource('tabela', { docIds: ['padrao'], docRefs: ['padrao'] }, 'root')
-      service.deleteDoc('padrao')
+      service.deleteDoc('padrao', 'admin')
       assert.deepStrictEqual([service.resource('tabela').docIds, service.resource('tabela').docRefs], [[], undefined])
     })
 
@@ -439,7 +439,7 @@ describe('GuidanceService', () => {
     it('apagar o doc tira ele dos recursos; apagar o agente ou o projeto limpa', () => {
       const service = seeded()
       service.setAgentResources('dev', { skills: ['tabela'], commands: ['resumir'] }, 'root')
-      service.deleteDoc('padrao')
+      service.deleteDoc('padrao', 'admin')
       assert.deepStrictEqual(service.resource('tabela').docIds, [])
       service.removeProject('xpto')
       assert.throws(() => service.resource('resumir'), GuidanceNotFoundError)
@@ -450,7 +450,7 @@ describe('GuidanceService', () => {
     it('⛔ apagar o único recurso liberado a um agente não o abre para todos: ele fica com nenhum', () => {
       const service = seeded()
       service.setAgentResources('dev', { skills: ['tabela'], commands: ['resumir'] }, 'root')
-      service.deleteResource('tabela')
+      service.deleteResource('tabela', 'admin')
       assert.deepStrictEqual(service.agentResources('dev'), { skills: [], commands: ['resumir'] })
     })
   })
@@ -546,7 +546,7 @@ describe('GuidanceService', () => {
       assert.strictEqual(service.updateDoc('api', { docIds: ['erros'] }, 'root').docRefs, undefined)
       service.updateDoc('api', { docIds: ['erros', 'adr-rest'], docRefs: ['adr-rest'] }, 'root')
       service.createResource({ id: 'rest', kind: 'skill', description: 'Faz API', body: 'Passos.', docIds: ['adr-rest'], docRefs: ['adr-rest'] }, 'root')
-      service.deleteDoc('adr-rest')
+      service.deleteDoc('adr-rest', 'admin')
       assert.deepStrictEqual([service.doc('api').docIds, service.doc('api').docRefs], [['erros'], undefined])
       assert.deepStrictEqual(service.resource('rest').docIds, [])
     })
@@ -784,7 +784,7 @@ describe('GuidanceService', () => {
       service.updateDoc('api-rest', { body: 'Versionamento por cabeçalho.' }, 'root')
       assert.deepStrictEqual(ids(service.searchDocs('paginação')), [])
       assert.deepStrictEqual(ids(service.searchDocs('versionamento')), ['api-rest'])
-      service.deleteDoc('feature-flags')
+      service.deleteDoc('feature-flags', 'admin')
       assert.deepStrictEqual(ids(service.searchDocs('liberação')), [])
       service.removeProject('xpto')
       assert.deepStrictEqual(ids(service.searchDocs('toggles', 'xpto')), [])

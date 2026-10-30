@@ -79,7 +79,7 @@ describe('AgentCatalog', () => {
     catalog.save({ ...base, name: 'outro' }, options(false))
     assert.strictEqual(catalog.get('pesquisa')?.name, 'outro')
 
-    catalog.remove('pesquisa')
+    catalog.remove('pesquisa', 'admin')
     assert.strictEqual(catalog.get('pesquisa'), undefined)
   })
 
@@ -98,9 +98,9 @@ describe('AgentCatalog', () => {
     catalog.save({ ...custom, name: 'Jurídico 2' }, options(false))
     assert.strictEqual(catalog.get('juridico')?.name, 'Jurídico 2')
 
-    catalog.remove('juridico')
+    catalog.remove('juridico', 'admin')
     assert.strictEqual(catalog.get('juridico'), undefined)
-    assert.throws(() => catalog.remove('juridico'), AgentNotFoundError)
+    assert.throws(() => catalog.remove('juridico', 'admin'), AgentNotFoundError)
   })
 
   it('o papel de subagente sobrevive à gravação; sem ele, volta a agente normal', () => {
@@ -145,16 +145,16 @@ describe('AgentCatalog', () => {
     catalog.save({ ...custom, id: 'chefe', allowedTools: ['search_web', 'agent:juridico'] }, { ...options(true), rules: { ...options(true).rules, agentExists: () => true } })
 
     assert.throws(
-      () => catalog.remove('juridico'),
+      () => catalog.remove('juridico', 'admin'),
       (error: unknown) => error instanceof AgentInUseError && error.delegators.join() === 'chefe' && !error.isDefault,
     )
     assert.throws(
-      () => catalog.remove('chefe', { defaultAgentId: 'chefe' }),
+      () => catalog.remove('chefe', 'admin', { defaultAgentId: 'chefe' }),
       (error: unknown) => error instanceof AgentInUseError && error.isDefault,
     )
 
-    catalog.remove('chefe')
-    catalog.remove('juridico')
+    catalog.remove('chefe', 'admin')
+    catalog.remove('juridico', 'admin')
     assert.strictEqual(catalog.get('juridico'), undefined)
   })
 

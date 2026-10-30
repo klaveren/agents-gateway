@@ -7,6 +7,8 @@ export interface IProject {
   id: string
   name: string
   description?: string
+  /** Os padrões (glob) que a varredura do importador ignora nos repositórios do projeto. O admin define. */
+  importIgnore?: string[]
   createdAt: Date
   updatedAt: Date
   updatedBy?: string
