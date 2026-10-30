@@ -7,6 +7,7 @@ import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepositor
 import { SqliteProjectRepository } from '@infra/persistence/Sqlite.ProjectRepository'
 import { makeAgents } from './Agents.Factory'
 import { makeAuth } from './Auth.Factory'
+import { makeCatalogHistory } from './CatalogHistory.Factory'
 import { makeGuidance } from './Guidance.Factory'
 import { makeProjectAccounts } from './ProjectAccounts.Factory'
 import { removeProjectMcpServers } from './McpServers.Factory'
@@ -45,8 +46,14 @@ function build() {
       },
     },
   )
+  service.history.use(() => makeCatalogHistory())
   instance = { service, repository }
   return instance
+}
+
+/** O repositório dos projetos, para o leitor do catálogo (o histórico). */
+export function projectRepository(): SqliteProjectRepository {
+  return build().repository
 }
 
 /** Uma vez: o que existia antes dos projetos vai para o projeto `geral` (ver `migrateLegacyToProjects`). */

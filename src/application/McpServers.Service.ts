@@ -20,6 +20,7 @@ import {
 } from '@domain/models/McpServer.Model'
 import { ICredentialStatus, ICredentialStore } from '@domain/ports/CredentialStore.Port'
 import { IMcpServerRepository } from '@domain/ports/McpServerRepository.Port'
+import { CatalogHistoryHook } from './CatalogHistory.Service'
 
 export interface IMcpServerInput {
   id: string
@@ -63,6 +64,12 @@ const SELF_MCP_SERVER_ID = 'gateway'
 const RESERVED_GLOBAL_IDS = [SELF_MCP_SERVER_ID, 'default']
 
 export class McpServersService {
+  /**
+   * O histórico do catálogo: toda escrita grava a revisão do servidor, pela CHAVE (`mcpServerKey`) — o escopo do
+   * projeto faz parte dela. ⛔ O documento não leva segredo (ver `MCP_SHAPE`).
+   */
+  readonly history = new CatalogHistoryHook()
+
   constructor(
     private readonly servers: IMcpServerRepository,
     private readonly secrets: ICredentialStore,
@@ -151,6 +158,7 @@ export class McpServersService {
 
     this.servers.insert(config)
     if (input.secret?.trim()) this.secrets.save(mcpSecretKey(mcpServerKey(config)), input.secret.trim(), by)
+    this.history.record([{ kind: 'mcp', id: mcpServerKey(config) }], { by })
     return config
   }
 
@@ -209,7 +217,10 @@ export class McpServersService {
       updatedAt: this.now(),
       updatedBy: by,
     })!
-    if (!moving) return saved
+    if (!moving) {
+      this.history.record([{ kind: 'mcp', id: key }], { by })
+      return saved
+    }
 
     const moved = this.servers.move(key, target, this.now(), by)!
     const nextKey = mcpServerKey(moved)
@@ -219,6 +230,14 @@ export class McpServersService {
       if (value) this.secrets.save(to, value, by)
       this.secrets.clear(from)
     }
+    // Trocar de escopo troca a chave: a antiga sai (delete), a nova entra (create).
+    this.history.record(
+      [
+        { kind: 'mcp', id: key, ...(current.projectId ? { projectId: current.projectId } : {}) },
+        { kind: 'mcp', id: nextKey },
+      ],
+      { by },
+    )
     return moved
   }
 
@@ -247,7 +266,7 @@ export class McpServersService {
   }
 
   /** ⛔ Com agente usando, recusa e diz quais (409) — apagar deixaria ferramentas apontando para o nada. */
-  remove(key: string): void {
+  remove(key: string, by: string): void {
     const server = this.get(key)
     const using = this.usedBy(key)
     if (using.length)
@@ -256,6 +275,7 @@ export class McpServersService {
         using.map((agent) => agent.name),
       )
     this.forget(server)
+    this.history.record([{ kind: 'mcp', id: key, ...(server.projectId ? { projectId: server.projectId } : {}) }], { by })
   }
 
   /**

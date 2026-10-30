@@ -4,8 +4,10 @@ import { dataDir } from '@infra/adapters/support/Subscription.Workspace'
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
 import { SqlitePermissionRepository } from '@infra/persistence/Sqlite.PermissionRepository'
 import { makeAgents } from './Agents.Factory'
+import { makeCatalogHistory } from './CatalogHistory.Factory'
 
 let service: PermissionsService | undefined
+let repository: SqlitePermissionRepository | undefined
 
 /**
  * ⛔ O que mora na pasta de dados do gateway e nenhum agente lê nem escreve: o banco, a chave-mestra, os backups e os
@@ -24,10 +26,18 @@ export function makePermissions(): PermissionsService {
   if (service) return service
   const configured = process.env.CONVERSATIONS_DB?.trim()
   const system = installationRules()
+  repository = new SqlitePermissionRepository(configured === 'off' ? ':memory:' : configured || DEFAULT_DB_PATH)
   service = new PermissionsService(
-    new SqlitePermissionRepository(configured === 'off' ? ':memory:' : configured || DEFAULT_DB_PATH),
+    repository,
     (agentId) => makeAgents().get(agentId)?.permissions,
     () => system,
   )
+  service.history.use(() => makeCatalogHistory())
   return service
+}
+
+/** O repositório das permissões, para o leitor do catálogo (o histórico). */
+export function permissionRepository(): SqlitePermissionRepository {
+  makePermissions()
+  return repository!
 }
