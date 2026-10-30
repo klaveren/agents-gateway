@@ -20,7 +20,7 @@ export interface ISchedulesControllerDeps {
 const fields = {
   cron: z.string().max(120),
   timezone: z.string().max(64).optional(),
-  prompt: z.string().max(20_000),
+  prompt: z.string(),
   session: z.enum(['new', 'continuous']).optional(),
   projectId: z.string().max(64).nullable().optional(),
   enabled: z.boolean().optional(),

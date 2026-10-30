@@ -220,6 +220,12 @@ describe('Hooks dos agentes (integração)', () => {
     }
   })
 
+  it('⚖️ o prompt não tem teto: 300 KB passa pela rota e volta inteiro', async () => {
+    const big = 'x'.repeat(300_000)
+    assert.strictEqual((await admin('POST', `/agents/${CLAUDE_TEST_AGENT.id}/hooks`, { name: 'longo', prompt: big })).status, 201)
+    assert.strictEqual(hooks.list(CLAUDE_TEST_AGENT.id).find((hook) => hook.name === 'longo')?.prompt, big)
+  })
+
   it('⛔ o cadastro é só de admin (404 para os demais); apagar o agente apaga os hooks e as chaves', async () => {
     const anonymous = await fetch(`${base}/agents/${CLAUDE_TEST_AGENT.id}/hooks`)
     assert.ok([401, 404].includes(anonymous.status))

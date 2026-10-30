@@ -17,7 +17,6 @@ export interface IHookInput {
 
 export type THookChange = Partial<Omit<IHookInput, 'name'>>
 
-const PROMPT_MAX = 20_000
 const HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/
 const VERIFIES: THookVerify[] = ['key', 'hmac']
 const SESSIONS: THookSession[] = ['new', 'continuous']
@@ -148,8 +147,8 @@ export class AgentHooksService {
 
 function issuesOf(hook: IAgentHook): Array<{ field: string; message: string }> {
   const issues: Array<{ field: string; message: string }> = []
+  // ⚖️ O prompt não tem teto: o tamanho é de quem cria o hook.
   if (!hook.prompt) issues.push({ field: 'prompt', message: 'required: what the agent does when the event arrives' })
-  else if (hook.prompt.length > PROMPT_MAX) issues.push({ field: 'prompt', message: `at most ${PROMPT_MAX} characters` })
   if (!VERIFIES.includes(hook.verify)) issues.push({ field: 'verify', message: `one of ${VERIFIES.join(', ')}` })
   if (!SESSIONS.includes(hook.session)) issues.push({ field: 'session', message: `one of ${SESSIONS.join(', ')}` })
   if (!HEADER_NAME.test(hook.signatureHeader)) issues.push({ field: 'signatureHeader', message: 'letters, digits and hyphens' })

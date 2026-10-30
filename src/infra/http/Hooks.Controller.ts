@@ -25,7 +25,7 @@ const BODY_IN_PROMPT = 100_000
 const HIDDEN_HEADERS = /^(authorization|cookie|x-hook-key|x-tool-authorization|x-forwarded-.*|x-real-ip)$/i
 
 const hookFields = {
-  prompt: z.string().max(20_000),
+  prompt: z.string(),
   enabled: z.boolean().optional(),
   verify: z.enum(['key', 'hmac']).optional(),
   signatureHeader: z.string().max(64).optional(),
