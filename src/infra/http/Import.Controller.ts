@@ -1,5 +1,6 @@
 import { Request, Response } from 'express'
 import { z } from 'zod'
+import { ImportPlanError, ImportPlanUseCase } from '@application/ImportPlan.Usecase'
 import { ImportScanUseCase } from '@application/ImportScan.Usecase'
 import { ignoreIssues, IMPORT_IGNORE_MAX } from '@domain/Import.Ignore'
 import { WorkFolderError } from '@infra/workspace/Work.Folder'
@@ -17,6 +18,8 @@ export interface IImportIgnoreStore {
 
 export interface IImportControllerDeps {
   scan: ImportScanUseCase
+  /** O lote. Ausente: montado sobre a mesma varredura. */
+  plan?: ImportPlanUseCase
   projectExists: (projectId: string) => boolean
   ignore?: IImportIgnoreStore
   proof?: ICallerProof
@@ -25,17 +28,28 @@ export interface IImportControllerDeps {
 const patterns = z.array(z.string().max(1_000)).max(IMPORT_IGNORE_MAX)
 const scanSchema = z.object({ repository: z.string().min(1).max(100), ignore: patterns.optional() })
 const ignoreSchema = z.object({ patterns })
+const planSchema = z.object({
+  repository: z.string().min(1).max(100),
+  agent: z.string().min(1).max(200),
+  prefix: z.string().max(16).optional(),
+  ignore: patterns.optional(),
+})
 
 /**
- * O IMPORTADOR de recursos de um repositório do projeto. Por ora a varredura (devolve o inventário e não grava nada) e
- * o ignorar do projeto (os globs que a varredura pula).
+ * O IMPORTADOR de recursos de um repositório do projeto. Por ora a varredura (devolve o inventário e não grava nada),
+ * o lote de um agente (fecho, ordem, ids, alcance e estimativa — também só leitura) e o ignorar do projeto (os globs que
+ * a varredura pula).
  *
  * ⛔ Só admin (quem administra o projeto), 404 para os demais, como `/projects/:id/members`. O repositório é só o
  * nome da pasta em `<projeto>/repositories/`, resolvido no servidor: repositório de outro projeto não existe aqui.
  */
 export class ImportController {
+  private readonly planner: ImportPlanUseCase
+
   constructor(private readonly deps: IImportControllerDeps) {
+    this.planner = deps.plan ?? new ImportPlanUseCase({ scan: deps.scan })
     this.scan = this.scan.bind(this)
+    this.plan = this.plan.bind(this)
     this.getIgnore = this.getIgnore.bind(this)
     this.setIgnore = this.setIgnore.bind(this)
   }
@@ -50,6 +64,25 @@ export class ImportController {
         return this.deps.scan.execute(projectId, repository, ignore ? { ignore } : {})
       } catch (error) {
         if (error instanceof WorkFolderError) throw new HttpError(422, 'validation_error', 'Request body is invalid', [{ field: 'repository', message: error.message }])
+        throw error
+      }
+    })
+  }
+
+  /**
+   * `POST /projects/:id/import/plan { repository, agent, prefix?, ignore? }` — o LOTE de um agente: o fecho em ordem,
+   * o mapa de ids, o alcance traduzido e a estimativa. ⛔ Só leitura: nada grava nem dispara construtor.
+   */
+  async plan(req: Request, res: Response): Promise<void> {
+    await this.respond(res, 'importPlan', req, async (projectId) => {
+      const { repository, agent, prefix, ignore } = parseBody(planSchema, req.body)
+      const issues = ignore ? ignoreIssues(ignore, 'ignore') : []
+      if (issues.length) throw new HttpError(422, 'validation_error', 'Request body is invalid', issues)
+      try {
+        return this.planner.execute(projectId, { repository, agent, ...(prefix !== undefined ? { prefix } : {}), ...(ignore ? { ignore } : {}) })
+      } catch (error) {
+        if (error instanceof WorkFolderError) throw new HttpError(422, 'validation_error', 'Request body is invalid', [{ field: 'repository', message: error.message }])
+        if (error instanceof ImportPlanError) throw new HttpError(422, 'validation_error', 'Request body is invalid', [{ field: error.field, message: error.message }])
         throw error
       }
     })

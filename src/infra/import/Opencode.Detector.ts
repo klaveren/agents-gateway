@@ -1,5 +1,6 @@
 import { extractCitations, fileTokens, frontmatter, resolveCitation } from '@domain/Import.Refs'
-import { IDetectedItem, IFormatDetector, IRepoTree } from '@domain/ports/FormatDetector.Port'
+import { IDetectedItem, IDetectedReach, IFormatDetector, IRepoTree } from '@domain/ports/FormatDetector.Port'
+import { globToRegex } from '@domain/Permission.Policy'
 import { under } from './AgentsDir.Detector'
 
 const CONFIGS = ['opencode.json', 'opencode.jsonc', '.opencode/opencode.json', '.opencode/opencode.jsonc']
@@ -37,6 +38,39 @@ export function parseJsonc(text: string): unknown {
 const isObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
 const text = (value: unknown) => (typeof value === 'string' ? value : undefined)
 
+/** Quantos arquivos um glob de `instructions` expande, no máximo (o resto vira alerta). */
+export const INSTRUCTIONS_GLOB_MAX = 200
+
+/**
+ * ⛔ A EXPANSÃO de um glob de `instructions` (`docs/*.md`, `.cursor/rules/**\/*.md`), relativa à pasta da configuração e
+ * contida como o leitor: casa só os caminhos da árvore (reais e por link, já dentro da raiz e sem o ignorado). Padrão
+ * absoluto, com `~` ou com `..` não expande.
+ */
+export function expandInstructions(tree: IRepoTree, configPath: string, pattern: string): { paths: string[]; refused?: string } {
+  const clean = pattern.trim().replace(/\\/g, '/').replace(/^\.\//, '')
+  if (!clean || clean.startsWith('/') || clean.startsWith('~') || /^[A-Za-z]:\//.test(clean) || clean.split('/').includes('..'))
+    return { paths: [], refused: 'fora da raiz do repositório' }
+  const dir = configPath.includes('/') ? configPath.slice(0, configPath.lastIndexOf('/') + 1) : ''
+  const regex = globToRegex(`${dir}${clean}`)
+  const paths: string[] = []
+  for (const entry of tree.entries())
+    for (const path of [entry.path, ...entry.aliases])
+      if (regex.test(path)) {
+        if (!paths.includes(entry.path)) paths.push(entry.path)
+        break
+      }
+  return { paths: paths.sort() }
+}
+
+/** O alcance cru de um bloco: só os objetos (o resto não é alcance). */
+function reachOf(raw: Record<string, unknown>): IDetectedReach | undefined {
+  const reach: IDetectedReach = {
+    ...(isObject(raw.permission) ? { permission: raw.permission } : {}),
+    ...(isObject(raw.tools) ? { tools: raw.tools } : {}),
+  }
+  return reach.permission || reach.tools ? reach : undefined
+}
+
 /**
  * O formato opencode: `opencode.json` (aceita JSONC) — `agent.<id>` (descrição, modelo, `prompt` com `{file:…}`,
  * `tools`, `permission`), `command`, `mcp`, `instructions` e o `permission` global — e os markdown de
@@ -70,7 +104,7 @@ export class OpencodeDetector implements IFormatDetector {
             name: agent[1],
             sources: [{ path: entry.path, role: 'prompt' }],
             fields,
-            notes: meta.tools !== undefined || meta.permission !== undefined ? [reachPending] : [],
+            notes: meta.tools !== undefined || meta.permission !== undefined ? [reachFrontmatter] : [],
           })
         else
           items.push({
@@ -97,14 +131,33 @@ export class OpencodeDetector implements IFormatDetector {
     const shared = (role: string) => ({ path, role, shared: true })
     const items: IDetectedItem[] = []
 
-    const configItem: IDetectedItem = { kind: 'config', name: 'opencode', sources: [{ path, role: 'opencode' }], cites: [], notes: [] }
+    const configItem: IDetectedItem = { kind: 'config', name: 'opencode', sources: [{ path, role: 'opencode' }], cites: [], instructions: [], notes: [] }
     const instructions = Array.isArray(config.instructions) ? config.instructions.filter((entry): entry is string => typeof entry === 'string') : []
     for (const entry of instructions) {
-      if (/[*?[]/.test(entry)) configItem.notes!.push({ level: 'attention', code: 'instructions-glob', text: `instructions com glob não expandido: ${entry}` })
-      else configItem.cites!.push(entry)
+      if (!/[*?[]/.test(entry)) {
+        configItem.cites!.push(entry)
+        configItem.instructions!.push(entry)
+        continue
+      }
+      const { paths, refused } = expandInstructions(tree, path, entry)
+      if (refused) configItem.notes!.push({ level: 'attention', code: 'instructions-outside', text: `instructions ${entry}: ${refused}, não expandido` })
+      else if (!paths.length) configItem.notes!.push({ level: 'attention', code: 'instructions-glob-empty', text: `instructions ${entry}: o glob não casa arquivo nenhum` })
+      else {
+        // O caminho expandido é relativo à raiz: a citação resolve pela raiz (o `/` no começo).
+        const found = paths.slice(0, INSTRUCTIONS_GLOB_MAX).map((one) => `/${one}`)
+        configItem.cites!.push(...found)
+        configItem.instructions!.push(...found)
+        configItem.notes!.push({
+          level: paths.length > INSTRUCTIONS_GLOB_MAX ? 'attention' : 'info',
+          code: 'instructions-glob',
+          text: `instructions ${entry}: ${paths.length} arquivo(s)${paths.length > INSTRUCTIONS_GLOB_MAX ? `, só os ${INSTRUCTIONS_GLOB_MAX} primeiros entram` : ''}`,
+        })
+      }
     }
-    if (config.permission !== undefined)
-      configItem.notes!.push({ level: 'attention', code: 'project-permissions-pending', text: 'permission global: vira permissão do projeto na tradução do alcance (ainda não)' })
+    if (isObject(config.permission)) {
+      configItem.reach = { permission: config.permission }
+      configItem.notes!.push({ level: 'attention', code: 'project-permissions', text: 'permission global: vira permissão do projeto no lote, por último e confirmada' })
+    }
     items.push(configItem)
 
     if (isObject(config.agent))
@@ -127,13 +180,16 @@ export class OpencodeDetector implements IFormatDetector {
             return value ? [[key, value]] : []
           }),
         )
+        const reach = reachOf(raw)
         items.push({
           kind: 'agent',
           name: id,
           sources,
           cites,
           fields,
-          notes: raw.tools !== undefined || raw.permission !== undefined ? [reachPending] : [],
+          notes: reach ? [reachInBatch] : [],
+          // Sem alcance próprio também: o lote precisa do nome do bloco (o agente cai no global).
+          reach: reach ?? {},
         })
       }
 
@@ -164,7 +220,8 @@ export class OpencodeDetector implements IFormatDetector {
   }
 }
 
-const reachPending = { level: 'attention' as const, code: 'reach-pending', text: 'tools/permission do agente: traduzidos na etapa do alcance (ainda não)' }
+const reachInBatch = { level: 'info' as const, code: 'reach', text: 'tools/permission do agente: traduzidos no lote (Montar lote), por último e confirmados' }
+const reachFrontmatter = { level: 'attention' as const, code: 'reach-pending', text: 'tools/permission no frontmatter: ainda não traduzidos (traduza na tela)' }
 const commandAgent = (agent: string) => ({
   level: 'untranslatable' as const,
   code: 'command-agent',

@@ -58,6 +58,18 @@ export interface IDetectedItem {
   /** Campos que dois detectores podem dizer de jeitos diferentes (`model`, `description`): divergência vira alerta. */
   fields?: Record<string, string>
   notes?: IInventoryNote[]
+  /**
+   * O ALCANCE como está na origem (o `permission`/`tools` de um agente do opencode; na configuração, o `permission`
+   * global). ⛔ Só para a tradução do lote: nunca sai no inventário.
+   */
+  reach?: IDetectedReach
+  /** Configuração: as citações do `instructions` (o opencode as dá a TODO agente). Relativas à primeira fonte. */
+  instructions?: string[]
+}
+
+export interface IDetectedReach {
+  permission?: Readonly<Record<string, unknown>>
+  tools?: Readonly<Record<string, unknown>>
 }
 
 /** Um FORMATO de repositório agêntico (`.agents/`, opencode, `.claude/`, `AGENTS.md`). Puro sobre a árvore. */

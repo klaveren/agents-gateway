@@ -15,8 +15,10 @@ const props = defineProps<{
   citedBy: readonly string[]
   /** As chaves que existem na análise: a citação vira link para o item. */
   known: ReadonlySet<string>
+  /** O lote deste agente está sendo montado. */
+  planning?: boolean
 }>()
-const emit = defineEmits<{ select: [key: string]; reclassify: [kind: TInventoryKind | undefined]; close: [] }>()
+const emit = defineEmits<{ select: [key: string]; reclassify: [kind: TInventoryKind | undefined]; close: []; plan: [] }>()
 
 const untranslatable = computed(() => props.item.notes.filter((note) => note.level === 'untranslatable'))
 const others = computed(() => props.item.notes.filter((note) => note.level !== 'untranslatable'))
@@ -52,6 +54,11 @@ function onReclassify(event: Event) {
       </div>
       <button type="button" class="btn btn-ghost btn-sm" title="Fechar o detalhe" @click="emit('close')">Fechar</button>
     </header>
+
+    <section v-if="item.kind === 'agent'" class="flex flex-col gap-1.5 rounded-xl border border-emerald-500/30 px-3 py-2">
+      <button type="button" class="btn btn-primary btn-sm self-start" :disabled="planning" data-test="plan" @click="emit('plan')">{{ planning ? 'Montando…' : 'Montar lote' }}</button>
+      <p class="text-xs text-zinc-500">O que este agente precisa, em ordem: docs, skills e commands, rules, ele com os triggers, e as permissões por último. Só mostra: nada é gravado.</p>
+    </section>
 
     <section v-if="untranslatable.length" class="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2" data-test="untranslatable">
       <h3 class="text-xs font-semibold tracking-wide text-amber-200 uppercase">Não traduz</h3>

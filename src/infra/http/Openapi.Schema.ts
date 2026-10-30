@@ -1536,6 +1536,60 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/projects/{id}/import/plan': {
+      post: {
+        summary:
+          'The import BATCH of one agent of the inventory: the closure (its triggers and what they cite, transitively), the order by phase (docs → skills/commands → rules → closed agent with triggers → links → reach → project permissions) with cycles, the id map (optional prefix, collisions block), the reach translated by the deterministic translator (rules, widenings, allowedTools, proposed resources.skills), what stays out and the cost estimate (builder conversations and input tokens). READ ONLY: nothing is saved and no builder runs. Administrators only (404 for the others)',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            properties: {
+              repository: { type: 'string', description: 'The folder name in `<project>/repositories/`' },
+              agent: { type: 'string', description: 'The agent of the inventory: its key (`agent:<id>`) or its candidate id' },
+              prefix: { type: 'string', description: 'Optional id prefix (lowercase letters, digits and "-", up to 16), for agent, skill, command and doc ids' },
+              ignore: { type: 'array', items: { type: 'string' }, description: 'Glob patterns ignored in this scan only, added to the project ones' },
+            },
+            required: ['repository', 'agent'],
+          }),
+        },
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  projectId: { type: 'string' },
+                  repository: { type: 'string' },
+                  head: { type: 'string' },
+                  dirty: { type: 'boolean' },
+                  plannedAt: { type: 'string', format: 'date-time' },
+                  agent: { type: 'string' },
+                  prefix: { type: 'string' },
+                  phases: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                  steps: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                  links: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                  reach: { type: 'object', additionalProperties: true },
+                  project: { type: 'object', additionalProperties: true },
+                  idMap: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                  excluded: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                  released: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                  mcps: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                  cycles: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                  estimate: { type: 'object', additionalProperties: true },
+                  blocked: { type: 'array', items: { type: 'string' } },
+                  notes: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                },
+              }),
+            ),
+          },
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
     '/projects/{id}/import/ignore': {
       get: {
         summary:

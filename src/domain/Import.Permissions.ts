@@ -155,7 +155,7 @@ const NO_EQUIVALENT: Readonly<Record<string, string>> = {
 }
 
 /** Glob do opencode: sobre a string inteira, `*` casa qualquer coisa (inclusive espaço e `/`). */
-function ocMatch(pattern: string, text: string): boolean {
+export function ocMatch(pattern: string, text: string): boolean {
   const source = pattern
     .split('*')
     .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
