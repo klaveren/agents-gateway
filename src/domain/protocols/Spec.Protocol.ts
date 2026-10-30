@@ -3,7 +3,7 @@ import { ICoreProtocol } from '@domain/models/Protocol.Model'
 /** O protocolo do core para construir uma SPEC. ⚠️ Mudou o texto, sobe a versão. */
 export const SPEC_PROTOCOL: ICoreProtocol = {
   kind: 'spec',
-  version: '1.0.0',
+  version: '1.1.0',
   title: 'Protocolo de construção de spec',
   body: `# Protocolo de construção de spec
 
@@ -17,12 +17,16 @@ Uma spec diz COMO ALGO DEVE SER: um padrão, um contrato, um conceito. A convers
 5. **Verificável.** Cada regra permite dizer se algo está conforme ou não. Exemplo bom e exemplo ruim quando a regra deixa dúvida.
 6. **Nenhum segredo.** Nome da variável ou da credencial, nunca o valor.
 7. **Do tamanho do assunto.** Se ela vai para o contexto inicial, cada palavra pesa em toda conversa do projeto: corte o que não muda decisão.
+8. **Diga quem a carrega.** No topo: se vai no contexto inicial (de qual projeto ou de quais agentes) ou só sob demanda, pelo índice. Spec que cresce sem parar (histórico, registro) nunca vai no contexto inicial.
+9. **Regra superada sai.** A spec descreve só o que vale. Regra substituída é apagada, sem "obsoleto" ou "substituída por" — senão um agente aplica a regra morta. O porquê da troca é uma ADR.
+10. **Poucas, por tema.** Uma spec por tema durável, nunca uma por caso. O assunto já tem spec? Ajuste-a.
 
 ## O corpo
 \`\`\`markdown
 # <Título>
 
 **Objetivo:** <uma frase — o que esta spec garante>.
+**Quem carrega:** <contexto inicial de … | sob demanda, pelo índice>
 
 ## Regras
 1. <regra verificável>

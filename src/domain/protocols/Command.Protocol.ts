@@ -3,7 +3,7 @@ import { ICoreProtocol } from '@domain/models/Protocol.Model'
 /** O protocolo do core para construir um COMMAND. ⚠️ Mudou o texto, sobe a versão. */
 export const COMMAND_PROTOCOL: ICoreProtocol = {
   kind: 'command',
-  version: '1.0.0',
+  version: '1.1.0',
   title: 'Protocolo de construção de command',
   body: `# Protocolo de construção de command
 
@@ -16,6 +16,7 @@ Um command é um PEDIDO PRONTO que a pessoa dispara digitando /nome argumentos n
 4. **A descrição é o que a pessoa lê no autocompletar.** Uma frase: o que acontece quando ela dispara.
 5. **Regra não mora no command.** O padrão a seguir está numa spec ou ADR: anexe (docIds), não copie.
 6. **Nenhum segredo no corpo.** O corpo vai ao modelo e fica gravado na conversa.
+7. **A trava mora no corpo.** Toda proibição do command fica no corpo, nunca só num documento anexado, e cita a exceção quando houver. O corpo não contradiz o que o documento anexado manda.
 
 ## O corpo
 É o TEMPLATE que vai ao modelo — não um documento sobre o command.
