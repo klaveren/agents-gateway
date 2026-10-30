@@ -19,6 +19,8 @@ export interface IManualToolResult {
 export interface IManualTurnOutcome {
   text: string
   calls: IManualToolCall[]
+  /** A resposta do modelo no formato do provider, intacta, para voltar ao history (ex.: as partes do Gemini com `thoughtSignature`). */
+  native?: unknown
 }
 
 /**
