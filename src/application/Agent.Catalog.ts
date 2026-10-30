@@ -159,5 +159,6 @@ function toAgent(stored: IStoredAgent): IAgent {
     ...(stored.adminOnly ? { adminOnly: true } : {}),
     ...(stored.projectId ? { projectId: stored.projectId } : {}),
     ...(stored.permissions?.length ? { permissions: stored.permissions } : {}),
+    ...(stored.terminal && (stored.terminal.timeoutSeconds || stored.terminal.maxOutputChars) ? { terminal: { ...stored.terminal } } : {}),
   }
 }

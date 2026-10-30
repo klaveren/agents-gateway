@@ -12,6 +12,10 @@ describe('Capability.Catalog', () => {
     const { allowedTools, unavailable } = resolve(EProvider.CLAUDE)
     assert.deepStrictEqual(allowedTools, [
       'run_bash',
+      'bash_start',
+      'bash_logs',
+      'bash_stop',
+      'bash_list',
       'sdk:Read',
       'list_files',
       'search_files',
@@ -33,6 +37,10 @@ describe('Capability.Catalog', () => {
     const official = resolve(EProvider.OPENAI)
     assert.deepStrictEqual(official.allowedTools, [
       'run_bash',
+      'bash_start',
+      'bash_logs',
+      'bash_stop',
+      'bash_list',
       'read_file',
       'list_files',
       'search_files',
@@ -56,6 +64,10 @@ describe('Capability.Catalog', () => {
     const codex = resolve(EProvider.CODEX)
     assert.deepStrictEqual(codex.allowedTools, [
       'run_bash',
+      'bash_start',
+      'bash_logs',
+      'bash_stop',
+      'bash_list',
       'read_file',
       'list_files',
       'search_files',
@@ -70,7 +82,20 @@ describe('Capability.Catalog', () => {
     assert.ok(!resolveCapabilities(['sdk:codex:shell'], { protocol: EProvider.CODEX, official: true, mode: EMode.AGENT }).allowedTools.length)
     // O Gemini também: o `--sandbox` dele nega o próprio terminal, e o projeto chega só pelas ferramentas do gateway.
     const gemini = resolve(EProvider.ANTIGRAVITY)
-    assert.deepStrictEqual(gemini.allowedTools, ['run_bash', 'read_file', 'list_files', 'search_files', 'write_file', 'edit_file', 'update_todos', 'mcp:gateway/list_agents'])
+    assert.deepStrictEqual(gemini.allowedTools, [
+      'run_bash',
+      'bash_start',
+      'bash_logs',
+      'bash_stop',
+      'bash_list',
+      'read_file',
+      'list_files',
+      'search_files',
+      'write_file',
+      'edit_file',
+      'update_todos',
+      'mcp:gateway/list_agents',
+    ])
     assert.deepStrictEqual(gemini.unavailable, ['Busca na web', 'Abrir página'])
   })
 

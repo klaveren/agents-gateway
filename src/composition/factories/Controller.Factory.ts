@@ -1,6 +1,7 @@
 import { installationRules, makePermissions } from './Permissions.Factory'
 import { makeProjectAccounts } from './ProjectAccounts.Factory'
 import { callbackAllowed } from '@infra/http/Turn.Callbacks'
+import { backgroundProcesses } from '@infra/tools/Background.Processes'
 import { ProjectAccountsController } from '@infra/http/ProjectAccounts.Controller'
 import { PermissionsController } from '@infra/http/Permissions.Controller'
 import { SchedulesController } from '@infra/http/Schedules.Controller'
@@ -67,6 +68,7 @@ export function makeController(): AgentController {
     guidance: makeGuidance(),
     repositoryAllowed: (agentId, projectId, repository) => makePermissions().test({ agentId, projectId }, { category: 'repository', value: repository }).allowed,
     callbackAllowed: (url) => callbackAllowed(url),
+    sessionEnded: (sessionId) => backgroundProcesses().stopSession(sessionId),
   })
   // O rascunho de agente do construtor é conferido com as MESMAS regras do cadastro, que moram aqui.
   makeGuidance().useAgentChecker((agent) => controller.agentDraftIssues(agent))

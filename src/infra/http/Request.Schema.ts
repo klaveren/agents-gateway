@@ -3,6 +3,7 @@ import { LIMIT_BOUNDS, LIMIT_NAMES, TLimitName } from '@domain/models/Limits.Mod
 import { EMode } from '@domain/enums/EMode.Enum'
 import { AUDIENCES } from '@domain/models/Settings.Model'
 import { PERMISSION_CATEGORIES, TPermissionCategory } from '@domain/Permission.Policy'
+import { AGENT_TERMINAL_BOUNDS } from '@domain/models/Agent.Model'
 
 /** Base64 infla ~33%, então o teto em caracteres é maior que o tamanho real do arquivo. */
 const MAX_FILE_CHARS = 8 * 1024 * 1024
@@ -155,6 +156,14 @@ export const agentBodySchema = z.object({
       }),
     )
     .max(300)
+    .optional(),
+  /** O terminal deste agente (tempo por comando e saída). Ausente na edição = mantém o que ele tem; `null` volta ao global. */
+  terminal: z
+    .object({
+      timeoutSeconds: z.number().int().min(AGENT_TERMINAL_BOUNDS.timeoutSeconds.min).max(AGENT_TERMINAL_BOUNDS.timeoutSeconds.max).optional(),
+      maxOutputChars: z.number().int().min(AGENT_TERMINAL_BOUNDS.maxOutputChars.min).max(AGENT_TERMINAL_BOUNDS.maxOutputChars.max).optional(),
+    })
+    .nullable()
     .optional(),
 })
 

@@ -143,9 +143,16 @@ export interface IAgentDetail extends IAgent {
   /** Quem o agente é (personalidade). */
   soul?: string
   permissions?: IPermissionRule[]
+  /** O terminal deste agente: tempo por comando e saída. Ausente = o global. */
+  terminal?: IAgentTerminal
   systemPrompt: string
   updatedAt?: string
   updatedBy?: string
+}
+
+export interface IAgentTerminal {
+  timeoutSeconds?: number
+  maxOutputChars?: number
 }
 
 export interface IAgentInput {
@@ -166,6 +173,7 @@ export interface IAgentInput {
   projectId?: string | null
   /** As regras de permissão do agente (a camada dele, por cima das do projeto). */
   permissions?: IPermissionRule[]
+  terminal?: IAgentTerminal | null
 }
 
 export type TPermissionCategory = 'terminal' | 'read' | 'write' | 'network' | 'mcp' | 'skill' | 'delegate' | 'account'

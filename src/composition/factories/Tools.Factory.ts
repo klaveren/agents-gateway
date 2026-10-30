@@ -54,6 +54,7 @@ export function makeTools(): ITools {
           drafts: makeGuidance(),
           todos: todoStore(),
           permissions: lazyPermissions,
+          agentTerminal: (agentId) => makeAgents().get(agentId)?.terminal,
           accounts: {
             commandEnv: (projectId, allowed) => makeProjectAccounts().commandEnv(projectId, allowed),
             sign: (projectId, id, namespace, data) => makeProjectAccounts().sign(projectId, id, namespace, data),
