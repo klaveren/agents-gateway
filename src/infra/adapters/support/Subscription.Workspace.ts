@@ -57,9 +57,14 @@ export function subscriptionHome(kind: 'codex' | 'antigravity' | 'claude', env: 
  * conversas do projeto — é onde os agentes dele trabalham, e onde depois moram specs, rules e skills.
  */
 export function projectWorkspace(projectId: string, env: NodeJS.ProcessEnv = process.env): string {
-  const dir = join(dataDir(env), 'projects', projectId.replace(/[^a-z0-9-]/g, '_'))
+  const dir = projectWorkspacePath(projectId, env)
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   return dir
+}
+
+/** O caminho da pasta do projeto, sem criá-la (para dizer ao agente onde ele opera). */
+export function projectWorkspacePath(projectId: string, env: NodeJS.ProcessEnv = process.env): string {
+  return join(dataDir(env), 'projects', projectId.replace(/[^a-z0-9-]/g, '_'))
 }
 
 /**

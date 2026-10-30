@@ -5,6 +5,7 @@ import { AgentNotFoundError, GuidanceNotFoundError, InvalidGuidanceError, Projec
 import { DOC_ID_PATTERN, DOC_INDEX_LIMIT, DOC_KINDS, DOC_SUMMARY_MAX, DOC_TITLE_MAX, IProjectDoc, READ_DOC_TOOL, SEARCH_DOCS_TOOL, TDocKind } from '@domain/models/ProjectDoc.Model'
 import {
   ALL_RESOURCES,
+  effectiveResources,
   IAgentResources,
   NO_RESOURCES,
   IResource,
@@ -712,7 +713,7 @@ export class GuidanceService {
   /** O que o agente pode usar (a guia Recursos dele): sem marcação, `['*']`; "nenhum" de propósito, `[]`. */
   agentResources(agentId: string): IAgentResources {
     this.requireAgent(agentId)
-    return effective(this.repository.agentResources(agentId))
+    return effectiveResources(this.repository.agentResources(agentId))
   }
 
   /**
@@ -759,7 +760,7 @@ export class GuidanceService {
     // ⛔ O construtor não usa skills nem commands: ele os ESCREVE (e o índice só pesaria no prompt dele).
     const agent = agentId && !builderKindOf(agentId) ? this.agentOf(agentId) : undefined
     if (!agent) return []
-    const granted = effective(this.repository.agentResources(agent.id))[kind === 'skill' ? 'skills' : 'commands']
+    const granted = effectiveResources(this.repository.agentResources(agent.id))[kind === 'skill' ? 'skills' : 'commands']
     if (!granted.length) return []
     const visible = [...this.repository.resources(null, kind), ...(agent.projectId ? this.repository.resources(agent.projectId, kind) : [])]
     return granted.includes(ALL_RESOURCES) ? visible : visible.filter((resource) => granted.includes(resource.id))
@@ -1009,12 +1010,6 @@ export class GuidanceService {
 /** O documento cabe em quem o anexa (recurso ou outro documento): global ou do projeto dele (a regra do anexo). */
 function attachable(doc: IProjectDoc, owner: IAttacher): boolean {
   return !doc.projectId || doc.projectId === owner.projectId
-}
-
-/** O que vale para o agente: sem marcação, todos (`*`); a marca de "nenhum", nenhum. */
-function effective(stored: IAgentResources): IAgentResources {
-  const of = (ids: string[]) => (!ids.length ? [ALL_RESOURCES] : ids.filter((id) => id !== NO_RESOURCES))
-  return { skills: of(stored.skills), commands: of(stored.commands) }
 }
 
 const EXISTING_LABEL: Readonly<Record<TProtocolKind, string>> = {

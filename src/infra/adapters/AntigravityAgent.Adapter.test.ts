@@ -131,6 +131,26 @@ describe('AntigravityAgentAdapter', () => {
     assert.deepStrictEqual(events.find((event) => event.type === 'usage')?.payload, { inputTokens: 50, cacheReadTokens: 10, outputTokens: 5, reasoningTokens: 2 })
   })
 
+  it('⛔ prompt acima do limite do Linux: recusa antes do `spawn`, com o tamanho, o limite e o que pesa (a mensagem conta)', async () => {
+    const calls: ISpawned[] = []
+    const adapter = new AntigravityAgentAdapter({ store: new SessionStore(), spawn: fakeSpawn(calls, turn), home: () => '/gw' })
+    const session = await adapter.createSession(agent, { environment: `## Specs do agente\n${'y'.repeat(100_000)}` })
+    const events = await collect(adapter.sendMessage(agent, session.id, { text: 'z'.repeat(40_000) }, {}))
+    assert.strictEqual(calls.length, 0)
+    assert.deepStrictEqual(
+      events.map((event) => event.type),
+      ['error'],
+    )
+    const message = String((events[0].payload as { message?: string } | undefined)?.message)
+    assert.match(message, /não cabe no Antigravity: .* num argumento de linha de comando, e o Linux aceita até 128 KiB \(131\.071 bytes\)/)
+    assert.match(message, /O que mais pesa: Specs do agente \(97,7 KiB\), Mensagem \(39,1 KiB\)/)
+
+    // A mesma conversa com uma mensagem curta cabe e roda.
+    const fine = await collect(adapter.sendMessage(agent, session.id, { text: 'oi' }, {}))
+    assert.strictEqual(calls.length, 1)
+    assert.ok(fine.some((event) => event.type === 'message.completed'))
+  })
+
   it('sem resultado, o erro diz o que fazer quando é o login', async () => {
     const adapter = new AntigravityAgentAdapter({ store: new SessionStore(), spawn: fakeSpawn([], () => [], 1, 'Authentication required. Please visit'), home: () => '/h' })
     const session = await adapter.createSession(agent, {})

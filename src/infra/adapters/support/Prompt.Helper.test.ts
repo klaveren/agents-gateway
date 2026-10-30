@@ -29,4 +29,19 @@ describe('composeSystemPrompt — soul', () => {
     const prompt = composeSystemPrompt({ ...agent, soul: 'Íris.' }, { environment: '## Regras do ambiente\n1. **A** — b', language: 'English' })
     assert.match(prompt, /## Como você trabalha\nResponda sobre o CRM\.\n\n## Regras do ambiente\n1\. \*\*A\*\* — b\n\nIMPORTANT: Please reply exclusively in English\.$/)
   })
+
+  it('o "## Ambiente" (agente, projeto, diretório) vem depois do que o agente faz e antes das regras, sem mexer nelas', () => {
+    const prompt = composeSystemPrompt(agent, {
+      ambient: { agentId: 'a', project: { id: 'alfa', name: 'Alfa', own: true }, directory: '/dados/projects/alfa' },
+      environment: '## Regras do ambiente\n1. **A** — b',
+    })
+    assert.match(
+      prompt,
+      /^Responda sobre o CRM\.\n\n## Ambiente\n- Agente: a\.\n- Projeto: Alfa \(projectId "alfa"\)\.\n- Diretório de trabalho: \/dados\/projects\/alfa — [^\n]+\n\n## Regras do ambiente\n1\. \*\*A\*\* — b$/,
+    )
+    assert.strictEqual(
+      composeSystemPrompt(agent, { ambient: { agentId: 'a' } }),
+      'Responda sobre o CRM.\n\n## Ambiente\n- Agente: a.\n- Diretório de trabalho: uma pasta vazia, só desta conversa.',
+    )
+  })
 })

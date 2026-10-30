@@ -5,6 +5,8 @@ import type { IMcpContainer, IMcpProcess, IMcpServer, IMcpTool, TMcpAuth, TMcpKi
 
 export interface INewMcpServer {
   id: string
+  /** O projeto dono. Ausente = global. */
+  projectId?: string
   name: string
   kind: TMcpKind
   container?: IMcpContainer
@@ -18,7 +20,10 @@ export interface INewMcpServer {
   secret?: string
 }
 
-/** Os servidores MCP (só admin) e as ferramentas de cada um, guardadas por servidor depois da 1ª leitura. */
+/**
+ * Os servidores MCP (só admin) e as ferramentas de cada um, guardadas por servidor depois da 1ª leitura.
+ * ⚖️ Tudo pela CHAVE (`key`): `n8n` é o global, `cliente-a.n8n` o do projeto — o mesmo id pode estar em dois projetos.
+ */
 export const useMcpStore = defineStore('mcp', () => {
   const list = ref<IMcpServer[]>([])
   const tools = ref<Record<string, IMcpTool[]>>({})
@@ -33,12 +38,14 @@ export const useMcpStore = defineStore('mcp', () => {
     return created
   }
 
+  /** Devolve o servidor gravado: com `projectId` (ou `null`, global) ele muda de escopo — e de chave. */
   async function update(
     id: string,
-    change: Partial<Pick<IMcpServer, 'name' | 'url' | 'transport' | 'auth' | 'headerName' | 'identity' | 'enabled' | 'container' | 'process'>>,
-  ): Promise<void> {
-    await api(`/mcp-servers/${encodeURIComponent(id)}`, { method: 'PUT', body: change })
+    change: Partial<Pick<IMcpServer, 'name' | 'url' | 'transport' | 'auth' | 'headerName' | 'identity' | 'enabled' | 'container' | 'process'>> & { projectId?: string | null },
+  ): Promise<IMcpServer> {
+    const saved = await api<IMcpServer>(`/mcp-servers/${encodeURIComponent(id)}`, { method: 'PUT', body: change })
     await load()
+    return saved
   }
 
   async function remove(id: string): Promise<void> {

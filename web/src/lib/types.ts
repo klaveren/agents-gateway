@@ -499,7 +499,12 @@ export interface IMcpProcess {
 export type TMcpKind = 'remote' | 'container' | 'process'
 
 export interface IMcpServer {
+  /** A chave das rotas: o id no global, `<projeto>.<id>` no de projeto. */
+  key: string
+  /** O que o agente cita (`mcp:<id>/…`). Dois projetos podem ter o mesmo. */
   id: string
+  /** O projeto dono. Ausente = global (serve a todo agente); de projeto, só aos agentes dele. */
+  projectId?: string
   name: string
   kind: TMcpKind
   container?: IMcpContainer
@@ -591,6 +596,20 @@ export interface IAgentFootprint {
   total: number
   project?: string
   sections: IFootprintSection[]
+  /** Só quando o agente salvo oferece Codex ou Antigravity: o prompt montado como argumento de linha de comando. */
+  cli?: ICliFootprint
+}
+
+/** O prompt montado num argumento de CLI, em bytes, contra o limite do Linux (128 KiB por argumento). */
+export interface ICliFootprint {
+  providers: string[]
+  /** O argumento inteiro estimado (o maior entre os CLIs do agente). */
+  bytes: number
+  limit: number
+  /** A partir daqui, aviso (nunca bloqueio). */
+  warnAt: number
+  /** Cada parte do prompt em bytes crus (`soul`, `instructions`, `rules`, `skills`, `index`…). */
+  parts: Array<{ key: string; label: string; bytes: number }>
 }
 
 export type TResourceKind = 'skill' | 'command'
