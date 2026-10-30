@@ -37,7 +37,6 @@ export interface IAgentResources {
 
 export const RESOURCE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,47}$/
 export const RESOURCE_DESCRIPTION_MAX = 300
-export const RESOURCE_BODY_MAX = 100_000
 export const ALL_RESOURCES = '*'
 /** A marca gravada de "nenhum, de propósito" — sem ela, a lista vazia seria o padrão (todos). */
 export const NO_RESOURCES = '-'

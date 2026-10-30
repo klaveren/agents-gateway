@@ -17,7 +17,7 @@ export interface IGuidanceControllerDeps {
 }
 
 const project = z.string().max(64).nullable().optional()
-const ruleSchema = z.object({ projectId: project, title: z.string().max(400).optional(), body: z.string().max(20_000).optional(), enabled: z.boolean().optional() })
+const ruleSchema = z.object({ projectId: project, title: z.string().max(400).optional(), body: z.string().optional(), enabled: z.boolean().optional() })
 const moveSchema = z.object({ direction: z.enum(['up', 'down']) })
 const contextSchema = z.object({ docIds: z.array(z.string().max(80)).max(100) })
 const resourceSchema = z.object({
@@ -25,10 +25,10 @@ const resourceSchema = z.object({
   kind: z.enum(RESOURCE_KINDS as [TResourceKind, ...TResourceKind[]]).optional(),
   projectId: project,
   description: z.string().max(1_000).optional(),
-  body: z.string().max(200_000).optional(),
+  body: z.string().optional(),
   docIds: z.array(z.string().max(80)).max(50).optional(),
 })
-const addendumSchema = z.object({ projectId: project, body: z.string().max(40_000) })
+const addendumSchema = z.object({ projectId: project, body: z.string() })
 const agentResourcesSchema = z.object({ skills: z.array(z.string().max(80)).max(200).optional(), commands: z.array(z.string().max(80)).max(200).optional() })
 const docSchema = z.object({
   id: z.string().max(80).optional(),
@@ -36,7 +36,7 @@ const docSchema = z.object({
   projectId: project,
   title: z.string().max(400).optional(),
   summary: z.string().max(1_000).optional(),
-  body: z.string().max(400_000).optional(),
+  body: z.string().optional(),
 })
 
 /**

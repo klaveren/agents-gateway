@@ -223,12 +223,13 @@ get right yourself:
 The gateway executes `run_bash`, so it is closed by default: it binds to `127.0.0.1` and
 rejects every cross-origin request. The bundled UI is same-origin and unaffected.
 
-| Env               | Default     | What it does                                                                                                             |
-| ----------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `HOST`            | `127.0.0.1` | Interface to bind. Change it only if you know who else is on the network.                                                |
-| `CORS_ORIGINS`    | _(none)_    | Comma-separated allowlist. Needed if you serve a frontend from another port.                                             |
-| `ALLOW_ANONYMOUS` | _(off)_     | Needed to use the bundled UI and plain `curl`, which send no caller credential. See [Caller identity](#caller-identity). |
-| `JSON_LIMIT`      | `25mb`      | Request body cap. Base64 attachments inflate ~33%.                                                                       |
+| Env                  | Default     | What it does                                                                                                                                                                                                                                             |
+| -------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HOST`               | `127.0.0.1` | Interface to bind. Change it only if you know who else is on the network.                                                                                                                                                                                |
+| `CORS_ORIGINS`       | _(none)_    | Comma-separated allowlist. Needed if you serve a frontend from another port.                                                                                                                                                                             |
+| `ALLOW_ANONYMOUS`    | _(off)_     | Needed to use the bundled UI and plain `curl`, which send no caller credential. See [Caller identity](#caller-identity).                                                                                                                                 |
+| `JSON_LIMIT`         | `256kb`     | Request body cap for every route except the ones below (the body is read before authentication).                                                                                                                                                         |
+| `MESSAGE_JSON_LIMIT` | `25mb`      | Body cap for conversation messages (base64 attachments inflate ~33%) and for the routes that save content: agents, hooks, schedules, rules, docs, skills/commands, protocol addenda, `/v1/mcp` and `/v1/turn-tools`. Content has no size cap of its own. |
 
 ### Caller identity
 

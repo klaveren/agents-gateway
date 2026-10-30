@@ -2,7 +2,7 @@
   import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
   import { useRoute } from 'vue-router'
   import { ApiError } from '@/lib/api'
-  import { effortLabel } from '@/lib/format'
+  import { effortLabel, sizeHint } from '@/lib/format'
   import { BUILD_KINDS, builderAgentId, type TBuildKind } from '@/lib/builder'
   import {
     defaultLanes,
@@ -555,18 +555,6 @@
       .slice(0, 48)
   }
 
-  /** O tamanho é de quem cria o agente: a tela só mostra quanto custa (cerca de 4 caracteres por token, a cada turno). */
-  function sizeHint(text: string): string {
-    const tokens = Math.round(text.length / 4)
-    return `${text.length.toLocaleString('pt-BR')} caracteres · cerca de ${tokens < 1000 ? tokens : `${Math.round(tokens / 100) / 10} mil`} tokens a cada turno`
-  }
-
-  /** O trigger custa só quando o agente o carrega. */
-  function triggerSize(text: string): string {
-    const tokens = Math.round(text.length / 4)
-    return `${text.length.toLocaleString('pt-BR')} caracteres · cerca de ${tokens < 1000 ? tokens : `${Math.round(tokens / 100) / 10} mil`} tokens quando carregado`
-  }
-
   /** O que será gravado, em uma linha, para a confirmação do Salvar. */
   const saveSummary = computed(() => {
     const { providers: targets, modes, allowedTools } = form.value
@@ -709,7 +697,7 @@
           class="input scroll-thin text-[13px] leading-relaxed"
           placeholder="Você é a Íris: gentil, direta, explica sem jargão e admite quando não sabe."
         />
-        <small v-if="form.soul" class="hint">{{ sizeHint(form.soul) }}</small>
+        <small v-if="form.soul" class="hint">{{ sizeHint(form.soul, 'a cada turno') }}</small>
         <small v-for="message in issues.soul" :key="message" class="error">{{ message }}</small>
       </label>
       <label class="field sm:col-span-2">
@@ -718,7 +706,7 @@
           <em class="font-normal text-zinc-500">— o que o agente faz: função, regras, como usar as ferramentas</em>
         </span>
         <textarea v-model="form.systemPrompt" required rows="10" class="input scroll-thin font-mono text-[13px] leading-relaxed" placeholder="Você é o agente…" />
-        <small v-if="form.systemPrompt" class="hint">{{ sizeHint(form.systemPrompt) }}</small>
+        <small v-if="form.systemPrompt" class="hint">{{ sizeHint(form.systemPrompt, 'a cada turno') }}</small>
         <small v-if="anyGoogle" class="hint">Com Gemini, evite {chaves} no texto: viram variáveis e dão erro.</small>
         <small v-for="message in issues.systemPrompt" :key="message" class="error">{{ message }}</small>
       </label>
@@ -759,7 +747,7 @@
           placeholder="O procedimento: o que fazer, passo a passo."
           aria-label="Procedimento"
         />
-        <small v-if="trigger.body" class="hint">{{ triggerSize(trigger.body) }}</small>
+        <small v-if="trigger.body" class="hint">{{ sizeHint(trigger.body, 'quando carregado') }}</small>
       </div>
       <p v-if="!form.triggers?.length" class="text-sm text-zinc-500">
         Nenhum trigger. Um trigger é um subcomando do agente: o "quando usar" vai no índice do prompt, e o procedimento só quando precisa.

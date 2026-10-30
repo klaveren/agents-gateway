@@ -7,7 +7,7 @@ import { HttpError } from './Http.Error'
 export const DEFAULT_HOST = '127.0.0.1'
 /** ⛔ O corpo de QUALQUER rota: pequeno. Ele é lido antes da autenticação, então é o que um anônimo manda. */
 export const DEFAULT_JSON_LIMIT = '256kb'
-/** Só a mensagem de uma conversa leva anexo (base64) — e só ela tem o teto grande. */
+/** O teto grande: a mensagem de uma conversa (anexo em base64) e as rotas que gravam conteúdo (ver `Http.Server`). */
 export const DEFAULT_MESSAGE_JSON_LIMIT = '25mb'
 
 export function messageJsonLimit(): string {

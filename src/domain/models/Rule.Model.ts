@@ -20,4 +20,3 @@ export interface IRule {
 }
 
 export const RULE_TITLE_MAX = 120
-export const RULE_BODY_MAX = 4_000

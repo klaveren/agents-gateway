@@ -22,6 +22,16 @@ export function tokens(value: number | undefined): string {
   return String(n)
 }
 
+/**
+ * ⚖️ O tamanho de um texto como INFORMAÇÃO, nunca trava: quem escreve decide. Caracteres e cerca de quantos tokens
+ * (≈ 4 caracteres por token); `when` diz quando pesa ("a cada turno", "quando carregado").
+ */
+export function sizeHint(text: string, when?: string): string {
+  const count = Math.round(text.length / 4)
+  const amount = count < 1000 ? String(count) : `${Math.round(count / 100) / 10} mil`.replace('.', ',')
+  return `${text.length.toLocaleString('pt-BR')} caracteres · cerca de ${amount} tokens${when ? ` ${when}` : ''}`
+}
+
 export function usd(value: number | undefined): string {
   if (value === undefined) return ''
   return value < 0.01 ? `<$0.01` : `$${value.toFixed(2)}`

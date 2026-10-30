@@ -30,7 +30,6 @@ export interface IScheduleAgent {
   projectId?: string
 }
 
-const PROMPT_MAX = 20_000
 const SESSIONS: TScheduleSession[] = ['new', 'continuous']
 
 /**
@@ -183,8 +182,8 @@ export class AgentSchedulesService {
     const issues: Array<{ field: string; message: string }> = []
     const agent = this.agentOf(agentId)
     if (!agent) issues.push({ field: 'agentId', message: `no such agent: ${agentId}` })
+    // ⚖️ O prompt não tem teto: o tamanho é de quem cria o agendamento.
     if (!input.prompt?.trim()) issues.push({ field: 'prompt', message: 'required: what the agent runs, as typed in the chat (/command args works)' })
-    else if (input.prompt.length > PROMPT_MAX) issues.push({ field: 'prompt', message: `at most ${PROMPT_MAX} characters` })
     if (input.session && !SESSIONS.includes(input.session)) issues.push({ field: 'session', message: `one of ${SESSIONS.join(', ')}` })
     try {
       const cron = new CronSchedule(input.cron ?? '', input.timezone?.trim() || SCHEDULE_DEFAULT_TIMEZONE)

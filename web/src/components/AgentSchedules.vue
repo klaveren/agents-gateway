@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { ApiError } from '@/lib/api'
 import { commandSuggestions, useAgentCommands } from '@/lib/commands'
 import { describeCron, RUN_STATUS, SCHEDULE_PRESETS } from '@/lib/cron'
-import { fullTime } from '@/lib/format'
+import { fullTime, sizeHint } from '@/lib/format'
 import type { ISchedule, IScheduleRun, TScheduleInput } from '@/lib/types'
 import { useProjectsStore } from '@/stores/projects'
 import { useSchedulesStore } from '@/stores/schedules'
@@ -203,6 +203,7 @@ const summary = (schedule: ISchedule) => describeCron(schedule.cron) ?? schedule
           </button>
         </span>
         <small class="hint">Como se você escrevesse na conversa. Comece com <code>/</code> para escolher um Command ou uma Skill.</small>
+        <small v-if="draft.prompt" class="hint">{{ sizeHint(draft.prompt, 'a cada execução') }}</small>
         <small v-for="m in issues.prompt" :key="m" class="error">{{ m }}</small>
       </label>
 

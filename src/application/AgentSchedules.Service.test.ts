@@ -27,6 +27,13 @@ describe('AgentSchedulesService', () => {
     assert.strictEqual(service.nextRun(schedule)?.toISOString(), '2026-10-29T11:00:00.000Z')
   })
 
+  it('⚖️ o prompt não tem teto: 300 KB é aceito e volta inteiro do banco', () => {
+    const service = build()
+    const big = 'x'.repeat(300_000)
+    service.create('global', { name: 'longo', cron: '0 8 * * *', prompt: big }, by)
+    assert.strictEqual(service.get('global', 'longo').prompt, big)
+  })
+
   it('⛔ recusa: nome, cron, fuso, intervalo abaixo de 5 minutos, texto vazio, projeto em agente de projeto e agente que não existe', () => {
     const service = build()
     assert.throws(

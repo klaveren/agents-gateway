@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import Icon from '@/components/Icon.vue'
 import { api, ApiError } from '@/lib/api'
+import { sizeHint } from '@/lib/format'
 import { pendingDraft } from '@/lib/builder'
 import { GLOBAL_SCOPE, rulesTokens, scopeToProjectId } from '@/lib/guidance'
 import type { IRule } from '@/lib/types'
@@ -144,7 +145,8 @@ function describe(failure: unknown): string {
       <li v-for="(rule, index) in rules" :key="rule.id" class="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3" :class="rule.enabled ? '' : 'opacity-60'">
         <form v-if="editing === rule.id" class="flex flex-col gap-2" @submit.prevent="saveEdit(rule)">
           <input v-model="edit.title" required maxlength="120" class="input text-sm font-medium" aria-label="Título" />
-          <textarea v-model="edit.body" required rows="3" maxlength="4000" class="input text-sm" aria-label="Regra" />
+          <textarea v-model="edit.body" required rows="3" class="input text-sm" aria-label="Regra" />
+          <small v-if="edit.body" class="hint">{{ sizeHint(edit.body, 'a cada turno') }}</small>
           <div class="flex gap-2">
             <button type="submit" :disabled="busy" class="btn btn-sm btn-primary">Salvar</button>
             <button type="button" class="btn btn-sm btn-ghost" @click="editing = undefined">Cancelar</button>
@@ -176,8 +178,8 @@ function describe(failure: unknown): string {
       <label class="field">Título<input v-model="draft.title" required maxlength="120" class="input text-sm" placeholder="Idioma" /><small v-for="m in draftIssues.title" :key="m" class="error">{{ m }}</small></label>
       <label class="field">
         Regra
-        <textarea v-model="draft.body" required rows="3" maxlength="4000" class="input text-sm" placeholder="Responda sempre em português do Brasil." />
-        <small class="hint">Curta e direta: uma regra por vez.</small>
+        <textarea v-model="draft.body" required rows="3" class="input text-sm" placeholder="Responda sempre em português do Brasil." />
+        <small class="hint">Curta e direta: uma regra por vez.<template v-if="draft.body"> {{ sizeHint(draft.body, 'a cada turno') }}.</template></small>
         <small v-for="m in draftIssues.body" :key="m" class="error">{{ m }}</small>
       </label>
       <div><button type="submit" :disabled="busy" class="btn btn-primary">Adicionar</button></div>

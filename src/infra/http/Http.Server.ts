@@ -64,10 +64,20 @@ export const API_PREFIX = '/v1'
  *
  * Rota pública nova entra aqui — e só aqui, de propósito.
  */
-/** A mensagem de uma conversa: a única rota com o teto de corpo grande (anexos). */
+/** A mensagem de uma conversa: leva anexo, por isso o teto de corpo grande. */
 const MESSAGE_ROUTE = /^\/v1\/sessions\/[^/]+\/messages\/?$/
-/** O cadastro de agente leva o prompt e a soul inteiros, cujo tamanho é de quem cria (ver `Agent.Policy`). */
-const AGENT_ROUTE = /^\/v1\/agents(?:\/[^/]+)?\/?$/
+/**
+ * ⚖️ As rotas que gravam CONTEÚDO, cujo tamanho é de quem escreve (o sistema não impõe teto): o agente (prompt, soul,
+ * triggers), os hooks e agendamentos dele (o prompt), rules, documentos, skills/commands e o complemento dos protocolos.
+ * Também o MCP próprio (as mesmas gravações, como ferramenta) e o `turn-tools` (o rascunho do construtor num CLI).
+ */
+const CONTENT_ROUTES: readonly RegExp[] = [
+  /^\/v1\/agents(?:\/[^/]+)?\/?$/,
+  /^\/v1\/agents\/[^/]+\/(?:hooks|schedules)(?:\/[^/]+)?\/?$/,
+  /^\/v1\/(?:rules|docs|resources)(?:\/[^/]+)?\/?$/,
+  /^\/v1\/protocols\/[^/]+\/addendum\/?$/,
+  /^\/v1\/(?:mcp|turn-tools)\/?$/,
+]
 const HOOK_ROUTE = /^\/v1\/hook\/[^/]+\/[^/]+\/?$/
 /** As rotas com limite por origem (ver `rateLimit`). */
 export const THROTTLED_PATHS = ['/auth/login', '/auth/setup']
@@ -112,13 +122,17 @@ export class HttpServer {
     this.app.use(securityHeaders())
     this.app.use(corsMiddleware())
     // ⛔ Dois tetos: o pequeno vale para tudo (o corpo é lido ANTES da autenticação); o grande, só para a
-    // mensagem de uma conversa, que leva anexo.
+    // mensagem de uma conversa, que leva anexo, e para as rotas que gravam conteúdo (`CONTENT_ROUTES`).
     const small = express.json({ limit: jsonLimit() })
     const large = express.json({ limit: messageJsonLimit() })
     // ⚖️ O hook lê o corpo CRU: a assinatura HMAC é dos bytes exatos, e o serviço que chama manda o que quiser.
     const raw = express.raw({ type: () => true, limit: '256kb' })
     this.app.use((req, res, next) =>
-      HOOK_ROUTE.test(req.path) ? raw(req, res, next) : MESSAGE_ROUTE.test(req.path) || AGENT_ROUTE.test(req.path) ? large(req, res, next) : small(req, res, next),
+      HOOK_ROUTE.test(req.path)
+        ? raw(req, res, next)
+        : MESSAGE_ROUTE.test(req.path) || CONTENT_ROUTES.some((route) => route.test(req.path))
+          ? large(req, res, next)
+          : small(req, res, next),
     )
     // A sessão da tela chega no cookie HttpOnly; daqui em diante é a mesma credencial do cabeçalho.
     this.app.use(cookieCredential())

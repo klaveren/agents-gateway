@@ -6,6 +6,7 @@ import Icon from '@/components/Icon.vue'
 import BuildTabs from '@/components/BuildTabs.vue'
 import MasterDetail from '@/components/MasterDetail.vue'
 import { api, ApiError } from '@/lib/api'
+import { sizeHint } from '@/lib/format'
 import { pendingDraft } from '@/lib/builder'
 import { docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId } from '@/lib/guidance'
 import { renderMarkdown } from '@/lib/markdown'
@@ -266,6 +267,7 @@ function describe(failure: unknown): string {
           <textarea v-if="!preview" v-model="form.body" required rows="18" class="input font-mono text-[13px] leading-relaxed" aria-label="Conteúdo em markdown" />
           <!-- eslint-disable-next-line vue/no-v-html -- renderMarkdown escapa antes de marcar -->
           <div v-else class="prose-agent min-h-[18rem] rounded-xl border border-zinc-800 p-4 text-sm break-words" v-html="renderMarkdown(form.body)" />
+          <small v-if="form.body" class="hint">{{ sizeHint(form.body, 'quando lido') }}</small>
           <small v-for="m in issues.body" :key="m" class="error">{{ m }}</small>
         </div>
 

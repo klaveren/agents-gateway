@@ -256,6 +256,14 @@ describe('MCP do próprio gateway (integração)', () => {
     assert.deepStrictEqual(json(await client.callTool({ name: 'list_hooks', arguments: { agentId: 'atlas' } })), [])
   })
 
+  it('⚖️ save_doc sem teto: 300 KB passa pelo MCP e pela API, e get_doc devolve inteiro', async () => {
+    const client = await connect(admin)
+    const big = 'x'.repeat(300_000)
+    const saved = (await client.callTool({ name: 'save_doc', arguments: { id: 'enorme', kind: 'spec', title: 'Enorme', summary: 'grande', body: big } })) as { isError?: boolean }
+    assert.ok(!saved.isError, JSON.stringify(saved).slice(0, 300))
+    assert.strictEqual(json(await client.callTool({ name: 'get_doc', arguments: { id: 'enorme' } })).body, big)
+  })
+
   it('save_rule numera, move_rule reordena (uma posição por chamada) e delete_rule renumera', async () => {
     const client = await connect(admin)
     const titles = async () =>
