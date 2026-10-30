@@ -183,6 +183,9 @@ export const changePasswordSchema = z.object({ current: password, password })
 export const createAccessTokenSchema = z.object({ name: z.string().max(200), expiresInDays: z.number().int().optional() })
 export const shareConversationSchema = z.object({ shared: z.boolean() })
 
+/** Qual conversa o stream da caixa de entrada acompanha ao vivo; `null` para. */
+export const followTurnSchema = z.object({ sessionId: z.string().min(1).max(200).nullable() })
+
 export type TCreateSessionBody = z.infer<typeof createSessionSchema>
 export type TSendMessageBody = z.infer<typeof sendMessageSchema>
 export type TUpdateSettingsBody = z.infer<typeof updateSettingsSchema>

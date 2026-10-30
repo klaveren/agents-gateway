@@ -589,6 +589,11 @@ Clicking a commit shows only its diff, and the panel refreshes when a turn ends.
   route and on `/messages`.
 - With `callbackUrl` on the conversation, the end of every turn is POSTed there, signed with
   `X-Gateway-Signature`. Only hosts in `TURN_CALLBACK_HOSTS` are accepted, and it tries 3 times.
+- **Live on the screen:** a turn started anywhere (the API, a schedule, a delegation, another
+  tab) shows up in the open conversation as it runs, and its stop button works. The list marks
+  running conversations with a pulsing dot. The screen follows the turn on the inbox stream it
+  already has (`PUT /v1/conversations/events/:streamId/follow`), because the browser opens at
+  most six connections per host. An API client can use `GET /v1/sessions/:id/live` (SSE) instead.
 
 **Project accounts (Project → Accounts).** Each project keeps its own credentials, which its
 agents' terminal receives: a GitHub App, a GitHub token, a GCP service account, SSH (a

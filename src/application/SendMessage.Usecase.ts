@@ -4,6 +4,7 @@ import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { ITurnClassifier } from '@domain/ports/TurnClassifier.Port'
+import { ITurnLive } from '@domain/ports/TurnLive.Port'
 import { aggregateTurn } from './Turn.Aggregator'
 
 const TITLE_MAX = 60
@@ -76,6 +77,8 @@ export class SendMessageUseCase {
     private classifier?: ITurnClassifier,
     /** A máscara de segredos (ver `Secret.Mask`): vale para o que a tela recebe e para o que se grava. */
     private mask?: ITurnMask,
+    /** O turno ao vivo (ver `Turn.Live`): quem abre a conversa o vê andando, venha da tela ou da API. */
+    private live?: ITurnLive,
   ) {}
 
   /**
@@ -105,19 +108,28 @@ export class SendMessageUseCase {
      * aceitar o turno. Lido depois, no `record()` assíncrono, ele dependia de a sessão ainda estar no
      * store (cancelada ou perdida virava 0) e de nenhum turno concorrente ter andado o contador.
      */
-    const index = this.describeQuietly(sessionId)?.turns
+    const described = this.describeQuietly(sessionId)
+    const index = described?.turns
+    const ticket = this.live?.start(sessionId, recorded.recordAs ?? recorded.text ?? '', described?.metadata)
+    // O turno ao vivo acaba quando o turno está GRAVADO (a tela relê o histórico nesse aviso), antes do rótulo.
+    const finished = () => (ticket !== undefined ? this.live?.finish(sessionId, ticket) : undefined)
 
     try {
       for await (const event of this.agentProvider.sendMessage(sessionId, sent)) {
         // ⛔ O que sai daqui (a tela, o histórico) já sai mascarado: o argumento e o resultado das ferramentas e o texto.
         const shown = this.mask ? maskEvent(event, this.mask, sessionId) : event
         events.push(shown)
+        this.live?.push(sessionId, shown)
         yield shown
       }
     } finally {
       // `void`: gravação não segura a resposta de quem está lendo o stream, e o repositório já
       // engole o próprio erro — banco fora do ar não pode derrubar a conversa.
-      if (index !== undefined) void this.record(sessionId, index, recorded, events, startedAt).catch(() => undefined)
+      if (index === undefined) finished()
+      else
+        void this.record(sessionId, index, recorded, events, startedAt, finished)
+          .catch(() => undefined)
+          .finally(finished)
     }
   }
 
@@ -141,7 +153,7 @@ export class SendMessageUseCase {
     return { ...rest, text: rest.text.trim() ? `${context}\n\n${rest.text}` : context }
   }
 
-  private async record(sessionId: string, index: number, input: IMessageInput, events: IAgentEvent[], startedAt: number): Promise<void> {
+  private async record(sessionId: string, index: number, input: IMessageInput, events: IAgentEvent[], startedAt: number, stored: () => void = () => undefined): Promise<void> {
     if (!events.length) return
 
     const turn = aggregateTurn(sessionId, events)
@@ -183,7 +195,7 @@ export class SendMessageUseCase {
       await this.conversations.saveNative?.(sessionId, this.agentProvider.nativeSnapshot?.(sessionId) ?? null)
     }
 
-    const stored = await this.conversations.appendTurn({
+    const at = await this.conversations.appendTurn({
       sessionId,
       index,
       at: new Date(),
@@ -203,8 +215,9 @@ export class SendMessageUseCase {
       error: turn.error,
     })
 
+    stored()
     // O rótulo vai para onde o turno FICOU: com o índice pedido ocupado, o banco o pôs no próximo.
-    if (stored !== undefined) await this.classify(sessionId, stored, input, turn)
+    if (at !== undefined) await this.classify(sessionId, at, input, turn)
   }
 
   /**

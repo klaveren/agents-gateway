@@ -8,7 +8,10 @@ import { IConversationSession } from '@domain/models/Conversation.Model'
  * `metadata` de antes de apagar — é ele que diz de quem era, e depois de apagar não há onde ler.
  */
 export type TConversationEvent =
-  { type: 'conversation.updated'; session: IConversationSession } | { type: 'conversation.deleted'; sessionId: string; metadata?: Record<string, unknown> }
+  | { type: 'conversation.updated'; session: IConversationSession }
+  | { type: 'conversation.deleted'; sessionId: string; metadata?: Record<string, unknown> }
+  /** Um turno começou ou acabou (ver `Turn.Live`): a lista mostra quem está rodando. */
+  | { type: 'conversation.running' | 'conversation.idle'; sessionId: string; metadata?: Record<string, unknown> }
 
 /**
  * Por onde as mudanças passam. Em processo: um gateway, um barramento.

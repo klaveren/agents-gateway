@@ -5,7 +5,7 @@ import type { IConversation } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import AgentAvatar from './AgentAvatar.vue'
 
-const props = defineProps<{ conversation: IConversation; active: boolean; unread: boolean; showOwner: boolean }>()
+const props = defineProps<{ conversation: IConversation; active: boolean; unread: boolean; running?: boolean; showOwner: boolean }>()
 
 const agents = useAgentsStore()
 const agentName = computed(() => agents.byId.get(props.conversation.agentId)?.name ?? props.conversation.agentId)
@@ -51,7 +51,8 @@ function plain(text: string): string {
           :class="CLASSIFICATION_COLOR[conversation.classification]"
           :title="CLASSIFICATION_LABEL[conversation.classification]"
         />
-        <span v-if="unread" class="ml-auto h-2 w-2 shrink-0 rounded-full bg-emerald-400" :class="{ 'ml-0': conversation.classification }" title="Nova atividade" />
+        <span v-if="running" class="ml-auto h-2 w-2 shrink-0 animate-pulse rounded-full bg-sky-400" :class="{ 'ml-0': conversation.classification }" title="Rodando agora" />
+        <span v-if="unread" class="ml-auto h-2 w-2 shrink-0 rounded-full bg-emerald-400" :class="{ 'ml-0': conversation.classification || running }" title="Nova atividade" />
       </div>
     </div>
   </RouterLink>

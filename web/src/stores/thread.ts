@@ -5,6 +5,7 @@ import { readSse } from '@/lib/sse'
 import type { IAgent, IAgentEvent, IConversation, ISessionState, ITodoItem, ITurn, IUsage, TMode } from '@/lib/types'
 import { levelsOf, resolveChoice } from '@/lib/agentChoice'
 import { useAgentsStore } from './agents'
+import { useConversationsStore, type TTurnFrame } from './conversations'
 import { useProjectsStore } from './projects'
 
 export interface IDraft {
@@ -106,10 +107,16 @@ export const useThreadStore = defineStore('thread', () => {
   const draft = ref<IDraft>()
   const pending = ref<IPendingTurn>()
   const sending = ref(false)
+  /** Um turno que outro começou (a API, um agendamento, outra aba), acompanhado pelo `/live`: o botão parar vale para ele. */
+  const following = ref(false)
   /** A lista de tarefas que o agente mantém na conversa (`update_todos`); vazia = nenhuma. */
   const todos = ref<ITodoItem[]>([])
 
   let inFlight: AbortController | undefined
+  /** O turno de fora que a tela está montando (ver `onLive`), pelo stream da caixa de entrada. */
+  let followed: IPendingTurn | undefined
+  const inbox = useConversationsStore()
+  inbox.onTurn(onLive)
   /**
    * ⚠️ Muda a cada troca de conversa (open, startDraft, reset). O `send` guarda o número com que
    * começou: se mudou, o stream é de OUTRA conversa e nada dele pode tocar o estado de agora.
@@ -122,6 +129,9 @@ export const useThreadStore = defineStore('thread', () => {
   function leave(): number {
     inFlight?.abort()
     inFlight = undefined
+    inbox.follow(undefined)
+    followed = undefined
+    following.value = false
     sending.value = false
     unrouted = undefined
     return ++generation
@@ -161,6 +171,9 @@ export const useThreadStore = defineStore('thread', () => {
       agentId.value = 'agentId' in history ? history.agentId : undefined
       liveSession.value = !!live || unsure
       session.value = live ? { provider: live.provider, model: live.model, reasoning: live.reasoning, place: live.place } : undefined
+      // Depois do histórico: o turno em curso (`turn.started`) entra depois dos já gravados. Também na conversa
+      // encerrada: a API a retoma ao mandar um turno, e ele aparece aqui.
+      inbox.follow(id)
       if (historyFailure) error.value = `Não foi possível carregar o histórico: ${historyFailure}`
       else if (unsure) error.value = 'Não foi possível confirmar se a sessão está ativa. Tente de novo em instantes.'
     } catch (failure) {
@@ -229,6 +242,7 @@ export const useThreadStore = defineStore('thread', () => {
         if (stale()) return { ok: false }
         sessionId.value = unrouted = born
         liveSession.value = true
+        inbox.follow(born)
         if (model) session.value = { provider, model, reasoning }
       }
 
@@ -290,6 +304,32 @@ export const useThreadStore = defineStore('thread', () => {
     const created = unrouted
     unrouted = undefined
     return { ok, created }
+  }
+
+  /** O turno que outro começou (a API, um agendamento, outra aba). O desta aba chega pelo próprio stream. */
+  function onLive(frame: TTurnFrame): void {
+    if (sending.value || frame.sessionId !== sessionId.value) return
+    if (frame.type === 'turn.started') {
+      const turn: IPendingTurn = { request: frame.turn.request, files: 0, text: '', reasoning: '', tools: [], warnings: [], aborted: false }
+      followed = turn
+      following.value = true
+      if (liveSession.value === false) {
+        liveSession.value = true
+        void reloadSession(frame.sessionId)
+      }
+      for (const event of frame.turn.events) applyEvent(turn, event)
+      pending.value = { ...turn, tools: [...turn.tools] }
+    } else if (frame.type === 'turn.event' && followed) {
+      applyEvent(followed, frame.event)
+    } else if ((frame.type === 'turn.finished' || frame.type === 'turn.idle') && followed) {
+      followed = undefined
+      following.value = false
+      // O turno já está gravado: a releitura o traz, e só então o pendente sai (sem piscar).
+      void refresh().finally(() => {
+        if (!following.value && !sending.value) pending.value = undefined
+        void loadTodos()
+      })
+    }
   }
 
   /** O provider e o modelo da sessão (retomada agora), para o cabeçalho e o seletor de modelo. */
@@ -415,6 +455,7 @@ export const useThreadStore = defineStore('thread', () => {
     draft,
     pending,
     sending,
+    following,
     open,
     startDraft,
     setHeader,

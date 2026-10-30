@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, ApiError, openStream } from '@/lib/api'
 import { readSse, type ISseFrame } from '@/lib/sse'
 import { reconcileDraft, useThreadStore } from './thread'
+import { useConversationsStore } from './conversations'
 
 vi.mock('@/lib/api', async (original) => ({ ...(await original<typeof import('@/lib/api')>()), api: vi.fn(), openStream: vi.fn() }))
 vi.mock('@/lib/sse', () => ({ readSse: vi.fn() }))
@@ -380,5 +381,71 @@ describe('reconcileDraft', () => {
     expect(reconcileDraft({ agentId: 'a', mode: 'agent', tools: false, provider: 'sub', model: 'm1', reasoning: 'high' }, two).reasoning).toBeUndefined()
     // Catálogo que não sabe (`null`): valem os do provider.
     expect(reconcileDraft({ agentId: 'a', mode: 'agent', tools: false, provider: 'sub', model: 'm3', reasoning: 'low' }, two).reasoning).toBe('low')
+  })
+})
+
+describe('o turno ao vivo (pelo stream da caixa de entrada)', () => {
+  it('o turno que outro começou aparece andando, o parar vale para ele, e no fim entra o gravado', async () => {
+    let stored: unknown[] = []
+    const follows: unknown[] = []
+    vi.mocked(api).mockImplementation(async (path: string, request?: { body?: unknown }) => {
+      if (path === '/conversations/events/s1/follow') return follows.push(request?.body) as never
+      if (path === '/conversations/A/turns') return { turns: stored } as never
+      if (path === '/conversations/A/todos') return { items: [] } as never
+      if (path.startsWith('/conversations')) return { sessions: [], total: 0, page: 1, pageSize: 30, facets: { agent: {} } } as never
+      if (path.startsWith('/sessions/')) return { model: 'm1' } as never
+      throw new Error(`rota não prevista: ${path}`)
+    })
+    const frames: ISseFrame[] = []
+    let wake: (() => void) | undefined
+    vi.mocked(openStream).mockImplementation(async (path) => {
+      expect(path).toBe('/conversations/events')
+      return new ReadableStream()
+    })
+    vi.mocked(readSse).mockImplementation(async function* () {
+      while (true) {
+        const next = frames.shift()
+        if (next) yield next
+        else await new Promise<void>((resolve) => (wake = resolve))
+      }
+    })
+    const push = (data: Record<string, unknown>) => {
+      frames.push({ data })
+      wake?.()
+    }
+
+    const inbox = useConversationsStore()
+    inbox.subscribe(false)
+    push({ type: 'stream.ready', streamId: 's1' })
+    await tick()
+    const thread = useThreadStore()
+    await thread.open('A')
+    await tick()
+    expect(follows.at(-1)).toEqual({ sessionId: 'A' })
+
+    push({ type: 'turn.started', sessionId: 'A', turn: { request: 'faça o build', events: [{ type: 'text.delta', payload: { text: 'rodando ' } }] } })
+    await tick()
+    expect(thread.pending).toMatchObject({ request: 'faça o build', text: 'rodando ' })
+    expect(thread.following).toBe(true)
+
+    // O turno de OUTRA conversa no mesmo stream não entra.
+    push({ type: 'turn.event', sessionId: 'B', event: { type: 'text.delta', payload: { text: 'intruso' } } })
+    push({ type: 'turn.event', sessionId: 'A', event: { type: 'tool.started', payload: { tool: 'run_bash' } } })
+    await tick()
+    expect(thread.pending?.text).toBe('rodando ')
+    expect(thread.pending?.tools).toEqual([{ tool: 'run_bash', status: 'running' }])
+
+    stored = [{ sessionId: 'A', index: 0, request: 'faça o build', text: 'pronto', toolCalls: [] }]
+    push({ type: 'turn.finished', sessionId: 'A' })
+    await tick()
+    await tick()
+    expect(thread.following).toBe(false)
+    expect(thread.pending).toBeUndefined()
+    expect(thread.turns.map((turn) => turn.text)).toEqual(['pronto'])
+
+    thread.reset()
+    await tick()
+    expect(follows.at(-1)).toEqual({ sessionId: null })
+    inbox.reset()
   })
 })

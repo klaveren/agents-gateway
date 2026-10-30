@@ -117,6 +117,7 @@ const topLevel = computed(() => conversations.items.filter((conversation) => !co
         :conversation="conversation"
         :active="conversation.id === conversations.selectedId"
         :unread="conversations.unread.has(conversation.id)"
+        :running="conversations.running.has(conversation.id)"
         :show-owner="auth.isAdmin"
       />
       <div ref="sentinel" class="h-6" />
