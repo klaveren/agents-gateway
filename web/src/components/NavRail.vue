@@ -1,53 +1,49 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useRoute } from 'vue-router'
-import { useAuthStore } from '@/stores/auth'
-import { useConversationsStore } from '@/stores/conversations'
-import AccountMenu from './AccountMenu.vue'
-import Icon from './Icon.vue'
-import ProjectSwitcher from './ProjectSwitcher.vue'
-import DocsMenu from './DocsMenu.vue'
-import ProjectMenu from './ProjectMenu.vue'
-import ResourcesMenu from './ResourcesMenu.vue'
-import SystemMenu from './SystemMenu.vue'
+  import { computed } from 'vue'
+  import { useRoute } from 'vue-router'
+  import { useAuthStore } from '@/stores/auth'
+  import { useConversationsStore } from '@/stores/conversations'
+  import AccountMenu from './AccountMenu.vue'
+  import Icon from './Icon.vue'
+  import ProjectSwitcher from './ProjectSwitcher.vue'
+  import DocsMenu from './DocsMenu.vue'
+  import ProjectMenu from './ProjectMenu.vue'
+  import ResourcesMenu from './ResourcesMenu.vue'
+  import SystemMenu from './SystemMenu.vue'
 
-const route = useRoute()
-const auth = useAuthStore()
-const conversations = useConversationsStore()
+  const route = useRoute()
+  const auth = useAuthStore()
+  const conversations = useConversationsStore()
 
+  const section = computed(() => {
+    const name = String(route.name ?? '')
+    if (name.startsWith('agent')) return 'agents'
+    if (name.startsWith('provider')) return 'providers'
+    if (name.startsWith('mcp')) return 'mcp'
+    if (name === 'user' || name.startsWith('user-')) return 'users'
+    if (name === 'rules' || name.startsWith('rule-')) return 'rules'
+    if (name === 'environment' || name === 'schedules' || name === 'permissions' || name === 'accounts') return name
+    if (name.startsWith('spec')) return 'specs'
+    if (name.startsWith('skill')) return 'skills'
+    if (name.startsWith('command')) return 'commands'
+    if (name.startsWith('adr')) return 'adrs'
+    if (name.startsWith('knowledge')) return 'knowledge'
+    // Perfil não tem item no trilho (mora no menu da conta): nada fica aceso.
+    if (name === 'packages' || name === 'profile' || name.startsWith('project')) return name.startsWith('project') ? 'projects' : name
+    if (name.startsWith('security')) return 'security'
+    return ['settings', 'users', 'usage'].includes(name) ? name : 'inbox'
+  })
 
-const section = computed(() => {
-  const name = String(route.name ?? '')
-  if (name.startsWith('agent')) return 'agents'
-  if (name.startsWith('provider')) return 'providers'
-  if (name.startsWith('mcp')) return 'mcp'
-  if (name === 'user' || name.startsWith('user-')) return 'users'
-  if (name === 'rules' || name.startsWith('rule-')) return 'rules'
-  if (name === 'environment' || name === 'schedules' || name === 'permissions' || name === 'accounts') return name
-  if (name.startsWith('spec')) return 'specs'
-  if (name.startsWith('skill')) return 'skills'
-  if (name.startsWith('command')) return 'commands'
-  if (name.startsWith('adr')) return 'adrs'
-  if (name.startsWith('knowledge')) return 'knowledge'
-  // Perfil não tem item no trilho (mora no menu da conta): nada fica aceso.
-  if (name === 'packages' || name === 'profile' || name.startsWith('project')) return name.startsWith('project') ? 'projects' : name
-  return ['settings', 'users', 'usage', 'secrets'].includes(name) ? name : 'inbox'
-})
-
-/**
- * ⚖️ Abaixo de `md` o trilho vira uma BARRA INFERIOR: no celular, 68px de coluna fixa eram quase um
- * quinto da tela. Os mesmos links; Perfil e Sair ficam no menu da conta, e o que é do sistema (Usuários,
- * Modelos, MCPs, Pacotes, Configuração), no menu Sistema.
- */
-const links = computed<Array<{ to: string; key: string; label: string; short?: string; icon: 'inbox' | 'chart' | 'agents'; badge: number }>>(() => [
-  { to: '/', key: 'inbox', label: 'Conversas', short: 'Conversas', icon: 'inbox' as const, badge: conversations.unread.size },
-  ...(auth.signedIn ? [{ to: '/usage', key: 'usage', label: 'Uso', icon: 'chart' as const, badge: 0 }] : []),
-  ...(auth.isAdmin
-    ? [
-        { to: '/agents', key: 'agents', label: 'Agentes', icon: 'agents' as const, badge: 0 },
-      ]
-    : []),
-])
+  /**
+   * ⚖️ Abaixo de `md` o trilho vira uma BARRA INFERIOR: no celular, 68px de coluna fixa eram quase um
+   * quinto da tela. Os mesmos links; Perfil e Sair ficam no menu da conta, e o que é do sistema (Usuários,
+   * Modelos, MCPs, Pacotes, Configuração), no menu Sistema.
+   */
+  const links = computed<Array<{ to: string; key: string; label: string; short?: string; icon: 'inbox' | 'chart' | 'agents'; badge: number }>>(() => [
+    { to: '/', key: 'inbox', label: 'Conversas', short: 'Conversas', icon: 'inbox' as const, badge: conversations.unread.size },
+    ...(auth.signedIn ? [{ to: '/usage', key: 'usage', label: 'Uso', icon: 'chart' as const, badge: 0 }] : []),
+    ...(auth.isAdmin ? [{ to: '/agents', key: 'agents', label: 'Agentes', icon: 'agents' as const, badge: 0 }] : []),
+  ])
 </script>
 
 <template>
@@ -57,7 +53,13 @@ const links = computed<Array<{ to: string; key: string; label: string; short?: s
     <!-- O seletor de projeto no lugar do logo: o projeto atual recorta o resto da tela. -->
     <div v-if="auth.user" class="flex min-w-0 flex-1 md:hidden"><ProjectSwitcher placement="up" /></div>
     <div v-if="auth.user" class="mb-3 hidden md:block"><ProjectSwitcher placement="side" /></div>
-    <div v-else class="mb-3 hidden h-10 w-10 place-items-center rounded-xl md:grid bg-gradient-to-br from-emerald-400 to-teal-600 text-sm font-bold text-zinc-950" title="Agents Gateway">AG</div>
+    <div
+      v-else
+      class="mb-3 hidden h-10 w-10 place-items-center rounded-xl md:grid bg-gradient-to-br from-emerald-400 to-teal-600 text-sm font-bold text-zinc-950"
+      title="Agents Gateway"
+    >
+      AG
+    </div>
     <RouterLink
       v-for="link in links"
       :key="link.key"
@@ -69,7 +71,12 @@ const links = computed<Array<{ to: string; key: string; label: string; short?: s
       <Icon :name="link.icon" class="h-[22px] w-[22px]" />
       <span class="max-w-full truncate md:hidden">{{ link.short ?? link.label }}</span>
       <span class="hidden md:inline">{{ link.label }}</span>
-      <span v-if="link.badge" class="absolute top-0.5 right-[calc(50%-20px)] md:top-1 md:right-2 min-w-[18px] rounded-full bg-emerald-500 px-1 text-center text-[10px] leading-[18px] font-semibold text-zinc-950">{{ link.badge > 99 ? '99+' : link.badge }}</span>
+      <span
+        v-if="link.badge"
+        class="absolute top-0.5 right-[calc(50%-20px)] md:top-1 md:right-2 min-w-[18px] rounded-full bg-emerald-500 px-1 text-center text-[10px] leading-[18px] font-semibold text-zinc-950"
+      >
+        {{ link.badge > 99 ? '99+' : link.badge }}
+      </span>
     </RouterLink>
     <!-- Duas instâncias (barra do celular abre para cima; trilho, para o lado), cada uma só no seu tamanho. -->
     <div v-if="auth.isAdmin" class="flex min-w-0 flex-1 md:hidden"><ProjectMenu placement="up" :active="section" /></div>
@@ -81,7 +88,9 @@ const links = computed<Array<{ to: string; key: string; label: string; short?: s
     <div v-if="auth.isAdmin" class="flex min-w-0 flex-1 md:hidden"><SystemMenu placement="up" :active="section" /></div>
     <div v-if="auth.isAdmin" class="hidden md:block"><SystemMenu placement="side" :active="section" /></div>
     <AccountMenu v-if="auth.user" placement="up" class="md:hidden" />
-    <RouterLink v-else-if="auth.localAccounts" to="/login" class="flex flex-1 flex-col items-center justify-center py-1.5 text-[10px] font-medium text-zinc-300 md:hidden">Entrar</RouterLink>
+    <RouterLink v-else-if="auth.localAccounts" to="/login" class="flex flex-1 flex-col items-center justify-center py-1.5 text-[10px] font-medium text-zinc-300 md:hidden">
+      Entrar
+    </RouterLink>
     <div class="mt-auto hidden flex-col items-center gap-2 pb-1 text-[10px] text-zinc-500 md:flex">
       <span class="h-2 w-2 rounded-full" :class="conversations.live ? 'bg-emerald-400' : 'bg-zinc-600'" :title="conversations.live ? 'Ao vivo' : 'Sem conexão ao vivo'" />
       <AccountMenu v-if="auth.user" placement="side" />

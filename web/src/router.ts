@@ -17,6 +17,7 @@ import AccountsView from './views/AccountsView.vue'
 import ProvidersView from './views/ProvidersView.vue'
 import SettingsView from './views/SettingsView.vue'
 import SecretsView from './views/SecretsView.vue'
+import SecurityView from './views/SecurityView.vue'
 import UsageView from './views/UsageView.vue'
 import UsersView from './views/UsersView.vue'
 
@@ -36,7 +37,16 @@ export const router = createRouter({
     { path: '/agents/protocol', name: 'agent-protocol', component: BuildView, props: { kind: 'agent', tab: 'protocol' } },
     { path: '/agents/:id', name: 'agent', component: AgentsView, props: true },
     // ⚠️ `/settings#conta` era o "Perfil" antes de ele ter página: o link antigo (favorito) cai no lugar certo.
-    { path: '/secrets', name: 'secrets', component: SecretsView },
+    // Segurança: uma guia por rota filha. `/secrets` era o endereço antigo de Segredos e redireciona.
+    {
+      path: '/security',
+      component: SecurityView,
+      children: [
+        { path: '', redirect: '/security/secrets' },
+        { path: 'secrets', name: 'security-secrets', component: SecretsView },
+      ],
+    },
+    { path: '/secrets', redirect: '/security/secrets' },
     { path: '/settings', name: 'settings', component: SettingsView, beforeEnter: (to) => (to.hash === '#conta' ? { path: '/profile', replace: true } : true) },
     { path: '/profile', name: 'profile', component: ProfileView },
     { path: '/users', name: 'users', component: UsersView },
