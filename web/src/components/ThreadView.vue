@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
 import { api } from '@/lib/api'
 import type { IConversation, TMode } from '@/lib/types'
 import { useRouter } from 'vue-router'
@@ -33,6 +33,7 @@ const agents = useAgentsStore()
 const protocols = useProtocolsStore()
 const conversations = useConversationsStore()
 const thread = useThreadStore()
+
 const projects = useProjectsStore()
 
 const scroller = ref<HTMLElement>()
@@ -44,6 +45,29 @@ const deleteError = ref<string>()
 const actionError = ref<string>()
 
 const header = computed(() => thread.header)
+
+/** As alterações (o painel tipo IDE): só numa conversa aberta num repositório. O diff (e o destaque) só carrega ao abrir. */
+const ChangesPanel = defineAsyncComponent(() => import('./ChangesPanel.vue'))
+const changesOpen = ref(false)
+const changesCount = ref<number>()
+const changesRefresh = ref(0)
+const inRepository = computed(() => typeof header.value?.metadata?.repository === 'string' && !!thread.sessionId)
+async function loadChangesCount() {
+  if (!inRepository.value || !thread.sessionId) return void (changesCount.value = undefined)
+  const result = await api<{ files: unknown[] }>(`/sessions/${encodeURIComponent(thread.sessionId)}/changes`, { query: { scope: 'conversation' } }).catch(() => undefined)
+  changesCount.value = result?.files.length
+}
+watch(inRepository, () => void loadChangesCount(), { immediate: true })
+// Terminou um turno: o agente pode ter mudado arquivos (a contagem e o painel aberto se atualizam).
+watch(
+  () => !!thread.pending,
+  (running, before) => {
+    if (before && !running) {
+      changesRefresh.value += 1
+      void loadChangesCount()
+    }
+  },
+)
 const agent = computed(() => agents.byId.get(header.value?.agentId ?? thread.draft?.agentId ?? ''))
 /** O nome do agente — o do core (o construtor) não está na lista de agentes. */
 const agentName = computed(() => agent.value?.name ?? coreAgentName(header.value?.agentId ?? thread.agentId ?? props.agentId) ?? header.value?.agentId)
@@ -197,6 +221,15 @@ async function continueFresh() {
         </div>
         <template v-if="header">
           <span v-if="auth.isAdmin && header.costUsd !== undefined" class="mr-2 hidden text-xs text-zinc-400 sm:inline">{{ tokens(header.usage.totalTokens) }} tokens · {{ header.costIsFloor ? '≥ ' : '' }}{{ usd(header.costUsd) }}</span>
+          <button
+            v-if="inRepository"
+            class="flex h-9 items-center gap-1.5 rounded-full px-2.5 text-xs text-zinc-300 hover:bg-zinc-800"
+            title="O que o agente mudou nesta conversa"
+            @click="changesOpen = true"
+          >
+            <Icon name="git" class="h-4 w-4" />
+            Alterações<span v-if="changesCount" class="rounded-full bg-emerald-500/20 px-1.5 text-emerald-300">{{ changesCount }}</span>
+          </button>
           <button v-if="!embedded" class="grid h-9 w-9 place-items-center rounded-full hover:bg-zinc-800" :class="header.shared ? 'text-emerald-400' : 'text-zinc-400'" :title="header.shared ? 'Parar de compartilhar' : 'Compartilhar por link'" @click="toggleShare">
             <Icon name="share" class="h-5 w-5" />
           </button>
@@ -249,6 +282,7 @@ async function continueFresh() {
       @cancel="confirming = false"
     />
     <TodoPanel v-if="thread.todos.length" :items="thread.todos" />
+    <ChangesPanel v-if="changesOpen && thread.sessionId" :session-id="thread.sessionId" :refresh-key="changesRefresh" @close="changesOpen = false" @count="changesCount = $event" />
     <!-- ⚖️ Sessão encerrada (expirou, ou o gateway reiniciou) não tranca a conversa: ao enviar, o gateway a retoma com o histórico. -->
     <div v-if="resumable" class="flex items-center gap-3 border-t border-zinc-800/80 bg-zinc-900/60 px-4 py-2 text-xs text-zinc-400">
       <span class="min-w-0 truncate">A conversa foi encerrada. Ao enviar, ela continua de onde parou.</span>

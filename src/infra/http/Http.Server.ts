@@ -384,6 +384,7 @@ function buildRoutes(
     { method: 'post', path: '/sessions/:id/messages', handler: controller.sendMessage },
     { method: 'post', path: '/sessions/:id/turns', handler: controller.startTurn },
     { method: 'get', path: '/sessions/:id/turns/:turn', handler: controller.turnStatus },
+    { method: 'get', path: '/sessions/:id/changes', handler: controller.changes },
     { method: 'post', path: '/sessions/:id/cancel', handler: controller.cancelSession },
   ]
 }

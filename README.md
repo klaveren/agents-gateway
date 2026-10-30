@@ -525,6 +525,22 @@ create the worktree: whoever calls prepares it.
 - The agent needs the permission `repository <name>`. The first message tells it the repository,
   the worktree, the branch and the folder.
 
+**Changes, like an IDE.** A conversation opened in a repository gets a **Changes** button with
+the number of files. It opens a side panel with the changed files (M/A/D/R, `+n −m`), the commits
+and each file's diff, side by side or in lines, with syntax highlighting. It has three scopes:
+
+- this conversation (since the commit it started on, committed or not);
+- not committed;
+- the whole branch (against the merge base with `origin/HEAD`, `main`, `master` or `automation`).
+
+Clicking a commit shows only its diff, and the panel refreshes when a turn ends. Behind it is
+`GET /v1/sessions/:id/changes`:
+
+- git runs read-only, with no external diff, textconv, fsmonitor, pager or system config, so
+  nothing in the repository config runs a program;
+- secrets (`.env`, keys) are listed without content;
+- at most 300 files and 200 KB of diff per file.
+
 **Asynchronous turns**, for an orchestrator that drives agents:
 
 - `POST /v1/sessions/:id/turns` answers 202 at once, and the turn runs on the server with no
