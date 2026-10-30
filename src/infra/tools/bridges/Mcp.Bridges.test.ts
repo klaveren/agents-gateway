@@ -33,6 +33,18 @@ describe('pontes MCP com vários servidores', () => {
     assert.strictEqual(servers.mcp_aberto.headers, undefined)
   })
 
+  it('⛔ Claude Agent SDK: a identidade de quem chama só no servidor que a pediu', () => {
+    const context = { agentId: 'maya', sessionId: 'conv-1', projectId: 'logiccus' }
+    const servers = buildClaudeMcpServers(
+      [],
+      [{ config: config('akm', { auth: 'none', identity: true }) }, { config: config('outro', { auth: 'none' }) }],
+      undefined,
+      context,
+    ) as Record<string, { headers?: Record<string, string> }>
+    assert.deepStrictEqual(servers.mcp_akm.headers, { 'x-gateway-agent': 'maya', 'x-gateway-conversation': 'conv-1', 'x-gateway-project': 'logiccus' })
+    assert.strictEqual(servers.mcp_outro.headers, undefined)
+  })
+
   it('⛔ Claude Agent SDK: as ferramentas fora da escolha saem do contexto do modelo, no nome do SDK', () => {
     assert.deepStrictEqual(claudeHiddenTools([...remotes, { config: config('gateway'), tools: ['list_resources'], hidden: ['list_docs', 'save_doc'] }]), [
       'mcp__mcp_gateway__list_docs',

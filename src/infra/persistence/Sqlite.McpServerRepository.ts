@@ -30,6 +30,7 @@ const ADDED_COLUMNS: Array<{ column: string; definition: string }> = [
   { column: 'kind', definition: "TEXT NOT NULL DEFAULT 'remote'" },
   { column: 'container', definition: 'TEXT' },
   { column: 'process', definition: 'TEXT' },
+  { column: 'identity', definition: 'INTEGER NOT NULL DEFAULT 0' },
 ]
 
 const COLUMNS: Record<keyof TMcpServerPatch, string> = {
@@ -40,6 +41,7 @@ const COLUMNS: Record<keyof TMcpServerPatch, string> = {
   transport: 'transport',
   auth: 'auth',
   headerName: 'header_name',
+  identity: 'identity',
   enabled: 'enabled',
   updatedAt: 'updated_at',
   updatedBy: 'updated_by',
@@ -72,7 +74,7 @@ export class SqliteMcpServerRepository implements IMcpServerRepository {
   insert(server: IMcpServerConfig): void {
     this.db
       .prepare(
-        'INSERT INTO mcp_servers (id, name, kind, container, process, url, transport, auth, header_name, enabled, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO mcp_servers (id, name, kind, container, process, url, transport, auth, header_name, identity, enabled, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         server.id,
@@ -84,6 +86,7 @@ export class SqliteMcpServerRepository implements IMcpServerRepository {
         server.transport,
         server.auth,
         server.headerName ?? null,
+        server.identity ? 1 : 0,
         server.enabled ? 1 : 0,
         server.createdAt.toISOString(),
         server.updatedAt.toISOString(),
@@ -137,6 +140,7 @@ function toServer(row: TRow): IMcpServerConfig {
     transport: String(row.transport) as TMcpTransport,
     auth: String(row.auth) as TMcpAuth,
     headerName: typeof row.header_name === 'string' ? row.header_name : undefined,
+    ...(Number(row.identity) === 1 ? { identity: true } : {}),
     enabled: Number(row.enabled) === 1,
     createdAt: new Date(String(row.created_at)),
     updatedAt: new Date(String(row.updated_at)),

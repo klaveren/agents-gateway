@@ -13,11 +13,25 @@ import { AsyncLocalStorage } from 'node:async_hooks'
  * sua, sem nada para limpar.
  */
 export class CallerTokenScope {
-  private readonly storage = new AsyncLocalStorage<{ token?: string }>()
+  private readonly storage = new AsyncLocalStorage<{ token?: string; identity?: Record<string, string> }>()
 
-  /** Roda `work` com `token` como a credencial de tudo que ele disparar. */
-  run<T>(token: string | undefined, work: () => Promise<T>): Promise<T> {
-    return this.storage.run({ token }, work)
+  /**
+   * Roda `work` com `token` como a credencial de tudo que ele disparar — e, no servidor que a pediu, com os cabeçalhos da
+   * identidade de quem chama (ver `Agent.Identity`), pelo mesmo escopo: duas conversas em voo não trocam de identidade.
+   */
+  run<T>(token: string | undefined, work: () => Promise<T>, identity?: Record<string, string>): Promise<T> {
+    return this.storage.run({ token, ...(identity ? { identity } : {}) }, work)
+  }
+
+  /** `fetch` que leva os cabeçalhos da identidade do escopo atual (só existem no servidor que os pediu). */
+  wrapIdentity(base: typeof fetch): typeof fetch {
+    return (input, init) => {
+      const identity = this.storage.getStore()?.identity
+      if (!identity || !Object.keys(identity).length) return base(input, init)
+      const headers = new Headers(init?.headers)
+      for (const [name, value] of Object.entries(identity)) headers.set(name, value)
+      return base(input, { ...init, headers })
+    }
   }
 
   /**

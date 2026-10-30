@@ -216,7 +216,7 @@ export class McpRegistry {
       return undefined
     }
 
-    const fingerprint = [config.url, config.transport, config.auth, config.headerName ?? ''].join('\u0000')
+    const fingerprint = [config.url, config.transport, config.auth, config.headerName ?? '', config.identity ? 'identity' : ''].join('\u0000')
     const current = this.clients.get(id)
     if (current?.fingerprint === fingerprint) return current.client
 
@@ -226,6 +226,7 @@ export class McpRegistry {
       transport: config.transport,
       label: config.id,
       callerHeader: config.auth === 'caller' ? config.headerName : undefined,
+      ...(config.identity ? { identity: true } : {}),
       header: () => this.header(config.id),
       fixedHeaders: () => this.fixedHeaders(this.servers.get(config.id) ?? config),
     })

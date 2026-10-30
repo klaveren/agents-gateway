@@ -46,6 +46,7 @@ const createSchema = z.object({
   transport: transport.optional(),
   auth: auth.optional(),
   headerName: z.string().max(64).optional(),
+  identity: z.boolean().optional(),
   secret: z.string().max(4000).optional(),
 })
 const updateSchema = z.object({
@@ -56,6 +57,7 @@ const updateSchema = z.object({
   transport: transport.optional(),
   auth: auth.optional(),
   headerName: z.string().max(64).optional(),
+  identity: z.boolean().optional(),
   enabled: z.boolean().optional(),
 })
 const secretSchema = z.object({ secret: z.string().max(4000) })
@@ -224,6 +226,7 @@ export class McpServersController {
       transport: server.transport,
       auth: server.auth,
       headerName: server.headerName,
+      identity: server.identity === true,
       enabled: server.enabled,
       secret: {
         configured: secret.configured,

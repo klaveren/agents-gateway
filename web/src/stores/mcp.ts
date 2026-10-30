@@ -13,6 +13,8 @@ export interface INewMcpServer {
   transport: TMcpTransport
   auth: TMcpAuth
   headerName?: string
+  /** Envia a identidade de quem chama (agente, conversa, projeto) em cabeçalhos. */
+  identity?: boolean
   secret?: string
 }
 
@@ -31,7 +33,10 @@ export const useMcpStore = defineStore('mcp', () => {
     return created
   }
 
-  async function update(id: string, change: Partial<Pick<IMcpServer, 'name' | 'url' | 'transport' | 'auth' | 'headerName' | 'enabled' | 'container' | 'process'>>): Promise<void> {
+  async function update(
+    id: string,
+    change: Partial<Pick<IMcpServer, 'name' | 'url' | 'transport' | 'auth' | 'headerName' | 'identity' | 'enabled' | 'container' | 'process'>>,
+  ): Promise<void> {
     await api(`/mcp-servers/${encodeURIComponent(id)}`, { method: 'PUT', body: change })
     await load()
   }

@@ -1,3 +1,4 @@
+import { identityEnv } from '@domain/Agent.Identity'
 import type { IPermissionAsker, IPermissionChecker } from '@application/Permissions.Service'
 import { cercoPlan } from '@domain/Cerco.Plan'
 import type { IExecutionContext } from '@domain/models/ExecutionContext.Model'
@@ -219,7 +220,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     }
     try {
       const line = await sandbox.wrapWith(command, root, (base) => cercoPlan(layers, { ...base, system }), token, { ...place, localPorts })
-      const env: Record<string, string> = { ...subscriptionEnv({ HOME: root }), ...accounts?.env }
+      // A identidade de quem chama (ver `Agent.Identity`); as contas do projeto vêm depois.
+      const env: Record<string, string> = { ...subscriptionEnv({ HOME: root }), ...identityEnv(context), ...accounts?.env }
       if (accounts?.ssh?.length) {
         const home = join(place.scratchBase ?? root, '.home')
         sshKit = accountsDir(home, token)
@@ -360,7 +362,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
             cwd,
             timeout: policy.timeoutMs,
             maxBuffer: EXEC_BUFFER_BYTES,
-            env: subscriptionEnv({ HOME: cwd }),
+            env: subscriptionEnv({ HOME: cwd, ...identityEnv(context) }),
             ...(context?.projectId ? { shell: SANDBOX_SHELL } : {}),
           })
           const output = stdout || stderr || 'Command executed successfully with no output.'

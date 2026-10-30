@@ -1,3 +1,4 @@
+import { identityEnv } from '@domain/Agent.Identity'
 import { sessionChoice } from '@domain/Agent.Policy'
 import { errorPayload } from '@domain/Provider.Failure'
 import { writeFileSync } from 'node:fs'
@@ -184,7 +185,7 @@ export class CodexAgentAdapter implements IAgentAdapter {
 
     try {
       const remotes = (await this.catalog?.mcpServersFor(agent.allowedTools, context)) ?? []
-      const servers = codexMcpServers(remotes, context.token)
+      const servers = codexMcpServers(remotes, context.token, context)
       if (grant)
         servers[CODEX_TURN_TOOLS_SERVER] = {
           url: this.turnTools!.url,
@@ -200,6 +201,8 @@ export class CodexAgentAdapter implements IAgentAdapter {
         env: subscriptionEnv({
           HOME: context.workFolder ? join(context.workFolder.projectDir, '.home') : agent.projectId ? projectHome(agent.projectId) : workspace,
           CODEX_HOME: home,
+          // A identidade de quem chama, para o shell do Codex (ver `Agent.Identity`).
+          ...identityEnv(context),
         }),
         config: {
           developer_instructions: withMcpHint(record.systemPrompt, remotes, grant ? locals.map((tool) => tool.name) : []),
@@ -291,10 +294,10 @@ export function withMcpHint(systemPrompt: string, remotes: readonly IAgentMcpSer
 }
 
 /** `mcp_servers` da config do Codex: URL, headers (a credencial de quem conversa) e o filtro de ferramentas. */
-export function codexMcpServers(remotes: readonly IAgentMcpServer[], token?: string): Record<string, Record<string, unknown>> {
+export function codexMcpServers(remotes: readonly IAgentMcpServer[], token?: string, context?: IExecutionContext): Record<string, Record<string, unknown>> {
   const servers: Record<string, Record<string, unknown>> = {}
   for (const remote of remotes) {
-    const headers = mcpHeaders(remote, token)
+    const headers = mcpHeaders(remote, token, context)
     servers[remote.config.id.replace(/[^a-zA-Z0-9_-]/g, '_')] = {
       url: remote.config.url,
       ...(headers ? { http_headers: headers } : {}),

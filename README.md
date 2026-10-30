@@ -478,6 +478,14 @@ The image ships Debian's `chromium` for Playwright: the screen's preset is
 `@playwright/mcp@latest --headless --isolated --no-sandbox --executable-path=/usr/bin/chromium`.
 Outside Linux, drop `--executable-path` and it uses the installed Chrome.
 
+**Who is calling.** An agent's terminal always gets `GATEWAY_AGENT_ID`, `GATEWAY_CONVERSATION_ID`
+and `GATEWAY_PROJECT_ID`: the gateway's `run_bash`, the Claude CLI (its Bash) and the Codex and
+Antigravity CLIs. A remote MCP server gets the same in headers (`x-gateway-agent`,
+`x-gateway-conversation`, `x-gateway-project`) only when its registration has "Enviar a identidade
+do agente" turned on. It is off by default, so a third-party server does not learn conversation ids
+unless whoever registered it decided so. It works on every lane: the gateway's own MCP client, the
+Claude CLI and the Codex CLI.
+
 ### Projects: several isolated workspaces in one gateway
 
 Agents, conversations and hooks belong to a **project**; models, MCP servers and packages are

@@ -33,6 +33,14 @@ describe('McpServersService', () => {
     assert.deepStrictEqual([service.secretStatus('crm').configured, service.secretStatus('crm').last4], [true, 'r3d0'])
   })
 
+  it('a identidade do agente: desligada por padrão, ligada no cadastro, e desligável', () => {
+    const { service } = build()
+    assert.strictEqual(service.create({ id: 'crm', name: 'CRM', url: 'https://mcp.exemplo.com/mcp' }, 'root').identity, undefined)
+    service.create({ id: 'akm', name: 'AKM', url: 'http://10.10.0.4:4004/mcp', identity: true }, 'root')
+    assert.strictEqual(service.get('akm').identity, true)
+    assert.strictEqual(service.update('akm', { identity: false }, 'root').identity, undefined)
+  })
+
   it('devolve todos os problemas: id, nome, URL (só http/https, sem credencial embutida)', () => {
     const { service } = build()
     assert.throws(

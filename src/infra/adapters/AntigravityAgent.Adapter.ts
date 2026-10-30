@@ -1,3 +1,4 @@
+import { identityEnv } from '@domain/Agent.Identity'
 import { sessionChoice } from '@domain/Agent.Policy'
 import { errorPayload } from '@domain/Provider.Failure'
 import { spawn as nodeSpawn } from 'node:child_process'
@@ -152,7 +153,7 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
     if (grant) writeTurnToolsPlugin(workspace, this.turnTools!.url, { 'X-Turn-Grant': grant, ...(context.token ? { 'X-Tool-Authorization': `Bearer ${context.token}` } : {}) })
     const child = this.spawn(antigravityBin(), antigravityArgs(prompt, record.model, native.conversationId), {
       cwd: workspace,
-      env: subscriptionEnv({ HOME: home }),
+      env: subscriptionEnv({ HOME: home, ...identityEnv(context) }),
       stdio: ['ignore', 'pipe', 'pipe'],
       signal: abort.signal,
     })
