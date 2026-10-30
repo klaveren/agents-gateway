@@ -67,3 +67,49 @@ export function gitInit(root: string): void {
   git('add', '-A')
   git('commit', '-q', '-m', 'fixture')
 }
+
+/**
+ * Um repositório SINTÉTICO do formato do Claude Code e do `AGENTS.md`: `.claude/` com agente, command, skill por link
+ * para `.agents/`, settings com permissões, hook, `env` e um segredo falso; `CLAUDE.md` na raiz (que importa) e numa
+ * subpasta; `AGENTS.md` na raiz e em `.agents/`; e a saída de benchmark que o admin manda ignorar.
+ */
+export function writeClaudeFixture(root: string): void {
+  const file = (path: string, body: string) => {
+    mkdirSync(dirname(join(root, path)), { recursive: true })
+    writeFileSync(join(root, path), body)
+  }
+  file('.agents/skills/revisar/SKILL.md', '---\ndescription: revisa\n---\n# Revisar\n')
+  file('.agents/skills/revisar/checklist.md', '- testes\n')
+  file('.agents/AGENTS.md', '# Contrato do .agents\nLeia `specs/x.md`.\n')
+  file('.claude/agents/revisor.md', '---\nname: revisor-codigo\ndescription: revisa PRs\ntools: Read, Grep\nmodel: sonnet\n---\nVocê revisa.\n')
+  file('.claude/commands/git/commit.md', '---\ndescription: faz o commit\nallowed-tools: Bash(git commit:*)\n---\nFaça o commit.\n')
+  file(
+    '.claude/settings.json',
+    JSON.stringify(
+      {
+        permissions: {
+          allow: ['Bash(npm run test:*)', 'Read(docs/**/*.md)'],
+          deny: [`Bash(curl -H "Authorization: Bearer ${FAKE_TOKEN}" *)`],
+        },
+        hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: '.claude/scripts/guarda.sh' }] }] },
+        env: { GITHUB_TOKEN: FAKE_TOKEN, API_URL: 'https://api.x.test' },
+      },
+      null,
+      2,
+    ),
+  )
+  symlinkSync('../.agents/skills', join(root, '.claude/skills'))
+  file('.claude/settings.local.json', JSON.stringify({ permissions: { allow: ['WebFetch(domain:x.test)'] }, enabledMcpjsonServers: ['github'] }, null, 2))
+  file('.mcp.json', JSON.stringify({ mcpServers: { github: { type: 'http', url: 'https://x.test/mcp', headers: { Authorization: `Bearer ${FAKE_TOKEN}` } } } }, null, 2))
+  file('.claude/scripts/guarda.sh', 'exit 0\n')
+  file('.claude/boot.md', '# Boot do projeto\nVeja `.agents/benchmark/results/run-1.md`.\n')
+  file('.claude/coisa.txt', 'sem formato\n')
+  file('.claude/worktrees/copia/CLAUDE.md', '# cópia\n')
+  file('.claude/worktrees/copia/AGENTS.md', '# cópia\n')
+  file('CLAUDE.md', '@.claude/boot.md\n@AGENTS.md\n')
+  file('pacotes/api/CLAUDE.md', `# Regras da API\nNo código, \`@nao/importa.md\` não é importação.\n${'Use JSON. '.repeat(500)}\n`)
+  file('AGENTS.md', '<!--\n# carimbo, não é título\n-->\n# Instruções do projeto\nResponda em português.\n')
+  file('.agents/benchmark/results/run-1.md', '# run 1\n')
+  file('.agents/benchmark/results/run-2.json', '{}\n')
+  file('tmp/results/saida.md', '# saída\n')
+}

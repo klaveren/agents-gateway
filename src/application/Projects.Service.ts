@@ -1,3 +1,4 @@
+import { ignoreIssues, normalizeIgnore } from '@domain/Import.Ignore'
 import { InvalidProjectError, ProjectInUseError, ProjectNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgent } from '@domain/models/Agent.Model'
 import { DEFAULT_PROJECT_ID, IProject, IProjectMember, PROJECT_ID_PATTERN } from '@domain/models/Project.Model'
@@ -106,6 +107,20 @@ export class ProjectsService {
       )
     this.projects.delete(id)
     this.workspace.remove(id)
+  }
+
+  /** Os padrões que a varredura do importador ignora neste projeto. */
+  importIgnore(id: string): string[] {
+    return this.get(id).importIgnore ?? []
+  }
+
+  /** ⛔ Troca a lista inteira (vazia apaga). Padrão absoluto ou com `..` é recusado: o ignorar é dentro do repositório. */
+  setImportIgnore(id: string, patterns: readonly string[], by: string): string[] {
+    this.get(id)
+    const issues = ignoreIssues(patterns)
+    if (issues.length) throw new InvalidProjectError(issues)
+    const clean = normalizeIgnore(patterns)
+    return this.projects.update(id, { importIgnore: clean, updatedAt: this.now(), updatedBy: by })?.importIgnore ?? []
   }
 
   members(id: string): IProjectMember[] {

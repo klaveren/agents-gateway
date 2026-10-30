@@ -47,8 +47,12 @@ export interface IDetectedItem {
   /** Trigger: o nome do agente. */
   parent?: string
   title?: string
-  /** `shared`: a fonte é de vários itens (o `opencode.json`), e não liga um item ao outro na junção. */
-  sources: Array<{ path: string; role?: string; shared?: boolean }>
+  /**
+   * `shared`: a fonte é de vários itens (o `opencode.json`), e não liga um item ao outro na junção. `structured`: o
+   * arquivo é configuração (o `settings.json` do Claude Code): as citações vêm só de `cites`, nunca do texto (o argumento
+   * de uma regra de permissão não é citação, e não sai).
+   */
+  sources: Array<{ path: string; role?: string; shared?: boolean; structured?: boolean }>
   /** Caminhos citados pela ESTRUTURA (o `{file:…}` do opencode, o `instructions`), além dos do texto. Relativos à primeira fonte. */
   cites?: string[]
   /** Campos que dois detectores podem dizer de jeitos diferentes (`model`, `description`): divergência vira alerta. */
