@@ -1,4 +1,5 @@
 import { offers, targetFor } from '@domain/Agent.Policy'
+import { conversationNote, IAmbient } from '@domain/Ambient.Policy'
 import { resolveCapabilities } from '@domain/Capability.Catalog'
 import { COMPACT_REQUEST, compactHandoff, shouldCompact } from '@domain/Compaction.Policy'
 import { DEFAULT_COOLDOWN_MINUTES, fallbackChain, IFallbackStep, nextStep } from '@domain/Fallback.Policy'
@@ -38,8 +39,8 @@ import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { READ_DOC_TOOL, SEARCH_DOCS_TOOL } from '@domain/models/ProjectDoc.Model'
 import { SEARCH_RESOURCES_TOOL, USE_RESOURCE_TOOL } from '@domain/models/Resource.Model'
 import { PROJECT_METADATA_KEY, REPOSITORY_METADATA_KEY, WORKTREE_METADATA_KEY } from '@domain/Session.Metadata'
-import { projectWorkspace } from '@infra/adapters/support/Subscription.Workspace'
-import { resolveWorkFolder } from '@infra/workspace/Work.Folder'
+import { projectWorkspace, projectWorkspacePath } from '@infra/adapters/support/Subscription.Workspace'
+import { currentBranch, resolveWorkFolder } from '@infra/workspace/Work.Folder'
 import { IContextWorkFolder, IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { caller } from '@infra/mcp/Caller.Identity'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
@@ -103,6 +104,9 @@ export class AgentProvider implements IAgentProvider {
 
     /** O detector de laço (ver `Loop.Guard`): aberto a cada turno, para o turno que repete a mesma chamada. Ausente = sem detector. */
     private readonly loops?: LoopGuard,
+
+    /** O nome de um projeto, para o "## Ambiente" do system prompt (ver `Ambient.Policy`). Ausente = só o id. */
+    private readonly projectName?: (projectId: string) => string | undefined,
   ) {
     /**
      * Uma leitura no boot, e depois só quando muda.
@@ -159,12 +163,13 @@ export class AgentProvider implements IAgentProvider {
     // ⛔ Subagente: só pela delegação. Aqui, e não na tela, porque é por aqui que todo caminho passa.
     if (agent.role === 'subagent' && !input.delegated) throw new SubagentOnlyError(agent.id)
 
-    const { adminAccess: _access, delegated: _delegated, parentSessionId: _parent, environment: _environment, ...rest } = input
+    const { adminAccess: _access, delegated: _delegated, parentSessionId: _parent, environment: _environment, ambient: _ambient, ...rest } = input
     // ⚖️ O projeto da CONVERSA (o controller o carimba), não o do agente: o Atlas no XPTO recebe as do XPTO.
     const environment = this.guidance?.environmentFor(projectOf(input.metadata), agent.id)
     const created = await this.getAdapter(protocol, mode).createSession(this.prepare(agent, projectOf(input.metadata), choice.provider, protocol, mode).agent, {
       ...rest,
       ...(environment ? { environment } : {}),
+      ambient: this.ambientOf(agent, input.metadata),
       agentId: agent.id,
       provider: choice.provider,
       model: choice.model,
@@ -197,8 +202,11 @@ export class AgentProvider implements IAgentProvider {
     // O contexto do sistema que não foi na mensagem (ver `SendMessageUseCase.withContext`): volta com o repasse feito
     // no meio do turno, quando o modelo recomeça do zero. O adapter nunca o recebe solto.
     const { context: systemContext, ...message } = input
-    const opening = (block: string | undefined): IMessageInput => (block ? { ...message, text: [block, systemContext, message.text].filter(Boolean).join('\n\n') } : message)
-    let sent = handoff ? { ...message, text: `${handoff}\n\n${message.text}` } : message
+    // ⚖️ O id da conversa vai UMA VEZ por histórico do modelo: no primeiro turno e quando ele recomeça (repasse, compactação,
+    // retomada, troca de provedor). Só na entrada do modelo: a transcrição e o turno gravado ficam com o `input`.
+    const note = conversationNote(record.id)
+    const opening = (block: string | undefined): IMessageInput => (block ? { ...message, text: [note, block, systemContext, message.text].filter(Boolean).join('\n\n') } : message)
+    let sent = handoff || record.turns === 0 ? { ...message, text: [note, handoff, message.text].filter(Boolean).join('\n\n') } : message
     const turn = { text: '', tools: [] as string[], by: `${record.provider} · ${record.model}`, completed: false }
     // ⛔ UM TURNO POR VEZ: o segundo rodaria por cima do primeiro (o cancelar só alcançava o último, e a transcrição e o
     // estado nativo se misturavam). A tela e a API recebem 409 `session_busy`.
@@ -493,6 +501,29 @@ export class AgentProvider implements IAgentProvider {
     // O nível que o protocolo novo não aceita cai: o adapter o descartaria em silêncio.
     if (record.reasoning && !REASONING_LEVELS[protocol].includes(record.reasoning)) record.reasoning = undefined
     record.native = undefined
+  }
+
+  /**
+   * Onde a conversa opera, para o "## Ambiente" do system prompt: o diretório pela MESMA regra das lanes — a pasta do
+   * repositório ou da worktree (`workFolderOf`), senão a do projeto do agente, senão a pasta vazia da conversa.
+   */
+  private ambientOf(agent: IAgent, metadata: Record<string, unknown> | undefined): IAmbient {
+    const projectId = projectOf(metadata) ?? agent.projectId
+    let folder: IContextWorkFolder | undefined
+    try {
+      folder = workFolderOf(metadata, projectOf(metadata))
+    } catch {
+      // A worktree que sumiu falha o turno, com o motivo (ver `workFolderOf`); aqui só não se diz que ela existe.
+      folder = undefined
+    }
+    const name = projectId ? this.projectName?.(projectId) : undefined
+    const branch = folder?.repository ? currentBranch(folder.dir) : undefined
+    return {
+      agentId: agent.id,
+      ...(projectId ? { project: { id: projectId, ...(name ? { name } : {}), own: agent.projectId === projectId } } : {}),
+      ...(folder?.repository ? { repository: { name: folder.repository, ...(folder.worktree ? { worktree: folder.worktree } : {}), ...(branch ? { branch } : {}) } } : {}),
+      ...(folder ? { directory: folder.dir } : agent.projectId ? { directory: projectWorkspacePath(agent.projectId) } : {}),
+    }
   }
 
   /**
