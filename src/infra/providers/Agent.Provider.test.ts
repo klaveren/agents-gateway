@@ -49,7 +49,7 @@ describe('AgentProvider', () => {
       adapter: {
         async createSession(agent, input) {
           calls.push('createSession')
-          const record = store.create(`${provider}-${mode}`, {
+          const record = store.create({
             agentId: agent.id,
             provider,
             protocol: provider,
@@ -567,7 +567,7 @@ describe('AgentProvider — agente com vários providers', () => {
     const seen: ISeen[] = []
     const answer = (protocol: EProvider): IAgentAdapter => ({
       async createSession(agent, input) {
-        const record = store.create(protocol, {
+        const record = store.create({
           agentId: agent.id,
           provider: input.provider!,
           protocol,
@@ -712,7 +712,7 @@ describe('AgentProvider — rules e documentos', () => {
       async createSession(agent, input) {
         seen.environment = input.environment
         seen.created = agent.allowedTools
-        const record = store.create('g', {
+        const record = store.create({
           agentId: agent.id,
           provider: EProvider.GOOGLE,
           protocol: EProvider.GOOGLE,
@@ -776,7 +776,7 @@ describe('AgentProvider — retomar a conversa gravada', () => {
     const sent: string[] = []
     const adapter: IAgentAdapter = {
       async createSession(agent, input) {
-        const record = store.create('google-chat', {
+        const record = store.create({
           agentId: agent.id,
           provider: EProvider.GOOGLE,
           protocol: EProvider.GOOGLE,
@@ -850,7 +850,7 @@ describe('AgentProvider — retomar com a memória do SDK', () => {
     const restored: unknown[] = []
     const adapter: IAgentAdapter = {
       async createSession(agent, input) {
-        const record = store.create('google-chat', {
+        const record = store.create({
           agentId: agent.id,
           provider: EProvider.GOOGLE,
           protocol: EProvider.GOOGLE,
@@ -901,7 +901,7 @@ describe('AgentProvider — retomar com a memória do SDK', () => {
     const adapter: IAgentAdapter = {
       async createSession(agent, input) {
         seen.created = agent.allowedTools
-        const record = store.create('g', {
+        const record = store.create({
           agentId: agent.id,
           provider: EProvider.GOOGLE,
           protocol: EProvider.GOOGLE,

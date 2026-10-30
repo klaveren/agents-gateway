@@ -1,23 +1,13 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { EMode } from '@domain/enums/EMode.Enum'
-import { EProvider } from '@domain/enums/EProvider.Enum'
-import { readMode, readProvider, sessionPrefix } from './Session.Key'
+import { newSessionId } from './Session.Key'
 
 describe('SessionKey', () => {
-  it('builds a prefix that carries provider and lane', () => {
-    assert.strictEqual(sessionPrefix(EProvider.CLAUDE, EMode.AGENT), 'claude-agent')
-  })
-
-  it('reads the lane back out of a session id', () => {
-    const id = `${sessionPrefix(EProvider.OPENAI, EMode.AGENT)}-2f1c9e3a-0000-4000-8000-000000000000`
-
-    assert.strictEqual(readMode(id), EMode.AGENT)
-    assert.strictEqual(readProvider(id), EProvider.OPENAI)
-  })
-
-  it('returns undefined for ids that do not carry a lane', () => {
-    assert.strictEqual(readMode('legacy-session-id'), undefined)
-    assert.strictEqual(readProvider('legacy-session-id'), undefined)
+  it('gw_ + 26 caracteres de base32, ordenável pelo momento em que nasceu', () => {
+    const first = newSessionId(1_700_000_000_000)
+    const later = newSessionId(1_700_000_000_001)
+    assert.match(first, /^gw_[0-9A-HJKMNP-TV-Z]{26}$/)
+    assert.ok(first.slice(0, 13) < later.slice(0, 13), 'o tempo vem primeiro')
+    assert.notStrictEqual(newSessionId(1), newSessionId(1), 'a parte aleatória muda')
   })
 })

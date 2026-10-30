@@ -154,8 +154,9 @@ YOU (Browser)                    GATEWAY                          PROVIDER
 ```
 
 One shared session store knows which agent and which lane every session belongs to, so
-`/v1/sessions/:id/messages` needs nothing but the id. The id keeps a readable prefix —
-`claude-agent-<uuid>` — purely for human comfort in logs.
+`/v1/sessions/:id/messages` needs nothing but the id. The id is `gw_` plus 26 characters (a ULID:
+sortable by creation time). It does not name the provider or the lane: a conversation can switch
+provider mid-way, so such a prefix would lie. Older ids (`claude-agent-<uuid>`) keep working.
 
 ---
 

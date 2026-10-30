@@ -84,7 +84,7 @@ describe('GoogleAgentAdapter', () => {
     const adapter = new GoogleAgentAdapter({ createRuntime: runtimeWith(() => [], emptyLog()) })
     const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id })
 
-    assert.ok(session.id.startsWith('google-agent-'))
+    assert.ok(session.id.startsWith('gw_'))
     assert.strictEqual(session.mode, EMode.AGENT)
   })
 

@@ -2,7 +2,6 @@ import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import type { CodexOptions, ThreadEvent, ThreadOptions } from '@openai/codex-sdk'
 import { EMode } from '@domain/enums/EMode.Enum'
-import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { SessionStore } from '@infra/session/Session.Store'
@@ -200,7 +199,7 @@ describe('CodexAgentAdapter', () => {
 
   it('o id da sessão carrega o protocolo', async () => {
     const session = await new CodexAgentAdapter({ store: new SessionStore() }).createSession(agent, {})
-    assert.ok(session.id.startsWith(`${EProvider.CODEX}-${EMode.AGENT}-`))
+    assert.ok(session.id.startsWith('gw_'))
   })
 
   it('as instruções dizem quais ferramentas vêm do MCP (o Codex tem internas de mesmo nome)', () => {

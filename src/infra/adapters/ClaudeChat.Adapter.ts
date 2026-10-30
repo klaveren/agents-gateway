@@ -12,7 +12,6 @@ import { IAgentSession } from '@domain/models/AgentSession.Model'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
-import { sessionPrefix } from '@infra/session/Session.Key'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { IToolDefinition } from '@infra/tools/Tool.Types'
@@ -55,7 +54,7 @@ export class ClaudeChatAdapter implements IAgentAdapter {
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
     const choice = sessionChoice(agent, input)
-    const record = this.store.create(sessionPrefix(EProvider.CLAUDE, EMode.CHAT), {
+    const record = this.store.create({
       agentId: agent.id,
       // O provider configurado (o oficial ou um compatível); o protocolo é o deste adapter.
       provider: choice.provider,

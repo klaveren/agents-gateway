@@ -31,7 +31,7 @@ describe('AgentProvider — mensagem durante o turno', () => {
     const atTool = new Promise<void>((resolve) => (reached = resolve))
     const adapter: IAgentAdapter = {
       async createSession(created, input) {
-        const record = store.create(EProvider.CLAUDE, {
+        const record = store.create({
           agentId: created.id,
           provider: input.provider!,
           protocol: EProvider.CLAUDE,

@@ -27,7 +27,7 @@ describe('AgentProvider — compactação do contexto', () => {
     const adapter: IAgentAdapter = {
       ...(options.compactsItself ? { compactsItself: true } : {}),
       async createSession(created, input) {
-        const record = store.create(EProvider.CLAUDE, {
+        const record = store.create({
           agentId: created.id,
           provider: input.provider!,
           protocol: EProvider.CLAUDE,

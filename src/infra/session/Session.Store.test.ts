@@ -17,11 +17,11 @@ describe('SessionStore', () => {
     ...overrides,
   })
 
-  it('creates prefixed ids and starts the counters at zero', () => {
+  it('creates gw_ ids and starts the counters at zero', () => {
     const store = new SessionStore()
-    const record = store.create('claude-chat', seed())
+    const record = store.create(seed())
 
-    assert.ok(record.id.startsWith('claude-chat-'))
+    assert.ok(record.id.startsWith('gw_'))
     assert.strictEqual(record.turns, 0)
     assert.strictEqual(record.status, 'idle')
     assert.deepStrictEqual(record.usage, {})
@@ -30,15 +30,15 @@ describe('SessionStore', () => {
 
   it('never repeats an id, even within the same millisecond', () => {
     const store = new SessionStore()
-    const ids = new Set(Array.from({ length: 200 }, () => store.create('claude-chat', seed()).id))
+    const ids = new Set(Array.from({ length: 200 }, () => store.create(seed()).id))
 
     assert.strictEqual(ids.size, 200)
   })
 
   it('knows which agent and lane a session belongs to', () => {
     const store = new SessionStore()
-    const chat = store.create('claude-chat', seed())
-    const agent = store.create('google-agent', seed({ agentId: 'pesquisa-teste', provider: EProvider.GOOGLE, mode: EMode.AGENT }))
+    const chat = store.create(seed())
+    const agent = store.create(seed({ agentId: 'pesquisa-teste', provider: EProvider.GOOGLE, mode: EMode.AGENT }))
 
     // É isto que permite tirar o agentId do path da requisição.
     assert.strictEqual(store.get(chat.id)?.agentId, 'operador-teste')
@@ -49,8 +49,8 @@ describe('SessionStore', () => {
 
   it('holds each adapter native state side by side without collision', () => {
     const store = new SessionStore()
-    const first = store.create('claude-chat', seed())
-    const second = store.create('openai-agent', seed({ provider: EProvider.OPENAI, mode: EMode.AGENT }))
+    const first = store.create(seed())
+    const second = store.create(seed({ provider: EProvider.OPENAI, mode: EMode.AGENT }))
 
     first.native = ['claude history']
     second.native = { sdkSessionId: 'abc' }
@@ -61,7 +61,7 @@ describe('SessionStore', () => {
 
   it('accumulates usage across turns', () => {
     const store = new SessionStore()
-    const record = store.create('claude-chat', seed())
+    const record = store.create(seed())
 
     store.addUsage(record, { inputTokens: 10, outputTokens: 5 })
     store.addUsage(record, { inputTokens: 3, outputTokens: 2, reasoningTokens: 7 })
@@ -71,7 +71,7 @@ describe('SessionStore', () => {
 
   it('sums the cache parcels, and leaves out a field no turn reported', () => {
     const store = new SessionStore()
-    const record = store.create('claude-chat', seed())
+    const record = store.create(seed())
 
     store.addUsage(record, { inputTokens: 10, cacheReadTokens: 8 })
     store.addUsage(record, { inputTokens: 12, cacheReadTokens: 9, cacheWriteTokens: 2 })
@@ -81,8 +81,8 @@ describe('SessionStore', () => {
 
   it('lists live sessions, most recently active first', () => {
     const store = new SessionStore()
-    const first = store.create('claude-chat', seed())
-    const second = store.create('openai-chat', seed({ provider: EProvider.OPENAI }))
+    const first = store.create(seed())
+    const second = store.create(seed({ provider: EProvider.OPENAI }))
     store.get(first.id)
 
     assert.deepStrictEqual(
@@ -93,7 +93,7 @@ describe('SessionStore', () => {
 
   it('drops sessions past the ttl', () => {
     const store = new SessionStore({ ttlMs: -1 })
-    const record = store.create('claude-chat', seed())
+    const record = store.create(seed())
 
     assert.strictEqual(store.get(record.id), undefined)
     assert.deepStrictEqual(store.list(), [])
@@ -106,7 +106,7 @@ describe('SessionStore', () => {
     const clock = mock.method(Date, 'now', () => start)
     try {
       const store = new SessionStore()
-      const record = store.create('claude-chat', seed())
+      const record = store.create(seed())
 
       clock.mock.mockImplementation(() => start + 7 * 60 * 60 * 1000)
       assert.ok(store.get(record.id), 'viva depois de 7h parada')
@@ -121,9 +121,9 @@ describe('SessionStore', () => {
 
   it('evicts the least recently used session past the cap', () => {
     const store = new SessionStore({ maxSessions: 2 })
-    const first = store.create('claude-chat', seed())
-    store.create('claude-chat', seed())
-    store.create('claude-chat', seed())
+    const first = store.create(seed())
+    store.create(seed())
+    store.create(seed())
 
     assert.strictEqual(store.size, 2)
     assert.strictEqual(store.get(first.id), undefined)
@@ -131,7 +131,7 @@ describe('SessionStore', () => {
 
   it('aborts the in-flight request when the session is deleted, and reports whether it existed', () => {
     const store = new SessionStore()
-    const record = store.create('claude-chat', seed())
+    const record = store.create(seed())
     const abort = new AbortController()
     record.abort = abort
 
@@ -142,8 +142,8 @@ describe('SessionStore', () => {
 
   it('adopt: a sessão passa a responder pelo id da conversa; não toma um id em uso', () => {
     const store = new SessionStore()
-    const fresh = store.create('x', { agentId: 'a', provider: 'p', protocol: 'google' as never, mode: 'chat' as never, model: 'm', tools: false, systemPrompt: '' })
-    const other = store.create('x', { agentId: 'a', provider: 'p', protocol: 'google' as never, mode: 'chat' as never, model: 'm', tools: false, systemPrompt: '' })
+    const fresh = store.create({ agentId: 'a', provider: 'p', protocol: 'google' as never, mode: 'chat' as never, model: 'm', tools: false, systemPrompt: '' })
+    const other = store.create({ agentId: 'a', provider: 'p', protocol: 'google' as never, mode: 'chat' as never, model: 'm', tools: false, systemPrompt: '' })
     const freshId = fresh.id
     assert.strictEqual(store.adopt(freshId, 'antiga'), true)
     assert.deepStrictEqual([store.get('antiga')?.id, store.get(freshId)], ['antiga', undefined])

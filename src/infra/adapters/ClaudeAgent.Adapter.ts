@@ -26,7 +26,6 @@ import { IAgentSession } from '@domain/models/AgentSession.Model'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { IFileAttachment, IMessageInput } from '@domain/models/MessageInput.Model'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
-import { sessionPrefix } from '@infra/session/Session.Key'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
 import { buildClaudeMcpServers, claudeHiddenTools, claudeMcpServerName, LOCAL_SERVER_NAME } from '@infra/tools/bridges/Claude.ToolBridge'
 import { IAgentMcpServer, ToolCatalog } from '@infra/tools/Tool.Catalog'
@@ -108,7 +107,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
     const choice = sessionChoice(agent, input)
-    const record = this.store.create(sessionPrefix(this.protocol, EMode.AGENT), {
+    const record = this.store.create({
       agentId: agent.id,
       provider: choice.provider,
       protocol: this.protocol,

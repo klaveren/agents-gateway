@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { newSessionId } from './Session.Key'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { addUsage, IUsage } from '@domain/models/AgentEvent.Model'
@@ -96,12 +96,12 @@ export class SessionStore {
    * O id combina um prefixo legível com um UUID. O prefixo é conforto humano no log e na
    * API; o roteamento vem do registro, não do texto do id.
    */
-  create(prefix: string, seed: TSessionSeed): ISessionRecord {
+  create(seed: TSessionSeed): ISessionRecord {
     this.sweep()
 
     const record: ISessionRecord = {
       ...seed,
-      id: `${prefix}-${randomUUID()}`,
+      id: newSessionId(),
       createdAt: new Date(),
       lastActivityAt: Date.now(),
       status: 'idle',

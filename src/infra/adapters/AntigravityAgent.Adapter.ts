@@ -15,7 +15,6 @@ import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
-import { sessionPrefix } from '@infra/session/Session.Key'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { ITurnTool, TurnGrants, turnGrants } from '@infra/tools/Turn.Grants'
@@ -104,7 +103,7 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
     const choice = sessionChoice(agent, input)
-    const record = this.store.create(sessionPrefix(EProvider.ANTIGRAVITY, EMode.AGENT), {
+    const record = this.store.create({
       agentId: agent.id,
       provider: choice.provider,
       protocol: EProvider.ANTIGRAVITY,

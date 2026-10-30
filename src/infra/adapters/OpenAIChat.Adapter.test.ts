@@ -28,7 +28,7 @@ describe('OpenAIChatAdapter', () => {
     const adapter = new OpenAIChatAdapter({ client: clientWith(async () => []) })
     const session = await adapter.createSession(getAgent(), { agentId: OPENAI_TEST_AGENT.id })
 
-    assert.ok(session.id.startsWith('openai-chat-'))
+    assert.ok(session.id.startsWith('gw_'))
     assert.strictEqual(session.mode, EMode.CHAT)
   })
 

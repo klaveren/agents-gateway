@@ -53,7 +53,7 @@ describe('GoogleChatAdapter', () => {
     const adapter = new GoogleChatAdapter({ client: clientWith(async () => ({ stream: [], response: {} })) })
     const session = await adapter.createSession(getAgent(), { agentId: GOOGLE_TEST_AGENT.id })
 
-    assert.ok(session.id.startsWith('google-chat-'))
+    assert.ok(session.id.startsWith('gw_'))
     assert.strictEqual(session.mode, EMode.CHAT)
   })
 

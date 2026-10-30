@@ -1,23 +1,29 @@
-import { EMode } from '@domain/enums/EMode.Enum'
-import { EProvider } from '@domain/enums/EProvider.Enum'
+import { randomBytes } from 'node:crypto'
 
 /**
- * O id de sessão carrega a rota: `<provider>-<mode>-<uuid>`.
- *
- * É o que permite `sendMessage` e `cancel` encontrarem o adapter certo a partir do id
- * sozinho, sem um mapa paralelo de sessão para lane vivendo em outro lugar.
+ * ⚖️ O ID DA CONVERSA: `gw_` + 26 caracteres (ULID: 48 bits de tempo + 80 aleatórios, em base32 de Crockford). Curto,
+ * ordenável pelo momento em que nasceu, e no mesmo formato do `ses_` + 26 do AKM — é ele que vira a sessão de auditoria
+ * do lado de lá (ver `Agent.Identity`). ⛔ O id não diz provedor nem lane: a conversa troca de provedor (cota, troca
+ * à mão) e um prefixo como `claudesub-agent-` passaria a mentir. Os ids antigos continuam valendo como estão.
  */
-export function sessionPrefix(provider: EProvider, mode: EMode): string {
-  // O hífen separa as partes: `claude-sub` vira `claudesub`, senão o modo seria lido como `sub`.
-  return `${provider.replace(/-/g, '')}-${mode}`
-}
+export const SESSION_ID_PREFIX = 'gw_'
 
-export function readMode(sessionId: string): EMode | undefined {
-  const mode = sessionId.split('-')[1]
-  return Object.values(EMode).find((value) => value === mode)
-}
+const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 
-export function readProvider(sessionId: string): EProvider | undefined {
-  const provider = sessionId.split('-')[0]
-  return Object.values(EProvider).find((value) => value.replace(/-/g, '') === provider)
+export function newSessionId(now: number = Date.now(), random: Buffer = randomBytes(10)): string {
+  let time = ''
+  let rest = now
+  for (let index = 0; index < 10; index++) {
+    time = CROCKFORD[rest % 32] + time
+    rest = Math.floor(rest / 32)
+  }
+  let tail = ''
+  // 80 bits = 16 caracteres de 5 bits.
+  let bits = 0n
+  for (const byte of random) bits = (bits << 8n) | BigInt(byte)
+  for (let index = 0; index < 16; index++) {
+    tail = CROCKFORD[Number(bits & 31n)] + tail
+    bits >>= 5n
+  }
+  return `${SESSION_ID_PREFIX}${time}${tail}`
 }
