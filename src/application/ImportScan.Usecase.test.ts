@@ -164,3 +164,68 @@ describe('ImportScanUseCase — o inventário de um repositório (só leitura)',
     assert.strictEqual(scan.totals.byKind.spec, 2)
   })
 })
+
+describe('ImportScanUseCase — citação que não é referência quebrada', () => {
+  const root = mkdtempSync(join(tmpdir(), 'gw-import-refs-'))
+  let scan: IImportScan
+  const file = (path: string, body: string) => {
+    mkdirSync(join(root, path, '..'), { recursive: true })
+    writeFileSync(join(root, path), body)
+  }
+
+  before(() => {
+    file('.agents/specs/core/anatomia.md', '# Anatomia\n')
+    file('.agents/skills/a/SKILL.md', '# A\n')
+    file('.agents/skills/b/SKILL.md', '# B\n')
+    file('.agents/agents/maya/soul.md', 'A alma.\n')
+    file(
+      '.agents/agents/maya/triggers/01-ler.md',
+      [
+        '# Ler',
+        'Siga `anatomia.md` e a `soul.md`. Não existe: `.agents/specs/sumiu.md`.',
+        'Padrões: `{alias}-memory.md`, `<nome>-soul.md`, `*.gen.md`, `IMP-XXX.md`, `-02.md`.',
+        'Fora: /Users/ana/notas.md. Ambíguo: SKILL.md. Código: r.json().',
+        '```',
+        '├── exemplo-que-nao-existe.md',
+        'cat .agents/specs/core/anatomia.md',
+        '```',
+      ].join('\n'),
+    )
+    const usecase = new ImportScanUseCase({
+      readTree: () => readRepoTree(root, { mask: (text) => maskText(text, []) }),
+      detectors: [new AgentsDirDetector()],
+      findInCatalog: () => undefined,
+    })
+    scan = usecase.execute('alfa', 'repo')
+  })
+  after(() => rmSync(root, { recursive: true, force: true }))
+
+  const trigger = () => {
+    const found = scan.items.find((item) => item.key === 'trigger:maya/01-ler')
+    assert.ok(found, scan.items.map((item) => item.key).join(', '))
+    return found
+  }
+
+  it('citação real que não existe continua quebrada (e só ela)', () => {
+    assert.deepStrictEqual(trigger().unresolved, ['.agents/specs/sumiu.md'])
+    assert.ok(trigger().notes.some((note) => note.code === 'broken-ref' && note.level === 'attention'))
+  })
+
+  it('pelo nome e subindo as pastas: vira vínculo, e o "pelo nome" fica dito', () => {
+    assert.ok(trigger().refs.some((ref) => ref.path === '.agents/specs/core/anatomia.md' && ref.item === 'spec:core-anatomia'))
+    assert.ok(trigger().refs.some((ref) => ref.path === '.agents/agents/maya/soul.md'))
+    const named = trigger().notes.find((note) => note.code === 'ref-by-name')
+    assert.strictEqual(named?.level, 'info')
+    assert.match(named?.text ?? '', /anatomia\.md → \.agents\/specs\/core\/anatomia\.md/)
+  })
+
+  it('o resto vira UMA nota de nível baixo, com a contagem por motivo', () => {
+    const ignored = trigger().notes.filter((note) => note.code === 'ignored-ref')
+    assert.strictEqual(ignored.length, 1)
+    assert.strictEqual(ignored[0].level, 'info')
+    const counts = Object.fromEntries([...ignored[0].text.matchAll(/(\d+) ([^(;:]+?) \(/g)].map((match) => [match[2], Number(match[1])]))
+    assert.deepStrictEqual(counts, { 'em exemplo': 1, marcador: 3, 'padrão glob': 1, 'sufixo solto': 1, 'nome ambíguo': 1, 'fora do repositório': 1, código: 1 })
+    assert.match(ignored[0].text, /exemplo-que-nao-existe\.md/)
+    assert.match(ignored[0].text, /\/Users\/ana\/notas\.md/)
+  })
+})
