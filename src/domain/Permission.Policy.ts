@@ -203,6 +203,12 @@ function globMatches(pattern: string, value: string): boolean {
 
 const escape = (text: string) => text.replace(/[.+?^${}()|[\]\\]/g, '\\$&')
 
+/**
+ * ⛔ `**` no terminal: o padrão é por palavras, e só o `*` sozinho vale qualquer sequência. `**` vira curinga de UMA
+ * palavra — casa `ls`, não `cat arquivo` —, e quem o escreve quer "qualquer comando" (é o que ele quer dizer em caminho).
+ */
+const LONE_STARS = /(^|\s)\*{2,}(\s|$)/
+
 /** O que está errado numa lista de regras (o salvamento recusa com isto). */
 export function permissionIssues(rules: unknown): Array<{ field: string; message: string }> {
   if (rules === undefined) return []
@@ -217,6 +223,8 @@ export function permissionIssues(rules: unknown): Array<{ field: string; message
     const pattern = typeof entry?.pattern === 'string' ? entry.pattern.trim() : ''
     if (!pattern) issues.push({ field: at, message: 'pattern: required' })
     else if (pattern.length > PERMISSION_LIMITS.pattern) issues.push({ field: at, message: `pattern: at most ${PERMISSION_LIMITS.pattern} characters` })
+    else if (entry?.category === 'terminal' && LONE_STARS.test(pattern))
+      issues.push({ field: at, message: 'pattern: in a terminal rule use * for any arguments (** matches a single word only)' })
     if (entry?.note !== undefined && (typeof entry.note !== 'string' || entry.note.length > PERMISSION_LIMITS.note))
       issues.push({ field: at, message: `note: at most ${PERMISSION_LIMITS.note} characters` })
   })

@@ -8,6 +8,17 @@ const cmd = (text: string) => ({ category: 'terminal' as const, value: text, arg
 describe('Permission.Policy', () => {
   it('sem regra, negado; o projeto fecha e o agente libera; dentro da camada, negar vence permitir', () => {
     assert.strictEqual(decide(cmd('git status'), {}).layer, 'default')
+    // `**` no terminal casa uma palavra só: o salvamento recusa e manda usar `*`.
+    assert.ok(decide(cmd('ls'), { project: [{ category: 'terminal', pattern: '**', decision: 'allow' }] }).allowed)
+    assert.ok(!decide(cmd('cat x'), { project: [{ category: 'terminal', pattern: '**', decision: 'allow' }] }).allowed)
+    assert.match(permissionIssues([{ category: 'terminal', pattern: 'git **', decision: 'allow' }])[0]?.message ?? '', /use \*/)
+    assert.deepStrictEqual(
+      permissionIssues([
+        { category: 'read', pattern: 'apps/**', decision: 'allow' },
+        { category: 'terminal', pattern: 'git *', decision: 'allow' },
+      ]),
+      [],
+    )
     // O repositório do projeto vale sem regra; Negar restringe.
     const repo = { category: 'repository' as const, value: 'logiccus' }
     assert.deepStrictEqual([decide(repo, {}).allowed, decide(repo, {}).layer], [true, 'default'])

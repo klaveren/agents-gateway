@@ -1,28 +1,28 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { PERMISSION_SECTIONS } from '@/lib/permissions'
-import type { IPermissionRule, TPermissionCategory } from '@/lib/types'
+  import { computed } from 'vue'
+  import { fixPattern, PERMISSION_SECTIONS, patternWarning } from '@/lib/permissions'
+  import type { IPermissionRule, TPermissionCategory } from '@/lib/types'
 
-/**
- * O editor de regras de permissão, por categoria. ⚖️ A ordem não importa: dentro da mesma lista, Negar vence Permitir.
- * Mora dentro de formulários: nada aqui submete com Enter.
- */
-const rules = defineModel<IPermissionRule[]>({ required: true })
-defineProps<{ readonly?: boolean }>()
+  /**
+   * O editor de regras de permissão, por categoria. ⚖️ A ordem não importa: dentro da mesma lista, Negar vence Permitir.
+   * Mora dentro de formulários: nada aqui submete com Enter.
+   */
+  const rules = defineModel<IPermissionRule[]>({ required: true })
+  defineProps<{ readonly?: boolean }>()
 
-const byCategory = computed(() =>
-  PERMISSION_SECTIONS.map((section) => ({ ...section, rules: rules.value.map((rule, index) => ({ rule, index })).filter(({ rule }) => rule.category === section.category) })),
-)
+  const byCategory = computed(() =>
+    PERMISSION_SECTIONS.map((section) => ({ ...section, rules: rules.value.map((rule, index) => ({ rule, index })).filter(({ rule }) => rule.category === section.category) })),
+  )
 
-function add(category: TPermissionCategory) {
-  rules.value = [...rules.value, { category, pattern: '', decision: 'allow' }]
-}
-function remove(index: number) {
-  rules.value = rules.value.filter((_, at) => at !== index)
-}
-function update(index: number, change: Partial<IPermissionRule>) {
-  rules.value = rules.value.map((rule, at) => (at === index ? { ...rule, ...change } : rule))
-}
+  function add(category: TPermissionCategory) {
+    rules.value = [...rules.value, { category, pattern: '', decision: 'allow' }]
+  }
+  function remove(index: number) {
+    rules.value = rules.value.filter((_, at) => at !== index)
+  }
+  function update(index: number, change: Partial<IPermissionRule>) {
+    rules.value = rules.value.map((rule, at) => (at === index ? { ...rule, ...change } : rule))
+  }
 </script>
 
 <template>
@@ -57,6 +57,12 @@ function update(index: number, change: Partial<IPermissionRule>) {
             @keydown.enter.prevent
           />
           <button v-if="!readonly" type="button" class="btn btn-sm btn-danger" title="Remover a regra" @click="remove(index)">Remover</button>
+          <p v-if="patternWarning(rule)" class="flex w-full flex-wrap items-center gap-2 text-xs text-amber-300">
+            ⚠ {{ patternWarning(rule) }}
+            <button v-if="!readonly" type="button" class="btn btn-sm btn-ghost" @click="update(index, { pattern: fixPattern(rule.pattern) })">
+              Trocar por {{ fixPattern(rule.pattern) }}
+            </button>
+          </p>
         </li>
       </ul>
     </section>
@@ -64,12 +70,12 @@ function update(index: number, change: Partial<IPermissionRule>) {
 </template>
 
 <style scoped>
-@reference '../style.css';
+  @reference '../style.css';
 
-.input {
-  @apply rounded-lg border border-zinc-800 bg-zinc-950 px-3 font-normal text-zinc-100 outline-none focus:border-emerald-500/60;
-}
-.chip.on-deny {
-  @apply border-rose-500/60 bg-rose-500/15 text-rose-200;
-}
+  .input {
+    @apply rounded-lg border border-zinc-800 bg-zinc-950 px-3 font-normal text-zinc-100 outline-none focus:border-emerald-500/60;
+  }
+  .chip.on-deny {
+    @apply border-rose-500/60 bg-rose-500/15 text-rose-200;
+  }
 </style>
