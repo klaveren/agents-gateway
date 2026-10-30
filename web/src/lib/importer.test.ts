@@ -4,6 +4,7 @@ import {
   citedBy,
   countByCatalog,
   countByKind,
+  countByState,
   EMPTY_FILTERS,
   effectiveKind,
   exclusionsByReason,
@@ -14,10 +15,12 @@ import {
   ignoredDirs,
   itemTokens,
   noteCodes,
+  overridesFrom,
   prefixIssue,
   reachRows,
   searchIndex,
   sortItems,
+  statesByKey,
   stepsByPhase,
 } from './importer'
 
@@ -205,5 +208,35 @@ describe('o lote', () => {
     expect(prefixIssue('akm-')).toBeUndefined()
     expect(prefixIssue('a b')).toBeTruthy()
     expect(prefixIssue('x'.repeat(17))).toBeTruthy()
+  })
+})
+
+describe('trabalho de importação', () => {
+  const states = [
+    { key: 'unknown:notes/x.md', state: 'pending' as const, kind: 'spec' as const, fingerprint: 'f' },
+    { key: 'command:ship', state: 'skipped' as const, fingerprint: 'f' },
+    { key: 'skill:deploy', state: 'stale' as const, staleFrom: 'approved' as const, fingerprint: 'f' },
+  ]
+
+  it('a reclassificação gravada vira o tipo da tela', () => {
+    expect(overridesFrom(states)).toEqual({ 'unknown:notes/x.md': 'spec' })
+  })
+
+  it('filtra pelo estado; item sem estado conta como a importar', () => {
+    const map = statesByKey(states)
+    expect(filterItems(ITEMS, { ...EMPTY_FILTERS, state: 'skipped' }, {}, undefined, map).map((entry) => entry.key)).toEqual(['command:ship'])
+    const pending = filterItems(ITEMS, { ...EMPTY_FILTERS, state: 'pending' }, {}, undefined, map).map((entry) => entry.key)
+    expect(pending).not.toContain('command:ship')
+    expect(pending).not.toContain('skill:deploy')
+    expect(pending).toContain('agent:maya')
+    expect(filterItems(ITEMS, { ...EMPTY_FILTERS, state: 'pending' }, {}, undefined, new Map())).toHaveLength(ITEMS.length)
+  })
+
+  it('conta por estado na ordem da tela, só os que têm', () => {
+    expect(countByState({ skipped: 2, pending: 3, stale: 1 })).toEqual([
+      { state: 'pending', count: 3 },
+      { state: 'stale', count: 1 },
+      { state: 'skipped', count: 2 },
+    ])
   })
 })

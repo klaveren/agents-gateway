@@ -29,6 +29,7 @@ import { CatalogWriter } from '@application/Catalog.Writer'
 import { isLaunchedMcp, mcpServerKey } from '@domain/models/McpServer.Model'
 import { removeInstall } from '@infra/mcp/Mcp.Install'
 import { catalogFinder, ImportScanUseCase } from '@application/ImportScan.Usecase'
+import { ImportJobService } from '@application/ImportJob.Service'
 import { readRepoTree } from '@infra/import/Repo.Tree'
 import { AgentsDirDetector } from '@infra/import/AgentsDir.Detector'
 import { AgentsMdDetector } from '@infra/import/AgentsMd.Detector'
@@ -48,6 +49,7 @@ import { loadPricing } from '@infra/pricing/Pricing.File'
 import { sessionContextFromEnv } from '@infra/session/Template.SessionContext'
 import { makeAgents } from './Agents.Factory'
 import { makeAuth } from './Auth.Factory'
+import { importJobRepository } from './ImportJobs.Factory'
 import { makeSettings } from './Settings.Factory'
 import { makeUsecases } from './Usecases.Factory'
 
@@ -222,7 +224,10 @@ function makeCatalogRestore(): CatalogRestoreUseCase {
   return new CatalogRestoreUseCase({ repository, history: makeCatalogHistory(), reader, writer })
 }
 
-/** O importador: a varredura lê o repositório DO projeto (`resolveWorkFolder`, a mesma contenção da conversa) e não grava. */
+/**
+ * O importador: a varredura lê o repositório DO projeto (`resolveWorkFolder`, a mesma contenção da conversa); o
+ * trabalho de importação a salva com o estado de cada item. ⛔ Nada grava no catálogo.
+ */
 export function makeImportController(): ImportController {
   const projects = makeProjects()
   const guidance = makeGuidance()
@@ -234,19 +239,21 @@ export function makeImportController(): ImportController {
       return undefined
     }
   }
-  return new ImportController({
-    scan: new ImportScanUseCase({
-      readTree: (projectId, repository) => readRepoTree(resolveWorkFolder(projects.folderOf(projectId), repository).dir, { mask: (text) => masker.text(text) }),
-      detectors: [new AgentsDirDetector(), new OpencodeDetector(), new AgentsMdDetector(), new ClaudeDetector()],
-      projectIgnore: (projectId) => projects.importIgnore(projectId),
-      findInCatalog: catalogFinder({
-        doc: (id) => quietly(() => guidance.doc(id)),
-        resource: (id) => quietly(() => guidance.resource(id)),
-        rules: (scope) => guidance.rules(scope),
-        agent: (id) => makeAgents().get(id),
-        mcpServer: (id) => !!makeTools().servers.get(id),
-      }),
+  const scan = new ImportScanUseCase({
+    readTree: (projectId, repository) => readRepoTree(resolveWorkFolder(projects.folderOf(projectId), repository).dir, { mask: (text) => masker.text(text) }),
+    detectors: [new AgentsDirDetector(), new OpencodeDetector(), new AgentsMdDetector(), new ClaudeDetector()],
+    projectIgnore: (projectId) => projects.importIgnore(projectId),
+    findInCatalog: catalogFinder({
+      doc: (id) => quietly(() => guidance.doc(id)),
+      resource: (id) => quietly(() => guidance.resource(id)),
+      rules: (scope) => guidance.rules(scope),
+      agent: (id) => makeAgents().get(id),
+      mcpServer: (id) => !!makeTools().servers.get(id),
     }),
+  })
+  return new ImportController({
+    scan,
+    jobs: new ImportJobService({ repository: importJobRepository(), scan: (projectId, repository, options) => scan.execute(projectId, repository, options) }),
     projectExists: (projectId) => projects.exists(projectId),
     ignore: { get: (projectId) => projects.importIgnore(projectId), set: (projectId, patterns, by) => projects.setImportIgnore(projectId, patterns, by) },
     proof: makeAuth().proof,

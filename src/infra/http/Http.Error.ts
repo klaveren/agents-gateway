@@ -87,6 +87,8 @@ export type TErrorCode =
   | 'not_found'
   | 'revision_conflict'
   | 'widening_confirmation_required'
+  | 'import_job_outdated'
+  | 'import_state_conflict'
   | 'internal_error'
 
 export interface IHttpFailure {

@@ -10,22 +10,30 @@ import {
   citedBy,
   countByCatalog,
   countByKind,
+  countByState,
   EMPTY_FILTERS,
   effectiveKind,
   filterItems,
   groupByKind,
   type IImportFilters,
+  type IImportItemStatus,
+  type IImportJob,
+  type IImportJobSummary,
   type IImportPlan,
-  type IImportScan,
   type IInventoryItem,
   ignoredDirs,
   itemTokens,
   KIND_LABEL,
   LINK_REASON_LABEL,
   noteCodes,
+  overridesFrom,
   searchIndex,
   sortItems,
+  STATE_HINT,
+  STATE_LABEL,
+  STATE_ORDER,
   type TCatalogState,
+  type TImportItemState,
   type TImportSort,
   type TInventoryKind,
 } from '@/lib/importer'
@@ -33,9 +41,12 @@ import { useAuthStore } from '@/stores/auth'
 import { useProjectsStore } from '@/stores/projects'
 
 /**
- * O IMPORTADOR do projeto em uso (só admin): escolhe um repositório do projeto, analisa e mostra o inventário — o que
- * achou de recurso agêntico, com tamanho, citações, estado no catálogo e o que não traduz. ⛔ Só lê: a análise não
- * grava nada, e reclassificar vale só nesta tela (persistir é do trabalho de importação, mais adiante).
+ * O IMPORTADOR do projeto em uso (só admin): os TRABALHOS DE IMPORTAÇÃO do projeto (cada análise de um repositório,
+ * salva) e o inventário do trabalho aberto — o que achou de recurso agêntico, com tamanho, citações, estado no catálogo,
+ * o que não traduz e o estado de cada item. A pessoa exclui/inclui e reclassifica item a item; isso fica gravado no
+ * trabalho, e analisar de novo reaproveita pela chave (a fonte que mudou depois da decisão aparece como "fonte mudou").
+ *
+ * ⛔ Nada aqui grava no catálogo. Só o trabalho mais novo de cada repositório muda; os outros são registro.
  */
 const PAGE = 100
 const CATALOG_STATES: readonly TCatalogState[] = ['new', 'same-project', 'global', 'other-project']
@@ -48,11 +59,19 @@ const repositories = ref<string[]>([])
 const repository = ref('')
 const busy = ref(false)
 const error = ref<string>()
+/** Os trabalhos do projeto (mais novo primeiro) e o aberto. */
+const jobs = ref<IImportJobSummary[]>([])
 /** ⚖️ `shallowRef`: o inventário é grande (centenas de itens, milhares de fontes) e só é trocado inteiro. */
-const scan = shallowRef<IImportScan>()
+const job = shallowRef<IImportJob>()
+const scan = computed(() => job.value?.scan)
+/** O estado de cada item do trabalho aberto, pela chave (o que muda item a item). */
+const statuses = ref<Record<string, IImportItemStatus>>({})
+const readonly = computed(() => !!job.value && !job.value.latest)
+const itemBusy = ref(false)
+const itemError = ref<string>()
 const filters = ref<IImportFilters>({ ...EMPTY_FILTERS })
 const sort = ref<TImportSort>('kind')
-const overrides = ref<Record<string, TInventoryKind>>({})
+const overrides = computed(() => overridesFrom(Object.values(statuses.value)))
 const selectedKey = ref<string>()
 const limit = ref(PAGE)
 /** O lote do agente escolhido (só leitura) e o prefixo dos ids. */
@@ -79,12 +98,18 @@ const untranslatableCount = computed(() => items.value.filter((item) => item.not
 const attentionCount = computed(() => items.value.filter((item) => item.notes.some((note) => note.level === 'attention')).length)
 const reclassifiedCount = computed(() => Object.keys(overrides.value).length)
 const dirs = computed(() => ignoredDirs(scan.value?.ignored.dirs ?? {}))
+const statusMap = computed(() => new Map(Object.entries(statuses.value)))
+const stateCounts = computed(() => {
+  const out: Partial<Record<TImportItemState, number>> = {}
+  for (const entry of Object.values(statuses.value)) out[entry.state] = (out[entry.state] ?? 0) + 1
+  return countByState(out)
+})
 
-const filtered = computed(() => sortItems(filterItems(items.value, filters.value, overrides.value, index.value), sort.value, overrides.value))
+const filtered = computed(() => sortItems(filterItems(items.value, filters.value, overrides.value, index.value, statusMap.value), sort.value, overrides.value))
 const shown = computed(() => filtered.value.slice(0, limit.value))
 const groups = computed(() => (sort.value === 'kind' ? groupByKind(shown.value, overrides.value) : [{ kind: undefined, items: shown.value }]))
 const selected = computed(() => (selectedKey.value ? items.value.find((item) => item.key === selectedKey.value) : undefined))
-const filtering = computed(() => !!(filters.value.kind || filters.value.catalog || filters.value.note || filters.value.query.trim()))
+const filtering = computed(() => !!(filters.value.kind || filters.value.catalog || filters.value.note || filters.value.state || filters.value.query.trim()))
 
 watch([filters, sort], () => (limit.value = PAGE), { deep: true })
 
@@ -147,11 +172,70 @@ async function buildPlan(agent: string, nextPrefix = prefix.value) {
   }
 }
 
+function projectPath(): string {
+  return `/projects/${encodeURIComponent(project.value!.id)}/import`
+}
+
+async function loadJobs() {
+  if (!project.value) return
+  try {
+    jobs.value = await api<IImportJobSummary[]>(`${projectPath()}/jobs`)
+  } catch (failure) {
+    error.value = message(failure)
+  }
+}
+
+/** Abre o trabalho que veio da API: o inventário, os estados e a tela limpa. */
+function show(opened: IImportJob) {
+  job.value = opened
+  statuses.value = Object.fromEntries(opened.states.map((entry) => [entry.key, entry]))
+  repository.value = opened.repository
+  selectedKey.value = undefined
+  plan.value = undefined
+  planError.value = undefined
+  itemError.value = undefined
+  filters.value = { ...EMPTY_FILTERS }
+  limit.value = PAGE
+}
+
+async function openJob(id: string) {
+  if (!project.value) return
+  busy.value = true
+  error.value = undefined
+  try {
+    show(await api<IImportJob>(`${projectPath()}/jobs/${encodeURIComponent(id)}`))
+  } catch (failure) {
+    error.value = message(failure)
+  } finally {
+    busy.value = false
+  }
+}
+
+/** Muda um item do trabalho aberto (excluir/incluir, reclassificar) e guarda o que o servidor devolveu. */
+async function changeItem(key: string, change: { state?: 'pending' | 'skipped'; kind?: TInventoryKind | null }) {
+  if (!project.value || !job.value || readonly.value) return
+  itemBusy.value = true
+  itemError.value = undefined
+  try {
+    const updated = await api<IImportItemStatus>(`${projectPath()}/jobs/${encodeURIComponent(job.value.id)}/items`, { method: 'PATCH', body: { key, ...change } })
+    statuses.value = { ...statuses.value, [key]: updated }
+    const counts: Partial<Record<TImportItemState, number>> = {}
+    for (const entry of Object.values(statuses.value)) counts[entry.state] = (counts[entry.state] ?? 0) + 1
+    jobs.value = jobs.value.map((entry) => (entry.id === job.value!.id ? { ...entry, byState: counts } : entry))
+  } catch (failure) {
+    itemError.value = message(failure)
+  } finally {
+    itemBusy.value = false
+  }
+}
+
 async function loadRepositories() {
   repositories.value = []
   repository.value = ''
+  jobs.value = []
   if (!project.value) return
   void loadIgnore()
+  void loadJobs()
   try {
     const list = await api<Array<{ name: string }>>(`/projects/${encodeURIComponent(project.value.id)}/repositories`)
     repositories.value = list.map((item) => item.name)
@@ -166,13 +250,8 @@ async function analyze() {
   busy.value = true
   error.value = undefined
   try {
-    scan.value = await api<IImportScan>(`/projects/${encodeURIComponent(project.value.id)}/import/scan`, { method: 'POST', body: { repository: repository.value } })
-    overrides.value = {}
-    selectedKey.value = undefined
-    plan.value = undefined
-    planError.value = undefined
-    filters.value = { ...EMPTY_FILTERS }
-    limit.value = PAGE
+    show(await api<IImportJob>(`${projectPath()}/jobs`, { method: 'POST', body: { repository: repository.value } }))
+    await loadJobs()
   } catch (failure) {
     error.value = message(failure)
   } finally {
@@ -181,20 +260,34 @@ async function analyze() {
 }
 
 function reset() {
-  scan.value = undefined
+  job.value = undefined
+  jobs.value = []
+  statuses.value = {}
   plan.value = undefined
   planError.value = undefined
-  overrides.value = {}
+  itemError.value = undefined
   selectedKey.value = undefined
   filters.value = { ...EMPTY_FILTERS }
   error.value = undefined
 }
 
 function reclassify(key: string, kind: TInventoryKind | undefined) {
-  const next = { ...overrides.value }
-  if (kind) next[key] = kind
-  else delete next[key]
-  overrides.value = next
+  void changeItem(key, { kind: kind ?? null })
+}
+
+function stateOf(item: IInventoryItem): TImportItemState {
+  return statuses.value[item.key]?.state ?? 'pending'
+}
+
+function reuseText(entry: IImportJobSummary): string | undefined {
+  const reuse = entry.reuse
+  if (!reuse) return undefined
+  const parts = [`${reuse.kept} mantido(s)`]
+  if (reuse.stale.length) parts.push(`${reuse.stale.length} com fonte mudada`)
+  if (reuse.restored.length) parts.push(`${reuse.restored.length} com a fonte de volta`)
+  if (reuse.added.length) parts.push(`${reuse.added.length} novo(s)`)
+  if (reuse.gone.length) parts.push(`${reuse.gone.length} sumiram`)
+  return parts.join(' · ')
 }
 
 function toggleKind(kind: TInventoryKind) {
@@ -239,7 +332,8 @@ watch(
       <header>
         <h1 class="text-xl font-semibold">Importador{{ project ? ` — ${project.name}` : '' }}</h1>
         <p class="text-xs text-zinc-500">
-          O que um repositório do projeto tem de agentes, skills, commands, rules e docs, e como isso chegaria ao catálogo. Só lê: nada é gravado.
+          O que um repositório do projeto tem de agentes, skills, commands, rules e docs, e como isso chegaria ao catálogo. Cada análise fica salva como um trabalho de importação, com o
+          que você decidir item a item. Nada vai ao catálogo.
         </p>
       </header>
 
@@ -256,6 +350,32 @@ watch(
         </form>
         <p v-if="!repositories.length && !error" class="text-xs text-zinc-500">Este projeto não tem repositório (pasta <code>repositories/</code> com git).</p>
         <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
+
+        <section v-if="jobs.length" class="flex flex-col gap-1.5" data-test="jobs">
+          <h2 class="text-xs font-medium text-zinc-500">Trabalhos de importação ({{ jobs.length }})</h2>
+          <ul class="scroll-thin flex max-h-56 flex-col divide-y divide-zinc-800 overflow-y-auto rounded-xl border border-zinc-800">
+            <li v-for="entry in jobs" :key="entry.id">
+              <button
+                type="button"
+                class="flex w-full flex-wrap items-center gap-x-3 gap-y-0.5 px-3 py-1.5 text-left text-xs hover:bg-zinc-900"
+                :class="entry.id === job?.id ? 'bg-zinc-900' : ''"
+                data-test="job"
+                @click="openJob(entry.id)"
+              >
+                <span class="font-medium text-zinc-200">{{ entry.repository }}</span>
+                <span class="text-zinc-400">{{ fullTime(entry.scannedAt) }}</span>
+                <code v-if="entry.head" class="text-zinc-500" :title="entry.head">{{ entry.head.slice(0, 12) }}</code>
+                <span class="text-zinc-500">por {{ entry.by }}</span>
+                <span class="text-zinc-500">{{ entry.items }} itens</span>
+                <span v-for="count in countByState(entry.byState)" :key="count.state" class="rounded-full bg-zinc-800 px-2 text-[11px]" :class="count.state === 'stale' ? 'text-amber-200' : 'text-zinc-300'">
+                  {{ STATE_LABEL[count.state] }} {{ count.count }}
+                </span>
+                <span v-if="entry.latest" class="rounded-full border border-emerald-500/40 px-2 text-[11px] text-emerald-200">mais novo</span>
+                <span v-else class="rounded-full border border-zinc-700 px-2 text-[11px] text-zinc-500" title="Há análise mais nova deste repositório: este fica como registro">registro</span>
+              </button>
+            </li>
+          </ul>
+        </section>
 
         <details class="rounded-xl border border-zinc-800 px-3 py-2 text-xs" data-test="ignore-editor">
           <summary class="cursor-pointer text-zinc-400">Ignorar neste projeto ({{ ignoreSaved.length }} padrão(ões))</summary>
@@ -280,8 +400,12 @@ watch(
               <span v-else>sem HEAD</span>
               <span v-if="scan.dirty" class="rounded-full border border-amber-500/40 px-2 text-[11px] text-amber-200" title="Há mudança não commitada: a análise lê o que está no disco">árvore suja</span>
               <span v-else-if="scan.dirty === false" class="rounded-full border border-zinc-700 px-2 text-[11px] text-zinc-400">árvore limpa</span>
-              <span>analisado em {{ fullTime(scan.scannedAt) }}</span>
+              <span>analisado em {{ fullTime(scan.scannedAt) }}<template v-if="job"> por {{ job.by }}</template></span>
             </div>
+            <p v-if="job && reuseText(job)" class="text-xs text-zinc-400" data-test="reuse">Reaproveitado da análise anterior: {{ reuseText(job) }}</p>
+            <p v-if="readonly" class="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-100" data-test="readonly">
+              Há análise mais nova deste repositório: este trabalho é registro e não muda. Abra o mais novo para excluir, incluir ou reclassificar.
+            </p>
             <div class="flex flex-wrap items-center gap-2 text-xs text-zinc-400">
               Formatos:
               <code v-for="format in scan.formats" :key="format" class="rounded bg-zinc-900 px-1.5 text-zinc-200">{{ format }}</code>
@@ -289,8 +413,21 @@ watch(
             </div>
             <p class="text-sm text-zinc-300">
               <strong>{{ scan.totals.items.toLocaleString('pt-BR') }}</strong> itens · <strong>{{ scan.totals.files.toLocaleString('pt-BR') }}</strong> arquivos · ≈<strong>{{ tokens(scan.totals.tokens) }}</strong> tokens
-              <template v-if="reclassifiedCount"> · {{ reclassifiedCount }} reclassificado(s) nesta tela</template>
+              <template v-if="reclassifiedCount"> · {{ reclassifiedCount }} reclassificado(s)</template>
             </p>
+            <div class="flex flex-wrap gap-1.5" data-test="states">
+              <button
+                v-for="entry in stateCounts"
+                :key="entry.state"
+                type="button"
+                class="chip"
+                :class="[{ on: filters.state === entry.state }, entry.state === 'stale' ? 'border-amber-500/50 text-amber-200' : '']"
+                :title="STATE_HINT[entry.state]"
+                @click="filters = { ...filters, state: filters.state === entry.state ? '' : entry.state }"
+              >
+                {{ STATE_LABEL[entry.state] }} <span class="text-zinc-500">{{ entry.count }}</span>
+              </button>
+            </div>
             <div class="flex flex-wrap gap-1.5" data-test="kinds">
               <button v-for="entry in kinds" :key="entry.kind" type="button" class="chip" :class="{ on: filters.kind === entry.kind }" @click="toggleKind(entry.kind)">
                 {{ KIND_LABEL[entry.kind] }} <span class="text-zinc-500">{{ entry.count }}</span>
@@ -366,6 +503,13 @@ watch(
                 <option v-for="entry in codes" :key="entry.code" :value="`code:${entry.code}`">{{ entry.code }} ({{ entry.count }})</option>
               </select>
             </label>
+            <label class="field min-w-36 flex-1">
+              Estado
+              <select v-model="filters.state" class="input" data-test="state">
+                <option value="">Todos</option>
+                <option v-for="state in STATE_ORDER" :key="state" :value="state">{{ STATE_LABEL[state] }}</option>
+              </select>
+            </label>
             <label class="field min-w-32 flex-1">
               Ordem
               <select v-model="sort" class="input">
@@ -396,6 +540,14 @@ watch(
                       @click="selectedKey = item.key"
                     >
                       <span class="flex flex-wrap items-center gap-2">
+                        <span
+                          v-if="stateOf(item) !== 'pending'"
+                          class="rounded-full px-2 text-[11px]"
+                          :class="stateOf(item) === 'stale' ? 'bg-amber-500/15 text-amber-200' : stateOf(item) === 'skipped' ? 'bg-zinc-800 text-zinc-500' : 'bg-zinc-800 text-zinc-300'"
+                          :title="STATE_HINT[stateOf(item)]"
+                          data-test="row-state"
+                          >{{ STATE_LABEL[stateOf(item)] }}</span
+                        >
                         <span class="rounded-full border px-2 text-[11px]" :class="overrides[item.key] ? 'border-emerald-500/50 text-emerald-200' : 'border-zinc-700 text-zinc-400'" :title="overrides[item.key] ? `Reclassificado (detectado: ${KIND_LABEL[item.kind]})` : undefined">{{
                           KIND_LABEL[effectiveKind(item, overrides)]
                         }}</span>
@@ -426,10 +578,15 @@ watch(
                 :kind="effectiveKind(selected, overrides)"
                 :cited-by="citations.get(selected.key) ?? []"
                 :known="known"
+                :status="statuses[selected.key]"
+                :readonly="readonly"
+                :busy="itemBusy"
+                :error="itemError"
                 :planning="planning"
                 @plan="buildPlan(selected.key)"
                 @select="selectedKey = $event"
                 @reclassify="reclassify(selected.key, $event)"
+                @state="changeItem(selected.key, { state: $event })"
                 @close="selectedKey = undefined"
               />
             </aside>
