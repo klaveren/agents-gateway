@@ -11,7 +11,7 @@ import { GetSessionUseCase } from '@application/GetSession.Usecase'
 import { ListSessionsUseCase } from '@application/ListSessions.Usecase'
 import { SendMessageUseCase } from '@application/SendMessage.Usecase'
 import { aggregateTurn } from '@application/Turn.Aggregator'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { AgentCatalog } from '@application/Agent.Catalog'
 import { ModelCatalogService } from '@application/ModelCatalog.Service'
 import { agentIssues, IAgentRules, offers, targetFor } from '@domain/Agent.Policy'
@@ -32,6 +32,7 @@ import { MODEL_PRICING, TModelPricing } from '@domain/models/Model.Pricing'
 import { allowsCaller, mergeSettings } from '@domain/models/Settings.Model'
 import { LIMIT_BOUNDS, liveLimit } from '@domain/models/Limits.Model'
 import { IConversationEvents, TConversationEvent } from '@domain/ports/ConversationEvents.Port'
+import { ITurnLive } from '@domain/ports/TurnLive.Port'
 import { IProviderDirectory } from '@domain/ports/ProviderRepository.Port'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { ISettingsRepository } from '@domain/ports/SettingsRepository.Port'
@@ -59,7 +60,16 @@ import { audienceRules } from './Caller.Roles'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
 import { parseBody } from './Request.Parser'
-import { agentBodySchema, createSessionSchema, sendMessageSchema, shareConversationSchema, TAgentBody, updateSettingsSchema, reconfigureSessionSchema } from './Request.Schema'
+import {
+  agentBodySchema,
+  createSessionSchema,
+  followTurnSchema,
+  sendMessageSchema,
+  shareConversationSchema,
+  TAgentBody,
+  updateSettingsSchema,
+  reconfigureSessionSchema,
+} from './Request.Schema'
 import { toSessionDto } from './Session.Dto'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { SseStream } from './Sse.Stream'
@@ -114,6 +124,8 @@ export interface IAgentControllerDeps {
   pricing?: TModelPricing
   /** Por onde chegam as mudanças nas conversas gravadas. Ausente = `/conversations/events` só mantém a conexão. */
   events?: IConversationEvents
+  /** O turno ao vivo (ver `Turn.Live`). Ausente = `/sessions/:id/live` só mantém a conexão. */
+  live?: ITurnLive
   /** O agente foi apagado: o que é dele e mora fora do cadastro (os hooks) vai junto. */
   agentRemoved?: (agentId: string) => void
   /** Os projetos e quem é membro. Ausente = sem projetos (tudo como antes: um espaço só). */
@@ -200,6 +212,8 @@ export class AgentController {
     this.deleteConversation = this.deleteConversation.bind(this)
     this.getSharedConversation = this.getSharedConversation.bind(this)
     this.conversationEvents = this.conversationEvents.bind(this)
+    this.sessionLive = this.sessionLive.bind(this)
+    this.followTurn = this.followTurn.bind(this)
     this.getAgent = this.getAgent.bind(this)
     this.createAgent = this.createAgent.bind(this)
     this.updateAgent = this.updateAgent.bind(this)
@@ -210,6 +224,8 @@ export class AgentController {
   private readonly agents: AgentCatalog
   /** Streams de eventos abertos por conta (ver `conversationEvents`). */
   private readonly openStreams = new Map<string, number>()
+  /** Os streams da caixa de entrada abertos agora, pelo id que cada um recebeu ao conectar (ver `followTurn`). */
+  private readonly inboxStreams = new Map<string, { owner: string; emit: (type: string, data: object) => void; unfollow?: () => void }>()
 
   /** O repositório das conversas — o mesmo do `SendMessageUseCase`; o uso (`UsageController`) lê dele. */
   get conversations(): IConversationRepository {
@@ -967,38 +983,142 @@ export class AgentController {
       return this.sendFailure(res, error, '[AgentController.conversationEvents]')
     }
 
-    // ⛔ Teto de streams abertos por conta: cada um segura uma inscrição e um relógio de heartbeat.
     const key = ownerOf(resolved)?.id ?? ''
-    const open = this.openStreams.get(key) ?? 0
-    if (open >= streamsPerOwner()) return this.sendFailure(res, new HttpError(429, 'rate_limited', 'Too many open event streams'), '[AgentController.conversationEvents]')
-    this.openStreams.set(key, open + 1)
+    if (!this.holdStream(key)) return this.sendFailure(res, new HttpError(429, 'rate_limited', 'Too many open event streams'), '[AgentController.conversationEvents]')
 
     const stream = new SseStream(res)
     stream.open()
-    stream.comment('ready')
+    // O id deste stream: é por ele que a tela pede o turno ao vivo da conversa aberta (`followTurn`), sem outra conexão.
+    const streamId = randomUUID()
+    const inbox: { owner: string; emit: (type: string, data: object) => void; unfollow?: () => void } = { owner: key, emit: (type, data) => stream.emit(type, data) }
+    this.inboxStreams.set(streamId, inbox)
+    stream.emit('stream.ready', { streamId })
 
     const view = this.viewFor(admin)
+    const visible = (metadata: Record<string, unknown> | undefined) =>
+      (admin || ownsSession(resolved, metadata)) &&
+      // Com `?project`, só as conversas daquele projeto.
+      (!project || metadata?.[PROJECT_METADATA_KEY] === project) &&
+      // As construções não entram na caixa de entrada (a guia Construir as lista).
+      !metadata?.[BUILDER_METADATA_KEY]
     const unsubscribe =
       this.usecases.events?.subscribe((event: TConversationEvent) => {
-        const metadata = event.type === 'conversation.updated' ? event.session.metadata : event.metadata
-        if (!admin && !ownsSession(resolved, metadata)) return
-        // Com `?project`, só as conversas daquele projeto.
-        if (project && metadata?.[PROJECT_METADATA_KEY] !== project) return
-        // As construções não entram na caixa de entrada (a guia Construir as lista).
-        if (metadata?.[BUILDER_METADATA_KEY]) return
-
+        if (!visible(event.type === 'conversation.updated' ? event.session.metadata : event.metadata)) return
         if (event.type === 'conversation.updated') stream.emit(event.type, { session: toConversationDto(event.session, view) })
         else stream.emit(event.type, { sessionId: event.sessionId })
       }) ?? (() => undefined)
+    // Quem conecta (ou reconecta) fica sabendo das que JÁ estão rodando.
+    for (const running of this.usecases.live?.running() ?? []) if (visible(running.metadata)) stream.emit('conversation.running', { sessionId: running.sessionId })
 
     // Em `res`, não em `req` — ver `sendMessageAsStream`: o `close` do request dispara cedo demais.
     res.on('close', () => {
       unsubscribe()
+      inbox.unfollow?.()
+      this.inboxStreams.delete(streamId)
       stream.close()
-      const left = (this.openStreams.get(key) ?? 1) - 1
-      if (left > 0) this.openStreams.set(key, left)
-      else this.openStreams.delete(key)
+      this.releaseStream(key)
     })
+  }
+
+  /**
+   * `PUT /conversations/events/:streamId/follow` — o turno ao vivo de UMA conversa, no stream da caixa de entrada já
+   * aberto (`{ sessionId }`; `null` para de acompanhar). Os mesmos `turn.*` do `/sessions/:id/live`, com o `sessionId`,
+   * e `turn.idle` quando não há turno rodando ao começar a acompanhar.
+   *
+   * ⚖️ NA MESMA CONEXÃO, e não numa segunda: o navegador abre no máximo seis por host em HTTP/1.1, e duas permanentes
+   * por aba travavam todas as chamadas com três abas abertas.
+   *
+   * ⛔ O stream tem de ser de quem pede, e a conversa, dele (ou admin): 404 nos dois casos.
+   */
+  async followTurn(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const resolved = await this.requireCaller()
+      const inbox = this.inboxStreams.get(String(req.params.streamId ?? ''))
+      if (!inbox || inbox.owner !== (ownerOf(resolved)?.id ?? '')) throw new HttpError(404, 'not_found', 'Stream not found')
+      const { sessionId } = parseBody(followTurnSchema, req.body)
+      inbox.unfollow?.()
+      inbox.unfollow = undefined
+      if (!sessionId) return { following: null }
+      await this.requireLiveAccess(sessionId)
+      inbox.unfollow = this.watchTurn(sessionId, (type, data) => inbox.emit(type, { sessionId, ...data }), true)
+      return { following: sessionId }
+    })
+  }
+
+  /**
+   * `GET /sessions/:id/live` — o turno da conversa AO VIVO (SSE), venha da tela, da API, de um agendamento ou de uma
+   * delegação. Ao conectar, o turno em curso (`turn.started`, com o que já saiu); depois cada evento (`turn.event`, já
+   * mascarado) e o fim (`turn.finished`, com o turno já gravado). Fica aberta esperando o próximo.
+   *
+   * ⛔ Dono ou administrador (404 aos demais), e o mesmo teto de streams por conta da caixa de entrada.
+   */
+  async sessionLive(req: Request, res: Response) {
+    const sessionId = req.params.id as string
+    let key: string
+    try {
+      key = ownerOf(await this.requireLiveAccess(sessionId))?.id ?? ''
+    } catch (error: unknown) {
+      return this.sendFailure(res, error, '[AgentController.sessionLive]')
+    }
+    if (!this.holdStream(key)) return this.sendFailure(res, new HttpError(429, 'rate_limited', 'Too many open event streams'), '[AgentController.sessionLive]')
+
+    const stream = new SseStream(res)
+    stream.open()
+    stream.comment('ready')
+    const unwatch = this.watchTurn(sessionId, (type, data) => stream.emit(type, data), false)
+
+    res.on('close', () => {
+      unwatch()
+      stream.close()
+      this.releaseStream(key)
+    })
+  }
+
+  /** Dono da conversa ou admin, ou 404. A sessão viva primeiro: a conversa nova só chega ao banco no fim do primeiro turno. */
+  private async requireLiveAccess(sessionId: string): Promise<IResolvedCaller> {
+    const resolved = await this.requireCaller()
+    const admin = (await checkAdminAccess(this.usecases.proof)).allowed
+    let metadata: Record<string, unknown> | undefined
+    let found = true
+    try {
+      metadata = (await this.usecases.getSession.execute(sessionId)).metadata
+    } catch {
+      const stored = await this.usecases.conversations.findSession(sessionId).catch(() => undefined)
+      found = !!stored
+      metadata = stored?.metadata
+    }
+    if (!found || (!admin && !ownsSession(resolved, metadata))) throw new SessionNotFoundError(sessionId)
+    return resolved
+  }
+
+  /** Assina o turno ao vivo da conversa e manda o que já está rodando. Devolve quem cancela. */
+  private watchTurn(sessionId: string, emit: (type: string, data: object) => void, sayIdle: boolean): () => void {
+    const live = this.usecases.live
+    const unsubscribe =
+      live?.subscribe(sessionId, (signal) => {
+        if (signal.type === 'turn.started') emit(signal.type, { turn: signal.turn })
+        else if (signal.type === 'turn.event') emit(signal.type, { event: signal.event })
+        else emit(signal.type, {})
+      }) ?? (() => undefined)
+    const current = live?.snapshot(sessionId)
+    if (current) emit('turn.started', { turn: current })
+    // Quem passa a acompanhar no meio de uma reconexão fica sabendo que o turno que via já acabou.
+    else if (sayIdle) emit('turn.idle', {})
+    return unsubscribe
+  }
+
+  /** ⛔ Teto de streams abertos por conta: cada um segura uma inscrição e um relógio de heartbeat. */
+  private holdStream(key: string): boolean {
+    const open = this.openStreams.get(key) ?? 0
+    if (open >= streamsPerOwner()) return false
+    this.openStreams.set(key, open + 1)
+    return true
+  }
+
+  private releaseStream(key: string): void {
+    const left = (this.openStreams.get(key) ?? 1) - 1
+    if (left > 0) this.openStreams.set(key, left)
+    else this.openStreams.delete(key)
   }
 
   /** As chaves de `metadata` que algum contêiner usa no egresso (`{meta:chave}`). */

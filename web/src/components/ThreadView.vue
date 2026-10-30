@@ -291,6 +291,6 @@ async function continueFresh() {
       </button>
     </div>
     <SessionTuner v-if="thread.liveSession && agent" :agent="agent" :mode="header?.mode" :fallback="{ provider: header?.provider, model: header?.model }" />
-    <Composer :sending="thread.sending" :disabled="thread.liveSession === undefined" :commands="commands" @send="send" @stop="thread.stop" />
+    <Composer :sending="thread.sending || thread.following" :disabled="thread.liveSession === undefined" :commands="commands" @send="send" @stop="thread.stop" />
   </section>
 </template>

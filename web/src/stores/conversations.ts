@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api, openStream } from '@/lib/api'
 import { readSse } from '@/lib/sse'
-import type { IConversation, IConversationPage } from '@/lib/types'
+import type { IAgentEvent, IConversation, IConversationPage } from '@/lib/types'
 import { useProjectsStore } from './projects'
 
 export interface IConversationFilters {
@@ -12,6 +12,15 @@ export interface IConversationFilters {
 }
 
 export type TConversationEvent = { type: 'conversation.updated'; session: IConversation } | { type: 'conversation.deleted'; sessionId: string }
+/** Um turno começou ou acabou numa conversa (venha da tela, da API ou de um agendamento). */
+export type TRunningEvent = { type: 'conversation.running'; sessionId: string } | { type: 'conversation.idle'; sessionId: string }
+/** O turno ao vivo da conversa acompanhada (ver `follow`), no mesmo stream. `turn.idle`: nada rodando ao começar. */
+export type TTurnFrame =
+  | { type: 'turn.started'; sessionId: string; turn: { request: string; events: IAgentEvent[] } }
+  | { type: 'turn.event'; sessionId: string; event: IAgentEvent }
+  | { type: 'turn.finished'; sessionId: string }
+  | { type: 'turn.idle'; sessionId: string }
+type TStreamFrame = TConversationEvent | TRunningEvent | TTurnFrame | { type: 'stream.ready'; streamId: string }
 
 const PAGE_SIZE = 30
 const RECONNECT_MS = 3_000
@@ -63,11 +72,21 @@ export const useConversationsStore = defineStore('conversations', () => {
   const error = ref<string>()
   const filters = ref<IConversationFilters>({ q: '', agentId: '', classification: '' })
   const unread = ref(new Set<string>())
+  /** As conversas com um turno rodando agora. Ao (re)conectar, o servidor manda as que já estão. */
+  const running = ref(new Set<string>())
   const live = ref(false)
   const selectedId = ref<string>()
 
   let all: IConversation[] = []
   let stream: AbortController | undefined
+  /**
+   * O id do stream aberto (o primeiro evento) e a conversa que ele acompanha ao vivo. ⚖️ No MESMO stream, e não num
+   * segundo: o navegador abre no máximo seis conexões por host, e duas permanentes por aba travavam tudo com três abas.
+   */
+  let streamId: string | undefined
+  let followed: string | undefined
+  let following = Promise.resolve()
+  const turnListeners = new Set<(frame: TTurnFrame) => void>()
   let generation = 0
 
   const hasMore = computed(() => scope.value === 'all' && items.value.length < total.value)
@@ -191,21 +210,63 @@ export const useConversationsStore = defineStore('conversations', () => {
         try {
           const body = await openStream('/conversations/events', { signal: controller.signal, query: useProjectsStore().query })
           live.value = true
+          running.value = new Set()
           if (!first) void load(admin)
           first = false
           for await (const frame of readSse(body)) {
             if (controller.signal.aborted) return
-            apply(frame.data as TConversationEvent)
+            const event = frame.data as TStreamFrame
+            if (event.type === 'stream.ready') {
+              streamId = event.streamId
+              if (followed) sendFollow()
+            } else if (event.type.startsWith('turn.')) {
+              const turn = event as TTurnFrame
+              if (turn.sessionId === followed) for (const listener of turnListeners) listener(turn)
+            } else if (event.type === 'conversation.running' || event.type === 'conversation.idle') markRunning(event.sessionId, event.type === 'conversation.running')
+            else apply(event as TConversationEvent)
           }
         } catch {
           // Caiu ou foi abortado: o laço decide.
         }
+        streamId = undefined
         live.value = false
         if (controller.signal.aborted) return
         await new Promise((resolve) => setTimeout(resolve, RECONNECT_MS))
       }
     }
     void run(true)
+  }
+
+  function markRunning(id: string, on: boolean): void {
+    if (running.value.has(id) === on) return
+    const next = new Set(running.value)
+    if (on) next.add(id)
+    else next.delete(id)
+    running.value = next
+  }
+
+  /** Acompanha ao vivo o turno de uma conversa (`undefined` para). Vale também depois de reconectar. */
+  function follow(id: string | undefined): void {
+    if (id === followed) return
+    followed = id
+    sendFollow()
+  }
+
+  /** Em fila: dois pedidos seguidos (sair de uma conversa, abrir outra) chegam na ordem. */
+  function sendFollow(): void {
+    const id = streamId
+    if (!id) return
+    following = following.then(() =>
+      api(`/conversations/events/${encodeURIComponent(id)}/follow`, { method: 'PUT', body: { sessionId: followed ?? null } }).then(
+        () => undefined,
+        () => undefined,
+      ),
+    )
+  }
+
+  function onTurn(listener: (frame: TTurnFrame) => void): () => void {
+    turnListeners.add(listener)
+    return () => turnListeners.delete(listener)
   }
 
   function unsubscribe(): void {
@@ -228,6 +289,8 @@ export const useConversationsStore = defineStore('conversations', () => {
     error.value = undefined
     filters.value = { q: '', agentId: '', classification: '' }
     unread.value = new Set()
+    running.value = new Set()
+    followed = undefined
     selectedId.value = undefined
   }
 
@@ -256,6 +319,9 @@ export const useConversationsStore = defineStore('conversations', () => {
     error,
     filters,
     unread,
+    running,
+    follow,
+    onTurn,
     live,
     selectedId,
     hasMore,

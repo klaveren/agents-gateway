@@ -8,6 +8,7 @@ import { GetSessionUseCase } from '@application/GetSession.Usecase'
 import { ListSessionsUseCase } from '@application/ListSessions.Usecase'
 import { SendMessageUseCase } from '@application/SendMessage.Usecase'
 import { InMemoryConversationEvents } from '@infra/events/InMemory.ConversationEvents'
+import { TurnLive } from '@infra/events/Turn.Live'
 import { NotifyingConversationRepository } from '@infra/persistence/Notifying.ConversationRepository'
 import { makeClassifier } from './Classifier.Factory'
 import { makeConversationRepository } from './Conversations.Factory'
@@ -23,8 +24,11 @@ export function makeUsecases() {
   const events = new InMemoryConversationEvents()
   const conversations = new NotifyingConversationRepository(makeConversationRepository(), events)
 
+  // O turno ao vivo avisa a mesma caixa de entrada (quem está rodando).
+  const live = new TurnLive(events)
+
   const createSession = new CreateSessionUseCase(agentProvider)
-  const sendMessage = new SendMessageUseCase(agentProvider, conversations, makeClassifier(), makeSecretMasker())
+  const sendMessage = new SendMessageUseCase(agentProvider, conversations, makeClassifier(), makeSecretMasker(), live)
   // A delegação usa os MESMOS casos de uso: a conversa filha é gravada e avisada como qualquer outra.
   makeTools().delegation.bind(new DelegationService(agentProvider, createSession, sendMessage, undefined, (id) => makeAgents().get(id)?.modes))
   // Os MCPs em contêiner leem a conversa (agente e `metadata`) para os domínios `{meta:…}` e para o proxy.
@@ -41,6 +45,8 @@ export function makeUsecases() {
     conversations,
     /** O MESMO barramento em que o repositório publica: a rota SSE assina este. */
     events,
+    /** O MESMO barramento em que o `SendMessageUseCase` publica o turno: a rota `/live` assina este. */
+    live,
     createSessionUseCase: createSession,
     sendMessageUseCase: sendMessage,
     cancelSessionUseCase: new CancelSessionUseCase(agentProvider),

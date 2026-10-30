@@ -8,6 +8,9 @@ import { ISession } from '@domain/models/Session.Model'
 import { TClassification } from '@domain/models/Classification.Model'
 import { ITurnClassifier } from '@domain/ports/TurnClassifier.Port'
 import { NullConversationRepository } from '@infra/persistence/Null.ConversationRepository'
+import { TurnLive } from '@infra/events/Turn.Live'
+import { TConversationEvent } from '@domain/ports/ConversationEvents.Port'
+import { TLiveTurnSignal } from '@domain/ports/TurnLive.Port'
 import { SendMessageUseCase } from './SendMessage.Usecase'
 
 /** Repositório que só anota o que recebeu, e avisa quando a gravação terminou. */
@@ -95,6 +98,63 @@ describe('SendMessageUseCase', () => {
     assert.ok(!JSON.stringify(events.slice(0, 2)).includes('segredo-xyz-123'))
     assert.strictEqual(repository.turns[0].text, 'o valor é [segredo:x]')
     assert.ok(!JSON.stringify(repository.turns[0].toolCalls).includes('segredo-xyz-123'))
+  })
+
+  it('o turno ao vivo: quem assina vê o começo, os eventos já mascarados e o fim só depois de gravado', async () => {
+    const repository = new RecordingRepository()
+    const inbox: TConversationEvent[] = []
+    const live = new TurnLive({ publish: (event) => inbox.push(event), subscribe: () => () => undefined })
+    const signals: Array<TLiveTurnSignal & { storedTurns: number }> = []
+    live.subscribe('s', (signal) => signals.push({ ...signal, storedTurns: repository.turns.length }))
+    let middle: ReturnType<TurnLive['snapshot']>
+    const usecase = new SendMessageUseCase(
+      stubProvider({
+        describe: () => session({ metadata: { owner: { id: 'u1' } } }),
+        sendMessage: async function* (sessionId) {
+          yield { type: 'text.delta', sessionId, payload: { text: 'olá, ' }, timestamp: new Date() }
+          yield { type: 'text.delta', sessionId, payload: { text: 'chave-abc' }, timestamp: new Date() }
+          middle = live.snapshot('s')
+          yield { type: 'tool.started', sessionId, payload: { tool: 'run_bash', args: { command: 'ls' } }, timestamp: new Date() }
+          yield { type: 'message.completed', sessionId, timestamp: new Date() }
+        },
+      }),
+      repository,
+      undefined,
+      { text: (text: string) => text.replace('chave-abc', '[segredo:k]'), deep: <T>(value: T) => value },
+      live,
+    )
+    for await (const _ of usecase.execute('s', { text: 'oi' })) void _
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    assert.deepStrictEqual(
+      signals.map((signal) => signal.type),
+      ['turn.started', 'turn.event', 'turn.event', 'turn.event', 'turn.event', 'turn.finished'],
+    )
+    assert.strictEqual(signals[0].type === 'turn.started' && signals[0].turn.request, 'oi')
+    assert.ok(!JSON.stringify(signals).includes('chave-abc'))
+    // O retrato do meio junta os pedaços de texto num só.
+    assert.deepStrictEqual(
+      middle?.events.map((event) => [event.type, event.payload]),
+      [['text.delta', { text: 'olá, [segredo:k]' }]],
+    )
+    assert.strictEqual(signals[signals.length - 1].storedTurns, 1)
+    assert.strictEqual(live.snapshot('s'), undefined)
+    assert.deepStrictEqual(
+      inbox.map((event) => [event.type, 'metadata' in event ? event.metadata : undefined]),
+      [
+        ['conversation.running', { owner: { id: 'u1' } }],
+        ['conversation.idle', { owner: { id: 'u1' } }],
+      ],
+    )
+  })
+
+  it('o fim atrasado de um turno não encerra o seguinte', () => {
+    const live = new TurnLive()
+    const first = live.start('s', 'um')
+    live.start('s', 'dois')
+    live.finish('s', first)
+    assert.strictEqual(live.snapshot('s')?.request, 'dois')
+    assert.deepStrictEqual(live.running(), [{ sessionId: 's' }])
   })
 
   it('passes the stream through in order, keyed only by session id', async () => {

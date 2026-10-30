@@ -50,6 +50,7 @@ export function makeController(): AgentController {
     sessionContext: sessionContextFromEnv(),
     conversations: usecases.conversations,
     events: usecases.events,
+    live: usecases.live,
     pricing: loadPricing(),
     createSession: usecases.createSessionUseCase,
     sendMessage: usecases.sendMessageUseCase,

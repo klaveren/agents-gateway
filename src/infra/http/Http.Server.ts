@@ -381,6 +381,7 @@ function buildRoutes(
     { method: 'get', path: '/conversations', handler: controller.listConversations },
     { method: 'get', path: '/conversations/stats', handler: controller.conversationStats },
     { method: 'get', path: '/conversations/events', handler: controller.conversationEvents },
+    { method: 'put', path: '/conversations/events/:streamId/follow', handler: controller.followTurn },
     { method: 'get', path: '/conversations/:id/turns', handler: controller.getConversationTurns },
     { method: 'get', path: '/conversations/:id/todos', handler: controller.getConversationTodos },
     { method: 'put', path: '/conversations/:id/share', handler: controller.shareConversation },
@@ -395,6 +396,7 @@ function buildRoutes(
     { method: 'post', path: '/sessions/:id/turns', handler: controller.startTurn },
     { method: 'get', path: '/sessions/:id/turns/:turn', handler: controller.turnStatus },
     { method: 'get', path: '/sessions/:id/changes', handler: controller.changes },
+    { method: 'get', path: '/sessions/:id/live', handler: controller.sessionLive },
     { method: 'post', path: '/sessions/:id/cancel', handler: controller.cancelSession },
   ]
 }

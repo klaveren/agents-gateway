@@ -2341,8 +2341,23 @@ export const OPENAPI_DOCUMENT = {
       get: {
         summary: 'Live changes to persisted conversations (SSE). Administrators receive all of them; anyone else, only their own',
         description:
-          'Events: `conversation.updated` with `{ session }` in the same projection as the listing (no `classification` or `costUsd` unless administrator), and `conversation.deleted` with `{ sessionId }`. A `: ping` comment every 15s keeps the connection open.',
+          'Events: `conversation.updated` with `{ session }` in the same projection as the listing (no `classification` or `costUsd` unless administrator), `conversation.deleted` with `{ sessionId }`, and `conversation.running` / `conversation.idle` with `{ sessionId }` when a turn starts or ends (on connect, one `conversation.running` per conversation already running). The first event, `stream.ready` with `{ streamId }`, names this stream for `PUT /conversations/events/{streamId}/follow`. A `: ping` comment every 15s keeps the connection open.',
         responses: { '200': { description: 'An event stream', content: { 'text/event-stream': { schema: { type: 'string' } } } }, '401': failures['401'] },
+      },
+    },
+    '/conversations/events/{streamId}/follow': {
+      put: {
+        summary: 'Follow the live turn of one conversation on an open `/conversations/events` stream (one connection per tab, not two). `null` stops',
+        description:
+          'The stream then also carries `turn.started`, `turn.event`, `turn.finished` (as in `/sessions/{id}/live`) with `sessionId`, and `turn.idle` when nothing is running as the follow starts. The stream must be the caller own, and the conversation theirs (or the caller an administrator); 404 otherwise.',
+        parameters: [{ name: 'streamId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', required: ['sessionId'], properties: { sessionId: { type: ['string', 'null'] } } }) },
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { following: { type: ['string', 'null'] } } })) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': failures['422'],
+        },
       },
     },
     '/conversations/{id}/turns': {
@@ -2561,6 +2576,20 @@ export const OPENAPI_DOCUMENT = {
           '200': { description: 'OK', ...json(envelope({ type: 'object', additionalProperties: true })) },
           '404': failures['404'],
           '422': failures['422'],
+        },
+      },
+    },
+    '/sessions/{id}/live': {
+      get: {
+        summary: 'The turn of a conversation, live (SSE), whoever started it (screen, API, schedule, delegation). The owner or an administrator; anyone else gets 404',
+        description:
+          'On connect, the running turn if any: `turn.started` with `{ turn: { request, startedAt, events } }` (consecutive text pieces already joined). Then `turn.event` with `{ event }` (the same agent events as `/messages`, secrets masked) and `turn.finished` once the turn is recorded. The stream stays open for the next turn. Counts toward the same per-account stream cap as `/conversations/events`.',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'An event stream', content: { 'text/event-stream': { schema: { type: 'string' } } } },
+          '401': failures['401'],
+          '404': failures['404'],
+          '429': { description: '`rate_limited`: too many open event streams for this account', ...json(failureEnvelope) },
         },
       },
     },
