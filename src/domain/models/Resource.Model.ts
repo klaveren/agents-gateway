@@ -1,7 +1,7 @@
 /**
  * Um RECURSO do agente: uma SKILL (um modo de fazer algo, que o agente carrega quando o assunto aparece) ou um
  * COMMAND (um pedido pronto que a pessoa dispara com `/nome argumentos`). Global ou do projeto, como as rules, e com
- * specs e ADRs anexadas, que vão junto quando o recurso é usado.
+ * specs e ADRs anexadas, que vão junto quando o recurso é usado — inteiras ou, as marcadas, por referência.
  *
  * ⚖️ Por padrão o agente usa todos os do escopo dele; a guia Recursos restringe (ver `IAgentResources`).
  */
@@ -18,8 +18,14 @@ export interface IResource {
   description: string
   /** Skill: markdown. Command: o texto que vai ao agente, com `$ARGUMENTS` no lugar do que vem depois do `/nome`. */
   body: string
-  /** Specs e ADRs que vão junto, inteiras, quando o recurso é usado. */
+  /** Specs e ADRs anexadas, na ordem: vão junto quando o recurso é usado. */
   docIds: string[]
+  /**
+   * Das anexadas, as que vão POR REFERÊNCIA: o recurso carregado lista id, título e tamanho, e o agente as lê com
+   * `read_doc` só se precisar. Sempre um subconjunto de `docIds`. ⚖️ Ausente ou vazio = todas inteiras (o de antes):
+   * quem decide é a pessoa, anexo a anexo — o sistema não impõe teto de tamanho.
+   */
+  docRefs?: string[]
   createdAt: Date
   updatedAt: Date
   updatedBy?: string

@@ -354,7 +354,9 @@ function describe(failure: unknown): string {
               </div>
             </dl>
             <div v-if="isResource && draft.docIds.length" class="flex flex-wrap gap-1">
-              <span v-for="docId in draft.docIds" :key="docId" class="rounded-full bg-zinc-800 px-2 py-0.5 font-mono text-[11px] text-zinc-300">{{ docId }}</span>
+              <span v-for="docId in draft.docIds" :key="docId" class="rounded-full bg-zinc-800 px-2 py-0.5 font-mono text-[11px] text-zinc-300">
+                {{ docId }}<template v-if="draft.docRefs.includes(docId)"> · ref</template>
+              </span>
             </div>
             <div class="flex gap-1 text-xs">
               <button

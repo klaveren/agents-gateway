@@ -648,7 +648,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'save_resource',
     {
       description:
-        'Create or replace a skill or a command. The id is a slug (2–48 lowercase letters, digits or hyphens) — the skill name in the index, the /name of the command. The description is the one line the agent reads to know when to use it. A command body is what goes to the agent; $ARGUMENTS takes what the person typed after /name. docIds: specs/ADRs that go along in full (global ones or of the same project). By default every agent of its scope uses it (unless its Resources tab restricts). Confirm with the person first.',
+        'Create or replace a skill or a command. The id is a slug (2–48 lowercase letters, digits or hyphens) — the skill name in the index, the /name of the command. The description is the one line the agent reads to know when to use it. A command body is what goes to the agent; $ARGUMENTS takes what the person typed after /name. docIds: specs/ADRs that go along in full (global ones or of the same project); docRefs: which of them go by reference instead (listed with id, title and size, read with read_doc only if needed) — use it for large docs. By default every agent of its scope uses it (unless its Resources tab restricts). Confirm with the person first.',
       inputSchema: {
         id: z.string(),
         kind: z.enum(['skill', 'command']),
@@ -656,6 +656,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
         description: z.string(),
         body: z.string().describe('Skill: markdown. Command: the request, with $ARGUMENTS'),
         docIds: z.array(z.string()).optional(),
+        docRefs: z.array(z.string()).optional().describe('Which of docIds go by reference instead of in full'),
       },
     },
     async ({ id, kind, ...resource }) => {

@@ -7,7 +7,7 @@ import MasterDetail from '@/components/MasterDetail.vue'
 import BuildTabs from '@/components/BuildTabs.vue'
 import { pendingDraft } from '@/lib/builder'
 import { api, ApiError } from '@/lib/api'
-import { docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId } from '@/lib/guidance'
+import { attachedRefs, docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId, setAttachMode, type TAttachMode } from '@/lib/guidance'
 import { renderMarkdown } from '@/lib/markdown'
 import type { IProjectDoc, IResource, TResourceKind } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
@@ -16,7 +16,8 @@ import { useProjectsStore } from '@/stores/projects'
 /**
  * SKILLS ou COMMANDS (só admin), uma página para cada (`kind`). ⚖️ O agente só usa o que a guia Recursos dele libera.
  * A skill entra no índice do prompt (nome e descrição) e o agente a carrega com `use_resource`; o command a pessoa dispara
- * com `/nome argumentos`, e o gateway troca pelo texto dele. Os dois levam as specs e ADRs anexadas.
+ * com `/nome argumentos`, e o gateway troca pelo texto dele. Os dois levam as specs e ADRs anexadas — cada uma inteira
+ * ou por referência (id, título e tamanho; o agente a lê com `read_doc` se precisar), à escolha de quem cadastra.
  */
 const props = defineProps<{ kind: TResourceKind; id?: string }>()
 const route = useRoute()
@@ -57,7 +58,7 @@ const info = computed(() => KIND[props.kind])
 /** As palavras que concordam com o tipo: "Novo estudo", "Nova spec". */
 const g = computed(() => (info.value.masc ? { nova: 'Novo', nenhuma: 'Nenhum', uma: 'um', a: 'o' } : { nova: 'Nova', nenhuma: 'Nenhuma', uma: 'uma', a: 'a' }))
 
-const form = ref({ id: '', description: '', body: '', global: true, project: '', docIds: [] as string[] })
+const form = ref({ id: '', description: '', body: '', global: true, project: '', docIds: [] as string[], docRefs: [] as string[] })
 const loaded = ref<IResource>()
 const preview = ref(false)
 const issues = ref<Record<string, string[]>>({})
@@ -74,7 +75,11 @@ const dirty = computed(() => {
   const resource = loaded.value
   if (!resource) return true
   return (
-    form.value.description !== resource.description || form.value.body !== resource.body || formScope.value !== (resource.projectId ?? GLOBAL_SCOPE) || form.value.docIds.join() !== resource.docIds.join()
+    form.value.description !== resource.description ||
+    form.value.body !== resource.body ||
+    formScope.value !== (resource.projectId ?? GLOBAL_SCOPE) ||
+    form.value.docIds.join() !== resource.docIds.join() ||
+    attachedRefs(form.value.docIds, form.value.docRefs).join() !== attachedRefs(resource.docIds, resource.docRefs ?? []).join()
   )
 })
 
@@ -96,7 +101,7 @@ watch(
     preview.value = false
     if (isNew) {
       loaded.value = undefined
-      form.value = { id: '', description: '', body: KIND[kind].template, global: scope.value === GLOBAL_SCOPE, project: scope.value === GLOBAL_SCOPE ? (projects.current ?? '') : scope.value, docIds: [] }
+      form.value = { id: '', description: '', body: KIND[kind].template, global: scope.value === GLOBAL_SCOPE, project: scope.value === GLOBAL_SCOPE ? (projects.current ?? '') : scope.value, docIds: [], docRefs: [] }
       applyDraft(kind)
       return
     }
@@ -105,7 +110,7 @@ watch(
       const resource = await api<IResource>(`/resources/${encodeURIComponent(id)}`)
       if (resource.kind !== kind) return void router.replace(`${KIND[resource.kind].base}/${resource.id}`)
       loaded.value = resource
-      form.value = { id: resource.id, description: resource.description, body: resource.body, global: !resource.projectId, project: resource.projectId ?? projects.current ?? '', docIds: [...resource.docIds] }
+      form.value = { id: resource.id, description: resource.description, body: resource.body, global: !resource.projectId, project: resource.projectId ?? projects.current ?? '', docIds: [...resource.docIds], docRefs: [...(resource.docRefs ?? [])] }
       applyDraft(kind, resource.id)
     } catch (failure) {
       loaded.value = undefined
@@ -130,6 +135,7 @@ function applyDraft(kind: TResourceKind, id?: string) {
     global: !draft.projectId,
     project: draft.projectId ?? projects.current ?? '',
     docIds: [...draft.docIds],
+    docRefs: [...draft.docRefs],
   }
   note.value = 'Rascunho do construtor aplicado: revise e salve.'
 }
@@ -156,6 +162,14 @@ function toggleDoc(id: string) {
   form.value.docIds = form.value.docIds.includes(id) ? form.value.docIds.filter((item) => item !== id) : [...form.value.docIds, id]
 }
 
+function attachMode(id: string): TAttachMode {
+  return form.value.docRefs.includes(id) ? 'reference' : 'inline'
+}
+
+function setMode(id: string, mode: TAttachMode) {
+  form.value.docRefs = setAttachMode(form.value.docRefs, id, mode)
+}
+
 function slug() {
   if (!form.value.id && form.value.description) form.value.id = docSlug(form.value.description).split('-').slice(0, 4).join('-')
 }
@@ -167,7 +181,7 @@ async function save() {
   busy.value = true
   // Um doc de outro projeto não vai junto quando o escopo muda.
   const docIds = form.value.docIds.filter((id) => attachable.value.some((doc) => doc.id === id))
-  const body = { description: form.value.description, body: form.value.body, projectId: scopeToProjectId(formScope.value), docIds }
+  const body = { description: form.value.description, body: form.value.body, projectId: scopeToProjectId(formScope.value), docIds, docRefs: attachedRefs(docIds, form.value.docRefs) }
   try {
     if (adding.value) {
       const created = await api<IResource>('/resources', { method: 'POST', body: { id: form.value.id, kind: props.kind, ...body } })
@@ -177,6 +191,7 @@ async function save() {
     } else {
       loaded.value = await api<IResource>(`/resources/${encodeURIComponent(form.value.id)}`, { method: 'PUT', body })
       form.value.docIds = [...loaded.value.docIds]
+      form.value.docRefs = [...(loaded.value.docRefs ?? [])]
       note.value = 'Salvo. Vale para as próximas conversas.'
       await loadList()
     }
@@ -270,13 +285,27 @@ function describe(failure: unknown): string {
         <div class="flex flex-col gap-1.5 rounded-xl border border-zinc-800 p-3">
           <p class="text-sm font-medium text-zinc-200">Specs e ADRs anexadas <span class="text-xs font-normal text-zinc-500">— vão junto quando {{ kind === 'command' ? 'o command é usado' : 'a skill é carregada' }}</span></p>
           <p v-if="!attachable.length" class="text-xs text-zinc-500">Nenhum documento {{ form.global ? 'global' : 'global ou deste projeto' }}. <RouterLink to="/specs/new" class="text-emerald-400 underline underline-offset-2">Criar uma spec</RouterLink>.</p>
-          <label v-for="doc in attachable" :key="doc.id" class="flex items-center gap-2 text-sm">
-            <input type="checkbox" class="accent-emerald-500" :checked="form.docIds.includes(doc.id)" @change="toggleDoc(doc.id)" />
-            <span class="rounded bg-zinc-800 px-1 text-[10px] text-zinc-400 uppercase">{{ doc.kind }}</span>
-            <span class="min-w-0 truncate">{{ doc.title }}</span>
-            <span class="ml-auto shrink-0 text-xs text-zinc-500 tabular-nums">≈ {{ (doc.tokens ?? 0).toLocaleString('pt-BR') }} tokens</span>
-          </label>
+          <div v-for="doc in attachable" :key="doc.id" class="flex flex-wrap items-center gap-2 text-sm">
+            <label class="flex min-w-0 flex-1 items-center gap-2">
+              <input type="checkbox" class="accent-emerald-500" :checked="form.docIds.includes(doc.id)" @change="toggleDoc(doc.id)" />
+              <span class="rounded bg-zinc-800 px-1 text-[10px] text-zinc-400 uppercase">{{ doc.kind }}</span>
+              <span class="min-w-0 truncate">{{ doc.title }}</span>
+              <span class="ml-auto shrink-0 text-xs text-zinc-500 tabular-nums">≈ {{ (doc.tokens ?? 0).toLocaleString('pt-BR') }} tokens</span>
+            </label>
+            <select
+              v-if="form.docIds.includes(doc.id)"
+              :value="attachMode(doc.id)"
+              class="input w-auto py-1 text-xs"
+              :aria-label="`Como ${doc.title} vai junto`"
+              @change="setMode(doc.id, ($event.target as HTMLSelectElement).value as TAttachMode)"
+            >
+              <option value="inline">inteiro</option>
+              <option value="reference">por referência</option>
+            </select>
+          </div>
+          <small class="hint">Inteiro: o texto vai junto toda vez. Por referência: vão só id, título e tamanho, e o agente lê com read_doc se precisar — para documento grande.</small>
           <small v-for="m in issues.docIds" :key="m" class="error">{{ m }}</small>
+          <small v-for="m in issues.docRefs" :key="m" class="error">{{ m }}</small>
         </div>
 
         <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>

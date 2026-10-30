@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { renderMarkdown } from './markdown'
-import { contextWeight, docSlug, rulesTokens, scopeLabel, scopeToProjectId } from './guidance'
+import { attachedRefs, contextWeight, docSlug, rulesTokens, scopeLabel, scopeToProjectId, setAttachMode } from './guidance'
 
 describe('guidance', () => {
   const projects = [{ id: 'xpto', name: 'Loja XPTO', createdAt: '', updatedAt: '' }]
@@ -8,6 +8,13 @@ describe('guidance', () => {
   it('o escopo: global ou o nome do projeto, e o projectId que a API grava', () => {
     expect([scopeLabel('global', projects), scopeLabel('xpto', projects), scopeLabel('sumiu', projects)]).toEqual(['Global', 'Loja XPTO', 'sumiu'])
     expect([scopeToProjectId('global'), scopeToProjectId('xpto')]).toEqual([null, 'xpto'])
+  })
+
+  it('o modo do anexo: por referência entra na lista, inteiro sai; só valem as dos anexados, na ordem deles', () => {
+    expect(setAttachMode([], 'api', 'reference')).toEqual(['api'])
+    expect(setAttachMode(['api', 'dados'], 'api', 'inline')).toEqual(['dados'])
+    expect(setAttachMode(['api'], 'api', 'reference')).toEqual(['api'])
+    expect(attachedRefs(['dados', 'api'], ['api', 'sumiu', 'dados'])).toEqual(['dados', 'api'])
   })
 
   it('o id do documento a partir do título', () => {

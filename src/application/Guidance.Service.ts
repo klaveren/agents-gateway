@@ -90,6 +90,14 @@ export interface IResourceInput {
   description?: string
   body?: string
   docIds?: string[]
+  /** Das anexadas, as que vão por referência (ver `IResource.docRefs`). Ausente na edição = mantém as de antes. */
+  docRefs?: string[]
+}
+
+/** Um documento anexado a um recurso que o agente pode carregar, e por quais recursos (ver `attachedDoc`). */
+export interface IAttachedDoc {
+  doc: IProjectDoc
+  via: Array<{ kind: TResourceKind; id: string }>
 }
 
 /** Um `/command` expandido: o que vai ao modelo e o que a conversa grava (o que a pessoa digitou). */
@@ -336,9 +344,30 @@ export class GuidanceService {
     }
   }
 
-  /** Há documento no índice desta conversa? É o que liga o `read_doc` nela. */
+  /**
+   * Há documento no índice desta conversa, ou anexado por referência a um recurso que o agente usa? É o que liga o
+   * `read_doc` nela — o recurso carregado manda ler o anexo por ele.
+   */
   hasDocs(projectId?: string, agentId?: string): boolean {
-    return this.visibleDocs(projectId, agentId).length > 0
+    if (this.visibleDocs(projectId, agentId).length > 0) return true
+    return RESOURCE_KINDS.some((kind) => this.usableResources(kind, agentId).some((resource) => this.referencedDocs(resource).length > 0))
+  }
+
+  /**
+   * ⛔ O documento anexado a um recurso (skill ou command) que ESTE agente pode carregar — o caminho do `read_doc` para o
+   * anexo por referência quando a regra da conversa (global ou do projeto dela) não o abre. Vale a regra do anexo: o
+   * documento global ou do projeto do recurso. Nada além do que o recurso, carregado, já entregaria inteiro. A permissão
+   * `skill` fica com quem chama (`via` diz por quais recursos).
+   */
+  attachedDoc(id: string, agentId?: string): IAttachedDoc | undefined {
+    const doc = this.repository.doc(id)
+    if (!doc) return undefined
+    const via = RESOURCE_KINDS.flatMap((kind) =>
+      this.usableResources(kind, agentId)
+        .filter((resource) => resource.docIds.includes(id) && attachable(doc, resource))
+        .map((resource) => ({ kind, id: resource.id })),
+    )
+    return via.length ? { doc, via } : undefined
   }
 
   /**
@@ -467,6 +496,7 @@ export class GuidanceService {
           description: draft.description?.trim() ?? '',
           body: draft.body ?? '',
           docIds: draft.docIds ?? [],
+          ...(draft.docRefs?.length ? { docRefs: draft.docRefs } : {}),
           createdAt: this.now(),
           updatedAt: this.now(),
         }),
@@ -576,6 +606,7 @@ export class GuidanceService {
       description: input.description?.trim() ?? '',
       body: input.body ?? '',
       docIds: input.docIds ?? [],
+      ...(input.docRefs?.length ? { docRefs: input.docRefs } : {}),
       createdAt: this.now(),
       updatedAt: this.now(),
       updatedBy: by,
@@ -601,6 +632,10 @@ export class GuidanceService {
       updatedAt: this.now(),
       updatedBy: by,
     }
+    // Sem `docRefs` na edição, ficam as de antes — menos as que deixaram de estar anexadas.
+    const refs = input.docRefs ?? (current.docRefs ?? []).filter((docId) => next.docIds.includes(docId))
+    if (refs.length) next.docRefs = refs
+    else delete next.docRefs
     if (!next.projectId) delete next.projectId
     this.check(this.resourceIssues(next), next.projectId)
     this.repository.saveResource(next)
@@ -792,11 +827,32 @@ export class GuidanceService {
     return issues
   }
 
-  /** Os documentos anexados a um recurso, inteiros (os que ainda existem). */
+  /**
+   * Os documentos anexados a um recurso (os que ainda existem): os inteiros, como sempre; os por referência, numa lista
+   * com id, título e tamanho — o agente os lê com `read_doc` só se precisar.
+   */
   private attachments(resource: IResource): string {
-    const docs = resource.docIds.map((id) => this.repository.doc(id)).filter((doc): doc is IProjectDoc => !!doc)
-    if (!docs.length) return ''
-    return `\n\n## Documentos anexados\n\n${docs.map((doc) => `### ${doc.title} [${doc.kind}]\n${doc.body.trim()}`).join('\n\n')}`
+    const refs = new Set(resource.docRefs ?? [])
+    const docs = resource.docIds
+      .filter((id) => !refs.has(id))
+      .map((id) => this.repository.doc(id))
+      .filter((doc): doc is IProjectDoc => !!doc)
+    const referenced = this.referencedDocs(resource)
+    const inline = docs.length ? `\n\n## Documentos anexados\n\n${docs.map((doc) => `### ${doc.title} [${doc.kind}]\n${doc.body.trim()}`).join('\n\n')}` : ''
+    if (!referenced.length) return inline
+    const lines = referenced.map(
+      (doc) => `- ${doc.id} — ${doc.title} [${doc.kind}] · ≈ ${estimateTokens(doc.body).toLocaleString('pt-BR')} tokens${doc.summary ? `: ${doc.summary}` : ''}`,
+    )
+    return `${inline}\n\n## Documentos anexados por referência\n\nNão vieram inteiros. Leia com ${READ_DOC_TOOL} (pelo id) só o que o passo pedir.\n\n${lines.join('\n')}`
+  }
+
+  /** Os anexados por referência que ainda existem e ainda cabem no recurso (globais ou do projeto dele). */
+  private referencedDocs(resource: IResource): IProjectDoc[] {
+    const refs = resource.docRefs ?? []
+    return resource.docIds
+      .filter((id) => refs.includes(id))
+      .map((id) => this.repository.doc(id))
+      .filter((doc): doc is IProjectDoc => !!doc && attachable(doc, resource))
   }
 
   private resourceIssues(resource: IResource): TIssues {
@@ -810,6 +866,11 @@ export class GuidanceService {
       const doc = this.repository.doc(id)
       if (!doc) issues.push({ field: 'docIds', message: `no such document: ${id}` })
       else if (doc.projectId && doc.projectId !== resource.projectId) issues.push({ field: 'docIds', message: `${id} belongs to another project (${doc.projectId})` })
+    }
+    const refs = resource.docRefs ?? []
+    for (const [index, id] of refs.entries()) {
+      if (refs.indexOf(id) !== index) issues.push({ field: 'docRefs', message: `repeated: ${id}` })
+      else if (!resource.docIds.includes(id)) issues.push({ field: 'docRefs', message: `not attached: ${id} (by reference only goes one of docIds)` })
     }
     return issues
   }
@@ -843,6 +904,11 @@ export class GuidanceService {
     if (projectId && !this.projectExists(projectId)) issues.push({ field: 'projectId', message: `no such project: ${projectId}` })
     if (issues.length) throw new InvalidGuidanceError(issues)
   }
+}
+
+/** O documento cabe no recurso: global ou do projeto dele (a regra do anexo). */
+function attachable(doc: IProjectDoc, resource: IResource): boolean {
+  return !doc.projectId || doc.projectId === resource.projectId
 }
 
 /** O que vale para o agente: sem marcação, todos (`*`); a marca de "nenhum", nenhum. */

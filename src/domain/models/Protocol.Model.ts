@@ -46,6 +46,8 @@ export interface IBuilderDraft {
   description?: string
   body?: string
   docIds?: string[]
+  /** Skill/command: das anexadas, as que vão por referência (ver `IResource.docRefs`). */
+  docRefs?: string[]
   /** Ausente = o do projeto da conversa (sem projeto, global). */
   global?: boolean
   /** Agente: o registro como o `save_agent` recebe (id, nome, soul, prompt, providers, lanes, ferramentas…). */

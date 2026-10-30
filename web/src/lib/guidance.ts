@@ -47,3 +47,17 @@ export function rulesTokens(rules: ReadonlyArray<{ title: string; body: string; 
   ].join('\n')
   return Math.ceil(text.length / 4)
 }
+
+/** Como um documento anexado a uma skill ou command vai junto: inteiro (o padrão) ou por referência (id, título e tamanho). */
+export type TAttachMode = 'inline' | 'reference'
+
+/** As referências que valem: só as dos documentos anexados, na ordem deles (o servidor recusa as outras). */
+export function attachedRefs(docIds: readonly string[], docRefs: readonly string[]): string[] {
+  return docIds.filter((id) => docRefs.includes(id))
+}
+
+/** Troca o modo de um anexo: a lista de referências com ou sem ele. */
+export function setAttachMode(docRefs: readonly string[], id: string, mode: TAttachMode): string[] {
+  const others = docRefs.filter((item) => item !== id)
+  return mode === 'reference' ? [...others, id] : others
+}
