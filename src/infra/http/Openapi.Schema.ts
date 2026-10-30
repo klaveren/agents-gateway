@@ -503,6 +503,73 @@ const agentHookBody = {
   },
 }
 
+const catalogKinds = ['agent', 'skill', 'command', 'rule', 'spec', 'adr', 'knowledge', 'protocol', 'project', 'project-permissions', 'mcp']
+const catalogItemParams = [
+  { name: 'kind', in: 'query', required: true, schema: { type: 'string', enum: catalogKinds } },
+  {
+    name: 'id',
+    in: 'query',
+    required: true,
+    schema: { type: 'string' },
+    description:
+      'The item id. MCP: the server key (`n8n` global, `cliente-a.n8n` of project `cliente-a`). Protocol addendum: the kind (`skill`) or `<project>/<kind>`. Rule: the uuid. Project and project-permissions: the project id.',
+  },
+  {
+    name: 'project',
+    in: 'query',
+    required: false,
+    schema: { type: 'string' },
+    description:
+      'Completes the key when needed: `kind=mcp&id=n8n&project=cliente-a` is `cliente-a.n8n`; `kind=protocol&id=skill&project=cliente-a` is `cliente-a/skill`. Ignored by the other kinds.',
+  },
+]
+const historyPaging = [
+  { name: 'page', in: 'query', required: false, schema: { type: 'integer', minimum: 1, default: 1 } },
+  { name: 'pageSize', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 } },
+]
+const revisionFields = {
+  id: { type: 'integer' },
+  kind: { type: 'string', enum: catalogKinds },
+  itemId: { type: 'string', description: 'The item id (MCP: the server key).' },
+  projectId: { type: 'string', description: 'The scope AT this revision. Absent = global.' },
+  revision: { type: 'integer', description: '1..n per item.' },
+  op: { type: 'string', enum: ['baseline', 'create', 'update', 'delete', 'restore', 'import', 'drift'] },
+  hash: { type: 'string', description: 'sha256 of the canonical document. Absent on `delete`.' },
+  at: { type: 'string', format: 'date-time' },
+  by: { type: 'string' },
+  source: { type: 'string', enum: ['api', 'agent', 'migration', 'boot', 'import', 'restore'] },
+  batchId: { type: 'string' },
+  note: { type: 'string' },
+}
+const revisionSummarySchema = { type: 'object', properties: revisionFields }
+const revisionPageFields = {
+  revisions: { type: 'array', items: revisionSummarySchema, description: 'Newest first, without the document.' },
+  total: { type: 'integer' },
+  page: { type: 'integer' },
+  pageSize: { type: 'integer' },
+}
+const diffSideSchema = {
+  type: 'object',
+  properties: {
+    revision: { oneOf: [{ type: 'integer' }, { type: 'string', enum: ['current'] }], description: '`0` = before the item existed.' },
+    exists: { type: 'boolean' },
+    hash: { type: 'string' },
+    op: { type: 'string' },
+    at: { type: 'string', format: 'date-time' },
+    by: { type: 'string' },
+  },
+}
+const diffLineSchema = {
+  type: 'object',
+  properties: {
+    op: { type: 'string', enum: ['equal', 'add', 'remove'] },
+    text: { type: 'string' },
+    oldLine: { type: 'integer', description: 'Absent on an added line.' },
+    newLine: { type: 'integer', description: 'Absent on a removed line.' },
+    noNewline: { type: 'boolean', description: 'The last line of the text, without a trailing newline.' },
+  },
+}
+
 const failures = {
   '401': {
     description:
@@ -1510,6 +1577,125 @@ export const OPENAPI_DOCUMENT = {
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: { required: true, ...json({ type: 'object', properties: { userIds: { type: 'array', items: { type: 'string' } } }, required: ['userIds'] }) },
         responses: { '200': { description: 'OK' }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/catalog/history': {
+      get: {
+        summary:
+          'The catalog history (read only). With `kind` and `id`: the revisions of that item, newest first, plus its current state (`current.hash` different from the last revision = a change not recorded yet). Without them: the revisions of a scope, newest first — `project=<id>`, `project=global` or, absent, everything. Each revision is the whole canonical document (never a secret: MCP keeps only variable names). Administrators see everything; a project member only the MCP servers of their own projects (item or `project=<own project>`); anyone else gets 404',
+        parameters: [
+          { name: 'kind', in: 'query', required: false, schema: { type: 'string', enum: catalogKinds }, description: 'With `id`: the item. See GET /catalog/history/diff.' },
+          { name: 'id', in: 'query', required: false, schema: { type: 'string' }, description: 'With `kind`: the item (MCP: the server key).' },
+          {
+            name: 'project',
+            in: 'query',
+            required: false,
+            schema: { type: 'string' },
+            description: 'Without `kind`/`id`: the scope (a project id, or `global`). With them: completes the MCP or protocol key.',
+          },
+          ...historyPaging,
+        ],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  kind: { type: 'string', enum: catalogKinds, description: 'Item form only.' },
+                  itemId: { type: 'string', description: 'Item form only.' },
+                  current: { type: 'object', description: 'Item form only.', properties: { exists: { type: 'boolean' }, hash: { type: 'string' } } },
+                  scope: { type: 'string', description: 'Scope form only: `all`, `global` or `project:<id>`.' },
+                  ...revisionPageFields,
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
+    '/catalog/history/revisions/{revision}': {
+      get: {
+        summary:
+          'One revision of an item, with the whole canonical document (`document`, the JSON text that is compared and diffed; absent on `delete`). Same access as GET /catalog/history',
+        parameters: [{ name: 'revision', in: 'path', required: true, schema: { type: 'integer', minimum: 1 } }, ...catalogItemParams],
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { ...revisionFields, document: { type: 'string' } } })) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
+    '/catalog/history/diff': {
+      get: {
+        summary:
+          'Line diff of the canonical document of an item between two revisions, or between a revision and the current state. Defaults: `to=current`; `from` = the last revision (when `to` is current) or the one before `to` (what `to` changed). `0` = before the item existed. Returns the hunks with context and the same diff as unified text. Same access as GET /catalog/history',
+        parameters: [
+          ...catalogItemParams,
+          {
+            name: 'from',
+            in: 'query',
+            required: false,
+            schema: {
+              oneOf: [
+                { type: 'integer', minimum: 0 },
+                { type: 'string', enum: ['current'] },
+              ],
+            },
+          },
+          {
+            name: 'to',
+            in: 'query',
+            required: false,
+            schema: {
+              oneOf: [
+                { type: 'integer', minimum: 0 },
+                { type: 'string', enum: ['current'] },
+              ],
+            },
+          },
+          { name: 'context', in: 'query', required: false, schema: { type: 'integer', minimum: 0, maximum: 50, default: 3 }, description: 'Lines of context around each change.' },
+        ],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  kind: { type: 'string', enum: catalogKinds },
+                  itemId: { type: 'string' },
+                  from: diffSideSchema,
+                  to: diffSideSchema,
+                  equal: { type: 'boolean' },
+                  added: { type: 'integer' },
+                  removed: { type: 'integer' },
+                  hunks: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        oldStart: { type: 'integer' },
+                        oldLines: { type: 'integer' },
+                        newStart: { type: 'integer' },
+                        newLines: { type: 'integer' },
+                        lines: { type: 'array', items: diffLineSchema },
+                      },
+                    },
+                  },
+                  unified: { type: 'string', description: 'The unified diff (`---`, `+++`, `@@`); empty when equal.' },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': failures['422'],
+        },
       },
     },
     '/rules': {
