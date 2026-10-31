@@ -20,8 +20,8 @@ import { SqlitePermissionRepository } from '@infra/persistence/Sqlite.Permission
 import { SqliteProjectRepository } from '@infra/persistence/Sqlite.ProjectRepository'
 import { SecretBox } from '@infra/secrets/Aes.SecretBox'
 
-/** As regras do cadastro de agente nos testes: duas ferramentas conhecidas, todo modelo é do Google. */
-export const TEST_AGENT_RULES = { knownTools: ['alpha_tool', 'beta_tool'], providerOf: () => EProvider.GOOGLE }
+/** As regras do cadastro de agente nos testes: duas ferramentas avulsas e as do terminal e dos arquivos; todo modelo é do Google. */
+export const TEST_AGENT_RULES = { knownTools: ['alpha_tool', 'beta_tool', 'run_bash', 'read_file', 'write_file'], providerOf: () => EProvider.GOOGLE }
 
 /**
  * O CATÁLOGO DE VERDADE EM MEMÓRIA (só para testes): os repositórios SQLite, os serviços de escrita com o histórico

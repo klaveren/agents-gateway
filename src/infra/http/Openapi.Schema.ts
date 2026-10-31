@@ -687,6 +687,24 @@ const selectionBody = {
   keys: { type: 'array', items: { type: 'string' }, description: 'The keys of the selected items of the job' },
   prefix: { type: 'string', description: 'Optional id prefix (lowercase letters, digits and "-", up to 16)' },
 }
+/** A seleção da gravação do importador. */
+const importApplySelection = {
+  type: 'object',
+  properties: {
+    batchId: { type: 'string', description: 'A saved batch: its approved items.' },
+    keys: { type: 'array', items: { type: 'string' }, description: 'Or these items (the approved among them). Neither: every approved item of the job.' },
+    wide: {
+      type: 'object',
+      additionalProperties: { type: 'array', items: { type: 'string' } },
+      description: 'Per agent key: the WIDE translated rules the person includes (none by default).',
+    },
+    models: {
+      type: 'object',
+      additionalProperties: { type: 'object', properties: { provider: { type: 'string' }, model: { type: 'string' } } },
+      description: 'Per agent key: the model it will use.',
+    },
+  },
+}
 const jobParams = [
   { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
   { name: 'job', in: 'path', required: true, schema: { type: 'string' } },
@@ -1864,6 +1882,51 @@ export const OPENAPI_DOCUMENT = {
           '200': { description: 'OK', ...json(envelope(importBatch)) },
           '401': failures['401'],
           '404': failures['404'],
+        },
+      },
+    },
+    '/projects/{id}/import/jobs/{job}/apply/plan': {
+      post: {
+        summary:
+          'The PREVIEW of writing the importer to the catalog: the APPROVED items (of a saved batch, of `keys`, or all of the newest job) become canonical documents — each draft checked again against the source on disk (same sha256, same final text of source + operations; a changed source is 409 `import_source_changed`), the triggers inside their agent, the cited paths as links (`docIds`/`docRefs`/initial context). The agent is born CLOSED: the wide rules of the permission translator stay out unless included in `wide`; its reach (tools and rules) is a later step of the batch, and `resources.skills` is the skills it releases. Returns the catalog plan over those documents (diff, widenings, broken references, missing secrets, order, `planHash`), the agents (model, rules with `wide` and `included`), the active models and what was skipped. Writes nothing. Administrators only',
+        parameters: [...jobParams],
+        requestBody: { required: false, ...json(importApplySelection) },
+        responses: {
+          '200': { description: 'The preview', ...json(envelope({ type: 'object' })) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '409': { description: '`import_job_outdated` (a newer analysis exists) or `import_source_changed` (a source changed on disk)', ...json(failureEnvelope) },
+          '422': failures['422'],
+        },
+      },
+    },
+    '/projects/{id}/import/jobs/{job}/apply': {
+      post: {
+        summary:
+          'WRITES the approved items to the catalog: the same documents as the preview go through POST /catalog/import/apply — a different `planHash` is 409 with the new plan; every widening needs its key in `confirm` (exactly the set) and only an administrator signed in on the screen can accept one (403 for an access token); everything in ONE catalog batch, with provenance (job, repository, HEAD, sources and sha256). Items whose documents were all written become `applied` with the batch id; a batch stopped midway is `partial` (see `revert`). Administrators only',
+        parameters: [...jobParams],
+        requestBody: {
+          required: true,
+          ...json({
+            ...importApplySelection,
+            required: ['planHash'],
+            properties: {
+              ...importApplySelection.properties,
+              planHash: { type: 'string' },
+              confirm: { type: 'array', items: { type: 'string' }, description: 'The widening keys being accepted.' },
+            },
+          }),
+        },
+        responses: {
+          '200': { description: 'Written (see `batch.status` and `items`)', ...json(envelope({ type: 'object' })) },
+          '401': failures['401'],
+          '403': restoreFailures['403'],
+          '404': failures['404'],
+          '409': {
+            description: '`plan_changed` (`details.plan`), `widening_confirmation_required` (`details.widenings`), `import_job_outdated` or `import_source_changed`',
+            ...json(failureEnvelope),
+          },
+          '422': failures['422'],
         },
       },
     },

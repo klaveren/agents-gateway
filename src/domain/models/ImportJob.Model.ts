@@ -5,8 +5,9 @@ import { IImportScan, IInventoryItem, TInventoryKind } from './ImportInventory.M
  * (`docs/integration/plano-importador.md`, PR 6). Reanalisar cria um trabalho novo que reaproveita o estado dos itens
  * pela chave.
  *
- * ⛔ Nada daqui grava no catálogo: até o L5 ganhar o import, o importador vai até `approved`. O histórico do catálogo
- * não cobre o trabalho: cada item tem o seu `by`/`at`.
+ * ⛔ Nada daqui grava no catálogo: quem grava é a gravação pelo catálogo (`ImportApply.Usecase`, PR 9), com o clique
+ * e as confirmações da pessoa; o item aplicado guarda o lote do catálogo (`batchId`). O histórico do catálogo não cobre
+ * o trabalho: cada item tem o seu `by`/`at`.
  *
  * Os estados de um item:
  * - `pending`: a importar (o começo, e o "incluir");
@@ -119,7 +120,7 @@ export interface INewImportJob {
 }
 
 /** A mudança de um item: o estado, a reclassificação (`null` volta ao detectado), e o que mais a regra decidiu. */
-export type TImportItemPatch = Partial<Pick<IImportItemStatus, 'state' | 'basis' | 'by' | 'at' | 'conversationId' | 'drafts' | 'approvedBy' | 'approvedAt'>> & {
+export type TImportItemPatch = Partial<Pick<IImportItemStatus, 'state' | 'basis' | 'by' | 'at' | 'conversationId' | 'drafts' | 'approvedBy' | 'approvedAt' | 'batchId'>> & {
   kind?: TInventoryKind | null
   staleFrom?: TImportItemState | null
   /** A revisão (`null` apaga). */
