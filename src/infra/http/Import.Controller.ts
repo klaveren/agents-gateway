@@ -1,6 +1,7 @@
 import { Request, Response } from 'express'
 import { z } from 'zod'
 import { IMPORT_BATCH_MAX, IMPORT_BATCH_NAME_MAX, ImportBatchService } from '@application/ImportBatch.Service'
+import { ImportBuildError, ImportBuildService } from '@application/ImportBuild.Service'
 import { ImportJobError, ImportJobService } from '@application/ImportJob.Service'
 import { ImportPlanError, ImportPlanUseCase } from '@application/ImportPlan.Usecase'
 import { ImportScanUseCase } from '@application/ImportScan.Usecase'
@@ -28,6 +29,8 @@ export interface IImportControllerDeps {
   jobs?: ImportJobService
   /** Os lotes por seleção de um trabalho. Ausente: as rotas respondem 404. */
   batches?: ImportBatchService
+  /** O construtor em modo importação (conversa por lote e revisão). Ausente: as rotas respondem 404. */
+  build?: ImportBuildService
   projectExists: (projectId: string) => boolean
   ignore?: IImportIgnoreStore
   proof?: ICallerProof
@@ -57,6 +60,13 @@ const itemSchema = z
     kind: z.enum(INVENTORY_KINDS).nullable().optional(),
   })
   .refine((body) => body.state !== undefined || body.kind !== undefined, { message: 'state or kind is required', path: ['state'] })
+const itemKey = z.string().min(1).max(1_000)
+const PROTOCOL_KINDS = ['skill', 'command', 'rule', 'spec', 'adr', 'knowledge', 'agent'] as const
+const builderSchema = z
+  .object({ keys: z.array(itemKey).min(1).max(200).optional(), batchId: z.string().min(1).max(200).optional(), kind: z.enum(PROTOCOL_KINDS).optional() })
+  .refine((body) => body.keys !== undefined || body.batchId !== undefined, { message: 'keys or batchId is required', path: ['keys'] })
+const approveSchema = z.object({ key: itemKey, removals: z.array(z.number().int().min(0)).max(10_000).default([]) })
+const adjustSchema = z.object({ key: itemKey, comment: z.string().min(1).max(4_000) })
 const planSchema = z.object({
   repository: z.string().min(1).max(100),
   agent: z.string().min(1).max(200),
@@ -96,6 +106,9 @@ export class ImportController {
     this.createBatch = this.createBatch.bind(this)
     this.listBatches = this.listBatches.bind(this)
     this.getBatch = this.getBatch.bind(this)
+    this.openBuilder = this.openBuilder.bind(this)
+    this.approveItem = this.approveItem.bind(this)
+    this.adjustItem = this.adjustItem.bind(this)
   }
 
   /** `POST /projects/:id/import/scan { repository, ignore? }` — o inventário do repositório (só leitura, nada persiste). */
@@ -218,6 +231,65 @@ export class ImportController {
     await this.respond(res, 'importBatch', req, async (projectId) => this.jobError(() => this.batches().get(projectId, req.params.job as string, req.params.batch as string)))
   }
 
+  /**
+   * `POST /projects/:id/import/jobs/:job/builder { keys?, batchId?, kind? }` — abre UMA conversa com o construtor do
+   * tipo (em modo importação: sem gravar) para a seleção (`keys`) ou para um LOTE SALVO (`batchId`: os itens dele que
+   * ainda vão ao construtor; `kind` escolhe o construtor quando o lote mistura tipos), e os liga a ela (`drafting`).
+   */
+  async openBuilder(req: Request, res: Response): Promise<void> {
+    await this.respond(res, 'openImportBuilder', req, async (projectId, by, owner) => {
+      const body = parseBody(builderSchema, req.body)
+      return this.buildError(() =>
+        this.build().open(projectId, req.params.job as string, by, {
+          ...(body.keys ? { keys: body.keys } : {}),
+          ...(body.batchId ? { batchId: body.batchId } : {}),
+          ...(body.kind ? { kind: body.kind } : {}),
+          ...(owner ? { owner } : {}),
+        }),
+      )
+    })
+  }
+
+  /**
+   * `POST /projects/:id/import/jobs/:job/items/approve { key, removals }` — aprova o rascunho do item: exige o OK de
+   * TODA remoção (pelo índice da operação) e confere de novo com a fonte. ⛔ Não grava no catálogo.
+   */
+  async approveItem(req: Request, res: Response): Promise<void> {
+    await this.respond(res, 'approveImportItem', req, async (projectId, by) => {
+      const body = parseBody(approveSchema, req.body)
+      return this.buildError(async () => this.build().approve(projectId, req.params.job as string, body.key, body.removals, by))
+    })
+  }
+
+  /** `POST /projects/:id/import/jobs/:job/items/adjust { key, comment }` — pede ajuste: o item volta ao construtor. */
+  async adjustItem(req: Request, res: Response): Promise<void> {
+    await this.respond(res, 'adjustImportItem', req, async (projectId, by) => {
+      const body = parseBody(adjustSchema, req.body)
+      return this.buildError(async () => this.build().adjust(projectId, req.params.job as string, body.key, body.comment, by))
+    })
+  }
+
+  private build(): ImportBuildService {
+    if (!this.deps.build) throw new HttpError(404, 'not_found', 'Not found')
+    return this.deps.build
+  }
+
+  /** O erro do construtor na resposta: o que não existe aqui é 404; estado, fonte mudada e trabalho antigo são conflito. */
+  private async buildError<T>(work: () => Promise<T> | T): Promise<T> {
+    try {
+      return await work()
+    } catch (error) {
+      if (!(error instanceof ImportBuildError)) throw error
+      const details = error.issues.length ? error.issues : error.field ? [{ field: error.field, message: error.message }] : undefined
+      if (error.code === 'not_found' && !error.field) throw new HttpError(404, 'not_found', error.message)
+      if (error.code === 'outdated') throw new HttpError(409, 'import_job_outdated', error.message)
+      if (error.code === 'transition') throw new HttpError(409, 'import_state_conflict', error.message, details)
+      if (error.code === 'source_changed') throw new HttpError(409, 'import_source_changed', error.message, details)
+      if (error.code === 'unavailable') throw new HttpError(409, 'builder_unavailable', error.message)
+      throw new HttpError(422, 'validation_error', error.message, details)
+    }
+  }
+
   private batches(): ImportBatchService {
     if (!this.deps.batches) throw new HttpError(404, 'not_found', 'Not found')
     return this.deps.batches
@@ -247,7 +319,7 @@ export class ImportController {
     return this.deps.ignore
   }
 
-  private async respond<T>(res: Response, operation: string, req: Request, work: (projectId: string, by: string) => Promise<T>): Promise<void> {
+  private async respond<T>(res: Response, operation: string, req: Request, work: (projectId: string, by: string, owner?: Record<string, string>) => Promise<T>): Promise<void> {
     try {
       const projectId = req.params.id as string
       const access = await checkAdminAccess(this.deps.proof)
@@ -257,7 +329,9 @@ export class ImportController {
       }
       if (!this.deps.projectExists(projectId)) throw new HttpError(404, 'not_found', `Project not found: ${projectId}`)
       const by = access.identity?.email ?? access.identity?.id ?? 'admin'
-      res.status(200).json(ok(await work(projectId, by)))
+      const identity = access.identity
+      const owner = identity?.id ? { id: identity.id, ...(identity.email ? { email: identity.email } : {}), ...(identity.account ? { account: identity.account } : {}) } : undefined
+      res.status(200).json(ok(await work(projectId, by, owner)))
     } catch (error: unknown) {
       const failure = toHttpFailure(error)
       if (failure.status >= 500) console.error('[ImportController] Error:', failure.message)

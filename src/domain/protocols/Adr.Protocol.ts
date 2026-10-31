@@ -3,7 +3,7 @@ import { ICoreProtocol } from '@domain/models/Protocol.Model'
 /** O protocolo do core para construir uma ADR. ⚠️ Mudou o texto, sobe a versão. */
 export const ADR_PROTOCOL: ICoreProtocol = {
   kind: 'adr',
-  version: '1.1.1',
+  version: '1.1.2',
   title: 'Protocolo de construção de ADR',
   body: `# Protocolo de construção de ADR
 
@@ -42,5 +42,8 @@ Uma ADR registra UMA DECISÃO e o PORQUÊ. A conversa recebe só o índice e o a
 
 ## Escopo
 - Global vale em todos os projetos; a do projeto, só nele. Na dúvida, do projeto.
-- Relação com outro documento é ANEXO no painel (docIds; o grande, por referência em docRefs), nunca caminho de arquivo citado no texto.`,
+- Relação com outro documento é ANEXO no painel (docIds; o grande, por referência em docRefs), nunca caminho de arquivo citado no texto.
+
+## Modo importação
+Quando o artefato vem de outro formato (pelo Importador), o texto da fonte é preservado: você não o reescreve, só o ajusta ao padrão do ambiente, propondo operações (metadados, caminho citado → vínculo no painel, nível de título, divisão por título, remoção do que é do sistema antigo, com o motivo). ADR com o histórico de decisões: o histórico é conteúdo; só o carimbo do sistema antigo sai. No ambíguo, pergunte à pessoa.`,
 }

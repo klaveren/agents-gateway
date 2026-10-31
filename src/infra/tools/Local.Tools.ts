@@ -25,6 +25,7 @@ import { makeFileTools, realOf } from './File.Tools'
 import type { IEditDiagnostics } from './Edit.Diagnostics'
 import type { IAgentDiagnostics } from '@domain/models/Agent.Model'
 import { ILocalTool, IToolResult } from './Tool.Types'
+import { IImportDesk, makeImportTools } from './Import.Tools'
 
 export interface IExecOptions {
   cwd: string
@@ -87,6 +88,8 @@ export interface ILocalToolDeps {
   docs?: IDocReader
   /** O conferente dos rascunhos do construtor. Ausente = sem `propose_draft`. */
   drafts?: IDraftChecker
+  /** O modo importação do construtor (ver `Import.Tools`). Ausente = sem as ferramentas de importação. */
+  imports?: IImportDesk
   /** Onde fica a lista de tarefas da conversa (o repositório de conversas). Ausente = sem `update_todos`. */
   todos?: ITodoStore
   /** As permissões dos agentes (ver `Permission.Policy`). Ausente = sem regras (só as travas fixas valem). */
@@ -408,6 +411,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     ...(deps.resources?.searchResources ? [searchResourcesTool(deps.resources)] : []),
     ...(deps.triggers ? [agentTriggerTool(deps.triggers, deps.permissions)] : []),
     ...(deps.drafts ? [proposeDraftTool(deps.drafts)] : []),
+    ...(deps.imports ? makeImportTools(deps.imports) : []),
     ...(deps.todos?.saveTodos ? [updateTodosTool(deps.todos)] : []),
   ]
   // ⛔ A chamada repetida é recusada antes de rodar (ver `Loop.Policy`); a edição que deu certo ganha o diagnóstico do

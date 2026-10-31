@@ -180,10 +180,29 @@ export class SqliteImportRepository implements IImportRepository {
     if (patch.staleFrom !== undefined) set('stale_from', patch.staleFrom)
     if (patch.kind !== undefined) set('reclassified_kind', patch.kind)
     if (patch.basis !== undefined) set('basis', patch.basis)
+    if (patch.conversationId !== undefined) set('conversation_id', patch.conversationId)
+    if (patch.drafts !== undefined) set('drafts', JSON.stringify(patch.drafts))
+    if (patch.review !== undefined) set('review', patch.review === null ? null : JSON.stringify(patch.review))
+    if (patch.approvedBy !== undefined) set('approved_by', patch.approvedBy)
+    if (patch.approvedAt !== undefined) set('approved_at', patch.approvedAt.toISOString())
     if (patch.by !== undefined) set('updated_by', patch.by)
     if (patch.at !== undefined) set('updated_at', patch.at.toISOString())
     if (sets.length) this.db.prepare(`UPDATE import_items SET ${sets.join(', ')} WHERE scan_id = ? AND key = ?`).run(...params, jobId, key)
     return this.item(jobId, key)
+  }
+
+  /** ⚖️ O trabalho mais novo (pela data e, no empate, pela gravação) que tem itens desta conversa. */
+  byConversation(conversationId: string): { job: IImportJobRecord; items: IImportJobItem[] } | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT s.${SCAN_COLUMNS.split(', ').join(', s.')} FROM import_scans s
+         WHERE s.id IN (SELECT scan_id FROM import_items WHERE conversation_id = ?) ORDER BY s.scanned_at DESC, s.rowid DESC LIMIT 1`,
+      )
+      .get(conversationId) as TRow | undefined
+    if (!row) return undefined
+    const job = toRecord(row)
+    const items = (this.db.prepare('SELECT * FROM import_items WHERE scan_id = ? AND conversation_id = ? ORDER BY key').all(job.id, conversationId) as TRow[]).map(toItem)
+    return { job, items }
   }
 
   createBatch(batch: IImportBatch): void {

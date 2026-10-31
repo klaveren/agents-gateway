@@ -53,7 +53,7 @@ import { CHANGE_SCOPES, changesOf, fileDiff, headOf, TChangeScope } from '@infra
 import { projectWorkspacePath } from '@infra/adapters/support/Subscription.Workspace'
 import { currentBranch, IWorkFolder, resolveWorkFolder, WorkFolderError } from '@infra/workspace/Work.Folder'
 import { deliverCallback } from './Turn.Callbacks'
-import { BUILDER_METADATA_KEY, builderKindOf, CORE_AGENT_IDS } from '@domain/Builder.Agents'
+import { BUILDER_METADATA_KEY, builderKindOf, CORE_AGENT_IDS, IMPORT_METADATA_KEY } from '@domain/Builder.Agents'
 import { IAgentProviderFacts, toAgentDetailDto, toAgentDto } from './Agent.Dto'
 import { assertNoAdkTemplateCollision } from '@infra/adapters/GoogleAgent.Adapter'
 import { IConversationView, toConversationDto, toStatsDto, toTurnDto } from './Conversation.Dto'
@@ -787,7 +787,8 @@ export class AgentController {
         if (callbackUrl && !this.usecases.callbackAllowed?.(callbackUrl))
           throw new HttpError(422, 'validation_error', 'Request body is invalid', [{ field: 'callbackUrl', message: 'host not in TURN_CALLBACK_HOSTS' }])
         // ⛔ A marca de construção também é só do servidor: vem do agente, nunca do corpo (esconderia a conversa da caixa).
-        const { [BUILDER_METADATA_KEY]: _builder, ...declared } = metadata ?? {}
+        // A marca da importação idem: só a rota do Importador a escreve.
+        const { [BUILDER_METADATA_KEY]: _builder, [IMPORT_METADATA_KEY]: _import, ...declared } = metadata ?? {}
         const building = builderKindOf(body.agentId)
         const stamped = {
           ...declared,

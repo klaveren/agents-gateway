@@ -1,7 +1,7 @@
 import { AgentCatalog } from '@application/Agent.Catalog'
 import { AGENT_SEED } from '@domain/Agent.Seed'
 import { AGENT_MIGRATIONS } from '@domain/Agent.Migrations'
-import { builderAgent, PROTOCOLS } from '@domain/Builder.Agents'
+import { builderAgent, importBuilderAgent, PROTOCOLS } from '@domain/Builder.Agents'
 import { IAgentSettings } from '@domain/models/Settings.Model'
 import { IAgent } from '@domain/models/Agent.Model'
 import { TProtocolKind } from '@domain/models/Protocol.Model'
@@ -84,7 +84,9 @@ function coreAgents(catalog: AgentCatalog): IAgent[] {
   const fallback = atlas ? targetFor(atlas, undefined, undefined, (target) => catalog.isTargetRunnable(atlas, target)) : undefined
   const chosen = settings?.builderProvider && settings.builderModel ? { provider: settings.builderProvider, model: settings.builderModel } : fallback
   if (!chosen) return []
-  return (Object.keys(PROTOCOLS) as TProtocolKind[]).map((kind) => builderAgent(kind, { provider: chosen.provider, models: [chosen.model] }))
+  const target = { provider: chosen.provider, models: [chosen.model] }
+  // O construtor de cada tipo e a variante dele em modo importação (sem gravar), no mesmo modelo.
+  return (Object.keys(PROTOCOLS) as TProtocolKind[]).flatMap((kind) => [builderAgent(kind, target), importBuilderAgent(kind, target)])
 }
 
 function build(): IAgentRepository {

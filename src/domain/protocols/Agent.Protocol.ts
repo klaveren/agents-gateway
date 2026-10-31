@@ -3,7 +3,7 @@ import { ICoreProtocol } from '@domain/models/Protocol.Model'
 /** O protocolo do core para construir um AGENTE. ⚠️ Mudou o texto, sobe a versão. */
 export const AGENT_PROTOCOL: ICoreProtocol = {
   kind: 'agent',
-  version: '1.2.2',
+  version: '1.2.3',
   title: 'Protocolo de construção de agente',
   body: `# Protocolo de construção de agente
 
@@ -75,5 +75,8 @@ Um trigger é o procedimento de uma situação, carregado sob demanda. O corpo:
 \`\`\`
 
 ## A soul
-Três a seis frases: quem é, o tom (formal, direto, didático…), o que valoriza, o que não faz. Sem regra operacional — essa é do prompt.`,
+Três a seis frases: quem é, o tom (formal, direto, didático…), o que valoriza, o que não faz. Sem regra operacional — essa é do prompt.
+
+## Modo importação
+Quando o artefato vem de outro formato (pelo Importador), o texto da fonte é preservado: você não o reescreve, só o ajusta ao padrão do ambiente, propondo operações (metadados, caminho citado → vínculo no painel, nível de título, divisão por título, remoção do que é do sistema antigo, com o motivo). Identity, soul e prompt da origem são juntados (compose) na soul e no prompt, na ordem, sem reescrever; cada trigger é um item à parte; permissões e modelos não passam por você. No ambíguo, pergunte à pessoa.`,
 }

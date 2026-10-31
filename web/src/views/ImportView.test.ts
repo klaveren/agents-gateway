@@ -567,7 +567,8 @@ describe('ImportView', () => {
     expect(widenings).toContain('liberaria TODAS as skills')
     expect(batch.querySelector('[data-test="skills"]')!.textContent).toContain('akm-revisar')
     expect(batch.querySelector('[data-test="reach-row"].bg-amber-500\\/10')).not.toBeNull()
-    const labels = [...host.querySelectorAll('button')].map((button) => button.textContent!.trim())
+    // ⛔ Nada que grave no catálogo; o único "Importar" é o que abre a conversa do construtor (que não grava).
+    const labels = [...host.querySelectorAll('button')].map((button) => button.textContent!.trim()).filter((label) => !label.startsWith('Importar com o construtor'))
     for (const word of ['Gravar', 'Transformar', 'Aplicar', 'Importar']) expect(labels.some((label) => label.includes(word))).toBe(false)
   })
 
@@ -639,7 +640,8 @@ describe('ImportView', () => {
     expect(host.querySelector('[data-test="batches"]')!.textContent).toContain('Deploy')
     expect(host.querySelector('[data-test="save-batch"]')).toBeNull()
 
-    const labels = [...host.querySelectorAll('button')].map((button) => button.textContent!.trim())
+    // ⛔ Nada que grave no catálogo; o único "Importar" é o que abre a conversa do construtor (que não grava).
+    const labels = [...host.querySelectorAll('button')].map((button) => button.textContent!.trim()).filter((label) => !label.startsWith('Importar com o construtor'))
     for (const word of ['Gravar', 'Transformar', 'Aplicar', 'Importar', 'Disparar']) expect(labels.some((label) => label.includes(word))).toBe(false)
 
     host.querySelector<HTMLButtonElement>('[data-test="pick-clear"]')!.click()
@@ -693,6 +695,49 @@ describe('ImportView', () => {
     expect(batch.textContent).toContain('Lote Commands')
     expect(batch.querySelectorAll('[data-test="step"]')).toHaveLength(2)
     expect(batch.querySelector('[data-test="save-batch"]')).toBeNull()
+  })
+
+  it('"Importar com o construtor": uma conversa por construtor, para a seleção ou para o lote salvo; o item fica em drafting', async () => {
+    const stored: IImportBatchView = {
+      id: 'b9',
+      jobId: 'j7',
+      name: 'Misto',
+      prefix: '',
+      keys: ['skill:deploy', 'command:ship'],
+      order: ['skill:deploy', 'command:ship'],
+      by: 'bia@x.test',
+      at: '2026-10-30T11:00:00.000Z',
+      plan: selectionPlan(['skill:deploy', 'command:ship']),
+    }
+    const host = await mount(SMALL, { jobs: [savedJob('j7', SMALL)], analyze: false, batches: { j7: [stored] } })
+    const base = vi.mocked(api).getMockImplementation()!
+    vi.mocked(api).mockImplementation(async (path: string, request?: { method?: string; body?: unknown }) => {
+      if (path.endsWith('/builder')) {
+        const body = request!.body as { keys?: string[]; kind?: string }
+        return { conversationId: 'conv-1', kind: body.kind ?? 'skill', agentId: 'builder-import-skill', keys: body.keys ?? ['skill:deploy'] }
+      }
+      return base(path, request as never)
+    })
+    host.querySelector<HTMLButtonElement>('[data-test="job"]')!.click()
+    await flush()
+    // A seleção mistura skill e command: um botão por construtor.
+    for (const box of host.querySelectorAll<HTMLInputElement>('[data-test="pick"]')) if (!box.closest('li')!.textContent!.includes('notes')) box.click()
+    await flush()
+    const picked = [...host.querySelectorAll<HTMLButtonElement>('[data-test="build-picked"]')].map((button) => button.textContent!.trim())
+    expect(picked).toEqual(['Importar com o construtor (skill, 1)', 'Importar com o construtor (command, 1)'])
+    host.querySelector<HTMLButtonElement>('[data-test="build-picked"]')!.click()
+    await flush()
+    expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/jobs/j7/builder', { method: 'POST', body: { keys: ['skill:deploy'] } })
+    // A skill já tem conversa: sai dos botões.
+    expect([...host.querySelectorAll('[data-test="build-picked"]')].map((button) => button.textContent!.trim())).toEqual(['Importar com o construtor (command, 1)'])
+    // O lote salvo aberto: o que dele ainda vai ao construtor, pelo id do lote e o construtor.
+    host.querySelector<HTMLButtonElement>('[data-test="batch-entry"]')!.click()
+    await flush()
+    const saved = host.querySelectorAll<HTMLButtonElement>('[data-test="build-saved-batch"]')
+    expect([...saved].map((button) => button.textContent!.trim())).toEqual(['Importar com o construtor (command, 1)'])
+    saved[0].click()
+    await flush()
+    expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/jobs/j7/builder', { method: 'POST', body: { batchId: 'b9', kind: 'command' } })
   })
 
   it('⛔ no trabalho antigo a prévia vale, mas o lote não é salvo', async () => {

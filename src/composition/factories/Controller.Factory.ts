@@ -56,6 +56,10 @@ import { makeAuth } from './Auth.Factory'
 import { importJobRepository } from './ImportJobs.Factory'
 import { makeSettings } from './Settings.Factory'
 import { makeUsecases } from './Usecases.Factory'
+import { makeImportBuild, useImportOpener } from './ImportBuild.Factory'
+import { BUILDER_METADATA_KEY } from '@domain/Builder.Agents'
+import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
+import { EMode } from '@domain/enums/EMode.Enum'
 
 /** O último controller de agentes montado: as regras do cadastro de agente moram nele (o rollback as usa). */
 let agentController: AgentController | undefined
@@ -63,6 +67,17 @@ let agentController: AgentController | undefined
 export function makeController(): AgentController {
   const usecases = makeUsecases()
   const { catalog } = makeTools()
+  // ⛔ A conversa do construtor em modo importação nasce pelos MESMOS casos de uso das conversas, com as marcas que só o
+  // servidor escreve: o dono, o projeto, a construção (fora da caixa de entrada) e a importação.
+  useImportOpener(async (input) => {
+    const session = await usecases.createSessionUseCase.execute({
+      agentId: input.agentId,
+      mode: EMode.AGENT,
+      adminAccess: true,
+      metadata: { ...input.metadata, ...(input.owner ? { owner: input.owner } : {}), [PROJECT_METADATA_KEY]: input.projectId, [BUILDER_METADATA_KEY]: input.kind },
+    })
+    return session.id
+  })
 
   const controller = new AgentController({
     catalog,
@@ -279,6 +294,7 @@ export function makeImportController(): ImportController {
   return new ImportController({
     scan,
     jobs: new ImportJobService({ repository: importJobRepository(), scan: (projectId, repository, options) => scan.execute(projectId, repository, options) }),
+    build: makeImportBuild(),
     batches: new ImportBatchService({ repository: importJobRepository(), catalogState: (query) => scan.catalogState(query) }),
     projectExists: (projectId) => projects.exists(projectId),
     ignore: { get: (projectId) => projects.importIgnore(projectId), set: (projectId, patterns, by) => projects.setImportIgnore(projectId, patterns, by) },

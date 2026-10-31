@@ -1,6 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, inject } from 'vue'
+import { routerKey } from 'vue-router'
+import ImportItemReview from '@/components/ImportItemReview.vue'
+import { BUILD_KINDS } from '@/lib/builder'
 import { fullTime, tokens } from '@/lib/format'
+import { buildLink, builderKindFor, type IImportBuildStatus, lastDraft } from '@/lib/importDraft'
 import {
   bytesLabel,
   CATALOG_HINT,
@@ -41,8 +45,39 @@ const props = defineProps<{
   /** Uma mudança do item está a caminho do servidor. */
   busy?: boolean
   error?: string
+  /** A conversa do construtor está sendo aberta para este item. */
+  building?: boolean
+  /** O erro da revisão (aprovar, pedir ajuste) ou da abertura da conversa. */
+  reviewError?: string
 }>()
-const emit = defineEmits<{ select: [key: string]; reclassify: [kind: TInventoryKind | undefined]; state: [state: 'pending' | 'skipped']; close: []; plan: [] }>()
+const emit = defineEmits<{
+  select: [key: string]
+  reclassify: [kind: TInventoryKind | undefined]
+  state: [state: 'pending' | 'skipped']
+  close: []
+  plan: []
+  build: []
+  approve: [oks: number[]]
+  adjust: [comment: string]
+}>()
+
+const router = inject(routerKey, null)
+function go(path: string) {
+  if (router) void router.push(path)
+  else window.location.assign(path)
+}
+
+/** O construtor do tipo (o trigger vai ao de agentes) e o que o construtor e a revisão gravaram no item. */
+const builder = computed(() => builderKindFor(props.kind))
+const build = computed(() => props.status as IImportBuildStatus | undefined)
+const draft = computed(() => lastDraft(build.value))
+const conversationLink = computed(() => (builder.value && build.value?.conversationId ? buildLink(builder.value, build.value.conversationId) : undefined))
+/** Vai (ou volta) ao construtor: sem conversa, ou de um estado que recomeça (rejeitado, erro, fonte mudada). */
+const canBuild = computed(() => {
+  if (props.readonly || !builder.value) return false
+  if (['pending', 'rejected', 'error', 'stale'].includes(state.value)) return true
+  return state.value === 'drafting' && !build.value?.conversationId
+})
 
 const state = computed(() => props.status?.state ?? 'pending')
 const canExclude = computed(() => !props.readonly && EXCLUDABLE_STATES.includes(state.value))
@@ -96,6 +131,35 @@ function onReclassify(event: Event) {
       <p class="text-xs text-zinc-500">{{ STATE_HINT[state] }}.<template v-if="status?.by"> Última mudança por {{ status.by }}<template v-if="status.at"> em {{ fullTime(status.at) }}</template>.</template></p>
       <p v-if="error" class="text-xs text-rose-300" data-test="item-error">{{ error }}</p>
     </section>
+
+    <section v-if="builder && (canBuild || conversationLink)" class="flex flex-col gap-1.5 rounded-xl border border-emerald-500/30 px-3 py-2" data-test="builder">
+      <div class="flex flex-wrap items-center gap-2">
+        <button v-if="canBuild" type="button" class="btn btn-primary btn-sm" :disabled="building" data-test="build" @click="emit('build')">
+          {{ building ? 'Abrindo…' : 'Importar com o construtor' }}
+        </button>
+        <a v-if="conversationLink" :href="conversationLink" class="text-xs text-emerald-300 hover:underline" data-test="open-conversation" @click.prevent="go(conversationLink)">Abrir a conversa do construtor</a>
+      </div>
+      <p class="text-xs text-zinc-500">
+        Uma conversa com o {{ BUILD_KINDS[builder].builder }}, em modo importação: ele lê a fonte pelo servidor e propõe só operações (o texto não muda). A revisão fica aqui. Nada vai ao
+        catálogo.
+      </p>
+      <p v-if="reviewError && !draft" class="text-xs text-rose-300" data-test="build-error">{{ reviewError }}</p>
+    </section>
+
+    <ImportItemReview
+      v-if="draft && ['drafting', 'review', 'approved'].includes(state)"
+      :draft="draft"
+      :state="state"
+      :review="build?.review"
+      :approved-by="build?.approvedBy"
+      :approved-at="build?.approvedAt"
+      :conversation-link="conversationLink"
+      :readonly="readonly"
+      :busy="busy"
+      :error="reviewError"
+      @approve="emit('approve', $event)"
+      @adjust="emit('adjust', $event)"
+    />
 
     <section v-if="item.kind === 'agent'" class="flex flex-col gap-1.5 rounded-xl border border-emerald-500/30 px-3 py-2">
       <button type="button" class="btn btn-primary btn-sm self-start" :disabled="planning" data-test="plan" @click="emit('plan')">{{ planning ? 'Montando…' : 'Montar lote' }}</button>

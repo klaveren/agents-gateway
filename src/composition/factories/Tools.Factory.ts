@@ -17,6 +17,7 @@ import { IEditDiagnostics, makeEditDiagnostics } from '@infra/tools/Edit.Diagnos
 import { DEFAULT_MCP_SERVER, ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { makeAgents } from './Agents.Factory'
 import { makeCredentials } from './Credentials.Factory'
+import { makeImportBuild } from './ImportBuild.Factory'
 
 export interface ITools {
   /** Onde a ferramenta `delegate_to_agent` encontra o serviço (preenchido em `makeUsecases`). */
@@ -79,6 +80,11 @@ export function makeTools(): ITools {
             saveTriggers: (agentId, triggers, by) => makeAgents().saveTriggers(agentId, triggers, by),
           },
           drafts: makeGuidance(),
+          imports: {
+            listText: (conversationId) => makeImportBuild().listText(conversationId),
+            readSource: (conversationId, key, options) => makeImportBuild().readSource(conversationId, key, options),
+            propose: (conversationId, key, meta, ops) => makeImportBuild().propose(conversationId, key, meta, ops),
+          },
           todos: todoStore(),
           permissions: lazyPermissions,
           agentTerminal: (agentId) => makeAgents().get(agentId)?.terminal,

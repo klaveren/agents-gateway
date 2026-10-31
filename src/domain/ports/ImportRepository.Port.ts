@@ -23,6 +23,11 @@ export interface IImportRepository {
   item(jobId: string, key: string): IImportJobItem | undefined
   /** Muda o estado, a reclassificação e o autor do item; devolve como ficou. */
   updateItem(jobId: string, key: string, patch: TImportItemPatch): IImportJobItem | undefined
+  /**
+   * Os itens ligados a uma conversa do construtor, no trabalho MAIS NOVO em que ela aparece (a reanálise copia a
+   * conversa para o trabalho novo; o antigo é registro).
+   */
+  byConversation(conversationId: string): { job: IImportJobRecord; items: IImportJobItem[] } | undefined
   /** Guarda um lote do trabalho (a seleção, com nome, ordem, autor e hora). */
   createBatch(batch: IImportBatch): void
   /** Os lotes do trabalho, do mais novo ao mais velho. */

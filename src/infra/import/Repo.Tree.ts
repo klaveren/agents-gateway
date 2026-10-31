@@ -196,3 +196,31 @@ export function readRepoTree(root: string, options: IRepoTreeOptions): IRepoTree
     refusedLinks: () => [...refused],
   }
 }
+
+/** Um arquivo lido sozinho (`readRepoFile`): o `sha256` do conteúdo cru e o texto mascarado. */
+export interface IRepoFileRead {
+  sha256: string
+  text: string
+  binary: boolean
+}
+
+/**
+ * ⛔ UM arquivo do repositório, com a MESMA contenção da árvore, sem varrer o resto: o caminho (relativo à raiz) é
+ * resolvido com `realpath` e recusado se sai da raiz ou passa por pasta ignorada. O texto sai MASCARADO; o `sha256` é o
+ * do conteúdo cru (o mesmo do inventário), para conferir se a fonte mudou.
+ */
+export function readRepoFile(root: string, path: string, options: IRepoTreeOptions): IRepoFileRead | undefined {
+  const clean = path.replace(/^\.\//, '')
+  if (!clean || isAbsolute(clean) || clean.split('/').includes('..') || hasIgnoredSegment(clean)) return undefined
+  try {
+    const realRoot = realpathSync(root)
+    const absolute = realpathSync(join(realRoot, clean))
+    if (!inside(realRoot, absolute) || hasIgnoredSegment(toPosix(relative(realRoot, absolute))) || !statSync(absolute).isFile()) return undefined
+    const buffer = readFileSync(absolute)
+    const sha256 = createHash('sha256').update(buffer).digest('hex')
+    if (buffer.subarray(0, BINARY_SNIFF).includes(0)) return { sha256, text: '', binary: true }
+    return { sha256, text: options.mask(buffer.toString('utf8')), binary: false }
+  } catch {
+    return undefined
+  }
+}
