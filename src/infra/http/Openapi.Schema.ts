@@ -2104,6 +2104,53 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/catalog/export': {
+      get: {
+        summary:
+          'Exports the catalog as a package: text items (skills, commands, rules, specs, ADRs, knowledge, protocol addenda) as `.md` with frontmatter, structure (agents, MCPs, project, project permissions) as canonical JSON, under `global/` and `projects/<id>/`, plus `catalog.json` (the manifest, with the sha256 of every file). No secret leaves: the canonical documents carry none, and every text field (bodies, agent env, MCP url and args) also goes through the secret mask; `manifest.masked` lists what was masked (file, field, layer), never the value. Administrators only (404 for the others)',
+        parameters: [
+          { name: 'scope', in: 'query', schema: { type: 'string', default: 'all' }, description: '`all`, `global` or `project` (with `project`); `project:<id>` also works.' },
+          { name: 'project', in: 'query', schema: { type: 'string' }, description: 'The project of `scope=project`.' },
+          {
+            name: 'format',
+            in: 'query',
+            schema: { type: 'string', enum: ['tar', 'json'], default: 'tar' },
+            description: '`tar`: a `.tar.gz` with the `catalog/` folder; `json`: `{ manifest, files }`.',
+          },
+        ],
+        responses: {
+          '200': {
+            description: 'The package',
+            content: {
+              'application/gzip': { schema: { type: 'string', format: 'binary' } },
+              'application/json': {
+                schema: envelope({
+                  type: 'object',
+                  properties: {
+                    manifest: {
+                      type: 'object',
+                      properties: {
+                        format: { type: 'integer' },
+                        scope: { type: 'string' },
+                        gateway: { type: 'string' },
+                        exportedAt: { type: 'string', format: 'date-time' },
+                        exportedBy: { type: 'string' },
+                        files: { type: 'object', additionalProperties: { type: 'string' } },
+                        masked: { type: 'array', items: { type: 'object' } },
+                      },
+                    },
+                    files: { type: 'object', additionalProperties: { type: 'string' }, description: 'Path → content (UTF-8, LF), `catalog.json` included.' },
+                  },
+                }),
+              },
+            },
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
     '/rules': {
       get: {
         summary:

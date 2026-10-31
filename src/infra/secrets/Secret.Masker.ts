@@ -81,6 +81,24 @@ export class SecretMasker {
     return maskDeep(value, known, options) as T
   }
 
+  /**
+   * Um valor mascarado e os acertos DESTA chamada (o export do catálogo lista o que trocou, sem o valor). `key` é o nome
+   * do campo: ancora a forma como no `deep` (`GH_TOKEN: <opaco>` sai mascarado mesmo sem formato de token).
+   */
+  scan(value: string, key?: string): { text: string; hits: IMaskHit[] } {
+    const hits: IMaskHit[] = []
+    const { known, options } = this.context(undefined)
+    const scoped = {
+      ...options,
+      onHit: (hit: IMaskHit) => {
+        hits.push(hit)
+        options.onHit(hit)
+      },
+    }
+    const text = key === undefined ? maskText(value, known, scoped) : (maskDeep({ [key]: value }, known, scoped) as Record<string, string>)[key]
+    return { text, hits }
+  }
+
   /** O comando traz um segredo conhecido escrito por extenso? (Ele roda; o aviso ensina a usar a variável.) */
   literalIn(command: string, sessionId?: string): string | undefined {
     return this.context(sessionId).known.find((secret) => command.includes(secret.value))?.label

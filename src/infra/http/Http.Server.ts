@@ -285,6 +285,8 @@ function buildRoutes(
     // O rollback (só admin): restaurar uma revisão (o item vai no corpo, como na query acima) e reverter um lote.
     { method: 'post', path: '/catalog/history/restore', handler: catalog.restore },
     { method: 'post', path: '/catalog/batches/:batchId/revert', handler: catalog.revertBatch },
+    // O export do pacote (só admin): `.tar.gz` ou `{ manifest, files }` (`format=json`).
+    { method: 'get', path: '/catalog/export', handler: catalog.exportCatalog },
     { method: 'get', path: '/secret-mask', handler: secretMask.get },
     { method: 'put', path: '/secret-mask/values/:id', handler: secretMask.saveValue },
     { method: 'delete', path: '/secret-mask/values/:id', handler: secretMask.removeValue },

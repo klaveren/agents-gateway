@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { installationRules, makePermissions } from './Permissions.Factory'
 import { makeProjectAccounts } from './ProjectAccounts.Factory'
 import { callbackAllowed } from '@infra/http/Turn.Callbacks'
@@ -25,6 +27,7 @@ import { ImportController } from '@infra/http/Import.Controller'
 import { CatalogController } from '@infra/http/Catalog.Controller'
 import { catalogHistoryParts, makeCatalogHistory, makeCatalogHistoryQuery } from './CatalogHistory.Factory'
 import { CatalogRestoreUseCase } from '@application/CatalogRestore.Usecase'
+import { CatalogExportUseCase } from '@application/CatalogExport.Usecase'
 import { CatalogWriter } from '@application/Catalog.Writer'
 import { isLaunchedMcp, mcpServerKey } from '@domain/models/McpServer.Model'
 import { removeInstall } from '@infra/mcp/Mcp.Install'
@@ -182,9 +185,30 @@ export function makeGuidanceController(): GuidanceController {
   return new GuidanceController({ guidance: makeGuidance(), proof: makeAuth().proof })
 }
 
-/** O histórico do catálogo: admin lê tudo e faz o rollback; o membro, só lê o MCP dos projetos dele. */
+/** O histórico do catálogo: admin lê tudo, faz o rollback e exporta; o membro, só lê o MCP dos projetos dele. */
 export function makeCatalogController(): CatalogController {
-  return new CatalogController({ history: makeCatalogHistoryQuery(), proof: makeAuth().proof, projects: makeProjects(), restore: makeCatalogRestore() })
+  return new CatalogController({
+    history: makeCatalogHistoryQuery(),
+    proof: makeAuth().proof,
+    projects: makeProjects(),
+    restore: makeCatalogRestore(),
+    exporter: makeCatalogExport(),
+  })
+}
+
+/** O export: o MESMO leitor do histórico e a MESMA máscara de segredos do gateway (valores conhecidos e nomes da tela). */
+function makeCatalogExport(): CatalogExportUseCase {
+  const version = gatewayVersion()
+  return new CatalogExportUseCase({ reader: catalogHistoryParts().reader, mask: makeSecretMasker(), ...(version ? { version } : {}) })
+}
+
+/** A versão do `package.json` da raiz (o mesmo nível em `src/` e em `dist/`); sem ele, o manifesto sai sem versão. */
+function gatewayVersion(): string | undefined {
+  try {
+    return (JSON.parse(readFileSync(join(__dirname, '..', '..', '..', 'package.json'), 'utf8')) as { version?: string }).version
+  } catch {
+    return undefined
+  }
 }
 
 /**

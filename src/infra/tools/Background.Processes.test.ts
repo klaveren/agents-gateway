@@ -22,7 +22,11 @@ const alive = (marker: string) => {
     return false
   }
 }
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+/** Espera a condição valer (até 10 s): um prazo fixo curto falhava com a suíte inteira rodando em paralelo. */
+async function until(condition: () => boolean): Promise<void> {
+  const deadline = Date.now() + 10_000
+  while (!condition() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10))
+}
 
 describe('Background.Processes (o terminal longo)', () => {
   it('a saída longa mostra o começo e o FIM (onde está o erro), e diz onde ler o resto', () => {
@@ -39,7 +43,7 @@ describe('Background.Processes (o terminal longo)', () => {
     const result = await startCommand(`(${marker}) & echo comecou; wait`, { cwd: root, env: { PATH: process.env.PATH! }, shell: '/bin/bash', timeoutMs: 400 }).done
     assert.strictEqual(result.timedOut, true)
     assert.match(result.output, /comecou/)
-    await sleep(300)
+    await until(() => !alive(marker))
     assert.strictEqual(alive(marker), false)
   })
 
@@ -84,8 +88,10 @@ describe('o terminal com o executor novo (spawn)', () => {
     const list = tools()
     const started = await find(list, 'bash_start').execute({ command: 'while true; do echo vivo; sleep 0.1; done', name: 'watch' }, context)
     const id = String(/id (\w+)/.exec(started.result)?.[1])
-    await sleep(400)
-    assert.match((await find(list, 'bash_logs').execute({ id, tail: 2 }, context)).result, /running[\s\S]*vivo/)
+    const read = async () => (await find(list, 'bash_logs').execute({ id, tail: 2 }, context)).result
+    let logs = await read()
+    for (const deadline = Date.now() + 10_000; !/vivo/.test(logs) && Date.now() < deadline; logs = await read()) await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.match(logs, /running[\s\S]*vivo/)
     assert.match((await find(list, 'bash_list').execute({}, context)).result, new RegExp(`${id} · segundo plano · running`))
     assert.match((await find(list, 'bash_stop').execute({ id }, context)).result, /stopped/)
     for (let index = 0; index < 5; index++) await find(list, 'bash_start').execute({ command: 'sleep 30' }, context)
