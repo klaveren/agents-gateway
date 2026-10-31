@@ -3,6 +3,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Icon from '@/components/Icon.vue'
 import BuildTabs from '@/components/BuildTabs.vue'
+import HistoryPanel from '@/components/HistoryPanel.vue'
+import HistoryTabs from '@/components/HistoryTabs.vue'
 import ThreadView from '@/components/ThreadView.vue'
 import { api } from '@/lib/api'
 import { BUILD_KINDS, builderAgentId, latestDraft, pendingDraft, type TBuildKind } from '@/lib/builder'
@@ -211,6 +213,9 @@ const protocolError = ref<string>()
 const addenda = ref({ global: '', project: '' })
 const saving = ref<'global' | 'project'>()
 const saved = ref<'global' | 'project'>()
+/** A guia de cada complemento: o texto ou o histórico dele (o id do complemento é o tipo, ou `<projeto>/<tipo>`). */
+const addendumTab = ref<Record<'global' | 'project', 'edit' | 'history'>>({ global: 'edit', project: 'edit' })
+const addendumId = (scope: 'global' | 'project') => (scope === 'project' ? `${scopeProject.value}/${props.kind}` : props.kind)
 const currentProjectName = computed(() => projects.list.find((project) => project.id === scopeProject.value)?.name ?? scopeProject.value)
 
 async function loadProtocol() {
@@ -439,46 +444,54 @@ function describe(failure: unknown): string {
           <section class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-4">
             <h2 class="font-semibold">Complemento global</h2>
             <p class="text-xs text-zinc-500">Vale em todos os projetos e prevalece sobre o protocolo.</p>
-            <textarea
-              v-model="addenda.global"
-              rows="6"
-              class="input font-mono text-[13px]"
-              placeholder="Ex.: a descrição é sempre em português; o id começa pelo tema (infra-, api-…)."
-            />
-            <small v-if="addenda.global" class="hint">{{ sizeHint(addenda.global, 'em cada conversa do construtor') }}</small>
-            <div class="flex items-center gap-3">
-              <button
-                :disabled="saving === 'global'"
-                class="btn btn-primary"
-                @click="saveAddendum('global')"
-              >
-                Salvar
-              </button>
-              <span v-if="saved === 'global'" class="text-xs text-emerald-300">Salvo. Vale para as próximas conversas.</span>
-              <span v-else-if="protocol.addenda.global" class="text-xs text-zinc-500">
-                {{ shortTime(protocol.addenda.global.updatedAt) }} · {{ protocol.addenda.global.updatedBy }}
-              </span>
-            </div>
+            <HistoryTabs v-model="addendumTab.global" edit-label="Complemento" />
+            <HistoryPanel v-if="addendumTab.global === 'history'" kind="protocol" :id="addendumId('global')" @restored="loadProtocol" />
+            <template v-else>
+              <textarea
+                v-model="addenda.global"
+                rows="6"
+                class="input font-mono text-[13px]"
+                placeholder="Ex.: a descrição é sempre em português; o id começa pelo tema (infra-, api-…)."
+              />
+              <small v-if="addenda.global" class="hint">{{ sizeHint(addenda.global, 'em cada conversa do construtor') }}</small>
+              <div class="flex items-center gap-3">
+                <button
+                  :disabled="saving === 'global'"
+                  class="btn btn-primary"
+                  @click="saveAddendum('global')"
+                >
+                  Salvar
+                </button>
+                <span v-if="saved === 'global'" class="text-xs text-emerald-300">Salvo. Vale para as próximas conversas.</span>
+                <span v-else-if="protocol.addenda.global" class="text-xs text-zinc-500">
+                  {{ shortTime(protocol.addenda.global.updatedAt) }} · {{ protocol.addenda.global.updatedBy }}
+                </span>
+              </div>
+            </template>
           </section>
 
           <section v-if="scopeProject" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-4">
             <h2 class="font-semibold">Complemento do projeto {{ currentProjectName }}</h2>
             <p class="text-xs text-zinc-500">Vale só neste projeto.</p>
-            <textarea v-model="addenda.project" rows="6" class="input font-mono text-[13px]" />
-            <small v-if="addenda.project" class="hint">{{ sizeHint(addenda.project, 'em cada conversa do construtor') }}</small>
-            <div class="flex items-center gap-3">
-              <button
-                :disabled="saving === 'project'"
-                class="btn btn-primary"
-                @click="saveAddendum('project')"
-              >
-                Salvar
-              </button>
-              <span v-if="saved === 'project'" class="text-xs text-emerald-300">Salvo. Vale para as próximas conversas.</span>
-              <span v-else-if="protocol.addenda.project" class="text-xs text-zinc-500">
-                {{ shortTime(protocol.addenda.project.updatedAt) }} · {{ protocol.addenda.project.updatedBy }}
-              </span>
-            </div>
+            <HistoryTabs v-model="addendumTab.project" edit-label="Complemento" />
+            <HistoryPanel v-if="addendumTab.project === 'history'" kind="protocol" :id="addendumId('project')" @restored="loadProtocol" />
+            <template v-else>
+              <textarea v-model="addenda.project" rows="6" class="input font-mono text-[13px]" />
+              <small v-if="addenda.project" class="hint">{{ sizeHint(addenda.project, 'em cada conversa do construtor') }}</small>
+              <div class="flex items-center gap-3">
+                <button
+                  :disabled="saving === 'project'"
+                  class="btn btn-primary"
+                  @click="saveAddendum('project')"
+                >
+                  Salvar
+                </button>
+                <span v-if="saved === 'project'" class="text-xs text-emerald-300">Salvo. Vale para as próximas conversas.</span>
+                <span v-else-if="protocol.addenda.project" class="text-xs text-zinc-500">
+                  {{ shortTime(protocol.addenda.project.updatedAt) }} · {{ protocol.addenda.project.updatedBy }}
+                </span>
+              </div>
+            </template>
           </section>
           <p v-else-if="project !== null" class="text-xs text-zinc-500">Escolha um projeto para ver e editar o complemento dele.</p>
         </template>

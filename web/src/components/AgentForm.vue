@@ -35,6 +35,7 @@
   import PermissionTester from './PermissionTester.vue'
   import AgentInitialContext from './AgentInitialContext.vue'
   import AgentResources from './AgentResources.vue'
+  import HistoryPanel from './HistoryPanel.vue'
   import ConfirmDialog from './ConfirmDialog.vue'
 
   const props = defineProps<{ agent?: IAgentDetail; creating: boolean }>()
@@ -349,7 +350,7 @@
    * As guias do formulário: o texto do agente na primeira, e cada grupo de capacidades na sua. A contagem diz
    * quanto está escolhido sem abrir a guia; o ponto vermelho, que o servidor recusou algo ali.
    */
-  type TTab = 'agente' | 'triggers' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos'
+  type TTab = 'agente' | 'triggers' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos' | 'historico'
   // `#agendamentos` no link (a visão geral dos agendamentos) abre direto na guia.
   /** O nome das ferramentas do gateway na guia Ferramentas (o id técnico fica na dica). */
   const LOCAL_TOOL_LABEL: Record<string, string> = {
@@ -363,7 +364,8 @@
     agent_trigger: 'Editar triggers',
   }
 
-  const tab = ref<TTab>(useRoute().hash === '#agendamentos' ? 'agendamentos' : 'agente')
+  const initialHash = useRoute().hash
+  const tab = ref<TTab>(initialHash === '#agendamentos' ? 'agendamentos' : initialHash === '#historico' ? 'historico' : 'agente')
 
   /** Sobram guias à direita (a barra rola de lado): a borda esmaece, para ninguém achar que acabaram. */
   const tabBar = ref<HTMLElement>()
@@ -395,6 +397,7 @@
     tamanho: [],
     hooks: [],
     agendamentos: [],
+    historico: [],
   }
   const tabs = computed(() => {
     const tools = form.value.allowedTools
@@ -416,6 +419,7 @@
       { id: 'tamanho', label: 'Tamanho' },
       { id: 'hooks', label: 'Hooks' },
       { id: 'agendamentos', label: 'Agendamentos' },
+      { id: 'historico', label: 'Histórico' },
     ]
     // A guia Permissões aparece sempre: as regras do agente moram nela, haja ou não nível de acesso ou extras.
     return all
@@ -1241,6 +1245,17 @@
       <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
     </section>
 
+    <!-- O histórico do agente: as revisões, o diff e "Restaurar esta versão" (grava pelo histórico, fora do Salvar). -->
+    <section v-if="tab === 'historico'">
+      <HistoryPanel
+        v-if="agent && !creating"
+        kind="agent"
+        :id="agent.id"
+        @restored="(result) => (result.exists ? emit('saved', agent!.id) : emit('removed'))"
+      />
+      <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
+    </section>
+
     <p v-if="agent?.updatedBy" class="text-xs text-zinc-500">
       Alterado por {{ agent.updatedBy }} em {{ agent.updatedAt ? new Date(agent.updatedAt).toLocaleString('pt-BR') : '' }}
     </p>
@@ -1251,7 +1266,7 @@
     </p>
     <p v-else-if="!ready" class="text-xs text-zinc-500">Carregando provedores…</p>
 
-    <div v-show="tab !== 'hooks' && tab !== 'agendamentos'" class="flex gap-2">
+    <div v-show="tab !== 'hooks' && tab !== 'agendamentos' && tab !== 'historico'" class="flex gap-2">
       <button type="submit" :disabled="saving || !ready || !!loadError || !form.providers.length" class="btn btn-primary">
         {{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar' }}
       </button>
