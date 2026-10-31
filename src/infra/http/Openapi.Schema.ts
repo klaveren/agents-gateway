@@ -2235,6 +2235,86 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/catalog/import/plan': {
+      post: {
+        summary:
+          'The import PLAN (dry-run): NOTHING is written. Takes the package of the export — the `.tar.gz` (`Content-Type: application/gzip`) or `{ manifest, files }` as JSON — and returns, per item, the operation (`create`, `update`, `unchanged`, `conflict`, `error`; never `delete`: only create and update, the mirror mode comes later), the diff against the current item, the access widenings (the `confirm` of the apply), the attentions, the broken references (attached doc, resource, initial context, `mcp:` and `agent:` that exist neither in the catalog nor in the package), the problems under the same rules as the screens, the secrets the vault still lacks (an enabled MCP missing one enters disabled), the apply ORDER (project → docs → resources → rules → addenda → MCPs → agents → links → project permissions; inside a phase, the cited before who cites and what restricts before what widens) and the `planHash` (sha256 of the package documents, the current state used and the outcome: the apply only runs if it is still the same). Body limit: `CATALOG_IMPORT_LIMIT`. Administrators only (404 for the others); an access token also plans, but `caller.wideningsApplicable` is false: widenings are applied only by an administrator on the screen',
+        parameters: [
+          {
+            name: 'scope',
+            in: 'query',
+            schema: { type: 'string' },
+            description: '`all`, `global` or `project` (with `project`); `project:<id>` also works. Absent: the scope of the manifest, else `all`.',
+          },
+          { name: 'project', in: 'query', schema: { type: 'string' }, description: 'The project of `scope=project`.' },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/gzip': { schema: { type: 'string', format: 'binary' } },
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['files'],
+                properties: {
+                  manifest: { type: 'object', description: 'The `catalog.json` (optional when it is inside `files`).' },
+                  files: { type: 'object', additionalProperties: { type: 'string' }, description: 'Path → content, as GET /catalog/export?format=json returns.' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'The plan',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  scope: { type: 'string' },
+                  planHash: { type: 'string' },
+                  items: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        ref: { type: 'string', description: '`<kind>/<id>` (MCP: the server key), as in the history.' },
+                        kind: { type: 'string', enum: catalogKinds },
+                        id: { type: 'string' },
+                        projectId: { type: 'string' },
+                        op: { type: 'string', enum: ['create', 'update', 'unchanged', 'conflict', 'error', 'delete'] },
+                        hash: { type: 'string' },
+                        currentHash: { type: 'string' },
+                        diff: { type: 'object', description: 'As in GET /catalog/history/diff.' },
+                        widenings: { type: 'array', items: wideningSchema },
+                        attentions: { type: 'array', items: { type: 'object' } },
+                        issues: { type: 'array', items: { type: 'object', properties: { field: { type: 'string' }, message: { type: 'string' } } } },
+                        brokenRefs: { type: 'array', items: { type: 'object' } },
+                        missingSecrets: { type: 'array', items: { type: 'string' } },
+                        entersDisabled: { type: 'boolean' },
+                        blockedByToken: { type: 'boolean' },
+                      },
+                    },
+                  },
+                  order: { type: 'array', items: { type: 'object' }, description: 'The `create`/`update` items in apply order, with `phase`.' },
+                  widenings: { type: 'array', items: wideningSchema },
+                  attentions: { type: 'array', items: { type: 'object' } },
+                  brokenRefs: { type: 'array', items: { type: 'object' } },
+                  missingSecrets: { type: 'array', items: { type: 'object' } },
+                  fileErrors: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, message: { type: 'string' } } } },
+                  summary: { type: 'object' },
+                  caller: { type: 'object', properties: { viaAccessToken: { type: 'boolean' }, wideningsApplicable: { type: 'boolean' } } },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+          '413': { description: 'The package is too large (body or unpacked)' },
+          '422': failures['422'],
+        },
+      },
+    },
     '/rules': {
       get: {
         summary:

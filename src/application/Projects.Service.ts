@@ -75,7 +75,7 @@ export class ProjectsService {
       updatedAt: this.now(),
       updatedBy: by,
     }
-    const issues = issuesOf(project)
+    const issues = projectIssues(project)
     if (!PROJECT_ID_PATTERN.test(project.id)) issues.unshift({ field: 'id', message: 'use 2–32 lowercase letters, digits or hyphens' })
     else if (this.projects.get(project.id)) issues.unshift({ field: 'id', message: `already exists: ${project.id}` })
     if (issues.length) throw new InvalidProjectError(issues)
@@ -98,7 +98,7 @@ export class ProjectsService {
       ...(change.name !== undefined ? { name: change.name.trim() } : {}),
       ...(change.description !== undefined ? { description: change.description.trim() } : {}),
     }
-    const issues = issuesOf(next)
+    const issues = projectIssues(next)
     if (issues.length) throw new InvalidProjectError(issues)
     const saved = this.projects.update(id, {
       name: next.name,
@@ -157,7 +157,8 @@ export class ProjectsService {
   }
 }
 
-function issuesOf(project: IProject): Array<{ field: string; message: string }> {
+/** Os problemas dos campos do projeto (nome e descrição), SEM gravar: as regras de `create`/`update`. */
+export function projectIssues(project: Pick<IProject, 'name' | 'description'>): Array<{ field: string; message: string }> {
   const issues: Array<{ field: string; message: string }> = []
   if (!project.name) issues.push({ field: 'name', message: 'required' })
   else if (project.name.length > NAME_MAX) issues.push({ field: 'name', message: `at most ${NAME_MAX} characters` })

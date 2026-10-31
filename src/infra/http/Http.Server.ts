@@ -50,7 +50,18 @@ import { fail } from './Http.Response'
 import { OPENAPI_DOCUMENT } from './Openapi.Schema'
 import { identityFromToken, tokenFromHeader, withCaller } from '@infra/mcp/Caller.Identity'
 import { handleSelfMcp, rejectSelfMcp } from './SelfMcp.Controller'
-import { CALLER_HEADER, corsMiddleware, host, jsonLimit, requireCaller, messageJsonLimit, rateLimit, securityHeaders, trustProxySetting } from './Security.Middleware'
+import {
+  CALLER_HEADER,
+  catalogImportLimit,
+  corsMiddleware,
+  host,
+  jsonLimit,
+  requireCaller,
+  messageJsonLimit,
+  rateLimit,
+  securityHeaders,
+  trustProxySetting,
+} from './Security.Middleware'
 
 export const API_PREFIX = '/v1'
 
@@ -84,6 +95,10 @@ const CONTENT_ROUTES: readonly RegExp[] = [
   /^\/v1\/(?:mcp|turn-tools)\/?$/,
 ]
 const HOOK_ROUTE = /^\/v1\/hook\/[^/]+\/[^/]+\/?$/
+/** O import do catálogo: o pacote inteiro, em JSON ou `.tar.gz`, com o limite próprio (`CATALOG_IMPORT_LIMIT`). */
+const CATALOG_IMPORT_ROUTE = /^\/v1\/catalog\/import\/plan\/?$/
+/** Os tipos do `.tar.gz` do export (o resto vai pelo JSON). */
+const ARCHIVE_TYPES = ['application/gzip', 'application/x-gzip', 'application/x-tar', 'application/octet-stream']
 /** As rotas com limite por origem (ver `rateLimit`). */
 export const THROTTLED_PATHS = ['/auth/login', '/auth/setup']
 
@@ -134,12 +149,17 @@ export class HttpServer {
     const large = express.json({ limit: messageJsonLimit() })
     // ⚖️ O hook lê o corpo CRU: a assinatura HMAC é dos bytes exatos, e o serviço que chama manda o que quiser.
     const raw = express.raw({ type: () => true, limit: '256kb' })
+    // O pacote do catálogo: o `.tar.gz` cru (o controller abre) ou o JSON, os dois com o limite do import.
+    const importArchive = express.raw({ type: ARCHIVE_TYPES, limit: catalogImportLimit() })
+    const importJson = express.json({ limit: catalogImportLimit() })
     this.app.use((req, res, next) =>
       HOOK_ROUTE.test(req.path)
         ? raw(req, res, next)
-        : MESSAGE_ROUTE.test(req.path) || CONTENT_ROUTES.some((route) => route.test(req.path))
-          ? large(req, res, next)
-          : small(req, res, next),
+        : CATALOG_IMPORT_ROUTE.test(req.path)
+          ? importArchive(req, res, (error?: unknown) => (error ? next(error) : importJson(req, res, next)))
+          : MESSAGE_ROUTE.test(req.path) || CONTENT_ROUTES.some((route) => route.test(req.path))
+            ? large(req, res, next)
+            : small(req, res, next),
     )
     // A sessão da tela chega no cookie HttpOnly; daqui em diante é a mesma credencial do cabeçalho.
     this.app.use(cookieCredential())
@@ -287,6 +307,8 @@ function buildRoutes(
     { method: 'post', path: '/catalog/batches/:batchId/revert', handler: catalog.revertBatch },
     // O export do pacote (só admin): `.tar.gz` ou `{ manifest, files }` (`format=json`).
     { method: 'get', path: '/catalog/export', handler: catalog.exportCatalog },
+    // O plano de import (só admin, dry-run: nada grava): o pacote do export → operações, diffs, ampliações e `planHash`.
+    { method: 'post', path: '/catalog/import/plan', handler: catalog.importPlan },
     { method: 'get', path: '/secret-mask', handler: secretMask.get },
     { method: 'put', path: '/secret-mask/values/:id', handler: secretMask.saveValue },
     { method: 'delete', path: '/secret-mask/values/:id', handler: secretMask.removeValue },
