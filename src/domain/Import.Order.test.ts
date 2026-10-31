@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { agentClosure, IAgentBatchInput, orderBatch, planAgentBatch, prefixedId, proposeIds } from './Import.Order'
+import { agentClosure, IAgentBatchInput, ISelectionBatchInput, orderBatch, planAgentBatch, planSelectionBatch, prefixedId, proposeIds } from './Import.Order'
 import { IInventoryItem, TCatalogState } from './models/ImportInventory.Model'
 
 /** Um item do inventário sintético: a fonte é `<chave>.md` com os tokens dados. */
@@ -289,5 +289,102 @@ describe('Import.Order — o lote com o alcance traduzido', () => {
     assert.strictEqual(plan.project, undefined)
     assert.deepStrictEqual(plan.links, [])
     assert.ok(plan.notes.some((note) => note.code === 'reach-none'))
+  })
+})
+
+describe('Import.Order — o lote por seleção', () => {
+  const items: IInventoryItem[] = [
+    ...ITEMS.map((one) => (one.key === 'spec:base' ? { ...one, catalog: 'same-project' as const } : one)),
+    item('spec:quebrada', { refs: [...cites('spec:guia'), { path: 'docs/sem-item.md' }, ...cites('config:opencode')], unresolved: ['x/sumiu.md'] }),
+  ]
+  const selection = ['spec:ciclo-b', 'spec:ciclo-a', 'spec:guia', 'skill:revisar', 'knowledge:fila', 'unknown:solto', 'trigger:ana/01-revisar', 'spec:base', 'spec:quebrada']
+  const input = (overrides: Partial<ISelectionBatchInput> = {}): ISelectionBatchInput => ({
+    items,
+    keys: selection,
+    catalog: () => 'new',
+    protocolTokens: () => 100,
+    states: new Map([
+      ['knowledge:fila', 'approved'],
+      ['rule:regras', 'applied'],
+    ]),
+    batchOf: new Map([['command:publicar', { id: 'b1', name: 'commands' }]]),
+    ...overrides,
+  })
+
+  it('a ordem só entre os escolhidos: por fase, citado antes de quem cita; o ciclo é reportado e não trava', () => {
+    const plan = planSelectionBatch(input())
+    assert.deepStrictEqual(
+      plan.steps.map((step) => step.key),
+      ['knowledge:fila', 'spec:base', 'spec:guia', 'spec:quebrada', 'spec:ciclo-a', 'spec:ciclo-b', 'skill:revisar', 'trigger:ana/01-revisar'],
+    )
+    assert.ok(plan.steps.every((step) => step.why === 'selected'))
+    assert.deepStrictEqual(
+      plan.cycles.map((cycle) => cycle.keys),
+      [['spec:ciclo-a', 'spec:ciclo-b']],
+    )
+    assert.deepStrictEqual(plan.steps.find((step) => step.key === 'spec:guia')!.dependsOn, ['knowledge:fila'])
+    assert.deepStrictEqual(plan.steps.find((step) => step.key === 'knowledge:fila')!.citedBy, ['spec:guia'])
+    // Nada fora da seleção entra por arrasto (a spec que o agente cita, o command que o trigger cita).
+    assert.ok(!plan.steps.some((step) => step.key === 'command:publicar' || step.key === 'agent:ana'))
+  })
+
+  it('o que não vai ao catálogo fica de fora, com o motivo', () => {
+    const plan = planSelectionBatch(input())
+    assert.deepStrictEqual(
+      plan.excluded.map((entry) => `${entry.from} ${entry.reason}`),
+      ['unknown:solto unclassified'],
+    )
+  })
+
+  it('as citações para fora da seleção, classificadas: catálogo, outro lote, faltando, quebrada, não vai ao catálogo', () => {
+    const plan = planSelectionBatch(input())
+    assert.deepStrictEqual(
+      plan.outside.map((entry) => `${entry.state} ${entry.from} → ${entry.item ?? entry.path}`),
+      [
+        'broken spec:quebrada → docs/sem-item.md',
+        'broken spec:quebrada → x/sumiu.md',
+        'missing trigger:ana/01-revisar → agent:ana',
+        'not-importable spec:quebrada → config:opencode',
+        'batch trigger:ana/01-revisar → command:publicar',
+        'catalog spec:base → rule:regras',
+      ],
+    )
+    assert.deepStrictEqual(plan.outside.find((entry) => entry.state === 'batch')!.batch, { id: 'b1', name: 'commands' })
+    assert.strictEqual(plan.outside.find((entry) => entry.item === 'agent:ana')!.id, 'ana')
+  })
+
+  it('o já feito (no catálogo, aprovado) fica na ordem e fora da estimativa', () => {
+    const plan = planSelectionBatch(input())
+    assert.deepStrictEqual(
+      plan.steps.filter((step) => step.done).map((step) => `${step.key} ${step.done}`),
+      ['knowledge:fila approved', 'spec:base catalog'],
+    )
+    assert.strictEqual(plan.estimate.conversations, 6)
+    assert.strictEqual(plan.estimate.done, 2)
+    assert.strictEqual(plan.estimate.inputTokens, 6 * (10 + 100))
+    assert.deepStrictEqual(plan.estimate.released, { conversations: 0, inputTokens: 0 })
+    assert.strictEqual(plan.phases.find((phase) => phase.phase === 1)!.steps, 4)
+  })
+
+  it('o prefixo vale no mapa e nas citações para fora; o id em conflito bloqueia', () => {
+    const plan = planSelectionBatch(
+      input({ prefix: 'akm-', catalog: (query) => (query.id === 'akm-guia' ? 'other-project' : query.id === 'akm-publicar' ? 'same-project' : 'new') }),
+    )
+    assert.strictEqual(plan.prefix, 'akm-')
+    assert.strictEqual(plan.idMap.find((entry) => entry.key === 'skill:revisar')!.id, 'akm-revisar')
+    assert.deepStrictEqual(plan.blocked, ['spec:guia: o id akm-guia já existe em outro projeto: mude antes de transformar'])
+    // O command já existe com o id prefixado: a citação resolve pelo catálogo, não pelo outro lote.
+    assert.strictEqual(plan.outside.find((entry) => entry.item === 'command:publicar')!.state, 'catalog')
+    assert.strictEqual(plan.outside.find((entry) => entry.item === 'agent:ana')!.id, 'akm-ana')
+  })
+
+  it('o item que já está em outro lote é avisado; chave fora do inventário é ignorada', () => {
+    const plan = planSelectionBatch(input({ keys: ['skill:revisar', 'nada:x'], batchOf: new Map([['skill:revisar', { id: 'b2', name: 'skills' }]]) }))
+    assert.deepStrictEqual(plan.keys, ['skill:revisar'])
+    assert.ok(plan.notes.some((note) => note.code === 'other-batch' && note.text.includes('skill:revisar (skills)')))
+    assert.deepStrictEqual(
+      plan.outside.map((entry) => `${entry.state} ${entry.item}`),
+      ['missing spec:guia'],
+    )
   })
 })

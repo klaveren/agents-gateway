@@ -145,15 +145,53 @@ describe('SqliteImportRepository', () => {
     assert.strictEqual(repository.get('alfa', 'j4'), undefined, 'o trabalho de outro projeto não existe aqui')
   })
 
-  it('apagar o projeto apaga os trabalhos e os itens dele, e só os dele', () => {
+  it('lote salvo, ida e volta (no arquivo): nome, itens, ordem, prefixo, autor e hora; mais novo primeiro; só do trabalho dele', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'import-batches-'))
+    try {
+      const path = join(dir, 'gateway.db')
+      const first = new SqliteImportRepository(path)
+      const pending = (key: string): IImportJobItem => ({ key, item: inventoryItem(key), state: 'pending', fingerprint: 'f', drafts: [] })
+      first.create(job('j1', 'alfa', 'app', '2026-10-30T10:00:00.000Z', [pending('spec:a'), pending('knowledge:b')]))
+      const batch = {
+        id: 'b1',
+        jobId: 'j1',
+        name: 'Knowledge e specs de core/',
+        prefix: 'akm-',
+        keys: ['spec:a', 'knowledge:b'],
+        order: ['knowledge:b', 'spec:a'],
+        by: 'ana@x.test',
+        at: new Date('2026-10-30T12:00:00.000Z'),
+      }
+      first.createBatch(batch)
+      first.createBatch({ ...batch, id: 'b2', name: 'segundo', prefix: '', keys: ['spec:a'], order: ['spec:a'], at: new Date('2026-10-30T13:00:00.000Z') })
+
+      const second = new SqliteImportRepository(path)
+      assert.deepStrictEqual(second.batch('j1', 'b1'), batch)
+      assert.deepStrictEqual(
+        second.batches('j1').map((one) => one.id),
+        ['b2', 'b1'],
+      )
+      assert.strictEqual(second.batch('j2', 'b1'), undefined, 'o lote de outro trabalho não existe aqui')
+      assert.deepStrictEqual(second.batches('j2'), [])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('apagar o projeto apaga os trabalhos, os itens e os lotes dele, e só os dele', () => {
     const repository = new SqliteImportRepository()
     const pending = (key: string): IImportJobItem => ({ key, item: inventoryItem(key), state: 'pending', fingerprint: 'f', drafts: [] })
     repository.create(job('j1', 'alfa', 'app', '2026-10-30T10:00:00.000Z', [pending('skill:a')]))
     repository.create(job('j2', 'beta', 'app', '2026-10-30T10:00:00.000Z', [pending('skill:a')]))
+    const batch = { name: 'x', prefix: '', keys: ['skill:a'], order: ['skill:a'], by: 'ana', at: new Date() }
+    repository.createBatch({ ...batch, id: 'b1', jobId: 'j1' })
+    repository.createBatch({ ...batch, id: 'b2', jobId: 'j2' })
     repository.deleteProject('alfa')
     assert.deepStrictEqual(repository.list('alfa'), [])
     assert.deepStrictEqual(repository.items('j1'), [])
+    assert.deepStrictEqual(repository.batches('j1'), [])
     assert.strictEqual(repository.items('j2').length, 1)
+    assert.strictEqual(repository.batches('j2').length, 1)
   })
 
   it('⚖️ o trabalho grava inteiro ou nada: item repetido desfaz o cabeçalho', () => {

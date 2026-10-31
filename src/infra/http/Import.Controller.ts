@@ -1,5 +1,6 @@
 import { Request, Response } from 'express'
 import { z } from 'zod'
+import { IMPORT_BATCH_MAX, IMPORT_BATCH_NAME_MAX, ImportBatchService } from '@application/ImportBatch.Service'
 import { ImportJobError, ImportJobService } from '@application/ImportJob.Service'
 import { ImportPlanError, ImportPlanUseCase } from '@application/ImportPlan.Usecase'
 import { ImportScanUseCase } from '@application/ImportScan.Usecase'
@@ -25,6 +26,8 @@ export interface IImportControllerDeps {
   plan?: ImportPlanUseCase
   /** Os trabalhos de importação (a varredura salva). Ausente: as rotas respondem 404. */
   jobs?: ImportJobService
+  /** Os lotes por seleção de um trabalho. Ausente: as rotas respondem 404. */
+  batches?: ImportBatchService
   projectExists: (projectId: string) => boolean
   ignore?: IImportIgnoreStore
   proof?: ICallerProof
@@ -59,7 +62,13 @@ const planSchema = z.object({
   agent: z.string().min(1).max(200),
   prefix: z.string().max(16).optional(),
   ignore: patterns.optional(),
+  job: z.string().min(1).max(100).optional(),
 })
+const selectionSchema = z.object({
+  keys: z.array(z.string().min(1).max(1_000)).min(1).max(IMPORT_BATCH_MAX),
+  prefix: z.string().max(16).optional(),
+})
+const batchSchema = selectionSchema.extend({ name: z.string().trim().min(1).max(IMPORT_BATCH_NAME_MAX) })
 
 /**
  * O IMPORTADOR de recursos de um repositório do projeto. Por ora a varredura (devolve o inventário e não grava nada),
@@ -73,7 +82,8 @@ export class ImportController {
   private readonly planner: ImportPlanUseCase
 
   constructor(private readonly deps: IImportControllerDeps) {
-    this.planner = deps.plan ?? new ImportPlanUseCase({ scan: deps.scan })
+    const jobs = deps.jobs
+    this.planner = deps.plan ?? new ImportPlanUseCase({ scan: deps.scan, ...(jobs ? { jobStates: (projectId, jobId) => jobs.statesOf(projectId, jobId) } : {}) })
     this.scan = this.scan.bind(this)
     this.plan = this.plan.bind(this)
     this.getIgnore = this.getIgnore.bind(this)
@@ -82,6 +92,10 @@ export class ImportController {
     this.createJob = this.createJob.bind(this)
     this.getJob = this.getJob.bind(this)
     this.updateItem = this.updateItem.bind(this)
+    this.planBatch = this.planBatch.bind(this)
+    this.createBatch = this.createBatch.bind(this)
+    this.listBatches = this.listBatches.bind(this)
+    this.getBatch = this.getBatch.bind(this)
   }
 
   /** `POST /projects/:id/import/scan { repository, ignore? }` — o inventário do repositório (só leitura, nada persiste). */
@@ -100,16 +114,17 @@ export class ImportController {
   }
 
   /**
-   * `POST /projects/:id/import/plan { repository, agent, prefix?, ignore? }` — o LOTE de um agente: o fecho em ordem,
-   * o mapa de ids, o alcance traduzido e a estimativa. ⛔ Só leitura: nada grava nem dispara construtor.
+   * `POST /projects/:id/import/plan { repository, agent, prefix?, ignore?, job? }` — o LOTE de um agente: o fecho em
+   * ordem, o mapa de ids, o alcance traduzido e a estimativa. O que já está no catálogo do projeto (e, com `job`, o
+   * aprovado no trabalho) fica marcado, sem conversa. ⛔ Só leitura: nada grava nem dispara construtor.
    */
   async plan(req: Request, res: Response): Promise<void> {
     await this.respond(res, 'importPlan', req, async (projectId) => {
-      const { repository, agent, prefix, ignore } = parseBody(planSchema, req.body)
+      const { repository, agent, prefix, ignore, job } = parseBody(planSchema, req.body)
       const issues = ignore ? ignoreIssues(ignore, 'ignore') : []
       if (issues.length) throw new HttpError(422, 'validation_error', 'Request body is invalid', issues)
       try {
-        return this.planner.execute(projectId, { repository, agent, ...(prefix !== undefined ? { prefix } : {}), ...(ignore ? { ignore } : {}) })
+        return this.planner.execute(projectId, { repository, agent, ...(prefix !== undefined ? { prefix } : {}), ...(ignore ? { ignore } : {}), ...(job ? { job } : {}) })
       } catch (error) {
         if (error instanceof WorkFolderError) throw new HttpError(422, 'validation_error', 'Request body is invalid', [{ field: 'repository', message: error.message }])
         if (error instanceof ImportPlanError) throw new HttpError(422, 'validation_error', 'Request body is invalid', [{ field: error.field, message: error.message }])
@@ -171,6 +186,43 @@ export class ImportController {
     })
   }
 
+  /**
+   * `POST /projects/:id/import/jobs/:job/batches/plan { keys, prefix? }` — o LOTE DA SELEÇÃO, sem salvar: a ordem só
+   * entre os escolhidos, os ciclos, o mapa de ids, as citações para fora e a estimativa. ⛔ Só leitura.
+   */
+  async planBatch(req: Request, res: Response): Promise<void> {
+    await this.respond(res, 'planImportBatch', req, async (projectId) => {
+      const { keys, prefix } = parseBody(selectionSchema, req.body)
+      return this.jobError(() => this.batches().plan(projectId, req.params.job as string, { keys, ...(prefix !== undefined ? { prefix } : {}) }))
+    })
+  }
+
+  /**
+   * `POST /projects/:id/import/jobs/:job/batches { name, keys, prefix? }` — SALVA o lote da seleção no trabalho mais
+   * novo do repositório (nome, itens, ordem, autor e hora). ⛔ Não dispara nada nem grava no catálogo.
+   */
+  async createBatch(req: Request, res: Response): Promise<void> {
+    await this.respond(res, 'createImportBatch', req, async (projectId, by) => {
+      const { name, keys, prefix } = parseBody(batchSchema, req.body)
+      return this.jobError(() => this.batches().create(projectId, req.params.job as string, { name, keys, ...(prefix !== undefined ? { prefix } : {}) }, by))
+    })
+  }
+
+  /** `GET /projects/:id/import/jobs/:job/batches` — os lotes salvos do trabalho, do mais novo ao mais velho. */
+  async listBatches(req: Request, res: Response): Promise<void> {
+    await this.respond(res, 'importBatches', req, async (projectId) => this.jobError(() => this.batches().list(projectId, req.params.job as string)))
+  }
+
+  /** `GET /projects/:id/import/jobs/:job/batches/:batch` — o lote salvo, com o lote recalculado sobre o estado de agora. */
+  async getBatch(req: Request, res: Response): Promise<void> {
+    await this.respond(res, 'importBatch', req, async (projectId) => this.jobError(() => this.batches().get(projectId, req.params.job as string, req.params.batch as string)))
+  }
+
+  private batches(): ImportBatchService {
+    if (!this.deps.batches) throw new HttpError(404, 'not_found', 'Not found')
+    return this.deps.batches
+  }
+
   private jobs(): ImportJobService {
     if (!this.deps.jobs) throw new HttpError(404, 'not_found', 'Not found')
     return this.deps.jobs
@@ -182,7 +234,8 @@ export class ImportController {
       return work()
     } catch (error) {
       if (!(error instanceof ImportJobError)) throw error
-      if (error.code === 'not_found' && error.field) throw new HttpError(422, 'validation_error', 'Request body is invalid', [{ field: error.field, message: error.message }])
+      if ((error.code === 'not_found' || error.code === 'invalid') && error.field)
+        throw new HttpError(422, 'validation_error', 'Request body is invalid', [{ field: error.field, message: error.message }])
       if (error.code === 'not_found') throw new HttpError(404, 'not_found', error.message)
       if (error.code === 'outdated') throw new HttpError(409, 'import_job_outdated', error.message)
       throw new HttpError(409, 'import_state_conflict', error.message, error.field ? [{ field: error.field, message: error.message }] : undefined)

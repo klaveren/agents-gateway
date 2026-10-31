@@ -1,4 +1,5 @@
 import { IReachLine, IReachTranslation, IReachWidening } from '../Import.Permissions'
+import { TImportItemState } from './ImportJob.Model'
 import { IInventoryNote, TCatalogState, TInventoryKind } from './ImportInventory.Model'
 
 /**
@@ -17,8 +18,15 @@ export interface IPlanPhaseInfo {
   steps: number
 }
 
-/** Por que o item entrou no lote. */
-export type TPlanWhy = 'agent' | 'trigger' | 'cited' | 'instructions'
+/** Por que o item entrou no lote (`selected`: a pessoa o escolheu, no lote por seleção). */
+export type TPlanWhy = 'agent' | 'trigger' | 'cited' | 'instructions' | 'selected'
+
+/**
+ * O passo que NÃO precisa de conversa: `catalog` = o id proposto já existe neste projeto (ou o item já foi aplicado);
+ * `approved` = o item já está aprovado neste trabalho. Fica na ordem (para quem o cita), fora das conversas e da
+ * estimativa.
+ */
+export type TPlanDone = 'catalog' | 'approved'
 
 /** O estado do id proposto: `conflict` e `duplicate` BLOQUEIAM (o id precisa mudar antes de transformar). */
 export type TPlanIdState = 'new' | 'update' | 'conflict' | 'duplicate'
@@ -60,6 +68,8 @@ export interface IPlanStep {
   /** ≈ tokens de entrada da conversa: as fontes lidas e o protocolo do construtor. */
   tokens: { sources: number; protocol: number }
   state: TPlanIdState
+  /** Já feito: sem conversa e fora da estimativa. Ausente = a importar. */
+  done?: TPlanDone
   /** As notas do inventário que pedem atenção (alerta e "não traduz"). */
   notes: IInventoryNote[]
 }
@@ -150,11 +160,13 @@ export interface IPlanEstimateEntry {
   inputTokens: number
 }
 
-/** O custo antes de qualquer clique: uma conversa de construtor por item, e os tokens de entrada da primeira volta. */
+/** O custo antes de qualquer clique: uma conversa de construtor por item a importar, e os tokens de entrada da primeira volta. */
 export interface IPlanEstimate extends IPlanEstimateEntry {
   sourceTokens: number
   protocolTokens: number
   byKind: Partial<Record<TInventoryKind, IPlanEstimateEntry>>
+  /** Os passos já feitos (no catálogo ou aprovados), que não contam. */
+  done: number
   /** Quanto somariam as skills liberadas e fora do lote, se a pessoa as incluísse. */
   released: IPlanEstimateEntry
   note: string
@@ -185,3 +197,53 @@ export interface IImportPlan {
   blocked: string[]
   notes: IInventoryNote[]
 }
+
+/**
+ * Uma citação de um item do lote para FORA da seleção, classificada:
+ * - `catalog`: o alvo já está no catálogo (o id proposto existe, ou o item foi aplicado);
+ * - `approved`: o alvo já está aprovado neste trabalho;
+ * - `batch`: o alvo está em outro lote deste trabalho;
+ * - `missing`: o alvo está no inventário, e em nenhum desses: falta importar;
+ * - `broken`: citação quebrada (nenhum arquivo, ou arquivo sem item);
+ * - `not-importable`: o alvo não vai ao catálogo (desconhecido, configuração, pulado).
+ */
+export type TOutsideState = 'catalog' | 'approved' | 'batch' | 'missing' | 'broken' | 'not-importable'
+
+export interface IPlanOutside {
+  /** O item do lote que cita (ou o trigger cujo agente ficou de fora). */
+  from: string
+  state: TOutsideState
+  /** O item citado, quando há. */
+  item?: string
+  /** O caminho citado, quando é citação de arquivo. */
+  path?: string
+  /** O id proposto do alvo (com o prefixo). */
+  id?: string
+  /** `batch`: o outro lote. */
+  batch?: { id: string; name: string }
+  text: string
+}
+
+/**
+ * O LOTE POR SELEÇÃO de um trabalho: a ordem SÓ entre os itens escolhidos (citado antes de quem cita, por fase), os
+ * ciclos, o mapa de ids, as citações para fora da seleção e a estimativa. ⛔ Só leitura: não grava no catálogo, não
+ * chama modelo e não dispara construtor.
+ */
+export interface ISelectionPlan {
+  /** As chaves escolhidas, como vieram (sem repetir). */
+  keys: string[]
+  prefix: string
+  phases: IPlanPhaseInfo[]
+  steps: IPlanStep[]
+  idMap: IPlanIdEntry[]
+  cycles: IPlanCycle[]
+  outside: IPlanOutside[]
+  /** Escolhidos que não vão ao catálogo (desconhecido, configuração, MCP, pulado). */
+  excluded: IPlanExclusion[]
+  estimate: IPlanEstimate
+  blocked: string[]
+  notes: IInventoryNote[]
+}
+
+/** O estado de cada item do trabalho, pela chave (o que o lote consulta para "já aprovado" e "já aplicado"). */
+export type TItemStates = ReadonlyMap<string, TImportItemState>

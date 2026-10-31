@@ -1,24 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import ImportBatchSteps from '@/components/ImportBatchSteps.vue'
 import { tokens } from '@/lib/format'
-import {
-  EXCLUSION_LABEL,
-  exclusionsByReason,
-  ID_STATE_LABEL,
-  type IImportPlan,
-  KIND_LABEL,
-  prefixIssue,
-  REACH_MARK,
-  REACH_STATUS_LABEL,
-  reachRows,
-  stepsByPhase,
-  WHY_LABEL,
-} from '@/lib/importer'
+import { EXCLUSION_LABEL, exclusionsByReason, ID_STATE_LABEL, type IImportPlan, KIND_LABEL, prefixIssue, REACH_MARK, REACH_STATUS_LABEL, reachRows } from '@/lib/importer'
 
 /**
  * O LOTE de um agente: o fecho em ordem por fase, o mapa de ids (com o prefixo), a tabela de permissões ✅/⚠️/❌ com as
- * ampliações em destaque, o que fica de fora e a estimativa. ⛔ Só mostra: nenhum botão grava nem dispara construtor —
- * o dono opera a importação item a item, mais adiante.
+ * ampliações em destaque, o que fica de fora e a estimativa. O que já está no catálogo (ou aprovado no trabalho) fica
+ * na ordem, marcado, sem conversa. ⛔ Só mostra: nenhum botão grava nem dispara construtor — o dono opera a importação
+ * item a item, mais adiante.
  */
 const props = defineProps<{ plan: IImportPlan; busy?: boolean }>()
 const emit = defineEmits<{ close: []; select: [key: string]; replan: [prefix: string] }>()
@@ -30,7 +20,6 @@ watch(
 )
 const issue = computed(() => prefixIssue(prefix.value))
 
-const groups = computed(() => stepsByPhase(props.plan))
 const rows = computed(() => reachRows(props.plan))
 const exclusions = computed(() => exclusionsByReason(props.plan.excluded))
 const later = computed(() => props.plan.phases.filter((phase) => phase.phase >= 5))
@@ -39,7 +28,7 @@ const widenings = computed(() => [
   ...(props.plan.project?.widenings ?? []).map((item) => ({ ...item, layer: 'projeto' })),
 ])
 const changedIds = computed(() => props.plan.idMap.filter((entry) => entry.prefixed || entry.state !== 'new' || entry.cut))
-const position = computed(() => new Map(props.plan.steps.map((step, at) => [step.key, at + 1])))
+const pending = computed(() => props.plan.steps.filter((step) => !step.done).length)
 const totals = computed(() => props.plan.reach?.translation.totals)
 
 const ruleText = (rule: { category: string; pattern: string; decision: string }) => `${rule.category} ${rule.decision === 'allow' ? 'libera' : 'nega'} ${rule.pattern}`
@@ -82,6 +71,7 @@ const ruleText = (rule: { category: string; pattern: string; decision: string })
       <p class="flex flex-wrap gap-x-3 text-xs text-zinc-400">
         <span v-for="(entry, kind) in plan.estimate.byKind" :key="kind">{{ KIND_LABEL[kind] }}: {{ entry!.conversations }} · ≈{{ tokens(entry!.inputTokens) }}</span>
       </p>
+      <p v-if="plan.estimate.done" class="text-xs text-emerald-200/80" data-test="estimate-done">{{ plan.estimate.done }} passo(s) já no catálogo ou aprovado(s) ficam fora da conta.</p>
       <p v-if="plan.estimate.released.conversations" class="text-xs text-zinc-500">
         Incluir as {{ plan.estimate.released.conversations }} skill(s) liberadas e não citadas somaria ≈{{ tokens(plan.estimate.released.inputTokens) }} tokens.
       </p>
@@ -89,26 +79,8 @@ const ruleText = (rule: { category: string; pattern: string; decision: string })
     </section>
 
     <section class="flex flex-col gap-2" data-test="order">
-      <h3 class="text-xs font-medium text-zinc-500">Ordem ({{ plan.steps.length }} itens com conversa, depois vínculos e permissões)</h3>
-      <div v-for="group in groups" :key="group.phase" class="flex flex-col gap-1">
-        <h4 class="text-xs font-semibold text-zinc-300">Fase {{ group.phase }} · {{ group.label }} · {{ group.steps.length }}</h4>
-        <ol class="divide-y divide-zinc-800 rounded-xl border border-zinc-800">
-          <li v-for="step in group.steps" :key="step.key" class="flex flex-col gap-0.5 px-3 py-1.5" data-test="step">
-            <span class="flex flex-wrap items-center gap-2">
-              <span class="w-7 shrink-0 text-right font-mono text-xs text-zinc-500">{{ position.get(step.key) }}</span>
-              <span class="rounded-full border border-zinc-700 px-2 text-[11px] text-zinc-400">{{ KIND_LABEL[step.kind] }}</span>
-              <button type="button" class="min-w-0 font-mono text-sm break-all text-zinc-100 hover:underline" @click="emit('select', step.key)">{{ step.id }}</button>
-              <span v-if="step.state !== 'new'" class="rounded-full border px-2 text-[11px]" :class="step.state === 'update' ? 'border-zinc-700 text-zinc-400' : 'border-rose-500/50 text-rose-200'">{{ ID_STATE_LABEL[step.state] }}</span>
-              <span v-if="step.notes.some((note) => note.level === 'untranslatable')" class="rounded-full bg-amber-500/15 px-2 text-[11px] text-amber-200">não traduz</span>
-              <span class="text-xs text-zinc-500">{{ WHY_LABEL[step.why] }} · ≈{{ tokens(step.tokens.sources + step.tokens.protocol) }}</span>
-            </span>
-            <span v-if="step.dependsOn.length || step.forward.length" class="pl-9 text-xs break-all text-zinc-500">
-              <template v-if="step.dependsOn.length">depois de {{ step.dependsOn.join(', ') }}</template>
-              <template v-if="step.forward.length"> · cita adiante {{ step.forward.join(', ') }}</template>
-            </span>
-          </li>
-        </ol>
-      </div>
+      <h3 class="text-xs font-medium text-zinc-500">Ordem ({{ pending }} itens com conversa<template v-if="pending !== plan.steps.length"> de {{ plan.steps.length }}</template>, depois vínculos e permissões)</h3>
+      <ImportBatchSteps :phases="plan.phases" :steps="plan.steps" @select="emit('select', $event)" />
       <ul class="flex flex-col gap-0.5 text-xs text-zinc-400">
         <li v-for="phase in later" :key="phase.phase">
           Fase {{ phase.phase }} · {{ phase.label }}

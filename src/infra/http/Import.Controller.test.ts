@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import { Request, Response } from 'express'
+import { ImportBatchService } from '@application/ImportBatch.Service'
 import { ImportJobService } from '@application/ImportJob.Service'
 import { ImportScanUseCase } from '@application/ImportScan.Usecase'
 import { maskText } from '@domain/Secret.Mask'
@@ -51,9 +52,11 @@ describe('POST /projects/:id/import/scan', () => {
       findInCatalog: () => undefined,
       projectIgnore: (projectId) => stored.get(projectId) ?? [],
     })
+    const repository = new SqliteImportRepository()
     controller = new ImportController({
       scan,
-      jobs: new ImportJobService({ repository: new SqliteImportRepository(), scan: (projectId, repository, options) => scan.execute(projectId, repository, options) }),
+      jobs: new ImportJobService({ repository, scan: (projectId, repository, options) => scan.execute(projectId, repository, options) }),
+      batches: new ImportBatchService({ repository, catalogState: (query) => scan.catalogState(query), protocolTokens: () => 100 }),
       projectExists: (projectId) => ['alfa', 'beta'].includes(projectId),
       ignore: {
         get: (projectId) => stored.get(projectId) ?? [],
@@ -64,7 +67,7 @@ describe('POST /projects/:id/import/scan', () => {
   })
   after(() => rmSync(base, { recursive: true, force: true }))
 
-  type THandler = 'scan' | 'plan' | 'getIgnore' | 'setIgnore' | 'listJobs' | 'createJob' | 'getJob' | 'updateItem'
+  type THandler = 'scan' | 'plan' | 'getIgnore' | 'setIgnore' | 'listJobs' | 'createJob' | 'getJob' | 'updateItem' | 'planBatch' | 'createBatch' | 'listBatches' | 'getBatch'
   const call = (as: string, projectId: string, body: unknown, handler: THandler = 'scan', params: Record<string, string> = {}) =>
     withCaller({ token: as, ...identityFromToken(as) }, async () => {
       const reply: { status: number; body?: { ok: boolean; result?: any; code?: string; details?: any } } = { status: 0 } // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -247,6 +250,87 @@ describe('POST /projects/:id/import/scan', () => {
       }
       const missing = await call(ADMIN, 'alfa', { key: 'agent:ninguem', state: 'skipped' }, 'updateItem', { job: job.id })
       assert.deepStrictEqual([missing.status, missing.body?.details?.[0]?.field], [422, 'key'])
+    })
+  })
+
+  describe('lotes por seleção (/projects/:id/import/jobs/:job/batches)', () => {
+    it('o admin monta a prévia, salva o lote, lista e abre; nada de segredo nem caminho do servidor', async () => {
+      const job = (await call(ADMIN, 'alfa', { repository: 'lote' }, 'createJob')).body?.result
+      const specs = (job.scan.items as Array<{ key: string; kind: string }>).filter((item) => item.kind === 'spec' || item.kind === 'knowledge').map((item) => item.key)
+      assert.ok(specs.length > 2)
+      const preview = await call(ADMIN, 'alfa', { keys: specs, prefix: 'akm-' }, 'planBatch', { job: job.id })
+      assert.strictEqual(preview.status, 200)
+      assert.ok((preview.body?.result.steps as Array<{ phase: number }>).every((step) => step.phase === 1))
+      assert.ok((preview.body?.result.cycles as Array<{ keys: string[] }>).some((cycle) => cycle.keys.includes('spec:ciclo-a')))
+      assert.strictEqual((await call(ADMIN, 'alfa', undefined, 'listBatches', { job: job.id })).body?.result.length, 0, 'a prévia não salva')
+
+      const created = await call(ADMIN, 'alfa', { name: 'Docs', keys: specs, prefix: 'akm-' }, 'createBatch', { job: job.id })
+      assert.strictEqual(created.status, 200)
+      const batch = created.body?.result
+      assert.deepStrictEqual([batch.name, batch.by, batch.prefix, batch.order.length], ['Docs', 'u_root@x.test', 'akm-', preview.body?.result.steps.length])
+      const list = await call(ADMIN, 'alfa', undefined, 'listBatches', { job: job.id })
+      assert.deepStrictEqual(
+        (list.body?.result as Array<{ id: string }>).map((entry) => entry.id),
+        [batch.id],
+      )
+      const opened = await call(ADMIN, 'alfa', undefined, 'getBatch', { job: job.id, batch: batch.id })
+      assert.deepStrictEqual([opened.status, opened.body?.result.plan.steps.length], [200, batch.order.length])
+      const json = JSON.stringify([preview.body, created.body, opened.body])
+      assert.ok(!json.includes(FAKE_TOKEN))
+      assert.ok(!json.includes(base), 'nenhum caminho do servidor')
+
+      // O lote do agente com o trabalho: o que foi aprovado nele sai das conversas.
+      const plan = await call(ADMIN, 'alfa', { repository: 'lote', agent: 'ana', job: job.id }, 'plan')
+      assert.strictEqual(plan.status, 200)
+      assert.strictEqual(plan.body?.result.estimate.done, 0)
+      const other = await call(ADMIN, 'alfa', { repository: 'app', agent: 'ana', job: job.id }, 'plan')
+      assert.deepStrictEqual([other.status, other.body?.details?.[0]?.field], [422, 'job'])
+    })
+
+    it('⛔ quem não é admin recebe 404 em todas, e nada é salvo', async () => {
+      const job = (await call(ADMIN, 'alfa', { repository: 'lote' }, 'createJob')).body?.result
+      for (const [handler, body, params] of [
+        ['planBatch', { keys: ['spec:base'] }, { job: job.id }],
+        ['createBatch', { name: 'x', keys: ['spec:base'] }, { job: job.id }],
+        ['listBatches', undefined, { job: job.id }],
+        ['getBatch', undefined, { job: job.id, batch: 'x' }],
+      ] as Array<[THandler, unknown, Record<string, string>]>) {
+        const reply = await call(MEMBER, 'alfa', body, handler, params)
+        assert.strictEqual(reply.status, 404, handler)
+        assert.strictEqual(reply.body?.result, undefined)
+      }
+      assert.strictEqual((await call(ADMIN, 'alfa', undefined, 'listBatches', { job: job.id })).body?.result.length, 0)
+    })
+
+    it('⛔ o trabalho e o lote de outro projeto não existem aqui (404); projeto inexistente, 404', async () => {
+      const theirs = (await call(ADMIN, 'beta', { repository: 'segredo' }, 'createJob')).body?.result
+      const key = (theirs.scan.items as Array<{ key: string }>)[0].key
+      const batch = (await call(ADMIN, 'beta', { name: 'deles', keys: [key] }, 'createBatch', { job: theirs.id })).body?.result
+      assert.ok(batch.id)
+      assert.strictEqual((await call(ADMIN, 'alfa', { keys: [key] }, 'planBatch', { job: theirs.id })).status, 404)
+      assert.strictEqual((await call(ADMIN, 'alfa', { name: 'x', keys: [key] }, 'createBatch', { job: theirs.id })).status, 404)
+      assert.strictEqual((await call(ADMIN, 'alfa', undefined, 'listBatches', { job: theirs.id })).status, 404)
+      assert.strictEqual((await call(ADMIN, 'alfa', undefined, 'getBatch', { job: theirs.id, batch: batch.id })).status, 404)
+      const mine = (await call(ADMIN, 'alfa', { repository: 'lote' }, 'createJob')).body?.result
+      assert.strictEqual((await call(ADMIN, 'alfa', undefined, 'getBatch', { job: mine.id, batch: batch.id })).status, 404)
+      assert.strictEqual((await call(ADMIN, 'gama', undefined, 'listBatches', { job: theirs.id })).status, 404)
+    })
+
+    it('corpo inválido é 422 no campo; trabalho antigo é 409', async () => {
+      const old = (await call(ADMIN, 'alfa', { repository: 'lote' }, 'createJob')).body?.result
+      for (const [body, field] of [
+        [{ keys: [] }, 'keys'],
+        [{ keys: ['spec:nada'] }, 'keys'],
+        [{ keys: ['spec:base'], prefix: 'a b' }, 'prefix'],
+      ] as Array<[unknown, string]>) {
+        const reply = await call(ADMIN, 'alfa', body, 'planBatch', { job: old.id })
+        assert.deepStrictEqual([reply.status, reply.body?.details?.[0]?.field], [422, field], JSON.stringify(body))
+      }
+      assert.strictEqual((await call(ADMIN, 'alfa', { name: ' ', keys: ['spec:base'] }, 'createBatch', { job: old.id })).status, 422)
+      assert.strictEqual((await call(ADMIN, 'alfa', { keys: ['spec:base'] }, 'createBatch', { job: old.id })).status, 422)
+      await call(ADMIN, 'alfa', { repository: 'lote' }, 'createJob')
+      const outdated = await call(ADMIN, 'alfa', { name: 'x', keys: ['spec:base'] }, 'createBatch', { job: old.id })
+      assert.deepStrictEqual([outdated.status, outdated.body?.code], [409, 'import_job_outdated'])
     })
   })
 })

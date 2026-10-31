@@ -123,3 +123,21 @@ export type TImportItemPatch = Partial<Pick<IImportItemStatus, 'state' | 'basis'
   kind?: TInventoryKind | null
   staleFrom?: TImportItemState | null
 }
+
+/**
+ * Um LOTE SALVO no trabalho: a seleção da pessoa, com nome, a ordem calculada ao montar, o prefixo, quem e quando.
+ * ⛔ Salvar o lote não dispara nada nem grava no catálogo: é o registro do que a pessoa quer importar junto.
+ * O lote é do trabalho: reanalisar o repositório cria um trabalho novo, sem lotes.
+ */
+export interface IImportBatch {
+  id: string
+  jobId: string
+  name: string
+  prefix: string
+  /** As chaves escolhidas, como vieram. */
+  keys: string[]
+  /** A ordem calculada ao montar (só os que têm conversa de construtor, já feitos inclusos). */
+  order: string[]
+  by: string
+  at: Date
+}

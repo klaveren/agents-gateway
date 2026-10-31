@@ -1,22 +1,26 @@
 import { builderAgent } from '@domain/Builder.Agents'
 import { IMPORT_PREFIX_PATTERN, planAgentBatch } from '@domain/Import.Order'
-import { IImportPlan } from '@domain/models/ImportPlan.Model'
+import { IImportPlan, TItemStates } from '@domain/models/ImportPlan.Model'
 import { TInventoryKind } from '@domain/models/ImportInventory.Model'
 import { PROTOCOL_KINDS, TProtocolKind } from '@domain/models/Protocol.Model'
 import { estimateTokens } from '@domain/Token.Estimate'
 import { IImportScanOptions, ImportScanUseCase } from './ImportScan.Usecase'
 
-/** O pedido do lote: o repositório, o agente (chave `agent:<id>` ou o id) e o prefixo opcional dos ids. */
+/**
+ * O pedido do lote: o repositório, o agente (chave `agent:<id>` ou o id), o prefixo opcional dos ids e o trabalho
+ * aberto (opcional): com ele, o que já está aprovado ou aplicado no trabalho sai das conversas e da estimativa.
+ */
 export interface IImportPlanRequest extends IImportScanOptions {
   repository: string
   agent: string
   prefix?: string
+  job?: string
 }
 
 /** O pedido não serve (agente que não existe no inventário, prefixo inválido): vira 422 no campo. */
 export class ImportPlanError extends Error {
   constructor(
-    readonly field: 'agent' | 'prefix',
+    readonly field: 'agent' | 'prefix' | 'job',
     message: string,
   ) {
     super(message)
@@ -28,6 +32,8 @@ export interface IImportPlanDeps {
   scan: ImportScanUseCase
   /** ≈ tokens do protocolo do construtor de um tipo. Padrão: alma + prompt do construtor do core. */
   protocolTokens?: (kind: TInventoryKind) => number
+  /** O repositório e o estado dos itens de um trabalho do projeto (ausente = não é dele). */
+  jobStates?: (projectId: string, jobId: string) => { repository: string; states: TItemStates } | undefined
   now?: () => Date
 }
 
@@ -47,7 +53,8 @@ export function builderProtocolTokens(): (kind: TInventoryKind) => number {
 
 /**
  * ⛔ O LOTE de um agente: SÓ LÊ. Roda a varredura (mesma contenção, mesmo ignorar), monta o fecho, a ordem, o mapa de
- * ids, o alcance traduzido e a estimativa. Não grava, não persiste, não chama modelo, não dispara construtor.
+ * ids, o alcance traduzido e a estimativa. O que já está no catálogo do projeto (e, com o trabalho, o que já está
+ * aprovado nele) fica marcado e fora das conversas. Não grava, não persiste, não chama modelo, não dispara construtor.
  */
 export class ImportPlanUseCase {
   private readonly protocolTokens: (kind: TInventoryKind) => number
@@ -59,6 +66,13 @@ export class ImportPlanUseCase {
   execute(projectId: string, request: IImportPlanRequest): IImportPlan {
     const prefix = (request.prefix ?? '').trim().toLowerCase()
     if (prefix && !IMPORT_PREFIX_PATTERN.test(prefix)) throw new ImportPlanError('prefix', 'prefix: lowercase letters, digits and "-", up to 16 characters')
+    let states: TItemStates | undefined
+    if (request.job) {
+      const found = this.deps.jobStates?.(projectId, request.job)
+      if (!found) throw new ImportPlanError('job', `import job not found: ${request.job}`)
+      if (found.repository !== request.repository) throw new ImportPlanError('job', 'the import job is of another repository')
+      states = found.states
+    }
     const { scan, reach, agentByName, instructions } = this.deps.scan.inventory(projectId, request.repository, request.ignore ? { ignore: request.ignore } : {})
     const wanted = request.agent.trim()
     const agent = scan.items.find((item) => item.kind === 'agent' && (item.key === wanted || item.candidateId === wanted))
@@ -72,6 +86,7 @@ export class ImportPlanUseCase {
       ...(instructions ? { instructions } : {}),
       catalog: (query) => this.deps.scan.catalogState({ ...query, projectId }),
       protocolTokens: this.protocolTokens,
+      ...(states ? { states } : {}),
     })
     return {
       projectId,

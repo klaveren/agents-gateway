@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  batchName,
   bytesLabel,
   citedBy,
   countByCatalog,
@@ -13,8 +14,10 @@ import {
   type IImportPlan,
   type IInventoryItem,
   ignoredDirs,
+  type IPlanOutside,
   itemTokens,
   noteCodes,
+  outsideByState,
   overridesFrom,
   prefixIssue,
   reachRows,
@@ -238,5 +241,20 @@ describe('trabalho de importação', () => {
       { state: 'stale', count: 1 },
       { state: 'skipped', count: 2 },
     ])
+  })
+})
+
+describe('importer — o lote por seleção', () => {
+  it('as citações para fora, por estado: as que pedem ação primeiro', () => {
+    const entry = (state: IPlanOutside['state'], from: string): IPlanOutside => ({ from, state, text: state })
+    const groups = outsideByState([entry('catalog', 'a'), entry('missing', 'b'), entry('broken', 'c'), entry('missing', 'd')])
+    expect(groups.map((group) => `${group.state} ${group.entries.length}`)).toEqual(['broken 1', 'missing 2', 'catalog 1'])
+  })
+
+  it('o nome sugerido: o tipo quando é um só (com a reclassificação), e quantos', () => {
+    const one = (key: string, kind: IInventoryItem['kind']): IInventoryItem => ({ key, kind, candidateId: key, detectors: [], sources: [], refs: [], unresolved: [], notes: [] })
+    expect(batchName([one('knowledge:a', 'knowledge'), one('knowledge:b', 'knowledge')])).toBe('Knowledge (2)')
+    expect(batchName([one('knowledge:a', 'knowledge'), one('unknown:b', 'unknown')])).toBe('Seleção (2)')
+    expect(batchName([one('knowledge:a', 'knowledge'), one('unknown:b', 'unknown')], { 'unknown:b': 'knowledge' })).toBe('Knowledge (2)')
   })
 })

@@ -648,6 +648,49 @@ const importJob = {
     states: { type: 'array', items: importItemStatus },
   },
 }
+const selectionPlan = {
+  type: 'object',
+  properties: {
+    keys: { type: 'array', items: { type: 'string' } },
+    prefix: { type: 'string' },
+    phases: { type: 'array', items: { type: 'object', additionalProperties: true } },
+    steps: {
+      type: 'array',
+      items: { type: 'object', additionalProperties: true },
+      description: 'In order; `done` (`catalog` | `approved`) marks a step with no builder conversation',
+    },
+    idMap: { type: 'array', items: { type: 'object', additionalProperties: true } },
+    cycles: { type: 'array', items: { type: 'object', additionalProperties: true } },
+    outside: {
+      type: 'array',
+      items: { type: 'object', additionalProperties: true },
+      description: 'Citations to items outside the selection, with `state`: catalog | approved | batch | missing | broken | not-importable',
+    },
+    excluded: { type: 'array', items: { type: 'object', additionalProperties: true } },
+    estimate: { type: 'object', additionalProperties: true },
+    blocked: { type: 'array', items: { type: 'string' } },
+    notes: { type: 'array', items: { type: 'object', additionalProperties: true } },
+  },
+}
+const importBatchFields = {
+  id: { type: 'string' },
+  jobId: { type: 'string' },
+  name: { type: 'string' },
+  prefix: { type: 'string' },
+  keys: { type: 'array', items: { type: 'string' } },
+  order: { type: 'array', items: { type: 'string' }, description: 'The order computed when the batch was saved' },
+  by: { type: 'string' },
+  at: { type: 'string', format: 'date-time' },
+}
+const importBatch = { type: 'object', properties: { ...importBatchFields, plan: selectionPlan } }
+const selectionBody = {
+  keys: { type: 'array', items: { type: 'string' }, description: 'The keys of the selected items of the job' },
+  prefix: { type: 'string', description: 'Optional id prefix (lowercase letters, digits and "-", up to 16)' },
+}
+const jobParams = [
+  { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+  { name: 'job', in: 'path', required: true, schema: { type: 'string' } },
+]
 const failures = {
   '401': {
     description:
@@ -1628,6 +1671,7 @@ export const OPENAPI_DOCUMENT = {
               agent: { type: 'string', description: 'The agent of the inventory: its key (`agent:<id>`) or its candidate id' },
               prefix: { type: 'string', description: 'Optional id prefix (lowercase letters, digits and "-", up to 16), for agent, skill, command and doc ids' },
               ignore: { type: 'array', items: { type: 'string' }, description: 'Glob patterns ignored in this scan only, added to the project ones' },
+              job: { type: 'string', description: 'The open import job of the same repository: its approved and applied items are marked done' },
             },
             required: ['repository', 'agent'],
           }),
@@ -1768,6 +1812,58 @@ export const OPENAPI_DOCUMENT = {
             content: { 'application/json': { schema: failureEnvelope } },
           },
           '422': failures['422'],
+        },
+      },
+    },
+    '/projects/{id}/import/jobs/{job}/batches/plan': {
+      post: {
+        summary:
+          'The BATCH OF A SELECTION of items of an import job, not saved: the order only among the selected items (by phase, cited before who cites), the cycles, the id map (optional prefix), the citations to items outside the selection (in the catalog, approved, in another batch, missing, broken) and the estimate. Items already in the catalog or approved are marked done and do not count. READ ONLY. Administrators only (404 for the others; a job of another project is 404)',
+        parameters: jobParams,
+        requestBody: { required: true, ...json({ type: 'object', properties: selectionBody, required: ['keys'] }) },
+        responses: {
+          '200': { description: 'OK', ...json(envelope(selectionPlan)) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
+    '/projects/{id}/import/jobs/{job}/batches': {
+      get: {
+        summary: 'The batches saved in an import job, newest first. Administrators only (404 for the others; a job of another project is 404)',
+        parameters: jobParams,
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'array', items: { type: 'object', properties: importBatchFields } })) },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+      post: {
+        summary:
+          'SAVE the batch of a selection in the NEWEST job of its repository: name, items, order, who and when. Nothing runs and nothing is written to the catalog. An older job is 409. Administrators only (404 for the others)',
+        parameters: jobParams,
+        requestBody: {
+          required: true,
+          ...json({ type: 'object', properties: { name: { type: 'string', maxLength: 120 }, ...selectionBody }, required: ['name', 'keys'] }),
+        },
+        responses: {
+          '200': { description: 'OK', ...json(envelope(importBatch)) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '409': { description: 'Code `import_job_outdated`: a newer analysis of the repository exists', content: { 'application/json': { schema: failureEnvelope } } },
+          '422': failures['422'],
+        },
+      },
+    },
+    '/projects/{id}/import/jobs/{job}/batches/{batch}': {
+      get: {
+        summary: 'One saved batch, with the batch computed again over the current state (approved, applied, other batches). Administrators only',
+        parameters: [...jobParams, { name: 'batch', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'OK', ...json(envelope(importBatch)) },
+          '401': failures['401'],
+          '404': failures['404'],
         },
       },
     },

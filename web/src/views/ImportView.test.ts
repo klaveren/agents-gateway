@@ -2,7 +2,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick } from 'vue'
 import { api } from '@/lib/api'
-import type { IImportItemStatus, IImportJob, IImportJobSummary, IImportPlan, IImportScan, IInventoryItem } from '@/lib/importer'
+import type { IImportBatchView, IImportItemStatus, IImportJob, IImportJobSummary, IImportPlan, IImportScan, IInventoryItem, ISelectionPlan } from '@/lib/importer'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectsStore } from '@/stores/projects'
 import ImportView from './ImportView.vue'
@@ -192,7 +192,66 @@ const PLAN: IImportPlan = {
   notes: [],
 }
 
+/** O lote da seleção que o "servidor" devolve: a ordem só entre os escolhidos, as citações para fora e a estimativa. */
+function selectionPlan(keys: string[], prefix = ''): ISelectionPlan {
+  return {
+    keys,
+    prefix,
+    phases: PLAN.phases.map((phase) => ({ ...phase, steps: phase.phase === 2 ? 1 : 0 })),
+    steps: [
+      {
+        phase: 2,
+        key: 'skill:deploy',
+        kind: 'skill',
+        id: `${prefix}deploy`,
+        why: 'selected',
+        citedBy: ['command:ship'],
+        dependsOn: [],
+        forward: [],
+        tokens: { sources: 100, protocol: 1000 },
+        state: 'update',
+        done: 'catalog',
+        notes: [],
+      },
+      {
+        phase: 2,
+        key: 'command:ship',
+        kind: 'command',
+        id: `${prefix}ship`,
+        why: 'selected',
+        citedBy: [],
+        dependsOn: ['skill:deploy'],
+        forward: [],
+        tokens: { sources: 20, protocol: 1000 },
+        state: 'new',
+        notes: [],
+      },
+    ].filter((step) => keys.includes(step.key)) as ISelectionPlan['steps'],
+    idMap: [],
+    cycles: [{ keys: ['spec:a', 'spec:b'], brokenBy: 'order', text: 'ciclo de citações entre spec:a, spec:b' }],
+    outside: [
+      { from: 'command:ship', state: 'broken', path: 'docs/sumiu.md', text: 'citação quebrada: docs/sumiu.md não existe no repositório' },
+      { from: 'command:ship', state: 'batch', item: 'spec:guia', id: 'guia', batch: { id: 'b0', name: 'docs' }, text: 'em outro lote deste trabalho: docs' },
+    ],
+    excluded: [],
+    estimate: {
+      conversations: 1,
+      inputTokens: 1020,
+      sourceTokens: 20,
+      protocolTokens: 1000,
+      byKind: { command: { conversations: 1, inputTokens: 1020 } },
+      done: 1,
+      released: { conversations: 0, inputTokens: 0 },
+      note: '≈ entrada',
+    },
+    blocked: [],
+    notes: [],
+  }
+}
+
 let ignoreStored: string[] = []
+/** Os lotes salvos de cada trabalho. */
+let savedBatches: Record<string, IImportBatchView[]> = {}
 /** O "servidor" dos trabalhos: os salvos (com os itens) e o estado de cada item. */
 let saved: IImportJob[] = []
 
@@ -221,9 +280,10 @@ function savedJob(id: string, items: IInventoryItem[], extra: Partial<IImportJob
   }
 }
 
-async function mount(items: IInventoryItem[], options: { jobs?: IImportJob[]; analyze?: boolean } = {}): Promise<HTMLElement> {
+async function mount(items: IInventoryItem[], options: { jobs?: IImportJob[]; analyze?: boolean; batches?: Record<string, IImportBatchView[]> } = {}): Promise<HTMLElement> {
   ignoreStored = ['.agents/benchmark']
   saved = options.jobs ?? []
+  savedBatches = options.batches ?? {}
   vi.mocked(api).mockImplementation(async (path: string, request?: { method?: string; body?: unknown }) => {
     if (path.endsWith('/repositories'))
       return [
@@ -254,6 +314,32 @@ async function mount(items: IInventoryItem[], options: { jobs?: IImportJob[]; an
       job.states = job.states.map((entry) => (entry.key === body.key ? next : entry))
       return next
     }
+    const batchPlan = path.match(/\/import\/jobs\/([^/]+)\/batches\/plan$/)
+    if (batchPlan) {
+      const body = request!.body as { keys: string[]; prefix?: string }
+      return selectionPlan(body.keys, body.prefix)
+    }
+    const batchList = path.match(/\/import\/jobs\/([^/]+)\/batches$/)
+    if (batchList && request?.method === 'POST') {
+      const body = request.body as { name: string; keys: string[]; prefix?: string }
+      const plan = selectionPlan(body.keys, body.prefix)
+      const view: IImportBatchView = {
+        id: `b${Object.values(savedBatches).flat().length + 1}`,
+        jobId: batchList[1],
+        name: body.name,
+        prefix: plan.prefix,
+        keys: body.keys,
+        order: plan.steps.map((step) => step.key),
+        by: 'root@x.test',
+        at: '2026-10-30T14:00:00.000Z',
+        plan,
+      }
+      savedBatches[batchList[1]] = [view, ...(savedBatches[batchList[1]] ?? [])]
+      return view
+    }
+    if (batchList) return (savedBatches[batchList[1]] ?? []).map(({ plan: _plan, ...record }) => record)
+    const batchOne = path.match(/\/import\/jobs\/([^/]+)\/batches\/([^/]+)$/)
+    if (batchOne) return savedBatches[batchOne[1]]!.find((entry) => entry.id === batchOne[2])
     const opened = path.match(/\/import\/jobs\/([^/]+)$/)
     if (opened) return saved.find((entry) => entry.id === opened[1])
     if (path.endsWith('/import/ignore')) {
@@ -467,7 +553,7 @@ describe('ImportView', () => {
     await flush()
     host.querySelector<HTMLButtonElement>('[data-test="plan"]')!.click()
     await flush()
-    expect(api).toHaveBeenCalledWith('/projects/alfa/import/plan', { method: 'POST', body: { repository: 'app', agent: 'agent:ana' } })
+    expect(api).toHaveBeenCalledWith('/projects/alfa/import/plan', { method: 'POST', body: { repository: 'app', agent: 'agent:ana', job: 'j1' } })
     const batch = host.querySelector('[data-test="batch"]')!
     expect([...batch.querySelectorAll('[data-test="step"]')].map((step) => step.querySelector('button')!.textContent)).toEqual(['base', 'ana', '01'])
     expect(batch.querySelector('[data-test="order"]')!.textContent).toContain('Fase 4 · agente fechado, com os triggers · 2')
@@ -497,12 +583,127 @@ describe('ImportView', () => {
     await flush()
     input.form!.dispatchEvent(new Event('submit'))
     await flush()
-    expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/plan', { method: 'POST', body: { repository: 'app', agent: 'agent:ana', prefix: 'akm-' } })
+    expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/plan', { method: 'POST', body: { repository: 'app', agent: 'agent:ana', prefix: 'akm-', job: 'j1' } })
     expect(host.querySelector('[data-test="id-map"]')!.textContent).toContain('akm-ana')
     // Prefixo inválido não recalcula.
     input.value = 'a b'
     input.dispatchEvent(new Event('input'))
     await flush()
     expect(host.querySelector<HTMLButtonElement>('[data-test="replan"]')!.disabled).toBe(true)
+  })
+
+  it('seleciona na lista e pelo filtro; "Montar lote da seleção" mostra a ordem, o fora da seleção e a estimativa; salvar grava só o lote', async () => {
+    const host = await mount(SMALL)
+    expect(host.querySelector<HTMLButtonElement>('[data-test="build-batch"]')!.disabled).toBe(true)
+    // Caixa a caixa.
+    const pick = (text: string) =>
+      [...host.querySelectorAll('[data-test="row"]')].find((row) => row.textContent!.includes(text))!.parentElement!.querySelector<HTMLInputElement>('[data-test="pick"]')!
+    pick('ship').click()
+    await flush()
+    expect(host.querySelector('[data-test="picked-count"]')!.textContent).toContain('1 selecionado')
+    // Todos do filtro atual: as skills.
+    choose(host, 'kind', 'skill')
+    await flush()
+    host.querySelector<HTMLButtonElement>('[data-test="pick-filtered"]')!.click()
+    await flush()
+    expect(host.querySelector('[data-test="picked-count"]')!.textContent).toContain('2 selecionado')
+    choose(host, 'kind', '')
+    await flush()
+    expect(pick('deploy').checked).toBe(true)
+    expect(pick('notes/x.md').checked).toBe(false)
+
+    host.querySelector<HTMLButtonElement>('[data-test="build-batch"]')!.click()
+    await flush()
+    expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j1/batches/plan', { method: 'POST', body: { keys: ['skill:deploy', 'command:ship'] } })
+    const batch = host.querySelector('[data-test="selection-batch"]')!
+    expect([...batch.querySelectorAll('[data-test="step"]')].map((step) => step.querySelector('button')!.textContent)).toEqual(['deploy', 'ship'])
+    expect(batch.querySelector('[data-test="step-done"]')!.textContent).toContain('já no catálogo')
+    expect(batch.querySelector('[data-test="selection-estimate"]')!.textContent).toContain('1 conversa(s)')
+    expect(batch.querySelector('[data-test="selection-estimate"]')!.textContent).toContain('1 passo(s) já no catálogo')
+    expect(batch.querySelector('[data-test="selection-cycles"]')!.textContent).toContain('spec:a, spec:b')
+    const outside = batch.querySelector('[data-test="outside"]')!.textContent!
+    expect(outside).toContain('citação quebrada (1)')
+    expect(outside).toContain('em outro lote (1)')
+    expect(outside).toContain('docs')
+    expect(host.querySelector('[data-test="batches"]')).toBeNull()
+
+    const name = batch.querySelector<HTMLInputElement>('[data-test="batch-name"]')!
+    expect(name.value).toBe('Seleção (2)')
+    name.value = 'Deploy'
+    name.dispatchEvent(new Event('input'))
+    await flush()
+    batch.querySelector<HTMLFormElement>('[data-test="save-batch"]')!.dispatchEvent(new Event('submit'))
+    await flush()
+    expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/jobs/j1/batches', { method: 'POST', body: { name: 'Deploy', keys: ['skill:deploy', 'command:ship'] } })
+    expect(host.querySelector('[data-test="batch-meta"]')!.textContent).toContain('root@x.test')
+    expect(host.querySelector('[data-test="batches"]')!.textContent).toContain('Deploy')
+    expect(host.querySelector('[data-test="save-batch"]')).toBeNull()
+
+    const labels = [...host.querySelectorAll('button')].map((button) => button.textContent!.trim())
+    for (const word of ['Gravar', 'Transformar', 'Aplicar', 'Importar', 'Disparar']) expect(labels.some((label) => label.includes(word))).toBe(false)
+
+    host.querySelector<HTMLButtonElement>('[data-test="pick-clear"]')!.click()
+    await flush()
+    expect(host.querySelector('[data-test="picked-count"]')!.textContent).toContain('0 selecionado')
+  })
+
+  it('o prefixo recalcula a prévia com as mesmas chaves', async () => {
+    const host = await mount(SMALL)
+    host.querySelector<HTMLButtonElement>('[data-test="pick-filtered"]')!.click()
+    await flush()
+    host.querySelector<HTMLButtonElement>('[data-test="build-batch"]')!.click()
+    await flush()
+    const input = host.querySelector<HTMLInputElement>('[data-test="selection-prefix"]')!
+    input.value = 'akm-'
+    input.dispatchEvent(new Event('input'))
+    await flush()
+    input.form!.dispatchEvent(new Event('submit'))
+    await flush()
+    expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/jobs/j1/batches/plan', {
+      method: 'POST',
+      body: { keys: ['skill:deploy', 'command:ship', 'unknown:notes/x.md'], prefix: 'akm-' },
+    })
+    expect(host.querySelector('[data-test="selection-order"]')!.textContent).toContain('akm-ship')
+  })
+
+  it('os lotes salvos do trabalho aparecem ao abrir; abrir um mostra o detalhe recalculado', async () => {
+    const plan = selectionPlan(['skill:deploy', 'command:ship'])
+    const stored: IImportBatchView = {
+      id: 'b9',
+      jobId: 'j7',
+      name: 'Commands',
+      prefix: '',
+      keys: ['skill:deploy', 'command:ship'],
+      order: ['skill:deploy', 'command:ship'],
+      by: 'bia@x.test',
+      at: '2026-10-30T11:00:00.000Z',
+      plan,
+    }
+    const host = await mount(SMALL, { jobs: [savedJob('j7', SMALL)], analyze: false, batches: { j7: [stored] } })
+    host.querySelector<HTMLButtonElement>('[data-test="job"]')!.click()
+    await flush()
+    expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j7/batches')
+    const entry = host.querySelector<HTMLButtonElement>('[data-test="batch-entry"]')!
+    expect(entry.textContent).toContain('Commands')
+    expect(entry.textContent).toContain('bia@x.test')
+    entry.click()
+    await flush()
+    expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/jobs/j7/batches/b9')
+    const batch = host.querySelector('[data-test="selection-batch"]')!
+    expect(batch.textContent).toContain('Lote Commands')
+    expect(batch.querySelectorAll('[data-test="step"]')).toHaveLength(2)
+    expect(batch.querySelector('[data-test="save-batch"]')).toBeNull()
+  })
+
+  it('⛔ no trabalho antigo a prévia vale, mas o lote não é salvo', async () => {
+    const host = await mount(SMALL, { jobs: [savedJob('j2', SMALL), savedJob('j1', SMALL, { latest: false })], analyze: false })
+    ;[...host.querySelectorAll<HTMLButtonElement>('[data-test="job"]')].find((button) => button.textContent!.includes('registro'))!.click()
+    await flush()
+    host.querySelector<HTMLButtonElement>('[data-test="pick-filtered"]')!.click()
+    await flush()
+    host.querySelector<HTMLButtonElement>('[data-test="build-batch"]')!.click()
+    await flush()
+    expect(host.querySelector('[data-test="selection-batch"]')).not.toBeNull()
+    expect(host.querySelector('[data-test="save-batch"]')).toBeNull()
   })
 })

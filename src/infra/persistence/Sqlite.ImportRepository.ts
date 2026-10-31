@@ -1,14 +1,15 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { IImportJobItem, IImportJobSummary, IImportReuse, INewImportJob, TImportItemPatch, TImportItemState } from '@domain/models/ImportJob.Model'
+import { IImportBatch, IImportJobItem, IImportJobSummary, IImportReuse, INewImportJob, TImportItemPatch, TImportItemState } from '@domain/models/ImportJob.Model'
 import { IImportScan, IInventoryItem, TInventoryKind } from '@domain/models/ImportInventory.Model'
 import { IImportJobRecord, IImportRepository } from '@domain/ports/ImportRepository.Port'
 
 /**
- * ⚖️ DUAS TABELAS: o trabalho (uma varredura salva, num `HEAD`) e os itens dele. Reanalisar cria um trabalho novo (o
- * anterior fica como registro); o estado dos itens é copiado pela chave. O inventário vai como JSON (o que a tela lê
- * inteiro); o que se consulta e se muda (estado, tipo, autor) vai em coluna.
+ * ⚖️ TRÊS TABELAS: o trabalho (uma varredura salva, num `HEAD`), os itens dele e os lotes que a pessoa montou nele.
+ * Reanalisar cria um trabalho novo (o anterior fica como registro, com os lotes); o estado dos itens é copiado pela
+ * chave. O inventário vai como JSON (o que a tela lê inteiro); o que se consulta e se muda (estado, tipo, autor) vai em
+ * coluna. O lote guarda as chaves e a ordem como JSON: ele é lido inteiro.
  */
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS import_scans (
@@ -46,6 +47,17 @@ const SCHEMA = `
     updated_at        TEXT,
     PRIMARY KEY (scan_id, key)
   );
+  CREATE TABLE IF NOT EXISTS import_batches (
+    id          TEXT    PRIMARY KEY,
+    scan_id     TEXT    NOT NULL,
+    name        TEXT    NOT NULL,
+    prefix      TEXT    NOT NULL DEFAULT '',
+    keys        TEXT    NOT NULL,
+    item_order  TEXT    NOT NULL,
+    created_by  TEXT    NOT NULL,
+    created_at  TEXT    NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS import_batches_scan ON import_batches (scan_id, created_at DESC);
 `
 
 type TRow = Record<string, unknown>
@@ -174,9 +186,26 @@ export class SqliteImportRepository implements IImportRepository {
     return this.item(jobId, key)
   }
 
+  createBatch(batch: IImportBatch): void {
+    this.db
+      .prepare('INSERT INTO import_batches (id, scan_id, name, prefix, keys, item_order, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(batch.id, batch.jobId, batch.name, batch.prefix, JSON.stringify(batch.keys), JSON.stringify(batch.order), batch.by, batch.at.toISOString())
+  }
+
+  /** ⚖️ O mais novo pela data e, no empate, pela ordem de gravação (`rowid`). */
+  batches(jobId: string): IImportBatch[] {
+    return (this.db.prepare('SELECT * FROM import_batches WHERE scan_id = ? ORDER BY created_at DESC, rowid DESC').all(jobId) as TRow[]).map(toBatch)
+  }
+
+  batch(jobId: string, batchId: string): IImportBatch | undefined {
+    const row = this.db.prepare('SELECT * FROM import_batches WHERE scan_id = ? AND id = ?').get(jobId, batchId) as TRow | undefined
+    return row ? toBatch(row) : undefined
+  }
+
   deleteProject(projectId: string): void {
     this.db.exec('BEGIN')
     try {
+      this.db.prepare('DELETE FROM import_batches WHERE scan_id IN (SELECT id FROM import_scans WHERE project_id = ?)').run(projectId)
       this.db.prepare('DELETE FROM import_items WHERE scan_id IN (SELECT id FROM import_scans WHERE project_id = ?)').run(projectId)
       this.db.prepare('DELETE FROM import_scans WHERE project_id = ?').run(projectId)
       this.db.exec('COMMIT')
@@ -222,5 +251,18 @@ function toItem(row: TRow): IImportJobItem {
     ...optional('batchId', text(row.batch_id)),
     ...optional('by', text(row.updated_by)),
     ...optional('at', text(row.updated_at) ? new Date(row.updated_at as string) : undefined),
+  }
+}
+
+function toBatch(row: TRow): IImportBatch {
+  return {
+    id: row.id as string,
+    jobId: row.scan_id as string,
+    name: row.name as string,
+    prefix: row.prefix as string,
+    keys: JSON.parse(row.keys as string) as string[],
+    order: JSON.parse(row.item_order as string) as string[],
+    by: row.created_by as string,
+    at: new Date(row.created_at as string),
   }
 }
