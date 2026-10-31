@@ -35,6 +35,7 @@
     // Perfil não tem item no trilho (mora no menu da conta): nada fica aceso.
     if (name === 'packages' || name === 'profile' || name.startsWith('project')) return name.startsWith('project') ? 'projects' : name
     if (name.startsWith('security')) return 'security'
+    if (name === 'catalog-history') return name
     return ['settings', 'users', 'usage'].includes(name) ? name : 'inbox'
   })
 

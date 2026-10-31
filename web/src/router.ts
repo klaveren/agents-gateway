@@ -10,6 +10,7 @@ import DocsView from './views/DocsView.vue'
 import ProjectsView from './views/ProjectsView.vue'
 import ResourcesView from './views/ResourcesView.vue'
 import BuildView from './views/BuildView.vue'
+import CatalogHistoryView from './views/CatalogHistoryView.vue'
 import RulesView from './views/RulesView.vue'
 import EnvironmentView from './views/EnvironmentView.vue'
 import SchedulesView from './views/SchedulesView.vue'
@@ -67,6 +68,7 @@ export const router = createRouter({
     { path: '/permissions', name: 'permissions', component: PermissionsView },
     { path: '/accounts', name: 'accounts', component: AccountsView },
     { path: '/import', name: 'import', component: ImportView },
+    { path: '/catalog/history', name: 'catalog-history', component: CatalogHistoryView },
     { path: '/specs', name: 'specs', component: DocsView, props: { kind: 'spec' } },
     { path: '/specs/new', name: 'spec-new', component: DocsView, props: { kind: 'spec' } },
     { path: '/specs/build', name: 'spec-build', component: BuildView, props: { kind: 'spec', tab: 'build' } },

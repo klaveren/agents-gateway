@@ -1,5 +1,8 @@
 <script setup lang="ts">
   import { computed, ref, watch } from 'vue'
+  import { useRoute } from 'vue-router'
+  import HistoryPanel from '@/components/HistoryPanel.vue'
+  import HistoryTabs from '@/components/HistoryTabs.vue'
   import MasterDetail from '@/components/MasterDetail.vue'
   import { initials, redactUrl } from '@/lib/format'
   import type { TMcpAuth, TMcpKind, TMcpTransport } from '@/lib/types'
@@ -16,6 +19,13 @@
   const mcp = useMcpStore()
   const projects = useProjectsStore()
   const loadError = ref<string>()
+  const route = useRoute()
+  /** Detalhes ou o histórico do MCP — que o membro lê, sem restaurar (é de quem administra). */
+  const tab = ref<'edit' | 'history'>(route.hash === '#historico' ? 'history' : 'edit')
+  watch(
+    () => props.id,
+    () => (tab.value = route.hash === '#historico' ? 'history' : 'edit'),
+  )
 
   const KIND_LABEL: Record<TMcpKind, string> = { process: 'Local (npm)', remote: 'Remoto (URL)', container: 'Contêiner isolado' }
   const TRANSPORT_LABEL: Record<TMcpTransport, string> = { auto: 'Automático', http: 'Streamable HTTP', sse: 'SSE' }
@@ -83,47 +93,51 @@
           </span>
         </div>
 
-        <dl class="grid gap-x-4 gap-y-2 rounded-xl border border-zinc-800 p-3 text-sm sm:grid-cols-[max-content_1fr]">
-          <dt class="text-zinc-500">Identificador</dt>
-          <dd class="font-mono text-zinc-200">{{ selected.id }}</dd>
-          <dt class="text-zinc-500">Tipo</dt>
-          <dd class="text-zinc-200">{{ KIND_LABEL[selected.kind] }}</dd>
-          <template v-if="selected.kind === 'remote'">
-            <dt class="text-zinc-500">URL</dt>
-            <dd data-test="mcp-url" class="font-mono break-all text-zinc-200">{{ redactUrl(selected.url) }}</dd>
-            <dt class="text-zinc-500">Conexão</dt>
-            <dd class="text-zinc-200">{{ TRANSPORT_LABEL[selected.transport] }}</dd>
-            <dt class="text-zinc-500">Autenticação</dt>
+        <HistoryTabs v-model="tab" edit-label="Detalhes" />
+        <HistoryPanel v-if="tab === 'history'" kind="mcp" :id="selected.key" readonly />
+        <template v-else>
+          <dl class="grid gap-x-4 gap-y-2 rounded-xl border border-zinc-800 p-3 text-sm sm:grid-cols-[max-content_1fr]">
+            <dt class="text-zinc-500">Identificador</dt>
+            <dd class="font-mono text-zinc-200">{{ selected.id }}</dd>
+            <dt class="text-zinc-500">Tipo</dt>
+            <dd class="text-zinc-200">{{ KIND_LABEL[selected.kind] }}</dd>
+            <template v-if="selected.kind === 'remote'">
+              <dt class="text-zinc-500">URL</dt>
+              <dd data-test="mcp-url" class="font-mono break-all text-zinc-200">{{ redactUrl(selected.url) }}</dd>
+              <dt class="text-zinc-500">Conexão</dt>
+              <dd class="text-zinc-200">{{ TRANSPORT_LABEL[selected.transport] }}</dd>
+              <dt class="text-zinc-500">Autenticação</dt>
+              <dd class="text-zinc-200">
+                {{ AUTH_LABEL[selected.auth] }}
+                <template v-if="selected.auth === 'header'">· {{ selected.secret.configured ? 'chave configurada' : 'sem chave' }}</template>
+              </dd>
+            </template>
+            <template v-else-if="selected.kind === 'process' && selected.process?.package">
+              <dt class="text-zinc-500">Pacote</dt>
+              <dd class="font-mono break-all text-zinc-200">{{ selected.process.package }}</dd>
+            </template>
+            <template v-else-if="selected.kind === 'container' && selected.container?.image">
+              <dt class="text-zinc-500">Imagem</dt>
+              <dd class="font-mono break-all text-zinc-200">{{ selected.container.image }}</dd>
+            </template>
+            <dt class="text-zinc-500">Envia a identidade</dt>
+            <dd class="text-zinc-200">{{ selected.identity ? 'Sim — agente, conversa e projeto nos cabeçalhos x-gateway-*' : 'Não' }}</dd>
+            <dt class="text-zinc-500">Estado</dt>
             <dd class="text-zinc-200">
-              {{ AUTH_LABEL[selected.auth] }}
-              <template v-if="selected.auth === 'header'">· {{ selected.secret.configured ? 'chave configurada' : 'sem chave' }}</template>
+              {{
+                selected.kind === 'remote'
+                  ? selected.status.connected
+                    ? 'conectado'
+                    : 'sem conexão'
+                  : `${selected.status.instances ?? 0} em execução`
+              }}
             </dd>
-          </template>
-          <template v-else-if="selected.kind === 'process' && selected.process?.package">
-            <dt class="text-zinc-500">Pacote</dt>
-            <dd class="font-mono break-all text-zinc-200">{{ selected.process.package }}</dd>
-          </template>
-          <template v-else-if="selected.kind === 'container' && selected.container?.image">
-            <dt class="text-zinc-500">Imagem</dt>
-            <dd class="font-mono break-all text-zinc-200">{{ selected.container.image }}</dd>
-          </template>
-          <dt class="text-zinc-500">Envia a identidade</dt>
-          <dd class="text-zinc-200">{{ selected.identity ? 'Sim — agente, conversa e projeto nos cabeçalhos x-gateway-*' : 'Não' }}</dd>
-          <dt class="text-zinc-500">Estado</dt>
-          <dd class="text-zinc-200">
-            {{
-              selected.kind === 'remote'
-                ? selected.status.connected
-                  ? 'conectado'
-                  : 'sem conexão'
-                : `${selected.status.instances ?? 0} em execução`
-            }}
-          </dd>
-          <dt class="text-zinc-500">Agentes</dt>
-          <dd class="text-zinc-200">{{ selected.agents.length ? selected.agents.map((agent) => agent.name).join(', ') : 'nenhum ainda' }}</dd>
-        </dl>
+            <dt class="text-zinc-500">Agentes</dt>
+            <dd class="text-zinc-200">{{ selected.agents.length ? selected.agents.map((agent) => agent.name).join(', ') : 'nenhum ainda' }}</dd>
+          </dl>
 
-        <p class="text-xs text-zinc-500">As ferramentas que este servidor expõe, e o teste de conexão, ficam com quem administra.</p>
+          <p class="text-xs text-zinc-500">As ferramentas que este servidor expõe, e o teste de conexão, ficam com quem administra.</p>
+        </template>
       </section>
       <div v-else class="grid h-full place-items-center text-zinc-500">Escolha um MCP.</div>
     </template>
