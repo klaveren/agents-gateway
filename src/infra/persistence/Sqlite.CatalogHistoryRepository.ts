@@ -3,6 +3,7 @@ import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { TCatalogKind } from '@domain/Catalog.Document'
 import {
+  IBatchFilter,
   IBatchWidening,
   ICatalogBatch,
   ICatalogBatchRepository,
@@ -13,6 +14,7 @@ import {
   TNewRevision,
   TRevisionOp,
   TBatchKind,
+  TBatchListItem,
   TBatchStatus,
   TRevisionSource,
 } from '@domain/ports/CatalogHistoryRepository.Port'
@@ -177,6 +179,29 @@ export class SqliteCatalogHistoryRepository implements ICatalogHistoryRepository
 
   batchRevisions(batchId: string): ICatalogRevision[] {
     return (this.db.prepare('SELECT * FROM catalog_revisions WHERE batch_id = ? ORDER BY id').all(batchId) as TRow[]).map(toRevision)
+  }
+
+  /** ⚖️ O lote de um projeto: o do escopo dele, ou o de escopo maior (`all`) que gravou revisão nele. */
+  batches(filter: IBatchFilter, paging: { offset: number; limit: number }): { batches: TBatchListItem[]; total: number } {
+    const where: string[] = []
+    const params: TParam[] = []
+    if (filter.kind !== undefined) {
+      where.push('b.kind = ?')
+      params.push(filter.kind)
+    }
+    if (filter.projectId !== undefined) {
+      where.push('(b.scope = ? OR b.id IN (SELECT batch_id FROM catalog_revisions WHERE batch_id IS NOT NULL AND project_id = ?))')
+      params.push(filter.projectId ? `project:${filter.projectId}` : 'global', filter.projectId)
+    }
+    const clause = where.length ? `WHERE ${where.join(' AND ')}` : ''
+    const total = Number((this.db.prepare(`SELECT COUNT(*) AS total FROM catalog_batches b ${clause}`).get(...params) as TRow).total)
+    const rows = this.db
+      .prepare(
+        `SELECT b.*, (SELECT COUNT(DISTINCT r.kind || '/' || r.item_id) FROM catalog_revisions r WHERE r.batch_id = b.id) AS items
+         FROM catalog_batches b ${clause} ORDER BY b.at DESC, b.rowid DESC LIMIT ? OFFSET ?`,
+      )
+      .all(...params, paging.limit, paging.offset) as TRow[]
+    return { batches: rows.map((row) => ({ ...toBatch(row), items: Number(row.items) })), total }
   }
 }
 

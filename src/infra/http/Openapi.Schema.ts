@@ -2238,7 +2238,7 @@ export const OPENAPI_DOCUMENT = {
     '/catalog/import/plan': {
       post: {
         summary:
-          'The import PLAN (dry-run): NOTHING is written. Takes the package of the export — the `.tar.gz` (`Content-Type: application/gzip`) or `{ manifest, files }` as JSON — and returns, per item, the operation (`create`, `update`, `unchanged`, `conflict`, `error`; never `delete`: only create and update, the mirror mode comes later), the diff against the current item, the access widenings (the `confirm` of the apply), the attentions, the broken references (attached doc, resource, initial context, `mcp:` and `agent:` that exist neither in the catalog nor in the package), the problems under the same rules as the screens, the secrets the vault still lacks (an enabled MCP missing one enters disabled), the apply ORDER (project → docs → resources → rules → addenda → MCPs → agents → links → project permissions; inside a phase, the cited before who cites and what restricts before what widens) and the `planHash` (sha256 of the package documents, the current state used and the outcome: the apply only runs if it is still the same). Body limit: `CATALOG_IMPORT_LIMIT`. Administrators only (404 for the others); an access token also plans, but `caller.wideningsApplicable` is false: widenings are applied only by an administrator on the screen',
+          'The import PLAN (dry-run): NOTHING is written. Takes the package of the export — the `.tar.gz` (`Content-Type: application/gzip`) or `{ manifest, files }` as JSON — or the canonical documents (`{ documents }`, the importer) and returns, per item, the operation (`create`, `update`, `unchanged`, `conflict`, `error`; never `delete`: only create and update, the mirror mode comes later), the diff against the current item, the access widenings (the `confirm` of the apply), the attentions, the broken references (attached doc, resource, initial context, `mcp:` and `agent:` that exist neither in the catalog nor in the package), the problems under the same rules as the screens, the secrets the vault still lacks (an enabled MCP missing one enters disabled), the apply ORDER (project → docs → resources → rules → addenda → MCPs → agents → links → project permissions; inside a phase, the cited before who cites and what restricts before what widens) and the `planHash` (sha256 of the package documents, the current state used and the outcome: the apply only runs if it is still the same). Body limit: `CATALOG_IMPORT_LIMIT`. Administrators only (404 for the others); an access token also plans, but `caller.wideningsApplicable` is false: widenings are applied only by an administrator on the screen',
         parameters: [
           {
             name: 'scope',
@@ -2312,6 +2312,116 @@ export const OPENAPI_DOCUMENT = {
           '404': failures['404'],
           '413': { description: 'The package is too large (body or unpacked)' },
           '422': failures['422'],
+        },
+      },
+    },
+    '/catalog/import/apply': {
+      post: {
+        summary:
+          'APPLIES the import. Takes `{ package | documents, scope?, planHash, confirm? }` (JSON only), recomputes the plan and refuses, writing NOTHING: `planHash` differs from the plan computed now (409 `plan_changed`, `details.plan` is the new plan); an item is `error`/`conflict` or a file is out of format (422 `import_blocked`, `details.blockers`); the plan widens access and `confirm` is not exactly its set (409 `widening_confirmation_required`) or the request came with an access token (403: widenings only by an administrator signed in on the screen). Then writes in the ORDER of the plan, through the same write path and validations as the screens, every write a revision (`op: import`, `source: import`) inside ONE batch (`kind: import`, opened as `partial` before the first write). The project whose initial context cites a new doc goes in two steps (`record` without it, then `links`). An MCP missing a secret enters disabled (`entersDisabled`, `missingSecrets`). It stops at the first step that fails: the batch stays `partial`, with `failed`, `pending` and `revert` (POST /catalog/batches/{batchId}/revert). Nothing to write (all `unchanged`): no batch. Administrators only (404 for the others)',
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            required: ['planHash'],
+            properties: {
+              package: { type: 'object', properties: { manifest: { type: 'object' }, files: { type: 'object', additionalProperties: { type: 'string' } } } },
+              documents: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  required: ['kind', 'id', 'body'],
+                  properties: { kind: { type: 'string', enum: catalogKinds }, id: { type: 'string' }, projectId: { type: 'string' }, body: { type: 'object' } },
+                },
+                description: 'Canonical documents (instead of `package`).',
+              },
+              scope: { type: 'string', description: '`all`, `global` or `project:<id>`. Absent: the query (`scope`/`project`), the manifest, else `all`.' },
+              planHash: { type: 'string', description: 'The `planHash` of the plan the person reviewed.' },
+              confirm: { type: 'array', items: { type: 'string' }, description: 'The widening keys being accepted: exactly those of the plan.' },
+            },
+          }),
+        },
+        responses: {
+          '200': {
+            description: 'Applied (see `batch.status`: `applied`, or `partial` with `failed`)',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  planHash: { type: 'string' },
+                  batch: { type: 'object' },
+                  applied: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: { ref: { type: 'string' }, op: { type: 'string' }, phase: { type: 'string' }, part: { type: 'string' }, revision: { type: 'integer' } },
+                    },
+                  },
+                  failed: {
+                    type: 'object',
+                    properties: { ref: { type: 'string' }, part: { type: 'string' }, message: { type: 'string' }, issues: { type: 'array', items: { type: 'object' } } },
+                  },
+                  pending: { type: 'array', items: { type: 'object' } },
+                  widenings: { type: 'array', items: wideningSchema },
+                  entersDisabled: { type: 'array', items: { type: 'string' } },
+                  missingSecrets: { type: 'array', items: { type: 'object' } },
+                  revert: { type: 'object', properties: { batchId: { type: 'string' }, method: { type: 'string' }, path: { type: 'string' } } },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '403': restoreFailures['403'],
+          '404': failures['404'],
+          '409': {
+            description: 'Code `plan_changed` (`details.plan`) or `widening_confirmation_required` (`details.widenings`)',
+            content: { 'application/json': { schema: failureEnvelope } },
+          },
+          '413': { description: 'The body is too large' },
+          '422': {
+            description: 'Invalid body, or code `import_blocked`: items that cannot be applied (`details.blockers`)',
+            content: { 'application/json': { schema: failureEnvelope } },
+          },
+        },
+      },
+    },
+    '/catalog/batches': {
+      get: {
+        summary:
+          'The catalog batches (imports and reverts), newest first: status (`applied`, `partial`, `reverted`), summary, the widenings accepted item by item, and how many items each one touched. Administrators only (404 for the others)',
+        parameters: [
+          { name: 'project', in: 'query', schema: { type: 'string' }, description: 'A project id (its scope, or batches that wrote in it), `global`, or absent (all).' },
+          { name: 'kind', in: 'query', schema: { type: 'string', enum: ['import', 'revert'] } },
+          { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } },
+          { name: 'pageSize', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 } },
+        ],
+        responses: {
+          '200': {
+            description: 'A page of batches',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: { batches: { type: 'array', items: { type: 'object' } }, total: { type: 'integer' }, page: { type: 'integer' }, pageSize: { type: 'integer' } },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
+    '/catalog/batches/{batchId}': {
+      get: {
+        summary: 'One batch, whole, and its revisions (without the document) in the order they were written. Administrators only (404 for the others)',
+        parameters: [{ name: 'batchId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'The batch',
+            ...json(envelope({ type: 'object', properties: { batch: { type: 'object' }, revisions: { type: 'array', items: revisionSummarySchema } } })),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
         },
       },
     },

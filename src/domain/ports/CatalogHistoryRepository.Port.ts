@@ -116,6 +116,19 @@ export interface ICatalogBatch {
   status: TBatchStatus
 }
 
+/** Um lote na lista: com quantos itens ele tocou (as revisões com o `batchId`, um por item). */
+export type TBatchListItem = ICatalogBatch & { items: number }
+
+/**
+ * O recorte da lista de lotes:
+ * - `projectId`: o lote do escopo `project:<id>` OU que gravou alguma revisão no projeto (`''` = o global);
+ * - `kind`: só os imports, ou só as reversões.
+ */
+export interface IBatchFilter {
+  projectId?: string
+  kind?: TBatchKind
+}
+
 /** ⚖️ Lote também só acrescenta: muda o `status` e o `summary` ao fechar; nunca se apaga. */
 export interface ICatalogBatchRepository {
   createBatch(batch: ICatalogBatch): ICatalogBatch
@@ -126,4 +139,6 @@ export interface ICatalogBatchRepository {
   markReverted(id: string): void
   /** As revisões gravadas com este `batchId`, na ordem em que foram gravadas. */
   batchRevisions(batchId: string): ICatalogRevision[]
+  /** Uma página dos lotes do recorte, do mais novo para o mais velho, e o total. */
+  batches(filter: IBatchFilter, paging: { offset: number; limit: number }): { batches: TBatchListItem[]; total: number }
 }

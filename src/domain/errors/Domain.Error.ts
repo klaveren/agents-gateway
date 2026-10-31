@@ -413,6 +413,30 @@ export class CatalogWideningForbiddenError extends DomainError {
   }
 }
 
+/**
+ * ⛔ O PLANO MUDOU: o `planHash` do pedido não é o do plano recalculado agora (alguém mexeu no catálogo, ou o pacote é
+ * outro). Nada foi gravado; volta o plano novo para a pessoa rever.
+ */
+export class CatalogPlanChangedError extends DomainError {
+  constructor(public readonly plan: unknown) {
+    super('The import plan changed since it was computed: review the new plan and apply it again')
+  }
+}
+
+/** Um item do plano que impede o import: o `error` ou o `conflict`, com os motivos; ou um arquivo fora do formato. */
+export interface IImportBlocker {
+  ref: string
+  op: string
+  issues: Array<{ field: string; message: string }>
+}
+
+/** ⛔ O plano tem item com erro ou conflito (ou arquivo fora do formato): NADA é aplicado. Corrija e planeje de novo. */
+export class CatalogImportBlockedError extends DomainError {
+  constructor(public readonly blockers: readonly IImportBlocker[]) {
+    super(`The import has items that cannot be applied (nothing was written): ${blockers.map((item) => `${item.ref} (${item.op})`).join(', ')}`)
+  }
+}
+
 /** A versão a restaurar não passa mais nas regras de hoje (ou o item não pode ser restaurado assim). Todos os problemas. */
 export class CatalogRestoreInvalidError extends DomainError {
   constructor(public readonly issues: Array<{ field: string; message: string }>) {

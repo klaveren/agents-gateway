@@ -117,6 +117,38 @@ export interface IRevertResult {
   failed?: IRevertItem & { message: string; issues?: IIssue[] }
 }
 
+export type TBatchStatus = 'applied' | 'partial' | 'reverted'
+
+/** Um lote (import ou reversão): o registro de `catalog_batches`, com quantos itens ele tocou. */
+export interface IBatch {
+  id: string
+  at: string
+  by: string
+  kind: 'import' | 'revert'
+  scope: string
+  /** O que o lote gravou, pulou, onde parou (`failed`), o que ficou pendente (`pending`). JSON livre de quem grava. */
+  summary: Record<string, unknown>
+  /** As ampliações aceitas, item a item. */
+  widenings: Array<IWideningRef & { kind: TCatalogKind; itemId: string }>
+  status: TBatchStatus
+  items: number
+}
+
+export interface IBatchPage {
+  batches: IBatch[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export const BATCH_STATUS_LABEL: Readonly<Record<TBatchStatus, string>> = { applied: 'aplicado', partial: 'parcial', reverted: 'revertido' }
+export const BATCH_KIND_LABEL: Readonly<Record<IBatch['kind'], string>> = { import: 'importação', revert: 'reversão' }
+
+/** Os lotes: `project` é um id, `global`, ou ausente (todos). */
+export function listBatches(project: string | undefined, page = 1, pageSize = HISTORY_PAGE_SIZE): Promise<IBatchPage> {
+  return api<IBatchPage>('/catalog/batches', { query: { project, page, pageSize } })
+}
+
 export interface IIssue {
   field: string
   message: string

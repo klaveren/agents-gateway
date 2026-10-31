@@ -59,6 +59,12 @@ export interface IPlanOptions {
 
 type TIssues = TImportIssue[]
 
+/** O plano e, por `ref`, o documento que cada item que grava gravaria. */
+export interface IPlanWithTargets {
+  plan: ICatalogImportPlan
+  targets: ReadonlyMap<string, ICatalogDocument>
+}
+
 /** Um item durante o plano: o documento normalizado (`document`) e o que seria gravado (`target`). */
 interface IDraft {
   input: ICatalogDocument
@@ -173,9 +179,14 @@ export class CatalogImportPlanner {
 
   /** NÍVEL 1 + 2: o pacote do export (`.tar.gz` já aberto ou `{ manifest, files }`) → o plano. */
   async planPackage(input: IPackageInput, options: IPlanOptions & { scope?: TCatalogScope } = {}): Promise<ICatalogImportPlan> {
+    return (await this.planPackageWithTargets(input, options)).plan
+  }
+
+  /** O plano do pacote e o que cada item gravaria (ver `planWithTargets`). */
+  async planPackageWithTargets(input: IPackageInput, options: IPlanOptions & { scope?: TCatalogScope } = {}): Promise<IPlanWithTargets> {
     const parsed = parsePackage(input.files, input.manifest)
     const scope = options.scope ?? scopeOfManifest(parsed.manifest?.scope) ?? { kind: 'all' }
-    return this.planDocuments(parsed.documents, scope, {
+    return this.planWithTargets(parsed.documents, scope, {
       ...options,
       masked: [...(options.masked ?? []), ...(parsed.manifest?.masked ?? [])],
       fileErrors: [...(options.fileErrors ?? []), ...parsed.errors],
@@ -188,6 +199,14 @@ export class CatalogImportPlanner {
    * depois do PR 9).
    */
   async planDocuments(documents: readonly ICatalogDocument[], scope: TCatalogScope, options: IPlanOptions = {}): Promise<ICatalogImportPlan> {
+    return (await this.planWithTargets(documents, scope, options)).plan
+  }
+
+  /**
+   * O plano E o documento que cada item que grava (`create`/`update`) gravaria, por `ref`: o normalizado, e no MCP que
+   * entra desligado, o desligado. É o que o apply escreve — o mesmo que o plano comparou e mostrou.
+   */
+  async planWithTargets(documents: readonly ICatalogDocument[], scope: TCatalogScope, options: IPlanOptions = {}): Promise<IPlanWithTargets> {
     const view = new CatalogView(this.deps.reader.list({ kind: 'all' }))
     const masked = new Set((options.masked ?? []).map((item) => itemRef(item.kind, item.id, item.projectId)))
     const drafts = this.classify(documents, scope, view, masked)
@@ -256,7 +275,8 @@ export class CatalogImportPlanner {
     summary.fileErrors = fileErrors.length
 
     const label = scopeLabel(scope)
-    return {
+    const targets = new Map(writes.map((draft) => [draft.ref, draft.target!]))
+    const plan: ICatalogImportPlan = {
       scope: label,
       planHash: planHashOf({
         scope: label,
@@ -284,6 +304,7 @@ export class CatalogImportPlanner {
       summary,
       caller: { viaAccessToken: !!options.viaAccessToken, wideningsApplicable: !options.viaAccessToken },
     }
+    return { plan, targets }
   }
 
   /** A operação de cada documento, antes das regras: normaliza, confere o escopo, a repetição e o id. */

@@ -121,3 +121,91 @@ describe('Catalog.Cli — pnpm catalog export', () => {
     assert.strictEqual(await runCatalogCli(['export', 'x', '--project', 'a', '--global'], io), 2)
   })
 })
+
+describe('Catalog.Cli — pnpm catalog plan|apply', () => {
+  const reply = (status: number, body: unknown) => ({ ok: status < 400, status, json: async () => body }) as Response
+  const plan = (patch: Record<string, unknown> = {}) => ({
+    scope: 'all',
+    planHash: 'f'.repeat(64),
+    items: [{ ref: 'spec/guia', op: 'create', issues: [] }],
+    order: [{ ref: 'spec/guia', phase: 'docs' }],
+    widenings: [],
+    attentions: [],
+    brokenRefs: [],
+    fileErrors: [],
+    summary: { create: 1, update: 0, unchanged: 0, conflict: 0, error: 0 },
+    ...patch,
+  })
+
+  function folder(name: string): string {
+    const dir = join(work, name)
+    writeCatalogDirectory(dir, { 'catalog.json': '{"format":1}', 'global/specs/guia.md': '---\nid: guia\n---\nB\n' })
+    mkdirSync(join(dir, '.git'), { recursive: true })
+    writeFileSync(join(dir, '.git', 'HEAD'), 'ref: x\n')
+    return dir
+  }
+
+  function io(handler: (url: string, body: unknown) => Response) {
+    const calls: Array<{ url: string; body: unknown }> = []
+    const lines: string[] = []
+    return {
+      calls,
+      lines,
+      io: {
+        env: { GATEWAY_URL: 'https://gw.test', GATEWAY_TOKEN: 'agw_abc' },
+        fetch: (async (url: string, init: { body?: string }) => {
+          const body = init.body ? JSON.parse(init.body) : undefined
+          calls.push({ url, body })
+          return handler(url, body)
+        }) as unknown as typeof fetch,
+        log: (line: string) => lines.push(line),
+      },
+    }
+  }
+
+  it('plan: manda a pasta (sem o .git) e mostra o plano; não grava', async () => {
+    const run = io(() => reply(200, { ok: true, result: plan() }))
+    assert.strictEqual(await runCatalogCli(['plan', folder('plan')], run.io), 0)
+    assert.deepStrictEqual(
+      run.calls.map((call) => call.url),
+      ['https://gw.test/v1/catalog/import/plan?scope=all'],
+    )
+    assert.deepStrictEqual(Object.keys((run.calls[0].body as { files: object }).files).sort(), ['catalog.json', 'global/specs/guia.md'])
+    assert.match(run.lines.join('\n'), /1 a criar[\s\S]*docs: spec\/guia[\s\S]*planHash f{64}/)
+  })
+
+  it('apply: planeja e aplica com o planHash, SEM confirm; lote parcial = código 1 e o caminho da reversão', async () => {
+    const run = io((url) =>
+      url.endsWith('/apply')
+        ? reply(200, {
+            ok: true,
+            result: {
+              batch: { id: 'lote-9', status: 'partial' },
+              applied: [],
+              failed: { ref: 'spec/guia', message: 'falhou' },
+              pending: [],
+              missingSecrets: [],
+              revert: { path: '/v1/catalog/batches/lote-9/revert' },
+            },
+          })
+        : reply(200, { ok: true, result: plan() }),
+    )
+    assert.strictEqual(await runCatalogCli(['apply', folder('apply')], run.io), 1)
+    assert.strictEqual(run.calls[1].url, 'https://gw.test/v1/catalog/import/apply')
+    const body = run.calls[1].body as Record<string, unknown>
+    assert.deepStrictEqual([body.planHash, body.scope, 'confirm' in body], ['f'.repeat(64), 'all', false])
+    assert.match(run.lines.join('\n'), /parou em spec\/guia[\s\S]*POST \/v1\/catalog\/batches\/lote-9\/revert/)
+  })
+
+  it('apply com ampliação ou com erro no plano: não chama o apply', async () => {
+    for (const patch of [
+      { widenings: [{ key: 'agent/theo#allowedTools+cap:terminal', description: 'terminal' }] },
+      { items: [{ ref: 'spec/guia', op: 'error', issues: [{ field: 'body', message: 'grande' }] }] },
+    ]) {
+      const run = io(() => reply(200, { ok: true, result: plan(patch) }))
+      assert.strictEqual(await runCatalogCli(['apply', folder('blocked')], run.io), 1)
+      assert.strictEqual(run.calls.length, 1)
+      assert.match(run.lines.join('\n'), /nada aplicado/)
+    }
+  })
+})

@@ -1,16 +1,22 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import WideningConfirm from '@/components/WideningConfirm.vue'
 import {
+  BATCH_KIND_LABEL,
+  BATCH_STATUS_LABEL,
   classifyFailure,
   HISTORY_PAGE_SIZE,
   itemLink,
   KIND_LABEL,
+  listBatches,
   OP_LABEL,
   revertBatch,
   scopeHistory,
   SOURCE_LABEL,
+  type IBatch,
+  type IBatchPage,
   type IIssue,
   type IRevertResult,
   type IRevisionSummary,
@@ -25,13 +31,14 @@ import { useProjectsStore } from '@/stores/projects'
  * O HISTÓRICO DO CATÁLOGO (só admin): as revisões recentes de um escopo — tudo, só o global ou um projeto —, com o link
  * para a guia Histórico de cada item, e os lotes que aparecem nelas, com "Reverter lote".
  *
- * ⚖️ OS LOTES SAEM DAS REVISÕES LISTADAS (as que levam `batchId`): não há leitura própria dos lotes na API, então o
- * estado de cada um (aplicado, parcial, revertido) só se sabe ao reverter.
+ * ⚖️ OS LOTES vêm da leitura própria (`GET /catalog/batches`), com o estado de cada um (aplicado, parcial, revertido),
+ * o que ficou pendente e as ampliações aceitas. `?lote=<id>` destaca um (o link do importador depois de gravar).
  * ⛔ Reverter segue as travas do restaurar: 409 de ampliação pede a confirmação item por item; o item que mudou depois
  * do lote é pulado, e a pessoa escolhe, um a um, sobrescrever.
  */
 const auth = useAuthStore()
 const projects = useProjectsStore()
+const route = useRoute()
 
 /** `*` = tudo; `global`; ou o id de um projeto. */
 const scope = ref<string>('*')
@@ -43,33 +50,29 @@ const loading = ref(false)
 const pages = computed(() => (data.value ? Math.max(1, Math.ceil(data.value.total / data.value.pageSize)) : 1))
 const projectName = (id?: string) => (id ? (projects.list.find((project) => project.id === id)?.name ?? id) : 'Global')
 
-interface IBatchRow {
-  id: string
-  at: string
-  by: string
-  items: string[]
-}
-/** Os lotes das revisões desta página, do mais novo para o mais velho. */
-const batches = computed<IBatchRow[]>(() => {
-  const rows = new Map<string, IBatchRow>()
-  for (const revision of data.value?.revisions ?? []) {
-    if (!revision.batchId) continue
-    const row = rows.get(revision.batchId) ?? { id: revision.batchId, at: revision.at, by: revision.by, items: [] }
-    const label = `${revision.kind}/${revision.itemId}`
-    if (!row.items.includes(label)) row.items.push(label)
-    rows.set(revision.batchId, row)
-  }
-  return [...rows.values()]
-})
+/** Os lotes do escopo, do mais novo para o mais velho (página própria). */
+const batchPage = ref<IBatchPage>()
+const batchPageNo = ref(1)
+const batchPages = computed(() => (batchPage.value ? Math.max(1, Math.ceil(batchPage.value.total / batchPage.value.pageSize)) : 1))
+const batches = computed<IBatch[]>(() => batchPage.value?.batches ?? [])
+const highlighted = computed(() => (typeof route.query.lote === 'string' ? route.query.lote : undefined))
+
+/** O que o resumo do lote diz de onde parou e do que ficou pendente. */
+const failedOf = (batch: IBatch) => batch.summary.failed as { ref: string; message: string } | undefined
+const pendingOf = (batch: IBatch) => (Array.isArray(batch.summary.pending) ? (batch.summary.pending as string[]) : [])
 
 let generation = 0
 async function load() {
   const token = ++generation
   loading.value = true
   error.value = undefined
+  const project = scope.value === '*' ? undefined : scope.value
   try {
-    const result = await scopeHistory(scope.value === '*' ? undefined : scope.value, page.value, HISTORY_PAGE_SIZE)
-    if (token === generation) data.value = result
+    const [result, lots] = await Promise.all([scopeHistory(project, page.value, HISTORY_PAGE_SIZE), listBatches(project, batchPageNo.value, HISTORY_PAGE_SIZE)])
+    if (token === generation) {
+      data.value = result
+      batchPage.value = lots
+    }
   } catch (failure) {
     if (token === generation) error.value = failure instanceof Error ? failure.message : String(failure)
   } finally {
@@ -83,9 +86,10 @@ onMounted(async () => {
 })
 watch(scope, () => {
   page.value = 1
+  batchPageNo.value = 1
   void load()
 })
-watch(page, () => void load())
+watch([page, batchPageNo], () => void load())
 watch(
   () => auth.isAdmin,
   (admin) => {
@@ -96,7 +100,7 @@ watch(
 
 // --- Reverter lote ---------------------------------------------------------------------------------------------
 
-const reverting = ref<IBatchRow>()
+const reverting = ref<IBatch>()
 const asking = ref(false)
 const busy = ref(false)
 const widenings = ref<IWideningRef[]>()
@@ -106,7 +110,7 @@ const result = ref<IRevertResult>()
 /** Os itens em conflito que a pessoa marcou para sobrescrever. */
 const overwrite = ref<Set<string>>(new Set())
 
-function startRevert(batch: IBatchRow) {
+function startRevert(batch: IBatch) {
   reverting.value = batch
   widenings.value = undefined
   revertError.value = undefined
@@ -200,17 +204,45 @@ const link = (revision: IRevisionSummary) => itemLink(revision)
 
       <section class="flex flex-col gap-2">
         <h2 class="text-sm font-medium text-zinc-200">Lotes</h2>
-        <p class="text-xs text-zinc-500">Os lotes (importação, reversão) com revisões nesta página. Reverter grava um lote novo: cada item volta ao estado de antes, e o histórico guarda tudo.</p>
-        <p v-if="!batches.length" class="text-xs text-zinc-500">Nenhum lote nesta página.</p>
+        <p class="text-xs text-zinc-500">
+          Os lotes (importação, reversão) do escopo, com o estado de cada um. Reverter grava um lote novo: cada item volta ao estado de antes, e o histórico guarda tudo.
+        </p>
+        <p v-if="!batches.length" class="text-xs text-zinc-500">Nenhum lote neste escopo.</p>
         <ul v-else class="divide-y divide-zinc-800 rounded-xl border border-zinc-800" data-test="batches">
-          <li v-for="batch in batches" :key="batch.id" class="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
+          <li
+            v-for="batch in batches"
+            :key="batch.id"
+            class="flex flex-wrap items-center gap-2 px-3 py-2 text-sm"
+            :class="batch.id === highlighted ? 'bg-emerald-500/10' : ''"
+            :data-batch="batch.id"
+          >
             <span class="min-w-0 flex-1">
-              <code class="block truncate text-zinc-200" :title="batch.id">{{ batch.id }}</code>
-              <span class="block truncate text-xs text-zinc-500" :title="batch.items.join('\n')">{{ fullTime(batch.at) }} · {{ batch.by }} · {{ batch.items.length }} item(ns)</span>
+              <span class="flex flex-wrap items-center gap-2">
+                <code class="truncate text-zinc-200" :title="batch.id">{{ batch.id }}</code>
+                <span
+                  class="rounded-full px-2 py-0.5 text-[10px]"
+                  :class="batch.status === 'applied' ? 'bg-emerald-500/15 text-emerald-300' : batch.status === 'partial' ? 'bg-rose-500/15 text-rose-300' : 'bg-zinc-700/50 text-zinc-300'"
+                  data-test="batch-status"
+                  >{{ BATCH_STATUS_LABEL[batch.status] ?? batch.status }}</span
+                >
+                <span class="text-xs text-zinc-400">{{ BATCH_KIND_LABEL[batch.kind] ?? batch.kind }}</span>
+                <span v-if="batch.widenings.length" class="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-300" :title="batch.widenings.map((item) => item.key).join('\n')">
+                  {{ batch.widenings.length }} ampliação(ões) aceita(s)
+                </span>
+              </span>
+              <span class="block truncate text-xs text-zinc-500">{{ fullTime(batch.at) }} · {{ batch.by }} · {{ batch.scope }} · {{ batch.items }} item(ns)</span>
+              <span v-if="failedOf(batch)" class="block text-xs text-rose-300">
+                Parou em <code>{{ failedOf(batch)!.ref }}</code>: {{ failedOf(batch)!.message }}<template v-if="pendingOf(batch).length"> · {{ pendingOf(batch).length }} pendente(s)</template>
+              </span>
             </span>
-            <button type="button" class="btn btn-sm btn-secondary" :disabled="busy" data-test="revert-batch" @click="startRevert(batch)">Reverter lote</button>
+            <button type="button" class="btn btn-sm btn-secondary" :disabled="busy || batch.status === 'reverted'" data-test="revert-batch" @click="startRevert(batch)">Reverter lote</button>
           </li>
         </ul>
+        <div v-if="batchPages > 1" class="flex items-center gap-2 text-xs text-zinc-500">
+          <button type="button" class="btn btn-sm btn-ghost" :disabled="batchPageNo <= 1" @click="batchPageNo--">Mais novos</button>
+          <span>Página {{ batchPageNo }} de {{ batchPages }}</span>
+          <button type="button" class="btn btn-sm btn-ghost" :disabled="batchPageNo >= batchPages" @click="batchPageNo++">Mais antigos</button>
+        </div>
 
         <template v-if="reverting && !asking">
           <WideningConfirm v-if="widenings" :widenings="widenings" action="Reverter com estas ampliações" :busy="busy" @confirm="revert" @cancel="widenings = undefined" />

@@ -29,6 +29,7 @@ import { catalogHistoryParts, makeCatalogHistory, makeCatalogHistoryQuery } from
 import { CatalogRestoreUseCase } from '@application/CatalogRestore.Usecase'
 import { CatalogExportUseCase } from '@application/CatalogExport.Usecase'
 import { CatalogImportPlanner } from '@application/CatalogImport.Plan'
+import { CatalogImportApplier } from '@application/CatalogImport.Apply'
 import { CatalogWriter } from '@application/Catalog.Writer'
 import { isLaunchedMcp, mcpServerKey } from '@domain/models/McpServer.Model'
 import { removeInstall } from '@infra/mcp/Mcp.Install'
@@ -210,7 +211,18 @@ export function makeCatalogController(): CatalogController {
     restore: makeCatalogRestore(),
     exporter: makeCatalogExport(),
     importPlanner: makeCatalogImportPlanner(),
+    importApplier: makeCatalogImportApplier(),
+    batches: catalogHistoryParts().repository,
   })
+}
+
+/**
+ * Aplicar o import: o MESMO plano (recalculado) e o MESMO escritor do rollback — os serviços de cada tipo, com as
+ * validações e os efeitos das rotas de sempre —, num lote do histórico.
+ */
+export function makeCatalogImportApplier(): CatalogImportApplier {
+  const { repository, reader } = catalogHistoryParts()
+  return new CatalogImportApplier({ planner: makeCatalogImportPlanner(), repository, history: makeCatalogHistory(), reader, writer: makeCatalogWriter() })
 }
 
 /**
@@ -243,10 +255,15 @@ function gatewayVersion(): string | undefined {
  * cliente e pacote.
  */
 function makeCatalogRestore(): CatalogRestoreUseCase {
+  const { repository, reader } = catalogHistoryParts()
+  return new CatalogRestoreUseCase({ repository, history: makeCatalogHistory(), reader, writer: makeCatalogWriter() })
+}
+
+/** O escritor do catálogo (rollback e import): o documento canônico de volta pelos serviços de cada tipo. */
+function makeCatalogWriter(): CatalogWriter {
   const agents = () => agentController ?? makeController()
   const { mcp } = makeTools()
-  const { repository, reader } = catalogHistoryParts()
-  const writer = new CatalogWriter({
+  return new CatalogWriter({
     guidance: makeGuidance(),
     permissions: makePermissions(),
     mcps: makeMcpServers(),
@@ -272,7 +289,6 @@ function makeCatalogRestore(): CatalogRestoreUseCase {
       if (server.kind === 'process') removeInstall(key)
     },
   })
-  return new CatalogRestoreUseCase({ repository, history: makeCatalogHistory(), reader, writer })
 }
 
 /**

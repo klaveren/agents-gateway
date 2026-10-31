@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, type App } from 'vue'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { api, ApiError } from '@/lib/api'
-import type { IScopeHistory } from '@/lib/catalogHistory'
+import type { IBatchPage, IScopeHistory } from '@/lib/catalogHistory'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectsStore } from '@/stores/projects'
 import CatalogHistoryView from './CatalogHistoryView.vue'
@@ -34,6 +34,26 @@ const recent: IScopeHistory = {
   ],
 }
 
+const lots: IBatchPage = {
+  total: 2,
+  page: 1,
+  pageSize: 20,
+  batches: [
+    {
+      id: 'lote-1',
+      at: '2026-10-30T10:00:00Z',
+      by: 'ana@x.com',
+      kind: 'import',
+      scope: 'all',
+      summary: { applied: ['skill/tabela', 'mcp/alfa.crm'], failed: { ref: 'agent/theo', message: 'o modelo saiu' }, pending: ['agent/lia'] },
+      widenings: [{ kind: 'mcp', itemId: 'alfa.crm', key: 'mcp/crm@alfa#new~remote', description: 'MCP novo' }],
+      status: 'partial',
+      items: 2,
+    },
+    { id: 'lote-0', at: '2026-10-29T10:00:00Z', by: 'bia@x.com', kind: 'import', scope: 'global', summary: {}, widenings: [], status: 'reverted', items: 4 },
+  ],
+}
+
 let app: App | undefined
 let revertHandler: (body: Record<string, unknown>) => unknown
 
@@ -43,7 +63,7 @@ async function flush() {
   await nextTick()
 }
 
-async function mount(admin: boolean): Promise<HTMLElement> {
+async function mount(admin: boolean, path = '/catalog/history'): Promise<HTMLElement> {
   const pinia = createPinia()
   setActivePinia(pinia)
   const auth = useAuthStore()
@@ -54,7 +74,7 @@ async function mount(admin: boolean): Promise<HTMLElement> {
   projects.current = 'alfa'
   projects.loaded = true
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:any(.*)*', component: CatalogHistoryView }] })
-  await router.push('/catalog/history')
+  await router.push(path)
   await router.isReady()
   const host = document.createElement('div')
   document.body.appendChild(host)
@@ -78,6 +98,7 @@ describe('CatalogHistoryView', () => {
     vi.mocked(api).mockReset()
     vi.mocked(api).mockImplementation(async (path: string, request?: { body?: unknown }) => {
       if (path === '/catalog/history') return recent
+      if (path === '/catalog/batches') return lots
       if (path === '/catalog/batches/lote-1/revert') return revertHandler((request?.body ?? {}) as Record<string, unknown>)
       return []
     })
@@ -94,8 +115,8 @@ describe('CatalogHistoryView', () => {
     expect(vi.mocked(api).mock.calls.some(([path]) => path === '/catalog/history')).toBe(false)
   })
 
-  it('admin: os recentes do escopo, com link para a guia Histórico do item, e os lotes', async () => {
-    const host = await mount(true)
+  it('admin: os recentes do escopo, com link para a guia Histórico do item, e os lotes da rota própria', async () => {
+    const host = await mount(true, '/catalog/history?lote=lote-1')
     expect(api).toHaveBeenCalledWith('/catalog/history', { query: { project: undefined, page: 1, pageSize: 20 } })
     const rows = host.querySelectorAll('[data-test="recent"] li')
     expect(rows).toHaveLength(3)
@@ -103,16 +124,24 @@ describe('CatalogHistoryView', () => {
     expect(rows[1].querySelector('a')?.getAttribute('href')).toBe('/skills/tabela#historico')
     expect(rows[2].querySelector('a')?.getAttribute('href')).toBe('/rules?escopo=alfa&rule=r-1#historico')
     expect(rows[2].textContent).toContain('ampliação aceita (1)')
+    expect(api).toHaveBeenCalledWith('/catalog/batches', { query: { project: undefined, page: 1, pageSize: 20 } })
     const batches = host.querySelectorAll('[data-test="batches"] li')
-    expect(batches).toHaveLength(1)
+    expect(batches).toHaveLength(2)
     expect(batches[0].textContent).toContain('lote-1')
     expect(batches[0].textContent).toContain('2 item(ns)')
+    expect(batches[0].querySelector('[data-test="batch-status"]')?.textContent).toBe('parcial')
+    expect(batches[0].textContent).toContain('1 ampliação(ões) aceita(s)')
+    expect(batches[0].textContent).toContain('Parou em agent/theo: o modelo saiu · 1 pendente(s)')
+    expect(batches[0].className).toContain('bg-emerald-500/10')
+    expect(batches[1].querySelector('[data-test="batch-status"]')?.textContent).toBe('revertido')
+    expect(batches[1].querySelector<HTMLButtonElement>('[data-test="revert-batch"]')?.disabled).toBe(true)
 
     const scope = host.querySelector<HTMLSelectElement>('select[aria-label="Escopo"]')!
     scope.value = 'global'
     scope.dispatchEvent(new Event('change'))
     await flush()
     expect(api).toHaveBeenCalledWith('/catalog/history', { query: { project: 'global', page: 1, pageSize: 20 } })
+    expect(api).toHaveBeenCalledWith('/catalog/batches', { query: { project: 'global', page: 1, pageSize: 20 } })
   })
 
   it('reverter lote: 409 de ampliação pede a confirmação item por item e reenvia com confirm', async () => {
