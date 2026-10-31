@@ -806,24 +806,7 @@ export class GuidanceService {
 
   /** Os problemas de uma liberação de recursos para um agente do projeto dado (ausente = agente global). */
   private grantIssues(next: IAgentResources, projectId: string | undefined): TIssues {
-    const issues: TIssues = []
-    for (const [field, kind] of [
-      ['skills', 'skill'],
-      ['commands', 'command'],
-    ] as const) {
-      const ids = next[field]
-      if (ids.includes(ALL_RESOURCES) && ids.length > 1) issues.push({ field, message: `"${ALL_RESOURCES}" goes alone` })
-      for (const id of ids.filter((item) => item !== ALL_RESOURCES)) {
-        const resource = this.repository.resource(id)
-        if (!resource || resource.kind !== kind) issues.push({ field, message: `no such ${kind}: ${id}` })
-        else if (resource.projectId && resource.projectId !== projectId)
-          issues.push({
-            field,
-            message: projectId ? `${id} belongs to another project (${resource.projectId})` : `${id} belongs to a project (a global agent uses only global resources)`,
-          })
-      }
-    }
-    return issues
+    return grantIssuesIn(this.lookup, next, projectId)
   }
 
   /**
@@ -951,17 +934,7 @@ export class GuidanceService {
 
   /** Os problemas de uma lista de contexto inicial: só spec, global ou do escopo dado, sem repetir. */
   private specIssues(docIds: readonly string[], projectId: string | undefined, outside: string): TIssues {
-    const issues: TIssues = []
-    const seen = new Set<string>()
-    for (const id of docIds) {
-      const doc = this.repository.doc(id)
-      if (seen.has(id)) issues.push({ field: 'docIds', message: `repeated: ${id}` })
-      else if (!doc) issues.push({ field: 'docIds', message: `no such document: ${id}` })
-      else if (doc.kind !== 'spec') issues.push({ field: 'docIds', message: `only specs load in full: ${id} is an ${doc.kind}` })
-      else if (doc.projectId && doc.projectId !== projectId) issues.push({ field: 'docIds', message: `${id} belongs to ${outside} (${doc.projectId})` })
-      seen.add(id)
-    }
-    return issues
+    return specIssuesIn(this.lookup, docIds, projectId, outside)
   }
 
   /**
@@ -1002,53 +975,16 @@ export class GuidanceService {
     return (owner.docIds ?? []).map((id) => this.repository.doc(id)).filter((doc): doc is IProjectDoc => !!doc && attachable(doc, owner))
   }
 
-  /**
-   * Os problemas dos anexos de um documento: existe, não é ele mesmo, cabe nele (global ou do mesmo projeto — o global
-   * só anexa global), sem repetir; e a referência é um dos anexados. ⚖️ Ciclo (A anexa B que anexa A) é permitido: a
-   * leitura visita cada um uma vez.
-   */
   private attachIssues(doc: IProjectDoc, selfId: string): TIssues {
-    const issues: TIssues = []
-    const ids = doc.docIds ?? []
-    for (const [index, id] of ids.entries()) {
-      const attached = this.repository.doc(id)
-      if (ids.indexOf(id) !== index) issues.push({ field: 'docIds', message: `repeated: ${id}` })
-      else if (id === selfId) issues.push({ field: 'docIds', message: `a document does not attach itself: ${id}` })
-      else if (!attached) issues.push({ field: 'docIds', message: `no such document: ${id}` })
-      else if (!attachable(attached, doc))
-        issues.push({
-          field: 'docIds',
-          message: doc.projectId
-            ? `${id} belongs to another project (${attached.projectId})`
-            : `${id} belongs to a project (${attached.projectId}): a global document attaches only global ones`,
-        })
-    }
-    const refs = doc.docRefs ?? []
-    for (const [index, id] of refs.entries()) {
-      if (refs.indexOf(id) !== index) issues.push({ field: 'docRefs', message: `repeated: ${id}` })
-      else if (!ids.includes(id)) issues.push({ field: 'docRefs', message: `not attached: ${id} (by reference only goes one of docIds)` })
-    }
-    return issues
+    return attachIssuesIn(this.lookup, doc, selfId)
   }
 
   private resourceIssues(resource: IResource): TIssues {
-    const issues: TIssues = []
-    if (!RESOURCE_KINDS.includes(resource.kind)) issues.push({ field: 'kind', message: `one of ${RESOURCE_KINDS.join(', ')}` })
-    if (!resource.description) issues.push({ field: 'description', message: 'required: it is what the agent reads to know when to use it' })
-    else if (resource.description.length > RESOURCE_DESCRIPTION_MAX) issues.push({ field: 'description', message: `at most ${RESOURCE_DESCRIPTION_MAX} characters` })
-    if (!resource.body.trim()) issues.push({ field: 'body', message: 'required' })
-    for (const id of resource.docIds) {
-      const doc = this.repository.doc(id)
-      if (!doc) issues.push({ field: 'docIds', message: `no such document: ${id}` })
-      else if (doc.projectId && doc.projectId !== resource.projectId) issues.push({ field: 'docIds', message: `${id} belongs to another project (${doc.projectId})` })
-    }
-    const refs = resource.docRefs ?? []
-    for (const [index, id] of refs.entries()) {
-      if (refs.indexOf(id) !== index) issues.push({ field: 'docRefs', message: `repeated: ${id}` })
-      else if (!resource.docIds.includes(id)) issues.push({ field: 'docRefs', message: `not attached: ${id} (by reference only goes one of docIds)` })
-    }
-    return issues
+    return resourceIssuesIn(this.lookup, resource)
   }
+
+  /** Quem as regras de vínculo consultam: o próprio repositório. */
+  private readonly lookup: IGuidanceLookup = { doc: (id) => this.repository.doc(id), resource: (id) => this.repository.resource(id) }
 
   private requireKind(kind: TProtocolKind): void {
     if (!PROTOCOL_KINDS.includes(kind)) throw new InvalidGuidanceError([{ field: 'kind', message: `one of ${PROTOCOL_KINDS.join(', ')}` }])
@@ -1082,8 +1018,103 @@ export class GuidanceService {
 }
 
 /** O documento cabe em quem o anexa (recurso ou outro documento): global ou do projeto dele (a regra do anexo). */
-function attachable(doc: IProjectDoc, owner: IAttacher): boolean {
+function attachable(doc: Pick<IProjectDoc, 'projectId'>, owner: IAttacher): boolean {
   return !doc.projectId || doc.projectId === owner.projectId
+}
+
+/**
+ * Onde as regras de vínculo procuram o que é citado. O serviço usa o repositório; o plano de import, o catálogo de hoje
+ * somado ao pacote (o que o pacote traz já conta como existente).
+ */
+export interface IGuidanceLookup {
+  doc(id: string): Pick<IProjectDoc, 'kind' | 'projectId'> | undefined
+  resource(id: string): Pick<IResource, 'kind' | 'projectId'> | undefined
+}
+
+/** Os problemas de uma liberação de recursos para um agente do projeto dado (ausente = agente global). */
+export function grantIssuesIn(lookup: IGuidanceLookup, next: IAgentResources, projectId: string | undefined): TIssues {
+  const issues: TIssues = []
+  for (const [field, kind] of [
+    ['skills', 'skill'],
+    ['commands', 'command'],
+  ] as const) {
+    const ids = next[field]
+    if (ids.includes(ALL_RESOURCES) && ids.length > 1) issues.push({ field, message: `"${ALL_RESOURCES}" goes alone` })
+    for (const id of ids.filter((item) => item !== ALL_RESOURCES)) {
+      const resource = lookup.resource(id)
+      if (!resource || resource.kind !== kind) issues.push({ field, message: `no such ${kind}: ${id}` })
+      else if (resource.projectId && resource.projectId !== projectId)
+        issues.push({
+          field,
+          message: projectId ? `${id} belongs to another project (${resource.projectId})` : `${id} belongs to a project (a global agent uses only global resources)`,
+        })
+    }
+  }
+  return issues
+}
+
+/** Os problemas de uma lista de contexto inicial: só spec, global ou do escopo dado, sem repetir. */
+export function specIssuesIn(lookup: IGuidanceLookup, docIds: readonly string[], projectId: string | undefined, outside: string): TIssues {
+  const issues: TIssues = []
+  const seen = new Set<string>()
+  for (const id of docIds) {
+    const doc = lookup.doc(id)
+    if (seen.has(id)) issues.push({ field: 'docIds', message: `repeated: ${id}` })
+    else if (!doc) issues.push({ field: 'docIds', message: `no such document: ${id}` })
+    else if (doc.kind !== 'spec') issues.push({ field: 'docIds', message: `only specs load in full: ${id} is an ${doc.kind}` })
+    else if (doc.projectId && doc.projectId !== projectId) issues.push({ field: 'docIds', message: `${id} belongs to ${outside} (${doc.projectId})` })
+    seen.add(id)
+  }
+  return issues
+}
+
+/**
+ * Os problemas dos anexos de um documento: existe, não é ele mesmo, cabe nele (global ou do mesmo projeto — o global
+ * só anexa global), sem repetir; e a referência é um dos anexados. ⚖️ Ciclo (A anexa B que anexa A) é permitido: a
+ * leitura visita cada um uma vez.
+ */
+export function attachIssuesIn(lookup: IGuidanceLookup, doc: Pick<IProjectDoc, 'projectId' | 'docIds' | 'docRefs'>, selfId: string): TIssues {
+  const issues: TIssues = []
+  const ids = doc.docIds ?? []
+  for (const [index, id] of ids.entries()) {
+    const attached = lookup.doc(id)
+    if (ids.indexOf(id) !== index) issues.push({ field: 'docIds', message: `repeated: ${id}` })
+    else if (id === selfId) issues.push({ field: 'docIds', message: `a document does not attach itself: ${id}` })
+    else if (!attached) issues.push({ field: 'docIds', message: `no such document: ${id}` })
+    else if (!attachable(attached, doc))
+      issues.push({
+        field: 'docIds',
+        message: doc.projectId
+          ? `${id} belongs to another project (${attached.projectId})`
+          : `${id} belongs to a project (${attached.projectId}): a global document attaches only global ones`,
+      })
+  }
+  const refs = doc.docRefs ?? []
+  for (const [index, id] of refs.entries()) {
+    if (refs.indexOf(id) !== index) issues.push({ field: 'docRefs', message: `repeated: ${id}` })
+    else if (!ids.includes(id)) issues.push({ field: 'docRefs', message: `not attached: ${id} (by reference only goes one of docIds)` })
+  }
+  return issues
+}
+
+/** Os problemas de uma skill ou command (sem o id, que tem regra própria na criação). */
+export function resourceIssuesIn(lookup: IGuidanceLookup, resource: Pick<IResource, 'kind' | 'projectId' | 'description' | 'body' | 'docIds' | 'docRefs'>): TIssues {
+  const issues: TIssues = []
+  if (!RESOURCE_KINDS.includes(resource.kind)) issues.push({ field: 'kind', message: `one of ${RESOURCE_KINDS.join(', ')}` })
+  if (!resource.description) issues.push({ field: 'description', message: 'required: it is what the agent reads to know when to use it' })
+  else if (resource.description.length > RESOURCE_DESCRIPTION_MAX) issues.push({ field: 'description', message: `at most ${RESOURCE_DESCRIPTION_MAX} characters` })
+  if (!resource.body.trim()) issues.push({ field: 'body', message: 'required' })
+  for (const id of resource.docIds) {
+    const doc = lookup.doc(id)
+    if (!doc) issues.push({ field: 'docIds', message: `no such document: ${id}` })
+    else if (doc.projectId && doc.projectId !== resource.projectId) issues.push({ field: 'docIds', message: `${id} belongs to another project (${doc.projectId})` })
+  }
+  const refs = resource.docRefs ?? []
+  for (const [index, id] of refs.entries()) {
+    if (refs.indexOf(id) !== index) issues.push({ field: 'docRefs', message: `repeated: ${id}` })
+    else if (!resource.docIds.includes(id)) issues.push({ field: 'docRefs', message: `not attached: ${id} (by reference only goes one of docIds)` })
+  }
+  return issues
 }
 
 const EXISTING_LABEL: Readonly<Record<TProtocolKind, string>> = {
@@ -1100,7 +1131,7 @@ const EXISTING_LABEL: Readonly<Record<TProtocolKind, string>> = {
  * ⚖️ O CORPO NÃO TEM TETO (rule, documento, skill/command, complemento de protocolo): o tamanho é de quem escreve, e a
  * tela mostra quanto pesa em tokens. Título, resumo e descrição têm, porque são uma linha de índice ou de lista.
  */
-function ruleIssues(rule: IRule): TIssues {
+export function ruleIssues(rule: Pick<IRule, 'title' | 'body'>): TIssues {
   const issues: TIssues = []
   if (!rule.title) issues.push({ field: 'title', message: 'required' })
   else if (rule.title.length > RULE_TITLE_MAX) issues.push({ field: 'title', message: `at most ${RULE_TITLE_MAX} characters` })
@@ -1108,7 +1139,7 @@ function ruleIssues(rule: IRule): TIssues {
   return issues
 }
 
-function docIssues(doc: IProjectDoc): TIssues {
+export function docIssues(doc: Pick<IProjectDoc, 'kind' | 'title' | 'summary' | 'body'>): TIssues {
   const issues: TIssues = []
   if (!DOC_KINDS.includes(doc.kind)) issues.push({ field: 'kind', message: `one of ${DOC_KINDS.join(', ')}` })
   if (!doc.title) issues.push({ field: 'title', message: 'required' })

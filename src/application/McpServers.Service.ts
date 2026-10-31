@@ -59,7 +59,7 @@ const AUTHS: TMcpAuth[] = ['caller', 'header', 'none']
  * sai só "configurado" e os quatro últimos caracteres.
  */
 /** O id do servidor MCP do próprio gateway (ver `Tools.Factory`). */
-const SELF_MCP_SERVER_ID = 'gateway'
+export const SELF_MCP_SERVER_ID = 'gateway'
 /** Os ids das sementes globais (o MCP do gateway e o do `.env`): projeto não os toma, ou a semente colidiria. */
 const RESERVED_GLOBAL_IDS = [SELF_MCP_SERVER_ID, 'default']
 
@@ -110,16 +110,11 @@ export class McpServersService {
    * projeto com o mesmo id, não — nos dois sentidos. `except`: a chave do próprio servidor (numa troca de escopo).
    */
   private scopeIssue(id: string, projectId: string | undefined, except?: string): string | undefined {
-    const others = this.servers.list().filter((server) => server.id === id && mcpServerKey(server) !== except)
-    if (projectId) {
-      if (others.some((server) => !server.projectId)) return `already exists as a global server: ${id}`
-      if (others.some((server) => server.projectId === projectId)) return `already exists in this project: ${id}`
-      if (RESERVED_GLOBAL_IDS.includes(id)) return `reserved for the global server: ${id}`
-      return undefined
-    }
-    if (others.some((server) => !server.projectId)) return `already exists: ${id}`
-    const projects = [...new Set(others.flatMap((server) => (server.projectId ? [server.projectId] : [])))]
-    return projects.length ? `already exists in project ${projects.join(', ')}: a global server with this id would be ambiguous` : undefined
+    return mcpScopeIssue(
+      id,
+      projectId,
+      this.servers.list().filter((server) => mcpServerKey(server) !== except),
+    )
   }
 
   private projectIssue(projectId: string | undefined): string | undefined {
@@ -370,6 +365,35 @@ function processIssues(proc: IMcpProcess): Array<{ field: string; message: strin
   for (const name of proc.env) if (!ENV_NAME.test(name)) issues.push({ field: 'env', message: `use UPPER_CASE names: ${name}` })
   if (proc.env.length > 20) issues.push({ field: 'env', message: 'up to 20 variables' })
   return issues
+}
+
+/**
+ * ⛔ O ID NUNCA FICA AMBÍGUO PARA UM AGENTE: dois projetos podem ter o mesmo id (cada um vê só o seu), mas global e de
+ * projeto com o mesmo id, não — nos dois sentidos. `others`: os outros servidores (sem o próprio, numa troca de escopo).
+ */
+export function mcpScopeIssue(id: string, projectId: string | undefined, servers: ReadonlyArray<Pick<IMcpServerConfig, 'id' | 'projectId'>>): string | undefined {
+  const others = servers.filter((server) => server.id === id)
+  if (projectId) {
+    if (others.some((server) => !server.projectId)) return `already exists as a global server: ${id}`
+    if (others.some((server) => server.projectId === projectId)) return `already exists in this project: ${id}`
+    if (RESERVED_GLOBAL_IDS.includes(id)) return `reserved for the global server: ${id}`
+    return undefined
+  }
+  if (others.some((server) => !server.projectId)) return `already exists: ${id}`
+  const projects = [...new Set(others.flatMap((server) => (server.projectId ? [server.projectId] : [])))]
+  return projects.length ? `already exists in project ${projects.join(', ')}: a global server with this id would be ambiguous` : undefined
+}
+
+/**
+ * Os problemas do cadastro de um servidor, SEM gravar (as regras de `create`/`update`, sem o id e o escopo): o contêiner
+ * e o processo passam pela mesma normalização da gravação antes de conferir.
+ */
+export function mcpServerIssues(config: IMcpServerConfig): Array<{ field: string; message: string }> {
+  return issuesOf({
+    ...config,
+    ...(config.kind === 'container' ? { container: containerOf(config.container) } : {}),
+    ...(config.kind === 'process' ? { process: processOf(config.process) } : {}),
+  })
 }
 
 function issuesOf(config: IMcpServerConfig): Array<{ field: string; message: string }> {

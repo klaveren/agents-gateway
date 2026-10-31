@@ -14,6 +14,28 @@ export function messageJsonLimit(): string {
   return process.env.MESSAGE_JSON_LIMIT || DEFAULT_MESSAGE_JSON_LIMIT
 }
 
+/** O padrão do corpo do import do catálogo (o pacote inteiro, JSON ou `.tar.gz`). */
+export const DEFAULT_CATALOG_IMPORT_LIMIT = '25mb'
+/** Quanto o `.tar.gz` pode crescer ao abrir, em vezes o limite do corpo (texto comprime ~5–10×; acima disso é bomba). */
+export const CATALOG_IMPORT_UNPACK_FACTOR = 8
+
+/**
+ * ⚖️ O limite do corpo do import do catálogo é de quem administra (`CATALOG_IMPORT_LIMIT`, no formato do Express:
+ * `25mb`, `512kb`): o catálogo não tem teto próprio (decisão do dono, #119/#122). ⛔ O corpo é lido antes da
+ * autenticação, como nas outras rotas de conteúdo.
+ */
+export function catalogImportLimit(): string {
+  return process.env.CATALOG_IMPORT_LIMIT || DEFAULT_CATALOG_IMPORT_LIMIT
+}
+
+/** `25mb` → bytes (o subconjunto do formato do Express: b, kb, mb, gb). Inválido: o padrão. */
+export function limitBytes(limit: string): number {
+  const match = /^\s*(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)?\s*$/i.exec(limit)
+  if (!match) return limitBytes(DEFAULT_CATALOG_IMPORT_LIMIT)
+  const unit = { b: 1, kb: 1024, mb: 1024 ** 2, gb: 1024 ** 3 }[(match[2] ?? 'b').toLowerCase() as 'b' | 'kb' | 'mb' | 'gb']
+  return Math.floor(Number(match[1]) * unit)
+}
+
 /**
  * ⛔ Os cabeçalhos do navegador. `frame-ancestors 'none'` e `X-Frame-Options`: a tela de admin não abre
  * dentro do site de outro (clickjacking). A CSP só deixa rodar o que vem desta origem — um XSS que

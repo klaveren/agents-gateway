@@ -28,6 +28,7 @@ import { CatalogController } from '@infra/http/Catalog.Controller'
 import { catalogHistoryParts, makeCatalogHistory, makeCatalogHistoryQuery } from './CatalogHistory.Factory'
 import { CatalogRestoreUseCase } from '@application/CatalogRestore.Usecase'
 import { CatalogExportUseCase } from '@application/CatalogExport.Usecase'
+import { CatalogImportPlanner } from '@application/CatalogImport.Plan'
 import { CatalogWriter } from '@application/Catalog.Writer'
 import { isLaunchedMcp, mcpServerKey } from '@domain/models/McpServer.Model'
 import { removeInstall } from '@infra/mcp/Mcp.Install'
@@ -208,7 +209,17 @@ export function makeCatalogController(): CatalogController {
     projects: makeProjects(),
     restore: makeCatalogRestore(),
     exporter: makeCatalogExport(),
+    importPlanner: makeCatalogImportPlanner(),
   })
+}
+
+/**
+ * O plano de import (dry-run): o MESMO leitor do histórico, as regras do cadastro de agente do controller de agentes e
+ * o cofre dos MCPs (só "configurado ou não"). ⛔ Nada grava.
+ */
+function makeCatalogImportPlanner(): CatalogImportPlanner {
+  const agents = () => agentController ?? makeController()
+  return new CatalogImportPlanner({ reader: catalogHistoryParts().reader, agentRules: () => agents().agentRules(), mcpSecrets: makeMcpServers() })
 }
 
 /** O export: o MESMO leitor do histórico e a MESMA máscara de segredos do gateway (valores conhecidos e nomes da tela). */

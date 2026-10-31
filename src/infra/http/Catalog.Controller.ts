@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { z } from 'zod'
 import type { TCatalogScope } from '@application/Catalog.Reader'
 import { CatalogExportUseCase } from '@application/CatalogExport.Usecase'
+import type { CatalogImportPlanner, IPackageInput } from '@application/CatalogImport.Plan'
 import { CatalogRestoreUseCase, IRestoreCaller } from '@application/CatalogRestore.Usecase'
 import { CatalogHistoryQuery, IHistoryItem, IHistoryPaging, THistoryScope, TRevisionRef } from '@application/CatalogHistory.Query'
 import type { IProjectCaller } from '@application/Projects.Service'
@@ -9,7 +10,7 @@ import { CATALOG_KINDS, protocolItemId, TCatalogKind } from '@domain/Catalog.Doc
 import { mcpServerKey, parseMcpServerKey } from '@domain/models/McpServer.Model'
 import { PROJECT_ID_PATTERN } from '@domain/models/Project.Model'
 import { TProtocolKind } from '@domain/models/Protocol.Model'
-import { tarGz } from '@infra/catalog/Tar.Archive'
+import { tarGz, untarGz } from '@infra/catalog/Tar.Archive'
 import { viaAccessToken } from './Auth.Controller'
 import { resolveCaller } from './Caller.Access'
 import { checkAdminAccess } from './Caller.Admin'
@@ -17,6 +18,7 @@ import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
 import { parseBody } from './Request.Parser'
+import { CATALOG_IMPORT_UNPACK_FACTOR, catalogImportLimit, limitBytes } from './Security.Middleware'
 
 export interface ICatalogControllerDeps {
   history: CatalogHistoryQuery
@@ -27,6 +29,8 @@ export interface ICatalogControllerDeps {
   restore?: CatalogRestoreUseCase
   /** O export do pacote. Ausente = a rota responde 404. */
   exporter?: CatalogExportUseCase
+  /** O plano de import (dry-run). Ausente = a rota responde 404. */
+  importPlanner?: Pick<CatalogImportPlanner, 'planPackage'>
 }
 
 /** A pasta raiz dentro do `.tar.gz`: `tar -xzf` cria `catalog/` com o pacote. */
@@ -52,6 +56,9 @@ const restoreSchema = z.object({
 
 const revertSchema = z.object({ confirm: keyList.optional(), overwrite: keyList.optional() })
 
+/** O pacote em JSON: o mesmo do `GET /catalog/export?format=json` (`catalog.json` dentro de `files` ou à parte). */
+const packageSchema = z.object({ manifest: z.unknown().optional(), files: z.record(z.string(), z.string()) })
+
 /**
  * ⛔ O que o MEMBRO de um projeto lê do histórico: só o que ele já vê hoje do projeto dele, por inteiro. É só o MCP do
  * projeto (`GET /mcp-servers?project=`). O resto não: o agente sai para ele sem o prompt (`GET /agents/:id` é de admin),
@@ -74,7 +81,7 @@ type TViewer = { admin: true } | { admin: false; userId: string }
  */
 export class CatalogController {
   constructor(private readonly deps: ICatalogControllerDeps) {
-    for (const name of ['history', 'revision', 'diff', 'restore', 'revertBatch', 'exportCatalog'] as const) this[name] = this[name].bind(this)
+    for (const name of ['history', 'revision', 'diff', 'restore', 'revertBatch', 'exportCatalog', 'importPlan'] as const) this[name] = this[name].bind(this)
   }
 
   /**
@@ -115,6 +122,23 @@ export class CatalogController {
       if (failure.status >= 500) console.error('[CatalogController] Error:', failure.message)
       res.status(failure.status).json(fail(failure.message, failure.code, failure.details))
     }
+  }
+
+  /**
+   * O PLANO DE IMPORT (dry-run, §2.6): o pacote no corpo — o `.tar.gz` do export (`Content-Type: application/gzip`) ou
+   * `{ manifest, files }` em JSON — e devolve, sem gravar nada, as operações, os diffs, as ampliações, as atenções, as
+   * referências quebradas, os segredos que faltam, a ordem e o `planHash`. O escopo vem da query (`scope`/`project`, como
+   * no export) ou do manifesto; sem nenhum, `all`. ⛔ Só admin; os outros, 404. O token de acesso (CI) também planeja,
+   * mas o plano marca que a ampliação não se aplica por token (`caller.wideningsApplicable: false`).
+   */
+  async importPlan(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const access = await checkAdminAccess(this.deps.proof)
+      if (!access.allowed || !this.deps.importPlanner) throw this.deny('catalogImportPlan', access.reason ?? 'import plan is not wired')
+      const query = req.query as Record<string, unknown>
+      const scope = query.scope !== undefined || query.project !== undefined ? exportScopeOf(query) : undefined
+      return this.deps.importPlanner.planPackage(packageOf(req.body), { ...(scope ? { scope } : {}), viaAccessToken: viaAccessToken(res) })
+    })
   }
 
   /**
@@ -292,6 +316,27 @@ function exportScopeOf(query: Record<string, unknown>): TCatalogScope {
   const projectId = inline ?? text(query.project, 'project')
   if (!projectId || !PROJECT_ID_PATTERN.test(projectId)) throw invalid('scope=project needs a valid project id')
   return { kind: 'project', projectId }
+}
+
+/**
+ * O pacote do corpo: o `.tar.gz` (chega como `Buffer`; a pasta `catalog/` do export sai do caminho) ou o JSON. ⛔ O
+ * `.tar.gz` aberto tem teto (`CATALOG_IMPORT_UNPACK_FACTOR` × o limite do corpo): acima, 413.
+ */
+function packageOf(body: unknown): IPackageInput {
+  if (!Buffer.isBuffer(body)) return parseBody(packageSchema, body ?? {})
+  let entries: ReturnType<typeof untarGz>
+  try {
+    entries = untarGz(body, { maxBytes: limitBytes(catalogImportLimit()) * CATALOG_IMPORT_UNPACK_FACTOR })
+  } catch (error: unknown) {
+    if (error instanceof RangeError) throw new HttpError(413, 'payload_too_large', 'The package is too large once unpacked')
+    throw invalid('Invalid package: expected the .tar.gz of the export')
+  }
+  const files: Record<string, string> = {}
+  for (const entry of entries) {
+    const path = entry.path.replace(/^\.\//, '')
+    files[path.startsWith(`${EXPORT_ROOT}/`) ? path.slice(EXPORT_ROOT.length + 1) : path] = entry.content.toString('utf8')
+  }
+  return { files }
 }
 
 function scopeLabel(scope: THistoryScope): string {

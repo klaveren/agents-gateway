@@ -113,6 +113,7 @@ export function untarEntries(tar: Buffer): ITarEntry[] {
   return entries
 }
 
-export function untarGz(archive: Buffer): ITarEntry[] {
-  return untarEntries(gunzipSync(archive))
+/** ⛔ `maxBytes`: o teto do `.tar` aberto (o `.tar.gz` de fora pode ser uma bomba). Acima: `RangeError`. */
+export function untarGz(archive: Buffer, options: { maxBytes?: number } = {}): ITarEntry[] {
+  return untarEntries(gunzipSync(archive, options.maxBytes ? { maxOutputLength: options.maxBytes } : {}))
 }
