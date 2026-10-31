@@ -81,9 +81,11 @@ export function startCommand(line: string, options: IRunOptions): IStarted {
   const done = new Promise<IRunResult>((resolve) => {
     const finish = (code: number | null, signal: NodeJS.Signals | null) => {
       clearTimeout(timer)
-      log?.end()
       options.onExit?.()
-      resolve({ code, ...(signal ? { signal } : {}), output, timedOut, ...(options.logFile ? { logFile: options.logFile } : {}) })
+      const result = { code, ...(signal ? { signal } : {}), output, timedOut, ...(options.logFile ? { logFile: options.logFile } : {}) }
+      // ⛔ Só resolve com o log gravado: o `bash_logs` lê o arquivo logo depois, e `end()` sozinho deixava o fim na fila.
+      if (log) log.end(() => resolve(result))
+      else resolve(result)
     }
     child.on('close', finish)
     child.on('error', (error) => {
