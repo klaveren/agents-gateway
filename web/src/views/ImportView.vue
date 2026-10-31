@@ -2,9 +2,11 @@
 import { computed, onMounted, ref, shallowRef, watch } from 'vue'
 import ImportBatch from '@/components/ImportBatch.vue'
 import ImportItemDetail from '@/components/ImportItemDetail.vue'
+import ImportSelectionBatch from '@/components/ImportSelectionBatch.vue'
 import { api, ApiError } from '@/lib/api'
 import { fullTime, tokens } from '@/lib/format'
 import {
+  batchName,
   CATALOG_HINT,
   CATALOG_LABEL,
   citedBy,
@@ -15,12 +17,15 @@ import {
   effectiveKind,
   filterItems,
   groupByKind,
+  type IImportBatch,
+  type IImportBatchView,
   type IImportFilters,
   type IImportItemStatus,
   type IImportJob,
   type IImportJobSummary,
   type IImportPlan,
   type IInventoryItem,
+  type ISelectionPlan,
   ignoredDirs,
   itemTokens,
   KIND_LABEL,
@@ -46,7 +51,11 @@ import { useProjectsStore } from '@/stores/projects'
  * o que não traduz e o estado de cada item. A pessoa exclui/inclui e reclassifica item a item; isso fica gravado no
  * trabalho, e analisar de novo reaproveita pela chave (a fonte que mudou depois da decisão aparece como "fonte mudou").
  *
- * ⛔ Nada aqui grava no catálogo. Só o trabalho mais novo de cada repositório muda; os outros são registro.
+ * A pessoa também SELECIONA itens (caixas na lista, ou "todos do filtro") e monta um LOTE da seleção: a ordem só entre
+ * eles, as citações para fora e a estimativa. O lote pode ser salvo no trabalho, com nome; os lotes salvos ficam na lista.
+ *
+ * ⛔ Nada aqui grava no catálogo nem dispara construtor. Só o trabalho mais novo de cada repositório muda; os outros são
+ * registro.
  */
 const PAGE = 100
 const CATALOG_STATES: readonly TCatalogState[] = ['new', 'same-project', 'global', 'other-project']
@@ -79,6 +88,14 @@ const plan = shallowRef<IImportPlan>()
 const prefix = ref('')
 const planning = ref(false)
 const planError = ref<string>()
+/** A seleção do trabalho aberto (chaves) e o lote por seleção: a prévia, ou o lote salvo aberto. */
+const picked = ref<Set<string>>(new Set())
+const selectionPlan = shallowRef<ISelectionPlan>()
+const openedBatch = shallowRef<IImportBatch>()
+const previewName = ref('')
+const batches = ref<IImportBatch[]>([])
+const batchBusy = ref(false)
+const batchError = ref<string>()
 /** O ignorar do projeto: um padrão por linha, como está salvo e como está no campo. */
 const ignoreSaved = ref<string[]>([])
 const ignoreText = ref('')
@@ -162,7 +179,7 @@ async function buildPlan(agent: string, nextPrefix = prefix.value) {
   planning.value = true
   planError.value = undefined
   try {
-    const body = { repository: scan.value.repository, agent, ...(nextPrefix ? { prefix: nextPrefix } : {}) }
+    const body = { repository: scan.value.repository, agent, ...(nextPrefix ? { prefix: nextPrefix } : {}), ...(job.value ? { job: job.value.id } : {}) }
     plan.value = await api<IImportPlan>(`/projects/${encodeURIComponent(project.value.id)}/import/plan`, { method: 'POST', body })
     prefix.value = plan.value.prefix
   } catch (failure) {
@@ -174,6 +191,95 @@ async function buildPlan(agent: string, nextPrefix = prefix.value) {
 
 function projectPath(): string {
   return `/projects/${encodeURIComponent(project.value!.id)}/import`
+}
+
+function batchesPath(): string {
+  return `${projectPath()}/jobs/${encodeURIComponent(job.value!.id)}/batches`
+}
+
+function togglePick(key: string) {
+  const next = new Set(picked.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  picked.value = next
+}
+
+/** Seleciona todos os itens do filtro atual (não só a página que aparece), somando à seleção. */
+function pickFiltered() {
+  const next = new Set(picked.value)
+  for (const item of filtered.value) next.add(item.key)
+  picked.value = next
+}
+
+function clearPicked() {
+  picked.value = new Set()
+}
+
+async function loadBatches() {
+  if (!project.value || !job.value) return
+  try {
+    batches.value = await api<IImportBatch[]>(batchesPath())
+  } catch (failure) {
+    batchError.value = message(failure)
+  }
+}
+
+/** A prévia do lote: as chaves escolhidas (na ordem da lista) e o prefixo. Não salva nada. */
+async function buildSelection(keys = items.value.filter((item) => picked.value.has(item.key)).map((item) => item.key), nextPrefix = selectionPlan.value?.prefix ?? '') {
+  if (!project.value || !job.value || !keys.length) return
+  const fresh = !selectionPlan.value || !!openedBatch.value || keys.join('\n') !== selectionPlan.value.keys.join('\n')
+  batchBusy.value = true
+  batchError.value = undefined
+  try {
+    selectionPlan.value = await api<ISelectionPlan>(`${batchesPath()}/plan`, { method: 'POST', body: { keys, ...(nextPrefix ? { prefix: nextPrefix } : {}) } })
+    if (fresh) previewName.value = batchName(items.value.filter((item) => keys.includes(item.key)), overrides.value)
+    openedBatch.value = undefined
+  } catch (failure) {
+    batchError.value = message(failure)
+  } finally {
+    batchBusy.value = false
+  }
+}
+
+/** Salva a prévia como lote do trabalho (nome, itens, ordem). ⛔ Não dispara nada nem grava no catálogo. */
+async function saveBatch(name: string) {
+  if (!project.value || !job.value || !selectionPlan.value || readonly.value) return
+  batchBusy.value = true
+  batchError.value = undefined
+  try {
+    const plan = selectionPlan.value
+    const view = await api<IImportBatchView>(batchesPath(), { method: 'POST', body: { name, keys: plan.keys, ...(plan.prefix ? { prefix: plan.prefix } : {}) } })
+    const { plan: batchPlan, ...record } = view
+    openedBatch.value = record
+    selectionPlan.value = batchPlan
+    batches.value = [record, ...batches.value.filter((entry) => entry.id !== record.id)]
+  } catch (failure) {
+    batchError.value = message(failure)
+  } finally {
+    batchBusy.value = false
+  }
+}
+
+async function openBatch(id: string) {
+  if (!project.value || !job.value) return
+  batchBusy.value = true
+  batchError.value = undefined
+  try {
+    const view = await api<IImportBatchView>(`${batchesPath()}/${encodeURIComponent(id)}`)
+    const { plan: batchPlan, ...record } = view
+    openedBatch.value = record
+    selectionPlan.value = batchPlan
+  } catch (failure) {
+    batchError.value = message(failure)
+  } finally {
+    batchBusy.value = false
+  }
+}
+
+function closeSelection() {
+  selectionPlan.value = undefined
+  openedBatch.value = undefined
+  batchError.value = undefined
 }
 
 async function loadJobs() {
@@ -196,6 +302,10 @@ function show(opened: IImportJob) {
   itemError.value = undefined
   filters.value = { ...EMPTY_FILTERS }
   limit.value = PAGE
+  picked.value = new Set()
+  batches.value = []
+  closeSelection()
+  void loadBatches()
 }
 
 async function openJob(id: string) {
@@ -269,6 +379,9 @@ function reset() {
   selectedKey.value = undefined
   filters.value = { ...EMPTY_FILTERS }
   error.value = undefined
+  picked.value = new Set()
+  batches.value = []
+  closeSelection()
 }
 
 function reclassify(key: string, kind: TInventoryKind | undefined) {
@@ -521,6 +634,51 @@ watch(
             <button v-if="filtering" type="button" class="btn btn-ghost btn-sm mb-1" @click="filters = { ...EMPTY_FILTERS }">Limpar</button>
           </section>
 
+          <section class="flex flex-wrap items-center gap-2 text-xs" data-test="selection">
+            <span class="text-zinc-400" data-test="picked-count">{{ picked.size.toLocaleString('pt-BR') }} selecionado(s)</span>
+            <button type="button" class="btn btn-secondary btn-sm" :disabled="!filtered.length" data-test="pick-filtered" @click="pickFiltered">
+              Selecionar os {{ filtered.length.toLocaleString('pt-BR') }} do filtro
+            </button>
+            <button v-if="picked.size" type="button" class="btn btn-ghost btn-sm" data-test="pick-clear" @click="clearPicked">Limpar seleção</button>
+            <button type="button" class="btn btn-primary btn-sm" :disabled="!picked.size || batchBusy" data-test="build-batch" @click="buildSelection()">
+              {{ batchBusy ? 'Montando…' : 'Montar lote da seleção' }}
+            </button>
+          </section>
+
+          <section v-if="batches.length" class="flex flex-col gap-1.5" data-test="batches">
+            <h2 class="text-xs font-medium text-zinc-500">Lotes deste trabalho ({{ batches.length }})</h2>
+            <ul class="flex flex-col divide-y divide-zinc-800 rounded-xl border border-zinc-800">
+              <li v-for="entry in batches" :key="entry.id">
+                <button
+                  type="button"
+                  class="flex w-full flex-wrap items-center gap-x-3 gap-y-0.5 px-3 py-1.5 text-left text-xs hover:bg-zinc-900"
+                  :class="entry.id === openedBatch?.id ? 'bg-zinc-900' : ''"
+                  data-test="batch-entry"
+                  @click="openBatch(entry.id)"
+                >
+                  <span class="font-medium text-zinc-200">{{ entry.name }}</span>
+                  <span class="text-zinc-500">{{ entry.keys.length }} item(ns) · {{ entry.order.length }} na ordem</span>
+                  <span v-if="entry.prefix" class="text-zinc-500">prefixo <code>{{ entry.prefix }}</code></span>
+                  <span class="text-zinc-500">por {{ entry.by }} · {{ fullTime(entry.at) }}</span>
+                </button>
+              </li>
+            </ul>
+          </section>
+          <p v-if="batchError && !selectionPlan" class="text-sm text-rose-300" data-test="selection-error">Lote: {{ batchError }}</p>
+          <ImportSelectionBatch
+            v-if="selectionPlan"
+            :plan="selectionPlan"
+            :batch="openedBatch"
+            :name="previewName"
+            :busy="batchBusy"
+            :readonly="readonly"
+            :error="batchError"
+            @close="closeSelection"
+            @select="selectedKey = $event"
+            @replan="buildSelection(selectionPlan.keys, $event)"
+            @save="saveBatch"
+          />
+
           <p v-if="planError" class="text-sm text-rose-300" data-test="plan-error">Lote: {{ planError }}</p>
           <ImportBatch v-if="plan" :plan="plan" :busy="planning" @close="plan = undefined" @select="selectedKey = $event" @replan="buildPlan(plan.agent, $event)" />
 
@@ -531,10 +689,13 @@ watch(
               <div v-for="group in groups" :key="group.kind ?? 'all'" class="flex flex-col gap-1">
                 <h2 v-if="group.kind" class="sticky top-0 z-10 bg-zinc-950/95 py-1 text-xs font-semibold text-zinc-400">{{ KIND_LABEL[group.kind] }} · {{ group.items.length }}</h2>
                 <ul class="divide-y divide-zinc-800 rounded-xl border border-zinc-800">
-                  <li v-for="item in group.items" :key="item.key">
+                  <li v-for="item in group.items" :key="item.key" class="flex items-stretch" :class="picked.has(item.key) ? 'bg-sky-500/5' : ''">
+                    <label class="flex shrink-0 cursor-pointer items-start pt-2.5 pl-3" :title="picked.has(item.key) ? 'Tirar da seleção' : 'Pôr na seleção'">
+                      <input type="checkbox" class="accent-sky-500" :checked="picked.has(item.key)" :aria-label="`Selecionar ${item.key}`" data-test="pick" @change="togglePick(item.key)" />
+                    </label>
                     <button
                       type="button"
-                      class="flex w-full flex-col gap-0.5 px-3 py-2 text-left hover:bg-zinc-900"
+                      class="flex min-w-0 flex-1 flex-col gap-0.5 px-3 py-2 text-left hover:bg-zinc-900"
                       :class="item.key === selectedKey ? 'bg-zinc-900' : ''"
                       data-test="row"
                       @click="selectedKey = item.key"

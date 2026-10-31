@@ -30,6 +30,7 @@ import { isLaunchedMcp, mcpServerKey } from '@domain/models/McpServer.Model'
 import { removeInstall } from '@infra/mcp/Mcp.Install'
 import { catalogFinder, ImportScanUseCase } from '@application/ImportScan.Usecase'
 import { ImportJobService } from '@application/ImportJob.Service'
+import { ImportBatchService } from '@application/ImportBatch.Service'
 import { readRepoTree } from '@infra/import/Repo.Tree'
 import { AgentsDirDetector } from '@infra/import/AgentsDir.Detector'
 import { AgentsMdDetector } from '@infra/import/AgentsMd.Detector'
@@ -254,6 +255,7 @@ export function makeImportController(): ImportController {
   return new ImportController({
     scan,
     jobs: new ImportJobService({ repository: importJobRepository(), scan: (projectId, repository, options) => scan.execute(projectId, repository, options) }),
+    batches: new ImportBatchService({ repository: importJobRepository(), catalogState: (query) => scan.catalogState(query) }),
     projectExists: (projectId) => projects.exists(projectId),
     ignore: { get: (projectId) => projects.importIgnore(projectId), set: (projectId, patterns, by) => projects.setImportIgnore(projectId, patterns, by) },
     proof: makeAuth().proof,

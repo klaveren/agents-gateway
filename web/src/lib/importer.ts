@@ -404,14 +404,18 @@ export interface IPlanStep {
   kind: TInventoryKind
   id: string
   title?: string
-  why: 'agent' | 'trigger' | 'cited' | 'instructions'
+  why: 'agent' | 'trigger' | 'cited' | 'instructions' | 'selected'
   citedBy: string[]
   dependsOn: string[]
   forward: string[]
   tokens: { sources: number; protocol: number }
   state: TPlanIdState
+  /** Já feito (no catálogo, ou aprovado neste trabalho): sem conversa e fora da estimativa. */
+  done?: TPlanDone
   notes: IInventoryNote[]
 }
+
+export type TPlanDone = 'catalog' | 'approved'
 
 export interface IPlanIdEntry {
   key: string
@@ -458,6 +462,28 @@ export interface IPlanEstimateEntry {
   inputTokens: number
 }
 
+export interface IPlanEstimate extends IPlanEstimateEntry {
+  sourceTokens: number
+  protocolTokens: number
+  byKind: Partial<Record<TInventoryKind, IPlanEstimateEntry>>
+  /** Os passos já feitos, fora da conta. */
+  done?: number
+  released: IPlanEstimateEntry
+  note: string
+}
+
+export interface IPlanPhaseInfo {
+  phase: TPlanPhase
+  label: string
+  steps: number
+}
+
+export interface IPlanCycle {
+  keys: string[]
+  brokenBy: 'order'
+  text: string
+}
+
 export interface IImportPlan {
   projectId: string
   repository: string
@@ -466,7 +492,7 @@ export interface IImportPlan {
   plannedAt: string
   agent: string
   prefix: string
-  phases: Array<{ phase: TPlanPhase; label: string; steps: number }>
+  phases: IPlanPhaseInfo[]
   steps: IPlanStep[]
   links: IPlanLink[]
   reach?: IPlanReach
@@ -475,16 +501,80 @@ export interface IImportPlan {
   excluded: IPlanExclusion[]
   released: Array<{ key: string; id: string; tokens: number; catalog?: TCatalogState }>
   mcps: Array<{ name: string; key?: string; id: string; exists: boolean }>
-  cycles: Array<{ keys: string[]; brokenBy: 'order'; text: string }>
-  estimate: IPlanEstimateEntry & {
-    sourceTokens: number
-    protocolTokens: number
-    byKind: Partial<Record<TInventoryKind, IPlanEstimateEntry>>
-    released: IPlanEstimateEntry
-    note: string
-  }
+  cycles: IPlanCycle[]
+  estimate: IPlanEstimate
   blocked: string[]
   notes: IInventoryNote[]
+}
+
+// ── O LOTE POR SELEÇÃO de um trabalho (`/projects/:id/import/jobs/:job/batches`). ⛔ Não grava no catálogo. ───────────
+
+/** Para onde aponta uma citação que sai da seleção. */
+export type TOutsideState = 'catalog' | 'approved' | 'batch' | 'missing' | 'broken' | 'not-importable'
+
+export interface IPlanOutside {
+  from: string
+  state: TOutsideState
+  item?: string
+  path?: string
+  id?: string
+  batch?: { id: string; name: string }
+  text: string
+}
+
+export interface ISelectionPlan {
+  keys: string[]
+  prefix: string
+  phases: IPlanPhaseInfo[]
+  steps: IPlanStep[]
+  idMap: IPlanIdEntry[]
+  cycles: IPlanCycle[]
+  outside: IPlanOutside[]
+  excluded: IPlanExclusion[]
+  estimate: IPlanEstimate
+  blocked: string[]
+  notes: IInventoryNote[]
+}
+
+/** Um lote salvo no trabalho: a seleção, com nome, ordem, quem e quando. */
+export interface IImportBatch {
+  id: string
+  jobId: string
+  name: string
+  prefix: string
+  keys: string[]
+  order: string[]
+  by: string
+  at: string
+}
+
+/** O lote salvo, aberto: com o lote recalculado sobre o estado de agora. */
+export interface IImportBatchView extends IImportBatch {
+  plan: ISelectionPlan
+}
+
+export const DONE_LABEL: Record<TPlanDone, string> = { catalog: 'já no catálogo', approved: 'já aprovado' }
+
+export const OUTSIDE_LABEL: Record<TOutsideState, string> = {
+  broken: 'citação quebrada',
+  missing: 'falta importar',
+  'not-importable': 'não vai ao catálogo',
+  batch: 'em outro lote',
+  approved: 'já aprovado neste trabalho',
+  catalog: 'já no catálogo',
+}
+
+/** As citações para fora da seleção, por estado (as que pedem ação primeiro). */
+export function outsideByState(outside: readonly IPlanOutside[]): Array<{ state: TOutsideState; entries: IPlanOutside[] }> {
+  const order: TOutsideState[] = ['broken', 'missing', 'not-importable', 'batch', 'approved', 'catalog']
+  return order.map((state) => ({ state, entries: outside.filter((entry) => entry.state === state) })).filter((group) => group.entries.length)
+}
+
+/** Um nome de lote a partir da seleção: o tipo, quando é um só, e quantos. */
+export function batchName(items: readonly IInventoryItem[], overrides: TOverrides = {}): string {
+  const kinds = [...new Set(items.map((item) => effectiveKind(item, overrides)))]
+  const what = kinds.length === 1 ? KIND_LABEL[kinds[0]] : 'Seleção'
+  return `${what} (${items.length})`
 }
 
 export const REACH_MARK: Record<TReachStatus, string> = { direct: '✅', changed: '⚠️', none: '❌' }
@@ -492,7 +582,13 @@ export const REACH_STATUS_LABEL: Record<TReachStatus, string> = { direct: 'tradu
 
 export const ID_STATE_LABEL: Record<TPlanIdState, string> = { new: 'novo', update: 'atualiza', conflict: 'conflito', duplicate: 'duplicado' }
 
-export const WHY_LABEL: Record<IPlanStep['why'], string> = { agent: 'o agente', trigger: 'trigger do agente', cited: 'citado', instructions: 'instructions do opencode' }
+export const WHY_LABEL: Record<IPlanStep['why'], string> = {
+  agent: 'o agente',
+  trigger: 'trigger do agente',
+  cited: 'citado',
+  instructions: 'instructions do opencode',
+  selected: 'escolhido',
+}
 
 export const EXCLUSION_LABEL: Record<IPlanExclusion['reason'], string> = {
   broken: 'citação quebrada',
@@ -512,7 +608,7 @@ export function prefixIssue(prefix: string): string | undefined {
 }
 
 /** Os passos agrupados por fase (só as fases com passo), na ordem do lote. */
-export function stepsByPhase(plan: IImportPlan): Array<{ phase: TPlanPhase; label: string; steps: IPlanStep[] }> {
+export function stepsByPhase(plan: Pick<IImportPlan, 'phases' | 'steps'>): Array<{ phase: TPlanPhase; label: string; steps: IPlanStep[] }> {
   return plan.phases
     .map((phase) => ({ phase: phase.phase, label: phase.label, steps: plan.steps.filter((step) => step.phase === phase.phase) }))
     .filter((group) => group.steps.length)

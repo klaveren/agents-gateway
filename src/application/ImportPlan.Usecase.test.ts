@@ -111,8 +111,11 @@ describe('ImportPlanUseCase — o lote de um agente sobre a varredura real (só 
     )
   })
 
-  it('a estimativa: uma conversa por item; o agente não conta o bootstrap gerado nem o ledger', () => {
-    assert.strictEqual(plan.estimate.conversations, 14)
+  it('a estimativa: uma conversa por item a importar; o agente não conta o bootstrap gerado nem o ledger', () => {
+    // 14 passos; a skill que já existe neste projeto (`akm-revisar`) fica na ordem, marcada, sem conversa.
+    assert.strictEqual(plan.steps.length, 14)
+    assert.strictEqual(plan.estimate.conversations, 13)
+    assert.strictEqual(plan.estimate.done, 1)
     const agent = plan.steps.find((step) => step.key === 'agent:ana')!
     assert.ok(agent.tokens.sources < 200, `o agente leria ${agent.tokens.sources} tokens`)
     const protocol = builderProtocolTokens()
@@ -136,6 +139,44 @@ describe('ImportPlanUseCase — o lote de um agente sobre a varredura real (só 
     assert.deepStrictEqual(prefixed.blocked, ['spec:base: o id akm-base já existe em outro projeto: mude antes de transformar'])
     // O alvo que existe como `caio` não existe como `akm-caio`: o vínculo volta a ficar pendente.
     assert.strictEqual(prefixed.links.find((link) => link.name === 'caio')?.state, 'pending')
+  })
+
+  it('lote do agente enxuto: o que já está no catálogo do projeto e o aprovado no trabalho saem das conversas e da estimativa', () => {
+    const revisar = plan.steps.find((step) => step.key === 'skill:akm-revisar')!
+    assert.deepStrictEqual([revisar.state, revisar.done], ['update', 'catalog'])
+    assert.ok(plan.notes.some((note) => note.code === 'done' && note.text.includes('1 já no catálogo')))
+    assert.ok(!plan.estimate.byKind.skill || plan.estimate.byKind.skill.conversations === 1)
+    assert.strictEqual(plan.phases.find((phase) => phase.phase === 2)!.steps, 2)
+
+    const states = new Map([
+      ['spec:guia', 'approved' as const],
+      ['knowledge:fila', 'applied' as const],
+      ['spec:base', 'pending' as const],
+    ])
+    const withJob = new ImportPlanUseCase({
+      scan,
+      jobStates: (projectId, jobId) => (projectId === 'alfa' && jobId === 'j1' ? { repository: 'repo', states } : undefined),
+    }).execute('alfa', { repository: 'repo', agent: 'ana', job: 'j1' })
+    const done = Object.fromEntries(withJob.steps.filter((step) => step.done).map((step) => [step.key, step.done]))
+    assert.deepStrictEqual(done, { 'knowledge:fila': 'catalog', 'spec:guia': 'approved', 'skill:akm-revisar': 'catalog' })
+    assert.strictEqual(withJob.estimate.conversations, 11)
+    assert.strictEqual(withJob.estimate.done, 3)
+    const spent = withJob.steps.filter((step) => !step.done).reduce((sum, step) => sum + step.tokens.sources + step.tokens.protocol, 0)
+    assert.strictEqual(withJob.estimate.inputTokens, spent)
+    // A ordem não muda: o feito fica no lugar, para quem o cita.
+    assert.deepStrictEqual(
+      withJob.steps.map((step) => step.key),
+      plan.steps.map((step) => step.key),
+    )
+  })
+
+  it('o trabalho tem de ser deste projeto e do mesmo repositório', () => {
+    const usecaseWithJobs = new ImportPlanUseCase({ scan, jobStates: (_projectId, jobId) => (jobId === 'outro-repo' ? { repository: 'x', states: new Map() } : undefined) })
+    for (const job of ['nao-existe', 'outro-repo'])
+      assert.throws(
+        () => usecaseWithJobs.execute('alfa', { repository: 'repo', agent: 'ana', job }),
+        (error: unknown) => error instanceof ImportPlanError && error.field === 'job',
+      )
   })
 
   it('agente que não existe no inventário e prefixo inválido são recusados no campo', () => {

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { canReclassify, canTransition, carryOver, countByState, reuseSummary, sourceFingerprint, TCarryOutcome } from '@domain/Import.Job'
 import { IImportJob, IImportJobItem, IImportJobSummary, TImportItemPatch, TImportManualState } from '@domain/models/ImportJob.Model'
 import { IImportScan, TInventoryKind } from '@domain/models/ImportInventory.Model'
+import { TItemStates } from '@domain/models/ImportPlan.Model'
 import { IImportJobRecord, IImportRepository } from '@domain/ports/ImportRepository.Port'
 import { IImportScanOptions } from './ImportScan.Usecase'
 
@@ -10,11 +11,12 @@ import { IImportScanOptions } from './ImportScan.Usecase'
  * - `not_found`: o trabalho não é deste projeto (ou não existe), ou o item não está nele;
  * - `outdated`: há análise mais nova do repositório; o trabalho antigo é registro e não muda;
  * - `transition`: o estado do item não vai para o pedido;
- * - `reclassify`: o item tem rascunho no caminho (construtor, revisão, aprovado, aplicado).
+ * - `reclassify`: o item tem rascunho no caminho (construtor, revisão, aprovado, aplicado);
+ * - `invalid`: o pedido não serve no campo (`field`): seleção vazia ou fora do trabalho, prefixo inválido.
  */
 export class ImportJobError extends Error {
   constructor(
-    readonly code: 'not_found' | 'outdated' | 'transition' | 'reclassify',
+    readonly code: 'not_found' | 'outdated' | 'transition' | 'reclassify' | 'invalid',
     message: string,
     readonly field?: string,
   ) {
@@ -124,6 +126,13 @@ export class ImportJobService {
     if (patch.kind === undefined && patch.state === undefined) return strip(current)
     const updated = this.deps.repository.updateItem(record.id, key, { ...patch, by, at: (this.deps.now ?? (() => new Date()))() })
     return strip(updated!)
+  }
+
+  /** O repositório e o estado de cada item do trabalho (o lote do agente marca o aprovado e o aplicado). Ausente = não é deste projeto. */
+  statesOf(projectId: string, jobId: string): { repository: string; states: TItemStates } | undefined {
+    const record = this.deps.repository.get(projectId, jobId)
+    if (!record) return undefined
+    return { repository: record.repository, states: new Map(this.deps.repository.items(record.id).map((entry) => [entry.key, entry.state])) }
   }
 
   /** Apagar o projeto apaga os trabalhos dele. */

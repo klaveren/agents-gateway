@@ -1,20 +1,27 @@
 import { posix } from 'node:path'
 import { IOpencodeReach, IReachLine, IReachWidening, ocMatch, translatePermission, translateReach } from './Import.Permissions'
 import { decide } from './Permission.Policy'
+import { TImportItemState } from './models/ImportJob.Model'
 import { CANDIDATE_ID_MAX, IInventoryItem, IInventoryNote, TCatalogState, TInventoryKind } from './models/ImportInventory.Model'
 import {
   IImportPlan,
   IPlanCycle,
   IPlanEstimate,
+  IPlanEstimateEntry,
   IPlanExclusion,
   IPlanIdEntry,
   IPlanLink,
   IPlanMcp,
+  IPlanOutside,
   IPlanPhaseInfo,
   IPlanProject,
   IPlanReach,
   IPlanReleased,
   IPlanStep,
+  ISelectionPlan,
+  TItemStates,
+  TOutsideState,
+  TPlanDone,
   TPlanPhase,
   TPlanWhy,
 } from './models/ImportPlan.Model'
@@ -36,7 +43,12 @@ import { IDetectedReach } from './ports/FormatDetector.Port'
  * - id = o candidato da varredura, com o prefixo nos tipos de id legível (agente, skill, command, docs). Id que já existe
  *   em outro projeto, ou global, ou repetido no lote, BLOQUEIA;
  * - alcance = o agente nasce FECHADO; as regras traduzidas, as ampliações e o `resources.skills` vêm depois, confirmados.
- *   O `skill * allow` do global nunca entra automático.
+ *   O `skill * allow` do global nunca entra automático;
+ * - já feito = o id proposto que já existe NESTE projeto (ou o item aplicado) e o item aprovado neste trabalho ficam na
+ *   ordem, marcados, fora das conversas e da estimativa: o lote traz só o que ainda falta.
+ *
+ * O LOTE POR SELEÇÃO (`planSelectionBatch`) usa as mesmas peças sobre os itens que a pessoa escolheu: a ordem só entre
+ * eles, e as citações para fora da seleção classificadas (no catálogo, aprovada, em outro lote, faltando, quebrada).
  */
 
 export const PLAN_PHASE_LABEL: Readonly<Record<TPlanPhase, string>> = {
@@ -86,6 +98,8 @@ export interface IAgentBatchInput {
   catalog: (query: IPlanCatalogQuery) => TCatalogState
   /** ≈ tokens do protocolo do construtor de cada tipo (o trigger usa o do agente). */
   protocolTokens: (kind: TInventoryKind) => number
+  /** O estado de cada item no trabalho aberto: o aprovado e o aplicado já estão feitos. Ausente = sem trabalho. */
+  states?: TItemStates
 }
 
 export type TAgentBatch = Omit<IImportPlan, 'projectId' | 'repository' | 'head' | 'dirty' | 'plannedAt'>
@@ -532,64 +546,30 @@ export function planAgentBatch(input: IAgentBatchInput): TAgentBatch {
   }
 
   // ── Os passos e a estimativa.
-  const position = new Map(order.map((one, at) => [one, at]))
-  const steps: IPlanStep[] = order.map((key) => {
-    const item = byKey.get(key)!
-    const member = members.get(key)!
-    const mine = deps.get(key) ?? []
-    const id = idOf.get(key)!
-    const tokens = sourceTokens(item) + (item.kind === 'agent' && agentReach ? jsonTokens({ permission: agentReach.permission, tools: agentReach.tools }) : 0)
-    return {
-      phase: PHASE_OF[item.kind]!,
-      key,
-      kind: item.kind,
-      id: id.id,
-      ...(item.title ? { title: item.title } : {}),
-      why: member.why,
-      citedBy: [...member.citedBy].sort(),
-      dependsOn: mine.filter((dep) => position.get(dep)! < position.get(key)!),
-      forward: mine.filter((dep) => position.get(dep)! > position.get(key)!),
-      tokens: { sources: tokens, protocol: input.protocolTokens(item.kind) },
-      state: id.state,
-      notes: attentionNotes(item),
-    }
+  const steps = buildSteps({
+    byKey,
+    order,
+    deps,
+    idOf,
+    why: (key) => members.get(key)!.why,
+    citedBy: (key) => [...members.get(key)!.citedBy].sort(),
+    tokens: (item) => sourceTokens(item) + (item.kind === 'agent' && agentReach ? jsonTokens({ permission: agentReach.permission, tools: agentReach.tools }) : 0),
+    protocolTokens: input.protocolTokens,
+    ...(input.states ? { states: input.states } : {}),
   })
-
-  const byKind: IPlanEstimate['byKind'] = {}
-  let sourceSum = 0
-  let protocolSum = 0
-  for (const step of steps) {
-    const entry = (byKind[step.kind] ??= { conversations: 0, inputTokens: 0 })
-    entry.conversations += 1
-    entry.inputTokens += step.tokens.sources + step.tokens.protocol
-    sourceSum += step.tokens.sources
-    protocolSum += step.tokens.protocol
-  }
   const releasedOut: IPlanReleased[] = released.map((skill) => ({
     key: skill.key,
     id: idOf.get(skill.key)!.id,
     tokens: sourceTokens(skill),
     ...(idOf.get(skill.key)!.catalog ? { catalog: idOf.get(skill.key)!.catalog } : {}),
   }))
-  const estimate: IPlanEstimate = {
-    conversations: steps.length,
-    inputTokens: sourceSum + protocolSum,
-    sourceTokens: sourceSum,
-    protocolTokens: protocolSum,
-    byKind,
-    released: {
-      conversations: releasedOut.length,
-      inputTokens: releasedOut.reduce((sum, skill) => sum + skill.tokens + input.protocolTokens('skill'), 0),
-    },
-    note: '≈ entrada da primeira volta de cada conversa (fontes + protocolo do construtor, sem os complementos do projeto); as respostas e os ajustes somam por cima. Nada é disparado daqui',
-  }
-
-  const phases: IPlanPhaseInfo[] = ([1, 2, 3, 4, 5, 6, 7] as const).map((phase) => ({
-    phase,
-    label: PLAN_PHASE_LABEL[phase],
-    steps: steps.filter((step) => step.phase === phase).length,
-  }))
-  const blocked = steps.filter((step) => step.state === 'conflict' || step.state === 'duplicate').map((step) => `${step.key}: ${idOf.get(step.key)!.reason}`)
+  const estimate = estimateOf(steps, {
+    conversations: releasedOut.length,
+    inputTokens: releasedOut.reduce((sum, skill) => sum + skill.tokens + input.protocolTokens('skill'), 0),
+  })
+  const phases = phasesOf(steps)
+  const blocked = blockedOf(steps, idOf)
+  doneNote(steps, notes)
   if (prefix) notes.push({ level: 'info', code: 'prefix', text: `prefixo ${prefix} nos ids de agente, skill, command e docs` })
 
   return {
@@ -607,6 +587,244 @@ export function planAgentBatch(input: IAgentBatchInput): TAgentBatch {
     cycles,
     estimate,
     blocked,
+    notes,
+  }
+}
+
+// ── As peças comuns aos dois lotes ───────────────────────────────────────────────────────────────────────────────────
+
+/** Já feito? O aplicado e o id que já existe neste projeto estão no catálogo; o aprovado, neste trabalho. */
+export function doneOf(entry: Pick<IPlanIdEntry, 'catalog'>, state?: TImportItemState): TPlanDone | undefined {
+  if (state === 'applied' || entry.catalog === 'same-project') return 'catalog'
+  if (state === 'approved') return 'approved'
+  return undefined
+}
+
+interface IStepContext {
+  byKey: ReadonlyMap<string, IInventoryItem>
+  order: readonly string[]
+  deps: ReadonlyMap<string, readonly string[]>
+  idOf: ReadonlyMap<string, IPlanIdEntry>
+  why: (key: string) => TPlanWhy
+  citedBy: (key: string) => string[]
+  tokens: (item: IInventoryItem) => number
+  protocolTokens: (kind: TInventoryKind) => number
+  states?: TItemStates
+}
+
+/** Os passos na ordem, com as dependências (antes e adiante), os tokens e o "já feito". */
+function buildSteps(context: IStepContext): IPlanStep[] {
+  const position = new Map(context.order.map((one, at) => [one, at]))
+  return context.order.map((key) => {
+    const item = context.byKey.get(key)!
+    const mine = context.deps.get(key) ?? []
+    const id = context.idOf.get(key)!
+    const done = doneOf(id, context.states?.get(key))
+    return {
+      phase: PHASE_OF[item.kind]!,
+      key,
+      kind: item.kind,
+      id: id.id,
+      ...(item.title ? { title: item.title } : {}),
+      why: context.why(key),
+      citedBy: context.citedBy(key),
+      dependsOn: mine.filter((dep) => position.get(dep)! < position.get(key)!),
+      forward: mine.filter((dep) => position.get(dep)! > position.get(key)!),
+      tokens: { sources: context.tokens(item), protocol: context.protocolTokens(item.kind) },
+      state: id.state,
+      ...(done ? { done } : {}),
+      notes: attentionNotes(item),
+    }
+  })
+}
+
+/** A estimativa: uma conversa por passo a importar (o já feito não conta). */
+function estimateOf(steps: readonly IPlanStep[], released: IPlanEstimateEntry): IPlanEstimate {
+  const byKind: IPlanEstimate['byKind'] = {}
+  let sourceSum = 0
+  let protocolSum = 0
+  let conversations = 0
+  for (const step of steps) {
+    if (step.done) continue
+    const entry = (byKind[step.kind] ??= { conversations: 0, inputTokens: 0 })
+    entry.conversations += 1
+    entry.inputTokens += step.tokens.sources + step.tokens.protocol
+    sourceSum += step.tokens.sources
+    protocolSum += step.tokens.protocol
+    conversations += 1
+  }
+  return {
+    conversations,
+    inputTokens: sourceSum + protocolSum,
+    sourceTokens: sourceSum,
+    protocolTokens: protocolSum,
+    byKind,
+    done: steps.length - conversations,
+    released,
+    note: '≈ entrada da primeira volta de cada conversa (fontes + protocolo do construtor, sem os complementos do projeto); as respostas e os ajustes somam por cima. O que já está no catálogo ou aprovado não conta. Nada é disparado daqui',
+  }
+}
+
+/** As fases, com quantos passos A IMPORTAR cada uma tem. */
+function phasesOf(steps: readonly IPlanStep[]): IPlanPhaseInfo[] {
+  return ([1, 2, 3, 4, 5, 6, 7] as const).map((phase) => ({
+    phase,
+    label: PLAN_PHASE_LABEL[phase],
+    steps: steps.filter((step) => step.phase === phase && !step.done).length,
+  }))
+}
+
+/** O que bloqueia: id em conflito ou repetido num passo a importar. */
+function blockedOf(steps: readonly IPlanStep[], idOf: ReadonlyMap<string, IPlanIdEntry>): string[] {
+  return steps.filter((step) => !step.done && (step.state === 'conflict' || step.state === 'duplicate')).map((step) => `${step.key}: ${idOf.get(step.key)!.reason}`)
+}
+
+function doneNote(steps: readonly IPlanStep[], notes: IInventoryNote[]): void {
+  const catalog = steps.filter((step) => step.done === 'catalog').length
+  const approved = steps.filter((step) => step.done === 'approved').length
+  if (!catalog && !approved) return
+  const parts = [catalog ? `${catalog} já no catálogo` : '', approved ? `${approved} já aprovado(s) neste trabalho` : ''].filter(Boolean)
+  notes.push({ level: 'info', code: 'done', text: `${parts.join(' e ')}: ficam na ordem, sem conversa e fora da estimativa` })
+}
+
+// ── O lote por seleção ───────────────────────────────────────────────────────────────────────────────────────────────
+
+export interface ISelectionBatchInput {
+  /** Os itens do trabalho, com o tipo já reclassificado. */
+  items: readonly IInventoryItem[]
+  /** As chaves escolhidas. */
+  keys: readonly string[]
+  prefix?: string
+  catalog: IAgentBatchInput['catalog']
+  protocolTokens: (kind: TInventoryKind) => number
+  states?: TItemStates
+  /** Chave do item → o outro lote salvo do trabalho que o tem. */
+  batchOf?: ReadonlyMap<string, { id: string; name: string }>
+}
+
+export type TSelectionBatch = ISelectionPlan
+
+const OUTSIDE_TEXT: Record<TOutsideState, string> = {
+  catalog: 'já no catálogo: o vínculo resolve pelo id',
+  approved: 'já aprovado neste trabalho: entra antes, se aplicado antes',
+  batch: 'em outro lote deste trabalho',
+  missing: 'fora da seleção e ainda não importado: inclua no lote ou importe antes',
+  broken: 'citação quebrada',
+  'not-importable': 'não vai ao catálogo: a citação fica sem vínculo',
+}
+
+/**
+ * O LOTE POR SELEÇÃO: a ordem SÓ entre os escolhidos (fase, depois citado antes de quem cita), os ciclos, o mapa de
+ * ids com o prefixo, as citações para fora da seleção, classificadas, e a estimativa. Escolhido que não vai ao
+ * catálogo fica em `excluded`. ⛔ Só leitura.
+ */
+export function planSelectionBatch(input: ISelectionBatchInput): TSelectionBatch {
+  const prefix = input.prefix ?? ''
+  const byKey = new Map(input.items.map((item) => [item.key, item]))
+  const keys = [...new Set(input.keys)].filter((key) => byKey.has(key))
+  const selected = new Set(keys)
+  const excluded: IPlanExclusion[] = []
+  for (const key of keys) {
+    const item = byKey.get(key)!
+    if (PHASE_OF[item.kind]) continue
+    const reason = item.kind === 'mcp' ? 'out-of-catalog' : (EXCLUDE_BY_KIND[item.kind] ?? 'out-of-catalog')
+    excluded.push({ from: key, reason, text: exclusionText(reason, key) })
+  }
+
+  const { order, deps, cycles } = orderBatch(input.items, keys)
+  const members = new Set(order)
+  const idMap = proposeIds(input.items, order, prefix, input.catalog)
+  const idOf = new Map(idMap.map((entry) => [entry.key, entry]))
+  const citedBy = new Map<string, Set<string>>()
+  for (const key of order) for (const dep of deps.get(key) ?? []) citedBy.set(dep, (citedBy.get(dep) ?? new Set()).add(key))
+
+  // ── Para fora da seleção: o que os escolhidos citam e não está entre eles (e o agente do trigger escolhido sozinho).
+  const outside: IPlanOutside[] = []
+  const seen = new Set<string>()
+  const targets: Array<{ from: string; item: string; path?: string }> = []
+  for (const key of order) {
+    const item = byKey.get(key)!
+    const push = (entry: IPlanOutside) => {
+      const id = `${entry.from}|${entry.item ?? ''}|${entry.path ?? ''}`
+      if (seen.has(id)) return
+      seen.add(id)
+      outside.push(entry)
+    }
+    for (const ref of item.refs) {
+      if (!ref.item) {
+        push({ from: key, state: 'broken', path: ref.path, text: `${ref.path}: arquivo sem item (nenhum formato o classifica como recurso)` })
+        continue
+      }
+      if (ref.item === key || members.has(ref.item)) continue
+      const target = byKey.get(ref.item)
+      if (!target || target.kind === 'mcp') continue
+      if (item.kind === 'agent' && target.kind === 'trigger' && target.parent === key) continue
+      targets.push({ from: key, item: target.key, path: ref.path })
+    }
+    if (item.kind === 'trigger' && item.parent && !members.has(item.parent) && byKey.has(item.parent)) targets.push({ from: key, item: item.parent })
+    for (const path of item.unresolved) push({ from: key, state: 'broken', path, text: `${OUTSIDE_TEXT.broken}: ${path} não existe no repositório` })
+  }
+  const outsideIds = new Map(proposeIds(input.items, [...new Set(targets.map((one) => one.item))], prefix, input.catalog).map((entry) => [entry.key, entry]))
+  for (const target of targets) {
+    const item = byKey.get(target.item)!
+    const entry = outsideIds.get(target.item)!
+    const state = input.states?.get(target.item)
+    const batch = input.batchOf?.get(target.item)
+    let kind: TOutsideState
+    if (!PHASE_OF[item.kind] || selected.has(target.item)) kind = 'not-importable'
+    else if (state === 'applied' || entry.catalog === 'same-project' || entry.catalog === 'global') kind = 'catalog'
+    else if (state === 'approved') kind = 'approved'
+    else if (batch) kind = 'batch'
+    else kind = 'missing'
+    const id = `${target.from}|${target.item}|${target.path ?? ''}`
+    if (seen.has(id)) continue
+    seen.add(id)
+    outside.push({
+      from: target.from,
+      state: kind,
+      item: target.item,
+      ...(target.path ? { path: target.path } : {}),
+      ...(kind !== 'not-importable' ? { id: entry.id } : {}),
+      ...(kind === 'batch' && batch ? { batch } : {}),
+      text: kind === 'batch' && batch ? `${OUTSIDE_TEXT.batch}: ${batch.name}` : OUTSIDE_TEXT[kind],
+    })
+  }
+  const outsideRank: Record<TOutsideState, number> = { broken: 0, missing: 1, 'not-importable': 2, batch: 3, approved: 4, catalog: 5 }
+  outside.sort((a, b) => outsideRank[a.state] - outsideRank[b.state] || a.from.localeCompare(b.from) || (a.item ?? a.path ?? '').localeCompare(b.item ?? b.path ?? ''))
+
+  const steps = buildSteps({
+    byKey,
+    order,
+    deps,
+    idOf,
+    why: () => 'selected',
+    citedBy: (key) => [...(citedBy.get(key) ?? [])].sort(),
+    tokens: sourceTokens,
+    protocolTokens: input.protocolTokens,
+    ...(input.states ? { states: input.states } : {}),
+  })
+  const notes: IInventoryNote[] = []
+  doneNote(steps, notes)
+  const shared = order.filter((key) => input.batchOf?.has(key))
+  if (shared.length)
+    notes.push({
+      level: 'attention',
+      code: 'other-batch',
+      text: `${shared.length} item(ns) já está(ão) em outro lote deste trabalho: ${shared.map((key) => `${key} (${input.batchOf!.get(key)!.name})`).join(', ')}`,
+    })
+  if (prefix) notes.push({ level: 'info', code: 'prefix', text: `prefixo ${prefix} nos ids de agente, skill, command e docs` })
+
+  return {
+    keys,
+    prefix,
+    phases: phasesOf(steps),
+    steps,
+    idMap,
+    cycles,
+    outside,
+    excluded,
+    estimate: estimateOf(steps, { conversations: 0, inputTokens: 0 }),
+    blocked: blockedOf(steps, idOf),
     notes,
   }
 }
