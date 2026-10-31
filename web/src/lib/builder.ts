@@ -29,10 +29,18 @@ export function builderAgentId(kind: TBuildKind): string {
   return `builder-${kind}`
 }
 
+/** O id do construtor de um tipo em modo importação (sem gravar; no gateway, `importBuilderAgent`). */
+export function importBuilderAgentId(kind: TBuildKind): string {
+  return `builder-import-${kind}`
+}
+
 /** O nome de um agente do core (fora da lista de agentes), ou nada. */
 export function coreAgentName(agentId: string | undefined): string | undefined {
-  const kind = (Object.keys(BUILD_KINDS) as TBuildKind[]).find((item) => builderAgentId(item) === agentId)
-  return kind ? BUILD_KINDS[kind].builder : undefined
+  const kinds = Object.keys(BUILD_KINDS) as TBuildKind[]
+  const kind = kinds.find((item) => builderAgentId(item) === agentId)
+  if (kind) return BUILD_KINDS[kind].builder
+  const importing = kinds.find((item) => importBuilderAgentId(item) === agentId)
+  return importing ? `${BUILD_KINDS[importing].builder} (importação)` : undefined
 }
 
 /** O rascunho; os campos valem conforme o tipo (rule: título e corpo; spec/ADR: id, título, resumo e corpo). */

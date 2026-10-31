@@ -1867,6 +1867,90 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/projects/{id}/import/jobs/{job}/builder': {
+      post: {
+        summary:
+          'Open ONE conversation with the builder of the kind, in import mode (no save tools), for a set of items of the newest job, and link them to it (`drafting`). One builder per conversation (a trigger goes to the agent builder). The builder reads the sources through the server (contained, masked, sha256 checked) and proposes drafts as operations over the source; nothing is written to the catalog. Administrators only',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'job', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            properties: {
+              keys: { type: 'array', items: { type: 'string' }, description: 'The item keys (1–200): the current selection' },
+              batchId: { type: 'string', description: 'A saved batch: without keys, its items that still go to the builder' },
+              kind: { type: 'string', enum: ['skill', 'command', 'rule', 'spec', 'adr', 'knowledge', 'agent'], description: 'Which builder, when the batch mixes kinds' },
+            },
+          }),
+        },
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: { conversationId: { type: 'string' }, kind: { type: 'string' }, agentId: { type: 'string' }, keys: { type: 'array', items: { type: 'string' } } },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+          '409': {
+            description: 'Code `import_job_outdated`, `import_state_conflict` (an item cannot go to the builder) or `builder_unavailable` (no builder model configured)',
+            content: { 'application/json': { schema: failureEnvelope } },
+          },
+          '422': failures['422'],
+        },
+      },
+    },
+    '/projects/{id}/import/jobs/{job}/items/approve': {
+      post: {
+        summary:
+          'Approve the draft of an item in `review`. Every removal operation needs its OK (`removals`: the operation indexes). The draft is checked again against the source on disk (same sha256, final text exactly source + operations). Only the state changes to `approved`: nothing is written to the catalog. Administrators only',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'job', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        requestBody: {
+          required: true,
+          ...json({ type: 'object', properties: { key: { type: 'string' }, removals: { type: 'array', items: { type: 'integer' } } }, required: ['key'] }),
+        },
+        responses: {
+          '200': { description: 'OK', ...json(envelope(importItemStatus)) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '409': {
+            description: 'Code `import_job_outdated`, `import_state_conflict` (not in review) or `import_source_changed`',
+            content: { 'application/json': { schema: failureEnvelope } },
+          },
+          '422': failures['422'],
+        },
+      },
+    },
+    '/projects/{id}/import/jobs/{job}/items/adjust': {
+      post: {
+        summary:
+          'Ask for an adjustment: the item in `review` goes back to `drafting`, with the comment for the builder conversation (it reads it in list_import_items). Administrators only',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'job', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        requestBody: {
+          required: true,
+          ...json({ type: 'object', properties: { key: { type: 'string' }, comment: { type: 'string' } }, required: ['key', 'comment'] }),
+        },
+        responses: {
+          '200': { description: 'OK', ...json(envelope(importItemStatus)) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '409': { description: 'Code `import_job_outdated` or `import_state_conflict`', content: { 'application/json': { schema: failureEnvelope } } },
+          '422': failures['422'],
+        },
+      },
+    },
     '/projects/{id}/members': {
       get: {
         summary: 'The members of a project (account ids). Administrators only',

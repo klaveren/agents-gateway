@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, inject, onMounted, ref, shallowRef, watch } from 'vue'
+import { routerKey } from 'vue-router'
 import ImportBatch from '@/components/ImportBatch.vue'
 import ImportItemDetail from '@/components/ImportItemDetail.vue'
 import ImportSelectionBatch from '@/components/ImportSelectionBatch.vue'
@@ -42,6 +43,8 @@ import {
   type TImportSort,
   type TInventoryKind,
 } from '@/lib/importer'
+import { BUILD_KINDS, type TBuildKind } from '@/lib/builder'
+import { BUILDABLE_STATES, buildLink, builderKindFor, type IImportBuildStatus } from '@/lib/importDraft'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectsStore } from '@/stores/projects'
 
@@ -129,6 +132,7 @@ const selected = computed(() => (selectedKey.value ? items.value.find((item) => 
 const filtering = computed(() => !!(filters.value.kind || filters.value.catalog || filters.value.note || filters.value.state || filters.value.query.trim()))
 
 watch([filters, sort], () => (limit.value = PAGE), { deep: true })
+watch(selectedKey, () => (reviewError.value = undefined))
 
 function message(failure: unknown): string {
   if (failure instanceof ApiError && Array.isArray(failure.details)) {
@@ -136,6 +140,78 @@ function message(failure: unknown): string {
     if (issues.length) return issues.join('; ')
   }
   return failure instanceof Error ? failure.message : String(failure)
+}
+
+// ── O construtor em modo importação ─────────────────────────────────────────
+
+const router = inject(routerKey, null)
+const building = ref(false)
+const reviewError = ref<string>()
+/**
+ * O que vai ao construtor, agrupado por construtor (uma conversa por grupo): só os itens com construtor e sem conversa
+ * nem rascunho em curso (pendente, rejeitado, com erro, com a fonte mudada).
+ */
+function builderGroups(keys: readonly string[]): Array<{ kind: TBuildKind; keys: string[] }> {
+  if (readonly.value) return []
+  const byKey = new Map(items.value.map((item) => [item.key, item]))
+  const groups = new Map<TBuildKind, string[]>()
+  for (const key of keys) {
+    const item = byKey.get(key)
+    const status = statuses.value[key] as IImportBuildStatus | undefined
+    const state = status?.state ?? 'pending'
+    if (!item || !BUILDABLE_STATES.includes(state) || state === 'review' || (state === 'drafting' && status?.conversationId)) continue
+    const kind = builderKindFor(effectiveKind(item, overrides.value))
+    if (kind) groups.set(kind, [...(groups.get(kind) ?? []), key])
+  }
+  return [...groups.entries()].map(([kind, list]) => ({ kind, keys: list }))
+}
+/** A seleção atual e o lote salvo aberto, por construtor. */
+const pickedGroups = computed(() => builderGroups([...picked.value]))
+const batchGroups = computed(() => (openedBatch.value ? builderGroups(openedBatch.value.order.length ? openedBatch.value.order : openedBatch.value.keys) : []))
+
+/** Guarda o item que o servidor devolveu e recontá os estados do trabalho na lista. */
+function keep(updated: IImportItemStatus) {
+  statuses.value = { ...statuses.value, [updated.key]: updated }
+  const counts: Partial<Record<TImportItemState, number>> = {}
+  for (const entry of Object.values(statuses.value)) counts[entry.state] = (counts[entry.state] ?? 0) + 1
+  jobs.value = jobs.value.map((entry) => (entry.id === job.value!.id ? { ...entry, byState: counts } : entry))
+}
+
+/**
+ * "Importar com o construtor": abre UMA conversa com o construtor do tipo (em modo importação) para os itens, e vai até
+ * ela. A pessoa conversa normalmente; os rascunhos voltam para a revisão aqui.
+ */
+async function openBuilder(target: { keys?: string[]; batchId?: string; kind?: TBuildKind }) {
+  if (!project.value || !job.value || readonly.value) return
+  building.value = true
+  reviewError.value = undefined
+  try {
+    const opened = await api<{ conversationId: string; kind: Parameters<typeof buildLink>[0]; keys: string[] }>(`${projectPath()}/jobs/${encodeURIComponent(job.value.id)}/builder`, {
+      method: 'POST',
+      body: target,
+    })
+    for (const key of opened.keys) keep({ ...(statuses.value[key] ?? { key, fingerprint: '' }), key, state: 'drafting', conversationId: opened.conversationId } as IImportItemStatus)
+    // Vai até a conversa (a guia Construir do tipo, com ela aberta).
+    if (router) await router.push(buildLink(opened.kind, opened.conversationId))
+  } catch (failure) {
+    reviewError.value = message(failure)
+  } finally {
+    building.value = false
+  }
+}
+
+/** Aprovar (com o OK de cada remoção) ou pedir ajuste (com o comentário para a conversa). ⛔ Nada vai ao catálogo. */
+async function reviewItem(key: string, action: 'approve' | 'adjust', body: { removals?: number[]; comment?: string }) {
+  if (!project.value || !job.value || readonly.value) return
+  itemBusy.value = true
+  reviewError.value = undefined
+  try {
+    keep(await api<IImportItemStatus>(`${projectPath()}/jobs/${encodeURIComponent(job.value.id)}/items/${action}`, { method: 'POST', body: { key, ...body } }))
+  } catch (failure) {
+    reviewError.value = message(failure)
+  } finally {
+    itemBusy.value = false
+  }
 }
 
 function parseIgnore(text: string): string[] {
@@ -643,7 +719,20 @@ watch(
             <button type="button" class="btn btn-primary btn-sm" :disabled="!picked.size || batchBusy" data-test="build-batch" @click="buildSelection()">
               {{ batchBusy ? 'Montando…' : 'Montar lote da seleção' }}
             </button>
+            <button
+              v-for="group in pickedGroups"
+              :key="group.kind"
+              type="button"
+              class="btn btn-secondary btn-sm"
+              :disabled="building"
+              :title="`Uma conversa com o ${BUILD_KINDS[group.kind].builder}, em modo importação, para os ${group.keys.length} selecionado(s)`"
+              data-test="build-picked"
+              @click="openBuilder({ keys: group.keys })"
+            >
+              {{ building ? 'Abrindo…' : `Importar com o construtor (${BUILD_KINDS[group.kind].noun}, ${group.keys.length})` }}
+            </button>
           </section>
+          <p v-if="reviewError && !selected" class="text-xs text-rose-300" data-test="build-error">{{ reviewError }}</p>
 
           <section v-if="batches.length" class="flex flex-col gap-1.5" data-test="batches">
             <h2 class="text-xs font-medium text-zinc-500">Lotes deste trabalho ({{ batches.length }})</h2>
@@ -678,6 +767,20 @@ watch(
             @replan="buildSelection(selectionPlan.keys, $event)"
             @save="saveBatch"
           />
+          <section v-if="openedBatch && batchGroups.length" class="flex flex-wrap items-center gap-2 text-xs" data-test="batch-builder">
+            <span class="text-zinc-400">Lote "{{ openedBatch.name }}":</span>
+            <button
+              v-for="group in batchGroups"
+              :key="group.kind"
+              type="button"
+              class="btn btn-secondary btn-sm"
+              :disabled="building"
+              data-test="build-saved-batch"
+              @click="openBuilder({ batchId: openedBatch.id, kind: group.kind })"
+            >
+              {{ building ? 'Abrindo…' : `Importar com o construtor (${BUILD_KINDS[group.kind].noun}, ${group.keys.length})` }}
+            </button>
+          </section>
 
           <p v-if="planError" class="text-sm text-rose-300" data-test="plan-error">Lote: {{ planError }}</p>
           <ImportBatch v-if="plan" :plan="plan" :busy="planning" @close="plan = undefined" @select="selectedKey = $event" @replan="buildPlan(plan.agent, $event)" />
@@ -685,6 +788,7 @@ watch(
           <div class="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)]">
             <section class="flex min-w-0 flex-col gap-2">
               <p class="text-xs text-zinc-500" data-test="count">{{ filtered.length.toLocaleString('pt-BR') }} de {{ items.length.toLocaleString('pt-BR') }} itens</p>
+              <p v-if="reviewError && !selected" class="text-xs text-rose-300" data-test="build-error">{{ reviewError }}</p>
               <p v-if="!filtered.length" class="rounded-xl border border-dashed border-zinc-800 p-4 text-center text-sm text-zinc-500">Nenhum item com estes filtros.</p>
               <div v-for="group in groups" :key="group.kind ?? 'all'" class="flex flex-col gap-1">
                 <h2 v-if="group.kind" class="sticky top-0 z-10 bg-zinc-950/95 py-1 text-xs font-semibold text-zinc-400">{{ KIND_LABEL[group.kind] }} · {{ group.items.length }}</h2>
@@ -744,6 +848,11 @@ watch(
                 :busy="itemBusy"
                 :error="itemError"
                 :planning="planning"
+                :building="building"
+                :review-error="reviewError"
+                @build="openBuilder({ keys: [selected.key] })"
+                @approve="reviewItem(selected.key, 'approve', { removals: $event })"
+                @adjust="reviewItem(selected.key, 'adjust', { comment: $event })"
                 @plan="buildPlan(selected.key)"
                 @select="selectedKey = $event"
                 @reclassify="reclassify(selected.key, $event)"

@@ -3,7 +3,7 @@ import { ICoreProtocol } from '@domain/models/Protocol.Model'
 /** O protocolo do core para construir um COMMAND. ⚠️ Mudou o texto, sobe a versão. */
 export const COMMAND_PROTOCOL: ICoreProtocol = {
   kind: 'command',
-  version: '1.1.0',
+  version: '1.1.1',
   title: 'Protocolo de construção de command',
   body: `# Protocolo de construção de command
 
@@ -39,5 +39,8 @@ Revise o pull request $ARGUMENTS (sem número: o mais recente aberto).
 ## Escopo
 - Global vale em todos os projetos; o do projeto, só nele. Na dúvida, do projeto.
 - Documento anexado tem de ser global ou do mesmo projeto do command.
-- A pessoa só dispara o command num agente que o tenha liberado na guia Recursos.`,
+- A pessoa só dispara o command num agente que o tenha liberado na guia Recursos.
+
+## Modo importação
+Quando o artefato vem de outro formato (pelo Importador), o texto da fonte é preservado: você não o reescreve, só o ajusta ao padrão do ambiente, propondo operações (metadados, caminho citado → vínculo no painel, nível de título, divisão por título, remoção do que é do sistema antigo, com o motivo). Caminho de doc citado no texto vira anexo (inteiro ou por referência), pelo id. No ambíguo, pergunte à pessoa.`,
 }

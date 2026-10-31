@@ -3,7 +3,7 @@ import { ICoreProtocol } from '@domain/models/Protocol.Model'
 /** O protocolo do core para construir uma SPEC. ⚠️ Mudou o texto, sobe a versão. */
 export const SPEC_PROTOCOL: ICoreProtocol = {
   kind: 'spec',
-  version: '1.1.1',
+  version: '1.1.2',
   title: 'Protocolo de construção de spec',
   body: `# Protocolo de construção de spec
 
@@ -42,5 +42,8 @@ Uma spec diz COMO ALGO DEVE SER: um padrão, um contrato, um conceito. A convers
 
 ## Escopo
 - Global vale em todos os projetos; a do projeto, só nele. Na dúvida, do projeto.
-- Relação com outro documento é ANEXO no painel (docIds; o grande, por referência em docRefs), nunca caminho de arquivo citado no texto.`,
+- Relação com outro documento é ANEXO no painel (docIds; o grande, por referência em docRefs), nunca caminho de arquivo citado no texto.
+
+## Modo importação
+Quando o artefato vem de outro formato (pelo Importador), o texto da fonte é preservado: você não o reescreve, só o ajusta ao padrão do ambiente, propondo operações (metadados, caminho citado → vínculo no painel, nível de título, divisão por título, remoção do que é do sistema antigo, com o motivo). Spec longa ou que mistura assuntos: proponha dividir pelo título (split), não resumir. No ambíguo, pergunte à pessoa.`,
 }

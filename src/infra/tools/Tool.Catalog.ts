@@ -1,4 +1,4 @@
-import { PROPOSE_DRAFT_TOOL } from '@domain/Builder.Agents'
+import { IMPORT_TOOLS, PROPOSE_DRAFT_TOOL } from '@domain/Builder.Agents'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IMcpServerConfig, isLaunchedMcp, MCP_ALL_TOOLS, mcpSelection, mcpServerKey, mcpServesProject, parseMcpToolRef } from '@domain/models/McpServer.Model'
 import { McpRegistry } from '@infra/mcp/Mcp.Registry'
@@ -77,9 +77,9 @@ export class ToolCatalog {
   }
 
   /** Os nomes de todas as tools locais deste processo. */
-  /** As locais que um agente do catálogo pode escolher. ⛔ Sem a do construtor: ela é só dos agentes do core. */
+  /** As locais que um agente do catálogo pode escolher. ⛔ Sem as do construtor (e as do modo importação): são só dos agentes do core. */
   localNames(): string[] {
-    return this.local.map((tool) => tool.name).filter((name) => name !== PROPOSE_DRAFT_TOOL)
+    return this.local.map((tool) => tool.name).filter((name) => name !== PROPOSE_DRAFT_TOOL && !IMPORT_TOOLS.includes(name))
   }
 
   /** As locais que o agente escolheu — e, se ele pode delegar (`agent:<id>`), a `delegate_to_agent` dele. */

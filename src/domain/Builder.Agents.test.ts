@@ -1,7 +1,18 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import { EMode } from './enums/EMode.Enum'
-import { builderAgent, builderAgentId, builderKindOf, CORE_AGENT_IDS, PROPOSE_DRAFT_TOOL } from './Builder.Agents'
+import { PROTOCOL_KINDS } from './models/Protocol.Model'
+import {
+  builderAgent,
+  builderAgentId,
+  builderKindOf,
+  CORE_AGENT_IDS,
+  IMPORT_TOOLS,
+  importBuilderAgent,
+  importBuilderAgentId,
+  isImportBuilder,
+  PROPOSE_DRAFT_TOOL,
+} from './Builder.Agents'
 
 describe('Builder.Agents', () => {
   it('um construtor por tipo, só de admin, só na lane agent, com o protocolo do core no prompt', () => {
@@ -38,7 +49,28 @@ describe('Builder.Agents', () => {
   })
 
   it('os ids reservados e o caminho de volta, do id ao tipo', () => {
-    assert.deepStrictEqual(CORE_AGENT_IDS, ['builder-skill', 'builder-command', 'builder-rule', 'builder-spec', 'builder-adr', 'builder-knowledge', 'builder-agent'])
+    assert.deepStrictEqual(CORE_AGENT_IDS.slice(0, 7), ['builder-skill', 'builder-command', 'builder-rule', 'builder-spec', 'builder-adr', 'builder-knowledge', 'builder-agent'])
+    assert.ok(CORE_AGENT_IDS.includes('builder-import-spec'))
     assert.deepStrictEqual([builderKindOf(builderAgentId('skill')), builderKindOf('atlas'), builderKindOf(undefined)], ['skill', undefined, undefined])
+    assert.deepStrictEqual([builderKindOf(importBuilderAgentId('agent')), isImportBuilder('builder-import-agent'), isImportBuilder('builder-agent')], ['agent', true, false])
+  })
+
+  it('⛔ o modo importação: sem NENHUMA ferramenta de gravar, só a leitura do tipo e as três da importação', () => {
+    const target = { provider: 'claude', models: ['m'] }
+    for (const kind of PROTOCOL_KINDS) {
+      const agent = importBuilderAgent(kind, target)
+      assert.strictEqual(agent.id, `builder-import-${kind}`)
+      assert.strictEqual(agent.adminOnly, true)
+      assert.ok(!agent.allowedTools.some((tool) => /save_|set_agent_/.test(tool)), kind)
+      assert.ok(!agent.allowedTools.includes(PROPOSE_DRAFT_TOOL), kind)
+      for (const tool of IMPORT_TOOLS) assert.ok(agent.allowedTools.includes(tool), `${kind}: ${tool}`)
+      // As permissões liberam só a leitura, uma a uma (nada de `gateway/*`).
+      assert.ok(
+        agent.permissions!.every((rule) => rule.decision === 'allow' && !rule.pattern.includes('*') && !/save_|set_/.test(rule.pattern)),
+        kind,
+      )
+      assert.match(agent.systemPrompt, /o texto não muda[\s\S]*propose_import_draft[\s\S]*## Modo importação/)
+    }
+    assert.deepStrictEqual(importBuilderAgent('rule', target).allowedTools, ['mcp:gateway/list_rules', ...IMPORT_TOOLS, 'cap:todos'])
   })
 })

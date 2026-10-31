@@ -6,6 +6,7 @@ import BuildTabs from '@/components/BuildTabs.vue'
 import ThreadView from '@/components/ThreadView.vue'
 import { api } from '@/lib/api'
 import { BUILD_KINDS, builderAgentId, latestDraft, pendingDraft, type TBuildKind } from '@/lib/builder'
+import { importOpening } from '@/lib/importDraft'
 import { shortTime, sizeHint } from '@/lib/format'
 import { renderMarkdown } from '@/lib/markdown'
 import type { IConversation, IProjectDoc, IResource } from '@/lib/types'
@@ -74,6 +75,19 @@ const buildProject = computed(() => {
   return typeof stamped === 'string' ? stamped : scopeProject.value
 })
 const draft = computed(() => (selected.value && thread.sessionId === selected.value ? latestDraft(thread.turns) : undefined))
+/**
+ * A conversa é uma IMPORTAÇÃO (aberta pelo Importador): o construtor em modo importação, sem gravar. Os itens e o
+ * trabalho vêm da marca que o servidor escreveu; o rascunho é revisado no Importador, não aqui.
+ */
+const importing = computed(() => {
+  const mark = selectedBuild.value?.metadata?.import as { job?: string; keys?: string[] } | undefined
+  return mark && Array.isArray(mark.keys) ? { job: mark.job, keys: mark.keys } : undefined
+})
+const threadAgent = computed(() => selectedBuild.value?.agentId ?? builderAgentId(props.kind))
+const canStartImport = computed(() => !!importing.value && thread.sessionId === selected.value && !thread.turns.length && !thread.sending)
+function startImport() {
+  if (importing.value) void thread.send(importOpening(importing.value.keys), [])
+}
 const draftPreview = ref(true)
 
 async function loadBuilds() {
@@ -283,7 +297,7 @@ function describe(failure: unknown): string {
     <div v-if="tab === 'build'" class="@container min-h-0 min-w-0 flex-1">
       <div class="scroll-thin flex h-full min-h-0 flex-col overflow-y-auto @3xl:flex-row @3xl:overflow-hidden">
         <main class="flex min-h-[30rem] min-w-0 flex-1 flex-col @3xl:min-h-0">
-          <ThreadView v-if="selected" :key="selected" embedded :agent-id="builderAgentId(kind)" mode="agent" @removed="removed" />
+          <ThreadView v-if="selected" :key="selected" embedded :agent-id="threadAgent" mode="agent" @removed="removed" />
           <section v-else class="mx-auto flex max-w-xl flex-col gap-3 p-6 text-sm text-zinc-300">
             <h2 class="text-lg font-semibold text-zinc-100">Construir {{ info.article }}</h2>
             <p>
@@ -304,7 +318,22 @@ function describe(failure: unknown): string {
           </section>
         </main>
 
-        <aside v-if="selected" class="scroll-thin flex shrink-0 flex-col gap-3 border-t border-zinc-800/80 p-4 @3xl:w-[22rem] @3xl:overflow-y-auto @3xl:border-t-0 @3xl:border-l">
+        <aside
+          v-if="selected && importing"
+          class="scroll-thin flex shrink-0 flex-col gap-3 border-t border-zinc-800/80 p-4 @3xl:w-[22rem] @3xl:overflow-y-auto @3xl:border-t-0 @3xl:border-l"
+          data-test="import-aside"
+        >
+          <h2 class="text-sm font-semibold text-zinc-200">Importação</h2>
+          <p class="text-xs text-zinc-400">
+            O construtor em modo importação lê as fontes pelo servidor e propõe só operações: o texto não muda. Ele não grava nada no catálogo. A revisão (com o OK de cada remoção) é no
+            <RouterLink to="/import" class="text-emerald-400 underline underline-offset-2">Importador</RouterLink>.
+          </p>
+          <ul class="flex flex-col gap-0.5 text-xs">
+            <li v-for="key in importing.keys" :key="key"><code class="break-all text-zinc-300">{{ key }}</code></li>
+          </ul>
+          <button v-if="canStartImport" type="button" class="btn btn-primary btn-sm self-start" data-test="start-import" @click="startImport">Começar</button>
+        </aside>
+        <aside v-else-if="selected" class="scroll-thin flex shrink-0 flex-col gap-3 border-t border-zinc-800/80 p-4 @3xl:w-[22rem] @3xl:overflow-y-auto @3xl:border-t-0 @3xl:border-l">
           <h2 class="text-sm font-semibold text-zinc-200">Rascunho</h2>
           <p v-if="!draft" class="text-xs text-zinc-500">Ainda nenhum. Quando o construtor fechar {{ info.article }}, o rascunho aparece aqui.</p>
           <template v-else>

@@ -119,9 +119,24 @@ export interface INewImportJob {
 }
 
 /** A mudança de um item: o estado, a reclassificação (`null` volta ao detectado), e o que mais a regra decidiu. */
-export type TImportItemPatch = Partial<Pick<IImportItemStatus, 'state' | 'basis' | 'by' | 'at'>> & {
+export type TImportItemPatch = Partial<Pick<IImportItemStatus, 'state' | 'basis' | 'by' | 'at' | 'conversationId' | 'drafts' | 'approvedBy' | 'approvedAt'>> & {
   kind?: TInventoryKind | null
   staleFrom?: TImportItemState | null
+  /** A revisão (`null` apaga). */
+  review?: IImportReview | null
+}
+
+/**
+ * A REVISÃO de um rascunho (PR 7, mínima): os OKs de cada remoção (pelo índice da operação) e o pedido de ajuste, que
+ * volta à conversa do construtor.
+ */
+export interface IImportReview {
+  /** As remoções com OK, pelo índice da operação no rascunho. */
+  removals?: number[]
+  /** O pedido de ajuste: o comentário vai para a conversa (o construtor o lê nos itens dela). */
+  adjust?: { comment: string; by: string; at: string }
+  by?: string
+  at?: string
 }
 
 /**

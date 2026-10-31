@@ -3,7 +3,7 @@ import { ICoreProtocol } from '@domain/models/Protocol.Model'
 /** O protocolo do core para construir CONHECIMENTO (o estudo de um tema). ⚠️ Mudou o texto, sobe a versão. */
 export const KNOWLEDGE_PROTOCOL: ICoreProtocol = {
   kind: 'knowledge',
-  version: '1.0.0',
+  version: '1.0.1',
   title: 'Protocolo de construção de conhecimento',
   body: `# Protocolo de construção de conhecimento
 
@@ -61,5 +61,8 @@ Impessoal, técnico, no presente — uma biblioteca de referência, nunca um di�
 ## Identificação
 - id em slug que diz o tema ("feature-flags", "arquitetura-hexagonal").
 - Resumo de uma linha: o que o estudo cobre — é o que aparece no índice de toda conversa.
-- Escopo: global (vale em todos os projetos) quando o tema é geral; do projeto quando é específico dele. Na dúvida, global.`,
+- Escopo: global (vale em todos os projetos) quando o tema é geral; do projeto quando é específico dele. Na dúvida, global.
+
+## Modo importação
+Quando o artefato vem de outro formato (pelo Importador), o texto da fonte é preservado: você não o reescreve, só o ajusta ao padrão do ambiente, propondo operações (metadados, caminho citado → vínculo no painel, nível de título, divisão por título, remoção do que é do sistema antigo, com o motivo). As fontes, URLs e datas de acesso do estudo são conteúdo: ficam. No ambíguo, pergunte à pessoa.`,
 }
