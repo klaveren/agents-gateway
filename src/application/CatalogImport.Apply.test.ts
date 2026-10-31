@@ -208,6 +208,33 @@ describe('CatalogImportApplier — aplicar o import', () => {
     assert.strictEqual(result.batch?.status, 'partial')
   })
 
+  it('agente com alcance: entra FECHADO (fase agents) e o alcance vem por último (fase reach); parar no alcance deixa o agente fechado', async () => {
+    const stack = buildCatalogStack({
+      wrapWriter: (writer) => ({
+        prepare: async (target, current) => {
+          if (target?.kind === 'agent' && (target.body.allowedTools as string[]).length) throw new Error('caiu no alcance')
+          return writer.prepare(target, current)
+        },
+      }),
+    })
+    const documents = [agent({ id: 'theo', allowedTools: ['alpha_tool'], permissions: [{ category: 'terminal', pattern: 'git status', decision: 'allow' }] }), spec('depois')]
+    const { plan } = await stack.applier.plan({ documents })
+    assert.deepStrictEqual(
+      plan.order.map((step) => `${step.ref}${step.part ? `#${step.part}` : ''}:${step.phase}`),
+      ['spec/depois:docs', 'agent/theo#record:agents', 'agent/theo#reach:reach'],
+    )
+    const keys = plan.widenings.map((widening) => widening.key)
+    const result = await stack.applier.apply({ documents, planHash: plan.planHash, confirm: keys }, ADMIN)
+    assert.strictEqual(result.batch?.status, 'partial')
+    assert.deepStrictEqual(result.failed && [result.failed.ref, result.failed.part], ['agent/theo', 'reach'])
+    const theo = stack.agents.entry('theo')!.agent
+    assert.deepStrictEqual([theo.allowedTools, theo.permissions ?? []], [[], []])
+    const revision = stack.repository.latest('agent', 'theo')!
+    assert.strictEqual(revision.note, `import do lote ${result.batch!.id} (o agente fechado, sem o alcance novo)`)
+    // A aceitação vai na revisão que completa o item (o alcance), que não chegou a ser gravada.
+    assert.strictEqual(revision.widenings, undefined)
+  })
+
   it('MCP que pede segredo que o cofre não tem entra DESLIGADO, e a resposta diz o que falta', async () => {
     const stack = buildCatalogStack()
     const documents = [

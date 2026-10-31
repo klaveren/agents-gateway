@@ -1,5 +1,6 @@
 import { Request, Response } from 'express'
 import { z } from 'zod'
+import { ImportApplyUseCase } from '@application/ImportApply.Usecase'
 import { IMPORT_BATCH_MAX, IMPORT_BATCH_NAME_MAX, ImportBatchService } from '@application/ImportBatch.Service'
 import { ImportBuildError, ImportBuildService } from '@application/ImportBuild.Service'
 import { ImportJobError, ImportJobService } from '@application/ImportJob.Service'
@@ -9,6 +10,7 @@ import { ignoreIssues, IMPORT_IGNORE_MAX } from '@domain/Import.Ignore'
 import { IMPORT_MANUAL_STATES, TImportManualState } from '@domain/models/ImportJob.Model'
 import { TInventoryKind } from '@domain/models/ImportInventory.Model'
 import { WorkFolderError } from '@infra/workspace/Work.Folder'
+import { viaAccessToken } from './Auth.Controller'
 import { checkAdminAccess } from './Caller.Admin'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
@@ -31,6 +33,8 @@ export interface IImportControllerDeps {
   batches?: ImportBatchService
   /** O construtor em modo importação (conversa por lote e revisão). Ausente: as rotas respondem 404. */
   build?: ImportBuildService
+  /** A gravação pelo catálogo (os aprovados viram documentos). Ausente: as rotas respondem 404. */
+  apply?: ImportApplyUseCase
   projectExists: (projectId: string) => boolean
   ignore?: IImportIgnoreStore
   proof?: ICallerProof
@@ -79,6 +83,17 @@ const selectionSchema = z.object({
   prefix: z.string().max(16).optional(),
 })
 const batchSchema = selectionSchema.extend({ name: z.string().trim().min(1).max(IMPORT_BATCH_NAME_MAX) })
+/** A gravação: o lote salvo OU as chaves (nenhum: todos os aprovados), as regras amplas incluídas e o modelo por agente. */
+const applySelectionSchema = z.object({
+  batchId: z.string().min(1).max(200).optional(),
+  keys: z.array(itemKey).min(1).max(IMPORT_BATCH_MAX).optional(),
+  wide: z.record(itemKey, z.array(z.string().min(1).max(2_000)).max(1_000)).optional(),
+  models: z.record(itemKey, z.object({ provider: z.string().min(1).max(100), model: z.string().min(1).max(200) })).optional(),
+})
+const applySchema = applySelectionSchema.extend({
+  planHash: z.string().regex(/^[a-f0-9]{64}$/, 'expected the planHash of the plan (64 hex)'),
+  confirm: z.array(z.string().min(1).max(2_000)).max(5_000).optional(),
+})
 
 /**
  * O IMPORTADOR de recursos de um repositório do projeto. Por ora a varredura (devolve o inventário e não grava nada),
@@ -109,6 +124,45 @@ export class ImportController {
     this.openBuilder = this.openBuilder.bind(this)
     this.approveItem = this.approveItem.bind(this)
     this.adjustItem = this.adjustItem.bind(this)
+    this.planApply = this.planApply.bind(this)
+    this.applyItems = this.applyItems.bind(this)
+  }
+
+  /**
+   * `POST /projects/:id/import/jobs/:job/apply/plan { batchId?, keys?, wide?, models? }` — a PRÉVIA da gravação: os
+   * aprovados (do lote, das chaves ou do trabalho) viram documentos canônicos, conferidos de novo contra a fonte no
+   * disco, e o plano do catálogo sobre eles (diff, ampliações, referências quebradas, segredos, ordem, `planHash`). O
+   * agente nasce fechado: as regras amplas do tradutor só entram se a pessoa as incluir (`wide`). ⛔ Só lê.
+   */
+  async planApply(req: Request, res: Response): Promise<void> {
+    await this.respond(res, 'planImportApply', req, async (projectId) => {
+      const body = parseBody(applySelectionSchema, req.body ?? {})
+      return this.buildError(() => this.applier().preview(projectId, req.params.job as string, selection(body), { viaAccessToken: viaAccessToken(res) }))
+    })
+  }
+
+  /**
+   * `POST /projects/:id/import/jobs/:job/apply { …a seleção, planHash, confirm? }` — GRAVA no catálogo: o mesmo plano
+   * (outro `planHash` = 409 com o plano novo), cada ampliação confirmada (`confirm` igual ao conjunto; token de acesso
+   * nunca), num lote do catálogo. Os itens gravados viram `applied`, com o lote. ⛔ Só admin, só com o clique.
+   */
+  async applyItems(req: Request, res: Response): Promise<void> {
+    await this.respond(res, 'importApply', req, async (projectId, by) => {
+      const body = parseBody(applySchema, req.body ?? {})
+      return this.buildError(() =>
+        this.applier().apply(
+          projectId,
+          req.params.job as string,
+          { ...selection(body), planHash: body.planHash, ...(body.confirm ? { confirm: body.confirm } : {}) },
+          { by, viaAccessToken: viaAccessToken(res) },
+        ),
+      )
+    })
+  }
+
+  private applier(): ImportApplyUseCase {
+    if (!this.deps.apply) throw new HttpError(404, 'not_found', 'Not found')
+    return this.deps.apply
   }
 
   /** `POST /projects/:id/import/scan { repository, ignore? }` — o inventário do repositório (só leitura, nada persiste). */
@@ -337,5 +391,15 @@ export class ImportController {
       if (failure.status >= 500) console.error('[ImportController] Error:', failure.message)
       res.status(failure.status).json(fail(failure.message, failure.code, failure.details))
     }
+  }
+}
+
+/** A seleção do corpo, sem os campos ausentes. */
+function selection(body: z.infer<typeof applySelectionSchema>) {
+  return {
+    ...(body.batchId ? { batchId: body.batchId } : {}),
+    ...(body.keys ? { keys: body.keys } : {}),
+    ...(body.wide ? { wide: body.wide } : {}),
+    ...(body.models ? { models: body.models } : {}),
   }
 }

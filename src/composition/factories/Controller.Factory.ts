@@ -30,6 +30,7 @@ import { CatalogRestoreUseCase } from '@application/CatalogRestore.Usecase'
 import { CatalogExportUseCase } from '@application/CatalogExport.Usecase'
 import { CatalogImportPlanner } from '@application/CatalogImport.Plan'
 import { CatalogImportApplier } from '@application/CatalogImport.Apply'
+import { ImportApplyUseCase } from '@application/ImportApply.Usecase'
 import { CatalogWriter } from '@application/Catalog.Writer'
 import { isLaunchedMcp, mcpServerKey } from '@domain/models/McpServer.Model'
 import { removeInstall } from '@infra/mcp/Mcp.Install'
@@ -58,7 +59,7 @@ import { makeAuth } from './Auth.Factory'
 import { importJobRepository } from './ImportJobs.Factory'
 import { makeSettings } from './Settings.Factory'
 import { makeUsecases } from './Usecases.Factory'
-import { makeImportBuild, useImportOpener } from './ImportBuild.Factory'
+import { makeImportBuild, readImportSource, useImportOpener } from './ImportBuild.Factory'
 import { BUILDER_METADATA_KEY } from '@domain/Builder.Agents'
 import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
 import { EMode } from '@domain/enums/EMode.Enum'
@@ -323,6 +324,20 @@ export function makeImportController(): ImportController {
     jobs: new ImportJobService({ repository: importJobRepository(), scan: (projectId, repository, options) => scan.execute(projectId, repository, options) }),
     build: makeImportBuild(),
     batches: new ImportBatchService({ repository: importJobRepository(), catalogState: (query) => scan.catalogState(query) }),
+    // ⛔ A gravação pelo catálogo: o MESMO plano e o MESMO apply do import do catálogo (um caminho de escrita só).
+    apply: new ImportApplyUseCase({
+      repository: importJobRepository(),
+      readSource: readImportSource,
+      scan,
+      catalog: makeCatalogImportApplier(),
+      reader: catalogHistoryParts().reader,
+      models: () =>
+        makeProviders()
+          .list()
+          .filter((provider) => provider.enabled)
+          .map((provider) => ({ provider: provider.id, models: makeModelCatalog().enabledIds(provider.id) }))
+          .filter((entry) => entry.models.length > 0),
+    }),
     projectExists: (projectId) => projects.exists(projectId),
     ignore: { get: (projectId) => projects.importIgnore(projectId), set: (projectId, patterns, by) => projects.setImportIgnore(projectId, patterns, by) },
     proof: makeAuth().proof,

@@ -327,10 +327,11 @@ export function attentionsOf(before: ICatalogDocument | undefined, after: ICatal
 
 /**
  * As fases, na ordem (§2.6): o projeto antes de tudo o que é dele; docs → recursos → rules → complementos → MCPs →
- * agentes → vínculos (o contexto inicial do projeto que cita doc novo do pacote) → permissões do projeto.
+ * agentes (FECHADOS: sem ferramentas nem permissões novas) → vínculos (o contexto inicial do projeto que cita doc novo do
+ * pacote) → alcance dos agentes (as ferramentas e as permissões) → permissões do projeto.
  */
-export type TImportPhase = 'project' | 'docs' | 'resources' | 'rules' | 'protocols' | 'mcps' | 'agents' | 'links' | 'permissions'
-export const IMPORT_PHASES: readonly TImportPhase[] = ['project', 'docs', 'resources', 'rules', 'protocols', 'mcps', 'agents', 'links', 'permissions']
+export type TImportPhase = 'project' | 'docs' | 'resources' | 'rules' | 'protocols' | 'mcps' | 'agents' | 'links' | 'reach' | 'permissions'
+export const IMPORT_PHASES: readonly TImportPhase[] = ['project', 'docs', 'resources', 'rules', 'protocols', 'mcps', 'agents', 'links', 'reach', 'permissions']
 
 const PHASE_OF: Readonly<Record<TCatalogKind, TImportPhase>> = {
   project: 'project',
@@ -358,6 +359,11 @@ export interface IOrderInput {
   dependsOn: readonly string[]
   /** Projeto: o contexto inicial cita doc que o pacote cria — o vínculo vai na fase `links`, depois dos docs. */
   linksLater?: boolean
+  /**
+   * Agente: as ferramentas ou as permissões mudam — ele entra FECHADO na fase `agents` (com as de antes; criado, sem
+   * nenhuma) e o alcance vem na fase `reach`. Um lote que pare no meio deixa o agente mais fechado, nunca mais aberto.
+   */
+  reachLater?: boolean
 }
 
 export interface IImportStep {
@@ -367,8 +373,11 @@ export interface IImportStep {
   projectId?: string
   op: 'create' | 'update' | 'delete'
   phase: TImportPhase
-  /** `record`: o item sem os vínculos (que vêm no passo `links`). Ausente: o item inteiro. */
-  part?: 'record' | 'links'
+  /**
+   * `record`: o item sem a parte que vem depois — o projeto sem o contexto inicial novo (passo `links`), o agente sem o
+   * alcance novo (passo `reach`). Ausente: o item inteiro.
+   */
+  part?: 'record' | 'links' | 'reach'
   widens: boolean
   /** Entrou fora da ordem das dependências: havia um ciclo entre os que faltavam (docs que se anexam). */
   cycle?: true
@@ -387,6 +396,10 @@ export function importOrder(items: readonly IOrderInput[]): IImportStep[] {
     if (item.kind === 'project' && item.linksLater) {
       steps.push({ ...base, phase: 'project', part: 'record', deps: [] })
       steps.push({ ...base, phase: 'links', part: 'links', deps: [] })
+    } else if (item.kind === 'agent' && item.reachLater) {
+      // O registro fechado não amplia (as ferramentas e as permissões ficam como estavam); o alcance, sim.
+      steps.push({ ...base, widens: false, phase: 'agents', part: 'record', deps: item.dependsOn.filter((ref) => ref !== item.ref) })
+      steps.push({ ...base, phase: 'reach', part: 'reach', deps: [] })
     } else steps.push({ ...base, phase: PHASE_OF[item.kind], deps: item.dependsOn.filter((ref) => ref !== item.ref) })
   }
   const kindOrder = (kind: TCatalogKind) => CATALOG_KINDS.indexOf(kind)
@@ -525,4 +538,28 @@ export interface IPackageInput {
 /** Quantos de cada operação (todas as chaves presentes). */
 export function emptySummary(): ICatalogImportPlan['summary'] {
   return { create: 0, update: 0, unchanged: 0, conflict: 0, error: 0, delete: 0, widenings: 0, brokenRefs: 0, fileErrors: 0 }
+}
+
+// --- O registro antes do resto -----------------------------------------------------------------------------------
+
+/**
+ * O que o passo `record` grava: o projeto com o contexto inicial de ANTES (criado: nenhum); o agente com as ferramentas
+ * e as permissões de ANTES (criado: nenhuma) — o agente nasce FECHADO, e o alcance vem no passo `reach`.
+ */
+export function recordPart(target: ICatalogDocument, current: ICatalogDocument | undefined): ICatalogDocument {
+  if (target.kind === 'project') return withBody(target, { ...target.body, initialContext: current?.body.initialContext ?? [] })
+  if (target.kind !== 'agent') return target
+  const { permissions: _permissions, ...body } = target.body
+  return withBody(target, {
+    ...body,
+    allowedTools: current?.body.allowedTools ?? [],
+    ...(current?.body.permissions !== undefined ? { permissions: current.body.permissions } : {}),
+  })
+}
+
+/** O agente muda as ferramentas ou as permissões: o alcance vai num passo à parte (`reach`), depois de todos. */
+export function reachChanges(target: ICatalogDocument, current: ICatalogDocument | undefined): boolean {
+  if (target.kind !== 'agent') return false
+  const json = (value: TCanonicalValue | undefined) => stableJson(value ?? [])
+  return json(target.body.allowedTools) !== json(current?.body.allowedTools) || json(target.body.permissions) !== json(current?.body.permissions)
 }

@@ -17,6 +17,7 @@ import {
   normalizeDocument,
   parsePackage,
   planHashOf,
+  reachChanges,
   referencesOf,
   refOfDocument,
   TImportIssue,
@@ -252,6 +253,7 @@ export class CatalogImportPlanner {
         const linksLater =
           draft.target!.kind === 'project' &&
           draft.refs.some((ref) => ref.field === 'initialContext' && drafts.some((other) => other.op === 'create' && other.target?.kind === 'spec' && other.target.id === ref.id))
+        const reachLater = reachChanges(draft.target!, draft.current)
         return {
           ref: draft.ref,
           kind: draft.target!.kind,
@@ -261,6 +263,7 @@ export class CatalogImportPlanner {
           widens: item.widenings.length > 0,
           dependsOn,
           ...(linksLater ? { linksLater } : {}),
+          ...(reachLater ? { reachLater } : {}),
         }
       }),
     )

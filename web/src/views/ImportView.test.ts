@@ -350,6 +350,37 @@ async function mount(items: IInventoryItem[], options: { jobs?: IImportJob[]; an
       const body = request!.body as { prefix?: string }
       return body.prefix ? { ...PLAN, prefix: body.prefix, idMap: PLAN.idMap.map((entry) => ({ ...entry, id: `${body.prefix}${entry.id}`, prefixed: true })) } : PLAN
     }
+    if (path.endsWith('/apply/plan'))
+      return {
+        jobId: 'j7',
+        repository: 'app',
+        scope: 'project:alfa',
+        items: [{ key: 'skill:deploy', kind: 'skill', refs: ['skill/deploy'] }],
+        skipped: [],
+        agents: [],
+        models: [],
+        plan: {
+          scope: 'project:alfa',
+          planHash: 'h',
+          items: [{ ref: 'skill/deploy', kind: 'skill', id: 'deploy', op: 'create', widenings: [], attentions: [], issues: [], brokenRefs: [] }],
+          order: [{ ref: 'skill/deploy', phase: 'resources', widens: false }],
+          widenings: [],
+          attentions: [],
+          brokenRefs: [],
+          missingSecrets: [],
+          summary: { create: 1 },
+        },
+      }
+    if (path.endsWith('/apply'))
+      return {
+        planHash: 'h',
+        batch: { id: 'lote-1', status: 'applied' },
+        applied: [],
+        pending: [],
+        entersDisabled: [],
+        missingSecrets: [],
+        items: { applied: ['skill:deploy'], notApplied: [] },
+      }
     throw new Error(`inesperado: ${path}`)
   })
   const host = document.createElement('div')
@@ -505,6 +536,22 @@ describe('ImportView', () => {
     expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/jobs/j7/items', { method: 'PATCH', body: { key: 'skill:deploy', state: 'skipped' } })
     expect(host.querySelector('[data-test="item-state"]')!.textContent).toContain('excluído')
     expect(host.querySelector('[data-test="job"]')!.textContent).toContain('excluído 2')
+  })
+
+  it('"Gravar todos os aprovados": a prévia do plano, o clique grava e o item vira aplicado', async () => {
+    const job = savedJob('j7', SMALL, {}, { 'skill:deploy': { state: 'approved' } })
+    const host = await mount(SMALL, { jobs: [job], analyze: false })
+    host.querySelector<HTMLButtonElement>('[data-test="job"]')!.click()
+    await flush()
+    expect(host.querySelector('[data-test="apply-targets"]')!.textContent).toContain('1 aprovado(s)')
+    host.querySelector<HTMLButtonElement>('[data-test="apply-all"]')!.click()
+    await flush()
+    expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j7/apply/plan', { method: 'POST', body: {} })
+    host.querySelector<HTMLButtonElement>('[data-test="apply-write"]')!.click()
+    await flush()
+    expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j7/apply', { method: 'POST', body: { planHash: 'h' } })
+    expect(host.querySelector('[data-test="apply-history"]')!.getAttribute('href')).toBe('/catalog/history?lote=lote-1')
+    expect([...host.querySelectorAll('[data-test="row-state"]')].map((chip) => chip.textContent!.trim())).toContain('aplicado')
   })
 
   it('⛔ o trabalho antigo é registro: sem excluir, incluir nem reclassificar', async () => {

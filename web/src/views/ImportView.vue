@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref, shallowRef, watch } from 'vue'
 import { routerKey } from 'vue-router'
+import ImportApply from '@/components/ImportApply.vue'
 import ImportBatch from '@/components/ImportBatch.vue'
 import ImportItemDetail from '@/components/ImportItemDetail.vue'
 import ImportSelectionBatch from '@/components/ImportSelectionBatch.vue'
 import { api, ApiError } from '@/lib/api'
+import type { IApplyResult } from '@/lib/importApply'
 import { fullTime, tokens } from '@/lib/format'
 import {
   batchName,
@@ -57,8 +59,11 @@ import { useProjectsStore } from '@/stores/projects'
  * A pessoa também SELECIONA itens (caixas na lista, ou "todos do filtro") e monta um LOTE da seleção: a ordem só entre
  * eles, as citações para fora e a estimativa. O lote pode ser salvo no trabalho, com nome; os lotes salvos ficam na lista.
  *
- * ⛔ Nada aqui grava no catálogo nem dispara construtor. Só o trabalho mais novo de cada repositório muda; os outros são
- * registro.
+ * GRAVAR NO CATÁLOGO (`ImportApply`): os aprovados de um lote salvo, da seleção ou do trabalho viram documentos, com o
+ * plano do catálogo (diff, ampliações, ordem) à vista; só grava com o clique e uma caixa por ampliação.
+ *
+ * ⛔ Fora isso, nada aqui grava no catálogo nem dispara construtor. Só o trabalho mais novo de cada repositório muda; os
+ * outros são registro.
  */
 const PAGE = 100
 const CATALOG_STATES: readonly TCatalogState[] = ['new', 'same-project', 'global', 'other-project']
@@ -170,6 +175,18 @@ const pickedGroups = computed(() => builderGroups([...picked.value]))
 const batchGroups = computed(() => (openedBatch.value ? builderGroups(openedBatch.value.order.length ? openedBatch.value.order : openedBatch.value.keys) : []))
 
 /** Guarda o item que o servidor devolveu e recontá os estados do trabalho na lista. */
+/** Gravar no catálogo: o alvo aberto (lote salvo, seleção ou todo o trabalho). */
+const applyTarget = ref<{ batchId?: string; keys?: string[]; label: string }>()
+const approvedCount = computed(() => Object.values(statuses.value).filter((entry) => entry.state === 'approved').length)
+
+/** Gravou: os itens gravados viram `applied`, com o lote. */
+function applied(result: IApplyResult) {
+  for (const key of result.items.applied) {
+    const current = statuses.value[key]
+    if (current) keep({ ...current, state: 'applied', ...(result.batch ? { batchId: result.batch.id } : {}) })
+  }
+}
+
 function keep(updated: IImportItemStatus) {
   statuses.value = { ...statuses.value, [updated.key]: updated }
   const counts: Partial<Record<TImportItemState, number>> = {}
@@ -380,6 +397,7 @@ function show(opened: IImportJob) {
   limit.value = PAGE
   picked.value = new Set()
   batches.value = []
+  applyTarget.value = undefined
   closeSelection()
   void loadBatches()
 }
@@ -781,6 +799,39 @@ watch(
               {{ building ? 'Abrindo…' : `Importar com o construtor (${BUILD_KINDS[group.kind].noun}, ${group.keys.length})` }}
             </button>
           </section>
+
+          <section v-if="!readonly && approvedCount" class="flex flex-wrap items-center gap-2 text-xs" data-test="apply-targets">
+            <span class="text-zinc-400">{{ approvedCount }} aprovado(s):</span>
+            <button
+              v-if="openedBatch"
+              type="button"
+              class="btn btn-secondary btn-sm"
+              data-test="apply-batch"
+              @click="applyTarget = { batchId: openedBatch.id, label: `lote ${openedBatch.name}` }"
+            >
+              Gravar os aprovados do lote no catálogo
+            </button>
+            <button
+              v-if="picked.size"
+              type="button"
+              class="btn btn-secondary btn-sm"
+              data-test="apply-picked"
+              @click="applyTarget = { keys: [...picked], label: `${picked.size} selecionado(s)` }"
+            >
+              Gravar os aprovados da seleção
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" data-test="apply-all" @click="applyTarget = { label: 'todos os aprovados do trabalho' }">Gravar todos os aprovados</button>
+          </section>
+          <ImportApply
+            v-if="applyTarget && job && project"
+            :key="JSON.stringify(applyTarget)"
+            :project-id="project.id"
+            :job-id="job.id"
+            :target="applyTarget"
+            :readonly="readonly"
+            @close="applyTarget = undefined"
+            @applied="applied"
+          />
 
           <p v-if="planError" class="text-sm text-rose-300" data-test="plan-error">Lote: {{ planError }}</p>
           <ImportBatch v-if="plan" :plan="plan" :busy="planning" @close="plan = undefined" @select="selectedKey = $event" @replan="buildPlan(plan.agent, $event)" />

@@ -300,6 +300,8 @@ export interface IImportItemStatus {
   /** A reclassificação gravada (ausente = o tipo detectado). */
   kind?: TInventoryKind
   fingerprint: string
+  /** O lote do catálogo em que o item entrou (`applied`). */
+  batchId?: string
   by?: string
   at?: string
 }

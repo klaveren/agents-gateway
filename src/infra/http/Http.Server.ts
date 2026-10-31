@@ -371,6 +371,8 @@ function buildRoutes(
     { method: 'get', path: '/projects/:id/import/jobs/:job/batches', handler: importer.listBatches },
     { method: 'post', path: '/projects/:id/import/jobs/:job/batches', handler: importer.createBatch },
     { method: 'get', path: '/projects/:id/import/jobs/:job/batches/:batch', handler: importer.getBatch },
+    { method: 'post', path: '/projects/:id/import/jobs/:job/apply/plan', handler: importer.planApply },
+    { method: 'post', path: '/projects/:id/import/jobs/:job/apply', handler: importer.applyItems },
     { method: 'put', path: '/projects/:id/members', handler: projects.setMembers },
     { method: 'post', path: HOOK_PATH, handler: hooks.receive },
     { method: 'get', path: '/agents/:agentId/hooks', handler: hooks.list },

@@ -282,13 +282,16 @@ describe('CatalogImportPlanner (dry-run)', () => {
         'rules:rule/rule-b',
         'agents:agent/lia',
         'agents:agent/bia',
-        'agents:agent/ze',
+        // O agente que ganha ferramenta entra fechado; o alcance vem depois dos vínculos (fase reach).
+        'agents:agent/ze(record)',
         'links:project/beta(links)',
+        'reach:agent/ze(reach)',
         'permissions:project-permissions/beta',
       ],
     )
     assert.ok(!plan.order.find((step) => step.ref === 'agent/lia')!.widens)
-    assert.ok(plan.order.find((step) => step.ref === 'agent/ze')!.widens)
+    assert.ok(!plan.order.find((step) => step.ref === 'agent/ze' && step.part === 'record')!.widens)
+    assert.ok(plan.order.find((step) => step.ref === 'agent/ze' && step.part === 'reach')!.widens)
   })
 
   it('planHash: estável (ordem de entrada não importa) e muda quando o estado atual usado muda', async () => {

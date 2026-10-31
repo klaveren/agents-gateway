@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { TCatalogScope } from '@application/Catalog.Reader'
-import { ICatalogDocument, TCanonicalValue } from '@domain/Catalog.Document'
-import { ICatalogImportPlan, IImportPlanItem, IImportStep, IPackageInput, withBody } from '@domain/Catalog.Import'
+import { ICatalogDocument } from '@domain/Catalog.Document'
+import { ICatalogImportPlan, IImportPlanItem, IImportStep, IPackageInput, recordPart } from '@domain/Catalog.Import'
 import { IWidening, wideningKeys } from '@domain/Catalog.Widening'
 import { CatalogImportBlockedError, CatalogPlanChangedError, CatalogRestoreInvalidError, CatalogRevisionConflictError, IImportBlocker } from '@domain/errors/Domain.Error'
 import { IBatchWidening, ICatalogBatch, ICatalogBatchRepository } from '@domain/ports/CatalogHistoryRepository.Port'
@@ -63,6 +63,14 @@ export interface ICatalogImportApplyDeps {
   newId?: () => string
 }
 
+/** A nota da revisão de cada parte de um item gravado em dois passos. */
+const PART_NOTE: Readonly<Record<string, string>> = {
+  record: 'o registro, sem o contexto inicial',
+  links: 'o contexto inicial',
+  'agent-record': 'o agente fechado, sem o alcance novo',
+  'agent-reach': 'o alcance: ferramentas e permissões',
+}
+
 /** O que impede o apply: o item que não se aplica, e o arquivo fora do formato. */
 function blockersOf(plan: ICatalogImportPlan): IImportBlocker[] {
   return [
@@ -70,8 +78,6 @@ function blockersOf(plan: ICatalogImportPlan): IImportBlocker[] {
     ...plan.fileErrors.map((error) => ({ ref: error.path, op: 'file-error', issues: [{ field: 'file', message: error.message }] })),
   ]
 }
-
-const list = (value: TCanonicalValue | undefined): string[] => (Array.isArray(value) ? value.map(String) : [])
 
 /**
  * APLICAR O IMPORT (docs/integration/plano-catalogo-historico.md §2.6, PR 9). Refaz o plano e grava, na ORDEM dele, pelo
@@ -193,7 +199,7 @@ export class CatalogImportApplier {
     who: { by: string; batchId: string },
   ): Promise<{ step: IAppliedStep; missingSecrets: string[] }> {
     const current = this.fresh(step, expected)
-    const target = step.part === 'record' ? withBody(full, { ...full.body, initialContext: list(current?.body.initialContext) }) : full
+    const target = step.part === 'record' ? recordPart(full, current) : full
     const prepared: IPreparedWrite = await this.deps.writer.prepare(target, current)
     // A preparação esperou (as regras do momento): confere de novo, já sem nada assíncrono até gravar.
     this.fresh(step, expected)
@@ -203,7 +209,7 @@ export class CatalogImportApplier {
       source: 'import',
       op: 'import',
       batchId: who.batchId,
-      note: `import do lote ${who.batchId}${step.part ? ` (${step.part === 'record' ? 'o registro, sem o contexto inicial' : 'o contexto inicial'})` : ''}`,
+      note: `import do lote ${who.batchId}${step.part ? ` (${PART_NOTE[step.kind === 'agent' ? `agent-${step.part}` : step.part] ?? step.part})` : ''}`,
       // A aceitação vai na revisão que completa o item.
       ...(last && item.widenings.length ? { widenings: wideningKeys(item.widenings) } : {}),
     }

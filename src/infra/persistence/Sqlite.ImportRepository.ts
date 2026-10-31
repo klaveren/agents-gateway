@@ -185,6 +185,7 @@ export class SqliteImportRepository implements IImportRepository {
     if (patch.review !== undefined) set('review', patch.review === null ? null : JSON.stringify(patch.review))
     if (patch.approvedBy !== undefined) set('approved_by', patch.approvedBy)
     if (patch.approvedAt !== undefined) set('approved_at', patch.approvedAt.toISOString())
+    if (patch.batchId !== undefined) set('batch_id', patch.batchId)
     if (patch.by !== undefined) set('updated_by', patch.by)
     if (patch.at !== undefined) set('updated_at', patch.at.toISOString())
     if (sets.length) this.db.prepare(`UPDATE import_items SET ${sets.join(', ')} WHERE scan_id = ? AND key = ?`).run(...params, jobId, key)
