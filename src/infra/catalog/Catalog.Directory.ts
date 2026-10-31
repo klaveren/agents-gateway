@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { ICatalogManifest, MANIFEST_PATH, TCatalogFiles } from '@domain/Catalog.Files'
 
@@ -60,4 +60,27 @@ function pruneEmpty(root: string, dir: string): void {
     if (readdirSync(current).length) return
     rmdirSync(current)
   }
+}
+
+/** O que a leitura da pasta pula: o repositório git que guarda o catálogo. */
+const SKIPPED_DIRS = new Set(['.git'])
+
+/**
+ * A PASTA EM PACOTE (a CLI `plan`/`apply`): cada arquivo dela, pelo caminho relativo com `/`, em UTF-8. ⛔ Link
+ * simbólico não é seguido (o pacote é só o que está na pasta), e `.git` fica de fora.
+ */
+export function readCatalogDirectory(dir: string): TCatalogFiles {
+  const root = resolve(dir)
+  if (!existsSync(root) || !statSync(root).isDirectory()) throw new Error(`catalog: não é uma pasta: ${dir}`)
+  const files: Record<string, string> = {}
+  const walk = (current: string) => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const full = join(current, entry.name)
+      if (entry.isDirectory()) {
+        if (!SKIPPED_DIRS.has(entry.name)) walk(full)
+      } else if (entry.isFile()) files[relative(root, full).split(sep).join('/')] = readFileSync(full, 'utf8')
+    }
+  }
+  walk(root)
+  return files
 }

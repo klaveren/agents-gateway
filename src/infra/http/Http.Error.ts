@@ -45,6 +45,8 @@ import {
   ModeNotSupportedError,
   SessionNotFoundError,
   ToolsNotSupportedError,
+  CatalogImportBlockedError,
+  CatalogPlanChangedError,
   CatalogRestoreInvalidError,
   CatalogRevisionConflictError,
   CatalogRevisionNotFoundError,
@@ -87,6 +89,8 @@ export type TErrorCode =
   | 'not_found'
   | 'revision_conflict'
   | 'widening_confirmation_required'
+  | 'plan_changed'
+  | 'import_blocked'
   | 'import_job_outdated'
   | 'import_state_conflict'
   | 'import_source_changed'
@@ -130,6 +134,14 @@ export function toHttpFailure(error: unknown): IHttpFailure {
 
   if (error instanceof CatalogRevisionConflictError) {
     return { status: 409, code: 'revision_conflict', message: error.message, details: { current: error.current } }
+  }
+
+  if (error instanceof CatalogPlanChangedError) {
+    return { status: 409, code: 'plan_changed', message: error.message, details: { plan: error.plan } }
+  }
+
+  if (error instanceof CatalogImportBlockedError) {
+    return { status: 422, code: 'import_blocked', message: error.message, details: { blockers: error.blockers } }
   }
 
   if (error instanceof CatalogWideningConfirmationError) {

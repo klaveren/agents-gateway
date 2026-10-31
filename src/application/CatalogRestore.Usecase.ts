@@ -145,7 +145,7 @@ export class CatalogRestoreUseCase {
     if (current?.hash === target?.hash) return { ...base, unchanged: true, exists: !!current, widenings: [] }
 
     const widenings = wideningsOf(current, target)
-    gate(widenings, request.confirm, caller)
+    gateWidenings(widenings, request.confirm, caller)
     const prepared = await this.prepare(target, current)
     // A preparação esperou (as regras do momento): confere de novo, já sem nada assíncrono até gravar.
     this.fresh(request.item, request.expectedRevision)
@@ -208,7 +208,7 @@ export class CatalogRestoreUseCase {
     }
 
     const widenings = planned.flatMap((item) => item.widenings)
-    gate(widenings, request.confirm, caller)
+    gateWidenings(widenings, request.confirm, caller)
 
     const batch = repository.createBatch({
       id: this.newId(),
@@ -328,7 +328,7 @@ export class CatalogRestoreUseCase {
  * ⛔ A TRAVA DE AMPLIAÇÃO. Sem ampliação, `confirm` tem de vir vazio (ou não vir): confirmação que não bate com nada é
  * sinal de que a pessoa viu outra coisa. Com ampliação: token de acesso nunca; sessão de admin, só com o conjunto exato.
  */
-function gate(widenings: readonly IWidening[], confirm: readonly string[] | undefined, caller: IRestoreCaller): void {
+export function gateWidenings(widenings: readonly IWidening[], confirm: readonly string[] | undefined, caller: IRestoreCaller): void {
   const refs: IWideningRef[] = widenings.map((item) => ({ key: item.key, description: item.description }))
   if (!widenings.length) {
     if (confirm?.length) throw new CatalogWideningConfirmationError(refs)

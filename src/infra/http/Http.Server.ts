@@ -96,7 +96,7 @@ const CONTENT_ROUTES: readonly RegExp[] = [
 ]
 const HOOK_ROUTE = /^\/v1\/hook\/[^/]+\/[^/]+\/?$/
 /** O import do catálogo: o pacote inteiro, em JSON ou `.tar.gz`, com o limite próprio (`CATALOG_IMPORT_LIMIT`). */
-const CATALOG_IMPORT_ROUTE = /^\/v1\/catalog\/import\/plan\/?$/
+const CATALOG_IMPORT_ROUTE = /^\/v1\/catalog\/import\/(?:plan|apply)\/?$/
 /** Os tipos do `.tar.gz` do export (o resto vai pelo JSON). */
 const ARCHIVE_TYPES = ['application/gzip', 'application/x-gzip', 'application/x-tar', 'application/octet-stream']
 /** As rotas com limite por origem (ver `rateLimit`). */
@@ -309,6 +309,11 @@ function buildRoutes(
     { method: 'get', path: '/catalog/export', handler: catalog.exportCatalog },
     // O plano de import (só admin, dry-run: nada grava): o pacote do export → operações, diffs, ampliações e `planHash`.
     { method: 'post', path: '/catalog/import/plan', handler: catalog.importPlan },
+    // Aplicar o import (só admin): refaz o plano, confere o `planHash` e o `confirm`, e grava em lote, na ordem do plano.
+    { method: 'post', path: '/catalog/import/apply', handler: catalog.importApply },
+    // Os lotes (só admin): a lista, com o estado e as ampliações aceitas, e um lote com as revisões dele.
+    { method: 'get', path: '/catalog/batches', handler: catalog.batchList },
+    { method: 'get', path: '/catalog/batches/:batchId', handler: catalog.batchDetail },
     { method: 'get', path: '/secret-mask', handler: secretMask.get },
     { method: 'put', path: '/secret-mask/values/:id', handler: secretMask.saveValue },
     { method: 'delete', path: '/secret-mask/values/:id', handler: secretMask.removeValue },

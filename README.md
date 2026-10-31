@@ -230,7 +230,7 @@ rejects every cross-origin request. The bundled UI is same-origin and unaffected
 | `ALLOW_ANONYMOUS`      | _(off)_     | Needed to use the bundled UI and plain `curl`, which send no caller credential. See [Caller identity](#caller-identity).                                                                                                                                 |
 | `JSON_LIMIT`           | `256kb`     | Request body cap for every route except the ones below (the body is read before authentication).                                                                                                                                                         |
 | `MESSAGE_JSON_LIMIT`   | `25mb`      | Body cap for conversation messages (base64 attachments inflate ~33%) and for the routes that save content: agents, hooks, schedules, rules, docs, skills/commands, protocol addenda, `/v1/mcp` and `/v1/turn-tools`. Content has no size cap of its own. |
-| `CATALOG_IMPORT_LIMIT` | `25mb`      | Body cap for `POST /v1/catalog/import/plan` (the catalog package, JSON or `.tar.gz`; the unpacked `.tar` may grow up to 8× this). The catalog has no size cap of its own.                                                                                |
+| `CATALOG_IMPORT_LIMIT` | `25mb`      | Body cap for `POST /v1/catalog/import/plan` and `/apply` (the catalog package, JSON or `.tar.gz`; the unpacked `.tar` may grow up to 8× this). The catalog has no size cap of its own.                                                                   |
 
 ### Caller identity
 

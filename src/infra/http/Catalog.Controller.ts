@@ -2,13 +2,15 @@ import { Request, Response } from 'express'
 import { z } from 'zod'
 import type { TCatalogScope } from '@application/Catalog.Reader'
 import { CatalogExportUseCase } from '@application/CatalogExport.Usecase'
-import type { CatalogImportPlanner, IPackageInput } from '@application/CatalogImport.Plan'
+import type { CatalogImportApplier, TImportSource } from '@application/CatalogImport.Apply'
+import { CatalogImportPlanner, IPackageInput, scopeOfManifest } from '@application/CatalogImport.Plan'
 import { CatalogRestoreUseCase, IRestoreCaller } from '@application/CatalogRestore.Usecase'
 import { CatalogHistoryQuery, IHistoryItem, IHistoryPaging, THistoryScope, TRevisionRef } from '@application/CatalogHistory.Query'
 import type { IProjectCaller } from '@application/Projects.Service'
-import { CATALOG_KINDS, protocolItemId, TCatalogKind } from '@domain/Catalog.Document'
+import { CATALOG_KINDS, catalogHash, ICatalogDocument, protocolItemId, stableJson, TCanonicalBody, TCatalogKind } from '@domain/Catalog.Document'
 import { mcpServerKey, parseMcpServerKey } from '@domain/models/McpServer.Model'
 import { PROJECT_ID_PATTERN } from '@domain/models/Project.Model'
+import type { ICatalogBatchRepository, TBatchKind } from '@domain/ports/CatalogHistoryRepository.Port'
 import { TProtocolKind } from '@domain/models/Protocol.Model'
 import { tarGz, untarGz } from '@infra/catalog/Tar.Archive'
 import { viaAccessToken } from './Auth.Controller'
@@ -30,7 +32,11 @@ export interface ICatalogControllerDeps {
   /** O export do pacote. Ausente = a rota responde 404. */
   exporter?: CatalogExportUseCase
   /** O plano de import (dry-run). Ausente = a rota responde 404. */
-  importPlanner?: Pick<CatalogImportPlanner, 'planPackage'>
+  importPlanner?: Pick<CatalogImportPlanner, 'planPackage' | 'planDocuments'>
+  /** Aplicar o import. Ausente = a rota responde 404. */
+  importApplier?: Pick<CatalogImportApplier, 'apply'>
+  /** A leitura dos lotes (import, reversão). Ausente = as rotas respondem 404. */
+  batches?: Pick<ICatalogBatchRepository, 'batches' | 'batch' | 'batchRevisions'>
 }
 
 /** A pasta raiz dentro do `.tar.gz`: `tar -xzf` cria `catalog/` com o pacote. */
@@ -59,6 +65,27 @@ const revertSchema = z.object({ confirm: keyList.optional(), overwrite: keyList.
 /** O pacote em JSON: o mesmo do `GET /catalog/export?format=json` (`catalog.json` dentro de `files` ou à parte). */
 const packageSchema = z.object({ manifest: z.unknown().optional(), files: z.record(z.string(), z.string()) })
 
+/** Um documento canônico de fora (o importador, ou quem monta os documentos sem arquivos): a chave e o corpo. */
+const documentSchema = z.object({
+  kind: z.string().min(1).max(40),
+  id: z.string().min(1).max(ID_MAX),
+  projectId: z.string().max(ID_MAX).optional(),
+  body: z.record(z.string(), z.unknown()),
+})
+const documentsSchema = z.array(documentSchema).max(KEYS_MAX)
+
+/** O plano em JSON: o pacote do export (como antes) OU os documentos canônicos. */
+const planSchema = z.union([packageSchema, z.object({ documents: documentsSchema })])
+
+/** Aplicar: o pacote OU os documentos, o escopo, o `planHash` do plano visto e as ampliações aceitas. */
+const applySchema = z.object({
+  package: packageSchema.optional(),
+  documents: documentsSchema.optional(),
+  scope: z.string().max(ID_MAX).optional(),
+  planHash: z.string().regex(/^[a-f0-9]{64}$/, 'expected the planHash of the plan (64 hex)'),
+  confirm: keyList.optional(),
+})
+
 /**
  * ⛔ O que o MEMBRO de um projeto lê do histórico: só o que ele já vê hoje do projeto dele, por inteiro. É só o MCP do
  * projeto (`GET /mcp-servers?project=`). O resto não: o agente sai para ele sem o prompt (`GET /agents/:id` é de admin),
@@ -81,7 +108,8 @@ type TViewer = { admin: true } | { admin: false; userId: string }
  */
 export class CatalogController {
   constructor(private readonly deps: ICatalogControllerDeps) {
-    for (const name of ['history', 'revision', 'diff', 'restore', 'revertBatch', 'exportCatalog', 'importPlan'] as const) this[name] = this[name].bind(this)
+    for (const name of ['history', 'revision', 'diff', 'restore', 'revertBatch', 'exportCatalog', 'importPlan', 'importApply', 'batchList', 'batchDetail'] as const)
+      this[name] = this[name].bind(this)
   }
 
   /**
@@ -137,8 +165,74 @@ export class CatalogController {
       if (!access.allowed || !this.deps.importPlanner) throw this.deny('catalogImportPlan', access.reason ?? 'import plan is not wired')
       const query = req.query as Record<string, unknown>
       const scope = query.scope !== undefined || query.project !== undefined ? exportScopeOf(query) : undefined
-      return this.deps.importPlanner.planPackage(packageOf(req.body), { ...(scope ? { scope } : {}), viaAccessToken: viaAccessToken(res) })
+      const options = { viaAccessToken: viaAccessToken(res) }
+      if (!Buffer.isBuffer(req.body) && req.body && typeof req.body === 'object' && 'documents' in req.body) {
+        const body = parseBody(planSchema, req.body) as { documents: z.infer<typeof documentsSchema> }
+        return this.deps.importPlanner.planDocuments(documentsOf(body.documents), scope ?? { kind: 'all' }, options)
+      }
+      return this.deps.importPlanner.planPackage(packageOf(req.body), { ...(scope ? { scope } : {}), ...options })
     })
+  }
+
+  /**
+   * APLICAR O IMPORT (§2.6, PR 9): `{ package | documents, scope?, planHash, confirm? }`. O servidor refaz o plano:
+   * `planHash` diferente = 409 com o plano novo; item `error`/`conflict` = 422 (nada é gravado); ampliação só com
+   * `confirm` igual ao conjunto do plano (409 com a lista) e só por admin na tela (403 para token de acesso). Grava na
+   * ordem do plano, num lote (`kind: import`); parou no meio = lote `partial`, com `failed`, `pending` e `revert`.
+   * ⛔ Só admin; os outros, 404.
+   */
+  async importApply(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const access = await checkAdminAccess(this.deps.proof)
+      if (!access.allowed || !this.deps.importApplier) throw this.deny('catalogImportApply', access.reason ?? 'import apply is not wired')
+      if (Buffer.isBuffer(req.body)) throw invalid('Apply takes JSON: { package | documents, scope?, planHash, confirm? }')
+      const body = parseBody(applySchema, req.body ?? {})
+      if (!body.package === !body.documents) throw invalid('Send either package or documents')
+      const query = req.query as Record<string, unknown>
+      const scope = body.scope !== undefined ? applyScopeOf(body.scope) : query.scope !== undefined || query.project !== undefined ? exportScopeOf(query) : undefined
+      const source: TImportSource = body.package ? { package: body.package } : { documents: documentsOf(body.documents!) }
+      const by = access.identity?.email ?? access.identity?.id ?? 'admin'
+      return this.deps.importApplier.apply(
+        { ...source, ...(scope ? { scope } : {}), planHash: body.planHash, ...(body.confirm ? { confirm: body.confirm } : {}) },
+        { by, viaAccessToken: viaAccessToken(res) },
+      )
+    })
+  }
+
+  /**
+   * OS LOTES (import e reversão), do mais novo para o mais velho: estado, resumo, ampliações aceitas e quantos itens.
+   * `project=<id>`: os do projeto (o escopo dele, ou que gravaram nele); `project=global`; ausente: todos. `kind`:
+   * `import` ou `revert`. ⛔ Só admin; os outros, 404.
+   */
+  async batchList(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const batches = await this.batchReader('catalogBatches')
+      const query = req.query as Record<string, unknown>
+      const paging = pagingOf(query)
+      const project = text(query.project, 'project')
+      const kind = text(query.kind, 'kind')
+      if (kind !== undefined && kind !== 'import' && kind !== 'revert') throw invalid('Invalid kind: expected import or revert')
+      const filter = { ...(project !== undefined ? { projectId: project === 'global' ? '' : project } : {}), ...(kind ? { kind: kind as TBatchKind } : {}) }
+      return { ...batches.batches(filter, { offset: (paging.page - 1) * paging.pageSize, limit: paging.pageSize }), ...paging }
+    })
+  }
+
+  /** UM LOTE: o registro inteiro e as revisões dele (sem o documento), na ordem em que foram gravadas. ⛔ Só admin. */
+  async batchDetail(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const batches = await this.batchReader('catalogBatch')
+      const batchId = text(req.params.batchId, 'batchId')!
+      const batch = batches.batch(batchId)
+      if (!batch) throw notFound(`Batch not found: ${batchId}`)
+      const revisions = batches.batchRevisions(batchId).map(({ document: _document, ...summary }) => summary)
+      return { batch, revisions }
+    })
+  }
+
+  private async batchReader(operation: string): Promise<NonNullable<ICatalogControllerDeps['batches']>> {
+    const access = await checkAdminAccess(this.deps.proof)
+    if (!access.allowed || !this.deps.batches) throw this.deny(operation, access.reason ?? 'batches are not wired')
+    return this.deps.batches
   }
 
   /**
@@ -337,6 +431,27 @@ function packageOf(body: unknown): IPackageInput {
     files[path.startsWith(`${EXPORT_ROOT}/`) ? path.slice(EXPORT_ROOT.length + 1) : path] = entry.content.toString('utf8')
   }
   return { files }
+}
+
+/** O escopo no corpo do apply: `all`, `global` ou `project:<id>` (o mesmo do manifesto). */
+function applyScopeOf(raw: string): TCatalogScope {
+  const scope = scopeOfManifest(raw)
+  if (!scope) throw invalid('Invalid scope: expected all, global or project:<id>')
+  return scope
+}
+
+/** Os documentos do corpo: a chave e o corpo; o texto e o hash saem daqui (o plano normaliza e confere a forma). */
+function documentsOf(raw: ReadonlyArray<z.infer<typeof documentSchema>>): ICatalogDocument[] {
+  return raw.map((item) => {
+    const body = item.body as TCanonicalBody
+    let text: string
+    try {
+      text = stableJson(body)
+    } catch {
+      text = JSON.stringify(body)
+    }
+    return { kind: item.kind as TCatalogKind, id: item.id, ...(item.projectId ? { projectId: item.projectId } : {}), body, text, hash: catalogHash(text) }
+  })
 }
 
 function scopeLabel(scope: THistoryScope): string {
