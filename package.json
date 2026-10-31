@@ -17,7 +17,8 @@
     "test": "CONVERSATIONS_DB=:memory: node --test --import tsx 'src/**/*.test.ts'",
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint src/**/*.ts --fix",
-    "format": "prettier --write \"src/**/*.ts\""
+    "format": "prettier --write \"src/**/*.ts\"",
+    "catalog": "tsx scripts/catalog.ts"
   },
   "keywords": [],
   "author": "",

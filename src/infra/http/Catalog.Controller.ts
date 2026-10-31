@@ -1,11 +1,15 @@
 import { Request, Response } from 'express'
 import { z } from 'zod'
+import type { TCatalogScope } from '@application/Catalog.Reader'
+import { CatalogExportUseCase } from '@application/CatalogExport.Usecase'
 import { CatalogRestoreUseCase, IRestoreCaller } from '@application/CatalogRestore.Usecase'
 import { CatalogHistoryQuery, IHistoryItem, IHistoryPaging, THistoryScope, TRevisionRef } from '@application/CatalogHistory.Query'
 import type { IProjectCaller } from '@application/Projects.Service'
 import { CATALOG_KINDS, protocolItemId, TCatalogKind } from '@domain/Catalog.Document'
 import { mcpServerKey, parseMcpServerKey } from '@domain/models/McpServer.Model'
+import { PROJECT_ID_PATTERN } from '@domain/models/Project.Model'
 import { TProtocolKind } from '@domain/models/Protocol.Model'
+import { tarGz } from '@infra/catalog/Tar.Archive'
 import { viaAccessToken } from './Auth.Controller'
 import { resolveCaller } from './Caller.Access'
 import { checkAdminAccess } from './Caller.Admin'
@@ -21,7 +25,12 @@ export interface ICatalogControllerDeps {
   projects?: { canUse(caller: IProjectCaller, projectId: string): boolean }
   /** O rollback (restaurar, reverter lote). Ausente = sem escrita: as rotas respondem 404. */
   restore?: CatalogRestoreUseCase
+  /** O export do pacote. Ausente = a rota responde 404. */
+  exporter?: CatalogExportUseCase
 }
+
+/** A pasta raiz dentro do `.tar.gz`: `tar -xzf` cria `catalog/` com o pacote. */
+export const EXPORT_ROOT = 'catalog'
 
 export const HISTORY_PAGE_SIZE_DEFAULT = 20
 export const HISTORY_PAGE_SIZE_MAX = 100
@@ -65,7 +74,47 @@ type TViewer = { admin: true } | { admin: false; userId: string }
  */
 export class CatalogController {
   constructor(private readonly deps: ICatalogControllerDeps) {
-    for (const name of ['history', 'revision', 'diff', 'restore', 'revertBatch'] as const) this[name] = this[name].bind(this)
+    for (const name of ['history', 'revision', 'diff', 'restore', 'revertBatch', 'exportCatalog'] as const) this[name] = this[name].bind(this)
+  }
+
+  /**
+   * O EXPORT do catálogo (§2.5): `scope=all|global|project` (`project=<id>` com `project`; `scope=project:<id>` também
+   * vale). `format=tar` (o padrão) devolve um `.tar.gz` com a pasta `catalog/`; `format=json`, o pacote
+   * `{ manifest, files }` no envelope de sempre (é o que a CLI e a tela usam). ⛔ Só admin; os outros, 404. Ler não
+   * amplia nada: o token de acesso (o CI) também exporta.
+   */
+  async exportCatalog(req: Request, res: Response): Promise<void> {
+    try {
+      const access = await checkAdminAccess(this.deps.proof)
+      if (!access.allowed || !this.deps.exporter) throw this.deny('catalogExport', access.reason ?? 'export is not wired')
+      const query = req.query as Record<string, unknown>
+      const scope = exportScopeOf(query)
+      const format = query.format === undefined ? 'tar' : query.format
+      if (format !== 'tar' && format !== 'json') throw invalid('Invalid format: expected tar or json')
+      const pack = this.deps.exporter.run(scope, access.identity?.email ?? access.identity?.id)
+      if (format === 'json') {
+        res.status(200).json(ok(pack))
+        return
+      }
+      const label = scope.kind === 'project' ? `project-${scope.projectId}` : scope.kind
+      const stamp = pack.manifest.exportedAt.replace(/[:.]/g, '-')
+      const archive = tarGz(
+        Object.entries(pack.files).map(([path, content]) => ({ path: `${EXPORT_ROOT}/${path}`, content })),
+        new Date(pack.manifest.exportedAt),
+      )
+      res
+        .status(200)
+        .set({
+          'Content-Type': 'application/gzip',
+          'Content-Disposition': `attachment; filename="catalog-${label}-${stamp}.tar.gz"`,
+          'X-Catalog-Masked': String(pack.manifest.masked.length),
+        })
+        .send(archive)
+    } catch (error: unknown) {
+      const failure = toHttpFailure(error)
+      if (failure.status >= 500) console.error('[CatalogController] Error:', failure.message)
+      res.status(failure.status).json(fail(failure.message, failure.code, failure.details))
+    }
   }
 
   /**
@@ -229,6 +278,20 @@ function scopeOf(query: Record<string, unknown>): THistoryScope {
   const project = text(query.project, 'project')
   if (!project) return { kind: 'all' }
   return project === 'global' ? { kind: 'global' } : { kind: 'project', projectId: project }
+}
+
+/** O escopo do export: `scope=all|global|project` com `project=<id>`, ou `scope=project:<id>`. Padrão: tudo. */
+function exportScopeOf(query: Record<string, unknown>): TCatalogScope {
+  const raw = text(query.scope, 'scope') ?? (query.project !== undefined ? 'project' : 'all')
+  const [kind, inline] = raw.startsWith('project:') ? ['project', raw.slice('project:'.length)] : [raw, undefined]
+  if (kind === 'all' || kind === 'global') {
+    if (query.project !== undefined) throw invalid(`project only goes with scope=project`)
+    return { kind }
+  }
+  if (kind !== 'project') throw invalid('Invalid scope: expected all, global or project')
+  const projectId = inline ?? text(query.project, 'project')
+  if (!projectId || !PROJECT_ID_PATTERN.test(projectId)) throw invalid('scope=project needs a valid project id')
+  return { kind: 'project', projectId }
 }
 
 function scopeLabel(scope: THistoryScope): string {
