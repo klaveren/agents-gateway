@@ -5,10 +5,13 @@ import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import Icon from '@/components/Icon.vue'
 import BuildTabs from '@/components/BuildTabs.vue'
 import MasterDetail from '@/components/MasterDetail.vue'
+import HistoryPanel from '@/components/HistoryPanel.vue'
+import HistoryTabs from '@/components/HistoryTabs.vue'
 import { api, ApiError } from '@/lib/api'
 import { sizeHint } from '@/lib/format'
 import { pendingDraft } from '@/lib/builder'
 import { attachableDocs, attachedRefs, attachmentsChanged, docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId, setAttachMode, type TAttachMode } from '@/lib/guidance'
+import type { IRestoreResult } from '@/lib/catalogHistory'
 import { renderMarkdown } from '@/lib/markdown'
 import type { IProjectDoc, TDocKind } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
@@ -77,6 +80,10 @@ const g = computed(() => (info.value.masc ? { nova: 'Novo', nenhuma: 'Nenhum', u
 const form = ref({ id: '', kind: 'spec' as TDocKind, title: '', summary: '', body: '', global: true, project: '', docIds: [] as string[], docRefs: [] as string[] })
 /** Os documentos que este pode anexar: os globais e os do projeto do formulário (a lista não segue o filtro de escopo). */
 const docs = ref<IProjectDoc[]>([])
+/** A guia da edição: o formulário ou o histórico (`#historico` no endereço abre nele). */
+const tab = ref<'edit' | 'history'>(route.hash === '#historico' ? 'history' : 'edit')
+/** Muda depois de restaurar uma versão: relê o item. */
+const reloadKey = ref(0)
 const loaded = ref<IProjectDoc>()
 const preview = ref(false)
 const issues = ref<Record<string, string[]>>({})
@@ -112,7 +119,7 @@ watch(scope, () => void loadList())
 watch(formScope, () => void loadDocs(), { immediate: true })
 
 watch(
-  () => [props.id, adding.value, props.kind] as const,
+  () => [props.id, adding.value, props.kind, reloadKey.value] as const,
   async ([id, isNew, kind]) => {
     issues.value = {}
     error.value = undefined
@@ -253,6 +260,19 @@ async function save() {
   }
 }
 
+/** Restaurou uma versão: relê o item e a lista; se a versão era a de antes de existir, o item sumiu. */
+function restored(result: IRestoreResult) {
+  void loadList()
+  if (!result.exists) return void router.push(info.value.base)
+  reloadKey.value++
+}
+
+// Outro item (ou o mesmo pelo link com `#historico`): a guia segue o endereço.
+watch(
+  () => props.id,
+  () => (tab.value = route.hash === '#historico' ? 'history' : 'edit'),
+)
+
 async function confirmRemove() {
   busy.value = true
   try {
@@ -306,7 +326,8 @@ function describe(failure: unknown): string {
     </template>
 
     <template #detail>
-      <form v-if="adding || loaded" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save">
+      <div v-if="!adding && loaded" class="mx-auto mb-4 max-w-3xl"><HistoryTabs v-model="tab" edit-label="Editar" /></div>
+      <form v-if="adding || (loaded && tab === 'edit')" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save">
         <h2 class="text-lg font-semibold">{{ adding ? `${g.nova} ${info.one}` : loaded?.title }}</h2>
         <label class="field">Título<input v-model="form.title" required maxlength="160" class="input" :placeholder="info.placeholder" @blur="slug" /><small v-for="m in issues.title" :key="m" class="error">{{ m }}</small></label>
         <label class="field">
@@ -378,6 +399,10 @@ function describe(failure: unknown): string {
           <button v-else type="button" class="btn btn-danger ml-auto" @click="removing = true">Apagar</button>
         </div>
       </form>
+      <section v-else-if="loaded && tab === 'history'" class="mx-auto flex max-w-3xl flex-col gap-3">
+        <h2 class="text-lg font-semibold">{{ loaded.title }}</h2>
+        <HistoryPanel :kind="kind" :id="loaded.id" @restored="restored" />
+      </section>
       <p v-else-if="error" class="mx-auto max-w-3xl text-sm text-rose-300">{{ error }}</p>
       <section v-else class="mx-auto flex max-w-2xl flex-col gap-3 text-sm text-zinc-300">
         <h2 class="text-lg font-semibold text-zinc-100">O que é {{ g.uma }} {{ info.one }}</h2>

@@ -37,6 +37,19 @@ const server: IMcpServer = {
   updatedAt: '2026-10-01T00:00:00Z',
 }
 
+const history = {
+  kind: 'mcp',
+  itemId: 'alfa.crm',
+  current: { exists: true, hash: 'h2' },
+  total: 2,
+  page: 1,
+  pageSize: 20,
+  revisions: [
+    { id: 2, kind: 'mcp', itemId: 'alfa.crm', projectId: 'alfa', revision: 2, op: 'update', hash: 'h2', at: '2026-10-30T10:00:00Z', by: 'admin@x.com', source: 'api' },
+    { id: 1, kind: 'mcp', itemId: 'alfa.crm', projectId: 'alfa', revision: 1, op: 'create', hash: 'h1', at: '2026-10-29T10:00:00Z', by: 'admin@x.com', source: 'api' },
+  ],
+}
+
 async function mount(path: string, admin: boolean): Promise<HTMLElement> {
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -77,6 +90,9 @@ describe('McpView', () => {
       if (path === '/mcp-servers') return [server]
       if (path === '/projects') return [{ id: 'alfa', name: 'Alfa' }]
       if (path.endsWith('/tools')) return []
+      if (path === '/catalog/history') return history
+      if (path === '/catalog/history/diff')
+        return { equal: true, added: 0, removed: 0, hunks: [], unified: '', from: { revision: 1, exists: false }, to: { revision: 2, exists: true } }
       return {}
     })
   })
@@ -98,10 +114,25 @@ describe('McpView', () => {
     expect(detail?.textContent).toContain('Sim')
     expect(host.querySelector('[data-test="mcp-url"]')?.textContent?.trim()).toBe('https://crm.exemplo.com/mcp?token=…')
     expect(host.textContent).not.toContain('s3nh4')
-    expect(host.querySelectorAll('button, input, select, textarea, form')).toHaveLength(0)
+    // As guias (Detalhes, Histórico) só trocam o que se vê.
+    expect(host.querySelectorAll('button:not([role="tab"]), input, select, textarea, form')).toHaveLength(0)
     expect(host.querySelector('a[href="/mcp/new"]')).toBeNull()
     expect(host.textContent).not.toContain('Remover MCP')
     expect(host.textContent).not.toContain('Testar conexão')
+  })
+
+  it('membro: a guia Histórico do MCP do projeto, só leitura (sem restaurar)', async () => {
+    const host = await mount('/mcp/alfa.crm', false)
+    const tab = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((button) => button.textContent?.trim() === 'Histórico')
+    tab!.click()
+    for (let i = 0; i < 4; i++) await nextTick()
+    await new Promise((resolve) => setTimeout(resolve))
+    expect(api).toHaveBeenCalledWith('/catalog/history', { query: { kind: 'mcp', id: 'alfa.crm', page: 1, pageSize: 20 } })
+    expect(host.querySelectorAll('[data-test="revisions"] li')).toHaveLength(2)
+    host.querySelector<HTMLButtonElement>('[data-revision="1"]')!.click()
+    await nextTick()
+    expect(host.querySelector('[data-test="restore"]')).toBeNull()
+    expect(host.textContent).toContain('Só quem administra restaura versões.')
   })
 
   it('admin: inalterado — a lista inteira, sem `?project=`, com criar, editar e remover', async () => {
