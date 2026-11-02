@@ -175,30 +175,14 @@ export class SendMessageUseCase {
 
     // Cabeçalho gravado a cada turno: é o que mantém `updatedAt` e o acumulado em dia, e cria a
     // conversa no banco mesmo quando ela nasceu antes de o banco estar de pé.
-    if (session) {
-      await this.conversations.saveSession({
-        id: session.id,
-        agentId: session.agentId,
-        provider: String(session.provider),
-        mode: String(session.mode),
-        model: session.model,
-        /**
-         * Título só no PRIMEIRO turno — depois `saveSession` o omite e o banco o preserva.
-         *
-         * Sai da pergunta que abriu a conversa porque é o que a pessoa reconhece numa lista. Deixá-lo
-         * `undefined` obrigaria quem lista a abrir o primeiro turno de cada conversa só para ter um
-         * rótulo — uma leitura por linha da lista.
-         */
-        title: index === 0 ? titleFrom(input.recordAs ?? input.text) : undefined,
-        createdAt: session.createdAt,
-        updatedAt: new Date(),
-        turns: session.turns,
-        // Zero em vez de ausente: campo que chega `undefined` vira `null` no banco, e `null` em
-        // contador é o que quebra qualquer conta feita em cima dele depois.
-        usage: usageOf(session.usage),
-        usageByModel: session.usageByModel ? Object.fromEntries(Object.entries(session.usageByModel).map(([model, usage]) => [model, usageOf(usage)])) : undefined,
-        metadata: session.metadata,
-      })
+    /**
+     * Título só no PRIMEIRO turno — depois `saveSession` o omite e o banco o preserva.
+     *
+     * Sai da pergunta que abriu a conversa porque é o que a pessoa reconhece numa lista. Deixá-lo
+     * `undefined` obrigaria quem lista a abrir o primeiro turno de cada conversa só para ter um
+     * rótulo — uma leitura por linha da lista.
+     */
+    if (await this.saveHeader(sessionId, index === 0 ? titleFrom(input.recordAs ?? input.text) : undefined)) {
       // O estado do SDK (o id da sessão do CLI do Claude), para a retomada continuar com a memória dele. `null` limpa:
       // a conversa trocou para uma lane que não exporta.
       await this.conversations.saveNative?.(sessionId, this.agentProvider.nativeSnapshot?.(sessionId) ?? null)
@@ -263,6 +247,35 @@ export class SendMessageUseCase {
    * ⚠️ Silencioso de propósito: `describe` lança quando a sessão já saiu do store (foi cancelada,
    * ou o processo a perdeu). O turno ainda merece ser gravado — sem cabeçalho, mas gravado.
    */
+  /**
+   * Grava o cabeçalho da conversa (o upsert do banco preserva o título e o `created_at` já gravados).
+   *
+   * ⚖️ Público para quem abre uma conversa que precisa existir no banco ANTES do primeiro turno: a do construtor em modo
+   * importação, cujas marcas a tela lê da lista para mostrar o "Começar". Devolve se a sessão ainda estava no store.
+   */
+  async saveHeader(sessionId: string, title?: string): Promise<boolean> {
+    const session = this.describeQuietly(sessionId)
+    if (!session) return false
+
+    await this.conversations.saveSession({
+      id: session.id,
+      agentId: session.agentId,
+      provider: String(session.provider),
+      mode: String(session.mode),
+      model: session.model,
+      title,
+      createdAt: session.createdAt,
+      updatedAt: new Date(),
+      turns: session.turns,
+      // Zero em vez de ausente: campo que chega `undefined` vira `null` no banco, e `null` em
+      // contador é o que quebra qualquer conta feita em cima dele depois.
+      usage: usageOf(session.usage),
+      usageByModel: session.usageByModel ? Object.fromEntries(Object.entries(session.usageByModel).map(([model, usage]) => [model, usageOf(usage)])) : undefined,
+      metadata: session.metadata,
+    })
+    return true
+  }
+
   private describeQuietly(sessionId: string) {
     try {
       return this.agentProvider.describe(sessionId)
