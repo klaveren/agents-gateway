@@ -377,6 +377,29 @@ describe('SendMessageUseCase', () => {
     )
   })
 
+  it('grava o cabeçalho antes do primeiro turno (a conversa do importador), com as marcas e sem título; sessão fora do store não grava', async () => {
+    const repository = new RecordingRepository()
+    const metadata = { builder: 'knowledge', import: { job: 'j', keys: ['knowledge:a'] } }
+    const useCase = new SendMessageUseCase(stubProvider({ describe: () => session({ turns: 0, metadata }) }), repository)
+
+    assert.strictEqual(await useCase.saveHeader('s'), true)
+    assert.strictEqual(repository.sessions.length, 1)
+    assert.deepStrictEqual(repository.sessions[0].metadata, metadata)
+    assert.strictEqual(repository.sessions[0].title, undefined)
+    assert.strictEqual(repository.sessions[0].turns, 0)
+
+    const gone = new SendMessageUseCase(
+      stubProvider({
+        describe: () => {
+          throw new Error('Session not found')
+        },
+      }),
+      repository,
+    )
+    assert.strictEqual(await gone.saveHeader('s'), false)
+    assert.strictEqual(repository.sessions.length, 1)
+  })
+
   it('takes the turn index before the provider accepts the turn, so a lost session cannot rewind it', async () => {
     const repository = new RecordingRepository()
     let describable = true

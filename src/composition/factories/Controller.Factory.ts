@@ -79,6 +79,9 @@ export function makeController(): AgentController {
       adminAccess: true,
       metadata: { ...input.metadata, ...(input.owner ? { owner: input.owner } : {}), [PROJECT_METADATA_KEY]: input.projectId, [BUILDER_METADATA_KEY]: input.kind },
     })
+    // ⛔ No banco já ao abrir, não no primeiro turno: a tela do construtor lê a marca da importação da lista para mostrar o
+    // "Começar", e o item fica ligado a esta conversa desde agora.
+    await usecases.sendMessageUseCase.saveHeader(session.id)
     return session.id
   })
 
