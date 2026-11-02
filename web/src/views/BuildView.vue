@@ -5,10 +5,11 @@ import Icon from '@/components/Icon.vue'
 import BuildTabs from '@/components/BuildTabs.vue'
 import HistoryPanel from '@/components/HistoryPanel.vue'
 import HistoryTabs from '@/components/HistoryTabs.vue'
+import ImportDraftAside from '@/components/ImportDraftAside.vue'
 import ThreadView from '@/components/ThreadView.vue'
 import { api } from '@/lib/api'
 import { BUILD_KINDS, builderAgentId, latestDraft, pendingDraft, type TBuildKind } from '@/lib/builder'
-import { importOpening } from '@/lib/importDraft'
+import { importOpening, importProposals } from '@/lib/importDraft'
 import { shortTime, sizeHint } from '@/lib/format'
 import { renderMarkdown } from '@/lib/markdown'
 import type { IConversation, IProjectDoc, IResource } from '@/lib/types'
@@ -79,13 +80,16 @@ const buildProject = computed(() => {
 const draft = computed(() => (selected.value && thread.sessionId === selected.value ? latestDraft(thread.turns) : undefined))
 /**
  * A conversa é uma IMPORTAÇÃO (aberta pelo Importador): o construtor em modo importação, sem gravar. Os itens e o
- * trabalho vêm da marca que o servidor escreveu; o rascunho é revisado no Importador, não aqui.
+ * trabalho vêm da marca que o servidor escreveu; o rascunho de cada item aparece aqui ao lado, com a mesma revisão do
+ * Importador. Gravar no catálogo é no Importador.
  */
 const importing = computed(() => {
   const mark = selectedBuild.value?.metadata?.import as { job?: string; keys?: string[] } | undefined
   return mark && Array.isArray(mark.keys) ? { job: mark.job, keys: mark.keys } : undefined
 })
 const threadAgent = computed(() => selectedBuild.value?.agentId ?? builderAgentId(props.kind))
+/** Muda quando uma proposta de rascunho termina (gravada ou ao vivo): o painel ao lado recarrega. */
+const importRefresh = computed(() => (importing.value && thread.sessionId === selected.value ? importProposals(thread.turns, thread.pending) : 0))
 const canStartImport = computed(() => !!importing.value && thread.sessionId === selected.value && !thread.turns.length && !thread.sending)
 function startImport() {
   if (importing.value) void thread.send(importOpening(importing.value.keys), [])
@@ -330,13 +334,14 @@ function describe(failure: unknown): string {
         >
           <h2 class="text-sm font-semibold text-zinc-200">Importação</h2>
           <p class="text-xs text-zinc-400">
-            O construtor em modo importação lê as fontes pelo servidor e propõe só operações: o texto não muda. Ele não grava nada no catálogo. A revisão (com o OK de cada remoção) é no
+            O construtor em modo importação lê as fontes pelo servidor e propõe só operações: o texto não muda. Ele não grava nada no catálogo. O rascunho aparece aqui; gravar é no
             <RouterLink to="/import" class="text-emerald-400 underline underline-offset-2">Importador</RouterLink>.
           </p>
-          <ul class="flex flex-col gap-0.5 text-xs">
+          <button v-if="canStartImport" type="button" class="btn btn-primary btn-sm self-start" data-test="start-import" @click="startImport">Começar</button>
+          <ImportDraftAside v-if="importing.job && buildProject" :project-id="buildProject" :job-id="importing.job" :keys="importing.keys" :refresh="importRefresh" />
+          <ul v-else class="flex flex-col gap-0.5 text-xs">
             <li v-for="key in importing.keys" :key="key"><code class="break-all text-zinc-300">{{ key }}</code></li>
           </ul>
-          <button v-if="canStartImport" type="button" class="btn btn-primary btn-sm self-start" data-test="start-import" @click="startImport">Começar</button>
         </aside>
         <aside v-else-if="selected" class="scroll-thin flex shrink-0 flex-col gap-3 border-t border-zinc-800/80 p-4 @3xl:w-[22rem] @3xl:overflow-y-auto @3xl:border-t-0 @3xl:border-l">
           <h2 class="text-sm font-semibold text-zinc-200">Rascunho</h2>

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { buildLink, builderKindFor, draftingWithoutConversation, type IImportBuildStatus, importOpening, lastDraft, missingOks, opSummary } from './importDraft'
+import { buildLink, builderKindFor, draftingWithoutConversation, type IImportBuildStatus, importOpening, importProposals, lastDraft, missingOks, opSummary } from './importDraft'
+import type { ITurn } from './types'
 
 describe('importDraft', () => {
   it('no construtor sem conversa viva (nenhuma ou perdida) abre de novo; com conversa viva, não', () => {
@@ -11,6 +12,19 @@ describe('importDraft', () => {
       draftingWithoutConversation(at({ state: 'review', conversationId: 'gw_1', conversationLost: true })),
       draftingWithoutConversation(undefined),
     ]).toEqual([true, true, false, false, false])
+  })
+
+  it('as propostas que terminaram: as dos turnos gravados e as do turno ao vivo que não estão rodando', () => {
+    const turn = (tools: string[]) => ({ toolCalls: tools.map((tool) => ({ tool })) }) as unknown as ITurn
+    const turns = [turn(['read_source', 'mcp__gw__propose_import_draft']), turn(['propose_import_draft', 'propose_import_draft'])]
+    const live = {
+      tools: [
+        { tool: 'propose_import_draft', status: 'error' },
+        { tool: 'propose_import_draft', status: 'running' },
+        { tool: 'read_source', status: 'done' },
+      ],
+    }
+    expect([importProposals([]), importProposals(turns), importProposals(turns, live)]).toEqual([0, 3, 4])
   })
 
   it('o construtor de cada tipo: trigger vai ao de agentes; mcp não tem', () => {

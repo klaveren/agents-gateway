@@ -38,13 +38,17 @@ export function authHeaders(extra: Record<string, string> = {}): Record<string, 
 interface IRequest {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   body?: unknown
-  query?: Record<string, string | number | undefined>
+  /** A lista repete a chave (`keys=a&keys=b`). */
+  query?: Record<string, string | number | readonly string[] | undefined>
   signal?: AbortSignal
 }
 
 export function url(path: string, query?: IRequest['query']): string {
   const params = new URLSearchParams()
-  for (const [key, value] of Object.entries(query ?? {})) if (value !== undefined && value !== '') params.set(key, String(value))
+  for (const [key, value] of Object.entries(query ?? {})) {
+    if (Array.isArray(value)) for (const item of value) params.append(key, item)
+    else if (value !== undefined && value !== '') params.set(key, String(value))
+  }
   const search = params.toString()
   return `/v1${path}${search ? `?${search}` : ''}`
 }

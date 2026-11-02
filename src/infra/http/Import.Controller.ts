@@ -73,6 +73,8 @@ const builderSchema = z
   .refine((body) => body.keys !== undefined || body.batchId !== undefined, { message: 'keys or batchId is required', path: ['keys'] })
 const approveSchema = z.object({ key: itemKey, removals: z.array(z.number().int().min(0)).max(10_000).default([]) })
 const adjustSchema = z.object({ key: itemKey, comment: z.string().min(1).max(4_000) })
+/** `?keys=a&keys=b` (um só chega como texto). */
+const itemsQuerySchema = z.object({ keys: z.union([itemKey, z.array(itemKey).min(1).max(200)]).transform((keys) => (Array.isArray(keys) ? keys : [keys])) })
 const planSchema = z.object({
   repository: z.string().min(1).max(100),
   agent: z.string().min(1).max(200),
@@ -118,6 +120,7 @@ export class ImportController {
     this.listJobs = this.listJobs.bind(this)
     this.createJob = this.createJob.bind(this)
     this.getJob = this.getJob.bind(this)
+    this.getItems = this.getItems.bind(this)
     this.updateItem = this.updateItem.bind(this)
     this.planBatch = this.planBatch.bind(this)
     this.createBatch = this.createBatch.bind(this)
@@ -242,17 +245,34 @@ export class ImportController {
   async getJob(req: Request, res: Response): Promise<void> {
     await this.respond(res, 'importJob', req, async (projectId) => {
       const job = this.jobError(() => this.jobs().get(projectId, req.params.job as string))
-      const exists = this.deps.conversationExists
-      if (!exists) return job
-      // ⚖️ Item "no construtor" cuja conversa não existe mais (apagada, ou aberta antes de ir ao banco e perdida num
-      // reinício): marcado, para a tela oferecer abrir de novo. Só os em `drafting` com conversa: poucos por trabalho.
-      const states = await Promise.all(
-        job.states.map(async (state) =>
-          state.state === 'drafting' && state.conversationId && !(await exists(state.conversationId)) ? { ...state, conversationLost: true } : state,
-        ),
-      )
-      return { ...job, states }
+      return { ...job, states: await this.markLost(job.states) }
     })
+  }
+
+  /**
+   * `GET /projects/:id/import/jobs/:job/items?keys=…` — o estado de alguns itens (o rascunho, a revisão), sem o
+   * inventário inteiro: o painel ao lado da conversa de importação recarrega a cada proposta.
+   */
+  async getItems(req: Request, res: Response): Promise<void> {
+    await this.respond(res, 'importItems', req, async (projectId) => {
+      const { keys } = parseBody(itemsQuerySchema, req.query)
+      const found = this.jobError(() => this.jobs().statesFor(projectId, req.params.job as string, keys))
+      return { ...found, states: await this.markLost(found.states) }
+    })
+  }
+
+  /**
+   * ⚖️ Item "no construtor" cuja conversa não existe mais (apagada, ou aberta antes de ir ao banco e perdida num
+   * reinício): marcado, para a tela oferecer abrir de novo. Só os em `drafting` com conversa: poucos por trabalho.
+   */
+  private async markLost<T extends { state: string; conversationId?: string }>(states: T[]): Promise<Array<T | (T & { conversationLost: true })>> {
+    const exists = this.deps.conversationExists
+    if (!exists) return states
+    return Promise.all(
+      states.map(async (state) =>
+        state.state === 'drafting' && state.conversationId && !(await exists(state.conversationId)) ? { ...state, conversationLost: true as const } : state,
+      ),
+    )
   }
 
   /**

@@ -1803,6 +1803,24 @@ export const OPENAPI_DOCUMENT = {
       },
     },
     '/projects/{id}/import/jobs/{job}/items': {
+      get: {
+        summary:
+          'The state of SOME items of an import job (the draft, the review), without the inventory: the panel beside an import conversation reloads it after each proposal. A key that is not in the job is left out. `latest`: only the newest job of the repository accepts a review. Administrators only',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'job', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'keys', in: 'query', required: true, style: 'form', explode: true, schema: { type: 'array', items: { type: 'string' }, maxItems: 200 } },
+        ],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(envelope({ type: 'object', properties: { latest: { type: 'boolean' }, states: { type: 'array', items: importItemStatus } }, required: ['latest', 'states'] })),
+          },
+          '422': failures['422'],
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
       patch: {
         summary:
           'Change one item of the NEWEST job of its repository: exclude (`state: skipped`), include (`state: pending`) and reclassify (`kind`; `null` goes back to the detected kind). Records who and when. An older job is 409; a transition the state does not allow, or reclassifying an item with a draft on the way, is 409. Nothing is written to the catalog. Administrators only',
