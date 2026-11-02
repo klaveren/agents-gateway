@@ -1,10 +1,6 @@
 <script setup lang="ts">
-import { computed, inject } from 'vue'
-import { routerKey } from 'vue-router'
-import ImportItemReview from '@/components/ImportItemReview.vue'
-import { BUILD_KINDS } from '@/lib/builder'
+import { computed } from 'vue'
 import { fullTime, tokens } from '@/lib/format'
-import { buildLink, builderKindFor, draftingWithoutConversation, type IImportBuildStatus, lastDraft } from '@/lib/importDraft'
 import {
   bytesLabel,
   CATALOG_HINT,
@@ -26,7 +22,8 @@ import {
 /**
  * O DETALHE de um item do inventário: as fontes (caminho, aliases, tamanho, ≈tokens, gerado, segredo — ⛔ nunca o
  * conteúdo), o que ele cita e quem o cita, as notas e o "não traduz" em destaque. O estado no trabalho de importação,
- * com excluir/incluir, e a reclassificação ficam gravados no trabalho (⛔ nada vai ao catálogo).
+ * com excluir/incluir, e a reclassificação ficam gravados no trabalho (⛔ nada vai ao catálogo). Importar (construtor,
+ * revisão, gravar) é da área Migrações: aqui só o link para a migração que tem o item.
  */
 const props = defineProps<{
   item: IInventoryItem
@@ -36,8 +33,6 @@ const props = defineProps<{
   citedBy: readonly string[]
   /** As chaves que existem na análise: a citação vira link para o item. */
   known: ReadonlySet<string>
-  /** O lote deste agente está sendo montado. */
-  planning?: boolean
   /** O estado do item no trabalho aberto. */
   status?: IImportItemStatus
   /** O trabalho é registro (há análise mais nova): nada muda. */
@@ -45,41 +40,19 @@ const props = defineProps<{
   /** Uma mudança do item está a caminho do servidor. */
   busy?: boolean
   error?: string
-  /** A conversa do construtor está sendo aberta para este item. */
-  building?: boolean
-  /** O erro da revisão (aprovar, pedir ajuste) ou da abertura da conversa. */
-  reviewError?: string
+  /** As migrações salvas que têm este item. */
+  migrations?: ReadonlyArray<{ id: string; name: string }>
 }>()
 const emit = defineEmits<{
   select: [key: string]
   reclassify: [kind: TInventoryKind | undefined]
   state: [state: 'pending' | 'skipped']
   close: []
-  plan: []
-  build: []
-  /** Montar o lote do item COM AS DEPENDÊNCIAS (o fecho), para preparar tudo com o construtor. */
-  closure: []
-  approve: [oks: number[]]
-  adjust: [comment: string]
+  /** Abrir a migração que tem o item (na área Migrações). */
+  migration: [id: string]
 }>()
 
-const router = inject(routerKey, null)
-function go(path: string) {
-  if (router) void router.push(path)
-  else window.location.assign(path)
-}
-
-/** O construtor do tipo (o trigger vai ao de agentes) e o que o construtor e a revisão gravaram no item. */
-const builder = computed(() => builderKindFor(props.kind))
-const build = computed(() => props.status as IImportBuildStatus | undefined)
-const draft = computed(() => lastDraft(build.value))
-const conversationLink = computed(() => (builder.value && build.value?.conversationId && !build.value.conversationLost ? buildLink(builder.value, build.value.conversationId) : undefined))
-/** Vai (ou volta) ao construtor: sem conversa, ou de um estado que recomeça (rejeitado, erro, fonte mudada). */
-const canBuild = computed(() => {
-  if (props.readonly || !builder.value) return false
-  if (['pending', 'rejected', 'error', 'stale'].includes(state.value)) return true
-  return draftingWithoutConversation(build.value)
-})
+const migrations = computed(() => props.migrations ?? [])
 
 const state = computed(() => props.status?.state ?? 'pending')
 const canExclude = computed(() => !props.readonly && EXCLUDABLE_STATES.includes(state.value))
@@ -134,49 +107,12 @@ function onReclassify(event: Event) {
       <p v-if="error" class="text-xs text-rose-300" data-test="item-error">{{ error }}</p>
     </section>
 
-    <section v-if="builder && !readonly" class="flex flex-col gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/5 px-3 py-2" data-test="with-dependencies">
-      <button type="button" class="btn btn-primary btn-sm self-start" :disabled="planning" data-test="closure" @click="emit('closure')">
-        {{ planning ? 'Montando…' : 'Migrar com dependências' }}
+    <!-- ⚖️ Importar mora na área Migrações: aqui só se diz em qual migração o item está. -->
+    <section v-if="migrations.length" class="flex flex-col gap-1 rounded-xl border border-zinc-800 px-3 py-2 text-xs" data-test="item-migrations">
+      <span class="text-zinc-500">Na migração:</span>
+      <button v-for="entry in migrations" :key="entry.id" type="button" class="self-start text-emerald-300 hover:underline" data-test="open-migration" @click="emit('migration', entry.id)">
+        {{ entry.name }} →
       </button>
-      <p class="text-xs text-zinc-500">
-        Mostra tudo o que este item precisa (<template v-if="kind === 'agent' || kind === 'trigger'">o agente, os triggers e </template>o que eles citam, em ordem) e, num clique, abre uma
-        conversa por construtor para preparar os rascunhos. Depois é revisar e gravar a migração.
-      </p>
-    </section>
-
-    <section v-if="builder && (canBuild || conversationLink)" class="flex flex-col gap-1.5 rounded-xl border border-emerald-500/30 px-3 py-2" data-test="builder">
-      <div class="flex flex-wrap items-center gap-2">
-        <button v-if="canBuild" type="button" class="btn btn-primary btn-sm" :disabled="building" data-test="build" @click="emit('build')">
-          {{ building ? 'Abrindo…' : 'Importar com o construtor' }}
-        </button>
-        <a v-if="conversationLink" :href="conversationLink" class="text-xs text-emerald-300 hover:underline" data-test="open-conversation" @click.prevent="go(conversationLink)">Abrir a conversa do construtor</a>
-      </div>
-      <p class="text-xs text-zinc-500">
-        Uma conversa com o {{ BUILD_KINDS[builder].builder }}, em modo importação: ele lê a fonte pelo servidor e propõe só operações (o texto não muda). A revisão fica aqui. Nada vai ao
-        catálogo.
-      </p>
-      <p v-if="build?.conversationLost" class="text-xs text-amber-300" data-test="conversation-lost">A conversa do construtor deste item não existe mais. Abra de novo: começa uma conversa nova.</p>
-      <p v-if="reviewError && !draft" class="text-xs text-rose-300" data-test="build-error">{{ reviewError }}</p>
-    </section>
-
-    <ImportItemReview
-      v-if="draft && ['drafting', 'review', 'approved'].includes(state)"
-      :draft="draft"
-      :state="state"
-      :review="build?.review"
-      :approved-by="build?.approvedBy"
-      :approved-at="build?.approvedAt"
-      :conversation-link="conversationLink"
-      :readonly="readonly"
-      :busy="busy"
-      :error="reviewError"
-      @approve="emit('approve', $event)"
-      @adjust="emit('adjust', $event)"
-    />
-
-    <section v-if="item.kind === 'agent'" class="flex flex-col gap-1.5 rounded-xl border border-emerald-500/30 px-3 py-2">
-      <button type="button" class="btn btn-primary btn-sm self-start" :disabled="planning" data-test="plan" @click="emit('plan')">{{ planning ? 'Montando…' : 'Prévia da migração do agente' }}</button>
-      <p class="text-xs text-zinc-500">O que este agente precisa, em ordem: docs, skills e commands, rules, ele com os triggers, e as permissões por último. Só mostra: nada é gravado.</p>
     </section>
 
     <section v-if="untranslatable.length" class="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2" data-test="untranslatable">

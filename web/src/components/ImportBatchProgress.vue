@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, inject } from 'vue'
 import { routerKey } from 'vue-router'
-import { BUILD_KINDS } from '@/lib/builder'
 import { buildLink, builderKindFor, draftingWithoutConversation, type IImportBuildStatus } from '@/lib/importDraft'
 import { effectiveKind, type IImportItemStatus, type IInventoryItem, KIND_LABEL, STATE_HINT, STATE_LABEL, type TImportItemState, type TOverrides } from '@/lib/importer'
 
@@ -67,10 +66,10 @@ function go(path: string) {
     <ul class="divide-y divide-zinc-800 rounded-xl border border-zinc-800 text-xs">
       <li v-for="row in rows" :key="row.key" class="flex flex-wrap items-center gap-2 px-3 py-1.5" data-test="progress-row">
         <span class="w-20 shrink-0 text-zinc-500">{{ KIND_LABEL[row.kind] }}</span>
-        <button type="button" class="min-w-0 flex-1 truncate text-left font-mono text-zinc-200 hover:underline" :title="row.key" @click="emit('select', row.key)">{{ row.item.candidateId }}</button>
+        <button type="button" class="min-w-0 flex-1 truncate text-left font-mono text-zinc-200 hover:underline" :title="`${row.key} — ver no inventário`" @click="emit('select', row.key)">{{ row.item.candidateId }}</button>
         <span class="rounded-full px-2" :class="TONE[row.state] ?? 'bg-zinc-800 text-zinc-400'" :title="STATE_HINT[row.state]" data-test="progress-state">{{ STATE_LABEL[row.state] }}</span>
         <a v-if="row.link && row.builder" :href="row.link" class="text-emerald-300 hover:underline" data-test="progress-conversation" @click.prevent="go(row.link)">{{
-          row.state === 'review' ? 'Revisar na conversa' : BUILD_KINDS[row.builder].builder
+          row.state === 'review' ? 'Revisar na conversa' : 'Abrir conversa'
         }}</a>
         <span v-else-if="!row.builder" class="text-zinc-600" title="Este tipo não passa pelo construtor">sem construtor</span>
       </li>

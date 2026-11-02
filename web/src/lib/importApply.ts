@@ -1,8 +1,6 @@
 import { api, ApiError } from '@/lib/api'
 import type { IDiffHunk, IIssue, IWideningRef, TCatalogKind } from '@/lib/catalogHistory'
-import { builderKindFor } from '@/lib/importDraft'
 import type { TImportItemState, TInventoryKind } from '@/lib/importer'
-import type { TBuildKind } from '@/lib/builder'
 
 /**
  * A GRAVAÇÃO DO IMPORTADOR na tela: a prévia (`apply/plan`) e o gravar (`apply`) de um trabalho de importação (ver
@@ -92,32 +90,6 @@ export interface IMissingRef {
   wrongKind?: { key: string; kind: TInventoryKind }
   /** As chaves do trabalho de quem cita. */
   fromKeys?: string[]
-}
-
-/** O que a tela oferece para uma falta: entrar na gravação, ir ao construtor, ou só ver o item. */
-export type TMissingAction = 'include' | 'build' | 'view' | 'none'
-
-/** Os estados em que o item ainda não foi ao construtor (ou voltou dele): o construtor abre. Em curso ou a revisar: ver. */
-const TO_BUILD: readonly TImportItemState[] = ['pending', 'rejected', 'error', 'stale']
-
-/** `include` só quando a gravação é de chaves escolhidas (o lote salvo e "todos os aprovados" já levam o aprovado). */
-export function missingAction(missing: IMissingRef, byKeys: boolean): TMissingAction {
-  const item = missing.item
-  if (!item) return 'none'
-  if (item.state === 'approved') return byKeys ? 'include' : 'view'
-  if (TO_BUILD.includes(item.state) && builderKindFor(item.kind)) return 'build'
-  return 'view'
-}
-
-/** As faltas que vão ao construtor, juntas por construtor (uma conversa por tipo): o "Preparar as N juntas". */
-export function missingBuildGroups(missing: readonly IMissingRef[]): Array<{ kind: TBuildKind; keys: string[] }> {
-  const groups = new Map<TBuildKind, string[]>()
-  for (const one of missing) {
-    if (missingAction(one, false) !== 'build') continue
-    const kind = builderKindFor(one.item!.kind)!
-    groups.set(kind, [...new Set([...(groups.get(kind) ?? []), one.item!.key])])
-  }
-  return [...groups].map(([kind, keys]) => ({ kind, keys }))
 }
 
 export interface IApplyResult {

@@ -599,12 +599,22 @@ describe('ImportView', () => {
     expect(editor.textContent).toContain('Analise de novo para aplicar')
   })
 
-  it('"Montar lote" no agente mostra o fecho em ordem, o mapa de ids, as permissões e a estimativa — sem botão que grave', async () => {
+  /** O alcance e as permissões de um agente: selecionado, "Migrar selecionados", e o botão dele no Montar. */
+  async function agentPlan(host: HTMLElement, name: string) {
+    ;[...host.querySelectorAll('[data-test="row"]')]
+      .find((row) => row.textContent!.includes(name))!
+      .parentElement!.querySelector<HTMLInputElement>('[data-test="pick"]')!
+      .click()
+    await flush()
+    host.querySelector<HTMLButtonElement>('[data-test="build-batch"]')!.click()
+    await flush()
+    host.querySelector<HTMLButtonElement>('[data-test="agent-plan"]')!.click()
+    await flush()
+  }
+
+  it('o alcance e as permissões do agente (no Montar da migração) mostram o fecho em ordem, o mapa de ids, as permissões e a estimativa — sem botão que grave', async () => {
     const host = await mount([...SMALL, item({ key: 'agent:ana', kind: 'agent', catalog: 'new' })])
-    ;[...host.querySelectorAll<HTMLButtonElement>('[data-test="row"]')].find((row) => row.textContent!.includes('ana'))!.click()
-    await flush()
-    host.querySelector<HTMLButtonElement>('[data-test="plan"]')!.click()
-    await flush()
+    await agentPlan(host, 'ana')
     expect(api).toHaveBeenCalledWith('/projects/alfa/import/plan', { method: 'POST', body: { repository: 'app', agent: 'agent:ana', job: 'j1' } })
     const batch = host.querySelector('[data-test="batch"]')!
     expect([...batch.querySelectorAll('[data-test="step"]')].map((step) => step.querySelector('button')!.textContent)).toEqual(['base', 'ana', '01'])
@@ -619,17 +629,14 @@ describe('ImportView', () => {
     expect(widenings).toContain('liberaria TODAS as skills')
     expect(batch.querySelector('[data-test="skills"]')!.textContent).toContain('akm-revisar')
     expect(batch.querySelector('[data-test="reach-row"].bg-amber-500\\/10')).not.toBeNull()
-    // ⛔ Nada que grave no catálogo; o único "Importar" é o que abre a conversa do construtor (que não grava).
-    const labels = [...host.querySelectorAll('button')].map((button) => button.textContent!.trim()).filter((label) => !label.startsWith('Importar com o construtor'))
+    // ⛔ Nada que grave no catálogo.
+    const labels = [...host.querySelectorAll('button')].map((button) => button.textContent!.trim())
     for (const word of ['Gravar', 'Transformar', 'Aplicar', 'Importar']) expect(labels.some((label) => label.includes(word))).toBe(false)
   })
 
   it('o prefixo recalcula o lote e o mapa mostra os ids novos', async () => {
     const host = await mount([...SMALL, item({ key: 'agent:ana', kind: 'agent', catalog: 'new' })])
-    ;[...host.querySelectorAll<HTMLButtonElement>('[data-test="row"]')].find((row) => row.textContent!.includes('ana'))!.click()
-    await flush()
-    host.querySelector<HTMLButtonElement>('[data-test="plan"]')!.click()
-    await flush()
+    await agentPlan(host, 'ana')
     const input = host.querySelector<HTMLInputElement>('[data-test="prefix"]')!
     input.value = 'AKM-'
     input.dispatchEvent(new Event('input'))
@@ -667,7 +674,7 @@ describe('ImportView', () => {
 
     host.querySelector<HTMLButtonElement>('[data-test="build-batch"]')!.click()
     await flush()
-    expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j1/batches/plan', { method: 'POST', body: { keys: ['skill:deploy', 'command:ship'] } })
+    expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j1/batches/plan', { method: 'POST', body: { keys: ['skill:deploy', 'command:ship'], closure: true } })
     const batch = host.querySelector('[data-test="selection-batch"]')!
     expect([...batch.querySelectorAll('[data-test="step"]')].map((step) => step.querySelector('button')!.textContent)).toEqual(['deploy', 'ship'])
     expect(batch.querySelector('[data-test="step-done"]')!.textContent).toContain('já no catálogo')
@@ -762,7 +769,7 @@ describe('ImportView', () => {
     expect(batch.querySelector('[data-test="save-batch"]')).toBeNull()
   })
 
-  it('"Importar com o construtor": o item sozinho, no detalhe; o lote salvo, no passo Preparar, uma conversa por construtor', async () => {
+  it('"Preparar com o construtor": no passo Preparar da migração salva, uma conversa por construtor; o detalhe do item só leva à migração', async () => {
     const stored: IImportBatchView = {
       id: 'b9',
       jobId: 'j7',
@@ -777,38 +784,6 @@ describe('ImportView', () => {
     const host = await mount(SMALL, { jobs: [savedJob('j7', SMALL)], analyze: false, batches: { j7: [stored] } })
     const base = vi.mocked(api).getMockImplementation()!
     vi.mocked(api).mockImplementation(async (path: string, request?: { method?: string; body?: unknown }) => {
-      if (path.endsWith('/builder')) {
-        const body = request!.body as { keys?: string[]; kind?: string }
-        return { conversationId: 'conv-1', kind: body.kind ?? 'skill', agentId: 'builder-import-skill', keys: body.keys ?? ['skill:deploy'] }
-      }
-      return base(path, request as never)
-    })
-    host.querySelector<HTMLButtonElement>('[data-test="job"]')!.click()
-    await flush()
-    // O item sozinho (no detalhe): uma conversa com o construtor dele.
-    ;[...host.querySelectorAll<HTMLButtonElement>('[data-test="row"]')].find((row) => row.textContent!.includes('deploy'))!.click()
-    await flush()
-    host.querySelector<HTMLButtonElement>('[data-test="build"]')!.click()
-    await flush()
-    expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/jobs/j7/builder', { method: 'POST', body: { keys: ['skill:deploy'] } })
-    // O lote salvo aberto, no passo Preparar: o que dele ainda vai ao construtor, pelo id do lote e o construtor.
-    host.querySelector<HTMLButtonElement>('[data-test="area-batches"]')!.click()
-    await flush()
-    host.querySelector<HTMLButtonElement>('[data-test="batch-entry"]')!.click()
-    await flush()
-    const saved = host.querySelectorAll<HTMLButtonElement>('[data-test="build-saved-batch"]')
-    expect([...saved].map((button) => button.textContent!.trim())).toEqual(['Só command (1)'])
-    expect(host.querySelector('[data-test="prepare-batch"]')!.textContent).toContain('1 conversa')
-    saved[0].click()
-    await flush()
-    expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/jobs/j7/builder', { method: 'POST', body: { batchId: 'b9', kind: 'command' } })
-  })
-
-  it('"Preparar com as dependências": o lote com o fecho; "Salvar e preparar tudo" salva e abre uma conversa por construtor', async () => {
-    const host = await mount(SMALL)
-    const base = vi.mocked(api).getMockImplementation()!
-    vi.mocked(api).mockImplementation(async (path: string, request?: { method?: string; body?: unknown }) => {
-      if (path.endsWith('/batches/plan')) return base(path, { ...request, body: { ...(request!.body as object), keys: ['skill:deploy', 'command:ship'] } } as never)
       if (path.endsWith('/prepare'))
         return {
           conversations: [
@@ -818,19 +793,54 @@ describe('ImportView', () => {
         }
       return base(path, request as never)
     })
+    host.querySelector<HTMLButtonElement>('[data-test="job"]')!.click()
+    await flush()
+    // O detalhe do item não importa nada: só diz em que migração ele está, e leva até ela.
     ;[...host.querySelectorAll<HTMLButtonElement>('[data-test="row"]')].find((row) => row.textContent!.includes('deploy'))!.click()
     await flush()
-    host.querySelector<HTMLButtonElement>('[data-test="closure"]')!.click()
+    const detail = host.querySelector('[data-test="import-detail"]')!
+    for (const gone of ['build', 'closure', 'plan', 'import-review']) expect(detail.querySelector(`[data-test="${gone}"]`)).toBeNull()
+    detail.querySelector<HTMLButtonElement>('[data-test="open-migration"]')!.click()
+    await flush()
+    expect(host.querySelector('[data-test="step-prepare"]')!.className).toContain('on')
+    expect(host.querySelector('[data-test="batch-builder"]')!.textContent).toContain('Abre 2 conversa(s), uma por construtor (skill, command)')
+    host.querySelector<HTMLButtonElement>('[data-test="prepare-batch"]')!.click()
+    await flush()
+    expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/jobs/j7/batches/b9/prepare', { method: 'POST' })
+    expect([...host.querySelectorAll('[data-test="prepared-link"]')].map((link) => link.getAttribute('href'))).toEqual(['/skills/build?c=conv-s', '/commands/build?c=conv-c'])
+  })
+
+  it('"Migrar selecionados" traz as dependências (caixa marcada); "Criar migração" salva e leva ao passo Preparar', async () => {
+    const host = await mount(SMALL)
+    const base = vi.mocked(api).getMockImplementation()!
+    vi.mocked(api).mockImplementation(async (path: string, request?: { method?: string; body?: unknown }) => {
+      if (path.endsWith('/batches/plan')) return base(path, { ...request, body: { ...(request!.body as object), keys: ['skill:deploy', 'command:ship'] } } as never)
+      return base(path, request as never)
+    })
+    ;[...host.querySelectorAll('[data-test="row"]')]
+      .find((row) => row.textContent!.includes('deploy'))!
+      .parentElement!.querySelector<HTMLInputElement>('[data-test="pick"]')!
+      .click()
+    await flush()
+    expect(host.querySelector<HTMLInputElement>('[data-test="with-dependencies"]')!.checked).toBe(true)
+    host.querySelector<HTMLButtonElement>('[data-test="build-batch"]')!.click()
     await flush()
     expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j1/batches/plan', { method: 'POST', body: { keys: ['skill:deploy'], closure: true } })
     const batch = host.querySelector('[data-test="selection-batch"]')!
-    expect(batch.querySelector<HTMLInputElement>('[data-test="batch-name"]')!.value).toBe('deploy e dependências')
-    batch.querySelector<HTMLButtonElement>('[data-test="batch-save-prepare"]')!.click()
+    expect(batch.querySelector('[data-test="batch-save"]')!.textContent).toContain('Criar migração')
+    batch.querySelector<HTMLFormElement>('[data-test="save-batch"]')!.dispatchEvent(new Event('submit'))
     await flush()
     expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j1/batches', { method: 'POST', body: { name: 'deploy e dependências', keys: ['skill:deploy', 'command:ship'] } })
-    expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/jobs/j1/batches/b1/prepare', { method: 'POST' })
-    const links = [...host.querySelectorAll('[data-test="prepared-link"]')].map((link) => link.getAttribute('href'))
-    expect(links).toEqual(['/skills/build?c=conv-s', '/commands/build?c=conv-c'])
+    expect(host.querySelector('[data-test="step-prepare"]')!.className).toContain('on')
+    // Sem a caixa, só os selecionados.
+    host.querySelector<HTMLButtonElement>('[data-test="area-inventory"]')!.click()
+    await flush()
+    const box = host.querySelector<HTMLInputElement>('[data-test="with-dependencies"]')!
+    box.click()
+    await flush()
+    host.querySelector<HTMLButtonElement>('[data-test="build-batch"]')!.click()
+    await flush()
+    expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/jobs/j1/batches/plan', { method: 'POST', body: { keys: ['skill:deploy'] } })
   })
 
   it('"Adicionar (com dependências)": a seleção entra numa migração salva, que abre com os itens novos', async () => {
