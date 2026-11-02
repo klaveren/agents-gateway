@@ -22,8 +22,7 @@ const props = defineProps<{
   readonly?: boolean
   error?: string
 }>()
-/** `prepare`: salvar o lote e já abrir uma conversa por construtor com o que ainda vai. */
-const emit = defineEmits<{ close: []; select: [key: string]; replan: [prefix: string]; save: [name: string]; prepare: [name: string] }>()
+const emit = defineEmits<{ close: []; select: [key: string]; replan: [prefix: string]; save: [name: string] }>()
 
 const prefix = ref(props.plan.prefix)
 const title = ref(props.name ?? '')
@@ -76,16 +75,7 @@ const kinds = computed(() => {
         Nome da migração
         <input v-model="title" class="input" maxlength="120" placeholder="ex.: knowledge, specs de core/" data-test="batch-name" />
       </label>
-      <button type="submit" class="btn btn-secondary btn-sm mb-0.5" :disabled="busy || !title.trim() || !!issue" data-test="batch-save">{{ busy ? 'Salvando…' : 'Salvar migração' }}</button>
-      <button
-        type="button"
-        class="btn btn-primary btn-sm mb-0.5"
-        :disabled="busy || !title.trim() || !!issue"
-        data-test="batch-save-prepare"
-        @click="title.trim() && emit('prepare', title.trim())"
-      >
-        Salvar e preparar tudo com o construtor
-      </button>
+      <button type="submit" class="btn btn-primary btn-sm mb-0.5" :disabled="busy || !title.trim() || !!issue" data-test="batch-save">{{ busy ? 'Criando…' : 'Criar migração' }}</button>
     </form>
     <p v-else-if="!batch && readonly" class="text-xs text-amber-200">Trabalho antigo: a prévia vale, mas a migração só é salva no trabalho mais novo.</p>
     <p v-if="error" class="text-xs text-rose-300" data-test="batch-error">{{ error }}</p>

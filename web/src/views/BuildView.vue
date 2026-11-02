@@ -334,8 +334,8 @@ function describe(failure: unknown): string {
         >
           <h2 class="text-sm font-semibold text-zinc-200">Importação</h2>
           <p class="text-xs text-zinc-400">
-            O construtor em modo importação lê as fontes pelo servidor e propõe só operações: o texto não muda. Ele não grava nada no catálogo. O rascunho aparece aqui; gravar é no
-            <RouterLink to="/import" class="text-emerald-400 underline underline-offset-2">Importador</RouterLink>.
+            O construtor em modo importação lê as fontes pelo servidor e propõe só operações: o texto não muda. Ele não grava nada no catálogo. Revise o rascunho aqui; gravar é no
+            passo Gravar da migração (<RouterLink to="/import" class="text-emerald-400 underline underline-offset-2">Importador → Migrações</RouterLink>).
           </p>
           <button v-if="canStartImport" type="button" class="btn btn-primary btn-sm self-start" data-test="start-import" @click="startImport">Começar</button>
           <ImportDraftAside v-if="importing.job && buildProject" :project-id="buildProject" :job-id="importing.job" :keys="importing.keys" :refresh="importRefresh" />

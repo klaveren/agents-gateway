@@ -59,7 +59,7 @@ import { useProjectsStore } from '@/stores/projects'
  *
  * DUAS ÁREAS no trabalho aberto, para não misturar explorar com importar:
  * - INVENTÁRIO: o resumo, os filtros, a lista e o detalhe. A pessoa SELECIONA itens (caixas, ou "todos do filtro") e a
- *   barra de baixo leva a seleção para a área de lotes ("Montar lote", com ou sem as dependências);
+ *   barra de baixo leva a seleção para a área Migrações ("Migrar selecionados", com ou sem as dependências);
  * - LOTES: os lotes salvos do trabalho, com o progresso, e o lote aberto em PASSOS — Montar (a ordem, o que fica de
  *   fora, nome e prefixo), Preparar (cada item com o estado e a conversa do construtor; "preparar tudo") e Gravar (o
  *   plano do catálogo do lote: `ImportApply`, que só grava com o clique e uma caixa por ampliação).
@@ -186,6 +186,8 @@ function builderGroups(keys: readonly string[]): Array<{ kind: TBuildKind; keys:
 }
 /** O lote salvo aberto, por construtor. */
 const batchGroups = computed(() => (openedBatch.value ? builderGroups(openedBatch.value.order.length ? openedBatch.value.order : openedBatch.value.keys) : []))
+/** Os tipos que o "Preparar com o construtor" abre (uma conversa por tipo). */
+const prepareKinds = computed(() => batchGroups.value.map((entry) => BUILD_KINDS[entry.kind].noun).join(', '))
 
 /** Guarda o item que o servidor devolveu e recontá os estados do trabalho na lista. */
 /** Gravar no catálogo: o alvo aberto (lote salvo, seleção ou todo o trabalho). */
@@ -226,6 +228,14 @@ function goStep(next: TStep) {
   if (next === 'prepare' && openedBatch.value) void refreshStates(openedBatch.value.order.length ? openedBatch.value.order : openedBatch.value.keys)
 }
 
+/** Os agentes da migração (o alcance e as permissões de cada um aparecem no Montar). */
+function agentsOf(keys: readonly string[]): string[] {
+  return keys.filter((key) => {
+    const item = itemMap.value.get(key)
+    return !!item && effectiveKind(item, overrides.value) === 'agent'
+  })
+}
+
 /** "Gravar todos os aprovados do trabalho": o plano de tudo o que está aprovado, fora de lote. */
 function openApplyAll() {
   closeSelection()
@@ -236,10 +246,10 @@ function openApplyAll() {
 }
 
 /** Gravou: os itens gravados viram `applied`, com o lote. */
-/** "Gravar junto": as faltas aprovadas entram na seleção, e a gravação é refeita com elas. */
+/** "Adicionar à migração" (no passo Gravar): as faltas entram na migração, e a gravação é refeita com elas. */
 function includeInApply(keys: string[]) {
-  // Na migração salva, a falta aprovada entra NELA (e a gravação é refeita com ela).
-  if (openedBatch.value && step.value === 'apply') return void addToBatch(openedBatch.value.id, keys, false, true)
+  // Na migração salva, a falta entra NELA com as dependências: a aprovada fica no Gravar; a que falta preparar leva ao Preparar.
+  if (openedBatch.value && step.value === 'apply') return void addToBatch(openedBatch.value.id, keys, true)
   if (!applyTarget.value?.keys) return
   const next = [...new Set([...applyTarget.value.keys, ...keys])]
   picked.value = new Set([...picked.value, ...keys])
@@ -258,43 +268,6 @@ function keep(updated: IImportItemStatus) {
   const counts: Partial<Record<TImportItemState, number>> = {}
   for (const entry of Object.values(statuses.value)) counts[entry.state] = (counts[entry.state] ?? 0) + 1
   jobs.value = jobs.value.map((entry) => (entry.id === job.value!.id ? { ...entry, byState: counts } : entry))
-}
-
-/**
- * "Importar com o construtor": abre UMA conversa com o construtor do tipo (em modo importação) para os itens, e vai até
- * ela. A pessoa conversa normalmente; os rascunhos voltam para a revisão aqui.
- */
-async function openBuilder(target: { keys?: string[]; batchId?: string; kind?: TBuildKind }) {
-  if (!project.value || !job.value || readonly.value) return
-  building.value = true
-  reviewError.value = undefined
-  try {
-    const opened = await api<{ conversationId: string; kind: Parameters<typeof buildLink>[0]; keys: string[] }>(`${projectPath()}/jobs/${encodeURIComponent(job.value.id)}/builder`, {
-      method: 'POST',
-      body: target,
-    })
-    for (const key of opened.keys) keep({ ...(statuses.value[key] ?? { key, fingerprint: '' }), key, state: 'drafting', conversationId: opened.conversationId } as IImportItemStatus)
-    // Vai até a conversa (a guia Construir do tipo, com ela aberta).
-    if (router) await router.push(buildLink(opened.kind, opened.conversationId))
-  } catch (failure) {
-    reviewError.value = message(failure)
-  } finally {
-    building.value = false
-  }
-}
-
-/** Aprovar (com o OK de cada remoção) ou pedir ajuste (com o comentário para a conversa). ⛔ Nada vai ao catálogo. */
-async function reviewItem(key: string, action: 'approve' | 'adjust', body: { removals?: number[]; comment?: string }) {
-  if (!project.value || !job.value || readonly.value) return
-  itemBusy.value = true
-  reviewError.value = undefined
-  try {
-    keep(await api<IImportItemStatus>(`${projectPath()}/jobs/${encodeURIComponent(job.value.id)}/items/${action}`, { method: 'POST', body: { key, ...body } }))
-  } catch (failure) {
-    reviewError.value = message(failure)
-  } finally {
-    itemBusy.value = false
-  }
 }
 
 function parseIgnore(text: string): string[] {
@@ -341,7 +314,6 @@ async function buildPlan(agent: string, nextPrefix = prefix.value) {
     const body = { repository: scan.value.repository, agent, ...(nextPrefix ? { prefix: nextPrefix } : {}), ...(job.value ? { job: job.value.id } : {}) }
     plan.value = await api<IImportPlan>(`/projects/${encodeURIComponent(project.value.id)}/import/plan`, { method: 'POST', body })
     prefix.value = plan.value.prefix
-    closeSelection()
     applyAll.value = false
     area.value = 'batches'
   } catch (failure) {
@@ -454,11 +426,6 @@ async function prepareBatch(batchId: string) {
   }
 }
 
-/** "Preparar com as dependências" (no detalhe do item): o lote com o fecho, na área de lotes. */
-async function withDependencies(key: string) {
-  await buildSelection([key], '', true)
-}
-
 /** Acrescenta itens a uma migração salva (com as dependências, se pedido) e a abre com o estado de agora. */
 async function addToBatch(batchId: string, keys: readonly string[], closure = false, keepStep = false) {
   if (!project.value || !job.value || readonly.value || !keys.length) return
@@ -483,12 +450,8 @@ async function addToBatch(batchId: string, keys: readonly string[], closure = fa
 
 /** A migração salva que recebe a seleção do inventário ("Adicionar à migração"). */
 const addTarget = ref('')
-
-/** "Salvar e preparar tudo": salva a prévia como lote e já abre as conversas. */
-async function saveAndPrepare(name: string) {
-  await saveBatch(name)
-  if (openedBatch.value && !batchError.value) await prepareBatch(openedBatch.value.id)
-}
+/** Migrar e adicionar trazem as dependências da seleção (o padrão: a migração sai completa). */
+const withDependencies = ref(true)
 
 async function openBatch(id: string) {
   if (!project.value || !job.value) return
@@ -939,62 +902,60 @@ watch(
                 class="scroll-thin max-lg:fixed max-lg:inset-0 max-lg:z-40 max-lg:overflow-y-auto max-lg:bg-zinc-950 max-lg:px-4 max-lg:py-5 lg:sticky lg:top-0 lg:max-h-[calc(100vh-2.5rem)] lg:overflow-y-auto lg:rounded-xl lg:border lg:border-zinc-800 lg:p-3"
               >
                 <ImportItemDetail
-                  :item="selected"
-                  :kind="effectiveKind(selected, overrides)"
-                  :cited-by="citations.get(selected.key) ?? []"
-                  :known="known"
-                  :status="statuses[selected.key]"
-                  :readonly="readonly"
-                  :busy="itemBusy"
-                  :error="itemError"
-                  :planning="planning"
-                  :building="building"
-                  :review-error="reviewError"
-                  @build="openBuilder({ keys: [selected.key] })"
-                  @approve="reviewItem(selected.key, 'approve', { removals: $event })"
-                  @adjust="reviewItem(selected.key, 'adjust', { comment: $event })"
-                  @plan="buildPlan(selected.key)"
-                  @closure="withDependencies(selected.key)"
-                  @select="selectedKey = $event"
-                  @reclassify="reclassify(selected.key, $event)"
-                  @state="changeItem(selected.key, { state: $event })"
-                  @close="selectedKey = undefined"
-                />
+                :item="selected"
+                :kind="effectiveKind(selected, overrides)"
+                :cited-by="citations.get(selected.key) ?? []"
+                :known="known"
+                :status="statuses[selected.key]"
+                :readonly="readonly"
+                :busy="itemBusy"
+                :error="itemError"
+                :migrations="batches.filter((entry) => entry.keys.includes(selected!.key)).map((entry) => ({ id: entry.id, name: entry.name }))"
+                @migration="openBatch($event)"
+                @select="selectedKey = $event"
+                @reclassify="reclassify(selected.key, $event)"
+                @state="changeItem(selected.key, { state: $event })"
+                @close="selectedKey = undefined"
+              />
               </aside>
               <p v-else class="hidden rounded-xl border border-dashed border-zinc-800 p-4 text-center text-sm text-zinc-500 lg:block">Escolha um item para ver as fontes, as citações e as notas.</p>
             </div>
 
-            <!-- A seleção: uma barra fixa embaixo, só com o que leva ao lote. -->
+            <!-- A seleção: uma barra fixa embaixo, destacada do fundo, só com o que leva à migração. -->
             <section
               v-if="items.length"
-              class="sticky bottom-0 z-20 -mx-4 flex flex-wrap items-center gap-2 border-t border-zinc-800 bg-zinc-950/95 px-4 py-2 text-xs backdrop-blur"
+              class="sticky bottom-3 z-20 flex flex-wrap items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-800/95 px-3 py-2 text-xs shadow-[0_-6px_24px_rgba(0,0,0,0.55)] backdrop-blur"
+              :class="picked.size ? 'border-emerald-500/50' : ''"
               data-test="selection"
             >
-              <span class="font-medium text-zinc-200" data-test="picked-count">{{ picked.size.toLocaleString('pt-BR') }} selecionado(s)</span>
+              <span class="rounded-full px-2 py-0.5 font-medium" :class="picked.size ? 'bg-emerald-500/20 text-emerald-100' : 'bg-zinc-900 text-zinc-300'" data-test="picked-count"
+                >{{ picked.size.toLocaleString('pt-BR') }} selecionado(s)</span
+              >
               <button type="button" class="btn btn-ghost btn-sm" :disabled="!filtered.length" data-test="pick-filtered" @click="pickFiltered">
                 Selecionar os {{ filtered.length.toLocaleString('pt-BR') }} do filtro
               </button>
-              <button v-if="picked.size" type="button" class="btn btn-ghost btn-sm" data-test="pick-clear" @click="clearPicked">Limpar seleção</button>
+              <button v-if="picked.size" type="button" class="btn btn-ghost btn-sm" data-test="pick-clear" @click="clearPicked">Limpar</button>
               <span class="flex-1" />
+              <label class="flex items-center gap-1.5 text-zinc-200" title="Traz o que os selecionados citam (e, no agente, os triggers), em ordem">
+                <input v-model="withDependencies" type="checkbox" class="accent-emerald-500" data-test="with-dependencies" />
+                com dependências
+              </label>
               <template v-if="batches.length && !readonly">
                 <select v-model="addTarget" class="input py-1 text-xs" aria-label="Migração que recebe a seleção" data-test="add-target">
-                  <option value="" disabled>Adicionar a uma migração…</option>
+                  <option value="" disabled>Adicionar à migração…</option>
                   <option v-for="entry in batches" :key="entry.id" :value="entry.id">{{ entry.name }}</option>
                 </select>
                 <button
                   type="button"
-                  class="btn btn-ghost btn-sm"
+                  class="btn btn-secondary btn-sm"
                   :disabled="!picked.size || !addTarget || batchBusy"
                   data-test="add-to-batch"
-                  @click="addToBatch(addTarget, items.filter((item) => picked.has(item.key)).map((item) => item.key), true)"
+                  @click="addToBatch(addTarget, items.filter((item) => picked.has(item.key)).map((item) => item.key), withDependencies)"
                 >
-                  Adicionar (com dependências)
+                  Adicionar
                 </button>
               </template>
-              <button type="button" class="btn btn-secondary btn-sm" :disabled="!picked.size || batchBusy" data-test="build-batch-closure" @click="buildSelection(undefined, '', true)">
-                Migrar com dependências
-              </button>
-              <button type="button" class="btn btn-primary btn-sm" :disabled="!picked.size || batchBusy" data-test="build-batch" @click="buildSelection()">
+              <button type="button" class="btn btn-primary btn-sm" :disabled="!picked.size || batchBusy" data-test="build-batch" @click="buildSelection(undefined, '', withDependencies)">
                 {{ batchBusy ? 'Montando…' : 'Migrar selecionados' }}
               </button>
             </section>
@@ -1039,7 +1000,6 @@ watch(
             <div class="flex min-w-0 flex-col gap-3">
               <p v-if="batchError" class="text-sm text-rose-300" data-test="selection-error">Migração: {{ batchError }}</p>
               <p v-if="planError" class="text-sm text-rose-300" data-test="plan-error">Migração: {{ planError }}</p>
-              <p v-if="reviewError" class="text-xs text-rose-300" data-test="build-error">{{ reviewError }}</p>
 
               <ImportApply
                 v-if="applyAll && applyTarget && job && project"
@@ -1051,16 +1011,7 @@ watch(
                 @close="applyAll = false; applyTarget = undefined"
                 @applied="applied"
                 @select="(key) => { selectedKey = key; area = 'inventory' }"
-                @build="openBuilder({ keys: $event })"
                 @include="includeInApply"
-              />
-              <ImportBatch
-                v-else-if="plan"
-                :plan="plan"
-                :busy="planning"
-                @close="plan = undefined"
-                @select="(key) => { selectedKey = key; area = 'inventory' }"
-                @replan="buildPlan(plan.agent, $event)"
               />
               <template v-else-if="selectionPlan">
                 <nav v-if="openedBatch" class="flex flex-wrap items-center gap-2" data-test="steps">
@@ -1092,28 +1043,17 @@ watch(
                   @select="(key) => { selectedKey = key; area = 'inventory' }"
                   @replan="buildSelection(selectionPlan.keys, $event)"
                   @save="saveBatch"
-                  @prepare="saveAndPrepare"
                 />
 
                 <template v-else-if="step === 'prepare'">
                   <section class="flex flex-wrap items-center gap-2 text-xs" data-test="batch-builder">
-                    <template v-if="batchGroups.length">
-                      <button type="button" class="btn btn-primary btn-sm" :disabled="building" data-test="prepare-batch" @click="prepareBatch(openedBatch.id)">
-                        {{ building ? 'Abrindo…' : `Preparar tudo com o construtor (${batchGroups.length} conversa${batchGroups.length > 1 ? 's' : ''})` }}
-                      </button>
-                      <button
-                        v-for="group in batchGroups"
-                        :key="group.kind"
-                        type="button"
-                        class="btn btn-secondary btn-sm"
-                        :disabled="building"
-                        data-test="build-saved-batch"
-                        @click="openBuilder({ batchId: openedBatch.id, kind: group.kind })"
-                      >
-                        {{ building ? 'Abrindo…' : `Só ${BUILD_KINDS[group.kind].noun} (${group.keys.length})` }}
-                      </button>
-                    </template>
-                    <span v-else class="text-zinc-400">Tudo desta migração já foi ao construtor. Revise ao lado de cada conversa; os aprovados vão para o passo Gravar.</span>
+                    <button v-if="batchGroups.length" type="button" class="btn btn-primary btn-sm" :disabled="building" data-test="prepare-batch" @click="prepareBatch(openedBatch.id)">
+                      {{ building ? 'Abrindo…' : 'Preparar com o construtor' }}
+                    </button>
+                    <span v-if="batchGroups.length" class="text-zinc-400"
+                      >Abre {{ batchGroups.length }} conversa(s), uma por construtor ({{ prepareKinds }}).</span
+                    >
+                    <span v-if="!batchGroups.length" class="text-zinc-400">Tudo desta migração já foi ao construtor. Revise ao lado de cada conversa; os aprovados vão para o passo Gravar.</span>
                     <button v-if="openedBatch && stepOf(openedBatch) === 'apply'" type="button" class="btn btn-secondary btn-sm" data-test="go-apply" @click="goStep('apply')">Ir para Gravar →</button>
                   </section>
                   <section v-if="prepared?.length" class="flex flex-col gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/5 p-3 text-xs" data-test="prepared">
@@ -1153,8 +1093,30 @@ watch(
                   @close="step = 'prepare'"
                   @applied="applied"
                   @select="(key) => { selectedKey = key; area = 'inventory' }"
-                  @build="openBuilder({ keys: $event })"
                   @include="includeInApply"
+                />
+                <!-- O alcance e as permissões do agente da migração (só leitura), no Montar. -->
+                <section v-if="(!openedBatch || step === 'build') && agentsOf(selectionPlan.keys).length" class="flex flex-wrap items-center gap-2 text-xs" data-test="agent-reach">
+                  <span class="text-zinc-400">Alcance e permissões:</span>
+                  <button
+                    v-for="key in agentsOf(selectionPlan.keys)"
+                    :key="key"
+                    type="button"
+                    class="btn btn-secondary btn-sm"
+                    :disabled="planning"
+                    data-test="agent-plan"
+                    @click="buildPlan(key)"
+                  >
+                    {{ planning ? 'Calculando…' : key.slice(key.indexOf(':') + 1) }}
+                  </button>
+                </section>
+                <ImportBatch
+                  v-if="plan && (!openedBatch || step === 'build')"
+                  :plan="plan"
+                  :busy="planning"
+                  @close="plan = undefined"
+                  @select="(key) => { selectedKey = key; area = 'inventory' }"
+                  @replan="buildPlan(plan.agent, $event)"
                 />
               </template>
               <section v-else class="rounded-xl border border-dashed border-zinc-800 p-6 text-center text-sm text-zinc-400" data-test="batches-empty">

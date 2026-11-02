@@ -204,41 +204,32 @@ describe('ImportApply — gravar no catálogo', () => {
     expect(member.querySelector('[data-test="apply-write"]')).toBeNull()
   })
 
-  it('o que falta diz o tipo e o estado, e leva ao item: ver, preparar (uma ou juntas) e gravar junto', async () => {
+  it('o que falta diz o tipo e o estado; vem deste repositório: "Adicionar à migração" (uma ou todas) e "Ver no inventário"', async () => {
     const item = (key: string, kind: string, state: string) => ({ key, kind, state, path: `.agents/${key}.md` })
     next = {
       ...preview(),
       missing: [
         { target: 'doc', id: 'plan-arq', from: ['knowledge/guia'], item: item('spec:plan-arq', 'spec', 'pending') },
-        { target: 'doc', id: 'dev-qualidade', from: ['knowledge/guia'], item: item('spec:dev-qualidade', 'spec', 'pending') },
         { target: 'doc', id: 'pronta', from: ['knowledge/guia'], item: item('spec:pronta', 'spec', 'approved') },
         { target: 'doc', id: 'sumiu', from: ['knowledge/guia'] },
         { target: 'doc', id: 'drain', from: ['knowledge/guia'], fromKeys: ['knowledge:guia'], wrongKind: { key: 'command:drain', kind: 'command' } },
       ],
     } as IApplyPreview
-    const host = await mount(true, { keys: ['knowledge:guia'], label: '1 selecionado(s)' })
+    const host = await mount(true, { batchId: 'b1', label: 'migração guia' })
     const rows = [...host.querySelectorAll('[data-test="missing-ref"]')]
     expect(rows[0].querySelector('[data-test="missing-kind"]')?.textContent).toContain('a importar')
-    expect(rows.map((row) => [!!row.querySelector('[data-test="missing-build"]'), !!row.querySelector('[data-test="missing-include"]')])).toEqual([
-      [true, false],
-      [true, false],
-      [false, true],
-      [false, false],
-      [false, false],
-    ])
-    expect(rows[3].querySelector('[data-test="missing-none"]')).not.toBeNull()
-    expect(rows[4].querySelector('[data-test="missing-wrong-kind"]')?.textContent).toContain('Command')
-    expect(rows[4].querySelector('[data-test="missing-none"]')).toBeNull()
+    expect(rows.map((row) => !!row.querySelector('[data-test="missing-include"]'))).toEqual([true, true, false, false])
+    expect(rows[2].querySelector('[data-test="missing-none"]')).not.toBeNull()
+    expect(rows[3].querySelector('[data-test="missing-wrong-kind"]')?.textContent).toContain('Command')
+    expect(rows[0].querySelector('[data-test="missing-view"]')!.textContent).toBe('Ver no inventário')
     await click(rows[0].querySelector('[data-test="missing-view"]'))
-    await click(rows[0].querySelector('[data-test="missing-build"]'))
-    await click(host.querySelector('[data-test="missing-build-group"]'))
-    await click(rows[2].querySelector('[data-test="missing-include"]'))
-    await click(rows[4].querySelector('[data-test="missing-view-from"]'))
+    await click(rows[1].querySelector('[data-test="missing-include"]'))
+    await click(host.querySelector('[data-test="missing-include-all"]'))
+    await click(rows[3].querySelector('[data-test="missing-view-from"]'))
     expect(events).toEqual([
       ['select', 'spec:plan-arq'],
-      ['build', ['spec:plan-arq']],
-      ['build', ['spec:plan-arq', 'spec:dev-qualidade']],
       ['include', ['spec:pronta']],
+      ['include', ['spec:plan-arq', 'spec:pronta']],
       ['select', 'knowledge:guia'],
     ])
   })
