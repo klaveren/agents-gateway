@@ -1,11 +1,12 @@
 import { ICatalogDocument, TCatalogKind } from '@domain/Catalog.Document'
-import { ICatalogImportPlan, refOfDocument, withBody } from '@domain/Catalog.Import'
+import { ICatalogImportPlan, refOfDocument, TRefTarget, withBody } from '@domain/Catalog.Import'
 import { IApprovedEntry, IAgentExtras, importDocuments } from '@domain/Import.Documents'
 import { draftKindForItem, verifyImportDraft } from '@domain/Import.Draft'
 import { canTransition } from '@domain/Import.Job'
 import { planAgentBatch, prefixedId } from '@domain/Import.Order'
 import { confirmedRules, IReachTranslation, ruleKey } from '@domain/Import.Permissions'
-import { IImportJobItem } from '@domain/models/ImportJob.Model'
+import { TInventoryKind } from '@domain/models/ImportInventory.Model'
+import { IImportJobItem, TImportItemState } from '@domain/models/ImportJob.Model'
 import { IPermissionRule } from '@domain/Permission.Policy'
 import { IImportJobRecord, IImportRepository } from '@domain/ports/ImportRepository.Port'
 import type { CatalogReader, TCatalogScope } from './Catalog.Reader'
@@ -71,6 +72,27 @@ export interface IImportApplyPreview {
   models: Array<{ provider: string; models: string[] }>
   /** O plano do catálogo sobre os documentos: diff, ampliações, referências quebradas, segredos, ordem e `planHash`. */
   plan: ICatalogImportPlan
+  /** O que falta (nem no catálogo, nem no pacote), com o item do trabalho que o produz, quando há. */
+  missing: IImportMissingRef[]
+}
+
+/** Uma referência que falta no catálogo e no pacote, e o item do trabalho que a resolve (ausente: não vem deste repositório). */
+export interface IImportMissingRef {
+  target: TRefTarget
+  id: string
+  /** Quem cita (`knowledge/x`). */
+  from: string[]
+  item?: { key: string; kind: TInventoryKind; state: TImportItemState; path: string }
+}
+
+/** Os tipos do inventário que produzem cada alvo de referência (o `doc` é qualquer documento de texto). */
+const KINDS_OF_TARGET: Partial<Record<TRefTarget, readonly TInventoryKind[]>> = {
+  doc: ['spec', 'adr', 'knowledge'],
+  spec: ['spec'],
+  skill: ['skill'],
+  command: ['command'],
+  agent: ['agent'],
+  mcp: ['mcp'],
 }
 
 export interface IImportApplyOutcome extends IImportApplyResult {
@@ -98,6 +120,9 @@ interface IPrepared {
   entries: IApprovedEntry[]
   skipped: Array<{ key: string; reason: string }>
   agents: IImportApplyAgent[]
+  /** Todos os itens do trabalho e o prefixo do lote: para achar quem produz o que falta. */
+  all: IImportJobItem[]
+  prefix: string
 }
 
 /**
@@ -131,6 +156,7 @@ export class ImportApplyUseCase {
       agents: prepared.agents,
       models: this.deps.models?.() ?? [],
       plan,
+      missing: missingRefs(plan, prepared.all, prepared.prefix),
     }
   }
 
@@ -256,6 +282,8 @@ export class ImportApplyUseCase {
       entries,
       skipped: [...skipped, ...built.skipped],
       agents: agents.map((agent) => agent.view),
+      all,
+      prefix,
     }
   }
 
@@ -352,4 +380,37 @@ export class ImportApplyUseCase {
       return { path: source.path, aliases: source.aliases, text: file.text }
     })
   }
+}
+
+/**
+ * As referências que faltam (`missing`), uma por alvo, com o item do trabalho que as produz: o do tipo certo cujo id no
+ * gateway (o do rascunho, o escolhido ou o proposto com o prefixo do lote) é o citado. A tela leva até ele.
+ */
+export function missingRefs(plan: Pick<ICatalogImportPlan, 'items'>, items: readonly IImportJobItem[], prefix: string): IImportMissingRef[] {
+  const found = new Map<string, IImportMissingRef>()
+  for (const planned of plan.items) {
+    for (const broken of planned.brokenRefs) {
+      if (broken.reason !== 'missing') continue
+      const ref = `${broken.target}/${broken.id}`
+      const known = found.get(ref)
+      if (known) {
+        if (!known.from.includes(broken.from)) known.from.push(broken.from)
+        continue
+      }
+      const kinds = KINDS_OF_TARGET[broken.target] ?? []
+      const entry = items.find((one) => {
+        const kind = one.kind ?? one.item.kind
+        if (!kinds.includes(kind)) return false
+        const drafted = lastDraft(one)?.outputs[0]?.meta.id
+        return [drafted, one.targetId, prefixedId(kind, one.item.candidateId, prefix).id, one.item.candidateId].includes(broken.id)
+      })
+      found.set(ref, {
+        target: broken.target,
+        id: broken.id,
+        from: [broken.from],
+        ...(entry ? { item: { key: entry.key, kind: entry.kind ?? entry.item.kind, state: entry.state, path: entry.item.sources[0]?.path ?? entry.key } } : {}),
+      })
+    }
+  }
+  return [...found.values()]
 }

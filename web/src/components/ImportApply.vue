@@ -9,11 +9,15 @@ import {
   classifyApplyFailure,
   OP_LABEL,
   PHASE_LABEL,
+  missingAction,
+  missingBuildGroups,
   previewApply,
   type IApplyPreview,
   type IApplyResult,
   type IApplySelection,
 } from '@/lib/importApply'
+import { BUILD_KINDS } from '@/lib/builder'
+import { KIND_LABEL, STATE_LABEL } from '@/lib/importer'
 import { useAuthStore } from '@/stores/auth'
 
 /**
@@ -31,7 +35,11 @@ const props = defineProps<{
   target: { batchId?: string; keys?: string[]; label: string }
   readonly?: boolean
 }>()
-const emit = defineEmits<{ close: []; applied: [result: IApplyResult] }>()
+/**
+ * `select`: ver o item no Importador; `build`: abrir o construtor para os itens; `include`: refazer a gravação com eles
+ * junto (as faltas já aprovadas).
+ */
+const emit = defineEmits<{ close: []; applied: [result: IApplyResult]; select: [key: string]; build: [keys: string[]]; include: [keys: string[]] }>()
 
 const auth = useAuthStore()
 /** Sem roteador (um teste da tela de fora), o link do lote é um link comum. */
@@ -58,6 +66,9 @@ const selection = computed<IApplySelection>(() => ({
 const plan = computed(() => preview.value?.plan)
 const changing = computed(() => (plan.value?.items ?? []).filter((item) => item.op !== 'unchanged'))
 const blockers = computed(() => (plan.value?.items ?? []).filter(blocking))
+const missing = computed(() => preview.value?.missing ?? [])
+const buildGroups = computed(() => missingBuildGroups(missing.value).filter((group) => group.keys.length > 1))
+const includable = computed(() => missing.value.filter((one) => missingAction(one, !!props.target.keys) === 'include').map((one) => one.item!.key))
 const canWrite = computed(() => auth.isAdmin && !props.readonly && !!plan.value && !blockers.value.length && plan.value.order.length > 0 && !writing.value)
 
 async function load() {
@@ -215,6 +226,59 @@ const partLabel = (part?: string) => (part === 'record' ? ' (registro)' : part =
           <DiffView v-if="item.diff && openDiff.has(item.ref)" :hunks="item.diff.hunks" />
         </li>
       </ul>
+
+      <section v-if="missing.length" class="flex flex-col gap-2 rounded-lg border border-amber-500/40 p-2 text-xs" data-test="apply-missing">
+        <p class="font-medium text-amber-200">Faltam no catálogo ({{ missing.length }}): o que é citado precisa existir antes, ou entrar junto nesta gravação.</p>
+        <ul class="flex flex-col gap-1.5">
+          <li v-for="one in missing" :key="`${one.target}/${one.id}`" class="flex flex-wrap items-center gap-2" data-test="missing-ref">
+            <code class="text-zinc-200">{{ one.id }}</code>
+            <template v-if="one.item">
+              <span class="rounded-full bg-zinc-800 px-1.5 text-[10px] text-zinc-300" data-test="missing-kind">{{ KIND_LABEL[one.item.kind] }} · {{ STATE_LABEL[one.item.state] }}</span>
+              <span class="min-w-0 truncate text-zinc-500" :title="one.item.path">{{ one.item.path }}</span>
+              <span class="flex-1" />
+              <button type="button" class="btn btn-ghost btn-sm" data-test="missing-view" @click="emit('select', one.item.key)">Ver no Importador</button>
+              <button
+                v-if="missingAction(one, !!target.keys) === 'build'"
+                type="button"
+                class="btn btn-secondary btn-sm"
+                :disabled="readonly"
+                data-test="missing-build"
+                @click="emit('build', [one.item.key])"
+              >
+                Preparar com o construtor
+              </button>
+              <button
+                v-if="missingAction(one, !!target.keys) === 'include'"
+                type="button"
+                class="btn btn-secondary btn-sm"
+                :disabled="readonly"
+                data-test="missing-include"
+                @click="emit('include', [one.item.key])"
+              >
+                Gravar junto
+              </button>
+            </template>
+            <span v-else class="text-zinc-500" data-test="missing-none">não vem deste repositório: crie no catálogo ou tire o vínculo</span>
+            <span class="basis-full text-zinc-500">citado por {{ one.from.join(', ') }}</span>
+          </li>
+        </ul>
+        <div v-if="buildGroups.length || includable.length > 1" class="flex flex-wrap gap-2">
+          <button
+            v-for="group in buildGroups"
+            :key="group.kind"
+            type="button"
+            class="btn btn-secondary btn-sm"
+            :disabled="readonly"
+            data-test="missing-build-group"
+            @click="emit('build', group.keys)"
+          >
+            Preparar as {{ group.keys.length }} juntas ({{ BUILD_KINDS[group.kind].builder }})
+          </button>
+          <button v-if="includable.length > 1" type="button" class="btn btn-secondary btn-sm" :disabled="readonly" data-test="missing-include-all" @click="emit('include', includable)">
+            Gravar as {{ includable.length }} junto
+          </button>
+        </div>
+      </section>
 
       <div v-if="plan.attentions.length" class="text-xs text-zinc-400">
         <p class="font-medium">Atenção</p>

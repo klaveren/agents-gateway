@@ -77,6 +77,7 @@ const RESULT: IApplyResult = {
 let app: App | undefined
 let next: IApplyPreview
 const appliedEvents: IApplyResult[] = []
+const events: Array<[string, unknown]> = []
 
 async function flush() {
   for (let i = 0; i < 6; i++) await nextTick()
@@ -94,7 +95,18 @@ async function mount(admin = true, target: { batchId?: string; keys?: string[]; 
   await router.isReady()
   const host = document.createElement('div')
   document.body.appendChild(host)
-  app = createApp({ render: () => h(ImportApply, { projectId: 'alfa', jobId: 'j1', target, onApplied: (result: IApplyResult) => appliedEvents.push(result) }) })
+  app = createApp({
+    render: () =>
+      h(ImportApply, {
+        projectId: 'alfa',
+        jobId: 'j1',
+        target,
+        onApplied: (result: IApplyResult) => appliedEvents.push(result),
+        onSelect: (key: string) => events.push(['select', key]),
+        onBuild: (keys: string[]) => events.push(['build', keys]),
+        onInclude: (keys: string[]) => events.push(['include', keys]),
+      }),
+  })
     .use(pinia)
     .use(router)
   app.mount(host)
@@ -118,6 +130,7 @@ describe('ImportApply — gravar no catálogo', () => {
   beforeEach(() => {
     next = preview()
     appliedEvents.length = 0
+    events.length = 0
     vi.mocked(api).mockReset()
     vi.mocked(api).mockImplementation(async (path: string) => {
       if (path.endsWith('/apply/plan')) return next
@@ -189,5 +202,48 @@ describe('ImportApply — gravar no catálogo', () => {
     next = preview()
     const member = await mount(false)
     expect(member.querySelector('[data-test="apply-write"]')).toBeNull()
+  })
+
+  it('o que falta diz o tipo e o estado, e leva ao item: ver, preparar (uma ou juntas) e gravar junto', async () => {
+    const item = (key: string, kind: string, state: string) => ({ key, kind, state, path: `.agents/${key}.md` })
+    next = {
+      ...preview(),
+      missing: [
+        { target: 'doc', id: 'plan-arq', from: ['knowledge/guia'], item: item('spec:plan-arq', 'spec', 'pending') },
+        { target: 'doc', id: 'dev-qualidade', from: ['knowledge/guia'], item: item('spec:dev-qualidade', 'spec', 'pending') },
+        { target: 'doc', id: 'pronta', from: ['knowledge/guia'], item: item('spec:pronta', 'spec', 'approved') },
+        { target: 'doc', id: 'sumiu', from: ['knowledge/guia'] },
+      ],
+    } as IApplyPreview
+    const host = await mount(true, { keys: ['knowledge:guia'], label: '1 selecionado(s)' })
+    const rows = [...host.querySelectorAll('[data-test="missing-ref"]')]
+    expect(rows[0].querySelector('[data-test="missing-kind"]')?.textContent).toContain('a importar')
+    expect(rows.map((row) => [!!row.querySelector('[data-test="missing-build"]'), !!row.querySelector('[data-test="missing-include"]')])).toEqual([
+      [true, false],
+      [true, false],
+      [false, true],
+      [false, false],
+    ])
+    expect(rows[3].querySelector('[data-test="missing-none"]')).not.toBeNull()
+    await click(rows[0].querySelector('[data-test="missing-view"]'))
+    await click(rows[0].querySelector('[data-test="missing-build"]'))
+    await click(host.querySelector('[data-test="missing-build-group"]'))
+    await click(rows[2].querySelector('[data-test="missing-include"]'))
+    expect(events).toEqual([
+      ['select', 'spec:plan-arq'],
+      ['build', ['spec:plan-arq']],
+      ['build', ['spec:plan-arq', 'spec:dev-qualidade']],
+      ['include', ['spec:pronta']],
+    ])
+  })
+
+  it('num lote salvo, a falta aprovada só se vê (o lote já leva os aprovados dele)', async () => {
+    next = {
+      ...preview(),
+      missing: [{ target: 'doc', id: 'pronta', from: ['knowledge/guia'], item: { key: 'spec:pronta', kind: 'spec', state: 'approved', path: 'x.md' } }],
+    } as IApplyPreview
+    const host = await mount()
+    expect(host.querySelector('[data-test="missing-include"]')).toBeNull()
+    expect(host.querySelector('[data-test="missing-view"]')).not.toBeNull()
   })
 })
