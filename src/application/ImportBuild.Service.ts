@@ -167,6 +167,15 @@ export class ImportBuildService {
       const kind = builderKindForItem(entry.kind ?? entry.item.kind)!
       byKind.set(kind, [...(byKind.get(kind) ?? []), key])
     }
+    // O trigger não se monta sem o agente: o agente do lote que está noutra conversa SEM rascunho vem junto (sai dela).
+    const triggers = byKind.get('agent') ?? []
+    const batch = this.deps.repository.batch(record.id, batchId)!
+    for (const key of [...triggers]) {
+      const parent = this.deps.repository.item(record.id, key)?.item.parent
+      if (!parent || triggers.includes(parent) || !batch.keys.includes(parent)) continue
+      const agent = this.deps.repository.item(record.id, parent)
+      if (agent?.state === 'drafting' && !lastDraft(agent)) triggers.unshift(parent)
+    }
     const opened: IImportConversation[] = []
     for (const [kind, keys] of byKind)
       for (let at = 0; at < keys.length; at += KEYS_MAX)
