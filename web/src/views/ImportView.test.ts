@@ -543,7 +543,10 @@ describe('ImportView', () => {
     const host = await mount(SMALL, { jobs: [job], analyze: false })
     host.querySelector<HTMLButtonElement>('[data-test="job"]')!.click()
     await flush()
-    expect(host.querySelector('[data-test="apply-targets"]')!.textContent).toContain('1 aprovado(s)')
+    // Os lotes e o gravar moram na área Lotes.
+    host.querySelector<HTMLButtonElement>('[data-test="area-batches"]')!.click()
+    await flush()
+    expect(host.querySelector('[data-test="apply-all"]')!.textContent).toContain('(1)')
     host.querySelector<HTMLButtonElement>('[data-test="apply-all"]')!.click()
     await flush()
     expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j7/apply/plan', { method: 'POST', body: {} })
@@ -551,6 +554,8 @@ describe('ImportView', () => {
     await flush()
     expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j7/apply', { method: 'POST', body: { planHash: 'h' } })
     expect(host.querySelector('[data-test="apply-history"]')!.getAttribute('href')).toBe('/catalog/history?lote=lote-1')
+    host.querySelector<HTMLButtonElement>('[data-test="area-inventory"]')!.click()
+    await flush()
     expect([...host.querySelectorAll('[data-test="row-state"]')].map((chip) => chip.textContent!.trim())).toContain('aplicado')
   })
 
@@ -683,14 +688,21 @@ describe('ImportView', () => {
     batch.querySelector<HTMLFormElement>('[data-test="save-batch"]')!.dispatchEvent(new Event('submit'))
     await flush()
     expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/jobs/j1/batches', { method: 'POST', body: { name: 'Deploy', keys: ['skill:deploy', 'command:ship'] } })
-    expect(host.querySelector('[data-test="batch-meta"]')!.textContent).toContain('root@x.test')
+    // Salvo, o lote vai ao passo Preparar; o Montar mostra quem salvou.
+    expect(host.querySelector('[data-test="step-prepare"]')!.className).toContain('on')
     expect(host.querySelector('[data-test="batches"]')!.textContent).toContain('Deploy')
+    expect(host.querySelectorAll('[data-test="progress-row"]')).toHaveLength(2)
+    host.querySelector<HTMLButtonElement>('[data-test="step-build"]')!.click()
+    await flush()
+    expect(host.querySelector('[data-test="batch-meta"]')!.textContent).toContain('root@x.test')
     expect(host.querySelector('[data-test="save-batch"]')).toBeNull()
 
-    // ⛔ Nada que grave no catálogo; o único "Importar" é o que abre a conversa do construtor (que não grava).
-    const labels = [...host.querySelectorAll('button')].map((button) => button.textContent!.trim()).filter((label) => !label.startsWith('Importar com o construtor'))
-    for (const word of ['Gravar', 'Transformar', 'Aplicar', 'Importar', 'Disparar']) expect(labels.some((label) => label.includes(word))).toBe(false)
+    // ⛔ Nada que grave no catálogo (sem aprovado, sem o passo de gravar à mão).
+    const labels = [...host.querySelectorAll('button')].map((button) => button.textContent!.trim())
+    for (const word of ['Gravar todos', 'Transformar', 'Aplicar', 'Disparar']) expect(labels.some((label) => label.includes(word))).toBe(false)
 
+    host.querySelector<HTMLButtonElement>('[data-test="area-inventory"]')!.click()
+    await flush()
     host.querySelector<HTMLButtonElement>('[data-test="pick-clear"]')!.click()
     await flush()
     expect(host.querySelector('[data-test="picked-count"]')!.textContent).toContain('0 selecionado')
@@ -732,19 +744,25 @@ describe('ImportView', () => {
     host.querySelector<HTMLButtonElement>('[data-test="job"]')!.click()
     await flush()
     expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j7/batches')
+    host.querySelector<HTMLButtonElement>('[data-test="area-batches"]')!.click()
+    await flush()
     const entry = host.querySelector<HTMLButtonElement>('[data-test="batch-entry"]')!
     expect(entry.textContent).toContain('Commands')
-    expect(entry.textContent).toContain('bia@x.test')
+    expect(entry.textContent).toContain('0/2 aprovado(s)')
     entry.click()
     await flush()
-    expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/jobs/j7/batches/b9')
+    expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j7/batches/b9')
+    // Nada foi ao construtor ainda: abre no passo Preparar; o Montar mostra o lote.
+    expect(host.querySelector('[data-test="step-prepare"]')!.className).toContain('on')
+    host.querySelector<HTMLButtonElement>('[data-test="step-build"]')!.click()
+    await flush()
     const batch = host.querySelector('[data-test="selection-batch"]')!
     expect(batch.textContent).toContain('Lote Commands')
     expect(batch.querySelectorAll('[data-test="step"]')).toHaveLength(2)
     expect(batch.querySelector('[data-test="save-batch"]')).toBeNull()
   })
 
-  it('"Importar com o construtor": uma conversa por construtor, para a seleção ou para o lote salvo; o item fica em drafting', async () => {
+  it('"Importar com o construtor": o item sozinho, no detalhe; o lote salvo, no passo Preparar, uma conversa por construtor', async () => {
     const stored: IImportBatchView = {
       id: 'b9',
       jobId: 'j7',
@@ -767,21 +785,20 @@ describe('ImportView', () => {
     })
     host.querySelector<HTMLButtonElement>('[data-test="job"]')!.click()
     await flush()
-    // A seleção mistura skill e command: um botão por construtor.
-    for (const box of host.querySelectorAll<HTMLInputElement>('[data-test="pick"]')) if (!box.closest('li')!.textContent!.includes('notes')) box.click()
+    // O item sozinho (no detalhe): uma conversa com o construtor dele.
+    ;[...host.querySelectorAll<HTMLButtonElement>('[data-test="row"]')].find((row) => row.textContent!.includes('deploy'))!.click()
     await flush()
-    const picked = [...host.querySelectorAll<HTMLButtonElement>('[data-test="build-picked"]')].map((button) => button.textContent!.trim())
-    expect(picked).toEqual(['Importar com o construtor (skill, 1)', 'Importar com o construtor (command, 1)'])
-    host.querySelector<HTMLButtonElement>('[data-test="build-picked"]')!.click()
+    host.querySelector<HTMLButtonElement>('[data-test="build"]')!.click()
     await flush()
     expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/jobs/j7/builder', { method: 'POST', body: { keys: ['skill:deploy'] } })
-    // A skill já tem conversa: sai dos botões.
-    expect([...host.querySelectorAll('[data-test="build-picked"]')].map((button) => button.textContent!.trim())).toEqual(['Importar com o construtor (command, 1)'])
-    // O lote salvo aberto: o que dele ainda vai ao construtor, pelo id do lote e o construtor.
+    // O lote salvo aberto, no passo Preparar: o que dele ainda vai ao construtor, pelo id do lote e o construtor.
+    host.querySelector<HTMLButtonElement>('[data-test="area-batches"]')!.click()
+    await flush()
     host.querySelector<HTMLButtonElement>('[data-test="batch-entry"]')!.click()
     await flush()
     const saved = host.querySelectorAll<HTMLButtonElement>('[data-test="build-saved-batch"]')
-    expect([...saved].map((button) => button.textContent!.trim())).toEqual(['Importar com o construtor (command, 1)'])
+    expect([...saved].map((button) => button.textContent!.trim())).toEqual(['Só command (1)'])
+    expect(host.querySelector('[data-test="prepare-batch"]')!.textContent).toContain('1 conversa')
     saved[0].click()
     await flush()
     expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/jobs/j7/builder', { method: 'POST', body: { batchId: 'b9', kind: 'command' } })
