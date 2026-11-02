@@ -83,6 +83,10 @@ export interface IImportMissingRef {
   /** Quem cita (`knowledge/x`). */
   from: string[]
   item?: { key: string; kind: TInventoryKind; state: TImportItemState; path: string }
+  /** Sem documento com o id, mas um item de outro tipo tem (um command): o vínculo está errado, não a falta. */
+  wrongKind?: { key: string; kind: TInventoryKind }
+  /** As chaves do trabalho de quem cita (para pedir ajuste no rascunho). */
+  fromKeys: string[]
 }
 
 /** Os tipos do inventário que produzem cada alvo de referência (o `doc` é qualquer documento de texto). */
@@ -156,7 +160,7 @@ export class ImportApplyUseCase {
       agents: prepared.agents,
       models: this.deps.models?.() ?? [],
       plan,
-      missing: missingRefs(plan, prepared.all, prepared.prefix),
+      missing: missingRefs(plan, prepared.all, prepared.prefix, prepared.produced),
     }
   }
 
@@ -386,29 +390,40 @@ export class ImportApplyUseCase {
  * As referências que faltam (`missing`), uma por alvo, com o item do trabalho que as produz: o do tipo certo cujo id no
  * gateway (o do rascunho, o escolhido ou o proposto com o prefixo do lote) é o citado. A tela leva até ele.
  */
-export function missingRefs(plan: Pick<ICatalogImportPlan, 'items'>, items: readonly IImportJobItem[], prefix: string): IImportMissingRef[] {
+export function missingRefs(
+  plan: Pick<ICatalogImportPlan, 'items'>,
+  items: readonly IImportJobItem[],
+  prefix: string,
+  produced: Readonly<Record<string, readonly string[]>> = {},
+): IImportMissingRef[] {
+  const keyOfRef = new Map(Object.entries(produced).flatMap(([key, refs]) => refs.map((ref) => [ref, key] as const)))
+  const idsOf = (one: IImportJobItem) => {
+    const kind = one.kind ?? one.item.kind
+    return [lastDraft(one)?.outputs[0]?.meta.id, one.targetId, prefixedId(kind, one.item.candidateId, prefix).id, one.item.candidateId]
+  }
   const found = new Map<string, IImportMissingRef>()
   for (const planned of plan.items) {
     for (const broken of planned.brokenRefs) {
       if (broken.reason !== 'missing') continue
       const ref = `${broken.target}/${broken.id}`
+      const fromKey = keyOfRef.get(broken.from)
       const known = found.get(ref)
       if (known) {
         if (!known.from.includes(broken.from)) known.from.push(broken.from)
+        if (fromKey && !known.fromKeys.includes(fromKey)) known.fromKeys.push(fromKey)
         continue
       }
       const kinds = KINDS_OF_TARGET[broken.target] ?? []
-      const entry = items.find((one) => {
-        const kind = one.kind ?? one.item.kind
-        if (!kinds.includes(kind)) return false
-        const drafted = lastDraft(one)?.outputs[0]?.meta.id
-        return [drafted, one.targetId, prefixedId(kind, one.item.candidateId, prefix).id, one.item.candidateId].includes(broken.id)
-      })
+      const withId = items.filter((one) => idsOf(one).includes(broken.id))
+      const entry = withId.find((one) => kinds.includes(one.kind ?? one.item.kind))
+      const other = entry ? undefined : withId[0]
       found.set(ref, {
         target: broken.target,
         id: broken.id,
         from: [broken.from],
+        fromKeys: fromKey ? [fromKey] : [],
         ...(entry ? { item: { key: entry.key, kind: entry.kind ?? entry.item.kind, state: entry.state, path: entry.item.sources[0]?.path ?? entry.key } } : {}),
+        ...(other ? { wrongKind: { key: other.key, kind: other.kind ?? other.item.kind } } : {}),
       })
     }
   }

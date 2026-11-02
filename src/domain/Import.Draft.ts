@@ -168,6 +168,9 @@ export const IMPORT_META: Readonly<Record<TImportDraftKind, { fields: readonly s
   trigger: { fields: ['id', 'when'], required: ['id', 'when'] },
 }
 
+/** O que um vínculo pode apontar: só documento de texto (o anexo e o contexto inicial são de docs). Command, skill e agente não. */
+export const IMPORT_LINK_KINDS: readonly TInventoryKind[] = ['spec', 'adr', 'knowledge']
+
 /** Os vínculos que cada tipo tem no painel: anexo de doc (skill, command, docs) e contexto inicial (agente). */
 const LINKS: Readonly<Record<TImportDraftKind, readonly TImportLink[]>> = {
   rule: [],

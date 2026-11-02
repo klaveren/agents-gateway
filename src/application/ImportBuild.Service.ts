@@ -6,6 +6,7 @@ import {
   IImportDraft,
   IImportIssue,
   IImportSourceText,
+  IMPORT_LINK_KINDS,
   missingRemovalOks,
   parseImportOps,
   TImportOp,
@@ -13,7 +14,7 @@ import {
 } from '@domain/Import.Draft'
 import { canTransition } from '@domain/Import.Job'
 import { IImportJobItem, IImportReview, TImportItemState } from '@domain/models/ImportJob.Model'
-import { IInventorySource } from '@domain/models/ImportInventory.Model'
+import { IInventorySource, TInventoryKind } from '@domain/models/ImportInventory.Model'
 import { TProtocolKind } from '@domain/models/Protocol.Model'
 import { IImportJobRecord, IImportRepository } from '@domain/ports/ImportRepository.Port'
 
@@ -280,6 +281,8 @@ export class ImportBuildService {
     }
     const check = verifyImportDraft(draft, sources)
     if (check.length) throw new ImportBuildError('invalid', 'the draft does not match source + operations', 'ops', check)
+    const wrong = this.wrongLinks(job.id, draft.links)
+    if (wrong.length) throw new ImportBuildError('invalid', 'the draft has problems', 'ops', wrong)
     const updated = this.deps.repository.updateItem(job.id, key, {
       state: 'review',
       drafts: [draft],
@@ -350,6 +353,30 @@ export class ImportBuildService {
     const entry = this.deps.repository.item(jobId, key)
     if (!entry) throw new ImportBuildError('not_found', `item not found in this import job: ${key}`, 'key')
     return entry
+  }
+
+  /**
+   * ⛔ O vínculo que aponta um item do trabalho que não é documento (um command, uma skill, um agente): o painel só
+   * anexa spec, ADR ou knowledge, e o catálogo recusaria. A citação fica como texto. Id fora do trabalho não se julga
+   * aqui (pode já estar no catálogo).
+   */
+  private wrongLinks(jobId: string, links: IImportDraft['links']): IImportIssue[] {
+    const kindsById = new Map<string, Array<{ key: string; kind: TInventoryKind }>>()
+    for (const entry of this.deps.repository.items(jobId)) {
+      const id = entry.targetId ?? entry.item.candidateId
+      kindsById.set(id, [...(kindsById.get(id) ?? []), { key: entry.key, kind: entry.kind ?? entry.item.kind }])
+    }
+    return links.flatMap((link) => {
+      const found = kindsById.get(link.target)
+      if (!found || found.some((one) => IMPORT_LINK_KINDS.includes(one.kind))) return []
+      const { key, kind } = found[0]
+      return [
+        {
+          field: `ops[${link.op}].target`,
+          message: `${link.target} is a ${kind} (${key}): a link attaches only a spec, ADR or knowledge. Drop this linkCitation and leave the citation as text`,
+        },
+      ]
+    })
   }
 
   /** O mapa de ids do trabalho: a chave do item → o id no gateway (o escolhido, senão o proposto). */
