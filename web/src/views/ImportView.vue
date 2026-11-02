@@ -46,7 +46,7 @@ import {
   type TInventoryKind,
 } from '@/lib/importer'
 import { BUILD_KINDS, type TBuildKind } from '@/lib/builder'
-import { BUILDABLE_STATES, buildLink, builderKindFor, type IImportBuildStatus } from '@/lib/importDraft'
+import { BUILDABLE_STATES, buildLink, builderKindFor, draftingWithoutConversation, type IImportBuildStatus } from '@/lib/importDraft'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectsStore } from '@/stores/projects'
 
@@ -164,7 +164,7 @@ function builderGroups(keys: readonly string[]): Array<{ kind: TBuildKind; keys:
     const item = byKey.get(key)
     const status = statuses.value[key] as IImportBuildStatus | undefined
     const state = status?.state ?? 'pending'
-    if (!item || !BUILDABLE_STATES.includes(state) || state === 'review' || (state === 'drafting' && status?.conversationId)) continue
+    if (!item || !BUILDABLE_STATES.includes(state) || state === 'review' || (state === 'drafting' && !draftingWithoutConversation(status))) continue
     const kind = builderKindFor(effectiveKind(item, overrides.value))
     if (kind) groups.set(kind, [...(groups.get(kind) ?? []), key])
   }

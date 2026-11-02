@@ -71,6 +71,8 @@ export interface IImportReviewView {
 /** O estado do item com o que o construtor e a revisão gravam. */
 export type IImportBuildStatus = IImportItemStatus & {
   conversationId?: string
+  /** `drafting` cuja conversa do construtor não existe mais (apagada, ou perdida num reinício): abre de novo. */
+  conversationLost?: boolean
   drafts?: unknown[]
   review?: IImportReviewView
   approvedBy?: string
@@ -87,6 +89,11 @@ export const OP_LABEL: Record<TImportOpType, string> = {
 }
 
 export const LINK_LABEL: Record<string, string> = { attach: 'anexo inteiro', reference: 'anexo por referência', initialContext: 'contexto inicial' }
+
+/** "No construtor" sem conversa viva (nenhuma ainda, ou a que havia sumiu): o construtor abre de novo. */
+export function draftingWithoutConversation(status: IImportBuildStatus | undefined): boolean {
+  return status?.state === 'drafting' && (!status.conversationId || !!status.conversationLost)
+}
 
 /** O rascunho em vigor do item (o último que passou na conferência). */
 export function lastDraft(status: IImportBuildStatus | undefined): IImportDraftView | undefined {

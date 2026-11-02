@@ -605,6 +605,7 @@ const importItemStatus = {
     fingerprint: { type: 'string', description: 'sha256 of the sources (path + sha256) in this job' },
     targetId: { type: 'string' },
     conversationId: { type: 'string' },
+    conversationLost: { type: 'boolean', description: '`drafting` whose builder conversation no longer exists: open the builder again for it' },
     drafts: { type: 'array', items: {} },
     review: {},
     approvedBy: { type: 'string' },

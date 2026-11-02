@@ -4,7 +4,7 @@ import { routerKey } from 'vue-router'
 import ImportItemReview from '@/components/ImportItemReview.vue'
 import { BUILD_KINDS } from '@/lib/builder'
 import { fullTime, tokens } from '@/lib/format'
-import { buildLink, builderKindFor, type IImportBuildStatus, lastDraft } from '@/lib/importDraft'
+import { buildLink, builderKindFor, draftingWithoutConversation, type IImportBuildStatus, lastDraft } from '@/lib/importDraft'
 import {
   bytesLabel,
   CATALOG_HINT,
@@ -71,12 +71,12 @@ function go(path: string) {
 const builder = computed(() => builderKindFor(props.kind))
 const build = computed(() => props.status as IImportBuildStatus | undefined)
 const draft = computed(() => lastDraft(build.value))
-const conversationLink = computed(() => (builder.value && build.value?.conversationId ? buildLink(builder.value, build.value.conversationId) : undefined))
+const conversationLink = computed(() => (builder.value && build.value?.conversationId && !build.value.conversationLost ? buildLink(builder.value, build.value.conversationId) : undefined))
 /** Vai (ou volta) ao construtor: sem conversa, ou de um estado que recomeça (rejeitado, erro, fonte mudada). */
 const canBuild = computed(() => {
   if (props.readonly || !builder.value) return false
   if (['pending', 'rejected', 'error', 'stale'].includes(state.value)) return true
-  return state.value === 'drafting' && !build.value?.conversationId
+  return draftingWithoutConversation(build.value)
 })
 
 const state = computed(() => props.status?.state ?? 'pending')
@@ -143,6 +143,7 @@ function onReclassify(event: Event) {
         Uma conversa com o {{ BUILD_KINDS[builder].builder }}, em modo importação: ele lê a fonte pelo servidor e propõe só operações (o texto não muda). A revisão fica aqui. Nada vai ao
         catálogo.
       </p>
+      <p v-if="build?.conversationLost" class="text-xs text-amber-300" data-test="conversation-lost">A conversa do construtor deste item não existe mais. Abra de novo: começa uma conversa nova.</p>
       <p v-if="reviewError && !draft" class="text-xs text-rose-300" data-test="build-error">{{ reviewError }}</p>
     </section>
 
