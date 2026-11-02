@@ -143,6 +143,18 @@ describe('runManualToolLoop', () => {
     assert.match(warning.payload.message, /Stopped after 3 tool turns/)
   })
 
+  it('sem teto (maxTurns ausente) segue até o modelo responder', async () => {
+    const history: TMessage[] = []
+    const many = [...Array.from({ length: 30 }, () => ({ text: 'x', calls: [call('run_bash')] })), { text: 'pronto', calls: [] }]
+    const { provider } = fakeProvider(many)
+    const { maxTurns: _maxTurns, ...unlimited } = base
+    const { events } = await drain(
+      runManualToolLoop<TMessage>({ ...unlimited, history, tools: [tool('run_bash')], catalog: fakeCatalog(() => ({ status: 'success', result: 'ok' })), provider }),
+    )
+    assert.strictEqual(events.filter((e) => e.type === 'tool.started').length, 30)
+    assert.ok(!events.some((e) => e.type === 'warning' && /Stopped after/.test(e.payload.message)))
+  })
+
   it('stops as soon as the turn is cancelled', async () => {
     const abort = new AbortController()
     const history: TMessage[] = []

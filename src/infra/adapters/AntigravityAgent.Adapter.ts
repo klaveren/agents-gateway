@@ -179,9 +179,10 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
           yield event
           if (event.type === 'error') return
         }
-        if (state.turns > maxToolTurns()) {
+        const limit = maxToolTurns()
+        if (limit !== undefined && state.turns > limit) {
           child.kill('SIGTERM')
-          yield { type: 'error', sessionId, timestamp: now(), payload: { message: `Antigravity passed ${maxToolTurns()} tool steps.` } }
+          yield { type: 'error', sessionId, timestamp: now(), payload: { message: `Antigravity passed ${limit} tool steps.` } }
           return
         }
       }

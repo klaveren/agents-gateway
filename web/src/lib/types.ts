@@ -333,7 +333,8 @@ export interface ISettings {
   limits?: Partial<Record<TLimitName, number>>
   /** O que vale agora, limite a limite (só leitura). */
   limitsInEffect?: Record<TLimitName, number>
-  limitBounds?: Record<TLimitName, { min: number; max: number; env: string }>
+  /** `unlimited`: aceita -1 (sem teto). */
+  limitBounds?: Record<TLimitName, { min: number; max: number; env: string; unlimited?: boolean }>
   /** Decisões de implantação: a tela mostra, só o deploy muda. */
   deployment?: {
     localToolsEnabled?: string

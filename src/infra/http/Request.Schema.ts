@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { FALLBACK_BOUNDS, FALLBACK_MODES, TFallbackMode } from '@domain/Fallback.Policy'
-import { LIMIT_BOUNDS, LIMIT_NAMES, TLimitName } from '@domain/models/Limits.Model'
+import { LIMIT_BOUNDS, LIMIT_NAMES, limitInBounds, TLimitName, UNLIMITED } from '@domain/models/Limits.Model'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { AUDIENCES } from '@domain/models/Settings.Model'
 import { PERMISSION_CATEGORIES, TPermissionCategory } from '@domain/Permission.Policy'
@@ -101,13 +101,24 @@ export const updateSettingsSchema = z.object({
   builderProvider: clearable,
   builderModel: clearable,
   classifyTurns: z.boolean().nullable().optional(),
-  // Cada limite na faixa dele; `null` num limite volta ao `.env`, e `null` no objeto volta todos.
+  // Cada limite na faixa dele (ou -1, "sem teto", no que aceita); `null` num limite volta ao `.env`, e `null` no objeto volta todos.
   limits: z
     .object(
-      Object.fromEntries(LIMIT_NAMES.map((name) => [name, z.number().int().min(LIMIT_BOUNDS[name].min).max(LIMIT_BOUNDS[name].max).nullable().optional()])) as Record<
-        TLimitName,
-        z.ZodOptional<z.ZodNullable<z.ZodNumber>>
-      >,
+      Object.fromEntries(
+        LIMIT_NAMES.map((name) => {
+          const { min, max, unlimited } = LIMIT_BOUNDS[name]
+          const range = `${min} to ${max}${unlimited ? `, or ${UNLIMITED} for no limit` : ''}`
+          return [
+            name,
+            z
+              .number()
+              .int()
+              .refine((value) => limitInBounds(name, value), `must be ${range}`)
+              .nullable()
+              .optional(),
+          ]
+        }),
+      ) as Record<TLimitName, z.ZodOptional<z.ZodNullable<z.ZodNumber>>>,
     )
     .strict()
     .nullable()

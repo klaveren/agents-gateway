@@ -22,8 +22,14 @@ export type TLimitName =
 
 export type ILimits = Partial<Record<TLimitName, number>>
 
-export const LIMIT_BOUNDS: Readonly<Record<TLimitName, { min: number; max: number; env: string }>> = {
-  maxToolTurns: { min: 1, max: 200, env: 'MAX_TOOL_TURNS' },
+/**
+ * "Sem teto" (-1), só no limite que o aceita (`unlimited`): os passos de ferramenta, porque um agente pode trabalhar
+ * horas. O que segura o turno aí é o detector de laço (`loop*`) e o botão parar.
+ */
+export const UNLIMITED = -1
+
+export const LIMIT_BOUNDS: Readonly<Record<TLimitName, { min: number; max: number; env: string; unlimited?: true }>> = {
+  maxToolTurns: { min: 1, max: 200, env: 'MAX_TOOL_TURNS', unlimited: true },
   maxOutputTokens: { min: 256, max: 128_000, env: 'MAX_OUTPUT_TOKENS' },
   delegationMaxDepth: { min: 0, max: 5, env: 'DELEGATION_MAX_DEPTH' },
   bashTimeoutMs: { min: 1_000, max: 600_000, env: 'BASH_TIMEOUT_MS' },
@@ -38,6 +44,12 @@ export const LIMIT_BOUNDS: Readonly<Record<TLimitName, { min: number; max: numbe
 
 export const LIMIT_NAMES = Object.keys(LIMIT_BOUNDS) as TLimitName[]
 
+/** Inteiro na faixa do limite, ou -1 no que aceita "sem teto". */
+export function limitInBounds(name: TLimitName, value: number): boolean {
+  const bounds = LIMIT_BOUNDS[name]
+  return Number.isInteger(value) && ((bounds.unlimited === true && value === UNLIMITED) || (value >= bounds.min && value <= bounds.max))
+}
+
 /** Só os inteiros dentro da faixa; o resto é descartado (documento editado à mão não derruba a leitura). */
 export function normalizeLimits(raw: unknown): ILimits | undefined {
   if (typeof raw !== 'object' || raw === null) return undefined
@@ -45,7 +57,7 @@ export function normalizeLimits(raw: unknown): ILimits | undefined {
   const limits: ILimits = {}
   for (const name of LIMIT_NAMES) {
     const value = stored[name]
-    if (typeof value === 'number' && Number.isInteger(value) && value >= LIMIT_BOUNDS[name].min && value <= LIMIT_BOUNDS[name].max) limits[name] = value
+    if (typeof value === 'number' && limitInBounds(name, value)) limits[name] = value
   }
 
   return Object.keys(limits).length ? limits : undefined

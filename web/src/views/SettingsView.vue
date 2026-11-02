@@ -235,12 +235,15 @@ async function saveSettings() {
                 v-model="limitDrafts[limit.name]"
                 type="number"
                 step="1"
-                :min="settings.current.limitBounds[limit.name]?.min"
+                :min="settings.current.limitBounds[limit.name]?.unlimited ? -1 : settings.current.limitBounds[limit.name]?.min"
                 :max="settings.current.limitBounds[limit.name]?.max"
-                :placeholder="String(settings.current.limitsInEffect?.[limit.name] ?? '')"
+                :placeholder="settings.current.limitsInEffect?.[limit.name] === -1 ? 'sem teto' : String(settings.current.limitsInEffect?.[limit.name] ?? '')"
                 class="h-9 rounded-lg border border-zinc-800 bg-zinc-900 px-3 text-sm tabular-nums"
               />
-              <small class="text-xs text-zinc-500">{{ settings.current.limitBounds[limit.name]?.min }} a {{ settings.current.limitBounds[limit.name]?.max }}</small>
+              <small class="text-xs text-zinc-500"
+                >{{ settings.current.limitBounds[limit.name]?.min }} a {{ settings.current.limitBounds[limit.name]?.max
+                }}<template v-if="settings.current.limitBounds[limit.name]?.unlimited">, ou -1 para sem teto (o detector de laço e o botão parar seguram)</template></small
+              >
             </label>
           </div>
         </div>

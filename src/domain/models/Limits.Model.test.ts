@@ -14,6 +14,11 @@ describe('Limits', () => {
     assert.deepStrictEqual(normalizeSettings({ audience: 'all', limits: { streamsPerOwner: 5 } }).limits, { streamsPerOwner: 5 })
   })
 
+  it('-1 é "sem teto" só nos passos de ferramenta; nos outros limites é descartado', () => {
+    assert.deepStrictEqual(normalizeLimits({ maxToolTurns: -1, delegationMaxDepth: -1, streamsPerOwner: -1 }), { maxToolTurns: -1 })
+    assert.strictEqual(normalizeLimits({ maxToolTurns: -2 }), undefined)
+  })
+
   it('a gravação mescla limite a limite; null volta ao .env, e null no objeto volta todos', () => {
     const current = { audience: 'all' as const, limits: { maxToolTurns: 20, sessionsPerOwner: 10 } }
 

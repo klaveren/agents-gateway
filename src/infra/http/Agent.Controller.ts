@@ -34,7 +34,7 @@ import { toSharedConversation } from '@domain/models/Conversation.Model'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { MODEL_PRICING, TModelPricing } from '@domain/models/Model.Pricing'
 import { allowsCaller, mergeSettings } from '@domain/models/Settings.Model'
-import { LIMIT_BOUNDS, liveLimit } from '@domain/models/Limits.Model'
+import { LIMIT_BOUNDS, liveLimit, UNLIMITED } from '@domain/models/Limits.Model'
 import { IConversationEvents, TConversationEvent } from '@domain/ports/ConversationEvents.Port'
 import { ITurnLive } from '@domain/ports/TurnLive.Port'
 import { IProviderDirectory } from '@domain/ports/ProviderRepository.Port'
@@ -851,7 +851,7 @@ export class AgentController {
         defaults: { agentId: fallback?.id, ...(fallback ? targetFor(fallback, undefined, undefined, (target) => this.agents.isTargetRunnable(fallback, target)) : {}) },
         // O que vale AGORA (a tela, senão o `.env`, senão o padrão) e a faixa que a gravação aceita.
         limitsInEffect: {
-          maxToolTurns: maxToolTurns(),
+          maxToolTurns: maxToolTurns() ?? UNLIMITED,
           maxOutputTokens: maxOutputTokens(),
           delegationMaxDepth: delegationMaxDepth(),
           bashTimeoutMs: bash.timeoutMs,
