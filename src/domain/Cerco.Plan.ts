@@ -32,6 +32,11 @@ export interface ICercoBase {
    * a que CONTÉM a raiz sai (o runtime faz a negação vencer a liberação, e a escrita já é fechada por padrão).
    */
   alwaysDeny: readonly string[]
+  /**
+   * As pastas SÓ LEITURA: os arquivos de recurso (skills, commands, agentes; ver `ResourceFile.Model`). Lidas sempre,
+   * gravadas nunca — nem com uma regra de escrita que as cubra: quem grava é o gateway.
+   */
+  readOnly?: readonly string[]
   /** Regras de sistema da instalação (absolutas). */
   system?: readonly IPermissionRule[]
   /**
@@ -81,9 +86,16 @@ export function cercoPlan(layers: IPermissionLayers, base: ICercoBase): ICercoPl
   return {
     // A raiz fechada para leitura por padrão: só o que as regras liberam (e as pastas de trabalho) se lê dentro dela.
     readDeny: [...new Set([...base.alwaysDeny, base.root, ...read.deny])],
-    readAllow: [...new Set([...base.scratch, ...base.alwaysRead, ...git, ...read.allow])],
+    readAllow: [...new Set([...base.scratch, ...base.alwaysRead, ...git, ...read.allow, ...(base.readOnly ?? [])])],
     writeAllow: [...new Set([...base.scratch, ...git, ...write.allow])],
-    writeDeny: [...new Set([...base.alwaysDeny.filter((path) => !contains(path, base.root)), ...write.deny, ...(base.gitCommonDir ? gitWriteDenies(base.gitCommonDir) : [])])],
+    writeDeny: [
+      ...new Set([
+        ...base.alwaysDeny.filter((path) => !contains(path, base.root)),
+        ...write.deny,
+        ...(base.gitCommonDir ? gitWriteDenies(base.gitCommonDir) : []),
+        ...(base.readOnly ?? []),
+      ]),
+    ],
   }
 }
 

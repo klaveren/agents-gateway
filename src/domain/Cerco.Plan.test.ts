@@ -27,6 +27,15 @@ describe('Cerco.Plan', () => {
     assert.ok(!plan.readAllow.some((path) => path === '/w/p/repositories/abc'), 'o checkout principal fica fora')
   })
 
+  it('⛔ as pastas só leitura (arquivos de recurso): lidas sempre, gravadas nunca — nem com regra de escrita que as cubra', () => {
+    const plan = cercoPlan({ agent: [rule('write', '**')] }, { ...base, readOnly: ['/w/p/skills', '/srv/data/global'] })
+    for (const path of ['/w/p/skills', '/srv/data/global']) {
+      assert.ok(plan.readAllow.includes(path), path)
+      assert.ok(plan.writeDeny.includes(path), path)
+    }
+    assert.ok(plan.writeAllow.includes('/w/p/**'))
+  })
+
   it('sem regra: a raiz fechada para leitura e escrita, só as pastas de trabalho abertas; segredos sempre negados', () => {
     const plan = cercoPlan({}, base)
     assert.ok(plan.readDeny.includes('/w/p') && plan.readDeny.includes('/home/gw'))

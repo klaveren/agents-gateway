@@ -1,3 +1,5 @@
+import type { IResourceFile } from './ResourceFile.Model'
+
 /**
  * Um RECURSO do agente: uma SKILL (um modo de fazer algo, que o agente carrega quando o assunto aparece) ou um
  * COMMAND (um pedido pronto que a pessoa dispara com `/nome argumentos`). Global ou do projeto, como as rules, e com
@@ -26,6 +28,8 @@ export interface IResource {
    * quem decide é a pessoa, anexo a anexo — o sistema não impõe teto de tamanho.
    */
   docRefs?: string[]
+  /** Os arquivos da pasta da skill/command (scripts, modelos): ver `ResourceFile.Model`. Ausente = nenhum. */
+  files?: IResourceFile[]
   createdAt: Date
   updatedAt: Date
   updatedBy?: string

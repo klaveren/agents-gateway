@@ -76,7 +76,7 @@ export function makeOrchestrator(): AgentProvider {
    * provider escuta o mesmo, e é isso que faz a mudança valer no instante em que é gravada.
    */
   const models = makeModelCatalog()
-  return new AgentProvider(
+  const provider = new AgentProvider(
     adapters,
     sessions,
     makeSettings(),
@@ -91,6 +91,8 @@ export function makeOrchestrator(): AgentProvider {
       return projects.exists(projectId) ? projects.get(projectId).name : undefined
     },
   )
+  provider.useAgentFiles((agent) => makeAgents().filesDir(agent))
+  return provider
 }
 
 let bench: ProviderBench | undefined

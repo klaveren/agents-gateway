@@ -166,4 +166,37 @@ describe('AgentCatalog', () => {
     assert.strictEqual(catalog.fallback(), undefined)
     assert.throws(() => catalog.save({ ...base, id: 'builder-skill' }, options(true)), InvalidAgentError)
   })
+
+  it('arquivos do agente: conteúdo não enviado é recusado; a pasta acompanha o projeto e sai com o agente', () => {
+    const blobs = new Set(['a'.repeat(64)])
+    const dirs = new Map<string, string[]>()
+    const key = (id: string, projectId?: string) => `${projectId ?? 'global'}/${id}`
+    const catalog = build()
+    catalog.useFiles({
+      has: (sha) => blobs.has(sha),
+      put: () => ({ sha256: '', bytes: 0 }),
+      read: () => undefined,
+      dirOf: (_kind, id, projectId) => `/dados/${key(id, projectId)}`,
+      sync: (_kind, id, projectId, files) => (
+        files.length
+          ? dirs.set(
+              key(id, projectId),
+              files.map((file) => file.path),
+            )
+          : dirs.delete(key(id, projectId)),
+        undefined
+      ),
+      remove: (_kind, id, projectId) => void dirs.delete(key(id, projectId)),
+    })
+    const file = (path: string, char: string) => ({ path, sha256: char.repeat(64), bytes: 3 })
+    assert.throws(() => catalog.save({ ...base, files: [file('b.sh', 'b')] }, options(true)), /content not uploaded: b\.sh/)
+    catalog.save({ ...base, files: [file('a.sh', 'a')] }, options(true))
+    assert.deepStrictEqual([...dirs.entries()], [['global/pesquisa', ['a.sh']]])
+    assert.strictEqual(catalog.filesDir(catalog.get('pesquisa')!), '/dados/global/pesquisa')
+    catalog.moveToProject('pesquisa', 'alfa', 'root')
+    assert.deepStrictEqual([...dirs.keys()], ['alfa/pesquisa'])
+    catalog.save({ ...base, id: 'outro', name: 'Outro' }, options(true))
+    catalog.remove('pesquisa', 'root')
+    assert.deepStrictEqual([...dirs.keys()], [])
+  })
 })

@@ -206,6 +206,12 @@ export const agentBodySchema = z.object({
    * na edição = mantém; `{}` ou `null` apaga todas.
    */
   env: z.record(z.string(), z.string()).nullable().optional(),
+  /** Os arquivos da pasta do agente (o conteúdo já no depósito). Ausente na edição = mantém; `[]` ou `null` tira todos. */
+  files: z
+    .array(z.object({ path: z.string(), sha256: z.string(), bytes: z.number() }))
+    .max(1_000)
+    .nullable()
+    .optional(),
   /** O diagnóstico depois de editar. Ausente na edição = mantém; `null` desliga. */
   diagnostics: z
     .object({

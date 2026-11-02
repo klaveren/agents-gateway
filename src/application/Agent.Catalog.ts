@@ -1,3 +1,5 @@
+import { sortFiles } from '@domain/models/ResourceFile.Model'
+import { IResourceFilesPort } from '@domain/ports/ResourceFiles.Port'
 import { toCapabilities } from '@domain/Capability.Catalog'
 import { agentIssues, IAgentRules, triggerIssues } from '@domain/Agent.Policy'
 import { AgentInUseError, AgentNotFoundError, InvalidAgentError } from '@domain/errors/Domain.Error'
@@ -51,6 +53,18 @@ export class AgentCatalog implements IAgentDirectory {
      */
     private readonly core: () => IAgent[] = () => [],
   ) {}
+
+  /** O depósito e as pastas dos arquivos de recurso (ver `ResourceFile.Model`). Sem ele, agente com arquivo é recusado. */
+  useFiles(files: IResourceFilesPort): void {
+    this.files = files
+  }
+
+  private files?: IResourceFilesPort
+
+  /** A pasta do agente com os arquivos dele (só leitura para ele), ou nada. */
+  filesDir(agent: Pick<IAgent, 'id' | 'projectId' | 'files'>): string | undefined {
+    return this.files && agent.files?.length ? this.files.dirOf('agent', agent.id, agent.projectId) : undefined
+  }
 
   /** Os agentes com os modelos que podem ser usados agora. */
   list(): IAgent[] {
@@ -117,11 +131,24 @@ export class AgentCatalog implements IAgentDirectory {
     // Na criação nenhum id existente serve; na atualização, o próprio é este.
     const takenIds = options.creating ? [...this.list(), ...this.core()].map((existing) => existing.id) : []
     const issues = agentIssues(agent, { ...options.rules, takenIds })
+    if (!issues.length && agent.files?.length) {
+      if (!this.files) issues.push({ field: 'files', message: 'resource files are not available on this gateway' })
+      else agent.files.forEach((file, index) => !this.files!.has(file.sha256) && issues.push({ field: `files[${index}].sha256`, message: `content not uploaded: ${file.path}` }))
+    }
     if (issues.length) throw new InvalidAgentError(issues)
 
-    const saved = this.repository.save(agent, options.by)
+    const before = this.repository.list().find((stored) => stored.id === agent.id)
+    const saved = this.repository.save(agent.files?.length ? { ...agent, files: sortFiles(agent.files) } : agent, options.by)
+    this.placeFiles(before ? toAgent(before) : undefined, saved)
     this.history.record([{ kind: 'agent', id: agent.id }], { by: options.by })
     return saved
+  }
+
+  /** A pasta do agente acompanha o registro: muda de lugar com o projeto, e a lista vazia a apaga. */
+  private placeFiles(before: Pick<IAgent, 'id' | 'projectId'> | undefined, after: Pick<IAgent, 'id' | 'projectId' | 'files'>): void {
+    if (!this.files) return
+    if (before && before.projectId !== after.projectId) this.files.remove('agent', before.id, before.projectId)
+    this.files.sync('agent', after.id, after.projectId, after.files ?? [])
   }
 
   /**
@@ -144,7 +171,8 @@ export class AgentCatalog implements IAgentDirectory {
   moveToProject(id: string, projectId: string, by: string): void {
     const stored = this.repository.list().find((agent) => agent.id === id)
     if (!stored) return
-    this.repository.save({ ...toAgent(stored), projectId }, by)
+    const moved = this.repository.save({ ...toAgent(stored), projectId }, by)
+    this.placeFiles(toAgent(stored), moved)
     this.history.record([{ kind: 'agent', id }], { by, source: 'migration' })
   }
 
@@ -159,7 +187,9 @@ export class AgentCatalog implements IAgentDirectory {
       .map((agent) => agent.id)
     const isDefault = options.defaultAgentId === id
     if (delegators.length || isDefault) throw new AgentInUseError(id, delegators, isDefault)
+    const stored = this.repository.list().find((agent) => agent.id === id)
     if (!this.repository.delete(id)) throw new AgentNotFoundError(id)
+    if (stored) this.files?.remove('agent', id, stored.projectId)
     this.history.record([{ kind: 'agent', id }], { by })
   }
 }
@@ -188,6 +218,7 @@ function toAgent(stored: IStoredAgent): IAgent {
     ...(diagnosticsOn(stored.diagnostics) ? { diagnostics: { ...stored.diagnostics } } : {}),
     ...(stored.triggers?.length ? { triggers: stored.triggers.map((trigger) => ({ id: trigger.id, when: trigger.when, body: trigger.body })) } : {}),
     ...(stored.env && Object.keys(stored.env).length ? { env: { ...stored.env } } : {}),
+    ...(stored.files?.length ? { files: stored.files.map((file) => ({ ...file })) } : {}),
     ...(stored.fallback
       ? { fallback: { mode: stored.fallback.mode, ...(stored.fallback.chain?.length ? { chain: stored.fallback.chain.map((step) => ({ ...step })) } : {}) } }
       : {}),

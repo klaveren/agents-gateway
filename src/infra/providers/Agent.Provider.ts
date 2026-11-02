@@ -507,6 +507,13 @@ export class AgentProvider implements IAgentProvider {
    * Onde a conversa opera, para o "## Ambiente" do system prompt: o diretório pela MESMA regra das lanes — a pasta do
    * repositório ou da worktree (`workFolderOf`), senão a do projeto do agente, senão a pasta vazia da conversa.
    */
+  /** A pasta dos arquivos do agente (ver `ResourceFile.Model`), para o "## Ambiente". Ligada na composição. */
+  useAgentFiles(dirOf: (agent: IAgent) => string | undefined): void {
+    this.agentFiles = dirOf
+  }
+
+  private agentFiles?: (agent: IAgent) => string | undefined
+
   private ambientOf(agent: IAgent, metadata: Record<string, unknown> | undefined): IAmbient {
     const projectId = projectOf(metadata) ?? agent.projectId
     let folder: IContextWorkFolder | undefined
@@ -523,6 +530,7 @@ export class AgentProvider implements IAgentProvider {
       ...(projectId ? { project: { id: projectId, ...(name ? { name } : {}), own: agent.projectId === projectId } } : {}),
       ...(folder?.repository ? { repository: { name: folder.repository, ...(folder.worktree ? { worktree: folder.worktree } : {}), ...(branch ? { branch } : {}) } } : {}),
       ...(folder ? { directory: folder.dir } : agent.projectId ? { directory: projectWorkspacePath(agent.projectId) } : {}),
+      ...(this.agentFiles?.(agent) ? { files: this.agentFiles(agent) } : {}),
     }
   }
 

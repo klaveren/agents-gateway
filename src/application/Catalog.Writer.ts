@@ -1,3 +1,4 @@
+import type { IResourceFile } from '@domain/models/ResourceFile.Model'
 import { ICatalogDocument, parseProtocolItemId } from '@domain/Catalog.Document'
 import type { IAgentRules } from '@domain/Agent.Policy'
 import { CatalogRestoreInvalidError } from '@domain/errors/Domain.Error'
@@ -180,6 +181,8 @@ export class CatalogWriter implements ICatalogWriter {
       body: text(body.body),
       docIds: list(body.docIds),
       docRefs: list(body.docRefs),
+      // A lista de arquivos da versão (o conteúdo mora no depósito por sha256: reverter traz o de antes).
+      files: filesOf(body.files),
     }
     return {
       commit: (by) => {
@@ -319,4 +322,9 @@ export class CatalogWriter implements ICatalogWriter {
       },
     }
   }
+}
+
+/** A lista de arquivos de um corpo do catálogo (o que não tiver a forma, a regra do recurso recusa). */
+function filesOf(value: unknown): IResourceFile[] {
+  return Array.isArray(value) ? (value as IResourceFile[]) : []
 }

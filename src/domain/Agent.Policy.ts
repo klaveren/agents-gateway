@@ -1,3 +1,4 @@
+import { fileIssues } from './models/ResourceFile.Model'
 import { permissionIssues } from './Permission.Policy'
 import { CLI_ARG_PROTOCOLS } from './CliArgument.Policy'
 import { capability, isCapability } from './Capability.Catalog'
@@ -183,6 +184,7 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
 
   for (const item of triggerIssues(agent.triggers)) issue(item.field, item.message)
   for (const item of envIssues(agent.env)) issue(item.field, item.message)
+  for (const item of fileIssues(agent.files)) issue(item.field, item.message)
 
   if (!agent.systemPrompt.trim()) issue('systemPrompt', 'required')
   else {

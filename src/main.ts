@@ -25,6 +25,7 @@ import { cleanupOrphans } from '@infra/sandbox/Docker.Sandbox'
 import { persistInstalls } from '@infra/packages/Persistent.Installs'
 import { migrateToProjects } from '@composition/factories/Projects.Factory'
 import { reconcileCatalogHistory } from '@composition/factories/CatalogHistory.Factory'
+import { syncResourceFiles } from '@composition/factories/ResourceFiles.Factory'
 import { projectSandbox } from '@infra/sandbox/Project.Sandbox'
 import { bootIssues, bootWarnings } from '@infra/http/Boot.Checks'
 import { clearSessionWorkspaces } from '@infra/adapters/support/Subscription.Workspace'
@@ -86,6 +87,8 @@ async function bootstrap() {
   await migrateToProjects(controller.conversations)
   // O histórico do catálogo: baseline do que não tem revisão e deriva do que mudou fora dele (semente, migrações, banco).
   reconcileCatalogHistory()
+  // As pastas dos arquivos de recurso, a partir do catálogo (ver `ResourceFile.Model`).
+  syncResourceFiles()
   const server = new HttpServer(
     controller,
     makeAuthController(),
