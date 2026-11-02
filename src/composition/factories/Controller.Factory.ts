@@ -40,7 +40,7 @@ import { removeInstall } from '@infra/mcp/Mcp.Install'
 import { catalogFinder, ImportScanUseCase } from '@application/ImportScan.Usecase'
 import { ImportJobService } from '@application/ImportJob.Service'
 import { ImportBatchService } from '@application/ImportBatch.Service'
-import { readRepoTree } from '@infra/import/Repo.Tree'
+import { readRepoBytes, readRepoTree } from '@infra/import/Repo.Tree'
 import { AgentsDirDetector } from '@infra/import/AgentsDir.Detector'
 import { AgentsMdDetector } from '@infra/import/AgentsMd.Detector'
 import { ClaudeDetector } from '@infra/import/Claude.Detector'
@@ -356,6 +356,19 @@ export function makeImportController(): ImportController {
           .filter((provider) => provider.enabled)
           .map((provider) => ({ provider: provider.id, models: makeModelCatalog().enabledIds(provider.id) }))
           .filter((entry) => entry.models.length > 0),
+      // Os arquivos de recurso (scripts da skill e do agente): byte a byte, conferidos, para o depósito.
+      readRaw: (projectId, repository, path) => {
+        try {
+          return readRepoBytes(resolveWorkFolder(projects.folderOf(projectId), repository).dir, path)
+        } catch {
+          return undefined
+        }
+      },
+      files: makeResourceFiles(),
+      secretsIn: (text) =>
+        makeSecretMasker()
+          .scan(text)
+          .hits.map((hit) => hit.label),
     }),
     projectExists: (projectId) => projects.exists(projectId),
     conversationExists: async (conversationId) => {

@@ -25,8 +25,17 @@ const SOURCES: Record<string, string> = {
 const sha = (text: string) => createHash('sha256').update(text).digest('hex')
 
 /** Um repositório sintético (em memória), o trabalho com os itens, o construtor, o catálogo e a gravação. */
-async function setup(options: { wrapWriter?: (writer: ICatalogWriter) => ICatalogWriter } = {}) {
-  const files = { ...SOURCES }
+async function setup(options: { wrapWriter?: (writer: ICatalogWriter) => ICatalogWriter; withFiles?: boolean } = {}) {
+  const files: Record<string, string> = {
+    ...SOURCES,
+    ...(options.withFiles
+      ? {
+          '.agents/skills/revisar/run.sh': '#!/bin/sh\necho revisar\n',
+          '.agents/agents/maya/scripts/saldo.mjs': 'console.log(1)\n',
+          '.agents/agents/maya/scripts/chave.mjs': 'const k = "ghp_0123456789abcdefghijklmnopqrstuvwxyzAB"\n',
+        }
+      : {}),
+  }
   const item = (key: string, path: string, refs: IInventoryItem['refs'] = [], parent?: string): IInventoryItem => {
     const [kind, id] = key.split(':') as [TInventoryKind, string]
     return {
@@ -51,6 +60,16 @@ async function setup(options: { wrapWriter?: (writer: ICatalogWriter) => ICatalo
     item('trigger:maya/revisar', '.agents/agents/maya/triggers/01-revisar.md', [], 'agent:maya'),
     item('rule:commits', '.agents/rules/commits.md'),
   ]
+  if (options.withFiles) {
+    // A skill com o script dela (vai como arquivo, fora do rascunho); a pasta scripts/ do agente, que a varredura deixa de fora.
+    const source = (path: string, role?: string) => ({ path, aliases: [], bytes: Buffer.byteLength(files[path]), tokens: 1, sha256: sha(files[path]), ...(role ? { role } : {}) })
+    const skill = items.find((entry) => entry.key === 'skill:revisar')!
+    skill.sources = [source('.agents/skills/revisar/SKILL.md', 'skill'), source('.agents/skills/revisar/run.sh', 'attachment')]
+    items.push({
+      ...item('skip:.agents/agents/maya/scripts', '.agents/agents/maya/scripts/saldo.mjs'),
+      sources: [source('.agents/agents/maya/scripts/saldo.mjs'), source('.agents/agents/maya/scripts/chave.mjs')],
+    })
+  }
   const repository = new SqliteImportRepository()
   repository.create({
     id: 'j1',
@@ -90,7 +109,26 @@ async function setup(options: { wrapWriter?: (writer: ICatalogWriter) => ICatalo
     'trigger:maya/revisar': { meta: { id: 'revisar', when: 'pedirem revisão' } },
   })
 
-  const stack = buildCatalogStack(options.wrapWriter ? { wrapWriter: options.wrapWriter } : {})
+  // O depósito em memória: o conteúdo por sha, e a pasta de cada recurso (o que a gravação escreveria).
+  const depot = new Map<string, Buffer>()
+  const folders = new Map<string, string[]>()
+  const filesPort = {
+    has: (hash: string) => depot.has(hash),
+    put: (content: Buffer) => {
+      const hash = createHash('sha256').update(content).digest('hex')
+      depot.set(hash, content)
+      return { sha256: hash, bytes: content.length }
+    },
+    read: (hash: string) => depot.get(hash),
+    dirOf: (kind: string, id: string) => `/dados/${kind}/${id}`,
+    sync: (kind: string, id: string, _projectId: string | undefined, list: ReadonlyArray<{ path: string }>) =>
+      void folders.set(
+        `${kind}/${id}`,
+        list.map((file) => file.path),
+      ),
+    remove: (kind: string, id: string) => void folders.delete(`${kind}/${id}`),
+  }
+  const stack = buildCatalogStack({ ...(options.wrapWriter ? { wrapWriter: options.wrapWriter } : {}), ...(options.withFiles ? { files: filesPort } : {}) })
   stack.projects.create({ id: 'alfa', name: 'Alfa' }, 'ana')
   // O alcance do opencode da Maya: terminal amplo (`*`), a skill dela, e o `bash` ligado.
   const reach = new Map([['agent:maya', { name: 'maya', permission: { bash: { '*': 'allow' }, skill: { revisar: 'allow' } }, tools: { bash: true } }]])
@@ -105,8 +143,15 @@ async function setup(options: { wrapWriter?: (writer: ICatalogWriter) => ICatalo
     reader: stack.reader,
     models: () => [{ provider: 'google', models: ['gemini-3.7-flash'] }],
     now: () => new Date('2026-10-30T12:00:00.000Z'),
+    ...(options.withFiles
+      ? {
+          readRaw: (_projectId: string, _repository: string, path: string) => (path in files ? Buffer.from(files[path]) : undefined),
+          files: filesPort,
+          secretsIn: (text: string) => (/ghp_/.test(text) ? ['token'] : []),
+        }
+      : {}),
   })
-  return { files, repository, stack, apply }
+  return { files, repository, stack, apply, depot, folders }
 }
 
 const ALL: IImportApplySelection = { keys: ['spec:arq', 'spec:outro', 'skill:revisar', 'agent:maya', 'trigger:maya/revisar', 'rule:commits'], models: MODEL }
@@ -266,6 +311,29 @@ describe('ImportApplyUseCase — a gravação do importador pelo catálogo', () 
     ])
     // Com a spec no pacote, nada falta.
     assert.deepStrictEqual((await apply.preview('alfa', 'j1', { keys: ['skill:revisar', 'spec:arq'] })).missing, [])
+  })
+})
+
+describe('ImportApplyUseCase — os arquivos de recurso que a importação leva', () => {
+  it('a skill leva o script (fora do rascunho); o agente, a pasta scripts/ — o que tem segredo fica de fora, com o motivo', async () => {
+    const { apply } = await setup({ withFiles: true })
+    const preview = await apply.preview('alfa', 'j1', ALL)
+    const skipped = preview.skipped.map((entry) => `${entry.key} ${entry.reason}`)
+    assert.ok(
+      skipped.some((line) => /^agent:maya arquivo \.agents\/agents\/maya\/scripts\/chave\.mjs fica de fora: parece ter segredo/.test(line)),
+      skipped.join('\n'),
+    )
+    assert.ok(!skipped.some((line) => /run\.sh|saldo\.mjs/.test(line)))
+  })
+
+  it('gravar: o conteúdo entra no depósito antes, e a pasta da skill e do agente é escrita', async () => {
+    const { apply, folders, depot } = await setup({ withFiles: true })
+    const preview = await apply.preview('alfa', 'j1', ALL)
+    const confirm = preview.plan.widenings.map((widening) => widening.key)
+    await apply.apply('alfa', 'j1', { ...ALL, planHash: preview.plan.planHash, confirm }, ADMIN)
+    assert.deepStrictEqual(folders.get('skill/revisar'), ['run.sh'])
+    assert.deepStrictEqual(folders.get('agent/maya'), ['scripts/saldo.mjs'])
+    assert.strictEqual(depot.size, 2)
   })
 })
 
