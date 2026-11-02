@@ -363,6 +363,7 @@ function buildRoutes(
     { method: 'get', path: '/projects/:id/import/jobs', handler: importer.listJobs },
     { method: 'post', path: '/projects/:id/import/jobs', handler: importer.createJob },
     { method: 'get', path: '/projects/:id/import/jobs/:job', handler: importer.getJob },
+    { method: 'get', path: '/projects/:id/import/jobs/:job/items', handler: importer.getItems },
     { method: 'patch', path: '/projects/:id/import/jobs/:job/items', handler: importer.updateItem },
     { method: 'post', path: '/projects/:id/import/jobs/:job/builder', handler: importer.openBuilder },
     { method: 'post', path: '/projects/:id/import/jobs/:job/items/approve', handler: importer.approveItem },

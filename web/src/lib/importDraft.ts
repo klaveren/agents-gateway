@@ -1,5 +1,9 @@
 import { BUILD_KINDS, type TBuildKind } from './builder'
 import type { IImportItemStatus, TImportItemState, TInventoryKind } from './importer'
+import type { ITurn } from './types'
+
+/** A ferramenta com que o construtor em modo importação propõe o rascunho (no gateway, `Import.Tools`). */
+export const IMPORT_PROPOSE_TOOL = 'propose_import_draft'
 
 /**
  * O RASCUNHO DE IMPORTAÇÃO (no gateway, `Import.Draft`): a fonte + operações de tipos fixos, aplicadas pelo servidor. A
@@ -93,6 +97,15 @@ export const LINK_LABEL: Record<string, string> = { attach: 'anexo inteiro', ref
 /** "No construtor" sem conversa viva (nenhuma ainda, ou a que havia sumiu): o construtor abre de novo. */
 export function draftingWithoutConversation(status: IImportBuildStatus | undefined): boolean {
   return status?.state === 'drafting' && (!status.conversationId || !!status.conversationLost)
+}
+
+/**
+ * Quantas propostas de rascunho de importação TERMINARAM na conversa (as gravadas e as do turno ao vivo): o painel ao
+ * lado recarrega quando o número muda. A que voltou com erro conta também: o servidor pode ter gravado o estado.
+ */
+export function importProposals(turns: readonly ITurn[], live?: { tools: ReadonlyArray<{ tool: string; status: string }> }): number {
+  const done = turns.reduce((count, turn) => count + (turn.toolCalls ?? []).filter((call) => call.tool.endsWith(IMPORT_PROPOSE_TOOL)).length, 0)
+  return done + (live?.tools ?? []).filter((tool) => tool.status !== 'running' && tool.tool.endsWith(IMPORT_PROPOSE_TOOL)).length
 }
 
 /** O rascunho em vigor do item (o último que passou na conferência). */

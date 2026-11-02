@@ -60,7 +60,7 @@ describe('construtor em modo importação (/projects/:id/import/jobs/:job/builde
   })
   after(() => rmSync(base, { recursive: true, force: true }))
 
-  type THandler = 'openBuilder' | 'approveItem' | 'adjustItem' | 'getJob'
+  type THandler = 'openBuilder' | 'approveItem' | 'adjustItem' | 'getJob' | 'getItems'
   const call = (as: string, body: unknown, handler: THandler, target: ImportController = controller) =>
     withCaller({ token: as, ...identityFromToken(as) }, async () => {
       const reply: { status: number; body?: { ok: boolean; result?: any; code?: string; details?: any } } = { status: 0 } // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -74,7 +74,8 @@ describe('construtor em modo importação (/projects/:id/import/jobs/:job/builde
           return this
         },
       } as unknown as Response
-      await target[handler]({ params: { id: 'alfa', job: jobId }, body } as unknown as Request, res)
+      // No GET, a mesma entrada vale como query.
+      await target[handler]({ params: { id: 'alfa', job: jobId }, body, query: body ?? {} } as unknown as Request, res)
       return reply
     })
 
@@ -125,6 +126,30 @@ describe('construtor em modo importação (/projects/:id/import/jobs/:job/builde
     const adjusted = await call(ADMIN, { key: 'spec:arquitetura', comment: 'divida em duas' }, 'adjustItem')
     assert.deepStrictEqual([adjusted.status, adjusted.body?.result.state, adjusted.body?.result.review.adjust.comment], [200, 'drafting', 'divida em duas'])
     assert.strictEqual((await call(ADMIN, { key: 'spec:arquitetura', comment: 'de novo' }, 'adjustItem')).status, 409)
+  })
+
+  it('o estado de alguns itens (o painel ao lado da conversa): só os pedidos, sem o inventário, e a conversa perdida marcada', async () => {
+    const some = await call(ADMIN, { keys: ['spec:config', 'spec:arquitetura', 'spec:nao-existe'] }, 'getItems')
+    const states = some.body?.result.states as Array<{ key: string; state: string; drafts?: unknown[]; approvedBy?: string; item?: unknown; conversationLost?: boolean }>
+    assert.deepStrictEqual(
+      [some.status, some.body?.result.latest, some.body?.result.scan, states.map((state) => [state.key, state.state])],
+      [
+        200,
+        true,
+        undefined,
+        [
+          ['spec:config', 'approved'],
+          ['spec:arquitetura', 'drafting'],
+        ],
+      ],
+    )
+    assert.deepStrictEqual([states[0].approvedBy, states[1].drafts?.length, states[0].item], ['u_root@x.test', 1, undefined])
+    // Uma chave só chega como texto.
+    assert.deepStrictEqual((await call(ADMIN, { keys: 'spec:config' }, 'getItems')).body?.result.states.length, 1)
+    const lost = new ImportController({ ...controllerDeps(), conversationExists: async (id) => id !== 'conv-1' })
+    assert.strictEqual((await call(ADMIN, { keys: ['spec:arquitetura'] }, 'getItems', lost)).body?.result.states[0].conversationLost, true)
+    assert.strictEqual((await call(ADMIN, {}, 'getItems')).status, 422)
+    assert.strictEqual((await call(MEMBER, { keys: ['spec:config'] }, 'getItems')).status, 404)
   })
 
   it('item no construtor cuja conversa sumiu vem marcado (conversationLost) e abre de novo numa conversa nova', async () => {

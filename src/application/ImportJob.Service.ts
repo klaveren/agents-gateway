@@ -128,6 +128,22 @@ export class ImportJobService {
     return strip(updated!)
   }
 
+  /**
+   * O estado de ALGUNS itens do trabalho (o painel ao lado da conversa de importação), sem o inventário inteiro. A chave
+   * que não é do trabalho fica de fora. `latest`: só o trabalho mais novo do repositório aceita revisão.
+   */
+  statesFor(projectId: string, jobId: string, keys: readonly string[]): { latest: boolean; states: IImportJob['states'] } {
+    const record = this.record(projectId, jobId)
+    const latest = this.deps.repository.latest(projectId, record.repository)?.id === record.id
+    const states = [...new Set(keys)].flatMap((key) => {
+      const entry = this.deps.repository.item(record.id, key)
+      if (!entry) return []
+      const { item: _item, basis: _basis, ...state } = entry
+      return [state]
+    })
+    return { latest, states }
+  }
+
   /** O repositório e o estado de cada item do trabalho (o lote do agente marca o aprovado e o aplicado). Ausente = não é deste projeto. */
   statesOf(projectId: string, jobId: string): { repository: string; states: TItemStates } | undefined {
     const record = this.deps.repository.get(projectId, jobId)
