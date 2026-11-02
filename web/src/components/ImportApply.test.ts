@@ -213,6 +213,7 @@ describe('ImportApply — gravar no catálogo', () => {
         { target: 'doc', id: 'dev-qualidade', from: ['knowledge/guia'], item: item('spec:dev-qualidade', 'spec', 'pending') },
         { target: 'doc', id: 'pronta', from: ['knowledge/guia'], item: item('spec:pronta', 'spec', 'approved') },
         { target: 'doc', id: 'sumiu', from: ['knowledge/guia'] },
+        { target: 'doc', id: 'drain', from: ['knowledge/guia'], fromKeys: ['knowledge:guia'], wrongKind: { key: 'command:drain', kind: 'command' } },
       ],
     } as IApplyPreview
     const host = await mount(true, { keys: ['knowledge:guia'], label: '1 selecionado(s)' })
@@ -223,17 +224,22 @@ describe('ImportApply — gravar no catálogo', () => {
       [true, false],
       [false, true],
       [false, false],
+      [false, false],
     ])
     expect(rows[3].querySelector('[data-test="missing-none"]')).not.toBeNull()
+    expect(rows[4].querySelector('[data-test="missing-wrong-kind"]')?.textContent).toContain('Command')
+    expect(rows[4].querySelector('[data-test="missing-none"]')).toBeNull()
     await click(rows[0].querySelector('[data-test="missing-view"]'))
     await click(rows[0].querySelector('[data-test="missing-build"]'))
     await click(host.querySelector('[data-test="missing-build-group"]'))
     await click(rows[2].querySelector('[data-test="missing-include"]'))
+    await click(rows[4].querySelector('[data-test="missing-view-from"]'))
     expect(events).toEqual([
       ['select', 'spec:plan-arq'],
       ['build', ['spec:plan-arq']],
       ['build', ['spec:plan-arq', 'spec:dev-qualidade']],
       ['include', ['spec:pronta']],
+      ['select', 'knowledge:guia'],
     ])
   })
 

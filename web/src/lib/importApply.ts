@@ -88,6 +88,10 @@ export interface IMissingRef {
   from: string[]
   /** Ausente: não vem deste repositório. */
   item?: { key: string; kind: TInventoryKind; state: TImportItemState; path: string }
+  /** Sem documento com o id, mas um item de outro tipo tem (um command): o vínculo está errado. */
+  wrongKind?: { key: string; kind: TInventoryKind }
+  /** As chaves do trabalho de quem cita. */
+  fromKeys?: string[]
 }
 
 /** O que a tela oferece para uma falta: entrar na gravação, ir ao construtor, ou só ver o item. */

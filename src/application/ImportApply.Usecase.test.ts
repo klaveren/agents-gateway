@@ -262,7 +262,7 @@ describe('ImportApplyUseCase — a gravação do importador pelo catálogo', () 
     const { apply } = await setup()
     const preview = await apply.preview('alfa', 'j1', { keys: ['skill:revisar'] })
     assert.deepStrictEqual(preview.missing, [
-      { target: 'doc', id: 'arq', from: ['skill/revisar'], item: { key: 'spec:arq', kind: 'spec', state: 'approved', path: '.agents/specs/arq.md' } },
+      { target: 'doc', id: 'arq', from: ['skill/revisar'], fromKeys: ['skill:revisar'], item: { key: 'spec:arq', kind: 'spec', state: 'approved', path: '.agents/specs/arq.md' } },
     ])
     // Com a spec no pacote, nada falta.
     assert.deepStrictEqual((await apply.preview('alfa', 'j1', { keys: ['skill:revisar', 'spec:arq'] })).missing, [])
@@ -297,5 +297,8 @@ describe('missingRefs', () => {
       ],
     )
     assert.strictEqual(missingRefs(plan(broken('k/a', 'spec', 'pre-plano')), items, 'pre-').at(0)?.item?.key, 'spec:plano')
+    // Um command com o id citado como doc: o vínculo está errado (não falta nada), e diz quem cita.
+    const wrong = missingRefs(plan(broken('spec/arq', 'doc', 'drain')), [entry('command:drain', 'drain')], '', { 'spec:arq': ['spec/arq'] })
+    assert.deepStrictEqual(wrong, [{ target: 'doc', id: 'drain', from: ['spec/arq'], fromKeys: ['spec:arq'], wrongKind: { key: 'command:drain', kind: 'command' } }])
   })
 })

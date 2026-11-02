@@ -258,6 +258,23 @@ const partLabel = (part?: string) => (part === 'record' ? ' (registro)' : part =
                 Gravar junto
               </button>
             </template>
+            <template v-else-if="one.wrongKind">
+              <span class="text-amber-200" data-test="missing-wrong-kind">
+                é {{ KIND_LABEL[one.wrongKind.kind] }} (<code>{{ one.wrongKind.key }}</code>), e um documento só anexa spec, ADR ou knowledge. Peça ajuste no rascunho de quem cita para tirar
+                o vínculo: a citação fica como texto.
+              </span>
+              <span class="flex-1" />
+              <button
+                v-for="key in one.fromKeys ?? []"
+                :key="key"
+                type="button"
+                class="btn btn-ghost btn-sm"
+                data-test="missing-view-from"
+                @click="emit('select', key)"
+              >
+                Ver {{ key }}
+              </button>
+            </template>
             <span v-else class="text-zinc-500" data-test="missing-none">não vem deste repositório: crie no catálogo ou tire o vínculo</span>
             <span class="basis-full text-zinc-500">citado por {{ one.from.join(', ') }}</span>
           </li>

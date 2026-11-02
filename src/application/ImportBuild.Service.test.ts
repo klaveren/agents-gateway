@@ -194,6 +194,19 @@ describe('ImportBuildService', () => {
     code(() => service.propose('c1', 'spec:filas', META, []), 'not_found')
   })
 
+  it('⛔ vínculo para um item do trabalho que não é documento (uma skill) é recusado: o painel só anexa spec, ADR ou knowledge', async () => {
+    const { service, repository } = setup()
+    await service.open('alfa', 'j1', 'ana', { keys: ['spec:arquitetura'] })
+    const toSkill = [OPS[0], { ...OPS[1], target: 'revisar', link: 'reference' }]
+    assert.throws(
+      () => service.propose('c1', 'spec:arquitetura', META, toSkill),
+      (error: unknown) => error instanceof ImportBuildError && error.issues?.[0]?.field === 'ops[1].target' && /revisar is a skill \(skill:revisar\)/.test(error.issues[0].message),
+    )
+    assert.strictEqual(repository.item('j1', 'spec:arquitetura')!.state, 'drafting')
+    // Id fora do trabalho não se julga aqui (pode já estar no catálogo).
+    assert.strictEqual(service.propose('c1', 'spec:arquitetura', META, [OPS[0], { ...OPS[1], target: 'ja-no-catalogo' }]).item.state, 'review')
+  })
+
   it('⛔ aprovar sem OK em toda remoção é recusado; com OK, o item vai a approved (nada no catálogo)', async () => {
     const { service, repository } = setup()
     await service.open('alfa', 'j1', 'ana', { keys: ['spec:arquitetura'] })
