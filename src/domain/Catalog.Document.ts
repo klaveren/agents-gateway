@@ -8,6 +8,7 @@ import type { IProjectDoc } from './models/ProjectDoc.Model'
 import type { IProtocolAddendum, TProtocolKind } from './models/Protocol.Model'
 import { PROTOCOL_KINDS } from './models/Protocol.Model'
 import type { IAgentResources, IResource } from './models/Resource.Model'
+import type { IResourceFile } from './models/ResourceFile.Model'
 import type { IRule } from './models/Rule.Model'
 import type { IPermissionRule } from './Permission.Policy'
 
@@ -102,6 +103,9 @@ export const FALLBACK_SHAPE: TShape<IAgentFallback> = { mode: 'value', chain: { 
  */
 export const PERMISSION_RULE_SHAPE: TShape<IPermissionRule> = { category: 'value', pattern: 'value', decision: 'value', note: 'value' }
 
+/** Um arquivo de recurso: o caminho, o sha256 do conteúdo e o tamanho. */
+export const FILE_SHAPE: TShape<IResourceFile> = { path: 'value', sha256: 'value', bytes: 'value' }
+
 export const AGENT_SHAPE: TShape<IAgent> = {
   id: 'value',
   name: 'value',
@@ -129,6 +133,8 @@ export const AGENT_SHAPE: TShape<IAgent> = {
    * valores pela máscara de segredos (`Secret.Mask`: forma e formato de token).
    */
   env: 'record',
+  // O conteúdo mora no depósito por sha256: o registro leva a lista (o diff e o reverter a enxergam).
+  files: { set: FILE_SHAPE },
 }
 
 /** O que o agente leva além do `IAgent`: os vínculos que moram em outras tabelas. */
@@ -157,6 +163,7 @@ export const RESOURCE_SHAPE: TShape<IResource> = {
   docIds: 'list',
   // Subconjunto de `docIds`: só diz QUAIS vão por referência.
   docRefs: 'set',
+  files: { set: FILE_SHAPE },
   createdAt: { omit: META },
   updatedAt: { omit: META },
   updatedBy: { omit: META },

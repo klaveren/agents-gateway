@@ -19,6 +19,8 @@ import {
 import { IBuilderDraft, IProtocolAddendum, IProtocolView, PROTOCOL_KINDS, TProtocolKind } from '@domain/models/Protocol.Model'
 import { IRule, RULE_TITLE_MAX } from '@domain/models/Rule.Model'
 import { IDocHit, IGuidanceRepository, TGuidanceScope } from '@domain/ports/GuidanceRepository.Port'
+import { fileIssues, filesNote, IResourceFile, sortFiles } from '@domain/models/ResourceFile.Model'
+import { IResourceFilesPort } from '@domain/ports/ResourceFiles.Port'
 import { protocolItemId } from '@domain/Catalog.Document'
 import { CatalogHistoryHook, ICatalogItemKey } from './CatalogHistory.Service'
 
@@ -83,6 +85,8 @@ export interface IResourceInput {
   docIds?: string[]
   /** Das anexadas, as que vão por referência (ver `IResource.docRefs`). Ausente na edição = mantém as de antes. */
   docRefs?: string[]
+  /** Os arquivos da pasta (o conteúdo já no depósito). Ausente na edição = mantém os de antes; `[]` tira todos. */
+  files?: IResourceFile[]
 }
 
 /**
@@ -654,6 +658,13 @@ export class GuidanceService {
     this.agentChecker = checker
   }
 
+  /** O depósito e as pastas dos arquivos de recurso (ver `ResourceFile.Model`). Sem ele, recurso com arquivo é recusado. */
+  useFiles(files: IResourceFilesPort): void {
+    this.files = files
+  }
+
+  private files?: IResourceFilesPort
+
   private agentChecker?: TAgentChecker
   private skillFilter?: (agentId: string | undefined, projectId: string | undefined, skillId: string) => boolean
 
@@ -738,6 +749,7 @@ export class GuidanceService {
       body: input.body ?? '',
       docIds: input.docIds ?? [],
       ...(input.docRefs?.length ? { docRefs: input.docRefs } : {}),
+      ...(input.files?.length ? { files: sortFiles(input.files) } : {}),
       createdAt: this.now(),
       updatedAt: this.now(),
       updatedBy: by,
@@ -747,6 +759,7 @@ export class GuidanceService {
     else if (this.repository.resource(resource.id)) issues.unshift({ field: 'id', message: `already exists: ${resource.id}` })
     this.check(issues, resource.projectId)
     this.repository.saveResource(resource)
+    this.files?.sync(resource.kind, resource.id, resource.projectId, resource.files ?? [])
     this.history.record([{ kind: resource.kind, id: resource.id }], { by })
     return resource
   }
@@ -761,9 +774,11 @@ export class GuidanceService {
       ...(input.description !== undefined ? { description: input.description.trim() } : {}),
       ...(input.body !== undefined ? { body: input.body } : {}),
       ...(input.docIds !== undefined ? { docIds: input.docIds } : {}),
+      ...(input.files !== undefined ? { files: sortFiles(input.files) } : {}),
       updatedAt: this.now(),
       updatedBy: by,
     }
+    if (!next.files?.length) delete next.files
     // Sem `docRefs` na edição, ficam as de antes — menos as que deixaram de estar anexadas.
     const refs = input.docRefs ?? (current.docRefs ?? []).filter((docId) => next.docIds.includes(docId))
     if (refs.length) next.docRefs = refs
@@ -771,6 +786,9 @@ export class GuidanceService {
     if (!next.projectId) delete next.projectId
     this.check(this.resourceIssues(next), next.projectId)
     this.repository.saveResource(next)
+    // Mudou de escopo: a pasta muda de lugar (a do escopo antigo sai).
+    if (current.projectId !== next.projectId) this.files?.remove(current.kind, id, current.projectId)
+    this.files?.sync(next.kind, id, next.projectId, next.files ?? [])
     this.history.record([{ kind: next.kind, id }], { by })
     return next
   }
@@ -780,6 +798,7 @@ export class GuidanceService {
     const resource = this.resource(id)
     const touched = this.history.withDependents({ kind: resource.kind, id })
     this.repository.deleteResource(id)
+    this.files?.remove(resource.kind, id, resource.projectId)
     this.history.record(touched, { by })
   }
 
@@ -844,7 +863,15 @@ export class GuidanceService {
       return trigger ? `# Trigger: ${trigger.id}\n\nQuando: ${trigger.when.trim()}\n\n${trigger.body.trim()}` : undefined
     }
     const resource = this.usableResources(kind, agentId).find((item) => item.id === id)
-    return resource ? `# ${kind === 'skill' ? 'Skill' : 'Command'}: ${resource.id}\n\n${resource.body.trim()}${this.attachments(resource, new Set())}` : undefined
+    return resource
+      ? `# ${kind === 'skill' ? 'Skill' : 'Command'}: ${resource.id}\n\n${resource.body.trim()}${this.attachments(resource, new Set())}${this.filesOf(resource)}`
+      : undefined
+  }
+
+  /** Onde estão os arquivos do recurso, para o agente rodar os scripts (a pasta é só leitura). */
+  private filesOf(resource: IResource): string {
+    if (!this.files || !resource.files?.length) return ''
+    return filesNote(this.files.dirOf(resource.kind, resource.id, resource.projectId), resource.files, `da ${resource.kind === 'skill' ? 'skill' : 'command'} ${resource.id}`)
   }
 
   /** A busca por id e descrição (o "quando", no trigger) entre o que o agente pode carregar: cada palavra tem de aparecer. */
@@ -876,11 +903,11 @@ export class GuidanceService {
     if (!resource) throw new InvalidGuidanceError([{ field: 'message', message: `${existing.kind} /${id} is not enabled for this agent` }])
     const args = (rawArgs ?? '').trim()
     if (resource.kind === 'skill') {
-      const skill = `[A pessoa pediu a skill ${resource.id}: ela já está carregada abaixo — siga-a.]\n\n# Skill: ${resource.id}\n\n${resource.body.trim()}${this.attachments(resource, new Set())}`
+      const skill = `[A pessoa pediu a skill ${resource.id}: ela já está carregada abaixo — siga-a.]\n\n# Skill: ${resource.id}\n\n${resource.body.trim()}${this.attachments(resource, new Set())}${this.filesOf(resource)}`
       return { text: `${skill}\n\n# Pedido\n\n${args || '(sem texto: aplique a skill ao que estamos fazendo)'}`, label: text.trim(), command: id }
     }
     const body = resource.body.includes('$ARGUMENTS') ? resource.body.replace(/\$ARGUMENTS/g, args) : `${resource.body.trim()}${args ? `\n\nArgumentos: ${args}` : ''}`
-    return { text: `${body.trim()}${this.attachments(resource, new Set())}`, label: text.trim(), command: id }
+    return { text: `${body.trim()}${this.attachments(resource, new Set())}${this.filesOf(resource)}`, label: text.trim(), command: id }
   }
 
   /**
@@ -980,7 +1007,16 @@ export class GuidanceService {
   }
 
   private resourceIssues(resource: IResource): TIssues {
-    return resourceIssuesIn(this.lookup, resource)
+    return [...resourceIssuesIn(this.lookup, resource), ...this.filesIssues(resource.files)]
+  }
+
+  /** A forma da lista e o conteúdo de cada arquivo no depósito (quem grava manda o conteúdo antes). */
+  filesIssues(files: readonly IResourceFile[] | undefined): TIssues {
+    if (!files?.length) return []
+    const shape = fileIssues(files)
+    if (shape.length) return shape
+    if (!this.files) return [{ field: 'files', message: 'resource files are not available on this gateway' }]
+    return files.flatMap((file, index) => (this.files!.has(file.sha256) ? [] : [{ field: `files[${index}].sha256`, message: `content not uploaded: ${file.path}` }]))
   }
 
   /** Quem as regras de vínculo consultam: o próprio repositório. */

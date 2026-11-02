@@ -7,6 +7,7 @@ import { dataDir, projectWorkspace } from '@infra/adapters/support/Subscription.
 import { esmImport } from '@infra/adapters/support/Esm.Import'
 import { networkGate } from '@infra/permissions/Network.Gate'
 import type { ICercoBase, ICercoPlan } from '@domain/Cerco.Plan'
+import { globalResourcesDir, projectResourceDirs, readOnlyResourceDirs } from '@infra/workspace/Resource.Files'
 
 const run = promisify(exec)
 
@@ -94,9 +95,10 @@ export class ProjectSandbox implements IProjectSandbox {
       ...(this.nested() ? { enableWeakerNestedSandbox: true } : {}),
       filesystem: {
         denyRead: [dataDir(this.env), process.cwd(), homedir()],
-        allowRead: [project, join(dataDir(this.env), 'tools'), ...runtimeHelpers()],
+        allowRead: [project, join(dataDir(this.env), 'tools'), ...existing([globalResourcesDir(this.env)]), ...runtimeHelpers()],
         allowWrite: [project],
-        denyWrite: [],
+        // Os arquivos de recurso do projeto (dentro dele) e os globais: só leitura.
+        denyWrite: existing([...projectResourceDirs(projectId, this.env), globalResourcesDir(this.env)]),
       },
     }
   }
@@ -110,6 +112,8 @@ export class ProjectSandbox implements IProjectSandbox {
       // A instalação do Node em uso (num Mac com nvm, fica na pasta pessoal, que o cerco fecha) e as ferramentas.
       alwaysRead: [join(dataDir(this.env), 'tools'), dirname(dirname(process.execPath)), ...runtimeHelpers()],
       alwaysDeny: [dataDir(this.env), process.cwd(), homedir()],
+      // Os arquivos de recurso: o global sempre; os do projeto quando a raiz é dele. Lê, não grava.
+      readOnly: existing(readOnlyResourceDirs(root, this.env)),
     }
   }
 
@@ -268,6 +272,21 @@ export function writeFolders(plan: ICercoPlan, root: string): string[] {
     .filter((path) => path.endsWith('/**'))
     .map((path) => path.slice(0, -3))
     .filter((dir) => !/[*?[\]{}]/.test(dir) && dir !== root && isAtOrUnder(dir, root))
+}
+
+/**
+ * As pastas dos arquivos de recurso, criadas se faltarem: o cerco não abre nem fecha o que não existe (e o recurso
+ * gravado depois já cai numa pasta que ele fecha para escrita).
+ */
+function existing(dirs: readonly string[]): string[] {
+  for (const dir of dirs) {
+    try {
+      mkdirSync(dir, { recursive: true, mode: 0o755 })
+    } catch {
+      // Sem como criar (somente leitura): o cerco segue sem ela.
+    }
+  }
+  return dirs.filter((dir) => existsSync(dir))
 }
 
 /** Fecha tudo dentro de `dir` menos o que leva ao que fica aberto (`keep`). */

@@ -4,6 +4,7 @@ import { SqliteGuidanceRepository } from '@infra/persistence/Sqlite.GuidanceRepo
 import { makeAgents } from './Agents.Factory'
 import { makeCatalogHistory } from './CatalogHistory.Factory'
 import { makeProjects } from './Projects.Factory'
+import { makeResourceFiles } from './ResourceFiles.Factory'
 
 let instance: GuidanceService | undefined
 let repository: SqliteGuidanceRepository | undefined
@@ -22,6 +23,7 @@ export function makeGuidance(): GuidanceService {
     },
   )
   instance.history.use(() => makeCatalogHistory())
+  instance.useFiles(makeResourceFiles())
   return instance
 }
 

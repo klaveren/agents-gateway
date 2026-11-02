@@ -14,6 +14,8 @@ export interface IAmbient {
    * (Claude Agent SDK, Codex) e a raiz das ferramentas do gateway (`run_bash`, arquivos). Ausente: a pasta vazia da conversa.
    */
   directory?: string
+  /** A pasta com os arquivos do próprio agente (scripts, modelos): só leitura para ele. */
+  files?: string
 }
 
 /** A seção "## Ambiente" do system prompt. */
@@ -29,6 +31,7 @@ export function ambientSection(ambient: IAmbient): string {
   if (!directory) lines.push('- Diretório de trabalho: uma pasta vazia, só desta conversa.')
   else if (repository) lines.push(`- Diretório de trabalho: ${directory}. Fora dele você não lê nem grava; o git dele funciona (status, commit, push).`)
   else lines.push(`- Diretório de trabalho: ${directory} — persistente e compartilhado pelas conversas do projeto. Fora dele você não lê nem grava.`)
+  if (ambient.files) lines.push(`- Seus arquivos (scripts, modelos): ${ambient.files} — só leitura; rode-os pelo terminal a partir dessa pasta.`)
   return lines.join('\n')
 }
 

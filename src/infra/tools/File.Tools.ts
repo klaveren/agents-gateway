@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { dataDir } from '@infra/adapters/support/Subscription.Workspace'
 import { ILocalTool, IToolResult } from './Tool.Types'
+import { globalResourcesDir, isResourceFilePath } from '@infra/workspace/Resource.Files'
 
 export interface IFileToolDeps {
   /** A pasta-raiz onde as tools podem mexer, por chamada (a pasta do projeto da conversa). */
@@ -72,20 +73,22 @@ export function deniedPath(absPath: string, root: string): string | undefined {
   // O `.git` por dentro (config, hooks, objetos) é do git: editar à mão quebraria o repositório ou plantaria um hook.
   if (/(^|[\\/])\.git([\\/]|$)/.test(absPath)) return 'git internals'
   const real = realOf(resolve(absPath))
-  if (isInside(realOf(dataDir()), real) && !isInside(realOf(resolve(root)), real)) return 'gateway data'
+  // Os arquivos de recurso globais se LEEM (a gravação é recusada à parte: `isResourceFilePath`).
+  if (isInside(realOf(dataDir()), real) && !isInside(realOf(resolve(root)), real) && !isInside(realOf(globalResourcesDir()), real)) return 'gateway data'
   return undefined
 }
 
 const fail = (result: string): IToolResult => ({ status: 'error', result })
 const toMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
-/** O caminho já conferido (dentro da raiz e não protegido) ou o erro pronto. */
-function guard(root: string, path: unknown, permit?: (rel: string) => string | undefined): { abs: string } | { error: IToolResult } {
+/** O caminho já conferido (dentro da raiz e não protegido) ou o erro pronto. `write`: também fora das pastas só leitura. */
+function guard(root: string, path: unknown, permit?: (rel: string) => string | undefined, write = false): { abs: string } | { error: IToolResult } {
   if (typeof path !== 'string' || !path.trim()) return { error: fail('path is required.') }
   const abs = resolveInside(root, path)
   if (!abs) return { error: fail('path is outside the allowed folder') }
   const reason = deniedPath(abs, root)
   if (reason) return { error: fail(`${reason}: this file is protected`) }
+  if (write && isResourceFilePath(abs)) return { error: fail('resource files are read-only: they are edited in the gateway (the skill, command or agent page)') }
   const denied = permit?.(relOf(root, abs))
   if (denied) return { error: fail(`Not permitted: ${denied}`) }
   return { abs }
@@ -273,7 +276,7 @@ function writeFileTool(deps: IFileToolDeps): ILocalTool {
     },
     async execute(args, context): Promise<IToolResult> {
       const root = deps.rootFor(context)
-      const checked = guard(root, args.path, (rel) => deps.access?.(context, 'write', rel, true))
+      const checked = guard(root, args.path, (rel) => deps.access?.(context, 'write', rel, true), true)
       if ('error' in checked) return checked.error
       if (typeof args.content !== 'string') return fail('content is required.')
       const bytes = Buffer.byteLength(args.content)
@@ -281,7 +284,7 @@ function writeFileTool(deps: IFileToolDeps): ILocalTool {
       try {
         await mkdir(dirname(checked.abs), { recursive: true })
         // Revalida depois do mkdir: o pai agora existe e pode ser um symlink que escapa.
-        const again = guard(root, args.path, (rel) => deps.access?.(context, 'write', rel, false))
+        const again = guard(root, args.path, (rel) => deps.access?.(context, 'write', rel, false), true)
         if ('error' in again) return again.error
         await writeFile(again.abs, args.content, 'utf8')
         return { status: 'success', result: `Wrote ${bytes} bytes to ${relOf(root, again.abs)}` }
@@ -311,7 +314,7 @@ function editFileTool(deps: IFileToolDeps): ILocalTool {
     },
     async execute(args, context): Promise<IToolResult> {
       const root = deps.rootFor(context)
-      const checked = guard(root, args.path, (rel) => deps.access?.(context, 'write', rel, true))
+      const checked = guard(root, args.path, (rel) => deps.access?.(context, 'write', rel, true), true)
       if ('error' in checked) return checked.error
       const { old_string: from, new_string: to } = args
       if (typeof from !== 'string' || typeof to !== 'string' || !from) return fail('old_string and new_string are required (old_string cannot be empty).')

@@ -15,6 +15,7 @@ import { makeModelCatalog } from './Catalog.Factory'
 import { makeCatalogHistory } from './CatalogHistory.Factory'
 import { makeProviders } from './Providers.Factory'
 import { makeSettings } from './Settings.Factory'
+import { makeResourceFiles } from './ResourceFiles.Factory'
 
 let instance: AgentCatalog | undefined
 let stored: IAgentRepository | undefined
@@ -52,6 +53,7 @@ export function makeAgents(): AgentCatalog {
     (): IAgent[] => coreAgents(catalog),
   )
   catalog.history.use(() => makeCatalogHistory())
+  catalog.useFiles(makeResourceFiles())
   instance = catalog
   return catalog
 }

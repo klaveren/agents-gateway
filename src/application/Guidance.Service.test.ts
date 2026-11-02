@@ -799,4 +799,74 @@ describe('GuidanceService', () => {
       assert.match(index, /use search_docs/)
     })
   })
+
+  describe('arquivos de recurso (a pasta da skill e do command)', () => {
+    /** Um depósito em memória: o conteúdo por sha e o que cada pasta tem. */
+    const fakeFiles = () => {
+      const blobs = new Set<string>()
+      const dirs = new Map<string, string[]>()
+      const key = (kind: string, id: string, projectId?: string) => `${projectId ?? 'global'}/${kind}/${id}`
+      return {
+        blobs,
+        dirs,
+        port: {
+          has: (sha: string) => blobs.has(sha),
+          put: () => ({ sha256: '', bytes: 0 }),
+          read: () => undefined,
+          dirOf: (kind: 'skill' | 'command' | 'agent', id: string, projectId?: string) => `/dados/${key(kind, id, projectId)}`,
+          sync: (kind: 'skill' | 'command' | 'agent', id: string, projectId: string | undefined, files: ReadonlyArray<{ path: string }>) => {
+            if (files.length)
+              dirs.set(
+                key(kind, id, projectId),
+                files.map((file) => file.path),
+              )
+            else dirs.delete(key(kind, id, projectId))
+          },
+          remove: (kind: 'skill' | 'command' | 'agent', id: string, projectId?: string) => void dirs.delete(key(kind, id, projectId)),
+        },
+      }
+    }
+    const file = (path: string, char: string) => ({ path, sha256: char.repeat(64), bytes: 10 })
+
+    it('⛔ conteúdo não enviado é recusado; enviado, a pasta é escrita e o carregar diz onde ela está', () => {
+      const service = new GuidanceService(
+        new SqliteGuidanceRepository(':memory:'),
+        (id) => ['xpto', 'crm'].includes(id),
+        (id) => (id === 'dev' ? { id: 'dev' } : undefined),
+      )
+      const files = fakeFiles()
+      service.useFiles(files.port)
+      assert.throws(
+        () => service.createResource({ id: 'banco', kind: 'skill', description: 'Banco', body: 'Use os scripts.', files: [file('scripts/saldo.mjs', 'a')] }, 'root'),
+        (error: unknown) => error instanceof InvalidGuidanceError && /content not uploaded: scripts\/saldo\.mjs/.test(JSON.stringify(error.issues)),
+      )
+      files.blobs.add('a'.repeat(64))
+      service.createResource({ id: 'banco', kind: 'skill', description: 'Banco', body: 'Use os scripts.', files: [file('scripts/saldo.mjs', 'a')] }, 'root')
+      assert.deepStrictEqual(files.dirs.get('global/skill/banco'), ['scripts/saldo.mjs'])
+      assert.match(service.loadResource('skill', 'banco', 'dev')!, /## Arquivos da skill banco\n\nPasta \(só leitura\): \/dados\/global\/skill\/banco/)
+      assert.match(service.expandCommand('/banco saldo de hoje', 'dev')!.text, /Pasta \(só leitura\): \/dados\/global\/skill\/banco/)
+    })
+
+    it('editar sem a lista mantém os arquivos; mudar de escopo muda a pasta de lugar; apagar a tira', () => {
+      const service = build()
+      const files = fakeFiles()
+      service.useFiles(files.port)
+      files.blobs.add('a'.repeat(64))
+      service.createResource({ id: 'banco', kind: 'skill', description: 'Banco', body: 'x', files: [file('a.sh', 'a')] }, 'root')
+      assert.deepStrictEqual(service.updateResource('banco', { body: 'y' }, 'root').files, [file('a.sh', 'a')])
+      service.updateResource('banco', { projectId: 'xpto' }, 'root')
+      assert.deepStrictEqual([...files.dirs.keys()], ['xpto/skill/banco'])
+      assert.strictEqual(service.updateResource('banco', { files: [] }, 'root').files, undefined)
+      assert.deepStrictEqual([...files.dirs.keys()], [])
+      service.updateResource('banco', { files: [file('a.sh', 'a')] }, 'root')
+      service.deleteResource('banco', 'root')
+      assert.deepStrictEqual([...files.dirs.keys()], [])
+    })
+
+    it('⛔ sem o depósito ligado, recurso com arquivo é recusado (e sem arquivo segue como sempre)', () => {
+      const service = build()
+      assert.throws(() => service.createResource({ id: 'banco', kind: 'skill', description: 'B', body: 'x', files: [file('a.sh', 'a')] }, 'root'), /not available/)
+      assert.strictEqual(service.createResource({ id: 'outra', kind: 'skill', description: 'B', body: 'x' }, 'root').files, undefined)
+    })
+  })
 })

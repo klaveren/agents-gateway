@@ -621,6 +621,8 @@ export class AgentController {
         const diagnostics = body.diagnostics === undefined ? this.agents.get(parsed.id)?.diagnostics : undefined
         const triggers = body.triggers === undefined ? this.agents.get(parsed.id)?.triggers : undefined
         const env = body.env === undefined ? this.agents.get(parsed.id)?.env : undefined
+        // Os arquivos têm guia própria: o formulário que não os manda não os apaga.
+        const files = body.files === undefined ? this.agents.get(parsed.id)?.files : undefined
         const input = {
           ...parsed,
           ...(current ? { permissions: current } : {}),
@@ -629,6 +631,7 @@ export class AgentController {
           ...(diagnostics ? { diagnostics } : {}),
           ...(triggers?.length ? { triggers } : {}),
           ...(env && Object.keys(env).length ? { env } : {}),
+          ...(files?.length ? { files } : {}),
         }
         const issues = this.projectIssues(input)
         if (issues.length) throw new HttpError(422, 'validation_error', 'Request body is invalid', issues)
@@ -1747,6 +1750,7 @@ function toAgentInput(id: string, body: TAgentBody): IAgent {
     ...(body.diagnostics && diagnosticsOn(body.diagnostics) ? { diagnostics: body.diagnostics } : {}),
     ...(body.triggers?.length ? { triggers: body.triggers.map((trigger) => ({ id: trigger.id.trim(), when: trigger.when.trim(), body: trigger.body })) } : {}),
     ...(body.env && Object.keys(body.env).length ? { env: { ...body.env } } : {}),
+    ...(body.files?.length ? { files: body.files.map(({ path, sha256, bytes }) => ({ path, sha256, bytes })) } : {}),
     // `global` é o padrão: não se grava.
     ...(body.fallback && body.fallback.mode !== 'global'
       ? { fallback: { mode: body.fallback.mode, ...(body.fallback.mode === 'own' ? { chain: body.fallback.chain ?? [] } : {}) } }

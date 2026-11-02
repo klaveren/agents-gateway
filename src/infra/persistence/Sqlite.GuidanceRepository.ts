@@ -1,3 +1,4 @@
+import { fileIssues, IResourceFile, sortFiles } from '@domain/models/ResourceFile.Model'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync, SQLInputValue } from 'node:sqlite'
@@ -60,6 +61,7 @@ const SCHEMA = `
     body        TEXT NOT NULL,
     doc_ids     TEXT NOT NULL DEFAULT '[]',
     doc_refs    TEXT NOT NULL DEFAULT '[]',
+    files       TEXT NOT NULL DEFAULT '[]',
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL,
     updated_by  TEXT
@@ -93,6 +95,7 @@ const SCHEMA = `
  */
 const ADDED_COLUMNS: ReadonlyArray<{ table: string; column: string; definition: string }> = [
   { table: 'resources', column: 'doc_refs', definition: "TEXT NOT NULL DEFAULT '[]'" },
+  { table: 'resources', column: 'files', definition: "TEXT NOT NULL DEFAULT '[]'" },
   { table: 'project_docs', column: 'doc_ids', definition: "TEXT NOT NULL DEFAULT '[]'" },
   { table: 'project_docs', column: 'doc_refs', definition: "TEXT NOT NULL DEFAULT '[]'" },
 ]
@@ -316,9 +319,9 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
   saveResource(resource: IResource): void {
     this.db
       .prepare(
-        `INSERT INTO resources (id, kind, project_id, description, body, doc_ids, doc_refs, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO resources (id, kind, project_id, description, body, doc_ids, doc_refs, files, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, project_id = excluded.project_id, description = excluded.description, body = excluded.body,
-           doc_ids = excluded.doc_ids, doc_refs = excluded.doc_refs, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+           doc_ids = excluded.doc_ids, doc_refs = excluded.doc_refs, files = excluded.files, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
       )
       .run(
         resource.id,
@@ -328,6 +331,7 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
         resource.body,
         JSON.stringify(resource.docIds),
         JSON.stringify(resource.docRefs ?? []),
+        JSON.stringify(sortFiles(resource.files ?? [])),
         resource.createdAt.toISOString(),
         resource.updatedAt.toISOString(),
         resource.updatedBy ?? null,
@@ -480,6 +484,7 @@ function toDoc(row: TRow): IProjectDoc {
 function toResource(row: TRow): IResource {
   const docIds = idList(row.doc_ids)
   const docRefs = idList(row.doc_refs).filter((id) => docIds.includes(id))
+  const files = fileList(row.files)
   return {
     id: row.id as string,
     kind: row.kind as TResourceKind,
@@ -488,9 +493,21 @@ function toResource(row: TRow): IResource {
     body: row.body as string,
     docIds,
     ...(docRefs.length ? { docRefs } : {}),
+    ...(files.length ? { files } : {}),
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
     ...(row.updated_by ? { updatedBy: row.updated_by as string } : {}),
+  }
+}
+
+/** A lista de arquivos gravada em JSON; o que não tiver a forma fica de fora. */
+function fileList(raw: unknown): IResourceFile[] {
+  try {
+    const value: unknown = JSON.parse(String(raw ?? '[]'))
+    if (!Array.isArray(value)) return []
+    return sortFiles(value.filter((file): file is IResourceFile => !!file && !fileIssues([file]).length))
+  } catch {
+    return []
   }
 }
 

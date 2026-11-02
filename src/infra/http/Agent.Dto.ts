@@ -1,3 +1,4 @@
+import type { IResourceFile } from '@domain/models/ResourceFile.Model'
 import type { IPermissionRule } from '@domain/Permission.Policy'
 import type { IAgentFallback } from '@domain/Fallback.Policy'
 import { IAgent, IAgentDiagnostics, IAgentTerminal, IAgentTrigger } from '@domain/models/Agent.Model'
@@ -89,6 +90,8 @@ export interface IAgentDetailDto extends IAgentDto {
   fallback?: IAgentFallback
   /** As variáveis de ambiente fixas do agente: só para quem administra, como o prompt. */
   env?: Record<string, string>
+  /** Os arquivos da pasta do agente (caminho, sha256, tamanho). */
+  files?: IResourceFile[]
   updatedAt?: Date
   updatedBy?: string
 }
@@ -157,6 +160,7 @@ export function toAgentDetailDto(
     ...(entry.agent.triggers?.length ? { triggers: entry.agent.triggers } : {}),
     ...(entry.agent.fallback ? { fallback: entry.agent.fallback } : {}),
     ...(entry.agent.env && Object.keys(entry.agent.env).length ? { env: entry.agent.env } : {}),
+    ...(entry.agent.files?.length ? { files: entry.agent.files } : {}),
     updatedAt: entry.updatedAt,
     updatedBy: entry.updatedBy,
   }

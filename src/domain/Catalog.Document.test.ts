@@ -126,6 +126,7 @@ const fullAgent: Required<IAgent> = {
   ],
   fallback: { mode: 'own', chain: [{ provider: 'openai', model: 'gpt' }] },
   env: { GIT_AUTHOR_NAME: 'Theo', LANG: 'pt_BR.UTF-8' },
+  files: [{ path: 'scripts/run.sh', sha256: 'a'.repeat(64), bytes: 12 }],
 }
 const links: IAgentLinks = { resources: { skills: ['revisar', 'commitar'], commands: ['*'] }, initialContext: ['visao', 'api'] }
 

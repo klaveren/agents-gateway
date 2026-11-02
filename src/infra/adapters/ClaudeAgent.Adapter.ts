@@ -30,6 +30,7 @@ import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
 import { buildClaudeMcpServers, claudeHiddenTools, claudeMcpServerName, LOCAL_SERVER_NAME } from '@infra/tools/bridges/Claude.ToolBridge'
 import { IAgentMcpServer, ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { composeSystemPrompt, maxToolTurns } from './support/Prompt.Helper'
+import { isResourceFilePath } from '@infra/workspace/Resource.Files'
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const
 type TImageType = (typeof IMAGE_TYPES)[number]
@@ -690,11 +691,16 @@ function protectedPathOf(toolName: string, input: Record<string, unknown>, root 
   for (const field of PATH_FIELDS[toolName] ?? []) {
     const value = input[field]
     if (typeof value !== 'string' || !value || ((field === 'pattern' || field === 'glob') && !isAbsolute(value))) continue
-    const reason = deniedPath(resolve(root === PROTECTED_ROOT ? process.cwd() : root, value), root)
+    const abs = resolve(root === PROTECTED_ROOT ? process.cwd() : root, value)
+    const reason = deniedPath(abs, root)
     if (reason) return `${toolName}: ${value} (${reason})`
+    if (WRITE_TOOLS.has(toolName) && isResourceFilePath(abs)) return `${toolName}: ${value} (resource files are read-only: edit them in the gateway)`
   }
   return undefined
 }
+
+/** As nativas que gravam: nas pastas de arquivos de recurso, recusadas. */
+const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
 
 /** Agente global: nenhuma pasta liberada dentro dos dados do gateway. O de projeto libera a pasta dele (o cerco faz o resto). */
 const PROTECTED_ROOT = '/nonexistent-root'

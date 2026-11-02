@@ -149,3 +149,35 @@ describe('File.Tools', () => {
     assert.deepStrictEqual(asked, ['read:a.txt', 'read:src/b.ts', 'write:novo.txt', 'write:src/novo.txt'])
   })
 })
+
+describe('File.Tools — ⛔ as pastas de arquivos de recurso são só leitura', () => {
+  let data: string
+  let root: string
+  const before_ = process.env.CONVERSATIONS_DB
+  before(() => {
+    data = mkdtempSync(join(tmpdir(), 'file-tools-res-'))
+    root = join(data, 'projects', 'alfa')
+    mkdirSync(join(root, 'skills', 'banco'), { recursive: true })
+    writeFileSync(join(root, 'skills', 'banco', 'run.sh'), 'echo oi')
+    process.env.CONVERSATIONS_DB = join(data, 'gateway.db')
+  })
+  after(() => {
+    if (before_ === undefined) delete process.env.CONVERSATIONS_DB
+    else process.env.CONVERSATIONS_DB = before_
+    rmSync(data, { recursive: true, force: true })
+  })
+  const run = (name: string, args: Record<string, unknown>) =>
+    makeFileTools({ rootFor: () => root })
+      .find((tool) => tool.name === name)!
+      .execute(args)
+
+  it('lê, mas não grava nem edita; fora delas grava como sempre', async () => {
+    assert.strictEqual((await run('read_file', { path: 'skills/banco/run.sh' })).status, 'success')
+    const write = await run('write_file', { path: 'skills/banco/run.sh', content: 'rm -rf /' })
+    assert.deepStrictEqual([write.status, /read-only/.test(String(write.result))], ['error', true])
+    const edit = await run('edit_file', { path: 'skills/banco/run.sh', old_string: 'oi', new_string: 'tchau' })
+    assert.strictEqual(edit.status, 'error')
+    assert.strictEqual((await run('write_file', { path: 'agents/maya/novo.txt', content: 'x' })).status, 'error')
+    assert.strictEqual((await run('write_file', { path: 'notas/a.md', content: 'x' })).status, 'success')
+  })
+})

@@ -45,4 +45,8 @@ describe('Ambient.Policy', () => {
   it('o id da conversa, numa linha marcada como do sistema', () => {
     assert.strictEqual(conversationNote('gw_01ABC'), '<contexto>id desta conversa: gw_01ABC</contexto>')
   })
+
+  it('o agente com arquivos sabe onde eles estão (só leitura)', () => {
+    assert.match(ambientSection({ agentId: 'maya', files: '/dados/global/agents/maya' }), /- Seus arquivos \(scripts, modelos\): \/dados\/global\/agents\/maya — só leitura/)
+  })
 })
