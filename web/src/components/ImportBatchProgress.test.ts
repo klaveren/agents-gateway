@@ -19,6 +19,7 @@ async function mount(statuses: Record<string, Partial<IImportItemStatus> & { con
         statuses: statuses as Record<string, IImportItemStatus>,
         overrides: {},
         onSelect: (key: string) => events.push(key),
+        onConversation: (id: string) => events.push(`conversation:${id}`),
       }),
   }).mount(host)
   await nextTick()
@@ -34,11 +35,12 @@ describe('ImportBatchProgress — o passo Preparar do lote', () => {
     })
     const rows = [...host.querySelectorAll('[data-test="progress-row"]')]
     expect(rows.map((row) => row.querySelector('[data-test="progress-state"]')!.textContent!.trim())).toEqual(['a revisar', 'no construtor', 'aprovado', 'a importar'])
-    expect(rows[0].querySelector('[data-test="progress-conversation"]')!.textContent).toBe('Revisar na conversa')
-    expect(rows[0].querySelector('[data-test="progress-conversation"]')!.getAttribute('href')).toBe('/specs/build?c=c1')
+    expect(rows[0].querySelector('[data-test="progress-conversation"]')!.textContent!.trim()).toBe('Revisar')
+    expect(rows[1].querySelector('[data-test="progress-conversation"]')!.textContent!.trim()).toBe('Ver conversa')
     expect(rows[3].textContent).toContain('sem construtor')
     expect(host.querySelector('[data-test="progress-summary"]')!.textContent!.replace(/\s+/g, ' ')).toContain('no construtor 1')
     ;(rows[1].querySelector('button') as HTMLButtonElement).click()
-    expect(events).toEqual(['skill:deploy'])
+    ;(rows[0].querySelector('[data-test="progress-conversation"]') as HTMLButtonElement).click()
+    expect(events).toEqual(['skill:deploy', 'conversation:c1'])
   })
 })

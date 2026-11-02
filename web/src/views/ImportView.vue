@@ -4,6 +4,7 @@ import { routerKey } from 'vue-router'
 import ImportApply from '@/components/ImportApply.vue'
 import ImportBatch from '@/components/ImportBatch.vue'
 import ImportBatchProgress from '@/components/ImportBatchProgress.vue'
+import ImportPrepareDesk from '@/components/ImportPrepareDesk.vue'
 import ImportItemDetail from '@/components/ImportItemDetail.vue'
 import ImportSelectionBatch from '@/components/ImportSelectionBatch.vue'
 import { api, ApiError } from '@/lib/api'
@@ -367,7 +368,6 @@ async function buildSelection(keys = items.value.filter((item) => picked.value.h
   const fresh = closure || !selectionPlan.value || !!openedBatch.value || keys.join('\n') !== selectionPlan.value.keys.join('\n')
   batchBusy.value = true
   batchError.value = undefined
-  prepared.value = undefined
   applyAll.value = false
   plan.value = undefined
   area.value = 'batches'
@@ -404,8 +404,9 @@ async function saveBatch(name: string) {
   }
 }
 
-/** As conversas que o "preparar tudo" abriu (uma por construtor), com o link de cada uma. */
-const prepared = ref<Array<{ kind: TBuildKind; conversationId: string; keys: string[] }>>()
+/** A conversa aberta na mesa do Preparar (a lista "Todos os itens" também escolhe). */
+const deskConversation = ref<string>()
+
 
 /** PREPARAR TUDO: o lote salvo vai ao construtor de uma vez, uma conversa por construtor. ⛔ Não grava no catálogo. */
 async function prepareBatch(batchId: string) {
@@ -418,7 +419,8 @@ async function prepareBatch(batchId: string) {
     })
     for (const opened of result.conversations)
       for (const key of opened.keys) keep({ ...(statuses.value[key] ?? { key, fingerprint: '' }), key, state: 'drafting', conversationId: opened.conversationId } as IImportItemStatus)
-    prepared.value = result.conversations
+    // A mesa abre na primeira conversa aberta agora.
+    deskConversation.value = result.conversations[0]?.conversationId ?? deskConversation.value
   } catch (failure) {
     batchError.value = message(failure)
   } finally {
@@ -463,8 +465,7 @@ async function openBatch(id: string) {
     applyAll.value = false
     applyTarget.value = undefined
     plan.value = undefined
-    prepared.value = undefined
-    openedBatch.value = record
+      openedBatch.value = record
     selectionPlan.value = batchPlan
     area.value = 'batches'
     await refreshStates(record.order.length ? record.order : record.keys)
@@ -477,7 +478,6 @@ async function openBatch(id: string) {
 }
 
 function closeSelection() {
-  prepared.value = undefined
   selectionPlan.value = undefined
   openedBatch.value = undefined
   batchError.value = undefined
@@ -1053,34 +1053,31 @@ watch(
                     <span v-if="batchGroups.length" class="text-zinc-400"
                       >Abre {{ batchGroups.length }} conversa(s), uma por construtor ({{ prepareKinds }}).</span
                     >
-                    <span v-if="!batchGroups.length" class="text-zinc-400">Tudo desta migração já foi ao construtor. Revise ao lado de cada conversa; os aprovados vão para o passo Gravar.</span>
+                    <span v-if="!batchGroups.length" class="text-zinc-400">Tudo desta migração já foi ao construtor: converse e revise abaixo; os aprovados vão para o passo Gravar.</span>
                     <button v-if="openedBatch && stepOf(openedBatch) === 'apply'" type="button" class="btn btn-secondary btn-sm" data-test="go-apply" @click="goStep('apply')">Ir para Gravar →</button>
                   </section>
-                  <section v-if="prepared?.length" class="flex flex-col gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/5 p-3 text-xs" data-test="prepared">
-                    <p class="text-emerald-200">
-                      {{ prepared.length }} conversa(s) aberta(s) com o construtor. Clique "Começar" em cada uma; o rascunho aparece ao lado da conversa. Volte aqui e "Atualizar estados" para ver o
-                      progresso.
-                    </p>
-                    <ul class="flex flex-col gap-1">
-                      <li v-for="opened in prepared" :key="opened.conversationId" class="flex flex-wrap items-center gap-2">
-                        <a
-                          :href="buildLink(opened.kind, opened.conversationId)"
-                          class="text-emerald-300 hover:underline"
-                          data-test="prepared-link"
-                          @click.prevent="router ? router.push(buildLink(opened.kind, opened.conversationId)) : undefined"
-                          >{{ BUILD_KINDS[opened.kind].builder }}</a
-                        >
-                        <span class="text-zinc-500">{{ opened.keys.length }} item(ns): {{ opened.keys.slice(0, 4).join(', ') }}<template v-if="opened.keys.length > 4">, …</template></span>
-                      </li>
-                    </ul>
-                  </section>
-                  <ImportBatchProgress
+                  <ImportPrepareDesk
+                    v-model:selected="deskConversation"
+                    :project-id="project!.id"
+                    :job-id="job!.id"
                     :keys="openedBatch.order.length ? openedBatch.order : openedBatch.keys"
                     :items="itemMap"
                     :statuses="statuses"
                     :overrides="overrides"
-                    @select="(key) => { selectedKey = key; area = 'inventory' }"
+                    @updated="(states) => states.forEach(keep)"
                   />
+                  <details class="rounded-xl border border-zinc-800 px-3 py-2" data-test="all-items">
+                    <summary class="cursor-pointer text-xs text-zinc-400">Todos os itens ({{ (openedBatch.order.length ? openedBatch.order : openedBatch.keys).length }})</summary>
+                    <ImportBatchProgress
+                      class="mt-2"
+                      :keys="openedBatch.order.length ? openedBatch.order : openedBatch.keys"
+                      :items="itemMap"
+                      :statuses="statuses"
+                      :overrides="overrides"
+                      @select="(key) => { selectedKey = key; area = 'inventory' }"
+                      @conversation="deskConversation = $event"
+                    />
+                  </details>
                 </template>
 
                 <ImportApply
