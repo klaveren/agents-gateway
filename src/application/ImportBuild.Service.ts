@@ -17,6 +17,7 @@ import { IImportJobItem, IImportReview, TImportItemState } from '@domain/models/
 import { IInventorySource, TInventoryKind } from '@domain/models/ImportInventory.Model'
 import { TProtocolKind } from '@domain/models/Protocol.Model'
 import { IImportJobRecord, IImportRepository } from '@domain/ports/ImportRepository.Port'
+import { isFileSource, textSources } from '@domain/Import.Files'
 
 /**
  * Por que o pedido não serve:
@@ -248,7 +249,9 @@ export class ImportBuildService {
       if (entry.item.title) lines.push(`- title in the source: ${entry.item.title}`)
       lines.push(`- sources (${entry.item.sources.length}):`)
       for (const source of entry.item.sources)
-        lines.push(`  - ${source.path}${source.role ? ` [${source.role}]` : ''} · ${source.bytes} bytes · ≈${source.tokens} tokens${sourceFlags(source)}`)
+        lines.push(
+          `  - ${source.path}${source.role ? ` [${source.role}]` : ''} · ${source.bytes} bytes · ≈${source.tokens} tokens${sourceFlags(source)}${isFileSource(kind, source) ? ' · FILE: goes byte for byte to the resource folder (no operation: do not compose nor remove it)' : ''}`,
+        )
       if (entry.item.refs.length) {
         lines.push('- cites (path → item → gateway id):')
         for (const ref of entry.item.refs) lines.push(`  - ${ref.path}${ref.item ? ` → ${ref.item} → ${ids.get(ref.item) ?? '(not imported)'}` : ' → (no item)'}`)
@@ -332,13 +335,14 @@ export class ImportBuildService {
     if (issues.length) throw new ImportBuildError('invalid', 'the draft has problems', 'ops', issues)
     // ⚖️ Os metadados do argumento vão DEPOIS das operações: os índices das operações (e dos OKs de remoção) não mudam.
     const ops = [...parsed.ops, ...metaOps]
-    const sources = this.sourceTexts(job, entry)
+    // As fontes de TEXTO: o anexo que vai como arquivo (o script da skill) não entra no rascunho (ver `Import.Files`).
+    const sources = this.sourceTexts(job, entry, textSources(effective, entry.item.sources))
     const result = applyImportOps(kind, sources, ops)
     if (!result.ok) throw new ImportBuildError('invalid', 'the draft has problems', 'ops', result.issues)
     const draft: IImportDraft = {
       key,
       kind,
-      sources: entry.item.sources.map((source) => ({ path: source.path, sha256: source.sha256 })),
+      sources: textSources(effective, entry.item.sources).map((source) => ({ path: source.path, sha256: source.sha256 })),
       ops,
       ...result.applied,
       conversationId,
@@ -371,7 +375,7 @@ export class ImportBuildService {
     if (!draft) throw new ImportBuildError('transition', 'the item has no draft to approve', 'key')
     const missing = missingRemovalOks(draft, oks)
     if (missing.length) throw new ImportBuildError('removals', `every removal needs an OK; missing: ${missing.map((op) => `ops[${op}]`).join(', ')}`, 'removals')
-    const issues = verifyImportDraft(draft, this.sourceTexts(record, entry))
+    const issues = verifyImportDraft(draft, this.sourceTexts(record, entry, draftSources(entry, draft)))
     if (issues.length) throw new ImportBuildError('invalid', 'the draft does not match source + operations', 'key', issues)
     const at = this.now()
     const removals = draft.removals.map((removal) => removal.op)
@@ -465,8 +469,8 @@ export class ImportBuildService {
     return file
   }
 
-  private sourceTexts(job: IImportJobRecord, entry: IImportJobItem): IImportSourceText[] {
-    return entry.item.sources.map((source) => ({ path: source.path, aliases: source.aliases, text: this.readChecked(job, source).text }))
+  private sourceTexts(job: IImportJobRecord, entry: IImportJobItem, sources: readonly IInventorySource[] = entry.item.sources): IImportSourceText[] {
+    return sources.map((source) => ({ path: source.path, aliases: source.aliases, text: this.readChecked(job, source).text }))
   }
 }
 
@@ -479,4 +483,10 @@ function sourceFlags(source: IInventorySource): string {
 export function lastDraft(entry: Pick<IImportJobItem, 'drafts'>): IImportDraft | undefined {
   const draft = entry.drafts.at(-1)
   return draft && typeof draft === 'object' && Array.isArray((draft as IImportDraft).ops) ? (draft as IImportDraft) : undefined
+}
+
+/** As fontes com que o rascunho foi feito (o de antes cobria também os anexos que hoje vão como arquivo). */
+export function draftSources(entry: Pick<IImportJobItem, 'item'>, draft: Pick<IImportDraft, 'sources'>): IInventorySource[] {
+  const paths = new Set(draft.sources.map((source) => source.path))
+  return entry.item.sources.filter((source) => paths.has(source.path))
 }

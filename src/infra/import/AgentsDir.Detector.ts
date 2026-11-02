@@ -84,7 +84,13 @@ export class AgentsDirDetector implements IFormatDetector {
           continue
         }
         if (parts.length > 3 && OUT_OF_CATALOG.test(parts[2])) {
-          skip(`${ROOT}agents/${agentName}/${parts[2]}`, entry.path, 'memória, histórico e scripts do agente ficam fora do catálogo')
+          skip(
+            `${ROOT}agents/${agentName}/${parts[2]}`,
+            entry.path,
+            parts[2] === 'scripts'
+              ? 'os scripts do agente não são texto do catálogo: vão como ARQUIVOS dele (a pasta só leitura) quando o agente é gravado'
+              : 'memória e histórico do agente ficam fora do catálogo',
+          )
           continue
         }
         if (parts.length === 3 && OUT_OF_CATALOG.test(stripExt(base))) {

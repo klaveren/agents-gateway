@@ -19,6 +19,7 @@ import { SqliteMcpServerRepository } from '@infra/persistence/Sqlite.McpServerRe
 import { SqlitePermissionRepository } from '@infra/persistence/Sqlite.PermissionRepository'
 import { SqliteProjectRepository } from '@infra/persistence/Sqlite.ProjectRepository'
 import { SecretBox } from '@infra/secrets/Aes.SecretBox'
+import { IResourceFilesPort } from '@domain/ports/ResourceFiles.Port'
 
 /** As regras do cadastro de agente nos testes: duas ferramentas avulsas e as do terminal e dos arquivos; todo modelo é do Google. */
 export const TEST_AGENT_RULES = { knownTools: ['alpha_tool', 'beta_tool', 'run_bash', 'read_file', 'write_file'], providerOf: () => EProvider.GOOGLE }
@@ -28,7 +29,7 @@ export const TEST_AGENT_RULES = { knownTools: ['alpha_tool', 'beta_tool', 'run_b
  * ligado, o leitor, o escritor, o plano, o apply e o rollback — o mesmo caminho da composição. `wrapWriter` deixa o teste
  * pôr uma falha no meio de um lote.
  */
-export function buildCatalogStack(options: { wrapWriter?: (writer: ICatalogWriter) => ICatalogWriter; newId?: () => string } = {}) {
+export function buildCatalogStack(options: { wrapWriter?: (writer: ICatalogWriter) => ICatalogWriter; newId?: () => string; files?: IResourceFilesPort } = {}) {
   const repos = {
     agents: new SqliteAgentRepository(':memory:'),
     guidance: new SqliteGuidanceRepository(':memory:'),
@@ -64,6 +65,10 @@ export function buildCatalogStack(options: { wrapWriter?: (writer: ICatalogWrite
     { create: (id) => `/tmp/${id}`, remove: () => undefined },
   )
   for (const service of [agents, guidance, permissions, mcps, projects]) service.history.use(() => history)
+  if (options.files) {
+    agents.useFiles(options.files)
+    guidance.useFiles(options.files)
+  }
 
   const realWriter = new CatalogWriter({
     guidance,

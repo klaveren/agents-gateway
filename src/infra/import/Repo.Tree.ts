@@ -210,16 +210,29 @@ export interface IRepoFileRead {
  * do conteúdo cru (o mesmo do inventário), para conferir se a fonte mudou.
  */
 export function readRepoFile(root: string, path: string, options: IRepoTreeOptions): IRepoFileRead | undefined {
+  try {
+    const buffer = readRepoBytes(root, path)
+    if (!buffer) return undefined
+    const sha256 = createHash('sha256').update(buffer).digest('hex')
+    if (buffer.subarray(0, BINARY_SNIFF).includes(0)) return { sha256, text: '', binary: true }
+    return { sha256, text: options.mask(buffer.toString('utf8')), binary: false }
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * ⛔ Os BYTES CRUS de um arquivo do repositório, com a mesma contenção do `readRepoFile` (os arquivos de recurso vão
+ * byte a byte para o depósito; quem chama confere o `sha256` e o segredo).
+ */
+export function readRepoBytes(root: string, path: string): Buffer | undefined {
   const clean = path.replace(/^\.\//, '')
   if (!clean || isAbsolute(clean) || clean.split('/').includes('..') || hasIgnoredSegment(clean)) return undefined
   try {
     const realRoot = realpathSync(root)
     const absolute = realpathSync(join(realRoot, clean))
     if (!inside(realRoot, absolute) || hasIgnoredSegment(toPosix(relative(realRoot, absolute))) || !statSync(absolute).isFile()) return undefined
-    const buffer = readFileSync(absolute)
-    const sha256 = createHash('sha256').update(buffer).digest('hex')
-    if (buffer.subarray(0, BINARY_SNIFF).includes(0)) return { sha256, text: '', binary: true }
-    return { sha256, text: options.mask(buffer.toString('utf8')), binary: false }
+    return readFileSync(absolute)
   } catch {
     return undefined
   }

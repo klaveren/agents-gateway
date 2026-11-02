@@ -1,7 +1,8 @@
-import { ICatalogDocument, TCatalogKind } from '@domain/Catalog.Document'
+import { createHash } from 'node:crypto'
+import { ICatalogDocument, TCanonicalValue, TCatalogKind } from '@domain/Catalog.Document'
 import { ICatalogImportPlan, refOfDocument, TRefTarget, withBody } from '@domain/Catalog.Import'
 import { IApprovedEntry, IAgentExtras, importDocuments } from '@domain/Import.Documents'
-import { draftKindForItem, verifyImportDraft } from '@domain/Import.Draft'
+import { draftKindForItem, IImportDraft, verifyImportDraft } from '@domain/Import.Draft'
 import { canTransition } from '@domain/Import.Job'
 import { planAgentBatch, prefixedId } from '@domain/Import.Order'
 import { confirmedRules, IReachTranslation, ruleKey } from '@domain/Import.Permissions'
@@ -12,8 +13,11 @@ import { IImportJobRecord, IImportRepository } from '@domain/ports/ImportReposit
 import type { CatalogReader, TCatalogScope } from './Catalog.Reader'
 import type { CatalogImportApplier, IImportApplyResult } from './CatalogImport.Apply'
 import type { IRestoreCaller } from './CatalogRestore.Usecase'
-import { IImportSourceFile, ImportBuildError, lastDraft } from './ImportBuild.Service'
+import { draftSources, IImportSourceFile, ImportBuildError, lastDraft } from './ImportBuild.Service'
 import type { ImportScanUseCase } from './ImportScan.Usecase'
+import { importFilesOf } from '@domain/Import.Files'
+import { IResourceFile, RESOURCE_FILE_MAX_BYTES, sortFiles } from '@domain/models/ResourceFile.Model'
+import { IResourceFilesPort } from '@domain/ports/ResourceFiles.Port'
 
 /** O que a pessoa escolhe na tela de gravação. */
 export interface IImportApplySelection {
@@ -114,6 +118,13 @@ export interface IImportApplyDeps {
   /** Os modelos ativos (provider → modelos ligados). Ausente: nenhum listado. */
   models?: () => Array<{ provider: string; models: string[] }>
   now?: () => Date
+  /**
+   * Os ARQUIVOS de recurso (ver `Import.Files`): os bytes crus de um arquivo do repositório (contido), o depósito e os
+   * segredos de um texto. Ausentes: a importação não leva arquivo.
+   */
+  readRaw?: (projectId: string, repository: string, path: string) => Buffer | undefined
+  files?: Pick<IResourceFilesPort, 'put'>
+  secretsIn?: (text: string) => string[]
 }
 
 interface IPrepared {
@@ -127,6 +138,8 @@ interface IPrepared {
   /** Todos os itens do trabalho e o prefixo do lote: para achar quem produz o que falta. */
   all: IImportJobItem[]
   prefix: string
+  /** O conteúdo dos arquivos de recurso que vão junto: entra no depósito antes da gravação. */
+  blobs: Buffer[]
 }
 
 /**
@@ -178,6 +191,8 @@ export class ImportApplyUseCase {
       ...(record.head ? { head: record.head } : {}),
       items: prepared.entries.filter((entry) => produced[entry.key]).map((entry) => ({ key: entry.key, refs: produced[entry.key], sources: entry.draft.sources })),
     }
+    // O conteúdo dos arquivos entra no depósito ANTES: a gravação confere que cada um está lá.
+    for (const blob of prepared.blobs) this.deps.files?.put(blob)
     const result = await this.deps.catalog.apply(
       { documents: prepared.documents, scope: prepared.scope, planHash: request.planHash, ...(request.confirm ? { confirm: request.confirm } : {}), provenance },
       caller,
@@ -240,7 +255,7 @@ export class ImportApplyUseCase {
         skipped.push({ key: entry.key, reason: 'sem rascunho do tipo do item' })
         continue
       }
-      const issues = verifyImportDraft(draft, this.sourceTexts(record, entry))
+      const issues = verifyImportDraft(draft, this.sourceTexts(record, entry, draft))
       if (issues.length) throw new ImportBuildError('invalid', `the draft of ${entry.key} does not match source + operations`, 'key', issues)
       entries.push({ key: entry.key, kind, ...(entry.item.parent ? { parent: entry.item.parent } : {}), draft })
     }
@@ -269,7 +284,7 @@ export class ImportApplyUseCase {
     // As skills e os commands liberados que não existem nem entram no lote: pendentes (fora de `resources`).
     const incoming = new Set(built.documents.map(refOfDocument))
     const exists = (kind: 'skill' | 'command', id: string) => incoming.has(`${kind}/${id}`) || this.deps.reader.read(kind, id)?.kind === kind
-    const documents = built.documents.map((document) => {
+    const linked = built.documents.map((document) => {
       const agent = agents.find((one) => one.view.id === document.id && document.kind === 'agent')
       if (!agent) return document
       agent.view.pendingSkills = agent.extras.skills.filter((id) => !exists('skill', id))
@@ -277,6 +292,8 @@ export class ImportApplyUseCase {
       agent.view.commands = agent.extras.commands.filter((id) => exists('command', id))
       return withBody(document, { ...document.body, resources: { skills: agent.view.skills, commands: agent.view.commands } })
     })
+    const blobs: Buffer[] = []
+    const documents = linked.map((document) => this.withFiles(record, document, built.produced, byKey, all, skipped, blobs))
     const global = documents.some((document) => !document.projectId && document.kind !== 'project')
     return {
       record,
@@ -288,7 +305,58 @@ export class ImportApplyUseCase {
       agents: agents.map((agent) => agent.view),
       all,
       prefix,
+      blobs,
     }
+  }
+
+  /**
+   * O documento da skill ou do agente com os ARQUIVOS do repositório (ver `Import.Files`), conferidos: o mesmo `sha256`
+   * da análise (senão, "analise de novo"), só texto, até 1 MB e sem segredo — o que não passa fica de fora, com o motivo.
+   * Sem arquivo no repositório, ficam os que o recurso já tem no catálogo (os da guia Arquivos).
+   */
+  private withFiles(
+    record: IImportJobRecord,
+    document: ICatalogDocument,
+    produced: Record<string, string[]>,
+    byKey: ReadonlyMap<string, IImportJobItem>,
+    all: readonly IImportJobItem[],
+    skipped: IPrepared['skipped'],
+    blobs: Buffer[],
+  ): ICatalogDocument {
+    if (!this.deps.readRaw || (document.kind !== 'skill' && document.kind !== 'agent')) return document
+    const ref = refOfDocument(document)
+    const key = Object.keys(produced).find((one) => produced[one].includes(ref) && (byKey.get(one)?.kind ?? byKey.get(one)?.item.kind) === document.kind)
+    const entry = key ? byKey.get(key) : undefined
+    if (!entry) return document
+    const found = importFilesOf(
+      entry.item,
+      document.kind,
+      all.map((one) => one.item),
+    )
+    for (const odd of found.skipped) skipped.push({ key: entry.key, reason: `arquivo ${odd.path} fica de fora: ${odd.reason}` })
+    const kept: IResourceFile[] = []
+    for (const file of found.files) {
+      const raw = this.deps.readRaw(record.projectId, record.repository, file.source)
+      if (!raw) throw new ImportBuildError('source_changed', `source not found anymore: ${file.source} — analyse the repository again`, 'path')
+      if (createHash('sha256').update(raw).digest('hex') !== file.sha256)
+        throw new ImportBuildError('source_changed', `source changed since the analysis: ${file.source} — analyse the repository again`, 'path')
+      const reason = raw.subarray(0, 8192).includes(0)
+        ? 'binário (só texto vai para a pasta)'
+        : raw.length > RESOURCE_FILE_MAX_BYTES
+          ? 'maior que 1 MB'
+          : (this.deps.secretsIn?.(raw.toString('utf8')) ?? []).length
+            ? 'parece ter segredo (a credencial vai numa variável do gateway)'
+            : undefined
+      if (reason) {
+        skipped.push({ key: entry.key, reason: `arquivo ${file.source} fica de fora: ${reason}` })
+        continue
+      }
+      blobs.push(raw)
+      kept.push({ path: file.path, sha256: file.sha256, bytes: raw.length })
+    }
+    const current = kept.length ? undefined : this.deps.reader.read(document.kind, document.id)?.body.files
+    const files = kept.length ? (sortFiles(kept) as unknown as TCanonicalValue[]) : Array.isArray(current) ? current : []
+    return files.length ? withBody(document, { ...document.body, files }) : document
   }
 
   /** O modelo e o alcance de cada agente aprovado: o tradutor (#131) com a política de "nasce fechado". */
@@ -375,8 +443,8 @@ export class ImportApplyUseCase {
     })
   }
 
-  private sourceTexts(record: IImportJobRecord, entry: IImportJobItem): Array<{ path: string; aliases: string[]; text: string }> {
-    return entry.item.sources.map((source) => {
+  private sourceTexts(record: IImportJobRecord, entry: IImportJobItem, draft: Pick<IImportDraft, 'sources'>): Array<{ path: string; aliases: string[]; text: string }> {
+    return draftSources(entry, draft).map((source) => {
       const file = this.deps.readSource(record.projectId, record.repository, source.path)
       if (!file) throw new ImportBuildError('source_changed', `source not found anymore: ${source.path} — analyse the repository again`, 'path')
       if (file.sha256 !== source.sha256) throw new ImportBuildError('source_changed', `source changed since the analysis: ${source.path} — analyse the repository again`, 'path')
