@@ -1,4 +1,4 @@
-import { sortFiles } from '@domain/models/ResourceFile.Model'
+import { fileIssues, IResourceFile, sortFiles } from '@domain/models/ResourceFile.Model'
 import { IResourceFilesPort } from '@domain/ports/ResourceFiles.Port'
 import { toCapabilities } from '@domain/Capability.Catalog'
 import { agentIssues, IAgentRules, triggerIssues } from '@domain/Agent.Policy'
@@ -165,6 +165,27 @@ export class AgentCatalog implements IAgentDirectory {
     this.repository.save(triggers.length ? { ...agent, triggers } : agent, by)
     // Quem grava aqui é a ferramenta `agent_trigger`, nunca a tela.
     this.history.record([{ kind: 'agent', id }], { by, source: 'agent' })
+  }
+
+  /**
+   * Só os ARQUIVOS de um agente gravado (a guia Arquivos): o resto do agente fica como está. A lista passa pela regra
+   * (caminho, tetos) e cada conteúdo tem de estar no depósito.
+   */
+  saveFiles(id: string, files: IResourceFile[], by: string): IStoredAgent {
+    const stored = this.repository.list().find((agent) => agent.id === id)
+    if (!stored) throw new AgentNotFoundError(id)
+    const issues = fileIssues(files)
+    if (!issues.length && files.length) {
+      if (!this.files) issues.push({ field: 'files', message: 'resource files are not available on this gateway' })
+      else files.forEach((file, index) => !this.files!.has(file.sha256) && issues.push({ field: `files[${index}].sha256`, message: `content not uploaded: ${file.path}` }))
+    }
+    if (issues.length) throw new InvalidAgentError(issues)
+    const agent: IAgent = { ...toAgent(stored) }
+    delete agent.files
+    const saved = this.repository.save(files.length ? { ...agent, files: sortFiles(files) } : agent, by)
+    this.placeFiles(agent, saved)
+    this.history.record([{ kind: 'agent', id }], { by })
+    return saved
   }
 
   /** Muda o agente de projeto sem passar pela regra do salvamento — só a migração para projetos usa. */

@@ -1,3 +1,4 @@
+import type { IResourceFile } from './resourceFiles'
 /** O que a API do gateway devolve — espelho do OpenAPI (`/v1/openapi.json`). */
 
 export type TProvider = 'claude' | 'openai' | 'google' | 'claude-sub' | 'codex' | 'antigravity'
@@ -163,6 +164,8 @@ export interface IAgentDetail extends IAgent {
   fallback?: IAgentFallback
   /** As variáveis de ambiente fixas do agente, em todo terminal dele. */
   env?: Record<string, string>
+  /** Os arquivos da pasta do agente (guia Arquivos): ver `lib/resourceFiles`. */
+  files?: IResourceFile[]
   systemPrompt: string
   updatedAt?: string
   updatedBy?: string
@@ -625,6 +628,8 @@ export interface IResource {
   docIds: string[]
   /** Dos anexados, os que vão por referência (o agente lê com `read_doc` se precisar). Ausente = todos inteiros. */
   docRefs?: string[]
+  /** Os arquivos da pasta (scripts, modelos): ver `lib/resourceFiles`. */
+  files?: IResourceFile[]
   createdAt: string
   updatedAt: string
   updatedBy?: string

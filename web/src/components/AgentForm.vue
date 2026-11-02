@@ -1,7 +1,8 @@
 <script setup lang="ts">
   import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
   import { useRoute } from 'vue-router'
-  import { ApiError } from '@/lib/api'
+  import { api, ApiError } from '@/lib/api'
+  import type { IResourceFile } from '@/lib/resourceFiles'
   import { effortLabel, sizeHint } from '@/lib/format'
   import { BUILD_KINDS, builderAgentId, type TBuildKind } from '@/lib/builder'
   import {
@@ -35,6 +36,7 @@
   import PermissionTester from './PermissionTester.vue'
   import AgentInitialContext from './AgentInitialContext.vue'
   import AgentResources from './AgentResources.vue'
+  import ResourceFiles from './ResourceFiles.vue'
   import HistoryPanel from './HistoryPanel.vue'
   import ConfirmDialog from './ConfirmDialog.vue'
 
@@ -307,6 +309,13 @@
   const form = ref<IAgentInput>(blank())
   /** As variáveis de ambiente do agente, em linhas (o par nome/valor): viram o registro só ao salvar. */
   const envList = ref<IEnvRow[]>([])
+  /** Os arquivos da pasta do agente: guia própria, gravada à parte (o Salvar do agente não os manda nem os apaga). */
+  const agentFiles = ref<IResourceFile[]>([])
+  async function saveAgentFiles(files: IResourceFile[]) {
+    if (!props.agent) return
+    await api(`/agents/${encodeURIComponent(props.agent.id)}/files`, { method: 'PUT', body: { files } })
+    agentFiles.value = files
+  }
   const envRepeated = computed(() => envDuplicates(envList.value))
 
   const DIAGNOSTIC_CHECKS: Array<{ key: 'typecheck' | 'lint' | 'format'; label: string }> = [
@@ -350,7 +359,7 @@
    * As guias do formulário: o texto do agente na primeira, e cada grupo de capacidades na sua. A contagem diz
    * quanto está escolhido sem abrir a guia; o ponto vermelho, que o servidor recusou algo ali.
    */
-  type TTab = 'agente' | 'triggers' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos' | 'historico'
+  type TTab = 'agente' | 'triggers' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'arquivos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos' | 'historico'
   // `#agendamentos` no link (a visão geral dos agendamentos) abre direto na guia.
   /** O nome das ferramentas do gateway na guia Ferramentas (o id técnico fica na dica). */
   const LOCAL_TOOL_LABEL: Record<string, string> = {
@@ -393,6 +402,7 @@
     mcps: [],
     sdk: ['env'],
     recursos: [],
+    arquivos: ['files'],
     contexto: [],
     tamanho: [],
     hooks: [],
@@ -415,6 +425,7 @@
       { id: 'mcps', label: 'MCPs', count: tools.filter((entry) => entry.startsWith('mcp:')).length },
       { id: 'sdk', label: 'Permissões', count: (form.value.permissions?.length ?? 0) + tools.filter((entry) => entry.startsWith('sdk:')).length },
       { id: 'recursos', label: 'Recursos' },
+      { id: 'arquivos', label: 'Arquivos', count: agentFiles.value.length },
       { id: 'contexto', label: 'Contexto inicial' },
       { id: 'tamanho', label: 'Tamanho' },
       { id: 'hooks', label: 'Hooks' },
@@ -549,6 +560,7 @@
           }
         : blank()
       envList.value = envRows(agent?.env)
+      agentFiles.value = (agent?.files ?? []).map((file) => ({ ...file }))
       issues.value = {}
       failure.value = undefined
       applyDefaultProvider()
@@ -1212,6 +1224,17 @@
         :agent-id="agent.id"
         :project-id="agent.projectId"
         :project-name="projects.list.find((item) => item.id === agent?.projectId)?.name"
+      />
+      <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
+    </section>
+
+    <!-- ⚖️ Os arquivos também têm o próprio cadastro (fora do Salvar do agente): só para agente já gravado. -->
+    <section v-if="tab === 'arquivos'">
+      <ResourceFiles
+        v-if="agent && !creating"
+        :files="agentFiles"
+        :where="`${agent.projectId ? `projects/${agent.projectId}` : 'global'}/agents/${agent.id}`"
+        :save="saveAgentFiles"
       />
       <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
     </section>

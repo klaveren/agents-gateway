@@ -195,6 +195,11 @@ describe('AgentCatalog', () => {
     assert.strictEqual(catalog.filesDir(catalog.get('pesquisa')!), '/dados/global/pesquisa')
     catalog.moveToProject('pesquisa', 'alfa', 'root')
     assert.deepStrictEqual([...dirs.keys()], ['alfa/pesquisa'])
+    // Só os arquivos (a guia Arquivos): o resto do agente fica; conteúdo não enviado é recusado.
+    assert.throws(() => catalog.saveFiles('pesquisa', [file('b.sh', 'b')], 'root'), /content not uploaded/)
+    catalog.saveFiles('pesquisa', [], 'root')
+    assert.deepStrictEqual([catalog.get('pesquisa')?.files, catalog.get('pesquisa')?.systemPrompt, [...dirs.keys()]], [undefined, 'pesquise', []])
+    catalog.saveFiles('pesquisa', [file('a.sh', 'a')], 'root')
     catalog.save({ ...base, id: 'outro', name: 'Outro' }, options(true))
     catalog.remove('pesquisa', 'root')
     assert.deepStrictEqual([...dirs.keys()], [])

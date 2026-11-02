@@ -93,6 +93,9 @@ const CONTENT_ROUTES: readonly RegExp[] = [
   /^\/v1\/(?:rules|docs|resources)(?:\/[^/]+)?\/?$/,
   /^\/v1\/protocols\/[^/]+\/addendum\/?$/,
   /^\/v1\/(?:mcp|turn-tools)\/?$/,
+  // Os arquivos de recurso: o conteúdo (base64, até 1 MB) e a lista de um recurso ou agente.
+  /^\/v1\/files\/?$/,
+  /^\/v1\/(?:resources|agents)\/[^/]+\/files\/?$/,
 ]
 const HOOK_ROUTE = /^\/v1\/hook\/[^/]+\/[^/]+\/?$/
 /** O import do catálogo: o pacote inteiro, em JSON ou `.tar.gz`, com o limite próprio (`CATALOG_IMPORT_LIMIT`). */
@@ -344,6 +347,10 @@ function buildRoutes(
     { method: 'get', path: '/resources/:id', handler: guidance.getResource },
     { method: 'put', path: '/resources/:id', handler: guidance.updateResource },
     { method: 'delete', path: '/resources/:id', handler: guidance.deleteResource },
+    { method: 'post', path: '/files', handler: guidance.uploadFile },
+    { method: 'get', path: '/files/:sha256', handler: guidance.readFile },
+    { method: 'put', path: '/resources/:id/files', handler: guidance.setResourceFiles },
+    { method: 'put', path: '/agents/:agentId/files', handler: guidance.setAgentFiles },
     { method: 'get', path: '/agents/:agentId/resources', handler: guidance.getAgentResources },
     { method: 'put', path: '/agents/:agentId/resources', handler: guidance.setAgentResources },
     { method: 'get', path: '/protocols/:kind', handler: guidance.getProtocol },

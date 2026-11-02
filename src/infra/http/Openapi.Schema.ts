@@ -798,6 +798,19 @@ const docBody = {
   },
 }
 const idParam = [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }]
+/** A lista de arquivos de um recurso ou agente: o conteúdo mora no depósito por sha256 (POST /files). */
+const resourceFiles = {
+  type: 'array',
+  items: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: 'Relative to the resource folder, with "/" (scripts/run.mjs)' },
+      sha256: { type: 'string' },
+      bytes: { type: 'integer' },
+    },
+    required: ['path', 'sha256', 'bytes'],
+  },
+}
 const resourceSchema = {
   type: 'object',
   properties: {
@@ -812,6 +825,7 @@ const resourceSchema = {
       items: { type: 'string' },
       description: 'Which of docIds go by reference: the loaded resource lists id, title and size, and the agent reads them with read_doc if needed. Absent on update = keep.',
     },
+    files: { ...resourceFiles, description: 'The files of the resource folder (content uploaded with POST /files). Absent on update = keep.' },
     createdAt: { type: 'string', format: 'date-time' },
     updatedAt: { type: 'string', format: 'date-time' },
     updatedBy: { type: 'string' },
@@ -2685,6 +2699,53 @@ export const OPENAPI_DOCUMENT = {
         summary: 'Delete a skill or command. Administrators only',
         parameters: idParam,
         responses: { '200': { description: 'OK' }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/files': {
+      post: {
+        summary:
+          'Upload the content of a RESOURCE FILE (a script or template of a skill, command or agent): stored by sha256, returned as {sha256, bytes}; the resource list points to it afterwards. Text only, up to 1 MB, and no secrets (422): the script reads credentials from a gateway variable. Administrators only',
+        requestBody: { required: true, ...json({ type: 'object', properties: { content: { type: 'string', description: 'The file content, base64' } }, required: ['content'] }) },
+        responses: {
+          '200': { description: 'Stored', ...json(envelope({ type: 'object', properties: { sha256: { type: 'string' }, bytes: { type: 'integer' } } })) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
+    '/files/{sha256}': {
+      get: {
+        summary: 'The content of a stored resource file, as text. Administrators only',
+        parameters: [{ name: 'sha256', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { sha256: { type: 'string' }, bytes: { type: 'integer' }, text: { type: 'string' } } })) },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+    },
+    '/resources/{id}/files': {
+      put: {
+        summary:
+          'Replace the FILES of a skill or command (the rest stays): the folder <data>/global|projects/<p>/skills|commands/<id>/ is rewritten whole, read-only for agents. Every content must be uploaded first. Administrators only',
+        parameters: idParam,
+        requestBody: { required: true, ...json({ type: 'object', properties: { files: resourceFiles }, required: ['files'] }) },
+        responses: { '200': { description: 'OK', ...json(envelope(resourceSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/agents/{agentId}/files': {
+      put: {
+        summary:
+          'Replace the FILES of an agent (the rest stays): its folder is rewritten whole, read-only for the agent. Every content must be uploaded first. Administrators only',
+        parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', properties: { files: resourceFiles }, required: ['files'] }) },
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { files: resourceFiles } })) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': failures['422'],
+        },
       },
     },
     '/agents/{agentId}/resources': {
