@@ -129,7 +129,14 @@ function clip(text: string, max = 800): string {
             <span class="rounded-full px-1.5 text-[10px]" :class="op.op === 'remove' ? 'bg-rose-500/20 text-rose-100' : 'bg-zinc-800 text-zinc-300'">{{ OP_LABEL[op.op] }}</span>
             <span class="min-w-0 flex-1 break-words text-zinc-200">{{ opSummary(op) }}</span>
             <label v-if="op.op === 'remove'" class="flex items-center gap-1 text-rose-100">
-              <input type="checkbox" :checked="oks.has(index)" :disabled="!reviewing || busy" data-test="removal-ok" @change="toggle(index, $event)" />
+              <input
+                type="checkbox"
+                :checked="oks.has(index)"
+                :disabled="!reviewing || busy"
+                :aria-label="`OK para remover: ${op.reason}`"
+                data-test="removal-ok"
+                @change="toggle(index, $event)"
+              />
               OK
             </label>
           </div>

@@ -5,6 +5,9 @@ import { makeProjectAccounts } from './ProjectAccounts.Factory'
 import { callbackAllowed } from '@infra/http/Turn.Callbacks'
 import { SecretMaskController } from '@infra/http/SecretMask.Controller'
 import { makeSecretMasker } from './SecretMask.Factory'
+import { makeConversationRepository } from './Conversations.Factory'
+import { NullConversationRepository } from '@infra/persistence/Null.ConversationRepository'
+import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { backgroundProcesses } from '@infra/tools/Background.Processes'
 import { ProjectAccountsController } from '@infra/http/ProjectAccounts.Controller'
 import { PermissionsController } from '@infra/http/Permissions.Controller'
@@ -295,6 +298,9 @@ function makeCatalogWriter(): CatalogWriter {
   })
 }
 
+/** Onde o importador confere se a conversa de um item existe: o banco das conversas (uma conexão a mais no mesmo arquivo). */
+let importConversations: IConversationRepository | undefined
+
 /**
  * O importador: a varredura lê o repositório DO projeto (`resolveWorkFolder`, a mesma contenção da conversa); o
  * trabalho de importação a salva com o estado de cada item. ⛔ Nada grava no catálogo.
@@ -342,6 +348,12 @@ export function makeImportController(): ImportController {
           .filter((entry) => entry.models.length > 0),
     }),
     projectExists: (projectId) => projects.exists(projectId),
+    conversationExists: async (conversationId) => {
+      importConversations ??= makeConversationRepository()
+      // Sem banco (`CONVERSATIONS_DB=off`) nada se perde por não estar nele: não marca.
+      if (importConversations instanceof NullConversationRepository) return true
+      return !!(await importConversations.findSession(conversationId))
+    },
     ignore: { get: (projectId) => projects.importIgnore(projectId), set: (projectId, patterns, by) => projects.setImportIgnore(projectId, patterns, by) },
     proof: makeAuth().proof,
   })

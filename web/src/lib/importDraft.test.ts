@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { buildLink, builderKindFor, type IImportBuildStatus, importOpening, lastDraft, missingOks, opSummary } from './importDraft'
+import { buildLink, builderKindFor, draftingWithoutConversation, type IImportBuildStatus, importOpening, lastDraft, missingOks, opSummary } from './importDraft'
 
 describe('importDraft', () => {
+  it('no construtor sem conversa viva (nenhuma ou perdida) abre de novo; com conversa viva, não', () => {
+    const at = (over: Partial<IImportBuildStatus>) => ({ key: 'k', state: 'drafting', ...over }) as IImportBuildStatus
+    expect([
+      draftingWithoutConversation(at({})),
+      draftingWithoutConversation(at({ conversationId: 'gw_1', conversationLost: true })),
+      draftingWithoutConversation(at({ conversationId: 'gw_1' })),
+      draftingWithoutConversation(at({ state: 'review', conversationId: 'gw_1', conversationLost: true })),
+      draftingWithoutConversation(undefined),
+    ]).toEqual([true, true, false, false, false])
+  })
+
   it('o construtor de cada tipo: trigger vai ao de agentes; mcp não tem', () => {
     expect([builderKindFor('trigger'), builderKindFor('spec'), builderKindFor('mcp'), builderKindFor('unknown')]).toEqual(['agent', 'spec', undefined, undefined])
   })

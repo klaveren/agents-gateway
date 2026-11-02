@@ -36,6 +36,8 @@ export interface IImportControllerDeps {
   /** A gravação pelo catálogo (os aprovados viram documentos). Ausente: as rotas respondem 404. */
   apply?: ImportApplyUseCase
   projectExists: (projectId: string) => boolean
+  /** A conversa existe (no banco)? Marca o item "no construtor" cuja conversa sumiu (`conversationLost`). Ausente: não marca. */
+  conversationExists?: (conversationId: string) => Promise<boolean>
   ignore?: IImportIgnoreStore
   proof?: ICallerProof
 }
@@ -238,7 +240,19 @@ export class ImportController {
 
   /** `GET /projects/:id/import/jobs/:job` — o trabalho: o inventário salvo e o estado de cada item. */
   async getJob(req: Request, res: Response): Promise<void> {
-    await this.respond(res, 'importJob', req, async (projectId) => this.jobError(() => this.jobs().get(projectId, req.params.job as string)))
+    await this.respond(res, 'importJob', req, async (projectId) => {
+      const job = this.jobError(() => this.jobs().get(projectId, req.params.job as string))
+      const exists = this.deps.conversationExists
+      if (!exists) return job
+      // ⚖️ Item "no construtor" cuja conversa não existe mais (apagada, ou aberta antes de ir ao banco e perdida num
+      // reinício): marcado, para a tela oferecer abrir de novo. Só os em `drafting` com conversa: poucos por trabalho.
+      const states = await Promise.all(
+        job.states.map(async (state) =>
+          state.state === 'drafting' && state.conversationId && !(await exists(state.conversationId)) ? { ...state, conversationLost: true } : state,
+        ),
+      )
+      return { ...job, states }
+    })
   }
 
   /**

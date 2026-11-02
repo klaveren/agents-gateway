@@ -31,6 +31,7 @@ describe('construtor em modo importação (/projects/:id/import/jobs/:job/builde
   const opened: Array<{ agentId: string; owner?: Record<string, string> }> = []
   let build: ImportBuildService
   let controller: ImportController
+  let controllerDeps: () => ConstructorParameters<typeof ImportController>[0]
   let jobId: string
 
   before(() => {
@@ -53,12 +54,13 @@ describe('construtor em modo importação (/projects/:id/import/jobs/:job/builde
         return `conv-${opened.length}`
       },
     })
-    controller = new ImportController({ scan, jobs, build, projectExists: (projectId) => projectId === 'alfa', proof })
+    controllerDeps = () => ({ scan, jobs, build, projectExists: (projectId: string) => projectId === 'alfa', proof })
+    controller = new ImportController(controllerDeps())
     jobId = jobs.create('alfa', 'app', 'u_root').id
   })
   after(() => rmSync(base, { recursive: true, force: true }))
 
-  type THandler = 'openBuilder' | 'approveItem' | 'adjustItem'
+  type THandler = 'openBuilder' | 'approveItem' | 'adjustItem' | 'getJob'
   const call = (as: string, body: unknown, handler: THandler, target: ImportController = controller) =>
     withCaller({ token: as, ...identityFromToken(as) }, async () => {
       const reply: { status: number; body?: { ok: boolean; result?: any; code?: string; details?: any } } = { status: 0 } // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -123,6 +125,22 @@ describe('construtor em modo importação (/projects/:id/import/jobs/:job/builde
     const adjusted = await call(ADMIN, { key: 'spec:arquitetura', comment: 'divida em duas' }, 'adjustItem')
     assert.deepStrictEqual([adjusted.status, adjusted.body?.result.state, adjusted.body?.result.review.adjust.comment], [200, 'drafting', 'divida em duas'])
     assert.strictEqual((await call(ADMIN, { key: 'spec:arquitetura', comment: 'de novo' }, 'adjustItem')).status, 409)
+  })
+
+  it('item no construtor cuja conversa sumiu vem marcado (conversationLost) e abre de novo numa conversa nova', async () => {
+    const lost = new ImportController({ ...controllerDeps(), conversationExists: async (id) => id !== 'conv-1' })
+    const states = (await call(ADMIN, undefined, 'getJob', lost)).body?.result.states as Array<{ key: string; state: string; conversationLost?: boolean }>
+    const of = (key: string) => states.find((state) => state.key === key)!
+    assert.deepStrictEqual([of('spec:arquitetura').state, of('spec:arquitetura').conversationLost], ['drafting', true])
+    assert.deepStrictEqual([of('spec:config').state, of('spec:config').conversationLost], ['approved', undefined])
+    // Sem quem confira, nada é marcado.
+    assert.strictEqual(
+      ((await call(ADMIN, undefined, 'getJob')).body?.result.states as typeof states).some((state) => state.conversationLost),
+      false,
+    )
+    const reopened = await call(ADMIN, { keys: ['spec:arquitetura'] }, 'openBuilder')
+    assert.deepStrictEqual([reopened.status, repository.item(jobId, 'spec:arquitetura')!.conversationId], [200, reopened.body?.result.conversationId])
+    assert.notStrictEqual(reopened.body?.result.conversationId, 'conv-1')
   })
 
   it('sem o construtor configurado na rota, 404', async () => {
