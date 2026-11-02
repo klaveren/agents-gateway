@@ -66,6 +66,7 @@ import { makeImportBuild, readImportSource, useImportOpener } from './ImportBuil
 import { BUILDER_METADATA_KEY } from '@domain/Builder.Agents'
 import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
 import { EMode } from '@domain/enums/EMode.Enum'
+import { makeResourceFiles } from './ResourceFiles.Factory'
 
 /** O último controller de agentes montado: as regras do cadastro de agente moram nele (o rollback as usa). */
 let agentController: AgentController | undefined
@@ -206,7 +207,16 @@ export function makeProjectsController(): ProjectsController {
 }
 
 export function makeGuidanceController(): GuidanceController {
-  return new GuidanceController({ guidance: makeGuidance(), proof: makeAuth().proof })
+  return new GuidanceController({
+    guidance: makeGuidance(),
+    proof: makeAuth().proof,
+    files: makeResourceFiles(),
+    agentFiles: (agentId, files, by) => makeAgents().saveFiles(agentId, files, by),
+    secretsIn: (text) =>
+      makeSecretMasker()
+        .scan(text)
+        .hits.map((hit) => hit.label),
+  })
 }
 
 /** O histórico do catálogo: admin lê tudo, faz o rollback e exporta; o membro, só lê o MCP dos projetos dele. */

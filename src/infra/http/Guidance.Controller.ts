@@ -5,6 +5,8 @@ import { DOC_KINDS, TDocKind } from '@domain/models/ProjectDoc.Model'
 import { TProtocolKind } from '@domain/models/Protocol.Model'
 import { RESOURCE_KINDS, TResourceKind } from '@domain/models/Resource.Model'
 import { TGuidanceScope } from '@domain/ports/GuidanceRepository.Port'
+import { IResourceFile, RESOURCE_FILE_MAX_BYTES } from '@domain/models/ResourceFile.Model'
+import { IResourceFilesPort } from '@domain/ports/ResourceFiles.Port'
 import { checkAdminAccess } from './Caller.Admin'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
@@ -14,6 +16,12 @@ import { parseBody } from './Request.Parser'
 export interface IGuidanceControllerDeps {
   guidance: GuidanceService
   proof?: ICallerProof
+  /** O depósito dos arquivos de recurso (ver `ResourceFile.Model`). Ausente = sem arquivos (as rotas respondem 404). */
+  files?: IResourceFilesPort
+  /** Os arquivos de um agente gravado (a guia Arquivos dele). */
+  agentFiles?: (agentId: string, files: IResourceFile[], by: string) => unknown
+  /** Os segredos que um texto traz (a máscara do gateway): arquivo com segredo não entra. */
+  secretsIn?: (text: string) => string[]
 }
 
 const project = z.string().max(64).nullable().optional()
@@ -28,7 +36,14 @@ const resourceSchema = z.object({
   body: z.string().optional(),
   docIds: z.array(z.string().max(80)).max(50).optional(),
   docRefs: z.array(z.string().max(80)).max(50).optional(),
+  files: z
+    .array(z.object({ path: z.string().max(400), sha256: z.string().max(64), bytes: z.number() }))
+    .max(1_000)
+    .optional(),
 })
+const filesSchema = z.object({ files: z.array(z.object({ path: z.string().max(400), sha256: z.string().max(64), bytes: z.number() })).max(1_000) })
+/** O conteúdo de um arquivo, em base64 (o texto passa inteiro, e o tamanho é o do arquivo). */
+const uploadSchema = z.object({ content: z.string().max(Math.ceil((RESOURCE_FILE_MAX_BYTES * 4) / 3) + 8) })
 const addendumSchema = z.object({ projectId: project, body: z.string() })
 const agentResourcesSchema = z.object({ skills: z.array(z.string().max(80)).max(200).optional(), commands: z.array(z.string().max(80)).max(200).optional() })
 const docSchema = z.object({
@@ -70,6 +85,10 @@ export class GuidanceController {
       'deleteResource',
       'getAgentResources',
       'setAgentResources',
+      'uploadFile',
+      'readFile',
+      'setResourceFiles',
+      'setAgentFiles',
       'getProtocol',
       'setProtocolAddendum',
     ] as const)
@@ -240,6 +259,66 @@ export class GuidanceController {
       const by = await this.requireAdmin('setAgentResources')
       return this.deps.guidance.setAgentResources(req.params.agentId as string, parseBody(agentResourcesSchema, req.body), by)
     })
+  }
+
+  /**
+   * `POST /files { content }` — guarda o conteúdo de um arquivo de recurso no depósito e devolve o sha256 e o tamanho;
+   * a lista do recurso aponta para ele depois. ⛔ Só texto (até 1 MB), e nada com segredo: o script lê a credencial de
+   * uma variável do gateway.
+   */
+  async uploadFile(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      await this.requireAdmin('uploadFile')
+      const files = this.requireFiles()
+      const content = Buffer.from(parseBody(uploadSchema, req.body).content, 'base64')
+      if (content.length > RESOURCE_FILE_MAX_BYTES)
+        throw new HttpError(422, 'validation_error', `at most ${RESOURCE_FILE_MAX_BYTES} bytes`, [{ field: 'content', message: 'too large' }])
+      if (content.subarray(0, 8192).includes(0))
+        throw new HttpError(422, 'validation_error', 'only text files', [{ field: 'content', message: 'binary content (NUL byte): only text files are accepted' }])
+      const secrets = this.deps.secretsIn?.(content.toString('utf8')) ?? []
+      if (secrets.length)
+        throw new HttpError(422, 'validation_error', 'the file has a secret', [
+          { field: 'content', message: `looks like a secret (${[...new Set(secrets)].join(', ')}): read it from a gateway variable instead` },
+        ])
+      return files.put(content)
+    })
+  }
+
+  /** `GET /files/:sha256` — o conteúdo de um arquivo do depósito, como texto (a tela edita). */
+  async readFile(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      await this.requireAdmin('readFile')
+      const sha256 = String(req.params.sha256 ?? '')
+      const content = /^[a-f0-9]{64}$/.test(sha256) ? this.requireFiles().read(sha256) : undefined
+      if (!content) throw new HttpError(404, 'not_found', `file not found: ${sha256}`)
+      return { sha256, bytes: content.length, text: content.toString('utf8') }
+    })
+  }
+
+  /** `PUT /resources/:id/files { files }` — só a lista de arquivos da skill ou do command (o resto fica). */
+  async setResourceFiles(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const by = await this.requireAdmin('setResourceFiles')
+      this.requireFiles()
+      return this.deps.guidance.updateResource(req.params.id as string, { files: parseBody(filesSchema, req.body).files }, by)
+    })
+  }
+
+  /** `PUT /agents/:agentId/files { files }` — só a lista de arquivos do agente (o resto fica). */
+  async setAgentFiles(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const by = await this.requireAdmin('setAgentFiles')
+      this.requireFiles()
+      if (!this.deps.agentFiles) throw new HttpError(404, 'not_found', 'Not found')
+      const { files } = parseBody(filesSchema, req.body)
+      this.deps.agentFiles(req.params.agentId as string, files, by)
+      return { files }
+    })
+  }
+
+  private requireFiles(): IResourceFilesPort {
+    if (!this.deps.files) throw new HttpError(404, 'not_found', 'Not found')
+    return this.deps.files
   }
 
   /** O protocolo do tipo: o do core (versão e corpo) e os complementos — o global e, com `?project=`, o do projeto. */

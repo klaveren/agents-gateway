@@ -6,6 +6,7 @@ import Icon from '@/components/Icon.vue'
 import MasterDetail from '@/components/MasterDetail.vue'
 import HistoryPanel from '@/components/HistoryPanel.vue'
 import HistoryTabs from '@/components/HistoryTabs.vue'
+import ResourceFiles from '@/components/ResourceFiles.vue'
 import BuildTabs from '@/components/BuildTabs.vue'
 import { pendingDraft } from '@/lib/builder'
 import { api, ApiError } from '@/lib/api'
@@ -64,7 +65,7 @@ const g = computed(() => (info.value.masc ? { nova: 'Novo', nenhuma: 'Nenhum', u
 
 const form = ref({ id: '', description: '', body: '', global: true, project: '', docIds: [] as string[], docRefs: [] as string[] })
 /** A guia da edição: o formulário ou o histórico (`#historico` no endereço abre nele). */
-const tab = ref<'edit' | 'history'>(route.hash === '#historico' ? 'history' : 'edit')
+const tab = ref<'edit' | 'files' | 'history'>(route.hash === '#historico' ? 'history' : 'edit')
 /** Muda depois de restaurar uma versão: relê o item. */
 const reloadKey = ref(0)
 const loaded = ref<IResource>()
@@ -182,6 +183,12 @@ function slug() {
   if (!form.value.id && form.value.description) form.value.id = docSlug(form.value.description).split('-').slice(0, 4).join('-')
 }
 
+/** A guia Arquivos: grava só a lista (o resto da skill fica). */
+async function saveFiles(files: IResource['files']) {
+  if (!loaded.value) return
+  loaded.value = await api<IResource>(`/resources/${encodeURIComponent(loaded.value.id)}/files`, { method: 'PUT', body: { files } })
+}
+
 async function save() {
   issues.value = {}
   error.value = undefined
@@ -269,7 +276,7 @@ function describe(failure: unknown): string {
     </template>
 
     <template #detail>
-      <div v-if="!adding && loaded" class="mx-auto mb-4 max-w-3xl"><HistoryTabs v-model="tab" edit-label="Editar" /></div>
+      <div v-if="!adding && loaded" class="mx-auto mb-4 max-w-3xl"><HistoryTabs v-model="tab" edit-label="Editar" :extra="[{ id: 'files', label: `Arquivos${loaded.files?.length ? ` (${loaded.files.length})` : ''}` }]" /></div>
       <form v-if="adding || (loaded && tab === 'edit')" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save">
         <h2 class="font-mono text-lg font-semibold">{{ adding ? `${g.nova} ${info.one}` : `${kind === 'command' ? '/' : ''}${loaded?.id}` }}</h2>
         <label class="field">
@@ -339,6 +346,10 @@ function describe(failure: unknown): string {
           <button v-else type="button" class="btn btn-danger ml-auto" @click="removing = true">Apagar</button>
         </div>
       </form>
+      <section v-else-if="loaded && tab === 'files'" class="mx-auto flex max-w-3xl flex-col gap-3">
+        <h2 class="font-mono text-lg font-semibold">{{ kind === 'command' ? '/' : '' }}{{ loaded.id }}</h2>
+        <ResourceFiles :files="loaded.files ?? []" :where="`${loaded.projectId ? `projects/${loaded.projectId}` : 'global'}/${kind}s/${loaded.id}`" :save="saveFiles" />
+      </section>
       <section v-else-if="loaded && tab === 'history'" class="mx-auto flex max-w-3xl flex-col gap-3">
         <h2 class="font-mono text-lg font-semibold">{{ kind === 'command' ? '/' : '' }}{{ loaded.id }}</h2>
         <HistoryPanel :kind="kind" :id="loaded.id" @restored="restored" />
