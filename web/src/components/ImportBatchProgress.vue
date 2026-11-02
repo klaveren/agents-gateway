@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { computed, inject } from 'vue'
-import { routerKey } from 'vue-router'
-import { buildLink, builderKindFor, draftingWithoutConversation, type IImportBuildStatus } from '@/lib/importDraft'
+import { computed } from 'vue'
+import { builderKindFor, draftingWithoutConversation, type IImportBuildStatus } from '@/lib/importDraft'
 import { effectiveKind, type IImportItemStatus, type IInventoryItem, KIND_LABEL, STATE_HINT, STATE_LABEL, type TImportItemState, type TOverrides } from '@/lib/importer'
 
 /**
@@ -15,9 +14,9 @@ const props = defineProps<{
   statuses: Readonly<Record<string, IImportItemStatus>>
   overrides: TOverrides
 }>()
-const emit = defineEmits<{ select: [key: string] }>()
+/** `conversation`: abrir a conversa do item na mesa (sem sair da tela). */
+const emit = defineEmits<{ select: [key: string]; conversation: [id: string] }>()
 
-const router = inject(routerKey, null)
 
 const rows = computed(() =>
   props.keys.flatMap((key) => {
@@ -27,8 +26,8 @@ const rows = computed(() =>
     const state: TImportItemState = status?.state ?? 'pending'
     const kind = effectiveKind(item, props.overrides)
     const builder = builderKindFor(kind)
-    const link = builder && status?.conversationId && !draftingWithoutConversation(status) ? buildLink(builder, status.conversationId) : undefined
-    return [{ key, item, kind, state, link, builder }]
+    const conversationId = builder && status?.conversationId && !draftingWithoutConversation(status) ? status.conversationId : undefined
+    return [{ key, item, kind, state, conversationId, builder }]
   }),
 )
 
@@ -50,10 +49,6 @@ const TONE: Partial<Record<TImportItemState, string>> = {
   rejected: 'bg-rose-500/15 text-rose-200',
 }
 
-function go(path: string) {
-  if (router) void router.push(path)
-  else window.location.assign(path)
-}
 </script>
 
 <template>
@@ -68,9 +63,15 @@ function go(path: string) {
         <span class="w-20 shrink-0 text-zinc-500">{{ KIND_LABEL[row.kind] }}</span>
         <button type="button" class="min-w-0 flex-1 truncate text-left font-mono text-zinc-200 hover:underline" :title="`${row.key} — ver no inventário`" @click="emit('select', row.key)">{{ row.item.candidateId }}</button>
         <span class="rounded-full px-2" :class="TONE[row.state] ?? 'bg-zinc-800 text-zinc-400'" :title="STATE_HINT[row.state]" data-test="progress-state">{{ STATE_LABEL[row.state] }}</span>
-        <a v-if="row.link && row.builder" :href="row.link" class="text-emerald-300 hover:underline" data-test="progress-conversation" @click.prevent="go(row.link)">{{
-          row.state === 'review' ? 'Revisar na conversa' : 'Abrir conversa'
-        }}</a>
+        <button
+          v-if="row.conversationId"
+          type="button"
+          class="text-emerald-300 hover:underline"
+          data-test="progress-conversation"
+          @click="emit('conversation', row.conversationId)"
+        >
+          {{ row.state === 'review' ? 'Revisar' : 'Ver conversa' }}
+        </button>
         <span v-else-if="!row.builder" class="text-zinc-600" title="Este tipo não passa pelo construtor">sem construtor</span>
       </li>
     </ul>

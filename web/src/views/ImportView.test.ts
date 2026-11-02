@@ -2,10 +2,26 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick } from 'vue'
 import { api } from '@/lib/api'
+import { useThreadStore } from '@/stores/thread'
 import type { IImportBatchView, IImportItemStatus, IImportJob, IImportJobSummary, IImportPlan, IImportScan, IInventoryItem, ISelectionPlan } from '@/lib/importer'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectsStore } from '@/stores/projects'
 import ImportView from './ImportView.vue'
+
+// A conversa embutida (a da tela do construtor) tem os testes dela: aqui, um marcador com o id aberto.
+vi.mock('@/components/ThreadView.vue', () => ({ default: { name: 'ThreadView', render: () => null } }))
+vi.mock('@/stores/thread', () => {
+  const state = {
+    sessionId: undefined as string | undefined,
+    turns: [],
+    pending: undefined,
+    sending: false,
+    loading: false,
+    open: vi.fn(async (id: string) => void (state.sessionId = id)),
+    send: vi.fn(),
+  }
+  return { useThreadStore: () => state }
+})
 
 vi.mock('@/lib/api', () => ({
   api: vi.fn(),
@@ -806,8 +822,20 @@ describe('ImportView', () => {
     expect(host.querySelector('[data-test="batch-builder"]')!.textContent).toContain('Abre 2 conversa(s), uma por construtor (skill, command)')
     host.querySelector<HTMLButtonElement>('[data-test="prepare-batch"]')!.click()
     await flush()
-    expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/jobs/j7/batches/b9/prepare', { method: 'POST' })
-    expect([...host.querySelectorAll('[data-test="prepared-link"]')].map((link) => link.getAttribute('href'))).toEqual(['/skills/build?c=conv-s', '/commands/build?c=conv-c'])
+    expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j7/batches/b9/prepare', { method: 'POST' })
+    // A mesa: as duas conversas à esquerda, a primeira aberta no meio (sem sair da tela) e a fila dela à direita.
+    const desk = host.querySelector('[data-test="prepare-desk"]')!
+    expect([...desk.querySelectorAll('[data-test="desk-conversation"]')].map((entry) => entry.textContent!.replace(/\s+/g, ' ').trim())).toEqual([
+      'Skills1 item(ns)0 aprovado(s)',
+      'Commands1 item(ns)0 aprovado(s)',
+    ])
+    expect(desk.querySelector('[data-test="desk-conversation"]')!.getAttribute('aria-current')).toBe('true')
+    expect(useThreadStore().open).toHaveBeenCalledWith('conv-s')
+    expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j7/items', { query: { keys: ['skill:deploy'] } })
+    // "Todos os itens" leva à conversa do item na mesa.
+    ;[...host.querySelectorAll<HTMLButtonElement>('[data-test="progress-conversation"]')][1].click()
+    await flush()
+    expect(useThreadStore().open).toHaveBeenLastCalledWith('conv-c')
   })
 
   it('"Migrar selecionados" traz as dependências (caixa marcada); "Criar migração" salva e leva ao passo Preparar', async () => {
