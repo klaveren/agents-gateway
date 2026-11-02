@@ -180,6 +180,14 @@ const applyTarget = ref<{ batchId?: string; keys?: string[]; label: string }>()
 const approvedCount = computed(() => Object.values(statuses.value).filter((entry) => entry.state === 'approved').length)
 
 /** Gravou: os itens gravados viram `applied`, com o lote. */
+/** "Gravar junto": as faltas aprovadas entram na seleção, e a gravação é refeita com elas. */
+function includeInApply(keys: string[]) {
+  if (!applyTarget.value?.keys) return
+  const next = [...new Set([...applyTarget.value.keys, ...keys])]
+  picked.value = new Set([...picked.value, ...keys])
+  applyTarget.value = { keys: next, label: `${next.length} selecionado(s)` }
+}
+
 function applied(result: IApplyResult) {
   for (const key of result.items.applied) {
     const current = statuses.value[key]
@@ -831,6 +839,9 @@ watch(
             :readonly="readonly"
             @close="applyTarget = undefined"
             @applied="applied"
+            @select="selectedKey = $event"
+            @build="openBuilder({ keys: $event })"
+            @include="includeInApply"
           />
 
           <p v-if="planError" class="text-sm text-rose-300" data-test="plan-error">Lote: {{ planError }}</p>

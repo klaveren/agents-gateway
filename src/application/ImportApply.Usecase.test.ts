@@ -6,7 +6,7 @@ import { IInventoryItem, TInventoryKind } from '@domain/models/ImportInventory.M
 import { SqliteImportRepository } from '@infra/persistence/Sqlite.ImportRepository'
 import { buildCatalogStack } from '../testing/Catalog.Fixture'
 import type { ICatalogWriter } from './Catalog.Writer'
-import { IImportApplySelection, ImportApplyUseCase } from './ImportApply.Usecase'
+import { IImportApplySelection, ImportApplyUseCase, missingRefs } from './ImportApply.Usecase'
 import { ImportBuildError, ImportBuildService } from './ImportBuild.Service'
 
 const ADMIN = { by: 'root@x.test', viaAccessToken: false }
@@ -256,5 +256,46 @@ describe('ImportApplyUseCase — a gravação do importador pelo catálogo', () 
     const all = await apply.preview('alfa', 'j1', { models: MODEL })
     assert.deepStrictEqual(all.skipped, [])
     assert.strictEqual(all.items.length, 5)
+  })
+
+  it('o que falta vem com o item do trabalho que o produz: a skill sem a spec selecionada aponta spec:arq (aprovada)', async () => {
+    const { apply } = await setup()
+    const preview = await apply.preview('alfa', 'j1', { keys: ['skill:revisar'] })
+    assert.deepStrictEqual(preview.missing, [
+      { target: 'doc', id: 'arq', from: ['skill/revisar'], item: { key: 'spec:arq', kind: 'spec', state: 'approved', path: '.agents/specs/arq.md' } },
+    ])
+    // Com a spec no pacote, nada falta.
+    assert.deepStrictEqual((await apply.preview('alfa', 'j1', { keys: ['skill:revisar', 'spec:arq'] })).missing, [])
+  })
+})
+
+describe('missingRefs', () => {
+  const entry = (key: string, candidateId: string, extra: Record<string, unknown> = {}) =>
+    ({ key, item: { key, kind: key.split(':')[0], candidateId, sources: [{ path: `src/${candidateId}.md` }] }, state: 'pending', drafts: [], ...extra }) as never
+  const broken = (from: string, target: string, id: string, reason = 'missing') => ({ from, field: 'docIds', target, id, reason, message: '' })
+  const plan = (...refs: ReturnType<typeof broken>[]) => ({ items: [{ brokenRefs: refs }] }) as never
+
+  it('casa pelo tipo e pelo id (o escolhido, o proposto com prefixo); junta quem cita; sem item, diz que não vem daqui', () => {
+    const items = [entry('skill:plano', 'plano'), entry('spec:plano', 'plano'), entry('knowledge:guia', 'guia', { targetId: 'guia-novo' })]
+    const found = missingRefs(
+      plan(
+        broken('knowledge/a', 'doc', 'plano'),
+        broken('knowledge/b', 'doc', 'plano'),
+        broken('knowledge/a', 'doc', 'guia-novo'),
+        broken('knowledge/a', 'doc', 'sumiu'),
+        broken('agent/x', 'mcp', 'off', 'disabled'),
+      ),
+      items,
+      '',
+    )
+    assert.deepStrictEqual(
+      found.map((one) => [one.id, one.from, one.item?.key]),
+      [
+        ['plano', ['knowledge/a', 'knowledge/b'], 'spec:plano'],
+        ['guia-novo', ['knowledge/a'], 'knowledge:guia'],
+        ['sumiu', ['knowledge/a'], undefined],
+      ],
+    )
+    assert.strictEqual(missingRefs(plan(broken('k/a', 'spec', 'pre-plano')), items, 'pre-').at(0)?.item?.key, 'spec:plano')
   })
 })
