@@ -51,8 +51,8 @@ const kinds = computed(() => {
     <header class="flex flex-wrap items-start gap-2">
       <div class="min-w-0 flex-1">
         <h2 class="text-base font-semibold text-zinc-100">
-          <template v-if="batch">Lote <span class="text-sky-200">{{ batch.name }}</span></template>
-          <template v-else>Lote da seleção (prévia)</template>
+          <template v-if="batch">Migração <span class="text-sky-200">{{ batch.name }}</span></template>
+          <template v-else>Nova migração (prévia)</template>
         </h2>
         <p v-if="batch" class="text-xs text-zinc-500" data-test="batch-meta">
           Montado por {{ batch.by }} em {{ fullTime(batch.at) }} · {{ batch.keys.length }} item(ns) escolhido(s){{ batch.prefix ? ` · prefixo ${batch.prefix}` : '' }}. Recalculado sobre o estado de agora.
@@ -73,10 +73,10 @@ const kinds = computed(() => {
 
     <form v-if="!batch && !readonly" class="flex flex-wrap items-end gap-2" data-test="save-batch" @submit.prevent="title.trim() && emit('save', title.trim())">
       <label class="field min-w-48 flex-1 sm:max-w-sm">
-        Nome do lote
+        Nome da migração
         <input v-model="title" class="input" maxlength="120" placeholder="ex.: knowledge, specs de core/" data-test="batch-name" />
       </label>
-      <button type="submit" class="btn btn-secondary btn-sm mb-0.5" :disabled="busy || !title.trim() || !!issue" data-test="batch-save">{{ busy ? 'Salvando…' : 'Salvar lote no trabalho' }}</button>
+      <button type="submit" class="btn btn-secondary btn-sm mb-0.5" :disabled="busy || !title.trim() || !!issue" data-test="batch-save">{{ busy ? 'Salvando…' : 'Salvar migração' }}</button>
       <button
         type="button"
         class="btn btn-primary btn-sm mb-0.5"
@@ -87,7 +87,7 @@ const kinds = computed(() => {
         Salvar e preparar tudo com o construtor
       </button>
     </form>
-    <p v-else-if="!batch && readonly" class="text-xs text-amber-200">Trabalho antigo: a prévia vale, mas o lote só é salvo no trabalho mais novo.</p>
+    <p v-else-if="!batch && readonly" class="text-xs text-amber-200">Trabalho antigo: a prévia vale, mas a migração só é salva no trabalho mais novo.</p>
     <p v-if="error" class="text-xs text-rose-300" data-test="batch-error">{{ error }}</p>
 
     <section v-if="plan.blocked.length" class="rounded-xl border border-rose-500/50 bg-rose-500/10 px-3 py-2" data-test="selection-blocked">

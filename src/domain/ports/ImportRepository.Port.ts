@@ -33,6 +33,8 @@ export interface IImportRepository {
   /** Os lotes do trabalho, do mais novo ao mais velho. */
   batches(jobId: string): IImportBatch[]
   batch(jobId: string, batchId: string): IImportBatch | undefined
+  /** Troca os itens e a ordem de um lote salvo (acrescentar itens). */
+  updateBatchItems(jobId: string, batchId: string, keys: readonly string[], order: readonly string[]): void
   /** Apagar o projeto apaga os trabalhos dele (e os lotes). */
   deleteProject(projectId: string): void
 }

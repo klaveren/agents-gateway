@@ -243,13 +243,17 @@ describe('ImportApply — gravar no catálogo', () => {
     ])
   })
 
-  it('num lote salvo, a falta aprovada só se vê (o lote já leva os aprovados dele)', async () => {
+  it('numa migração salva, a falta aprovada também grava junto (entra nela); em "todos os aprovados", só se vê', async () => {
     next = {
       ...preview(),
       missing: [{ target: 'doc', id: 'pronta', from: ['knowledge/guia'], item: { key: 'spec:pronta', kind: 'spec', state: 'approved', path: 'x.md' } }],
     } as IApplyPreview
     const host = await mount()
-    expect(host.querySelector('[data-test="missing-include"]')).toBeNull()
-    expect(host.querySelector('[data-test="missing-view"]')).not.toBeNull()
+    await click(host.querySelector('[data-test="missing-include"]'))
+    expect(events).toContainEqual(['include', ['spec:pronta']])
+    app?.unmount()
+    const all = await mount(true, { label: 'todos os aprovados do trabalho' })
+    expect(all.querySelector('[data-test="missing-include"]')).toBeNull()
+    expect(all.querySelector('[data-test="missing-view"]')).not.toBeNull()
   })
 })

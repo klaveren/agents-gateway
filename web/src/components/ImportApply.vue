@@ -68,7 +68,7 @@ const changing = computed(() => (plan.value?.items ?? []).filter((item) => item.
 const blockers = computed(() => (plan.value?.items ?? []).filter(blocking))
 const missing = computed(() => preview.value?.missing ?? [])
 const buildGroups = computed(() => missingBuildGroups(missing.value).filter((group) => group.keys.length > 1))
-const includable = computed(() => missing.value.filter((one) => missingAction(one, !!props.target.keys) === 'include').map((one) => one.item!.key))
+const includable = computed(() => missing.value.filter((one) => missingAction(one, !!(props.target.keys || props.target.batchId)) === 'include').map((one) => one.item!.key))
 const canWrite = computed(() => auth.isAdmin && !props.readonly && !!plan.value && !blockers.value.length && plan.value.order.length > 0 && !writing.value)
 
 async function load() {
@@ -238,7 +238,7 @@ const partLabel = (part?: string) => (part === 'record' ? ' (registro)' : part =
               <span class="flex-1" />
               <button type="button" class="btn btn-ghost btn-sm" data-test="missing-view" @click="emit('select', one.item.key)">Ver no Importador</button>
               <button
-                v-if="missingAction(one, !!target.keys) === 'build'"
+                v-if="missingAction(one, !!(target.keys || target.batchId)) === 'build'"
                 type="button"
                 class="btn btn-secondary btn-sm"
                 :disabled="readonly"
@@ -248,7 +248,7 @@ const partLabel = (part?: string) => (part === 'record' ? ' (registro)' : part =
                 Preparar com o construtor
               </button>
               <button
-                v-if="missingAction(one, !!target.keys) === 'include'"
+                v-if="missingAction(one, !!(target.keys || target.batchId)) === 'include'"
                 type="button"
                 class="btn btn-secondary btn-sm"
                 :disabled="readonly"

@@ -90,6 +90,18 @@ describe('ImportBatchService — o lote por seleção de um trabalho', () => {
     assert.deepStrictEqual([...saved.keys].sort(), ['knowledge:fila', 'skill:revisar', 'spec:guia'])
   })
 
+  it('acrescentar ao lote salvo: os itens novos (com as dependências) entram e a ordem é recalculada; só no trabalho mais novo', () => {
+    const { jobs, batches, tick } = setup()
+    const job = jobs.create('alfa', 'app', 'ana@x.test')
+    const saved = batches.create('alfa', job.id, { name: 'guia', keys: ['spec:guia'] }, 'ana@x.test')
+    const grown = batches.addItems('alfa', job.id, saved.id, { keys: ['skill:revisar'], closure: true })
+    assert.deepStrictEqual(grown.order, ['knowledge:fila', 'spec:guia', 'skill:revisar'])
+    assert.deepStrictEqual(batches.get('alfa', job.id, saved.id).keys.sort(), ['knowledge:fila', 'skill:revisar', 'spec:guia'])
+    tick()
+    jobs.create('alfa', 'app', 'ana@x.test')
+    assert.throws(() => batches.addItems('alfa', job.id, saved.id, { keys: ['spec:core-a'] }), code('outdated'))
+  })
+
   it('lote salvo, ida e volta: nome, itens, ordem, prefixo, autor e hora; a lista e o abrir o devolvem', () => {
     const { jobs, batches, tick } = setup()
     const job = jobs.create('alfa', 'app', 'ana@x.test')

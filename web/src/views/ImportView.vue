@@ -238,6 +238,8 @@ function openApplyAll() {
 /** Gravou: os itens gravados viram `applied`, com o lote. */
 /** "Gravar junto": as faltas aprovadas entram na seleção, e a gravação é refeita com elas. */
 function includeInApply(keys: string[]) {
+  // Na migração salva, a falta aprovada entra NELA (e a gravação é refeita com ela).
+  if (openedBatch.value && step.value === 'apply') return void addToBatch(openedBatch.value.id, keys, false, true)
   if (!applyTarget.value?.keys) return
   const next = [...new Set([...applyTarget.value.keys, ...keys])]
   picked.value = new Set([...picked.value, ...keys])
@@ -456,6 +458,31 @@ async function prepareBatch(batchId: string) {
 async function withDependencies(key: string) {
   await buildSelection([key], '', true)
 }
+
+/** Acrescenta itens a uma migração salva (com as dependências, se pedido) e a abre com o estado de agora. */
+async function addToBatch(batchId: string, keys: readonly string[], closure = false, keepStep = false) {
+  if (!project.value || !job.value || readonly.value || !keys.length) return
+  batchBusy.value = true
+  batchError.value = undefined
+  try {
+    const view = await api<IImportBatchView>(`${batchesPath()}/${encodeURIComponent(batchId)}/items`, { method: 'POST', body: { keys, ...(closure ? { closure } : {}) } })
+    const { plan: batchPlan, ...record } = view
+    openedBatch.value = record
+    selectionPlan.value = batchPlan
+    batches.value = batches.value.map((entry) => (entry.id === record.id ? record : entry))
+    applyAll.value = false
+    plan.value = undefined
+    area.value = 'batches'
+    if (!keepStep) step.value = stepOf(record)
+  } catch (failure) {
+    batchError.value = message(failure)
+  } finally {
+    batchBusy.value = false
+  }
+}
+
+/** A migração salva que recebe a seleção do inventário ("Adicionar à migração"). */
+const addTarget = ref('')
 
 /** "Salvar e preparar tudo": salva a prévia como lote e já abre as conversas. */
 async function saveAndPrepare(name: string) {
@@ -725,7 +752,7 @@ watch(
               Inventário
             </button>
             <button type="button" role="tab" class="area-tab" :aria-selected="area === 'batches'" :class="area === 'batches' ? 'on' : ''" data-test="area-batches" @click="area = 'batches'">
-              Lotes <span class="text-zinc-500">{{ batches.length }}</span>
+              Migrações <span class="text-zinc-500">{{ batches.length }}</span>
             </button>
           </nav>
 
@@ -949,18 +976,33 @@ watch(
               </button>
               <button v-if="picked.size" type="button" class="btn btn-ghost btn-sm" data-test="pick-clear" @click="clearPicked">Limpar seleção</button>
               <span class="flex-1" />
+              <template v-if="batches.length && !readonly">
+                <select v-model="addTarget" class="input py-1 text-xs" aria-label="Migração que recebe a seleção" data-test="add-target">
+                  <option value="" disabled>Adicionar a uma migração…</option>
+                  <option v-for="entry in batches" :key="entry.id" :value="entry.id">{{ entry.name }}</option>
+                </select>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm"
+                  :disabled="!picked.size || !addTarget || batchBusy"
+                  data-test="add-to-batch"
+                  @click="addToBatch(addTarget, items.filter((item) => picked.has(item.key)).map((item) => item.key), true)"
+                >
+                  Adicionar (com dependências)
+                </button>
+              </template>
               <button type="button" class="btn btn-secondary btn-sm" :disabled="!picked.size || batchBusy" data-test="build-batch-closure" @click="buildSelection(undefined, '', true)">
-                Montar lote com as dependências
+                Migrar com dependências
               </button>
               <button type="button" class="btn btn-primary btn-sm" :disabled="!picked.size || batchBusy" data-test="build-batch" @click="buildSelection()">
-                {{ batchBusy ? 'Montando…' : 'Montar lote' }}
+                {{ batchBusy ? 'Montando…' : 'Migrar selecionados' }}
               </button>
             </section>
           </template>
 
           <section v-else class="grid items-start gap-4 lg:grid-cols-[16rem_minmax(0,1fr)]" data-test="batches-area">
             <aside class="flex flex-col gap-2">
-              <button type="button" class="btn btn-secondary btn-sm" data-test="new-batch" @click="area = 'inventory'">+ Novo lote (selecione no inventário)</button>
+              <button type="button" class="btn btn-secondary btn-sm" data-test="new-batch" @click="area = 'inventory'">+ Nova migração (selecione no inventário)</button>
               <button
                 v-if="selectionPlan && !openedBatch"
                 type="button"
@@ -971,7 +1013,7 @@ watch(
                 <span class="block font-medium text-sky-200">Rascunho (não salvo)</span>
                 <span class="text-zinc-400">{{ selectionPlan.keys.length }} item(ns)</span>
               </button>
-              <p v-if="!batches.length" class="text-xs text-zinc-500">Nenhum lote salvo ainda.</p>
+              <p v-if="!batches.length" class="text-xs text-zinc-500">Nenhuma migração salva ainda.</p>
               <ul v-else class="flex flex-col gap-1" data-test="batches">
                 <li v-for="entry in batches" :key="entry.id">
                   <button
@@ -995,8 +1037,8 @@ watch(
             </aside>
 
             <div class="flex min-w-0 flex-col gap-3">
-              <p v-if="batchError" class="text-sm text-rose-300" data-test="selection-error">Lote: {{ batchError }}</p>
-              <p v-if="planError" class="text-sm text-rose-300" data-test="plan-error">Lote: {{ planError }}</p>
+              <p v-if="batchError" class="text-sm text-rose-300" data-test="selection-error">Migração: {{ batchError }}</p>
+              <p v-if="planError" class="text-sm text-rose-300" data-test="plan-error">Migração: {{ planError }}</p>
               <p v-if="reviewError" class="text-xs text-rose-300" data-test="build-error">{{ reviewError }}</p>
 
               <ImportApply
@@ -1071,7 +1113,7 @@ watch(
                         {{ building ? 'Abrindo…' : `Só ${BUILD_KINDS[group.kind].noun} (${group.keys.length})` }}
                       </button>
                     </template>
-                    <span v-else class="text-zinc-400">Tudo deste lote já foi ao construtor. Revise ao lado de cada conversa; os aprovados vão para o passo Gravar.</span>
+                    <span v-else class="text-zinc-400">Tudo desta migração já foi ao construtor. Revise ao lado de cada conversa; os aprovados vão para o passo Gravar.</span>
                     <button v-if="openedBatch && stepOf(openedBatch) === 'apply'" type="button" class="btn btn-secondary btn-sm" data-test="go-apply" @click="goStep('apply')">Ir para Gravar →</button>
                   </section>
                   <section v-if="prepared?.length" class="flex flex-col gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/5 p-3 text-xs" data-test="prepared">
@@ -1103,10 +1145,10 @@ watch(
 
                 <ImportApply
                   v-else-if="step === 'apply' && job && project"
-                  :key="`batch-${openedBatch.id}`"
+                  :key="`batch-${openedBatch.id}-${openedBatch.keys.length}`"
                   :project-id="project.id"
                   :job-id="job.id"
-                  :target="{ batchId: openedBatch.id, label: `lote ${openedBatch.name}` }"
+                  :target="{ batchId: openedBatch.id, label: `migração ${openedBatch.name}` }"
                   :readonly="readonly"
                   @close="step = 'prepare'"
                   @applied="applied"
@@ -1116,9 +1158,9 @@ watch(
                 />
               </template>
               <section v-else class="rounded-xl border border-dashed border-zinc-800 p-6 text-center text-sm text-zinc-400" data-test="batches-empty">
-                <p class="font-medium text-zinc-200">Um lote leva itens do inventário ao catálogo, em três passos.</p>
+                <p class="font-medium text-zinc-200">Uma migração leva itens do inventário ao catálogo, em três passos.</p>
                 <p class="mt-1">1. <strong>Montar</strong>: os itens (e as dependências), a ordem e o nome. 2. <strong>Preparar</strong>: o construtor faz os rascunhos e você revisa ao lado de cada conversa. 3. <strong>Gravar</strong>: os aprovados vão ao catálogo.</p>
-                <p class="mt-2">Abra um lote à esquerda, ou selecione itens no <button type="button" class="text-emerald-300 underline" @click="area = 'inventory'">Inventário</button> e clique "Montar lote".</p>
+                <p class="mt-2">Abra uma migração à esquerda, ou selecione itens no <button type="button" class="text-emerald-300 underline" @click="area = 'inventory'">Inventário</button> e clique "Migrar selecionados".</p>
               </section>
             </div>
           </section>

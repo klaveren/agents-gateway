@@ -128,6 +128,7 @@ export class ImportController {
     this.createBatch = this.createBatch.bind(this)
     this.listBatches = this.listBatches.bind(this)
     this.getBatch = this.getBatch.bind(this)
+    this.addBatchItems = this.addBatchItems.bind(this)
     this.openBuilder = this.openBuilder.bind(this)
     this.prepareBatch = this.prepareBatch.bind(this)
     this.approveItem = this.approveItem.bind(this)
@@ -340,6 +341,14 @@ export class ImportController {
           ...(owner ? { owner } : {}),
         }),
       )
+    })
+  }
+
+  /** `POST /projects/:id/import/jobs/:job/batches/:batch/items { keys, closure? }` — acrescenta itens ao lote salvo. */
+  async addBatchItems(req: Request, res: Response): Promise<void> {
+    await this.respond(res, 'addImportBatchItems', req, async (projectId) => {
+      const { keys, closure } = parseBody(selectionSchema, req.body)
+      return this.jobError(() => this.batches().addItems(projectId, req.params.job as string, req.params.batch as string, { keys, ...(closure ? { closure } : {}) }))
     })
   }
 

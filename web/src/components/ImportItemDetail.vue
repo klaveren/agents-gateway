@@ -136,11 +136,11 @@ function onReclassify(event: Event) {
 
     <section v-if="builder && !readonly" class="flex flex-col gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/5 px-3 py-2" data-test="with-dependencies">
       <button type="button" class="btn btn-primary btn-sm self-start" :disabled="planning" data-test="closure" @click="emit('closure')">
-        {{ planning ? 'Montando…' : 'Preparar com as dependências' }}
+        {{ planning ? 'Montando…' : 'Migrar com dependências' }}
       </button>
       <p class="text-xs text-zinc-500">
         Mostra tudo o que este item precisa (<template v-if="kind === 'agent' || kind === 'trigger'">o agente, os triggers e </template>o que eles citam, em ordem) e, num clique, abre uma
-        conversa por construtor para preparar os rascunhos. Depois é revisar e gravar o lote.
+        conversa por construtor para preparar os rascunhos. Depois é revisar e gravar a migração.
       </p>
     </section>
 
@@ -175,7 +175,7 @@ function onReclassify(event: Event) {
     />
 
     <section v-if="item.kind === 'agent'" class="flex flex-col gap-1.5 rounded-xl border border-emerald-500/30 px-3 py-2">
-      <button type="button" class="btn btn-primary btn-sm self-start" :disabled="planning" data-test="plan" @click="emit('plan')">{{ planning ? 'Montando…' : 'Montar lote' }}</button>
+      <button type="button" class="btn btn-primary btn-sm self-start" :disabled="planning" data-test="plan" @click="emit('plan')">{{ planning ? 'Montando…' : 'Prévia da migração do agente' }}</button>
       <p class="text-xs text-zinc-500">O que este agente precisa, em ordem: docs, skills e commands, rules, ele com os triggers, e as permissões por último. Só mostra: nada é gravado.</p>
     </section>
 

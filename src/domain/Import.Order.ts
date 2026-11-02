@@ -465,7 +465,7 @@ export function planAgentBatch(input: IAgentBatchInput): TAgentBatch {
         linkState === 'exists'
           ? 'o alvo já existe no gateway: o vínculo entra na fase 5'
           : linkState === 'pending'
-            ? 'o alvo não está no lote nem no gateway: o vínculo fica pendente até ele existir'
+            ? 'o alvo não está na migração nem no gateway: o vínculo fica pendente até ele existir'
             : 'o alvo não está no inventário nem no gateway: pendente',
         cycle ? 'ciclo de delegação (ele também delega a este): não trava, os vínculos vêm depois dos dois agentes' : '',
       ]
@@ -529,7 +529,7 @@ export function planAgentBatch(input: IAgentBatchInput): TAgentBatch {
       projectNotes.push({
         level: 'attention',
         code: 'project-skill-all',
-        text: '`skill * allow` do global liberaria TODAS as skills a todo agente do projeto: é ampliação, nunca automática. O agente do lote fica restrito por `resources.skills`',
+        text: '`skill * allow` do global liberaria TODAS as skills a todo agente do projeto: é ampliação, nunca automática. O agente da migração fica restrito por `resources.skills`',
       })
     project = { lines, widenings, notes: projectNotes }
   }
@@ -722,8 +722,8 @@ export type TSelectionBatch = ISelectionPlan
 const OUTSIDE_TEXT: Record<TOutsideState, string> = {
   catalog: 'já no catálogo: o vínculo resolve pelo id',
   approved: 'já aprovado neste trabalho: entra antes, se aplicado antes',
-  batch: 'em outro lote deste trabalho',
-  missing: 'fora da seleção e ainda não importado: inclua no lote ou importe antes',
+  batch: 'em outra migração deste trabalho',
+  missing: 'fora da seleção e ainda não importado: inclua na migração ou importe antes',
   broken: 'citação quebrada',
   'not-importable': 'não vai ao catálogo: a citação fica sem vínculo',
 }
@@ -825,7 +825,7 @@ export function planSelectionBatch(input: ISelectionBatchInput): TSelectionBatch
     notes.push({
       level: 'attention',
       code: 'other-batch',
-      text: `${shared.length} item(ns) já está(ão) em outro lote deste trabalho: ${shared.map((key) => `${key} (${input.batchOf!.get(key)!.name})`).join(', ')}`,
+      text: `${shared.length} item(ns) já está(ão) em outra migração deste trabalho: ${shared.map((key) => `${key} (${input.batchOf!.get(key)!.name})`).join(', ')}`,
     })
   if (prefix) notes.push({ level: 'info', code: 'prefix', text: `prefixo ${prefix} nos ids de agente, skill, command e docs` })
 

@@ -676,7 +676,7 @@ describe('ImportView', () => {
     expect(batch.querySelector('[data-test="selection-cycles"]')!.textContent).toContain('spec:a, spec:b')
     const outside = batch.querySelector('[data-test="outside"]')!.textContent!
     expect(outside).toContain('citação quebrada (1)')
-    expect(outside).toContain('em outro lote (1)')
+    expect(outside).toContain('em outra migração (1)')
     expect(outside).toContain('docs')
     expect(host.querySelector('[data-test="batches"]')).toBeNull()
 
@@ -757,7 +757,7 @@ describe('ImportView', () => {
     host.querySelector<HTMLButtonElement>('[data-test="step-build"]')!.click()
     await flush()
     const batch = host.querySelector('[data-test="selection-batch"]')!
-    expect(batch.textContent).toContain('Lote Commands')
+    expect(batch.textContent).toContain('Migração Commands')
     expect(batch.querySelectorAll('[data-test="step"]')).toHaveLength(2)
     expect(batch.querySelector('[data-test="save-batch"]')).toBeNull()
   })
@@ -831,6 +831,41 @@ describe('ImportView', () => {
     expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/jobs/j1/batches/b1/prepare', { method: 'POST' })
     const links = [...host.querySelectorAll('[data-test="prepared-link"]')].map((link) => link.getAttribute('href'))
     expect(links).toEqual(['/skills/build?c=conv-s', '/commands/build?c=conv-c'])
+  })
+
+  it('"Adicionar (com dependências)": a seleção entra numa migração salva, que abre com os itens novos', async () => {
+    const stored: IImportBatchView = {
+      id: 'b9',
+      jobId: 'j7',
+      name: 'Deploy',
+      prefix: '',
+      keys: ['skill:deploy'],
+      order: ['skill:deploy'],
+      by: 'bia@x.test',
+      at: '2026-10-30T11:00:00.000Z',
+      plan: selectionPlan(['skill:deploy']),
+    }
+    const host = await mount(SMALL, { jobs: [savedJob('j7', SMALL)], analyze: false, batches: { j7: [stored] } })
+    const base = vi.mocked(api).getMockImplementation()!
+    vi.mocked(api).mockImplementation(async (path: string, request?: { method?: string; body?: unknown }) => {
+      if (path.endsWith('/batches/b9/items'))
+        return { ...stored, keys: ['skill:deploy', 'command:ship'], order: ['skill:deploy', 'command:ship'], plan: selectionPlan(['skill:deploy', 'command:ship']) }
+      return base(path, request as never)
+    })
+    host.querySelector<HTMLButtonElement>('[data-test="job"]')!.click()
+    await flush()
+    ;[...host.querySelectorAll('[data-test="row"]')]
+      .find((row) => row.textContent!.includes('ship'))!
+      .parentElement!.querySelector<HTMLInputElement>('[data-test="pick"]')!
+      .click()
+    await flush()
+    choose(host, 'add-target', 'b9')
+    await flush()
+    host.querySelector<HTMLButtonElement>('[data-test="add-to-batch"]')!.click()
+    await flush()
+    expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j7/batches/b9/items', { method: 'POST', body: { keys: ['command:ship'], closure: true } })
+    expect(host.querySelector('[data-test="batches-area"]')).not.toBeNull()
+    expect(host.querySelectorAll('[data-test="progress-row"]')).toHaveLength(2)
   })
 
   it('⛔ no trabalho antigo a prévia vale, mas o lote não é salvo', async () => {

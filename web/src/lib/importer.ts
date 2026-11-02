@@ -561,7 +561,7 @@ export const OUTSIDE_LABEL: Record<TOutsideState, string> = {
   broken: 'citação quebrada',
   missing: 'falta importar',
   'not-importable': 'não vai ao catálogo',
-  batch: 'em outro lote',
+  batch: 'em outra migração',
   approved: 'já aprovado neste trabalho',
   catalog: 'já no catálogo',
 }
