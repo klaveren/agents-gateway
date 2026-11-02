@@ -787,6 +787,35 @@ describe('ImportView', () => {
     expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/jobs/j7/builder', { method: 'POST', body: { batchId: 'b9', kind: 'command' } })
   })
 
+  it('"Preparar com as dependências": o lote com o fecho; "Salvar e preparar tudo" salva e abre uma conversa por construtor', async () => {
+    const host = await mount(SMALL)
+    const base = vi.mocked(api).getMockImplementation()!
+    vi.mocked(api).mockImplementation(async (path: string, request?: { method?: string; body?: unknown }) => {
+      if (path.endsWith('/batches/plan')) return base(path, { ...request, body: { ...(request!.body as object), keys: ['skill:deploy', 'command:ship'] } } as never)
+      if (path.endsWith('/prepare'))
+        return {
+          conversations: [
+            { kind: 'skill', conversationId: 'conv-s', agentId: 'builder-import-skill', keys: ['skill:deploy'] },
+            { kind: 'command', conversationId: 'conv-c', agentId: 'builder-import-command', keys: ['command:ship'] },
+          ],
+        }
+      return base(path, request as never)
+    })
+    ;[...host.querySelectorAll<HTMLButtonElement>('[data-test="row"]')].find((row) => row.textContent!.includes('deploy'))!.click()
+    await flush()
+    host.querySelector<HTMLButtonElement>('[data-test="closure"]')!.click()
+    await flush()
+    expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j1/batches/plan', { method: 'POST', body: { keys: ['skill:deploy'], closure: true } })
+    const batch = host.querySelector('[data-test="selection-batch"]')!
+    expect(batch.querySelector<HTMLInputElement>('[data-test="batch-name"]')!.value).toBe('deploy e dependências')
+    batch.querySelector<HTMLButtonElement>('[data-test="batch-save-prepare"]')!.click()
+    await flush()
+    expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j1/batches', { method: 'POST', body: { name: 'deploy e dependências', keys: ['skill:deploy', 'command:ship'] } })
+    expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/jobs/j1/batches/b1/prepare', { method: 'POST' })
+    const links = [...host.querySelectorAll('[data-test="prepared-link"]')].map((link) => link.getAttribute('href'))
+    expect(links).toEqual(['/skills/build?c=conv-s', '/commands/build?c=conv-c'])
+  })
+
   it('⛔ no trabalho antigo a prévia vale, mas o lote não é salvo', async () => {
     const host = await mount(SMALL, { jobs: [savedJob('j2', SMALL), savedJob('j1', SMALL, { latest: false })], analyze: false })
     ;[...host.querySelectorAll<HTMLButtonElement>('[data-test="job"]')].find((button) => button.textContent!.includes('registro'))!.click()

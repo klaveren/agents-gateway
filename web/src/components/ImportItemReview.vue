@@ -158,7 +158,9 @@ function clip(text: string, max = 800): string {
     </div>
 
     <div class="flex flex-col gap-1">
-      <h4 class="text-xs font-medium text-zinc-500">Fonte × final</h4>
+      <h4 class="text-xs font-medium text-zinc-500" title="O arquivo do repositório nunca é alterado: o diff mostra o que entra no catálogo.">
+        Repositório (não muda) × documento no catálogo
+      </h4>
       <p v-if="!changed.length" class="text-xs text-zinc-500">O texto das fontes não mudou (só metadados).</p>
       <details v-for="entry in changed" :key="entry.source" class="rounded-lg border border-zinc-800 text-xs" open data-test="draft-diff">
         <summary class="cursor-pointer px-2 py-1 text-zinc-300">

@@ -113,7 +113,7 @@ export class ImportBuildService {
   /** Abre a conversa do construtor para os itens (um construtor por lote) e os liga a ela. */
   async open(projectId: string, jobId: string, by: string, options: IImportOpenOptions): Promise<IImportConversation> {
     const record = this.latestRecord(projectId, jobId)
-    const unique = [...new Set(options.keys ?? this.fromBatch(record.id, options))]
+    const unique = [...new Set(options.keys ? this.withTriggers(record.id, options.keys, options.batchId) : this.fromBatch(record.id, options))]
     if (!unique.length) throw new ImportBuildError('invalid', 'at least one item', 'keys')
     if (unique.length > KEYS_MAX) throw new ImportBuildError('invalid', `at most ${KEYS_MAX} items per conversation`, 'keys')
     const batch = options.batchId ? this.deps.repository.batch(record.id, options.batchId) : undefined
@@ -152,6 +152,49 @@ export class ImportBuildService {
     const at = this.now()
     for (const entry of entries) this.deps.repository.updateItem(record.id, entry.key, { state: 'drafting', staleFrom: null, conversationId, basis: entry.fingerprint, by, at })
     return { conversationId, kind, agentId, keys: unique }
+  }
+
+  /**
+   * PREPARAR TUDO: o lote salvo vai ao construtor de uma vez, UMA conversa por construtor (o agente com os triggers,
+   * as specs, as skills…), com os itens dele que ainda vão (os de `fromBatch`). ⛔ Só abre as conversas: nada é
+   * proposto, aprovado nem gravado; a pessoa revisa cada rascunho.
+   */
+  async prepare(projectId: string, jobId: string, batchId: string, by: string, owner?: Record<string, string>): Promise<IImportConversation[]> {
+    const record = this.latestRecord(projectId, jobId)
+    const byKind = new Map<TProtocolKind, string[]>()
+    for (const key of this.fromBatch(record.id, { batchId })) {
+      const entry = this.deps.repository.item(record.id, key)!
+      const kind = builderKindForItem(entry.kind ?? entry.item.kind)!
+      byKind.set(kind, [...(byKind.get(kind) ?? []), key])
+    }
+    const opened: IImportConversation[] = []
+    for (const [kind, keys] of byKind)
+      for (let at = 0; at < keys.length; at += KEYS_MAX)
+        opened.push(await this.open(projectId, jobId, by, { keys: keys.slice(at, at + KEYS_MAX), batchId, kind, ...(owner ? { owner } : {}) }))
+    return opened
+  }
+
+  /**
+   * O agente aberto sozinho leva os TRIGGERS dele (o mesmo construtor; separado, o construtor não tem o que montar):
+   * os que ainda vão, sem conversa nem rascunho em curso. Num lote, só os que estão nele.
+   */
+  private withTriggers(jobId: string, keys: readonly string[], batchId?: string): string[] {
+    const inBatch = batchId ? new Set(this.deps.repository.batch(jobId, batchId)?.keys ?? []) : undefined
+    const all = this.deps.repository.items(jobId)
+    const out = new Set(keys)
+    for (const key of keys) {
+      if (!all.some((entry) => entry.key === key && (entry.kind ?? entry.item.kind) === 'agent')) continue
+      for (const entry of all)
+        if (
+          entry.item.parent === key &&
+          (entry.kind ?? entry.item.kind) === 'trigger' &&
+          FRESH.includes(entry.state) &&
+          !(entry.state === 'drafting' && entry.conversationId) &&
+          (!inBatch || inBatch.has(entry.key))
+        )
+          out.add(entry.key)
+    }
+    return [...out]
   }
 
   /**
@@ -205,6 +248,19 @@ export class ImportBuildService {
       for (const note of entry.item.notes) lines.push(`- note [${note.level}] ${note.code}: ${note.text}`)
       const review = entry.review as IImportReview | undefined
       if (entry.state === 'drafting' && review?.adjust) lines.push(`- ⚠️ the person asked for an adjustment: ${review.adjust.comment}`)
+      if (kind === 'agent') {
+        const here = new Set(items.map((one) => one.key))
+        const away = this.deps.repository.items(job.id).filter((one) => one.item.parent === entry.key && !here.has(one.key))
+        if (away.length)
+          lines.push(
+            `- ⚠️ ${away.length} trigger(s) of this agent are in the import job but NOT in this conversation (${away
+              .slice(0, 5)
+              .map((one) => `${one.key} [${one.state}]`)
+              .join(
+                ', ',
+              )}${away.length > 5 ? ', …' : ''}). They exist: never ask to create items; ask the person to open the builder with them (Importer → "Com as dependências").`,
+          )
+      }
       const draft = lastDraft(entry)
       if (draft) lines.push(`- last draft: ${draft.ops.length} operation(s), ${draft.removals.length} removal(s), ${draft.outputs.length} item(s), proposed ${draft.proposedAt}`)
     }

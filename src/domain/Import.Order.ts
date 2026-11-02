@@ -156,6 +156,21 @@ function exclusionText(reason: IPlanExclusion['reason'], subject: string): strin
  * configuração que valem para o agente (o opencode as dava a todo agente).
  */
 export function agentClosure(items: readonly IInventoryItem[], agentKey: string, instructions?: IClosureInstructions): IClosure {
+  return closureFrom(items, agentKey, instructions)
+}
+
+/**
+ * O FECHO de QUALQUER item (o "preparar com as dependências"): o agente como em `agentClosure`; o trigger, o do agente
+ * dono (o trigger não vive sozinho); spec, ADR, knowledge, skill, command e rule, ele e o que cita, transitivo. Outro
+ * tipo (MCP, configuração, desconhecido) não tem fecho.
+ */
+export function itemClosure(items: readonly IInventoryItem[], key: string): IClosure {
+  const item = items.find((one) => one.key === key)
+  if (item?.kind === 'trigger' && item.parent) return closureFrom(items, item.parent)
+  return closureFrom(items, key)
+}
+
+function closureFrom(items: readonly IInventoryItem[], agentKey: string, instructions?: IClosureInstructions): IClosure {
   const byKey = new Map(items.map((item) => [item.key, item]))
   const members = new Map<string, IClosureMember>()
   const excluded = new Map<string, IPlanExclusion>()
@@ -171,9 +186,9 @@ export function agentClosure(items: readonly IInventoryItem[], agentKey: string,
     if (from && from !== item.key) member.citedBy.add(from)
   }
   const agent = byKey.get(agentKey)
-  if (!agent || agent.kind !== 'agent') return { members, excluded: [] }
-  add(agent, 'agent')
-  for (const item of items) if (item.kind === 'trigger' && item.parent === agentKey) add(item, 'trigger', agentKey)
+  if (!agent || (agent.kind !== 'agent' && !CONTENT.has(agent.kind))) return { members, excluded: [] }
+  add(agent, agent.kind === 'agent' ? 'agent' : 'selected')
+  if (agent.kind === 'agent') for (const item of items) if (item.kind === 'trigger' && item.parent === agentKey) add(item, 'trigger', agentKey)
 
   const follow = (item: IInventoryItem, why: TPlanWhy, own: boolean) => {
     for (const ref of item.refs) {

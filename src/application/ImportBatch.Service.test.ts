@@ -77,6 +77,19 @@ describe('ImportBatchService — o lote por seleção de um trabalho', () => {
     assert.deepStrictEqual(batches.list('alfa', job.id), [])
   })
 
+  it('com as dependências: a skill traz o que cita, transitivo, e nada fica para fora; salvo, o lote guarda todos', () => {
+    const { jobs, batches } = setup()
+    const job = jobs.create('alfa', 'app', 'ana@x.test')
+    const plan = batches.plan('alfa', job.id, { keys: ['skill:revisar'], closure: true })
+    assert.deepStrictEqual(
+      plan.steps.map((step) => step.key),
+      ['knowledge:fila', 'spec:guia', 'skill:revisar'],
+    )
+    assert.deepStrictEqual(plan.outside, [])
+    const saved = batches.create('alfa', job.id, { name: 'revisar', keys: ['skill:revisar'], closure: true }, 'ana@x.test')
+    assert.deepStrictEqual([...saved.keys].sort(), ['knowledge:fila', 'skill:revisar', 'spec:guia'])
+  })
+
   it('lote salvo, ida e volta: nome, itens, ordem, prefixo, autor e hora; a lista e o abrir o devolvem', () => {
     const { jobs, batches, tick } = setup()
     const job = jobs.create('alfa', 'app', 'ana@x.test')

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { IMPORT_PREFIX_PATTERN, planSelectionBatch } from '@domain/Import.Order'
+import { IMPORT_PREFIX_PATTERN, itemClosure, planSelectionBatch } from '@domain/Import.Order'
 import { IImportBatch, IImportJobItem } from '@domain/models/ImportJob.Model'
 import { CATALOG_KINDS, IInventoryItem, TCatalogState, TInventoryKind } from '@domain/models/ImportInventory.Model'
 import { ISelectionPlan } from '@domain/models/ImportPlan.Model'
@@ -25,6 +25,8 @@ export interface IImportBatchDeps {
 export interface IImportSelection {
   keys: readonly string[]
   prefix?: string
+  /** Com as DEPENDÊNCIAS: cada chave traz o fecho dela (o agente com os triggers e o que citam, transitivo). */
+  closure?: boolean
 }
 
 /** O lote salvo, aberto: o registro e o lote calculado agora (estado e catálogo de agora). */
@@ -90,22 +92,23 @@ export class ImportBatchService {
   private compute(record: IImportJobRecord, entries: readonly IImportJobItem[], selection: IImportSelection, self?: string): ISelectionPlan {
     const prefix = (selection.prefix ?? '').trim().toLowerCase()
     if (prefix && !IMPORT_PREFIX_PATTERN.test(prefix)) throw new ImportJobError('invalid', 'prefix: lowercase letters, digits and "-", up to 16 characters', 'prefix')
-    const keys = [...new Set(selection.keys)]
+    const projectId = record.projectId
+    const catalog = (query: { kind: TInventoryKind; id: string; parent?: string; title?: string }) => this.deps.catalogState({ ...query, projectId })
+    const items = entries.map((entry) => effective(entry, catalog))
+    const keys = selection.closure ? withClosure(items, selection.keys) : [...new Set(selection.keys)]
     if (!keys.length) throw new ImportJobError('invalid', 'select at least one item', 'keys')
     if (keys.length > IMPORT_BATCH_MAX) throw new ImportJobError('invalid', `at most ${IMPORT_BATCH_MAX} items in a batch`, 'keys')
     const known = new Set(entries.map((entry) => entry.key))
     const unknown = keys.filter((key) => !known.has(key))
     if (unknown.length) throw new ImportJobError('invalid', `not in this import job: ${unknown.slice(0, 5).join(', ')}${unknown.length > 5 ? '…' : ''}`, 'keys')
 
-    const projectId = record.projectId
-    const catalog = (query: { kind: TInventoryKind; id: string; parent?: string; title?: string }) => this.deps.catalogState({ ...query, projectId })
     const batchOf = new Map<string, { id: string; name: string }>()
     for (const other of this.deps.repository.batches(record.id)) {
       if (other.id === self) continue
       for (const key of other.keys) if (!batchOf.has(key)) batchOf.set(key, { id: other.id, name: other.name })
     }
     return planSelectionBatch({
-      items: entries.map((entry) => effective(entry, catalog)),
+      items,
       keys,
       prefix,
       catalog,
@@ -129,4 +132,14 @@ function effective(entry: IImportJobItem, catalog: (query: { kind: TInventoryKin
   const state =
     CATALOG_KINDS.includes(entry.kind) && entry.kind !== 'trigger' ? catalog({ kind: entry.kind, id: item.candidateId, ...(item.title ? { title: item.title } : {}) }) : undefined
   return { ...item, kind: entry.kind, ...(state ? { catalog: state } : {}) }
+}
+
+/** As chaves com o fecho de cada uma, na ordem em que aparecem (a escolhida primeiro). */
+function withClosure(items: readonly IInventoryItem[], keys: readonly string[]): string[] {
+  const all = new Set<string>()
+  for (const key of keys) {
+    all.add(key)
+    for (const member of itemClosure(items, key).members.keys()) all.add(member)
+  }
+  return [...all]
 }

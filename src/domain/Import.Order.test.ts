@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { agentClosure, IAgentBatchInput, ISelectionBatchInput, orderBatch, planAgentBatch, planSelectionBatch, prefixedId, proposeIds } from './Import.Order'
+import { agentClosure, IAgentBatchInput, itemClosure, ISelectionBatchInput, orderBatch, planAgentBatch, planSelectionBatch, prefixedId, proposeIds } from './Import.Order'
 import { IInventoryItem, TCatalogState } from './models/ImportInventory.Model'
 
 /** Um item do inventário sintético: a fonte é `<chave>.md` com os tokens dados. */
@@ -83,6 +83,24 @@ describe('Import.Order — o fecho de um agente', () => {
       'command:publicar untranslatable command-agent',
     ])
     assert.ok(!members.has('agent:bia') && !members.has('trigger:bia/01-outro'))
+  })
+})
+
+describe('Import.Order — o fecho de qualquer item (com as dependências)', () => {
+  const keys = (key: string) => [...itemClosure(ITEMS, key).members.keys()].sort()
+
+  it('skill: ela e o que cita, transitivo; spec: o mesmo; o trigger leva ao fecho do agente dono', () => {
+    assert.deepStrictEqual(keys('skill:revisar'), ['knowledge:fila', 'skill:revisar', 'spec:guia'])
+    assert.deepStrictEqual(keys('spec:ciclo-a'), ['spec:ciclo-a', 'spec:ciclo-b'])
+    assert.deepStrictEqual(keys('trigger:ana/02-ciclo'), keys('agent:ana'))
+    assert.ok(keys('agent:ana').includes('trigger:ana/02-ciclo'))
+  })
+
+  it('o command que cita um agente não o arrasta (outro agente fica de fora); MCP e desconhecido não têm fecho', () => {
+    const { members, excluded } = itemClosure(ITEMS, 'command:publicar')
+    assert.deepStrictEqual([...members.keys()].sort(), ['command:publicar', 'knowledge:fila', 'spec:guia'])
+    assert.ok(excluded.some((entry) => entry.reason === 'other-agent' && entry.item === 'agent:ana'))
+    assert.deepStrictEqual([keys('mcp:github'), keys('unknown:solto')], [[], []])
   })
 })
 

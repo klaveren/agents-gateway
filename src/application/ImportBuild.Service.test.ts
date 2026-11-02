@@ -30,6 +30,9 @@ describe('ImportBuildService', () => {
     file('.agents/specs/outra.md', '# Outra\n')
     file('.agents/skills/revisar/SKILL.md', '# Revisar\n')
     file('.agents/mcp.json', '{}\n')
+    file('.agents/agents/maya/AGENT.md', '# Maya\n')
+    file('.agents/agents/maya/triggers/01-revisar.md', 'Quando pedirem revisão.\n')
+    file('.agents/agents/maya/triggers/02-publicar.md', 'Quando pedirem publicação.\n')
     writeFileSync(join(base, `fora-${seq}.md`), 'de fora\n')
     const sha = (path: string) =>
       createHash('sha256')
@@ -46,6 +49,9 @@ describe('ImportBuildService', () => {
       item('spec:outra', '.agents/specs/outra.md'),
       item('skill:revisar', '.agents/skills/revisar/SKILL.md'),
       item('mcp:github', '.agents/mcp.json'),
+      { ...item('agent:maya', '.agents/agents/maya/AGENT.md'), candidateId: 'maya' },
+      { ...item('trigger:maya/01-revisar', '.agents/agents/maya/triggers/01-revisar.md'), candidateId: '01-revisar', parent: 'agent:maya' },
+      { ...item('trigger:maya/02-publicar', '.agents/agents/maya/triggers/02-publicar.md'), candidateId: '02-publicar', parent: 'agent:maya' },
     ]
     const repository = new SqliteImportRepository()
     const job = (id: string, at: string) =>
@@ -114,6 +120,36 @@ describe('ImportBuildService', () => {
     await rejects(() => service.open('alfa', 'j1', 'ana', { batchId: 'b1' }), 'invalid')
     await rejects(() => service.open('alfa', 'j1', 'ana', { batchId: 'nao-existe' }), 'not_found')
     await rejects(() => service.open('alfa', 'j1', 'ana', { batchId: 'b1', keys: ['spec:config'] }), 'invalid')
+  })
+
+  it('o agente aberto sozinho leva os triggers dele; o trigger já em outra conversa fica onde está', async () => {
+    const { service } = setup()
+    const first = await service.open('alfa', 'j1', 'ana', { keys: ['trigger:maya/02-publicar'] })
+    assert.deepStrictEqual(first.keys, ['trigger:maya/02-publicar'])
+    const agent = await service.open('alfa', 'j1', 'ana', { keys: ['agent:maya'] })
+    assert.deepStrictEqual(agent.keys, ['agent:maya', 'trigger:maya/01-revisar'])
+    // O construtor vê que o trigger de fora existe (e não pede para criá-lo).
+    assert.match(service.listText(agent.conversationId), /1 trigger\(s\) of this agent are in the import job but NOT in this conversation \(trigger:maya\/02-publicar/)
+  })
+
+  it('preparar tudo: o lote salvo vai ao construtor de uma vez, uma conversa por construtor, só o que ainda vai', async () => {
+    const { service, repository, opened } = setup()
+    const keys = ['spec:filas', 'spec:arquitetura', 'skill:revisar', 'agent:maya', 'trigger:maya/01-revisar', 'trigger:maya/02-publicar', 'mcp:github', 'spec:outra']
+    repository.createBatch({ id: 'b1', jobId: 'j1', name: 'maya', prefix: '', keys, order: keys, by: 'ana', at: new Date('2026-10-30T11:30:00.000Z') })
+    repository.updateItem('j1', 'spec:outra', { state: 'approved' })
+    const conversations = await service.prepare('alfa', 'j1', 'b1', 'ana', { id: 'u1' })
+    assert.deepStrictEqual(
+      conversations.map((one) => [one.kind, one.keys]),
+      [
+        ['spec', ['spec:filas', 'spec:arquitetura']],
+        ['skill', ['skill:revisar']],
+        ['agent', ['agent:maya', 'trigger:maya/01-revisar', 'trigger:maya/02-publicar']],
+      ],
+    )
+    assert.ok(opened.every((one) => one.owner?.id === 'u1' && (one.metadata.import as { batch?: string }).batch === 'b1'))
+    assert.strictEqual(repository.item('j1', 'agent:maya')!.state, 'drafting')
+    // De novo: nada mais vai.
+    await rejects(() => service.prepare('alfa', 'j1', 'b1', 'ana'), 'invalid')
   })
 
   it('⛔ abrir recusa: construtores misturados, tipo sem construtor, item fora do trabalho, trabalho antigo', async () => {
