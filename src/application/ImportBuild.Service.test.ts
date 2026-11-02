@@ -152,6 +152,17 @@ describe('ImportBuildService', () => {
     await rejects(() => service.prepare('alfa', 'j1', 'b1', 'ana'), 'invalid')
   })
 
+  it('preparar tudo: o agente já noutra conversa, sem rascunho, vem junto com os triggers dele', async () => {
+    const { service, repository } = setup()
+    const keys = ['agent:maya', 'trigger:maya/01-revisar', 'trigger:maya/02-publicar']
+    repository.createBatch({ id: 'b2', jobId: 'j1', name: 'maya', prefix: '', keys, order: keys, by: 'ana', at: new Date('2026-10-30T11:30:00.000Z') })
+    // Aberto antes só com o agente (os triggers ficaram pendentes).
+    repository.updateItem('j1', 'agent:maya', { state: 'drafting', conversationId: 'velha' })
+    const [agent] = await service.prepare('alfa', 'j1', 'b2', 'ana')
+    assert.deepStrictEqual(agent.keys, ['agent:maya', 'trigger:maya/01-revisar', 'trigger:maya/02-publicar'])
+    assert.strictEqual(repository.item('j1', 'agent:maya')!.conversationId, agent.conversationId)
+  })
+
   it('⛔ abrir recusa: construtores misturados, tipo sem construtor, item fora do trabalho, trabalho antigo', async () => {
     const { service, job } = setup()
     await rejects(() => service.open('alfa', 'j1', 'ana', { keys: ['spec:arquitetura', 'skill:revisar'] }), 'kind')
