@@ -1922,6 +1922,21 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/projects/{id}/import/jobs/{job}/batches/{batch}/items': {
+      post: {
+        summary:
+          'ADD items to a saved batch (with their dependencies when `closure`): the order is computed again over all of them. Only the newest job. Nothing is written to the catalog. Administrators only',
+        parameters: [...jobParams, { name: 'batch', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json({ type: 'object', properties: selectionBody, required: ['keys'] }) },
+        responses: {
+          '200': { description: 'The batch, with the batch computed again', ...json(envelope(importBatch)) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '409': { description: '`import_job_outdated`', ...json(failureEnvelope) },
+          '422': failures['422'],
+        },
+      },
+    },
     '/projects/{id}/import/jobs/{job}/batches/{batch}/prepare': {
       post: {
         summary:

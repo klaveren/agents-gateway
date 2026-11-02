@@ -77,6 +77,25 @@ export class ImportBatchService {
     return { ...batch, plan }
   }
 
+  /**
+   * ACRESCENTA itens a um lote salvo (o "gravar junto" do passo Gravar, ou mais itens do inventário), com as
+   * dependências deles quando `closure`: a ordem é recalculada sobre todos. ⛔ Só no trabalho mais novo.
+   */
+  addItems(projectId: string, jobId: string, batchId: string, input: { keys: readonly string[]; closure?: boolean }): IImportBatchView {
+    const record = this.record(projectId, jobId)
+    if (this.deps.repository.latest(projectId, record.repository)?.id !== record.id)
+      throw new ImportJobError('outdated', 'there is a newer analysis of this repository: open it to change batches')
+    const batch = this.deps.repository.batch(record.id, batchId)
+    if (!batch) throw new ImportJobError('not_found', `import batch not found: ${batchId}`)
+    const entries = this.deps.repository.items(record.id)
+    const added = this.compute(record, entries, { keys: input.keys, ...(input.closure ? { closure: true } : {}), prefix: batch.prefix }, batch.id).keys
+    const keys = [...new Set([...batch.keys, ...added])]
+    const plan = this.compute(record, entries, { keys, prefix: batch.prefix }, batch.id)
+    const order = plan.steps.map((step) => step.key)
+    this.deps.repository.updateBatchItems(record.id, batch.id, plan.keys, order)
+    return { ...batch, keys: plan.keys, order, plan }
+  }
+
   list(projectId: string, jobId: string): IImportBatch[] {
     return this.deps.repository.batches(this.record(projectId, jobId).id)
   }

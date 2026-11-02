@@ -222,6 +222,10 @@ export class SqliteImportRepository implements IImportRepository {
     return row ? toBatch(row) : undefined
   }
 
+  updateBatchItems(jobId: string, batchId: string, keys: readonly string[], order: readonly string[]): void {
+    this.db.prepare('UPDATE import_batches SET keys = ?, item_order = ? WHERE scan_id = ? AND id = ?').run(JSON.stringify(keys), JSON.stringify(order), jobId, batchId)
+  }
+
   deleteProject(projectId: string): void {
     this.db.exec('BEGIN')
     try {

@@ -39,9 +39,9 @@ const ruleText = (rule: { category: string; pattern: string; decision: string })
     <header class="flex flex-wrap items-start gap-2">
       <div class="min-w-0 flex-1">
         <h2 class="text-base font-semibold text-zinc-100">
-          Lote de <code class="text-emerald-200">{{ plan.agent }}</code>
+          Prévia da migração de <code class="text-emerald-200">{{ plan.agent }}</code>
         </h2>
-        <p class="text-xs text-zinc-500">Só leitura: o lote mostra o que a importação faria, na ordem. Nada é gravado e nenhum construtor é disparado.</p>
+        <p class="text-xs text-zinc-500">Só leitura: a prévia mostra o que a migração faria, na ordem. Nada é gravado e nenhum construtor é disparado.</p>
       </div>
       <form class="flex items-end gap-2" @submit.prevent="!issue && emit('replan', prefix.trim().toLowerCase())">
         <label class="field w-36">
@@ -192,7 +192,7 @@ const ruleText = (rule: { category: string; pattern: string; decision: string })
           </p>
           <p class="text-zinc-500">{{ plan.reach.skills.note }}.</p>
           <p v-if="plan.reach.skills.notReleased.length" class="text-amber-200">Citadas e não liberadas (fora da lista): {{ plan.reach.skills.notReleased.join(', ') }}</p>
-          <p v-if="plan.reach.skills.pending.length" class="text-zinc-500">Fora do lote e do catálogo (pendentes): {{ plan.reach.skills.pending.join(', ') }}</p>
+          <p v-if="plan.reach.skills.pending.length" class="text-zinc-500">Fora da migração e do catálogo (pendentes): {{ plan.reach.skills.pending.join(', ') }}</p>
         </div>
         <ul v-if="plan.reach.notes.some((note) => note.level !== 'info')" class="text-xs text-amber-200">
           <li v-for="note in plan.reach.notes.filter((one) => one.level !== 'info')" :key="note.code">{{ note.text }}</li>
@@ -208,7 +208,7 @@ const ruleText = (rule: { category: string; pattern: string; decision: string })
     </section>
 
     <details v-if="plan.released.length" class="text-xs text-zinc-400" data-test="released">
-      <summary class="cursor-pointer">Skills liberadas pela permissão e fora do lote ({{ plan.released.length }}) — liberar não é usar</summary>
+      <summary class="cursor-pointer">Skills liberadas pela permissão e fora da migração ({{ plan.released.length }}) — liberar não é usar</summary>
       <p class="mt-1 flex flex-wrap gap-x-3">
         <code v-for="skill in plan.released" :key="skill.key">{{ skill.id }}</code>
       </p>
