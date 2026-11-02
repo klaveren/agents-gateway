@@ -48,7 +48,8 @@ export interface IManualLoopParams<TMessage> {
   /** A credencial de quem chamou. Sem ela a tool MCP iria sem header, ou com a identidade do ambiente. */
   context: IExecutionContext
   signal: AbortSignal
-  maxTurns: number
+  /** Ausente: sem teto. */
+  maxTurns?: number
   /** As mensagens que chegaram com o turno rodando (`IMessageInput.interjections`). */
   interjections?: () => string[]
 }
@@ -66,7 +67,7 @@ export async function* runManualToolLoop<TMessage>(params: IManualLoopParams<TMe
   const { sessionId, history, tools, provider, catalog, context, signal, maxTurns, interjections } = params
   let answer = ''
 
-  for (let turn = 1; turn <= maxTurns; turn += 1) {
+  for (let turn = 1; turn <= (maxTurns ?? Infinity); turn += 1) {
     const outcome = yield* provider.runTurn(history, tools, signal)
     answer += outcome.text
     provider.appendAssistant(history, outcome)

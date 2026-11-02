@@ -1,6 +1,7 @@
 import assert from 'node:assert'
 import { afterEach, describe, it } from 'node:test'
 import { EMode } from '@domain/enums/EMode.Enum'
+import { applyLimits } from '@domain/models/Limits.Model'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { AgentNotFoundError, SessionNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
@@ -867,6 +868,8 @@ describe('AgentController', () => {
 
         assert.strictEqual((await withRules({ limits: { maxToolTurns: 0 } }, settings)).locals.statusCode, 422)
         assert.strictEqual((await withRules({ limits: { inventado: 3 } }, settings)).locals.statusCode, 422)
+        // -1 = sem teto, só onde a faixa aceita.
+        assert.strictEqual((await withRules({ limits: { streamsPerOwner: -1 } }, settings)).locals.statusCode, 422)
         assert.strictEqual((await withRules({ limits: { maxToolTurns: 30, streamsPerOwner: 5 } }, settings)).locals.statusCode, 200)
         await withRules({ limits: { streamsPerOwner: null } }, settings)
         assert.deepStrictEqual((await settings.read()).limits, { maxToolTurns: 30 })
@@ -875,6 +878,12 @@ describe('AgentController', () => {
         const result = read.body?.result as { limitsInEffect: Record<string, number>; limitBounds: Record<string, { min: number }>; deployment: Record<string, unknown> }
         assert.strictEqual(typeof result.limitsInEffect.maxOutputTokens, 'number')
         assert.strictEqual(result.limitBounds.maxToolTurns.min, 1)
+        assert.strictEqual((await withRules({ limits: { maxToolTurns: -1 } }, settings)).locals.statusCode, 200)
+        // O espelho em vigor é ligado ao repositório pela composição; aqui, à mão.
+        applyLimits({ maxToolTurns: -1 })
+        const unlimited = (await call(ADMIN, get, settings)).body?.result as { limitsInEffect: Record<string, number>; limitBounds: Record<string, { unlimited?: boolean }> }
+        applyLimits(undefined)
+        assert.deepStrictEqual([unlimited.limitsInEffect.maxToolTurns, unlimited.limitBounds.maxToolTurns.unlimited], [-1, true])
         assert.strictEqual('dangerousToolsAdminOnly' in result.deployment, false)
       })
 

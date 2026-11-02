@@ -230,7 +230,8 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       // Isolamento: sem isto o subprocesso lê o ~/.claude e o CLAUDE.md da máquina.
       settingSources: [],
       includePartialMessages: true,
-      maxTurns: maxToolTurns(),
+      // Sem teto: o SDK não leva `maxTurns`.
+      ...(maxToolTurns() !== undefined ? { maxTurns: maxToolTurns() } : {}),
       abortController: abort,
       ...(native.started ? { resume: native.sdkSessionId } : { sessionId: native.sdkSessionId }),
       // As variáveis do agente e a identidade de quem chama vão para o terminal do CLI (o Bash nativo) — ver `Agent.Identity`.

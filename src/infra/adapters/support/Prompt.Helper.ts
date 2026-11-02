@@ -1,5 +1,5 @@
 import { ambientSection } from '@domain/Ambient.Policy'
-import { liveLimit } from '@domain/models/Limits.Model'
+import { liveLimit, UNLIMITED } from '@domain/models/Limits.Model'
 import { IAgent } from '@domain/models/Agent.Model'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 
@@ -39,10 +39,15 @@ export function maxOutputTokens(): number {
 
 const DEFAULT_MAX_TOOL_TURNS = 12
 
-/** Teto de idas e voltas de tool num turno. O loop antigo, feito à mão, não tinha nenhum. */
-export function maxToolTurns(): number {
+/**
+ * Teto de idas e voltas de tool num turno. `undefined` = SEM TETO (-1 na tela ou no `.env`): o turno segue até o
+ * modelo responder, o detector de laço parar ou a pessoa apertar parar.
+ */
+export function maxToolTurns(): number | undefined {
   const configured = liveLimit('maxToolTurns')
+  if (configured === UNLIMITED) return undefined
   if (configured) return configured
   const parsed = Number.parseInt(process.env.MAX_TOOL_TURNS ?? '', 10)
+  if (parsed === UNLIMITED) return undefined
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_TOOL_TURNS
 }

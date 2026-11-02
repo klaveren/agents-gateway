@@ -157,7 +157,8 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
       const stream = await this.run(oaiAgent, items, {
         stream: true,
         signal: abort.signal,
-        maxTurns: maxToolTurns(),
+        // Sem teto: o SDK cai no padrão dele (10) sem número, então vai o maior inteiro.
+        maxTurns: maxToolTurns() ?? Number.MAX_SAFE_INTEGER,
       })
 
       for await (const event of stream) {
