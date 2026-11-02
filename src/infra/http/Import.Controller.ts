@@ -85,6 +85,8 @@ const planSchema = z.object({
 const selectionSchema = z.object({
   keys: z.array(z.string().min(1).max(1_000)).min(1).max(IMPORT_BATCH_MAX),
   prefix: z.string().max(16).optional(),
+  /** Com as dependências de cada chave. */
+  closure: z.boolean().optional(),
 })
 const batchSchema = selectionSchema.extend({ name: z.string().trim().min(1).max(IMPORT_BATCH_NAME_MAX) })
 /** A gravação: o lote salvo OU as chaves (nenhum: todos os aprovados), as regras amplas incluídas e o modelo por agente. */
@@ -127,6 +129,7 @@ export class ImportController {
     this.listBatches = this.listBatches.bind(this)
     this.getBatch = this.getBatch.bind(this)
     this.openBuilder = this.openBuilder.bind(this)
+    this.prepareBatch = this.prepareBatch.bind(this)
     this.approveItem = this.approveItem.bind(this)
     this.adjustItem = this.adjustItem.bind(this)
     this.planApply = this.planApply.bind(this)
@@ -293,8 +296,8 @@ export class ImportController {
    */
   async planBatch(req: Request, res: Response): Promise<void> {
     await this.respond(res, 'planImportBatch', req, async (projectId) => {
-      const { keys, prefix } = parseBody(selectionSchema, req.body)
-      return this.jobError(() => this.batches().plan(projectId, req.params.job as string, { keys, ...(prefix !== undefined ? { prefix } : {}) }))
+      const { keys, prefix, closure } = parseBody(selectionSchema, req.body)
+      return this.jobError(() => this.batches().plan(projectId, req.params.job as string, { keys, ...(prefix !== undefined ? { prefix } : {}), ...(closure ? { closure } : {}) }))
     })
   }
 
@@ -304,8 +307,10 @@ export class ImportController {
    */
   async createBatch(req: Request, res: Response): Promise<void> {
     await this.respond(res, 'createImportBatch', req, async (projectId, by) => {
-      const { name, keys, prefix } = parseBody(batchSchema, req.body)
-      return this.jobError(() => this.batches().create(projectId, req.params.job as string, { name, keys, ...(prefix !== undefined ? { prefix } : {}) }, by))
+      const { name, keys, prefix, closure } = parseBody(batchSchema, req.body)
+      return this.jobError(() =>
+        this.batches().create(projectId, req.params.job as string, { name, keys, ...(prefix !== undefined ? { prefix } : {}), ...(closure ? { closure } : {}) }, by),
+      )
     })
   }
 
@@ -336,6 +341,16 @@ export class ImportController {
         }),
       )
     })
+  }
+
+  /**
+   * `POST /projects/:id/import/jobs/:job/batches/:batch/prepare` — PREPARAR TUDO: o lote salvo vai ao construtor de uma
+   * vez, uma conversa por construtor, com os itens que ainda vão. Devolve as conversas abertas. ⛔ Não grava no catálogo.
+   */
+  async prepareBatch(req: Request, res: Response): Promise<void> {
+    await this.respond(res, 'prepareImportBatch', req, async (projectId, by, owner) => ({
+      conversations: await this.buildError(() => this.build().prepare(projectId, req.params.job as string, req.params.batch as string, by, owner)),
+    }))
   }
 
   /**

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, inject, nextTick, onMounted, ref, shallowRef, watch } from 'vue'
 import { routerKey } from 'vue-router'
 import ImportApply from '@/components/ImportApply.vue'
 import ImportBatch from '@/components/ImportBatch.vue'
@@ -325,15 +325,20 @@ async function loadBatches() {
   }
 }
 
-/** A prévia do lote: as chaves escolhidas (na ordem da lista) e o prefixo. Não salva nada. */
-async function buildSelection(keys = items.value.filter((item) => picked.value.has(item.key)).map((item) => item.key), nextPrefix = selectionPlan.value?.prefix ?? '') {
+/**
+ * A prévia do lote: as chaves escolhidas (na ordem da lista) e o prefixo. `closure`: cada chave com as dependências (o
+ * servidor devolve o lote com todas). Não salva nada.
+ */
+async function buildSelection(keys = items.value.filter((item) => picked.value.has(item.key)).map((item) => item.key), nextPrefix = selectionPlan.value?.prefix ?? '', closure = false) {
   if (!project.value || !job.value || !keys.length) return
-  const fresh = !selectionPlan.value || !!openedBatch.value || keys.join('\n') !== selectionPlan.value.keys.join('\n')
+  const fresh = closure || !selectionPlan.value || !!openedBatch.value || keys.join('\n') !== selectionPlan.value.keys.join('\n')
   batchBusy.value = true
   batchError.value = undefined
+  prepared.value = undefined
   try {
-    selectionPlan.value = await api<ISelectionPlan>(`${batchesPath()}/plan`, { method: 'POST', body: { keys, ...(nextPrefix ? { prefix: nextPrefix } : {}) } })
-    if (fresh) previewName.value = batchName(items.value.filter((item) => keys.includes(item.key)), overrides.value)
+    selectionPlan.value = await api<ISelectionPlan>(`${batchesPath()}/plan`, { method: 'POST', body: { keys, ...(nextPrefix ? { prefix: nextPrefix } : {}), ...(closure ? { closure } : {}) } })
+    if (closure && keys.length === 1) previewName.value = `${keys[0].slice(keys[0].indexOf(':') + 1)} e dependências`
+    else if (fresh) previewName.value = batchName(items.value.filter((item) => keys.includes(item.key)), overrides.value)
     openedBatch.value = undefined
   } catch (failure) {
     batchError.value = message(failure)
@@ -361,6 +366,41 @@ async function saveBatch(name: string) {
   }
 }
 
+/** As conversas que o "preparar tudo" abriu (uma por construtor), com o link de cada uma. */
+const prepared = ref<Array<{ kind: TBuildKind; conversationId: string; keys: string[] }>>()
+
+/** PREPARAR TUDO: o lote salvo vai ao construtor de uma vez, uma conversa por construtor. ⛔ Não grava no catálogo. */
+async function prepareBatch(batchId: string) {
+  if (!project.value || !job.value || readonly.value) return
+  building.value = true
+  batchError.value = undefined
+  try {
+    const result = await api<{ conversations: Array<{ kind: TBuildKind; conversationId: string; keys: string[] }> }>(`${batchesPath()}/${encodeURIComponent(batchId)}/prepare`, {
+      method: 'POST',
+    })
+    for (const opened of result.conversations)
+      for (const key of opened.keys) keep({ ...(statuses.value[key] ?? { key, fingerprint: '' }), key, state: 'drafting', conversationId: opened.conversationId } as IImportItemStatus)
+    prepared.value = result.conversations
+  } catch (failure) {
+    batchError.value = message(failure)
+  } finally {
+    building.value = false
+  }
+}
+
+/** "Preparar com as dependências" (no detalhe, à direita): o lote aparece acima, e a tela vai até ele. */
+async function withDependencies(key: string) {
+  await buildSelection([key], '', true)
+  await nextTick()
+  document.querySelector('[data-test="selection-batch"]')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+}
+
+/** "Salvar e preparar tudo": salva a prévia como lote e já abre as conversas. */
+async function saveAndPrepare(name: string) {
+  await saveBatch(name)
+  if (openedBatch.value && !batchError.value) await prepareBatch(openedBatch.value.id)
+}
+
 async function openBatch(id: string) {
   if (!project.value || !job.value) return
   batchBusy.value = true
@@ -378,6 +418,7 @@ async function openBatch(id: string) {
 }
 
 function closeSelection() {
+  prepared.value = undefined
   selectionPlan.value = undefined
   openedBatch.value = undefined
   batchError.value = undefined
@@ -792,9 +833,30 @@ watch(
             @select="selectedKey = $event"
             @replan="buildSelection(selectionPlan.keys, $event)"
             @save="saveBatch"
+            @prepare="saveAndPrepare"
           />
+          <section v-if="prepared?.length" class="flex flex-col gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/5 p-3 text-xs" data-test="prepared">
+            <p class="text-emerald-200">
+              {{ prepared.length }} conversa(s) aberta(s) com o construtor. Peça "Começar" em cada uma; o rascunho aparece ao lado da conversa. Depois, grave os aprovados do lote.
+            </p>
+            <ul class="flex flex-col gap-1">
+              <li v-for="opened in prepared" :key="opened.conversationId" class="flex flex-wrap items-center gap-2">
+                <a
+                  :href="buildLink(opened.kind, opened.conversationId)"
+                  class="text-emerald-300 hover:underline"
+                  data-test="prepared-link"
+                  @click.prevent="router ? router.push(buildLink(opened.kind, opened.conversationId)) : undefined"
+                  >{{ BUILD_KINDS[opened.kind].builder }}</a
+                >
+                <span class="text-zinc-500">{{ opened.keys.length }} item(ns): {{ opened.keys.slice(0, 4).join(', ') }}<template v-if="opened.keys.length > 4">, …</template></span>
+              </li>
+            </ul>
+          </section>
           <section v-if="openedBatch && batchGroups.length" class="flex flex-wrap items-center gap-2 text-xs" data-test="batch-builder">
             <span class="text-zinc-400">Lote "{{ openedBatch.name }}":</span>
+            <button type="button" class="btn btn-primary btn-sm" :disabled="building" data-test="prepare-batch" @click="prepareBatch(openedBatch.id)">
+              {{ building ? 'Abrindo…' : `Preparar tudo com o construtor (${batchGroups.length} conversa${batchGroups.length > 1 ? 's' : ''})` }}
+            </button>
             <button
               v-for="group in batchGroups"
               :key="group.kind"
@@ -916,6 +978,7 @@ watch(
                 @approve="reviewItem(selected.key, 'approve', { removals: $event })"
                 @adjust="reviewItem(selected.key, 'adjust', { comment: $event })"
                 @plan="buildPlan(selected.key)"
+                @closure="withDependencies(selected.key)"
                 @select="selectedKey = $event"
                 @reclassify="reclassify(selected.key, $event)"
                 @state="changeItem(selected.key, { state: $event })"

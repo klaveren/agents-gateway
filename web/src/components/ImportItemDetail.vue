@@ -57,6 +57,8 @@ const emit = defineEmits<{
   close: []
   plan: []
   build: []
+  /** Montar o lote do item COM AS DEPENDÊNCIAS (o fecho), para preparar tudo com o construtor. */
+  closure: []
   approve: [oks: number[]]
   adjust: [comment: string]
 }>()
@@ -130,6 +132,16 @@ function onReclassify(event: Event) {
       </div>
       <p class="text-xs text-zinc-500">{{ STATE_HINT[state] }}.<template v-if="status?.by"> Última mudança por {{ status.by }}<template v-if="status.at"> em {{ fullTime(status.at) }}</template>.</template></p>
       <p v-if="error" class="text-xs text-rose-300" data-test="item-error">{{ error }}</p>
+    </section>
+
+    <section v-if="builder && !readonly" class="flex flex-col gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/5 px-3 py-2" data-test="with-dependencies">
+      <button type="button" class="btn btn-primary btn-sm self-start" :disabled="planning" data-test="closure" @click="emit('closure')">
+        {{ planning ? 'Montando…' : 'Preparar com as dependências' }}
+      </button>
+      <p class="text-xs text-zinc-500">
+        Mostra tudo o que este item precisa (<template v-if="kind === 'agent' || kind === 'trigger'">o agente, os triggers e </template>o que eles citam, em ordem) e, num clique, abre uma
+        conversa por construtor para preparar os rascunhos. Depois é revisar e gravar o lote.
+      </p>
     </section>
 
     <section v-if="builder && (canBuild || conversationLink)" class="flex flex-col gap-1.5 rounded-xl border border-emerald-500/30 px-3 py-2" data-test="builder">

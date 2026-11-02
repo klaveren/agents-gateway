@@ -687,6 +687,10 @@ const importBatch = { type: 'object', properties: { ...importBatchFields, plan: 
 const selectionBody = {
   keys: { type: 'array', items: { type: 'string' }, description: 'The keys of the selected items of the job' },
   prefix: { type: 'string', description: 'Optional id prefix (lowercase letters, digits and "-", up to 16)' },
+  closure: {
+    type: 'boolean',
+    description: 'With the DEPENDENCIES: each key brings its closure (an agent with its triggers, a trigger with its agent, and what they cite, transitively)',
+  },
 }
 /** A seleção da gravação do importador. */
 const importApplySelection = {
@@ -1901,6 +1905,36 @@ export const OPENAPI_DOCUMENT = {
           '200': { description: 'OK', ...json(envelope(importBatch)) },
           '401': failures['401'],
           '404': failures['404'],
+        },
+      },
+    },
+    '/projects/{id}/import/jobs/{job}/batches/{batch}/prepare': {
+      post: {
+        summary:
+          'PREPARE ALL: the saved batch goes to the builder at once, ONE conversation per builder (the agent with its triggers, the specs, the skills…), with the items that still go (no conversation or draft in progress). Returns the opened conversations. Nothing is proposed, approved or written to the catalog. Administrators only',
+        parameters: [...jobParams, { name: 'batch', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'The opened conversations',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  conversations: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: { conversationId: { type: 'string' }, kind: { type: 'string' }, agentId: { type: 'string' }, keys: { type: 'array', items: { type: 'string' } } },
+                    },
+                  },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+          '409': { description: 'A newer analysis exists, or an item cannot go to the builder now', ...json(failureEnvelope) },
+          '422': failures['422'],
         },
       },
     },
