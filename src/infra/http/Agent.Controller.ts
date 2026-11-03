@@ -660,7 +660,8 @@ export class AgentController {
 
   /**
    * `POST /agents/:agentId/import-issues/resolve { code, target? }` — "resolvido": tira do agente os problemas da
-   * importação que casam. Só admin; a revisão vai para o histórico. Devolve o agente inteiro.
+   * importação que casam; `{ pending: true }` descarta todos os pendentes (o alcance guardado neles é esquecido). Só
+   * admin; a revisão vai para o histórico. Devolve o agente inteiro.
    */
   async resolveAgentImportIssue(req: Request, res: Response) {
     await this.respond(res, async () => {

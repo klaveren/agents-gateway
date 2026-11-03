@@ -52,6 +52,8 @@ export interface IApplyRule {
   rule: { category: string; pattern: string; decision: string; note?: string }
   wide?: string
   included: boolean
+  /** Fica de fora mesmo incluída: cita um agente ou servidor MCP que não existe (guardada no problema do agente). */
+  held?: string
 }
 
 export interface IApplyAgent {

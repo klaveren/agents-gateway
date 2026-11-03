@@ -1092,6 +1092,17 @@ describe('AgentController', () => {
       assert.strictEqual('importIssues' in ((resolved.body?.result ?? {}) as object), false)
       assert.strictEqual((await detail()).importIssues, undefined)
       assert.strictEqual((await as(MEMBER, controller, (res) => controller.resolveAgentImportIssue(mockRequest({ params, body: { code: 'x' } }), res))).statusCode, 404)
+
+      // "Descartar todos os pendentes": uma gravação tira só os pendentes (o guardado neles vai junto).
+      const held = { code: 'delegate-missing' as const, message: 'permite delegar a agent-sre, que ainda não existe', target: 'agent-sre', link: 'reach' as const }
+      const other = { code: 'link-missing' as const, message: 'cita memoria, que não existe', target: 'memoria', link: 'attach' as const }
+      repository.save({ ...agents.entry('juridico')!.agent, importIssues: [issue, held, other] }, 'import')
+      const pending = { params, body: { pending: true } }
+      const discarded = await as(ADMIN, controller, (res) => controller.resolveAgentImportIssue(mockRequest(pending), res))
+      assert.strictEqual(discarded.statusCode, 200)
+      assert.deepStrictEqual(((discarded.body?.result ?? {}) as { importIssues?: unknown }).importIssues, [other])
+      assert.strictEqual((await as(ADMIN, controller, (res) => controller.resolveAgentImportIssue(mockRequest(pending), res))).statusCode, 404)
+      assert.strictEqual((await as(ADMIN, controller, (res) => controller.resolveAgentImportIssue(mockRequest({ params, body: { pending: false } }), res))).statusCode, 422)
     })
 
     it('editar troca o agente criado; apagar tira da lista', async () => {

@@ -16,7 +16,7 @@ import { sizeHint } from '@/lib/format'
 import { attachedRefs, docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId, setAttachMode, type TAttachMode } from '@/lib/guidance'
 import type { IRestoreResult } from '@/lib/catalogHistory'
 import { renderMarkdown } from '@/lib/markdown'
-import type { IImportIssue, IResource, TResourceKind } from '@/lib/types'
+import type { IResource, TImportIssueMatch, TResourceKind } from '@/lib/types'
 import { useScopedDocs } from '@/composables/useCatalogLists'
 import { useResource } from '@/composables/useResource'
 import { useAuthStore } from '@/stores/auth'
@@ -180,8 +180,8 @@ async function saveFiles(files: IResource['files']) {
   loaded.value = await resources.saveFiles(loaded.value.id, files)
 }
 
-/** "Resolvido": a store grava e devolve o recurso (o formulário fica como está). */
-async function resolveIssue(issue: IImportIssue) {
+/** "Resolvido" (ou "Descartar", um ou todos os pendentes): a store grava e devolve o recurso (o formulário fica como está). */
+async function resolveIssue(issue: TImportIssueMatch) {
   if (loaded.value) loaded.value = await resources.resolveIssue(loaded.value.id, issue)
 }
 

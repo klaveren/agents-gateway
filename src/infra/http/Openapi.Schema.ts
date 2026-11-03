@@ -282,25 +282,54 @@ const agentSchema = {
 const importIssuesSchema = {
   type: 'array',
   description:
-    'Import issues: problems the importer recorded in the artifact instead of blocking the write (a citation that is not a document, a link still pending, a skill not imported yet). Only the importer adds them; a normal edit keeps them; POST …/import-issues/resolve removes one. `link-pending`, `skill-missing` and `command-missing` resolve by themselves when a later import writes the target.',
+    'Import issues: problems the importer recorded in the artifact instead of blocking the write (a citation that is not a document, a link still pending, a skill not imported yet, an agent rule that releases delegating to an agent or using an MCP server that does not exist). Only the importer adds them; a normal edit keeps them; POST …/import-issues/resolve removes one (or, with `{ pending: true }`, every pending one). The PENDING ones — `link-pending`, `skill-missing`, `command-missing`, `delegate-missing`, `mcp-missing` — resolve by themselves when a later import writes the target: the link (or the held-back rule) comes back in that write, and a rule that comes back is a widening to confirm like any other. Discarding a pending issue forgets what was held back.',
   items: {
     type: 'object',
     properties: {
-      code: { type: 'string', enum: ['link-not-document', 'link-not-spec', 'link-missing', 'link-scope', 'link-pending', 'skill-missing', 'command-missing'] },
+      code: {
+        type: 'string',
+        enum: ['link-not-document', 'link-not-spec', 'link-missing', 'link-scope', 'link-pending', 'skill-missing', 'command-missing', 'delegate-missing', 'mcp-missing'],
+      },
       message: { type: 'string', description: 'In Portuguese, for the person and for the agent that fixes it.' },
       target: { type: 'string', description: 'The id the link cited.' },
-      link: { type: 'string', enum: ['attach', 'reference', 'initialContext', 'skill', 'command'], description: 'The link left out (what comes back by itself).' },
+      link: {
+        type: 'string',
+        enum: ['attach', 'reference', 'initialContext', 'skill', 'command', 'reach'],
+        description: 'The link left out (what comes back by itself). `reach`: the agent permissions and allowedTools in `rules` and `tools`.',
+      },
+      rules: {
+        type: 'array',
+        description:
+          '`delegate-missing`/`mcp-missing`: the exact agent permission rules held back (allow rules naming a specific agent or MCP server; deny and wildcard rules stay).',
+        items: {
+          type: 'object',
+          properties: { category: { type: 'string' }, pattern: { type: 'string' }, decision: { type: 'string', enum: ['allow', 'deny'] }, note: { type: 'string' } },
+          required: ['category', 'pattern', 'decision'],
+        },
+      },
+      tools: { type: 'array', items: { type: 'string' }, description: 'The allowedTools entries held back (`agent:<id>`, `mcp:<server>/<tool>`).' },
     },
     required: ['code', 'message'],
   },
 }
 const importIssueMatch = {
-  type: 'object',
-  properties: {
-    code: { type: 'string', description: 'The issue code' },
-    target: { type: 'string', description: 'Only the issue with this target; absent = every issue with the code' },
-  },
-  required: ['code'],
+  oneOf: [
+    {
+      type: 'object',
+      properties: {
+        code: { type: 'string', description: 'The issue code' },
+        target: { type: 'string', description: 'Only the issue with this target; absent = every issue with the code' },
+      },
+      required: ['code'],
+    },
+    {
+      type: 'object',
+      description:
+        'DISCARD every pending issue at once (`link-pending`, `skill-missing`, `command-missing`, `delegate-missing`, `mcp-missing`): one write, one revision in the history; what they held back is forgotten',
+      properties: { pending: { type: 'boolean', enum: [true] } },
+      required: ['pending'],
+    },
+  ],
 }
 
 const agentDetailSchema = {
@@ -2729,7 +2758,7 @@ export const OPENAPI_DOCUMENT = {
     '/docs/{id}/import-issues/resolve': {
       post: {
         summary:
-          'Mark an import issue of the document as RESOLVED: the issues with this code (and target, when given) leave it; the rest stays. Recorded in the catalog history. Administrators only; 404 when no issue matches',
+          'Mark an import issue of the document as RESOLVED (a pending one: DISCARD — what it held back is forgotten): the issues with this code (and target, when given) leave it; the rest stays. `{ pending: true }` discards every pending issue at once. Recorded in the catalog history. Administrators only; 404 when no issue matches',
         parameters: idParam,
         requestBody: { required: true, ...json(importIssueMatch) },
         responses: { '200': { description: 'OK', ...json(envelope(docSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
@@ -2738,7 +2767,7 @@ export const OPENAPI_DOCUMENT = {
     '/resources/{id}/import-issues/resolve': {
       post: {
         summary:
-          'Mark an import issue of the skill or command as RESOLVED: the issues with this code (and target, when given) leave it; the rest stays. Recorded in the catalog history. Administrators only; 404 when no issue matches',
+          'Mark an import issue of the skill or command as RESOLVED (a pending one: DISCARD — what it held back is forgotten): the issues with this code (and target, when given) leave it; the rest stays. `{ pending: true }` discards every pending issue at once. Recorded in the catalog history. Administrators only; 404 when no issue matches',
         parameters: idParam,
         requestBody: { required: true, ...json(importIssueMatch) },
         responses: { '200': { description: 'OK', ...json(envelope(resourceSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
@@ -2747,7 +2776,7 @@ export const OPENAPI_DOCUMENT = {
     '/agents/{agentId}/import-issues/resolve': {
       post: {
         summary:
-          'Mark an import issue of the agent as RESOLVED: the issues with this code (and target, when given) leave it; the rest stays. Recorded in the catalog history. Administrators only; 404 when no issue matches',
+          'Mark an import issue of the agent as RESOLVED (a pending one: DISCARD — what it held back is forgotten): the issues with this code (and target, when given) leave it; the rest stays. `{ pending: true }` discards every pending issue at once. Recorded in the catalog history. Administrators only; 404 when no issue matches',
         parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: { required: true, ...json(importIssueMatch) },
         responses: { '200': { description: 'OK', ...json(envelope(agentDetailSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },

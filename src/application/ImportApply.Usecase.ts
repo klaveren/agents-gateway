@@ -52,6 +52,8 @@ export interface IReachRuleView {
   /** Ampla (terminal com qualquer comando, `read **`, servidor MCP inteiro, `*`…): só entra se a pessoa incluir. */
   wide?: string
   included: boolean
+  /** Fica de fora mesmo incluída: cita um agente ou servidor MCP que não existe (o problema guardado no agente). */
+  held?: string
 }
 
 /** O agente na gravação: o modelo, e o alcance traduzido com o que entra. */
@@ -288,6 +290,9 @@ export class ImportApplyUseCase {
     const catalogDocs = byId(DOC_KINDS)
     const catalogResources = byId(RESOURCE_KINDS)
     const catalogOthers = byId(['agent', 'mcp'])
+    // O alcance do agente cita agentes e servidores MCP: os que existem ou entram agora (o MCP, com o escopo).
+    const agentIds = new Set([...writing, ...prepared.snapshot].filter((document) => document.kind === 'agent').map((document) => document.id))
+    const mcps = [...writing, ...prepared.snapshot].filter((document) => document.kind === 'mcp')
     const slim = (document: ICatalogDocument | undefined) => (document ? { kind: document.kind, ...(document.projectId ? { projectId: document.projectId } : {}) } : undefined)
     // Os ids que cada item do trabalho tem no gateway (o do rascunho, o escolhido, o proposto com o prefixo, o candidato).
     const idsOf = (one: IImportJobItem) => {
@@ -305,12 +310,22 @@ export class ImportApplyUseCase {
       catalogResource: (id) => slim(catalogResources.get(id)),
       pendingDoc: (id) => excludedDocs.has(id) || DOC_KINDS.includes(jobKinds.get(id) ?? ''),
       otherKind: (id) => jobKinds.get(id) ?? catalogResources.get(id)?.kind ?? catalogOthers.get(id)?.kind,
+      agentExists: (id) => agentIds.has(id),
+      mcpExists: (id, projectId) => mcps.some((mcp) => mcp.id === id && (!mcp.projectId || mcp.projectId === projectId)),
     }
     const documents = prepared.documents.map((document) => withImportIssues(document, world))
 
-    // O agente na tela: as skills e os commands que ele libera de fato, e os pendentes.
+    // O agente na tela: as skills e os commands que ele libera de fato, e os pendentes; as regras e as ferramentas que
+    // ficaram de fora por citar o que não existe.
     for (const agent of prepared.agents) {
       const document = documents.find((one) => one.kind === 'agent' && one.id === agent.view.id)
+      const reach = problemList(document?.body.importIssues).filter((issue) => issue.link === 'reach')
+      for (const rule of agent.view.rules) {
+        const issue = reach.find((one) => one.rules?.some((held) => ruleKey(held) === rule.key))
+        if (issue) rule.held = issue.message
+        else delete rule.held
+      }
+      if (document) agent.view.allowedTools = agent.extras.allowedTools.filter((tool) => !reach.some((issue) => issue.tools?.includes(tool)))
       const resources = document?.body.resources as { skills?: string[]; commands?: string[] } | undefined
       if (!resources) continue
       agent.view.skills = resources.skills ?? []
@@ -319,7 +334,13 @@ export class ImportApplyUseCase {
     }
 
     const incoming = new Set(documents.map(refOfDocument))
-    const written = { docs: new Set(writtenDocs.keys()), skills: kindIds(writtenResources, 'skill'), commands: kindIds(writtenResources, 'command') }
+    const written = {
+      docs: new Set(writtenDocs.keys()),
+      skills: kindIds(writtenResources, 'skill'),
+      commands: kindIds(writtenResources, 'command'),
+      agents: new Set(writing.filter((document) => document.kind === 'agent').map((document) => document.id)),
+      mcps: new Set(writing.filter((document) => document.kind === 'mcp').map((document) => document.id)),
+    }
     const resolved: ILinked['resolved'] = []
     const restored: ICatalogDocument[] = []
     for (const document of prepared.snapshot) {

@@ -109,6 +109,9 @@ export const REACH_DEFAULTS: Required<Pick<IReachOptions, 'createAnywhere' | 're
   outsideServerTools: 'drop',
 }
 
+/** A nota da delegação a quem ainda não existe (a gravação a guarda no problema `delegate-missing`, e tira ao voltar). */
+export const DELEGATE_PENDING_NOTE = 'alvo ainda não importado'
+
 /** A chave de uma regra, para confirmar ampliações. */
 export const ruleKey = (rule: Pick<IPermissionRule, 'category' | 'pattern' | 'decision'>) => `${rule.category} ${rule.decision} ${rule.pattern}`
 
@@ -414,7 +417,7 @@ function translateEntry(entry: IEntry, entries: readonly IEntry[], options: IRea
     if (!target) {
       status = 'none'
       reasons.push('alvo não importado: a regra fica inerte e `agent:<id>` fica de fora até o agente existir')
-      rule.note = 'alvo ainda não importado'
+      rule.note = DELEGATE_PENDING_NOTE
     }
   }
   const widening = wideningOf(rule)

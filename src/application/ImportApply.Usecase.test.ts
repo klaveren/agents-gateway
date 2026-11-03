@@ -27,9 +27,18 @@ const SOURCES: Record<string, string> = {
 const sha = (text: string) => createHash('sha256').update(text).digest('hex')
 
 /** Um repositório sintético (em memória), o trabalho com os itens, o construtor, o catálogo e a gravação. */
-async function setup(options: { wrapWriter?: (writer: ICatalogWriter) => ICatalogWriter; withFiles?: boolean } = {}) {
+async function setup(
+  options: {
+    wrapWriter?: (writer: ICatalogWriter) => ICatalogWriter
+    withFiles?: boolean
+    /** O alcance do opencode da Maya no lugar do padrão; e o agente `agent-sre` e o MCP `fantasma` no trabalho. */
+    reach?: { permission: Record<string, unknown>; tools: Record<string, boolean> }
+    extra?: boolean
+  } = {},
+) {
   const files: Record<string, string> = {
     ...SOURCES,
+    ...(options.extra ? { '.agents/agents/agent-sre/prompt.md': 'Você é o SRE.\n', 'opencode.json#mcp.fantasma': '{"type":"local"}\n' } : {}),
     ...(options.withFiles
       ? {
           '.agents/skills/revisar/run.sh': '#!/bin/sh\necho revisar\n',
@@ -63,6 +72,10 @@ async function setup(options: { wrapWriter?: (writer: ICatalogWriter) => ICatalo
     item('rule:commits', '.agents/rules/commits.md'),
     item('spec:guia', '.agents/specs/guia.md'),
     item('spec:longa', '.agents/specs/longa.md'),
+    // ⚠️ O MCP que a varredura viu no gateway (`global`) e que não está mais lá: o tradutor o mapeia mesmo assim.
+    ...(options.extra
+      ? [item('agent:agent-sre', '.agents/agents/agent-sre/prompt.md'), { ...item('mcp:fantasma', 'opencode.json#mcp.fantasma'), catalog: 'global' as const }]
+      : []),
   ]
   if (options.withFiles) {
     // A skill com o script dela (vai como arquivo, fora do rascunho); a pasta scripts/ do agente, que a varredura deixa de fora.
@@ -123,6 +136,8 @@ async function setup(options: { wrapWriter?: (writer: ICatalogWriter) => ICatalo
     'spec:longa': { meta: { id: 'longa', title: 'Longa', summary: 'A longa' } },
   })
 
+  if (options.extra) await propose(['agent:agent-sre'], { 'agent:agent-sre': { meta: { id: 'agent-sre', name: 'SRE' } } })
+
   // O depósito em memória: o conteúdo por sha, e a pasta de cada recurso (o que a gravação escreveria).
   const depot = new Map<string, Buffer>()
   const folders = new Map<string, string[]>()
@@ -145,7 +160,7 @@ async function setup(options: { wrapWriter?: (writer: ICatalogWriter) => ICatalo
   const stack = buildCatalogStack({ ...(options.wrapWriter ? { wrapWriter: options.wrapWriter } : {}), ...(options.withFiles ? { files: filesPort } : {}) })
   stack.projects.create({ id: 'alfa', name: 'Alfa' }, 'ana')
   // O alcance do opencode da Maya: terminal amplo (`*`), a skill dela, e o `bash` ligado.
-  const reach = new Map([['agent:maya', { name: 'maya', permission: { bash: { '*': 'allow' }, skill: { revisar: 'allow' } }, tools: { bash: true } }]])
+  const reach = new Map([['agent:maya', { name: 'maya', ...(options.reach ?? { permission: { bash: { '*': 'allow' }, skill: { revisar: 'allow' } }, tools: { bash: true } }) }]])
   const apply = new ImportApplyUseCase({
     repository,
     readSource,
@@ -494,6 +509,131 @@ describe('ImportApplyUseCase — os problemas da importação (não bloqueiam, f
     assert.ok(second.preview.plan.widenings.some((one) => one.key === 'agent/maya@alfa#resources.skills+revisar'))
     assert.deepStrictEqual(stack.reader.read('agent', 'maya')!.body.resources, { skills: ['revisar'], commands: [] })
     assert.strictEqual(maya().importIssues, undefined)
+  })
+})
+
+describe('ImportApplyUseCase — o alcance que cita o que não existe (`delegate-missing`, `mcp-missing`)', () => {
+  // O administrador do opencode: delega a um agente que não existe, a um curinga, nega um terceiro e usa um MCP sumido.
+  const REACH = {
+    permission: {
+      bash: { 'git status': 'allow' },
+      task: { 'agent-sre': 'allow', 'ops-*': 'allow', 'agent-velho': 'deny' },
+      mcp: { fantasma_buscar: 'allow' },
+    },
+    tools: { bash: true, fantasma_buscar: true },
+  }
+  const MAYA = { keys: ['agent:maya', 'trigger:maya/revisar'], models: MODEL }
+  const agentKeys = (plan: { widenings: Array<{ kind: string; id: string; key: string }> }, id = 'maya') =>
+    plan.widenings.filter((widening) => widening.kind === 'agent' && widening.id === id).map((widening) => widening.key)
+
+  it('a liberação exata a quem não existe sai e fica guardada no agente (não vira ampliação); curinga, negar, terminal e `cap:` seguem', async () => {
+    const { apply, stack } = await setup({ reach: REACH, extra: true })
+    const preview = await apply.preview('alfa', 'j1', MAYA)
+    assert.deepStrictEqual(agentKeys(preview.plan), [
+      'agent/maya@alfa#allowedTools+cap:files.read',
+      'agent/maya@alfa#allowedTools+cap:terminal',
+      'agent/maya@alfa#permissions+allow:delegate:ops-*',
+      'agent/maya@alfa#permissions+allow:terminal:git status',
+    ])
+    const view = preview.agents.find((agent) => agent.key === 'agent:maya')!
+    assert.deepStrictEqual(
+      view.rules.filter((rule) => rule.held).map((rule) => rule.key),
+      ['delegate allow agent-sre', 'mcp allow fantasma/buscar'],
+    )
+    assert.deepStrictEqual(view.allowedTools, ['cap:terminal', 'cap:files.read'])
+    // A lista amarela da gravação mostra o que ficou de fora (e por quê a lista de ampliações encolheu).
+    const issues = preview.items.find((item) => item.key === 'agent:maya')!.issues!.filter((one) => one.link === 'reach')
+    assert.deepStrictEqual(
+      issues.map((one) => [one.ref, one.code, one.target]),
+      [
+        ['agent/maya', 'delegate-missing', 'agent-sre'],
+        ['agent/maya', 'mcp-missing', 'fantasma'],
+      ],
+    )
+    assert.match(issues[0].message, /^permite delegar a agent-sre, que ainda não existe/)
+
+    const result = await apply.apply('alfa', 'j1', { ...MAYA, planHash: preview.plan.planHash, confirm: preview.plan.widenings.map((one) => one.key) }, ADMIN)
+    assert.strictEqual(result.batch?.status, 'applied')
+    const maya = stack.agents.entry('maya')!.agent
+    assert.deepStrictEqual(maya.permissions, [
+      { category: 'terminal', pattern: 'git status', decision: 'allow' },
+      { category: 'delegate', pattern: 'ops-*', decision: 'allow' },
+      { category: 'delegate', pattern: 'agent-velho', decision: 'deny' },
+    ])
+    assert.deepStrictEqual(maya.allowedTools, ['cap:files.read', 'cap:terminal'])
+    assert.deepStrictEqual(
+      maya.importIssues?.filter((one) => one.link === 'reach').map((one) => [one.code, one.target, one.rules, one.tools]),
+      [
+        ['delegate-missing', 'agent-sre', [{ category: 'delegate', pattern: 'agent-sre', decision: 'allow', note: 'alvo ainda não importado' }], undefined],
+        ['mcp-missing', 'fantasma', [{ category: 'mcp', pattern: 'fantasma/buscar', decision: 'allow' }], ['mcp:fantasma/buscar']],
+      ],
+    )
+  })
+
+  it('o alvo entra NA MESMA gravação: a regra fica, e é ampliação a confirmar como sempre', async () => {
+    const { apply } = await setup({ reach: REACH, extra: true })
+    const preview = await apply.preview('alfa', 'j1', { keys: [...MAYA.keys, 'agent:agent-sre'], models: { ...MODEL, 'agent:agent-sre': MODEL['agent:maya'] } })
+    assert.ok(agentKeys(preview.plan).includes('agent/maya@alfa#permissions+allow:delegate:agent-sre'))
+    assert.deepStrictEqual(
+      preview.items
+        .find((item) => item.key === 'agent:maya')!
+        .issues!.filter((one) => one.link === 'reach')
+        .map((one) => one.code),
+      ['mcp-missing'],
+    )
+  })
+
+  it('auto-resolve: a importação seguinte que grava o agente devolve a regra como AMPLIAÇÃO — sem a caixa, nada entra', async () => {
+    const { apply, stack } = await setup({ reach: REACH, extra: true })
+    const first = await apply.preview('alfa', 'j1', MAYA)
+    await apply.apply('alfa', 'j1', { ...MAYA, planHash: first.plan.planHash, confirm: first.plan.widenings.map((one) => one.key) }, ADMIN)
+
+    const sre = { keys: ['agent:agent-sre'], models: { 'agent:agent-sre': MODEL['agent:maya'] } }
+    const preview = await apply.preview('alfa', 'j1', sre)
+    assert.deepStrictEqual(
+      preview.resolved.map((one) => [one.ref, one.issues.map((issue) => issue.code)]),
+      [['agent/maya', ['delegate-missing']]],
+    )
+    assert.deepStrictEqual(agentKeys(preview.plan), ['agent/maya@alfa#permissions+allow:delegate:agent-sre'])
+    // ⛔ O confirm tem de trazer a ampliação da regra que volta.
+    const others = preview.plan.widenings.map((one) => one.key).filter((key) => !key.startsWith('agent/maya'))
+    await assert.rejects(apply.apply('alfa', 'j1', { ...sre, planHash: preview.plan.planHash, confirm: others }, ADMIN), CatalogWideningConfirmationError)
+    assert.strictEqual(
+      stack.agents.entry('maya')!.agent.permissions?.some((rule) => rule.pattern === 'agent-sre'),
+      false,
+    )
+
+    await apply.apply('alfa', 'j1', { ...sre, planHash: preview.plan.planHash, confirm: preview.plan.widenings.map((one) => one.key) }, ADMIN)
+    const maya = stack.agents.entry('maya')!.agent
+    assert.deepStrictEqual(maya.permissions?.at(-1), { category: 'delegate', pattern: 'agent-sre', decision: 'allow' })
+    assert.deepStrictEqual(
+      maya.importIssues?.map((one) => one.code),
+      ['link-pending', 'skill-missing', 'mcp-missing'],
+    )
+  })
+
+  it('descartar: um (código e alvo) ou todos os pendentes de uma vez; o guardado é esquecido, e a revisão vai para o histórico', async () => {
+    const { apply, stack } = await setup({ reach: REACH, extra: true })
+    const first = await apply.preview('alfa', 'j1', MAYA)
+    await apply.apply('alfa', 'j1', { ...MAYA, planHash: first.plan.planHash, confirm: first.plan.widenings.map((one) => one.key) }, ADMIN)
+    const revisions = () => stack.repository.revisions('agent', 'maya').length
+    const before = revisions()
+
+    stack.agents.resolveImportIssue('maya', { code: 'mcp-missing', target: 'fantasma' }, 'root@x.test')
+    assert.deepStrictEqual(
+      stack.agents.entry('maya')!.agent.importIssues?.map((one) => one.code),
+      ['link-pending', 'skill-missing', 'delegate-missing'],
+    )
+    stack.agents.resolveImportIssue('maya', { pending: true }, 'root@x.test')
+    assert.strictEqual(stack.agents.entry('maya')!.agent.importIssues, undefined)
+    assert.strictEqual(revisions(), before + 2)
+    assert.strictEqual(stack.repository.revisions('agent', 'maya').at(-1)?.by, 'root@x.test')
+    assert.throws(() => stack.agents.resolveImportIssue('maya', { pending: true }, 'root@x.test'), /pending issues in agent maya/)
+
+    // O agente gravado depois não devolve nada: o que foi descartado não volta.
+    const sre = { keys: ['agent:agent-sre'], models: { 'agent:agent-sre': MODEL['agent:maya'] } }
+    const preview = await apply.preview('alfa', 'j1', sre)
+    assert.deepStrictEqual([preview.resolved, agentKeys(preview.plan)], [[], []])
   })
 })
 

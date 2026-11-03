@@ -17,7 +17,7 @@ import {
   USE_RESOURCE_TOOL,
 } from '@domain/models/Resource.Model'
 import { IBuilderDraft, IProtocolAddendum, IProtocolView, PROTOCOL_KINDS, TProtocolKind } from '@domain/models/Protocol.Model'
-import { IImportProblem, IImportProblemMatch, withoutProblem } from '@domain/models/ImportProblem.Model'
+import { IImportProblem, describeMatch, IImportProblemMatch, withoutProblem } from '@domain/models/ImportProblem.Model'
 import { IRule, RULE_TITLE_MAX } from '@domain/models/Rule.Model'
 import { IDocHit, IGuidanceRepository, TGuidanceScope } from '@domain/ports/GuidanceRepository.Port'
 import { fileIssues, filesNote, IResourceFile, sortFiles } from '@domain/models/ResourceFile.Model'
@@ -1091,7 +1091,7 @@ export class GuidanceService {
 /** Os problemas que ficam depois de "resolvido"; nenhum casou: não há o que resolver (404). */
 export function remaining(issues: readonly IImportProblem[] | undefined, match: IImportProblemMatch, what: string): IImportProblem[] {
   const rest = withoutProblem(issues, match)
-  if (!rest) throw new GuidanceNotFoundError('import issue', `${match.code}${match.target ? ` ${match.target}` : ''} in ${what}`)
+  if (!rest) throw new GuidanceNotFoundError('import issue', `${describeMatch(match)} in ${what}`)
   return rest
 }
 

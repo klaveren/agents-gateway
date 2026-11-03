@@ -324,4 +324,24 @@ describe('ImportApply — os problemas com que cada item entra (não bloqueiam)'
     // Não bloqueia: o botão de gravar continua ativo.
     expect(host.querySelector('[data-test="apply-write"]')!.hasAttribute('disabled')).toBe(false)
   })
+
+  it('a delegação a quem não existe: a regra diz que fica de fora, e o problema entra na lista amarela do agente', async () => {
+    const base = preview()
+    const held = 'permite delegar a agent-sre, que ainda não existe: a regra fica guardada e volta quando agent-sre for importado'
+    next = {
+      ...base,
+      items: [base.items[0], { ...base.items[1], issues: [{ code: 'delegate-missing', message: held, target: 'agent-sre', link: 'reach', ref: 'agent/maya' }] }],
+      agents: [
+        {
+          ...base.agents[0],
+          rules: [...base.agents[0].rules, { key: 'delegate allow agent-sre', rule: { category: 'delegate', pattern: 'agent-sre', decision: 'allow' }, included: true, held }],
+        },
+      ],
+    }
+    vi.mocked(api).mockImplementation(async () => next as never)
+    const host = await mount()
+    expect([...host.querySelectorAll('[data-test="apply-rule-held"]')].map((one) => one.textContent)).toEqual([` — fica de fora: ${held}`])
+    const rows = [...host.querySelectorAll('[data-test="apply-items"] > li')]
+    expect(rows[1].querySelector('[data-test="apply-item-issues"]')?.textContent).toContain('permite delegar a agent-sre')
+  })
 })

@@ -901,6 +901,13 @@ describe('GuidanceService — os problemas da importação', () => {
     assert.deepStrictEqual(service.updateResource('lint', { description: 'Roda o lint' }, 'root').importIssues, [issue])
     assert.strictEqual(service.resolveResourceIssue('lint', { code: 'link-missing', target: 'memoria' }, 'root').importIssues, undefined)
     assert.strictEqual(service.resource('lint').importIssues, undefined)
+
+    // Descartar todos os pendentes: só eles saem, numa gravação; sem pendente, 404.
+    service.createDoc({ id: 'outro', kind: 'spec', title: 'Outro', summary: '', body: 'x', projectId: 'xpto', importIssues: [issue, pending] }, 'import')
+    assert.deepStrictEqual(service.resolveDocIssue('outro', { pending: true }, 'root').importIssues, [issue])
+    assert.throws(() => service.resolveDocIssue('outro', { pending: true }, 'root'), GuidanceNotFoundError)
+    service.createResource({ id: 'fmt', kind: 'command', description: 'Fmt', body: 'x', importIssues: [pending] }, 'import')
+    assert.strictEqual(service.resolveResourceIssue('fmt', { pending: true }, 'root').importIssues, undefined)
   })
 
   it('o agente lê os problemas no read_doc e no use_resource (para resolvê-los)', () => {

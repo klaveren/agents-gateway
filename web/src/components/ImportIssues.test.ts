@@ -45,6 +45,27 @@ describe('ImportIssues — o bloco "Problemas da importação"', () => {
     expect(host.querySelector('[data-test="import-issues-error"]')?.textContent).toBe('não deu')
   })
 
+  it('pendente: "Descartar" (os outros, "Resolvido"); "Descartar todos os pendentes" pede confirmação e manda `{ pending: true }`', async () => {
+    const resolve = vi.fn(async () => undefined)
+    const issues: IImportIssue[] = [...ISSUES, { code: 'delegate-missing', message: 'permite delegar a agent-sre, que ainda não existe', target: 'agent-sre', link: 'reach' }]
+    const host = mount(ImportIssues, { issues, resolve })
+    await flush()
+    expect([...host.querySelectorAll('[data-test="import-issue-resolve"]')].map((button) => button.textContent?.trim())).toEqual(['Resolvido', 'Descartar', 'Descartar'])
+    ;(host.querySelector('[data-test="import-issues-discard-all"]') as HTMLButtonElement).click()
+    await flush()
+    const dialog = document.querySelector('[role="alertdialog"]')!
+    expect(dialog.textContent).toContain('2 problema(s) pendente(s)')
+    expect(resolve).not.toHaveBeenCalled()
+    ;([...dialog.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Descartar') as HTMLButtonElement).click()
+    await flush()
+    expect(resolve).toHaveBeenCalledWith({ pending: true })
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull()
+    // Sem pendente, sem o botão de todos.
+    const none = mount(ImportIssues, { issues: [ISSUES[0]], resolve })
+    await flush()
+    expect(none.querySelector('[data-test="import-issues-discard-all"]')).toBeNull()
+  })
+
   it('sem problema, nada; o selo da lista diz quantos', async () => {
     expect(mount(ImportIssues, { issues: [], resolve: vi.fn() }).querySelector('[data-test="import-issues"]')).toBeNull()
     expect(mount(ImportIssuesBadge, { count: 0 }).querySelector('[data-test="import-issues-badge"]')).toBeNull()
@@ -82,5 +103,19 @@ describe('o "Resolvido" nas stores: a resposta entra na store, sem reler', () =>
     expect(agents.details.get('maya')).toBe(detail)
     expect(detail.importIssues).toBeUndefined()
     expect(agents.lists.get('')?.[0].importIssueCount).toBeUndefined()
+  })
+
+  it('descartar todos os pendentes: um POST com `{ pending: true }`, e a resposta entra no detalhe e na contagem da lista', async () => {
+    const listed: IAgent = { id: 'maya', name: 'Maya', providers: [], modes: ['chat'], allowedTools: [], importIssueCount: 2 }
+    const detail: IAgentDetail = { ...listed, systemPrompt: 'x', importIssues: ISSUES }
+    const agents = useAgentsStore()
+    agents.details.set('maya', detail)
+    agents.lists.set('', [listed])
+    vi.mocked(api).mockResolvedValue({ ...detail, importIssues: [ISSUES[0]] } as never)
+    await agents.resolveIssue('maya', { pending: true })
+    expect(vi.mocked(api).mock.calls).toEqual([['/agents/maya/import-issues/resolve', { method: 'POST', body: { pending: true } }]])
+    expect(agents.details.get('maya')).toBe(detail)
+    expect(detail.importIssues).toEqual([ISSUES[0]])
+    expect(agents.lists.get('')?.[0].importIssueCount).toBe(1)
   })
 })

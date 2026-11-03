@@ -155,14 +155,22 @@ export interface IAgent {
 
 /**
  * Um PROBLEMA DA IMPORTAÇÃO que ficou dentro do artefato (doc, skill, command, agente): não impediu a gravação; o
- * artefato entrou sem o vínculo quebrado. `link-pending` e `skill-missing` voltam sozinhos quando o alvo é importado.
+ * artefato entrou sem o vínculo quebrado. Os PENDENTES (`link-pending`, `skill-missing`, `command-missing`,
+ * `delegate-missing`, `mcp-missing`) voltam sozinhos quando o alvo é importado; descartar um esquece o que ele guardava.
  */
 export interface IImportIssue {
   code: string
   message: string
   target?: string
   link?: string
+  /** `delegate-missing`/`mcp-missing`: as regras do agente que ficaram guardadas (voltam com o alvo). */
+  rules?: IPermissionRule[]
+  /** E as ferramentas (`agent:<id>`, `mcp:<servidor>/…`). */
+  tools?: string[]
 }
+
+/** Qual resolver: um (o código e, dado, o alvo), ou todos os pendentes de uma vez. */
+export type TImportIssueMatch = Pick<IImportIssue, 'code' | 'target'> | { pending: true }
 
 export interface IAgentDetail extends IAgent {
   /** Os problemas da importação (ver `IImportIssue`). */

@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { api } from '@/lib/api'
 import { GLOBAL_SCOPE } from '@/lib/guidance'
 import { keyedResource } from '@/lib/resource'
-import type { IImportIssue, IResource, TResourceKind } from '@/lib/types'
+import type { IResource, TImportIssueMatch, TResourceKind } from '@/lib/types'
 import { issueMatch } from './docs'
 import { useAgentCatalogStore } from './agentCatalog'
 
@@ -57,7 +57,7 @@ export const useResourcesStore = defineStore('resources', () => {
   }
 
   /** "Resolvido" num problema da importação: a resposta entra em `details` e nas listas, sem reler. */
-  async function resolveIssue(id: string, issue: Pick<IImportIssue, 'code' | 'target'>): Promise<IResource> {
+  async function resolveIssue(id: string, issue: TImportIssueMatch): Promise<IResource> {
     const saved = await api<IResource>(`/resources/${encodeURIComponent(id)}/import-issues/resolve`, { method: 'POST', body: issueMatch(issue) })
     put(saved)
     return saved
