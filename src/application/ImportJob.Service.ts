@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { canReclassify, canTransition, carryOver, countByState, releasedFromBuilder, reuseSummary, sourceFingerprint, TCarryOutcome } from '@domain/Import.Job'
-import { IImportJob, IImportJobItem, IImportJobSummary, TImportItemPatch, TImportManualState } from '@domain/models/ImportJob.Model'
+import { analysisOf, canReclassify, canTransition, carryOver, countByState, releasedFromBuilder, sourceFingerprint, TCarryOutcome } from '@domain/Import.Job'
+import { IImportAnalysis, IImportItemRefresh, IImportJob, IImportJobItem, IImportJobSummary, TImportItemPatch, TImportManualState } from '@domain/models/ImportJob.Model'
 import { IImportScan, TInventoryKind } from '@domain/models/ImportInventory.Model'
 import { TItemStates } from '@domain/models/ImportPlan.Model'
 import { IImportJobRecord, IImportRepository } from '@domain/ports/ImportRepository.Port'
@@ -10,14 +10,13 @@ import { IImportScanOptions } from './ImportScan.Usecase'
 /**
  * Por que o pedido não serve:
  * - `not_found`: o trabalho não é deste projeto (ou não existe), ou o item não está nele;
- * - `outdated`: há análise mais nova do repositório; o trabalho antigo é registro e não muda;
  * - `transition`: o estado do item não vai para o pedido;
  * - `reclassify`: o item tem rascunho no caminho (construtor, revisão, aprovado, aplicado);
  * - `invalid`: o pedido não serve no campo (`field`): seleção vazia ou fora do trabalho, prefixo inválido.
  */
 export class ImportJobError extends Error {
   constructor(
-    readonly code: 'not_found' | 'outdated' | 'transition' | 'reclassify' | 'invalid',
+    readonly code: 'not_found' | 'transition' | 'reclassify' | 'invalid',
     message: string,
     readonly field?: string,
   ) {
@@ -40,12 +39,19 @@ export interface IImportItemChange {
   kind?: TInventoryKind | null
 }
 
+/** A análise: a importação como ficou e o que mudou nesta análise. */
+export interface IImportAnalyzed extends IImportJob {
+  analysis: IImportAnalysis
+}
+
 /**
- * O TRABALHO DE IMPORTAÇÃO (`docs/integration/plano-importador.md`, PR 6): a varredura salva, com o estado de cada item.
- *
- * - Analisar = um trabalho novo, que reaproveita pela chave o estado do trabalho mais novo do mesmo repositório
- *   (`carryOver`): fonte igual mantém, fonte mudada depois da decisão vira `stale`.
- * - Só o trabalho mais novo do repositório muda; os anteriores ficam como registro.
+ * A IMPORTAÇÃO (`docs/integration/plano-importador.md`, PR 6): a varredura salva de um repositório, com o estado de cada
+ * item. ⚖️ UMA por projeto + repositório, e o id não muda:
+ * - Analisar a primeira vez cria a importação (tudo `pending`); analisar de novo ATUALIZA a mesma — inventário, `HEAD`,
+ *   data — e cada item pela chave (`carryOver`): fonte igual fica como está (rascunho, aprovação, conversa, lote); fonte
+ *   mudada depois da decisão vira `stale`, lembrando o estado de antes; o novo entra `pending`.
+ * - O item que SAIU DA FONTE fica, marcado (`goneAt`), fora do construtor e da gravação; se voltar, a marca sai e o
+ *   `carryOver` vale. O registro de cada análise fica em `analyses`.
  * - A pessoa exclui/inclui e reclassifica, item a item. O autor e a hora ficam no item.
  *
  * ⛔ Nada daqui grava no catálogo nem dispara construtor.
@@ -53,38 +59,45 @@ export interface IImportItemChange {
 export class ImportJobService {
   constructor(private readonly deps: IImportJobDeps) {}
 
-  /** Analisa o repositório e salva o trabalho. Lança o erro da varredura (repositório fora do projeto…). */
-  create(projectId: string, repository: string, by: string, options: IImportScanOptions = {}): IImportJob {
+  /** Analisa o repositório: cria a importação, ou a atualiza no lugar. Lança o erro da varredura (repositório fora do projeto…). */
+  create(projectId: string, repository: string, by: string, options: IImportScanOptions = {}): IImportAnalyzed {
     const scan = this.deps.scan(projectId, repository, options)
-    const previous = this.deps.repository.latest(projectId, repository)
-    const before = new Map((previous ? this.deps.repository.items(previous.id) : []).map((entry) => [entry.key, entry]))
+    const current = this.deps.repository.latest(projectId, repository)
+    const { items: _items, ...inventory } = scan
+    const header = { at: scan.scannedAt, by, ...(scan.head ? { head: scan.head } : {}), ...(scan.dirty !== undefined ? { dirty: scan.dirty } : {}) }
+    const meta = { ...(scan.head ? { head: scan.head } : {}), ...(scan.dirty !== undefined ? { dirty: scan.dirty } : {}), scannedAt: scan.scannedAt, by, inventory }
+
+    if (!current) {
+      const id = (this.deps.newId ?? randomUUID)()
+      const items: IImportJobItem[] = scan.items.map((item) => ({ key: item.key, item, state: 'pending', fingerprint: sourceFingerprint(item), drafts: [] }))
+      const analysis = analysisOf(
+        header,
+        items.map((entry) => ({ key: entry.key, outcome: 'added' as const })),
+        [],
+        [],
+      )
+      this.deps.repository.create({ id, projectId, repository, ...meta, items, analysis })
+      return { ...this.get(projectId, id), analysis }
+    }
+
+    const before = new Map(this.deps.repository.items(current.id).map((entry) => [entry.key, entry]))
     const outcomes: Array<{ key: string; outcome: TCarryOutcome }> = []
-    const items: IImportJobItem[] = scan.items.map((item) => {
+    const returned: string[] = []
+    const present: IImportItemRefresh[] = scan.items.map((item) => {
       const fingerprint = sourceFingerprint(item)
       const old = before.get(item.key)
       const carried = carryOver(old, fingerprint)
       outcomes.push({ key: item.key, outcome: carried.outcome })
-      if (!old) return { key: item.key, item, state: 'pending', fingerprint, drafts: [] }
-      const { item: _old, state: _state, staleFrom: _staleFrom, fingerprint: _fingerprint, ...kept } = old
-      return { ...kept, key: item.key, item, fingerprint, state: carried.state, ...(carried.staleFrom ? { staleFrom: carried.staleFrom } : {}) }
+      if (old?.goneAt) returned.push(item.key)
+      const changed = old && (carried.state !== old.state || (carried.staleFrom ?? null) !== (old.staleFrom ?? null))
+      return { key: item.key, item, fingerprint, ...(changed ? { state: carried.state, staleFrom: carried.staleFrom ?? null } : {}) }
     })
     const keys = new Set(scan.items.map((item) => item.key))
-    const gone = [...before.keys()].filter((key) => !keys.has(key))
-    const { items: _items, ...inventory } = scan
-    const id = (this.deps.newId ?? randomUUID)()
-    this.deps.repository.create({
-      id,
-      projectId,
-      repository,
-      ...(scan.head ? { head: scan.head } : {}),
-      ...(scan.dirty !== undefined ? { dirty: scan.dirty } : {}),
-      scannedAt: scan.scannedAt,
-      by,
-      ...(previous ? { previousId: previous.id, reuse: reuseSummary(previous.id, outcomes, gone) } : {}),
-      inventory,
-      items,
-    })
-    return this.get(projectId, id)
+    // Só os que saem AGORA: o que já tinha saído continua marcado com a data de quando saiu.
+    const gone = [...before.values()].filter((entry) => !keys.has(entry.key) && !entry.goneAt).map((entry) => entry.key)
+    const analysis = analysisOf(header, outcomes, gone, returned)
+    this.deps.repository.reanalyze({ jobId: current.id, ...meta, present, gone, analysis })
+    return { ...this.get(projectId, current.id), analysis }
   }
 
   list(projectId: string): IImportJobSummary[] {
@@ -102,13 +115,11 @@ export class ImportJobService {
   }
 
   /**
-   * Excluir (`skipped`), incluir (`pending`) e reclassificar um item do trabalho mais novo. Mudar o estado é uma
+   * Excluir (`skipped`), incluir (`pending`) e reclassificar um item (também o que saiu da fonte). Mudar o estado é uma
    * DECISÃO: as fontes de agora viram a base que a próxima reanálise compara.
    */
   updateItem(projectId: string, jobId: string, key: string, change: IImportItemChange, by: string): Omit<IImportJobItem, 'basis'> {
     const record = this.record(projectId, jobId)
-    const latest = this.deps.repository.latest(projectId, record.repository)
-    if (latest?.id !== record.id) throw new ImportJobError('outdated', 'there is a newer analysis of this repository: open it to change items')
     const current = this.deps.repository.item(record.id, key)
     if (!current) throw new ImportJobError('not_found', `item not found in this import job: ${key}`, 'key')
 
@@ -134,18 +145,17 @@ export class ImportJobService {
 
   /**
    * O estado de ALGUNS itens do trabalho (o painel ao lado da conversa de importação), sem o inventário inteiro. A chave
-   * que não é do trabalho fica de fora. `latest`: só o trabalho mais novo do repositório aceita revisão.
+   * que não é do trabalho fica de fora. `latest`: sempre `true` (uma importação por repositório; fica para quem o lê).
    */
   statesFor(projectId: string, jobId: string, keys: readonly string[]): { latest: boolean; states: IImportJob['states'] } {
     const record = this.record(projectId, jobId)
-    const latest = this.deps.repository.latest(projectId, record.repository)?.id === record.id
     const states = [...new Set(keys)].flatMap((key) => {
       const entry = this.deps.repository.item(record.id, key)
       if (!entry) return []
       const { item: _item, basis: _basis, ...state } = entry
       return [state]
     })
-    return { latest, states }
+    return { latest: true, states }
   }
 
   /** O repositório e o estado de cada item do trabalho (o lote do agente marca o aprovado e o aplicado). Ausente = não é deste projeto. */
@@ -168,8 +178,14 @@ export class ImportJobService {
 
   private summary(record: IImportJobRecord, items: readonly IImportJobItem[]): IImportJobSummary {
     const { inventory: _inventory, ...rest } = record
-    const latest = this.deps.repository.latest(record.projectId, record.repository)
-    return { ...rest, items: items.length, byState: countByState(items), latest: latest?.id === record.id }
+    return {
+      ...rest,
+      items: items.length,
+      byState: countByState(items),
+      gone: items.filter((entry) => entry.goneAt).length,
+      latest: true,
+      analyses: this.deps.repository.analyses(record.id),
+    }
   }
 }
 

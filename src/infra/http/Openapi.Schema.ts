@@ -640,6 +640,29 @@ const importItemStatus = {
     batchId: { type: 'string' },
     by: { type: 'string', description: 'Who changed the item last (state or kind)' },
     at: { type: 'string', format: 'date-time' },
+    goneAt: {
+      type: 'string',
+      format: 'date-time',
+      description:
+        'The item LEFT THE SOURCE (the analysis when it stopped appearing). Not a state: it keeps its state, never goes to the builder nor to the write; cleared if it comes back',
+    },
+  },
+}
+const stringList = { type: 'array', items: { type: 'string' } }
+const importAnalysis = {
+  type: 'object',
+  description: 'One analysis of the import: when, who, the HEAD and what changed in the items',
+  properties: {
+    at: { type: 'string', format: 'date-time' },
+    by: { type: 'string' },
+    head: { type: 'string' },
+    dirty: { type: 'boolean' },
+    kept: { type: 'integer', description: 'Same sources (or nothing decided): the item stayed as it was' },
+    stale: { ...stringList, description: 'Sources changed after the decision: became `stale`' },
+    added: { ...stringList, description: 'New in the source: `pending`' },
+    gone: { ...stringList, description: 'Left the source in this analysis' },
+    restored: { ...stringList, description: 'Was `stale` and the sources went back to those of the decision' },
+    returned: { ...stringList, description: 'Had left the source and came back' },
   },
 }
 const importJobFields = {
@@ -649,23 +672,12 @@ const importJobFields = {
   head: { type: 'string' },
   dirty: { type: 'boolean' },
   scannedAt: { type: 'string', format: 'date-time' },
-  by: { type: 'string' },
-  previousId: { type: 'string' },
+  by: { type: 'string', description: 'Who ran the last analysis' },
   items: { type: 'integer' },
   byState: { type: 'object', additionalProperties: { type: 'integer' } },
-  latest: { type: 'boolean', description: 'The newest job of its repository: the only one that changes' },
-  reuse: {
-    type: 'object',
-    description: 'What the analysis reused from the previous job of the same repository',
-    properties: {
-      from: { type: 'string' },
-      kept: { type: 'integer' },
-      stale: { type: 'array', items: { type: 'string' } },
-      restored: { type: 'array', items: { type: 'string' } },
-      added: { type: 'array', items: { type: 'string' } },
-      gone: { type: 'array', items: { type: 'string' } },
-    },
-  },
+  gone: { type: 'integer', description: 'Items that left the source' },
+  latest: { type: 'boolean', description: 'Always true: there is one import per repository (kept for older clients)' },
+  analyses: { type: 'array', items: importAnalysis, description: 'The last analyses, newest first (at most 20)' },
 }
 const importJobSummary = { type: 'object', properties: importJobFields }
 const importJob = {
@@ -709,6 +721,7 @@ const importBatchFields = {
   order: { type: 'array', items: { type: 'string' }, description: 'The order computed when the batch was saved' },
   by: { type: 'string' },
   at: { type: 'string', format: 'date-time' },
+  gone: { ...stringList, description: 'Keys of the batch whose item left the source: kept in the batch, out of the order' },
 }
 const importBatch = { type: 'object', properties: { ...importBatchFields, plan: selectionPlan } }
 const importBatchRun = {
@@ -1820,7 +1833,7 @@ export const OPENAPI_DOCUMENT = {
     '/projects/{id}/import/jobs': {
       get: {
         summary:
-          'The import JOBS of the project, newest first: one saved scan of a repository at a HEAD, with how many items are in each state and whether it is the newest of its repository (only the newest changes). Administrators only (404 for the others)',
+          'The IMPORTS of the project, ONE per repository, the most recently analyzed first: the saved inventory of the last analysis (HEAD, date, who), how many items are in each state, how many left the source, and the last analyses (`analyses`). Administrators only (404 for the others)',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: {
           '200': { description: 'OK', ...json(envelope({ type: 'array', items: importJobSummary })) },
@@ -1830,7 +1843,7 @@ export const OPENAPI_DOCUMENT = {
       },
       post: {
         summary:
-          'Scan a repository of the project and SAVE it as an import job. The state of each item is reused, by key, from the newest job of the same repository: same sources keep it; sources changed since the last decision become `stale` (with `staleFrom`). Nothing is written to the catalog and no builder runs. Administrators only (404 for the others; a repository of another project is 422)',
+          'ANALYZE a repository of the project: the first time it creates its import (every item `pending`); afterwards it updates the SAME import in place (same id): inventory, HEAD and date. Each item, by key: same sources stay as they are (draft, approval, conversation, batch); sources changed since the last decision become `stale` (with `staleFrom`); new items enter `pending`; items that left the source are kept and flagged (`goneAt`), and the flag clears if they come back. Saved batches stay. Returns the import and `analysis` (what changed in this run; also logged in `analyses`). Nothing is written to the catalog and no builder runs. Administrators only (404 for the others; a repository of another project is 422)',
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: {
           required: true,
@@ -1844,7 +1857,7 @@ export const OPENAPI_DOCUMENT = {
           }),
         },
         responses: {
-          '200': { description: 'OK', ...json(envelope(importJob)) },
+          '200': { description: 'OK', ...json(envelope({ ...importJob, properties: { ...importJob.properties, analysis: importAnalysis } })) },
           '401': failures['401'],
           '404': failures['404'],
           '422': failures['422'],
@@ -1868,7 +1881,7 @@ export const OPENAPI_DOCUMENT = {
     '/projects/{id}/import/jobs/{job}/items': {
       get: {
         summary:
-          'The state of SOME items of an import job (the draft, the review), without the inventory: the panel beside an import conversation reloads it after each proposal. A key that is not in the job is left out. `latest`: only the newest job of the repository accepts a review. Administrators only',
+          'The state of SOME items of an import job (the draft, the review), without the inventory: the panel beside an import conversation reloads it after each proposal. A key that is not in the job is left out. `latest`: always true (one import per repository). Administrators only',
         parameters: [
           { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'job', in: 'path', required: true, schema: { type: 'string' } },
@@ -1908,7 +1921,7 @@ export const OPENAPI_DOCUMENT = {
           '401': failures['401'],
           '404': failures['404'],
           '409': {
-            description: 'Code `import_job_outdated`: a newer analysis of the repository exists. Code `import_state_conflict`: the state does not allow the change',
+            description: 'Code `import_state_conflict`: the state does not allow the change',
             content: { 'application/json': { schema: failureEnvelope } },
           },
           '422': failures['422'],
@@ -1951,7 +1964,6 @@ export const OPENAPI_DOCUMENT = {
           '200': { description: 'OK', ...json(envelope(importBatch)) },
           '401': failures['401'],
           '404': failures['404'],
-          '409': { description: 'Code `import_job_outdated`: a newer analysis of the repository exists', content: { 'application/json': { schema: failureEnvelope } } },
           '422': failures['422'],
         },
       },
@@ -1970,14 +1982,13 @@ export const OPENAPI_DOCUMENT = {
     '/projects/{id}/import/jobs/{job}/batches/{batch}/items': {
       post: {
         summary:
-          'ADD items to a saved batch (with their dependencies when `closure`): the order is computed again over all of them. Only the newest job. Nothing is written to the catalog. Administrators only',
+          'ADD items to a saved batch (with their dependencies when `closure`): the order is computed again over all of them. Keys whose item left the source stay in the batch (`gone`). Nothing is written to the catalog. Administrators only',
         parameters: [...jobParams, { name: 'batch', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: { required: true, ...json({ type: 'object', properties: selectionBody, required: ['keys'] }) },
         responses: {
           '200': { description: 'The batch, with the batch computed again', ...json(envelope(importBatch)) },
           '401': failures['401'],
           '404': failures['404'],
-          '409': { description: '`import_job_outdated`', ...json(failureEnvelope) },
           '422': failures['422'],
         },
       },
@@ -2012,7 +2023,7 @@ export const OPENAPI_DOCUMENT = {
           },
           '401': failures['401'],
           '404': failures['404'],
-          '409': { description: 'A newer analysis exists, or an item cannot go to the builder now', ...json(failureEnvelope) },
+          '409': { description: 'An item cannot go to the builder now', ...json(failureEnvelope) },
           '422': failures['422'],
         },
       },
@@ -2026,21 +2037,20 @@ export const OPENAPI_DOCUMENT = {
           '200': { description: 'The batch conversations', ...json(envelope({ type: 'object', properties: { runs: { type: 'array', items: importBatchRun } } })) },
           '401': failures['401'],
           '404': failures['404'],
-          '409': { description: 'A newer analysis exists', ...json(failureEnvelope) },
         },
       },
     },
     '/projects/{id}/import/jobs/{job}/apply/plan': {
       post: {
         summary:
-          'The PREVIEW of writing the importer to the catalog: the APPROVED items (of a saved batch, of `keys`, or all of the newest job) become canonical documents — each draft checked again against the source on disk (same sha256, same final text of source + operations; a changed source is 409 `import_source_changed`), the triggers inside their agent, the cited paths as links (`docIds`/`docRefs`/initial context). The agent is born CLOSED: the wide rules of the permission translator stay out unless included in `wide`; its reach (tools and rules) is a later step of the batch, and `resources.skills` is the skills it releases. Returns the catalog plan over those documents (diff, widenings, broken references, missing secrets, order, `planHash`), `missing` (each reference that exists neither in the catalog nor in the package, with the job item that produces it: key, kind, state, path), the agents (model, rules with `wide` and `included`), the active models, what was skipped and, with `ready`, `heldBack` (the items left out by a block, with the reason). IMPORT ISSUES do not block: a link to something that is not a document (an agent, a command, a memory file), that exists nowhere, belongs to another project or is a document of this job not written now is left out of the document and recorded in its `importIssues` (`items[].issues`, per `ref`); `resolved` lists the catalog artifacts whose pending link comes back because its target is written now (they go in the same batch). Every document goes to the project: an import is never global. Writes nothing. Administrators only',
+          'The PREVIEW of writing the importer to the catalog: the APPROVED items (of a saved batch, of `keys`, or all of the import; an item that left the source is skipped with the reason `saiu da fonte`) become canonical documents — each draft checked again against the source on disk (same sha256, same final text of source + operations; a changed source is 409 `import_source_changed`), the triggers inside their agent, the cited paths as links (`docIds`/`docRefs`/initial context). The agent is born CLOSED: the wide rules of the permission translator stay out unless included in `wide`; its reach (tools and rules) is a later step of the batch, and `resources.skills` is the skills it releases. Returns the catalog plan over those documents (diff, widenings, broken references, missing secrets, order, `planHash`), `missing` (each reference that exists neither in the catalog nor in the package, with the job item that produces it: key, kind, state, path), the agents (model, rules with `wide` and `included`), the active models, what was skipped and, with `ready`, `heldBack` (the items left out by a block, with the reason). IMPORT ISSUES do not block: a link to something that is not a document (an agent, a command, a memory file), that exists nowhere, belongs to another project or is a document of this job not written now is left out of the document and recorded in its `importIssues` (`items[].issues`, per `ref`); `resolved` lists the catalog artifacts whose pending link comes back because its target is written now (they go in the same batch). Every document goes to the project: an import is never global. Writes nothing. Administrators only',
         parameters: [...jobParams],
         requestBody: { required: false, ...json(importApplySelection) },
         responses: {
           '200': { description: 'The preview', ...json(envelope({ type: 'object' })) },
           '401': failures['401'],
           '404': failures['404'],
-          '409': { description: '`import_job_outdated` (a newer analysis exists) or `import_source_changed` (a source changed on disk)', ...json(failureEnvelope) },
+          '409': { description: '`import_source_changed` (a source changed on disk)', ...json(failureEnvelope) },
           '422': failures['422'],
         },
       },
@@ -2058,7 +2068,7 @@ export const OPENAPI_DOCUMENT = {
           '200': { description: 'What went back to the builder', ...json(envelope({ type: 'object' })) },
           '401': failures['401'],
           '404': failures['404'],
-          '409': { description: '`import_job_outdated` or `import_source_changed`', ...json(failureEnvelope) },
+          '409': { description: '`import_source_changed`', ...json(failureEnvelope) },
           '422': failures['422'],
         },
       },
@@ -2086,7 +2096,7 @@ export const OPENAPI_DOCUMENT = {
           '403': restoreFailures['403'],
           '404': failures['404'],
           '409': {
-            description: '`plan_changed` (`details.plan`), `widening_confirmation_required` (`details.widenings`), `import_job_outdated` or `import_source_changed`',
+            description: '`plan_changed` (`details.plan`), `widening_confirmation_required` (`details.widenings`) or `import_source_changed`',
             ...json(failureEnvelope),
           },
           '422': failures['422'],
@@ -2096,7 +2106,7 @@ export const OPENAPI_DOCUMENT = {
     '/projects/{id}/import/jobs/{job}/builder': {
       post: {
         summary:
-          'Open ONE conversation with the builder of the kind, in import mode (no save tools), for a set of items of the newest job, and link them to it (`drafting`). One builder per conversation (a trigger goes to the agent builder). The builder reads the sources through the server (contained, masked, sha256 checked) and proposes drafts as operations over the source; nothing is written to the catalog. Administrators only',
+          'Open ONE conversation with the builder of the kind, in import mode (no save tools), for a set of items of the import (never one that left the source), and link them to it (`drafting`). One builder per conversation (a trigger goes to the agent builder). The builder reads the sources through the server (contained, masked, sha256 checked) and proposes drafts as operations over the source; nothing is written to the catalog. Administrators only',
         parameters: [
           { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'job', in: 'path', required: true, schema: { type: 'string' } },
@@ -2125,7 +2135,7 @@ export const OPENAPI_DOCUMENT = {
           '401': failures['401'],
           '404': failures['404'],
           '409': {
-            description: 'Code `import_job_outdated`, `import_state_conflict` (an item cannot go to the builder) or `builder_unavailable` (no builder model configured)',
+            description: 'Code `import_state_conflict` (an item cannot go to the builder, or left the source) or `builder_unavailable` (no builder model configured)',
             content: { 'application/json': { schema: failureEnvelope } },
           },
           '422': failures['422'],
@@ -2149,7 +2159,7 @@ export const OPENAPI_DOCUMENT = {
           '401': failures['401'],
           '404': failures['404'],
           '409': {
-            description: 'Code `import_job_outdated`, `import_state_conflict` (not in review) or `import_source_changed`',
+            description: 'Code `import_state_conflict` (not in review) or `import_source_changed`',
             content: { 'application/json': { schema: failureEnvelope } },
           },
           '422': failures['422'],
@@ -2172,7 +2182,7 @@ export const OPENAPI_DOCUMENT = {
           '200': { description: 'OK', ...json(envelope(importItemStatus)) },
           '401': failures['401'],
           '404': failures['404'],
-          '409': { description: 'Code `import_job_outdated` or `import_state_conflict`', content: { 'application/json': { schema: failureEnvelope } } },
+          '409': { description: 'Code `import_state_conflict`', content: { 'application/json': { schema: failureEnvelope } } },
           '422': failures['422'],
         },
       },

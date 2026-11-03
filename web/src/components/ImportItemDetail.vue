@@ -8,6 +8,8 @@ import {
   CATALOG_HINT,
   CATALOG_LABEL,
   EXCLUDABLE_STATES,
+  GONE_HINT,
+  GONE_LABEL,
   type IImportItemStatus,
   type IInventoryItem,
   INCLUDABLE_STATES,
@@ -100,11 +102,13 @@ function onReclassify(event: Event) {
         <span class="text-xs text-zinc-500">No trabalho:</span>
         <span class="rounded-full px-2 text-[11px]" :class="state === 'stale' ? 'bg-amber-500/15 text-amber-200' : 'bg-zinc-800 text-zinc-200'" :title="STATE_HINT[state]">{{ STATE_LABEL[state] }}</span>
         <span v-if="status?.staleFrom" class="text-xs text-amber-100/80">era {{ STATE_LABEL[status.staleFrom] }}</span>
+        <span v-if="status?.goneAt" class="rounded-full bg-amber-500/15 px-2 text-[11px] text-amber-200" :title="GONE_HINT" data-test="gone-badge">{{ GONE_LABEL }}</span>
         <span class="flex-1" />
         <button v-if="canExclude" type="button" class="btn btn-secondary btn-sm" :disabled="busy" data-test="exclude" @click="emit('state', 'skipped')">Excluir</button>
         <button v-if="canInclude" type="button" class="btn btn-secondary btn-sm" :disabled="busy" data-test="include" @click="emit('state', 'pending')">Incluir</button>
       </div>
       <p class="text-xs text-zinc-500">{{ STATE_HINT[state] }}.<template v-if="status?.by"> Última mudança por {{ status.by }}<template v-if="status.at"> em {{ fullTime(status.at) }}</template>.</template></p>
+      <p v-if="status?.goneAt" class="text-xs text-amber-200" data-test="gone-note">{{ GONE_HINT }} Saiu em {{ fullTime(status.goneAt) }}. Fica fora do Preparar e da gravação.</p>
       <p v-if="error" class="text-xs text-rose-300" data-test="item-error">{{ error }}</p>
     </section>
 

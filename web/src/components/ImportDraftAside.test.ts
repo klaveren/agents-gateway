@@ -138,11 +138,21 @@ describe('ImportDraftAside — a fila de revisão de uma conversa de importaçã
     expect(host.querySelector('[data-test="quick-approve-result"]')!.textContent).toContain('1/1 aprovado(s)')
   })
 
-  it('recarrega quando uma proposta termina; trabalho antigo avisa', async () => {
+  it('recarrega quando uma proposta termina e mostra o que mudou', async () => {
     const { host, refresh } = await mount()
-    mocked.mockResolvedValue({ latest: false, states: [] })
+    mocked.mockResolvedValue({ latest: true, states: [{ key: 'knowledge:a', state: 'review', drafts: [draft('knowledge:a')] }] })
     refresh.value = 1
     await flush()
-    expect(host.querySelector('[data-test="import-drafts-outdated"]')).not.toBeNull()
+    expect(toggles(host)).toContain('knowledge:a')
+  })
+
+  it('o item que saiu da fonte leva o selo "saiu da fonte" na fila', async () => {
+    const { host, refresh } = await mount()
+    mocked.mockResolvedValue({ latest: true, states: [{ key: 'knowledge:b', state: 'review', goneAt: '2026-11-03T09:00:00.000Z', drafts: [draft('knowledge:b')] }] })
+    refresh.value = 1
+    await flush()
+    const badges = host.querySelectorAll('[data-test="gone-badge"]')
+    expect(badges).toHaveLength(1)
+    expect(badges[0].getAttribute('title')).toContain('nada foi apagado do catálogo')
   })
 })

@@ -2,6 +2,7 @@ import assert from 'node:assert'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { describe, it } from 'node:test'
 import { IImportJobItem, INewImportJob } from '@domain/models/ImportJob.Model'
 import { IInventoryItem } from '@domain/models/ImportInventory.Model'
@@ -74,8 +75,6 @@ describe('SqliteImportRepository', () => {
             at,
           },
         ]),
-        previousId: 'j0',
-        reuse: { from: 'j0', kept: 1, stale: ['unknown:notes'], restored: [], added: [], gone: ['skill:old'] },
       })
 
       // Outra conexão no mesmo arquivo: está gravado, não em memória.
@@ -84,8 +83,12 @@ describe('SqliteImportRepository', () => {
       assert.strictEqual(record.repository, 'app')
       assert.strictEqual(record.head, 'abc123')
       assert.strictEqual(record.dirty, false)
-      assert.strictEqual(record.previousId, 'j0')
-      assert.deepStrictEqual(record.reuse?.gone, ['skill:old'])
+      // A importação sem registro de análise ganha o dela no boot (uma vez).
+      assert.deepStrictEqual(
+        second.analyses('j1').map((entry) => [entry.by, entry.head, entry.added]),
+        [['ana@x.test', 'abc123', ['skill:deploy', 'unknown:notes']]],
+      )
+      assert.strictEqual(new SqliteImportRepository(path).analyses('j1').length, 1)
       assert.deepStrictEqual(record.inventory.ignored.dirs, { node_modules: 2 })
       assert.ok(record.inventory.scannedAt instanceof Date)
 
@@ -123,26 +126,125 @@ describe('SqliteImportRepository', () => {
     assert.strictEqual(repository.updateItem('j1', 'skill:nada', { state: 'pending' }), undefined)
   })
 
-  it('a lista do projeto: mais novo primeiro, contagem por estado e o mais novo de cada repositório; outro projeto não aparece', () => {
+  it('a lista do projeto: uma por repositório, a analisada por último primeiro, contagem por estado e os que saíram; outro projeto não aparece', () => {
     const repository = new SqliteImportRepository()
     const pending = (key: string): IImportJobItem => ({ key, item: inventoryItem(key), state: 'pending', fingerprint: 'f', drafts: [] })
-    repository.create(job('j1', 'alfa', 'app', '2026-10-30T10:00:00.000Z', [pending('skill:a'), { ...pending('skill:b'), state: 'skipped' }]))
-    repository.create(job('j2', 'alfa', 'app', '2026-10-30T11:00:00.000Z', [pending('skill:a')]))
+    const gone = new Date('2026-10-30T10:30:00.000Z')
+    repository.create(job('j2', 'alfa', 'app', '2026-10-30T11:00:00.000Z', [pending('skill:a'), { ...pending('skill:b'), state: 'skipped', goneAt: gone }]))
     repository.create(job('j3', 'alfa', 'lib', '2026-10-30T10:30:00.000Z', []))
     repository.create(job('j4', 'beta', 'app', '2026-10-30T12:00:00.000Z', [pending('skill:a')]))
 
     const list = repository.list('alfa')
     assert.deepStrictEqual(
-      list.map((entry) => [entry.id, entry.latest, entry.items, entry.byState]),
+      list.map((entry) => [entry.id, entry.latest, entry.items, entry.byState, entry.gone]),
       [
-        ['j2', true, 1, { pending: 1 }],
-        ['j3', true, 0, {}],
-        ['j1', false, 2, { pending: 1, skipped: 1 }],
+        ['j2', true, 2, { pending: 1, skipped: 1 }, 1],
+        ['j3', true, 0, {}, 0],
       ],
     )
     assert.ok(!('inventory' in list[0]))
+    assert.strictEqual(repository.item('j2', 'skill:b')?.goneAt?.toISOString(), gone.toISOString())
     assert.strictEqual(repository.latest('alfa', 'app')?.id, 'j2')
     assert.strictEqual(repository.get('alfa', 'j4'), undefined, 'o trabalho de outro projeto não existe aqui')
+  })
+
+  it('⚖️ a consolidação de boot: o mais novo fica, os antigos viram registro arquivado; lotes e processado vêm junto; nada é apagado; idempotente', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'import-consolidate-'))
+    try {
+      const path = join(dir, 'gateway.db')
+      const legacy = new SqliteImportRepository(path)
+      const entry = (key: string, extra: Partial<IImportJobItem> = {}): IImportJobItem => ({
+        key,
+        item: inventoryItem(key),
+        state: 'pending',
+        fingerprint: 'f',
+        drafts: [],
+        ...extra,
+      })
+      const draft = { kind: 'skill', ops: [] }
+      // O tempo de "um trabalho por análise": dois trabalhos ativos do mesmo repositório.
+      legacy.create(
+        job('j1', 'alfa', 'app', '2026-10-30T10:00:00.000Z', [
+          entry('skill:a', { state: 'approved', basis: 'f', conversationId: 'c1', drafts: [draft], approvedBy: 'bia' }),
+          entry('skill:b', { state: 'review', conversationId: 'c2', drafts: [draft] }),
+          entry('skill:c', { state: 'approved', basis: 'f' }),
+          entry('skill:e', { state: 'skipped', basis: 'velho' }),
+        ]),
+      )
+      legacy.create(
+        job('j2', 'alfa', 'app', '2026-10-31T10:00:00.000Z', [
+          entry('skill:a'),
+          entry('skill:c', { state: 'skipped', basis: 'f', by: 'caio' }),
+          entry('skill:d'),
+          entry('skill:e', { fingerprint: 'novo' }),
+        ]),
+      )
+      legacy.create(job('j9', 'alfa', 'lib', '2026-10-29T10:00:00.000Z', [entry('skill:z')]))
+      const batch = { prefix: 'akm-', order: [], by: 'ana', at: new Date('2026-10-30T11:00:00.000Z') }
+      legacy.createBatch({ ...batch, id: 'b1', jobId: 'j1', name: 'Lote', keys: ['skill:a', 'skill:b'] })
+      legacy.createBatch({ ...batch, id: 'b2', jobId: 'j1', name: 'Outro', keys: ['skill:c'] })
+      legacy.createBatch({ ...batch, id: 'b3', jobId: 'j2', name: 'Lote', keys: ['skill:d'], at: new Date('2026-10-31T11:00:00.000Z') })
+      const raw = new DatabaseSync(path)
+      raw
+        .prepare('UPDATE import_scans SET reuse = ?, previous_id = ? WHERE id = ?')
+        .run(JSON.stringify({ from: 'j1', kept: 2, stale: [], restored: [], added: ['skill:d'], gone: ['skill:b'] }), 'j1', 'j2')
+
+      const booted = new SqliteImportRepository(path)
+      assert.deepStrictEqual(
+        booted.list('alfa').map((one) => [one.id, one.repository, one.gone]),
+        [
+          ['j2', 'app', 1],
+          ['j9', 'lib', 0],
+        ],
+      )
+      assert.strictEqual(booted.get('alfa', 'j1'), undefined, 'o arquivado não aparece')
+      assert.strictEqual(booted.latest('alfa', 'app')?.id, 'j2')
+
+      const items = new Map(booted.items('j2').map((one) => [one.key, one]))
+      const a = items.get('skill:a')!
+      assert.deepStrictEqual([a.state, a.conversationId, a.drafts.length, a.approvedBy], ['approved', 'c1', 1, 'bia'], 'o processado do antigo vem')
+      const b = items.get('skill:b')!
+      assert.deepStrictEqual([b.state, b.conversationId, b.goneAt?.toISOString()], ['review', 'c2', '2026-10-31T10:00:00.000Z'], 'só no antigo: entra como saído da fonte')
+      assert.deepStrictEqual([items.get('skill:c')!.state, items.get('skill:c')!.by], ['skipped', 'caio'], '⛔ o processado do que fica não é sobrescrito')
+      assert.strictEqual(items.get('skill:d')!.state, 'pending')
+      assert.deepStrictEqual([items.get('skill:e')!.state, items.get('skill:e')!.staleFrom], ['stale', 'skipped'], 'fonte mudada desde a decisão: stale')
+      assert.strictEqual(booted.byConversation('c1')?.job.id, 'j2')
+
+      assert.deepStrictEqual(
+        booted.batches('j2').map((one) => [one.id, one.name, one.prefix, one.keys, one.by]),
+        [
+          ['b3', 'Lote', 'akm-', ['skill:d'], 'ana'],
+          ['b2', 'Outro', 'akm-', ['skill:c'], 'ana'],
+          ['b1', 'Lote (análise de 30/10)', 'akm-', ['skill:a', 'skill:b'], 'ana'],
+        ],
+      )
+      assert.deepStrictEqual(
+        booted.analyses('j2').map((one) => [one.at.toISOString(), one.added, one.gone]),
+        [
+          ['2026-10-31T10:00:00.000Z', ['skill:d'], ['skill:b']],
+          ['2026-10-30T10:00:00.000Z', ['skill:a', 'skill:b', 'skill:c', 'skill:e'], []],
+        ],
+      )
+
+      // ⛔ Nada apagado: o antigo continua no arquivo, arquivado, com os itens.
+      const count = (sql: string) => Number((raw.prepare(sql).get() as { n: number }).n)
+      assert.strictEqual(count('SELECT COUNT(*) AS n FROM import_scans'), 3)
+      assert.strictEqual(count("SELECT COUNT(*) AS n FROM import_scans WHERE id = 'j1' AND archived_at IS NOT NULL"), 1)
+      assert.strictEqual(count("SELECT COUNT(*) AS n FROM import_items WHERE scan_id = 'j1'"), 4)
+
+      // Idempotente: o boot seguinte não faz nada novo.
+      const again = new SqliteImportRepository(path)
+      assert.deepStrictEqual(again.consolidate(), { kept: [] })
+      assert.strictEqual(again.analyses('j2').length, 2)
+      assert.deepStrictEqual(
+        again.batches('j2').map((one) => one.name),
+        ['Lote', 'Outro', 'Lote (análise de 30/10)'],
+      )
+      assert.deepStrictEqual(again.items('j2'), booted.items('j2'))
+      raw.close()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('lote salvo, ida e volta (no arquivo): nome, itens, ordem, prefixo, autor e hora; mais novo primeiro; só do trabalho dele', () => {

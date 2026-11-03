@@ -57,10 +57,12 @@ const kindOf = (key: string): TInventoryKind | undefined => {
   const item = props.items.get(key)
   return item ? effectiveKind(item, props.overrides) : undefined
 }
+/** ⛔ O que saiu da fonte nunca vai ao construtor: fica fora da mesa (e do "Preparar tudo"), só contado. */
+const gone = computed(() => props.keys.filter((key) => !!statusOf(key)?.goneAt))
 /** Só o que tem construtor entra na mesa. */
 const buildable = computed(() => props.keys.filter((key) => {
   const kind = kindOf(key)
-  return !!kind && !!builderKindFor(kind)
+  return !!kind && !!builderKindFor(kind) && !statusOf(key)?.goneAt
 }))
 
 /** A conversa (de servidor) de cada item e as que estão na fila ou rodando. */
@@ -169,6 +171,7 @@ const RUN_LABEL: Record<NonNullable<IImportBatchRun['run']>['state'], string> = 
       <span class="text-zinc-200">{{ buildable.length }} itens</span>
       <span v-if="totals.working" class="animate-pulse text-sky-300">{{ totals.working }} com o construtor</span>
       <span v-if="notSent.length" class="text-zinc-400">{{ notSent.length }} ainda não foram</span>
+      <span v-if="gone.length" class="text-amber-200" data-test="desk-gone" :title="gone.join(', ')">{{ gone.length }} saíram da fonte: ficam fora do Preparar</span>
       <span v-if="totals.idle" class="text-orange-300">{{ totals.idle }} parados</span>
       <span class="text-amber-300">{{ totals.review }} a revisar</span>
       <span class="text-emerald-300">{{ totals.done }} aprovados</span>

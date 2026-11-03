@@ -23,7 +23,6 @@ import { isFileSource, textSources } from '@domain/Import.Files'
 /**
  * Por que o pedido não serve:
  * - `not_found`: o trabalho, o item ou a conversa não existem aqui (o item não é desta conversa);
- * - `outdated`: há análise mais nova do repositório;
  * - `transition`: o estado do item não permite (aprovar sem rascunho, abrir conversa de item aprovado…);
  * - `kind`: o item não tem construtor, ou o lote mistura construtores;
  * - `source_changed`: a fonte no disco não é a do trabalho (o `sha256` mudou): analise de novo;
@@ -33,7 +32,7 @@ import { isFileSource, textSources } from '@domain/Import.Files'
  */
 export class ImportBuildError extends Error {
   constructor(
-    readonly code: 'not_found' | 'outdated' | 'transition' | 'kind' | 'source_changed' | 'invalid' | 'removals' | 'unavailable',
+    readonly code: 'not_found' | 'transition' | 'kind' | 'source_changed' | 'invalid' | 'removals' | 'unavailable',
     message: string,
     readonly field?: string,
     readonly issues: IImportIssue[] = [],
@@ -124,7 +123,7 @@ export class ImportBuildService {
 
   /** Abre a conversa do construtor para os itens (um construtor por lote) e os liga a ela. */
   async open(projectId: string, jobId: string, by: string, options: IImportOpenOptions): Promise<IImportConversation> {
-    const record = this.latestRecord(projectId, jobId)
+    const record = this.record(projectId, jobId)
     const unique = [...new Set(options.keys ? this.withTriggers(record.id, options.keys, options.batchId) : this.fromBatch(record.id, options))]
     if (!unique.length) throw new ImportBuildError('invalid', 'at least one item', 'keys')
     if (unique.length > KEYS_MAX) throw new ImportBuildError('invalid', `at most ${KEYS_MAX} items per conversation`, 'keys')
@@ -147,6 +146,7 @@ export class ImportBuildService {
       if (!kind) throw new ImportBuildError('kind', `no builder imports a ${effective}: ${entry.key}`, 'keys')
       if (options.kind && kind !== options.kind) throw new ImportBuildError('kind', `${entry.key} goes to the ${kind} builder, not ${options.kind}`, 'keys')
       kinds.add(kind)
+      if (entry.goneAt) throw new ImportBuildError('transition', `the item left the source (saiu da fonte): ${entry.key} — nothing to build from`, 'keys')
       if (!OPENABLE.includes(entry.state) || (entry.state !== 'drafting' && !canTransition(entry.state, 'drafting')))
         throw new ImportBuildError('transition', `an item in state ${entry.state} cannot go to the builder: ${entry.key}`, 'keys')
     }
@@ -172,7 +172,7 @@ export class ImportBuildService {
    * proposto, aprovado nem gravado; a pessoa revisa cada rascunho.
    */
   async prepare(projectId: string, jobId: string, batchId: string, by: string, owner?: Record<string, string>): Promise<IImportConversation[]> {
-    const record = this.latestRecord(projectId, jobId)
+    const record = this.record(projectId, jobId)
     const byKind = new Map<TProtocolKind, string[]>()
     for (const key of this.fromBatch(record.id, { batchId })) {
       const entry = this.deps.repository.item(record.id, key)!
@@ -186,7 +186,7 @@ export class ImportBuildService {
       const parent = this.deps.repository.item(record.id, key)?.item.parent
       if (!parent || triggers.includes(parent) || !batch.keys.includes(parent)) continue
       const agent = this.deps.repository.item(record.id, parent)
-      if (agent?.state === 'drafting' && !lastDraft(agent)) triggers.unshift(parent)
+      if (agent?.state === 'drafting' && !agent.goneAt && !lastDraft(agent)) triggers.unshift(parent)
     }
     const opened: IImportConversation[] = []
     for (const [kind, keys] of byKind)
@@ -200,13 +200,13 @@ export class ImportBuildService {
    * `drafting`, sem rascunho ou com ajuste pedido). É o que o "Preparar tudo" manda rodar.
    */
   batchConversations(projectId: string, jobId: string, batchId: string): IImportBatchConversation[] {
-    const record = this.latestRecord(projectId, jobId)
+    const record = this.record(projectId, jobId)
     const batch = this.deps.repository.batch(record.id, batchId)
     if (!batch) throw new ImportBuildError('not_found', `batch not found in this import job: ${batchId}`, 'batchId')
     const groups = new Map<string, IImportBatchConversation>()
     for (const key of new Set([...batch.order, ...batch.keys])) {
       const entry = this.deps.repository.item(record.id, key)
-      if (!entry?.conversationId) continue
+      if (!entry?.conversationId || entry.goneAt) continue
       const kind = builderKindForItem(entry.kind ?? entry.item.kind)
       if (!kind) continue
       const group = groups.get(entry.conversationId) ?? { conversationId: entry.conversationId, kind, agentId: importBuilderAgentId(kind), keys: [], pending: [] }
@@ -230,6 +230,7 @@ export class ImportBuildService {
       for (const entry of all)
         if (
           entry.item.parent === key &&
+          !entry.goneAt &&
           (entry.kind ?? entry.item.kind) === 'trigger' &&
           FRESH.includes(entry.state) &&
           !(entry.state === 'drafting' && entry.conversationId) &&
@@ -242,7 +243,7 @@ export class ImportBuildService {
 
   /**
    * Os itens de um LOTE SALVO que ainda vão ao construtor: os da ordem do lote (os que têm conversa de construtor) em
-   * estado de (re)começar, sem conversa em curso, e do construtor pedido (`kind`) quando há.
+   * estado de (re)começar, sem conversa em curso, e do construtor pedido (`kind`) quando há. ⛔ O que saiu da fonte, não.
    */
   private fromBatch(jobId: string, options: IImportOpenOptions): string[] {
     if (!options.batchId) throw new ImportBuildError('invalid', 'keys or batchId is required', 'keys')
@@ -250,7 +251,7 @@ export class ImportBuildService {
     if (!batch) throw new ImportBuildError('not_found', `batch not found in this import job: ${options.batchId}`, 'batchId')
     const keys = (batch.order.length ? batch.order : batch.keys).filter((key) => {
       const entry = this.deps.repository.item(jobId, key)
-      if (!entry || !FRESH.includes(entry.state) || (entry.state === 'drafting' && entry.conversationId)) return false
+      if (!entry || entry.goneAt || !FRESH.includes(entry.state) || (entry.state === 'drafting' && entry.conversationId)) return false
       const kind = builderKindForItem(entry.kind ?? entry.item.kind)
       return !!kind && (!options.kind || kind === options.kind)
     })
@@ -258,13 +259,15 @@ export class ImportBuildService {
     return keys
   }
 
-  /** Os itens desta conversa, no trabalho mais novo. ⛔ Conversa sem itens (ou de trabalho antigo) não tem o que fazer. */
+  /**
+   * Os itens desta conversa, na importação. ⛔ Conversa sem itens não tem o que fazer; o item que SAIU DA FONTE sai
+   * da conversa (não há fonte a ler nem a conferir).
+   */
   conversation(conversationId: string): { job: IImportJobRecord; items: IImportJobItem[] } {
     const found = conversationId ? this.deps.repository.byConversation(conversationId) : undefined
-    if (!found || !found.items.length) throw new ImportBuildError('not_found', 'this conversation has no import items: open it from the Importer')
-    const latest = this.deps.repository.latest(found.job.projectId, found.job.repository)
-    if (latest?.id !== found.job.id) throw new ImportBuildError('outdated', 'there is a newer analysis of this repository: open the conversation again from the Importer')
-    return found
+    const items = found?.items.filter((entry) => !entry.goneAt) ?? []
+    if (!found || !items.length) throw new ImportBuildError('not_found', 'this conversation has no import items: open it from the Importer')
+    return { job: found.job, items }
   }
 
   /** `list_import_items`: os itens da conversa, as fontes, o que citam com o mapa de ids e o pedido de ajuste. */
@@ -367,7 +370,7 @@ export class ImportBuildService {
    * Preparar abre outra para eles. Devolve as chaves soltas.
    */
   async releaseLost(projectId: string, jobId: string, batchId: string, exists: (conversationId: string) => Promise<boolean>): Promise<string[]> {
-    const record = this.latestRecord(projectId, jobId)
+    const record = this.record(projectId, jobId)
     const batch = this.deps.repository.batch(record.id, batchId)
     if (!batch) return []
     const known = new Map<string, boolean>()
@@ -475,7 +478,7 @@ export class ImportBuildService {
    * `sha256` e o mesmo texto final). ⛔ Não grava no catálogo: o item só vai para `approved`.
    */
   approve(projectId: string, jobId: string, key: string, oks: readonly number[], by: string): IImportJobItem {
-    const record = this.latestRecord(projectId, jobId)
+    const record = this.record(projectId, jobId)
     const entry = this.entry(record.id, key)
     if (entry.state !== 'review') throw new ImportBuildError('transition', `an item in state ${entry.state} cannot be approved`, 'key')
     const draft = lastDraft(entry)
@@ -499,7 +502,7 @@ export class ImportBuildService {
 
   /** PEDIR AJUSTE: o item volta a `drafting`, com o comentário para a conversa (o construtor o lê nos itens dela). */
   adjust(projectId: string, jobId: string, key: string, comment: string, by: string): IImportJobItem {
-    const record = this.latestRecord(projectId, jobId)
+    const record = this.record(projectId, jobId)
     const entry = this.entry(record.id, key)
     const text = comment.trim()
     if (!text) throw new ImportBuildError('invalid', 'say what to adjust', 'comment')
@@ -523,7 +526,7 @@ export class ImportBuildService {
    * revisão de novo.
    */
   reopen(projectId: string, jobId: string, key: string, comment: string, by: string): IImportJobItem {
-    const record = this.latestRecord(projectId, jobId)
+    const record = this.record(projectId, jobId)
     const entry = this.entry(record.id, key)
     const text = comment.trim().slice(0, COMMENT_MAX)
     if (!text) throw new ImportBuildError('invalid', 'say what to adjust', 'comment')
@@ -540,11 +543,9 @@ export class ImportBuildService {
     })!
   }
 
-  private latestRecord(projectId: string, jobId: string): IImportJobRecord {
+  private record(projectId: string, jobId: string): IImportJobRecord {
     const record = this.deps.repository.get(projectId, jobId)
     if (!record) throw new ImportBuildError('not_found', `import job not found: ${jobId}`)
-    const latest = this.deps.repository.latest(projectId, record.repository)
-    if (latest?.id !== record.id) throw new ImportBuildError('outdated', 'there is a newer analysis of this repository: open it to change items')
     return record
   }
 

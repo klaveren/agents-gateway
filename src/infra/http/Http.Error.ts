@@ -91,7 +91,6 @@ export type TErrorCode =
   | 'widening_confirmation_required'
   | 'plan_changed'
   | 'import_blocked'
-  | 'import_job_outdated'
   | 'import_state_conflict'
   | 'import_source_changed'
   | 'builder_unavailable'

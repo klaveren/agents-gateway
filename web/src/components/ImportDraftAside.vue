@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import ImportItemReview from '@/components/ImportItemReview.vue'
 import { ApiError } from '@/lib/api'
 import { type IImportBuildStatus, lastDraft } from '@/lib/importDraft'
-import { BUILDER_KINDS, canReclassifyState, KIND_LABEL, STATE_HINT, STATE_LABEL, type TImportItemState, type TInventoryKind } from '@/lib/importer'
+import { BUILDER_KINDS, canReclassifyState, GONE_HINT, GONE_LABEL, KIND_LABEL, STATE_HINT, STATE_LABEL, type TImportItemState, type TInventoryKind } from '@/lib/importer'
 import { useImportsStore } from '@/stores/imports'
 
 /**
@@ -34,7 +34,6 @@ const emit = defineEmits<{ updated: [states: IImportBuildStatus[]]; conversation
 const imports = useImportsStore()
 /** O estado dos itens: a cópia da store, a mesma do Importador e da mesa do Preparar. */
 const statuses = computed(() => imports.statesOf(props.projectId, props.jobId))
-const latest = computed(() => imports.latestOf(props.projectId, props.jobId) ?? true)
 const loadError = ref<string>()
 const busyKey = ref<string>()
 const reviewError = ref<{ key: string; text: string }>()
@@ -121,7 +120,7 @@ function kindOf(key: string): TInventoryKind {
 /** Reclassificar daqui: o item sem rascunho (mesmo já com o construtor) sai da conversa e volta à fila. */
 function canMove(key: string): boolean {
   const status = statuses.value[key]
-  return latest.value && !!status && canReclassifyState(status.state, !!status.drafted || !!lastDraft(status))
+  return !!status && canReclassifyState(status.state, !!status.drafted || !!lastDraft(status))
 }
 
 async function reclassify(key: string, kind: TInventoryKind) {
@@ -157,7 +156,6 @@ async function approveQuick() {
 <template>
   <div class="flex flex-col gap-3" data-test="import-drafts">
     <p v-if="loadError" class="text-xs text-rose-300" data-test="import-drafts-error">{{ loadError }}</p>
-    <p v-if="!latest" class="text-xs text-amber-300" data-test="import-drafts-outdated">Há uma análise mais nova deste repositório: a revisão é nela, no Importador.</p>
 
     <div class="flex flex-wrap items-center gap-2 text-xs">
       <span class="text-zinc-300" data-test="review-count">{{ toReview.length }} a revisar · {{ keys.length }} {{ scope }}</span>
@@ -168,7 +166,7 @@ async function approveQuick() {
       </label>
     </div>
 
-    <section v-if="quick.length && latest" class="flex flex-col gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/5 p-2 text-xs" data-test="quick-approve">
+    <section v-if="quick.length" class="flex flex-col gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/5 p-2 text-xs" data-test="quick-approve">
       <button v-if="!confirming" type="button" class="btn btn-secondary btn-sm self-start" :disabled="!!bulk && bulk.done < bulk.total" data-test="quick-approve-open" @click="confirming = true">
         Aprovar os {{ quick.length }} sem remoção
       </button>
@@ -216,6 +214,7 @@ async function approveQuick() {
           >
             {{ STATE_LABEL[statuses[key].state] }}
           </span>
+          <span v-if="statuses[key]?.goneAt" class="rounded-full bg-amber-500/15 px-1.5 text-[10px] text-amber-200" :title="GONE_HINT" data-test="gone-badge">{{ GONE_LABEL }}</span>
         </button>
         <button
           v-if="withConversation && open === key && statuses[key]?.conversationId"
@@ -234,7 +233,6 @@ async function approveQuick() {
             :review="statuses[key].review"
             :approved-by="statuses[key].approvedBy"
             :approved-at="statuses[key].approvedAt"
-            :readonly="!latest"
             :busy="busyKey === key"
             :error="reviewError?.key === key ? reviewError.text : undefined"
             @approve="review(key, 'approve', { removals: $event })"

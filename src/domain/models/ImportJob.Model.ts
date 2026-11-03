@@ -2,8 +2,8 @@ import { IImportScan, IInventoryItem, TInventoryKind } from './ImportInventory.M
 
 /**
  * O TRABALHO DE IMPORTAÇÃO: uma varredura SALVA de um repositório do projeto num `HEAD`, com o estado de cada item
- * (`docs/integration/plano-importador.md`, PR 6). Reanalisar cria um trabalho novo que reaproveita o estado dos itens
- * pela chave.
+ * (`docs/integration/plano-importador.md`, PR 6). ⚖️ UMA importação por repositório do projeto: reanalisar ATUALIZA a
+ * mesma (inventário, `HEAD`, data), o id não muda; o estado de cada item fica, com as regras de `carryOver`.
  *
  * ⛔ Nada daqui grava no catálogo: quem grava é a gravação pelo catálogo (`ImportApply.Usecase`, PR 9), com o clique
  * e as confirmações da pessoa; o item aplicado guarda o lote do catálogo (`batchId`). O histórico do catálogo não cobre
@@ -54,6 +54,12 @@ export interface IImportItemStatus {
   /** Quem mudou o item por último, e quando (estado ou reclassificação). */
   by?: string
   at?: Date
+  /**
+   * SAIU DA FONTE: a análise de quando o item deixou de aparecer no repositório. ⚖️ Não é estado: o item fica como
+   * estava (rascunho, aprovação, lote), fora do construtor e da gravação; volta sozinho se a fonte voltar. ⛔ O catálogo
+   * não é tocado.
+   */
+  goneAt?: Date
 }
 
 /** Um item do trabalho: o do inventário e o estado. */
@@ -61,20 +67,24 @@ export interface IImportJobItem extends IImportItemStatus {
   item: IInventoryItem
 }
 
-/** O que a reanálise fez com os itens do trabalho anterior do mesmo repositório. */
-export interface IImportReuse {
-  /** O trabalho de onde o estado veio. */
-  from: string
-  /** Fonte igual: o estado veio como estava. */
+/** O REGISTRO de uma análise: quando, quem, o `HEAD`, e o que mudou nos itens da importação. */
+export interface IImportAnalysis {
+  at: Date
+  by: string
+  head?: string
+  dirty?: boolean
+  /** Fonte igual (ou nada decidido): o item ficou como estava. */
   kept: number
   /** Fonte mudada depois da decisão: virou `stale`. */
   stale: string[]
+  /** Itens novos na fonte. */
+  added: string[]
+  /** Itens que saíram da fonte NESTA análise. */
+  gone: string[]
   /** Estava `stale` e a fonte voltou a ser a da decisão: o estado de antes voltou. */
   restored: string[]
-  /** Itens que o trabalho anterior não tinha. */
-  added: string[]
-  /** Itens do trabalho anterior que sumiram. */
-  gone: string[]
+  /** Tinham saído da fonte e voltaram. */
+  returned: string[]
 }
 
 /** O cabeçalho de um trabalho: a linha da lista. */
@@ -85,16 +95,17 @@ export interface IImportJobSummary {
   head?: string
   dirty?: boolean
   scannedAt: Date
-  /** Quem analisou. */
+  /** Quem analisou por último. */
   by: string
-  /** O trabalho anterior do mesmo repositório, de onde o estado foi reaproveitado. */
-  previousId?: string
-  /** Quantos itens, e quantos em cada estado. */
+  /** Quantos itens, e quantos em cada estado (os que saíram da fonte contam no estado deles). */
   items: number
   byState: Partial<Record<TImportItemState, number>>
-  /** É o trabalho mais novo do repositório: só ele muda (os outros são registro). */
+  /** Quantos saíram da fonte. */
+  gone: number
+  /** ⚖️ Sempre `true`: a importação é a única do repositório (o campo fica para quem ainda o lê). */
   latest: boolean
-  reuse?: IImportReuse
+  /** As últimas análises, da mais nova à mais velha. */
+  analyses: IImportAnalysis[]
 }
 
 /** O trabalho aberto: o inventário inteiro (como a varredura devolve) e o estado de cada item. */
@@ -103,7 +114,7 @@ export interface IImportJob extends IImportJobSummary {
   states: Array<Omit<IImportItemStatus, 'basis'>>
 }
 
-/** O que o repositório guarda de um trabalho novo. */
+/** O que o repositório guarda de um trabalho novo (a primeira análise do repositório). */
 export interface INewImportJob {
   id: string
   projectId: string
@@ -112,11 +123,37 @@ export interface INewImportJob {
   dirty?: boolean
   scannedAt: Date
   by: string
-  previousId?: string
   /** O inventário sem os itens (formatos, totais, ignorados). */
   inventory: Omit<IImportScan, 'items'>
-  reuse?: IImportReuse
   items: IImportJobItem[]
+  /** O registro da análise. */
+  analysis?: IImportAnalysis
+}
+
+/** Um item na reanálise: o do inventário de agora e, quando a regra mudou, o estado. */
+export interface IImportItemRefresh {
+  key: string
+  item: IInventoryItem
+  fingerprint: string
+  /** Mudou com a fonte (`stale`, ou de volta ao estado de antes); ausente = o estado fica. */
+  state?: TImportItemState
+  staleFrom?: TImportItemState | null
+}
+
+/**
+ * A REANÁLISE gravada na mesma importação, de uma vez: o cabeçalho (`HEAD`, data, quem, inventário), os itens que estão
+ * na fonte (os novos entram `pending`), os que saíram (marcados, não apagados) e o registro.
+ */
+export interface IImportReanalysis {
+  jobId: string
+  head?: string
+  dirty?: boolean
+  scannedAt: Date
+  by: string
+  inventory: Omit<IImportScan, 'items'>
+  present: IImportItemRefresh[]
+  gone: string[]
+  analysis: IImportAnalysis
 }
 
 /** A mudança de um item: o estado, a reclassificação (`null` volta ao detectado), e o que mais a regra decidiu. */
@@ -145,7 +182,7 @@ export interface IImportReview {
 /**
  * Um LOTE SALVO no trabalho: a seleção da pessoa, com nome, a ordem calculada ao montar, o prefixo, quem e quando.
  * ⛔ Salvar o lote não dispara nada nem grava no catálogo: é o registro do que a pessoa quer importar junto.
- * O lote é do trabalho: reanalisar o repositório cria um trabalho novo, sem lotes.
+ * O lote é da importação e sobrevive à reanálise; a chave que saiu da fonte continua nele, marcada (`gone`).
  */
 export interface IImportBatch {
   id: string
@@ -158,4 +195,6 @@ export interface IImportBatch {
   order: string[]
   by: string
   at: Date
+  /** Na leitura: as chaves do lote cujo item saiu da fonte (ou não está na importação). */
+  gone?: string[]
 }

@@ -21,10 +21,12 @@ import {
   EMPTY_FILTERS,
   effectiveKind,
   filterItems,
+  GONE_HINT,
+  GONE_LABEL,
   groupByKind,
+  type IImportAnalysis,
   type IImportBatch,
   type IImportFilters,
-  type IImportJobSummary,
   type IImportPlan,
   type IInventoryItem,
   type ISelectionPlan,
@@ -64,8 +66,8 @@ import { useRepositoriesStore } from '@/stores/repositories'
  *   fora, nome e prefixo), Preparar (cada item com o estado e a conversa do construtor; "preparar tudo") e Gravar (o
  *   plano do catálogo do lote: `ImportApply`, que só grava com o clique e uma caixa por ampliação).
  *
- * ⛔ Fora isso, nada aqui grava no catálogo nem dispara construtor. Só o trabalho mais novo de cada repositório muda; os
- * outros são registro.
+ * ⛔ Fora isso, nada aqui grava no catálogo nem dispara construtor. Há UMA importação por repositório: cada "Analisar" a atualiza no
+ * mesmo lugar e entra no histórico de análises.
  *
  * ⚖️ Tudo o que vem do servidor mora na store (`useImportsStore`, `useRepositoriesStore`): a tela garante (`ensure`) o
  * que mostra, e as gravações põem a resposta lá — a fila de revisão e a mesa do Preparar leem a mesma cópia.
@@ -207,7 +209,7 @@ function builderGroups(keys: readonly string[]): Array<{ kind: TBuildKind; keys:
 /** Guarda o item que o servidor devolveu e recontá os estados do trabalho na lista. */
 /** Gravar no catálogo: o alvo aberto (lote salvo, seleção ou todo o trabalho). */
 const applyTarget = ref<{ batchId?: string; keys?: string[]; label: string }>()
-const approvedCount = computed(() => Object.values(statuses.value).filter((entry) => entry.state === 'approved').length)
+const approvedCount = computed(() => Object.values(statuses.value).filter((entry) => entry.state === 'approved' && !entry.goneAt).length)
 
 /** O progresso de um lote salvo: quantos já estão aprovados ou gravados, do total. */
 function progressOf(batch: IImportBatch): { done: number; total: number } {
@@ -327,7 +329,7 @@ function togglePick(key: string) {
 /** Seleciona todos os itens do filtro atual (não só a página que aparece), somando à seleção. */
 function pickFiltered() {
   const next = new Set(picked.value)
-  for (const item of filtered.value) next.add(item.key)
+  for (const item of filtered.value) if (!isGone(item.key)) next.add(item.key)
   picked.value = next
 }
 
@@ -490,7 +492,9 @@ async function analyze() {
   busy.value = true
   actionError.value = undefined
   try {
-    show(await imports.analyze(projectId.value, repository.value))
+    const { job: analyzed } = await imports.analyze(projectId.value, repository.value)
+    // ⚖️ Reanálise da importação já aberta: a tela fica onde está (seleção, filtros, migração aberta).
+    if (openedJobId.value !== analyzed.id) show(analyzed)
   } catch (failure) {
     actionError.value = message(failure)
   } finally {
@@ -520,14 +524,16 @@ function stateOf(item: IInventoryItem): TImportItemState {
   return statuses.value[item.key]?.state ?? 'pending'
 }
 
-function reuseText(entry: IImportJobSummary): string | undefined {
-  const reuse = entry.reuse
-  if (!reuse) return undefined
-  const parts = [`${reuse.kept} mantido(s)`]
-  if (reuse.stale.length) parts.push(`${reuse.stale.length} com fonte mudada`)
-  if (reuse.restored.length) parts.push(`${reuse.restored.length} com a fonte de volta`)
-  if (reuse.added.length) parts.push(`${reuse.added.length} novo(s)`)
-  if (reuse.gone.length) parts.push(`${reuse.gone.length} sumiram`)
+const isGone = (key: string) => !!statuses.value[key]?.goneAt
+
+/** O que uma análise mudou, em texto curto: mantidos, fonte mudada, novos, saíram, fonte de volta, voltaram. */
+function analysisText(one: IImportAnalysis): string {
+  const parts = [`${one.kept} mantido(s)`]
+  if (one.stale.length) parts.push(`${one.stale.length} com fonte mudada`)
+  if (one.added.length) parts.push(`${one.added.length} novo(s)`)
+  if (one.gone.length) parts.push(`${one.gone.length} saíram da fonte`)
+  if (one.restored.length) parts.push(`${one.restored.length} com a fonte de volta`)
+  if (one.returned.length) parts.push(`${one.returned.length} voltaram`)
   return parts.join(' · ')
 }
 
@@ -586,9 +592,9 @@ watch(() => projects.current, reset)
         <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
 
         <section v-if="jobs.length" class="flex flex-col gap-1.5" data-test="jobs">
-          <h2 class="text-xs font-medium text-zinc-500">Trabalhos de importação ({{ jobs.length }})</h2>
+          <h2 class="text-xs font-medium text-zinc-500">Importações ({{ jobs.length }})</h2>
           <ul class="scroll-thin flex max-h-56 flex-col divide-y divide-zinc-800 overflow-y-auto rounded-xl border border-zinc-800">
-            <li v-for="entry in jobs" :key="entry.id">
+            <li v-for="entry in jobs" :key="entry.id" data-test="job-entry">
               <button
                 type="button"
                 class="flex w-full flex-wrap items-center gap-x-3 gap-y-0.5 px-3 py-1.5 text-left text-xs hover:bg-zinc-900"
@@ -604,9 +610,20 @@ watch(() => projects.current, reset)
                 <span v-for="count in countByState(entry.byState)" :key="count.state" class="rounded-full bg-zinc-800 px-2 text-[11px]" :class="count.state === 'stale' ? 'text-amber-200' : 'text-zinc-300'">
                   {{ STATE_LABEL[count.state] }} {{ count.count }}
                 </span>
-                <span v-if="entry.latest" class="rounded-full border border-emerald-500/40 px-2 text-[11px] text-emerald-200">mais novo</span>
-                <span v-else class="rounded-full border border-zinc-700 px-2 text-[11px] text-zinc-500" title="Há análise mais nova deste repositório: este fica como registro">registro</span>
+                <span v-if="entry.gone" class="rounded-full bg-amber-500/15 px-2 text-[11px] text-amber-200" :title="GONE_HINT">{{ entry.gone }} {{ GONE_LABEL }}</span>
               </button>
+              <details v-if="entry.analyses?.length" class="px-3 pb-1.5 text-xs text-zinc-400" data-test="analyses">
+                <summary class="cursor-pointer text-zinc-500">{{ entry.analyses.length }} análise(s)</summary>
+                <ul class="mt-1 flex flex-col gap-0.5">
+                  <li v-for="one in entry.analyses" :key="one.at" class="flex flex-wrap items-center gap-x-3" data-test="analysis">
+                    <span>{{ fullTime(one.at) }}</span>
+                    <span class="text-zinc-500">por {{ one.by }}</span>
+                    <code v-if="one.head" class="text-zinc-500" :title="one.head">{{ one.head.slice(0, 12) }}</code>
+                    <span v-if="one.dirty" class="text-amber-200">árvore suja</span>
+                    <span>{{ analysisText(one) }}</span>
+                  </li>
+                </ul>
+              </details>
             </li>
           </ul>
         </section>
@@ -646,10 +663,8 @@ watch(() => projects.current, reset)
                 <span v-else-if="scan.dirty === false" class="rounded-full border border-zinc-700 px-2 text-[11px] text-zinc-400">árvore limpa</span>
                 <span>analisado em {{ fullTime(scan.scannedAt) }}<template v-if="job"> por {{ job.by }}</template></span>
               </div>
-              <p v-if="job && reuseText(job)" class="text-xs text-zinc-400" data-test="reuse">Reaproveitado da análise anterior: {{ reuseText(job) }}</p>
-              <p v-if="readonly" class="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-100" data-test="readonly">
-                Há análise mais nova deste repositório: este trabalho é registro e não muda. Abra o mais novo para excluir, incluir ou reclassificar.
-              </p>
+              <p v-if="job?.analyses?.[0]" class="text-xs text-zinc-400" data-test="last-analysis">Última análise: {{ analysisText(job.analyses[0]) }}</p>
+              <p v-if="job?.gone" class="text-xs text-amber-200" data-test="gone-summary">{{ job.gone }} {{ GONE_LABEL }}: ficam fora do Preparar e da gravação. Decida: excluir ou deixar.</p>
               <div class="flex flex-wrap items-center gap-2 text-xs text-zinc-400">
                 Formatos:
                 <code v-for="format in scan.formats" :key="format" class="rounded bg-zinc-900 px-1.5 text-zinc-200">{{ format }}</code>
@@ -775,7 +790,7 @@ watch(() => projects.current, reset)
                   <ul class="divide-y divide-zinc-800 rounded-xl border border-zinc-800">
                     <li v-for="item in group.items" :key="item.key" class="flex items-stretch" :class="picked.has(item.key) ? 'bg-sky-500/5' : ''">
                       <label class="flex shrink-0 cursor-pointer items-start pt-2.5 pl-3" :title="picked.has(item.key) ? 'Tirar da seleção' : 'Pôr na seleção'">
-                        <input type="checkbox" class="accent-sky-500" :checked="picked.has(item.key)" :aria-label="`Selecionar ${item.key}`" data-test="pick" @change="togglePick(item.key)" />
+                        <input type="checkbox" class="accent-sky-500" :checked="picked.has(item.key)" :disabled="isGone(item.key)" :aria-label="`Selecionar ${item.key}`" data-test="pick" @change="togglePick(item.key)" />
                       </label>
                       <button
                         type="button"
@@ -785,6 +800,7 @@ watch(() => projects.current, reset)
                         @click="selectedKey = item.key"
                       >
                         <span class="flex flex-wrap items-center gap-2">
+                          <span v-if="isGone(item.key)" class="rounded-full bg-amber-500/15 px-2 text-[11px] text-amber-200" :title="GONE_HINT" data-test="gone-badge">{{ GONE_LABEL }}</span>
                           <span
                             v-if="stateOf(item) !== 'pending'"
                             class="rounded-full px-2 text-[11px]"
@@ -903,6 +919,7 @@ watch(() => projects.current, reset)
                   >
                     <span class="font-medium text-zinc-200">{{ entry.name }}</span>
                     <span class="text-zinc-500">{{ progressOf(entry).done }}/{{ progressOf(entry).total }} aprovado(s) ou gravado(s)</span>
+                    <span v-if="entry.gone?.length" class="text-amber-200" data-test="batch-entry-gone">{{ entry.gone.length }} saíram da fonte</span>
                     <span class="h-1 overflow-hidden rounded-full bg-zinc-800">
                       <span class="block h-full bg-emerald-500" :style="{ width: `${progressOf(entry).total ? (100 * progressOf(entry).done) / progressOf(entry).total : 0}%` }" />
                     </span>

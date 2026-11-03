@@ -277,14 +277,15 @@ export class ImportController {
     })
   }
 
-  /** `GET /projects/:id/import/jobs` — os trabalhos de importação do projeto, do mais novo ao mais velho. */
+  /** `GET /projects/:id/import/jobs` — as importações do projeto (uma por repositório), da analisada por último à mais antiga. */
   async listJobs(req: Request, res: Response): Promise<void> {
     await this.respond(res, 'importJobs', req, async (projectId) => this.jobs().list(projectId))
   }
 
   /**
-   * `POST /projects/:id/import/jobs { repository, ignore? }` — analisa o repositório e SALVA o trabalho, reaproveitando
-   * o estado do trabalho mais novo do mesmo repositório. ⛔ Não grava no catálogo nem dispara construtor.
+   * `POST /projects/:id/import/jobs { repository, ignore? }` — ANALISA o repositório: cria a importação na primeira vez e
+   * a atualiza no lugar depois (o mesmo id). Devolve a importação e o que mudou (`analysis`). ⛔ Não grava no catálogo
+   * nem dispara construtor.
    */
   async createJob(req: Request, res: Response): Promise<void> {
     await this.respond(res, 'createImportJob', req, async (projectId, by) => {
@@ -292,7 +293,8 @@ export class ImportController {
       const issues = ignore ? ignoreIssues(ignore, 'ignore') : []
       if (issues.length) throw new HttpError(422, 'validation_error', 'Request body is invalid', issues)
       try {
-        return leanJob(this.jobs().create(projectId, repository, by, ignore ? { ignore } : {}))
+        const { analysis, ...job } = this.jobs().create(projectId, repository, by, ignore ? { ignore } : {})
+        return { ...leanJob(job), analysis }
       } catch (error) {
         if (error instanceof WorkFolderError) throw new HttpError(422, 'validation_error', 'Request body is invalid', [{ field: 'repository', message: error.message }])
         throw error
@@ -478,7 +480,7 @@ export class ImportController {
     return this.deps.build
   }
 
-  /** O erro do construtor na resposta: o que não existe aqui é 404; estado, fonte mudada e trabalho antigo são conflito. */
+  /** O erro do construtor na resposta: o que não existe aqui é 404; estado e fonte mudada são conflito. */
   private async buildError<T>(work: () => Promise<T> | T): Promise<T> {
     try {
       return await work()
@@ -486,7 +488,6 @@ export class ImportController {
       if (!(error instanceof ImportBuildError)) throw error
       const details = error.issues.length ? error.issues : error.field ? [{ field: error.field, message: error.message }] : undefined
       if (error.code === 'not_found' && !error.field) throw new HttpError(404, 'not_found', error.message)
-      if (error.code === 'outdated') throw new HttpError(409, 'import_job_outdated', error.message)
       if (error.code === 'transition') throw new HttpError(409, 'import_state_conflict', error.message, details)
       if (error.code === 'source_changed') throw new HttpError(409, 'import_source_changed', error.message, details)
       if (error.code === 'unavailable') throw new HttpError(409, 'builder_unavailable', error.message)
@@ -504,7 +505,7 @@ export class ImportController {
     return this.deps.jobs
   }
 
-  /** O erro do trabalho na resposta: o de outro projeto não existe aqui (404); o antigo e a transição são conflito (409). */
+  /** O erro do trabalho na resposta: o de outro projeto não existe aqui (404); a transição é conflito (409). */
   private jobError<T>(work: () => T): T {
     try {
       return work()
@@ -513,7 +514,6 @@ export class ImportController {
       if ((error.code === 'not_found' || error.code === 'invalid') && error.field)
         throw new HttpError(422, 'validation_error', 'Request body is invalid', [{ field: error.field, message: error.message }])
       if (error.code === 'not_found') throw new HttpError(404, 'not_found', error.message)
-      if (error.code === 'outdated') throw new HttpError(409, 'import_job_outdated', error.message)
       throw new HttpError(409, 'import_state_conflict', error.message, error.field ? [{ field: error.field, message: error.message }] : undefined)
     }
   }

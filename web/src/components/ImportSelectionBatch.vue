@@ -56,6 +56,9 @@ const kinds = computed(() => {
         <p v-if="batch" class="text-xs text-zinc-500" data-test="batch-meta">
           Montado por {{ batch.by }} em {{ fullTime(batch.at) }} · {{ batch.keys.length }} item(ns) escolhido(s){{ batch.prefix ? ` · prefixo ${batch.prefix}` : '' }}. Recalculado sobre o estado de agora.
         </p>
+        <p v-if="batch?.gone?.length" class="text-xs text-amber-200" data-test="batch-gone" :title="batch.gone.join(', ')">
+          {{ batch.gone.length }} saíram da fonte: ficam fora do Preparar e da gravação.
+        </p>
         <p class="text-xs text-zinc-500">Ordem só entre os itens escolhidos. Nada é gravado no catálogo e nenhum construtor é disparado.</p>
       </div>
       <form v-if="!batch" class="flex items-end gap-2" @submit.prevent="!issue && emit('replan', prefix.trim().toLowerCase())">

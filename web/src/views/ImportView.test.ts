@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, nextTick } from 'vue'
 import { api } from '@/lib/api'
 import { useThreadStore } from '@/stores/thread'
-import type { IImportBatchView, IImportItemStatus, IImportJob, IImportJobSummary, IImportPlan, IImportScan, IInventoryItem, ISelectionPlan } from '@/lib/importer'
+import type { IImportAnalysis, IImportBatchView, IImportItemStatus, IImportJob, IImportJobSummary, IImportPlan, IImportScan, IInventoryItem, ISelectionPlan } from '@/lib/importer'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectsStore } from '@/stores/projects'
 import ImportView from './ImportView.vue'
@@ -290,6 +290,8 @@ function savedJob(id: string, items: IInventoryItem[], extra: Partial<IImportJob
     items: items.length,
     byState: {},
     latest: true,
+    gone: 0,
+    analyses: [],
     scan: scan(items),
     states: items.map((entry) => ({ key: entry.key, state: 'pending', fingerprint: 'f', ...states[entry.key] })),
     ...extra,
@@ -307,14 +309,28 @@ async function mount(items: IInventoryItem[], options: { jobs?: IImportJob[]; an
         { name: 'lib', worktrees: [] },
       ]
     if (path.endsWith('/import/jobs') && request?.method === 'POST') {
-      const previous = saved.find((entry) => entry.latest)
+      // Uma importação por repositório: a segunda análise atualiza a MESMA (mesmo id), com o histórico.
+      const previous = saved.find((entry) => entry.repository === 'app')
+      const analysis: IImportAnalysis = {
+        at: '2026-10-31T12:00:00.000Z',
+        by: 'ana@x.test',
+        head: 'fedcba9876543210',
+        dirty: false,
+        kept: items.length,
+        stale: [],
+        added: [],
+        gone: [],
+        restored: [],
+        returned: [],
+      }
       const created = savedJob(
-        `j${saved.length + 1}`,
+        previous?.id ?? `j${saved.length + 1}`,
         items,
-        previous ? { previousId: previous.id, reuse: { from: previous.id, kept: items.length, stale: [], restored: [], added: [], gone: [] } } : {},
+        { analyses: [analysis, ...(previous?.analyses ?? [])] },
+        previous ? Object.fromEntries(previous.states.map((entry) => [entry.key, entry])) : {},
       )
-      saved = [created, ...saved.map((entry) => ({ ...entry, latest: false }))]
-      return created
+      saved = [created, ...saved.filter((entry) => entry.id !== created.id)]
+      return { ...created, analysis }
     }
     if (path.endsWith('/import/jobs')) return saved.map(summary)
     const items_ = path.match(/\/import\/jobs\/([^/]+)\/items$/)
@@ -521,7 +537,22 @@ describe('ImportView', () => {
     const stale = savedJob(
       'j7',
       SMALL,
-      { reuse: { from: 'j6', kept: 2, stale: ['skill:deploy'], restored: [], added: [], gone: [] }, previousId: 'j6' },
+      {
+        analyses: [
+          {
+            at: '2026-10-30T12:00:00.000Z',
+            by: 'ana@x.test',
+            head: '0123456789abcdef',
+            dirty: true,
+            kept: 2,
+            stale: ['skill:deploy'],
+            added: [],
+            gone: [],
+            restored: [],
+            returned: [],
+          },
+        ],
+      },
       {
         'skill:deploy': { state: 'stale', staleFrom: 'skipped', by: 'bia@x.test', at: '2026-10-30T11:00:00.000Z' },
         'command:ship': { state: 'skipped' },
@@ -532,7 +563,7 @@ describe('ImportView', () => {
     expect(host.querySelector('[data-test="job"]')!.textContent).toContain('fonte mudou 1')
     host.querySelector<HTMLButtonElement>('[data-test="job"]')!.click()
     await flush()
-    expect(host.querySelector('[data-test="reuse"]')!.textContent).toContain('1 com fonte mudada')
+    expect(host.querySelector('[data-test="last-analysis"]')!.textContent).toContain('1 com fonte mudada')
     expect([...host.querySelectorAll('[data-test="row-state"]')].map((chip) => chip.textContent!.trim()).sort()).toEqual(['excluído', 'fonte mudou'])
 
     choose(host, 'state', 'stale')
@@ -580,12 +611,136 @@ describe('ImportView', () => {
     expect([...host.querySelectorAll('[data-test="row-state"]')].map((chip) => chip.textContent!.trim())).toContain('aplicado')
   })
 
-  it('⛔ o trabalho antigo é registro: sem excluir, incluir nem reclassificar', async () => {
+  it('uma importação por repositório, com o histórico de análises (data, quem, HEAD, árvore suja e as contagens)', async () => {
+    const job = savedJob('j7', SMALL, {
+      gone: 1,
+      analyses: [
+        {
+          at: '2026-11-02T12:00:00.000Z',
+          by: 'bia@x.test',
+          head: 'abcdef0123456789',
+          dirty: false,
+          kept: 1,
+          stale: ['skill:deploy'],
+          added: ['command:ship'],
+          gone: ['rule:x'],
+          restored: ['spec:a'],
+          returned: ['spec:b'],
+        },
+        { at: '2026-10-30T12:00:00.000Z', by: 'ana@x.test', head: '0123456789abcdef', dirty: true, kept: 0, stale: [], added: [], gone: [], restored: [], returned: [] },
+      ],
+    })
+    const host = await mount(SMALL, { jobs: [job], analyze: false })
+    expect(host.querySelectorAll('[data-test="job-entry"]')).toHaveLength(1)
+    expect(host.querySelector('[data-test="jobs"] h2')!.textContent).toContain('Importações (1)')
+    expect(host.querySelector('[data-test="job"]')!.textContent).toContain('1 saiu da fonte')
+    const lines = [...host.querySelectorAll('[data-test="analysis"]')].map((line) => line.textContent!.replace(/\s+/g, ' '))
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toContain('bia@x.test')
+    expect(lines[0]).toContain('abcdef012345')
+    expect(lines[0]).toContain('1 mantido(s) · 1 com fonte mudada · 1 novo(s) · 1 saíram da fonte · 1 com a fonte de volta · 1 voltaram')
+    expect(lines[1]).toContain('árvore suja')
+    expect(host.querySelector('[data-test="job"]')!.textContent).not.toContain('mais novo')
+    host.querySelector<HTMLButtonElement>('[data-test="job"]')!.click()
+    await flush()
+    expect(host.querySelector('[data-test="last-analysis"]')!.textContent).toContain('1 voltaram')
+  })
+
+  it('"Analisar de novo" reanalisa a MESMA importação: a tela fica no mesmo trabalho e nada é relido depois do POST', async () => {
+    const host = await mount(SMALL)
+    expect(host.querySelectorAll('[data-test="job"]')).toHaveLength(1)
+    const store = (await import('@/stores/imports')).useImportsStore()
+    expect(store.jobs.get('alfa')!.map((entry) => entry.id)).toEqual(['j1'])
+    // Uma decisão tomada na primeira análise sobrevive à segunda (mesmo id, atualizado no lugar).
+    ;[...host.querySelectorAll<HTMLButtonElement>('[data-test="row"]')].find((row) => row.textContent!.includes('deploy'))!.click()
+    await flush()
+    host.querySelector<HTMLButtonElement>('[data-test="exclude"]')!.click()
+    await flush()
+    vi.mocked(api).mockClear()
+    host.querySelector<HTMLButtonElement>('[data-test="analyze"]')!.click()
+    await flush()
+    expect(vi.mocked(api).mock.calls.map(([path, request]) => `${(request as { method?: string } | undefined)?.method ?? 'GET'} ${path}`)).toEqual([
+      'POST /projects/alfa/import/jobs',
+    ])
+    expect(host.querySelectorAll('[data-test="job-entry"]')).toHaveLength(1)
+    expect(store.jobs.get('alfa')!.map((entry) => entry.id)).toEqual(['j1'])
+    expect(store.job.get('alfa\nj1')!.analyses).toHaveLength(2)
+    expect(host.querySelectorAll('[data-test="analysis"]')).toHaveLength(2)
+    // A tela não foi reiniciada: o item continua aberto e excluído.
+    expect(host.querySelector('[data-test="import-detail"]')).not.toBeNull()
+    expect(host.querySelector('[data-test="item-state"]')!.textContent).toContain('excluído')
+  })
+
+  it('o item que saiu da fonte leva o selo no inventário e no detalhe, e não entra na seleção', async () => {
+    const job = savedJob('j7', SMALL, { gone: 1 }, { 'skill:deploy': { state: 'approved', goneAt: '2026-11-03T09:00:00.000Z' } })
+    const host = await mount(SMALL, { jobs: [job], analyze: false })
+    host.querySelector<HTMLButtonElement>('[data-test="job"]')!.click()
+    await flush()
+    expect(host.querySelector('[data-test="gone-summary"]')!.textContent).toContain('1 saiu da fonte')
+    const badges = host.querySelectorAll('[data-test="row"] [data-test="gone-badge"]')
+    expect(badges).toHaveLength(1)
+    expect(badges[0].getAttribute('title')).toContain('nada foi apagado do catálogo')
+    ;[...host.querySelectorAll<HTMLButtonElement>('[data-test="row"]')].find((row) => row.textContent!.includes('deploy'))!.click()
+    await flush()
+    expect(host.querySelector('[data-test="import-detail"] [data-test="gone-badge"]')).not.toBeNull()
+    expect(host.querySelector('[data-test="gone-note"]')!.textContent).toContain('Fica fora do Preparar e da gravação')
+    const picks = [...host.querySelectorAll<HTMLInputElement>('[data-test="pick"]')]
+    expect(picks.filter((box) => box.disabled)).toHaveLength(1)
+    host.querySelector<HTMLButtonElement>('[data-test="pick-filtered"]')!.click()
+    await flush()
+    expect(host.querySelector('[data-test="picked-count"]')!.textContent).toContain('2 selecionado(s)')
+  })
+
+  it('o item que saiu da fonte fica fora do Preparar e da gravação, com a explicação; a migração mostra quantos saíram', async () => {
+    const stored: IImportBatchView = {
+      id: 'b9',
+      jobId: 'j7',
+      name: 'Misto',
+      prefix: '',
+      keys: ['skill:deploy', 'command:ship'],
+      order: ['skill:deploy', 'command:ship'],
+      by: 'bia@x.test',
+      at: '2026-10-30T11:00:00.000Z',
+      gone: ['skill:deploy'],
+      plan: selectionPlan(['skill:deploy', 'command:ship']),
+    }
+    const job = savedJob('j7', SMALL, { gone: 1 }, { 'skill:deploy': { goneAt: '2026-11-03T09:00:00.000Z' } })
+    const host = await mount(SMALL, { jobs: [job], analyze: false, batches: { j7: [stored] } })
+    const base = vi.mocked(api).getMockImplementation()!
+    vi.mocked(api).mockImplementation(async (path: string, request?: { method?: string; body?: unknown; query?: { keys?: string[] } }) => {
+      if (path.endsWith('/apply/plan')) {
+        const plan = (await base(path, request as never)) as { skipped: unknown[] }
+        return { ...plan, skipped: [{ key: 'skill:deploy', reason: 'saiu da fonte: não vai ao catálogo' }] }
+      }
+      return base(path, request as never)
+    })
+    host.querySelector<HTMLButtonElement>('[data-test="job"]')!.click()
+    await flush()
+    host.querySelector<HTMLButtonElement>('[data-test="area-batches"]')!.click()
+    await flush()
+    expect(host.querySelector('[data-test="batch-entry-gone"]')!.textContent).toContain('1 saíram da fonte')
+    host.querySelector<HTMLButtonElement>('[data-test="batch-entry"]')!.click()
+    await flush()
+    // Preparar: só o command:ship é do construtor; o que saiu é contado à parte.
+    const desk = host.querySelector('[data-test="prepare-desk"]')!
+    expect(desk.querySelector('[data-test="desk-progress"]')!.textContent).toContain('1 itens')
+    expect(desk.querySelector('[data-test="desk-gone"]')!.textContent).toContain('1 saíram da fonte: ficam fora do Preparar')
+    expect(desk.textContent).not.toContain('skill:deploy')
+    // Montar: a contagem da migração.
+    host.querySelector<HTMLButtonElement>('[data-test="step-build"]')!.click()
+    await flush()
+    expect(host.querySelector('[data-test="batch-gone"]')!.textContent).toContain('1 saíram da fonte')
+    // Gravar: a explicação do que ficou de fora.
+    host.querySelector<HTMLButtonElement>('[data-test="step-apply"]')!.click()
+    await flush()
+    expect(host.querySelector('[data-test="apply-gone"]')!.textContent).toContain('1 saíram da fonte: ficam fora da gravação')
+  })
+
+  it('⛔ um trabalho com `latest: false` (não acontece mais) continua só leitura: sem excluir, incluir nem reclassificar', async () => {
     const old = savedJob('j1', SMALL, { latest: false })
     const host = await mount(SMALL, { jobs: [savedJob('j2', SMALL), old], analyze: false })
-    ;[...host.querySelectorAll<HTMLButtonElement>('[data-test="job"]')].find((button) => button.textContent!.includes('registro'))!.click()
+    host.querySelectorAll<HTMLButtonElement>('[data-test="job"]')[1]!.click()
     await flush()
-    expect(host.querySelector('[data-test="readonly"]')).not.toBeNull()
     host.querySelector<HTMLButtonElement>('[data-test="row"]')!.click()
     await flush()
     expect(host.querySelector('[data-test="exclude"]')).toBeNull()
@@ -985,9 +1140,9 @@ describe('ImportView', () => {
     expect(host.querySelectorAll('[data-test="import-draft-item"]')).toHaveLength(2)
   })
 
-  it('⛔ no trabalho antigo a prévia vale, mas o lote não é salvo', async () => {
+  it('⛔ num trabalho com `latest: false` a prévia vale, mas o lote não é salvo', async () => {
     const host = await mount(SMALL, { jobs: [savedJob('j2', SMALL), savedJob('j1', SMALL, { latest: false })], analyze: false })
-    ;[...host.querySelectorAll<HTMLButtonElement>('[data-test="job"]')].find((button) => button.textContent!.includes('registro'))!.click()
+    host.querySelectorAll<HTMLButtonElement>('[data-test="job"]')[1]!.click()
     await flush()
     host.querySelector<HTMLButtonElement>('[data-test="pick-filtered"]')!.click()
     await flush()

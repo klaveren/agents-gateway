@@ -21,7 +21,7 @@ describe('gravação do importador (/projects/:id/import/jobs/:job/apply e apply
   const apply = {
     preview: async (...args: unknown[]) => {
       calls.push({ what: 'preview', args })
-      if (args[1] === 'velho') throw new ImportBuildError('outdated', 'there is a newer analysis')
+      if (args[1] === 'velho') throw new ImportBuildError('source_changed', 'source changed since the analysis')
       return { plan: { planHash: 'h' } }
     },
     apply: async (...args: unknown[]) => {
@@ -55,7 +55,7 @@ describe('gravação do importador (/projects/:id/import/jobs/:job/apply e apply
 
   const HASH = 'a'.repeat(64)
 
-  it('prévia: passa a seleção (lote, regras amplas incluídas, modelo) e o token; trabalho antigo = 409', async () => {
+  it('prévia: passa a seleção (lote, regras amplas incluídas, modelo) e o token; fonte mudada = 409', async () => {
     calls.length = 0
     const body = { batchId: 'b1', wide: { 'agent:maya': ['terminal allow *'] }, models: { 'agent:maya': { provider: 'google', model: 'm' } } }
     const reply = await call(controller, 'planApply', ADMIN, 'j1', body)

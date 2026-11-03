@@ -18,7 +18,7 @@ import {
   type IApplyResult,
   type IApplySelection,
 } from '@/lib/importApply'
-import { KIND_LABEL, STATE_LABEL } from '@/lib/importer'
+import { GONE_LABEL, KIND_LABEL, STATE_LABEL } from '@/lib/importer'
 import { useAuthStore } from '@/stores/auth'
 
 /**
@@ -74,6 +74,8 @@ const heldBack = computed(() => preview.value?.heldBack ?? [])
 /** Os problemas da importação com que cada documento entra (não bloqueiam: ficam no artefato). */
 const issuesByRef = computed(() => (preview.value ? importIssuesByRef(preview.value) : new Map()))
 const resolved = computed(() => preview.value?.resolved ?? [])
+/** ⚠️ Os que saíram da fonte vêm em `skipped` ("saiu da fonte…"): não são gravados. */
+const goneSkipped = computed(() => (preview.value?.skipped ?? []).filter((one) => one.reason.startsWith(GONE_LABEL)))
 
 function setReady(on: boolean) {
   ready.value = on
@@ -234,6 +236,9 @@ const partLabel = (part?: string) => (part === 'record' ? ' (registro)' : part =
           </li>
         </ul>
       </section>
+      <p v-if="goneSkipped.length" class="text-xs text-amber-200" data-test="apply-gone" :title="goneSkipped.map((one) => one.key).join(', ')">
+        {{ goneSkipped.length }} saíram da fonte: ficam fora da gravação.
+      </p>
       <ul v-if="preview.skipped.length" class="text-xs text-zinc-500" data-test="apply-skipped">
         <li v-for="entry in preview.skipped" :key="entry.key">fica de fora: <code>{{ entry.key }}</code> — {{ entry.reason }}</li>
       </ul>
