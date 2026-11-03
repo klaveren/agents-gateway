@@ -59,6 +59,10 @@ describe('ImportDraftAside — a fila de revisão de uma conversa de importaçã
   beforeEach(() => {
     mocked.mockReset()
     mocked.mockImplementation(async (path: string, request?: { method?: string; body?: unknown }) => {
+      if (request?.method === 'PATCH') {
+        const { key, kind } = request.body as { key: string; kind: string }
+        return { key, state: 'pending', kind, fingerprint: 'f' }
+      }
       if (path.endsWith('/items/approve')) {
         const key = (request!.body as { key: string }).key
         return { key, state: 'approved', drafts: [draft(key)] }
@@ -95,6 +99,24 @@ describe('ImportDraftAside — a fila de revisão de uma conversa de importaçã
     expect(updated.at(-1)).toEqual(['knowledge:b'])
     const open = host.querySelector('[data-test="import-draft-toggle"][aria-expanded="true"]')!
     expect(open.textContent).toContain('knowledge:d')
+  })
+
+  it('o item no construtor sem rascunho reclassifica daqui: sai da conversa e volta à fila; com rascunho, não', async () => {
+    const { host, updated } = await mount()
+    expect(host.querySelector('[data-test="import-draft-reclassify"]')).toBeNull()
+    host.querySelector<HTMLInputElement>('[data-test="only-review"]')!.click()
+    await flush()
+    const row = [...host.querySelectorAll<HTMLButtonElement>('[data-test="import-draft-toggle"]')].find((one) => one.textContent!.includes('knowledge:a'))!
+    row.click()
+    await flush()
+    const select = host.querySelector<HTMLSelectElement>('[data-test="import-draft-reclassify-kind"]')!
+    expect(select.value).toBe('knowledge')
+    select.value = 'spec'
+    select.dispatchEvent(new Event('change'))
+    await flush()
+    expect(mocked).toHaveBeenCalledWith('/projects/logiccus/import/jobs/j1/items', { method: 'PATCH', body: { key: 'knowledge:a', kind: 'spec' } })
+    expect(updated.at(-1)).toEqual(['knowledge:a'])
+    expect(host.querySelector<HTMLSelectElement>('[data-test="import-draft-reclassify-kind"]')!.value).toBe('spec')
   })
 
   it('"Aprovar os N sem remoção": só os que não removem nada, com confirmação e a lista', async () => {

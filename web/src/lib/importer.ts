@@ -293,6 +293,14 @@ export const INCLUDABLE_STATES: readonly TImportItemState[] = ['skipped', 'stale
 /** Reclassificar só sem rascunho no caminho. */
 export const RECLASSIFIABLE_STATES: readonly TImportItemState[] = ['pending', 'skipped', 'rejected', 'error', 'stale']
 
+/** Também o item no construtor AINDA SEM RASCUNHO: sai da conversa e volta à fila (espelho de `Import.Job.ts`). */
+export function canReclassifyState(state: TImportItemState, drafted: boolean): boolean {
+  return RECLASSIFIABLE_STATES.includes(state) || (state === 'drafting' && !drafted)
+}
+
+/** Os tipos que têm construtor (o destino de reclassificar um item que já está na migração). */
+export const BUILDER_KINDS: readonly TInventoryKind[] = ['agent', 'trigger', 'skill', 'command', 'rule', 'spec', 'adr', 'knowledge']
+
 export interface IImportItemStatus {
   key: string
   state: TImportItemState

@@ -305,4 +305,45 @@ describe('ImportBuildService', () => {
     assert.strictEqual(service.approve('alfa', 'j1', 'spec:arquitetura', [], 'bia').state, 'approved')
     code(() => service.adjust('alfa', 'j1', 'spec:arquitetura', 'x', 'bia'), 'transition')
   })
+
+  it('list_import_items mostra as remoções que a pessoa já aprovou no trabalho, pelo motivo: não se pergunta de novo', async () => {
+    const { service } = setup()
+    await service.open('alfa', 'j1', 'ana', { keys: ['spec:arquitetura', 'spec:filas'] })
+    assert.doesNotMatch(service.listText('c1'), /already approved/)
+    service.propose('c1', 'spec:arquitetura', META, OPS)
+    assert.doesNotMatch(service.listText('c1'), /already approved/, 'só o aprovado conta')
+    service.approve('alfa', 'j1', 'spec:arquitetura', [0], 'ana')
+    assert.match(service.listText('c1'), /## Removals the person already approved[\s\S]*- cabeçalho de gerado — approved 1× \(e\.g\. "<!-- gerado por agents-sync -->"\)/)
+  })
+
+  it('reclassificar pela conversa: só item dela sem rascunho; sai da conversa e volta à fila com o tipo novo', async () => {
+    const { service, repository } = setup()
+    await service.open('alfa', 'j1', 'ana', { keys: ['spec:arquitetura', 'spec:filas'] })
+    code(() => service.reclassify('c1', 'spec:outra', 'knowledge', 'r'), 'not_found')
+    code(() => service.reclassify('c1', 'spec:filas', 'mcp', 'r'), 'kind')
+    code(() => service.reclassify('c1', 'spec:filas', 'spec', 'r'), 'invalid')
+    code(() => service.reclassify('c1', 'spec:filas', 'knowledge', ' '), 'invalid')
+    const moved = service.reclassify('c1', 'spec:filas', 'knowledge', 'a pessoa pediu')
+    assert.deepStrictEqual([moved.state, moved.kind, moved.conversationId, moved.by], ['pending', 'knowledge', undefined, 'builder:c1'])
+    assert.doesNotMatch(service.listText('c1'), /## spec:filas/)
+    // De volta ao tipo detectado: a reclassificação some.
+    await service.open('alfa', 'j1', 'ana', { keys: ['spec:filas'] })
+    assert.strictEqual(service.reclassify('c2', 'spec:filas', 'spec', 'voltou').kind, undefined)
+    // Com rascunho, não.
+    service.propose('c1', 'spec:arquitetura', META, OPS)
+    repository.updateItem('j1', 'spec:arquitetura', { state: 'drafting' })
+    code(() => service.reclassify('c1', 'spec:arquitetura', 'knowledge', 'r'), 'transition')
+  })
+
+  it('a conversa apagada solta os itens do lote no construtor: o Preparar abre outra para eles', async () => {
+    const { service, repository } = setup()
+    const keys = ['spec:filas', 'spec:arquitetura', 'skill:revisar']
+    repository.createBatch({ id: 'b9', jobId: 'j1', name: 'x', prefix: '', keys, order: keys, by: 'ana', at: new Date('2026-10-30T11:30:00.000Z') })
+    const [specs] = await service.prepare('alfa', 'j1', 'b9', 'ana')
+    const released = await service.releaseLost('alfa', 'j1', 'b9', async (id) => id !== specs.conversationId)
+    assert.deepStrictEqual(released, ['spec:filas', 'spec:arquitetura'])
+    assert.deepStrictEqual([repository.item('j1', 'spec:filas')!.state, repository.item('j1', 'spec:filas')!.conversationId], ['drafting', undefined])
+    const [again] = await service.prepare('alfa', 'j1', 'b9', 'ana')
+    assert.deepStrictEqual([again.kind, again.keys], ['spec', ['spec:filas', 'spec:arquitetura']])
+  })
 })

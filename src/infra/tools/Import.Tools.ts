@@ -1,4 +1,4 @@
-import { isImportBuilder, LIST_IMPORT_ITEMS_TOOL, PROPOSE_IMPORT_DRAFT_TOOL, READ_IMPORT_SOURCE_TOOL } from '@domain/Builder.Agents'
+import { isImportBuilder, LIST_IMPORT_ITEMS_TOOL, PROPOSE_IMPORT_DRAFT_TOOL, READ_IMPORT_SOURCE_TOOL, RECLASSIFY_IMPORT_ITEM_TOOL } from '@domain/Builder.Agents'
 import type { IImportDraft } from '@domain/Import.Draft'
 import type { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { ILocalTool, IToolResult } from './Tool.Types'
@@ -8,6 +8,7 @@ export interface IImportDesk {
   listText(conversationId: string): string
   readSource(conversationId: string, key: string, options: { path?: string; offset?: number; limit?: number }): string
   propose(conversationId: string, key: string, meta: unknown, ops: unknown): { draft: IImportDraft }
+  reclassify(conversationId: string, key: string, kind: unknown, reason: unknown): unknown
 }
 
 /** ⛔ Só o construtor em modo importação, e só dentro de uma conversa: o resto responde como se a ferramenta não existisse. */
@@ -24,6 +25,9 @@ function failure(error: unknown): IToolResult {
   return { status: 'error', result: message }
 }
 
+/** Os tipos que têm construtor em modo importação (o destino de uma reclassificação pela conversa). */
+const RECLASSIFY_KINDS = ['agent', 'trigger', 'skill', 'command', 'rule', 'spec', 'adr', 'knowledge'] as const
+
 const text = (value: unknown) => (typeof value === 'string' ? value : undefined)
 const integer = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : undefined)
 
@@ -32,7 +36,8 @@ const integer = (value: unknown) => (typeof value === 'number' && Number.isFinit
  * conversa recebeu ao abrir (pelo Importador); nenhuma delas grava no catálogo.
  * - `list_import_items`: os itens, as fontes, o que citam com o mapa de ids e o pedido de ajuste;
  * - `read_import_source`: uma fonte lida PELO SERVIDOR, contida, mascarada, em páginas, conferindo o `sha256`;
- * - `propose_import_draft`: os metadados e as operações; o servidor aplica, confere e grava o rascunho no item (`review`).
+ * - `propose_import_draft`: os metadados e as operações; o servidor aplica, confere e grava o rascunho no item (`review`);
+ * - `reclassify_import_item`: a pessoa pediu outro tipo para um item sem rascunho; ele sai da conversa e volta à fila.
  */
 export function makeImportTools(desk: IImportDesk): ILocalTool[] {
   return [
@@ -130,6 +135,37 @@ export function makeImportTools(desk: IImportDesk): ILocalTool[] {
           return {
             status: 'success',
             result: `Draft saved on ${key} (${draft.ops.length} operation(s), ${draft.removals.length} removal(s); item(s): ${outputs}). Nothing went to the catalog: the person reviews it in the Importer, and each removal needs their OK.`,
+          }
+        } catch (error) {
+          return failure(error)
+        }
+      },
+    },
+    {
+      origin: 'local',
+      name: RECLASSIFY_IMPORT_ITEM_TOOL,
+      description:
+        'Changes the kind of ONE item that has no draft yet, ONLY when the person asked for it in this conversation (e.g. "it is a spec"). The item leaves this conversation and goes back to the queue: the builder of the new kind takes it when the person resumes the migration (Preparar). Never on your own, nor in a conversation nobody follows.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          item: { type: 'string', description: 'The item key.' },
+          kind: { type: 'string', enum: [...RECLASSIFY_KINDS], description: 'The new kind.' },
+          reason: { type: 'string', description: 'What the person asked, in their words.' },
+        },
+        required: ['item', 'kind', 'reason'],
+        additionalProperties: false,
+      },
+      execute: async (args, context) => {
+        const refused = refusal(RECLASSIFY_IMPORT_ITEM_TOOL, context)
+        if (refused) return refused
+        const key = text(args.item)
+        if (!key) return { status: 'error', result: 'item: required (the item key)' }
+        try {
+          desk.reclassify(context!.sessionId!, key, args.kind, args.reason)
+          return {
+            status: 'success',
+            result: `${key} is now a ${String(args.kind)} and left this conversation. Tell the person: in the migration (Preparar), "Retomar as paradas" sends it to the ${String(args.kind)} builder.`,
           }
         } catch (error) {
           return failure(error)

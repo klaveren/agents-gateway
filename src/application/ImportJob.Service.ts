@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { canReclassify, canTransition, carryOver, countByState, reuseSummary, sourceFingerprint, TCarryOutcome } from '@domain/Import.Job'
+import { canReclassify, canTransition, carryOver, countByState, releasedFromBuilder, reuseSummary, sourceFingerprint, TCarryOutcome } from '@domain/Import.Job'
 import { IImportJob, IImportJobItem, IImportJobSummary, TImportItemPatch, TImportManualState } from '@domain/models/ImportJob.Model'
 import { IImportScan, TInventoryKind } from '@domain/models/ImportInventory.Model'
 import { TItemStates } from '@domain/models/ImportPlan.Model'
 import { IImportJobRecord, IImportRepository } from '@domain/ports/ImportRepository.Port'
+import { lastDraft } from './ImportBuild.Service'
 import { IImportScanOptions } from './ImportScan.Usecase'
 
 /**
@@ -113,9 +114,12 @@ export class ImportJobService {
 
     const patch: TImportItemPatch = {}
     if (change.kind !== undefined) {
-      if (!canReclassify(current.state)) throw new ImportJobError('reclassify', `an item in state ${current.state} cannot be reclassified`, 'kind')
+      if (!canReclassify(current.state, !!lastDraft(current)))
+        throw new ImportJobError('reclassify', `an item in state ${current.state}${current.state === 'drafting' ? ' with a draft' : ''} cannot be reclassified`, 'kind')
       const kind = change.kind === null || change.kind === current.item.kind ? null : change.kind
       if (kind !== (current.kind ?? null)) patch.kind = kind
+      // No construtor sem rascunho: sai da conversa e volta à fila, para o construtor do tipo novo.
+      if (patch.kind !== undefined && current.state === 'drafting') Object.assign(patch, releasedFromBuilder(current.fingerprint))
     }
     if (change.state !== undefined && change.state !== current.state) {
       if (!canTransition(current.state, change.state)) throw new ImportJobError('transition', `an item in state ${current.state} cannot go to ${change.state}`, 'state')
