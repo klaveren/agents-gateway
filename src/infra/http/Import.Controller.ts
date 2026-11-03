@@ -102,6 +102,7 @@ const applySelectionSchema = z.object({
   models: z.record(itemKey, z.object({ provider: z.string().min(1).max(100), model: z.string().min(1).max(200) })).optional(),
   ready: z.boolean().optional(),
 })
+const fixSchema = applySelectionSchema.extend({ concurrency: z.number().int().min(1).max(RUN_CONCURRENCY_MAX).optional() })
 const applySchema = applySelectionSchema.extend({
   planHash: z.string().regex(/^[a-f0-9]{64}$/, 'expected the planHash of the plan (64 hex)'),
   confirm: z.array(z.string().min(1).max(2_000)).max(5_000).optional(),
@@ -142,6 +143,7 @@ export class ImportController {
     this.adjustItem = this.adjustItem.bind(this)
     this.planApply = this.planApply.bind(this)
     this.applyItems = this.applyItems.bind(this)
+    this.fixApply = this.fixApply.bind(this)
   }
 
   /**
@@ -173,6 +175,52 @@ export class ImportController {
           { by, viaAccessToken: viaAccessToken(res) },
         ),
       )
+    })
+  }
+
+  /**
+   * `POST /projects/:id/import/jobs/:job/apply/fix { …a seleção, concurrency? }` — CORRIGIR COM O CONSTRUTOR: cada item
+   * que a prévia da gravação recusa por problema DELE (não o que só cita um recusado, nem o modelo do agente, que é
+   * escolha da pessoa) volta ao construtor com o pedido de ajuste escrito a partir do erro, e a conversa roda no
+   * servidor (como o "Preparar tudo"). ⛔ Nada vai ao catálogo: o rascunho novo volta à revisão.
+   */
+  async fixApply(req: Request, res: Response): Promise<void> {
+    await this.respond(res, 'fixImportApply', req, async (projectId, by) => {
+      const body = parseBody(fixSchema, req.body ?? {})
+      if (!this.deps.runs) throw new HttpError(404, 'not_found', 'Not found')
+      const job = req.params.job as string
+      const preview = await this.buildError(() => this.applier().preview(projectId, job, selection(body), { viaAccessToken: viaAccessToken(res) }))
+      const keyOf = new Map(preview.items.flatMap((item) => item.refs.map((ref) => [ref, item.key] as const)))
+      const issues = new Map<string, string[]>()
+      for (const item of preview.plan.items) {
+        if (item.op !== 'error') continue
+        const own = item.issues.filter((issue) => issue.field !== 'providers' && !/which is not applied/.test(issue.message))
+        const key = keyOf.get(item.ref)
+        if (!key || !own.length) continue
+        issues.set(key, [...(issues.get(key) ?? []), ...own.map((issue) => `${item.ref} · ${issue.field}: ${issue.message}`)])
+      }
+      const reopened: Array<{ key: string; issues: string[] }> = []
+      const skipped: Array<{ key: string; reason: string }> = []
+      const byConversation = new Map<string, string[]>()
+      for (const [key, found] of issues) {
+        const comment = `A gravação no catálogo recusou este rascunho:\n${found.map((one) => `- ${one}`).join('\n')}\nCorrija só isso e entregue de novo.`
+        try {
+          const item = this.build().reopen(projectId, job, key, comment, by)
+          if (this.deps.conversationExists && !(await this.deps.conversationExists(item.conversationId!))) {
+            skipped.push({ key, reason: 'a conversa do construtor não existe mais: Retomar no Preparar abre outra' })
+            continue
+          }
+          byConversation.set(item.conversationId!, [...(byConversation.get(item.conversationId!) ?? []), key])
+          reopened.push({ key, issues: found })
+        } catch (error) {
+          skipped.push({ key, reason: error instanceof Error ? error.message : String(error) })
+        }
+      }
+      const started = this.deps.runs.start(
+        [...byConversation].map(([conversationId, keys]) => ({ conversationId, keys })),
+        body.concurrency,
+      )
+      return { reopened, skipped, started }
     })
   }
 

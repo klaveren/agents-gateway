@@ -517,6 +517,29 @@ export class ImportBuildService {
     })!
   }
 
+  /**
+   * DE VOLTA AO CONSTRUTOR o item aprovado (ou a revisar) que a gravação recusou: volta a `drafting` com o pedido de
+   * ajuste já escrito (o que o catálogo recusou), para a mesma conversa. A aprovação some: o rascunho novo passa pela
+   * revisão de novo.
+   */
+  reopen(projectId: string, jobId: string, key: string, comment: string, by: string): IImportJobItem {
+    const record = this.latestRecord(projectId, jobId)
+    const entry = this.entry(record.id, key)
+    const text = comment.trim().slice(0, COMMENT_MAX)
+    if (!text) throw new ImportBuildError('invalid', 'say what to adjust', 'comment')
+    if (entry.state !== 'approved' && entry.state !== 'review') throw new ImportBuildError('transition', `an item in state ${entry.state} has no draft to send back`, 'key')
+    if (!entry.conversationId) throw new ImportBuildError('transition', 'the item has no builder conversation', 'key')
+    const at = this.now()
+    const previous = (entry.review as IImportReview | undefined) ?? {}
+    return this.deps.repository.updateItem(record.id, key, {
+      state: 'drafting',
+      review: { ...previous, adjust: { comment: text, by, at: at.toISOString() }, by, at: at.toISOString() },
+      basis: entry.fingerprint,
+      by,
+      at,
+    })!
+  }
+
   private latestRecord(projectId: string, jobId: string): IImportJobRecord {
     const record = this.deps.repository.get(projectId, jobId)
     if (!record) throw new ImportBuildError('not_found', `import job not found: ${jobId}`)

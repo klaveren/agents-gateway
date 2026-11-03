@@ -2045,6 +2045,24 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/projects/{id}/import/jobs/{job}/apply/fix': {
+      post: {
+        summary:
+          'FIX WITH THE BUILDER: every approved item the preview of the write refuses for a problem of its OWN (not the ones only citing a refused item, nor the agent model, which is the person’s choice) goes back to its builder conversation (`drafting`) with the adjustment request written from the error, and that conversation runs a turn on the server, `concurrency` at a time (like "Preparar tudo"). Returns `reopened` (key and the problems sent), `skipped` (key and why) and `started` (the conversations queued). Writes nothing to the catalog: the new draft goes back to review. Administrators only',
+        parameters: [...jobParams],
+        requestBody: {
+          required: false,
+          ...json({ ...importApplySelection, properties: { ...importApplySelection.properties, concurrency: { type: 'integer', minimum: 1, maximum: 5 } } }),
+        },
+        responses: {
+          '200': { description: 'What went back to the builder', ...json(envelope({ type: 'object' })) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '409': { description: '`import_job_outdated` or `import_source_changed`', ...json(failureEnvelope) },
+          '422': failures['422'],
+        },
+      },
+    },
     '/projects/{id}/import/jobs/{job}/apply': {
       post: {
         summary:

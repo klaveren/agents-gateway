@@ -204,6 +204,37 @@ describe('ImportApply — gravar no catálogo', () => {
     expect(member.querySelector('[data-test="apply-write"]')).toBeNull()
   })
 
+  it('"Corrigir com o construtor": só o recusado por problema dele; confirma (tokens), manda as chaves e relê o plano', async () => {
+    next = preview({
+      items: [
+        { ref: 'spec/arq', kind: 'spec', id: 'arq', op: 'error', widenings: [], attentions: [], issues: [{ field: 'summary', message: 'at most 300 characters' }], brokenRefs: [] },
+        {
+          ref: 'agent/maya',
+          kind: 'agent',
+          id: 'maya',
+          op: 'error',
+          widenings: [],
+          attentions: [],
+          issues: [{ field: 'providers', message: 'at least one provider' }],
+          brokenRefs: [],
+        },
+      ],
+    })
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path.endsWith('/apply/plan')) return next
+      if (path.endsWith('/apply/fix')) return { reopened: [{ key: 'spec:arq', issues: ['x'] }], skipped: [], started: ['c1'] }
+      return undefined
+    })
+    const host = await mount()
+    expect(host.querySelectorAll('[data-test="apply-fix-one"]')).toHaveLength(1)
+    await click(host.querySelector('[data-test="apply-fix-all"]'))
+    expect(bodies('/projects/alfa/import/jobs/j1/apply/fix')).toEqual([])
+    await click(host.querySelector('[data-test="apply-fix-start"]'))
+    expect(bodies('/projects/alfa/import/jobs/j1/apply/fix')).toEqual([{ batchId: 'b1', keys: ['spec:arq'] }])
+    expect(host.querySelector('[data-test="apply-fix-result"]')!.textContent).toContain('1 item(ns) voltaram ao construtor (1 conversa(s) rodando)')
+    expect(bodies('/projects/alfa/import/jobs/j1/apply/plan')).toHaveLength(2)
+  })
+
   it('"Gravar só os prontos": refaz o plano sem os bloqueados, lista o que ficou de fora e libera o botão; volta a ver todos', async () => {
     next = preview({
       items: [
