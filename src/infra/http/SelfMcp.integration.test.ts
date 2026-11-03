@@ -41,6 +41,7 @@ describe('MCP do próprio gateway (integração)', () => {
   let stop: () => void
   let admin = ''
   let member = ''
+  const guidance = new GuidanceService(new SqliteGuidanceRepository(), () => false)
 
   const call = async (path: string, init: { method?: string; body?: unknown; token?: string } = {}) => {
     const res = await fetch(`${base}${path}`, {
@@ -87,7 +88,7 @@ describe('MCP do próprio gateway (integração)', () => {
       packages,
       hooks,
       undefined,
-      new GuidanceController({ guidance: new GuidanceService(new SqliteGuidanceRepository(), () => false), proof: makeAuth().proof }),
+      new GuidanceController({ guidance, proof: makeAuth().proof }),
     ).start(0)
     await new Promise((resolve) => server.once('listening', resolve))
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`
@@ -149,6 +150,7 @@ describe('MCP do próprio gateway (integração)', () => {
       'install_package',
       'move_rule',
       'remove_package',
+      'resolve_import_issue',
       'save_agent',
       'save_doc',
       'save_hook',
@@ -262,6 +264,33 @@ describe('MCP do próprio gateway (integração)', () => {
     const saved = (await client.callTool({ name: 'save_doc', arguments: { id: 'enorme', kind: 'spec', title: 'Enorme', summary: 'grande', body: big } })) as { isError?: boolean }
     assert.ok(!saved.isError, JSON.stringify(saved).slice(0, 300))
     assert.strictEqual(json(await client.callTool({ name: 'get_doc', arguments: { id: 'enorme' } })).body, big)
+  })
+
+  it('get_doc traz os problemas da importação, e resolve_import_issue tira um (pela mesma rota da tela)', async () => {
+    guidance.createDoc(
+      {
+        id: 'importado',
+        kind: 'spec',
+        title: 'Importado',
+        summary: '',
+        body: 'x',
+        importIssues: [
+          { code: 'link-missing', message: 'cita memoria, que não existe', target: 'memoria', link: 'attach' },
+          { code: 'link-pending', message: 'vínculo com api pendente', target: 'api', link: 'attach' },
+        ],
+      },
+      'import',
+    )
+    const client = await connect(admin)
+    const codes = async () => (json(await client.callTool({ name: 'get_doc', arguments: { id: 'importado' } })).importIssues ?? []).map((one: { code: string }) => one.code)
+    assert.deepStrictEqual(await codes(), ['link-missing', 'link-pending'])
+    const resolved = (await client.callTool({ name: 'resolve_import_issue', arguments: { kind: 'doc', id: 'importado', code: 'link-missing', target: 'memoria' } })) as {
+      isError?: boolean
+    }
+    assert.ok(!resolved.isError, JSON.stringify(resolved))
+    assert.deepStrictEqual(await codes(), ['link-pending'])
+    const again = (await client.callTool({ name: 'resolve_import_issue', arguments: { kind: 'doc', id: 'importado', code: 'link-missing' } })) as { isError?: boolean }
+    assert.strictEqual(again.isError, true)
   })
 
   it('save_rule numera, move_rule reordena (uma posição por chamada) e delete_rule renumera', async () => {

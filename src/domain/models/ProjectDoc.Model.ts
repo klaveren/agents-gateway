@@ -1,3 +1,5 @@
+import type { IImportProblem } from './ImportProblem.Model'
+
 /**
  * Um DOCUMENTO de referência em markdown: uma spec (como algo deve ser), uma ADR (uma decisão de arquitetura e o
  * porquê) ou CONHECIMENTO (o estudo de um tema, com as fontes — a base sólida antes de escrever spec, skill ou ADR). O
@@ -32,6 +34,8 @@ export interface IProjectDoc {
    * Sempre um subconjunto de `docIds`. Ausente ou vazio = todos inteiros — a mesma semântica de `IResource.docRefs`.
    */
   docRefs?: string[]
+  /** Os problemas da importação que ficaram no documento (ver `ImportProblem.Model`). Ausente = nenhum. */
+  importIssues?: IImportProblem[]
   createdAt: Date
   updatedAt: Date
   updatedBy?: string

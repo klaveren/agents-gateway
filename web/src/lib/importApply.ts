@@ -1,6 +1,7 @@
 import { api, ApiError } from '@/lib/api'
 import type { IDiffHunk, IIssue, IWideningRef, TCatalogKind } from '@/lib/catalogHistory'
 import type { TImportItemState, TInventoryKind } from '@/lib/importer'
+import type { IImportIssue } from '@/lib/types'
 
 /**
  * A GRAVAÇÃO DO IMPORTADOR na tela: a prévia (`apply/plan`) e o gravar (`apply`) de um trabalho de importação (ver
@@ -72,7 +73,10 @@ export interface IApplyPreview {
   repository: string
   head?: string
   scope: string
-  items: Array<{ key: string; kind: string; refs: string[] }>
+  /** `issues`: os problemas da importação com que cada documento é gravado — não bloqueiam, ficam no artefato. */
+  items: Array<{ key: string; kind: string; refs: string[]; issues?: Array<IImportIssue & { ref: string }> }>
+  /** Os artefatos do catálogo que recebem de volta um vínculo pendente (o alvo entra agora), e os problemas que saem. */
+  resolved?: Array<{ ref: string; issues: IImportIssue[] }>
   skipped: Array<{ key: string; reason: string }>
   agents: IApplyAgent[]
   models: Array<{ provider: string; models: string[] }>
@@ -116,6 +120,20 @@ export function previewApply(projectId: string, jobId: string, selection: IApply
 
 export function applyToCatalog(projectId: string, jobId: string, selection: IApplySelection, planHash: string, confirm: string[]): Promise<IApplyResult> {
   return api<IApplyResult>(`${jobPath(projectId, jobId)}/apply`, { method: 'POST', body: { ...selection, planHash, ...(confirm.length ? { confirm } : {}) } })
+}
+
+/** Os problemas da importação de cada documento do plano (`ref` → os problemas), sem repetir o documento de dois itens. */
+export function importIssuesByRef(preview: Pick<IApplyPreview, 'items'>): Map<string, IImportIssue[]> {
+  const byRef = new Map<string, IImportIssue[]>()
+  const seen = new Set<string>()
+  for (const item of preview.items)
+    for (const { ref, ...issue } of item.issues ?? []) {
+      const key = `${ref}\0${issue.code}\0${issue.target ?? ''}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      byRef.set(ref, [...(byRef.get(ref) ?? []), issue])
+    }
+  return byRef
 }
 
 /** O que "Corrigir com o construtor" devolve: o que voltou à conversa (com os problemas enviados), o que não, e as conversas postas a rodar. */

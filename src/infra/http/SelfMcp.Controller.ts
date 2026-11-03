@@ -278,7 +278,11 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
 
   server.registerTool(
     'get_agent',
-    { description: 'One agent in full, system prompt included.', inputSchema: { agentId: z.string() }, annotations: { readOnlyHint: true } },
+    {
+      description: 'One agent in full, system prompt included, and its importIssues (problems recorded when it was imported; fix them, then resolve_import_issue).',
+      inputSchema: { agentId: z.string() },
+      annotations: { readOnlyHint: true },
+    },
     async ({ agentId }) => reply(await api('GET', `/agents/${encodeURIComponent(agentId)}`)),
   )
 
@@ -360,7 +364,8 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   server.registerTool(
     'get_doc',
     {
-      description: 'One spec or ADR in full, markdown body included, with its attachments (docIds, and docRefs: those by reference).',
+      description:
+        'One spec or ADR in full, markdown body included, with its attachments (docIds, and docRefs: those by reference) and its importIssues (problems recorded when it was imported; fix them, then resolve_import_issue).',
       inputSchema: { id: z.string() },
       annotations: { readOnlyHint: true },
     },
@@ -686,6 +691,24 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
       inputSchema: { agentId: z.string(), skills: z.array(z.string()), commands: z.array(z.string()) },
     },
     async ({ agentId, ...resources }) => reply(await api('PUT', `/agents/${encodeURIComponent(agentId)}/resources`, { body: resources })),
+  )
+
+  server.registerTool(
+    'resolve_import_issue',
+    {
+      description:
+        'Mark an import issue as resolved: it leaves the importIssues of the doc (spec, ADR, knowledge), skill, command or agent. Fix the cause first (attach the right document, adjust the text, release the skill). `target` picks one issue; absent = every issue with that code. Recorded in the catalog history.',
+      inputSchema: {
+        kind: z.enum(['doc', 'resource', 'agent']).describe('doc = spec, ADR or knowledge; resource = skill or command'),
+        id: z.string(),
+        code: z.string().describe('The issue code, e.g. link-not-document, link-pending, skill-missing'),
+        target: z.string().optional(),
+      },
+    },
+    async ({ kind, id, code, target }) => {
+      const base = kind === 'agent' ? '/agents' : kind === 'resource' ? '/resources' : '/docs'
+      return reply(await api('POST', `${base}/${encodeURIComponent(id)}/import-issues/resolve`, { body: { code, ...(target ? { target } : {}) } }))
+    },
   )
 
   server.registerTool(

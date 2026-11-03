@@ -3,6 +3,7 @@ import { ICatalogDocument, parseProtocolItemId } from '@domain/Catalog.Document'
 import type { IAgentRules } from '@domain/Agent.Policy'
 import { CatalogRestoreInvalidError } from '@domain/errors/Domain.Error'
 import { IAgent } from '@domain/models/Agent.Model'
+import { problemList } from '@domain/models/ImportProblem.Model'
 import { IMcpContainer, IMcpProcess, IMcpServerConfig, mcpServerKey, TMcpAuth, TMcpKind, TMcpTransport } from '@domain/models/McpServer.Model'
 import { TDocKind } from '@domain/models/ProjectDoc.Model'
 import { ALL_RESOURCES, IAgentResources, TResourceKind } from '@domain/models/Resource.Model'
@@ -183,6 +184,8 @@ export class CatalogWriter implements ICatalogWriter {
       docRefs: list(body.docRefs),
       // A lista de arquivos da versão (o conteúdo mora no depósito por sha256: reverter traz o de antes).
       files: filesOf(body.files),
+      // O documento é a verdade inteira: sem a lista, nenhum problema.
+      importIssues: problemList(body.importIssues),
     }
     return {
       commit: (by) => {
@@ -218,6 +221,7 @@ export class CatalogWriter implements ICatalogWriter {
       body: text(body.body),
       docIds: list(body.docIds),
       docRefs: list(body.docRefs),
+      importIssues: problemList(body.importIssues),
     }
     return {
       commit: (by) => {

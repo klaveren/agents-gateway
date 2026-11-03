@@ -20,6 +20,8 @@ const SOURCES: Record<string, string> = {
   '.agents/agents/maya/prompt.md': 'Você é a Maya.\nContexto em `.agents/specs/arq.md`.\n',
   '.agents/agents/maya/triggers/01-revisar.md': 'Quando pedirem revisão, use a skill revisar.\n',
   '.agents/rules/commits.md': 'Use mensagens claras.\n',
+  '.agents/specs/guia.md': '# Guia\nVeja `.agents/commands/lint.md`, `.agents/memoria.md` e `.agents/specs/longa.md`.\n',
+  '.agents/specs/longa.md': '# Longa\n',
 }
 
 const sha = (text: string) => createHash('sha256').update(text).digest('hex')
@@ -59,6 +61,8 @@ async function setup(options: { wrapWriter?: (writer: ICatalogWriter) => ICatalo
     item('agent:maya', '.agents/agents/maya/prompt.md', [arq, { path: '.agents/skills/revisar/SKILL.md', item: 'skill:revisar' }]),
     item('trigger:maya/revisar', '.agents/agents/maya/triggers/01-revisar.md', [], 'agent:maya'),
     item('rule:commits', '.agents/rules/commits.md'),
+    item('spec:guia', '.agents/specs/guia.md'),
+    item('spec:longa', '.agents/specs/longa.md'),
   ]
   if (options.withFiles) {
     // A skill com o script dela (vai como arquivo, fora do rascunho); a pasta scripts/ do agente, que a varredura deixa de fora.
@@ -83,7 +87,7 @@ async function setup(options: { wrapWriter?: (writer: ICatalogWriter) => ICatalo
       repository: 'app',
       scannedAt: new Date('2026-10-30T10:00:00.000Z'),
       formats: ['agents-dir', 'opencode'],
-      totals: { files: 6, items: 6, tokens: 6, byKind: {} },
+      totals: { files: 8, items: 8, tokens: 8, byKind: {} },
       ignored: { dirs: {}, binaries: [], links: [], patterns: [] },
     },
     items: items.map((entry) => ({ key: entry.key, item: entry, state: 'pending', fingerprint: `f-${entry.key}`, drafts: [] })),
@@ -107,6 +111,16 @@ async function setup(options: { wrapWriter?: (writer: ICatalogWriter) => ICatalo
   await propose(['agent:maya', 'trigger:maya/revisar'], {
     'agent:maya': { meta: { id: 'maya', name: 'Maya' }, ops: [cite('arq', 'initialContext')] },
     'trigger:maya/revisar': { meta: { id: 'revisar', when: 'pedirem revisão' } },
+  })
+  // O guia cita um command do catálogo, um arquivo de memória (nada no catálogo) e outra spec, por referência. ⚠️ O
+  // construtor de hoje já recusa vínculo com item do trabalho que não é documento; o rascunho antigo não passou por isso.
+  const quote = (text: string, target: string, link: string) => ({ op: 'linkCitation', text, target, link })
+  await propose(['spec:guia', 'spec:longa'], {
+    'spec:guia': {
+      meta: { id: 'guia', title: 'Guia', summary: 'O guia' },
+      ops: [quote('.agents/commands/lint.md', 'lint', 'attach'), quote('.agents/memoria.md', 'memoria', 'attach'), quote('.agents/specs/longa.md', 'longa', 'reference')],
+    },
+    'spec:longa': { meta: { id: 'longa', title: 'Longa', summary: 'A longa' } },
   })
 
   // O depósito em memória: o conteúdo por sha, e a pasta de cada recurso (o que a gravação escreveria).
@@ -290,7 +304,7 @@ describe('ImportApplyUseCase — a gravação do importador pelo catálogo', () 
     assert.ok(preview.agents[0].notes.some((note) => note.includes('modelo')))
   })
 
-  it('só os prontos (`ready`): o bloqueado fica de fora com o motivo, e com ele o que depende dele; o resto grava', async () => {
+  it('só os prontos (`ready`): o bloqueado fica de fora com o motivo; o resto grava', async () => {
     const { apply, repository } = await setup()
     const selection = { keys: ALL.keys, ready: true }
     const preview = await apply.preview('alfa', 'j1', selection)
@@ -319,17 +333,137 @@ describe('ImportApplyUseCase — a gravação do importador pelo catálogo', () 
     )
     const all = await apply.preview('alfa', 'j1', { models: MODEL })
     assert.deepStrictEqual(all.skipped, [])
-    assert.strictEqual(all.items.length, 5)
+    assert.strictEqual(all.items.length, 7)
   })
 
-  it('o que falta vem com o item do trabalho que o produz: a skill sem a spec selecionada aponta spec:arq (aprovada)', async () => {
+  it('a skill sem a spec selecionada NÃO bloqueia: entra sem o vínculo, com `link-pending` (nada falta no plano)', async () => {
     const { apply } = await setup()
     const preview = await apply.preview('alfa', 'j1', { keys: ['skill:revisar'] })
-    assert.deepStrictEqual(preview.missing, [
-      { target: 'doc', id: 'arq', from: ['skill/revisar'], fromKeys: ['skill:revisar'], item: { key: 'spec:arq', kind: 'spec', state: 'approved', path: '.agents/specs/arq.md' } },
+    assert.deepStrictEqual(preview.missing, [])
+    assert.deepStrictEqual(
+      preview.plan.items.map((item) => [item.ref, item.op]),
+      [['skill/revisar', 'create']],
+    )
+    assert.deepStrictEqual(preview.items[0].issues, [
+      {
+        code: 'link-pending',
+        message: 'vínculo com arq pendente: arq ainda não está no catálogo (volta sozinho quando arq for importado)',
+        target: 'arq',
+        link: 'attach',
+        ref: 'skill/revisar',
+      },
     ])
-    // Com a spec no pacote, nada falta.
-    assert.deepStrictEqual((await apply.preview('alfa', 'j1', { keys: ['skill:revisar', 'spec:arq'] })).missing, [])
+    // Com a spec no pacote, o vínculo vale.
+    const both = await apply.preview('alfa', 'j1', { keys: ['skill:revisar', 'spec:arq'] })
+    assert.deepStrictEqual([both.missing, both.items.map((item) => item.issues)], [[], [undefined, undefined]])
+  })
+})
+
+describe('ImportApplyUseCase — os problemas da importação (não bloqueiam, ficam no artefato)', () => {
+  const write = async (apply: ImportApplyUseCase, selection: IImportApplySelection) => {
+    const preview = await apply.preview('alfa', 'j1', selection)
+    const result = await apply.apply('alfa', 'j1', { ...selection, planHash: preview.plan.planHash, confirm: preview.plan.widenings.map((one) => one.key) }, ADMIN)
+    return { preview, result }
+  }
+
+  it('o vínculo com o que não é documento (um command), com o que não existe, e com o doc do trabalho fora da seleção: grava sem ele, com o problema no doc', async () => {
+    const { apply, stack } = await setup()
+    stack.guidance.createResource({ id: 'lint', kind: 'command', projectId: 'alfa', description: 'Roda o lint', body: 'lint' }, 'ana')
+    const { preview, result } = await write(apply, { keys: ['spec:guia'] })
+    assert.deepStrictEqual(
+      preview.plan.items.map((item) => [item.ref, item.op]),
+      [['spec/guia', 'create']],
+    )
+    assert.strictEqual(result.batch?.status, 'applied')
+    const guia = stack.guidance.doc('guia')
+    assert.deepStrictEqual([guia.docIds, guia.docRefs], [[], undefined])
+    assert.deepStrictEqual(
+      guia.importIssues?.map((issue) => [issue.code, issue.target, issue.link]),
+      [
+        ['link-not-document', 'lint', 'attach'],
+        ['link-missing', 'memoria', 'attach'],
+        ['link-pending', 'longa', 'reference'],
+      ],
+    )
+    assert.match(guia.importIssues![0].message, /lint, que é um command: não vira vínculo/)
+    // A citação fica no texto; o problema vai no documento canônico (histórico, export).
+    assert.match(guia.body, /Veja `lint`, `memoria` e `longa`/)
+    assert.strictEqual((stack.reader.read('spec', 'guia')!.body.importIssues as unknown[]).length, 3)
+  })
+
+  it('a cascata não segura ninguém: o bloqueado de verdade fica de fora (`ready`), quem o cita entra com `link-pending`; sem `ready`, só ele é erro', async () => {
+    const { apply, stack } = await setup()
+    // Um doc `longa` de outro projeto: o id já existe fora do escopo — conflito, bloqueio de verdade.
+    stack.projects.create({ id: 'beta', name: 'Beta' }, 'ana')
+    stack.guidance.createDoc({ id: 'longa', kind: 'spec', projectId: 'beta', title: 'Longa', summary: 'De outro', body: 'x' }, 'ana')
+    const keys = ['spec:guia', 'spec:longa']
+    const all = await apply.preview('alfa', 'j1', { keys })
+    assert.deepStrictEqual(
+      all.plan.items.map((item) => [item.ref, item.op]),
+      [
+        ['spec/guia', 'create'],
+        ['spec/longa', 'conflict'],
+      ],
+    )
+    const ready = await apply.preview('alfa', 'j1', { keys, ready: true })
+    assert.deepStrictEqual(
+      ready.heldBack.map((one) => one.key),
+      ['spec:longa'],
+    )
+    const issue = ready.items.find((item) => item.key === 'spec:guia')!.issues!.find((one) => one.target === 'longa')
+    // ⚖️ Existe no catálogo, mas em outro projeto: não é pendente, é de escopo.
+    assert.deepStrictEqual([issue?.code, issue?.link], ['link-scope', 'reference'])
+  })
+
+  it('auto-resolve: a importação seguinte que grava o doc pendente devolve o vínculo (com o histórico) e tira o problema', async () => {
+    const { apply, stack } = await setup()
+    await write(apply, { keys: ['skill:revisar'] })
+    assert.deepStrictEqual(stack.guidance.resource('revisar').docIds, [])
+    const { preview, result } = await write(apply, { keys: ['spec:arq'] })
+    assert.deepStrictEqual(preview.resolved, [
+      {
+        ref: 'skill/revisar',
+        issues: [
+          { code: 'link-pending', message: 'vínculo com arq pendente: arq ainda não está no catálogo (volta sozinho quando arq for importado)', target: 'arq', link: 'attach' },
+        ],
+      },
+    ])
+    assert.deepStrictEqual(
+      result.applied.map((step) => step.ref),
+      ['spec/arq', 'skill/revisar'],
+    )
+    const skill = stack.guidance.resource('revisar')
+    assert.deepStrictEqual([skill.docIds, skill.importIssues], [['arq'], undefined])
+    const revisions = stack.repository.revisions('skill', 'revisar')
+    assert.deepStrictEqual(
+      revisions.map((revision) => [revision.op, revision.source]),
+      [
+        ['import', 'import'],
+        ['import', 'import'],
+      ],
+    )
+    // O guia com `longa` por referência: volta em docIds E em docRefs.
+    stack.guidance.createResource({ id: 'lint', kind: 'command', projectId: 'alfa', description: 'Roda o lint', body: 'lint' }, 'ana')
+    await write(apply, { keys: ['spec:guia'] })
+    await write(apply, { keys: ['spec:longa'] })
+    const guia = stack.guidance.doc('guia')
+    assert.deepStrictEqual([guia.docIds, guia.docRefs, guia.importIssues?.map((one) => one.code)], [['longa'], ['longa'], ['link-not-document', 'link-missing']])
+  })
+
+  it('a skill liberada que ainda não está no catálogo vira `skill-missing` no agente; gravada depois, entra em `resources.skills` (com a ampliação confirmada)', async () => {
+    const { apply, stack } = await setup()
+    const first = await write(apply, { keys: ['spec:arq', 'agent:maya', 'trigger:maya/revisar'], models: MODEL })
+    assert.deepStrictEqual(first.preview.agents[0].pendingSkills, ['revisar'])
+    const maya = () => stack.agents.entry('maya')!.agent
+    assert.deepStrictEqual(
+      maya().importIssues?.map((one) => [one.code, one.target, one.link]),
+      [['skill-missing', 'revisar', 'skill']],
+    )
+    assert.deepStrictEqual(stack.reader.read('agent', 'maya')!.body.resources, { skills: [], commands: [] })
+    const second = await write(apply, { keys: ['skill:revisar'] })
+    assert.ok(second.preview.plan.widenings.some((one) => one.key === 'agent/maya@alfa#resources.skills+revisar'))
+    assert.deepStrictEqual(stack.reader.read('agent', 'maya')!.body.resources, { skills: ['revisar'], commands: [] })
+    assert.strictEqual(maya().importIssues, undefined)
   })
 })
 

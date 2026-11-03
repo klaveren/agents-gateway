@@ -23,6 +23,8 @@ import { IAgentSettings } from '@domain/models/Settings.Model'
 import { withCaller } from '@infra/mcp/Caller.Identity'
 import { ICallerProof } from './Caller.Proof'
 import { TEST_AGENTS, testAgentCatalog } from '../../testing/Agents.Fixture'
+import { AgentCatalog } from '@application/Agent.Catalog'
+import { NullAgentRepository } from '@infra/persistence/Null.AgentRepository'
 
 interface IBody {
   ok: boolean
@@ -1061,6 +1063,35 @@ describe('AgentController', () => {
       assert.strictEqual(refused.statusCode, 422)
       await as(ADMIN, controller, (res) => controller.updateAgent(mockRequest({ params, body: { ...body, env: null } }), res))
       assert.strictEqual(await envOf(), undefined)
+    })
+
+    it('os problemas da importação: o admin vê (a contagem na lista, o texto no detalhe); editar mantém; "resolvido" tira', async () => {
+      const repository = new NullAgentRepository()
+      repository.seedOnce(TEST_AGENTS, 'teste')
+      const agents = new AgentCatalog(repository)
+      const controller = controllerWith({}, toolsCatalog(), proof, { agents })
+      const params = { agentId: 'juridico' }
+      await as(ADMIN, controller, (res) => controller.createAgent(mockRequest({ body }), res))
+      const issue = { code: 'skill-missing' as const, message: 'libera a skill revisar, que ainda não está no catálogo', target: 'revisar', link: 'skill' as const }
+      repository.save({ ...agents.entry('juridico')!.agent, importIssues: [issue] }, 'import')
+
+      const detail = async () => ((await as(ADMIN, controller, (res) => controller.getAgent(mockRequest({ params }), res))).body?.result ?? {}) as { importIssues?: unknown }
+      assert.deepStrictEqual((await detail()).importIssues, [issue])
+      const listed = async (who: typeof ADMIN | typeof MEMBER) =>
+        ((await as(who, controller, (res) => controller.getAgents(mockRequest(), res))).body?.result as Array<Record<string, unknown>>).find((agent) => agent.id === 'juridico')
+      assert.strictEqual((await listed(ADMIN))?.importIssueCount, 1)
+      assert.strictEqual('importIssueCount' in ((await listed(MEMBER)) ?? {}), false)
+
+      await as(ADMIN, controller, (res) => controller.updateAgent(mockRequest({ params, body: { ...body, name: 'Jurídico 2' } }), res))
+      assert.deepStrictEqual((await detail()).importIssues, [issue])
+
+      const missing = await as(ADMIN, controller, (res) => controller.resolveAgentImportIssue(mockRequest({ params, body: { code: 'link-pending' } }), res))
+      assert.strictEqual(missing.statusCode, 404)
+      const resolved = await as(ADMIN, controller, (res) => controller.resolveAgentImportIssue(mockRequest({ params, body: { code: 'skill-missing', target: 'revisar' } }), res))
+      assert.strictEqual(resolved.statusCode, 200)
+      assert.strictEqual('importIssues' in ((resolved.body?.result ?? {}) as object), false)
+      assert.strictEqual((await detail()).importIssues, undefined)
+      assert.strictEqual((await as(MEMBER, controller, (res) => controller.resolveAgentImportIssue(mockRequest({ params, body: { code: 'x' } }), res))).statusCode, 404)
     })
 
     it('editar troca o agente criado; apagar tira da lista', async () => {

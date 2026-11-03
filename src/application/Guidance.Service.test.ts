@@ -870,3 +870,52 @@ describe('GuidanceService', () => {
     })
   })
 })
+
+describe('GuidanceService — os problemas da importação', () => {
+  const build = () => new GuidanceService(new SqliteGuidanceRepository(':memory:'), (id) => ['xpto'].includes(id))
+  const issue = { code: 'link-missing' as const, message: 'cita memoria, que não existe', target: 'memoria', link: 'attach' as const }
+  const pending = { code: 'link-pending' as const, message: 'vínculo com api pendente', target: 'api', link: 'attach' as const }
+
+  it('⛔ a tela e a API continuam recusando vínculo ruim: só o importador grava sem ele', () => {
+    const service = build()
+    assert.throws(
+      () => service.createDoc({ id: 'guia', kind: 'spec', title: 'Guia', summary: '', body: 'x', projectId: 'xpto', docIds: ['memoria'] }, 'root'),
+      (error: unknown) => error instanceof InvalidGuidanceError && error.issues.some((one) => one.message === 'no such document: memoria'),
+    )
+    assert.throws(
+      () => service.createResource({ id: 'lint', kind: 'command', description: 'Lint', body: 'x', docIds: ['memoria'] }, 'root'),
+      (error: unknown) => error instanceof InvalidGuidanceError,
+    )
+  })
+
+  it('a edição normal mantém os problemas; "resolvido" tira o que casa (código e alvo), e sem nenhum que case é 404', () => {
+    const service = build()
+    service.createDoc({ id: 'guia', kind: 'spec', title: 'Guia', summary: '', body: 'x', projectId: 'xpto', importIssues: [issue, pending] }, 'import')
+    assert.deepStrictEqual(service.updateDoc('guia', { title: 'Guia novo' }, 'root').importIssues, [issue, pending])
+    assert.deepStrictEqual(service.resolveDocIssue('guia', { code: 'link-pending', target: 'api' }, 'root').importIssues, [issue])
+    assert.throws(() => service.resolveDocIssue('guia', { code: 'link-pending' }, 'root'), GuidanceNotFoundError)
+    assert.strictEqual(service.resolveDocIssue('guia', { code: 'link-missing' }, 'root').importIssues, undefined)
+    assert.strictEqual(service.doc('guia').importIssues, undefined)
+
+    service.createResource({ id: 'lint', kind: 'command', description: 'Lint', body: 'x', importIssues: [issue] }, 'import')
+    assert.deepStrictEqual(service.updateResource('lint', { description: 'Roda o lint' }, 'root').importIssues, [issue])
+    assert.strictEqual(service.resolveResourceIssue('lint', { code: 'link-missing', target: 'memoria' }, 'root').importIssues, undefined)
+    assert.strictEqual(service.resource('lint').importIssues, undefined)
+  })
+
+  it('o agente lê os problemas no read_doc e no use_resource (para resolvê-los)', () => {
+    const service = new GuidanceService(
+      new SqliteGuidanceRepository(':memory:'),
+      () => true,
+      (id) => (id === 'maya' ? { id } : undefined),
+    )
+    const doc = service.createDoc({ id: 'guia', kind: 'spec', title: 'Guia', summary: '', body: 'corpo', importIssues: [issue] }, 'import')
+    const text = service.docText(doc)
+    assert.match(text, /## Problemas da importação/)
+    assert.match(text, /- `link-missing` \(memoria\): cita memoria, que não existe/)
+    assert.match(text, /resolve_import_issue/)
+    assert.doesNotMatch(service.docText(service.createDoc({ id: 'limpo', kind: 'spec', title: 'Limpo', summary: '', body: 'corpo' }, 'root')), /Problemas da importação/)
+    service.createResource({ id: 'revisar', kind: 'skill', description: 'Revisa', body: 'passos', importIssues: [issue] }, 'import')
+    assert.match(service.loadResource('skill', 'revisar', 'maya') ?? '', /## Problemas da importação/)
+  })
+})

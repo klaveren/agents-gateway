@@ -297,3 +297,31 @@ describe('ImportApply — gravar no catálogo', () => {
     expect(all.querySelector('[data-test="missing-view"]')).not.toBeNull()
   })
 })
+
+describe('ImportApply — os problemas com que cada item entra (não bloqueiam)', () => {
+  beforeEach(() => {
+    vi.mocked(api).mockReset()
+  })
+  afterEach(() => {
+    app?.unmount()
+    app = undefined
+    document.body.innerHTML = ''
+  })
+
+  it('a lista amarela por documento, separada dos erros; o que volta (vínculo pendente) aparece à parte', async () => {
+    const base = preview()
+    next = {
+      ...base,
+      items: [{ ...base.items[0], issues: [{ code: 'link-pending', message: 'vínculo com api pendente', target: 'api', link: 'attach', ref: 'spec/arq' }] }, base.items[1]],
+      resolved: [{ ref: 'skill/revisar', issues: [{ code: 'link-pending', message: 'vínculo com arq pendente', target: 'arq', link: 'attach' }] }],
+    }
+    vi.mocked(api).mockImplementation(async () => next as never)
+    const host = await mount()
+    const rows = [...host.querySelectorAll('[data-test="apply-items"] > li')]
+    expect(rows[0].querySelector('[data-test="apply-item-issues"]')?.textContent).toContain('vínculo com api pendente')
+    expect(rows[1].querySelector('[data-test="apply-item-issues"]')).toBeNull()
+    expect(host.querySelector('[data-test="apply-resolved"]')?.textContent).toContain('skill/revisar')
+    // Não bloqueia: o botão de gravar continua ativo.
+    expect(host.querySelector('[data-test="apply-write"]')!.hasAttribute('disabled')).toBe(false)
+  })
+})

@@ -8,6 +8,7 @@ import {
   blocking,
   classifyApplyFailure,
   fixWithBuilder,
+  importIssuesByRef,
   OP_LABEL,
   ownIssue,
   PHASE_LABEL,
@@ -70,6 +71,9 @@ const changing = computed(() => (plan.value?.items ?? []).filter((item) => item.
 const blockers = computed(() => (plan.value?.items ?? []).filter(blocking))
 const missing = computed(() => preview.value?.missing ?? [])
 const heldBack = computed(() => preview.value?.heldBack ?? [])
+/** Os problemas da importação com que cada documento entra (não bloqueiam: ficam no artefato). */
+const issuesByRef = computed(() => (preview.value ? importIssuesByRef(preview.value) : new Map()))
+const resolved = computed(() => preview.value?.resolved ?? [])
 
 function setReady(on: boolean) {
   ready.value = on
@@ -217,11 +221,11 @@ const partLabel = (part?: string) => (part === 'record' ? ' (registro)' : part =
       </p>
       <div v-if="blockers.length && !ready" class="flex flex-wrap items-center gap-2 text-xs" data-test="apply-ready-offer">
         <button type="button" class="btn btn-secondary btn-sm" :disabled="loading" data-test="apply-ready" @click="setReady(true)">Gravar só os prontos</button>
-        <span class="text-zinc-500">deixa de fora os bloqueados e o que depende deles; eles continuam aprovados, para gravar depois.</span>
+        <span class="text-zinc-500">deixa de fora os bloqueados (eles continuam aprovados, para gravar depois); quem só os cita entra sem o vínculo, com o problema registrado nele.</span>
       </div>
       <section v-if="ready" class="flex flex-col gap-1 rounded-lg border border-amber-500/40 p-2 text-xs" data-test="apply-held">
         <p class="flex flex-wrap items-center gap-2 text-amber-200">
-          {{ heldBack.length }} item(ns) de fora por bloqueio (o deles ou o de quem citam)
+          {{ heldBack.length }} item(ns) de fora por bloqueio
           <button type="button" class="btn btn-ghost btn-sm ml-auto" :disabled="loading" data-test="apply-ready-off" @click="setReady(false)">Ver todos de novo</button>
         </p>
         <ul class="scroll-thin flex max-h-48 flex-col gap-0.5 overflow-y-auto">
@@ -299,9 +303,24 @@ const partLabel = (part?: string) => (part === 'record' ? ' (registro)' : part =
           <ul v-if="item.brokenRefs.length" class="list-disc pl-5 text-amber-200">
             <li v-for="(broken, index) in item.brokenRefs" :key="index">{{ broken.message }}</li>
           </ul>
+          <div v-if="issuesByRef.get(item.ref)?.length" class="rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-1 text-amber-200" data-test="apply-item-issues">
+            <p>Entra com {{ issuesByRef.get(item.ref)!.length }} problema(s) da importação (não bloqueia; fica registrado no artefato):</p>
+            <ul class="list-disc pl-5">
+              <li v-for="(issue, index) in issuesByRef.get(item.ref)" :key="index" data-test="apply-item-issue">{{ issue.message }}</li>
+            </ul>
+          </div>
           <DiffView v-if="item.diff && openDiff.has(item.ref)" :hunks="item.diff.hunks" />
         </li>
       </ul>
+
+      <section v-if="resolved.length" class="flex flex-col gap-1 rounded-lg border border-emerald-500/30 p-2 text-xs" data-test="apply-resolved">
+        <p class="font-medium text-emerald-200">Vínculos pendentes que voltam ({{ resolved.length }}): o citado entra nesta gravação.</p>
+        <ul class="flex flex-col gap-0.5">
+          <li v-for="one in resolved" :key="one.ref" class="text-zinc-400">
+            <code class="text-zinc-200">{{ one.ref }}</code> — {{ one.issues.map((issue) => issue.target ?? issue.code).join(', ') }}
+          </li>
+        </ul>
+      </section>
 
       <section v-if="missing.length" class="flex flex-col gap-2 rounded-lg border border-amber-500/40 p-2 text-xs" data-test="apply-missing">
         <p class="font-medium text-amber-200">Faltam no catálogo ({{ missing.length }}): o que é citado precisa existir antes, ou entrar junto nesta gravação.</p>

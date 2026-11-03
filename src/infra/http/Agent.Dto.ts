@@ -1,3 +1,4 @@
+import type { IImportProblem } from '@domain/models/ImportProblem.Model'
 import type { IResourceFile } from '@domain/models/ResourceFile.Model'
 import type { IPermissionRule } from '@domain/Permission.Policy'
 import type { IAgentFallback } from '@domain/Fallback.Policy'
@@ -92,6 +93,8 @@ export interface IAgentDetailDto extends IAgentDto {
   env?: Record<string, string>
   /** Os arquivos da pasta do agente (caminho, sha256, tamanho). */
   files?: IResourceFile[]
+  /** Os problemas da importação que ficaram no agente (ver `ImportProblem.Model`). */
+  importIssues?: IImportProblem[]
   updatedAt?: Date
   updatedBy?: string
 }
@@ -161,6 +164,7 @@ export function toAgentDetailDto(
     ...(entry.agent.fallback ? { fallback: entry.agent.fallback } : {}),
     ...(entry.agent.env && Object.keys(entry.agent.env).length ? { env: entry.agent.env } : {}),
     ...(entry.agent.files?.length ? { files: entry.agent.files } : {}),
+    ...(entry.agent.importIssues?.length ? { importIssues: entry.agent.importIssues } : {}),
     updatedAt: entry.updatedAt,
     updatedBy: entry.updatedBy,
   }

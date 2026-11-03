@@ -2,6 +2,7 @@ import { fileIssues, IResourceFile, sortFiles } from '@domain/models/ResourceFil
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync, SQLInputValue } from 'node:sqlite'
+import { IImportProblem, problemList } from '@domain/models/ImportProblem.Model'
 import { IProjectDoc, TDocKind } from '@domain/models/ProjectDoc.Model'
 import { IProtocolAddendum, TProtocolKind } from '@domain/models/Protocol.Model'
 import { IAgentResources, IResource, NO_RESOURCES, TResourceKind } from '@domain/models/Resource.Model'
@@ -30,6 +31,7 @@ const SCHEMA = `
     body        TEXT NOT NULL,
     doc_ids     TEXT NOT NULL DEFAULT '[]',
     doc_refs    TEXT NOT NULL DEFAULT '[]',
+    import_issues TEXT NOT NULL DEFAULT '[]',
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL,
     updated_by  TEXT
@@ -62,6 +64,7 @@ const SCHEMA = `
     doc_ids     TEXT NOT NULL DEFAULT '[]',
     doc_refs    TEXT NOT NULL DEFAULT '[]',
     files       TEXT NOT NULL DEFAULT '[]',
+    import_issues TEXT NOT NULL DEFAULT '[]',
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL,
     updated_by  TEXT
@@ -98,6 +101,9 @@ const ADDED_COLUMNS: ReadonlyArray<{ table: string; column: string; definition: 
   { table: 'resources', column: 'files', definition: "TEXT NOT NULL DEFAULT '[]'" },
   { table: 'project_docs', column: 'doc_ids', definition: "TEXT NOT NULL DEFAULT '[]'" },
   { table: 'project_docs', column: 'doc_refs', definition: "TEXT NOT NULL DEFAULT '[]'" },
+  // Os problemas da importação (ver `ImportProblem.Model`): antes não havia nenhum.
+  { table: 'project_docs', column: 'import_issues', definition: "TEXT NOT NULL DEFAULT '[]'" },
+  { table: 'resources', column: 'import_issues', definition: "TEXT NOT NULL DEFAULT '[]'" },
 ]
 
 type TRow = Record<string, unknown>
@@ -119,6 +125,7 @@ const DOC_COLUMNS: Record<keyof TDocPatch, string> = {
   body: 'body',
   docIds: 'doc_ids',
   docRefs: 'doc_refs',
+  importIssues: 'import_issues',
   updatedAt: 'updated_at',
   updatedBy: 'updated_by',
 }
@@ -231,7 +238,7 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
   insertDoc(doc: IProjectDoc): void {
     this.db
       .prepare(
-        'INSERT INTO project_docs (id, kind, project_id, title, summary, body, doc_ids, doc_refs, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO project_docs (id, kind, project_id, title, summary, body, doc_ids, doc_refs, import_issues, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         doc.id,
@@ -242,6 +249,7 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
         doc.body,
         JSON.stringify(doc.docIds ?? []),
         JSON.stringify(doc.docRefs ?? []),
+        JSON.stringify(doc.importIssues ?? []),
         doc.createdAt.toISOString(),
         doc.updatedAt.toISOString(),
         doc.updatedBy ?? null,
@@ -319,9 +327,9 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
   saveResource(resource: IResource): void {
     this.db
       .prepare(
-        `INSERT INTO resources (id, kind, project_id, description, body, doc_ids, doc_refs, files, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO resources (id, kind, project_id, description, body, doc_ids, doc_refs, files, import_issues, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, project_id = excluded.project_id, description = excluded.description, body = excluded.body,
-           doc_ids = excluded.doc_ids, doc_refs = excluded.doc_refs, files = excluded.files, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+           doc_ids = excluded.doc_ids, doc_refs = excluded.doc_refs, files = excluded.files, import_issues = excluded.import_issues, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
       )
       .run(
         resource.id,
@@ -332,6 +340,7 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
         JSON.stringify(resource.docIds),
         JSON.stringify(resource.docRefs ?? []),
         JSON.stringify(sortFiles(resource.files ?? [])),
+        JSON.stringify(resource.importIssues ?? []),
         resource.createdAt.toISOString(),
         resource.updatedAt.toISOString(),
         resource.updatedBy ?? null,
@@ -466,6 +475,7 @@ function toRule(row: TRow): IRule {
 function toDoc(row: TRow): IProjectDoc {
   const docIds = idList(row.doc_ids)
   const docRefs = idList(row.doc_refs).filter((id) => docIds.includes(id))
+  const importIssues = problemsOf(row.import_issues)
   return {
     id: row.id as string,
     kind: row.kind as TDocKind,
@@ -475,6 +485,7 @@ function toDoc(row: TRow): IProjectDoc {
     body: row.body as string,
     docIds,
     ...(docRefs.length ? { docRefs } : {}),
+    ...(importIssues.length ? { importIssues } : {}),
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
     ...(row.updated_by ? { updatedBy: row.updated_by as string } : {}),
@@ -485,6 +496,7 @@ function toResource(row: TRow): IResource {
   const docIds = idList(row.doc_ids)
   const docRefs = idList(row.doc_refs).filter((id) => docIds.includes(id))
   const files = fileList(row.files)
+  const importIssues = problemsOf(row.import_issues)
   return {
     id: row.id as string,
     kind: row.kind as TResourceKind,
@@ -494,6 +506,7 @@ function toResource(row: TRow): IResource {
     docIds,
     ...(docRefs.length ? { docRefs } : {}),
     ...(files.length ? { files } : {}),
+    ...(importIssues.length ? { importIssues } : {}),
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
     ...(row.updated_by ? { updatedBy: row.updated_by as string } : {}),
@@ -506,6 +519,15 @@ function fileList(raw: unknown): IResourceFile[] {
     const value: unknown = JSON.parse(String(raw ?? '[]'))
     if (!Array.isArray(value)) return []
     return sortFiles(value.filter((file): file is IResourceFile => !!file && !fileIssues([file]).length))
+  } catch {
+    return []
+  }
+}
+
+/** Os problemas da importação gravados em JSON; o que não tiver a forma fica de fora. */
+function problemsOf(raw: unknown): IImportProblem[] {
+  try {
+    return problemList(JSON.parse(String(raw ?? '[]')))
   } catch {
     return []
   }
