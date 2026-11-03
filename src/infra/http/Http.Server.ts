@@ -3,6 +3,7 @@ import { SqlitePermissionRepository } from '@infra/persistence/Sqlite.Permission
 import { ProjectAccountsService } from '@application/ProjectAccounts.Service'
 import { SqliteProjectAccountRepository } from '@infra/persistence/Sqlite.ProjectAccountRepository'
 import { PermissionsController } from './Permissions.Controller'
+import { PermissionRequestsController } from './PermissionRequests.Controller'
 import { ProjectAccountsController } from './ProjectAccounts.Controller'
 import { SecretMaskController } from './SecretMask.Controller'
 import { SecretMasker } from '@infra/secrets/Secret.Masker'
@@ -139,6 +140,7 @@ export class HttpServer {
     secretMask?: SecretMaskController,
     importer?: ImportController,
     catalog?: CatalogController,
+    permissionRequests?: PermissionRequestsController,
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
@@ -187,6 +189,7 @@ export class HttpServer {
       secretMask ?? new SecretMaskController({ masker: new SecretMasker(new SecretBox(randomBytes(32))) }),
       importer ?? defaultImporter(),
       catalog ?? defaultCatalog(),
+      permissionRequests ?? new PermissionRequestsController({}),
     )
     this.setupRoutes()
     this.setupFrontend()
@@ -302,8 +305,22 @@ function buildRoutes(
   secretMask: SecretMaskController,
   importer: ImportController,
   catalog: CatalogController,
+  permissionRequests: PermissionRequestsController,
 ): IRoute[] {
   return [
+    // Os pedidos de permissão dos agentes (só admin). ⛔ Aprovar, só pela sessão da tela (ver `PermissionRequests.Controller`).
+    { method: 'get', path: '/agents/:agentId/permission-rules', handler: permissionRequests.rules },
+    { method: 'post', path: '/agents/:agentId/permission-rules', handler: permissionRequests.change },
+    { method: 'get', path: '/agents/:agentId/permission-requests', handler: permissionRequests.listForAgent },
+    { method: 'get', path: '/projects/:projectId/permission-rules', handler: permissionRequests.rules },
+    { method: 'post', path: '/projects/:projectId/permission-rules', handler: permissionRequests.change },
+    { method: 'get', path: '/projects/:projectId/permission-requests', handler: permissionRequests.listForProject },
+    // O `patch_agent`: só os campos pedidos; o que amplia vira pedido de permissão.
+    { method: 'patch', path: '/agents/:agentId', handler: permissionRequests.patchAgent },
+    { method: 'get', path: '/agents/:agentId/system-prompt', handler: controller.getAgentSystemPrompt },
+    { method: 'get', path: '/permission-requests', handler: permissionRequests.list },
+    { method: 'post', path: '/permission-requests/:requestId/approve', handler: permissionRequests.approve },
+    { method: 'post', path: '/permission-requests/:requestId/reject', handler: permissionRequests.reject },
     // O histórico do catálogo (só leitura). O item vai na query: o id do complemento de protocolo tem barra.
     { method: 'get', path: '/catalog/history', handler: catalog.history },
     { method: 'get', path: '/catalog/history/diff', handler: catalog.diff },

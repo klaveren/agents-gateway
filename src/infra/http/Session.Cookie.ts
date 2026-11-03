@@ -70,8 +70,21 @@ export function cookieCredential(): RequestHandler {
       return
     }
     req.headers[CALLER_HEADER] = `Bearer ${token}`
+    res.locals[VIA_SESSION_COOKIE] = true
     next()
   }
+}
+
+/** Marca, em `res.locals`, que a credencial veio do COOKIE da tela (e não de um cabeçalho). */
+const VIA_SESSION_COOKIE = 'viaSessionCookie'
+
+/**
+ * A credencial veio do cookie HttpOnly da tela, sem `X-Tool-Authorization` no pedido — é a pessoa no navegador. ⛔ É a
+ * régua do que só a pessoa na tela faz (aprovar pedido de permissão): o agente, o MCP do gateway, o cliente MCP e o
+ * token de acesso chegam pelo cabeçalho, e o cabeçalho sempre vence o cookie (ver `cookieCredential`).
+ */
+export function viaSessionCookie(res: Response): boolean {
+  return res.locals[VIA_SESSION_COOKIE] === true
 }
 
 /** O pedido saiu de uma página DESTA origem? Sem `Origin` nem `Referer` (fetch antigo), não. */

@@ -1,0 +1,312 @@
+import assert from 'node:assert'
+import { AddressInfo } from 'node:net'
+import { after, before, describe, it } from 'node:test'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { makeAgents } from '@composition/factories/Agents.Factory'
+import { makeAuth } from '@composition/factories/Auth.Factory'
+import {
+  makeAuthController,
+  makeCatalogController,
+  makeController,
+  makePermissionRequestsController,
+  makeProjectsController,
+  makeProvidersController,
+} from '@composition/factories/Controller.Factory'
+import { EMode } from '@domain/enums/EMode.Enum'
+import { EProvider } from '@domain/enums/EProvider.Enum'
+import { HttpServer } from './Http.Server'
+
+const PASSWORD = 'frase longa o bastante'
+
+/**
+ * ⛔ A TRANCA DE PONTA A PONTA: o agente pede pelo MCP do gateway (com a conta de um admin, como o Atlas), e a aprovação
+ * só passa pela sessão da tela (cookie). A mesma conta pelo cabeçalho — o agente, um cliente MCP, um token de acesso — leva 403.
+ */
+describe('pedidos de permissão (integração: MCP do gateway, API, cookie da tela)', () => {
+  let base: string
+  let stop: () => void
+  let admin = ''
+  let jar = ''
+  let accessToken = ''
+
+  const raw = (path: string, init: { method?: string; body?: unknown; headers?: Record<string, string> } = {}) =>
+    fetch(`${base}${path}`, {
+      method: init.method ?? 'GET',
+      headers: { ...(init.body === undefined ? {} : { 'Content-Type': 'application/json' }), ...init.headers },
+      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+    })
+  const call = async (path: string, init: { method?: string; body?: unknown; headers?: Record<string, string> } = {}) => {
+    const res = await raw(path, init)
+    return { status: res.status, body: (await res.json()) as { ok: boolean; result?: any; code?: string; details?: any } } // eslint-disable-line @typescript-eslint/no-explicit-any
+  }
+  const bearer = (token: string) => ({ 'X-Tool-Authorization': `Bearer ${token}` })
+  const origin = () => `http://${new URL(base).host}`
+  const screen = () => ({ Cookie: jar, Origin: origin() })
+
+  /** O cliente MCP como o gateway o usa: a conta de quem conversa e a identidade do agente (rótulo). */
+  const connect = async (token: string) => {
+    const client = new Client({ name: 'teste', version: '1.0.0' })
+    const headers = { ...bearer(token), 'x-gateway-agent': 'theo', 'x-gateway-conversation': 'c-42' }
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers } }))
+    return client
+  }
+  const texts = (result: unknown) => (result as { content: Array<{ text: string }> }).content.map((part) => part.text)
+
+  before(async () => {
+    delete process.env.SELF_MCP_WRITE
+    const controller = makeController()
+    const server = new HttpServer(
+      controller,
+      makeAuthController(),
+      makeProvidersController(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      makeProjectsController(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      makeCatalogController(),
+      makePermissionRequestsController(),
+    ).start(0)
+    await new Promise((resolve) => server.once('listening', resolve))
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`
+    server.unref()
+    stop = () => {
+      server.closeAllConnections()
+      server.close()
+    }
+    admin = (await call('/auth/setup', { method: 'POST', body: { code: makeAuth().accounts?.setupCode, email: 'root@x.test', name: 'Root', password: PASSWORD } })).body.result
+      .token
+    const login = await raw('/auth/login', {
+      method: 'POST',
+      body: { email: 'root@x.test', password: PASSWORD },
+      headers: { 'X-Gateway-Client': 'web', Origin: origin() },
+    })
+    jar = (login.headers.get('set-cookie') ?? '').split(';')[0]
+    // O modelo do agente ativo: o `patch_agent` grava pelas regras do `PUT` (modelo ativado no catálogo).
+    await call('/providers/claude/models', { method: 'POST', headers: bearer(admin), body: { modelId: 'claude-sonnet-5' } })
+    await call('/providers/claude/models', { method: 'PUT', headers: bearer(admin), body: { modelId: 'claude-sonnet-5', enabled: true } })
+    accessToken = (await call('/auth/tokens', { method: 'POST', headers: bearer(admin), body: { name: 'ci' } })).body.result.token
+    makeAgents().save(
+      {
+        id: 'theo',
+        name: 'Theo',
+        providers: [{ provider: EProvider.CLAUDE, models: ['claude-sonnet-5'] }],
+        systemPrompt: 'faça',
+        modes: [EMode.AGENT],
+        allowedTools: [],
+        permissions: [{ category: 'terminal', pattern: 'git status', decision: 'allow' }],
+      },
+      { rules: { knownTools: [] }, by: 'seed', creating: true },
+    )
+  })
+
+  after(() => stop())
+
+  let requestId = ''
+  let keys: string[] = []
+
+  it('save_permission_rules: a restrição vale já; a ampliação fica pendente, e o resultado manda confirmar na tela', async () => {
+    const client = await connect(admin)
+    const tools = (await client.listTools()).tools.map((tool) => tool.name)
+    assert.ok(tools.includes('list_permission_rules') && tools.includes('save_permission_rules'))
+    assert.ok(!tools.some((name) => /approve/.test(name)), 'nenhuma ferramenta aprova pedido')
+    const description = (await client.listTools()).tools.find((tool) => tool.name === 'save_permission_rules')?.description ?? ''
+    assert.match(description, /PENDING until an administrator confirms on the screen/)
+    assert.match(description, /never say access was granted/)
+
+    const result = await client.callTool({
+      name: 'save_permission_rules',
+      arguments: {
+        scope: 'agent',
+        id: 'theo',
+        add: [
+          { category: 'network', pattern: '*.evil.com', decision: 'deny' },
+          { category: 'terminal', pattern: 'npm test', decision: 'allow' },
+        ],
+        reason: 'rodar os testes',
+      },
+    })
+    const [notice, json] = texts(result)
+    assert.match(notice, /PENDENTE — NÃO aplicado/)
+    assert.match(notice, /Agentes → Theo → Permissões → Pedidos pendentes/)
+    assert.match(notice, /permite terminal "npm test"/)
+    const parsed = JSON.parse(json)
+    assert.strictEqual(parsed.pending.requestedBy.agentId, 'theo')
+    assert.strictEqual(parsed.pending.requestedBy.conversationId, 'c-42')
+    requestId = parsed.pending.id
+    keys = parsed.pending.widenings.map((item: { key: string }) => item.key)
+    assert.deepStrictEqual(keys, ['agent/theo#permissions+allow:terminal:npm test'])
+
+    const rules = makeAgents().get('theo')?.permissions ?? []
+    assert.ok(rules.some((rule) => rule.pattern === '*.evil.com' && rule.decision === 'deny'))
+    assert.ok(!rules.some((rule) => rule.pattern === 'npm test'))
+
+    const listed = JSON.parse(texts(await client.callTool({ name: 'list_permission_rules', arguments: { scope: 'agent', id: 'theo' } }))[0])
+    assert.deepStrictEqual(
+      listed.pending.map((item: { id: string }) => item.id),
+      [requestId],
+    )
+  })
+
+  it('regra inválida pelo MCP: volta com os problemas campo a campo', async () => {
+    const client = await connect(admin)
+    const result = await client.callTool({
+      name: 'save_permission_rules',
+      arguments: { scope: 'agent', id: 'theo', add: [{ category: 'terminal', pattern: 'npm **', decision: 'allow' }], reason: 'x' },
+    })
+    assert.strictEqual((result as { isError?: boolean }).isError, true)
+    const error = JSON.parse(texts(result)[0])
+    assert.strictEqual(error.status, 422)
+    assert.strictEqual(error.details[0].field, 'add[0]')
+  })
+
+  it('⛔ aprovar com a conta do admin no CABEÇALHO (o agente, um cliente MCP) é 403; com token de acesso, 403; nada muda', async () => {
+    const viaHeader = await call(`/permission-requests/${requestId}/approve`, { method: 'POST', headers: bearer(admin), body: { confirm: keys } })
+    assert.strictEqual(viaHeader.status, 403)
+    const viaToken = await call(`/permission-requests/${requestId}/approve`, { method: 'POST', headers: bearer(accessToken), body: { confirm: keys } })
+    assert.strictEqual(viaToken.status, 403)
+    // O cabeçalho vence o cookie: mandar os dois não vira sessão da tela.
+    const both = await call(`/permission-requests/${requestId}/approve`, { method: 'POST', headers: { ...screen(), ...bearer(admin) }, body: { confirm: keys } })
+    assert.strictEqual(both.status, 403)
+    // Cookie sem a origem da tela: a trava de CSRF de sempre.
+    const crossSite = await call(`/permission-requests/${requestId}/approve`, { method: 'POST', headers: { Cookie: jar, Origin: 'https://evil.example' }, body: { confirm: keys } })
+    assert.strictEqual(crossSite.status, 403)
+    assert.ok(!(makeAgents().get('theo')?.permissions ?? []).some((rule) => rule.pattern === 'npm test'))
+  })
+
+  it('a pessoa na tela (cookie) aprova com as chaves exatas: a regra vale, e a revisão guarda as chaves aceitas', async () => {
+    const wrong = await call(`/permission-requests/${requestId}/approve`, { method: 'POST', headers: screen(), body: { confirm: [] } })
+    assert.deepStrictEqual([wrong.status, wrong.body.code], [409, 'widening_confirmation_required'])
+
+    const listed = await call('/permission-requests', { headers: screen() })
+    assert.deepStrictEqual(
+      listed.body.result.map((item: { id: string; status: string }) => [item.id, item.status]),
+      [[requestId, 'pending']],
+    )
+
+    const approved = await call(`/permission-requests/${requestId}/approve`, { method: 'POST', headers: screen(), body: { confirm: keys } })
+    assert.strictEqual(approved.status, 200)
+    assert.strictEqual(approved.body.result.request.status, 'approved')
+    assert.ok((makeAgents().get('theo')?.permissions ?? []).some((rule) => rule.pattern === 'npm test' && rule.decision === 'allow'))
+
+    const history = await call('/catalog/history?kind=agent&id=theo', { headers: screen() })
+    const last = history.body.result.revisions[0]
+    assert.deepStrictEqual(last.widenings, keys)
+    assert.strictEqual(last.by, 'root@x.test')
+
+    const again = await call(`/permission-requests/${requestId}/approve`, { method: 'POST', headers: screen(), body: { confirm: keys } })
+    assert.deepStrictEqual([again.status, again.body.code], [409, 'permission_request_closed'])
+  })
+
+  it('recusar: pelo cabeçalho também (recusar não abre nada); o agente fica como estava', async () => {
+    const client = await connect(admin)
+    const result = await client.callTool({
+      name: 'save_permission_rules',
+      arguments: { scope: 'agent', id: 'theo', add: [{ category: 'read', pattern: '/etc/**', decision: 'allow' }], reason: 'ler config' },
+    })
+    const id = JSON.parse(texts(result)[1]).pending.id
+    const rejected = await call(`/permission-requests/${id}/reject`, { method: 'POST', headers: bearer(admin), body: { note: 'não' } })
+    assert.strictEqual(rejected.body.result.status, 'rejected')
+    assert.ok(!(makeAgents().get('theo')?.permissions ?? []).some((rule) => rule.pattern === '/etc/**'))
+    assert.strictEqual((await call('/agents/theo/permission-requests', { headers: bearer(admin) })).body.result.length, 0)
+  })
+
+  it('scope project: a camada do projeto, com o mesmo fluxo (restringe já, amplia pendente, aprova só na tela)', async () => {
+    assert.strictEqual((await call('/projects', { method: 'POST', headers: bearer(admin), body: { id: 'alfa', name: 'Alfa' } })).status, 201)
+    const client = await connect(admin)
+    const result = await client.callTool({
+      name: 'save_permission_rules',
+      arguments: {
+        scope: 'project',
+        id: 'alfa',
+        add: [
+          { category: 'write', pattern: '**/*.lock', decision: 'deny' },
+          { category: 'network', pattern: 'registry.npmjs.org', decision: 'allow' },
+        ],
+        reason: 'instalar pacotes',
+      },
+    })
+    const [notice, json] = texts(result)
+    assert.match(notice, /Projeto Alfa → Permissões → Pedidos pendentes/)
+    const pending = JSON.parse(json).pending
+    assert.deepStrictEqual(
+      pending.widenings.map((item: { key: string }) => item.key),
+      ['project-permissions/alfa#rules+allow:network:registry.npmjs.org'],
+    )
+    const listed = JSON.parse(texts(await client.callTool({ name: 'list_permission_rules', arguments: { scope: 'project', id: 'alfa' } }))[0])
+    assert.deepStrictEqual([listed.layer, listed.pending.length], ['project', 1])
+    assert.deepStrictEqual(
+      listed.rules.map((rule: { pattern: string }) => rule.pattern),
+      ['**/*.lock'],
+    )
+    assert.strictEqual((await call('/projects/alfa/permission-requests', { headers: bearer(admin) })).body.result.length, 1)
+
+    const keys = pending.widenings.map((item: { key: string }) => item.key)
+    assert.strictEqual((await call(`/permission-requests/${pending.id}/approve`, { method: 'POST', headers: bearer(admin), body: { confirm: keys } })).status, 403)
+    const approved = await call(`/permission-requests/${pending.id}/approve`, { method: 'POST', headers: screen(), body: { confirm: keys } })
+    assert.strictEqual(approved.status, 200)
+    assert.ok(approved.body.result.permissions.some((rule: { pattern: string }) => rule.pattern === 'registry.npmjs.org'))
+  })
+
+  it('patch_agent: o que não amplia vale já, a ferramenta nova fica pendente; aprovar só na tela', async () => {
+    const client = await connect(admin)
+    const result = await client.callTool({
+      name: 'patch_agent',
+      arguments: { agentId: 'theo', patch: { systemPrompt: 'faça melhor', allowedTools: ['agent:theo-2'] }, reason: 'delegar' },
+    })
+    // Delegar a um agente que não existe: a validação do PUT vale para o patch inteiro, nada grava.
+    assert.strictEqual((result as { isError?: boolean }).isError, true)
+    assert.strictEqual(makeAgents().get('theo')?.systemPrompt, 'faça')
+
+    const ok = await client.callTool({
+      name: 'patch_agent',
+      arguments: { agentId: 'theo', patch: { systemPrompt: 'faça melhor', adminOnly: false, role: 'subagent' }, reason: 'virar subagente' },
+    })
+    const [notice, json] = texts(ok)
+    assert.match(notice, /Nada mudou|Aplicado agora/)
+    const parsed = JSON.parse(json)
+    assert.deepStrictEqual(parsed.applied.sort(), ['adminOnly', 'role', 'systemPrompt'])
+    assert.strictEqual(parsed.pending, undefined)
+    assert.strictEqual(makeAgents().entry('theo')?.agent.role, 'subagent')
+
+    const widening = await client.callTool({ name: 'patch_agent', arguments: { agentId: 'theo', patch: { role: null }, reason: 'conversar direto' } })
+    const [warn, data] = texts(widening)
+    assert.match(warn, /PENDENTE — NÃO aplicado/)
+    const pending = JSON.parse(data).pending
+    assert.deepStrictEqual(
+      pending.widenings.map((item: { key: string }) => item.key),
+      ['agent/theo#role-subagent'],
+    )
+    assert.strictEqual(makeAgents().entry('theo')?.agent.role, 'subagent')
+    const keys = pending.widenings.map((item: { key: string }) => item.key)
+    assert.strictEqual((await call(`/permission-requests/${pending.id}/approve`, { method: 'POST', headers: bearer(accessToken), body: { confirm: keys } })).status, 403)
+    assert.strictEqual((await call(`/permission-requests/${pending.id}/approve`, { method: 'POST', headers: screen(), body: { confirm: keys } })).status, 200)
+    assert.strictEqual(makeAgents().entry('theo')?.agent.role, undefined)
+  })
+
+  it('get_agent com `fields` devolve só aqueles; preview_system_prompt traz o prompt final e o tamanho por parte', async () => {
+    const client = await connect(admin)
+    const picked = JSON.parse(texts(await client.callTool({ name: 'get_agent', arguments: { agentId: 'theo', fields: ['permissions'] } }))[0])
+    assert.deepStrictEqual(Object.keys(picked).sort(), ['id', 'permissions'])
+    const full = JSON.parse(texts(await client.callTool({ name: 'get_agent', arguments: { agentId: 'theo' } }))[0])
+    assert.ok('systemPrompt' in full && 'providers' in full)
+
+    const preview = JSON.parse(texts(await client.callTool({ name: 'preview_system_prompt', arguments: { agentId: 'theo', projectId: 'alfa' } }))[0])
+    assert.match(preview.prompt, /faça melhor/)
+    assert.strictEqual(preview.projectId, 'alfa')
+    assert.strictEqual(preview.chars, preview.prompt.length)
+    assert.ok(preview.tokens > 0)
+    assert.deepStrictEqual(
+      preview.parts.slice(0, 2).map((part: { key: string }) => part.key),
+      ['instructions', 'ambient'],
+    )
+  })
+})

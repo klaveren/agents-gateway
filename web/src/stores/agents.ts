@@ -110,6 +110,15 @@ export const useAgentsStore = defineStore('agents', () => {
   }
 
   /**
+   * As regras do agente mudaram por fora do formulário (um pedido de permissão aprovado). ⚖️ Como em `saveFiles`: troca
+   * só as regras no detalhe guardado, no MESMO objeto — o formulário aberto não se refaz.
+   */
+  function setPermissions(id: string, permissions: IAgentDetail['permissions']): void {
+    const current = details.get(id)
+    if (current) current.permissions = permissions
+  }
+
+  /**
    * "Resolvido" num problema da importação do agente. ⚖️ Como em `saveFiles`: troca só a lista no detalhe guardado, no
    * MESMO objeto (o formulário aberto não se refaz), e a contagem na lista.
    */
@@ -157,6 +166,7 @@ export const useAgentsStore = defineStore('agents', () => {
     save,
     remove,
     saveFiles,
+    setPermissions,
     resolveIssue,
     reset,
   }

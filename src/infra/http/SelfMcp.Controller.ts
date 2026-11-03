@@ -2,16 +2,19 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { Request, Response } from 'express'
 import { z } from 'zod'
+import { IDENTITY_HEADERS } from '@domain/Agent.Identity'
+import { PERMISSION_CATEGORIES, TPermissionCategory } from '@domain/Permission.Policy'
 import { ISelfReply, selfApi, selfBase, TSelfApi } from './Self.Api'
 
 /** O que a própria API devolveu: o envelope `{ ok, result, message, code, details }` mais o status. */
 /**
  * ⛔ Só o header da credencial (`X-Tool-Authorization`, a conta) de quem chamou o MCP segue adiante. Nada do
- * corpo do MCP vira identidade.
+ * corpo do MCP vira identidade. ⚖️ Os cabeçalhos de identidade do agente (agente, conversa) vão junto como RÓTULO: a
+ * API os usa só para dizer quem fez o pedido de permissão, nunca para decidir acesso.
  */
 function callerApi(req: Request): TSelfApi {
   const credentials: Record<string, string> = {}
-  for (const name of ['x-tool-authorization']) {
+  for (const name of ['x-tool-authorization', IDENTITY_HEADERS.agent, IDENTITY_HEADERS.conversation]) {
     const value = req.headers[name]
     if (typeof value === 'string') credentials[name] = value
   }
@@ -77,6 +80,31 @@ const agentShape = {
     .optional()
     .describe('The project the agent belongs to (see list_projects): it only works in that project folder and only its members see it. Absent or null = global (every project).'),
 }
+
+/** O alvo das regras de permissão: um agente ou um projeto (a camada de baixo). */
+const permissionTarget = { scope: z.enum(['agent', 'project']), id: z.string().describe('The agent id or the project id.') }
+const targetPath = (scope: 'agent' | 'project', id: string) => `/${scope === 'agent' ? 'agents' : 'projects'}/${encodeURIComponent(id)}`
+
+/** ⛔ O aviso vem PRIMEIRO e em texto: é o que o agente repassa à pessoa (pendente ≠ liberado). */
+function pendingReply(answer: ISelfReply) {
+  if (!answer.ok) return reply(answer)
+  const { notice, ...result } = answer.result as { notice: string }
+  return {
+    content: [
+      { type: 'text' as const, text: notice },
+      { type: 'text' as const, text: JSON.stringify(result) },
+    ],
+  }
+}
+
+const permissionRuleShape = z.object({
+  category: z.enum(PERMISSION_CATEGORIES as [TPermissionCategory, ...TPermissionCategory[]]),
+  pattern: z
+    .string()
+    .describe('terminal: words, `*` = any arguments (`git push *`); read/write: a path glob (`src/**`); network: a host (`*.github.com`); the others: a name with `*`.'),
+  decision: z.enum(['allow', 'deny']),
+  note: z.string().optional(),
+})
 
 /**
  * As ferramentas, segundo quem chama.
@@ -279,11 +307,37 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   server.registerTool(
     'get_agent',
     {
-      description: 'One agent in full, system prompt included, and its importIssues (problems recorded when it was imported; fix them, then resolve_import_issue).',
-      inputSchema: { agentId: z.string() },
+      description:
+        'One agent in full, system prompt included, and its importIssues (problems recorded when it was imported; fix them, then resolve_import_issue). `fields` returns only those fields (e.g. ["allowedTools","permissions"]).',
+      inputSchema: { agentId: z.string(), fields: z.array(z.string()).optional() },
       annotations: { readOnlyHint: true },
     },
-    async ({ agentId }) => reply(await api('GET', `/agents/${encodeURIComponent(agentId)}`)),
+    async ({ agentId, fields }) =>
+      reply(await api('GET', `/agents/${encodeURIComponent(agentId)}`), (result) =>
+        fields?.length ? Object.fromEntries(Object.entries(result as Record<string, unknown>).filter(([key]) => key === 'id' || fields.includes(key))) : result,
+      ),
+  )
+
+  server.registerTool(
+    'preview_system_prompt',
+    {
+      description:
+        'The final system prompt an agent receives in a new conversation (soul, instructions, environment, rules, initial context, indexes), with characters and ≈tokens per part. `projectId`: the conversation project, for a global agent.',
+      inputSchema: { agentId: z.string(), projectId: z.string().optional() },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ agentId, projectId }) => reply(await api('GET', `/agents/${encodeURIComponent(agentId)}/system-prompt`, { query: { project: projectId } })),
+  )
+
+  server.registerTool(
+    'list_permission_rules',
+    {
+      description:
+        "The permission rules { category, pattern, decision: allow|deny } of a target — `{ scope: 'agent' | 'project', id }` — and its requests waiting for an administrator. Agent rules decide before the project's; deny wins within a layer; no rule = denied.",
+      inputSchema: permissionTarget,
+      annotations: { readOnlyHint: true },
+    },
+    async ({ scope, id }) => reply(await api('GET', `${targetPath(scope, id)}/permission-rules`)),
   )
 
   server.registerTool(
@@ -580,6 +634,35 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
       const exists = (await api('GET', `/agents/${encodeURIComponent(agent.id)}`)).ok
       return reply(exists ? await api('PUT', `/agents/${encodeURIComponent(agent.id)}`, { body: agent }) : await api('POST', '/agents', { body: agent }))
     },
+  )
+
+  server.registerTool(
+    'save_permission_rules',
+    {
+      description:
+        "Add/remove permission rules of a target `{ scope: 'agent' | 'project', id }`. Restrictions (add deny, remove allow) apply now. Widenings (add allow, remove deny) stay PENDING until an administrator confirms on the screen; you cannot approve. Tell the person what is pending and where (the result says); never say access was granted before that.",
+      inputSchema: {
+        ...permissionTarget,
+        add: z.array(permissionRuleShape).optional(),
+        remove: z.array(permissionRuleShape).optional().describe('Must match existing rules.'),
+        reason: z.string().describe('Why; shown to whoever confirms.'),
+      },
+    },
+    async ({ scope, id, ...change }) => pendingReply(await api('POST', `${targetPath(scope, id)}/permission-rules`, { body: change })),
+  )
+
+  server.registerTool(
+    'patch_agent',
+    {
+      description:
+        'Change only some fields of an agent (same fields and rules as save_agent; null removes). What widens access (tools, delegation, permissions, exposure, sandbox…) stays PENDING until an administrator confirms on the screen; the rest applies now. Tell the person what is pending and where (the result says); never say it was granted before that.',
+      inputSchema: {
+        agentId: z.string(),
+        patch: z.record(z.string(), z.unknown()).describe('Field → new value, e.g. { "allowedTools": [...] }.'),
+        reason: z.string().describe('Why; shown to whoever confirms.'),
+      },
+    },
+    async ({ agentId, patch, reason }) => pendingReply(await api('PATCH', `/agents/${encodeURIComponent(agentId)}`, { body: { patch, reason } })),
   )
 
   server.registerTool(

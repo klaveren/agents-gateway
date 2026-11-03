@@ -4,6 +4,9 @@ import { useRoute, useRouter } from 'vue-router'
 import AgentAvatar from '@/components/AgentAvatar.vue'
 import AgentForm from '@/components/AgentForm.vue'
 import ImportIssuesBadge from '@/components/ImportIssuesBadge.vue'
+import PermissionRequestsBadge from '@/components/PermissionRequestsBadge.vue'
+import { pendingCount } from '@/lib/permissionRequests'
+import { usePermissionRequestsStore } from '@/stores/permissionRequests'
 import BuildTabs from '@/components/BuildTabs.vue'
 import Icon from '@/components/Icon.vue'
 import MasterDetail from '@/components/MasterDetail.vue'
@@ -22,6 +25,9 @@ const auth = useAuthStore()
 const agents = useAgentsStore()
 const providers = useProvidersStore()
 const protocols = useProtocolsStore()
+const permissionRequests = usePermissionRequestsStore()
+/** Os pedidos de permissão abertos de todos os agentes (o selo da lista). */
+const openRequests = computed(() => permissionRequests.lists.get(''))
 
 /** "Claude · claude-opus-5 +2": o padrão com o modelo dele, e quantos providers mais o agente tem. */
 function providersLine(agent: IAgent): string {
@@ -90,6 +96,7 @@ onMounted(() => {
   void providers.ensure().catch(() => undefined)
   // A lista traz `unavailable` (só para admin) e muda por fora: relê ao abrir a tela.
   void agents.load().catch(() => undefined)
+  if (auth.isAdmin) void permissionRequests.lists.ensure('').catch(() => undefined)
 })
 
 /** ⚠️ Cada leitura vale uma geração: a resposta de uma seleção anterior chega depois e não pode sobrescrever a atual. */
@@ -167,6 +174,7 @@ watch(creating, (value) => {
           <span v-if="agent.unavailable" class="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-300" :title="`Indisponível agora: ${agent.unavailable.label}`">{{ agent.unavailable.label }}</span>
           <span v-if="agent.adminOnly" class="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300" title="Só administradores conversam com este agente">só administradores</span>
           <span v-if="!agent.projectId" class="shrink-0 rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] text-sky-300" title="Aparece em todos os projetos">global</span>
+          <PermissionRequestsBadge :count="pendingCount(openRequests, { agentId: agent.id })" />
           <ImportIssuesBadge :count="agent.importIssueCount" />
         </RouterLink>
       </template>

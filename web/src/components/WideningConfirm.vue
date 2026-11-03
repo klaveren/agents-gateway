@@ -7,7 +7,7 @@ import type { IWideningRef } from '@/lib/catalogHistory'
  * com TODAS marcadas — o servidor só aceita o conjunto inteiro (`confirm` igual ao calculado). A lista nova (o servidor
  * recalculou) desmarca tudo: a pessoa confirma o que vê.
  */
-const props = defineProps<{ widenings: IWideningRef[]; action: string; busy?: boolean }>()
+const props = defineProps<{ widenings: IWideningRef[]; action: string; busy?: boolean; cancelLabel?: string }>()
 const emit = defineEmits<{ confirm: [keys: string[]]; cancel: [] }>()
 
 const checked = ref<Set<string>>(new Set())
@@ -53,7 +53,7 @@ function toggle(key: string, on: boolean) {
       <button type="button" class="btn btn-primary" :disabled="!allChecked || busy" data-test="widening-submit" @click="emit('confirm', widenings.map((item) => item.key))">
         {{ busy ? 'Gravando…' : action }}
       </button>
-      <button type="button" class="btn btn-ghost" @click="emit('cancel')">Cancelar</button>
+      <button type="button" class="btn btn-ghost" :disabled="busy" data-test="widening-cancel" @click="emit('cancel')">{{ cancelLabel ?? 'Cancelar' }}</button>
     </div>
   </section>
 </template>

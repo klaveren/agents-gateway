@@ -52,6 +52,9 @@ import {
   CatalogRevisionNotFoundError,
   CatalogWideningConfirmationError,
   CatalogWideningForbiddenError,
+  PermissionRequestClosedError,
+  PermissionRequestForbiddenError,
+  PermissionRequestNotFoundError,
 } from '@domain/errors/Domain.Error'
 
 export type TErrorCode =
@@ -90,6 +93,7 @@ export type TErrorCode =
   | 'revision_conflict'
   | 'widening_confirmation_required'
   | 'plan_changed'
+  | 'permission_request_closed'
   | 'import_blocked'
   | 'import_state_conflict'
   | 'import_source_changed'
@@ -149,6 +153,18 @@ export function toHttpFailure(error: unknown): IHttpFailure {
 
   if (error instanceof CatalogWideningForbiddenError) {
     return { status: 403, code: 'forbidden', message: error.message, details: { widenings: error.widenings } }
+  }
+
+  if (error instanceof PermissionRequestNotFoundError) {
+    return { status: 404, code: 'not_found', message: error.message }
+  }
+
+  if (error instanceof PermissionRequestClosedError) {
+    return { status: 409, code: 'permission_request_closed', message: error.message, details: { status: error.status } }
+  }
+
+  if (error instanceof PermissionRequestForbiddenError) {
+    return { status: 403, code: 'forbidden', message: error.message }
   }
 
   if (error instanceof CatalogRestoreInvalidError) {

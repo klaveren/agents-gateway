@@ -4,6 +4,7 @@ import { useBuilderStore } from './builder'
 import { useDocsStore } from './docs'
 import { useMcpStore } from './mcp'
 import { usePermissionsStore } from './permissions'
+import { usePermissionRequestsStore } from './permissionRequests'
 import { useProjectsStore } from './projects'
 import { useResourcesStore } from './resources'
 import { useRulesStore } from './rules'
@@ -86,6 +87,8 @@ function applyChanges(changes: readonly ICatalogChanged[]): void {
     catalog.initialContexts.markAllStale()
   }
   if (ids('project-permissions').length) quiet(usePermissionsStore().projects.refreshLoaded())
+  // Um agente pediu permissão (ou alguém decidiu um pedido): as listas abertas buscam de novo.
+  if (ids('permission-request').length) quiet(usePermissionRequestsStore().lists.refreshLoaded())
   if (ids('mcp').length) {
     const store = useMcpStore()
     quiet(store.all.refreshLoaded())

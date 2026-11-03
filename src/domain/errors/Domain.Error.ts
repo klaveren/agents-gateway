@@ -443,3 +443,33 @@ export class CatalogRestoreInvalidError extends DomainError {
     super(`The version cannot be restored: ${issues.map((issue) => `${issue.field} (${issue.message})`).join('; ')}`)
   }
 }
+
+export class PermissionRequestNotFoundError extends DomainError {
+  constructor(public readonly requestId: string) {
+    super(`Permission request not found: ${requestId}`)
+  }
+}
+
+/** O pedido não está mais pendente (já decidido, ou venceu): nada muda. */
+export class PermissionRequestClosedError extends DomainError {
+  constructor(
+    public readonly requestId: string,
+    public readonly status: string,
+  ) {
+    super(
+      status === 'expired'
+        ? `Permission request ${requestId} expired: it can no longer be approved; the agent must ask again`
+        : `Permission request ${requestId} is already ${status}`,
+    )
+  }
+}
+
+/**
+ * ⛔ Aprovar pedido de permissão é só de um administrador NA TELA (a sessão de login no cookie). Agente, cliente MCP e
+ * token de acesso nunca aprovam — nem o próprio pedido, nem o de outro.
+ */
+export class PermissionRequestForbiddenError extends DomainError {
+  constructor() {
+    super('Only an administrator signed in on the screen can approve a permission request; an agent, an MCP client or an access token cannot')
+  }
+}

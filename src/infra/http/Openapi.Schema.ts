@@ -980,6 +980,36 @@ const permissionRuleSchema = {
   },
   required: ['category', 'pattern', 'decision'],
 }
+/** Um pedido de permissão do agente (ver `PermissionRequests.Service`). */
+const permissionRequestSchema = {
+  type: 'object',
+  properties: {
+    id: { type: 'string' },
+    kind: { type: 'string', enum: ['agent-rules', 'project-rules', 'agent-patch'], description: 'What changes: an agent rules, a project rules, or agent fields.' },
+    agentId: { type: 'string' },
+    agentName: { type: 'string' },
+    projectId: { type: 'string' },
+    projectName: { type: 'string' },
+    patch: { type: 'object', description: '`agent-patch`: the requested field values (null = remove).' },
+    add: { type: 'array', items: permissionRuleSchema },
+    remove: { type: 'array', items: permissionRuleSchema },
+    widenings: { type: 'array', items: wideningSchema, description: 'What approving would widen NOW (on the current agent): the keys `confirm` must carry.' },
+    requestedWidenings: { type: 'array', items: wideningSchema, description: 'As computed when the agent asked.' },
+    changed: { type: 'boolean', description: 'The agent rules changed since the request: `widenings` was recomputed.' },
+    reason: { type: 'string' },
+    requestedBy: {
+      type: 'object',
+      properties: { by: { type: 'string' }, agentId: { type: 'string' }, conversationId: { type: 'string' } },
+      description: '`by` is the account; `agentId` and `conversationId` are labels from the identity headers.',
+    },
+    createdAt: { type: 'string', format: 'date-time' },
+    expiresAt: { type: 'string', format: 'date-time' },
+    status: { type: 'string', enum: ['pending', 'approved', 'rejected', 'expired'] },
+    decidedBy: { type: 'string' },
+    decidedAt: { type: 'string', format: 'date-time' },
+    decisionNote: { type: 'string' },
+  },
+}
 
 const scheduleSchema = {
   type: 'object',
@@ -2861,6 +2891,38 @@ export const OPENAPI_DOCUMENT = {
         responses: { '200': { description: 'OK', ...json(envelope(agentDetailSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
     },
+    '/agents/{agentId}/system-prompt': {
+      get: {
+        summary:
+          'The final system prompt the agent receives in a new conversation (the self MCP `preview_system_prompt`), composed as the provider lanes compose it, with characters and estimated tokens per part. `project`: the conversation project, for a global agent. Administrators only',
+        parameters: [
+          { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'project', in: 'query', required: false, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  agentId: { type: 'string' },
+                  projectId: { type: 'string' },
+                  prompt: { type: 'string' },
+                  chars: { type: 'integer' },
+                  tokens: { type: 'integer' },
+                  parts: {
+                    type: 'array',
+                    items: { type: 'object', properties: { key: { type: 'string' }, label: { type: 'string' }, chars: { type: 'integer' }, tokens: { type: 'integer' } } },
+                  },
+                },
+              }),
+            ),
+          },
+          '404': failures['404'],
+        },
+      },
+    },
     '/agents/{agentId}/footprint': {
       get: {
         summary:
@@ -3303,6 +3365,202 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/agents/{agentId}/permission-rules': {
+      get: {
+        summary: "An agent's permission rules, its project's rules and its open permission requests (the self MCP `list_permission_rules`). Administrators only (404 otherwise)",
+        parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  agentId: { type: 'string' },
+                  agentName: { type: 'string' },
+                  projectId: { type: 'string' },
+                  rules: { type: 'array', items: permissionRuleSchema },
+                  project: { type: 'object', properties: { projectId: { type: 'string' }, rules: { type: 'array', items: permissionRuleSchema } } },
+                  pending: { type: 'array', items: permissionRequestSchema },
+                },
+              }),
+            ),
+          },
+          '404': failures['404'],
+        },
+      },
+      post: {
+        summary:
+          "Change an agent's permission rules on behalf of an agent (the self MCP `save_permission_rules`). Restrictions (add a `deny`, remove an `allow`) apply at once, recorded in the catalog history with the reason; widenings (add an `allow`, remove a `deny`, as the catalog widening detector defines them) are NOT applied: they become one pending permission request that only an administrator signed in on the screen can approve. Administrators only",
+        description:
+          'Every rule goes through the same validator as the agent form; all problems come back at once (422). `notice` is the text the agent must relay to the person (pt-BR): what was applied and, if any, what is pending and where to confirm it. The `x-gateway-agent` and `x-gateway-conversation` headers (sent by the gateway to its own MCP) label who asked; they never grant anything.',
+        parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            required: ['reason'],
+            properties: {
+              add: { type: 'array', items: permissionRuleSchema, maxItems: 50 },
+              remove: { type: 'array', items: permissionRuleSchema, maxItems: 50, description: 'Each must match a rule the agent has (category, pattern, decision).' },
+              reason: { type: 'string', maxLength: 1000, description: 'Why: shown to the administrator who confirms.' },
+            },
+          }),
+        },
+        responses: {
+          '200': {
+            description: 'Restrictions applied; widenings (if any) pending',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  agentId: { type: 'string' },
+                  applied: { type: 'object', properties: { add: { type: 'array', items: permissionRuleSchema }, remove: { type: 'array', items: permissionRuleSchema } } },
+                  pending: permissionRequestSchema,
+                  rules: { type: 'array', items: permissionRuleSchema, description: 'The agent rules now (the pending ones are not in it).' },
+                  notice: { type: 'string' },
+                },
+              }),
+            ),
+          },
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
+    '/agents/{agentId}/permission-requests': {
+      get: {
+        summary: "An agent's permission requests: the open ones (pending and expired) by default, `status=all` adds the decided ones. Administrators only",
+        parameters: [
+          { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'status', in: 'query', required: false, schema: { type: 'string', enum: ['open', 'all'] } },
+        ],
+        responses: { '200': { description: 'OK, newest first', ...json(envelope({ type: 'array', items: permissionRequestSchema })) }, '404': failures['404'] },
+      },
+    },
+    '/projects/{projectId}/permission-rules': {
+      get: {
+        summary:
+          "A project's permission rules (the project layer) and its open permission requests (the self MCP `list_permission_rules` with scope `project`). Administrators only (404 otherwise)",
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  agentId: { type: 'string' },
+                  agentName: { type: 'string' },
+                  projectId: { type: 'string' },
+                  rules: { type: 'array', items: permissionRuleSchema },
+                  project: { type: 'object', properties: { projectId: { type: 'string' }, rules: { type: 'array', items: permissionRuleSchema } } },
+                  pending: { type: 'array', items: permissionRequestSchema },
+                },
+              }),
+            ),
+          },
+          '404': failures['404'],
+        },
+      },
+      post: {
+        summary:
+          "Change a project's permission rules (the project layer) on behalf of an agent (the self MCP `save_permission_rules` with scope `project`). Restrictions (add a `deny`, remove an `allow`) apply at once, recorded in the catalog history with the reason; widenings (add an `allow`, remove a `deny`, as the catalog widening detector defines them) are NOT applied: they become one pending permission request that only an administrator signed in on the screen can approve. Administrators only",
+        description:
+          'Every rule goes through the same validator as the agent form; all problems come back at once (422). `notice` is the text the agent must relay to the person (pt-BR): what was applied and, if any, what is pending and where to confirm it. The `x-gateway-agent` and `x-gateway-conversation` headers (sent by the gateway to its own MCP) label who asked; they never grant anything.',
+        parameters: [{ name: 'projectId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            required: ['reason'],
+            properties: {
+              add: { type: 'array', items: permissionRuleSchema, maxItems: 50 },
+              remove: { type: 'array', items: permissionRuleSchema, maxItems: 50, description: 'Each must match a rule the agent has (category, pattern, decision).' },
+              reason: { type: 'string', maxLength: 1000, description: 'Why: shown to the administrator who confirms.' },
+            },
+          }),
+        },
+        responses: {
+          '200': {
+            description: 'Restrictions applied; widenings (if any) pending',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  agentId: { type: 'string' },
+                  applied: { type: 'object', properties: { add: { type: 'array', items: permissionRuleSchema }, remove: { type: 'array', items: permissionRuleSchema } } },
+                  pending: permissionRequestSchema,
+                  rules: { type: 'array', items: permissionRuleSchema, description: 'The agent rules now (the pending ones are not in it).' },
+                  notice: { type: 'string' },
+                },
+              }),
+            ),
+          },
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
+    '/projects/{projectId}/permission-requests': {
+      get: {
+        summary: "The permission requests for a project's rules: the open ones (pending and expired) by default, `status=all` adds the decided ones. Administrators only",
+        parameters: [
+          { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'status', in: 'query', required: false, schema: { type: 'string', enum: ['open', 'all'] } },
+        ],
+        responses: { '200': { description: 'OK, newest first', ...json(envelope({ type: 'array', items: permissionRequestSchema })) }, '404': failures['404'] },
+      },
+    },
+    '/permission-requests': {
+      get: {
+        summary: 'Every permission request: the open ones (pending and expired) by default, `status=all` adds the decided ones; `agentId` filters. Administrators only',
+        parameters: [
+          { name: 'agentId', in: 'query', required: false, schema: { type: 'string' } },
+          { name: 'projectId', in: 'query', required: false, schema: { type: 'string' } },
+          { name: 'status', in: 'query', required: false, schema: { type: 'string', enum: ['open', 'all'] } },
+        ],
+        responses: { '200': { description: 'OK, newest first', ...json(envelope({ type: 'array', items: permissionRequestSchema })) }, '404': failures['404'] },
+      },
+    },
+    '/permission-requests/{requestId}/approve': {
+      post: {
+        summary:
+          "Approve a pending permission request: its rules are written through the agent's normal write path, with the accepted widening keys recorded in the revision. ONLY an administrator signed in on the screen (the session cookie): an access token, an MCP client or an agent (any credential in `X-Tool-Authorization`) gets 403. Administrators only",
+        description:
+          'The widenings are recomputed on the agent as it is NOW, and `confirm` must be exactly that set (as in the catalog import and rollback). If the agent changed since the screen read it, 409 `widening_confirmation_required` with the new `details.widenings`. A request pending for more than 7 days is expired and cannot be approved.',
+        parameters: [{ name: 'requestId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          ...json({ type: 'object', properties: { confirm: { type: 'array', items: { type: 'string' }, description: 'The widening keys being accepted.' } } }),
+        },
+        responses: {
+          '200': {
+            description: 'Approved',
+            ...json(envelope({ type: 'object', properties: { request: permissionRequestSchema, permissions: { type: 'array', items: permissionRuleSchema } } })),
+          },
+          '403': { description: 'Code `forbidden`: not an administrator signed in on the screen.', ...json(failureEnvelope) },
+          '404': failures['404'],
+          '409': {
+            description:
+              'Code `widening_confirmation_required`: `confirm` is not exactly `details.widenings` (the agent may have changed). Code `permission_request_closed`: already decided, or expired (`details.status`).',
+            ...json(failureEnvelope),
+          },
+        },
+      },
+    },
+    '/permission-requests/{requestId}/reject': {
+      post: {
+        summary: 'Reject a pending (or expired) permission request: nothing changes on the agent. Administrators only',
+        parameters: [{ name: 'requestId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: false, ...json({ type: 'object', properties: { note: { type: 'string', maxLength: 500 } } }) },
+        responses: {
+          '200': { description: 'Rejected', ...json(envelope(permissionRequestSchema)) },
+          '404': failures['404'],
+          '409': { description: 'Code `permission_request_closed`: already decided.', ...json(failureEnvelope) },
+        },
+      },
+    },
     '/projects/{projectId}/permissions': {
       get: {
         summary: 'The permission rules of a project (the project layer), plus the fixed system rules. Administrators only (404 otherwise)',
@@ -3713,6 +3971,35 @@ export const OPENAPI_DOCUMENT = {
       },
     },
     '/agents/{agentId}': {
+      patch: {
+        summary:
+          'Change only some fields of an agent (the self MCP `patch_agent`), through the normal agent write path with the same rules as PUT; `null` removes a field. Whatever widens access (by the catalog widening detector: tools, delegation, permissions, exposure, scope, sandbox, environment) is NOT applied: it becomes a pending permission request that only an administrator signed in on the screen approves; the rest applies at once. Administrators only',
+        parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            required: ['patch', 'reason'],
+            properties: {
+              patch: { type: 'object', description: 'Fields of PUT /agents/{agentId} (no id or files), each with its new value.' },
+              reason: { type: 'string', maxLength: 1000, description: 'Why: shown to the administrator who confirms.' },
+            },
+          }),
+        },
+        responses: {
+          '200': {
+            description: 'Non-widening fields applied; widening fields (if any) pending',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: { agentId: { type: 'string' }, applied: { type: 'array', items: { type: 'string' } }, pending: permissionRequestSchema, notice: { type: 'string' } },
+              }),
+            ),
+          },
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
       get: {
         summary: 'One agent in full, system prompt included. Administrators only; anyone else gets 404',
         parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],

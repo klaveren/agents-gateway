@@ -23,7 +23,10 @@ import { delegationMaxDepth } from '@domain/models/Delegation.Model'
 import { mcpServerKey, mcpServesProject } from '@domain/models/McpServer.Model'
 import { compactAtPercent } from '@domain/Compaction.Policy'
 import { loopLimits } from '@domain/Loop.Policy'
-import { maxOutputTokens, maxToolTurns } from '@infra/adapters/support/Prompt.Helper'
+import { composeSystemPrompt, maxOutputTokens, maxToolTurns } from '@infra/adapters/support/Prompt.Helper'
+import { ambientSection, IAmbient } from '@domain/Ambient.Policy'
+import { estimateTokens } from '@domain/Token.Estimate'
+import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { bashPolicy } from '@infra/tools/Bash.Guard'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { diagnosticsOn, IAgent, IAgentTarget } from '@domain/models/Agent.Model'
@@ -199,6 +202,7 @@ export class AgentController {
     this.getAgents = this.getAgents.bind(this)
     this.getAgentTools = this.getAgentTools.bind(this)
     this.getAgentFootprint = this.getAgentFootprint.bind(this)
+    this.getAgentSystemPrompt = this.getAgentSystemPrompt.bind(this)
     this.getAgentCommands = this.getAgentCommands.bind(this)
     this.getTools = this.getTools.bind(this)
     this.createSession = this.createSession.bind(this)
@@ -565,6 +569,52 @@ export class AgentController {
           return tools.length ? tools : undefined
         },
       })
+    })
+  }
+
+  /**
+   * `GET /agents/:agentId/system-prompt?project=` — o system prompt FINAL de uma conversa nova (o `preview_system_prompt`):
+   * montado pelo MESMO `composeSystemPrompt` das lanes, com o "## Ambiente" e as seções do ambiente como o `AgentProvider`
+   * os passa, e o tamanho de cada parte. ⚖️ Fora de repositório (o repositório e o branch só a conversa sabe). Só admin.
+   */
+  async getAgentSystemPrompt(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      await this.requireAdmin('getAgentSystemPrompt')
+      const id = req.params.agentId as string
+      const agent = this.agents.get(id)
+      if (!agent) throw new AgentNotFoundError(id)
+      const requested = typeof req.query.project === 'string' && req.query.project ? req.query.project : undefined
+      const projectId = agent.projectId ?? (requested && this.usecases.projects?.exists(requested) ? requested : undefined)
+      const name = projectId && this.usecases.projects?.exists(projectId) ? this.usecases.projects.get(projectId).name : undefined
+      const files = this.agents.filesDir(agent)
+      const ambient: IAmbient = {
+        agentId: agent.id,
+        ...(projectId ? { project: { id: projectId, ...(name ? { name } : {}), own: agent.projectId === projectId } } : {}),
+        ...(agent.projectId ? { directory: projectWorkspacePath(agent.projectId) } : {}),
+        ...(files ? { files } : {}),
+      }
+      const guidance = this.usecases.guidance
+      const environment = guidance?.environmentFor(projectId, agent.id)
+      const prompt = composeSystemPrompt(agent, { ambient, ...(environment ? { environment } : {}) } as ICreateSessionInput)
+      const env = guidance?.environmentParts(projectId, agent.id) ?? {}
+      const soul = agent.soul?.trim()
+      const parts = [
+        ['soul', 'Soul', soul ? `## Quem você é\n${soul}\n\n## Como você trabalha\n` : undefined],
+        ['instructions', 'Instrução do sistema', agent.systemPrompt],
+        ['ambient', 'Ambiente', ambientSection(ambient)],
+        ['rules', 'Rules', env.rules],
+        ['projectSpecs', 'Contexto inicial do projeto', env.projectSpecs],
+        ['agentSpecs', 'Contexto inicial do agente', env.agentSpecs],
+        ['skills', 'Índice de skills', env.skills],
+        ['triggers', 'Índice de triggers', env.triggers],
+        ['commands', 'Índice de commands', env.commands],
+        ['index', 'Índice de documentos', env.index],
+        ['protocol', 'Complemento do protocolo', env.protocol],
+        ['existing', 'O que já existe', env.existing],
+      ]
+        .filter((part): part is [string, string, string] => !!part[2]?.trim())
+        .map(([key, label, text]) => ({ key, label, chars: text.length, tokens: estimateTokens(text) }))
+      return { agentId: agent.id, ...(projectId ? { projectId } : {}), prompt, chars: prompt.length, tokens: estimateTokens(prompt), parts }
     })
   }
 
@@ -1079,7 +1129,8 @@ export class AgentController {
     }
     const unsubscribeCatalog =
       this.usecases.catalogEvents?.subscribe((changes) => {
-        const visible = changes.filter((change) => sees(change.projectId))
+        // ⛔ O pedido de permissão é assunto de quem administra: o membro do projeto nem fica sabendo que existe.
+        const visible = changes.filter((change) => (change.kind === 'permission-request' ? admin : sees(change.projectId)))
         if (visible.length) stream.emit('catalog.changed', { changes: visible })
       }) ?? (() => undefined)
     // Quem conecta (ou reconecta) fica sabendo das que JÁ estão rodando.
