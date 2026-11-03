@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import { ApiError } from '@/lib/api'
 import { fullTime, sizeHint } from '@/lib/format'
 import type { IAgentHook, IHookDelivery, THookInput } from '@/lib/types'
+import { useResource } from '@/composables/useResource'
 import { useHooksStore } from '@/stores/hooks'
 import ConfirmDialog from './ConfirmDialog.vue'
 
@@ -15,8 +16,9 @@ import ConfirmDialog from './ConfirmDialog.vue'
 const props = defineProps<{ agentId: string }>()
 const hooks = useHooksStore()
 
-const list = computed(() => hooks.byAgent[props.agentId] ?? [])
-const loadError = ref<string>()
+const { data, error: listError } = useResource(hooks.lists, () => props.agentId)
+const list = computed(() => data.value ?? [])
+const loadError = computed(() => (listError.value ? describe(listError.value) : undefined))
 /** O hook aberto: `''` = um novo; `undefined` = nenhum. */
 const open = ref<string>()
 const draft = ref<THookInput & { name: string }>(blank())
@@ -33,16 +35,6 @@ function blank(): THookInput & { name: string } {
   return { name: '', prompt: '', enabled: true, verify: 'key', signatureHeader: 'X-Hub-Signature-256', signaturePrefix: 'sha256=', signatureEncoding: 'hex', session: 'new' }
 }
 
-onMounted(() => reload())
-watch(
-  () => props.agentId,
-  () => reload(),
-)
-
-async function reload() {
-  loadError.value = undefined
-  await hooks.load(props.agentId).catch((failure) => (loadError.value = describe(failure)))
-}
 
 function describe(failure: unknown): string {
   if (failure instanceof ApiError && failure.status === 422) {
