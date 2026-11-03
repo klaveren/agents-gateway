@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useResource } from '@/composables/useResource'
 import { levelsOf, type IChoice } from '@/lib/agentChoice'
-import { api } from '@/lib/api'
 import { useAgentCommands } from '@/lib/commands'
 import { effortLabel } from '@/lib/format'
 import type { TMode } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import { useProjectsStore } from '@/stores/projects'
 import { useProtocolsStore } from '@/stores/protocols'
+import { useRepositoriesStore } from '@/stores/repositories'
 import { reconcileDraft, useThreadStore, type IOutgoingFile } from '@/stores/thread'
 import AgentAvatar from './AgentAvatar.vue'
 import Composer from './Composer.vue'
@@ -24,13 +25,13 @@ const thread = useThreadStore()
 const projects = useProjectsStore()
 
 /** Os repositórios do projeto atual (`repositories/<nome>`) e as worktrees de cada um: onde a conversa pode abrir. */
-const repositories = ref<Array<{ name: string; worktrees: Array<{ name: string; branch?: string; path: string }> }>>([])
-async function loadRepositories() {
-  repositories.value = projects.current ? await api<typeof repositories.value>(`/projects/${encodeURIComponent(projects.current)}/repositories`).catch(() => []) : []
+const { data: repositoryList, error: repositoryError } = useResource(useRepositoriesStore().lists, () => projects.current || undefined)
+const repositories = computed(() => repositoryList.value ?? [])
+// O repositório do rascunho que o projeto não tem mais sai (a leitura que falhou conta como lista vazia).
+watch([repositoryList, repositoryError], () => {
+  if (!repositoryList.value && !repositoryError.value && projects.current) return
   if (thread.draft?.repository && !repositories.value.some((item) => item.name === thread.draft?.repository)) thread.draft = { ...thread.draft, repository: undefined, worktree: undefined }
-}
-onMounted(loadRepositories)
-watch(() => projects.current, loadRepositories)
+}, { immediate: true })
 const worktrees = computed(() => repositories.value.find((item) => item.name === thread.draft?.repository)?.worktrees ?? [])
 function pickRepository(name: string) {
   if (thread.draft) thread.draft = { ...thread.draft, repository: name || undefined, worktree: undefined }

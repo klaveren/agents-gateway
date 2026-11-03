@@ -501,10 +501,10 @@ describe('ImportView', () => {
     expect(rows(host)[0]).toContain('Spec')
     expect(host.querySelector('[data-test="summary"]')!.textContent).toContain('1 reclassificado(s)')
 
-    // Reabrir o trabalho pela lista: o tipo veio do servidor.
+    // Reabrir o trabalho pela lista: vem da store (a análise já o trouxe), com o tipo que a gravação deixou lá.
     host.querySelector<HTMLButtonElement>('[data-test="job"]')!.click()
     await flush()
-    expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j1')
+    expect(api).not.toHaveBeenCalledWith('/projects/alfa/import/jobs/j1')
     choose(host, 'kind', 'spec')
     await flush()
     expect(rows(host)).toHaveLength(1)
@@ -866,6 +866,55 @@ describe('ImportView', () => {
     document.querySelector<HTMLButtonElement>('[data-test="desk-drawer-close"]')!.click()
     await flush()
     expect(document.querySelector('[data-test="desk-drawer"]')).toBeNull()
+  })
+
+  it('o estado dos itens é um só: abrir a migração e a fila do Preparar leem o completo uma vez, e aprovar lá aparece no inventário', async () => {
+    const draft = { key: 'skill:deploy', kind: 'skill', sources: [], ops: [], meta: {}, outputs: [], links: [], removals: [], diffs: [], conversationId: 'conv-s', proposedAt: '' }
+    const stored: IImportBatchView = {
+      id: 'b9',
+      jobId: 'j7',
+      name: 'Misto',
+      prefix: '',
+      keys: ['skill:deploy', 'command:ship'],
+      order: ['skill:deploy', 'command:ship'],
+      by: 'bia@x.test',
+      at: '2026-10-30T11:00:00.000Z',
+      plan: selectionPlan(['skill:deploy', 'command:ship']),
+    }
+    const job = savedJob('j7', SMALL, {}, { 'skill:deploy': { state: 'review', conversationId: 'conv-s', drafted: true } as Partial<IImportItemStatus> })
+    const host = await mount(SMALL, { jobs: [job], analyze: false, batches: { j7: [stored] } })
+    const base = vi.mocked(api).getMockImplementation()!
+    vi.mocked(api).mockImplementation(async (path: string, request?: { method?: string; body?: unknown; query?: { keys?: string[] } }) => {
+      // O trabalho vem leve (sem rascunho); o `…/items` traz o rascunho.
+      if (path.endsWith('/import/jobs/j7'))
+        return { ...saved[0], states: saved[0].states.map(({ drafts: _drafts, ...state }: IImportItemStatus & { drafts?: unknown[] }) => state) }
+      if (path.endsWith('/items') && !request?.method)
+        return {
+          latest: true,
+          states: (request?.query?.keys ?? []).map((key) => ({ ...saved[0].states.find((entry) => entry.key === key)!, ...(key === 'skill:deploy' ? { drafts: [draft] } : {}) })),
+        }
+      if (path.endsWith('/items/approve')) return { key: 'skill:deploy', state: 'approved', fingerprint: 'f', drafts: [draft] }
+      return base(path, request as never)
+    })
+    host.querySelector<HTMLButtonElement>('[data-test="job"]')!.click()
+    await flush()
+    host.querySelector<HTMLButtonElement>('[data-test="area-batches"]')!.click()
+    await flush()
+    host.querySelector<HTMLButtonElement>('[data-test="batch-entry"]')!.click()
+    await flush()
+    expect(host.querySelector('[data-test="step-prepare"]')!.className).toContain('on')
+    // Só o item com rascunho vai ao `…/items`, uma vez: o resto já veio inteiro no trabalho.
+    const reads = vi.mocked(api).mock.calls.filter(([path, request]) => path.endsWith('/items') && !request?.method)
+    expect(reads).toEqual([['/projects/alfa/import/jobs/j7/items', { query: { keys: ['skill:deploy'] } }]])
+
+    host.querySelector<HTMLButtonElement>('[data-test="approve"]')!.click()
+    await flush()
+    expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j7/items/approve', { method: 'POST', body: { key: 'skill:deploy', removals: [] } })
+    expect(host.querySelector('[data-test="batch-entry"]')!.textContent).toContain('1/2 aprovado(s)')
+    expect(host.querySelector('[data-test="job"]')!.textContent).toContain('aprovado 1')
+    host.querySelector<HTMLButtonElement>('[data-test="area-inventory"]')!.click()
+    await flush()
+    expect([...host.querySelectorAll('[data-test="row-state"]')].map((chip) => chip.textContent!.trim())).toContain('aprovado')
   })
 
   it('"Migrar selecionados" traz as dependências (caixa marcada); "Criar migração" salva e leva ao passo Preparar', async () => {
