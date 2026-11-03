@@ -93,6 +93,11 @@ export interface IImportConversation {
   keys: string[]
 }
 
+/** Uma conversa de construtor de um lote, com os itens dela que o construtor ainda deve. */
+export interface IImportBatchConversation extends IImportConversation {
+  pending: string[]
+}
+
 /**
  * O CONSTRUTOR EM MODO IMPORTAÇÃO (`docs/integration/plano-importador.md`, PR 7): uma conversa por lote, as ferramentas
  * dela e a revisão mínima.
@@ -182,6 +187,28 @@ export class ImportBuildService {
       for (let at = 0; at < keys.length; at += KEYS_MAX)
         opened.push(await this.open(projectId, jobId, by, { keys: keys.slice(at, at + KEYS_MAX), batchId, kind, ...(owner ? { owner } : {}) }))
     return opened
+  }
+
+  /**
+   * As conversas de construtor dos itens de um LOTE SALVO, com o que cada uma ainda deve (`pending`: os itens dela em
+   * `drafting`, sem rascunho ou com ajuste pedido). É o que o "Preparar tudo" manda rodar.
+   */
+  batchConversations(projectId: string, jobId: string, batchId: string): IImportBatchConversation[] {
+    const record = this.latestRecord(projectId, jobId)
+    const batch = this.deps.repository.batch(record.id, batchId)
+    if (!batch) throw new ImportBuildError('not_found', `batch not found in this import job: ${batchId}`, 'batchId')
+    const groups = new Map<string, IImportBatchConversation>()
+    for (const key of new Set([...batch.order, ...batch.keys])) {
+      const entry = this.deps.repository.item(record.id, key)
+      if (!entry?.conversationId) continue
+      const kind = builderKindForItem(entry.kind ?? entry.item.kind)
+      if (!kind) continue
+      const group = groups.get(entry.conversationId) ?? { conversationId: entry.conversationId, kind, agentId: importBuilderAgentId(kind), keys: [], pending: [] }
+      group.keys.push(entry.key)
+      if (entry.state === 'drafting') group.pending.push(entry.key)
+      groups.set(entry.conversationId, group)
+    }
+    return [...groups.values()]
   }
 
   /**

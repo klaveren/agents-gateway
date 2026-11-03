@@ -3,7 +3,6 @@ import { computed, inject, onMounted, ref, shallowRef, watch } from 'vue'
 import { routerKey } from 'vue-router'
 import ImportApply from '@/components/ImportApply.vue'
 import ImportBatch from '@/components/ImportBatch.vue'
-import ImportBatchProgress from '@/components/ImportBatchProgress.vue'
 import ImportPrepareDesk from '@/components/ImportPrepareDesk.vue'
 import ImportItemDetail from '@/components/ImportItemDetail.vue'
 import ImportSelectionBatch from '@/components/ImportSelectionBatch.vue'
@@ -165,7 +164,6 @@ function message(failure: unknown): string {
 // ── O construtor em modo importação ─────────────────────────────────────────
 
 const router = inject(routerKey, null)
-const building = ref(false)
 const reviewError = ref<string>()
 /**
  * O que vai ao construtor, agrupado por construtor (uma conversa por grupo): só os itens com construtor e sem conversa
@@ -185,10 +183,6 @@ function builderGroups(keys: readonly string[]): Array<{ kind: TBuildKind; keys:
   }
   return [...groups.entries()].map(([kind, list]) => ({ kind, keys: list }))
 }
-/** O lote salvo aberto, por construtor. */
-const batchGroups = computed(() => (openedBatch.value ? builderGroups(openedBatch.value.order.length ? openedBatch.value.order : openedBatch.value.keys) : []))
-/** Os tipos que o "Preparar com o construtor" abre (uma conversa por tipo). */
-const prepareKinds = computed(() => batchGroups.value.map((entry) => BUILD_KINDS[entry.kind].noun).join(', '))
 
 /** Guarda o item que o servidor devolveu e recontá os estados do trabalho na lista. */
 /** Gravar no catálogo: o alvo aberto (lote salvo, seleção ou todo o trabalho). */
@@ -401,30 +395,6 @@ async function saveBatch(name: string) {
     batchError.value = message(failure)
   } finally {
     batchBusy.value = false
-  }
-}
-
-/** A conversa aberta na mesa do Preparar (a lista "Todos os itens" também escolhe). */
-const deskConversation = ref<string>()
-
-
-/** PREPARAR TUDO: o lote salvo vai ao construtor de uma vez, uma conversa por construtor. ⛔ Não grava no catálogo. */
-async function prepareBatch(batchId: string) {
-  if (!project.value || !job.value || readonly.value) return
-  building.value = true
-  batchError.value = undefined
-  try {
-    const result = await api<{ conversations: Array<{ kind: TBuildKind; conversationId: string; keys: string[] }> }>(`${batchesPath()}/${encodeURIComponent(batchId)}/prepare`, {
-      method: 'POST',
-    })
-    for (const opened of result.conversations)
-      for (const key of opened.keys) keep({ ...(statuses.value[key] ?? { key, fingerprint: '' }), key, state: 'drafting', conversationId: opened.conversationId } as IImportItemStatus)
-    // A mesa abre na primeira conversa aberta agora.
-    deskConversation.value = result.conversations[0]?.conversationId ?? deskConversation.value
-  } catch (failure) {
-    batchError.value = message(failure)
-  } finally {
-    building.value = false
   }
 }
 
@@ -1046,38 +1016,22 @@ watch(
                 />
 
                 <template v-else-if="step === 'prepare'">
-                  <section class="flex flex-wrap items-center gap-2 text-xs" data-test="batch-builder">
-                    <button v-if="batchGroups.length" type="button" class="btn btn-primary btn-sm" :disabled="building" data-test="prepare-batch" @click="prepareBatch(openedBatch.id)">
-                      {{ building ? 'Abrindo…' : 'Preparar com o construtor' }}
-                    </button>
-                    <span v-if="batchGroups.length" class="text-zinc-400"
-                      >Abre {{ batchGroups.length }} conversa(s), uma por construtor ({{ prepareKinds }}).</span
-                    >
-                    <span v-if="!batchGroups.length" class="text-zinc-400">Tudo desta migração já foi ao construtor: converse e revise abaixo; os aprovados vão para o passo Gravar.</span>
-                    <button v-if="openedBatch && stepOf(openedBatch) === 'apply'" type="button" class="btn btn-secondary btn-sm" data-test="go-apply" @click="goStep('apply')">Ir para Gravar →</button>
+                  <section v-if="stepOf(openedBatch) === 'apply'" class="flex flex-wrap items-center gap-2 text-xs" data-test="batch-builder">
+                    <span class="text-zinc-400">Os aprovados já podem ir ao catálogo; o que falta revisar continua aqui.</span>
+                    <button type="button" class="btn btn-secondary btn-sm" data-test="go-apply" @click="goStep('apply')">Ir para Gravar →</button>
                   </section>
                   <ImportPrepareDesk
-                    v-model:selected="deskConversation"
+                    :key="openedBatch.id"
                     :project-id="project!.id"
                     :job-id="job!.id"
+                    :batch-id="openedBatch.id"
                     :keys="openedBatch.order.length ? openedBatch.order : openedBatch.keys"
                     :items="itemMap"
                     :statuses="statuses"
                     :overrides="overrides"
+                    :readonly="readonly"
                     @updated="(states) => states.forEach(keep)"
                   />
-                  <details class="rounded-xl border border-zinc-800 px-3 py-2" data-test="all-items">
-                    <summary class="cursor-pointer text-xs text-zinc-400">Todos os itens ({{ (openedBatch.order.length ? openedBatch.order : openedBatch.keys).length }})</summary>
-                    <ImportBatchProgress
-                      class="mt-2"
-                      :keys="openedBatch.order.length ? openedBatch.order : openedBatch.keys"
-                      :items="itemMap"
-                      :statuses="statuses"
-                      :overrides="overrides"
-                      @select="(key) => { selectedKey = key; area = 'inventory' }"
-                      @conversation="deskConversation = $event"
-                    />
-                  </details>
                 </template>
 
                 <ImportApply

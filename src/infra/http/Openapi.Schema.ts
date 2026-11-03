@@ -684,6 +684,17 @@ const importBatchFields = {
   at: { type: 'string', format: 'date-time' },
 }
 const importBatch = { type: 'object', properties: { ...importBatchFields, plan: selectionPlan } }
+const importBatchRun = {
+  type: 'object',
+  properties: {
+    conversationId: { type: 'string' },
+    kind: { type: 'string' },
+    agentId: { type: 'string' },
+    keys: { type: 'array', items: { type: 'string' } },
+    pending: { type: 'array', items: { type: 'string' } },
+    run: { type: 'object', properties: { state: { type: 'string', enum: ['queued', 'running', 'ok', 'error', 'aborted'] }, error: { type: 'string' }, at: { type: 'string' } } },
+  },
+}
 const selectionBody = {
   keys: { type: 'array', items: { type: 'string' }, description: 'The keys of the selected items of the job' },
   prefix: { type: 'string', description: 'Optional id prefix (lowercase letters, digits and "-", up to 16)' },
@@ -1940,8 +1951,12 @@ export const OPENAPI_DOCUMENT = {
     '/projects/{id}/import/jobs/{job}/batches/{batch}/prepare': {
       post: {
         summary:
-          'PREPARE ALL: the saved batch goes to the builder at once, ONE conversation per builder (the agent with its triggers, the specs, the skills…), with the items that still go (no conversation or draft in progress). Returns the opened conversations. Nothing is proposed, approved or written to the catalog. Administrators only',
+          'PREPARE ALL: the saved batch goes to the builder at once, ONE conversation per builder (the agent with its triggers, the specs, the skills…), with the items that still go (no conversation or draft in progress). With `start`, every batch conversation that still owes a draft runs a turn ON THE SERVER (no open tab), `concurrency` at a time (default 3, at most 5). Returns the opened conversations and the batch conversations with their progress (`runs`). Nothing is approved or written to the catalog. Administrators only',
         parameters: [...jobParams, { name: 'batch', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: false,
+          ...json({ type: 'object', properties: { start: { type: 'boolean' }, concurrency: { type: 'integer', minimum: 1, maximum: 5 } } }),
+        },
         responses: {
           '200': {
             description: 'The opened conversations',
@@ -1956,6 +1971,7 @@ export const OPENAPI_DOCUMENT = {
                       properties: { conversationId: { type: 'string' }, kind: { type: 'string' }, agentId: { type: 'string' }, keys: { type: 'array', items: { type: 'string' } } },
                     },
                   },
+                  runs: { type: 'array', items: importBatchRun },
                 },
               }),
             ),
@@ -1964,6 +1980,19 @@ export const OPENAPI_DOCUMENT = {
           '404': failures['404'],
           '409': { description: 'A newer analysis exists, or an item cannot go to the builder now', ...json(failureEnvelope) },
           '422': failures['422'],
+        },
+      },
+    },
+    '/projects/{id}/import/jobs/{job}/batches/{batch}/conversations': {
+      get: {
+        summary:
+          'The builder conversations of the saved batch: the items of each one, the ones it still owes (`pending`: drafting, with no draft or with an adjustment asked) and the progress of the server turn (`run`: queued, running, ok, error, aborted; absent when it never ran since the gateway started). Administrators only',
+        parameters: [...jobParams, { name: 'batch', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'The batch conversations', ...json(envelope({ type: 'object', properties: { runs: { type: 'array', items: importBatchRun } } })) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '409': { description: 'A newer analysis exists', ...json(failureEnvelope) },
         },
       },
     },

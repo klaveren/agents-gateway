@@ -1,4 +1,5 @@
 import { IImportConversationInput, IImportSourceFile, ImportBuildService } from '@application/ImportBuild.Service'
+import { IImportTurnResult, ImportRunService } from '@application/ImportRun.Service'
 import { readRepoFile } from '@infra/import/Repo.Tree'
 import { resolveWorkFolder } from '@infra/workspace/Work.Folder'
 import { importJobRepository } from './ImportJobs.Factory'
@@ -7,6 +8,8 @@ import { makeSecretMasker } from './SecretMask.Factory'
 
 let instance: ImportBuildService | undefined
 let opener: ((input: IImportConversationInput) => Promise<string>) | undefined
+let runs: ImportRunService | undefined
+let turns: ((conversationId: string, message: string) => () => Promise<IImportTurnResult>) | undefined
 
 /**
  * O construtor em modo importação: UM serviço, para as rotas do Importador e para as ferramentas da conversa. A fonte é
@@ -41,4 +44,20 @@ export function readImportSource(projectId: string, repository: string, path: st
 /** Quem abre a conversa (os casos de uso das conversas, montados com o controller de agentes). */
 export function useImportOpener(open: (input: IImportConversationInput) => Promise<string>): void {
   opener = open
+}
+
+/** O construtor em segundo plano (o "Preparar tudo"): UMA fila no gateway, com o turno dos casos de uso das conversas. */
+export function makeImportRuns(): ImportRunService {
+  runs ??= new ImportRunService({
+    prepareTurn: (conversationId, message) => {
+      if (!turns) throw new Error('the builder turn cannot run yet')
+      return turns(conversationId, message)
+    },
+  })
+  return runs
+}
+
+/** Quem roda o turno de fundo (o controller de agentes, no contexto de quem pediu). */
+export function useImportTurns(prepare: (conversationId: string, message: string) => () => Promise<IImportTurnResult>): void {
+  turns = prepare
 }

@@ -152,6 +152,22 @@ describe('ImportBuildService', () => {
     await rejects(() => service.prepare('alfa', 'j1', 'b1', 'ana'), 'invalid')
   })
 
+  it('as conversas do lote: os itens de cada uma e o que o construtor ainda deve', async () => {
+    const { service, repository } = setup()
+    const keys = ['spec:filas', 'spec:arquitetura', 'skill:revisar', 'mcp:github']
+    repository.createBatch({ id: 'b3', jobId: 'j1', name: 'specs', prefix: '', keys, order: keys, by: 'ana', at: new Date('2026-10-30T11:30:00.000Z') })
+    const [specs, skills] = await service.prepare('alfa', 'j1', 'b3', 'ana')
+    repository.updateItem('j1', 'spec:filas', { state: 'review' })
+    assert.deepStrictEqual(
+      service.batchConversations('alfa', 'j1', 'b3').map((one) => [one.conversationId, one.kind, one.keys, one.pending]),
+      [
+        [specs.conversationId, 'spec', ['spec:filas', 'spec:arquitetura'], ['spec:arquitetura']],
+        [skills.conversationId, 'skill', ['skill:revisar'], ['skill:revisar']],
+      ],
+    )
+    assert.throws(() => service.batchConversations('alfa', 'j1', 'nao-existe'), /batch not found/)
+  })
+
   it('preparar tudo: o agente já noutra conversa, sem rascunho, vem junto com os triggers dele', async () => {
     const { service, repository } = setup()
     const keys = ['agent:maya', 'trigger:maya/01-revisar', 'trigger:maya/02-publicar']

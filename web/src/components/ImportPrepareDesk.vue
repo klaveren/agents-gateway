@@ -1,116 +1,272 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import ImportDraftAside from '@/components/ImportDraftAside.vue'
 import ThreadView from '@/components/ThreadView.vue'
-import { BUILD_KINDS, importBuilderAgentId, type TBuildKind } from '@/lib/builder'
-import { builderKindFor, draftingWithoutConversation, type IImportBuildStatus, importOpening, importProposals } from '@/lib/importDraft'
-import { effectiveKind, type IImportItemStatus, type IInventoryItem, type TOverrides } from '@/lib/importer'
+import { api, ApiError } from '@/lib/api'
+import { BUILD_KINDS, importBuilderAgentId } from '@/lib/builder'
+import { builderKindFor, draftingWithoutConversation, type IImportBatchRun, type IImportBuildStatus, runBusy } from '@/lib/importDraft'
+import { effectiveKind, type IImportItemStatus, type IInventoryItem, type TInventoryKind, type TOverrides } from '@/lib/importer'
 import { useThreadStore } from '@/stores/thread'
 
 /**
- * A MESA DO PASSO PREPARAR: as conversas da migração (uma por construtor) à esquerda, a conversa escolhida no meio — a
- * mesma da tela do construtor, embutida — e a fila de revisão dela à direita. Trocar de conversa não sai da tela.
- * ⛔ Aprovar não grava no catálogo (é do passo Gravar).
+ * A MESA DO PASSO PREPARAR: o construtor trabalha NO SERVIDOR ("Preparar tudo": as conversas da migração rodam sem aba
+ * aberta, algumas de cada vez) e a pessoa revisa numa fila só, da migração inteira, filtrada por tipo. A conversa é
+ * secundária: abre num painel por cima, quando um item pede (dúvida, erro, ajuste). ⛔ Aprovar não grava no catálogo
+ * (é do passo Gravar).
  */
 const props = defineProps<{
   projectId: string
   jobId: string
+  batchId: string
   keys: readonly string[]
   items: ReadonlyMap<string, IInventoryItem>
   statuses: Readonly<Record<string, IImportItemStatus>>
   overrides: TOverrides
+  readonly: boolean
 }>()
 const emit = defineEmits<{ updated: [states: IImportBuildStatus[]] }>()
 
 const thread = useThreadStore()
 
-/** As conversas da migração: os itens agrupados pela conversa do construtor em que estão. */
-const conversations = computed(() => {
-  const groups = new Map<string, { id: string; kind: TBuildKind; keys: string[] }>()
-  for (const key of props.keys) {
-    const status = props.statuses[key] as IImportBuildStatus | undefined
-    const item = props.items.get(key)
-    if (!item || !status?.conversationId || draftingWithoutConversation(status)) continue
-    const kind = builderKindFor(effectiveKind(item, props.overrides))
-    if (!kind) continue
-    const group = groups.get(status.conversationId) ?? { id: status.conversationId, kind, keys: [] }
-    group.keys.push(key)
-    groups.set(status.conversationId, group)
+const runs = ref<IImportBatchRun[]>([])
+const loadError = ref<string>()
+const concurrency = ref(3)
+const confirming = ref(false)
+const starting = ref(false)
+/** A fila recarrega quando muda (o andamento do servidor, a cada volta enquanto alguma conversa roda). */
+const tick = ref(0)
+/** O tipo filtrado na fila (`all`: todos) e a conversa aberta no painel. */
+const filter = ref<TInventoryKind | 'all'>('all')
+const drawer = ref<string>()
+
+function message(failure: unknown): string {
+  if (failure instanceof ApiError && Array.isArray(failure.details)) {
+    const issues = (failure.details as Array<{ message?: string }>).map((item) => item.message).filter(Boolean)
+    if (issues.length) return issues.join('; ')
   }
-  return [...groups.values()].map((group) => {
-    const states = group.keys.map((key) => props.statuses[key]?.state)
-    return {
-      ...group,
-      review: states.filter((state) => state === 'review').length,
-      done: states.filter((state) => state === 'approved' || state === 'applied').length,
-    }
-  })
+  return failure instanceof Error ? failure.message : String(failure)
+}
+
+function batchPath(): string {
+  return `/projects/${encodeURIComponent(props.projectId)}/import/jobs/${encodeURIComponent(props.jobId)}/batches/${encodeURIComponent(props.batchId)}`
+}
+
+const statusOf = (key: string) => props.statuses[key] as IImportBuildStatus | undefined
+const kindOf = (key: string): TInventoryKind | undefined => {
+  const item = props.items.get(key)
+  return item ? effectiveKind(item, props.overrides) : undefined
+}
+/** Só o que tem construtor entra na mesa. */
+const buildable = computed(() => props.keys.filter((key) => {
+  const kind = kindOf(key)
+  return !!kind && !!builderKindFor(kind)
+}))
+
+/** A conversa (de servidor) de cada item e as que estão na fila ou rodando. */
+const runOf = computed(() => new Map(runs.value.flatMap((run) => run.keys.map((key) => [key, run] as const))))
+const working = computed(() => new Set(runs.value.filter(runBusy).flatMap((run) => run.pending)))
+const active = computed(() => runs.value.some(runBusy))
+
+/** O que ainda não foi ao construtor (sem conversa, ou a conversa sumiu). */
+const notSent = computed(() =>
+  buildable.value.filter((key) => {
+    const status = statusOf(key)
+    return !status || ['pending', 'rejected', 'error', 'stale'].includes(status.state) || draftingWithoutConversation(status)
+  }),
+)
+/** As conversas que o "Preparar tudo" põe para rodar: as que devem rascunho e não estão rodando. */
+const idleRuns = computed(() => runs.value.filter((run) => run.pending.length && !runBusy(run)))
+const toStart = computed(() => idleRuns.value.length + (notSent.value.length ? 1 : 0))
+
+const count = (state: string) => buildable.value.filter((key) => statusOf(key)?.state === state).length
+const totals = computed(() => ({
+  review: count('review'),
+  done: count('approved') + count('applied'),
+  working: working.value.size,
+  idle: idleRuns.value.reduce((sum, run) => sum + run.pending.length, 0),
+}))
+
+/** O andamento no lugar do estado, item a item, enquanto o item está com o construtor. */
+const badges = computed(() => {
+  const out: Record<string, { label: string; hint?: string; tone: 'work' | 'idle' }> = {}
+  for (const key of buildable.value) {
+    const run = runOf.value.get(key)
+    if (!run || statusOf(key)?.state !== 'drafting') continue
+    if (working.value.has(key)) out[key] = { label: run.run?.state === 'queued' ? 'na fila' : 'construtor trabalhando', tone: 'work' }
+    else
+      out[key] = {
+        label: run.run?.state === 'error' ? 'erro no construtor' : 'parado',
+        hint: run.run?.error ?? 'O construtor não está trabalhando nele: use "Preparar tudo" ou abra a conversa.',
+        tone: 'idle',
+      }
+  }
+  return out
 })
 
-/** A conversa aberta no meio (quem embute pode escolher: a lista "Todos os itens" leva à conversa do item). */
-const selected = defineModel<string | undefined>('selected')
-const current = computed(() => conversations.value.find((entry) => entry.id === selected.value))
-// Abre na conversa que pede revisão (senão, a primeira); a que sumiu da lista cede o lugar.
-watch(
-  conversations,
-  (list) => {
-    if (!current.value) selected.value = (list.find((entry) => entry.review) ?? list[0])?.id
-  },
-  { immediate: true },
-)
-watch(
-  selected,
-  (id) => {
-    if (id && thread.sessionId !== id) void thread.open(id)
-  },
-  { immediate: true },
-)
+/** Os tipos da migração, com as contagens: filtram a fila. */
+const LABEL = (kind: TInventoryKind) => (kind === 'trigger' ? 'Triggers' : BUILD_KINDS[builderKindFor(kind)!].title)
+const kinds = computed(() => {
+  const groups = new Map<TInventoryKind, string[]>()
+  for (const key of buildable.value) groups.set(kindOf(key)!, [...(groups.get(kindOf(key)!) ?? []), key])
+  return [...groups.entries()].map(([kind, keys]) => ({
+    kind,
+    label: LABEL(kind),
+    keys,
+    review: keys.filter((key) => statusOf(key)?.state === 'review').length,
+    working: keys.some((key) => working.value.has(key)),
+    failed: keys.some((key) => badges.value[key]?.label === 'erro no construtor'),
+  }))
+})
+const shownKeys = computed(() => (filter.value === 'all' ? buildable.value : (kinds.value.find((entry) => entry.kind === filter.value)?.keys ?? [])))
 
-const here = computed(() => !!selected.value && thread.sessionId === selected.value)
-const canStart = computed(() => here.value && !thread.turns.length && !thread.sending && !thread.loading)
-const refresh = computed(() => (here.value ? importProposals(thread.turns, thread.pending) : 0))
-
-function start() {
-  if (current.value) void thread.send(importOpening(current.value.keys), [])
+async function load() {
+  try {
+    runs.value = (await api<{ runs: IImportBatchRun[] }>(`${batchPath()}/conversations`)).runs
+    loadError.value = undefined
+  } catch (failure) {
+    loadError.value = message(failure)
+  }
 }
+watch(() => [props.projectId, props.jobId, props.batchId], load, { immediate: true })
+
+/** Enquanto alguma conversa roda, o andamento e a fila se atualizam sozinhos; ao parar, uma última vez. */
+let timer: ReturnType<typeof setInterval> | undefined
+watch(
+  active,
+  (now, before) => {
+    if (now && !timer)
+      timer = setInterval(() => {
+        void load()
+        tick.value += 1
+      }, 5_000)
+    if (!now && timer) {
+      clearInterval(timer)
+      timer = undefined
+    }
+    if (!now && before) tick.value += 1
+  },
+  { immediate: true },
+)
+onBeforeUnmount(() => timer && clearInterval(timer))
+
+async function startAll() {
+  confirming.value = false
+  starting.value = true
+  loadError.value = undefined
+  try {
+    const result = await api<{ runs: IImportBatchRun[] }>(`${batchPath()}/prepare`, { method: 'POST', body: { start: true, concurrency: concurrency.value } })
+    runs.value = result.runs
+    tick.value += 1
+  } catch (failure) {
+    loadError.value = message(failure)
+  } finally {
+    starting.value = false
+  }
+}
+
+// ── O painel da conversa ────────────────────────────────────────────────────
+
+const opened = computed(() => runs.value.find((run) => run.conversationId === drawer.value))
+watch(drawer, (id) => {
+  if (id && thread.sessionId !== id) void thread.open(id)
+})
+const RUN_LABEL: Record<NonNullable<IImportBatchRun['run']>['state'], string> = { queued: 'na fila', running: 'trabalhando', ok: 'terminou', error: 'erro', aborted: 'interrompida' }
 </script>
 
 <template>
-  <section class="grid min-h-0 gap-3 lg:h-[calc(100vh-13rem)] lg:grid-cols-[13rem_minmax(0,1fr)_minmax(0,24rem)]" data-test="prepare-desk">
-    <nav class="flex flex-col gap-1.5 lg:overflow-y-auto" aria-label="Conversas da migração" data-test="desk-conversations">
-      <p v-if="!conversations.length" class="text-xs text-zinc-500">Nenhuma conversa ainda: use "Preparar com o construtor".</p>
-      <button
-        v-for="entry in conversations"
-        :key="entry.id"
-        type="button"
-        class="flex flex-col gap-0.5 rounded-xl border px-3 py-2 text-left text-xs hover:bg-zinc-900"
-        :class="entry.id === selected ? 'border-emerald-500/50 bg-zinc-900' : 'border-zinc-800'"
-        :aria-current="entry.id === selected"
-        data-test="desk-conversation"
-        @click="selected = entry.id"
-      >
-        <span class="font-medium text-zinc-200">{{ BUILD_KINDS[entry.kind].title }}</span>
-        <span class="text-zinc-500">{{ entry.keys.length }} item(ns)</span>
-        <span class="flex flex-wrap gap-1">
-          <span v-if="entry.review" class="rounded-full bg-amber-500/15 px-1.5 text-[10px] text-amber-200">{{ entry.review }} a revisar</span>
-          <span class="rounded-full bg-emerald-500/15 px-1.5 text-[10px] text-emerald-200">{{ entry.done }} aprovado(s)</span>
-        </span>
+  <section class="flex flex-col gap-3" data-test="prepare-desk">
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs" data-test="desk-progress">
+      <span class="text-zinc-200">{{ buildable.length }} itens</span>
+      <span v-if="totals.working" class="animate-pulse text-sky-300">{{ totals.working }} com o construtor</span>
+      <span v-if="notSent.length" class="text-zinc-400">{{ notSent.length }} ainda não foram</span>
+      <span v-if="totals.idle" class="text-orange-300">{{ totals.idle }} parados</span>
+      <span class="text-amber-300">{{ totals.review }} a revisar</span>
+      <span class="text-emerald-300">{{ totals.done }} aprovados</span>
+      <span class="flex-1" />
+      <template v-if="!readonly && toStart && !confirming">
+        <label class="flex items-center gap-1 text-zinc-400" title="Quantas conversas o construtor toca ao mesmo tempo">
+          juntas
+          <input v-model.number="concurrency" type="number" min="1" max="5" class="input w-14 py-0.5" data-test="desk-concurrency" />
+        </label>
+        <button type="button" class="btn btn-primary btn-sm" :disabled="starting" data-test="desk-start-all" @click="confirming = true">
+          {{ starting ? 'Começando…' : notSent.length || !runs.length ? 'Preparar tudo' : 'Retomar as paradas' }}
+        </button>
+      </template>
+    </div>
+
+    <div v-if="confirming" class="flex flex-col gap-2 rounded-xl border border-sky-500/40 bg-sky-500/5 p-3 text-xs" data-test="desk-confirm">
+      <p class="text-zinc-200">
+        O construtor vai rodar no servidor<template v-if="notSent.length"> (abrindo as conversas dos {{ notSent.length }} itens que ainda não foram)</template>, {{ concurrency }} conversa(s) por vez,
+        gastando tokens sem você acompanhando. Pode sair da tela: o andamento fica aqui.
+      </p>
+      <div class="flex gap-2">
+        <button type="button" class="btn btn-primary btn-sm" data-test="desk-confirm-start" @click="startAll">Começar</button>
+        <button type="button" class="btn btn-ghost btn-sm" @click="confirming = false">Cancelar</button>
+      </div>
+    </div>
+    <p v-if="loadError" class="text-xs text-rose-300" data-test="desk-error">{{ loadError }}</p>
+
+    <nav class="flex flex-wrap gap-1.5" aria-label="Tipos da migração" data-test="desk-kinds">
+      <button type="button" class="chip" :class="filter === 'all' ? 'chip-on' : ''" @click="filter = 'all'">Todos ({{ buildable.length }})</button>
+      <button v-for="entry in kinds" :key="entry.kind" type="button" class="chip" :class="filter === entry.kind ? 'chip-on' : ''" data-test="desk-kind" @click="filter = entry.kind">
+        {{ entry.label }} ({{ entry.keys.length }})
+        <span v-if="entry.working" class="ml-1 animate-pulse text-sky-300">●</span>
+        <span v-if="entry.failed" class="ml-1 text-rose-300">erro</span>
+        <span v-if="entry.review" class="ml-1 rounded-full bg-amber-500/15 px-1.5 text-[10px] text-amber-200">{{ entry.review }}</span>
       </button>
     </nav>
 
-    <div class="flex min-h-[28rem] min-w-0 flex-col overflow-hidden rounded-xl border border-zinc-800" data-test="desk-thread">
-      <template v-if="current">
-        <div v-if="canStart" class="flex flex-wrap items-center gap-2 border-b border-zinc-800 px-3 py-2 text-xs">
-          <span class="text-zinc-400">O construtor ainda não começou estes {{ current.keys.length }} item(ns).</span>
-          <button type="button" class="btn btn-primary btn-sm" data-test="desk-start" @click="start">Começar</button>
-        </div>
-        <ThreadView :key="current.id" embedded :agent-id="importBuilderAgentId(current.kind)" mode="agent" />
-      </template>
-      <p v-else class="m-auto p-6 text-sm text-zinc-500">Escolha uma conversa à esquerda.</p>
-    </div>
+    <ImportDraftAside
+      :project-id="projectId"
+      :job-id="jobId"
+      :keys="shownKeys"
+      :refresh="tick"
+      scope="nesta lista"
+      :badges="badges"
+      with-conversation
+      @updated="emit('updated', $event)"
+      @conversation="drawer = $event"
+    />
 
-    <aside class="scroll-thin min-w-0 lg:overflow-y-auto" data-test="desk-review">
-      <ImportDraftAside v-if="current" :key="current.id" :project-id="projectId" :job-id="jobId" :keys="current.keys" :refresh="refresh" @updated="emit('updated', $event)" />
-    </aside>
+    <Teleport to="body">
+      <div v-if="drawer" class="fixed inset-0 z-40 flex justify-end bg-black/50" data-test="desk-drawer" @click.self="drawer = undefined" @keydown.esc="drawer = undefined">
+        <aside class="flex h-full w-full max-w-3xl flex-col border-l border-zinc-700 bg-zinc-950" aria-label="Conversa do construtor">
+          <header class="flex flex-col gap-2 border-b border-zinc-800 px-3 py-2">
+            <div class="flex items-center gap-2 text-sm">
+              <span class="font-medium text-zinc-200">{{ opened ? BUILD_KINDS[opened.kind].builder : 'Conversa' }}</span>
+              <span v-if="opened?.run" class="text-xs text-zinc-400" :title="opened.run.error">· {{ RUN_LABEL[opened.run.state] }}</span>
+              <span class="flex-1" />
+              <button type="button" class="btn btn-ghost btn-sm" data-test="desk-drawer-close" @click="drawer = undefined">Fechar</button>
+            </div>
+            <nav class="scroll-thin flex gap-1 overflow-x-auto" aria-label="Conversas da migração">
+              <button
+                v-for="run in runs"
+                :key="run.conversationId"
+                type="button"
+                class="chip shrink-0"
+                :class="run.conversationId === drawer ? 'chip-on' : ''"
+                data-test="desk-drawer-tab"
+                @click="drawer = run.conversationId"
+              >
+                {{ BUILD_KINDS[run.kind].title }} · {{ run.keys.length }}
+                <span v-if="runBusy(run)" class="ml-1 animate-pulse text-sky-300">●</span>
+              </button>
+            </nav>
+          </header>
+          <ThreadView v-if="opened" :key="opened.conversationId" embedded :agent-id="importBuilderAgentId(opened.kind)" mode="agent" />
+        </aside>
+      </div>
+    </Teleport>
   </section>
 </template>
+
+<style scoped>
+@reference '../style.css';
+
+.chip {
+  @apply rounded-full border border-zinc-700 px-2.5 py-0.5 text-xs text-zinc-300 hover:bg-zinc-800;
+}
+.chip-on {
+  @apply border-emerald-500/60 bg-emerald-500/10 text-emerald-100;
+}
+</style>

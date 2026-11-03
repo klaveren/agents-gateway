@@ -380,6 +380,7 @@ function buildRoutes(
     { method: 'post', path: '/projects/:id/import/jobs/:job/batches', handler: importer.createBatch },
     { method: 'get', path: '/projects/:id/import/jobs/:job/batches/:batch', handler: importer.getBatch },
     { method: 'post', path: '/projects/:id/import/jobs/:job/batches/:batch/prepare', handler: importer.prepareBatch },
+    { method: 'get', path: '/projects/:id/import/jobs/:job/batches/:batch/conversations', handler: importer.batchConversations },
     { method: 'post', path: '/projects/:id/import/jobs/:job/batches/:batch/items', handler: importer.addBatchItems },
     { method: 'post', path: '/projects/:id/import/jobs/:job/apply/plan', handler: importer.planApply },
     { method: 'post', path: '/projects/:id/import/jobs/:job/apply', handler: importer.applyItems },

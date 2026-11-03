@@ -5,6 +5,7 @@ import { IMPORT_BATCH_MAX, IMPORT_BATCH_NAME_MAX, ImportBatchService } from '@ap
 import { ImportBuildError, ImportBuildService } from '@application/ImportBuild.Service'
 import { ImportJobError, ImportJobService } from '@application/ImportJob.Service'
 import { ImportPlanError, ImportPlanUseCase } from '@application/ImportPlan.Usecase'
+import { ImportRunService, RUN_CONCURRENCY_MAX } from '@application/ImportRun.Service'
 import { ImportScanUseCase } from '@application/ImportScan.Usecase'
 import { ignoreIssues, IMPORT_IGNORE_MAX } from '@domain/Import.Ignore'
 import { IMPORT_MANUAL_STATES, TImportManualState } from '@domain/models/ImportJob.Model'
@@ -33,6 +34,8 @@ export interface IImportControllerDeps {
   batches?: ImportBatchService
   /** O construtor em modo importação (conversa por lote e revisão). Ausente: as rotas respondem 404. */
   build?: ImportBuildService
+  /** O construtor em segundo plano (o "Preparar tudo" que roda no servidor). Ausente: o preparar só abre as conversas. */
+  runs?: ImportRunService
   /** A gravação pelo catálogo (os aprovados viram documentos). Ausente: as rotas respondem 404. */
   apply?: ImportApplyUseCase
   projectExists: (projectId: string) => boolean
@@ -41,6 +44,8 @@ export interface IImportControllerDeps {
   ignore?: IImportIgnoreStore
   proof?: ICallerProof
 }
+
+const prepareSchema = z.object({ start: z.boolean().optional(), concurrency: z.number().int().min(1).max(RUN_CONCURRENCY_MAX).optional() })
 
 const patterns = z.array(z.string().max(1_000)).max(IMPORT_IGNORE_MAX)
 const scanSchema = z.object({ repository: z.string().min(1).max(100), ignore: patterns.optional() })
@@ -131,6 +136,7 @@ export class ImportController {
     this.addBatchItems = this.addBatchItems.bind(this)
     this.openBuilder = this.openBuilder.bind(this)
     this.prepareBatch = this.prepareBatch.bind(this)
+    this.batchConversations = this.batchConversations.bind(this)
     this.approveItem = this.approveItem.bind(this)
     this.adjustItem = this.adjustItem.bind(this)
     this.planApply = this.planApply.bind(this)
@@ -353,13 +359,48 @@ export class ImportController {
   }
 
   /**
-   * `POST /projects/:id/import/jobs/:job/batches/:batch/prepare` — PREPARAR TUDO: o lote salvo vai ao construtor de uma
-   * vez, uma conversa por construtor, com os itens que ainda vão. Devolve as conversas abertas. ⛔ Não grava no catálogo.
+   * `POST /projects/:id/import/jobs/:job/batches/:batch/prepare { start?, concurrency? }` — PREPARAR TUDO: o lote salvo
+   * vai ao construtor de uma vez, uma conversa por construtor, com os itens que ainda vão. Com `start`, cada conversa
+   * que ainda deve rascunho roda um turno no servidor (sem aba aberta), `concurrency` de cada vez. Devolve as conversas
+   * abertas agora e as do lote com o andamento. ⛔ Não grava no catálogo.
    */
   async prepareBatch(req: Request, res: Response): Promise<void> {
-    await this.respond(res, 'prepareImportBatch', req, async (projectId, by, owner) => ({
-      conversations: await this.buildError(() => this.build().prepare(projectId, req.params.job as string, req.params.batch as string, by, owner)),
+    await this.respond(res, 'prepareImportBatch', req, async (projectId, by, owner) => {
+      const body = parseBody(prepareSchema, req.body ?? {})
+      const job = req.params.job as string
+      const batch = req.params.batch as string
+      if (body.start && !this.deps.runs) throw new HttpError(404, 'not_found', 'Not found')
+      const conversations = await this.buildError(async () => {
+        try {
+          return await this.build().prepare(projectId, job, batch, by, owner)
+        } catch (error) {
+          // Começar o que já está aberto: nada a abrir não é erro.
+          if (body.start && error instanceof ImportBuildError && error.code === 'invalid') return []
+          throw error
+        }
+      })
+      if (body.start)
+        this.deps.runs!.start(
+          this.build()
+            .batchConversations(projectId, job, batch)
+            .map((entry) => ({ conversationId: entry.conversationId, keys: entry.pending })),
+          body.concurrency,
+        )
+      return { conversations, runs: this.withRuns(projectId, job, batch) }
+    })
+  }
+
+  /** `GET /projects/:id/import/jobs/:job/batches/:batch/conversations` — as conversas do lote, o que devem e o andamento. */
+  async batchConversations(req: Request, res: Response): Promise<void> {
+    await this.respond(res, 'importBatchConversations', req, async (projectId) => ({
+      runs: await this.buildError(() => this.withRuns(projectId, req.params.job as string, req.params.batch as string)),
     }))
+  }
+
+  private withRuns(projectId: string, jobId: string, batchId: string) {
+    const list = this.build().batchConversations(projectId, jobId, batchId)
+    const runs = this.deps.runs?.statusOf(list.map((entry) => entry.conversationId)) ?? {}
+    return list.map((entry) => ({ ...entry, ...(runs[entry.conversationId] ? { run: runs[entry.conversationId] } : {}) }))
   }
 
   /**

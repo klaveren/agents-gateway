@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { AsyncResource } from 'node:async_hooks'
 import { join } from 'node:path'
 import { installationRules, makePermissions } from './Permissions.Factory'
 import { makeProjectAccounts } from './ProjectAccounts.Factory'
@@ -62,7 +63,7 @@ import { makeAuth } from './Auth.Factory'
 import { importJobRepository } from './ImportJobs.Factory'
 import { makeSettings } from './Settings.Factory'
 import { makeUsecases } from './Usecases.Factory'
-import { makeImportBuild, readImportSource, useImportOpener } from './ImportBuild.Factory'
+import { makeImportBuild, makeImportRuns, readImportSource, useImportOpener, useImportTurns } from './ImportBuild.Factory'
 import { BUILDER_METADATA_KEY } from '@domain/Builder.Agents'
 import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
 import { EMode } from '@domain/enums/EMode.Enum'
@@ -123,6 +124,9 @@ export function makeController(): AgentController {
     callbackAllowed: (url) => callbackAllowed(url),
     sessionEnded: (sessionId) => backgroundProcesses().stopSession(sessionId),
   })
+  // ⛔ O turno de fundo do Importador amarrado ao contexto de quem pediu (a identidade da requisição): a fila roda depois,
+  // e o turno passa pelas mesmas regras do `POST …/turns`.
+  useImportTurns((conversationId, message) => AsyncResource.bind(() => controller.serverTurn(conversationId, message)))
   // O rascunho de agente do construtor é conferido com as MESMAS regras do cadastro, que moram aqui.
   makeGuidance().useAgentChecker((agent) => controller.agentDraftIssues(agent))
   agentController = controller
@@ -342,6 +346,7 @@ export function makeImportController(): ImportController {
     scan,
     jobs: new ImportJobService({ repository: importJobRepository(), scan: (projectId, repository, options) => scan.execute(projectId, repository, options) }),
     build: makeImportBuild(),
+    runs: makeImportRuns(),
     batches: new ImportBatchService({ repository: importJobRepository(), catalogState: (query) => scan.catalogState(query) }),
     // ⛔ A gravação pelo catálogo: o MESMO plano e o MESMO apply do import do catálogo (um caminho de escrita só).
     apply: new ImportApplyUseCase({

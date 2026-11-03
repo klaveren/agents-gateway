@@ -7,12 +7,14 @@ import { after, before, describe, it } from 'node:test'
 import { Request, Response } from 'express'
 import { ImportBuildService } from '@application/ImportBuild.Service'
 import { ImportJobService } from '@application/ImportJob.Service'
+import { ImportRunService } from '@application/ImportRun.Service'
+import { AsyncResource } from 'node:async_hooks'
 import { ImportScanUseCase } from '@application/ImportScan.Usecase'
 import { maskText } from '@domain/Secret.Mask'
 import { HmacTokenIssuer } from '@infra/auth/Hmac.TokenIssuer'
 import { AgentsDirDetector } from '@infra/import/AgentsDir.Detector'
 import { readRepoFile, readRepoTree } from '@infra/import/Repo.Tree'
-import { identityFromToken, withCaller } from '@infra/mcp/Caller.Identity'
+import { caller, identityFromToken, withCaller } from '@infra/mcp/Caller.Identity'
 import { SqliteImportRepository } from '@infra/persistence/Sqlite.ImportRepository'
 import { resolveWorkFolder } from '@infra/workspace/Work.Folder'
 import { gitInit, writeFixture } from '../../testing/Import.Fixture'
@@ -60,8 +62,8 @@ describe('construtor em modo importação (/projects/:id/import/jobs/:job/builde
   })
   after(() => rmSync(base, { recursive: true, force: true }))
 
-  type THandler = 'openBuilder' | 'approveItem' | 'adjustItem' | 'getJob' | 'getItems'
-  const call = (as: string, body: unknown, handler: THandler, target: ImportController = controller) =>
+  type THandler = 'openBuilder' | 'approveItem' | 'adjustItem' | 'getJob' | 'getItems' | 'prepareBatch' | 'batchConversations'
+  const call = (as: string, body: unknown, handler: THandler, target: ImportController = controller, params: Record<string, string> = {}) =>
     withCaller({ token: as, ...identityFromToken(as) }, async () => {
       const reply: { status: number; body?: { ok: boolean; result?: any; code?: string; details?: any } } = { status: 0 } // eslint-disable-line @typescript-eslint/no-explicit-any
       const res = {
@@ -75,7 +77,7 @@ describe('construtor em modo importação (/projects/:id/import/jobs/:job/builde
         },
       } as unknown as Response
       // No GET, a mesma entrada vale como query.
-      await target[handler]({ params: { id: 'alfa', job: jobId }, body, query: body ?? {} } as unknown as Request, res)
+      await target[handler]({ params: { id: 'alfa', job: jobId, ...params }, body, query: body ?? {} } as unknown as Request, res)
       return reply
     })
 
@@ -166,6 +168,41 @@ describe('construtor em modo importação (/projects/:id/import/jobs/:job/builde
     const reopened = await call(ADMIN, { keys: ['spec:arquitetura'] }, 'openBuilder')
     assert.deepStrictEqual([reopened.status, repository.item(jobId, 'spec:arquitetura')!.conversationId], [200, reopened.body?.result.conversationId])
     assert.notStrictEqual(reopened.body?.result.conversationId, 'conv-1')
+  })
+
+  it('preparar tudo com `start`: abre o que falta e roda cada conversa no servidor, como quem pediu', async () => {
+    repository.createBatch({ id: 'run', jobId, name: 'run', prefix: '', keys: ['skill:revisar'], order: ['skill:revisar'], by: 'u_root', at: new Date('2026-11-02T10:00:00.000Z') })
+    const turns: Array<{ conversationId: string; as?: string; message: string }> = []
+    const runs = new ImportRunService({
+      prepareTurn: (conversationId, message) =>
+        AsyncResource.bind(async () => {
+          turns.push({ conversationId, as: caller()?.id, message })
+          return { status: 'ok' as const }
+        }),
+    })
+    const withRuns = new ImportController({ ...controllerDeps(), runs })
+    assert.strictEqual((await call(MEMBER, { start: true }, 'prepareBatch', withRuns, { batch: 'run' })).status, 404)
+    assert.strictEqual((await call(ADMIN, { start: true, concurrency: 9 }, 'prepareBatch', withRuns, { batch: 'run' })).status, 422)
+    const reply = await call(ADMIN, { start: true, concurrency: 2 }, 'prepareBatch', withRuns, { batch: 'run' })
+    assert.strictEqual(reply.status, 200)
+    const conversationId = reply.body?.result.conversations[0].conversationId as string
+    assert.deepStrictEqual(
+      reply.body?.result.runs.map((one: { conversationId: string; pending: string[] }) => [one.conversationId, one.pending]),
+      [[conversationId, ['skill:revisar']]],
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.deepStrictEqual(
+      turns.map((one) => [one.conversationId, one.as]),
+      [[conversationId, 'u_root']],
+    )
+    assert.match(turns[0].message, /skill:revisar/)
+    const listed = await call(ADMIN, undefined, 'batchConversations', withRuns, { batch: 'run' })
+    assert.strictEqual(listed.body?.result.runs[0].run.state, 'ok')
+    // De novo, com a conversa já aberta: nada a abrir não é erro, e ela roda outra vez (ainda deve o rascunho).
+    const again = await call(ADMIN, { start: true }, 'prepareBatch', withRuns, { batch: 'run' })
+    assert.deepStrictEqual([again.status, again.body?.result.conversations], [200, []])
+    // Sem o `start`, o mesmo de antes: nada mais vai ao construtor.
+    assert.strictEqual((await call(ADMIN, {}, 'prepareBatch', withRuns, { batch: 'run' })).status, 422)
   })
 
   it('sem o construtor configurado na rota, 404', async () => {
