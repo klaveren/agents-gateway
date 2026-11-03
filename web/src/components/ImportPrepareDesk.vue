@@ -2,10 +2,12 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import ImportDraftAside from '@/components/ImportDraftAside.vue'
 import ThreadView from '@/components/ThreadView.vue'
-import { api, ApiError } from '@/lib/api'
+import { useResource } from '@/composables/useResource'
+import { ApiError } from '@/lib/api'
 import { BUILD_KINDS, importBuilderAgentId } from '@/lib/builder'
 import { builderKindFor, draftingWithoutConversation, type IImportBatchRun, type IImportBuildStatus, runBusy } from '@/lib/importDraft'
-import { effectiveKind, type IImportItemStatus, type IInventoryItem, type TInventoryKind, type TOverrides } from '@/lib/importer'
+import { effectiveKind, type IInventoryItem, type TInventoryKind, type TOverrides } from '@/lib/importer'
+import { batchKey, useImportsStore } from '@/stores/imports'
 import { useThreadStore } from '@/stores/thread'
 
 /**
@@ -20,16 +22,19 @@ const props = defineProps<{
   batchId: string
   keys: readonly string[]
   items: ReadonlyMap<string, IInventoryItem>
-  statuses: Readonly<Record<string, IImportItemStatus>>
   overrides: TOverrides
   readonly: boolean
 }>()
-const emit = defineEmits<{ updated: [states: IImportBuildStatus[]] }>()
 
 const thread = useThreadStore()
+const imports = useImportsStore()
 
-const runs = ref<IImportBatchRun[]>([])
-const loadError = ref<string>()
+/** As conversas do lote, da store (o "Preparar tudo" e a releitura do andamento gravam lá). */
+const runsKey = computed(() => batchKey(props.projectId, props.jobId, props.batchId))
+const { data: runList, error: runError } = useResource(imports.runs, runsKey)
+const runs = computed(() => runList.value ?? [])
+const actionError = ref<string>()
+const loadError = computed(() => actionError.value ?? (runError.value === undefined ? undefined : message(runError.value)))
 const concurrency = ref(3)
 const confirming = ref(false)
 const starting = ref(false)
@@ -47,11 +52,7 @@ function message(failure: unknown): string {
   return failure instanceof Error ? failure.message : String(failure)
 }
 
-function batchPath(): string {
-  return `/projects/${encodeURIComponent(props.projectId)}/import/jobs/${encodeURIComponent(props.jobId)}/batches/${encodeURIComponent(props.batchId)}`
-}
-
-const statusOf = (key: string) => props.statuses[key] as IImportBuildStatus | undefined
+const statusOf = (key: string): IImportBuildStatus | undefined => imports.statesOf(props.projectId, props.jobId)[key]
 const kindOf = (key: string): TInventoryKind | undefined => {
   const item = props.items.get(key)
   return item ? effectiveKind(item, props.overrides) : undefined
@@ -119,16 +120,6 @@ const kinds = computed(() => {
 })
 const shownKeys = computed(() => (filter.value === 'all' ? buildable.value : (kinds.value.find((entry) => entry.kind === filter.value)?.keys ?? [])))
 
-async function load() {
-  try {
-    runs.value = (await api<{ runs: IImportBatchRun[] }>(`${batchPath()}/conversations`)).runs
-    loadError.value = undefined
-  } catch (failure) {
-    loadError.value = message(failure)
-  }
-}
-watch(() => [props.projectId, props.jobId, props.batchId], load, { immediate: true })
-
 /** Enquanto alguma conversa roda, o andamento e a fila se atualizam sozinhos; ao parar, uma última vez. */
 let timer: ReturnType<typeof setInterval> | undefined
 watch(
@@ -136,7 +127,7 @@ watch(
   (now, before) => {
     if (now && !timer)
       timer = setInterval(() => {
-        void load()
+        void imports.runs.refresh(runsKey.value).catch(() => undefined)
         tick.value += 1
       }, 5_000)
     if (!now && timer) {
@@ -152,13 +143,12 @@ onBeforeUnmount(() => timer && clearInterval(timer))
 async function startAll() {
   confirming.value = false
   starting.value = true
-  loadError.value = undefined
+  actionError.value = undefined
   try {
-    const result = await api<{ runs: IImportBatchRun[] }>(`${batchPath()}/prepare`, { method: 'POST', body: { start: true, concurrency: concurrency.value } })
-    runs.value = result.runs
+    await imports.prepare(props.projectId, props.jobId, props.batchId, concurrency.value)
     tick.value += 1
   } catch (failure) {
-    loadError.value = message(failure)
+    actionError.value = message(failure)
   } finally {
     starting.value = false
   }
@@ -224,7 +214,6 @@ const RUN_LABEL: Record<NonNullable<IImportBatchRun['run']>['state'], string> = 
       scope="nesta lista"
       :badges="badges"
       with-conversation
-      @updated="emit('updated', $event)"
       @conversation="drawer = $event"
     />
 

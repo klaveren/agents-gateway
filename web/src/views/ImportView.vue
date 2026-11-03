@@ -6,6 +6,7 @@ import ImportBatch from '@/components/ImportBatch.vue'
 import ImportPrepareDesk from '@/components/ImportPrepareDesk.vue'
 import ImportItemDetail from '@/components/ImportItemDetail.vue'
 import ImportSelectionBatch from '@/components/ImportSelectionBatch.vue'
+import { useResource } from '@/composables/useResource'
 import { api, ApiError } from '@/lib/api'
 import type { IApplyResult } from '@/lib/importApply'
 import { fullTime, tokens } from '@/lib/format'
@@ -22,10 +23,7 @@ import {
   filterItems,
   groupByKind,
   type IImportBatch,
-  type IImportBatchView,
   type IImportFilters,
-  type IImportItemStatus,
-  type IImportJob,
   type IImportJobSummary,
   type IImportPlan,
   type IInventoryItem,
@@ -49,7 +47,9 @@ import {
 import { BUILD_KINDS, type TBuildKind } from '@/lib/builder'
 import { BUILDABLE_STATES, buildLink, builderKindFor, draftingWithoutConversation, type IImportBuildStatus } from '@/lib/importDraft'
 import { useAuthStore } from '@/stores/auth'
+import { batchKey, type IImportJobView, jobKey, useImportsStore } from '@/stores/imports'
 import { useProjectsStore } from '@/stores/projects'
+import { useRepositoriesStore } from '@/stores/repositories'
 
 /**
  * O IMPORTADOR do projeto em uso (só admin): os TRABALHOS DE IMPORTAÇÃO do projeto (cada análise de um repositório,
@@ -66,6 +66,9 @@ import { useProjectsStore } from '@/stores/projects'
  *
  * ⛔ Fora isso, nada aqui grava no catálogo nem dispara construtor. Só o trabalho mais novo de cada repositório muda; os
  * outros são registro.
+ *
+ * ⚖️ Tudo o que vem do servidor mora na store (`useImportsStore`, `useRepositoriesStore`): a tela garante (`ensure`) o
+ * que mostra, e as gravações põem a resposta lá — a fila de revisão e a mesa do Preparar leem a mesma cópia.
  */
 const PAGE = 100
 const CATALOG_STATES: readonly TCatalogState[] = ['new', 'same-project', 'global', 'other-project']
@@ -73,18 +76,25 @@ const CATALOG_STATES: readonly TCatalogState[] = ['new', 'same-project', 'global
 const auth = useAuthStore()
 const projects = useProjectsStore()
 const project = computed(() => projects.list.find((item) => item.id === projects.current))
+const imports = useImportsStore()
+/** O projeto das leituras do importador (só admin). */
+const projectId = computed(() => (auth.isAdmin ? project.value?.id : undefined))
 
-const repositories = ref<string[]>([])
+const { data: repositoryList, error: repositoryError } = useResource(useRepositoriesStore().lists, projectId)
+const repositories = computed(() => (repositoryList.value ?? []).map((item) => item.name))
 const repository = ref('')
 const busy = ref(false)
-const error = ref<string>()
-/** Os trabalhos do projeto (mais novo primeiro) e o aberto. */
-const jobs = ref<IImportJobSummary[]>([])
-/** ⚖️ `shallowRef`: o inventário é grande (centenas de itens, milhares de fontes) e só é trocado inteiro. */
-const job = shallowRef<IImportJob>()
+const actionError = ref<string>()
+/** Os trabalhos do projeto (mais novo primeiro) e o aberto (da store, pelo id). */
+const { data: jobList, error: jobsError } = useResource(imports.jobs, projectId)
+const jobs = computed(() => jobList.value ?? [])
+const openedJobId = ref<string>()
+const openedJobKey = computed(() => (projectId.value && openedJobId.value ? jobKey(projectId.value, openedJobId.value) : undefined))
+const job = computed<IImportJobView | undefined>(() => (openedJobKey.value ? imports.job.get(openedJobKey.value) : undefined))
 const scan = computed(() => job.value?.scan)
-/** O estado de cada item do trabalho aberto, pela chave (o que muda item a item). */
-const statuses = ref<Record<string, IImportItemStatus>>({})
+/** O estado de cada item do trabalho aberto, pela chave: a cópia da store (o que muda item a item). */
+const statuses = computed<Readonly<Record<string, IImportBuildStatus>>>(() => (projectId.value && job.value ? imports.statesOf(projectId.value, job.value.id) : {}))
+const error = computed(() => actionError.value ?? [repositoryError.value, jobsError.value].map((failure) => (failure === undefined ? undefined : message(failure))).find(Boolean))
 const readonly = computed(() => !!job.value && !job.value.latest)
 const itemBusy = ref(false)
 const itemError = ref<string>()
@@ -100,12 +110,19 @@ const planning = ref(false)
 const planError = ref<string>()
 /** A seleção do trabalho aberto (chaves) e o lote por seleção: a prévia, ou o lote salvo aberto. */
 const picked = ref<Set<string>>(new Set())
-const selectionPlan = shallowRef<ISelectionPlan>()
-const openedBatch = shallowRef<IImportBatch>()
+/** A prévia da seleção (não salva) e o lote salvo aberto (da store, pelo id): o lote mostrado é o dele, senão a prévia. */
+const previewPlan = shallowRef<ISelectionPlan>()
+const openedBatchId = ref<string>()
+const openedBatch = computed(() => (projectId.value && job.value && openedBatchId.value ? imports.batch.get(batchKey(projectId.value, job.value.id, openedBatchId.value)) : undefined))
+const selectionPlan = computed(() => openedBatch.value?.plan ?? previewPlan.value)
 const previewName = ref('')
-const batches = ref<IImportBatch[]>([])
+const { data: batchList, error: batchesError } = useResource(imports.batches, openedJobKey)
+const batches = computed(() => batchList.value ?? [])
 const batchBusy = ref(false)
 const batchError = ref<string>()
+watch(batchesError, (failure) => {
+  if (failure !== undefined) batchError.value = message(failure)
+})
 /** A área do trabalho aberto e o passo do lote aberto (ver o comentário do topo). */
 const area = ref<'inventory' | 'batches'>('inventory')
 type TStep = 'build' | 'prepare' | 'apply'
@@ -117,12 +134,15 @@ const STEPS: ReadonlyArray<{ id: TStep; label: string }> = [
 ]
 /** "Gravar todos os aprovados do trabalho" (fora de lote), aberto na área de lotes. */
 const applyAll = ref(false)
-/** O ignorar do projeto: um padrão por linha, como está salvo e como está no campo. */
-const ignoreSaved = ref<string[]>([])
+/** O ignorar do projeto: um padrão por linha, como está salvo (na store) e como está no campo. */
+const { data: ignoreData, error: ignoreLoadError } = useResource(imports.ignore, projectId)
+const ignoreSaved = computed(() => ignoreData.value ?? [])
 const ignoreText = ref('')
+watch(ignoreData, (patterns) => (ignoreText.value = (patterns ?? []).join('\n')), { immediate: true })
 const ignoreBusy = ref(false)
 const ignoreMessage = ref<string>()
-const ignoreError = ref<string>()
+const ignoreSaveError = ref<string>()
+const ignoreError = computed(() => ignoreSaveError.value ?? (ignoreLoadError.value === undefined ? undefined : message(ignoreLoadError.value)))
 const ignoreDirty = computed(() => parseIgnore(ignoreText.value).join('\n') !== ignoreSaved.value.join('\n'))
 
 const items = computed(() => scan.value?.items ?? [])
@@ -175,7 +195,7 @@ function builderGroups(keys: readonly string[]): Array<{ kind: TBuildKind; keys:
   const groups = new Map<TBuildKind, string[]>()
   for (const key of keys) {
     const item = byKey.get(key)
-    const status = statuses.value[key] as IImportBuildStatus | undefined
+    const status = statuses.value[key]
     const state = status?.state ?? 'pending'
     if (!item || !BUILDABLE_STATES.includes(state) || state === 'review' || (state === 'drafting' && !draftingWithoutConversation(status))) continue
     const kind = builderKindFor(effectiveKind(item, overrides.value))
@@ -203,24 +223,22 @@ function stepOf(batch: IImportBatch): TStep {
 }
 
 /**
- * Os estados de AGORA dos itens do lote (a pessoa revisou nas conversas, noutra tela): a rota leve do trabalho, em
- * pedaços de 200 chaves.
+ * "Atualizar estados": os estados de AGORA dos itens do lote (a pessoa revisou noutra aba, outra pessoa revisou) e o
+ * lote recalculado sobre eles, na store.
  */
 async function refreshStates(keys: readonly string[]) {
-  if (!project.value || !job.value || !keys.length) return
+  if (!projectId.value || !job.value || !keys.length) return
+  const opened = openedBatch.value
   try {
-    for (let at = 0; at < keys.length; at += 200) {
-      const found = await api<{ states: IImportItemStatus[] } | undefined>(`${projectPath()}/jobs/${encodeURIComponent(job.value.id)}/items`, { query: { keys: keys.slice(at, at + 200) } })
-      for (const state of found?.states ?? []) keep(state)
-    }
+    await Promise.all([imports.refreshItems(projectId.value, job.value.id, keys), opened ? imports.batch.refresh(batchKey(projectId.value, job.value.id, opened.id)) : undefined])
   } catch (failure) {
     batchError.value = message(failure)
   }
 }
 
+/** ⚖️ Abrir o Preparar não relê nada: a fila de revisão garante o estado completo dos itens, na store. */
 function goStep(next: TStep) {
   step.value = next
-  if (next === 'prepare' && openedBatch.value) void refreshStates(openedBatch.value.order.length ? openedBatch.value.order : openedBatch.value.keys)
 }
 
 /** Os agentes da migração (o alcance e as permissões de cada um aparecem no Montar). */
@@ -252,50 +270,23 @@ function includeInApply(keys: string[]) {
 }
 
 function applied(result: IApplyResult) {
-  for (const key of result.items.applied) {
-    const current = statuses.value[key]
-    if (current) keep({ ...current, state: 'applied', ...(result.batch ? { batchId: result.batch.id } : {}) })
-  }
-}
-
-function keep(updated: IImportItemStatus) {
-  statuses.value = { ...statuses.value, [updated.key]: updated }
-  const counts: Partial<Record<TImportItemState, number>> = {}
-  for (const entry of Object.values(statuses.value)) counts[entry.state] = (counts[entry.state] ?? 0) + 1
-  jobs.value = jobs.value.map((entry) => (entry.id === job.value!.id ? { ...entry, byState: counts } : entry))
+  if (projectId.value && job.value) imports.markApplied(projectId.value, job.value.id, result)
 }
 
 function parseIgnore(text: string): string[] {
   return [...new Set(text.split('\n').map((line) => line.trim()).filter(Boolean))]
 }
 
-async function loadIgnore() {
-  ignoreSaved.value = []
-  ignoreText.value = ''
-  ignoreMessage.value = undefined
-  ignoreError.value = undefined
-  if (!project.value) return
-  try {
-    const result = await api<{ patterns: string[] }>(`/projects/${encodeURIComponent(project.value.id)}/import/ignore`)
-    ignoreSaved.value = result.patterns
-    ignoreText.value = result.patterns.join('\n')
-  } catch (failure) {
-    ignoreError.value = message(failure)
-  }
-}
-
 async function saveIgnore() {
-  if (!project.value) return
+  if (!projectId.value) return
   ignoreBusy.value = true
   ignoreMessage.value = undefined
-  ignoreError.value = undefined
+  ignoreSaveError.value = undefined
   try {
-    const result = await api<{ patterns: string[] }>(`/projects/${encodeURIComponent(project.value.id)}/import/ignore`, { method: 'PUT', body: { patterns: parseIgnore(ignoreText.value) } })
-    ignoreSaved.value = result.patterns
-    ignoreText.value = result.patterns.join('\n')
+    await imports.saveIgnore(projectId.value, parseIgnore(ignoreText.value))
     ignoreMessage.value = scan.value ? 'Salvo. Analise de novo para aplicar.' : 'Salvo.'
   } catch (failure) {
-    ignoreError.value = message(failure)
+    ignoreSaveError.value = message(failure)
   } finally {
     ignoreBusy.value = false
   }
@@ -344,15 +335,6 @@ function clearPicked() {
   picked.value = new Set()
 }
 
-async function loadBatches() {
-  if (!project.value || !job.value) return
-  try {
-    batches.value = await api<IImportBatch[]>(batchesPath())
-  } catch (failure) {
-    batchError.value = message(failure)
-  }
-}
-
 /**
  * A prévia do lote: as chaves escolhidas (na ordem da lista) e o prefixo. `closure`: cada chave com as dependências (o
  * servidor devolve o lote com todas). Não salva nada.
@@ -367,10 +349,10 @@ async function buildSelection(keys = items.value.filter((item) => picked.value.h
   area.value = 'batches'
   step.value = 'build'
   try {
-    selectionPlan.value = await api<ISelectionPlan>(`${batchesPath()}/plan`, { method: 'POST', body: { keys, ...(nextPrefix ? { prefix: nextPrefix } : {}), ...(closure ? { closure } : {}) } })
+    previewPlan.value = await api<ISelectionPlan>(`${batchesPath()}/plan`, { method: 'POST', body: { keys, ...(nextPrefix ? { prefix: nextPrefix } : {}), ...(closure ? { closure } : {}) } })
     if (closure && keys.length === 1) previewName.value = `${keys[0].slice(keys[0].indexOf(':') + 1)} e dependências`
     else if (fresh) previewName.value = batchName(items.value.filter((item) => keys.includes(item.key)), overrides.value)
-    openedBatch.value = undefined
+    openedBatchId.value = undefined
   } catch (failure) {
     batchError.value = message(failure)
   } finally {
@@ -380,16 +362,14 @@ async function buildSelection(keys = items.value.filter((item) => picked.value.h
 
 /** Salva a prévia como lote do trabalho (nome, itens, ordem). ⛔ Não dispara nada nem grava no catálogo. */
 async function saveBatch(name: string) {
-  if (!project.value || !job.value || !selectionPlan.value || readonly.value) return
+  if (!projectId.value || !job.value || !selectionPlan.value || readonly.value) return
   batchBusy.value = true
   batchError.value = undefined
   try {
     const plan = selectionPlan.value
-    const view = await api<IImportBatchView>(batchesPath(), { method: 'POST', body: { name, keys: plan.keys, ...(plan.prefix ? { prefix: plan.prefix } : {}) } })
-    const { plan: batchPlan, ...record } = view
-    openedBatch.value = record
-    selectionPlan.value = batchPlan
-    batches.value = [record, ...batches.value.filter((entry) => entry.id !== record.id)]
+    const view = await imports.createBatch(projectId.value, job.value.id, { name, keys: plan.keys, ...(plan.prefix ? { prefix: plan.prefix } : {}) })
+    openedBatchId.value = view.id
+    previewPlan.value = undefined
     step.value = 'prepare'
   } catch (failure) {
     batchError.value = message(failure)
@@ -400,19 +380,17 @@ async function saveBatch(name: string) {
 
 /** Acrescenta itens a uma migração salva (com as dependências, se pedido) e a abre com o estado de agora. */
 async function addToBatch(batchId: string, keys: readonly string[], closure = false, keepStep = false) {
-  if (!project.value || !job.value || readonly.value || !keys.length) return
+  if (!projectId.value || !job.value || readonly.value || !keys.length) return
   batchBusy.value = true
   batchError.value = undefined
   try {
-    const view = await api<IImportBatchView>(`${batchesPath()}/${encodeURIComponent(batchId)}/items`, { method: 'POST', body: { keys, ...(closure ? { closure } : {}) } })
-    const { plan: batchPlan, ...record } = view
-    openedBatch.value = record
-    selectionPlan.value = batchPlan
-    batches.value = batches.value.map((entry) => (entry.id === record.id ? record : entry))
+    const view = await imports.addToBatch(projectId.value, job.value.id, batchId, { keys, ...(closure ? { closure } : {}) })
+    openedBatchId.value = view.id
+    previewPlan.value = undefined
     applyAll.value = false
     plan.value = undefined
     area.value = 'batches'
-    if (!keepStep) step.value = stepOf(record)
+    if (!keepStep) step.value = stepOf(view)
   } catch (failure) {
     batchError.value = message(failure)
   } finally {
@@ -425,21 +403,22 @@ const addTarget = ref('')
 /** Migrar e adicionar trazem as dependências da seleção (o padrão: a migração sai completa). */
 const withDependencies = ref(true)
 
+/** Abre a migração salva (da store, lida uma vez) no passo em que ela está, com o estado completo dos itens. */
 async function openBatch(id: string) {
-  if (!project.value || !job.value) return
+  if (!projectId.value || !job.value) return
+  const jobId = job.value.id
   batchBusy.value = true
   batchError.value = undefined
   try {
-    const view = await api<IImportBatchView>(`${batchesPath()}/${encodeURIComponent(id)}`)
-    const { plan: batchPlan, ...record } = view
+    const view = await imports.batch.ensure(batchKey(projectId.value, jobId, id))
     applyAll.value = false
     applyTarget.value = undefined
     plan.value = undefined
-      openedBatch.value = record
-    selectionPlan.value = batchPlan
+    openedBatchId.value = id
+    previewPlan.value = undefined
     area.value = 'batches'
-    await refreshStates(record.order.length ? record.order : record.keys)
-    step.value = stepOf(record)
+    await imports.ensureItems(projectId.value, jobId, view.order.length ? view.order : view.keys)
+    step.value = stepOf(view)
   } catch (failure) {
     batchError.value = message(failure)
   } finally {
@@ -448,24 +427,14 @@ async function openBatch(id: string) {
 }
 
 function closeSelection() {
-  selectionPlan.value = undefined
-  openedBatch.value = undefined
+  previewPlan.value = undefined
+  openedBatchId.value = undefined
   batchError.value = undefined
 }
 
-async function loadJobs() {
-  if (!project.value) return
-  try {
-    jobs.value = await api<IImportJobSummary[]>(`${projectPath()}/jobs`)
-  } catch (failure) {
-    error.value = message(failure)
-  }
-}
-
-/** Abre o trabalho que veio da API: o inventário, os estados e a tela limpa. */
-function show(opened: IImportJob) {
-  job.value = opened
-  statuses.value = Object.fromEntries(opened.states.map((entry) => [entry.key, entry]))
+/** Abre o trabalho (já na store): o inventário, os estados e a tela limpa. */
+function show(opened: IImportJobView) {
+  openedJobId.value = opened.id
   repository.value = opened.repository
   selectedKey.value = undefined
   plan.value = undefined
@@ -474,22 +443,20 @@ function show(opened: IImportJob) {
   filters.value = { ...EMPTY_FILTERS }
   limit.value = PAGE
   picked.value = new Set()
-  batches.value = []
   applyTarget.value = undefined
   applyAll.value = false
   area.value = 'inventory'
   closeSelection()
-  void loadBatches()
 }
 
 async function openJob(id: string) {
-  if (!project.value) return
+  if (!projectId.value) return
   busy.value = true
-  error.value = undefined
+  actionError.value = undefined
   try {
-    show(await api<IImportJob>(`${projectPath()}/jobs/${encodeURIComponent(id)}`))
+    show(await imports.job.ensure(jobKey(projectId.value, id)))
   } catch (failure) {
-    error.value = message(failure)
+    actionError.value = message(failure)
   } finally {
     busy.value = false
   }
@@ -497,15 +464,11 @@ async function openJob(id: string) {
 
 /** Muda um item do trabalho aberto (excluir/incluir, reclassificar) e guarda o que o servidor devolveu. */
 async function changeItem(key: string, change: { state?: 'pending' | 'skipped'; kind?: TInventoryKind | null }) {
-  if (!project.value || !job.value || readonly.value) return
+  if (!projectId.value || !job.value || readonly.value) return
   itemBusy.value = true
   itemError.value = undefined
   try {
-    const updated = await api<IImportItemStatus>(`${projectPath()}/jobs/${encodeURIComponent(job.value.id)}/items`, { method: 'PATCH', body: { key, ...change } })
-    statuses.value = { ...statuses.value, [key]: updated }
-    const counts: Partial<Record<TImportItemState, number>> = {}
-    for (const entry of Object.values(statuses.value)) counts[entry.state] = (counts[entry.state] ?? 0) + 1
-    jobs.value = jobs.value.map((entry) => (entry.id === job.value!.id ? { ...entry, byState: counts } : entry))
+    await imports.updateItem(projectId.value, job.value.id, key, change)
   } catch (failure) {
     itemError.value = message(failure)
   } finally {
@@ -513,48 +476,39 @@ async function changeItem(key: string, change: { state?: 'pending' | 'skipped'; 
   }
 }
 
-async function loadRepositories() {
-  repositories.value = []
-  repository.value = ''
-  jobs.value = []
-  if (!project.value) return
-  void loadIgnore()
-  void loadJobs()
-  try {
-    const list = await api<Array<{ name: string }>>(`/projects/${encodeURIComponent(project.value.id)}/repositories`)
-    repositories.value = list.map((item) => item.name)
-    repository.value = repositories.value[0] ?? ''
-  } catch (failure) {
-    error.value = message(failure)
-  }
-}
+/** O repositório escolhido: o primeiro do projeto, ao trocar de projeto ou quando o escolhido não existe mais. */
+watch(
+  [() => projects.current, repositories],
+  ([current], [before]) => {
+    if (current !== before || !repositories.value.includes(repository.value)) repository.value = repositories.value[0] ?? ''
+  },
+  { immediate: true },
+)
 
 async function analyze() {
-  if (!project.value || !repository.value) return
+  if (!projectId.value || !repository.value) return
   busy.value = true
-  error.value = undefined
+  actionError.value = undefined
   try {
-    show(await api<IImportJob>(`${projectPath()}/jobs`, { method: 'POST', body: { repository: repository.value } }))
-    await loadJobs()
+    show(await imports.analyze(projectId.value, repository.value))
   } catch (failure) {
-    error.value = message(failure)
+    actionError.value = message(failure)
   } finally {
     busy.value = false
   }
 }
 
 function reset() {
-  job.value = undefined
-  jobs.value = []
-  statuses.value = {}
+  openedJobId.value = undefined
+  ignoreMessage.value = undefined
+  ignoreSaveError.value = undefined
   plan.value = undefined
   planError.value = undefined
   itemError.value = undefined
   selectedKey.value = undefined
   filters.value = { ...EMPTY_FILTERS }
-  error.value = undefined
+  actionError.value = undefined
   picked.value = new Set()
-  batches.value = []
   closeSelection()
 }
 
@@ -596,17 +550,10 @@ function noteBadges(item: IInventoryItem): { untranslatable: number; attention: 
 }
 
 onMounted(async () => {
-  if (!auth.isAdmin) return
-  if (!projects.loaded) await projects.load().catch(() => undefined)
-  await loadRepositories()
+  if (auth.isAdmin && !projects.loaded) await projects.load().catch(() => undefined)
 })
-watch(
-  () => projects.current,
-  () => {
-    reset()
-    if (auth.isAdmin) void loadRepositories()
-  },
-)
+// ⚖️ As leituras seguem o projeto sozinhas (`useResource`): trocar de projeto só limpa a tela.
+watch(() => projects.current, reset)
 </script>
 
 <template>
@@ -1027,10 +974,8 @@ watch(
                     :batch-id="openedBatch.id"
                     :keys="openedBatch.order.length ? openedBatch.order : openedBatch.keys"
                     :items="itemMap"
-                    :statuses="statuses"
                     :overrides="overrides"
                     :readonly="readonly"
-                    @updated="(states) => states.forEach(keep)"
                   />
                 </template>
 

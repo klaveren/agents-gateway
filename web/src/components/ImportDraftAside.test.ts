@@ -1,3 +1,4 @@
+import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, ref } from 'vue'
 import { api } from '@/lib/api'
@@ -38,6 +39,8 @@ async function mount() {
   const updated: string[][] = []
   const host = document.createElement('div')
   document.body.append(host)
+  const pinia = createPinia()
+  setActivePinia(pinia)
   createApp({
     render: () =>
       h(ImportDraftAside, {
@@ -47,7 +50,9 @@ async function mount() {
         refresh: refresh.value,
         onUpdated: (states: Array<{ key: string }>) => updated.push(states.map((one) => one.key)),
       }),
-  }).mount(host)
+  })
+    .use(pinia)
+    .mount(host)
   await flush()
   return { host, refresh, updated }
 }

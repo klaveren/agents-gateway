@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import ImportItemReview from '@/components/ImportItemReview.vue'
-import { api, ApiError } from '@/lib/api'
+import { ApiError } from '@/lib/api'
 import { type IImportBuildStatus, lastDraft } from '@/lib/importDraft'
 import { BUILDER_KINDS, canReclassifyState, KIND_LABEL, STATE_HINT, STATE_LABEL, type TImportItemState, type TInventoryKind } from '@/lib/importer'
+import { useImportsStore } from '@/stores/imports'
 
 /**
  * A FILA DE REVISÃO de uma conversa de importação (ao lado da conversa, na tela do construtor e na mesa do passo
@@ -27,11 +28,13 @@ const props = withDefaults(
   }>(),
   { scope: 'na conversa', badges: () => ({}), withConversation: false },
 )
-/** O estado de agora dos itens (o que a fila carregou ou a revisão mudou): quem embute atualiza as contagens. */
+/** O estado de agora dos itens (o que a fila carregou ou a revisão mudou). ⚖️ Já está na store: o aviso é só para quem quer saber. */
 const emit = defineEmits<{ updated: [states: IImportBuildStatus[]]; conversation: [conversationId: string] }>()
 
-const statuses = ref<Record<string, IImportBuildStatus>>({})
-const latest = ref(true)
+const imports = useImportsStore()
+/** O estado dos itens: a cópia da store, a mesma do Importador e da mesa do Preparar. */
+const statuses = computed(() => imports.statesOf(props.projectId, props.jobId))
+const latest = computed(() => imports.latestOf(props.projectId, props.jobId) ?? true)
 const loadError = ref<string>()
 const busyKey = ref<string>()
 const reviewError = ref<{ key: string; text: string }>()
@@ -63,35 +66,32 @@ function message(failure: unknown): string {
   return failure instanceof Error ? failure.message : String(failure)
 }
 
-function jobPath(): string {
-  return `/projects/${encodeURIComponent(props.projectId)}/import/jobs/${encodeURIComponent(props.jobId)}`
-}
-
-/** O servidor lê no máximo 200 chaves por pedido. */
-const KEYS_PER_CALL = 200
-
-async function load() {
+/**
+ * Garante o estado completo dos itens (`fresh`: busca de novo) e abre o primeiro a revisar. ⚖️ Lê e grava só na store:
+ * quem embute vê o mesmo estado sem receber nada de volta — o `updated` fica para quem ainda o escuta.
+ */
+async function load(fresh: boolean) {
   if (!props.keys.length) return
   try {
-    const states: IImportBuildStatus[] = []
-    let fresh = true
-    for (let at = 0; at < props.keys.length; at += KEYS_PER_CALL) {
-      const found = await api<{ latest: boolean; states: IImportBuildStatus[] }>(`${jobPath()}/items`, { query: { keys: props.keys.slice(at, at + KEYS_PER_CALL) } })
-      states.push(...found.states)
-      fresh &&= found.latest
-    }
-    statuses.value = Object.fromEntries(states.map((state) => [state.key, state]))
-    latest.value = fresh
+    await (fresh ? imports.refreshItems : imports.ensureItems)(props.projectId, props.jobId, props.keys)
     loadError.value = undefined
-    if (!open.value || !statuses.value[open.value] || statuses.value[open.value].state !== 'review') open.value = toReview.value[0]
-    emit('updated', states)
+    if (!open.value || statuses.value[open.value]?.state !== 'review') open.value = toReview.value[0]
+    emit(
+      'updated',
+      props.keys.map((key) => statuses.value[key]).filter((state): state is IImportBuildStatus => !!state),
+    )
   } catch (failure) {
     loadError.value = message(failure)
   }
 }
 
-// ⚠️ Um texto, não um array: o array novo a cada leitura dispararia de novo a cada mudança de estado (e a carga muda o estado).
-watch(() => `${props.projectId}\n${props.jobId}\n${props.refresh}\n${props.keys.join('\n')}`, load, { immediate: true })
+// ⚠️ Um texto, não um array: o array novo a cada leitura dispararia de novo a cada mudança de estado.
+watch(() => `${props.projectId}\n${props.jobId}\n${props.keys.join('\n')}`, () => load(false), { immediate: true })
+// Uma proposta que terminou (ou a volta do andamento): o estado de agora, do servidor.
+watch(
+  () => props.refresh,
+  () => load(true),
+)
 
 /** O próximo a revisar depois deste (ou o primeiro que sobrou). */
 function nextAfter(key: string): string | undefined {
@@ -103,10 +103,8 @@ async function review(key: string, action: 'approve' | 'adjust', body: { removal
   busyKey.value = key
   reviewError.value = undefined
   try {
-    const updated = await api<IImportBuildStatus>(`${jobPath()}/items/${action}`, { method: 'POST', body: { key, ...body } })
     const next = action === 'approve' ? nextAfter(key) : key
-    statuses.value = { ...statuses.value, [key]: { ...statuses.value[key], ...updated } }
-    emit('updated', [statuses.value[key]])
+    emit('updated', [await imports.review(props.projectId, props.jobId, key, action, body)])
     open.value = next
   } catch (failure) {
     reviewError.value = { key, text: message(failure) }
@@ -123,17 +121,15 @@ function kindOf(key: string): TInventoryKind {
 /** Reclassificar daqui: o item sem rascunho (mesmo já com o construtor) sai da conversa e volta à fila. */
 function canMove(key: string): boolean {
   const status = statuses.value[key]
-  return latest.value && !!status && canReclassifyState(status.state, !!lastDraft(status))
+  return latest.value && !!status && canReclassifyState(status.state, !!status.drafted || !!lastDraft(status))
 }
 
 async function reclassify(key: string, kind: TInventoryKind) {
   busyKey.value = key
   reviewError.value = undefined
   try {
-    const updated = await api<IImportBuildStatus>(`${jobPath()}/items`, { method: 'PATCH', body: { key, kind } })
-    // ⚠️ Substitui (não mescla): a conversa de que o item saiu não vem na resposta.
-    statuses.value = { ...statuses.value, [key]: updated }
-    emit('updated', [updated])
+    // ⚠️ A store substitui (não mescla): a conversa de que o item saiu não vem na resposta.
+    emit('updated', [await imports.updateItem(props.projectId, props.jobId, key, { kind })])
   } catch (failure) {
     reviewError.value = { key, text: message(failure) }
   } finally {
@@ -148,9 +144,7 @@ async function approveQuick() {
   bulk.value = { done: 0, total: keys.length, failed: [] }
   for (const key of keys) {
     try {
-      const updated = await api<IImportBuildStatus>(`${jobPath()}/items/approve`, { method: 'POST', body: { key, removals: [] } })
-      statuses.value = { ...statuses.value, [key]: { ...statuses.value[key], ...updated } }
-      emit('updated', [statuses.value[key]])
+      emit('updated', [await imports.review(props.projectId, props.jobId, key, 'approve', { removals: [] })])
     } catch (failure) {
       bulk.value.failed.push(`${key}: ${message(failure)}`)
     }
