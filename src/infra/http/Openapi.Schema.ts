@@ -1731,6 +1731,22 @@ export const OPENAPI_DOCUMENT = {
                       },
                     },
                   },
+                  scope: {
+                    type: 'object',
+                    description:
+                      'The agentic environment looked at: each default place (on/off, found in the repository, files), the extra paths and how many files were left outside',
+                    properties: {
+                      places: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: { place: { type: 'string' }, enabled: { type: 'boolean' }, found: { type: 'boolean' }, files: { type: 'integer' } },
+                        },
+                      },
+                      extra: { type: 'array', items: { type: 'object', properties: { pattern: { type: 'string' }, files: { type: 'integer' } } } },
+                      outside: { type: 'integer' },
+                    },
+                  },
                   items: {
                     type: 'array',
                     items: {
@@ -1853,6 +1869,69 @@ export const OPENAPI_DOCUMENT = {
         requestBody: { required: true, ...json({ type: 'object', properties: { patterns: { type: 'array', items: { type: 'string' } } }, required: ['patterns'] }) },
         responses: {
           '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { patterns: { type: 'array', items: { type: 'string' } } } })) },
+          '401': failures['401'],
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
+    '/projects/{id}/import/scope': {
+      get: {
+        summary:
+          'The AGENTIC ENVIRONMENT the import scan looks at in the repositories of this project: an include list (the known places of each tool — `.agents/`, `.claude/`, `CLAUDE.md`, `.opencode/`, `AGENTS.md`, `.cursor/`… — and only the entry files in subfolders), which defaults are off and the extra paths. Files outside it never enter the inventory; citations to them are references only. The ignore patterns still apply inside it. Administrators only (404 for the others)',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  tools: {
+                    type: 'array',
+                    description: 'The default places, by tool (read-only; a place ending in `/` is a folder; `**/NAME` is only the entry file in subfolders)',
+                    items: { type: 'object', properties: { id: { type: 'string' }, label: { type: 'string' }, places: { type: 'array', items: { type: 'string' } } } },
+                  },
+                  disabled: { type: 'array', items: { type: 'string' }, description: 'Default places turned OFF (every other default is on)' },
+                  extra: { type: 'array', items: { type: 'string' }, description: 'Extra paths/globs included (gitignore-like, relative to the repository root)' },
+                },
+              }),
+            ),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+      put: {
+        summary:
+          'Replace the agentic environment of the import scan for this project: the default places turned off and the extra paths (absolute paths, `..` and unknown places are refused). Applies on the next analysis. Administrators only',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            properties: { disabled: { type: 'array', items: { type: 'string' } }, extra: { type: 'array', items: { type: 'string' } } },
+            required: ['disabled', 'extra'],
+          }),
+        },
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  tools: {
+                    type: 'array',
+                    description: 'The default places, by tool (read-only; a place ending in `/` is a folder; `**/NAME` is only the entry file in subfolders)',
+                    items: { type: 'object', properties: { id: { type: 'string' }, label: { type: 'string' }, places: { type: 'array', items: { type: 'string' } } } },
+                  },
+                  disabled: { type: 'array', items: { type: 'string' }, description: 'Default places turned OFF (every other default is on)' },
+                  extra: { type: 'array', items: { type: 'string' }, description: 'Extra paths/globs included (gitignore-like, relative to the repository root)' },
+                },
+              }),
+            ),
+          },
           '401': failures['401'],
           '404': failures['404'],
           '422': failures['422'],

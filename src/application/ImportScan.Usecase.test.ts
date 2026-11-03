@@ -30,6 +30,8 @@ describe('ImportScanUseCase — o inventário de um repositório (só leitura)',
     const usecase = new ImportScanUseCase({
       readTree: () => readRepoTree(root, { mask: (text) => maskText(text, []) }),
       detectors: [new AgentsDirDetector(), new OpencodeDetector()],
+      // O ambiente ganha os caminhos a mais da fixture: o prompt do opencode e os links para fora (a contenção, abaixo).
+      projectScope: () => ({ disabled: [], extra: ['prompts', 'link-fora', 'arquivo-fora.md'] }),
       findInCatalog: catalogFinder({
         doc: (id) => (id === 'arquitetura' ? { projectId: 'outro' } : id === 'filas' ? { projectId: 'alfa' } : undefined),
         resource: (id) => (id === 'revisar' ? {} : undefined),

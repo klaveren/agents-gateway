@@ -300,21 +300,6 @@ export function listRepoFiles(root: string, under: string | undefined, exclude: 
   return [...files.values()].map((entry) => ({ path: entry.path, aliases: [...entry.aliases].sort(), bytes: entry.bytes })).sort((a, b) => a.path.localeCompare(b.path))
 }
 
-/** As pastas do primeiro nível do repositório (sem as ignoradas, as excluídas e os links para fora). */
-export function listRepoTop(root: string, exclude: (path: string) => boolean): string[] {
-  const realRoot = realpathSync(root)
-  const out: string[] = []
-  for (const child of readdirSync(realRoot, { withFileTypes: true })) {
-    if (IGNORED_DIRS.has(child.name) || exclude(child.name)) continue
-    if (child.isDirectory()) out.push(child.name)
-    else if (child.isSymbolicLink()) {
-      const found = containedPath(realRoot, child.name, exclude)
-      if (typeof found !== 'string' && statSync(found.absolute).isDirectory()) out.push(child.name)
-    }
-  }
-  return out.sort((a, b) => a.localeCompare(b))
-}
-
 /**
  * ⛔ UM arquivo de TEXTO do repositório, para o construtor conferir: o caminho (relativo à raiz) é recusado se sai da
  * raiz pelo texto ou pelo `realpath` (link para fora), se passa por pasta ignorada ou se `exclude` o tira (o pedido E o

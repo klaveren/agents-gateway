@@ -44,6 +44,7 @@ import { ImportJobService } from '@application/ImportJob.Service'
 import { ImportBatchService } from '@application/ImportBatch.Service'
 import { readRepoBytes, readRepoTree } from '@infra/import/Repo.Tree'
 import { AgentsDirDetector } from '@infra/import/AgentsDir.Detector'
+import { AgenticToolsDetector } from '@infra/import/AgenticTools.Detector'
 import { AgentsMdDetector } from '@infra/import/AgentsMd.Detector'
 import { ClaudeDetector } from '@infra/import/Claude.Detector'
 import { OpencodeDetector } from '@infra/import/Opencode.Detector'
@@ -334,8 +335,9 @@ export function makeImportController(): ImportController {
   }
   const scan = new ImportScanUseCase({
     readTree: (projectId, repository) => readRepoTree(resolveWorkFolder(projects.folderOf(projectId), repository).dir, { mask: (text) => masker.text(text) }),
-    detectors: [new AgentsDirDetector(), new OpencodeDetector(), new AgentsMdDetector(), new ClaudeDetector()],
+    detectors: [new AgentsDirDetector(), new OpencodeDetector(), new AgentsMdDetector(), new ClaudeDetector(), new AgenticToolsDetector()],
     projectIgnore: (projectId) => projects.importIgnore(projectId),
+    projectScope: (projectId) => projects.importScope(projectId),
     findInCatalog: catalogFinder({
       doc: (id) => quietly(() => guidance.doc(id)),
       resource: (id) => quietly(() => guidance.resource(id)),
@@ -385,6 +387,7 @@ export function makeImportController(): ImportController {
       return !!(await importConversations.findSession(conversationId))
     },
     ignore: { get: (projectId) => projects.importIgnore(projectId), set: (projectId, patterns, by) => projects.setImportIgnore(projectId, patterns, by) },
+    scope: { get: (projectId) => projects.importScope(projectId), set: (projectId, scope, by) => projects.setImportScope(projectId, scope, by) },
     proof: makeAuth().proof,
   })
 }

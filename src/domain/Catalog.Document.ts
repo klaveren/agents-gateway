@@ -226,6 +226,7 @@ export const PROJECT_SHAPE: TShape<IProject> = {
   name: 'value',
   description: 'value',
   importIgnore: { omit: 'configuração da varredura do importador (os repositórios desta instalação), não conteúdo do catálogo' },
+  importScope: { omit: 'configuração da varredura do importador (os repositórios desta instalação), não conteúdo do catálogo' },
   createdAt: { omit: META },
   updatedAt: { omit: META },
   updatedBy: { omit: META },

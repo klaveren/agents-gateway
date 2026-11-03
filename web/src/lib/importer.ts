@@ -55,6 +55,27 @@ export interface IInventoryLink {
   reason: 'outside' | 'cycle' | 'broken'
 }
 
+/** Uma ferramenta e os lugares em que ela guarda o ambiente agêntico (`/` no fim = pasta; `**\/NOME` = só a entrada nas subpastas). */
+export interface IAgenticTool {
+  id: string
+  label: string
+  places: string[]
+}
+
+/** O ambiente agêntico guardado no projeto (`/import/scope`): os lugares padrão, os desligados e os caminhos a mais. */
+export interface IImportScopeSetting {
+  tools: IAgenticTool[]
+  disabled: string[]
+  extra: string[]
+}
+
+/** O ambiente que a análise olhou: cada lugar padrão (ligado? encontrado?), os a mais e quantos arquivos ficaram fora. */
+export interface IInventoryScope {
+  places: Array<{ place: string; enabled: boolean; found: boolean; files: number }>
+  extra: Array<{ pattern: string; files: number }>
+  outside: number
+}
+
 export interface IImportScan {
   projectId: string
   repository: string
@@ -64,6 +85,8 @@ export interface IImportScan {
   formats: string[]
   totals: { files: number; items: number; tokens: number; byKind: Partial<Record<TInventoryKind, number>> }
   ignored: { dirs: Record<string, number>; binaries: string[]; links: IInventoryLink[] }
+  /** Ausente: análise de antes do ambiente agêntico (olhava o repositório inteiro). */
+  scope?: IInventoryScope
   items: IInventoryItem[]
 }
 

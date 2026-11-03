@@ -8,6 +8,7 @@ import { ImportPlanError, ImportPlanUseCase } from '@application/ImportPlan.Usec
 import { ImportRunService, RUN_CONCURRENCY_MAX } from '@application/ImportRun.Service'
 import { ImportScanUseCase } from '@application/ImportScan.Usecase'
 import { ignoreIssues, IMPORT_IGNORE_MAX } from '@domain/Import.Ignore'
+import { AGENTIC_PLACES, AGENTIC_SCOPE_DEFAULTS, IAgenticScope } from '@domain/Import.Scope'
 import { IMPORT_MANUAL_STATES, TImportManualState } from '@domain/models/ImportJob.Model'
 import { TInventoryKind } from '@domain/models/ImportInventory.Model'
 import { WorkFolderError } from '@infra/workspace/Work.Folder'
@@ -22,6 +23,12 @@ import { parseBody } from './Request.Parser'
 export interface IImportIgnoreStore {
   get: (projectId: string) => string[]
   set: (projectId: string, patterns: readonly string[], by: string) => string[]
+}
+
+/** O ambiente agêntico guardado no projeto (`ProjectsService.importScope`/`setImportScope`). */
+export interface IImportScopeStore {
+  get: (projectId: string) => IAgenticScope
+  set: (projectId: string, scope: IAgenticScope, by: string) => IAgenticScope
 }
 
 export interface IImportControllerDeps {
@@ -42,6 +49,7 @@ export interface IImportControllerDeps {
   /** A conversa existe (no banco)? Marca o item "no construtor" cuja conversa sumiu (`conversationLost`). Ausente: não marca. */
   conversationExists?: (conversationId: string) => Promise<boolean>
   ignore?: IImportIgnoreStore
+  scope?: IImportScopeStore
   proof?: ICallerProof
 }
 
@@ -50,6 +58,7 @@ const prepareSchema = z.object({ start: z.boolean().optional(), concurrency: z.n
 const patterns = z.array(z.string().max(1_000)).max(IMPORT_IGNORE_MAX)
 const scanSchema = z.object({ repository: z.string().min(1).max(100), ignore: patterns.optional() })
 const ignoreSchema = z.object({ patterns })
+const scopeSchema = z.object({ disabled: z.array(z.string().max(200)).max(AGENTIC_PLACES.length), extra: patterns })
 const INVENTORY_KINDS = [
   'skill',
   'command',
@@ -126,6 +135,8 @@ export class ImportController {
     this.plan = this.plan.bind(this)
     this.getIgnore = this.getIgnore.bind(this)
     this.setIgnore = this.setIgnore.bind(this)
+    this.getScope = this.getScope.bind(this)
+    this.setScope = this.setScope.bind(this)
     this.listJobs = this.listJobs.bind(this)
     this.createJob = this.createJob.bind(this)
     this.getJob = this.getJob.bind(this)
@@ -275,6 +286,19 @@ export class ImportController {
     await this.respond(res, 'setImportIgnore', req, async (projectId, by) => {
       const body = parseBody(ignoreSchema, req.body)
       return { patterns: this.store().set(projectId, body.patterns, by) }
+    })
+  }
+
+  /** `GET /projects/:id/import/scope` — o ambiente agêntico que a varredura olha neste projeto, com os lugares padrão. */
+  async getScope(req: Request, res: Response): Promise<void> {
+    await this.respond(res, 'importScope', req, async (projectId) => scopeView(this.scopes().get(projectId)))
+  }
+
+  /** `PUT /projects/:id/import/scope { disabled, extra }` — troca o ambiente inteiro (vale na próxima análise). */
+  async setScope(req: Request, res: Response): Promise<void> {
+    await this.respond(res, 'setImportScope', req, async (projectId, by) => {
+      const body = parseBody(scopeSchema, req.body)
+      return scopeView(this.scopes().set(projectId, body, by))
     })
   }
 
@@ -519,6 +543,11 @@ export class ImportController {
     }
   }
 
+  private scopes(): IImportScopeStore {
+    if (!this.deps.scope) throw new HttpError(404, 'not_found', 'Not found')
+    return this.deps.scope
+  }
+
   private store(): IImportIgnoreStore {
     if (!this.deps.ignore) throw new HttpError(404, 'not_found', 'Not found')
     return this.deps.ignore
@@ -550,6 +579,11 @@ export class ImportController {
  * O trabalho SEM o rascunho e a revisão de cada item (só `drafted`: se tem rascunho). A tela de análise não os usa, e
  * eles são quase todo o peso (399 itens: 4,7 MB com eles, 0,8 MB sem). A revisão lê os rascunhos por `…/items`.
  */
+/** O ambiente na resposta: os lugares padrão (por ferramenta), os desligados e os a mais. */
+function scopeView(scope: IAgenticScope) {
+  return { tools: AGENTIC_SCOPE_DEFAULTS, disabled: scope.disabled, extra: scope.extra }
+}
+
 function leanJob<T extends { states: Array<{ drafts?: unknown[]; review?: unknown }> }>(job: T): T {
   return { ...job, states: job.states.map(({ drafts, review: _review, ...state }) => ({ ...state, drafted: !!drafts?.length })) }
 }

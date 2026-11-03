@@ -3,7 +3,17 @@ import { shallowRef, triggerRef } from 'vue'
 import { api } from '@/lib/api'
 import type { IApplyResult } from '@/lib/importApply'
 import type { IImportBatchRun, IImportBuildStatus } from '@/lib/importDraft'
-import type { IImportAnalysis, IImportBatch, IImportBatchView, IImportItemStatus, IImportJob, IImportJobSummary, TImportItemState, TInventoryKind } from '@/lib/importer'
+import type {
+  IImportAnalysis,
+  IImportBatch,
+  IImportBatchView,
+  IImportItemStatus,
+  IImportJob,
+  IImportJobSummary,
+  IImportScopeSetting,
+  TImportItemState,
+  TInventoryKind,
+} from '@/lib/importer'
 import { keyedResource } from '@/lib/resource'
 
 /** O trabalho aberto, sem os estados dos itens: eles moram numa cópia só, em `statesOf`. */
@@ -201,6 +211,8 @@ export const useImportsStore = defineStore('imports', () => {
   })
   /** O ignorar do projeto: um padrão por linha (a chave é o projeto). */
   const ignore = keyedResource(async (projectId) => (await api<{ patterns: string[] }>(`${importPath(projectId)}/ignore`)).patterns)
+  /** O ambiente agêntico do projeto: os lugares padrão, os desligados e os a mais (a chave é o projeto). */
+  const scope = keyedResource((projectId) => api<IImportScopeSetting>(`${importPath(projectId)}/scope`))
 
   // ── As gravações ───────────────────────────────────────────────────────────
 
@@ -239,6 +251,13 @@ export const useImportsStore = defineStore('imports', () => {
     write(key, (record) => {
       for (const one of keys) record[one] = { ...record[one], state: 'applied', ...(result.batch ? { batchId: result.batch.id } : {}) }
     })
+  }
+
+  /** Troca o ambiente agêntico do projeto; a store fica com o que o servidor devolveu (vale na próxima análise). */
+  async function saveScope(projectId: string, change: { disabled: string[]; extra: string[] }): Promise<IImportScopeSetting> {
+    const result = await api<IImportScopeSetting>(`${importPath(projectId)}/scope`, { method: 'PUT', body: change })
+    scope.set(projectId, result)
+    return result
   }
 
   async function saveIgnore(projectId: string, patterns: string[]): Promise<string[]> {
@@ -293,6 +312,7 @@ export const useImportsStore = defineStore('imports', () => {
     batch,
     runs,
     ignore,
+    scope,
     statesOf,
     latestOf,
     ensureItems,
@@ -302,6 +322,7 @@ export const useImportsStore = defineStore('imports', () => {
     review,
     markApplied,
     saveIgnore,
+    saveScope,
     createBatch,
     addToBatch,
     prepare,

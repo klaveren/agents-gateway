@@ -8,6 +8,8 @@ import { Request, Response } from 'express'
 import { ImportBatchService } from '@application/ImportBatch.Service'
 import { ImportJobService } from '@application/ImportJob.Service'
 import { ImportScanUseCase } from '@application/ImportScan.Usecase'
+import { InvalidProjectError } from '@domain/errors/Domain.Error'
+import { IAgenticScope, normalizeScope, scopeIssues } from '@domain/Import.Scope'
 import { maskText } from '@domain/Secret.Mask'
 import { HmacTokenIssuer } from '@infra/auth/Hmac.TokenIssuer'
 import { AgentsDirDetector } from '@infra/import/AgentsDir.Detector'
@@ -31,6 +33,7 @@ describe('POST /projects/:id/import/scan', () => {
   const folderOf = (projectId: string) => join(base, projectId)
   let controller: ImportController
   const stored = new Map<string, string[]>()
+  const scopes = new Map<string, IAgenticScope>()
 
   before(() => {
     for (const [project, repository] of [
@@ -51,6 +54,7 @@ describe('POST /projects/:id/import/scan', () => {
       detectors: [new AgentsDirDetector(), new OpencodeDetector()],
       findInCatalog: () => undefined,
       projectIgnore: (projectId) => stored.get(projectId) ?? [],
+      projectScope: (projectId) => normalizeScope(scopes.get(projectId)),
     })
     const repository = new SqliteImportRepository()
     controller = new ImportController({
@@ -62,12 +66,36 @@ describe('POST /projects/:id/import/scan', () => {
         get: (projectId) => stored.get(projectId) ?? [],
         set: (projectId, patterns) => (stored.set(projectId, [...patterns]), [...patterns]),
       },
+      scope: {
+        get: (projectId) => normalizeScope(scopes.get(projectId)),
+        // Como o `ProjectsService.setImportScope`: recusa o inválido, guarda normalizado.
+        set: (projectId, scope) => {
+          const issues = scopeIssues(scope)
+          if (issues.length) throw new InvalidProjectError(issues)
+          scopes.set(projectId, normalizeScope(scope))
+          return normalizeScope(scope)
+        },
+      },
       proof,
     })
   })
   after(() => rmSync(base, { recursive: true, force: true }))
 
-  type THandler = 'scan' | 'plan' | 'getIgnore' | 'setIgnore' | 'listJobs' | 'createJob' | 'getJob' | 'updateItem' | 'planBatch' | 'createBatch' | 'listBatches' | 'getBatch'
+  type THandler =
+    | 'scan'
+    | 'plan'
+    | 'getIgnore'
+    | 'setIgnore'
+    | 'getScope'
+    | 'setScope'
+    | 'listJobs'
+    | 'createJob'
+    | 'getJob'
+    | 'updateItem'
+    | 'planBatch'
+    | 'createBatch'
+    | 'listBatches'
+    | 'getBatch'
   const call = (as: string, projectId: string, body: unknown, handler: THandler = 'scan', params: Record<string, string> = {}) =>
     withCaller({ token: as, ...identityFromToken(as) }, async () => {
       const reply: { status: number; body?: { ok: boolean; result?: any; code?: string; details?: any } } = { status: 0 } // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -127,6 +155,41 @@ describe('POST /projects/:id/import/scan', () => {
     ])
     assert.ok(!(reply.body?.result.items as Array<{ kind: string }>).some((item) => item.kind === 'spec'))
     stored.clear()
+  })
+
+  it('o ambiente agêntico do projeto: o admin lê os lugares padrão e grava; a próxima varredura aplica', async () => {
+    const read = await call(ADMIN, 'alfa', undefined, 'getScope')
+    assert.strictEqual(read.status, 200)
+    assert.deepStrictEqual([read.body?.result.disabled, read.body?.result.extra], [[], []])
+    const tools = read.body?.result.tools as Array<{ id: string; places: string[] }>
+    assert.deepStrictEqual(tools.find((tool) => tool.id === 'claude')?.places, ['.claude/', 'CLAUDE.md', '.mcp.json'])
+    assert.ok(tools.some((tool) => tool.places.includes('**/AGENTS.md')))
+    const saved = await call(ADMIN, 'alfa', { disabled: ['opencode.json', '.agents/'], extra: [' ./docs/ '] }, 'setScope')
+    assert.strictEqual(saved.status, 200)
+    assert.deepStrictEqual([saved.body?.result.disabled, saved.body?.result.extra], [['.agents/', 'opencode.json'], ['docs']])
+    const reply = await call(ADMIN, 'alfa', { repository: 'app' })
+    scopes.clear()
+    const places = reply.body?.result.scope.places as Array<{ place: string; enabled: boolean; found: boolean }>
+    assert.deepStrictEqual(
+      places.find((place) => place.place === '.agents/'),
+      { place: '.agents/', enabled: false, found: true, files: 19 },
+    )
+    assert.deepStrictEqual(reply.body?.result.scope.extra, [{ pattern: 'docs', files: 1 }])
+    // Sem o `.agents/`, só entra dele o que um link do ambiente traz (o `.opencode/command`): spec nenhuma.
+    assert.ok(!(reply.body?.result.items as Array<{ kind: string }>).some((item) => item.kind === 'spec'))
+  })
+
+  it('⛔ o ambiente é só do admin; lugar desconhecido e caminho para fora são 422', async () => {
+    assert.strictEqual((await call(MEMBER, 'alfa', undefined, 'getScope')).status, 404)
+    assert.strictEqual((await call(MEMBER, 'alfa', { disabled: [], extra: ['x'] }, 'setScope')).status, 404)
+    assert.strictEqual((await call(ADMIN, 'gama', undefined, 'getScope')).status, 404)
+    assert.strictEqual(scopes.size, 0)
+    const unknown = await call(ADMIN, 'alfa', { disabled: ['src/'], extra: [] }, 'setScope')
+    assert.deepStrictEqual([unknown.status, unknown.body?.details?.[0]?.field], [422, 'disabled.0'])
+    const outside = await call(ADMIN, 'alfa', { disabled: [], extra: ['../fora'] }, 'setScope')
+    assert.deepStrictEqual([outside.status, outside.body?.details?.[0]?.field], [422, 'extra.0'])
+    assert.strictEqual((await call(ADMIN, 'alfa', { extra: [] }, 'setScope')).status, 422)
+    assert.strictEqual(scopes.size, 0)
   })
 
   it('⛔ o ignorar é só do admin; padrão para fora do repositório é 422', async () => {

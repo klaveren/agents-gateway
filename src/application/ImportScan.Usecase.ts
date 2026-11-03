@@ -1,5 +1,6 @@
 import { posix } from 'node:path'
 import { ignoreMatcher, normalizeIgnore } from '@domain/Import.Ignore'
+import { AGENTIC_PLACES, IAgenticScope, normalizeScope, placeMatcher, scopeMatcher } from '@domain/Import.Scope'
 import { candidateId, citationsIn, ICitation, locateCitation, REF_SKIP_TEXT, resolveCitation, TRefSkip } from '@domain/Import.Refs'
 import {
   CATALOG_KINDS,
@@ -8,11 +9,12 @@ import {
   IInventoryItem,
   IInventoryNote,
   IInventoryRef,
+  IInventoryScope,
   IInventorySource,
   TCatalogState,
   TInventoryKind,
 } from '@domain/models/ImportInventory.Model'
-import { IDetectedItem, IDetectedReach, IFormatDetector, IRepoTree } from '@domain/ports/FormatDetector.Port'
+import { IDetectedItem, IDetectedReach, IFormatDetector, IRepoEntry, IRepoTree } from '@domain/ports/FormatDetector.Port'
 
 /** O que já existe no catálogo com o mesmo id (rule: com o mesmo título; trigger: no agente `parent`). */
 export interface IImportCatalogQuery {
@@ -31,6 +33,8 @@ export interface IImportScanDeps {
   findInCatalog: (query: IImportCatalogQuery) => { projectId?: string } | undefined
   /** Os padrões de ignorar guardados no projeto (o admin define). */
   projectIgnore?: (projectId: string) => readonly string[]
+  /** O ambiente agêntico guardado no projeto (o admin define). Ausente: os lugares padrão, todos ligados. */
+  projectScope?: (projectId: string) => IAgenticScope
   now?: () => Date
 }
 
@@ -78,9 +82,11 @@ export class ImportScanUseCase {
   /** A varredura, com o que o lote precisa e a resposta não leva (`IImportInventory`). */
   inventory(projectId: string, repository: string, options: IImportScanOptions = {}): IImportInventory {
     const full = this.deps.readTree(projectId, repository)
+    // ⛔ Só o ambiente agêntico chega aos detectores; o ignorar vale dentro dele.
+    const { tree: scoped, scope } = withScope(full, normalizeScope(this.deps.projectScope?.(projectId)))
     const project = normalizeIgnore(this.deps.projectIgnore?.(projectId) ?? [])
     const request = normalizeIgnore(options.ignore ?? []).filter((pattern) => !project.includes(pattern))
-    const { tree, patterns } = withIgnore(full, [
+    const { tree, patterns } = withIgnore(scoped, [
       ...project.map((pattern) => ({ pattern, origin: 'project' as const })),
       ...request.map((pattern) => ({ pattern, origin: 'request' as const })),
     ])
@@ -125,8 +131,9 @@ export class ImportScanUseCase {
     }
 
     const items = built.map(({ item }) => item)
-    // A citação resolve na árvore inteira: arquivo ignorado e citado não é referência quebrada (só não tem item).
-    this.refs(full, built)
+    // A citação resolve na árvore inteira: arquivo ignorado ou fora do ambiente, e citado, não é referência quebrada (só
+    // não tem item).
+    this.refs(full, built, (path) => scoped.resolve(path) !== undefined)
     this.duplicates(items)
     items.sort((a, b) => a.key.localeCompare(b.key))
 
@@ -144,6 +151,7 @@ export class ImportScanUseCase {
       formats: active.map((detector) => detector.id),
       totals: { files: tree.entries().length, items: items.length, tokens: [...counted.values()].reduce((sum, value) => sum + value, 0), byKind },
       ignored: { dirs: tree.ignoredDirs(), binaries: [...binaries].sort(), links: [...tree.refusedLinks()], patterns },
+      scope,
       items,
     }
     return { scan, reach, agentByName: agentKeyByName, ...(instructions ? { instructions } : {}) }
@@ -285,7 +293,7 @@ export class ImportScanUseCase {
    * que não resolve e não é quebrada (exemplo, marcador, glob…) vira contagem por motivo (`ignored-ref`); o que só achou
    * pelo nome fica dito (`ref-by-name`).
    */
-  private refs(tree: IRepoTree, built: Array<{ item: IInventoryItem; group: IGroup }>): void {
+  private refs(tree: IRepoTree, built: Array<{ item: IInventoryItem; group: IGroup }>, inScope: (path: string) => boolean): void {
     const owner = new Map<string, string>()
     for (const { item, group } of built) {
       const shared = new Set(group.parts.flatMap(({ item: part }) => part.sources.filter((source) => source.shared).map((source) => source.path)))
@@ -322,6 +330,13 @@ export class ImportScanUseCase {
       item.refs = [...refs.values()].sort((a, b) => a.path.localeCompare(b.path))
       item.unresolved = [...unresolved].sort()
       if (item.unresolved.length) item.notes.push({ level: 'attention', code: 'broken-ref', text: `referência quebrada: ${item.unresolved.join(', ')}` })
+      const outside = item.refs.filter((ref) => !ref.item && !inScope(ref.path)).map((ref) => ref.path)
+      if (outside.length)
+        item.notes.push({
+          level: 'info',
+          code: 'outside-scope',
+          text: `citado fora do ambiente agêntico (só referência; para trazer, inclua o caminho no ambiente do projeto): ${sample(outside)}`,
+        })
       if (named.size) item.notes.push({ level: 'info', code: 'ref-by-name', text: `achada só pelo nome: ${sample([...named].map(([cited, path]) => `${cited} → ${path}`))}` })
       if (skipped.size) {
         const parts = (Object.keys(REF_SKIP_TEXT) as TRefSkip[])
@@ -358,6 +373,50 @@ export class ImportScanUseCase {
 /** Até 5 exemplos, e quantos mais. */
 function sample(values: string[]): string {
   return values.length > 5 ? `${values.slice(0, 5).join(', ')} +${values.length - 5}` : values.join(', ')
+}
+
+/**
+ * ⛔ A árvore SÓ com o AMBIENTE AGÊNTICO (`Import.Scope`): entra o arquivo cujo caminho real, ou um link para ele, está
+ * no ambiente; os links de fora saem dos `aliases` (e não resolvem). Os links recusados fora do ambiente também saem. Conta
+ * cada lugar padrão (ligado ou não: "encontrado") e cada caminho a mais, na árvore inteira.
+ */
+function withScope(tree: IRepoTree, setting: IAgenticScope): { tree: IRepoTree; scope: IInventoryScope } {
+  const inScope = scopeMatcher(setting)
+  const off = new Set(setting.disabled)
+  const places = AGENTIC_PLACES.map((place) => ({ place, matches: placeMatcher(place), files: 0 }))
+  const extra = setting.extra.map((pattern) => ({ pattern, matcher: ignoreMatcher(pattern), files: 0 }))
+  const kept = new Map<string, IRepoEntry>()
+  for (const entry of tree.entries()) {
+    const paths = [entry.path, ...entry.aliases]
+    for (const place of places) if (paths.some(place.matches)) place.files++
+    for (const one of extra) if (paths.some((path) => one.matcher.matches(path))) one.files++
+    if (paths.some(inScope)) kept.set(entry.path, { ...entry, aliases: entry.aliases.filter(inScope) })
+  }
+  const entries = [...kept.values()]
+  const resolve = (path: string) => {
+    const real = tree.resolve(path)
+    if (!real || !kept.has(real)) return undefined
+    return real === path.replace(/^\.\//, '') || inScope(path) ? real : undefined
+  }
+  return {
+    scope: {
+      places: places.map(({ place, files }) => ({ place, enabled: !off.has(place), found: files > 0, files })),
+      extra: extra.map(({ pattern, files }) => ({ pattern, files })),
+      outside: tree.entries().length - kept.size,
+    },
+    tree: {
+      ...(tree.head ? { head: tree.head } : {}),
+      ...(tree.dirty !== undefined ? { dirty: tree.dirty } : {}),
+      entries: () => entries,
+      resolve,
+      read: (path) => {
+        const file = resolve(path) ? tree.read(path) : undefined
+        return file && { ...file, aliases: file.aliases.filter(inScope) }
+      },
+      ignoredDirs: () => tree.ignoredDirs(),
+      refusedLinks: () => tree.refusedLinks().filter((link) => inScope(link.path)),
+    },
+  }
 }
 
 /**

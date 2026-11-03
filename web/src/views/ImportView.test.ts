@@ -5,6 +5,7 @@ import { api } from '@/lib/api'
 import { useThreadStore } from '@/stores/thread'
 import type { IImportAnalysis, IImportBatchView, IImportItemStatus, IImportJob, IImportJobSummary, IImportPlan, IImportScan, IInventoryItem, ISelectionPlan } from '@/lib/importer'
 import { useAuthStore } from '@/stores/auth'
+import { useImportsStore } from '@/stores/imports'
 import { useProjectsStore } from '@/stores/projects'
 import ImportView from './ImportView.vue'
 
@@ -46,9 +47,30 @@ function scan(items: IInventoryItem[]): IImportScan {
     formats: ['agents-dir', 'opencode'],
     totals: { files: 9, items: items.length, tokens: 1200, byKind: {} },
     ignored: { dirs: { node_modules: 40 }, binaries: [], links: [{ path: '.agents/fora', reason: 'outside' }] },
+    scope: {
+      places: [
+        { place: '.agents/', enabled: true, found: true, files: 6 },
+        { place: '.claude/', enabled: true, found: true, files: 2 },
+        { place: '.opencode/', enabled: true, found: false, files: 0 },
+        { place: 'AGENTS.md', enabled: true, found: true, files: 1 },
+        { place: '.cursor/', enabled: false, found: false, files: 0 },
+      ],
+      extra: [],
+      outside: 120,
+    },
     items,
   }
 }
+
+/** O ambiente guardado no "servidor" (o `PUT` troca; a resposta é o que a store guarda). */
+const SCOPE_TOOLS = [
+  { id: 'agents', label: '.agents (canônico legado)', places: ['.agents/'] },
+  { id: 'claude', label: 'Claude Code', places: ['.claude/', 'CLAUDE.md'] },
+  { id: 'opencode', label: 'opencode', places: ['.opencode/', 'AGENTS.md'] },
+  { id: 'codex', label: 'Codex', places: ['.codex/', 'AGENTS.md'] },
+  { id: 'cursor', label: 'Cursor', places: ['.cursor/'] },
+]
+let scopeStored: { disabled: string[]; extra: string[] } = { disabled: [], extra: [] }
 
 const SMALL = [
   item({
@@ -300,6 +322,7 @@ function savedJob(id: string, items: IInventoryItem[], extra: Partial<IImportJob
 
 async function mount(items: IInventoryItem[], options: { jobs?: IImportJob[]; analyze?: boolean; batches?: Record<string, IImportBatchView[]> } = {}): Promise<HTMLElement> {
   ignoreStored = ['.agents/benchmark']
+  scopeStored = { disabled: ['.cursor/'], extra: [] }
   saved = options.jobs ?? []
   savedBatches = options.batches ?? {}
   vi.mocked(api).mockImplementation(async (path: string, request?: { method?: string; body?: unknown; query?: { keys?: string[] } }) => {
@@ -379,6 +402,14 @@ async function mount(items: IInventoryItem[], options: { jobs?: IImportJob[]; an
     if (batchOne) return savedBatches[batchOne[1]]!.find((entry) => entry.id === batchOne[2])
     const opened = path.match(/\/import\/jobs\/([^/]+)$/)
     if (opened) return saved.find((entry) => entry.id === opened[1])
+    if (path.endsWith('/import/scope')) {
+      if (request?.method === 'PUT') {
+        const body = request.body as { disabled: string[]; extra: string[] }
+        // O servidor normaliza: o que volta é o que a store guarda.
+        scopeStored = { disabled: body.disabled, extra: [...new Set(body.extra.map((one) => one.replace(/^\.\//, '').replace(/\/+$/, '')))] }
+      }
+      return { tools: SCOPE_TOOLS, ...scopeStored }
+    }
     if (path.endsWith('/import/ignore')) {
       if (request?.method === 'PUT') ignoreStored = (request.body as { patterns: string[] }).patterns
       return { patterns: ignoreStored }
@@ -773,6 +804,62 @@ describe('ImportView', () => {
     await flush()
     expect(api).toHaveBeenCalledWith('/projects/alfa/import/ignore', { method: 'PUT', body: { patterns: ['.agents/benchmark', '*.log'] } })
     expect(editor.textContent).toContain('Analise de novo para aplicar')
+  })
+
+  it('o ambiente agêntico do projeto: lugares por ferramenta com interruptor e "encontrado"; salva pela API e fica com a resposta', async () => {
+    const host = await mount(SMALL)
+    expect(api).toHaveBeenCalledWith('/projects/alfa/import/scope')
+    const editor = host.querySelector('[data-test="scope-editor"]')!
+    expect(editor.querySelector('summary')!.textContent).toContain('6 de 7 lugar(es)')
+    expect([...editor.querySelectorAll('[data-test="scope-tool"] legend')].map((legend) => legend.textContent)).toEqual([
+      '.agents (canônico legado)',
+      'Claude Code',
+      'opencode',
+      'Codex',
+      'Cursor',
+    ])
+    expect(editor.querySelector('[data-test="scope-found"]')!.textContent).toMatch(/\.agents\/\s*\.claude\/\s*AGENTS\.md.*120 arquivo\(s\) fora do ambiente/s)
+    const place = (name: string) => [...editor.querySelectorAll<HTMLElement>(`[data-place="${name}"]`)]
+    expect(place('.opencode/')[0].querySelector('[data-test="scope-mark"]')!.textContent).toBe('não encontrado')
+    expect(place('.agents/')[0].querySelector('[data-test="scope-mark"]')!.textContent).toBe('encontrado')
+    expect(place('CLAUDE.md')[0].querySelector('[data-test="scope-mark"]')).toBeNull()
+    expect(place('.cursor/')[0].querySelector<HTMLInputElement>('input')!.checked).toBe(false)
+    const save = editor.querySelector<HTMLButtonElement>('[data-test="scope-save"]')!
+    expect(save.disabled).toBe(true)
+    // O AGENTS.md é do opencode e do Codex: o mesmo interruptor nos dois.
+    place('AGENTS.md')[0].querySelector<HTMLInputElement>('input')!.click()
+    await flush()
+    expect(place('AGENTS.md').map((one) => one.querySelector<HTMLInputElement>('input')!.checked)).toEqual([false, false])
+    place('.cursor/')[0].querySelector<HTMLInputElement>('input')!.click()
+    const extra = editor.querySelector<HTMLTextAreaElement>('[data-test="scope-extra"]')!
+    extra.value = './prompts/\n  docs/agentes  \n\nprompts'
+    extra.dispatchEvent(new Event('input'))
+    await flush()
+    expect(save.disabled).toBe(false)
+    vi.mocked(api).mockClear()
+    editor.querySelector('form')!.dispatchEvent(new Event('submit'))
+    await flush()
+    expect(api).toHaveBeenCalledWith('/projects/alfa/import/scope', { method: 'PUT', body: { disabled: ['AGENTS.md'], extra: ['./prompts/', 'docs/agentes', 'prompts'] } })
+    expect(api).toHaveBeenCalledTimes(1)
+    expect(editor.querySelector('[data-test="scope-saved"]')!.textContent).toContain('Vale no próximo “Analisar de novo”')
+    // A store fica com a resposta (normalizada pelo servidor), sem reler.
+    expect(extra.value).toBe('prompts\ndocs/agentes')
+    expect(useImportsStore().scope.get('alfa')).toEqual({ tools: SCOPE_TOOLS, disabled: ['AGENTS.md'], extra: ['prompts', 'docs/agentes'] })
+    expect(editor.querySelector('summary')!.textContent).toContain('6 de 7 lugar(es) + 2 a mais')
+  })
+
+  it('o ambiente: erro do servidor aparece; sem análise com ambiente, diz para analisar', async () => {
+    const host = await mount(SMALL, { analyze: false })
+    const editor = host.querySelector('[data-test="scope-editor"]')!
+    expect(editor.querySelector('[data-test="scope-not-analysed"]')).not.toBeNull()
+    vi.mocked(api).mockRejectedValueOnce(new Error('extra.0: ".." is not allowed'))
+    const extra = editor.querySelector<HTMLTextAreaElement>('[data-test="scope-extra"]')!
+    extra.value = '../fora'
+    extra.dispatchEvent(new Event('input'))
+    await flush()
+    editor.querySelector('form')!.dispatchEvent(new Event('submit'))
+    await flush()
+    expect(editor.querySelector('[data-test="scope-error"]')!.textContent).toBe('extra.0: ".." is not allowed')
   })
 
   /** O alcance e as permissões de um agente: selecionado, "Migrar selecionados", e o botão dele no Montar. */

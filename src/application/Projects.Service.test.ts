@@ -102,6 +102,28 @@ describe('ProjectsService', () => {
     assert.strictEqual(service.get('alfa').importIgnore, undefined)
   })
 
+  it('ambiente agêntico do importador: padrão sem nada guardado; troca inteiro, normaliza e recusa o inválido', () => {
+    const { service } = build()
+    service.create({ id: 'alfa', name: 'Alfa' }, 'root')
+    assert.deepStrictEqual(service.importScope('alfa'), { disabled: [], extra: [] })
+    assert.deepStrictEqual(service.setImportScope('alfa', { disabled: ['GEMINI.md', '.cursor/'], extra: [' ./docs/ '] }, 'root'), {
+      disabled: ['.cursor/', 'GEMINI.md'],
+      extra: ['docs'],
+    })
+    assert.deepStrictEqual(service.get('alfa').importScope, { disabled: ['.cursor/', 'GEMINI.md'], extra: ['docs'] })
+    for (const [scope, field] of [
+      [{ disabled: ['src/'], extra: [] }, 'disabled.0'],
+      [{ disabled: [], extra: ['../fora'] }, 'extra.0'],
+    ] as const)
+      assert.throws(
+        () => service.setImportScope('alfa', { disabled: [...scope.disabled], extra: [...scope.extra] }, 'root'),
+        (error: unknown) => error instanceof InvalidProjectError && error.issues[0].field === field,
+      )
+    assert.deepStrictEqual(service.importScope('alfa').extra, ['docs'], 'a recusa não mexe no guardado')
+    assert.deepStrictEqual(service.setImportScope('alfa', { disabled: [], extra: [] }, 'root'), { disabled: [], extra: [] })
+    assert.strictEqual(service.get('alfa').importScope, undefined)
+  })
+
   it('banco antigo, sem a coluna do ignorar, ganha a coluna na abertura e mantém os projetos', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gw-projects-old-'))
     const path = join(dir, 'old.db')
@@ -113,6 +135,7 @@ describe('ProjectsService', () => {
     const repository = new SqliteProjectRepository(path)
     assert.strictEqual(repository.get('alfa')?.importIgnore, undefined)
     assert.deepStrictEqual(repository.update('alfa', { importIgnore: ['results'] })?.importIgnore, ['results'])
+    assert.deepStrictEqual(repository.update('alfa', { importScope: { disabled: ['.roo/'], extra: [] } })?.importScope, { disabled: ['.roo/'], extra: [] })
     rmSync(dir, { recursive: true, force: true })
   })
 })
