@@ -85,7 +85,7 @@ export class NetworkGate {
     }
     let address: string
     try {
-      address = isIP(name) ? name : (await lookup(name)).address
+      address = isIP(name) ? name : preferredAddress(await lookup(name, { all: true }))
     } catch {
       return { allowed: false, reason: `não resolveu ${name}` }
     }
@@ -165,6 +165,16 @@ function splitTarget(target: string): [string, string | undefined] {
   }
   const at = target.lastIndexOf(':')
   return at > 0 ? [target.slice(0, at), target.slice(at + 1)] : [target, undefined]
+}
+
+/**
+ * ⚖️ O endereço do túnel: o IPv4 antes do IPv6. O DNS pode responder o IPv6 primeiro (Cloudflare) e o host sem rota
+ * IPv6 deixava a conexão morrer ("Proxy CONNECT aborted"). O túnel liga no endereço conferido aqui, nunca no nome.
+ */
+export function preferredAddress(found: ReadonlyArray<{ address: string; family: number }>): string {
+  const first = found.find((one) => one.family === 4) ?? found[0]
+  if (!first) throw new Error('no address')
+  return first.address
 }
 
 /**
