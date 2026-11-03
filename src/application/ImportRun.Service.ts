@@ -27,7 +27,7 @@ export const RUN_CONCURRENCY_MAX = 5
 export function importRunMessage(keys: readonly string[]): string {
   return (
     `Prepare ${keys.length === 1 ? 'este item' : `estes ${keys.length} itens`} do trabalho de importação: ${keys.join(', ')}. ` +
-    'Comece por list_import_items, leia as fontes e proponha o rascunho de cada item (o que tem ajuste pedido traz o pedido na lista). ' +
+    'Comece por list_import_items, leia as fontes, confira no repositório só o necessário e proponha o rascunho de cada item (o que tem ajuste pedido traz o pedido na lista). ' +
     'Esta conversa roda sem ninguém acompanhando: não espere resposta. O que for ambíguo, fique com o mais fiel à fonte, ' +
     'siga para o próximo e diga no fim o que ficou em dúvida. Item que não é do tipo desta conversa: não reclassifique, diga no fim qual tipo serve.'
   )

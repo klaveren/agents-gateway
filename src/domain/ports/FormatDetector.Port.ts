@@ -78,3 +78,17 @@ export interface IFormatDetector {
   detects(tree: IRepoTree): boolean
   scan(tree: IRepoTree): IDetectedItem[]
 }
+
+/**
+ * Por que a navegação do construtor recusa um caminho: fora do repositório (`..`, absoluto, link para fora), excluído
+ * (credenciais, `.env*`, `.git`, o ignorar do projeto), inexistente, binário ou grande demais para ler.
+ */
+export type TRepoRefusal = 'outside' | 'excluded' | 'not_found' | 'binary' | 'too_large'
+
+/** Um arquivo de texto lido para conferir. ⛔ `text` já vem MASCARADO. */
+export interface IRepoText {
+  /** O caminho real, relativo à raiz. */
+  path: string
+  bytes: number
+  text: string
+}

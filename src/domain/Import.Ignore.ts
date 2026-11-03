@@ -70,3 +70,12 @@ export function ignoreMatcher(pattern: string): IIgnoreMatcher {
     },
   }
 }
+
+/** ⛔ O que a navegação do construtor NUNCA lista nem lê, em qualquer pasta: credenciais, `.env*` e o `.git`. */
+export const REPOSITORY_EXCLUDED: readonly string[] = ['.credentials', '.env*', '.git']
+
+/** O predicado da navegação: os excluídos fixos mais os padrões dados (o ignorar do projeto e o da análise). */
+export function repositoryExclusion(patterns: readonly string[]): (path: string) => boolean {
+  const matchers = normalizeIgnore([...REPOSITORY_EXCLUDED, ...patterns]).map(ignoreMatcher)
+  return (path) => matchers.some((matcher) => matcher.matches(path))
+}
