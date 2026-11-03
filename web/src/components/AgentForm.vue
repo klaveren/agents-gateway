@@ -366,7 +366,7 @@
    * As guias do formulário: o texto do agente na primeira, e cada grupo de capacidades na sua. A contagem diz
    * quanto está escolhido sem abrir a guia; o ponto vermelho, que o servidor recusou algo ali.
    */
-  type TTab = 'agente' | 'triggers' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'arquivos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos' | 'historico' | 'problemas'
+  type TTab = 'agente' | 'instrucoes' | 'triggers' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'arquivos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos' | 'historico' | 'problemas'
   // `#agendamentos` no link (a visão geral dos agendamentos) abre direto na guia.
   /** O nome das ferramentas do gateway na guia Ferramentas (o id técnico fica na dica). */
   const LOCAL_TOOL_LABEL: Record<string, string> = {
@@ -381,7 +381,8 @@
   }
 
   const initialHash = useRoute().hash
-  const tab = ref<TTab>(initialHash === '#agendamentos' ? 'agendamentos' : initialHash === '#historico' ? 'historico' : initialHash === '#problemas' ? 'problemas' : 'agente')
+  const HASH_TAB: Record<string, TTab> = { '#agendamentos': 'agendamentos', '#historico': 'historico', '#problemas': 'problemas', '#instrucoes': 'instrucoes' }
+  const tab = ref<TTab>(HASH_TAB[initialHash] ?? 'agente')
 
   /** Sobram guias à direita (a barra rola de lado): a borda esmaece, para ninguém achar que acabaram. */
   const tabBar = ref<HTMLElement>()
@@ -402,7 +403,8 @@
     immediate: true,
   })
   const TAB_FIELDS: Record<TTab, string[]> = {
-    agente: ['id', 'name', 'soul', 'systemPrompt', 'role', 'adminOnly', 'projectId'],
+    agente: ['id', 'name', 'role', 'adminOnly', 'projectId'],
+    instrucoes: ['soul', 'systemPrompt'],
     triggers: ['triggers'],
     modelos: ['providers', 'models', 'modes', 'reasoningEfforts'],
     ferramentas: ['allowedTools'],
@@ -424,6 +426,7 @@
     const alert = (id: TTab) => (TAB_FIELDS[id].some((field) => issues.value[field]?.length) ? 'Corrija os campos desta guia.' : undefined)
     const all: Array<{ id: TTab; label: string; count?: number; alert?: string }> = [
       { id: 'agente', label: 'Agente', alert: alert('agente') },
+      { id: 'instrucoes', label: 'Instruções', alert: alert('instrucoes') },
       { id: 'triggers', label: 'Triggers', count: form.value.triggers?.length ?? 0, alert: alert('triggers') },
       { id: 'modelos', label: 'Modelos', count: form.value.providers.reduce((total, target) => total + target.models.length, 0), alert: alert('modelos') },
       {
@@ -651,7 +654,7 @@
 </script>
 
 <template>
-  <form class="mx-auto flex max-w-3xl flex-col gap-5" @submit.prevent="confirmingSave = true" @invalid.capture="tab = 'agente'">
+  <form class="mx-auto flex max-w-3xl flex-col gap-5" @submit.prevent="confirmingSave = true" @invalid.capture="tab = ($event.target as HTMLElement).dataset.tab === 'instrucoes' ? 'instrucoes' : 'agente'">
     <!-- Uma linha só: com muitas guias, rola de lado (quebrar em duas linhas desalinhava o sublinhado). -->
     <nav ref="tabBar" class="no-scrollbar flex gap-1 overflow-x-auto border-b border-zinc-800" :class="{ 'fade-right': moreTabs }" role="tablist" @scroll.passive="measureTabs">
       <button
@@ -717,6 +720,9 @@
         <small class="hint">Desligado, qualquer pessoa com conta pode conversar com este agente.</small>
       </div>
 
+    </fieldset>
+    <!-- As instruções do agente (personalidade e instrução do sistema), numa guia só delas. -->
+    <fieldset v-show="tab === 'instrucoes'" class="grid gap-4 sm:grid-cols-2">
       <label class="field sm:col-span-2">
         <span>
           Personalidade
@@ -736,7 +742,7 @@
           Instrução do sistema
           <em class="font-normal text-zinc-500">— o que o agente faz: função, regras, como usar as ferramentas</em>
         </span>
-        <textarea v-model="form.systemPrompt" required rows="10" class="input scroll-thin font-mono text-[13px] leading-relaxed" placeholder="Você é o agente…" />
+        <textarea v-model="form.systemPrompt" required rows="18" data-tab="instrucoes" class="input scroll-thin font-mono text-[13px] leading-relaxed" placeholder="Você é o agente…" />
         <small v-if="form.systemPrompt" class="hint">{{ sizeHint(form.systemPrompt, 'a cada turno') }}</small>
         <small v-if="anyGoogle" class="hint">Com Gemini, evite {chaves} no texto: viram variáveis e dão erro.</small>
         <CliPromptMeter

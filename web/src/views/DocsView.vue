@@ -89,7 +89,9 @@ const g = computed(() => (info.value.masc ? { nova: 'Novo', nenhuma: 'Nenhum', u
 
 const form = ref({ id: '', kind: 'spec' as TDocKind, title: '', summary: '', body: '', global: true, project: '', docIds: [] as string[], docRefs: [] as string[] })
 /** A guia da edição: o formulário ou o histórico (`#historico` no endereço abre nele). */
-const tab = ref<'edit' | 'history'>(route.hash === '#historico' ? 'history' : 'edit')
+type TDocTab = 'edit' | 'instructions' | 'issues' | 'history'
+const HASH_TAB: Record<string, TDocTab> = { '#historico': 'history', '#instrucoes': 'instructions', '#problemas': 'issues' }
+const tab = ref<TDocTab>(HASH_TAB[route.hash] ?? 'edit')
 /** Muda depois de restaurar uma versão: relê o item. */
 const reloadKey = ref(0)
 const loaded = ref<IProjectDoc>()
@@ -292,6 +294,24 @@ function loadedLabel(doc: IProjectDoc): string {
 function describe(failure: unknown): string {
   return failure instanceof Error ? failure.message : String(failure)
 }
+
+/** Os problemas da importação do item aberto (a guia só existe com algum). */
+const importIssues = computed(() => (adding.value ? [] : (loaded.value?.importIssues ?? [])))
+/** As guias além da principal (título, resumo, escopo, anexos): as instruções (o texto e a prévia) e os problemas. */
+const extraTabs = computed(() =>
+  [
+    { id: 'instructions' as const, label: 'Instruções' },
+    ...(importIssues.value.length ? [{ id: 'issues' as const, label: `Problemas da importação (${importIssues.value.length})` }] : []),
+  ].filter((item) => !adding.value || item.id === 'instructions'),
+)
+// A guia de problemas some quando o último é resolvido: volta à principal.
+watch(importIssues, (list) => {
+  if (tab.value === 'issues' && !list.length) tab.value = 'edit'
+})
+/** O campo obrigatório vazio está noutra guia: abre a dele (senão o navegador não consegue apontar para ele). */
+function onInvalid(event: Event) {
+  tab.value = (event.target as HTMLElement).dataset.tab === 'instructions' ? 'instructions' : 'edit'
+}
 </script>
 
 <template>
@@ -322,10 +342,10 @@ function describe(failure: unknown): string {
     </template>
 
     <template #detail>
-      <div v-if="!adding && loaded" class="mx-auto mb-4 max-w-3xl"><HistoryTabs v-model="tab" edit-label="Editar" /></div>
-      <ImportIssues v-if="!adding && loaded" class="mx-auto mb-4 max-w-3xl" :issues="loaded.importIssues" :resolve="resolveIssue" />
-      <form v-if="adding || (loaded && tab === 'edit')" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save">
+      <div v-if="adding || loaded" class="mx-auto mb-4 max-w-3xl"><HistoryTabs v-model="tab" edit-label="Documento" :extra="extraTabs" :history="!adding" /></div>
+      <form v-if="adding || (loaded && (tab === 'edit' || tab === 'instructions'))" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save" @invalid.capture="onInvalid">
         <h2 class="text-lg font-semibold">{{ adding ? `${g.nova} ${info.one}` : loaded?.title }}</h2>
+        <div v-show="tab === 'edit'" class="flex flex-col gap-3">
         <label class="field">Título<input v-model="form.title" required maxlength="160" class="input" :placeholder="info.placeholder" @blur="slug" /><small v-for="m in issues.title" :key="m" class="error">{{ m }}</small></label>
         <label class="field">
           Identificador
@@ -346,18 +366,7 @@ function describe(failure: unknown): string {
           </select>
           <small v-for="m in issues.projectId" :key="m" class="error">{{ m }}</small>
         </div>
-
-        <div class="flex flex-col gap-1">
-          <div class="flex gap-1 text-xs">
-            <button type="button" class="btn btn-sm" :class="!preview ? 'btn-secondary' : 'btn-ghost'" @click="preview = false">Markdown</button>
-            <button type="button" class="btn btn-sm" :class="preview ? 'btn-secondary' : 'btn-ghost'" @click="preview = true">Prévia</button>
-          </div>
-          <textarea v-if="!preview" v-model="form.body" required rows="18" class="input font-mono text-[13px] leading-relaxed" aria-label="Conteúdo em markdown" />
-          <!-- eslint-disable-next-line vue/no-v-html -- renderMarkdown escapa antes de marcar -->
-          <div v-else class="prose-agent min-h-[18rem] rounded-xl border border-zinc-800 p-4 text-sm break-words" v-html="renderMarkdown(form.body)" />
-          <small v-if="form.body" class="hint">{{ sizeHint(form.body, 'quando lido') }}</small>
-          <small v-for="m in issues.body" :key="m" class="error">{{ m }}</small>
-        </div>
+        <small v-if="issues.body?.length" class="error">O conteúdo tem problema: veja a guia Instruções.</small>
 
         <div class="flex flex-col gap-1.5 rounded-xl border border-zinc-800 p-3">
           <p class="text-sm font-medium text-zinc-200">Documentos anexados <span class="text-xs font-normal text-zinc-500">— vão junto quando este documento é lido</span></p>
@@ -387,6 +396,20 @@ function describe(failure: unknown): string {
           <small v-for="m in issues.docIds" :key="m" class="error">{{ m }}</small>
           <small v-for="m in issues.docRefs" :key="m" class="error">{{ m }}</small>
         </div>
+        </div>
+
+        <!-- As instruções: o texto e a prévia, numa guia só deles (o principal fica com título, resumo e anexos). -->
+        <div v-show="tab === 'instructions'" class="flex flex-col gap-1">
+          <div class="flex gap-1 text-xs">
+            <button type="button" class="btn btn-sm" :class="!preview ? 'btn-secondary' : 'btn-ghost'" @click="preview = false">Markdown</button>
+            <button type="button" class="btn btn-sm" :class="preview ? 'btn-secondary' : 'btn-ghost'" @click="preview = true">Prévia</button>
+          </div>
+          <textarea v-if="!preview" v-model="form.body" required rows="22" data-tab="instructions" class="input font-mono text-[13px] leading-relaxed" aria-label="Conteúdo em markdown" />
+          <!-- eslint-disable-next-line vue/no-v-html -- renderMarkdown escapa antes de marcar -->
+          <div v-else class="prose-agent min-h-[18rem] rounded-xl border border-zinc-800 p-4 text-sm break-words" v-html="renderMarkdown(form.body)" />
+          <small v-if="form.body" class="hint">{{ sizeHint(form.body, 'quando lido') }}</small>
+          <small v-for="m in issues.body" :key="m" class="error">{{ m }}</small>
+        </div>
 
         <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
         <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
@@ -396,6 +419,10 @@ function describe(failure: unknown): string {
           <button v-else type="button" class="btn btn-danger ml-auto" @click="removing = true">Apagar</button>
         </div>
       </form>
+      <section v-else-if="loaded && tab === 'issues'" class="mx-auto flex max-w-3xl flex-col gap-3">
+        <h2 class="text-lg font-semibold">{{ loaded.title }}</h2>
+        <ImportIssues :issues="importIssues" :resolve="resolveIssue" />
+      </section>
       <section v-else-if="loaded && tab === 'history'" class="mx-auto flex max-w-3xl flex-col gap-3">
         <h2 class="text-lg font-semibold">{{ loaded.title }}</h2>
         <HistoryPanel :kind="kind" :id="loaded.id" @restored="restored" />

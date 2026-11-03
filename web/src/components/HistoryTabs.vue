@@ -6,9 +6,10 @@ import { computed } from 'vue'
  * "Arquivos" na skill) e "Histórico". Mesmo desenho das guias do agente. A tela abre direto no histórico com
  * `#historico` no endereço (o link da página Histórico do catálogo).
  */
-const props = defineProps<{ editLabel: string; extra?: ReadonlyArray<{ id: T; label: string }> }>()
+const props = withDefaults(defineProps<{ editLabel: string; extra?: ReadonlyArray<{ id: T; label: string }>; history?: boolean }>(), { extra: () => [], history: true })
 const tab = defineModel<T>({ required: true })
-const items = computed(() => [{ id: 'edit' as T, label: props.editLabel }, ...(props.extra ?? []), { id: 'history' as T, label: 'Histórico' }])
+/** `history: false`: a tela de criar (ainda não há histórico). */
+const items = computed(() => [{ id: 'edit' as T, label: props.editLabel }, ...props.extra, ...(props.history ? [{ id: 'history' as T, label: 'Histórico' }] : [])])
 </script>
 
 <template>
