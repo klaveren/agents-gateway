@@ -1,23 +1,21 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { api } from '@/lib/api'
-import type { IInitialContext } from '@/lib/types'
+import { useResource } from '@/composables/useResource'
+import { useAgentCatalogStore } from '@/stores/agentCatalog'
 import InitialContextEditor from './InitialContextEditor.vue'
 
 /**
  * O CONTEXTO INICIAL de um agente: as specs que ELE carrega inteiras além das do projeto (o agente desenvolvedor e as
- * de arquitetura). ⛔ Agente global: só specs globais — ele roda em qualquer projeto.
+ * de arquitetura). ⛔ Agente global: só specs globais — ele roda em qualquer projeto. O do projeto vem da store (o
+ * mesmo do Ambiente).
  */
 const props = defineProps<{ agentId: string; projectId?: string; projectName?: string }>()
+const catalog = useAgentCatalogStore()
 
-const project = ref<IInitialContext>()
-onMounted(async () => {
-  if (props.projectId) project.value = await api<IInitialContext>(`/projects/${encodeURIComponent(props.projectId)}/initial-context`).catch(() => undefined)
-})
+const { data: project } = useResource(catalog.initialContexts, () => (props.projectId ? catalog.contextKey('projects', props.projectId) : undefined))
 </script>
 
 <template>
-  <InitialContextEditor :endpoint="`/agents/${encodeURIComponent(agentId)}/initial-context`" :project-id="projectId" :base-tokens="project?.totalTokens">
+  <InitialContextEditor owner="agents" :owner-id="agentId" :project-id="projectId" :base-tokens="project?.totalTokens">
     <p class="text-sm text-zinc-400">
       As Specs marcadas são enviadas <strong class="text-zinc-200">inteiras</strong> a este agente, além das Rules
       <template v-if="projectId">

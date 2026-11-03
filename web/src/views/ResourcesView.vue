@@ -9,26 +9,31 @@ import HistoryTabs from '@/components/HistoryTabs.vue'
 import ResourceFiles from '@/components/ResourceFiles.vue'
 import BuildTabs from '@/components/BuildTabs.vue'
 import { pendingDraft } from '@/lib/builder'
-import { api, ApiError } from '@/lib/api'
+import { ApiError } from '@/lib/api'
 import { sizeHint } from '@/lib/format'
 import { attachedRefs, docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId, setAttachMode, type TAttachMode } from '@/lib/guidance'
 import type { IRestoreResult } from '@/lib/catalogHistory'
 import { renderMarkdown } from '@/lib/markdown'
-import type { IProjectDoc, IResource, TResourceKind } from '@/lib/types'
+import type { IResource, TResourceKind } from '@/lib/types'
+import { useScopedDocs } from '@/composables/useCatalogLists'
+import { useResource } from '@/composables/useResource'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectsStore } from '@/stores/projects'
+import { useResourcesStore } from '@/stores/resources'
 
 /**
  * SKILLS ou COMMANDS (só admin), uma página para cada (`kind`). ⚖️ O agente só usa o que a guia Recursos dele libera.
  * A skill entra no índice do prompt (nome e descrição) e o agente a carrega com `use_resource`; o command a pessoa dispara
  * com `/nome argumentos`, e o gateway troca pelo texto dele. Os dois levam as specs e ADRs anexadas — cada uma inteira
  * ou por referência (id, título e tamanho; o agente a lê com `read_doc` se precisar), à escolha de quem cadastra.
+ * As listas e o recurso aberto moram na store: a gravação põe a resposta nela, sem reler.
  */
 const props = defineProps<{ kind: TResourceKind; id?: string }>()
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const projects = useProjectsStore()
+const resources = useResourcesStore()
 
 const KIND: Record<TResourceKind, { title: string; one: string; masc?: boolean; base: string; lead: string; when: string[]; example: string; bodyHint: string; template: string }> = {
   skill: {
@@ -55,9 +60,11 @@ const KIND: Record<TResourceKind, { title: string; one: string; masc?: boolean; 
 }
 
 const scope = ref<string>(projects.current ?? GLOBAL_SCOPE)
-const list = ref<IResource[]>([])
-const docs = ref<IProjectDoc[]>([])
-const loadError = ref<string>()
+/** Lê quando a tela abre (só admin, com a lista de projetos). */
+const ready = ref(false)
+const listed = useResource(resources.lists, () => (ready.value ? resources.listKey(scope.value, props.kind) : undefined))
+const list = computed(() => listed.data.value ?? [])
+const loadError = computed(() => (listed.error.value === undefined ? undefined : describe(listed.error.value)))
 const adding = computed(() => route.name === `${props.kind}-new`)
 const info = computed(() => KIND[props.kind])
 /** As palavras que concordam com o tipo: "Novo estudo", "Nova spec". */
@@ -78,6 +85,7 @@ const removing = ref(false)
 
 const scopes = computed(() => [{ id: GLOBAL_SCOPE, name: 'Global — todos os projetos' }, ...projects.list.map((project) => ({ id: project.id, name: project.name }))])
 const formScope = computed(() => (form.value.global ? GLOBAL_SCOPE : form.value.project))
+const { list: docs } = useScopedDocs(() => (auth.isAdmin ? scopeToProjectId(formScope.value) : undefined))
 /** Os documentos que podem ir anexados: os globais e, num recurso de projeto, os do projeto. */
 const attachable = computed(() => docs.value.filter((doc) => !doc.projectId || doc.projectId === scopeToProjectId(formScope.value)))
 const dirty = computed(() => {
@@ -95,11 +103,8 @@ const dirty = computed(() => {
 onMounted(async () => {
   if (!auth.isAdmin) return
   if (!projects.loaded) await projects.load().catch(() => undefined)
-  await loadList()
+  ready.value = true
 })
-watch(scope, () => void loadList())
-watch(() => props.kind, () => void loadList())
-watch(formScope, () => void loadDocs(), { immediate: true })
 
 watch(
   () => [props.id, adding.value, props.kind, reloadKey.value] as const,
@@ -116,7 +121,9 @@ watch(
     }
     if (!id) return
     try {
-      const resource = await api<IResource>(`/resources/${encodeURIComponent(id)}`)
+      const resource = await resources.details.ensure(id)
+      // Outro item aberto enquanto este vinha: o mais novo manda.
+      if (props.id !== id) return
       if (resource.kind !== kind) return void router.replace(`${KIND[resource.kind].base}/${resource.id}`)
       loaded.value = resource
       form.value = { id: resource.id, description: resource.description, body: resource.body, global: !resource.projectId, project: resource.projectId ?? projects.current ?? '', docIds: [...resource.docIds], docRefs: [...(resource.docRefs ?? [])] }
@@ -149,24 +156,6 @@ function applyDraft(kind: TResourceKind, id?: string) {
   note.value = 'Rascunho do construtor aplicado: revise e salve.'
 }
 
-async function loadList() {
-  loadError.value = undefined
-  try {
-    list.value = await api<IResource[]>('/resources', { query: { project: scope.value, kind: props.kind } })
-  } catch (failure) {
-    loadError.value = describe(failure)
-  }
-}
-
-async function loadDocs() {
-  const project = scopeToProjectId(formScope.value)
-  const [globals, local] = await Promise.all([
-    api<IProjectDoc[]>('/docs', { query: { project: GLOBAL_SCOPE } }).catch(() => []),
-    project ? api<IProjectDoc[]>('/docs', { query: { project } }).catch(() => []) : Promise.resolve([]),
-  ])
-  docs.value = [...local, ...globals]
-}
-
 function toggleDoc(id: string) {
   form.value.docIds = form.value.docIds.includes(id) ? form.value.docIds.filter((item) => item !== id) : [...form.value.docIds, id]
 }
@@ -186,7 +175,7 @@ function slug() {
 /** A guia Arquivos: grava só a lista (o resto da skill fica). */
 async function saveFiles(files: IResource['files']) {
   if (!loaded.value) return
-  loaded.value = await api<IResource>(`/resources/${encodeURIComponent(loaded.value.id)}/files`, { method: 'PUT', body: { files } })
+  loaded.value = await resources.saveFiles(loaded.value.id, files)
 }
 
 async function save() {
@@ -199,16 +188,14 @@ async function save() {
   const body = { description: form.value.description, body: form.value.body, projectId: scopeToProjectId(formScope.value), docIds, docRefs: attachedRefs(docIds, form.value.docRefs) }
   try {
     if (adding.value) {
-      const created = await api<IResource>('/resources', { method: 'POST', body: { id: form.value.id, kind: props.kind, ...body } })
+      const created = await resources.create({ id: form.value.id, kind: props.kind, ...body })
       scope.value = created.projectId ?? GLOBAL_SCOPE
-      await loadList()
       await router.push(`${info.value.base}/${created.id}`)
     } else {
-      loaded.value = await api<IResource>(`/resources/${encodeURIComponent(form.value.id)}`, { method: 'PUT', body })
+      loaded.value = await resources.update(form.value.id, body)
       form.value.docIds = [...loaded.value.docIds]
       form.value.docRefs = [...(loaded.value.docRefs ?? [])]
       note.value = 'Salvo. Vale para as próximas conversas.'
-      await loadList()
     }
   } catch (failure) {
     if (failure instanceof ApiError && failure.status === 422) issues.value = failure.fieldIssues
@@ -218,9 +205,10 @@ async function save() {
   }
 }
 
-/** Restaurou uma versão: relê o item e a lista; se a versão era a de antes de existir, o item sumiu. */
-function restored(result: IRestoreResult) {
-  void loadList()
+/** Restaurou uma versão: a store relê o item e o põe nas listas; se a versão era a de antes de existir, o item sumiu. */
+async function restored(result: IRestoreResult) {
+  const id = loaded.value?.id ?? props.id
+  if (id) await resources.restored(id, result.exists).catch(() => undefined)
   if (!result.exists) return void router.push(info.value.base)
   reloadKey.value++
 }
@@ -234,9 +222,8 @@ watch(
 async function confirmRemove() {
   busy.value = true
   try {
-    await api(`/resources/${encodeURIComponent(form.value.id)}`, { method: 'DELETE' })
+    await resources.remove(form.value.id)
     removing.value = false
-    await loadList()
     await router.push(info.value.base)
   } catch (failure) {
     error.value = describe(failure)

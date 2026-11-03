@@ -5,17 +5,20 @@ import HistoryPanel from '@/components/HistoryPanel.vue'
 import HistoryTabs from '@/components/HistoryTabs.vue'
 import PermissionRules from '@/components/PermissionRules.vue'
 import PermissionTester from '@/components/PermissionTester.vue'
-import { api, ApiError } from '@/lib/api'
+import { ApiError } from '@/lib/api'
 import { fullTime } from '@/lib/format'
 import { LAYER_LABEL, PERMISSION_SECTIONS } from '@/lib/permissions'
 import type { IPermissionDecision, IPermissionRule } from '@/lib/types'
+import { useResource } from '@/composables/useResource'
 import { useAgentsStore } from '@/stores/agents'
 import { useAuthStore } from '@/stores/auth'
+import { usePermissionsStore } from '@/stores/permissions'
 import { useProjectsStore } from '@/stores/projects'
 
 /**
  * As PERMISSÕES do projeto em uso (só admin): o que os agentes podem fazer — comandos, arquivos, rede, MCP, skills e
- * delegação. Sem regra, negado. Cada agente libera o que precisa na guia Permissões dele, por cima destas.
+ * delegação. Sem regra, negado. Cada agente libera o que precisa na guia Permissões dele, por cima destas. As regras
+ * moram na store (as Contas somam a elas); as decisões são lidas na hora.
  */
 const route = useRoute()
 const auth = useAuthStore()
@@ -23,13 +26,19 @@ const projects = useProjectsStore()
 const agents = useAgentsStore()
 const project = computed(() => projects.list.find((item) => item.id === projects.current))
 
+const permissions = usePermissionsStore()
+/** Lê quando a tela abre (só admin, depois de acertar o projeto do link). */
+const ready = ref(false)
+const stored = useResource(permissions.projects, () => (ready.value && project.value ? project.value.id : undefined))
+/** O rascunho das regras (o que a pessoa edita); o salvo é o da store. */
 const rules = ref<IPermissionRule[]>([])
-const saved = ref<string>('[]')
-const system = ref<IPermissionRule[]>([])
-const meta = ref<{ updatedAt?: string; updatedBy?: string }>({})
+const saved = computed(() => JSON.stringify(stored.data.value?.rules ?? []))
+const system = computed(() => stored.data.value?.system ?? [])
+const meta = computed(() => ({ updatedAt: stored.data.value?.updatedAt, updatedBy: stored.data.value?.updatedBy }))
 const decisions = ref<IPermissionDecision[]>([])
 const decisionAgent = ref('')
-const error = ref<string>()
+const actionError = ref<string>()
+const error = computed(() => actionError.value ?? (stored.error.value === undefined ? undefined : stored.error.value instanceof Error ? stored.error.value.message : String(stored.error.value)))
 const notice = ref<string>()
 const busy = ref(false)
 const showSystem = ref(false)
@@ -39,44 +48,36 @@ const tab = ref<'edit' | 'history'>(route.hash === '#historico' ? 'history' : 'e
 const dirty = computed(() => JSON.stringify(rules.value) !== saved.value)
 const label = (category: string) => PERMISSION_SECTIONS.find((section) => section.category === category)?.label ?? category
 
-async function load() {
-  if (!project.value) return
-  error.value = undefined
-  try {
-    const result = await api<{ rules: IPermissionRule[]; system: IPermissionRule[]; updatedAt?: string; updatedBy?: string }>(`/projects/${encodeURIComponent(project.value.id)}/permissions`)
-    rules.value = result.rules
-    saved.value = JSON.stringify(result.rules)
-    system.value = result.system
-    meta.value = { updatedAt: result.updatedAt, updatedBy: result.updatedBy }
-    await loadDecisions()
-  } catch (failure) {
-    error.value = failure instanceof Error ? failure.message : String(failure)
-  }
-}
+// O salvo chegou (ou mudou: outro projeto, a gravação, o histórico): o rascunho volta a ele.
+watch(
+  () => stored.data.value,
+  (value) => (rules.value = value ? (JSON.parse(JSON.stringify(value.rules)) as IPermissionRule[]) : []),
+  { immediate: true },
+)
 
 async function loadDecisions() {
   if (!project.value) return
-  decisions.value = await api<IPermissionDecision[]>(`/projects/${encodeURIComponent(project.value.id)}/permissions/decisions`, {
-    query: decisionAgent.value ? { agentId: decisionAgent.value } : {},
-  }).catch(() => [])
+  decisions.value = await permissions.decisions(project.value.id, decisionAgent.value || undefined).catch(() => [])
 }
 
 async function save() {
   if (!project.value) return
   busy.value = true
-  error.value = undefined
+  actionError.value = undefined
   notice.value = undefined
   try {
-    const clean = rules.value.filter((rule) => rule.pattern.trim())
-    const result = await api<{ rules: IPermissionRule[] }>(`/projects/${encodeURIComponent(project.value.id)}/permissions`, { method: 'PUT', body: { rules: clean } })
-    rules.value = result.rules
-    saved.value = JSON.stringify(result.rules)
+    await permissions.save(project.value.id, rules.value.filter((rule) => rule.pattern.trim()))
     notice.value = 'Salvo. Vale na hora, para todos os agentes do projeto.'
   } catch (failure) {
-    error.value = failure instanceof ApiError && failure.status === 422 ? 'Alguma regra está inválida: confira os padrões.' : failure instanceof Error ? failure.message : String(failure)
+    actionError.value = failure instanceof ApiError && failure.status === 422 ? 'Alguma regra está inválida: confira os padrões.' : failure instanceof Error ? failure.message : String(failure)
   } finally {
     busy.value = false
   }
+}
+
+/** Restaurou uma versão: relê as regras do projeto (o rascunho segue a store). */
+function restored() {
+  if (project.value) void permissions.projects.refresh(project.value.id).catch(() => undefined)
 }
 
 onMounted(async () => {
@@ -85,11 +86,15 @@ onMounted(async () => {
   // O link do histórico (`?projeto=`) abre no projeto do item: troca o projeto em uso, como o seletor do topo.
   const linked = route.query.projeto
   if (typeof linked === 'string' && linked !== projects.current && projects.list.some((item) => item.id === linked)) await projects.select(linked).catch(() => undefined)
-  await load()
+  ready.value = true
 })
+// Outro projeto: as decisões dele (as regras vêm da store, pela chave).
 watch(
-  () => projects.current,
-  () => auth.isAdmin && load(),
+  () => [ready.value, projects.current] as const,
+  () => {
+    actionError.value = undefined
+    if (ready.value) void loadDecisions()
+  },
 )
 watch(decisionAgent, () => void loadDecisions())
 </script>
@@ -113,7 +118,7 @@ watch(decisionAgent, () => void loadDecisions())
           (segredos e comandos que derrubam o servidor) valem sempre.
         </div>
         <HistoryTabs v-model="tab" edit-label="Regras" />
-        <HistoryPanel v-if="tab === 'history'" kind="project-permissions" :id="project.id" @restored="load" />
+        <HistoryPanel v-if="tab === 'history'" kind="project-permissions" :id="project.id" @restored="restored" />
         <template v-else>
           <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
 

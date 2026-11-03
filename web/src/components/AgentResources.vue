@@ -1,49 +1,53 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { api } from '@/lib/api'
-import { GLOBAL_SCOPE } from '@/lib/guidance'
-import type { IAgentResources, IResource, TResourceKind } from '@/lib/types'
+import type { IAgentResources, TResourceKind } from '@/lib/types'
+import { useScopedResources } from '@/composables/useCatalogLists'
+import { useResource } from '@/composables/useResource'
+import { useAgentCatalogStore } from '@/stores/agentCatalog'
 
 /**
  * Os RECURSOS do agente: as skills e os commands que ele pode usar. ⚖️ Por padrão, "Todos" = os globais e os do
  * projeto dele, inclusive os que forem criados depois. Desmarcar tudo é "nenhum". ⛔ Agente global: só os globais.
+ * As listas e a escolha salva moram nas stores (as mesmas das páginas Skills e Commands).
  */
 const props = defineProps<{ agentId: string; projectId?: string; projectName?: string }>()
+const catalog = useAgentCatalogStore()
 
 const SECTIONS: Array<{ kind: TResourceKind; field: keyof IAgentResources; title: string; hint: string; base: string }> = [
   { kind: 'skill', field: 'skills', title: 'Skills', hint: 'O agente usa quando for útil.', base: '/skills' },
   { kind: 'command', field: 'commands', title: 'Commands', hint: 'Use com /nome na conversa.', base: '/commands' },
 ]
 
-const available = ref<IResource[]>([])
+const resources = useScopedResources(() => props.projectId ?? null)
+const current = useResource(catalog.resources, () => props.agentId)
+const available = resources.list
+const saved = computed<IAgentResources>(() => current.data.value ?? { skills: [], commands: [] })
 const selected = ref<IAgentResources>({ skills: [], commands: [] })
-const saved = ref<IAgentResources>({ skills: [], commands: [] })
 const busy = ref(false)
-const error = ref<string>()
+const saveError = ref<unknown>()
+const error = computed(() => {
+  const failure = saveError.value ?? current.error.value ?? resources.error.value
+  return failure === undefined ? undefined : failure instanceof Error ? failure.message : String(failure)
+})
 const note = ref<string>()
+
+// A escolha salva chegou (ou mudou): a marcação volta a ela.
+watch(
+  () => current.data.value,
+  () => (selected.value = { skills: [...saved.value.skills], commands: [...saved.value.commands] }),
+  { immediate: true },
+)
+watch(
+  () => [props.agentId, props.projectId],
+  () => {
+    saveError.value = undefined
+    note.value = undefined
+  },
+)
 
 const dirty = computed(() => SECTIONS.some(({ field }) => selected.value[field].join() !== saved.value[field].join()))
 const of = (kind: TResourceKind) => available.value.filter((resource) => resource.kind === kind)
 const all = (field: keyof IAgentResources) => selected.value[field].includes('*')
-
-watch(() => [props.agentId, props.projectId], load, { immediate: true })
-
-async function load() {
-  error.value = undefined
-  note.value = undefined
-  try {
-    const [globals, local, current] = await Promise.all([
-      api<IResource[]>('/resources', { query: { project: GLOBAL_SCOPE } }),
-      props.projectId ? api<IResource[]>('/resources', { query: { project: props.projectId } }) : Promise.resolve([]),
-      api<IAgentResources>(`/agents/${encodeURIComponent(props.agentId)}/resources`),
-    ])
-    available.value = [...local, ...globals]
-    saved.value = { skills: [...current.skills], commands: [...current.commands] }
-    selected.value = { skills: [...current.skills], commands: [...current.commands] }
-  } catch (failure) {
-    error.value = failure instanceof Error ? failure.message : String(failure)
-  }
-}
 
 function toggle(field: keyof IAgentResources, id: string) {
   const list = selected.value[field]
@@ -56,15 +60,13 @@ function toggleAll(field: keyof IAgentResources) {
 
 async function save() {
   busy.value = true
-  error.value = undefined
+  saveError.value = undefined
   note.value = undefined
   try {
-    const result = await api<IAgentResources>(`/agents/${encodeURIComponent(props.agentId)}/resources`, { method: 'PUT', body: selected.value })
-    saved.value = { skills: [...result.skills], commands: [...result.commands] }
-    selected.value = { skills: [...result.skills], commands: [...result.commands] }
+    await catalog.saveResources(props.agentId, selected.value)
     note.value = 'Salvo. Vale para as próximas conversas.'
   } catch (failure) {
-    error.value = failure instanceof Error ? failure.message : String(failure)
+    saveError.value = failure
   } finally {
     busy.value = false
   }

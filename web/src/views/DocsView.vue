@@ -7,15 +7,18 @@ import BuildTabs from '@/components/BuildTabs.vue'
 import MasterDetail from '@/components/MasterDetail.vue'
 import HistoryPanel from '@/components/HistoryPanel.vue'
 import HistoryTabs from '@/components/HistoryTabs.vue'
-import { api, ApiError } from '@/lib/api'
+import { ApiError } from '@/lib/api'
 import { sizeHint } from '@/lib/format'
 import { pendingDraft } from '@/lib/builder'
 import { attachableDocs, attachedRefs, attachmentsChanged, docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId, setAttachMode, type TAttachMode } from '@/lib/guidance'
 import type { IRestoreResult } from '@/lib/catalogHistory'
 import { renderMarkdown } from '@/lib/markdown'
 import type { IProjectDoc, TDocKind } from '@/lib/types'
+import { useScopedDocs } from '@/composables/useCatalogLists'
+import { useResource } from '@/composables/useResource'
 import { useAuthStore } from '@/stores/auth'
 import { useAgentsStore } from '@/stores/agents'
+import { useDocsStore } from '@/stores/docs'
 import { useProjectsStore } from '@/stores/projects'
 
 /**
@@ -24,6 +27,7 @@ import { useProjectsStore } from '@/stores/projects'
  * documento inteiro com `read_doc` quando precisa. O status de uma ADR fica no próprio texto.
  * ⚖️ Relação com outro documento (spec que cita spec, ADR → spec) é ANEXO, feito aqui — não caminho citado no texto. O
  * anexado vai junto quando o documento é lido: inteiro ou por referência, como no anexo de skill.
+ * As listas e o documento aberto moram na store: trocar de item ou de página não relê o que já veio.
  */
 const props = defineProps<{ kind: TDocKind; id?: string }>()
 const route = useRoute()
@@ -31,6 +35,7 @@ const router = useRouter()
 const auth = useAuthStore()
 const projects = useProjectsStore()
 const agents = useAgentsStore()
+const docsStore = useDocsStore()
 
 /** O que é cada tipo, para quem cadastra: a página explica antes de pedir o texto. */
 const KIND: Record<TDocKind, { title: string; one: string; masc?: boolean; base: string; lead: string; when: string[]; example: string; placeholder: string }> = {
@@ -70,16 +75,17 @@ const TEMPLATE: Record<TDocKind, string> = {
 }
 
 const scope = ref<string>(projects.current ?? GLOBAL_SCOPE)
-const list = ref<IProjectDoc[]>([])
-const loadError = ref<string>()
+/** Lê quando a tela abre (só admin, com a lista de projetos). */
+const ready = ref(false)
+const listed = useResource(docsStore.lists, () => (ready.value ? docsStore.listKey(scope.value) : undefined))
+const list = computed(() => listed.data.value ?? [])
+const loadError = computed(() => (listed.error.value === undefined ? undefined : describe(listed.error.value)))
 const adding = computed(() => route.name === `${props.kind}-new`)
 const info = computed(() => KIND[props.kind])
 /** As palavras que concordam com o tipo: "Novo estudo", "Nova spec". */
 const g = computed(() => (info.value.masc ? { nova: 'Novo', nenhuma: 'Nenhum', uma: 'um', a: 'o' } : { nova: 'Nova', nenhuma: 'Nenhuma', uma: 'uma', a: 'a' }))
 
 const form = ref({ id: '', kind: 'spec' as TDocKind, title: '', summary: '', body: '', global: true, project: '', docIds: [] as string[], docRefs: [] as string[] })
-/** Os documentos que este pode anexar: os globais e os do projeto do formulário (a lista não segue o filtro de escopo). */
-const docs = ref<IProjectDoc[]>([])
 /** A guia da edição: o formulário ou o histórico (`#historico` no endereço abre nele). */
 const tab = ref<'edit' | 'history'>(route.hash === '#historico' ? 'history' : 'edit')
 /** Muda depois de restaurar uma versão: relê o item. */
@@ -95,6 +101,8 @@ const removing = ref(false)
 const scopes = computed(() => [{ id: GLOBAL_SCOPE, name: 'Global — todos os projetos' }, ...projects.list.map((project) => ({ id: project.id, name: project.name }))])
 const shown = computed(() => list.value.filter((doc) => doc.kind === props.kind))
 const formScope = computed(() => (form.value.global ? GLOBAL_SCOPE : form.value.project))
+/** Os documentos que este pode anexar: os globais e os do projeto do formulário (a lista não segue o filtro de escopo). */
+const { list: docs } = useScopedDocs(() => (auth.isAdmin ? scopeToProjectId(formScope.value) : undefined))
 const attachable = computed(() => attachableDocs(docs.value, scopeToProjectId(formScope.value), form.value.id || undefined))
 const dirty = computed(() => {
   const doc = loaded.value
@@ -113,10 +121,8 @@ onMounted(async () => {
   if (!projects.loaded) await projects.load().catch(() => undefined)
   // Os nomes dos agentes do selo "carregada em".
   if (!agents.loaded) void agents.load().catch(() => undefined)
-  await loadList()
+  ready.value = true
 })
-watch(scope, () => void loadList())
-watch(formScope, () => void loadDocs(), { immediate: true })
 
 watch(
   () => [props.id, adding.value, props.kind, reloadKey.value] as const,
@@ -143,7 +149,9 @@ watch(
     }
     if (!id) return
     try {
-      const doc = await api<IProjectDoc>(`/docs/${encodeURIComponent(id)}`)
+      const doc = await docsStore.details.ensure(id)
+      // Outro item aberto enquanto este vinha: o mais novo manda.
+      if (props.id !== id) return
       // O endereço é da outra página (uma ADR aberta em /specs): vai para a certa.
       if (doc.kind !== kind) return void router.replace(`${KIND[doc.kind].base}/${doc.id}`)
       loaded.value = doc
@@ -189,24 +197,6 @@ function applyDraft(kind: TDocKind, id?: string) {
   note.value = 'Rascunho do construtor aplicado: revise e salve.'
 }
 
-async function loadList() {
-  loadError.value = undefined
-  try {
-    list.value = await api<IProjectDoc[]>('/docs', { query: { project: scope.value } })
-  } catch (failure) {
-    loadError.value = describe(failure)
-  }
-}
-
-async function loadDocs() {
-  const project = scopeToProjectId(formScope.value)
-  const [globals, local] = await Promise.all([
-    api<IProjectDoc[]>('/docs', { query: { project: GLOBAL_SCOPE } }).catch(() => []),
-    project ? api<IProjectDoc[]>('/docs', { query: { project } }).catch(() => []) : Promise.resolve([]),
-  ])
-  docs.value = [...local, ...globals]
-}
-
 function toggleDoc(id: string) {
   form.value.docIds = form.value.docIds.includes(id) ? form.value.docIds.filter((item) => item !== id) : [...form.value.docIds, id]
 }
@@ -241,16 +231,14 @@ async function save() {
   }
   try {
     if (adding.value) {
-      const created = await api<IProjectDoc>('/docs', { method: 'POST', body: { id: form.value.id, ...body } })
+      const created = await docsStore.create({ id: form.value.id, ...body })
       scope.value = created.projectId ?? GLOBAL_SCOPE
-      await loadList()
       await router.push(`${info.value.base}/${created.id}`)
     } else {
-      loaded.value = await api<IProjectDoc>(`/docs/${encodeURIComponent(form.value.id)}`, { method: 'PUT', body })
+      loaded.value = await docsStore.update(form.value.id, body)
       form.value.docIds = [...(loaded.value.docIds ?? [])]
       form.value.docRefs = [...(loaded.value.docRefs ?? [])]
       note.value = 'Salvo. Vale para as próximas conversas.'
-      await loadList()
     }
   } catch (failure) {
     if (failure instanceof ApiError && failure.status === 422) issues.value = failure.fieldIssues
@@ -260,9 +248,10 @@ async function save() {
   }
 }
 
-/** Restaurou uma versão: relê o item e a lista; se a versão era a de antes de existir, o item sumiu. */
-function restored(result: IRestoreResult) {
-  void loadList()
+/** Restaurou uma versão: a store relê o item e as listas; se a versão era a de antes de existir, o item sumiu. */
+async function restored(result: IRestoreResult) {
+  const id = loaded.value?.id ?? props.id
+  if (id) await docsStore.restored(id, result.exists)
   if (!result.exists) return void router.push(info.value.base)
   reloadKey.value++
 }
@@ -276,9 +265,8 @@ watch(
 async function confirmRemove() {
   busy.value = true
   try {
-    await api(`/docs/${encodeURIComponent(form.value.id)}`, { method: 'DELETE' })
+    await docsStore.remove(form.value.id)
     removing.value = false
-    await loadList()
     await router.push(info.value.base)
   } catch (failure) {
     error.value = describe(failure)

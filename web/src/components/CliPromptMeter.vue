@@ -1,8 +1,8 @@
 <script setup lang="ts">
-  import { computed, ref, watch } from 'vue'
-  import { api } from '@/lib/api'
+  import { computed, watch } from 'vue'
   import { cliPromptEstimate, kib } from '@/lib/cliPrompt'
-  import type { IAgentFootprint, ICliFootprint } from '@/lib/types'
+  import { useResource } from '@/composables/useResource'
+  import { useAgentCatalogStore } from '@/stores/agentCatalog'
   import { useProjectsStore } from '@/stores/projects'
 
   /**
@@ -22,25 +22,17 @@
     saved?: { soul?: string; systemPrompt: string }
   }>()
   const projects = useProjectsStore()
+  const catalog = useAgentCatalogStore()
 
-  const measured = ref<ICliFootprint>()
   const project = computed(() => props.projectId ?? projects.current ?? '')
-
-  let request = 0
-  // Salvou (outro `saved`): mede de novo — a conta troca o salvo pelo da tela.
-  watch(() => [props.agentId, project.value, props.saved], load, { immediate: true })
-
-  async function load() {
-    const mine = ++request
-    measured.value = undefined
-    if (!props.agentId) return
-    try {
-      const result = await api<IAgentFootprint>(`/agents/${encodeURIComponent(props.agentId)}/footprint`, { query: !props.projectId && project.value ? { project: project.value } : {} })
-      if (mine === request) measured.value = result.cli
-    } catch {
-      // Sem a medida, a conta fica só com o soul e a instrução (e a tela diz).
-    }
-  }
+  // A medida mora na store: a mesma da guia Tamanho. Sem ela, a conta fica só com o soul e a instrução (e a tela diz).
+  const { data } = useResource(catalog.footprints, () => (props.agentId ? catalog.footprintKey(props.agentId, !props.projectId && project.value ? project.value : undefined) : undefined))
+  const measured = computed(() => data.value?.cli)
+  // Salvou (outro `saved`): a medida do salvo ficou velha — a conta troca o salvo pelo da tela.
+  watch(
+    () => props.saved,
+    () => catalog.invalidate(),
+  )
 
   const estimate = computed(() => cliPromptEstimate({ cli: measured.value, saved: props.saved, live: { soul: props.soul, systemPrompt: props.systemPrompt }, codex: props.codex }))
   const heavy = computed(() => estimate.value.heavy.map((part) => `${part.label} (${kib(part.bytes)})`).join(', '))

@@ -1,28 +1,26 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { api, ApiError } from '@/lib/api'
+import { computed, ref } from 'vue'
+import { ApiError } from '@/lib/api'
 import { fullTime } from '@/lib/format'
+import { useResource } from '@/composables/useResource'
+import { useAuthStore } from '@/stores/auth'
+import { type IAccessToken, useTokensStore } from '@/stores/tokens'
 import ConfirmDialog from './ConfirmDialog.vue'
 import Icon from './Icon.vue'
 
-interface IAccessToken {
-  id: string
-  name: string
-  prefix: string
-  createdAt: string
-  expiresAt?: string
-  lastUsedAt?: string
-  revokedAt?: string
-}
-
 /**
- * Os tokens de acesso pessoais: para o Claude Code (MCP), scripts e integrações.
+ * Os tokens de acesso pessoais: para o Claude Code (MCP), scripts e integrações. A lista mora na store, pela conta.
  *
  * ⛔ O token aparece UMA vez, logo depois de criado, e some da tela ao fechar o aviso — o servidor guarda só
- * o hash e não o devolve de novo.
+ * o hash e não o devolve de novo (nem a store o guarda).
  */
-const tokens = ref<IAccessToken[]>([])
-const loadError = ref<string>()
+const auth = useAuthStore()
+const store = useTokensStore()
+const userId = computed(() => auth.user?.id)
+const { data, error: listError } = useResource(store.lists, userId)
+const tokens = computed(() => data.value ?? [])
+const revokeError = ref<string>()
+const loadError = computed(() => revokeError.value ?? (listError.value === undefined ? undefined : listError.value instanceof Error ? listError.value.message : String(listError.value)))
 const name = ref('Claude Code')
 const days = ref<number | ''>(90)
 const creating = ref(false)
@@ -47,22 +45,13 @@ const mcpCommand = computed(() =>
     : '',
 )
 
-async function load() {
-  try {
-    tokens.value = await api<IAccessToken[]>('/auth/tokens')
-  } catch (error) {
-    loadError.value = error instanceof Error ? error.message : String(error)
-  }
-}
-onMounted(load)
-
 async function create() {
   creating.value = true
   createError.value = undefined
   try {
-    const created = await api<IAccessToken & { token: string }>('/auth/tokens', { method: 'POST', body: { name: name.value, ...(days.value ? { expiresInDays: days.value } : {}) } })
+    if (!userId.value) return
+    const created = await store.create(userId.value, { name: name.value, ...(days.value ? { expiresInDays: days.value } : {}) })
     revealed.value = { name: created.name, token: created.token }
-    await load()
   } catch (error) {
     createError.value = error instanceof ApiError && error.status === 422 ? Object.values(error.fieldIssues).flat().join('; ') : error instanceof Error ? error.message : String(error)
   } finally {
@@ -78,10 +67,10 @@ async function copy(label: string, value: string) {
 
 async function revoke() {
   const target = revoking.value
-  if (!target) return
-  await api(`/auth/tokens/${encodeURIComponent(target.id)}`, { method: 'DELETE' }).catch((error) => (loadError.value = error instanceof Error ? error.message : String(error)))
+  if (!target || !userId.value) return
+  revokeError.value = undefined
+  await store.revoke(userId.value, target.id).catch((error) => (revokeError.value = error instanceof Error ? error.message : String(error)))
   revoking.value = undefined
-  await load()
 }
 </script>
 

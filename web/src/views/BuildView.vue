@@ -12,8 +12,10 @@ import { BUILD_KINDS, builderAgentId, latestDraft, pendingDraft, type TBuildKind
 import { importOpening, importProposals } from '@/lib/importDraft'
 import { shortTime, sizeHint } from '@/lib/format'
 import { renderMarkdown } from '@/lib/markdown'
-import type { IConversation, IProjectDoc, IResource } from '@/lib/types'
+import type { IProjectDoc, IResource } from '@/lib/types'
+import { useResource } from '@/composables/useResource'
 import { useAuthStore } from '@/stores/auth'
+import { useBuilderStore } from '@/stores/builder'
 import { useProjectsStore } from '@/stores/projects'
 import { useThreadStore } from '@/stores/thread'
 
@@ -23,6 +25,7 @@ import { useThreadStore } from '@/stores/thread'
  * ⚖️ O protocolo do CORE chega com o gateway e não se edita aqui: quem administra só soma um complemento (global ou do
  * projeto), que vem depois dele. O construtor é um agente do core que segue os dois numa conversa guiada, entrega um
  * rascunho e grava quando a pessoa confirma na conversa; o rascunho também abre no editor da guia Lista.
+ * As conversas com o construtor e o protocolo moram na store (por tipo e projeto).
  */
 /**
  * `project`: o escopo FIXO — `null` = global (as rules globais, em Sistema), um id = aquele projeto (a guia do projeto).
@@ -34,6 +37,7 @@ const router = useRouter()
 const auth = useAuthStore()
 const projects = useProjectsStore()
 const thread = useThreadStore()
+const builder = useBuilderStore()
 
 const info = computed(() => BUILD_KINDS[props.kind])
 /** O projeto em que se constrói: o fixo, ou o atual. `undefined` = global. */
@@ -67,8 +71,11 @@ onMounted(async () => {
 
 // ── Construir ────────────────────────────────────────────────────────────────
 
-const builds = ref<IConversation[]>([])
-const buildsError = ref<string>()
+const listed = useResource(builder.builds, () => (auth.isAdmin && props.tab === 'build' ? builder.key(props.kind, scopeProject.value) : undefined))
+// Escopo global: só as conversas sem projeto (a busca sem `project` traria as de todos).
+const builds = computed(() => (props.project === null ? (listed.data.value ?? []).filter((build) => !build.metadata?.project) : (listed.data.value ?? [])))
+const startError = ref<string>()
+const buildsError = computed(() => startError.value ?? (listed.error.value === undefined ? undefined : describe(listed.error.value)))
 const starting = ref(false)
 const selected = computed(() => (typeof route.query.c === 'string' && route.query.c ? route.query.c : undefined))
 const selectedBuild = computed(() => builds.value.find((build) => build.id === selected.value))
@@ -96,28 +103,11 @@ function startImport() {
 }
 const draftPreview = ref(true)
 
-async function loadBuilds() {
-  if (!auth.isAdmin || props.tab !== 'build') return
-  buildsError.value = undefined
-  try {
-    const found = (
-      await api<{ sessions: IConversation[] }>('/conversations', { query: { builder: props.kind, limit: 50, ...(scopeProject.value ? { project: scopeProject.value } : {}) } })
-    ).sessions
-    // Escopo global: só as conversas sem projeto (a busca sem `project` traria as de todos).
-    builds.value = props.project === null ? found.filter((build) => !build.metadata?.project) : found
-    // Aberta antes de a lista chegar (recarregou a página): o cabeçalho ganha o título agora.
-    const open = builds.value.find((build) => build.id === selected.value)
-    if (open && !thread.header) thread.setHeader(open)
-  } catch (failure) {
-    buildsError.value = describe(failure)
-  }
-}
-
-watch(
-  () => [props.kind, props.tab, scopeProject.value] as const,
-  () => void loadBuilds(),
-  { immediate: true },
-)
+// Aberta antes de a lista chegar (recarregou a página): o cabeçalho ganha o título agora.
+watch(builds, (list) => {
+  const open = list.find((build) => build.id === selected.value)
+  if (open && !thread.header) thread.setHeader(open)
+})
 watch(
   selected,
   (id) => {
@@ -129,11 +119,15 @@ watch(
   },
   { immediate: true },
 )
-// O título e o resumo da conversa nascem no primeiro turno: relê a lista quando um turno termina.
+/**
+ * O título e o resumo da conversa nascem no primeiro turno: relê a lista quando o número de turnos da conversa aberta
+ * deixa de bater com o da lista (ou ela ainda não está lá). ⚖️ Abrir uma conversa já listada não relê.
+ */
 watch(
   () => thread.turns.length,
-  () => {
-    if (selected.value && thread.sessionId === selected.value) void loadBuilds()
+  (count) => {
+    if (!selected.value || thread.sessionId !== selected.value || selectedBuild.value?.turns === count) return
+    void listed.refresh().catch(() => undefined)
   },
 )
 /**
@@ -152,22 +146,22 @@ watch(
 
 async function startBuild() {
   starting.value = true
-  buildsError.value = undefined
+  startError.value = undefined
   try {
     const { id } = await api<{ id: string }>('/sessions', { method: 'POST', body: { agentId: builderAgentId(props.kind), projectId: scopeProject.value } })
     // ⚠️ Preserva o resto da query: embutido (a guia do projeto), o `?tab=` é da tela que embute.
     await router.replace({ query: { ...route.query, c: id } })
   } catch (failure) {
-    buildsError.value = describe(failure)
+    startError.value = describe(failure)
   } finally {
     starting.value = false
   }
 }
 
 async function removed() {
-  const { c: _closed, ...rest } = route.query
+  const { c: closed, ...rest } = route.query
+  if (typeof closed === 'string') builder.dropBuild(closed)
   await router.replace({ query: rest })
-  await loadBuilds()
 }
 
 /**
@@ -202,18 +196,10 @@ const savedLink = computed(() => (props.kind === 'rule' || !draft.value?.id ? ba
 
 // ── Protocolo ────────────────────────────────────────────────────────────────
 
-interface IAddendum {
-  body: string
-  updatedAt: string
-  updatedBy?: string
-}
-interface IProtocolView {
-  core: { kind: TBuildKind; version: string; title: string; body: string }
-  addenda: { global?: IAddendum; project?: IAddendum }
-}
-
-const protocol = ref<IProtocolView>()
-const protocolError = ref<string>()
+const shown = useResource(builder.protocols, () => (auth.isAdmin && props.tab === 'protocol' ? builder.key(props.kind, scopeProject.value) : undefined))
+const protocol = shown.data
+const saveError = ref<string>()
+const protocolError = computed(() => saveError.value ?? (shown.error.value === undefined ? undefined : describe(shown.error.value)))
 const addenda = ref({ global: '', project: '' })
 const saving = ref<'global' | 'project'>()
 const saved = ref<'global' | 'project'>()
@@ -222,35 +208,26 @@ const addendumTab = ref<Record<'global' | 'project', 'edit' | 'history'>>({ glob
 const addendumId = (scope: 'global' | 'project') => (scope === 'project' ? `${scopeProject.value}/${props.kind}` : props.kind)
 const currentProjectName = computed(() => projects.list.find((project) => project.id === scopeProject.value)?.name ?? scopeProject.value)
 
-async function loadProtocol() {
-  if (!auth.isAdmin || props.tab !== 'protocol') return
-  protocolError.value = undefined
-  try {
-    const view = await api<IProtocolView>(`/protocols/${props.kind}`, { query: scopeProject.value ? { project: scopeProject.value } : {} })
-    protocol.value = view
-    addenda.value = { global: view.addenda.global?.body ?? '', project: view.addenda.project?.body ?? '' }
-  } catch (failure) {
-    protocolError.value = describe(failure)
-  }
-}
-
+// O protocolo chegou (ou mudou: outro escopo, a gravação, o histórico): os complementos voltam ao salvo.
 watch(
-  () => [props.kind, props.tab, scopeProject.value] as const,
-  () => void loadProtocol(),
+  protocol,
+  (view) => (addenda.value = { global: view?.addenda.global?.body ?? '', project: view?.addenda.project?.body ?? '' }),
   { immediate: true },
 )
+
+/** Restaurou um complemento (o histórico): a store relê o protocolo do tipo. */
+const restoredProtocol = () => void builder.protocolRestored(props.kind)
 
 async function saveAddendum(scope: 'global' | 'project') {
   saving.value = scope
   saved.value = undefined
-  protocolError.value = undefined
+  saveError.value = undefined
   try {
-    await api(`/protocols/${props.kind}/addendum`, { method: 'PUT', body: { projectId: scope === 'project' ? scopeProject.value : null, body: addenda.value[scope] } })
-    // A resposta é a do escopo gravado; relê no do projeto atual, para os dois complementos.
-    await loadProtocol()
+    // A store põe a resposta (a do escopo gravado) nas chaves do tipo: os dois complementos, sem reler.
+    await builder.saveAddendum(props.kind, scope === 'project' ? (scopeProject.value ?? null) : null, addenda.value[scope])
     saved.value = scope
   } catch (failure) {
-    protocolError.value = describe(failure)
+    saveError.value = describe(failure)
   } finally {
     saving.value = undefined
   }
@@ -450,7 +427,7 @@ function describe(failure: unknown): string {
             <h2 class="font-semibold">Complemento global</h2>
             <p class="text-xs text-zinc-500">Vale em todos os projetos e prevalece sobre o protocolo.</p>
             <HistoryTabs v-model="addendumTab.global" edit-label="Complemento" />
-            <HistoryPanel v-if="addendumTab.global === 'history'" kind="protocol" :id="addendumId('global')" @restored="loadProtocol" />
+            <HistoryPanel v-if="addendumTab.global === 'history'" kind="protocol" :id="addendumId('global')" @restored="restoredProtocol" />
             <template v-else>
               <textarea
                 v-model="addenda.global"
@@ -479,7 +456,7 @@ function describe(failure: unknown): string {
             <h2 class="font-semibold">Complemento do projeto {{ currentProjectName }}</h2>
             <p class="text-xs text-zinc-500">Vale só neste projeto.</p>
             <HistoryTabs v-model="addendumTab.project" edit-label="Complemento" />
-            <HistoryPanel v-if="addendumTab.project === 'history'" kind="protocol" :id="addendumId('project')" @restored="loadProtocol" />
+            <HistoryPanel v-if="addendumTab.project === 'history'" kind="protocol" :id="addendumId('project')" @restored="restoredProtocol" />
             <template v-else>
               <textarea v-model="addenda.project" rows="6" class="input font-mono text-[13px]" />
               <small v-if="addenda.project" class="hint">{{ sizeHint(addenda.project, 'em cada conversa do construtor') }}</small>
