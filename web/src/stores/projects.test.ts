@@ -19,6 +19,19 @@ describe('useProjectsStore', () => {
     localStorage.clear()
   })
 
+  it('quem pede enquanto a leitura não volta espera a mesma: uma chamada só', async () => {
+    let release: (value: unknown) => void = () => undefined
+    vi.mocked(api).mockReturnValueOnce(new Promise((resolve) => (release = resolve)) as never)
+    const projects = useProjectsStore()
+    const both = Promise.all([projects.load(), projects.load()])
+    release([{ id: 'alfa', name: 'Alfa' }])
+    await both
+    expect(api).toHaveBeenCalledTimes(1)
+    vi.mocked(api).mockResolvedValueOnce([{ id: 'alfa', name: 'Alfa' }])
+    await projects.load()
+    expect(api).toHaveBeenCalledTimes(2)
+  })
+
   it('o guardado que não existe mais (ou de que a pessoa saiu) cai no primeiro que ela tem', async () => {
     localStorage.setItem('gw.project', 'sumiu')
     vi.mocked(api).mockResolvedValueOnce([
