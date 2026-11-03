@@ -27,11 +27,17 @@ export const useProjectsStore = defineStore('projects', () => {
     return out
   })
 
-  async function load(): Promise<void> {
-    list.value = await api<IProject[]>('/projects')
-    loaded.value = true
-    // O guardado sumiu (apagado, ou a pessoa saiu dele): vale o primeiro que ela tem.
-    if (!list.value.some((project) => project.id === current.value)) setCurrent(list.value[0]?.id)
+  /** A leitura em curso: quem pede enquanto ela não volta (a tela e o início do app, juntos) espera a mesma. */
+  let loading: Promise<void> | undefined
+
+  function load(): Promise<void> {
+    loading ??= (async () => {
+      list.value = await api<IProject[]>('/projects')
+      loaded.value = true
+      // O guardado sumiu (apagado, ou a pessoa saiu dele): vale o primeiro que ela tem.
+      if (!list.value.some((project) => project.id === current.value)) setCurrent(list.value[0]?.id)
+    })().finally(() => (loading = undefined))
+    return loading
   }
 
   function setCurrent(id: string | undefined): void {

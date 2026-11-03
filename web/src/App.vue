@@ -51,14 +51,17 @@ async function loadAgents() {
 }
 
 onMounted(async () => {
-  await auth.probe()
+  // ⚖️ Tudo o que não depende de outra resposta sai junto: o gateway pode estar longe (~220 ms de ida e volta), e
+  // cada espera em fila soma isso. Sem sessão, estas falham como antes (a tela de login refaz o escopo ao entrar).
   // As regras de cada protocolo (lanes, níveis, assinatura): vêm do servidor, a tela não copia.
   void protocols.load().catch(() => undefined)
-  // Os projetos antes dos agentes: o atual recorta a lista.
-  await projects.load().catch(() => undefined)
-  await loadAgents()
   // As ferramentas (com os rótulos das nativas), para o histórico mostrar "Busca na web" e não `WebSearch`.
   void agents.loadTools().catch(() => undefined)
+  // Os projetos antes dos agentes: o atual recorta a lista.
+  const projectsLoaded = projects.load().catch(() => undefined)
+  await auth.probe()
+  await projectsLoaded
+  await loadAgents()
   // Assinado aqui, e não na caixa de entrada: o contador de não lidas vale em qualquer tela.
   conversations.subscribe(auth.isAdmin)
 })

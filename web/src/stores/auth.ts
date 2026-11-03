@@ -80,21 +80,23 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function scan(): Promise<void> {
     try {
-      const status = await api<{ localAccounts: boolean; setupRequired: boolean }>('/auth/status').catch(() => ({ localAccounts: false, setupRequired: false }))
-      localAccounts.value = status.localAccounts
-      setupRequired.value = status.setupRequired
-
+      // ⚖️ As três de uma vez: o gateway pode estar longe (~220 ms de ida e volta), e cada espera em fila soma isso.
+      const status = api<{ localAccounts: boolean; setupRequired: boolean }>('/auth/status').catch(() => ({ localAccounts: false, setupRequired: false }))
+      // O token antigo vira cookie ANTES de perguntar quem é (só quando há um no navegador).
       await migrateStoredSession()
-      user.value = await api<IUser>('/auth/me').catch(() => undefined)
-
-      try {
-        await api('/settings')
-        isAdmin.value = true
-        unauthorized.value = false
-      } catch (error) {
-        isAdmin.value = false
-        unauthorized.value = error instanceof ApiError && error.status === 401
-      }
+      const [found, me, admin] = await Promise.all([
+        status,
+        api<IUser>('/auth/me').catch(() => undefined),
+        api('/settings').then(
+          () => undefined,
+          (error: unknown) => error,
+        ),
+      ])
+      localAccounts.value = found.localAccounts
+      setupRequired.value = found.setupRequired
+      user.value = me
+      isAdmin.value = admin === undefined
+      unauthorized.value = admin instanceof ApiError && admin.status === 401
     } finally {
       checked.value = true
     }
