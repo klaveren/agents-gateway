@@ -1,3 +1,6 @@
+import { EMode } from '@domain/enums/EMode.Enum'
+import { EProvider } from '@domain/enums/EProvider.Enum'
+import { lanesOf } from '@domain/Subscription.Policy'
 import { createHash } from 'node:crypto'
 import { ICatalogDocument, TCanonicalValue, TCatalogKind } from '@domain/Catalog.Document'
 import { ICatalogImportPlan, refOfDocument, TRefTarget, withBody } from '@domain/Catalog.Import'
@@ -128,7 +131,7 @@ export interface IImportApplyDeps {
   catalog: Pick<CatalogImportApplier, 'plan' | 'apply'>
   reader: Pick<CatalogReader, 'read' | 'list'>
   /** Os modelos ativos (provider → modelos ligados). Ausente: nenhum listado. */
-  models?: () => Array<{ provider: string; models: string[] }>
+  models?: () => Array<{ provider: string; protocol?: EProvider; models: string[] }>
   now?: () => Date
   /**
    * Os ARQUIVOS de recurso (ver `Import.Files`): os bytes crus de um arquivo do repositório (contido), o depósito e os
@@ -572,6 +575,13 @@ export class ImportApplyUseCase {
       const allowedTools = translation?.allowedTools ?? []
       const chosen = selection.models?.[entry.key]
       const providers = chosen ? [{ provider: chosen.provider, models: [chosen.model] }] : undefined
+      // As lanes do modelo escolhido: o protocolo do provider (o id dos oficiais é o próprio protocolo).
+      const protocol = chosen
+        ? (this.deps.models?.().find((one) => one.provider === chosen.provider)?.protocol ??
+          (Object.values(EProvider).includes(chosen.provider as EProvider) ? (chosen.provider as EProvider) : undefined))
+        : undefined
+      const lanes = protocol ? lanesOf(protocol) : undefined
+      if (lanes && !lanes.includes(EMode.CHAT)) notes.push(`${chosen!.provider} roda só no modo agente: o agente entra só com ele`)
       const currentModel = (current?.body.providers as Array<{ provider: string; models: string[] }> | undefined)?.[0]
       const model = chosen ?? (currentModel?.models[0] ? { provider: currentModel.provider, model: currentModel.models[0] } : undefined)
       if (!translation) notes.push('sem alcance do opencode para traduzir: o agente nasce fechado e o alcance é escolhido na tela do agente')
@@ -590,7 +600,7 @@ export class ImportApplyUseCase {
           reach: translation ? 'opencode' : 'none',
           notes,
         },
-        extras: { ...(providers ? { providers } : {}), allowedTools, permissions, skills, commands },
+        extras: { ...(providers ? { providers } : {}), ...(lanes ? { lanes } : {}), allowedTools, permissions, skills, commands },
       }
     })
   }

@@ -361,7 +361,7 @@ export function makeImportController(): ImportController {
         makeProviders()
           .list()
           .filter((provider) => provider.enabled)
-          .map((provider) => ({ provider: provider.id, models: makeModelCatalog().enabledIds(provider.id) }))
+          .map((provider) => ({ provider: provider.id, protocol: provider.protocol, models: makeModelCatalog().enabledIds(provider.id) }))
           .filter((entry) => entry.models.length > 0),
       // Os arquivos de recurso (scripts da skill e do agente): byte a byte, conferidos, para o depósito.
       readRaw: (projectId, repository, path) => {

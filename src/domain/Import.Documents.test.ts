@@ -2,7 +2,7 @@ import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import { agentDocument } from './Catalog.Document'
 import { EMode } from './enums/EMode.Enum'
-import { importDocuments, importedRuleId, IImportDocumentsInput } from './Import.Documents'
+import { importDocuments, importedRuleId, IImportDocumentsInput, modesFor } from './Import.Documents'
 import { applyImportOps, IImportDraft, TImportDraftKind, TImportOp } from './Import.Draft'
 
 /** Um rascunho de verdade: as operações aplicadas sobre a fonte. */
@@ -83,5 +83,13 @@ describe('importDocuments', () => {
       [body.allowedTools, body.permissions, body.modes, body.resources, body.projectId],
       [[], undefined, ['chat'], { skills: ['revisar'], commands: [] }, 'alfa'],
     )
+  })
+})
+
+describe('modesFor — os modos do agente dentro das lanes do modelo', () => {
+  it('a assinatura (só agent) tira o chat; nada sobra: as lanes; sem lanes, como veio', () => {
+    assert.deepStrictEqual(modesFor(['chat', 'agent'], ['agent']), ['agent'])
+    assert.deepStrictEqual(modesFor(['chat'], ['agent']), ['agent'])
+    assert.deepStrictEqual(modesFor(['chat', 'agent'], undefined), ['chat', 'agent'])
   })
 })
