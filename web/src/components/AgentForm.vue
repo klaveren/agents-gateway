@@ -449,6 +449,8 @@
   })
   // A guia que sumiu (tirou o provider das nativas) não fica aberta vazia.
   watch(tabs, (list) => {
+    // ⚖️ O link `#problemas` espera os problemas chegarem (o detalhe completo vem depois da lista).
+    if (tab.value === 'problemas' && initialHash === '#problemas' && !importIssues.value.length) return
     if (!list.some((item) => item.id === tab.value)) tab.value = 'agente'
   })
 
