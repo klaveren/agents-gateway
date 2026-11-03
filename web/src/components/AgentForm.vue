@@ -2,6 +2,7 @@
   import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
   import { useRoute } from 'vue-router'
   import { ApiError } from '@/lib/api'
+  import ImportIssues from '@/components/ImportIssues.vue'
   import type { IResourceFile } from '@/lib/resourceFiles'
   import { effortLabel, sizeHint } from '@/lib/format'
   import { BUILD_KINDS, builderAgentId, type TBuildKind } from '@/lib/builder'
@@ -365,7 +366,7 @@
    * As guias do formulário: o texto do agente na primeira, e cada grupo de capacidades na sua. A contagem diz
    * quanto está escolhido sem abrir a guia; o ponto vermelho, que o servidor recusou algo ali.
    */
-  type TTab = 'agente' | 'triggers' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'arquivos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos' | 'historico'
+  type TTab = 'agente' | 'triggers' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'arquivos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos' | 'historico' | 'problemas'
   // `#agendamentos` no link (a visão geral dos agendamentos) abre direto na guia.
   /** O nome das ferramentas do gateway na guia Ferramentas (o id técnico fica na dica). */
   const LOCAL_TOOL_LABEL: Record<string, string> = {
@@ -380,7 +381,7 @@
   }
 
   const initialHash = useRoute().hash
-  const tab = ref<TTab>(initialHash === '#agendamentos' ? 'agendamentos' : initialHash === '#historico' ? 'historico' : 'agente')
+  const tab = ref<TTab>(initialHash === '#agendamentos' ? 'agendamentos' : initialHash === '#historico' ? 'historico' : initialHash === '#problemas' ? 'problemas' : 'agente')
 
   /** Sobram guias à direita (a barra rola de lado): a borda esmaece, para ninguém achar que acabaram. */
   const tabBar = ref<HTMLElement>()
@@ -414,7 +415,10 @@
     hooks: [],
     agendamentos: [],
     historico: [],
+    problemas: [],
   }
+  /** Os problemas da importação do agente (da store: o "Descartar" troca a lista sem refazer o formulário). */
+  const importIssues = computed(() => (props.agent ? (agents.details.get(props.agent.id)?.importIssues ?? props.agent.importIssues ?? []) : []))
   const tabs = computed(() => {
     const tools = form.value.allowedTools
     const alert = (id: TTab) => (TAB_FIELDS[id].some((field) => issues.value[field]?.length) ? 'Corrija os campos desta guia.' : undefined)
@@ -437,6 +441,8 @@
       { id: 'hooks', label: 'Hooks' },
       { id: 'agendamentos', label: 'Agendamentos' },
       { id: 'historico', label: 'Histórico' },
+      // Só aparece com problema: o que a importação deixou anotado no agente (não impediu a gravação).
+      ...(importIssues.value.length ? [{ id: 'problemas' as const, label: 'Problemas da importação', count: importIssues.value.length }] : []),
     ]
     // A guia Permissões aparece sempre: as regras do agente moram nela, haja ou não nível de acesso ou extras.
     return all
@@ -1259,6 +1265,10 @@
     <section v-if="tab === 'agendamentos'">
       <AgentSchedules v-if="agent && !creating" :agent-id="agent.id" :project-id="agent.projectId" />
       <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
+    </section>
+
+    <section v-if="tab === 'problemas' && agent">
+      <ImportIssues :issues="importIssues" :resolve="(issue) => agents.resolveIssue(agent!.id, issue)" />
     </section>
 
     <!-- O histórico do agente: as revisões, o diff e "Restaurar esta versão" (grava pelo histórico, fora do Salvar). -->
