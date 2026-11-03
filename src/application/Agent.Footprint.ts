@@ -4,6 +4,7 @@ import { ambientSection } from '@domain/Ambient.Policy'
 import { IAgent } from '@domain/models/Agent.Model'
 import { mcpSelection } from '@domain/models/McpServer.Model'
 import { READ_DOC_TOOL, SEARCH_DOCS_TOOL } from '@domain/models/ProjectDoc.Model'
+import { LEDGER_TOOLS } from '@domain/models/Ledger.Model'
 import { SEARCH_RESOURCES_TOOL, USE_RESOURCE_TOOL } from '@domain/models/Resource.Model'
 import { estimateTokens, toolTokens } from '@domain/Token.Estimate'
 import { IEnvironmentParts } from './Guidance.Service'
@@ -52,6 +53,7 @@ export interface IFootprintDeps {
     environmentParts(projectId?: string, agentId?: string): IEnvironmentParts
     hasDocs(projectId?: string, agentId?: string): boolean
     hasResources?(agentId?: string): boolean
+    hasLedger?(): boolean
   }
   /** As ferramentas locais que o agente tem (com a de delegação), como a conversa as recebe. */
   localFor(allowed: readonly string[]): TToolShape[]
@@ -104,12 +106,14 @@ export async function agentFootprint(agent: IAgent, projectId: string | undefine
   add('triggers', 'Índice de triggers', parts.triggers)
   add('commands', 'Índice de commands', parts.commands)
   add('index', 'Índice de documentos', parts.index)
+  add('ledger', 'Índice do ledger', parts.ledger)
   const cli = deps.cli?.protocols.length ? cliFootprint(deps.cli, texts, [parts.protocol, parts.existing]) : undefined
 
-  // As ferramentas que a conversa liga sozinha: `read_doc` com índice, `use_resource` com skill, command ou trigger (como o `AgentProvider`).
+  // As ferramentas que a conversa liga sozinha: `read_doc` com índice, `use_resource` com skill, command ou trigger, o ledger (como o `AgentProvider`).
   const automatic = [
     ...(deps.guidance?.hasDocs(projectId, agent.id) ? [READ_DOC_TOOL, SEARCH_DOCS_TOOL] : []),
     ...(deps.guidance?.hasResources?.(agent.id) ? [USE_RESOURCE_TOOL, SEARCH_RESOURCES_TOOL] : []),
+    ...(deps.guidance?.hasLedger?.() ? LEDGER_TOOLS : []),
   ]
   const allowed = [...agent.allowedTools, ...automatic.filter((tool) => !agent.allowedTools.includes(tool))]
   const local = deps.localFor(allowed)

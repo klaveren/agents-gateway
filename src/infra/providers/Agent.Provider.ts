@@ -37,6 +37,7 @@ import { IAgentEvent, IUsage } from '@domain/models/AgentEvent.Model'
 import { IAgentSession } from '@domain/models/AgentSession.Model'
 import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { READ_DOC_TOOL, SEARCH_DOCS_TOOL } from '@domain/models/ProjectDoc.Model'
+import { LEDGER_TOOLS } from '@domain/models/Ledger.Model'
 import { SEARCH_RESOURCES_TOOL, USE_RESOURCE_TOOL } from '@domain/models/Resource.Model'
 import { PROJECT_METADATA_KEY, REPOSITORY_METADATA_KEY, WORKTREE_METADATA_KEY } from '@domain/Session.Metadata'
 import { projectWorkspace, projectWorkspacePath } from '@infra/adapters/support/Subscription.Workspace'
@@ -94,6 +95,7 @@ export class AgentProvider implements IAgentProvider {
       environmentFor(projectId?: string, agentId?: string): string | undefined
       hasDocs(projectId?: string, agentId?: string): boolean
       hasResources?(agentId?: string): boolean
+      hasLedger?(): boolean
     },
 
     /** Os provedores sem cota agora (ver `Provider.Bench`). Ausente = sem troca de provedor. */
@@ -545,14 +547,16 @@ export class AgentProvider implements IAgentProvider {
   }
 
   /**
-   * O agente com o `read_doc` quando a conversa tem documento no índice, e com o `use_resource` e o `search_resources`
-   * quando ele tem skill, command ou trigger: o prompt manda usar, então a ferramenta vem junto, sem ninguém ter de
-   * escolhê-la no cadastro do agente.
+   * O agente com o `read_doc` quando a conversa tem documento no índice, com o `use_resource` e o `search_resources`
+   * quando ele tem skill, command ou trigger, e com o `ledger_read`/`ledger_write` quando o gateway tem ledger: o prompt
+   * manda usar, então a ferramenta vem junto, sem ninguém ter de escolhê-la no cadastro do agente.
    */
   private withDocs(agent: IAgent, projectId: string | undefined): IAgent {
     const extra = [
       ...(this.guidance?.hasDocs(projectId, agent.id) ? [READ_DOC_TOOL, SEARCH_DOCS_TOOL] : []),
       ...(this.guidance?.hasResources?.(agent.id) ? [USE_RESOURCE_TOOL, SEARCH_RESOURCES_TOOL] : []),
+      // O ledger: todo agente lê e escreve o PRÓPRIO (o dono é o agente do turno, ver `Ledger.Tools`).
+      ...(this.guidance?.hasLedger?.() ? LEDGER_TOOLS : []),
     ].filter((tool) => !agent.allowedTools.includes(tool))
     return extra.length ? { ...agent, allowedTools: [...agent.allowedTools, ...extra] } : agent
   }

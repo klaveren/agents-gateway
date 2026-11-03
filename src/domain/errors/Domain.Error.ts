@@ -473,3 +473,19 @@ export class PermissionRequestForbiddenError extends DomainError {
     super('Only an administrator signed in on the screen can approve a permission request; an agent, an MCP client or an access token cannot')
   }
 }
+
+/** Uma escrita no ledger que não passa pela regra (ver `Ledger.Policy`): todos os problemas, campo a campo. */
+export class InvalidLedgerError extends DomainError {
+  constructor(public readonly issues: Array<{ field: string; message: string }>) {
+    super(`Ledger change is invalid: ${issues.map((issue) => `${issue.field} (${issue.message})`).join('; ')}`)
+  }
+}
+
+export class LedgerNotFoundError extends DomainError {
+  constructor(
+    public readonly kind: 'context' | 'line' | 'agent',
+    public readonly id: string,
+  ) {
+    super(`${kind === 'context' ? 'Ledger context' : kind === 'line' ? 'Ledger line' : 'Agent'} not found: ${id}`)
+  }
+}

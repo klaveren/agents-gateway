@@ -749,6 +749,13 @@ describe('AgentProvider — rules e documentos', () => {
 
     await provider.createSession({ agentId: SEED.list()[0].id, metadata: { project: 'crm' } })
     assert.ok(!seen.created.includes('read_doc'))
+    // Sem ledger ligado, as ferramentas dele não entram.
+    assert.ok(!seen.created.includes('ledger_read'))
+
+    // ⚖️ Com ledger no gateway, TODO agente ganha as duas (mesmo sem contexto ainda, para criar o primeiro).
+    const withLedger = new AgentProvider(new Map([[adapterKey(EProvider.GOOGLE, EMode.CHAT), adapter]]), store, undefined, SEED, undefined, { ...guidance, hasLedger: () => true })
+    await withLedger.createSession({ agentId: SEED.list()[0].id, metadata: { project: 'crm' } })
+    assert.ok(seen.created.includes('ledger_read') && seen.created.includes('ledger_write'))
   })
 })
 

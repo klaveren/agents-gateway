@@ -322,7 +322,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'preview_system_prompt',
     {
       description:
-        'The final system prompt an agent receives in a new conversation (soul, instructions, environment, rules, initial context, indexes), with characters and ≈tokens per part. `projectId`: the conversation project, for a global agent.',
+        'The final system prompt an agent receives in a new conversation (soul, instructions, environment, rules, initial context, indexes, its ledger index), with characters and ≈tokens per part. `projectId`: the conversation project, for a global agent.',
       inputSchema: { agentId: z.string(), projectId: z.string().optional() },
       annotations: { readOnlyHint: true },
     },

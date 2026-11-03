@@ -33,6 +33,7 @@
   import CliPromptMeter from './CliPromptMeter.vue'
   import AgentHooks from './AgentHooks.vue'
   import AgentSchedules from './AgentSchedules.vue'
+  import AgentLedger from './AgentLedger.vue'
   import PermissionRules from './PermissionRules.vue'
   import PermissionTester from './PermissionTester.vue'
   import PermissionRequests from './PermissionRequests.vue'
@@ -380,7 +381,7 @@
     agents.setPermissions(props.agent.id, permissions)
   }
 
-  type TTab = 'agente' | 'instrucoes' | 'triggers' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'arquivos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos' | 'historico' | 'problemas'
+  type TTab = 'agente' | 'instrucoes' | 'triggers' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'arquivos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos' | 'memoria' | 'historico' | 'problemas'
   // `#agendamentos` no link (a visão geral dos agendamentos) abre direto na guia.
   /** O nome das ferramentas do gateway na guia Ferramentas (o id técnico fica na dica). */
   const LOCAL_TOOL_LABEL: Record<string, string> = {
@@ -395,7 +396,7 @@
   }
 
   const initialHash = useRoute().hash
-  const HASH_TAB: Record<string, TTab> = { '#agendamentos': 'agendamentos', '#historico': 'historico', '#problemas': 'problemas', '#instrucoes': 'instrucoes' }
+  const HASH_TAB: Record<string, TTab> = { '#agendamentos': 'agendamentos', '#memoria': 'memoria', '#historico': 'historico', '#problemas': 'problemas', '#instrucoes': 'instrucoes' }
   const tab = ref<TTab>(HASH_TAB[initialHash] ?? 'agente')
 
   /** Sobram guias à direita (a barra rola de lado): a borda esmaece, para ninguém achar que acabaram. */
@@ -430,6 +431,7 @@
     tamanho: [],
     hooks: [],
     agendamentos: [],
+    memoria: [],
     historico: [],
     problemas: [],
   }
@@ -457,6 +459,8 @@
       { id: 'tamanho', label: 'Tamanho' },
       { id: 'hooks', label: 'Hooks' },
       { id: 'agendamentos', label: 'Agendamentos' },
+      // O ledger do agente (o que ele aprendeu de como agir): só para agente já gravado.
+      { id: 'memoria', label: 'Memória' },
       { id: 'historico', label: 'Histórico' },
       // Só aparece com problema: o que a importação deixou anotado no agente (não impediu a gravação).
       ...(importIssues.value.length ? [{ id: 'problemas' as const, label: 'Problemas da importação', count: importIssues.value.length }] : []),
@@ -1290,6 +1294,12 @@
       <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
     </section>
 
+    <!-- O ledger (a memória durável do agente) tem o próprio cadastro, como os hooks: fora do Salvar do agente. -->
+    <section v-if="tab === 'memoria'">
+      <AgentLedger v-if="agent && !creating" :agent-id="agent.id" />
+      <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
+    </section>
+
     <section v-if="tab === 'problemas' && agent">
       <ImportIssues :issues="importIssues" :resolve="(issue) => agents.resolveIssue(agent!.id, issue)" />
     </section>
@@ -1315,7 +1325,7 @@
     </p>
     <p v-else-if="!ready" class="text-xs text-zinc-500">Carregando provedores…</p>
 
-    <div v-show="tab !== 'hooks' && tab !== 'agendamentos' && tab !== 'historico'" class="flex gap-2">
+    <div v-show="tab !== 'hooks' && tab !== 'agendamentos' && tab !== 'memoria' && tab !== 'historico'" class="flex gap-2">
       <button type="submit" :disabled="saving || !ready || !!loadError || !form.providers.length" class="btn btn-primary">
         {{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar' }}
       </button>
