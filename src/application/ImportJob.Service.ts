@@ -4,6 +4,7 @@ import { IImportAnalysis, IImportItemRefresh, IImportJob, IImportJobItem, IImpor
 import { IImportScan, TInventoryKind } from '@domain/models/ImportInventory.Model'
 import { TItemStates } from '@domain/models/ImportPlan.Model'
 import { IImportJobRecord, IImportRepository } from '@domain/ports/ImportRepository.Port'
+import { draftKindForItem } from '@domain/Import.Draft'
 import { lastDraft } from './ImportBuild.Service'
 import { IImportScanOptions } from './ImportScan.Usecase'
 
@@ -86,7 +87,7 @@ export class ImportJobService {
     const present: IImportItemRefresh[] = scan.items.map((item) => {
       const fingerprint = sourceFingerprint(item)
       const old = before.get(item.key)
-      const carried = carryOver(old, fingerprint)
+      const carried = reopenedIfGone(carryOver(old, fingerprint), old, item)
       outcomes.push({ key: item.key, outcome: carried.outcome })
       if (old?.goneAt) returned.push(item.key)
       const changed = old && (carried.state !== old.state || (carried.staleFrom ?? null) !== (old.staleFrom ?? null))
@@ -187,6 +188,18 @@ export class ImportJobService {
       analyses: this.deps.repository.analyses(record.id),
     }
   }
+}
+
+/**
+ * ⚖️ GRAVADO QUE SAIU DO CATÁLOGO (alguém o apagou para processar de novo) ou que deixou de ser importável (o tipo
+ * detectado mudou para um sem construtor, como a entrada de uma CLI): volta à fila — à revisão, com o rascunho, se ele
+ * ainda serve; senão, a pendente.
+ */
+function reopenedIfGone(carried: ReturnType<typeof carryOver>, old: IImportJobItem | undefined, item: IImportScan['items'][number]): ReturnType<typeof carryOver> {
+  if (!old || carried.state !== 'applied') return carried
+  const kind = draftKindForItem(old.kind ?? item.kind)
+  if (kind && item.catalog !== 'new') return carried
+  return { ...carried, state: kind && lastDraft(old) ? 'review' : 'pending', staleFrom: undefined }
 }
 
 function strip({ basis: _basis, ...item }: IImportJobItem): Omit<IImportJobItem, 'basis'> {

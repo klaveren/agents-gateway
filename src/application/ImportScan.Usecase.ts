@@ -250,7 +250,7 @@ export class ImportScanUseCase {
         })
       if (source.secret) notes.push({ level: 'attention', code: 'secret', text: `${source.path} tem o que parece segredo: só a versão mascarada é lida` })
     }
-    if (head.kind === 'unknown') notes.push({ level: 'attention', code: 'unclassified', text: 'nenhuma regra do formato classifica: reclassifique na tela' })
+    if (head.kind === 'unknown' && !isCliEntry(head)) notes.push({ level: 'attention', code: 'unclassified', text: 'nenhuma regra do formato classifica: reclassifique na tela' })
 
     const key = head.kind === 'unknown' || head.kind === 'skip' ? `${head.kind}:${head.name}` : `${head.kind}:${id}`
     // O trigger é conferido depois, quando o agente pai já tem o id.
@@ -262,7 +262,7 @@ export class ImportScanUseCase {
       key,
       kind: head.kind,
       candidateId: id,
-      ...(head.kind === 'rule' && head.title ? { title: head.title } : {}),
+      ...((head.kind === 'rule' || isCliEntry(head)) && head.title ? { title: head.title } : {}),
       detectors: [...new Set(group.parts.map(({ detector }) => detector))],
       sources,
       refs: [],
@@ -408,12 +408,19 @@ function withIgnore(tree: IRepoTree, rules: ReadonlyArray<{ pattern: string; ori
  */
 function dropClaimedUnknowns(groups: IGroup[]): IGroup[] {
   const claimed = new Set<string>()
+  // A entrada de uma CLI é desconhecida DE PROPÓSITO (com o motivo): ela reclama o arquivo como um item classificado.
+  const classified = (item: IGroup['parts'][number]['item']) => item.kind !== 'unknown' || isCliEntry(item)
   for (const group of groups)
-    if (group.parts[0].item.kind !== 'unknown') for (const { item } of group.parts) for (const source of item.sources) if (!source.shared) claimed.add(source.path)
+    if (classified(group.parts[0].item)) for (const { item } of group.parts) for (const source of item.sources) if (!source.shared) claimed.add(source.path)
   return groups.filter((group) => {
     const head = group.parts[0].item
-    return head.kind !== 'unknown' || !head.sources.length || !head.sources.every((source) => claimed.has(source.path))
+    return classified(head) || !head.sources.length || !head.sources.every((source) => claimed.has(source.path))
   })
+}
+
+/** O item é a entrada de uma ferramenta (`CLAUDE.md`, `AGENTS.md`): desconhecido de propósito (ver `memoryNotes`). */
+function isCliEntry(item: { notes?: ReadonlyArray<{ code: string }> }): boolean {
+  return !!item.notes?.some((note) => note.code === 'cli-entry')
 }
 
 /** O que o `catalogFinder` consulta: só leitura. */

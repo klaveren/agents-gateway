@@ -66,8 +66,8 @@ describe('Detectores claude e agents-md — o inventário do formato do Claude C
     assert.ok(skill.sources.some((source) => source.path === '.agents/skills/revisar/checklist.md'))
   })
 
-  it('CLAUDE.md da raiz: rule candidata; o que importa de .claude/ é fonte, o resto é citação', () => {
-    const rule = item('rule:claude-md')
+  it('CLAUDE.md da raiz: entrada da CLI (desconhecido, com o motivo); o que importa de .claude/ é fonte, o resto é citação', () => {
+    const rule = item('unknown:CLAUDE.md')
     assert.deepStrictEqual(rule.detectors, ['claude'])
     assert.strictEqual(rule.title, 'Boot do projeto')
     assert.deepStrictEqual(
@@ -77,31 +77,30 @@ describe('Detectores claude e agents-md — o inventário do formato do Claude C
         ['.claude/boot.md', 'import'],
       ],
     )
-    assert.ok(rule.refs.some((ref) => ref.path === 'AGENTS.md' && ref.item === 'rule:agents-md'))
-    assert.ok(codes('rule:claude-md').includes('protocol-complement'))
-    assert.ok(codes('rule:claude-md').includes('imports-only'))
+    assert.ok(rule.refs.some((ref) => ref.path === 'AGENTS.md' && ref.item === 'unknown:AGENTS.md'))
+    assert.ok(codes('unknown:CLAUDE.md').includes('cli-entry'))
+    assert.ok(codes('unknown:CLAUDE.md').includes('imports-only'))
     assert.ok(!scan.items.some((one) => one.key === 'unknown:.claude/boot.md'), 'o importado não fica desconhecido')
   })
 
-  it('CLAUDE.md de subpasta: diz a pasta, avisa que não cabe numa rule e não confunde `@` em código com importação', () => {
-    const rule = item('rule:pacotes-api-claude-md')
+  it('CLAUDE.md de subpasta: diz a pasta e não confunde `@` em código com importação', () => {
+    const rule = item('unknown:pacotes/api/CLAUDE.md')
     assert.strictEqual(rule.title, 'Regras da API')
     assert.ok(rule.notes.some((note) => note.code === 'scoped' && note.text.includes('pacotes/api/')))
-    assert.ok(codes('rule:pacotes-api-claude-md').includes('over-rule-limit'))
     assert.deepStrictEqual(
       rule.sources.map((source) => source.role),
       ['memory'],
     )
   })
 
-  it('AGENTS.md: rule candidata na raiz e em .agents/ (o desconhecido do agents-dir sai); título fora de comentário', () => {
-    const rootRule = item('rule:agents-md')
+  it('AGENTS.md: entrada da CLI (desconhecido) na raiz e em .agents/ (o desconhecido do agents-dir sai); título fora de comentário', () => {
+    const rootRule = item('unknown:AGENTS.md')
     assert.deepStrictEqual([rootRule.detectors, rootRule.title], [['agents-md'], 'Instruções do projeto'])
-    assert.ok(codes('rule:agents-md').includes('protocol-complement'))
-    assert.ok(!codes('rule:agents-md').includes('scoped'))
-    const inner = item('rule:agents-agents-md')
+    assert.ok(codes('unknown:AGENTS.md').includes('cli-entry'))
+    assert.ok(!codes('unknown:AGENTS.md').includes('scoped'))
+    const inner = item('unknown:.agents/AGENTS.md')
     assert.deepStrictEqual(inner.detectors, ['agents-md'])
-    assert.ok(!scan.items.some((one) => one.kind === 'unknown' && one.sources.some((source) => source.path === '.agents/AGENTS.md')))
+    assert.strictEqual(scan.items.filter((one) => one.sources.some((source) => source.path === '.agents/AGENTS.md')).length, 1)
   })
 
   it('cópia de trabalho do Claude Code fica fora: nem CLAUDE.md nem AGENTS.md de lá viram item', () => {
@@ -145,7 +144,7 @@ describe('Detectores claude e agents-md — o inventário do formato do Claude C
     ])
     assert.ok(!ignored.items.some((one) => one.sources.some((source) => /(^|\/)results\//.test(source.path))))
     assert.strictEqual(ignored.totals.files, scan.totals.files - 3)
-    const rule = item('rule:claude-md', ignored)
+    const rule = item('unknown:CLAUDE.md', ignored)
     assert.ok(rule.refs.some((ref) => ref.path === '.agents/benchmark/results/run-1.md' && !ref.item))
     assert.deepStrictEqual(rule.unresolved, [])
   })
