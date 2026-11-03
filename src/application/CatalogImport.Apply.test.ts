@@ -85,6 +85,21 @@ describe('CatalogImportApplier — aplicar o import', () => {
     assert.deepStrictEqual(noop.applied, [])
   })
 
+  it('⚖️ docs que se anexam em ciclo gravam: primeiro sem os anexos, depois com eles; e quem cita o ciclo também', async () => {
+    const stack = buildCatalogStack()
+    const withDocs = (document: ICatalogDocument, docIds: string[]) => withBody(document, { ...document.body, docIds })
+    const documents = [withDocs(spec('alfa'), ['beta']), withDocs(spec('beta'), ['alfa']), withDocs(spec('gama'), ['alfa', 'beta'])]
+    const { plan } = await stack.applier.plan({ documents })
+    assert.ok(plan.items.every((item) => item.op === 'create'))
+    const result = await stack.applier.apply({ documents, planHash: plan.planHash }, ADMIN)
+    assert.strictEqual(result.failed, undefined)
+    assert.strictEqual(result.batch?.status, 'applied')
+    assert.deepStrictEqual(
+      ['alfa', 'beta', 'gama'].map((id) => stack.guidance.doc(id).docIds),
+      [['beta'], ['alfa'], ['alfa', 'beta']],
+    )
+  })
+
   it('planHash velho: 409 com o plano novo, nada gravado', async () => {
     const stack = buildCatalogStack()
     const documents = [spec('novo')]

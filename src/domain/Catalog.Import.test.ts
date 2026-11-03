@@ -72,19 +72,32 @@ describe('importOrder', () => {
     return { ref, kind, id, op: 'create', widens: false, dependsOn: [], ...patch }
   }
 
-  it('fases fixas; citado antes; restringe antes de ampliar; ciclo marcado e não trava', () => {
+  it('fases fixas; citado antes; restringe antes de ampliar; ciclo de agentes marcado e não trava', () => {
     const order = importOrder([
       step('project-permissions/alfa', { widens: true }),
       step('agent/b', { widens: true }),
       step('agent/a', { dependsOn: ['agent/b'] }),
       step('agent/c'),
-      step('spec/x', { dependsOn: ['spec/y'] }),
-      step('spec/y', { dependsOn: ['spec/x'] }),
+      step('agent/x', { dependsOn: ['agent/y'] }),
+      step('agent/y', { dependsOn: ['agent/x'] }),
       step('mcp/m', { widens: true }),
     ])
     assert.deepStrictEqual(
       order.map((item) => `${item.phase}:${item.ref}${item.cycle ? '!' : ''}`),
-      ['docs:spec/x!', 'docs:spec/y', 'mcps:mcp/m', 'agents:agent/c', 'agents:agent/b', 'agents:agent/a', 'permissions:project-permissions/alfa'],
+      ['mcps:mcp/m', 'agents:agent/c', 'agents:agent/b', 'agents:agent/a', 'agents:agent/x!', 'agents:agent/y', 'permissions:project-permissions/alfa'],
+    )
+  })
+
+  it('⚖️ docs em ciclo: cada um entra sem os anexos (record) e os anexos vêm depois (links); quem só cita o ciclo espera o record', () => {
+    const order = importOrder([
+      step('knowledge/agentic', { dependsOn: ['knowledge/quality', 'spec/arq'] }),
+      step('knowledge/quality', { dependsOn: ['spec/dev-quality'] }),
+      step('spec/dev-quality', { dependsOn: ['knowledge/quality'] }),
+      step('spec/arq'),
+    ])
+    assert.deepStrictEqual(
+      order.map((item) => `${item.phase}:${item.ref}${item.part ? `#${item.part}` : ''}${item.cycle ? '!' : ''}`),
+      ['docs:knowledge/quality#record', 'docs:spec/arq', 'docs:knowledge/agentic', 'docs:spec/dev-quality#record', 'links:knowledge/quality#links', 'links:spec/dev-quality#links'],
     )
   })
 })
