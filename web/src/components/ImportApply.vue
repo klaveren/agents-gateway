@@ -271,6 +271,7 @@ const partLabel = (part?: string) => (part === 'record' ? ' (registro)' : part =
             <span>
               <code>{{ rule.rule.category }} {{ rule.rule.decision }} {{ rule.rule.pattern }}</code>
               <template v-if="rule.wide"> — ampla: {{ rule.wide }}</template>
+              <span v-if="rule.held" class="text-amber-300" data-test="apply-rule-held"> — fica de fora: {{ rule.held }}</span>
             </span>
           </label>
         </div>

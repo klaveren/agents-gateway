@@ -2,6 +2,10 @@ import { ICatalogDocument, TCanonicalBody, TCanonicalValue } from './Catalog.Doc
 import { withBody } from './Catalog.Import'
 import { IImportProblem, problemList, RESTORABLE_CODES, TImportProblemLink } from './models/ImportProblem.Model'
 import { ALL_RESOURCES } from './models/Resource.Model'
+import { AGENT_TOOL_PREFIX } from './models/Delegation.Model'
+import { parseMcpToolRef } from './models/McpServer.Model'
+import { DELEGATE_PENDING_NOTE } from './Import.Permissions'
+import { IPermissionRule } from './Permission.Policy'
 
 /**
  * OS VÍNCULOS DA IMPORTAÇÃO QUE NÃO BLOQUEIAM (puro). O rascunho aprovado cita, pelo `linkCitation`, o que achou no
@@ -9,7 +13,11 @@ import { ALL_RESOURCES } from './models/Resource.Model'
  * registrado nele como problema (`importIssues`):
  * - doc, skill, command: `docIds`/`docRefs`; agente: o contexto inicial e as skills e commands que ele libera;
  * - documento que é desta importação mas não entra AGORA (bloqueado, não aprovado, fora da seleção) fica PENDENTE e
- *   volta sozinho quando uma importação seguinte gravá-lo (`restoreImportLinks`).
+ *   volta sozinho quando uma importação seguinte gravá-lo (`restoreImportLinks`);
+ * - o ALCANCE do agente que cita um alvo que não existe — liberar delegar a um agente exato, ou um servidor MCP exato
+ *   (regra ou `allowedTools`) — sai e fica GUARDADO no problema (`delegate-missing`, `mcp-missing`), exato, para voltar.
+ *   ⛔ Voltar não concede nada sozinho: a regra volta no documento e vira ampliação a confirmar naquela gravação.
+ *   ⚖️ Negar fica (só restringe); curinga (`agent-*`, `*`, `mcp` do servidor `*`) fica: segue como ampliação.
  *
  * ⛔ SÓ O IMPORTADOR relaxa: a tela e a API que gravam um `docIds` ruim continuam recusando.
  */
@@ -29,6 +37,10 @@ export interface ILinkWorld {
   pendingDoc: (id: string) => boolean
   /** O tipo de outra coisa com o id (um agente, um command, um arquivo de memória), quando não é documento. */
   otherKind: (id: string) => string | undefined
+  /** O agente com o id existe no catálogo ou entra nesta gravação. */
+  agentExists: (id: string) => boolean
+  /** O servidor MCP que o agente do projeto (ausente: global) enxerga — global ou do projeto dele —, no catálogo ou nesta gravação. */
+  mcpExists: (id: string, projectId: string | undefined) => boolean
 }
 
 const KIND_LABEL: Readonly<Record<string, string>> = {
@@ -86,6 +98,61 @@ function grantProblem(id: string, kind: 'skill' | 'command', world: ILinkWorld):
   }
 }
 
+/** O alvo EXATO que a liberação cita: o agente da delegação, ou o servidor MCP. Negar e curinga: nenhum (ficam). */
+function ruleTarget(rule: IPermissionRule): { code: 'delegate-missing' | 'mcp-missing'; id: string } | undefined {
+  if (rule.decision !== 'allow') return undefined
+  const pattern = rule.pattern.trim()
+  if (rule.category === 'delegate') return pattern && !pattern.includes('*') ? { code: 'delegate-missing', id: pattern } : undefined
+  if (rule.category !== 'mcp') return undefined
+  const server = pattern.includes('/') ? pattern.slice(0, pattern.indexOf('/')) : ''
+  return server && !server.includes('*') ? { code: 'mcp-missing', id: server } : undefined
+}
+
+/** O alvo exato de uma entrada de `allowedTools` (`agent:<id>`, `mcp:<servidor>/…`). `cap:` e o resto: nenhum. */
+function toolTarget(tool: string): { code: 'delegate-missing' | 'mcp-missing'; id: string } | undefined {
+  if (tool.startsWith(AGENT_TOOL_PREFIX)) {
+    const id = tool.slice(AGENT_TOOL_PREFIX.length)
+    return id && !id.includes('*') ? { code: 'delegate-missing', id } : undefined
+  }
+  const ref = parseMcpToolRef(tool)
+  return ref && !ref.server.includes('*') ? { code: 'mcp-missing', id: ref.server } : undefined
+}
+
+const REACH_MESSAGE = {
+  'delegate-missing': (id: string) => `permite delegar a ${id}, que ainda não existe: a regra fica guardada e volta quando ${id} for importado (com a confirmação da ampliação)`,
+  'mcp-missing': (id: string) => `usa o servidor MCP ${id}, que ainda não existe: fica guardado e volta quando ${id} for importado (com a confirmação da ampliação)`,
+}
+
+/** O alcance do agente sem o que cita alvo que não existe; o que saiu vira um problema por alvo, com o que guardar. */
+function heldReach(body: TCanonicalBody, projectId: string | undefined, world: ILinkWorld) {
+  const held = new Map<string, IImportProblem & { rules: IPermissionRule[]; tools: string[] }>()
+  const missing = (target: { code: 'delegate-missing' | 'mcp-missing'; id: string } | undefined) => {
+    if (!target) return undefined
+    const exists = target.code === 'delegate-missing' ? world.agentExists(target.id) : world.mcpExists(target.id, projectId)
+    if (exists) return undefined
+    const key = `${target.code}|${target.id}`
+    if (!held.has(key)) held.set(key, { code: target.code, message: REACH_MESSAGE[target.code](target.id), target: target.id, link: 'reach', rules: [], tools: [] })
+    return held.get(key)!
+  }
+  const rules = Array.isArray(body.permissions) ? (body.permissions as unknown as IPermissionRule[]) : undefined
+  const keptRules = (rules ?? []).filter((rule) => {
+    const problem = missing(ruleTarget(rule))
+    problem?.rules.push(rule)
+    return !problem
+  })
+  const keptTools = strings(body.allowedTools).filter((tool) => {
+    const problem = missing(toolTarget(tool))
+    problem?.tools.push(tool)
+    return !problem
+  })
+  const problems: IImportProblem[] = [...held.values()].map(({ rules, tools, ...problem }) => ({
+    ...problem,
+    ...(rules.length ? { rules } : {}),
+    ...(tools.length ? { tools } : {}),
+  }))
+  return { rules: rules && keptRules, tools: keptTools, problems }
+}
+
 /** Junta os problemas novos aos que o documento já traz, sem repetir (código e alvo). */
 function withProblems(body: TCanonicalBody, problems: readonly IImportProblem[]): TCanonicalBody {
   const all = [...problemList(body.importIssues), ...problems]
@@ -141,6 +208,12 @@ export function withImportIssues(document: ICatalogDocument, world: ILinkWorld):
           })
         next.resources = { skills: granted('skills', 'skill'), commands: granted('commands', 'command') }
       }
+      const reach = heldReach(body, document.projectId, world)
+      if (reach.problems.length) {
+        if (reach.rules) next.permissions = reach.rules as unknown as TCanonicalValue[]
+        if (body.allowedTools !== undefined) next.allowedTools = reach.tools
+        problems.push(...reach.problems)
+      }
       break
     }
     default:
@@ -154,20 +227,28 @@ export interface IRestorable {
   docs: ReadonlySet<string>
   skills: ReadonlySet<string>
   commands: ReadonlySet<string>
+  /** Os agentes e os servidores MCP: o alcance guardado (`delegate-missing`, `mcp-missing`) volta. */
+  agents: ReadonlySet<string>
+  mcps: ReadonlySet<string>
 }
 
 const appendTo = (list: readonly string[], id: string) => (list.includes(id) ? [...list] : [...list, id])
 
 /**
- * O artefato do catálogo com os vínculos PENDENTES de volta: os `link-pending`/`skill-missing`/`command-missing` cujo
- * alvo esta gravação escreve. O vínculo volta no fim da lista (`docIds`, e `docRefs` se era por referência; o contexto
- * inicial; `resources`) e o problema sai. `undefined` = nada a voltar.
+ * O artefato do catálogo com os vínculos PENDENTES de volta: os `link-pending`/`skill-missing`/`command-missing`/
+ * `delegate-missing`/`mcp-missing` cujo alvo esta gravação escreve. O vínculo volta no fim da lista (`docIds`, e
+ * `docRefs` se era por referência; o contexto inicial; `resources`; `permissions` e `allowedTools`) e o problema sai.
+ * `undefined` = nada a voltar.
+ *
+ * ⛔ O alcance que volta passa pela trava de ampliação do plano como qualquer outro: sem a caixa marcada, não entra.
  */
 export function restoreImportLinks(document: ICatalogDocument, written: IRestorable): ICatalogDocument | undefined {
   const problems = problemList(document.body.importIssues)
   const available = (problem: IImportProblem) => {
     if (!problem.target || !RESTORABLE_CODES.includes(problem.code)) return false
     if (problem.code === 'link-pending') return written.docs.has(problem.target)
+    if (problem.code === 'delegate-missing') return written.agents.has(problem.target)
+    if (problem.code === 'mcp-missing') return written.mcps.has(problem.target)
     return (problem.code === 'skill-missing' ? written.skills : written.commands).has(problem.target)
   }
   const back = problems.filter(available)
@@ -191,6 +272,21 @@ export function restoreImportLinks(document: ICatalogDocument, written: IRestora
         const current = strings(resources[field])
         // Com `*` ele já libera tudo do escopo: só o problema sai.
         body.resources = { ...resources, [field]: current.includes(ALL_RESOURCES) ? current : appendTo(current, id) }
+        break
+      }
+      case 'reach': {
+        const rules = Array.isArray(body.permissions) ? [...(body.permissions as unknown as IPermissionRule[])] : []
+        const same = (a: IPermissionRule, b: IPermissionRule) => a.category === b.category && a.decision === b.decision && a.pattern === b.pattern
+        // ⚖️ A nota do tradutor ("alvo ainda não importado") deixa de ser verdade: sai; o resto da regra volta exato.
+        for (const rule of problem.rules ?? []) {
+          const { note, ...exact } = rule
+          const back = note && note !== DELEGATE_PENDING_NOTE ? { ...exact, note } : exact
+          if (!rules.some((one) => same(one, back))) rules.push(back)
+        }
+        if (rules.length) body.permissions = rules as unknown as TCanonicalValue[]
+        let tools = strings(body.allowedTools)
+        for (const tool of problem.tools ?? []) tools = appendTo(tools, tool)
+        if (tools.length || body.allowedTools !== undefined) body.allowedTools = tools
         break
       }
       default:

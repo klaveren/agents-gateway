@@ -2,11 +2,15 @@ import { defineStore } from 'pinia'
 import { api } from '@/lib/api'
 import { GLOBAL_SCOPE } from '@/lib/guidance'
 import { keyedResource } from '@/lib/resource'
-import type { IImportIssue, IProjectDoc, TDocKind } from '@/lib/types'
+import type { IImportIssue, IProjectDoc, TDocKind, TImportIssueMatch } from '@/lib/types'
 import { useAgentCatalogStore } from './agentCatalog'
 
-/** O que o "resolvido" manda: o código e, para tirar só um, o alvo. */
-export const issueMatch = (issue: Pick<IImportIssue, 'code' | 'target'>) => ({ code: issue.code, ...(issue.target ? { target: issue.target } : {}) })
+/** O que o "resolvido" manda: o código e, para tirar só um, o alvo; ou `{ pending: true }` (todos os pendentes). */
+export const issueMatch = (match: TImportIssueMatch) => ('pending' in match ? { pending: true } : { code: match.code, ...(match.target ? { target: match.target } : {}) })
+
+/** Os PENDENTES: voltariam sozinhos com o alvo. O botão deles é "Descartar" (esquece o que guardavam). */
+export const PENDING_ISSUE_CODES: readonly string[] = ['link-pending', 'skill-missing', 'command-missing', 'delegate-missing', 'mcp-missing']
+export const isPendingIssue = (issue: Pick<IImportIssue, 'code'>) => PENDING_ISSUE_CODES.includes(issue.code)
 
 /** O corpo que a gravação manda (o `id` só ao criar). */
 export type TDocInput = Pick<IProjectDoc, 'kind' | 'title' | 'summary' | 'body'> & { projectId: string | null; docIds: string[]; docRefs: string[] }
@@ -57,8 +61,8 @@ export const useDocsStore = defineStore('docs', () => {
     useAgentCatalogStore().docsChanged()
   }
 
-  /** "Resolvido" num problema da importação: o documento salvo em `details`, e a lista dele troca só os problemas. */
-  async function resolveIssue(id: string, issue: Pick<IImportIssue, 'code' | 'target'>): Promise<IProjectDoc> {
+  /** "Resolvido" (ou "Descartar") num problema da importação: o documento salvo em `details`, e a lista dele troca só os problemas. */
+  async function resolveIssue(id: string, issue: TImportIssueMatch): Promise<IProjectDoc> {
     const saved = await api<IProjectDoc>(`/docs/${encodeURIComponent(id)}/import-issues/resolve`, { method: 'POST', body: issueMatch(issue) })
     details.set(id, saved)
     for (const key of lists.keys()) lists.update(key, (list) => list.map((doc) => (doc.id === id ? { ...doc, importIssues: saved.importIssues } : doc)))

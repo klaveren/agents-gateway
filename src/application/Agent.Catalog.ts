@@ -3,7 +3,7 @@ import { IResourceFilesPort } from '@domain/ports/ResourceFiles.Port'
 import { toCapabilities } from '@domain/Capability.Catalog'
 import { agentIssues, IAgentRules, triggerIssues } from '@domain/Agent.Policy'
 import { AgentInUseError, AgentNotFoundError, GuidanceNotFoundError, InvalidAgentError } from '@domain/errors/Domain.Error'
-import { IImportProblemMatch, withoutProblem } from '@domain/models/ImportProblem.Model'
+import { describeMatch, IImportProblemMatch, withoutProblem } from '@domain/models/ImportProblem.Model'
 import { diagnosticsOn, IAgent, IAgentTarget, IAgentTrigger } from '@domain/models/Agent.Model'
 import { IAgentDirectory, IAgentRepository, IStoredAgent } from '@domain/ports/AgentRepository.Port'
 import { CatalogHistoryHook } from './CatalogHistory.Service'
@@ -198,7 +198,7 @@ export class AgentCatalog implements IAgentDirectory {
     if (!stored) throw new AgentNotFoundError(id)
     const agent: IAgent = { ...toAgent(stored) }
     const rest = withoutProblem(agent.importIssues, match)
-    if (!rest) throw new GuidanceNotFoundError('import issue', `${match.code}${match.target ? ` ${match.target}` : ''} in agent ${id}`)
+    if (!rest) throw new GuidanceNotFoundError('import issue', `${describeMatch(match)} in agent ${id}`)
     delete agent.importIssues
     const saved = this.repository.save(rest.length ? { ...agent, importIssues: rest } : agent, by)
     this.history.record([{ kind: 'agent', id }], { by })

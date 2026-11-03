@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed } from 'vue'
 import { api } from '@/lib/api'
 import { keyedResource } from '@/lib/resource'
-import type { IAgent, IAgentDetail, IAgentInput, ICapability, IImportIssue, INativeTool, ITool } from '@/lib/types'
+import type { IAgent, IAgentDetail, IAgentInput, ICapability, INativeTool, ITool, TImportIssueMatch } from '@/lib/types'
 import { issueMatch } from './docs'
 import type { IResourceFile } from '@/lib/resourceFiles'
 import { useProjectsStore } from './projects'
@@ -113,7 +113,7 @@ export const useAgentsStore = defineStore('agents', () => {
    * "Resolvido" num problema da importação do agente. ⚖️ Como em `saveFiles`: troca só a lista no detalhe guardado, no
    * MESMO objeto (o formulário aberto não se refaz), e a contagem na lista.
    */
-  async function resolveIssue(id: string, issue: Pick<IImportIssue, 'code' | 'target'>): Promise<IAgentDetail> {
+  async function resolveIssue(id: string, issue: TImportIssueMatch): Promise<IAgentDetail> {
     const saved = await api<IAgentDetail>(`/agents/${encodeURIComponent(id)}/import-issues/resolve`, { method: 'POST', body: issueMatch(issue) })
     details.update(id, (current) => Object.assign(current, { importIssues: saved.importIssues }))
     for (const key of lists.keys()) lists.update(key, (list) => list.map((agent) => (agent.id === id ? { ...agent, importIssueCount: saved.importIssues?.length } : agent)))

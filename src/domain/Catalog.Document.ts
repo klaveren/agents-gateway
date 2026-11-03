@@ -105,7 +105,15 @@ export const FALLBACK_SHAPE: TShape<IAgentFallback> = { mode: 'value', chain: { 
 export const PERMISSION_RULE_SHAPE: TShape<IPermissionRule> = { category: 'value', pattern: 'value', decision: 'value', note: 'value' }
 
 /** Um problema da importação: a ordem é a em que o importador os achou. */
-export const IMPORT_PROBLEM_SHAPE: TShape<IImportProblem> = { code: 'value', message: 'value', target: 'value', link: 'value' }
+export const IMPORT_PROBLEM_SHAPE: TShape<IImportProblem> = {
+  code: 'value',
+  message: 'value',
+  target: 'value',
+  link: 'value',
+  // O alcance guardado (`delegate-missing`, `mcp-missing`): volta exato, na ordem em que estava.
+  rules: { list: PERMISSION_RULE_SHAPE },
+  tools: 'list',
+}
 
 /** Um arquivo de recurso: o caminho, o sha256 do conteúdo e o tamanho. */
 export const FILE_SHAPE: TShape<IResourceFile> = { path: 'value', sha256: 'value', bytes: 'value' }

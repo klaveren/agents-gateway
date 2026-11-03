@@ -15,7 +15,7 @@ import { pendingDraft } from '@/lib/builder'
 import { attachableDocs, attachedRefs, attachmentsChanged, docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId, setAttachMode, type TAttachMode } from '@/lib/guidance'
 import type { IRestoreResult } from '@/lib/catalogHistory'
 import { renderMarkdown } from '@/lib/markdown'
-import type { IImportIssue, IProjectDoc, TDocKind } from '@/lib/types'
+import type { IProjectDoc, TDocKind, TImportIssueMatch } from '@/lib/types'
 import { useScopedDocs } from '@/composables/useCatalogLists'
 import { useResource } from '@/composables/useResource'
 import { useAuthStore } from '@/stores/auth'
@@ -250,8 +250,8 @@ async function save() {
   }
 }
 
-/** "Resolvido": a store grava e devolve o documento (o formulário fica como está). */
-async function resolveIssue(issue: IImportIssue) {
+/** "Resolvido" (ou "Descartar", um ou todos os pendentes): a store grava e devolve o documento (o formulário fica como está). */
+async function resolveIssue(issue: TImportIssueMatch) {
   if (loaded.value) loaded.value = await docsStore.resolveIssue(loaded.value.id, issue)
 }
 

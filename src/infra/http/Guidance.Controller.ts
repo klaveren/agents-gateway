@@ -46,8 +46,11 @@ const filesSchema = z.object({ files: z.array(z.object({ path: z.string().max(40
 const uploadSchema = z.object({ content: z.string().max(Math.ceil((RESOURCE_FILE_MAX_BYTES * 4) / 3) + 8) })
 const addendumSchema = z.object({ projectId: project, body: z.string() })
 const agentResourcesSchema = z.object({ skills: z.array(z.string().max(80)).max(200).optional(), commands: z.array(z.string().max(80)).max(200).optional() })
-/** O "resolvido" de um problema da importação: o código e, para tirar só um, o alvo. */
-export const importIssueMatchSchema = z.object({ code: z.string().min(1).max(40), target: z.string().max(200).optional() })
+/**
+ * O "resolvido" de um problema da importação: o código e, para tirar só um, o alvo. Ou `{ pending: true }`: "descartar
+ * todos os pendentes" de uma vez (uma gravação, uma revisão no histórico).
+ */
+export const importIssueMatchSchema = z.union([z.object({ code: z.string().min(1).max(40), target: z.string().max(200).optional() }), z.object({ pending: z.literal(true) })])
 const docSchema = z.object({
   id: z.string().max(80).optional(),
   kind: z.enum(DOC_KINDS as [TDocKind, ...TDocKind[]]).optional(),
@@ -178,7 +181,10 @@ export class GuidanceController {
     )
   }
 
-  /** `POST /docs/:id/import-issues/resolve { code, target? }` — "resolvido": tira do documento os problemas que casam. */
+  /**
+   * `POST /docs/:id/import-issues/resolve { code, target? }` — "resolvido": tira do documento os problemas que casam.
+   * `{ pending: true }`: descarta todos os pendentes (o que ficou guardado é esquecido).
+   */
   async resolveDocImportIssue(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
       const by = await this.requireAdmin('resolveDocImportIssue')
@@ -186,7 +192,7 @@ export class GuidanceController {
     })
   }
 
-  /** `POST /resources/:id/import-issues/resolve { code, target? }` — o mesmo na skill ou no command. */
+  /** `POST /resources/:id/import-issues/resolve { code, target? } | { pending: true }` — o mesmo na skill ou no command. */
   async resolveResourceImportIssue(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
       const by = await this.requireAdmin('resolveResourceImportIssue')

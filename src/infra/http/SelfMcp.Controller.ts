@@ -697,11 +697,11 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'resolve_import_issue',
     {
       description:
-        'Mark an import issue as resolved: it leaves the importIssues of the doc (spec, ADR, knowledge), skill, command or agent. Fix the cause first (attach the right document, adjust the text, release the skill). `target` picks one issue; absent = every issue with that code. Recorded in the catalog history.',
+        'Mark an import issue as resolved: it leaves the importIssues of the doc (spec, ADR, knowledge), skill, command or agent. Fix the cause first (attach the right document, adjust the text, release the skill). A PENDING issue (link-pending, skill-missing, command-missing, delegate-missing, mcp-missing) would come back by itself when a later import writes the target: resolving it DISCARDS it, and what it held back (the link, the agent rule) is forgotten — confirm with the person first. `target` picks one issue; absent = every issue with that code. Recorded in the catalog history.',
       inputSchema: {
         kind: z.enum(['doc', 'resource', 'agent']).describe('doc = spec, ADR or knowledge; resource = skill or command'),
         id: z.string(),
-        code: z.string().describe('The issue code, e.g. link-not-document, link-pending, skill-missing'),
+        code: z.string().describe('The issue code, e.g. link-not-document, link-pending, skill-missing, delegate-missing'),
         target: z.string().optional(),
       },
     },
