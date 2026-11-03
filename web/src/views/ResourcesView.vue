@@ -5,6 +5,7 @@ import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import Icon from '@/components/Icon.vue'
 import MasterDetail from '@/components/MasterDetail.vue'
 import HistoryPanel from '@/components/HistoryPanel.vue'
+import AttachedDocs from '@/components/AttachedDocs.vue'
 import HistoryTabs from '@/components/HistoryTabs.vue'
 import ImportIssues from '@/components/ImportIssues.vue'
 import ImportIssuesBadge from '@/components/ImportIssuesBadge.vue'
@@ -74,8 +75,8 @@ const g = computed(() => (info.value.masc ? { nova: 'Novo', nenhuma: 'Nenhum', u
 
 const form = ref({ id: '', description: '', body: '', global: true, project: '', docIds: [] as string[], docRefs: [] as string[] })
 /** A guia da edição: o formulário ou o histórico (`#historico` no endereço abre nele). */
-type TResourceTab = 'edit' | 'instructions' | 'files' | 'issues' | 'history'
-const HASH_TAB: Record<string, TResourceTab> = { '#historico': 'history', '#instrucoes': 'instructions', '#arquivos': 'files', '#problemas': 'issues' }
+type TResourceTab = 'edit' | 'instructions' | 'attachments' | 'files' | 'issues' | 'history'
+const HASH_TAB: Record<string, TResourceTab> = { '#historico': 'history', '#instrucoes': 'instructions', '#anexos': 'attachments', '#arquivos': 'files', '#problemas': 'issues' }
 const tab = ref<TResourceTab>(HASH_TAB[route.hash] ?? 'edit')
 /** Muda depois de restaurar uma versão: relê o item. */
 const reloadKey = ref(0)
@@ -251,9 +252,10 @@ const importIssues = computed(() => (adding.value ? [] : (loaded.value?.importIs
 const extraTabs = computed(() =>
   [
     { id: 'instructions' as const, label: 'Instruções' },
+    { id: 'attachments' as const, label: `Anexos${form.value.docIds.length ? ` (${form.value.docIds.length})` : ''}` },
   { id: 'files' as const, label: `Arquivos${loaded.value?.files?.length ? ` (${loaded.value.files.length})` : ''}` },
     ...(importIssues.value.length ? [{ id: 'issues' as const, label: `Problemas da importação (${importIssues.value.length})` }] : []),
-  ].filter((item) => !adding.value || item.id === 'instructions'),
+  ].filter((item) => !adding.value || item.id === 'instructions' || item.id === 'attachments'),
 )
 // A guia de problemas some quando o último é resolvido: volta à principal.
 watch(importIssues, (list) => {
@@ -261,7 +263,8 @@ watch(importIssues, (list) => {
 })
 /** O campo obrigatório vazio está noutra guia: abre a dele (senão o navegador não consegue apontar para ele). */
 function onInvalid(event: Event) {
-  tab.value = (event.target as HTMLElement).dataset.tab === 'instructions' ? 'instructions' : 'edit'
+  const target = (event.target as HTMLElement).dataset.tab
+  tab.value = target === 'instructions' || target === 'attachments' ? target : 'edit'
 }
 </script>
 
@@ -293,7 +296,7 @@ function onInvalid(event: Event) {
 
     <template #detail>
       <div v-if="adding || loaded" class="mx-auto mb-4 max-w-3xl"><HistoryTabs v-model="tab" :edit-label="info.one.charAt(0).toUpperCase() + info.one.slice(1)" :extra="extraTabs" :history="!adding" /></div>
-      <form v-if="adding || (loaded && (tab === 'edit' || tab === 'instructions'))" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save" @invalid.capture="onInvalid">
+      <form v-if="adding || (loaded && (tab === 'edit' || tab === 'instructions' || tab === 'attachments'))" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save" @invalid.capture="onInvalid">
         <h2 class="font-mono text-lg font-semibold">{{ adding ? `${g.nova} ${info.one}` : `${kind === 'command' ? '/' : ''}${loaded?.id}` }}</h2>
         <div v-show="tab === 'edit'" class="flex flex-col gap-3">
         <label class="field">
@@ -317,31 +320,7 @@ function onInvalid(event: Event) {
         </div>
         <small v-if="issues.body?.length" class="error">O conteúdo tem problema: veja a guia Instruções.</small>
 
-        <div class="flex flex-col gap-1.5 rounded-xl border border-zinc-800 p-3">
-          <p class="text-sm font-medium text-zinc-200">Specs e ADRs anexadas <span class="text-xs font-normal text-zinc-500">— vão junto quando {{ kind === 'command' ? 'o command é usado' : 'a skill é carregada' }}</span></p>
-          <p v-if="!attachable.length" class="text-xs text-zinc-500">Nenhum documento {{ form.global ? 'global' : 'global ou deste projeto' }}. <RouterLink to="/specs/new" class="text-emerald-400 underline underline-offset-2">Criar uma spec</RouterLink>.</p>
-          <div v-for="doc in attachable" :key="doc.id" class="flex flex-wrap items-center gap-2 text-sm">
-            <label class="flex min-w-0 flex-1 items-center gap-2">
-              <input type="checkbox" class="accent-emerald-500" :checked="form.docIds.includes(doc.id)" @change="toggleDoc(doc.id)" />
-              <span class="rounded bg-zinc-800 px-1 text-[10px] text-zinc-400 uppercase">{{ doc.kind }}</span>
-              <span class="min-w-0 truncate">{{ doc.title }}</span>
-              <span class="ml-auto shrink-0 text-xs text-zinc-500 tabular-nums">≈ {{ (doc.tokens ?? 0).toLocaleString('pt-BR') }} tokens</span>
-            </label>
-            <select
-              v-if="form.docIds.includes(doc.id)"
-              :value="attachMode(doc.id)"
-              class="input w-auto py-1 text-xs"
-              :aria-label="`Como ${doc.title} vai junto`"
-              @change="setMode(doc.id, ($event.target as HTMLSelectElement).value as TAttachMode)"
-            >
-              <option value="inline">inteiro</option>
-              <option value="reference">por referência</option>
-            </select>
-          </div>
-          <small class="hint">Inteiro: o texto vai junto toda vez. Por referência: vão só id, título e tamanho, e o agente lê com read_doc se precisar — para documento grande.</small>
-          <small v-for="m in issues.docIds" :key="m" class="error">{{ m }}</small>
-          <small v-for="m in issues.docRefs" :key="m" class="error">{{ m }}</small>
-        </div>
+        <small v-if="issues.docIds?.length || issues.docRefs?.length" class="error">Os anexos têm problema: veja a guia Anexos.</small>
         </div>
 
         <!-- As instruções: o texto e a prévia, numa guia só deles (o principal fica com descrição, escopo e anexos). -->
@@ -356,6 +335,14 @@ function onInvalid(event: Event) {
           <small class="hint">{{ info.bodyHint }}</small>
           <small v-if="form.body" class="hint">{{ sizeHint(form.body, kind === 'command' ? 'quando usado' : 'quando carregada') }}</small>
           <small v-for="m in issues.body" :key="m" class="error">{{ m }}</small>
+        </div>
+
+        <!-- Os anexos: os escolhidos em cima, todos os que dá para anexar embaixo. -->
+        <div v-show="tab === 'attachments'" class="flex flex-col gap-2">
+          <AttachedDocs :attachable="attachable" :selected="form.docIds" :mode-of="attachMode" :empty-text="form.global ? 'Nenhum documento global.' : 'Nenhum documento global ou deste projeto.'" @toggle="toggleDoc" @mode="setMode" />
+          <small class="hint">Inteiro: o texto vai junto toda vez. Por referência: vão só id, título e tamanho, e o agente lê com read_doc se precisar — para documento grande.</small>
+          <small v-for="m in issues.docIds" :key="m" class="error">{{ m }}</small>
+          <small v-for="m in issues.docRefs" :key="m" class="error">{{ m }}</small>
         </div>
 
         <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
