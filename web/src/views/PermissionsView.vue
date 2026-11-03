@@ -4,6 +4,10 @@ import { useRoute } from 'vue-router'
 import HistoryPanel from '@/components/HistoryPanel.vue'
 import HistoryTabs from '@/components/HistoryTabs.vue'
 import PermissionRules from '@/components/PermissionRules.vue'
+import PermissionRequests from '@/components/PermissionRequests.vue'
+import PermissionRequestsBadge from '@/components/PermissionRequestsBadge.vue'
+import { pendingCount, requestsKey } from '@/lib/permissionRequests'
+import { usePermissionRequestsStore } from '@/stores/permissionRequests'
 import PermissionTester from '@/components/PermissionTester.vue'
 import { ApiError } from '@/lib/api'
 import { fullTime } from '@/lib/format'
@@ -27,6 +31,14 @@ const agents = useAgentsStore()
 const project = computed(() => projects.list.find((item) => item.id === projects.current))
 
 const permissions = usePermissionsStore()
+const permissionRequests = usePermissionRequestsStore()
+/** Os pedidos abertos para as regras do projeto (o selo do título; a lista é o `PermissionRequests`). */
+const pendingRequests = computed(() => (project.value ? pendingCount(permissionRequests.lists.get(requestsKey({ projectId: project.value.id })), { projectId: project.value.id }) : 0))
+
+/** Um pedido aprovado: as regras do projeto são as que o servidor gravou (o rascunho segue a store). */
+function requestApproved(_request: unknown, approved: IPermissionRule[] | undefined) {
+  if (project.value && approved) permissions.projects.update(project.value.id, (current) => ({ ...current, rules: approved }))
+}
 /** Lê quando a tela abre (só admin, depois de acertar o projeto do link). */
 const ready = ref(false)
 const stored = useResource(permissions.projects, () => (ready.value && project.value ? project.value.id : undefined))
@@ -107,7 +119,9 @@ watch(decisionAgent, () => void loadDecisions())
   <div v-else class="scroll-thin h-full overflow-y-auto px-4 py-5">
     <section class="mx-auto flex max-w-3xl flex-col gap-4">
       <header>
-        <h1 class="text-xl font-semibold">Permissões{{ project ? ` — ${project.name}` : '' }}</h1>
+        <h1 class="flex items-center gap-2 text-xl font-semibold">
+          Permissões{{ project ? ` — ${project.name}` : '' }} <PermissionRequestsBadge :count="pendingRequests" />
+        </h1>
         <p class="text-xs text-zinc-500">O que os agentes do projeto podem fazer. Cada agente libera o que precisa na guia Permissões dele.</p>
       </header>
 
@@ -122,6 +136,7 @@ watch(decisionAgent, () => void loadDecisions())
         <template v-else>
           <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
 
+          <PermissionRequests :project-id="project.id" @approved="requestApproved" />
           <PermissionRules v-model="rules" />
           <div class="flex flex-wrap items-center gap-3">
             <button type="button" class="btn btn-primary" :disabled="busy || !dirty" @click="save">Salvar</button>

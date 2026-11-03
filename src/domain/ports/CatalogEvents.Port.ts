@@ -1,9 +1,12 @@
 import { TCatalogKind } from '@domain/Catalog.Document'
 import { TRevisionOp } from './CatalogHistoryRepository.Port'
 
-/** Um item do catálogo que mudou (a revisão gravada): o tipo, o id (no MCP, a chave), o escopo e a operação. */
+/**
+ * Um item do catálogo que mudou (a revisão gravada): o tipo, o id (no MCP, a chave), o escopo e a operação.
+ * `permission-request`: um pedido de permissão do agente `id` foi feito ou decidido (não é revisão; só admin recebe).
+ */
 export interface ICatalogChanged {
-  kind: TCatalogKind
+  kind: TCatalogKind | 'permission-request'
   id: string
   projectId?: string
   op: TRevisionOp

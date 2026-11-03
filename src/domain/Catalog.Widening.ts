@@ -107,6 +107,20 @@ export function wideningKeys(widenings: readonly IWidening[]): string[] {
   return [...new Set(widenings.map((item) => item.key))].sort(byText)
 }
 
+/**
+ * As ampliações de uma troca SÓ DE REGRAS de permissão de um item (o agente, as do projeto): a mesma regra e as mesmas
+ * chaves do item inteiro (`agent/x@proj#permissions+allow:terminal:git *`). É o que o pedido de permissão do agente usa
+ * (ver `PermissionRequest.Policy`): a definição de "amplia" é uma só, a do catálogo.
+ */
+export function ruleWidenings(item: TWideningItem, before: readonly IPermissionRule[], after: readonly IPermissionRule[]): IWidening[] {
+  const out = new Collector(item)
+  rulesWidenings(out, item.kind === 'project-permissions' ? 'rules' : 'permissions', before, after)
+  return out.list()
+}
+
+/** O item de que as chaves falam: o tipo, o id e o escopo (o resto do documento não entra na chave). */
+export type TWideningItem = Pick<ICatalogDocument, 'kind' | 'id' | 'projectId'>
+
 /** O `confirm` do pedido é EXATAMENTE o conjunto calculado (nem a mais, nem a menos; ordem e repetição não contam). */
 export function confirmsWidenings(confirm: readonly string[], widenings: readonly IWidening[]): boolean {
   const want = wideningKeys(widenings)
@@ -417,7 +431,7 @@ class Collector {
   private readonly ref: string
   private readonly label: string
 
-  constructor(private readonly doc: ICatalogDocument) {
+  constructor(private readonly doc: TWideningItem) {
     const scope = doc.projectId && doc.projectId !== doc.id ? `@${doc.projectId}` : ''
     this.ref = `${doc.kind}/${doc.id}${scope}`
     this.label = `${KIND_LABEL[doc.kind] ?? doc.kind} ${doc.id}${scope ? ` (projeto ${doc.projectId})` : ''}`

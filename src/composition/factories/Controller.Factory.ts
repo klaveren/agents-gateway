@@ -13,6 +13,8 @@ import { IConversationRepository } from '@domain/ports/ConversationRepository.Po
 import { backgroundProcesses } from '@infra/tools/Background.Processes'
 import { ProjectAccountsController } from '@infra/http/ProjectAccounts.Controller'
 import { PermissionsController } from '@infra/http/Permissions.Controller'
+import { PermissionRequestsController } from '@infra/http/PermissionRequests.Controller'
+import { makePermissionRequests } from './PermissionRequests.Factory'
 import { SchedulesController } from '@infra/http/Schedules.Controller'
 import { makeScheduleRunner, makeSchedules } from './Schedules.Factory'
 import { dockerStatus } from '@infra/sandbox/Docker.Sandbox'
@@ -137,6 +139,8 @@ export function makeController(): AgentController {
     (agentId, projectId, skillId) =>
       makePermissions().test({ ...(agentId ? { agentId } : {}), ...(projectId ? { projectId } : {}) }, { category: 'skill', value: skillId }).allowed,
   )
+  // O `patch_agent` e a aprovação de um patch gravam o agente inteiro: com as MESMAS regras do `PUT /agents`.
+  makePermissionRequests().useAgentValidation(async () => ({ rules: await controller.agentRules(), issues: (agent) => controller.projectIssues(agent) }))
   return controller
 }
 
@@ -157,6 +161,10 @@ export function makePermissionsController(): PermissionsController {
     installationRules: () => installationRules(),
     proof: makeAuth().proof,
   })
+}
+
+export function makePermissionRequestsController(): PermissionRequestsController {
+  return new PermissionRequestsController({ service: makePermissionRequests(), proof: makeAuth().proof })
 }
 
 export function makeProjectAccountsController(): ProjectAccountsController {

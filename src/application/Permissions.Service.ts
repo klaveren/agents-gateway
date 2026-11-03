@@ -1,7 +1,7 @@
 import { cleanRules, decide, IPermissionLayers, IPermissionRule, IPermissionSubject, IPermissionVerdict, permissionIssues } from '@domain/Permission.Policy'
 import { InvalidPermissionsError } from '@domain/errors/Domain.Error'
 import { IPermissionDecision, IPermissionRepository } from '@domain/ports/PermissionRepository.Port'
-import { CatalogHistoryHook } from './CatalogHistory.Service'
+import { CatalogHistoryHook, ICatalogChange } from './CatalogHistory.Service'
 
 /** Quem pede: o agente que está respondendo, na conversa de que projeto. */
 export interface IPermissionAsker {
@@ -39,12 +39,13 @@ export class PermissionsService implements IPermissionChecker {
     return this.repository.projectRules(projectId)
   }
 
-  saveProjectRules(projectId: string, rules: unknown, by: string): IPermissionRule[] {
+  /** `change`: por onde veio, a nota e as ampliações aceitas (o pedido de permissão) — vão na revisão. */
+  saveProjectRules(projectId: string, rules: unknown, by: string, change: Omit<ICatalogChange, 'by'> = {}): IPermissionRule[] {
     const issues = permissionIssues(rules)
     if (issues.length) throw new InvalidPermissionsError(issues)
     const clean = cleanRules(rules as IPermissionRule[])
     this.repository.saveProjectRules(projectId, clean, by)
-    this.history.record([{ kind: 'project-permissions', id: projectId }], { by })
+    this.history.record([{ kind: 'project-permissions', id: projectId }], { ...change, by })
     return clean
   }
 

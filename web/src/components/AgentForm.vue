@@ -35,6 +35,8 @@
   import AgentSchedules from './AgentSchedules.vue'
   import PermissionRules from './PermissionRules.vue'
   import PermissionTester from './PermissionTester.vue'
+  import PermissionRequests from './PermissionRequests.vue'
+  import type { IPermissionRequest } from '@/lib/permissionRequests'
   import AgentInitialContext from './AgentInitialContext.vue'
   import AgentResources from './AgentResources.vue'
   import ResourceFiles from './ResourceFiles.vue'
@@ -366,6 +368,18 @@
    * As guias do formulário: o texto do agente na primeira, e cada grupo de capacidades na sua. A contagem diz
    * quanto está escolhido sem abrir a guia; o ponto vermelho, que o servidor recusou algo ali.
    */
+  /**
+   * Um pedido de permissão aprovado: as regras do agente são as que o servidor gravou. ⛔ O formulário passa a mostrá-las
+   * — senão o próximo Salvar regravaria as de antes e desfaria a aprovação.
+   */
+  function permissionsApproved(request: IPermissionRequest, permissions: IAgentInput['permissions']) {
+    if (!props.agent) return
+    // O patch aprovado muda outros campos: o agente é relido (o formulário volta ao gravado).
+    if (request.kind === 'agent-patch') return void agents.details.refresh(props.agent.id).catch(() => undefined)
+    form.value.permissions = (permissions ?? []).map((rule) => ({ ...rule }))
+    agents.setPermissions(props.agent.id, permissions)
+  }
+
   type TTab = 'agente' | 'instrucoes' | 'triggers' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'arquivos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos' | 'historico' | 'problemas'
   // `#agendamentos` no link (a visão geral dos agendamentos) abre direto na guia.
   /** O nome das ferramentas do gateway na guia Ferramentas (o id técnico fica na dica). */
@@ -1056,6 +1070,7 @@
       </div>
     </fieldset>
     <fieldset v-show="tab === 'sdk'" class="flex flex-col gap-4">
+      <PermissionRequests v-if="agent && !creating" :agent-id="agent.id" @approved="permissionsApproved" />
       <div class="flex flex-col gap-2">
         <h3 class="text-sm font-medium text-zinc-200">Regras deste agente</h3>
         <p class="text-xs text-zinc-500">

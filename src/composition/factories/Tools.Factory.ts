@@ -167,6 +167,9 @@ function selfServer(): IMcpServerConfig {
     transport: 'http',
     auth: 'caller',
     headerName: 'X-Tool-Authorization',
+    // ⚖️ O próprio gateway recebe a identidade do agente (agente, conversa, projeto): é por ela que o pedido de
+    // permissão diz à tela quem pediu. Rótulo, não credencial — quem pode é a conta do cabeçalho.
+    identity: true,
     enabled: true,
     createdAt: now,
     updatedAt: now,
@@ -183,8 +186,8 @@ function keepSelfUrl(servers: IMcpServerRepository): void {
   const current = servers.get(SELF_MCP_SERVER)
   if (!current) return
   const expected = selfServer()
-  const drift = current.url !== expected.url || current.auth !== expected.auth || current.headerName !== expected.headerName
-  if (drift) servers.update(SELF_MCP_SERVER, { url: expected.url, auth: expected.auth, headerName: expected.headerName, updatedAt: new Date(), updatedBy: SYSTEM })
+  const drift = current.url !== expected.url || current.auth !== expected.auth || current.headerName !== expected.headerName || !current.identity
+  if (drift) servers.update(SELF_MCP_SERVER, { url: expected.url, auth: expected.auth, headerName: expected.headerName, identity: true, updatedAt: new Date(), updatedBy: SYSTEM })
 }
 
 function seedFromEnv(env: NodeJS.ProcessEnv = process.env): IMcpServerConfig[] {

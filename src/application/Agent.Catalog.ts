@@ -6,7 +6,8 @@ import { AgentInUseError, AgentNotFoundError, GuidanceNotFoundError, InvalidAgen
 import { describeMatch, IImportProblemMatch, withoutProblem } from '@domain/models/ImportProblem.Model'
 import { diagnosticsOn, IAgent, IAgentTarget, IAgentTrigger } from '@domain/models/Agent.Model'
 import { IAgentDirectory, IAgentRepository, IStoredAgent } from '@domain/ports/AgentRepository.Port'
-import { CatalogHistoryHook } from './CatalogHistory.Service'
+import { cleanRules, IPermissionRule, permissionIssues } from '@domain/Permission.Policy'
+import { CatalogHistoryHook, ICatalogChange } from './CatalogHistory.Service'
 
 /** Um agente na lista da tela, com quem mexeu por último. */
 export interface IAgentEntry {
@@ -21,6 +22,8 @@ export interface ISaveAgentOptions {
   by: string
   /** `true` cria (o id não pode existir); `false` atualiza (o id tem de existir). */
   creating: boolean
+  /** Por onde veio, a nota e as ampliações aceitas — vão na revisão (o `patch_agent` e a aprovação na tela). */
+  change?: Omit<ICatalogChange, 'by'>
 }
 
 /**
@@ -141,7 +144,7 @@ export class AgentCatalog implements IAgentDirectory {
     const before = this.repository.list().find((stored) => stored.id === agent.id)
     const saved = this.repository.save(agent.files?.length ? { ...agent, files: sortFiles(agent.files) } : agent, options.by)
     this.placeFiles(before ? toAgent(before) : undefined, saved)
-    this.history.record([{ kind: 'agent', id: agent.id }], { by: options.by })
+    this.history.record([{ kind: 'agent', id: agent.id }], { ...options.change, by: options.by })
     return saved
   }
 
@@ -166,6 +169,24 @@ export class AgentCatalog implements IAgentDirectory {
     this.repository.save(triggers.length ? { ...agent, triggers } : agent, by)
     // Quem grava aqui é a ferramenta `agent_trigger`, nunca a tela.
     this.history.record([{ kind: 'agent', id }], { by, source: 'agent' })
+  }
+
+  /**
+   * Só as REGRAS DE PERMISSÃO de um agente gravado (o pedido de permissão: a restrição que vale já e a aprovação na
+   * tela): o resto do agente fica como está, e só as regras passam pela regra (o mesmo validador do formulário).
+   * `change`: por onde veio, a nota e as ampliações aceitas — vão na revisão. ⛔ Agente de fábrica responde inexistente.
+   */
+  savePermissions(id: string, rules: readonly IPermissionRule[], by: string, change: Omit<ICatalogChange, 'by'> = {}): IStoredAgent {
+    const stored = this.repository.list().find((agent) => agent.id === id)
+    if (!stored) throw new AgentNotFoundError(id)
+    const issues = permissionIssues(rules)
+    if (issues.length) throw new InvalidAgentError(issues)
+    const clean = cleanRules(rules)
+    const agent: IAgent = { ...toAgent(stored) }
+    delete agent.permissions
+    const saved = this.repository.save(clean.length ? { ...agent, permissions: clean } : agent, by)
+    this.history.record([{ kind: 'agent', id }], { ...change, by })
+    return saved
   }
 
   /**
