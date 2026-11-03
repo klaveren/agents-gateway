@@ -49,7 +49,8 @@ function build() {
     projects: new SqliteProjectRepository(':memory:'),
   }
   const history = new SqliteCatalogHistoryRepository(':memory:')
-  const service = new CatalogHistoryService(history, new CatalogReader(repos), () => at)
+  const published: Array<Array<{ kind: string; id: string; projectId?: string; op: string }>> = []
+  const service = new CatalogHistoryService(history, new CatalogReader(repos), () => at, { publish: (changes) => void published.push([...changes]) })
   const secrets = new SqliteCredentialStore(new SecretBox(randomBytes(32)), ':memory:')
 
   const agents = new AgentCatalog(repos.agents)
@@ -85,7 +86,7 @@ function build() {
 
   const revisions = (kind: TCatalogKind, id: string) => history.revisions(kind, id)
   const ops = (kind: TCatalogKind, id: string) => revisions(kind, id).map((revision) => `${revision.op}:${revision.by}`)
-  return { repos, history, service, secrets, agents, guidance, permissions, mcps, projects, revisions, ops }
+  return { repos, history, service, secrets, agents, guidance, permissions, mcps, projects, revisions, ops, published }
 }
 
 describe('CatalogHistoryService — a gravação nos serviços', () => {
@@ -103,6 +104,17 @@ describe('CatalogHistoryService — a gravação nos serviços', () => {
     assert.strictEqual(updated.source, 'api')
     assert.strictEqual(deleted.document, undefined)
     assert.strictEqual(deleted.hash, undefined)
+  })
+
+  it('cada revisão gravada avisa quem assina (a tela aberta); gravar igual não avisa', () => {
+    const { agents, published } = build()
+    agents.save(agent('pesquisa', undefined), saving('ana', true))
+    agents.save(agent('pesquisa', undefined), saving('ana', false))
+    agents.remove('pesquisa', 'ana')
+    assert.deepStrictEqual(
+      published.map((changes) => changes.map((one) => `${one.kind}/${one.id}:${one.op}`)),
+      [['agent/pesquisa:create'], ['agent/pesquisa:delete']],
+    )
   })
 
   it('agente: os vínculos (recursos e contexto) entram no documento dele; o trigger vem da ferramenta e a mudança de projeto da migração', () => {

@@ -35,6 +35,7 @@ import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { MODEL_PRICING, TModelPricing } from '@domain/models/Model.Pricing'
 import { allowsCaller, mergeSettings } from '@domain/models/Settings.Model'
 import { LIMIT_BOUNDS, liveLimit, UNLIMITED } from '@domain/models/Limits.Model'
+import { ICatalogEvents } from '@domain/ports/CatalogEvents.Port'
 import { IConversationEvents, TConversationEvent } from '@domain/ports/ConversationEvents.Port'
 import { ITurnLive } from '@domain/ports/TurnLive.Port'
 import { IProviderDirectory } from '@domain/ports/ProviderRepository.Port'
@@ -129,6 +130,8 @@ export interface IAgentControllerDeps {
   pricing?: TModelPricing
   /** Por onde chegam as mudanças nas conversas gravadas. Ausente = `/conversations/events` só mantém a conexão. */
   events?: IConversationEvents
+  /** O que mudou no catálogo (ver `CatalogHistory.Service`): o mesmo stream avisa a tela (`catalog.changed`). */
+  catalogEvents?: ICatalogEvents
   /** Os provedores sem cota agora (ver `Provider.Bench`), para a tela de configurações. */
   bench?: { list(): Array<{ provider: string; until: Date }> }
   /** O turno ao vivo (ver `Turn.Live`). Ausente = `/sessions/:id/live` só mantém a conexão. */
@@ -1034,12 +1037,36 @@ export class AgentController {
         if (event.type === 'conversation.updated') stream.emit(event.type, { session: toConversationDto(event.session, view) })
         else stream.emit(event.type, { sessionId: event.sessionId })
       }) ?? (() => undefined)
+    // ⛔ O catálogo: só o que a pessoa pode ver — o global, e o projeto de que ela é membro (admin vê tudo).
+    const member = new Map<string, boolean>()
+    const sees = (projectId: string | undefined) => {
+      if (!projectId || admin) return true
+      if (!member.has(projectId))
+        member.set(
+          projectId,
+          (() => {
+            try {
+              this.requireProject({ userId: resolved.identity?.id, admin }, projectId)
+              return true
+            } catch {
+              return false
+            }
+          })(),
+        )
+      return member.get(projectId)!
+    }
+    const unsubscribeCatalog =
+      this.usecases.catalogEvents?.subscribe((changes) => {
+        const visible = changes.filter((change) => sees(change.projectId))
+        if (visible.length) stream.emit('catalog.changed', { changes: visible })
+      }) ?? (() => undefined)
     // Quem conecta (ou reconecta) fica sabendo das que JÁ estão rodando.
     for (const running of this.usecases.live?.running() ?? []) if (visible(running.metadata)) stream.emit('conversation.running', { sessionId: running.sessionId })
 
     // Em `res`, não em `req` — ver `sendMessageAsStream`: o `close` do request dispara cedo demais.
     res.on('close', () => {
       unsubscribe()
+      unsubscribeCatalog()
       inbox.unfollow?.()
       this.inboxStreams.delete(streamId)
       stream.close()

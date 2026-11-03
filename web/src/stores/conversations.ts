@@ -4,6 +4,7 @@ import { api, openStream } from '@/lib/api'
 import { readSse } from '@/lib/sse'
 import type { IAgentEvent, IConversation, IConversationPage } from '@/lib/types'
 import { useProjectsStore } from './projects'
+import { catalogChanged, catalogResync, type ICatalogChanged } from './catalogSync'
 
 export interface IConversationFilters {
   q: string
@@ -20,7 +21,7 @@ export type TTurnFrame =
   | { type: 'turn.event'; sessionId: string; event: IAgentEvent }
   | { type: 'turn.finished'; sessionId: string }
   | { type: 'turn.idle'; sessionId: string }
-type TStreamFrame = TConversationEvent | TRunningEvent | TTurnFrame | { type: 'stream.ready'; streamId: string }
+type TStreamFrame = TConversationEvent | TRunningEvent | TTurnFrame | { type: 'stream.ready'; streamId: string } | { type: 'catalog.changed'; changes: ICatalogChanged[] }
 
 const PAGE_SIZE = 30
 const RECONNECT_MS = 3_000
@@ -211,7 +212,11 @@ export const useConversationsStore = defineStore('conversations', () => {
           const body = await openStream('/conversations/events', { signal: controller.signal, query: useProjectsStore().query })
           live.value = true
           running.value = new Set()
-          if (!first) void load(admin)
+          if (!first) {
+            void load(admin)
+            // O catálogo também: o aviso de mudança que caiu no meio não chegou.
+            catalogResync()
+          }
           first = false
           for await (const frame of readSse(body)) {
             if (controller.signal.aborted) return
@@ -222,7 +227,8 @@ export const useConversationsStore = defineStore('conversations', () => {
             } else if (event.type.startsWith('turn.')) {
               const turn = event as TTurnFrame
               if (turn.sessionId === followed) for (const listener of turnListeners) listener(turn)
-            } else if (event.type === 'conversation.running' || event.type === 'conversation.idle') markRunning(event.sessionId, event.type === 'conversation.running')
+            } else if (event.type === 'catalog.changed') catalogChanged(event.changes)
+            else if (event.type === 'conversation.running' || event.type === 'conversation.idle') markRunning(event.sessionId, event.type === 'conversation.running')
             else apply(event as TConversationEvent)
           }
         } catch {

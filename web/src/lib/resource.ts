@@ -27,6 +27,12 @@ export interface IKeyedResource<T> {
   /** Muda o dado guardado (a gravação que devolve o item: troca na lista). Sem dado guardado, não faz nada. */
   update(key: string, change: (current: T) => T): void
   drop(key: string): void
+  /**
+   * Marca como VELHO sem tirar da tela: o dado fica, e o próximo `ensure` busca de novo. É o aviso de fora (o catálogo
+   * mudou) para o que pode estar aberto num formulário — trocar ali faria a pessoa perder o que está editando.
+   */
+  markStale(key: string): void
+  markAllStale(): void
   clear(): void
   /** As chaves já lidas. */
   keys(): string[]
@@ -36,6 +42,7 @@ export interface IKeyedResource<T> {
 interface IEntry<T> {
   data?: T
   has: boolean
+  stale?: boolean
   at?: number
   pending?: Promise<T>
   error?: unknown
@@ -71,7 +78,7 @@ export function keyedResource<T>(fetcher: (key: string) => Promise<T>, options: 
     generation.set(key, mine)
     const pending = fetcher(key).then(
       (data) => {
-        if (generation.get(key) === mine) write(key, { data, has: true, at: now(), pending: undefined, error: undefined })
+        if (generation.get(key) === mine) write(key, { data, has: true, stale: false, at: now(), pending: undefined, error: undefined })
         return data
       },
       (error: unknown) => {
@@ -83,7 +90,7 @@ export function keyedResource<T>(fetcher: (key: string) => Promise<T>, options: 
     return pending
   }
 
-  const fresh = (current: IEntry<T>) => current.has && (options.staleMs === undefined || now() - (current.at ?? 0) < options.staleMs)
+  const fresh = (current: IEntry<T>) => current.has && !current.stale && (options.staleMs === undefined || now() - (current.at ?? 0) < options.staleMs)
 
   const resource: IKeyedResource<T> = {
     get: (key) => entry(key)?.data,
@@ -99,12 +106,19 @@ export function keyedResource<T>(fetcher: (key: string) => Promise<T>, options: 
     refresh: (key) => fetchKey(key),
     set: (key, data) => {
       generation.set(key, (generation.get(key) ?? 0) + 1)
-      write(key, { data, has: true, at: now(), pending: undefined, error: undefined })
+      write(key, { data, has: true, stale: false, at: now(), pending: undefined, error: undefined })
     },
     update(key, change) {
       const current = entry(key)
       if (!current?.has) return
       write(key, { data: change(current.data as T) })
+    },
+    markStale(key) {
+      const current = entry(key)
+      if (current?.has) current.stale = true
+    },
+    markAllStale() {
+      for (const current of entries.value.values()) if (current.has) current.stale = true
     },
     drop(key) {
       generation.set(key, (generation.get(key) ?? 0) + 1)
