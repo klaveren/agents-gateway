@@ -7,7 +7,7 @@ import { ICatalogImportPlan, refOfDocument, TRefTarget, withBody } from '@domain
 import { IApprovedEntry, IAgentExtras, importDocuments } from '@domain/Import.Documents'
 import { ILinkWorld, restoreImportLinks, withImportIssues } from '@domain/Import.Issues'
 import { IImportProblem, problemList } from '@domain/models/ImportProblem.Model'
-import { draftKindForItem, IImportDraft, verifyImportDraft } from '@domain/Import.Draft'
+import { currentRuleIssues, draftKindForItem, IImportDraft, verifyImportDraft } from '@domain/Import.Draft'
 import { canTransition } from '@domain/Import.Job'
 import { planAgentBatch, prefixedId } from '@domain/Import.Order'
 import { confirmedRules, IReachTranslation, ruleKey } from '@domain/Import.Permissions'
@@ -436,6 +436,12 @@ export class ImportApplyUseCase {
       const kind = draftKindForItem(entry.kind ?? entry.item.kind)
       if (!draft || !kind || draft.kind !== kind) {
         skipped.push({ key: entry.key, reason: 'sem rascunho do tipo do item' })
+        continue
+      }
+      // ⛔ Aprovado antes das regras de hoje (a rule de 43 KB): fica de fora, com o motivo — peça ajuste ao construtor.
+      const current = currentRuleIssues(kind, draft.outputs)
+      if (current.length) {
+        skipped.push({ key: entry.key, reason: `o rascunho não passa nas regras de hoje (${current.map((one) => one.message).join('; ')}): peça ajuste ao construtor` })
         continue
       }
       const issues = verifyImportDraft(draft, this.sourceTexts(record, entry, draft))

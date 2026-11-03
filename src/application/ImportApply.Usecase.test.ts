@@ -311,6 +311,17 @@ describe('ImportApplyUseCase — a gravação do importador pelo catálogo', () 
     assert.strictEqual(stack.reader.read('spec', 'arq'), undefined)
   })
 
+  it('⛔ aprovado antes das regras de hoje (resumo acima do limite): fica de fora da gravação, com o motivo', async () => {
+    const { apply, repository } = await setup()
+    const entry = repository.item('j1', 'spec:arq')!
+    const draft = entry.drafts.at(-1) as { outputs: Array<{ meta: Record<string, string> }> }
+    repository.updateItem('j1', 'spec:arq', { drafts: [{ ...draft, outputs: draft.outputs.map((output) => ({ ...output, meta: { ...output.meta, summary: 'x'.repeat(400) } })) }] })
+    const preview = await apply.preview('alfa', 'j1', ALL)
+    const skipped = preview.skipped.find((one) => one.key === 'spec:arq')
+    assert.match(skipped?.reason ?? '', /não passa nas regras de hoje.*peça ajuste/)
+    assert.ok(!preview.items.some((item) => item.key === 'spec:arq'))
+  })
+
   it('agente novo sem modelo: o plano diz o problema e nada se aplica', async () => {
     const { apply } = await setup()
     const preview = await apply.preview('alfa', 'j1', { keys: ALL.keys })
