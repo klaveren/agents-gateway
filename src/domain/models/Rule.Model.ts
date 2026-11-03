@@ -20,3 +20,5 @@ export interface IRule {
 }
 
 export const RULE_TITLE_MAX = 120
+/** O corpo de uma rule: ela entra em TODA conversa, para sempre — o que passa disto é várias rules, ou uma spec. */
+export const RULE_BODY_MAX = 4 * 1024

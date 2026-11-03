@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { applyImportOps, builderKindForItem, IImportApplied, IImportSourceText, missingRemovalOks, TImportOp, verifyImportDraft } from './Import.Draft'
+import { applyImportOps, builderKindForItem, IImportApplied, IImportSourceText, missingRemovalOks, proposalIssues, TImportOp, verifyImportDraft } from './Import.Draft'
 
 const SPEC = [
   '<!-- gerado por agents-sync em 2026-01-01 -->',
@@ -218,5 +218,14 @@ describe('Import.Draft — conferência', () => {
   it('o OK de cada remoção: a que falta aparece pelo índice da operação', () => {
     assert.deepStrictEqual(missingRemovalOks(draft(), []), [3])
     assert.deepStrictEqual(missingRemovalOks(draft(), [3]), [])
+  })
+})
+
+describe('proposalIssues — a rule que entraria em toda conversa', () => {
+  it('⛔ corpo de rule acima de 4 KB é recusado ao propor (divida ou é spec); até 4 KB passa; outro tipo não tem esse teto', () => {
+    const big = { meta: { title: 'Regimento' }, fields: { body: 'x'.repeat(4097) } }
+    assert.match(proposalIssues('rule', [big]).map((one) => `${one.field}: ${one.message}`)[0], /^body: a rule body has at most 4096 characters \(this one has 4097\): split it/)
+    assert.deepStrictEqual(proposalIssues('rule', [{ ...big, fields: { body: 'x'.repeat(4096) } }]), [])
+    assert.deepStrictEqual(proposalIssues('spec', [{ meta: { id: 'a', title: 'A', summary: 'S' }, fields: { body: 'x'.repeat(9000) } }]), [])
   })
 })

@@ -197,7 +197,7 @@ describe('SqliteImportRepository', () => {
           ['j9', 'lib', 0],
         ],
       )
-      assert.strictEqual(booted.get('alfa', 'j1'), undefined, 'o arquivado não aparece')
+      assert.strictEqual(booted.get('alfa', 'j1')?.id, 'j2', 'o arquivado leva à importação que ficou no lugar')
       assert.strictEqual(booted.latest('alfa', 'app')?.id, 'j2')
 
       const items = new Map(booted.items('j2').map((one) => [one.key, one]))

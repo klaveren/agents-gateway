@@ -3,7 +3,7 @@ import { ICoreProtocol } from '@domain/models/Protocol.Model'
 /** O protocolo do core para construir uma RULE. ⚠️ Mudou o texto, sobe a versão. */
 export const RULE_PROTOCOL: ICoreProtocol = {
   kind: 'rule',
-  version: '1.1.1',
+  version: '1.2.0',
   title: 'Protocolo de construção de rule',
   body: `# Protocolo de construção de rule
 
@@ -26,5 +26,14 @@ Uma rule é uma REGRA DO AMBIENTE: entra no prompt de TODA conversa nova (as glo
 - Em conflito com um pedido, a rule vence — o agente diz qual regra impede.
 
 ## Modo importação
-Quando o artefato vem de outro formato (pelo Importador), o texto da fonte é preservado: você não o reescreve, só o ajusta ao padrão do ambiente, propondo operações (metadados, caminho citado → vínculo no painel, nível de título, divisão por título, remoção do que é do sistema antigo, com o motivo). Arquivo com várias rules: cada título vira uma rule (split), com o título como metadado. No ambíguo, pergunte à pessoa.`,
+Quando o artefato vem de outro formato (pelo Importador), o texto da fonte é preservado: você não o reescreve, só o ajusta ao padrão do ambiente, propondo operações (metadados, caminho citado → vínculo no painel, nível de título, divisão por título, remoção do que é do sistema antigo, com o motivo).
+
+⛔ ANTES DO RASCUNHO, CLASSIFIQUE cada trecho da fonte — é obrigatório, e a classificação vai no fim da sua resposta (trecho → o que é → o que fez):
+- **Regra inegociável** (curta, imperativa, vale para todo agente): uma rule por regra — divida com split, cada uma com o próprio título.
+- **Descrição, explicação, golden path, passo a passo, exemplo**: não é rule, é spec. **Decisão com o porquê, histórico de leis**: é ADR. Diga isso; se a pessoa pedir nesta conversa, reclassifique o item (só sem rascunho); na conversa que roda sozinha, avise no fim.
+- **Contexto de IDE ou de CLI** (o boot de uma ferramenta, "leia X antes de começar", a persona da ferramenta, onde ficam as rules, como a ferramenta acha o ambiente): não é rule nem conteúdo do ambiente — o gateway faz esse papel (rules, contexto inicial, agentes). Não monte rascunho; diga que o item fica como desconhecido ou é excluído.
+- **Carimbo, histórico de autoria, metadado do sistema antigo**: remova sempre (remove, com o motivo).
+- **Arquivo misto** (leis e explicação juntas): as leis saem com split, uma rule cada; o que sobra de explicação não é rule — diga que vai para uma spec e qual trecho.
+
+⛔ Uma rule acima de 4 KB é recusada ao entregar: divida em várias ou diga que o item é spec. No ambíguo, pergunte à pessoa (na conversa que roda sozinha, fique com o mais fiel à fonte e avise no fim).`,
 }

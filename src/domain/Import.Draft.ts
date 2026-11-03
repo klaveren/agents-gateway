@@ -3,7 +3,7 @@ import { TProtocolKind } from './models/Protocol.Model'
 import { TInventoryKind } from './models/ImportInventory.Model'
 import { DOC_SUMMARY_MAX, DOC_TITLE_MAX } from './models/ProjectDoc.Model'
 import { RESOURCE_DESCRIPTION_MAX } from './models/Resource.Model'
-import { RULE_TITLE_MAX } from './models/Rule.Model'
+import { RULE_BODY_MAX, RULE_TITLE_MAX } from './models/Rule.Model'
 import { diffText, ITextDiff } from './Text.Diff'
 
 /**
@@ -251,7 +251,7 @@ const CATALOG_MAX: Readonly<Partial<Record<TImportDraftKind, Readonly<Record<str
  * só a gravação recusaria, depois da revisão) e ⛔ o `scope` — a importação vem do repositório de um projeto e nasce
  * nele; quem quiser global muda depois, no catálogo.
  */
-export function proposalIssues(kind: TImportDraftKind, outputs: readonly Pick<IImportDraftOutput, 'meta'>[]): IImportIssue[] {
+export function proposalIssues(kind: TImportDraftKind, outputs: readonly Pick<IImportDraftOutput, 'meta' | 'fields'>[]): IImportIssue[] {
   const limits = CATALOG_MAX[kind] ?? {}
   return outputs.flatMap((output, index) => {
     const field = index === 0 ? 'meta' : `outputs[${index}].meta`
@@ -262,6 +262,13 @@ export function proposalIssues(kind: TImportDraftKind, outputs: readonly Pick<II
       if (value !== undefined && value.length > max)
         issues.push({ field: `${field}.${name}`, message: `at most ${max} characters in the catalog (this one has ${value.length}): shorten it` })
     }
+    // ⛔ A rule entra em toda conversa: o regimento inteiro numa rule só não passa.
+    const body = output.fields.body ?? ''
+    if (kind === 'rule' && body.length > RULE_BODY_MAX)
+      issues.push({
+        field: index === 0 ? 'body' : `outputs[${index}].body`,
+        message: `a rule body has at most ${RULE_BODY_MAX} characters (this one has ${body.length}): split it into several rules (one per law), remove what belongs to the old system, or say the item is a spec`,
+      })
     return issues
   })
 }
