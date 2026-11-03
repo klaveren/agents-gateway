@@ -74,7 +74,9 @@ const g = computed(() => (info.value.masc ? { nova: 'Novo', nenhuma: 'Nenhum', u
 
 const form = ref({ id: '', description: '', body: '', global: true, project: '', docIds: [] as string[], docRefs: [] as string[] })
 /** A guia da edição: o formulário ou o histórico (`#historico` no endereço abre nele). */
-const tab = ref<'edit' | 'files' | 'history'>(route.hash === '#historico' ? 'history' : 'edit')
+type TResourceTab = 'edit' | 'instructions' | 'files' | 'issues' | 'history'
+const HASH_TAB: Record<string, TResourceTab> = { '#historico': 'history', '#instrucoes': 'instructions', '#arquivos': 'files', '#problemas': 'issues' }
+const tab = ref<TResourceTab>(HASH_TAB[route.hash] ?? 'edit')
 /** Muda depois de restaurar uma versão: relê o item. */
 const reloadKey = ref(0)
 const loaded = ref<IResource>()
@@ -242,6 +244,25 @@ async function confirmRemove() {
 function describe(failure: unknown): string {
   return failure instanceof Error ? failure.message : String(failure)
 }
+
+/** Os problemas da importação do item aberto (a guia só existe com algum). */
+const importIssues = computed(() => (adding.value ? [] : (loaded.value?.importIssues ?? [])))
+/** As guias além da principal (título, resumo, escopo, anexos): as instruções (o texto e a prévia), os arquivos e os problemas. */
+const extraTabs = computed(() =>
+  [
+    { id: 'instructions' as const, label: 'Instruções' },
+  { id: 'files' as const, label: `Arquivos${loaded.value?.files?.length ? ` (${loaded.value.files.length})` : ''}` },
+    ...(importIssues.value.length ? [{ id: 'issues' as const, label: `Problemas da importação (${importIssues.value.length})` }] : []),
+  ].filter((item) => !adding.value || item.id === 'instructions'),
+)
+// A guia de problemas some quando o último é resolvido: volta à principal.
+watch(importIssues, (list) => {
+  if (tab.value === 'issues' && !list.length) tab.value = 'edit'
+})
+/** O campo obrigatório vazio está noutra guia: abre a dele (senão o navegador não consegue apontar para ele). */
+function onInvalid(event: Event) {
+  tab.value = (event.target as HTMLElement).dataset.tab === 'instructions' ? 'instructions' : 'edit'
+}
 </script>
 
 <template>
@@ -271,10 +292,10 @@ function describe(failure: unknown): string {
     </template>
 
     <template #detail>
-      <div v-if="!adding && loaded" class="mx-auto mb-4 max-w-3xl"><HistoryTabs v-model="tab" edit-label="Editar" :extra="[{ id: 'files', label: `Arquivos${loaded.files?.length ? ` (${loaded.files.length})` : ''}` }]" /></div>
-      <ImportIssues v-if="!adding && loaded" class="mx-auto mb-4 max-w-3xl" :issues="loaded.importIssues" :resolve="resolveIssue" />
-      <form v-if="adding || (loaded && tab === 'edit')" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save">
+      <div v-if="adding || loaded" class="mx-auto mb-4 max-w-3xl"><HistoryTabs v-model="tab" :edit-label="info.one.charAt(0).toUpperCase() + info.one.slice(1)" :extra="extraTabs" :history="!adding" /></div>
+      <form v-if="adding || (loaded && (tab === 'edit' || tab === 'instructions'))" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save" @invalid.capture="onInvalid">
         <h2 class="font-mono text-lg font-semibold">{{ adding ? `${g.nova} ${info.one}` : `${kind === 'command' ? '/' : ''}${loaded?.id}` }}</h2>
+        <div v-show="tab === 'edit'" class="flex flex-col gap-3">
         <label class="field">
           Descrição
           <input v-model="form.description" required maxlength="300" class="input" :placeholder="kind === 'command' ? 'Resume um arquivo em 3 linhas' : 'Montar tabelas em markdown'" @blur="slug" />
@@ -294,19 +315,7 @@ function describe(failure: unknown): string {
           </select>
           <small v-for="m in issues.projectId" :key="m" class="error">{{ m }}</small>
         </div>
-
-        <div class="flex flex-col gap-1">
-          <div class="flex gap-1 text-xs">
-            <button type="button" class="btn btn-sm" :class="!preview ? 'btn-secondary' : 'btn-ghost'" @click="preview = false">{{ kind === 'command' ? 'Texto' : 'Markdown' }}</button>
-            <button type="button" class="btn btn-sm" :class="preview ? 'btn-secondary' : 'btn-ghost'" @click="preview = true">Prévia</button>
-          </div>
-          <textarea v-if="!preview" v-model="form.body" required rows="14" class="input font-mono text-[13px] leading-relaxed" :aria-label="info.bodyHint" />
-          <!-- eslint-disable-next-line vue/no-v-html -- renderMarkdown escapa antes de marcar -->
-          <div v-else class="prose-agent min-h-[14rem] rounded-xl border border-zinc-800 p-4 text-sm break-words" v-html="renderMarkdown(form.body)" />
-          <small class="hint">{{ info.bodyHint }}</small>
-          <small v-if="form.body" class="hint">{{ sizeHint(form.body, kind === 'command' ? 'quando usado' : 'quando carregada') }}</small>
-          <small v-for="m in issues.body" :key="m" class="error">{{ m }}</small>
-        </div>
+        <small v-if="issues.body?.length" class="error">O conteúdo tem problema: veja a guia Instruções.</small>
 
         <div class="flex flex-col gap-1.5 rounded-xl border border-zinc-800 p-3">
           <p class="text-sm font-medium text-zinc-200">Specs e ADRs anexadas <span class="text-xs font-normal text-zinc-500">— vão junto quando {{ kind === 'command' ? 'o command é usado' : 'a skill é carregada' }}</span></p>
@@ -333,6 +342,21 @@ function describe(failure: unknown): string {
           <small v-for="m in issues.docIds" :key="m" class="error">{{ m }}</small>
           <small v-for="m in issues.docRefs" :key="m" class="error">{{ m }}</small>
         </div>
+        </div>
+
+        <!-- As instruções: o texto e a prévia, numa guia só deles (o principal fica com descrição, escopo e anexos). -->
+        <div v-show="tab === 'instructions'" class="flex flex-col gap-1">
+          <div class="flex gap-1 text-xs">
+            <button type="button" class="btn btn-sm" :class="!preview ? 'btn-secondary' : 'btn-ghost'" @click="preview = false">{{ kind === 'command' ? 'Texto' : 'Markdown' }}</button>
+            <button type="button" class="btn btn-sm" :class="preview ? 'btn-secondary' : 'btn-ghost'" @click="preview = true">Prévia</button>
+          </div>
+          <textarea v-if="!preview" v-model="form.body" required rows="22" data-tab="instructions" class="input font-mono text-[13px] leading-relaxed" :aria-label="info.bodyHint" />
+          <!-- eslint-disable-next-line vue/no-v-html -- renderMarkdown escapa antes de marcar -->
+          <div v-else class="prose-agent min-h-[14rem] rounded-xl border border-zinc-800 p-4 text-sm break-words" v-html="renderMarkdown(form.body)" />
+          <small class="hint">{{ info.bodyHint }}</small>
+          <small v-if="form.body" class="hint">{{ sizeHint(form.body, kind === 'command' ? 'quando usado' : 'quando carregada') }}</small>
+          <small v-for="m in issues.body" :key="m" class="error">{{ m }}</small>
+        </div>
 
         <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
         <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
@@ -342,6 +366,10 @@ function describe(failure: unknown): string {
           <button v-else type="button" class="btn btn-danger ml-auto" @click="removing = true">Apagar</button>
         </div>
       </form>
+      <section v-else-if="loaded && tab === 'issues'" class="mx-auto flex max-w-3xl flex-col gap-3">
+        <h2 class="font-mono text-lg font-semibold">{{ kind === 'command' ? '/' : '' }}{{ loaded.id }}</h2>
+        <ImportIssues :issues="importIssues" :resolve="resolveIssue" />
+      </section>
       <section v-else-if="loaded && tab === 'files'" class="mx-auto flex max-w-3xl flex-col gap-3">
         <h2 class="font-mono text-lg font-semibold">{{ kind === 'command' ? '/' : '' }}{{ loaded.id }}</h2>
         <ResourceFiles :files="loaded.files ?? []" :where="`${loaded.projectId ? `projects/${loaded.projectId}` : 'global'}/${kind}s/${loaded.id}`" :save="saveFiles" />
