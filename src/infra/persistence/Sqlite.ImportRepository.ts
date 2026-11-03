@@ -209,7 +209,12 @@ export class SqliteImportRepository implements IImportRepository {
 
   get(projectId: string, jobId: string): IImportJobRecord | undefined {
     const row = this.db.prepare(`SELECT ${SCAN_COLUMNS} FROM import_scans WHERE project_id = ? AND id = ? AND archived_at IS NULL`).get(projectId, jobId) as TRow | undefined
-    return row ? toRecord(row) : undefined
+    if (row) return toRecord(row)
+    // ⚖️ O id de uma análise ARQUIVADA (a consolidação) leva à importação que ficou no lugar: a conversa do construtor
+    // e o link antigos guardam o id de antes.
+    const archived = this.db.prepare('SELECT repository FROM import_scans WHERE project_id = ? AND id = ? AND archived_at IS NOT NULL').get(projectId, jobId) as
+      { repository: string } | undefined
+    return archived ? this.latest(projectId, archived.repository) : undefined
   }
 
   latest(projectId: string, repository: string): IImportJobRecord | undefined {
