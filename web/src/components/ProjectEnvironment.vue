@@ -43,7 +43,7 @@ const format = (value: number) => value.toLocaleString('pt-BR')
 
     <div class="flex flex-col gap-2">
       <h3 class="text-sm font-semibold text-zinc-200">Specs sempre presentes</h3>
-      <InitialContextEditor :endpoint="`/projects/${encodeURIComponent(projectId)}/initial-context`" :project-id="projectId" @weight="(tokens) => (specsWeight = tokens)">
+      <InitialContextEditor owner="projects" :owner-id="projectId" :project-id="projectId" @weight="(tokens) => (specsWeight = tokens)">
         <p class="text-sm text-zinc-400">
           As specs marcadas ficam sempre na memória de todo agente do projeto. As demais o agente consulta quando precisa.
         </p>

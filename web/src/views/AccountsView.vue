@@ -1,43 +1,20 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { api, ApiError } from '@/lib/api'
+import { ApiError } from '@/lib/api'
 import { fullTime } from '@/lib/format'
 import type { IPermissionRule } from '@/lib/types'
+import { useResource } from '@/composables/useResource'
+import { type IProjectAccount, type TAccountKind, useAccountsStore } from '@/stores/accounts'
 import { useAuthStore } from '@/stores/auth'
+import { usePermissionsStore } from '@/stores/permissions'
 import { useProjectsStore } from '@/stores/projects'
 
 /**
  * As CONTAS do projeto em uso (só admin): as credenciais que o terminal dos agentes dele recebe — o GitHub da empresa,
  * uma variável secreta. O segredo entra e nunca volta para a tela. Quem usa cada conta: a permissão `Contas` (no
- * projeto ou no agente). As contas não liberam rede: o destino precisa da regra de rede.
+ * projeto ou no agente). As contas não liberam rede: o destino precisa da regra de rede. A lista mora na store.
  */
-type TKind = 'github-app' | 'github-token' | 'gcp-service-account' | 'ssh-ca' | 'ssh-key' | 'secret-env'
-interface IAccount {
-  id: string
-  kind: TKind
-  label: string
-  public: {
-    owner?: string
-    appId?: string
-    installationId?: string
-    repositories?: string[]
-    envName?: string
-    gcpProject?: string
-    clientEmail?: string
-    principals?: string[]
-    validityMinutes?: number
-    hostPatterns?: string[]
-    knownHosts?: string
-    publicKey?: string
-    certificate?: string
-    last4?: string
-  }
-  exposesSecret: boolean
-  updatedAt: string
-  updatedBy?: string
-}
-
-const KINDS: Array<{ kind: TKind; label: string; hint: string }> = [
+const KINDS: Array<{ kind: TAccountKind; label: string; hint: string }> = [
   { kind: 'github-app', label: 'GitHub App', hint: 'Recomendado. O comando recebe um token de 1h, só dos repositórios escolhidos; a chave do App fica no gateway.' },
   { kind: 'github-token', label: 'GitHub token', hint: 'Um token pessoal (PAT). O comando recebe o próprio token.' },
   {
@@ -58,8 +35,14 @@ const auth = useAuthStore()
 const projects = useProjectsStore()
 const project = computed(() => projects.list.find((item) => item.id === projects.current))
 
-const accounts = ref<IAccount[]>([])
-const error = ref<string>()
+const store = useAccountsStore()
+const permissions = usePermissionsStore()
+/** Lê quando a tela abre (só admin, com a lista de projetos). */
+const ready = ref(false)
+const listed = useResource(store.lists, () => (ready.value && project.value ? project.value.id : undefined))
+const accounts = computed(() => listed.data.value ?? [])
+const actionError = ref<string>()
+const error = computed(() => actionError.value ?? (listed.error.value === undefined ? undefined : listed.error.value instanceof Error ? listed.error.value.message : String(listed.error.value)))
 const notice = ref<string>()
 const busy = ref(false)
 const tests = ref<Record<string, { ok: boolean; detail: string }>>({})
@@ -67,22 +50,11 @@ const editing = ref<string | null>(null)
 const form = ref(blank())
 
 function blank() {
-  return { id: '', kind: 'github-app' as TKind, label: '', owner: '', appId: '', installationId: '', repositories: '', envName: '', gcpProject: '', principals: '', validityMinutes: '', hostPatterns: '', knownHosts: '', certificate: '', secret: '' }
+  return { id: '', kind: 'github-app' as TAccountKind, label: '', owner: '', appId: '', installationId: '', repositories: '', envName: '', gcpProject: '', principals: '', validityMinutes: '', hostPatterns: '', knownHosts: '', certificate: '', secret: '' }
 }
 
-const base = computed(() => (project.value ? `/projects/${encodeURIComponent(project.value.id)}/accounts` : ''))
-const kindLabel = (kind: TKind) => KINDS.find((item) => item.kind === kind)?.label ?? kind
+const kindLabel = (kind: TAccountKind) => KINDS.find((item) => item.kind === kind)?.label ?? kind
 const kindHint = computed(() => KINDS.find((item) => item.kind === form.value.kind)?.hint)
-
-async function load() {
-  if (!project.value) return
-  error.value = undefined
-  try {
-    accounts.value = (await api<{ accounts: IAccount[] }>(base.value)).accounts
-  } catch (failure) {
-    error.value = failure instanceof Error ? failure.message : String(failure)
-  }
-}
 
 function startNew() {
   editing.value = ''
@@ -90,7 +62,7 @@ function startNew() {
   notice.value = undefined
 }
 
-function startEdit(account: IAccount) {
+function startEdit(account: IProjectAccount) {
   editing.value = account.id
   form.value = {
     ...blank(),
@@ -115,34 +87,30 @@ function startEdit(account: IAccount) {
 async function save() {
   if (!project.value) return
   busy.value = true
-  error.value = undefined
+  actionError.value = undefined
   try {
     const { id, kind, label, owner, appId, installationId, repositories, envName, gcpProject, principals, validityMinutes, hostPatterns, knownHosts, certificate, secret } = form.value
     const isSsh = kind === 'ssh-ca' || kind === 'ssh-key'
     const list = (value: string) => value.split(/[\s,]+/).filter(Boolean)
     const isGitHub = kind === 'github-app' || kind === 'github-token'
-    await api(`${base.value}/${encodeURIComponent(id.trim())}`, {
-      method: 'PUT',
-      body: {
-        kind,
-        label,
-        public: {
-          ...(isGitHub && owner.trim() ? { owner: owner.trim() } : {}),
-          ...(kind === 'github-app' ? { appId, installationId, repositories: repositories.split(/[\s,]+/).filter(Boolean) } : {}),
-          ...(kind === 'secret-env' ? { envName: envName.trim() } : {}),
-          ...(kind === 'gcp-service-account' && gcpProject.trim() ? { gcpProject: gcpProject.trim() } : {}),
-          ...(isSsh ? { knownHosts, hostPatterns: list(hostPatterns) } : {}),
-          ...(kind === 'ssh-ca' ? { principals: list(principals), ...(validityMinutes.trim() ? { validityMinutes: Number(validityMinutes) } : {}) } : {}),
-          ...(kind === 'ssh-key' && certificate.trim() ? { certificate: certificate.trim() } : {}),
-        },
-        ...(secret.trim() && kind !== 'ssh-ca' ? { secret } : {}),
+    await store.save(project.value.id, id.trim(), {
+      kind,
+      label,
+      public: {
+        ...(isGitHub && owner.trim() ? { owner: owner.trim() } : {}),
+        ...(kind === 'github-app' ? { appId, installationId, repositories: repositories.split(/[\s,]+/).filter(Boolean) } : {}),
+        ...(kind === 'secret-env' ? { envName: envName.trim() } : {}),
+        ...(kind === 'gcp-service-account' && gcpProject.trim() ? { gcpProject: gcpProject.trim() } : {}),
+        ...(isSsh ? { knownHosts, hostPatterns: list(hostPatterns) } : {}),
+        ...(kind === 'ssh-ca' ? { principals: list(principals), ...(validityMinutes.trim() ? { validityMinutes: Number(validityMinutes) } : {}) } : {}),
+        ...(kind === 'ssh-key' && certificate.trim() ? { certificate: certificate.trim() } : {}),
       },
+      ...(secret.trim() && kind !== 'ssh-ca' ? { secret } : {}),
     })
     notice.value = `Conta ${id} salva. Para um agente usar, libere "${id}" em Contas, nas Permissões.`
     editing.value = null
-    await load()
   } catch (failure) {
-    error.value =
+    actionError.value =
       failure instanceof ApiError && Array.isArray(failure.details)
         ? (failure.details as Array<{ message: string }>).map((item) => item.message).join('; ')
         : failure instanceof Error
@@ -153,23 +121,25 @@ async function save() {
   }
 }
 
-async function remove(account: IAccount) {
+async function remove(account: IProjectAccount) {
   if (!confirm(`Apagar a conta ${account.id}? Os agentes deixam de recebê-la na hora.`)) return
-  await api(`${base.value}/${encodeURIComponent(account.id)}`, { method: 'DELETE' }).catch((failure) => (error.value = String(failure)))
-  await load()
+  if (!project.value) return
+  actionError.value = undefined
+  await store.remove(project.value.id, account.id).catch((failure) => (actionError.value = String(failure)))
 }
 
-async function test(account: IAccount) {
+async function test(account: IProjectAccount) {
+  if (!project.value) return
   tests.value = { ...tests.value, [account.id]: { ok: true, detail: 'testando…' } }
   try {
-    tests.value = { ...tests.value, [account.id]: await api<{ ok: boolean; detail: string }>(`${base.value}/${encodeURIComponent(account.id)}/test`, { method: 'POST' }) }
+    tests.value = { ...tests.value, [account.id]: await store.test(project.value.id, account.id) }
   } catch (failure) {
     tests.value = { ...tests.value, [account.id]: { ok: false, detail: failure instanceof Error ? failure.message : String(failure) } }
   }
 }
 
 /** As regras que a conta pede: a de uso (`Contas`) e a de rede do GitHub. */
-function suggested(account: IAccount): IPermissionRule[] {
+function suggested(account: IProjectAccount): IPermissionRule[] {
   const rules: IPermissionRule[] = [{ category: 'account', pattern: account.id, decision: 'allow' }]
   if (account.kind === 'github-app' || account.kind === 'github-token')
     rules.push({ category: 'network', pattern: 'github.com:443', decision: 'allow' }, { category: 'network', pattern: 'api.github.com:443', decision: 'allow' })
@@ -190,29 +160,26 @@ function knownHostNames(knownHosts = ''): string[] {
   return [...new Set(names)]
 }
 
-async function addRules(account: IAccount) {
+async function addRules(account: IProjectAccount) {
   if (!project.value) return
-  const path = `/projects/${encodeURIComponent(project.value.id)}/permissions`
   try {
-    const current = (await api<{ rules: IPermissionRule[] }>(path)).rules
-    const missing = suggested(account).filter((rule) => !current.some((item) => item.category === rule.category && item.pattern === rule.pattern))
-    if (missing.length) await api(path, { method: 'PUT', body: { rules: [...current, ...missing] } })
-    notice.value = missing.length ? `${missing.length} regra(s) adicionada(s) às Permissões do projeto.` : 'As regras já estavam nas Permissões do projeto.'
+    const added = await permissions.addMissing(project.value.id, suggested(account))
+    notice.value = added ? `${added} regra(s) adicionada(s) às Permissões do projeto.` : 'As regras já estavam nas Permissões do projeto.'
   } catch (failure) {
-    error.value = failure instanceof Error ? failure.message : String(failure)
+    actionError.value = failure instanceof Error ? failure.message : String(failure)
   }
 }
 
 onMounted(async () => {
   if (!auth.isAdmin) return
   if (!projects.loaded) await projects.load().catch(() => undefined)
-  await load()
+  ready.value = true
 })
 watch(
   () => projects.current,
   () => {
     editing.value = null
-    if (auth.isAdmin) void load()
+    actionError.value = undefined
   },
 )
 </script>

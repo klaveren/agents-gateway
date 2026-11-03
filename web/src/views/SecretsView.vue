@@ -1,54 +1,41 @@
 <script setup lang="ts">
-  import { onMounted, ref } from 'vue'
-  import { api, ApiError } from '@/lib/api'
+  import { computed, ref, watch } from 'vue'
+  import { ApiError } from '@/lib/api'
   import { fullTime } from '@/lib/format'
+  import { useResource } from '@/composables/useResource'
   import { useAuthStore } from '@/stores/auth'
+  import { type ISecretHit, type ISecretValue, useSecretsStore } from '@/stores/secrets'
 
   /**
    * A MÁSCARA DE SEGREDOS (só admin): o que sai das ferramentas vai ao modelo, ao histórico e à tela, e passa antes por
    * três camadas — valor conhecido, forma (nome que diz segredo + valor opaco) e formato de token. Aqui se cadastram os
-   * valores a mascarar (o valor entra e nunca volta), os nomes de campo extras, e se vê o que a máscara pegou.
+   * valores a mascarar (o valor entra e nunca volta), os nomes de campo extras, e se vê o que a máscara pegou. O que o
+   * servidor devolve mora na store.
    */
-  interface IValue {
-    id: string
-    label: string
-    last4?: string
-    updatedAt: string
-    updatedBy?: string
-  }
-  interface IHit {
-    at: string
-    layer: 'value' | 'shape' | 'format'
-    label: string
-    field?: string
-    length: number
-  }
-
-  const LAYER: Record<IHit['layer'], string> = { value: 'valor conhecido', shape: 'forma', format: 'formato' }
+  const LAYER: Record<ISecretHit['layer'], string> = { value: 'valor conhecido', shape: 'forma', format: 'formato' }
 
   const auth = useAuthStore()
-  const values = ref<IValue[]>([])
-  const hits = ref<IHit[]>([])
+  const store = useSecretsStore()
+  const { data, error: loadError } = useResource(store.mask, () => (auth.isAdmin ? '' : undefined))
+  const values = computed(() => data.value?.values ?? [])
+  const hits = computed(() => data.value?.hits ?? [])
+  /** Os nomes como a pessoa edita (um por linha); voltam ao salvo quando ele muda. */
   const secretNames = ref('')
   const safeNames = ref('')
+  watch(
+    () => data.value?.names,
+    (names) => {
+      secretNames.value = names?.secret.join('\n') ?? ''
+      safeNames.value = names?.safe.join('\n') ?? ''
+    },
+    { immediate: true },
+  )
   const draft = ref({ id: '', label: '', value: '' })
   const sample = ref('')
   const masked = ref<string>()
-  const error = ref<string>()
+  const actionError = ref<string>()
+  const error = computed(() => actionError.value ?? (loadError.value === undefined ? undefined : messageOf(loadError.value)))
   const notice = ref<string>()
-
-  async function load() {
-    error.value = undefined
-    try {
-      const result = await api<{ values: IValue[]; names: { secret: string[]; safe: string[] }; hits: IHit[] }>('/secret-mask')
-      values.value = result.values
-      hits.value = result.hits
-      secretNames.value = result.names.secret.join('\n')
-      safeNames.value = result.names.safe.join('\n')
-    } catch (failure) {
-      error.value = failure instanceof Error ? failure.message : String(failure)
-    }
-  }
 
   const messageOf = (failure: unknown) =>
     failure instanceof ApiError && Array.isArray(failure.details)
@@ -58,21 +45,20 @@
         : String(failure)
 
   async function addValue() {
-    error.value = notice.value = undefined
+    actionError.value = notice.value = undefined
     try {
-      await api(`/secret-mask/values/${encodeURIComponent(draft.value.id.trim())}`, { method: 'PUT', body: { label: draft.value.label, value: draft.value.value } })
+      await store.saveValue(draft.value.id.trim(), draft.value.label, draft.value.value)
       notice.value = `"${draft.value.label}" passa a ser mascarado em tudo o que as conversas mostram e gravam.`
       draft.value = { id: '', label: '', value: '' }
-      await load()
     } catch (failure) {
-      error.value = messageOf(failure)
+      actionError.value = messageOf(failure)
     }
   }
 
-  async function removeValue(value: IValue) {
+  async function removeValue(value: ISecretValue) {
     if (!confirm(`Parar de mascarar "${value.label}"?`)) return
-    await api(`/secret-mask/values/${encodeURIComponent(value.id)}`, { method: 'DELETE' }).catch((failure) => (error.value = messageOf(failure)))
-    await load()
+    actionError.value = undefined
+    await store.removeValue(value.id).catch((failure) => (actionError.value = messageOf(failure)))
   }
 
   const lines = (text: string) =>
@@ -82,23 +68,18 @@
       .filter(Boolean)
 
   async function saveNames() {
-    error.value = notice.value = undefined
+    actionError.value = notice.value = undefined
     try {
-      await api('/secret-mask/names', { method: 'PUT', body: { secret: lines(secretNames.value), safe: lines(safeNames.value) } })
+      await store.saveNames({ secret: lines(secretNames.value), safe: lines(safeNames.value) })
       notice.value = 'Nomes salvos. Valem no próximo comando.'
     } catch (failure) {
-      error.value = messageOf(failure)
+      actionError.value = messageOf(failure)
     }
   }
 
   async function test() {
-    masked.value = (
-      await api<{ masked: string }>('/secret-mask/test', { method: 'POST', body: { text: sample.value } }).catch((failure) => ({ masked: messageOf(failure) }))
-    ).masked
-    await load()
+    masked.value = await store.test(sample.value).catch((failure: unknown) => messageOf(failure))
   }
-
-  onMounted(() => auth.isAdmin && load())
 </script>
 
 <template>

@@ -1,5 +1,6 @@
-import { ref, watch, type Ref } from 'vue'
-import { api } from './api'
+import { computed, type Ref } from 'vue'
+import { useResource } from '@/composables/useResource'
+import { useAgentCatalogStore } from '@/stores/agentCatalog'
 
 /** O que o `/` oferece: as skills e os commands do agente e os documentos da conversa (`/spec:<id>` anexa o inteiro). */
 export type TSlashKind = 'skill' | 'command' | 'spec' | 'adr' | 'knowledge'
@@ -81,20 +82,11 @@ export function commandSuggestions(text: string, commands: readonly ICommandHint
 }
 
 /**
- * O que o `/` do agente oferece, buscado quando o agente ou o projeto da conversa muda (os documentos são os globais e
- * os do projeto dela). Sem agente, nada; falhar não atrapalha a conversa.
+ * O que o `/` do agente oferece no projeto da conversa (os documentos são os globais e os do projeto dela), da store:
+ * as telas abertas com o mesmo agente e projeto leem a mesma cópia. Sem agente, nada; falhar não atrapalha a conversa.
  */
 export function useAgentCommands(agentId: Ref<string | undefined>, project?: Ref<string | undefined>): Ref<ICommandHint[]> {
-  const commands = ref<ICommandHint[]>([])
-  watch(
-    () => [agentId.value, project?.value] as const,
-    async ([id, scope]) => {
-      commands.value = []
-      if (!id) return
-      const list = await api<ICommandHint[]>(`/agents/${encodeURIComponent(id)}/commands`, { query: scope ? { project: scope } : {} }).catch(() => [])
-      if (agentId.value === id && project?.value === scope) commands.value = list
-    },
-    { immediate: true },
-  )
-  return commands
+  const catalog = useAgentCatalogStore()
+  const { data } = useResource(catalog.commands, () => (agentId.value ? catalog.commandsKey(agentId.value, project?.value) : undefined))
+  return computed(() => data.value ?? [])
 }

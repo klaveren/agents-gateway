@@ -1,26 +1,43 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { api } from '@/lib/api'
-import { CONTEXT_WARN_TOKENS, contextWeight, GLOBAL_SCOPE } from '@/lib/guidance'
-import type { IInitialContext, IProjectDoc } from '@/lib/types'
+import { CONTEXT_WARN_TOKENS, contextWeight } from '@/lib/guidance'
+import type { IProjectDoc } from '@/lib/types'
+import { useScopedDocs } from '@/composables/useCatalogLists'
+import { useResource } from '@/composables/useResource'
+import { type TContextOwner, useAgentCatalogStore } from '@/stores/agentCatalog'
 
 /**
  * O editor de um CONTEXTO INICIAL — o do projeto ou o de um agente: as specs que vão INTEIRAS no prompt, na ordem
- * marcada. `endpoint` é a rota (`/projects/:id/initial-context`, `/agents/:id/initial-context`); `projectId`, de que
- * projeto vêm as specs além das globais (ausente = só as globais); `baseTokens`, o que já entra antes (o do projeto,
- * na guia do agente), para o peso mostrar o total da conversa.
+ * marcada. `owner` + `ownerId` dizem de quem é (`projects`/`agents`, a rota `/<owner>/:id/initial-context`);
+ * `projectId`, de que projeto vêm as specs além das globais (ausente = só as globais); `baseTokens`, o que já entra
+ * antes (o do projeto, na guia do agente), para o peso mostrar o total da conversa. As specs e o contexto moram nas
+ * stores: o Ambiente e a guia do agente leem a mesma cópia.
  */
-const props = defineProps<{ endpoint: string; projectId?: string; baseTokens?: number }>()
+const props = defineProps<{ owner: TContextOwner; ownerId: string; projectId?: string; baseTokens?: number }>()
 /** O peso das marcadas (o que já está na lista, salvo ou não): quem embute mostra o total da conversa. */
 const emit = defineEmits<{ weight: [tokens: number] }>()
+const catalog = useAgentCatalogStore()
 
-const available = ref<IProjectDoc[]>([])
+const specs = useScopedDocs(() => props.projectId ?? null, 'spec')
+const context = useResource(catalog.initialContexts, () => catalog.contextKey(props.owner, props.ownerId))
+const available = specs.list
+const saved = computed(() => context.data.value?.docs.map((doc) => doc.id) ?? [])
 const selected = ref<string[]>([])
-const saved = ref<string[]>([])
-const loading = ref(false)
+const loading = computed(() => specs.loading.value || context.loading.value)
 const busy = ref(false)
-const error = ref<string>()
+const saveError = ref<unknown>()
+const error = computed(() => {
+  const failure = saveError.value ?? context.error.value ?? specs.error.value
+  return failure === undefined ? undefined : describe(failure)
+})
 const note = ref<string>()
+
+// O salvo chegou (ou mudou): a marcação volta a ele.
+watch(
+  () => context.data.value,
+  () => (selected.value = [...saved.value]),
+  { immediate: true },
+)
 
 const byId = computed(() => new Map(available.value.map((doc) => [doc.id, doc])))
 const weight = computed(() => contextWeight(selected.value, (id) => byId.value.get(id)?.tokens))
@@ -33,28 +50,6 @@ const dirty = computed(() => selected.value.join() !== saved.value.join())
 watch(weight, (value) => emit('weight', value.total), { immediate: true })
 /** As marcadas primeiro, na ordem do prompt; depois as demais, pelo título. */
 const ordered = computed(() => [...selected.value.map((id) => byId.value.get(id)).filter((doc): doc is IProjectDoc => !!doc), ...available.value.filter((doc) => !selected.value.includes(doc.id))])
-
-watch(() => [props.endpoint, props.projectId], load, { immediate: true })
-
-async function load() {
-  loading.value = true
-  error.value = undefined
-  note.value = undefined
-  try {
-    const [globals, local, context] = await Promise.all([
-      api<IProjectDoc[]>('/docs', { query: { project: GLOBAL_SCOPE, kind: 'spec' } }),
-      props.projectId ? api<IProjectDoc[]>('/docs', { query: { project: props.projectId, kind: 'spec' } }) : Promise.resolve([]),
-      api<IInitialContext>(props.endpoint),
-    ])
-    available.value = [...local, ...globals]
-    saved.value = context.docs.map((doc) => doc.id)
-    selected.value = [...saved.value]
-  } catch (failure) {
-    error.value = describe(failure)
-  } finally {
-    loading.value = false
-  }
-}
 
 function toggle(id: string) {
   selected.value = selected.value.includes(id) ? selected.value.filter((item) => item !== id) : [...selected.value, id]
@@ -71,15 +66,13 @@ function move(id: string, step: -1 | 1) {
 
 async function save() {
   busy.value = true
-  error.value = undefined
+  saveError.value = undefined
   note.value = undefined
   try {
-    const result = await api<IInitialContext>(props.endpoint, { method: 'PUT', body: { docIds: selected.value } })
-    saved.value = result.docs.map((doc) => doc.id)
-    selected.value = [...saved.value]
+    await catalog.saveContext(props.owner, props.ownerId, selected.value)
     note.value = 'Salvo. Vale para as próximas conversas.'
   } catch (failure) {
-    error.value = describe(failure)
+    saveError.value = failure
   } finally {
     busy.value = false
   }

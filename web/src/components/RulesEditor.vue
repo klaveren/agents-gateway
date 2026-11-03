@@ -2,25 +2,32 @@
 import { computed, ref, watch } from 'vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import Icon from '@/components/Icon.vue'
-import { api, ApiError } from '@/lib/api'
+import { ApiError } from '@/lib/api'
 import { sizeHint } from '@/lib/format'
 import { pendingDraft } from '@/lib/builder'
-import { GLOBAL_SCOPE, rulesTokens, scopeToProjectId } from '@/lib/guidance'
+import { GLOBAL_SCOPE, rulesTokens } from '@/lib/guidance'
 import type { IRule } from '@/lib/types'
+import { useResource } from '@/composables/useResource'
+import { useRulesStore } from '@/stores/rules'
 
 /**
  * As RULES de um escopo: as globais ou as de um projeto. Uma por registro, numeradas como entram no prompt.
  * `showGlobals`: no projeto, as globais aparecem antes, só para ler — é a ordem da conversa. `readonly`: só a lista
  * (o Ambiente mostra; quem edita é a página Rules). Emite `weight`: os tokens das rules ligadas que toda conversa do
- * escopo leva (as globais inclusive, quando mostradas).
+ * escopo leva (as globais inclusive, quando mostradas). As listas moram na store: a página Rules e o Ambiente leem a
+ * mesma cópia.
  */
 const props = defineProps<{ scope: string; showGlobals?: boolean; readonly?: boolean }>()
 const emit = defineEmits<{ weight: [tokens: number] }>()
+const store = useRulesStore()
 
-const rules = ref<IRule[]>([])
-const globals = ref<IRule[]>([])
-const loading = ref(false)
-const error = ref<string>()
+const own = useResource(store.lists, () => props.scope)
+const global = useResource(store.lists, () => (props.showGlobals && props.scope !== GLOBAL_SCOPE ? GLOBAL_SCOPE : undefined))
+const rules = computed(() => own.data.value ?? [])
+const globals = computed(() => (props.showGlobals && props.scope !== GLOBAL_SCOPE ? (global.data.value ?? []) : []))
+const loading = computed(() => own.loading.value || global.loading.value)
+const actionError = ref<string>()
+const error = computed(() => actionError.value ?? describeLoad(own.error.value ?? global.error.value))
 const draft = ref({ title: '', body: '' })
 const draftIssues = ref<Record<string, string[]>>({})
 const draftNote = ref<string>()
@@ -33,35 +40,24 @@ const busy = ref(false)
 const numberOf = computed(() => {
   const numbers = new Map<string, number>()
   let next = 1
-  for (const rule of [...(props.showGlobals ? globals.value : []), ...rules.value]) if (rule.enabled) numbers.set(rule.id, next++)
+  for (const rule of [...globals.value, ...rules.value]) if (rule.enabled) numbers.set(rule.id, next++)
   return numbers
 })
 
-watch(() => props.scope, load, { immediate: true })
 watch(
-  () => [rules.value, globals.value] as const,
-  () => emit('weight', rulesTokens([...(props.showGlobals ? globals.value : []), ...rules.value])),
-  { deep: true },
+  () => props.scope,
+  () => {
+    actionError.value = undefined
+    editing.value = undefined
+    applyDraft()
+  },
+  { immediate: true },
 )
-
-async function load() {
-  loading.value = true
-  error.value = undefined
-  editing.value = undefined
-  applyDraft()
-  try {
-    const [own, global] = await Promise.all([
-      api<IRule[]>('/rules', { query: { project: props.scope } }),
-      props.showGlobals && props.scope !== GLOBAL_SCOPE ? api<IRule[]>('/rules', { query: { project: GLOBAL_SCOPE } }) : Promise.resolve([]),
-    ])
-    rules.value = own
-    globals.value = global
-  } catch (failure) {
-    error.value = describe(failure)
-  } finally {
-    loading.value = false
-  }
-}
+watch(
+  () => rulesTokens([...globals.value, ...rules.value]),
+  (tokens) => emit('weight', tokens),
+  { immediate: true },
+)
 
 /** O rascunho do construtor ("Abrir no editor"): vai para o formulário de rule nova deste escopo, SEM salvar. */
 function applyDraft() {
@@ -74,12 +70,11 @@ function applyDraft() {
 
 async function run(work: () => Promise<unknown>) {
   busy.value = true
-  error.value = undefined
+  actionError.value = undefined
   try {
     await work()
-    await load()
   } catch (failure) {
-    error.value = describe(failure)
+    actionError.value = describe(failure)
   } finally {
     busy.value = false
   }
@@ -88,15 +83,14 @@ async function run(work: () => Promise<unknown>) {
 async function add() {
   draftIssues.value = {}
   busy.value = true
-  error.value = undefined
+  actionError.value = undefined
   try {
-    await api('/rules', { method: 'POST', body: { ...draft.value, projectId: scopeToProjectId(props.scope) } })
+    await store.create(props.scope, draft.value)
     draft.value = { title: '', body: '' }
     draftNote.value = undefined
-    await load()
   } catch (failure) {
     if (failure instanceof ApiError && failure.status === 422) draftIssues.value = failure.fieldIssues
-    error.value = describe(failure)
+    actionError.value = describe(failure)
   } finally {
     busy.value = false
   }
@@ -109,22 +103,24 @@ function startEdit(rule: IRule) {
 
 const saveEdit = (rule: IRule) =>
   run(async () => {
-    await api(`/rules/${encodeURIComponent(rule.id)}`, { method: 'PUT', body: edit.value })
+    await store.update(rule, edit.value)
     editing.value = undefined
   })
-const toggle = (rule: IRule) => run(() => api(`/rules/${encodeURIComponent(rule.id)}`, { method: 'PUT', body: { enabled: !rule.enabled } }))
-const move = (rule: IRule, direction: 'up' | 'down') => run(() => api(`/rules/${encodeURIComponent(rule.id)}/move`, { method: 'POST', body: { direction } }))
+const toggle = (rule: IRule) => run(() => store.update(rule, { enabled: !rule.enabled }))
+const move = (rule: IRule, direction: 'up' | 'down') => run(() => store.move(rule, direction))
 
 async function confirmRemove() {
   const target = removing.value
   if (!target) return
-  await run(() => api(`/rules/${encodeURIComponent(target.id)}`, { method: 'DELETE' }))
+  await run(() => store.remove(target))
   removing.value = undefined
 }
 
 function describe(failure: unknown): string {
   return failure instanceof Error ? failure.message : String(failure)
 }
+
+const describeLoad = (failure: unknown) => (failure === undefined ? undefined : describe(failure))
 </script>
 
 <template>

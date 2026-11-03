@@ -1,39 +1,38 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { api } from '@/lib/api'
+import { computed, ref } from 'vue'
 import { footprintShares } from '@/lib/footprint'
-import type { IAgentFootprint } from '@/lib/types'
+import { useResource } from '@/composables/useResource'
+import { useAgentCatalogStore } from '@/stores/agentCatalog'
 import { useProjectsStore } from '@/stores/projects'
 
 /**
  * O TAMANHO do agente: quantos tokens ele carrega antes da primeira mensagem, parte a parte — o que se paga em toda
  * chamada ao modelo. ⚖️ Medido no servidor, com as mesmas peças da conversa, sobre o que está SALVO. Um agente global
- * muda com o projeto da conversa (as rules e as specs são do projeto): aí se escolhe o projeto.
+ * muda com o projeto da conversa (as rules e as specs são do projeto): aí se escolhe o projeto. A medida mora na store
+ * (a mesma do medidor do prompt no CLI); "Atualizar" mede de novo.
  */
 const props = defineProps<{ agentId: string; projectId?: string }>()
 const projects = useProjectsStore()
+const catalog = useAgentCatalogStore()
 
 const project = ref<string>(props.projectId ?? projects.current ?? '')
-const result = ref<IAgentFootprint>()
-const loading = ref(false)
-const error = ref<string>()
+const measure = useResource(catalog.footprints, () => catalog.footprintKey(props.agentId, !props.projectId && project.value ? project.value : undefined))
+const result = measure.data
+const refreshing = ref(false)
+const loading = computed(() => measure.loading.value || refreshing.value)
+const error = computed(() => {
+  const failure = measure.error.value
+  return failure === undefined ? undefined : failure instanceof Error ? failure.message : String(failure)
+})
 const open = ref<Set<string>>(new Set())
 
 const shares = computed(() => footprintShares(result.value?.sections ?? []))
 const unmeasured = computed(() => shares.value.filter((section) => section.tokens === null))
 
-watch(() => [props.agentId, project.value], load, { immediate: true })
-
 async function load() {
-  loading.value = true
-  error.value = undefined
-  try {
-    result.value = await api<IAgentFootprint>(`/agents/${encodeURIComponent(props.agentId)}/footprint`, { query: !props.projectId && project.value ? { project: project.value } : {} })
-  } catch (failure) {
-    error.value = failure instanceof Error ? failure.message : String(failure)
-  } finally {
-    loading.value = false
-  }
+  refreshing.value = true
+  await measure.refresh().catch(() => undefined)
+  refreshing.value = false
 }
 
 function toggle(key: string) {

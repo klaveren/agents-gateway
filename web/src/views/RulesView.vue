@@ -6,12 +6,12 @@ import HistoryPanel from '@/components/HistoryPanel.vue'
 import HistoryTabs from '@/components/HistoryTabs.vue'
 import RulesEditor from '@/components/RulesEditor.vue'
 import { pendingDraft } from '@/lib/builder'
-import { api } from '@/lib/api'
 import { scopeHistory } from '@/lib/catalogHistory'
 import { GLOBAL_SCOPE, scopeLabel } from '@/lib/guidance'
 import type { IRule } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectsStore } from '@/stores/projects'
+import { useRulesStore } from '@/stores/rules'
 
 /**
  * As RULES (só admin): as regras do ambiente que todo agente respeita, uma por registro ("Rule 1", "Rule 2"…).
@@ -21,6 +21,7 @@ import { useProjectsStore } from '@/stores/projects'
 const route = useRoute()
 const auth = useAuthStore()
 const projects = useProjectsStore()
+const rules = useRulesStore()
 
 // O rascunho do construtor ("Abrir no editor") abre no escopo dele; o link do histórico (`?escopo=&rule=#historico`), no da rule.
 const linked = typeof route.query.escopo === 'string' ? route.query.escopo : undefined
@@ -29,8 +30,8 @@ const scopes = computed(() => [{ id: GLOBAL_SCOPE, name: 'Global — todos os pr
 const label = computed(() => scopeLabel(scope.value, projects.list))
 
 /**
- * O HISTÓRICO das rules do escopo, uma por vez: as de hoje e as apagadas que aparecem nas revisões recentes do escopo
- * (para poder trazer uma de volta).
+ * O HISTÓRICO das rules do escopo, uma por vez: as de hoje (da store, a mesma lista do editor) e as apagadas que
+ * aparecem nas revisões recentes do escopo (para poder trazer uma de volta; as revisões são lidas na hora).
  */
 const tab = ref<'edit' | 'history'>(route.hash === '#historico' ? 'history' : 'edit')
 const historyRule = ref<string>(typeof route.query.rule === 'string' ? route.query.rule : '')
@@ -38,7 +39,7 @@ const ruleOptions = ref<Array<{ id: string; label: string }>>([])
 
 async function loadRuleOptions() {
   const [current, recent] = await Promise.all([
-    api<IRule[]>('/rules', { query: { project: scope.value } }).catch(() => []),
+    rules.lists.ensure(scope.value).catch((): IRule[] => []),
     scopeHistory(scope.value, 1, 100).catch(() => undefined),
   ])
   const options = current.map((rule) => ({ id: rule.id, label: rule.title }))
@@ -50,6 +51,12 @@ async function loadRuleOptions() {
   }
   ruleOptions.value = options
   if (!options.some((option) => option.id === historyRule.value)) historyRule.value = options[0]?.id ?? ''
+}
+
+/** Restaurou uma versão: as listas da store e as opções do histórico relidas. */
+async function restored() {
+  await rules.restored()
+  await loadRuleOptions()
 }
 watch(
   () => [tab.value, scope.value] as const,
@@ -100,7 +107,7 @@ watch(
               <option v-for="option in ruleOptions" :key="option.id" :value="option.id">{{ option.label }}</option>
             </select>
           </label>
-          <HistoryPanel v-if="historyRule" kind="rule" :id="historyRule" @restored="loadRuleOptions" />
+          <HistoryPanel v-if="historyRule" kind="rule" :id="historyRule" @restored="restored" />
         </template>
       </template>
     </section>
