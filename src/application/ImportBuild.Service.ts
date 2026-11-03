@@ -20,6 +20,7 @@ import { TProtocolKind } from '@domain/models/Protocol.Model'
 import { IImportJobRecord, IImportRepository } from '@domain/ports/ImportRepository.Port'
 import { IRepoEntry, IRepoText, TRepoRefusal } from '@domain/ports/FormatDetector.Port'
 import { ignoreIssues, ignoreMatcher, normalizeIgnore, repositoryExclusion } from '@domain/Import.Ignore'
+import { analysedScope, IAgenticScope, normalizeScope, scopeMatcher } from '@domain/Import.Scope'
 import { isFileSource, textSources } from '@domain/Import.Files'
 
 /**
@@ -66,8 +67,6 @@ export interface IImportConversationInput {
  * fora), sem o que `exclude` tira, com o texto MASCARADO. Recusa = o motivo (`TRepoRefusal`).
  */
 export interface IImportRepositoryFiles {
-  /** As pastas do primeiro nível. */
-  top(projectId: string, repository: string, exclude: (path: string) => boolean): string[]
   /** Os arquivos abaixo de `under` (a raiz por padrão). */
   list(projectId: string, repository: string, under: string | undefined, exclude: (path: string) => boolean): IRepoEntry[] | TRepoRefusal
   /** Um arquivo de texto. */
@@ -80,6 +79,8 @@ export interface IImportBuildDeps {
   repositoryFiles?: IImportRepositoryFiles
   /** O ignorar guardado no projeto (o mesmo da varredura): a navegação também não mostra. */
   projectIgnore?: (projectId: string) => readonly string[]
+  /** O ambiente agêntico guardado no projeto (o mesmo da varredura): a navegação fica nele. Ausente: os lugares padrão. */
+  projectScope?: (projectId: string) => IAgenticScope
   /** ⛔ Lê um arquivo do repositório DESTE projeto, contido e mascarado. Ausente o arquivo (ou fora): `undefined`. */
   readSource: (projectId: string, repository: string, path: string) => IImportSourceFile | undefined
   /** Abre a conversa com o construtor e devolve o id dela. Ausente: não há como abrir (`unavailable`). */
@@ -102,14 +103,21 @@ const REASON_MAX = 1_000
 const DECIDED_MAX = 12
 /** Quantos arquivos `list_repository_files` mostra numa chamada (o resto: estreite com path ou pattern). */
 export const REPOSITORY_LIST_MAX = 300
-/** Quantas pastas do primeiro nível o resumo mostra. */
-const TOP_MAX = 30
+/** Quantos lugares do ambiente o resumo mostra. */
+const PLACES_MAX = 30
 /** Os formatos que a varredura reconhece, como a pessoa os vê no repositório. */
-const FORMAT_LABELS: Readonly<Record<string, string>> = { 'agents-dir': '.agents/', claude: '.claude/', opencode: 'opencode', 'agents-md': 'AGENTS.md' }
+const FORMAT_LABELS: Readonly<Record<string, string>> = {
+  'agents-dir': '.agents/',
+  claude: '.claude/',
+  opencode: 'opencode',
+  'agents-md': 'AGENTS.md',
+  'agentic-tools': 'other tools (Cursor, Copilot, Gemini…)',
+}
 /** O que dizer de cada recusa da navegação. */
-const REFUSALS: Readonly<Record<TRepoRefusal, { code: ImportBuildError['code']; text: string }>> = {
+const REFUSALS: Readonly<Record<TRepoRefusal | 'out_of_scope', { code: ImportBuildError['code']; text: string }>> = {
   outside: { code: 'invalid', text: 'outside the repository (no "..", no absolute path, no link leaving it)' },
   excluded: { code: 'invalid', text: 'excluded (credentials, .env*, .git, or the project ignore): it is never listed nor read' },
+  out_of_scope: { code: 'invalid', text: 'outside the agentic environment of this project and not cited by an item of this import: it is never read' },
   not_found: { code: 'not_found', text: 'not found in the repository' },
   binary: { code: 'invalid', text: 'binary file: only text files are read' },
   too_large: { code: 'invalid', text: 'file too large to read (over 2 MB)' },
@@ -427,28 +435,19 @@ export class ImportBuildService {
     return released
   }
 
-  /** O resumo do repositório no topo de `list_import_items`: as pastas, os formatos e o que a importação achou, por tipo. */
+  /** O resumo do repositório no topo de `list_import_items`: o ambiente achado, os formatos e o que a importação achou, por tipo. */
   private repositorySummary(job: IImportJobRecord): string[] {
-    const { formats, totals } = job.inventory
-    let top: string[] = []
-    try {
-      top = this.deps.repositoryFiles?.top(job.projectId, job.repository, this.exclusion(job)) ?? []
-    } catch {
-      // O repositório sumiu do projeto: o resumo fica sem as pastas.
-    }
-    const folders = top.length
-      ? `folders ${top
-          .slice(0, TOP_MAX)
-          .map((name) => `${name}/`)
-          .join(', ')}${top.length > TOP_MAX ? `, … (${top.length})` : ''}`
-      : ''
-    const found = formats.length ? `formats ${formats.map((id) => FORMAT_LABELS[id] ?? id).join(', ')}` : ''
+    const { formats, totals, scope } = job.inventory
+    const found = (scope?.places ?? []).filter((place) => place.enabled && place.found).map((place) => place.place)
+    found.push(...(scope?.extra ?? []).filter((one) => one.files > 0).map((one) => one.pattern))
+    const folders = found.length ? `agentic environment ${found.slice(0, PLACES_MAX).join(', ')}${found.length > PLACES_MAX ? `, … (${found.length})` : ''}` : ''
+    const known = formats.length ? `formats ${formats.map((id) => FORMAT_LABELS[id] ?? id).join(', ')}` : ''
     const kinds = Object.entries(totals.byKind)
       .filter(([, count]) => !!count)
       .map(([kind, count]) => `${kind} ${count}`)
       .join(', ')
     const scanned = `${totals.files} file(s) scanned, ${totals.items} item(s)${kinds ? ` (${kinds})` : ''}`
-    return [`Repository: ${[folders, found, scanned].filter(Boolean).join(' · ')}.`]
+    return [`Repository: ${[folders, known, scanned].filter(Boolean).join(' · ')}.`]
   }
 
   /** ⛔ O que a navegação nunca mostra: os excluídos fixos, o ignorar do projeto (o de agora) e o da análise. */
@@ -458,12 +457,34 @@ export class ImportBuildService {
     return repositoryExclusion([...project, ...scanned])
   }
 
+  /**
+   * ⛔ O AMBIENTE da navegação: o do projeto (o de agora) E o da análise do trabalho — os dois precisam deixar (o admin
+   * que estreita o ambiente estreita também a conversa já aberta).
+   */
+  private scope(job: IImportJobRecord): (path: string) => boolean {
+    const current = scopeMatcher(normalizeScope(this.deps.projectScope?.(job.projectId)))
+    if (!job.inventory.scope) return current
+    const analysed = scopeMatcher(analysedScope(job.inventory.scope))
+    return (path) => current(path) && analysed(path)
+  }
+
+  /** ⛔ O que os itens do trabalho trazem ou citam (fontes e referências, fora os que saíram da fonte): lê-se mesmo fora do ambiente. */
+  private cited(job: IImportJobRecord): Set<string> {
+    const paths = new Set<string>()
+    for (const entry of this.deps.repository.items(job.id)) {
+      if (entry.goneAt) continue
+      for (const source of entry.item.sources) paths.add(source.path)
+      for (const ref of entry.item.refs) paths.add(ref.path)
+    }
+    return paths
+  }
+
   private files(): IImportRepositoryFiles {
     if (!this.deps.repositoryFiles) throw new ImportBuildError('unavailable', 'the repository cannot be browsed on this gateway')
     return this.deps.repositoryFiles
   }
 
-  private refuse(refusal: TRepoRefusal, path: string, field: string): never {
+  private refuse(refusal: TRepoRefusal | 'out_of_scope', path: string, field: string): never {
     const { code, text } = REFUSALS[refusal]
     throw new ImportBuildError(code, `${path || '(root)'}: ${text}`, field)
   }
@@ -483,13 +504,15 @@ export class ImportBuildService {
     }
     const listed = this.files().list(job.projectId, job.repository, options.path, this.exclusion(job))
     if (typeof listed === 'string') this.refuse(listed, options.path ?? '', 'path')
-    const files = matcher ? listed.filter((entry) => matcher(entry.path) || entry.aliases.some(matcher)) : listed
+    // ⛔ Só o ambiente agêntico (pelo caminho real ou por um link para ele): o código do projeto não aparece.
+    const inScope = this.scope(job)
+    const files = listed.filter((entry) => (inScope(entry.path) || entry.aliases.some(inScope)) && (!matcher || matcher(entry.path) || entry.aliases.some(matcher)))
     const sources = new Map<string, string>()
     for (const entry of this.deps.repository.items(job.id)) for (const source of entry.item.sources) if (!entry.goneAt) sources.set(source.path, entry.key)
     const shown = files.slice(0, REPOSITORY_LIST_MAX)
     const where = [options.path ? `under ${options.path}` : 'from the root', options.pattern ? `matching ${options.pattern}` : ''].filter(Boolean).join(' ')
     const truncated = files.length > shown.length ? ` Showing the first ${shown.length}: TRUNCATED — narrow it with path or pattern.` : ''
-    const lines = [`Repository ${job.repository} — ${files.length} file(s) ${where} (excluded paths never appear).${truncated}`]
+    const lines = [`Repository ${job.repository} — ${files.length} file(s) of the agentic environment ${where} (nothing outside it nor excluded paths appear).${truncated}`]
     for (const entry of shown) {
       const item = sources.get(entry.path)
       lines.push(`- ${entry.path} · ${entry.bytes} bytes${entry.aliases.length ? ` · also ${entry.aliases.join(', ')}` : ''}${item ? ` · import item ${item}` : ''}`)
@@ -500,8 +523,14 @@ export class ImportBuildService {
   /** `read_repository_file`: uma página de um arquivo de TEXTO do repositório desta conversa, mascarada. */
   readRepository(conversationId: string, options: { path: string; offset?: number; limit?: number }): string {
     const { job } = this.conversation(conversationId)
+    // ⛔ O ambiente agêntico e o que os itens do trabalho citam; nada mais (os excluídos e o ignorar ainda ganham, na leitura).
+    const wanted = normalizeIgnore([options.path])[0] ?? ''
+    const inScope = this.scope(job)
+    const cited = this.cited(job)
+    if (wanted && !inScope(wanted) && !cited.has(wanted)) this.refuse('out_of_scope', options.path, 'path')
     const file = this.files().read(job.projectId, job.repository, options.path, this.exclusion(job))
     if (typeof file === 'string') this.refuse(file, options.path, 'path')
+    if (!inScope(wanted) && !cited.has(file.path)) this.refuse('out_of_scope', options.path, 'path')
     const total = file.text.length
     const offset = Math.max(0, Math.floor(options.offset ?? 0))
     const limit = Math.min(PAGE_MAX, Math.max(1, Math.floor(options.limit ?? PAGE_DEFAULT)))

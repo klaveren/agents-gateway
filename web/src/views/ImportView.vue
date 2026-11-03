@@ -4,6 +4,7 @@ import { routerKey } from 'vue-router'
 import ImportApply from '@/components/ImportApply.vue'
 import ImportBatch from '@/components/ImportBatch.vue'
 import ImportPrepareDesk from '@/components/ImportPrepareDesk.vue'
+import ImportScope from '@/components/ImportScope.vue'
 import ImportItemDetail from '@/components/ImportItemDetail.vue'
 import ImportSelectionBatch from '@/components/ImportSelectionBatch.vue'
 import { useResource } from '@/composables/useResource'
@@ -642,6 +643,8 @@ watch(() => projects.current, reset)
             </div>
           </form>
         </details>
+
+        <ImportScope :project-id="projectId" :scope="scan?.scope" />
 
         <template v-if="scan">
           <nav class="flex gap-1 border-b border-zinc-800" role="tablist" data-test="areas">

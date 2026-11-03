@@ -140,10 +140,11 @@ describe('Detectores claude e agents-md — o inventário do formato do Claude C
     const ignored = scanWith(['.agents/benchmark/results/'], ['results', '.agents/benchmark/results'])
     assert.deepStrictEqual(ignored.ignored.patterns, [
       { pattern: '.agents/benchmark/results', origin: 'project', files: 2 },
-      { pattern: 'results', origin: 'request', files: 1 },
+      // O `tmp/results/` está fora do ambiente agêntico: o ignorar só conta dentro dele.
+      { pattern: 'results', origin: 'request', files: 0 },
     ])
     assert.ok(!ignored.items.some((one) => one.sources.some((source) => /(^|\/)results\//.test(source.path))))
-    assert.strictEqual(ignored.totals.files, scan.totals.files - 3)
+    assert.strictEqual(ignored.totals.files, scan.totals.files - 2)
     const rule = item('unknown:CLAUDE.md', ignored)
     assert.ok(rule.refs.some((ref) => ref.path === '.agents/benchmark/results/run-1.md' && !ref.item))
     assert.deepStrictEqual(rule.unresolved, [])

@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
 import { parseJsonc } from './Opencode.Detector'
 import { repositoryExclusion } from '@domain/Import.Ignore'
-import { listRepoFiles, listRepoTop, readRepoFile, readRepoText, readRepoTree, REPO_TEXT_MAX_BYTES } from './Repo.Tree'
+import { listRepoFiles, readRepoFile, readRepoText, readRepoTree, REPO_TEXT_MAX_BYTES } from './Repo.Tree'
 
 describe('Repo.Tree — a árvore contida de um repositório', () => {
   const base = mkdtempSync(join(tmpdir(), 'gw-repo-tree-'))
@@ -58,7 +58,7 @@ describe('Repo.Tree — a árvore contida de um repositório', () => {
       assert.strictEqual(readRepoFile(root, path, mask), undefined, path)
   })
 
-  it('⛔ a navegação do construtor (listRepoFiles/listRepoTop/readRepoText): contida, sem os excluídos, mascarada', () => {
+  it('⛔ a navegação do construtor (listRepoFiles/readRepoText): contida, sem os excluídos, mascarada', () => {
     const root = join(base, 'nav')
     for (const dir of ['docs/sub', '.credentials', '.git', 'node_modules/p', 'cfg']) mkdirSync(join(root, dir), { recursive: true })
     writeFileSync(join(root, 'docs/a.md'), 'TOKEN=cru')
@@ -82,7 +82,6 @@ describe('Repo.Tree — a árvore contida de um repositório', () => {
       ['docs/a.md', 'docs/bin.dat', 'docs/grande.md', 'docs/sub/b.md'],
     )
     assert.deepStrictEqual(listed[0].aliases, ['atalho/a.md'])
-    assert.deepStrictEqual(listRepoTop(root, exclude), ['atalho', 'cfg', 'docs'])
     assert.deepStrictEqual(
       (listRepoFiles(root, 'docs/sub', exclude) as Array<{ path: string }>).map((entry) => entry.path),
       ['docs/sub/b.md'],

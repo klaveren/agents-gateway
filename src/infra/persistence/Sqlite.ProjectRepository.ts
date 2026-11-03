@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { IAgenticScope, normalizeScope } from '@domain/Import.Scope'
 import { IProject, IProjectMember } from '@domain/models/Project.Model'
 import { IProjectRepository } from '@domain/ports/ProjectRepository.Port'
 
@@ -36,6 +37,8 @@ type TRow = Record<string, unknown>
 const ADDED_COLUMNS: ReadonlyArray<{ column: string; definition: string }> = [
   // JSON com a lista de globs; NULL = nenhum.
   { column: 'import_ignore', definition: 'TEXT' },
+  // JSON `{ disabled, extra }`; NULL = os lugares padrão, todos ligados.
+  { column: 'import_scope', definition: 'TEXT' },
 ]
 
 /** Os projetos e os membros, no mesmo arquivo das conversas. Sem arquivo, em memória (`:memory:`). */
@@ -68,11 +71,15 @@ export class SqliteProjectRepository implements IProjectRepository {
       .run(project.id, project.name, project.description ?? null, project.createdAt.toISOString(), project.updatedAt.toISOString(), project.updatedBy ?? null)
   }
 
-  update(id: string, patch: Partial<Pick<IProject, 'name' | 'description' | 'importIgnore' | 'updatedAt' | 'updatedBy'>>): IProject | undefined {
+  update(id: string, patch: Partial<Pick<IProject, 'name' | 'description' | 'importIgnore' | 'importScope' | 'updatedAt' | 'updatedBy'>>): IProject | undefined {
     if (patch.name !== undefined) this.db.prepare('UPDATE projects SET name = ? WHERE id = ?').run(patch.name, id)
     if ('description' in patch) this.db.prepare('UPDATE projects SET description = ? WHERE id = ?').run(patch.description ?? null, id)
     if ('importIgnore' in patch)
       this.db.prepare('UPDATE projects SET import_ignore = ? WHERE id = ?').run(patch.importIgnore?.length ? JSON.stringify(patch.importIgnore) : null, id)
+    if ('importScope' in patch) {
+      const scope = patch.importScope
+      this.db.prepare('UPDATE projects SET import_scope = ? WHERE id = ?').run(scope && (scope.disabled.length || scope.extra.length) ? JSON.stringify(scope) : null, id)
+    }
     if (patch.updatedAt) this.db.prepare('UPDATE projects SET updated_at = ?, updated_by = ? WHERE id = ?').run(patch.updatedAt.toISOString(), patch.updatedBy ?? null, id)
     return this.get(id)
   }
@@ -120,9 +127,21 @@ function toProject(row: TRow): IProject {
     name: String(row.name),
     ...(typeof row.description === 'string' && row.description ? { description: row.description } : {}),
     ...(importIgnoreOf(row.import_ignore).length ? { importIgnore: importIgnoreOf(row.import_ignore) } : {}),
+    ...(importScopeOf(row.import_scope) ? { importScope: importScopeOf(row.import_scope) } : {}),
     createdAt: new Date(String(row.created_at)),
     updatedAt: new Date(String(row.updated_at)),
     ...(typeof row.updated_by === 'string' ? { updatedBy: row.updated_by } : {}),
+  }
+}
+
+function importScopeOf(value: unknown): IAgenticScope | undefined {
+  if (typeof value !== 'string' || !value) return undefined
+  try {
+    const parsed = JSON.parse(value) as { disabled?: unknown; extra?: unknown }
+    const strings = (list: unknown) => (Array.isArray(list) ? list.filter((one): one is string => typeof one === 'string') : [])
+    return normalizeScope({ disabled: strings(parsed.disabled), extra: strings(parsed.extra) })
+  } catch {
+    return undefined
   }
 }
 

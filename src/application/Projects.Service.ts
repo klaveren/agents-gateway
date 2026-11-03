@@ -1,4 +1,5 @@
 import { ignoreIssues, normalizeIgnore } from '@domain/Import.Ignore'
+import { IAgenticScope, normalizeScope, scopeIssues } from '@domain/Import.Scope'
 import { InvalidProjectError, ProjectInUseError, ProjectNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgent } from '@domain/models/Agent.Model'
 import { DEFAULT_PROJECT_ID, IProject, IProjectMember, PROJECT_ID_PATTERN } from '@domain/models/Project.Model'
@@ -140,6 +141,19 @@ export class ProjectsService {
     if (issues.length) throw new InvalidProjectError(issues)
     const clean = normalizeIgnore(patterns)
     return this.projects.update(id, { importIgnore: clean, updatedAt: this.now(), updatedBy: by })?.importIgnore ?? []
+  }
+
+  /** O ambiente agêntico que a varredura do importador olha neste projeto (os lugares padrão desligados e os a mais). */
+  importScope(id: string): IAgenticScope {
+    return normalizeScope(this.get(id).importScope)
+  }
+
+  /** ⛔ Troca o ambiente inteiro. Lugar desconhecido, caminho absoluto ou com `..` é recusado: o ambiente é dentro do repositório. */
+  setImportScope(id: string, scope: { disabled: readonly string[]; extra: readonly string[] }, by: string): IAgenticScope {
+    this.get(id)
+    const issues = scopeIssues(scope)
+    if (issues.length) throw new InvalidProjectError(issues)
+    return normalizeScope(this.projects.update(id, { importScope: normalizeScope(scope), updatedAt: this.now(), updatedBy: by })?.importScope)
   }
 
   members(id: string): IProjectMember[] {

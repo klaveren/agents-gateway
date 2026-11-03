@@ -80,6 +80,24 @@ export interface IInventoryIgnored {
   files: number
 }
 
+/** Um lugar padrão do ambiente agêntico na varredura: ligado no projeto? Quantos arquivos do repositório estão nele? */
+export interface IInventoryScopePlace {
+  place: string
+  enabled: boolean
+  /** Achado no repositório (mesmo desligado): há arquivo nele. */
+  found: boolean
+  files: number
+}
+
+/** O AMBIENTE AGÊNTICO que a varredura olhou (`Import.Scope`): só o que está nele entra no inventário. */
+export interface IInventoryScope {
+  places: IInventoryScopePlace[]
+  /** Os caminhos a mais do projeto e quantos arquivos cada um trouxe. */
+  extra: Array<{ pattern: string; files: number }>
+  /** Arquivos do repositório fora do ambiente: nunca entram (o citado de lá é só referência). */
+  outside: number
+}
+
 export interface IImportScan {
   projectId: string
   repository: string
@@ -99,6 +117,8 @@ export interface IImportScan {
     /** Os padrões de ignorar (do projeto e da chamada) e quantos arquivos cada um tirou (o primeiro que casa conta). */
     patterns: IInventoryIgnored[]
   }
+  /** O ambiente olhado. Ausente: análise de antes do ambiente (olhava o repositório inteiro). */
+  scope?: IInventoryScope
   items: IInventoryItem[]
 }
 

@@ -112,3 +112,25 @@ describe('useImportsStore — o estado dos itens numa cópia só', () => {
     expect(imports.statesOf('alfa', 'j1').a.state).toBe('approved')
   })
 })
+
+describe('useImportsStore — o ambiente agêntico do projeto', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.mocked(api).mockReset()
+  })
+
+  it('lê uma vez por projeto; salvar troca pela API e a store fica com a resposta, sem reler', async () => {
+    const tools = [{ id: 'claude', label: 'Claude Code', places: ['.claude/', 'CLAUDE.md'] }]
+    vi.mocked(api).mockResolvedValueOnce({ tools, disabled: [], extra: [] })
+    const imports = useImportsStore()
+    await imports.scope.ensure('alfa')
+    await imports.scope.ensure('alfa')
+    expect(api).toHaveBeenCalledTimes(1)
+    expect(api).toHaveBeenCalledWith('/projects/alfa/import/scope')
+    vi.mocked(api).mockResolvedValueOnce({ tools, disabled: ['CLAUDE.md'], extra: ['prompts'] })
+    await imports.saveScope('alfa', { disabled: ['CLAUDE.md'], extra: ['./prompts/'] })
+    expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/scope', { method: 'PUT', body: { disabled: ['CLAUDE.md'], extra: ['./prompts/'] } })
+    expect(imports.scope.get('alfa')).toEqual({ tools, disabled: ['CLAUDE.md'], extra: ['prompts'] })
+    expect(api).toHaveBeenCalledTimes(2)
+  })
+})

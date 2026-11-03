@@ -372,6 +372,8 @@ function buildRoutes(
     { method: 'post', path: '/projects/:id/import/plan', handler: importer.plan },
     { method: 'get', path: '/projects/:id/import/ignore', handler: importer.getIgnore },
     { method: 'put', path: '/projects/:id/import/ignore', handler: importer.setIgnore },
+    { method: 'get', path: '/projects/:id/import/scope', handler: importer.getScope },
+    { method: 'put', path: '/projects/:id/import/scope', handler: importer.setScope },
     { method: 'get', path: '/projects/:id/import/jobs', handler: importer.listJobs },
     { method: 'post', path: '/projects/:id/import/jobs', handler: importer.createJob },
     { method: 'get', path: '/projects/:id/import/jobs/:job', handler: importer.getJob },
