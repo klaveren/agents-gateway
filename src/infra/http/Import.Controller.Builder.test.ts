@@ -62,11 +62,12 @@ describe('construtor em modo importação (/projects/:id/import/jobs/:job/builde
   })
   after(() => rmSync(base, { recursive: true, force: true }))
 
-  type THandler = 'openBuilder' | 'approveItem' | 'adjustItem' | 'getJob' | 'getItems' | 'prepareBatch' | 'batchConversations'
+  type THandler = 'openBuilder' | 'approveItem' | 'adjustItem' | 'getJob' | 'getItems' | 'prepareBatch' | 'batchConversations' | 'fixApply'
   const call = (as: string, body: unknown, handler: THandler, target: ImportController = controller, params: Record<string, string> = {}) =>
     withCaller({ token: as, ...identityFromToken(as) }, async () => {
       const reply: { status: number; body?: { ok: boolean; result?: any; code?: string; details?: any } } = { status: 0 } // eslint-disable-line @typescript-eslint/no-explicit-any
       const res = {
+        locals: {},
         status(code: number) {
           reply.status = code
           return this
@@ -206,6 +207,53 @@ describe('construtor em modo importação (/projects/:id/import/jobs/:job/builde
     assert.deepStrictEqual([again.status, again.body?.result.conversations], [200, []])
     // Sem o `start`, o mesmo de antes: nada mais vai ao construtor.
     assert.strictEqual((await call(ADMIN, {}, 'prepareBatch', withRuns, { batch: 'run' })).status, 422)
+  })
+
+  it('corrigir com o construtor: o recusado por problema DELE volta à conversa com o erro escrito e roda; a cascata e o modelo, não', async () => {
+    repository.updateItem(jobId, 'spec:arquitetura', { state: 'approved', conversationId: 'conv-a' })
+    repository.updateItem(jobId, 'spec:config', { state: 'approved', conversationId: 'conv-a' })
+    const turns: Array<{ conversationId: string; message: string }> = []
+    const runs = new ImportRunService({
+      prepareTurn: (conversationId, message) =>
+        AsyncResource.bind(async () => {
+          turns.push({ conversationId, message })
+          return { status: 'ok' as const }
+        }),
+    })
+    const apply = {
+      preview: async () => ({
+        items: [
+          { key: 'spec:arquitetura', kind: 'spec', refs: ['spec/arquitetura'] },
+          { key: 'spec:config', kind: 'spec', refs: ['spec/config'] },
+          { key: 'agent:maya', kind: 'agent', refs: ['agent/maya'] },
+        ],
+        plan: {
+          items: [
+            { ref: 'spec/arquitetura', op: 'error', issues: [{ field: 'summary', message: 'at most 300 characters' }] },
+            { ref: 'spec/config', op: 'error', issues: [{ field: 'docIds', message: 'depends on spec/arquitetura, which is not applied (see that item)' }] },
+            { ref: 'agent/maya', op: 'error', issues: [{ field: 'providers', message: 'at least one provider' }] },
+          ],
+        },
+      }),
+    }
+    const fixer = new ImportController({ ...controllerDeps(), runs, apply: apply as never })
+    assert.strictEqual((await call(MEMBER, {}, 'fixApply', fixer)).status, 404)
+    const reply = await call(ADMIN, { keys: ['spec:arquitetura', 'spec:config'] }, 'fixApply', fixer)
+    assert.strictEqual(reply.status, 200)
+    assert.deepStrictEqual(
+      reply.body?.result.reopened.map((one: { key: string }) => one.key),
+      ['spec:arquitetura'],
+    )
+    assert.deepStrictEqual(reply.body?.result.started, ['conv-a'])
+    const item = repository.item(jobId, 'spec:arquitetura')!
+    assert.strictEqual(item.state, 'drafting')
+    assert.match((item.review as { adjust: { comment: string } }).adjust.comment, /summary: at most 300 characters/)
+    assert.strictEqual(repository.item(jobId, 'spec:config')!.state, 'approved')
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.deepStrictEqual(
+      turns.map((one) => one.conversationId),
+      ['conv-a'],
+    )
   })
 
   it('sem o construtor configurado na rota, 404', async () => {

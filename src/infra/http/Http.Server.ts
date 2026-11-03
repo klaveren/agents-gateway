@@ -386,6 +386,7 @@ function buildRoutes(
     { method: 'get', path: '/projects/:id/import/jobs/:job/batches/:batch/conversations', handler: importer.batchConversations },
     { method: 'post', path: '/projects/:id/import/jobs/:job/batches/:batch/items', handler: importer.addBatchItems },
     { method: 'post', path: '/projects/:id/import/jobs/:job/apply/plan', handler: importer.planApply },
+    { method: 'post', path: '/projects/:id/import/jobs/:job/apply/fix', handler: importer.fixApply },
     { method: 'post', path: '/projects/:id/import/jobs/:job/apply', handler: importer.applyItems },
     { method: 'put', path: '/projects/:id/members', handler: projects.setMembers },
     { method: 'post', path: HOOK_PATH, handler: hooks.receive },

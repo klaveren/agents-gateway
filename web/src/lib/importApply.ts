@@ -118,6 +118,20 @@ export function applyToCatalog(projectId: string, jobId: string, selection: IApp
   return api<IApplyResult>(`${jobPath(projectId, jobId)}/apply`, { method: 'POST', body: { ...selection, planHash, ...(confirm.length ? { confirm } : {}) } })
 }
 
+/** O que "Corrigir com o construtor" devolve: o que voltou à conversa (com os problemas enviados), o que não, e as conversas postas a rodar. */
+export interface IApplyFixResult {
+  reopened: Array<{ key: string; issues: string[] }>
+  skipped: Array<{ key: string; reason: string }>
+  started: string[]
+}
+
+export function fixWithBuilder(projectId: string, jobId: string, selection: IApplySelection): Promise<IApplyFixResult> {
+  return api<IApplyFixResult>(`${jobPath(projectId, jobId)}/apply/fix`, { method: 'POST', body: selection })
+}
+
+/** O problema é do PRÓPRIO item (o construtor corrige): não o de quem só cita um recusado, nem a falta de modelo do agente. */
+export const ownIssue = (issue: Pick<IIssue, 'field' | 'message'>) => issue.field !== 'providers' && !/which is not applied/.test(issue.message)
+
 /** O item bloqueia a gravação inteira (o servidor recusa com 422). */
 export const blocking = (item: Pick<IApplyPlanItem, 'op'>) => item.op === 'error' || item.op === 'conflict'
 

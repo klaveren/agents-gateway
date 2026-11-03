@@ -7,10 +7,13 @@ import {
   applyToCatalog,
   blocking,
   classifyApplyFailure,
+  fixWithBuilder,
   OP_LABEL,
+  ownIssue,
   PHASE_LABEL,
   previewApply,
   type IApplyPreview,
+  type IApplyFixResult,
   type IApplyResult,
   type IApplySelection,
 } from '@/lib/importApply'
@@ -75,6 +78,31 @@ function setReady(on: boolean) {
 /** Uma falta que vem deste repositório entra na migração (com as dependências); em "todos os aprovados" só se vê. */
 const canAdd = computed(() => !!(props.target.keys || props.target.batchId))
 const addable = computed(() => missing.value.filter((one) => one.item).map((one) => one.item!.key))
+/** Os itens recusados por problema DELES: o construtor corrige (a cascata e o modelo do agente, não). */
+const fixKeyOf = computed(() => new Map((preview.value?.items ?? []).flatMap((item) => item.refs.map((ref) => [ref, item.key] as const))))
+const fixable = computed(() => {
+  const keys = (plan.value?.items ?? []).filter((item) => item.op === 'error' && item.issues.some(ownIssue)).map((item) => fixKeyOf.value.get(item.ref))
+  return [...new Set(keys.filter((key): key is string => !!key))]
+})
+/** A confirmação aberta (gasta tokens) e o que voltou ao construtor. */
+const fixConfirm = ref<string[]>()
+const fixing = ref(false)
+const fixed = ref<IApplyFixResult>()
+
+async function fix(keys: string[]) {
+  fixConfirm.value = undefined
+  fixing.value = true
+  error.value = undefined
+  try {
+    fixed.value = await fixWithBuilder(props.projectId, props.jobId, { ...selection.value, keys })
+    await load()
+  } catch (failure) {
+    error.value = failure instanceof Error ? failure.message : String(failure)
+  } finally {
+    fixing.value = false
+  }
+}
+
 const canWrite = computed(() => auth.isAdmin && !props.readonly && !!plan.value && !blockers.value.length && plan.value.order.length > 0 && !writing.value)
 
 async function load() {
@@ -170,6 +198,23 @@ const partLabel = (part?: string) => (part === 'record' ? ' (registro)' : part =
           · <span class="text-rose-300">{{ blockers.length }} bloqueando</span></template
         >
       </p>
+      <section v-if="fixable.length && !ready && auth.isAdmin && !readonly" class="flex flex-col gap-2 rounded-lg border border-sky-500/40 p-2 text-xs" data-test="apply-fix">
+        <p class="flex flex-wrap items-center gap-2 text-sky-200">
+          {{ fixable.length }} item(ns) recusado(s) por problema do rascunho: o construtor corrige.
+          <button v-if="!fixConfirm" type="button" class="btn btn-secondary btn-sm ml-auto" :disabled="fixing" data-test="apply-fix-all" @click="fixConfirm = fixable">
+            Corrigir {{ fixable.length }} com o construtor
+          </button>
+        </p>
+        <div v-if="fixConfirm" class="flex flex-wrap items-center gap-2" data-test="apply-fix-confirm">
+          <span class="text-zinc-300">{{ fixConfirm.length }} item(ns) voltam ao construtor, que roda no servidor gastando tokens sem você acompanhando; o rascunho novo volta à revisão.</span>
+          <button type="button" class="btn btn-primary btn-sm" data-test="apply-fix-start" @click="fix(fixConfirm)">Corrigir</button>
+          <button type="button" class="btn btn-ghost btn-sm" @click="fixConfirm = undefined">Cancelar</button>
+        </div>
+      </section>
+      <p v-if="fixed" class="text-xs text-sky-200" data-test="apply-fix-result">
+        {{ fixed.reopened.length }} item(ns) voltaram ao construtor<template v-if="fixed.started.length"> ({{ fixed.started.length }} conversa(s) rodando)</template>: acompanhe no Preparar; aprovados de novo, eles
+        aparecem aqui.<template v-if="fixed.skipped.length"> Ficaram de fora: {{ fixed.skipped.map((one) => `${one.key} (${one.reason})`).join('; ') }}.</template>
+      </p>
       <div v-if="blockers.length && !ready" class="flex flex-wrap items-center gap-2 text-xs" data-test="apply-ready-offer">
         <button type="button" class="btn btn-secondary btn-sm" :disabled="loading" data-test="apply-ready" @click="setReady(true)">Gravar só os prontos</button>
         <span class="text-zinc-500">deixa de fora os bloqueados e o que depende deles; eles continuam aprovados, para gravar depois.</span>
@@ -236,6 +281,16 @@ const partLabel = (part?: string) => (part === 'record' ? ' (registro)' : part =
             <code class="text-zinc-200">{{ item.ref }}</code>
             <span :class="blocking(item) ? 'text-rose-300' : 'text-zinc-400'">{{ OP_LABEL[item.op] }}</span>
             <span v-if="item.entersDisabled" class="text-amber-300">entra desligado (falta segredo)</span>
+            <button
+              v-if="!ready && auth.isAdmin && !readonly && fixKeyOf.get(item.ref) && fixable.includes(fixKeyOf.get(item.ref)!)"
+              type="button"
+              class="btn btn-ghost btn-sm"
+              :disabled="fixing"
+              data-test="apply-fix-one"
+              @click="fixConfirm = [fixKeyOf.get(item.ref)!]"
+            >
+              Corrigir com o construtor
+            </button>
             <button v-if="item.diff" type="button" class="btn btn-ghost btn-sm ml-auto" @click="toggleDiff(item.ref)">{{ openDiff.has(item.ref) ? 'Esconder diff' : 'Ver diff' }}</button>
           </span>
           <ul v-if="item.issues.length" class="list-disc pl-5 text-rose-300">
