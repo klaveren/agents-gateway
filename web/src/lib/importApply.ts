@@ -148,7 +148,7 @@ export function fixWithBuilder(projectId: string, jobId: string, selection: IApp
 }
 
 /** O problema é do PRÓPRIO item (o construtor corrige): não o de quem só cita um recusado, nem a falta de modelo do agente. */
-export const ownIssue = (issue: Pick<IIssue, 'field' | 'message'>) => issue.field !== 'providers' && !/which is not applied/.test(issue.message)
+export const ownIssue = (issue: Pick<IIssue, 'field' | 'message'>) => issue.field !== 'providers' && issue.field !== 'modes' && !/which is not applied/.test(issue.message)
 
 /** O item bloqueia a gravação inteira (o servidor recusa com 422). */
 export const blocking = (item: Pick<IApplyPlanItem, 'op'>) => item.op === 'error' || item.op === 'conflict'

@@ -194,7 +194,8 @@ export class ImportController {
       const issues = new Map<string, string[]>()
       for (const item of preview.plan.items) {
         if (item.op !== 'error') continue
-        const own = item.issues.filter((issue) => issue.field !== 'providers' && !/which is not applied/.test(issue.message))
+        // O modelo e as lanes do agente são escolha da tela, não do rascunho.
+        const own = item.issues.filter((issue) => issue.field !== 'providers' && issue.field !== 'modes' && !/which is not applied/.test(issue.message))
         const key = keyOf.get(item.ref)
         if (!key || !own.length) continue
         issues.set(key, [...(issues.get(key) ?? []), ...own.map((issue) => `${item.ref} · ${issue.field}: ${issue.message}`)])

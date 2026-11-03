@@ -304,6 +304,17 @@ describe('ImportApplyUseCase — a gravação do importador pelo catálogo', () 
     assert.ok(preview.agents[0].notes.some((note) => note.includes('modelo')))
   })
 
+  it('⚖️ modelo da assinatura (só a lane agent): o agente entra só com o modo agent, e o plano não recusa', async () => {
+    const { apply } = await setup()
+    const preview = await apply.preview('alfa', 'j1', { ...ALL, models: { 'agent:maya': { provider: 'claude-sub', model: 'claude-opus-5-5' } } })
+    const maya = preview.plan.items.find((item) => item.ref === 'agent/maya')!
+    assert.deepStrictEqual(
+      maya.issues.filter((issue) => issue.field === 'modes'),
+      [],
+    )
+    assert.ok(preview.agents[0].notes.some((note) => note.includes('só no modo agente')))
+  })
+
   it('só os prontos (`ready`): o bloqueado fica de fora com o motivo; o resto grava', async () => {
     const { apply, repository } = await setup()
     const selection = { keys: ALL.keys, ready: true }

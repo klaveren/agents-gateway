@@ -33,6 +33,8 @@ export interface IApprovedEntry {
 export interface IAgentExtras {
   /** O modelo escolhido na tela. Ausente: o do agente que já existe (criado sem: o plano recusa). */
   providers?: IAgentTarget[]
+  /** As lanes que o modelo escolhido roda (a assinatura, só `agent`): os modos do agente ficam dentro delas. */
+  lanes?: readonly string[]
   allowedTools: string[]
   permissions: IPermissionRule[]
   /** `resources.skills`: as skills que ele libera (nunca `*` sem confirmação). */
@@ -88,6 +90,16 @@ function docLinks(draft: IImportDraft): { docIds: string[]; docRefs?: string[] }
  * quem quiser global muda depois, no catálogo.
  */
 const scopeOf = (_output: IImportDraftOutput, projectId: string): string | undefined => projectId
+
+/**
+ * ⚖️ Os modos do agente dentro do que o modelo escolhido roda: o Claude da assinatura (e o Codex, o Antigravity) só
+ * roda a lane `agent`, e o catálogo recusaria um agente com `chat`. Nada sobra: as lanes do modelo.
+ */
+export function modesFor(modes: readonly string[], lanes: readonly string[] | undefined): string[] {
+  if (!lanes) return [...modes]
+  const kept = modes.filter((mode) => lanes.includes(mode))
+  return kept.length ? kept : [...lanes]
+}
 
 export function importDocuments(input: IImportDocumentsInput): IImportDocuments {
   const documents: ICatalogDocument[] = []
@@ -180,7 +192,7 @@ export function importDocuments(input: IImportDocumentsInput): IImportDocuments 
       providers: (extras.providers ?? (current?.body.providers as TCanonicalValue | undefined) ?? []) as TCanonicalValue,
       ...(output.fields.soul ? { soul: output.fields.soul } : {}),
       systemPrompt: output.fields.systemPrompt ?? '',
-      modes: (current?.body.modes as TCanonicalValue | undefined) ?? (extras.allowedTools.length ? ['chat', 'agent'] : ['chat']),
+      modes: modesFor((current?.body.modes as string[] | undefined) ?? (extras.allowedTools.length ? ['chat', 'agent'] : ['chat']), extras.lanes),
       allowedTools: extras.allowedTools,
       ...(extras.permissions.length ? { permissions: extras.permissions as unknown as TCanonicalValue } : {}),
       ...(triggers.length ? { triggers } : {}),
