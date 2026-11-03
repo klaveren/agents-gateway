@@ -374,8 +374,8 @@ export interface IImportStep {
   op: 'create' | 'update' | 'delete'
   phase: TImportPhase
   /**
-   * `record`: o item sem a parte que vem depois — o projeto sem o contexto inicial novo (passo `links`), o agente sem o
-   * alcance novo (passo `reach`). Ausente: o item inteiro.
+   * `record`: o item sem a parte que vem depois — o projeto sem o contexto inicial novo (passo `links`), o doc de um
+   * ciclo sem os anexos novos (passo `links`), o agente sem o alcance novo (passo `reach`). Ausente: o item inteiro.
    */
   part?: 'record' | 'links' | 'reach'
   widens: boolean
@@ -402,6 +402,7 @@ export function importOrder(items: readonly IOrderInput[]): IImportStep[] {
       steps.push({ ...base, phase: 'reach', part: 'reach', deps: [] })
     } else steps.push({ ...base, phase: PHASE_OF[item.kind], deps: item.dependsOn.filter((ref) => ref !== item.ref) })
   }
+  splitDocCycles(steps)
   const kindOrder = (kind: TCatalogKind) => CATALOG_KINDS.indexOf(kind)
   const before = (a: IImportStep, b: IImportStep) =>
     Number(a.widens) - Number(b.widens) || kindOrder(a.kind) - kindOrder(b.kind) || byText(a.projectId ?? '', b.projectId ?? '') || byText(a.id, b.id)
@@ -423,6 +424,55 @@ export function importOrder(items: readonly IOrderInput[]): IImportStep[] {
     }
   }
   return ordered
+}
+
+/**
+ * ⚖️ DOCS QUE SE ANEXAM EM CICLO (A anexa B e B anexa A, ou uma volta maior): nenhum entra antes do outro, e o
+ * catálogo recusa anexar o que não existe. Cada doc do ciclo entra em dois passos: o `record` (sem os anexos novos) na
+ * fase `docs`, e os anexos no passo `links`, depois de todos existirem. Quem só CITA o ciclo espera o `record`.
+ */
+function splitDocCycles(steps: Array<IImportStep & { deps: readonly string[] }>): void {
+  const docs = steps.filter((step) => step.phase === 'docs' && !step.part)
+  const byRef = new Map(docs.map((step) => [step.ref, step]))
+  // Tarjan: os componentes fortemente conexos entre os docs do plano.
+  const index = new Map<string, number>()
+  const low = new Map<string, number>()
+  const stack: string[] = []
+  const onStack = new Set<string>()
+  const cycles: string[][] = []
+  let next = 0
+  const visit = (ref: string) => {
+    index.set(ref, next)
+    low.set(ref, next++)
+    stack.push(ref)
+    onStack.add(ref)
+    for (const dep of byRef.get(ref)!.deps) {
+      if (!byRef.has(dep)) continue
+      if (!index.has(dep)) {
+        visit(dep)
+        low.set(ref, Math.min(low.get(ref)!, low.get(dep)!))
+      } else if (onStack.has(dep)) low.set(ref, Math.min(low.get(ref)!, index.get(dep)!))
+    }
+    if (low.get(ref) !== index.get(ref)) return
+    const component: string[] = []
+    let member: string
+    do {
+      member = stack.pop()!
+      onStack.delete(member)
+      component.push(member)
+    } while (member !== ref)
+    if (component.length > 1) cycles.push(component)
+  }
+  for (const step of docs) if (!index.has(step.ref)) visit(step.ref)
+  for (const component of cycles) {
+    const members = new Set(component)
+    for (const ref of component) {
+      const step = byRef.get(ref)!
+      const at = steps.indexOf(step)
+      const { deps, ...base } = step
+      steps.splice(at, 1, { ...base, part: 'record', widens: false, deps: deps.filter((dep) => !members.has(dep)) }, { ...base, phase: 'links', part: 'links', deps: [] })
+    }
+  }
 }
 
 // --- O hash do plano ----------------------------------------------------------------------------------------------
@@ -548,6 +598,9 @@ export function emptySummary(): ICatalogImportPlan['summary'] {
  */
 export function recordPart(target: ICatalogDocument, current: ICatalogDocument | undefined): ICatalogDocument {
   if (target.kind === 'project') return withBody(target, { ...target.body, initialContext: current?.body.initialContext ?? [] })
+  // O doc de um ciclo: os anexos de antes (criado, nenhum); os novos vêm no passo `links`.
+  if (target.kind === 'spec' || target.kind === 'adr' || target.kind === 'knowledge')
+    return withBody(target, { ...target.body, docIds: current?.body.docIds ?? [], docRefs: current?.body.docRefs ?? [] })
   if (target.kind !== 'agent') return target
   const { permissions: _permissions, ...body } = target.body
   return withBody(target, {

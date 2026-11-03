@@ -67,6 +67,8 @@ export interface ICatalogImportApplyDeps {
 const PART_NOTE: Readonly<Record<string, string>> = {
   record: 'o registro, sem o contexto inicial',
   links: 'o contexto inicial',
+  'doc-record': 'o documento, sem os anexos (ciclo)',
+  'doc-links': 'os anexos (ciclo)',
   'agent-record': 'o agente fechado, sem o alcance novo',
   'agent-reach': 'o alcance: ferramentas e permissões',
 }
@@ -209,7 +211,7 @@ export class CatalogImportApplier {
       source: 'import',
       op: 'import',
       batchId: who.batchId,
-      note: `import do lote ${who.batchId}${step.part ? ` (${PART_NOTE[step.kind === 'agent' ? `agent-${step.part}` : step.part] ?? step.part})` : ''}`,
+      note: `import do lote ${who.batchId}${step.part ? ` (${PART_NOTE[step.kind === 'agent' ? `agent-${step.part}` : step.kind === 'project' ? step.part : `doc-${step.part}`] ?? step.part})` : ''}`,
       // A aceitação vai na revisão que completa o item.
       ...(last && item.widenings.length ? { widenings: wideningKeys(item.widenings) } : {}),
     }
