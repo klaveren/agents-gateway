@@ -300,7 +300,7 @@ async function mount(items: IInventoryItem[], options: { jobs?: IImportJob[]; an
   ignoreStored = ['.agents/benchmark']
   saved = options.jobs ?? []
   savedBatches = options.batches ?? {}
-  vi.mocked(api).mockImplementation(async (path: string, request?: { method?: string; body?: unknown }) => {
+  vi.mocked(api).mockImplementation(async (path: string, request?: { method?: string; body?: unknown; query?: { keys?: string[] } }) => {
     if (path.endsWith('/repositories'))
       return [
         { name: 'app', worktrees: [] },
@@ -330,6 +330,11 @@ async function mount(items: IInventoryItem[], options: { jobs?: IImportJob[]; an
       job.states = job.states.map((entry) => (entry.key === body.key ? next : entry))
       return next
     }
+    if (items_ && !request?.method) {
+      const job = saved.find((entry) => entry.id === items_[1])
+      return { latest: true, states: (request?.query?.keys ?? []).map((key) => job?.states.find((entry) => entry.key === key) ?? { key, state: 'pending', fingerprint: '' }) }
+    }
+    if (/\/batches\/[^/]+\/conversations$/.test(path)) return { runs: [] }
     const batchPlan = path.match(/\/import\/jobs\/([^/]+)\/batches\/plan$/)
     if (batchPlan) {
       const body = request!.body as { keys: string[]; prefix?: string }
@@ -710,11 +715,11 @@ describe('ImportView', () => {
     await flush()
     batch.querySelector<HTMLFormElement>('[data-test="save-batch"]')!.dispatchEvent(new Event('submit'))
     await flush()
-    expect(api).toHaveBeenLastCalledWith('/projects/alfa/import/jobs/j1/batches', { method: 'POST', body: { name: 'Deploy', keys: ['skill:deploy', 'command:ship'] } })
+    expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j1/batches', { method: 'POST', body: { name: 'Deploy', keys: ['skill:deploy', 'command:ship'] } })
     // Salvo, o lote vai ao passo Preparar; o Montar mostra quem salvou.
     expect(host.querySelector('[data-test="step-prepare"]')!.className).toContain('on')
     expect(host.querySelector('[data-test="batches"]')!.textContent).toContain('Deploy')
-    expect(host.querySelectorAll('[data-test="progress-row"]')).toHaveLength(2)
+    expect(host.querySelectorAll('[data-test="import-draft-item"]')).toHaveLength(2)
     host.querySelector<HTMLButtonElement>('[data-test="step-build"]')!.click()
     await flush()
     expect(host.querySelector('[data-test="batch-meta"]')!.textContent).toContain('root@x.test')
@@ -785,7 +790,7 @@ describe('ImportView', () => {
     expect(batch.querySelector('[data-test="save-batch"]')).toBeNull()
   })
 
-  it('"Preparar com o construtor": no passo Preparar da migração salva, uma conversa por construtor; o detalhe do item só leva à migração', async () => {
+  it('"Preparar tudo": confirma, roda no servidor e mostra a fila da migração inteira; a conversa abre no painel por cima', async () => {
     const stored: IImportBatchView = {
       id: 'b9',
       jobId: 'j7',
@@ -799,14 +804,33 @@ describe('ImportView', () => {
     }
     const host = await mount(SMALL, { jobs: [savedJob('j7', SMALL)], analyze: false, batches: { j7: [stored] } })
     const base = vi.mocked(api).getMockImplementation()!
-    vi.mocked(api).mockImplementation(async (path: string, request?: { method?: string; body?: unknown }) => {
-      if (path.endsWith('/prepare'))
-        return {
-          conversations: [
-            { kind: 'skill', conversationId: 'conv-s', agentId: 'builder-import-skill', keys: ['skill:deploy'] },
-            { kind: 'command', conversationId: 'conv-c', agentId: 'builder-import-command', keys: ['command:ship'] },
-          ],
-        }
+    const runs = [
+      {
+        conversationId: 'conv-s',
+        kind: 'skill',
+        agentId: 'builder-import-skill',
+        keys: ['skill:deploy'],
+        pending: ['skill:deploy'],
+        run: { state: 'running', at: '2026-11-02T10:00:00.000Z' },
+      },
+      {
+        conversationId: 'conv-c',
+        kind: 'command',
+        agentId: 'builder-import-command',
+        keys: ['command:ship'],
+        pending: ['command:ship'],
+        run: { state: 'queued', at: '2026-11-02T10:00:00.000Z' },
+      },
+    ]
+    vi.mocked(api).mockImplementation(async (path: string, request?: { method?: string; body?: unknown; query?: { keys?: string[] } }) => {
+      if (path.endsWith('/prepare')) {
+        saved[0].states = saved[0].states.map((entry) =>
+          ['skill:deploy', 'command:ship'].includes(entry.key)
+            ? ({ ...entry, state: 'drafting', conversationId: entry.key.startsWith('skill') ? 'conv-s' : 'conv-c' } as IImportItemStatus)
+            : entry,
+        )
+        return { conversations: [], runs }
+      }
       return base(path, request as never)
     })
     host.querySelector<HTMLButtonElement>('[data-test="job"]')!.click()
@@ -819,23 +843,29 @@ describe('ImportView', () => {
     detail.querySelector<HTMLButtonElement>('[data-test="open-migration"]')!.click()
     await flush()
     expect(host.querySelector('[data-test="step-prepare"]')!.className).toContain('on')
-    expect(host.querySelector('[data-test="batch-builder"]')!.textContent).toContain('Abre 2 conversa(s), uma por construtor (skill, command)')
-    host.querySelector<HTMLButtonElement>('[data-test="prepare-batch"]')!.click()
-    await flush()
-    expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j7/batches/b9/prepare', { method: 'POST' })
-    // A mesa: as duas conversas à esquerda, a primeira aberta no meio (sem sair da tela) e a fila dela à direita.
     const desk = host.querySelector('[data-test="prepare-desk"]')!
-    expect([...desk.querySelectorAll('[data-test="desk-conversation"]')].map((entry) => entry.textContent!.replace(/\s+/g, ' ').trim())).toEqual([
-      'Skills1 item(ns)0 aprovado(s)',
-      'Commands1 item(ns)0 aprovado(s)',
-    ])
-    expect(desk.querySelector('[data-test="desk-conversation"]')!.getAttribute('aria-current')).toBe('true')
-    expect(useThreadStore().open).toHaveBeenCalledWith('conv-s')
-    expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j7/items', { query: { keys: ['skill:deploy'] } })
-    // "Todos os itens" leva à conversa do item na mesa.
-    ;[...host.querySelectorAll<HTMLButtonElement>('[data-test="progress-conversation"]')][1].click()
+    expect(desk.querySelector('[data-test="desk-progress"]')!.textContent).toContain('2 ainda não foram')
+    // Pede confirmação antes de gastar tokens no servidor.
+    desk.querySelector<HTMLButtonElement>('[data-test="desk-start-all"]')!.click()
     await flush()
-    expect(useThreadStore().open).toHaveBeenLastCalledWith('conv-c')
+    expect(api).not.toHaveBeenCalledWith(expect.stringMatching(/\/prepare$/), expect.anything())
+    expect(desk.querySelector('[data-test="desk-confirm"]')!.textContent).toContain('gastando tokens sem você acompanhando')
+    desk.querySelector<HTMLButtonElement>('[data-test="desk-confirm-start"]')!.click()
+    await flush()
+    expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j7/batches/b9/prepare', { method: 'POST', body: { start: true, concurrency: 3 } })
+    // Uma fila só, da migração inteira, com o andamento do construtor item a item.
+    expect([...desk.querySelectorAll('[data-test="import-draft-badge"]')].map((badge) => badge.textContent!.trim())).toEqual(['construtor trabalhando', 'na fila'])
+    expect([...desk.querySelectorAll('[data-test="desk-kind"]')].map((chip) => chip.textContent!.replace(/\s+/g, ' ').trim())).toEqual(['Skills (1) ●', 'Commands (1) ●'])
+    // A conversa do item abre no painel por cima da fila, sem sair da tela.
+    desk.querySelector<HTMLButtonElement>('[data-test="import-draft-toggle"]')!.click()
+    await flush()
+    desk.querySelector<HTMLButtonElement>('[data-test="import-draft-conversation"]')!.click()
+    await flush()
+    expect(document.querySelector('[data-test="desk-drawer"]')).not.toBeNull()
+    expect(useThreadStore().open).toHaveBeenCalledWith('conv-s')
+    document.querySelector<HTMLButtonElement>('[data-test="desk-drawer-close"]')!.click()
+    await flush()
+    expect(document.querySelector('[data-test="desk-drawer"]')).toBeNull()
   })
 
   it('"Migrar selecionados" traz as dependências (caixa marcada); "Criar migração" salva e leva ao passo Preparar', async () => {
@@ -903,7 +933,7 @@ describe('ImportView', () => {
     await flush()
     expect(api).toHaveBeenCalledWith('/projects/alfa/import/jobs/j7/batches/b9/items', { method: 'POST', body: { keys: ['command:ship'], closure: true } })
     expect(host.querySelector('[data-test="batches-area"]')).not.toBeNull()
-    expect(host.querySelectorAll('[data-test="progress-row"]')).toHaveLength(2)
+    expect(host.querySelectorAll('[data-test="import-draft-item"]')).toHaveLength(2)
   })
 
   it('⛔ no trabalho antigo a prévia vale, mas o lote não é salvo', async () => {

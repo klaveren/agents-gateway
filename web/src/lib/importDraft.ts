@@ -157,3 +157,25 @@ export function buildLink(kind: TBuildKind, conversationId: string): string {
 export function importOpening(keys: readonly string[]): string {
   return `Importe ${keys.length === 1 ? 'este item' : `estes ${keys.length} itens`} do trabalho de importação: ${keys.join(', ')}. Comece por list_import_items, leia as fontes e me pergunte o que for ambíguo.`
 }
+
+/** O andamento do construtor de fundo numa conversa da migração (o "Preparar tudo" no servidor). */
+export interface IImportRunState {
+  state: 'queued' | 'running' | 'ok' | 'error' | 'aborted'
+  error?: string
+  at: string
+}
+
+/** Uma conversa de construtor da migração: os itens dela, o que ainda deve e o andamento (ausente: nunca rodou aqui). */
+export interface IImportBatchRun {
+  conversationId: string
+  kind: TBuildKind
+  agentId: string
+  keys: string[]
+  pending: string[]
+  run?: IImportRunState
+}
+
+/** A conversa está na fila ou rodando no servidor. */
+export function runBusy(run: IImportBatchRun): boolean {
+  return run.run?.state === 'queued' || run.run?.state === 'running'
+}

@@ -12,9 +12,23 @@ import { STATE_HINT, STATE_LABEL, type TImportItemState } from '@/lib/importer'
  * confirmação, os rascunhos que não removem nada (a remoção segue pedindo o OK de cada uma). Recarrega a cada proposta
  * que termina (`refresh`). ⛔ Gravar no catálogo é do passo Gravar da migração.
  */
-const props = defineProps<{ projectId: string; jobId: string; keys: readonly string[]; refresh: number }>()
+const props = withDefaults(
+  defineProps<{
+    projectId: string
+    jobId: string
+    keys: readonly string[]
+    refresh: number
+    /** Onde os itens estão, na contagem ("na conversa", "na migração"). */
+    scope?: string
+    /** O andamento do construtor por item (a mesa do Preparar): no lugar do estado, enquanto o item está com ele. */
+    badges?: Readonly<Record<string, { label: string; hint?: string; tone: 'work' | 'idle' }>>
+    /** Mostra, em cada item, o botão que abre a conversa dele (`conversation`). */
+    withConversation?: boolean
+  }>(),
+  { scope: 'na conversa', badges: () => ({}), withConversation: false },
+)
 /** O estado de agora dos itens (o que a fila carregou ou a revisão mudou): quem embute atualiza as contagens. */
-const emit = defineEmits<{ updated: [states: IImportBuildStatus[]] }>()
+const emit = defineEmits<{ updated: [states: IImportBuildStatus[]]; conversation: [conversationId: string] }>()
 
 const statuses = ref<Record<string, IImportBuildStatus>>({})
 const latest = ref(true)
@@ -53,21 +67,31 @@ function jobPath(): string {
   return `/projects/${encodeURIComponent(props.projectId)}/import/jobs/${encodeURIComponent(props.jobId)}`
 }
 
+/** O servidor lê no máximo 200 chaves por pedido. */
+const KEYS_PER_CALL = 200
+
 async function load() {
   if (!props.keys.length) return
   try {
-    const found = await api<{ latest: boolean; states: IImportBuildStatus[] }>(`${jobPath()}/items`, { query: { keys: props.keys } })
-    statuses.value = Object.fromEntries(found.states.map((state) => [state.key, state]))
-    latest.value = found.latest
+    const states: IImportBuildStatus[] = []
+    let fresh = true
+    for (let at = 0; at < props.keys.length; at += KEYS_PER_CALL) {
+      const found = await api<{ latest: boolean; states: IImportBuildStatus[] }>(`${jobPath()}/items`, { query: { keys: props.keys.slice(at, at + KEYS_PER_CALL) } })
+      states.push(...found.states)
+      fresh &&= found.latest
+    }
+    statuses.value = Object.fromEntries(states.map((state) => [state.key, state]))
+    latest.value = fresh
     loadError.value = undefined
     if (!open.value || !statuses.value[open.value] || statuses.value[open.value].state !== 'review') open.value = toReview.value[0]
-    emit('updated', found.states)
+    emit('updated', states)
   } catch (failure) {
     loadError.value = message(failure)
   }
 }
 
-watch(() => [props.projectId, props.jobId, props.keys.join('\n'), props.refresh], load, { immediate: true })
+// ⚠️ Um texto, não um array: o array novo a cada leitura dispararia de novo a cada mudança de estado (e a carga muda o estado).
+watch(() => `${props.projectId}\n${props.jobId}\n${props.refresh}\n${props.keys.join('\n')}`, load, { immediate: true })
 
 /** O próximo a revisar depois deste (ou o primeiro que sobrou). */
 function nextAfter(key: string): string | undefined {
@@ -116,7 +140,7 @@ async function approveQuick() {
     <p v-if="!latest" class="text-xs text-amber-300" data-test="import-drafts-outdated">Há uma análise mais nova deste repositório: a revisão é nela, no Importador.</p>
 
     <div class="flex flex-wrap items-center gap-2 text-xs">
-      <span class="text-zinc-300" data-test="review-count">{{ toReview.length }} a revisar · {{ keys.length }} na conversa</span>
+      <span class="text-zinc-300" data-test="review-count">{{ toReview.length }} a revisar · {{ keys.length }} {{ scope }}</span>
       <span class="flex-1" />
       <label v-if="toReview.length" class="flex items-center gap-1 text-zinc-400">
         <input v-model="onlyReview" type="checkbox" class="accent-emerald-500" data-test="only-review" />
@@ -155,7 +179,16 @@ async function approveQuick() {
         >
           <code class="min-w-0 flex-1 break-all text-zinc-300">{{ key }}</code>
           <span
-            v-if="statuses[key]"
+            v-if="badges[key] && statuses[key]?.state === 'drafting'"
+            class="rounded-full px-1.5 text-[10px]"
+            :class="badges[key].tone === 'work' ? 'animate-pulse bg-sky-500/15 text-sky-200' : 'bg-orange-500/15 text-orange-200'"
+            :title="badges[key].hint"
+            data-test="import-draft-badge"
+          >
+            {{ badges[key].label }}
+          </span>
+          <span
+            v-else-if="statuses[key]"
             class="rounded-full px-1.5 text-[10px]"
             :class="statuses[key].state === 'review' ? 'bg-amber-500/15 text-amber-200' : statuses[key].state === 'approved' ? 'bg-emerald-500/15 text-emerald-200' : 'bg-zinc-800 text-zinc-300'"
             :title="STATE_HINT[statuses[key].state]"
@@ -163,6 +196,15 @@ async function approveQuick() {
           >
             {{ STATE_LABEL[statuses[key].state] }}
           </span>
+        </button>
+        <button
+          v-if="withConversation && open === key && statuses[key]?.conversationId"
+          type="button"
+          class="btn btn-ghost btn-sm self-start"
+          data-test="import-draft-conversation"
+          @click="emit('conversation', statuses[key].conversationId!)"
+        >
+          Abrir a conversa deste item
         </button>
         <template v-if="open === key">
           <ImportItemReview

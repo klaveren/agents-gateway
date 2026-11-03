@@ -1434,11 +1434,8 @@ export class AgentController {
         const input = await this.turnInput(sessionId, resolved, body)
         const position = body.whileBusy === 'queue' ? this.queue(sessionId, body, input) : undefined
         if (position !== undefined) return { conversationId: sessionId, turn: this.liveTurns.get(sessionId)?.turn ?? session.turns - 1, status: 'queued' as const, position }
-        if (session.status === 'running' || this.liveTurns.has(sessionId)) throw new SessionBusyError(sessionId)
-        const live: ILiveTurn = { turn: session.turns, startedAt: Date.now(), text: '', tools: [] }
-        this.liveTurns.set(sessionId, live)
         const callback = session.metadata?.[CALLBACK_METADATA_KEY]
-        void this.runTurn(sessionId, input, live, typeof callback === 'string' ? callback : undefined)
+        const { live } = this.launch(sessionId, session, input, typeof callback === 'string' ? callback : undefined)
         return { conversationId: sessionId, turn: live.turn, status: 'running' as const }
       },
       { status: 202, message: 'Turn started' },
@@ -1515,6 +1512,27 @@ export class AgentController {
   }
 
   /** O turno em segundo plano: consome os eventos, guarda o resultado para o `GET` e avisa quem pediu. Nunca lança. */
+  /**
+   * ⛔ O turno pedido pelo PRÓPRIO gateway em nome de quem está na requisição (o "Preparar tudo" do Importador): as mesmas
+   * regras do `POST …/turns` (dono, retomada, `/command`, um turno por conversa). Resolve quando o turno acaba.
+   */
+  async serverTurn(sessionId: string, message: string): Promise<{ status: 'ok' | 'error' | 'aborted'; error?: string }> {
+    const resolved = await this.requireOwnedSession(sessionId, { resume: true })
+    const session = await this.usecases.getSession.execute(sessionId)
+    const input = await this.turnInput(sessionId, resolved, { message })
+    await this.launch(sessionId, session, input, undefined).done
+    const finished = this.finishedTurns.get(sessionId) as { status?: 'ok' | 'error' | 'aborted'; error?: string } | undefined
+    return { status: finished?.status ?? 'ok', ...(finished?.error ? { error: finished.error } : {}) }
+  }
+
+  /** Começa o turno assíncrono (um por conversa: rodando, é 409). */
+  private launch(sessionId: string, session: { status: string; turns: number }, input: IMessageInput, callback: string | undefined): { live: ILiveTurn; done: Promise<void> } {
+    if (session.status === 'running' || this.liveTurns.has(sessionId)) throw new SessionBusyError(sessionId)
+    const live: ILiveTurn = { turn: session.turns, startedAt: Date.now(), text: '', tools: [] }
+    this.liveTurns.set(sessionId, live)
+    return { live, done: this.runTurn(sessionId, input, live, callback) }
+  }
+
   private async runTurn(sessionId: string, input: IMessageInput, live: ILiveTurn, callback: string | undefined): Promise<void> {
     const events: IAgentEvent[] = []
     let failure: string | undefined
