@@ -273,6 +273,14 @@ export function proposalIssues(kind: TImportDraftKind, outputs: readonly Pick<II
   })
 }
 
+/**
+ * As regras de HOJE sobre um rascunho que já existe (aprovar, gravar): as de `proposalIssues` menos o escopo — o
+ * `global` de um rascunho antigo é ignorado na gravação, não é defeito dele.
+ */
+export function currentRuleIssues(kind: TImportDraftKind, outputs: readonly Pick<IImportDraftOutput, 'meta' | 'fields'>[]): IImportIssue[] {
+  return proposalIssues(kind, outputs).filter((issue) => !issue.field.endsWith('.scope'))
+}
+
 /** Tira as linhas em branco do começo e do fim (a única normalização do texto final). */
 function trimBlank(text: string): string {
   return text.replace(/^(?:[ \t]*\r?\n)+/, '').replace(/\s+$/, '')

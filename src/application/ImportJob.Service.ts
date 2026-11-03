@@ -192,14 +192,15 @@ export class ImportJobService {
 
 /**
  * ⚖️ GRAVADO QUE SAIU DO CATÁLOGO (alguém o apagou para processar de novo) ou que deixou de ser importável (o tipo
- * detectado mudou para um sem construtor, como a entrada de uma CLI): volta à fila — à revisão, com o rascunho, se ele
- * ainda serve; senão, a pendente.
+ * detectado mudou para um sem construtor, como a entrada de uma CLI): volta a PENDENTE. ⛔ Não volta à revisão com o
+ * rascunho antigo — quem apagou quer processar de novo, e o rascunho de antes pode não passar nas regras de agora; o
+ * Preparar abre uma conversa NOVA (com o protocolo de hoje).
  */
 function reopenedIfGone(carried: ReturnType<typeof carryOver>, old: IImportJobItem | undefined, item: IImportScan['items'][number]): ReturnType<typeof carryOver> {
   if (!old || carried.state !== 'applied') return carried
   const kind = draftKindForItem(old.kind ?? item.kind)
   if (kind && item.catalog !== 'new') return carried
-  return { ...carried, state: kind && lastDraft(old) ? 'review' : 'pending', staleFrom: undefined }
+  return { ...carried, state: 'pending', staleFrom: undefined }
 }
 
 function strip({ basis: _basis, ...item }: IImportJobItem): Omit<IImportJobItem, 'basis'> {

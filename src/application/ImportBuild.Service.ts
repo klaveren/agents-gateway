@@ -10,6 +10,7 @@ import {
   missingRemovalOks,
   parseImportOps,
   proposalIssues,
+  currentRuleIssues,
   TImportOp,
   verifyImportDraft,
 } from '@domain/Import.Draft'
@@ -639,6 +640,9 @@ export class ImportBuildService {
     if (!draft) throw new ImportBuildError('transition', 'the item has no draft to approve', 'key')
     const missing = missingRemovalOks(draft, oks)
     if (missing.length) throw new ImportBuildError('removals', `every removal needs an OK; missing: ${missing.map((op) => `ops[${op}]`).join(', ')}`, 'removals')
+    // ⛔ O rascunho de antes das regras de hoje (a rule de 43 KB) não passa: peça ajuste ao construtor.
+    const current = currentRuleIssues(draft.kind, draft.outputs)
+    if (current.length) throw new ImportBuildError('invalid', 'the draft breaks the rules of today: ask the builder for an adjustment', 'key', current)
     const issues = verifyImportDraft(draft, this.sourceTexts(record, entry, draftSources(entry, draft)))
     if (issues.length) throw new ImportBuildError('invalid', 'the draft does not match source + operations', 'key', issues)
     const at = this.now()

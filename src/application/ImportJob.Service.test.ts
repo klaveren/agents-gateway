@@ -54,7 +54,7 @@ function setup() {
 }
 
 describe('ImportJobService', () => {
-  it('⚖️ gravado que saiu do catálogo volta à revisão com o rascunho; o que virou tipo sem construtor, a pendente', () => {
+  it('⚖️ gravado que saiu do catálogo, ou que virou tipo sem construtor, volta a pendente (nunca à revisão com o rascunho antigo)', () => {
     const { files, catalog, service, repository, state } = setup()
     files.set('spec:base', 'a').set('rule:boot', 'b')
     service.create('alfa', 'app', 'ana', {})
@@ -66,7 +66,11 @@ describe('ImportJobService', () => {
     catalog.set('spec:base', 'new')
     service.create('alfa', 'app', 'ana', {})
     const job = service.get('alfa', 'j1')
-    assert.deepStrictEqual([state(job, 'spec:base')?.state, state(job, 'rule:boot')?.state], ['review', 'pending'])
+    assert.deepStrictEqual(
+      [state(job, 'spec:base')?.state, state(job, 'rule:boot')?.state],
+      ['pending', 'pending'],
+      'pendente: o Preparar abre conversa nova, sem o rascunho antigo',
+    )
   })
 
   it('analisar salva o trabalho com todos os itens pendentes; abrir devolve o inventário e os estados', () => {

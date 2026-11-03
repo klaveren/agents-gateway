@@ -425,6 +425,20 @@ describe('ImportBuildService', () => {
     assert.strictEqual(service.propose('c1', 'spec:arquitetura', META, [OPS[0], { ...OPS[1], target: 'ja-no-catalogo' }]).item.state, 'review')
   })
 
+  it('⛔ aprovar confere o rascunho pelas regras de HOJE: o de antes (resumo acima do limite) é recusado, com o motivo', async () => {
+    const { service, repository } = setup()
+    await service.open('alfa', 'j1', 'ana', { keys: ['spec:arquitetura'] })
+    const { draft } = service.propose('c1', 'spec:arquitetura', META, OPS)
+    // O rascunho velho: proposto antes do limite (o resumo passa de 300).
+    const old = { ...draft, outputs: draft.outputs.map((output) => ({ ...output, meta: { ...output.meta, summary: 'x'.repeat(400) } })) }
+    repository.updateItem('j1', 'spec:arquitetura', { drafts: [old] })
+    assert.throws(
+      () => service.approve('alfa', 'j1', 'spec:arquitetura', [0], 'ana'),
+      (error: unknown) => error instanceof ImportBuildError && error.code === 'invalid' && /rules of today/.test(error.message) && error.issues[0].field === 'meta.summary',
+    )
+    assert.strictEqual(repository.item('j1', 'spec:arquitetura')!.state, 'review')
+  })
+
   it('⛔ aprovar sem OK em toda remoção é recusado; com OK, o item vai a approved (nada no catálogo)', async () => {
     const { service, repository } = setup()
     await service.open('alfa', 'j1', 'ana', { keys: ['spec:arquitetura'] })
