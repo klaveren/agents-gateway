@@ -160,6 +160,9 @@ describe('construtor em modo importação (/projects/:id/import/jobs/:job/builde
     const of = (key: string) => states.find((state) => state.key === key)!
     assert.deepStrictEqual([of('spec:arquitetura').state, of('spec:arquitetura').conversationLost], ['drafting', true])
     assert.deepStrictEqual([of('spec:config').state, of('spec:config').conversationLost], ['approved', undefined])
+    // ⚖️ O trabalho aberto não leva rascunho nem revisão (o peso): só se tem rascunho.
+    const raw = of('spec:config') as unknown as Record<string, unknown>
+    assert.deepStrictEqual([raw.drafts, raw.review, typeof raw.drafted], [undefined, undefined, 'boolean'])
     // Sem quem confira, nada é marcado.
     assert.strictEqual(
       ((await call(ADMIN, undefined, 'getJob')).body?.result.states as typeof states).some((state) => state.conversationLost),

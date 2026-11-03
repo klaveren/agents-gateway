@@ -310,6 +310,8 @@ export interface IImportItemStatus {
   fingerprint: string
   /** O lote do catálogo em que o item entrou (`applied`). */
   batchId?: string
+  /** Tem rascunho (o trabalho aberto não traz o rascunho, só isto; a revisão o lê por `…/items`). */
+  drafted?: boolean
   by?: string
   at?: string
 }
