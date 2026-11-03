@@ -29,7 +29,10 @@ function providersLine(agent: IAgent): string {
   return `${protocols.providerName(first.id)} · ${first.models[0] ?? 'sem modelo'}${rest.length ? ` +${rest.length}` : ''}`
 }
 
-const detail = ref<IAgentDetail>()
+/** O rascunho do construtor por cima do agente aberto (sem salvar): vale até salvar ou trocar de agente. */
+const drafted = ref<IAgentDetail>()
+/** O agente aberto: o da store (lido uma vez; o Salvar põe a resposta lá), ou o rascunho por cima dele. */
+const detail = computed(() => drafted.value ?? (props.id ? agents.details.get(props.id) : undefined))
 const template = ref<IAgentDetail>()
 const error = ref<string>()
 /** O formulário veio do construtor ("Abrir no editor"): avisa, até a próxima troca de agente. */
@@ -81,26 +84,24 @@ const created = computed(() => agents.list.filter((agent) => agent.role !== 'sub
 const subagents = computed(() => agents.list.filter((agent) => agent.role === 'subagent'))
 
 onMounted(() => {
-  void agents.loadTools().catch(() => undefined)
+  void agents.ensureTools().catch(() => undefined)
   // Os providers configurados, para o formulário escolher entre eles.
-  void providers.load().catch(() => undefined)
+  void providers.ensure().catch(() => undefined)
   // A lista traz `unavailable` (só para admin) e muda por fora: relê ao abrir a tela.
   void agents.load().catch(() => undefined)
 })
 
 /** ⚠️ Cada leitura vale uma geração: a resposta de uma seleção anterior chega depois e não pode sobrescrever a atual. */
 let generation = 0
-async function loadDetail(id: string, keepCurrent = false) {
+async function loadDetail(id: string) {
   const token = ++generation
   try {
-    const fresh = await agents.detail(id)
+    await agents.detail(id)
     if (token !== generation) return
-    detail.value = fresh
-    const drafted = takeDraft(id)
-    if (drafted) detail.value = drafted
+    const draft = takeDraft(id)
+    if (draft) drafted.value = draft
   } catch (failure) {
     if (token !== generation) return
-    if (!keepCurrent) detail.value = undefined
     error.value = failure instanceof Error ? failure.message : String(failure)
   }
 }
@@ -109,12 +110,12 @@ watch(
   () => [props.id, creating.value] as const,
   async ([id, isNew]) => {
     error.value = undefined
-    detail.value = undefined
+    drafted.value = undefined
     draftNote.value = undefined
     generation++
     if (isNew) {
-      const drafted = takeDraft()
-      if (drafted) template.value = drafted
+      const draft = takeDraft()
+      if (draft) template.value = draft
     }
     if (!id) return
     await loadDetail(id)
@@ -187,7 +188,7 @@ watch(creating, (value) => {
           <RouterLink v-if="detail.role !== 'subagent'" :to="{ path: '/new', query: { agent: detail.id } }" class="btn btn-secondary ml-auto">Conversar</RouterLink>
         </div>
         <p v-if="draftNote" class="mx-auto mb-4 max-w-3xl text-sm text-emerald-300">{{ draftNote }}</p>
-        <AgentForm :agent="detail" :creating="false" @saved="(saved) => loadDetail(saved, true)" @duplicate="duplicate" @removed="router.push('/agents')" />
+        <AgentForm :agent="detail" :creating="false" @saved="drafted = undefined" @duplicate="duplicate" @removed="router.push('/agents')" />
       </template>
       <p v-else-if="error" class="text-sm text-rose-300">{{ error }}</p>
       <div v-else class="grid h-full place-items-center text-zinc-500">Escolha um agente ou crie um novo.</div>

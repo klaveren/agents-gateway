@@ -81,7 +81,7 @@ const activeAdmins = computed(() => users.list.filter((user) => user.role === 'a
 
 onMounted(async () => {
   if (!auth.isAdmin) return
-  await users.load().catch((error) => (loadError.value = error instanceof Error ? error.message : String(error)))
+  await users.ensure().catch((error) => (loadError.value = error instanceof Error ? error.message : String(error)))
 })
 
 function askRole(user: IUser) {

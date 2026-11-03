@@ -40,6 +40,8 @@ async function submit() {
     conversations.subscribe(auth.isAdmin)
     void conversations.load(auth.isAdmin)
     void agents.load().catch(() => undefined)
+    // As ferramentas também dependem de quem pergunta (os MCPs dos projetos da pessoa).
+    void agents.loadTools().catch(() => undefined)
     await router.replace(String(route.query.next ?? '/'))
   } catch (failure) {
     if (failure instanceof ApiError && failure.status === 422) issues.value = failure.fieldIssues

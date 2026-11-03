@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { api } from '@/lib/api'
+import { keyedResource } from '@/lib/resource'
 import type { IProtocolInfo } from '@/lib/types'
 import { useAgentsStore } from './agents'
 import { useProvidersStore } from './providers'
@@ -10,16 +11,24 @@ const BRAND_COLOR: Record<IProtocolInfo['brand'], string> = { claude: 'bg-claude
 
 /**
  * Os protocolos como o servidor os descreve (`GET /protocols`): lanes, níveis de raciocínio, assinatura,
- * rótulo, console. ⚖️ A tela não guarda cópia: a regra mora no servidor, que é quem recusa.
+ * rótulo, console. ⚖️ A tela não guarda cópia: a regra mora no servidor, que é quem recusa. Não muda com o uso:
+ * lidos uma vez (`ensure`), chave única `''`.
  */
 export const useProtocolsStore = defineStore('protocols', () => {
-  const list = ref<IProtocolInfo[]>([])
-  const loaded = ref(false)
+  const resource = keyedResource(() => api<IProtocolInfo[]>('/protocols'))
+  const list = computed<IProtocolInfo[]>({
+    get: () => resource.get('') ?? [],
+    set: (value) => resource.set('', value),
+  })
+  const loaded = computed(() => resource.has(''))
   const byId = computed(() => new Map(list.value.map((protocol) => [protocol.id as string, protocol])))
 
   async function load(): Promise<void> {
-    list.value = await api<IProtocolInfo[]>('/protocols')
-    loaded.value = true
+    await resource.refresh('')
+  }
+
+  async function ensure(): Promise<void> {
+    await resource.ensure('')
   }
 
   function get(protocol: string | undefined): IProtocolInfo | undefined {
@@ -56,5 +65,5 @@ export const useProtocolsStore = defineStore('protocols', () => {
     return brand ? BRAND_COLOR[brand] : 'bg-zinc-600'
   }
 
-  return { list, loaded, byId, load, get, levelsFor, protocolOf, providerName, providerColor }
+  return { resource, list, loaded, byId, load, ensure, get, levelsFor, protocolOf, providerName, providerColor }
 })

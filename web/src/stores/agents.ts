@@ -1,58 +1,117 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { api } from '@/lib/api'
+import { keyedResource } from '@/lib/resource'
 import type { IAgent, IAgentDetail, IAgentInput, ICapability, INativeTool, ITool } from '@/lib/types'
+import type { IResourceFile } from '@/lib/resourceFiles'
 import { useProjectsStore } from './projects'
 
+interface IToolsResult {
+  mcp: { connected: boolean }
+  tools: ITool[]
+  capabilities?: ICapability[]
+  native?: INativeTool[]
+  limits?: { delegationMaxDepth: number }
+}
+
+/**
+ * Os agentes: a lista POR PROJETO (`lists`, a chave é o projeto; `''` sem projeto), o agente inteiro de cada um
+ * (`details`, só admin) e as ferramentas do servidor (`GET /tools`). `list`/`loaded` são os do projeto atual.
+ * ⚖️ `load()` relê a lista do projeto atual (ela traz `unavailable`, que muda por fora); `ensure()` só lê se não tem.
+ */
 export const useAgentsStore = defineStore('agents', () => {
-  const list = ref<IAgent[]>([])
-  const tools = ref<ITool[]>([])
-  const capabilities = ref<ICapability[]>([])
-  const nativeTools = ref<INativeTool[]>([])
-  const mcpConnected = ref(false)
+  // Os do projeto e os globais (o Atlas).
+  const lists = keyedResource((project) => api<IAgent[]>('/agents', { query: project ? { project } : {} }))
+  const details = keyedResource((id) => api<IAgentDetail>(`/agents/${encodeURIComponent(id)}`))
+  const toolsResource = keyedResource(() => api<IToolsResult>('/tools'))
+
+  const listKey = computed(() => useProjectsStore().current ?? '')
+  const list = computed<IAgent[]>({
+    get: () => lists.get(listKey.value) ?? [],
+    set: (value) => lists.set(listKey.value, value),
+  })
+  const loaded = computed(() => lists.has(listKey.value))
+
+  const toolsResult = computed(() => toolsResource.get(''))
+  const tools = computed(() => toolsResult.value?.tools ?? [])
+  const capabilities = computed(() => toolsResult.value?.capabilities ?? [])
+  const nativeTools = computed(() => toolsResult.value?.native ?? [])
+  const mcpConnected = computed(() => toolsResult.value?.mcp.connected ?? false)
   /** Limites do servidor que a tela cita em texto (`GET /tools`). */
-  const limits = ref<{ delegationMaxDepth: number }>({ delegationMaxDepth: 2 })
-  const toolsLoaded = ref(false)
-  const loaded = ref(false)
+  const limits = computed(() => toolsResult.value?.limits ?? { delegationMaxDepth: 2 })
+  const toolsLoaded = computed(() => toolsResource.has(''))
 
   const byId = computed(() => new Map(list.value.map((agent) => [agent.id, agent])))
   /** Os que abrem conversa: subagente só é chamado por outro agente. */
   const conversable = computed(() => list.value.filter((agent) => agent.role !== 'subagent'))
 
   async function load(): Promise<void> {
-    // Os do projeto atual e os globais (o Atlas).
-    list.value = await api<IAgent[]>('/agents', { query: useProjectsStore().query })
-    loaded.value = true
+    await lists.refresh(listKey.value)
+  }
+
+  async function ensure(): Promise<void> {
+    await lists.ensure(listKey.value)
   }
 
   async function loadTools(): Promise<void> {
-    const result = await api<{ mcp: { connected: boolean }; tools: ITool[]; capabilities?: ICapability[]; native?: INativeTool[]; limits?: { delegationMaxDepth: number } }>(
-      '/tools',
-    )
-    tools.value = result.tools
-    capabilities.value = result.capabilities ?? []
-    nativeTools.value = result.native ?? []
-    mcpConnected.value = result.mcp.connected
-    if (result.limits) limits.value = result.limits
-    toolsLoaded.value = true
+    await toolsResource.refresh('')
   }
 
+  async function ensureTools(): Promise<void> {
+    await toolsResource.ensure('')
+  }
+
+  /** O agente inteiro (com o prompt): o guardado, ou lido uma vez. */
   function detail(id: string): Promise<IAgentDetail> {
-    return api<IAgentDetail>(`/agents/${encodeURIComponent(id)}`)
+    return details.ensure(id)
   }
 
   async function save(input: IAgentInput, creating: boolean): Promise<IAgentDetail> {
     const saved = creating
       ? await api<IAgentDetail>('/agents', { method: 'POST', body: input })
       : await api<IAgentDetail>(`/agents/${encodeURIComponent(input.id ?? '')}`, { method: 'PUT', body: input })
+    details.set(saved.id, saved)
+    // ⚖️ A lista traz `unavailable`, que a resposta não traz: relê a do projeto atual.
     // ⚠️ Já gravou: falha ao reler a lista não pode virar "não salvou".
-    await load().catch(() => undefined)
+    await reloadLists().catch(() => undefined)
     return saved
+  }
+
+  /** Relê a lista do projeto atual; as dos outros projetos são esquecidas e lidas na volta a eles. */
+  async function reloadLists(): Promise<void> {
+    for (const key of lists.keys()) if (key !== listKey.value) lists.drop(key)
+    await load()
+  }
+
+  /**
+   * Mudou o que vale para TODOS os agentes (um provider, um modelo ligado): as listas e os detalhes guardados
+   * (`disabledModels`, o nome do provider) ficam velhos. Relê a lista atual; os detalhes, quando abertos de novo.
+   */
+  async function reloadAll(): Promise<void> {
+    details.clear()
+    await reloadLists()
   }
 
   async function remove(id: string): Promise<void> {
     await api(`/agents/${encodeURIComponent(id)}`, { method: 'DELETE' })
-    await load().catch(() => undefined)
+    for (const key of lists.keys()) lists.update(key, (current) => current.filter((agent) => agent.id !== id))
+    details.drop(id)
+  }
+
+  /**
+   * Os arquivos da pasta do agente (guia própria, gravada à parte). ⚖️ Troca só os arquivos no detalhe guardado, no
+   * MESMO objeto: o formulário aberto não se refaz (perderia o que ainda não foi salvo), e quem abrir depois já os vê.
+   */
+  async function saveFiles(id: string, files: IResourceFile[]): Promise<void> {
+    await api(`/agents/${encodeURIComponent(id)}/files`, { method: 'PUT', body: { files } })
+    const current = details.get(id)
+    if (current) current.files = files
+  }
+
+  /** Esquece o que é de quem estava logado (as listas e os detalhes; as ferramentas são relidas no novo escopo). */
+  function reset(): void {
+    lists.clear()
+    details.clear()
   }
 
   /** O nome legível de uma ferramenta no histórico: o rótulo da nativa (`WebSearch` → "Busca na web"), senão o próprio nome. */
@@ -63,5 +122,29 @@ export const useAgentsStore = defineStore('agents', () => {
     return nativeTools.value.find((tool) => tool.sdkName === name || tool.sdkName === base)?.label ?? name
   }
 
-  return { list, conversable, tools, capabilities, nativeTools, mcpConnected, limits, toolsLoaded, toolLabel, loaded, byId, load, loadTools, detail, save, remove }
+  return {
+    lists,
+    details,
+    list,
+    conversable,
+    tools,
+    capabilities,
+    nativeTools,
+    mcpConnected,
+    limits,
+    toolsLoaded,
+    toolLabel,
+    loaded,
+    byId,
+    load,
+    ensure,
+    reloadAll,
+    loadTools,
+    ensureTools,
+    detail,
+    save,
+    remove,
+    saveFiles,
+    reset,
+  }
 })

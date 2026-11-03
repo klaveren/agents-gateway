@@ -36,16 +36,17 @@ function blank(): TScheduleInput & { name: string } {
 
 onMounted(async () => {
   await reload()
-  if (!props.projectId && !projects.loaded) await projects.load().catch(() => undefined)
+  if (!props.projectId) await projects.ensure().catch(() => undefined)
 })
 watch(
   () => props.agentId,
   () => reload(),
 )
 
+/** A lista do agente, da store: lida uma vez; a gravação põe a resposta lá. */
 async function reload() {
   loadError.value = undefined
-  await schedules.load(props.agentId).catch((failure) => (loadError.value = describe(failure)))
+  await schedules.ensure(props.agentId).catch((failure) => (loadError.value = describe(failure)))
 }
 
 function describe(failure: unknown): string {
@@ -122,6 +123,7 @@ const runNow = () =>
     if (!selected.value) return
     await schedules.runNow(props.agentId, selected.value.name)
     started.value = true
+    // ⚖️ Ao vivo: o histórico e a lista (`lastRun`) são relidos enquanto a execução anda.
     for (const wait of [800, 3000, 8000, 20000]) setTimeout(() => void loadRuns().then(() => schedules.load(props.agentId)), wait)
   })
 

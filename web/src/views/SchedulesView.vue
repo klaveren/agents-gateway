@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted } from 'vue'
+import { useResource } from '@/composables/useResource'
 import { describeCron, RUN_STATUS } from '@/lib/cron'
 import { fullTime } from '@/lib/format'
-import type { ISchedule } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectsStore } from '@/stores/projects'
@@ -18,31 +18,20 @@ const agents = useAgentsStore()
 const schedules = useSchedulesStore()
 const project = computed(() => projects.list.find((item) => item.id === projects.current))
 
-const list = ref<ISchedule[]>([])
-const error = ref<string>()
-const loading = ref(false)
-
-async function reload() {
-  loading.value = true
-  error.value = undefined
-  try {
-    list.value = await schedules.all(projects.current)
-  } catch (failure) {
-    error.value = failure instanceof Error ? failure.message : String(failure)
-  } finally {
-    loading.value = false
-  }
-}
+/** A visão geral do projeto atual, da store (por projeto): lida uma vez; "Atualizar" relê (a próxima execução anda). */
+const overview = useResource(schedules.overview, () => (auth.isAdmin ? (projects.current ?? '') : undefined))
+const list = computed(() => overview.data.value ?? [])
+const loading = computed(() => schedules.overview.loading(projects.current ?? ''))
+const error = computed(() => {
+  const failure = overview.error.value
+  return failure === undefined ? undefined : failure instanceof Error ? failure.message : String(failure)
+})
+const reload = () => overview.refresh().catch(() => undefined)
 
 onMounted(async () => {
   if (!auth.isAdmin) return
-  await Promise.all([projects.loaded ? undefined : projects.load().catch(() => undefined), agents.loaded ? undefined : agents.load().catch(() => undefined)])
-  await reload()
+  await Promise.all([projects.ensure().catch(() => undefined), agents.ensure().catch(() => undefined)])
 })
-watch(
-  () => projects.current,
-  () => auth.isAdmin && reload(),
-)
 
 const agentName = (id: string) => agents.byId.get(id)?.name ?? id
 </script>

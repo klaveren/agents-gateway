@@ -44,7 +44,7 @@ const formIssues = ref<Record<string, string[]>>({})
 const formError = ref<string>()
 
 onMounted(async () => {
-  if (auth.isAdmin) await providers.load().catch((error) => (loadError.value = error instanceof Error ? error.message : String(error)))
+  if (auth.isAdmin) await providers.ensure().catch((error) => (loadError.value = error instanceof Error ? error.message : String(error)))
 })
 
 /** O rótulo do protocolo como o servidor o descreve; sem a lista carregada, o próprio id. */
@@ -94,7 +94,7 @@ function save(id: string) {
   })
 }
 
-/** Login da assinatura concluído: recarrega o estado e testa — o erro aparece no resultado, não se perde. */
+/** Login da assinatura concluído: relê o estado (o token salvo não vem na resposta do login) e testa — o erro aparece no resultado, não se perde. */
 function loginDone(id: string) {
   return run(id, async () => {
     await providers.load()

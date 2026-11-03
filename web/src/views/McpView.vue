@@ -122,6 +122,7 @@
    * anterior, e "Salvar alterações" gravaria o velho por cima. Se a versão era a de antes de existir, o MCP sumiu.
    */
   async function restored(result: IRestoreResult) {
+    // ⚖️ A restauração não devolve o servidor: relê a lista (de propósito).
     await mcp.load().catch((error) => (loadError.value = describe(error)))
     const server = selected.value
     if (!result.exists || !server) return void router.push('/mcp')
@@ -133,9 +134,9 @@
   onMounted(async () => {
     if (auth.isAdmin)
       await Promise.all([
-        mcp.load().catch((error) => (loadError.value = describe(error))),
-        settings.load().catch(() => undefined),
-        projects.loaded ? undefined : projects.load().catch(() => undefined),
+        mcp.ensure().catch((error) => (loadError.value = describe(error))),
+        settings.ensure().catch(() => undefined),
+        projects.ensure().catch(() => undefined),
       ])
   })
 
@@ -163,7 +164,7 @@
         // ⛔ Segredo digitado é de UM servidor: não pode aparecer no formulário de outro.
         secret.value = ''
         envValues.value = {}
-        mcp.loadTools(server.key).catch((error) => (toolsError.value = describe(error)))
+        mcp.ensureTools(server.key).catch((error) => (toolsError.value = describe(error)))
         moveTo.value = server.projectId ?? ''
       }
       // ⚠️ "Testar" e "Ligado" recarregam a lista e o `selected` muda de objeto: a edição não salva só é

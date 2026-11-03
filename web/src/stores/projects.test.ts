@@ -60,3 +60,25 @@ describe('useProjectsStore', () => {
     expect([projects.current, projects.query]).toEqual([undefined, {}])
   })
 })
+
+describe('useProjectsStore — membros', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.mocked(api).mockReset()
+    localStorage.clear()
+  })
+
+  it('salvar os membros guarda a resposta (e a contagem na lista) sem reler', async () => {
+    vi.mocked(api).mockResolvedValueOnce([{ id: 'alfa', name: 'Alfa', members: 0 }])
+    const projects = useProjectsStore()
+    await projects.ensure()
+    await projects.ensure()
+    vi.mocked(api).mockResolvedValueOnce([{ projectId: 'alfa', userId: 'u1', addedAt: '' }])
+    await projects.setMembers('alfa', ['u1'])
+    await projects.members('alfa')
+
+    expect(api).toHaveBeenCalledTimes(2)
+    expect(projects.memberLists.get('alfa')?.map((member) => member.userId)).toEqual(['u1'])
+    expect(projects.list[0]?.members).toBe(1)
+  })
+})
