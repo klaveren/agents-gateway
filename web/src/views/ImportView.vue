@@ -572,8 +572,8 @@ watch(() => projects.current, reset)
       <header>
         <h1 class="text-xl font-semibold">Importador{{ project ? ` — ${project.name}` : '' }}</h1>
         <p class="text-xs text-zinc-500">
-          O que um repositório do projeto tem de agentes, skills, commands, rules e docs, e como isso chegaria ao catálogo. Cada análise fica salva como um trabalho de importação, com o
-          que você decidir item a item. Nada vai ao catálogo.
+          O que um repositório do projeto tem de agentes, skills, commands, rules e docs, e como isso chegaria ao catálogo. Cada repositório tem uma importação só: analisar de novo a
+          atualiza, guardando o que você já decidiu item a item. Nada vai ao catálogo.
         </p>
       </header>
 
