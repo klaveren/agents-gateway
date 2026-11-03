@@ -62,6 +62,7 @@ import {
   securityHeaders,
   trustProxySetting,
 } from './Security.Middleware'
+import { compressJson, gzipStatic } from './Compression.Middleware'
 
 export const API_PREFIX = '/v1'
 
@@ -146,6 +147,7 @@ export class HttpServer {
     if (trusted) this.app.set('trust proxy', trusted)
     this.app.use(securityHeaders())
     this.app.use(corsMiddleware())
+    this.app.use(compressJson())
     // ⛔ Dois tetos: o pequeno vale para tudo (o corpo é lido ANTES da autenticação); o grande, só para a
     // mensagem de uma conversa, que leva anexo, e para as rotas que gravam conteúdo (`CONTENT_ROUTES`).
     const small = express.json({ limit: jsonLimit() })
@@ -203,6 +205,7 @@ export class HttpServer {
     const web = resolveWebDir()
     if (!web) return
 
+    this.app.use(gzipStatic(web))
     this.app.use(express.static(web, { index: false }))
     this.app.get(/^(?!\/v1(\/|$)).*/, (req, res, next) => {
       if (!req.accepts('html')) return next()

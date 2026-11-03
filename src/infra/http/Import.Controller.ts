@@ -244,7 +244,7 @@ export class ImportController {
       const issues = ignore ? ignoreIssues(ignore, 'ignore') : []
       if (issues.length) throw new HttpError(422, 'validation_error', 'Request body is invalid', issues)
       try {
-        return this.jobs().create(projectId, repository, by, ignore ? { ignore } : {})
+        return leanJob(this.jobs().create(projectId, repository, by, ignore ? { ignore } : {}))
       } catch (error) {
         if (error instanceof WorkFolderError) throw new HttpError(422, 'validation_error', 'Request body is invalid', [{ field: 'repository', message: error.message }])
         throw error
@@ -255,7 +255,7 @@ export class ImportController {
   /** `GET /projects/:id/import/jobs/:job` — o trabalho: o inventário salvo e o estado de cada item. */
   async getJob(req: Request, res: Response): Promise<void> {
     await this.respond(res, 'importJob', req, async (projectId) => {
-      const job = this.jobError(() => this.jobs().get(projectId, req.params.job as string))
+      const job = leanJob(this.jobError(() => this.jobs().get(projectId, req.params.job as string)))
       return { ...job, states: await this.markLost(job.states) }
     })
   }
@@ -497,6 +497,14 @@ export class ImportController {
 }
 
 /** A seleção do corpo, sem os campos ausentes. */
+/**
+ * O trabalho SEM o rascunho e a revisão de cada item (só `drafted`: se tem rascunho). A tela de análise não os usa, e
+ * eles são quase todo o peso (399 itens: 4,7 MB com eles, 0,8 MB sem). A revisão lê os rascunhos por `…/items`.
+ */
+function leanJob<T extends { states: Array<{ drafts?: unknown[]; review?: unknown }> }>(job: T): T {
+  return { ...job, states: job.states.map(({ drafts, review: _review, ...state }) => ({ ...state, drafted: !!drafts?.length })) }
+}
+
 function selection(body: z.infer<typeof applySelectionSchema>) {
   return {
     ...(body.batchId ? { batchId: body.batchId } : {}),

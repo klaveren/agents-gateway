@@ -58,7 +58,7 @@ const migrations = computed(() => props.migrations ?? [])
 const state = computed(() => props.status?.state ?? 'pending')
 const canExclude = computed(() => !props.readonly && EXCLUDABLE_STATES.includes(state.value))
 const canInclude = computed(() => !props.readonly && INCLUDABLE_STATES.includes(state.value))
-const canReclassify = computed(() => !props.readonly && canReclassifyState(state.value, !!lastDraft(props.status as IImportBuildStatus | undefined)))
+const canReclassify = computed(() => !props.readonly && canReclassifyState(state.value, props.status?.drafted ?? !!lastDraft(props.status as IImportBuildStatus | undefined)))
 
 const untranslatable = computed(() => props.item.notes.filter((note) => note.level === 'untranslatable'))
 const others = computed(() => props.item.notes.filter((note) => note.level !== 'untranslatable'))
