@@ -230,7 +230,7 @@ const RUN_LABEL: Record<NonNullable<IImportBatchRun['run']>['state'], string> = 
 
     <Teleport to="body">
       <div v-if="drawer" class="fixed inset-0 z-40 flex justify-end bg-black/50" data-test="desk-drawer" @click.self="drawer = undefined" @keydown.esc="drawer = undefined">
-        <aside class="flex h-full w-full max-w-3xl flex-col border-l border-zinc-700 bg-zinc-950" aria-label="Conversa do construtor">
+        <aside class="flex h-full w-full max-w-3xl flex-col overflow-hidden border-l border-zinc-700 bg-zinc-950" aria-label="Conversa do construtor">
           <header class="flex flex-col gap-2 border-b border-zinc-800 px-3 py-2">
             <div class="flex items-center gap-2 text-sm">
               <span class="font-medium text-zinc-200">{{ opened ? BUILD_KINDS[opened.kind].builder : 'Conversa' }}</span>
@@ -253,7 +253,10 @@ const RUN_LABEL: Record<NonNullable<IImportBatchRun['run']>['state'], string> = 
               </button>
             </nav>
           </header>
-          <ThreadView v-if="opened" :key="opened.conversationId" embedded :agent-id="importBuilderAgentId(opened.kind)" mode="agent" />
+          <!-- ⚖️ min-h-0: sem isso o ThreadView (h-full) soma a altura do cabeçalho e o campo de mensagem fica abaixo da tela. -->
+          <div v-if="opened" class="min-h-0 flex-1">
+            <ThreadView :key="opened.conversationId" embedded :agent-id="importBuilderAgentId(opened.kind)" mode="agent" />
+          </div>
         </aside>
       </div>
     </Teleport>
