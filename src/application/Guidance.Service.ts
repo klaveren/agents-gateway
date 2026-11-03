@@ -66,6 +66,8 @@ export interface IEnvironmentParts {
   skills?: string
   commands?: string
   triggers?: string
+  /** O índice do ledger do agente (tema → gatilho) e a regra de leitura e escrita (ver `Ledger.Policy`). */
+  ledger?: string
   /** Só no construtor: o complemento do protocolo (o global, depois o do projeto). */
   protocol?: string
   /** Só no construtor: o que já existe do tipo que ele constrói (id e descrição). */
@@ -521,9 +523,18 @@ export class GuidanceService {
    */
   environmentFor(projectId?: string, agentId?: string): string | undefined {
     const parts = this.environmentParts(projectId, agentId)
-    const sections = [parts.rules, parts.projectSpecs, parts.agentSpecs, parts.skills, parts.triggers, parts.commands, parts.index, parts.protocol, parts.existing].filter(
-      (part): part is string => !!part,
-    )
+    const sections = [
+      parts.rules,
+      parts.projectSpecs,
+      parts.agentSpecs,
+      parts.skills,
+      parts.triggers,
+      parts.commands,
+      parts.index,
+      parts.ledger,
+      parts.protocol,
+      parts.existing,
+    ].filter((part): part is string => !!part)
     return sections.length ? sections.join('\n\n') : undefined
   }
 
@@ -590,6 +601,9 @@ export class GuidanceService {
         ...(listed.length < docs.length ? [`- … e mais ${docs.length - listed.length} documento(s): ache com ${SEARCH_DOCS_TOOL}.`] : []),
       ].join('\n')
     }
+    // O índice do ledger do agente: o que ele já aprendeu, para conferir antes de diagnosticar ou operar.
+    const ledger = agentId ? this.ledgerSection?.(agentId) : undefined
+    if (ledger) parts.ledger = ledger
     const building = builderKindOf(agentId)
     if (building) Object.assign(parts, this.builderParts(building, projectId))
     return parts
@@ -684,6 +698,21 @@ export class GuidanceService {
   }
 
   private files?: IResourceFilesPort
+
+  /**
+   * O ledger dos agentes (ver `Ledger.Service`): a seção do índice no prompt e, ligado, as ferramentas `ledger_read` e
+   * `ledger_write` em toda conversa (`hasLedger`). Ligado na composição; sem ele, nada disso.
+   */
+  useLedger(section: (agentId: string) => string | undefined): void {
+    this.ledgerSection = section
+  }
+
+  /** Há ledger neste gateway: toda conversa ganha as duas ferramentas dele (mesmo sem contexto ainda, para criar o primeiro). */
+  hasLedger(): boolean {
+    return !!this.ledgerSection
+  }
+
+  private ledgerSection?: (agentId: string) => string | undefined
 
   private agentChecker?: TAgentChecker
   private skillFilter?: (agentId: string | undefined, projectId: string | undefined, skillId: string) => boolean

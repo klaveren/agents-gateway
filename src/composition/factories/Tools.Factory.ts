@@ -12,6 +12,8 @@ import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepositor
 import { SqliteMcpServerRepository } from '@infra/persistence/Sqlite.McpServerRepository'
 import { DelegationSlot, makeDelegateTool } from '@infra/tools/Delegate.Tool'
 import { ITodoStore, makeLocalTools } from '@infra/tools/Local.Tools'
+import { makeLedgerTools } from '@infra/tools/Ledger.Tools'
+import { makeLedger } from './Ledger.Factory'
 import { LoopGuard } from '@infra/tools/Loop.Guard'
 import { IEditDiagnostics, makeEditDiagnostics } from '@infra/tools/Edit.Diagnostics'
 import { DEFAULT_MCP_SERVER, ToolCatalog } from '@infra/tools/Tool.Catalog'
@@ -66,41 +68,45 @@ export function makeTools(): ITools {
       servers,
       catalog: new ToolCatalog(
         mcp,
-        makeLocalTools({
-          docs: makeGuidance(),
-          resources: makeGuidance(),
-          triggers: {
-            // Só agente gravado: o de fábrica (Atlas, construtores) não se edita e responde como inexistente.
-            triggersOf: (agentId) => {
-              const entry = makeAgents()
-                .rawEntries()
-                .find((item) => item.agent.id === agentId)
-              return entry ? (entry.agent.triggers ?? []) : undefined
+        [
+          ...makeLocalTools({
+            docs: makeGuidance(),
+            resources: makeGuidance(),
+            triggers: {
+              // Só agente gravado: o de fábrica (Atlas, construtores) não se edita e responde como inexistente.
+              triggersOf: (agentId) => {
+                const entry = makeAgents()
+                  .rawEntries()
+                  .find((item) => item.agent.id === agentId)
+                return entry ? (entry.agent.triggers ?? []) : undefined
+              },
+              saveTriggers: (agentId, triggers, by) => makeAgents().saveTriggers(agentId, triggers, by),
             },
-            saveTriggers: (agentId, triggers, by) => makeAgents().saveTriggers(agentId, triggers, by),
-          },
-          drafts: makeGuidance(),
-          imports: {
-            listText: (conversationId) => makeImportBuild().listText(conversationId),
-            readSource: (conversationId, key, options) => makeImportBuild().readSource(conversationId, key, options),
-            propose: (conversationId, key, meta, ops) => makeImportBuild().propose(conversationId, key, meta, ops),
-            reclassify: (conversationId, key, kind, reason) => makeImportBuild().reclassify(conversationId, key, kind, reason),
-            listRepository: (conversationId, options) => makeImportBuild().listRepository(conversationId, options),
-            readRepository: (conversationId, options) => makeImportBuild().readRepository(conversationId, options),
-          },
-          todos: todoStore(),
-          permissions: lazyPermissions,
-          agentTerminal: (agentId) => makeAgents().get(agentId)?.terminal,
-          agentEnv: (agentId) => makeAgents().get(agentId)?.env,
-          mask: makeSecretMasker(),
-          loops: loopGuard(),
-          diagnostics: editDiagnostics(),
-          agentDiagnostics: (agentId) => makeAgents().get(agentId)?.diagnostics,
-          accounts: {
-            commandEnv: (projectId, allowed) => makeProjectAccounts().commandEnv(projectId, allowed),
-            sign: (projectId, id, namespace, data) => makeProjectAccounts().sign(projectId, id, namespace, data),
-          },
-        }),
+            drafts: makeGuidance(),
+            imports: {
+              listText: (conversationId) => makeImportBuild().listText(conversationId),
+              readSource: (conversationId, key, options) => makeImportBuild().readSource(conversationId, key, options),
+              propose: (conversationId, key, meta, ops) => makeImportBuild().propose(conversationId, key, meta, ops),
+              reclassify: (conversationId, key, kind, reason) => makeImportBuild().reclassify(conversationId, key, kind, reason),
+              listRepository: (conversationId, options) => makeImportBuild().listRepository(conversationId, options),
+              readRepository: (conversationId, options) => makeImportBuild().readRepository(conversationId, options),
+            },
+            todos: todoStore(),
+            permissions: lazyPermissions,
+            agentTerminal: (agentId) => makeAgents().get(agentId)?.terminal,
+            agentEnv: (agentId) => makeAgents().get(agentId)?.env,
+            mask: makeSecretMasker(),
+            loops: loopGuard(),
+            diagnostics: editDiagnostics(),
+            agentDiagnostics: (agentId) => makeAgents().get(agentId)?.diagnostics,
+            accounts: {
+              commandEnv: (projectId, allowed) => makeProjectAccounts().commandEnv(projectId, allowed),
+              sign: (projectId, id, namespace, data) => makeProjectAccounts().sign(projectId, id, namespace, data),
+            },
+          }),
+          // O ledger do agente (ver `Ledger.Tools`): toda conversa recebe as duas (ver `AgentProvider.withDocs`).
+          ...makeLedgerTools(makeLedger()),
+        ],
         (allowed) => makeDelegateTool(runnableTargets(allowed), delegation, lazyPermissions),
         containerProxy,
         lazyPermissions,

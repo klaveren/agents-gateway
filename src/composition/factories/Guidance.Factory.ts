@@ -3,6 +3,7 @@ import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepositor
 import { SqliteGuidanceRepository } from '@infra/persistence/Sqlite.GuidanceRepository'
 import { makeAgents } from './Agents.Factory'
 import { makeCatalogHistory } from './CatalogHistory.Factory'
+import { makeLedger } from './Ledger.Factory'
 import { makeProjects } from './Projects.Factory'
 import { makeResourceFiles } from './ResourceFiles.Factory'
 
@@ -24,6 +25,8 @@ export function makeGuidance(): GuidanceService {
   )
   instance.history.use(() => makeCatalogHistory())
   instance.useFiles(makeResourceFiles())
+  // O índice do ledger de cada agente no prompt (pedido na hora: o ledger lê os agentes).
+  instance.useLedger((agentId) => makeLedger().promptSection(agentId))
   return instance
 }
 

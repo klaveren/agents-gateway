@@ -4,6 +4,7 @@ import { ProjectAccountsService } from '@application/ProjectAccounts.Service'
 import { SqliteProjectAccountRepository } from '@infra/persistence/Sqlite.ProjectAccountRepository'
 import { PermissionsController } from './Permissions.Controller'
 import { PermissionRequestsController } from './PermissionRequests.Controller'
+import { LedgerController } from './Ledger.Controller'
 import { ProjectAccountsController } from './ProjectAccounts.Controller'
 import { SecretMaskController } from './SecretMask.Controller'
 import { SecretMasker } from '@infra/secrets/Secret.Masker'
@@ -141,6 +142,7 @@ export class HttpServer {
     importer?: ImportController,
     catalog?: CatalogController,
     permissionRequests?: PermissionRequestsController,
+    ledger?: LedgerController,
   ) {
     this.app = express()
     this.app.disable('x-powered-by')
@@ -190,6 +192,7 @@ export class HttpServer {
       importer ?? defaultImporter(),
       catalog ?? defaultCatalog(),
       permissionRequests ?? new PermissionRequestsController({}),
+      ledger ?? new LedgerController({}),
     )
     this.setupRoutes()
     this.setupFrontend()
@@ -306,8 +309,21 @@ function buildRoutes(
   importer: ImportController,
   catalog: CatalogController,
   permissionRequests: PermissionRequestsController,
+  ledger: LedgerController,
 ): IRoute[] {
   return [
+    // O ledger de cada agente (a guia Memória; só admin). O agente lê e escreve o dele pelas ferramentas `ledger_*`.
+    { method: 'get', path: '/agents/:agentId/ledger', handler: ledger.index },
+    { method: 'get', path: '/agents/:agentId/ledger/search', handler: ledger.search },
+    { method: 'get', path: '/agents/:agentId/ledger/export', handler: ledger.exportLedger },
+    { method: 'post', path: '/agents/:agentId/ledger/contexts', handler: ledger.createContext },
+    { method: 'get', path: '/agents/:agentId/ledger/contexts/:topic', handler: ledger.context },
+    { method: 'put', path: '/agents/:agentId/ledger/contexts/:topic', handler: ledger.updateContext },
+    { method: 'delete', path: '/agents/:agentId/ledger/contexts/:topic', handler: ledger.deleteContext },
+    { method: 'get', path: '/agents/:agentId/ledger/contexts/:topic/revisions', handler: ledger.revisions },
+    { method: 'post', path: '/agents/:agentId/ledger/contexts/:topic/lines', handler: ledger.addLine },
+    { method: 'put', path: '/agents/:agentId/ledger/contexts/:topic/lines/:lineId', handler: ledger.updateLine },
+    { method: 'delete', path: '/agents/:agentId/ledger/contexts/:topic/lines/:lineId', handler: ledger.deleteLine },
     // Os pedidos de permissão dos agentes (só admin). ⛔ Aprovar, só pela sessão da tela (ver `PermissionRequests.Controller`).
     { method: 'get', path: '/agents/:agentId/permission-rules', handler: permissionRequests.rules },
     { method: 'post', path: '/agents/:agentId/permission-rules', handler: permissionRequests.change },

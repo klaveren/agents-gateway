@@ -609,6 +609,7 @@ export class AgentController {
         ['triggers', 'Índice de triggers', env.triggers],
         ['commands', 'Índice de commands', env.commands],
         ['index', 'Índice de documentos', env.index],
+        ['ledger', 'Índice do ledger', env.ledger],
         ['protocol', 'Complemento do protocolo', env.protocol],
         ['existing', 'O que já existe', env.existing],
       ]

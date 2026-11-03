@@ -3,6 +3,7 @@ import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IMcpServerConfig, isLaunchedMcp, MCP_ALL_TOOLS, mcpSelection, mcpServerKey, mcpServesProject, parseMcpToolRef } from '@domain/models/McpServer.Model'
 import { McpRegistry } from '@infra/mcp/Mcp.Registry'
 import { delegatesOf } from '@domain/models/Delegation.Model'
+import { LEDGER_TOOLS } from '@domain/models/Ledger.Model'
 import { ILocalTool, IToolDefinition, IToolResult } from './Tool.Types'
 import type { IPermissionChecker } from '@application/Permissions.Service'
 import type { IPermissionVerdict } from '@domain/Permission.Policy'
@@ -77,9 +78,12 @@ export class ToolCatalog {
   }
 
   /** Os nomes de todas as tools locais deste processo. */
-  /** As locais que um agente do catálogo pode escolher. ⛔ Sem as do construtor (e as do modo importação): são só dos agentes do core. */
+  /**
+   * As locais que um agente do catálogo pode escolher. ⛔ Sem as do construtor (e as do modo importação): são só dos agentes
+   * do core. Sem as do ledger: todo agente já as tem (ver `AgentProvider.withDocs`), não são escolha.
+   */
   localNames(): string[] {
-    return this.local.map((tool) => tool.name).filter((name) => name !== PROPOSE_DRAFT_TOOL && !IMPORT_TOOLS.includes(name))
+    return this.local.map((tool) => tool.name).filter((name) => name !== PROPOSE_DRAFT_TOOL && !IMPORT_TOOLS.includes(name) && !LEDGER_TOOLS.includes(name))
   }
 
   /** As locais que o agente escolheu — e, se ele pode delegar (`agent:<id>`), a `delegate_to_agent` dele. */
