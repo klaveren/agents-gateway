@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { IAgentFallback, IFallbackStep } from './Fallback.Policy'
 import type { IAgent, IAgentDiagnostics, IAgentTarget, IAgentTerminal, IAgentTrigger } from './models/Agent.Model'
+import type { IImportProblem } from './models/ImportProblem.Model'
 import type { IMcpContainer, IMcpProcess, IMcpServerConfig } from './models/McpServer.Model'
 import { mcpEnvNames } from './models/McpServer.Model'
 import type { IProject } from './models/Project.Model'
@@ -103,6 +104,9 @@ export const FALLBACK_SHAPE: TShape<IAgentFallback> = { mode: 'value', chain: { 
  */
 export const PERMISSION_RULE_SHAPE: TShape<IPermissionRule> = { category: 'value', pattern: 'value', decision: 'value', note: 'value' }
 
+/** Um problema da importação: a ordem é a em que o importador os achou. */
+export const IMPORT_PROBLEM_SHAPE: TShape<IImportProblem> = { code: 'value', message: 'value', target: 'value', link: 'value' }
+
 /** Um arquivo de recurso: o caminho, o sha256 do conteúdo e o tamanho. */
 export const FILE_SHAPE: TShape<IResourceFile> = { path: 'value', sha256: 'value', bytes: 'value' }
 
@@ -135,6 +139,7 @@ export const AGENT_SHAPE: TShape<IAgent> = {
   env: 'record',
   // O conteúdo mora no depósito por sha256: o registro leva a lista (o diff e o reverter a enxergam).
   files: { set: FILE_SHAPE },
+  importIssues: { list: IMPORT_PROBLEM_SHAPE },
 }
 
 /** O que o agente leva além do `IAgent`: os vínculos que moram em outras tabelas. */
@@ -164,6 +169,7 @@ export const RESOURCE_SHAPE: TShape<IResource> = {
   // Subconjunto de `docIds`: só diz QUAIS vão por referência.
   docRefs: 'set',
   files: { set: FILE_SHAPE },
+  importIssues: { list: IMPORT_PROBLEM_SHAPE },
   createdAt: { omit: META },
   updatedAt: { omit: META },
   updatedBy: { omit: META },
@@ -191,6 +197,7 @@ export const DOC_SHAPE: TShape<IProjectDoc> = {
   // Os anexos do doc (doc → doc), como os da skill: a ordem é a da carga; `docRefs` só diz quais vão por referência.
   docIds: 'list',
   docRefs: 'set',
+  importIssues: { list: IMPORT_PROBLEM_SHAPE },
   createdAt: { omit: META },
   updatedAt: { omit: META },
   updatedBy: { omit: META },

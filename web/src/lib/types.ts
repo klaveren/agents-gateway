@@ -149,9 +149,24 @@ export interface IAgent {
   projectId?: string
   /** Só para admin: por que o agente não abre conversa agora (nenhum provider roda). Ausente = ativo. */
   unavailable?: { reason: 'provider_disabled' | 'no_model' | 'no_key' | 'admin_only'; label: string }
+  /** Só na lista, só para admin: quantos problemas da importação ele tem (o detalhe traz a lista). */
+  importIssueCount?: number
+}
+
+/**
+ * Um PROBLEMA DA IMPORTAÇÃO que ficou dentro do artefato (doc, skill, command, agente): não impediu a gravação; o
+ * artefato entrou sem o vínculo quebrado. `link-pending` e `skill-missing` voltam sozinhos quando o alvo é importado.
+ */
+export interface IImportIssue {
+  code: string
+  message: string
+  target?: string
+  link?: string
 }
 
 export interface IAgentDetail extends IAgent {
+  /** Os problemas da importação (ver `IImportIssue`). */
+  importIssues?: IImportIssue[]
   /** Quem o agente é (personalidade). */
   soul?: string
   permissions?: IPermissionRule[]
@@ -581,6 +596,8 @@ export interface IProjectDoc {
   loadedIn?: { projects: string[]; agents: string[] }
   /** Só na lista: o peso estimado do corpo. */
   tokens?: number
+  /** Os problemas da importação (ver `IImportIssue`), na lista também. */
+  importIssues?: IImportIssue[]
   createdAt: string
   updatedAt: string
   updatedBy?: string
@@ -630,6 +647,8 @@ export interface IResource {
   docRefs?: string[]
   /** Os arquivos da pasta (scripts, modelos): ver `lib/resourceFiles`. */
   files?: IResourceFile[]
+  /** Os problemas da importação (ver `IImportIssue`). */
+  importIssues?: IImportIssue[]
   createdAt: string
   updatedAt: string
   updatedBy?: string

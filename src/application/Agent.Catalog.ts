@@ -2,7 +2,8 @@ import { fileIssues, IResourceFile, sortFiles } from '@domain/models/ResourceFil
 import { IResourceFilesPort } from '@domain/ports/ResourceFiles.Port'
 import { toCapabilities } from '@domain/Capability.Catalog'
 import { agentIssues, IAgentRules, triggerIssues } from '@domain/Agent.Policy'
-import { AgentInUseError, AgentNotFoundError, InvalidAgentError } from '@domain/errors/Domain.Error'
+import { AgentInUseError, AgentNotFoundError, GuidanceNotFoundError, InvalidAgentError } from '@domain/errors/Domain.Error'
+import { IImportProblemMatch, withoutProblem } from '@domain/models/ImportProblem.Model'
 import { diagnosticsOn, IAgent, IAgentTarget, IAgentTrigger } from '@domain/models/Agent.Model'
 import { IAgentDirectory, IAgentRepository, IStoredAgent } from '@domain/ports/AgentRepository.Port'
 import { CatalogHistoryHook } from './CatalogHistory.Service'
@@ -188,6 +189,22 @@ export class AgentCatalog implements IAgentDirectory {
     return saved
   }
 
+  /**
+   * "Resolvido": tira do agente gravado os problemas da importação que casam (o código e, dado, o alvo). O resto do
+   * agente fica como está, sem passar pela regra do salvamento (nada muda além da lista). Nenhum casou: 404.
+   */
+  resolveImportIssue(id: string, match: IImportProblemMatch, by: string): IStoredAgent {
+    const stored = this.repository.list().find((agent) => agent.id === id)
+    if (!stored) throw new AgentNotFoundError(id)
+    const agent: IAgent = { ...toAgent(stored) }
+    const rest = withoutProblem(agent.importIssues, match)
+    if (!rest) throw new GuidanceNotFoundError('import issue', `${match.code}${match.target ? ` ${match.target}` : ''} in agent ${id}`)
+    delete agent.importIssues
+    const saved = this.repository.save(rest.length ? { ...agent, importIssues: rest } : agent, by)
+    this.history.record([{ kind: 'agent', id }], { by })
+    return saved
+  }
+
   /** Muda o agente de projeto sem passar pela regra do salvamento — só a migração para projetos usa. */
   moveToProject(id: string, projectId: string, by: string): void {
     const stored = this.repository.list().find((agent) => agent.id === id)
@@ -240,6 +257,7 @@ function toAgent(stored: IStoredAgent): IAgent {
     ...(stored.triggers?.length ? { triggers: stored.triggers.map((trigger) => ({ id: trigger.id, when: trigger.when, body: trigger.body })) } : {}),
     ...(stored.env && Object.keys(stored.env).length ? { env: { ...stored.env } } : {}),
     ...(stored.files?.length ? { files: stored.files.map((file) => ({ ...file })) } : {}),
+    ...(stored.importIssues?.length ? { importIssues: stored.importIssues.map((issue) => ({ ...issue })) } : {}),
     ...(stored.fallback
       ? { fallback: { mode: stored.fallback.mode, ...(stored.fallback.chain?.length ? { chain: stored.fallback.chain.map((step) => ({ ...step })) } : {}) } }
       : {}),

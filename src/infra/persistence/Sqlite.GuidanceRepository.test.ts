@@ -116,3 +116,36 @@ describe('SqliteGuidanceRepository — anexos dos documentos', () => {
     }
   })
 })
+
+describe('SqliteGuidanceRepository — os problemas da importação', () => {
+  const now = new Date('2026-10-30T12:00:00.000Z')
+  const issues = [{ code: 'link-pending' as const, message: 'vínculo com api pendente', target: 'api', link: 'reference' as const }]
+
+  it('vão e voltam no doc e no recurso; sem eles, nada (o documento canônico não muda)', () => {
+    const repository = new SqliteGuidanceRepository(':memory:')
+    repository.insertDoc({ id: 'guia', kind: 'spec', title: 'Guia', summary: '', body: 'x', importIssues: issues, createdAt: now, updatedAt: now })
+    assert.deepStrictEqual(repository.doc('guia')?.importIssues, issues)
+    repository.updateDoc('guia', { importIssues: [] })
+    assert.strictEqual(repository.doc('guia')?.importIssues, undefined)
+    repository.saveResource({ id: 'lint', kind: 'command', description: 'Lint', body: 'x', docIds: [], importIssues: issues, createdAt: now, updatedAt: now })
+    assert.deepStrictEqual(repository.resource('lint')?.importIssues, issues)
+  })
+
+  it('⚖️ banco de antes da coluna: ganha a coluna ao abrir, e o que havia fica sem problema nenhum', () => {
+    const folder = mkdtempSync(join(tmpdir(), 'gw-guidance-'))
+    const path = join(folder, 'gateway.db')
+    try {
+      new SqliteGuidanceRepository(path).insertDoc({ id: 'api', kind: 'spec', title: 'API', summary: '', body: 'x', createdAt: now, updatedAt: now })
+      const raw = new DatabaseSync(path)
+      raw.exec('ALTER TABLE project_docs DROP COLUMN import_issues')
+      raw.exec('ALTER TABLE resources DROP COLUMN import_issues')
+      raw.close()
+      const reopened = new SqliteGuidanceRepository(path)
+      assert.strictEqual(reopened.doc('api')?.importIssues, undefined)
+      reopened.updateDoc('api', { importIssues: issues })
+      assert.deepStrictEqual(reopened.doc('api')?.importIssues, issues)
+    } finally {
+      rmSync(folder, { recursive: true, force: true })
+    }
+  })
+})

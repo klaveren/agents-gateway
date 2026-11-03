@@ -46,6 +46,8 @@ const filesSchema = z.object({ files: z.array(z.object({ path: z.string().max(40
 const uploadSchema = z.object({ content: z.string().max(Math.ceil((RESOURCE_FILE_MAX_BYTES * 4) / 3) + 8) })
 const addendumSchema = z.object({ projectId: project, body: z.string() })
 const agentResourcesSchema = z.object({ skills: z.array(z.string().max(80)).max(200).optional(), commands: z.array(z.string().max(80)).max(200).optional() })
+/** O "resolvido" de um problema da importação: o código e, para tirar só um, o alvo. */
+export const importIssueMatchSchema = z.object({ code: z.string().min(1).max(40), target: z.string().max(200).optional() })
 const docSchema = z.object({
   id: z.string().max(80).optional(),
   kind: z.enum(DOC_KINDS as [TDocKind, ...TDocKind[]]).optional(),
@@ -74,6 +76,8 @@ export class GuidanceController {
       'createDoc',
       'updateDoc',
       'deleteDoc',
+      'resolveDocImportIssue',
+      'resolveResourceImportIssue',
       'getInitialContext',
       'setInitialContext',
       'getAgentContext',
@@ -172,6 +176,22 @@ export class GuidanceController {
       },
       { message: 'Document deleted' },
     )
+  }
+
+  /** `POST /docs/:id/import-issues/resolve { code, target? }` — "resolvido": tira do documento os problemas que casam. */
+  async resolveDocImportIssue(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const by = await this.requireAdmin('resolveDocImportIssue')
+      return this.deps.guidance.resolveDocIssue(req.params.id as string, parseBody(importIssueMatchSchema, req.body), by)
+    })
+  }
+
+  /** `POST /resources/:id/import-issues/resolve { code, target? }` — o mesmo na skill ou no command. */
+  async resolveResourceImportIssue(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const by = await this.requireAdmin('resolveResourceImportIssue')
+      return this.deps.guidance.resolveResourceIssue(req.params.id as string, parseBody(importIssueMatchSchema, req.body), by)
+    })
   }
 
   /** O contexto inicial do projeto: as specs que vão inteiras no prompt, com os tokens estimados. */

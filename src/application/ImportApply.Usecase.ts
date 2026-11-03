@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto'
 import { ICatalogDocument, TCanonicalValue, TCatalogKind } from '@domain/Catalog.Document'
 import { ICatalogImportPlan, refOfDocument, TRefTarget, withBody } from '@domain/Catalog.Import'
 import { IApprovedEntry, IAgentExtras, importDocuments } from '@domain/Import.Documents'
+import { ILinkWorld, restoreImportLinks, withImportIssues } from '@domain/Import.Issues'
+import { IImportProblem, problemList } from '@domain/models/ImportProblem.Model'
 import { draftKindForItem, IImportDraft, verifyImportDraft } from '@domain/Import.Draft'
 import { canTransition } from '@domain/Import.Job'
 import { planAgentBatch, prefixedId } from '@domain/Import.Order'
@@ -33,8 +35,9 @@ export interface IImportApplySelection {
   /** Por agente (a chave do item): o modelo que ele vai usar (o agente novo precisa de um). */
   models?: Readonly<Record<string, { provider: string; model: string }>>
   /**
-   * Só os PRONTOS: o item com documento bloqueado (erro ou conflito no plano) fica de fora, e com ele o que depende
-   * dele (a cascata). O que fica de fora vai em `heldBack`, com o motivo.
+   * Só os PRONTOS: o item com documento bloqueado (erro ou conflito no plano) fica de fora, com o motivo, em `heldBack`.
+   * ⚖️ Quem só CITAVA o que ficou de fora não vai junto: entra sem o vínculo, com o problema `link-pending` registrado
+   * nele (ver `Import.Issues`), e o vínculo volta quando o citado for gravado.
    */
   ready?: boolean
 }
@@ -72,8 +75,10 @@ export interface IImportApplyPreview {
   head?: string
   /** `project:<id>` (ou `all`, quando um item é global por escolha). */
   scope: string
-  /** Os aprovados que viram documento, e quais. */
-  items: Array<{ key: string; kind: string; refs: string[] }>
+  /** Os aprovados que viram documento, e quais; `issues`: os problemas da importação com que cada documento dele é gravado (não bloqueiam). */
+  items: Array<{ key: string; kind: string; refs: string[]; issues?: Array<IImportProblem & { ref: string }> }>
+  /** Os artefatos do catálogo que recebem de volta um vínculo pendente (o alvo entra nesta gravação), e os problemas que saem. */
+  resolved: Array<{ ref: string; issues: IImportProblem[] }>
   /** Os escolhidos que não entram, e por quê (não aprovados, trigger sem agente…). */
   skipped: Array<{ key: string; reason: string }>
   agents: IImportApplyAgent[]
@@ -141,13 +146,27 @@ interface IPrepared {
   produced: Record<string, string[]>
   entries: IApprovedEntry[]
   skipped: Array<{ key: string; reason: string }>
-  agents: IImportApplyAgent[]
+  agents: Array<{ view: IImportApplyAgent; extras: IAgentExtras }>
   /** Todos os itens do trabalho e o prefixo do lote: para achar quem produz o que falta. */
   all: IImportJobItem[]
   prefix: string
   /** O conteúdo dos arquivos de recurso que vão junto: entra no depósito antes da gravação. */
   blobs: Buffer[]
+  projectId: string
+  /** O catálogo de hoje: onde os vínculos procuram o citado, e os pendentes que podem voltar. */
+  snapshot: ICatalogDocument[]
 }
+
+/** Os documentos como vão ao plano: os vínculos que valem, os problemas, e os artefatos do catálogo com vínculo de volta. */
+interface ILinked {
+  documents: ICatalogDocument[]
+  resolved: IImportApplyPreview['resolved']
+}
+
+const DOC_KINDS: readonly string[] = ['spec', 'adr', 'knowledge']
+const RESOURCE_KINDS: readonly string[] = ['skill', 'command']
+/** Os campos dos vínculos que a importação tira do documento (ver `Import.Issues`). */
+const LINK_FIELDS: readonly string[] = ['docIds', 'docRefs', 'initialContext', 'resources.skills', 'resources.commands']
 
 /**
  * A GRAVAÇÃO DO IMPORTADOR pelo caminho do catálogo (`docs/integration/plano-importador.md` §2.4, PR 9): os itens
@@ -168,15 +187,25 @@ export class ImportApplyUseCase {
   constructor(private readonly deps: IImportApplyDeps) {}
 
   async preview(projectId: string, jobId: string, selection: IImportApplySelection, caller?: Pick<IRestoreCaller, 'viaAccessToken'>): Promise<IImportApplyPreview> {
-    const { prepared, plan, heldBack } = await this.planned(this.prepare(projectId, jobId, selection), !!selection.ready, !!caller?.viaAccessToken)
+    const { prepared, documents, resolved, plan, heldBack } = await this.planned(this.prepare(projectId, jobId, selection), !!selection.ready, !!caller?.viaAccessToken)
+    const issuesOf = (refs: readonly string[]) =>
+      documents
+        .filter((document) => refs.includes(refOfDocument(document)))
+        .flatMap((document) => problemList(document.body.importIssues).map((issue) => ({ ...issue, ref: refOfDocument(document) })))
     return {
       jobId: prepared.record.id,
       repository: prepared.record.repository,
       ...(prepared.record.head ? { head: prepared.record.head } : {}),
       scope: plan.scope,
-      items: prepared.entries.filter((entry) => prepared.produced[entry.key]).map((entry) => ({ key: entry.key, kind: entry.kind, refs: prepared.produced[entry.key] })),
+      items: prepared.entries
+        .filter((entry) => prepared.produced[entry.key])
+        .map((entry) => {
+          const issues = issuesOf(prepared.produced[entry.key])
+          return { key: entry.key, kind: entry.kind, refs: prepared.produced[entry.key], ...(issues.length ? { issues } : {}) }
+        }),
+      resolved,
       skipped: prepared.skipped,
-      agents: prepared.agents,
+      agents: prepared.agents.map((agent) => agent.view),
       models: this.deps.models?.() ?? [],
       plan,
       missing: missingRefs(plan, prepared.all, prepared.prefix, prepared.produced),
@@ -185,38 +214,121 @@ export class ImportApplyUseCase {
   }
 
   /**
-   * O plano do catálogo sobre os documentos. Com `ready`, tira os itens bloqueados (todos os documentos deles) e planeja
-   * de novo, até não sobrar bloqueio: o que citava um tirado passa a bloquear na volta seguinte (a cascata). O mesmo
-   * cálculo na prévia e na gravação: o `planHash` confere.
+   * O plano do catálogo sobre os documentos, até não mudar mais nada. O que bloqueia (erro, conflito) sai dos VÍNCULOS
+   * dos outros: quem o citava entra sem o vínculo, com `link-pending` (a cascata não segura mais ninguém). Com `ready`,
+   * o item bloqueado sai também do plano (`heldBack`); sem, fica nele, com o erro, e a gravação é recusada. O artefato do
+   * catálogo cujo vínculo voltaria e não passa no plano fica como está. O mesmo cálculo na prévia e na gravação: o
+   * `planHash` confere.
    */
   private async planned(
     prepared: IPrepared,
     ready: boolean,
     viaAccessToken: boolean,
-  ): Promise<{ prepared: IPrepared; plan: ICatalogImportPlan; heldBack: IImportApplyPreview['heldBack'] }> {
+  ): Promise<{ prepared: IPrepared; documents: ICatalogDocument[]; resolved: ILinked['resolved']; plan: ICatalogImportPlan; heldBack: IImportApplyPreview['heldBack'] }> {
     const heldBack: IImportApplyPreview['heldBack'] = []
+    const excluded = new Set<string>()
+    const keepAsIs = new Set<string>()
     let current = prepared
     for (;;) {
-      const { plan } = await this.deps.catalog.plan({ documents: current.documents, scope: current.scope }, { viaAccessToken })
-      const blocked = new Map(plan.items.filter((item) => item.op === 'error' || item.op === 'conflict').map((item) => [item.ref, item.issues[0]?.message ?? item.op]))
-      if (!ready || !blocked.size) return { prepared: current, plan, heldBack }
+      const linked = this.linked(current, excluded, keepAsIs)
+      const { plan } = await this.deps.catalog.plan({ documents: linked.documents, scope: current.scope }, { viaAccessToken })
+      const done = { prepared: current, documents: linked.documents, resolved: linked.resolved, plan, heldBack }
+      const failing = plan.items.filter((item) => item.op === 'error' || item.op === 'conflict')
+      if (!failing.length) return done
+      // ⚖️ Só a RAIZ do bloqueio sai nesta volta: o item com problema que não é de vínculo. Quem só tem problema de
+      // vínculo (cita outro do lote que não se aplica) espera — na volta seguinte o vínculo dele já saiu. Sem raiz,
+      // saem todos.
+      const roots = failing.filter((item) => item.issues.some((issue) => !LINK_FIELDS.includes(issue.field)))
+      const blocked = new Map((roots.length ? roots : failing).map((item) => [item.ref, item.issues[0]?.message ?? item.op]))
+      let changed = false
+      for (const { ref } of linked.resolved)
+        if (blocked.has(ref) && !keepAsIs.has(ref)) {
+          keepAsIs.add(ref)
+          changed = true
+        }
       const held = new Set<string>()
       for (const [key, refs] of Object.entries(current.produced)) {
         const ref = refs.find((one) => blocked.has(one))
         if (!ref) continue
+        for (const one of refs)
+          if (!excluded.has(one)) {
+            excluded.add(one)
+            changed = true
+          }
+        if (!ready) continue
         held.add(key)
         heldBack.push({ key, ref, reason: blocked.get(ref)! })
+        changed = true
       }
-      const out = new Set([...blocked.keys(), ...[...held].flatMap((key) => current.produced[key])])
-      // Sem item a tirar (o bloqueio não é de um item): não há como avançar; o plano volta como está.
-      if (!held.size) return { prepared: current, plan, heldBack }
-      current = {
-        ...current,
-        documents: current.documents.filter((document) => !out.has(refOfDocument(document))),
-        produced: Object.fromEntries(Object.entries(current.produced).filter(([key]) => !held.has(key))),
-        entries: current.entries.filter((entry) => !held.has(entry.key)),
-      }
+      // Nada mais a tirar (o bloqueio não é de um item, ou já saiu dos vínculos): o plano volta como está.
+      if (!changed) return done
+      if (held.size)
+        current = {
+          ...current,
+          documents: current.documents.filter((document) => !excluded.has(refOfDocument(document))),
+          produced: Object.fromEntries(Object.entries(current.produced).filter(([key]) => !held.has(key))),
+          entries: current.entries.filter((entry) => !held.has(entry.key)),
+        }
     }
+  }
+
+  /**
+   * Os vínculos de cada documento contra o que esta gravação escreve (menos os `excluded`) e o catálogo de hoje: o que
+   * não vale sai e vira problema no documento (`Import.Issues`). E os artefatos do catálogo, do projeto, com vínculo
+   * pendente para o que entra agora: voltam com ele (menos os `keepAsIs`).
+   */
+  private linked(prepared: IPrepared, excluded: ReadonlySet<string>, keepAsIs: ReadonlySet<string>): ILinked {
+    const writing = prepared.documents.filter((document) => !excluded.has(refOfDocument(document)))
+    const writtenDocs = new Map(writing.filter((document) => DOC_KINDS.includes(document.kind)).map((document) => [document.id, document.kind as string]))
+    const writtenResources = new Map(writing.filter((document) => RESOURCE_KINDS.includes(document.kind)).map((document) => [document.id, document.kind as string]))
+    const byId = (kinds: readonly string[]) => new Map(prepared.snapshot.filter((document) => kinds.includes(document.kind)).map((document) => [document.id, document]))
+    const catalogDocs = byId(DOC_KINDS)
+    const catalogResources = byId(RESOURCE_KINDS)
+    const catalogOthers = byId(['agent', 'mcp'])
+    const slim = (document: ICatalogDocument | undefined) => (document ? { kind: document.kind, ...(document.projectId ? { projectId: document.projectId } : {}) } : undefined)
+    // Os ids que cada item do trabalho tem no gateway (o do rascunho, o escolhido, o proposto com o prefixo, o candidato).
+    const idsOf = (one: IImportJobItem) => {
+      const kind = one.kind ?? one.item.kind
+      return [lastDraft(one)?.outputs[0]?.meta.id, one.targetId, prefixedId(kind, one.item.candidateId, prepared.prefix).id, one.item.candidateId].filter(Boolean) as string[]
+    }
+    const jobKinds = new Map<string, string>()
+    for (const one of prepared.all) for (const id of idsOf(one)) if (!jobKinds.has(id) || DOC_KINDS.includes(one.kind ?? one.item.kind)) jobKinds.set(id, one.kind ?? one.item.kind)
+    const excludedDocs = new Set(prepared.documents.filter((document) => excluded.has(refOfDocument(document)) && DOC_KINDS.includes(document.kind)).map((document) => document.id))
+    const world: ILinkWorld = {
+      projectId: prepared.projectId,
+      writtenDocs,
+      writtenResources,
+      catalogDoc: (id) => slim(catalogDocs.get(id)),
+      catalogResource: (id) => slim(catalogResources.get(id)),
+      pendingDoc: (id) => excludedDocs.has(id) || DOC_KINDS.includes(jobKinds.get(id) ?? ''),
+      otherKind: (id) => jobKinds.get(id) ?? catalogResources.get(id)?.kind ?? catalogOthers.get(id)?.kind,
+    }
+    const documents = prepared.documents.map((document) => withImportIssues(document, world))
+
+    // O agente na tela: as skills e os commands que ele libera de fato, e os pendentes.
+    for (const agent of prepared.agents) {
+      const document = documents.find((one) => one.kind === 'agent' && one.id === agent.view.id)
+      const resources = document?.body.resources as { skills?: string[]; commands?: string[] } | undefined
+      if (!resources) continue
+      agent.view.skills = resources.skills ?? []
+      agent.view.commands = resources.commands ?? []
+      agent.view.pendingSkills = agent.extras.skills.filter((id) => !agent.view.skills.includes(id))
+    }
+
+    const incoming = new Set(documents.map(refOfDocument))
+    const written = { docs: new Set(writtenDocs.keys()), skills: kindIds(writtenResources, 'skill'), commands: kindIds(writtenResources, 'command') }
+    const resolved: ILinked['resolved'] = []
+    const restored: ICatalogDocument[] = []
+    for (const document of prepared.snapshot) {
+      const ref = refOfDocument(document)
+      if (document.projectId !== prepared.projectId || incoming.has(ref) || keepAsIs.has(ref) || !document.body.importIssues) continue
+      const back = restoreImportLinks(document, written)
+      if (!back) continue
+      const left = problemList(back.body.importIssues)
+      resolved.push({ ref, issues: problemList(document.body.importIssues).filter((one) => !left.some((other) => other.code === one.code && other.target === one.target)) })
+      restored.push(back)
+    }
+    return { documents: [...documents, ...restored], resolved }
   }
 
   async apply(
@@ -225,18 +337,19 @@ export class ImportApplyUseCase {
     request: IImportApplySelection & { planHash: string; confirm?: readonly string[] },
     caller: IRestoreCaller,
   ): Promise<IImportApplyOutcome> {
-    const { prepared, heldBack } = await this.planned(this.prepare(projectId, jobId, request), !!request.ready, !!caller.viaAccessToken)
+    const { prepared, documents, resolved, heldBack } = await this.planned(this.prepare(projectId, jobId, request), !!request.ready, !!caller.viaAccessToken)
     const { record, produced } = prepared
     const provenance = {
       importJob: record.id,
       repository: record.repository,
       ...(record.head ? { head: record.head } : {}),
       items: prepared.entries.filter((entry) => produced[entry.key]).map((entry) => ({ key: entry.key, refs: produced[entry.key], sources: entry.draft.sources })),
+      ...(resolved.length ? { resolved: resolved.map((one) => one.ref) } : {}),
     }
     // O conteúdo dos arquivos entra no depósito ANTES: a gravação confere que cada um está lá.
     for (const blob of prepared.blobs) this.deps.files?.put(blob)
     const result = await this.deps.catalog.apply(
-      { documents: prepared.documents, scope: prepared.scope, planHash: request.planHash, ...(request.confirm ? { confirm: request.confirm } : {}), provenance },
+      { documents, scope: prepared.scope, planHash: request.planHash, ...(request.confirm ? { confirm: request.confirm } : {}), provenance },
       caller,
     )
 
@@ -324,19 +437,10 @@ export class ImportApplyUseCase {
       agent: (agentKey) => extras.get(agentKey)!,
     })
 
-    // As skills e os commands liberados que não existem nem entram no lote: pendentes (fora de `resources`).
-    const incoming = new Set(built.documents.map(refOfDocument))
-    const exists = (kind: 'skill' | 'command', id: string) => incoming.has(`${kind}/${id}`) || this.deps.reader.read(kind, id)?.kind === kind
-    const linked = built.documents.map((document) => {
-      const agent = agents.find((one) => one.view.id === document.id && document.kind === 'agent')
-      if (!agent) return document
-      agent.view.pendingSkills = agent.extras.skills.filter((id) => !exists('skill', id))
-      agent.view.skills = agent.extras.skills.filter((id) => exists('skill', id))
-      agent.view.commands = agent.extras.commands.filter((id) => exists('command', id))
-      return withBody(document, { ...document.body, resources: { skills: agent.view.skills, commands: agent.view.commands } })
-    })
+    // ⚖️ Os vínculos (docs citados, as skills e os commands liberados) são decididos no plano (`linked`): dependem do que
+    // entra de fato nesta gravação.
     const blobs: Buffer[] = []
-    const documents = linked.map((document) => this.withFiles(record, document, built.produced, byKey, all, skipped, blobs))
+    const documents = built.documents.map((document) => this.withFiles(record, document, built.produced, byKey, all, skipped, blobs))
     const global = documents.some((document) => !document.projectId && document.kind !== 'project')
     return {
       record,
@@ -345,10 +449,12 @@ export class ImportApplyUseCase {
       produced: built.produced,
       entries,
       skipped: [...skipped, ...built.skipped],
-      agents: agents.map((agent) => agent.view),
+      agents,
       all,
       prefix,
       blobs,
+      projectId,
+      snapshot: this.deps.reader.list({ kind: 'all' }),
     }
   }
 
@@ -540,3 +646,5 @@ export function missingRefs(
   }
   return [...found.values()]
 }
+
+const kindIds = (ids: ReadonlyMap<string, string>, kind: string) => new Set([...ids].filter(([, one]) => one === kind).map(([id]) => id))

@@ -2,7 +2,8 @@ import { defineStore } from 'pinia'
 import { api } from '@/lib/api'
 import { GLOBAL_SCOPE } from '@/lib/guidance'
 import { keyedResource } from '@/lib/resource'
-import type { IResource, TResourceKind } from '@/lib/types'
+import type { IImportIssue, IResource, TResourceKind } from '@/lib/types'
+import { issueMatch } from './docs'
 import { useAgentCatalogStore } from './agentCatalog'
 
 /** O corpo que a gravação manda (o `id` e o `kind` só ao criar). */
@@ -55,6 +56,13 @@ export const useResourcesStore = defineStore('resources', () => {
     return saved
   }
 
+  /** "Resolvido" num problema da importação: a resposta entra em `details` e nas listas, sem reler. */
+  async function resolveIssue(id: string, issue: Pick<IImportIssue, 'code' | 'target'>): Promise<IResource> {
+    const saved = await api<IResource>(`/resources/${encodeURIComponent(id)}/import-issues/resolve`, { method: 'POST', body: issueMatch(issue) })
+    put(saved)
+    return saved
+  }
+
   async function remove(id: string): Promise<void> {
     await api(`/resources/${encodeURIComponent(id)}`, { method: 'DELETE' })
     details.drop(id)
@@ -72,5 +80,5 @@ export const useResourcesStore = defineStore('resources', () => {
     put(await details.refresh(id))
   }
 
-  return { lists, details, listKey, create, update, saveFiles, remove, restored }
+  return { lists, details, listKey, create, update, saveFiles, resolveIssue, remove, restored }
 })

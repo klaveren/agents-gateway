@@ -2,8 +2,11 @@ import { defineStore } from 'pinia'
 import { api } from '@/lib/api'
 import { GLOBAL_SCOPE } from '@/lib/guidance'
 import { keyedResource } from '@/lib/resource'
-import type { IProjectDoc, TDocKind } from '@/lib/types'
+import type { IImportIssue, IProjectDoc, TDocKind } from '@/lib/types'
 import { useAgentCatalogStore } from './agentCatalog'
+
+/** O que o "resolvido" manda: o código e, para tirar só um, o alvo. */
+export const issueMatch = (issue: Pick<IImportIssue, 'code' | 'target'>) => ({ code: issue.code, ...(issue.target ? { target: issue.target } : {}) })
 
 /** O corpo que a gravação manda (o `id` só ao criar). */
 export type TDocInput = Pick<IProjectDoc, 'kind' | 'title' | 'summary' | 'body'> & { projectId: string | null; docIds: string[]; docRefs: string[] }
@@ -54,6 +57,14 @@ export const useDocsStore = defineStore('docs', () => {
     useAgentCatalogStore().docsChanged()
   }
 
+  /** "Resolvido" num problema da importação: o documento salvo em `details`, e a lista dele troca só os problemas. */
+  async function resolveIssue(id: string, issue: Pick<IImportIssue, 'code' | 'target'>): Promise<IProjectDoc> {
+    const saved = await api<IProjectDoc>(`/docs/${encodeURIComponent(id)}/import-issues/resolve`, { method: 'POST', body: issueMatch(issue) })
+    details.set(id, saved)
+    for (const key of lists.keys()) lists.update(key, (list) => list.map((doc) => (doc.id === id ? { ...doc, importIssues: saved.importIssues } : doc)))
+    return saved
+  }
+
   /** Restaurou uma versão (o histórico): relê o documento e as listas — o escopo pode ter mudado. */
   async function restored(id: string, exists: boolean): Promise<void> {
     if (exists) await details.refresh(id).catch(() => undefined)
@@ -62,5 +73,5 @@ export const useDocsStore = defineStore('docs', () => {
     await lists.refreshLoaded()
   }
 
-  return { lists, details, listKey, create, update, remove, restored }
+  return { lists, details, listKey, create, update, resolveIssue, remove, restored }
 })

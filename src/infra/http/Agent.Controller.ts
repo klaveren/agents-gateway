@@ -56,6 +56,7 @@ import { currentBranch, IWorkFolder, resolveWorkFolder, WorkFolderError } from '
 import { deliverCallback } from './Turn.Callbacks'
 import { BUILDER_METADATA_KEY, builderKindOf, CORE_AGENT_IDS, IMPORT_METADATA_KEY } from '@domain/Builder.Agents'
 import { IAgentProviderFacts, toAgentDetailDto, toAgentDto } from './Agent.Dto'
+import { importIssueMatchSchema } from './Guidance.Controller'
 import { assertNoAdkTemplateCollision } from '@infra/adapters/GoogleAgent.Adapter'
 import { IConversationView, toConversationDto, toStatsDto, toTurnDto } from './Conversation.Dto'
 import { metadataFilter, parsePageQuery } from './Monitor.Query'
@@ -229,6 +230,7 @@ export class AgentController {
     this.createAgent = this.createAgent.bind(this)
     this.updateAgent = this.updateAgent.bind(this)
     this.deleteAgent = this.deleteAgent.bind(this)
+    this.resolveAgentImportIssue = this.resolveAgentImportIssue.bind(this)
     this.agents = usecases.agents
   }
 
@@ -295,6 +297,8 @@ export class AgentController {
           .map(({ entry, unavailable }) => ({
             // ⛔ Quem não administra só vê os providers que rodam para ele: um desligado não é escolha.
             ...this.listedAgent(entry.agent, admin),
+            // Só quem administra vê que há problema da importação (a tela marca a lista); o texto vem no detalhe.
+            ...(admin && entry.agent.importIssues?.length ? { importIssueCount: entry.agent.importIssues.length } : {}),
             ...(unavailable ? { unavailable: { reason: unavailable, label: UNAVAILABLE_LABEL[unavailable] } } : {}),
           }))
       )
@@ -626,6 +630,8 @@ export class AgentController {
         const env = body.env === undefined ? this.agents.get(parsed.id)?.env : undefined
         // Os arquivos têm guia própria: o formulário que não os manda não os apaga.
         const files = body.files === undefined ? this.agents.get(parsed.id)?.files : undefined
+        // Os problemas da importação só saem pelo "resolvido" (ou por uma importação nova): a edição os mantém.
+        const importIssues = this.agents.entry(parsed.id)?.agent.importIssues
         const input = {
           ...parsed,
           ...(current ? { permissions: current } : {}),
@@ -635,6 +641,7 @@ export class AgentController {
           ...(triggers?.length ? { triggers } : {}),
           ...(env && Object.keys(env).length ? { env } : {}),
           ...(files?.length ? { files } : {}),
+          ...(importIssues?.length ? { importIssues } : {}),
         }
         const issues = this.projectIssues(input)
         if (issues.length) throw new HttpError(422, 'validation_error', 'Request body is invalid', issues)
@@ -649,6 +656,20 @@ export class AgentController {
       },
       { message: 'Agent updated' },
     )
+  }
+
+  /**
+   * `POST /agents/:agentId/import-issues/resolve { code, target? }` — "resolvido": tira do agente os problemas da
+   * importação que casam. Só admin; a revisão vai para o histórico. Devolve o agente inteiro.
+   */
+  async resolveAgentImportIssue(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const admin = await this.requireAdmin('resolveAgentImportIssue')
+      const match = parseBody(importIssueMatchSchema, req.body)
+      const saved = this.agents.resolveImportIssue(req.params.agentId as string, match, admin.email ?? admin.id ?? 'admin')
+      const entry = this.agents.entry(saved.id)!
+      return toAgentDetailDto(entry, (providerId) => this.providerFacts(providerId, this.agents.unusableModels(entry.agent)))
+    })
   }
 
   /**

@@ -17,6 +17,7 @@ import {
   USE_RESOURCE_TOOL,
 } from '@domain/models/Resource.Model'
 import { IBuilderDraft, IProtocolAddendum, IProtocolView, PROTOCOL_KINDS, TProtocolKind } from '@domain/models/Protocol.Model'
+import { IImportProblem, IImportProblemMatch, withoutProblem } from '@domain/models/ImportProblem.Model'
 import { IRule, RULE_TITLE_MAX } from '@domain/models/Rule.Model'
 import { IDocHit, IGuidanceRepository, TGuidanceScope } from '@domain/ports/GuidanceRepository.Port'
 import { fileIssues, filesNote, IResourceFile, sortFiles } from '@domain/models/ResourceFile.Model'
@@ -87,6 +88,8 @@ export interface IResourceInput {
   docRefs?: string[]
   /** Os arquivos da pasta (o conteúdo já no depósito). Ausente na edição = mantém os de antes; `[]` tira todos. */
   files?: IResourceFile[]
+  /** Os problemas da importação (só o caminho do catálogo grava; ver `ImportProblem.Model`). Ausente na edição = mantém. */
+  importIssues?: IImportProblem[]
 }
 
 /**
@@ -125,6 +128,8 @@ export interface IDocInput {
   docIds?: string[]
   /** Dos anexados, os que vão por referência (ver `IProjectDoc.docRefs`). Ausente na edição = mantém os de antes. */
   docRefs?: string[]
+  /** Os problemas da importação (só o caminho do catálogo grava; ver `ImportProblem.Model`). Ausente na edição = mantém. */
+  importIssues?: IImportProblem[]
 }
 
 /**
@@ -295,6 +300,7 @@ export class GuidanceService {
       body: input.body ?? '',
       docIds: input.docIds ?? [],
       ...(input.docRefs?.length ? { docRefs: input.docRefs } : {}),
+      ...(input.importIssues?.length ? { importIssues: input.importIssues } : {}),
       createdAt: this.now(),
       updatedAt: this.now(),
       updatedBy: by,
@@ -318,6 +324,7 @@ export class GuidanceService {
       ...(input.summary !== undefined ? { summary: input.summary.trim() } : {}),
       ...(input.body !== undefined ? { body: input.body } : {}),
       ...(input.docIds !== undefined ? { docIds: input.docIds } : {}),
+      ...(input.importIssues !== undefined ? { importIssues: input.importIssues } : {}),
     }
     if (scope) next.projectId = scope
     else delete next.projectId
@@ -334,6 +341,7 @@ export class GuidanceService {
       body: next.body,
       docIds,
       docRefs: next.docRefs ?? [],
+      importIssues: next.importIssues ?? [],
       ...(input.projectId !== undefined ? { projectId: scope } : {}),
       updatedAt: this.now(),
       updatedBy: by,
@@ -346,6 +354,18 @@ export class GuidanceService {
       ],
       { by },
     )
+    return saved
+  }
+
+  /**
+   * "Resolvido": tira do documento os problemas da importação que casam (o código e, dado, o alvo). O resto fica como
+   * está; a revisão vai para o histórico. Nenhum casou: 404.
+   */
+  resolveDocIssue(id: string, match: IImportProblemMatch, by: string): IProjectDoc {
+    const doc = this.doc(id)
+    const rest = remaining(doc.importIssues, match, `doc ${id}`)
+    const saved = this.repository.updateDoc(id, { importIssues: rest, updatedAt: this.now(), updatedBy: by })!
+    this.history.record([{ kind: doc.kind, id }], { by })
     return saved
   }
 
@@ -372,7 +392,7 @@ export class GuidanceService {
    * como seção, os por referência numa lista (ver `INLINE_DEPTH` para a profundidade e os ciclos).
    */
   docText(doc: IProjectDoc): string {
-    return `# ${doc.title} [${doc.kind}]\n\n${doc.body}${this.attachments(doc, new Set([doc.id]))}`
+    return `# ${doc.title} [${doc.kind}]\n\n${doc.body}${this.attachments(doc, new Set([doc.id]))}${importIssuesNote(doc.importIssues)}`
   }
 
   /**
@@ -750,6 +770,7 @@ export class GuidanceService {
       docIds: input.docIds ?? [],
       ...(input.docRefs?.length ? { docRefs: input.docRefs } : {}),
       ...(input.files?.length ? { files: sortFiles(input.files) } : {}),
+      ...(input.importIssues?.length ? { importIssues: input.importIssues } : {}),
       createdAt: this.now(),
       updatedAt: this.now(),
       updatedBy: by,
@@ -775,10 +796,12 @@ export class GuidanceService {
       ...(input.body !== undefined ? { body: input.body } : {}),
       ...(input.docIds !== undefined ? { docIds: input.docIds } : {}),
       ...(input.files !== undefined ? { files: sortFiles(input.files) } : {}),
+      ...(input.importIssues !== undefined ? { importIssues: input.importIssues } : {}),
       updatedAt: this.now(),
       updatedBy: by,
     }
     if (!next.files?.length) delete next.files
+    if (!next.importIssues?.length) delete next.importIssues
     // Sem `docRefs` na edição, ficam as de antes — menos as que deixaram de estar anexadas.
     const refs = input.docRefs ?? (current.docRefs ?? []).filter((docId) => next.docIds.includes(docId))
     if (refs.length) next.docRefs = refs
@@ -790,6 +813,18 @@ export class GuidanceService {
     if (current.projectId !== next.projectId) this.files?.remove(current.kind, id, current.projectId)
     this.files?.sync(next.kind, id, next.projectId, next.files ?? [])
     this.history.record([{ kind: next.kind, id }], { by })
+    return next
+  }
+
+  /** "Resolvido" na skill ou no command (ver `resolveDocIssue`). */
+  resolveResourceIssue(id: string, match: IImportProblemMatch, by: string): IResource {
+    const resource = this.resource(id)
+    const rest = remaining(resource.importIssues, match, `resource ${id}`)
+    const next: IResource = { ...resource, updatedAt: this.now(), updatedBy: by }
+    if (rest.length) next.importIssues = rest
+    else delete next.importIssues
+    this.repository.saveResource(next)
+    this.history.record([{ kind: resource.kind, id }], { by })
     return next
   }
 
@@ -864,7 +899,7 @@ export class GuidanceService {
     }
     const resource = this.usableResources(kind, agentId).find((item) => item.id === id)
     return resource
-      ? `# ${kind === 'skill' ? 'Skill' : 'Command'}: ${resource.id}\n\n${resource.body.trim()}${this.attachments(resource, new Set())}${this.filesOf(resource)}`
+      ? `# ${kind === 'skill' ? 'Skill' : 'Command'}: ${resource.id}\n\n${resource.body.trim()}${this.attachments(resource, new Set())}${this.filesOf(resource)}${importIssuesNote(resource.importIssues)}`
       : undefined
   }
 
@@ -1051,6 +1086,20 @@ export class GuidanceService {
     if (projectId && !this.projectExists(projectId)) issues.push({ field: 'projectId', message: `no such project: ${projectId}` })
     if (issues.length) throw new InvalidGuidanceError(issues)
   }
+}
+
+/** Os problemas que ficam depois de "resolvido"; nenhum casou: não há o que resolver (404). */
+export function remaining(issues: readonly IImportProblem[] | undefined, match: IImportProblemMatch, what: string): IImportProblem[] {
+  const rest = withoutProblem(issues, match)
+  if (!rest) throw new GuidanceNotFoundError('import issue', `${match.code}${match.target ? ` ${match.target}` : ''} in ${what}`)
+  return rest
+}
+
+/** Os problemas da importação no fim do texto que o agente lê (`read_doc`, `use_resource`): ele pode resolvê-los. */
+export function importIssuesNote(issues: readonly IImportProblem[] | undefined): string {
+  if (!issues?.length) return ''
+  const lines = issues.map((issue) => `- \`${issue.code}\`${issue.target ? ` (${issue.target})` : ''}: ${issue.message}`)
+  return `\n\n## Problemas da importação\n\nFicaram registrados ao importar; resolvido um, marque com \`resolve_import_issue\`.\n\n${lines.join('\n')}`
 }
 
 /** O documento cabe em quem o anexa (recurso ou outro documento): global ou do projeto dele (a regra do anexo). */

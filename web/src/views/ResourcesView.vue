@@ -6,6 +6,8 @@ import Icon from '@/components/Icon.vue'
 import MasterDetail from '@/components/MasterDetail.vue'
 import HistoryPanel from '@/components/HistoryPanel.vue'
 import HistoryTabs from '@/components/HistoryTabs.vue'
+import ImportIssues from '@/components/ImportIssues.vue'
+import ImportIssuesBadge from '@/components/ImportIssuesBadge.vue'
 import ResourceFiles from '@/components/ResourceFiles.vue'
 import BuildTabs from '@/components/BuildTabs.vue'
 import { pendingDraft } from '@/lib/builder'
@@ -14,7 +16,7 @@ import { sizeHint } from '@/lib/format'
 import { attachedRefs, docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId, setAttachMode, type TAttachMode } from '@/lib/guidance'
 import type { IRestoreResult } from '@/lib/catalogHistory'
 import { renderMarkdown } from '@/lib/markdown'
-import type { IResource, TResourceKind } from '@/lib/types'
+import type { IImportIssue, IResource, TResourceKind } from '@/lib/types'
 import { useScopedDocs } from '@/composables/useCatalogLists'
 import { useResource } from '@/composables/useResource'
 import { useAuthStore } from '@/stores/auth'
@@ -178,6 +180,11 @@ async function saveFiles(files: IResource['files']) {
   loaded.value = await resources.saveFiles(loaded.value.id, files)
 }
 
+/** "Resolvido": a store grava e devolve o recurso (o formulário fica como está). */
+async function resolveIssue(issue: IImportIssue) {
+  if (loaded.value) loaded.value = await resources.resolveIssue(loaded.value.id, issue)
+}
+
 async function save() {
   issues.value = {}
   error.value = undefined
@@ -259,11 +266,13 @@ function describe(failure: unknown): string {
       <RouterLink v-for="resource in list" :key="resource.id" :to="`${info.base}/${resource.id}`" class="mx-2 block rounded-xl px-3 py-2" :class="resource.id === id ? 'bg-emerald-500/15' : 'hover:bg-zinc-800/60'">
         <span class="block truncate font-mono text-sm">{{ kind === 'command' ? '/' : '' }}{{ resource.id }}</span>
         <span class="block truncate text-xs text-zinc-500">{{ resource.description }}<template v-if="resource.docIds.length"> · {{ resource.docIds.length }} doc(s)</template></span>
+        <ImportIssuesBadge :count="resource.importIssues?.length" class="mt-1" />
       </RouterLink>
     </template>
 
     <template #detail>
       <div v-if="!adding && loaded" class="mx-auto mb-4 max-w-3xl"><HistoryTabs v-model="tab" edit-label="Editar" :extra="[{ id: 'files', label: `Arquivos${loaded.files?.length ? ` (${loaded.files.length})` : ''}` }]" /></div>
+      <ImportIssues v-if="!adding && loaded" class="mx-auto mb-4 max-w-3xl" :issues="loaded.importIssues" :resolve="resolveIssue" />
       <form v-if="adding || (loaded && tab === 'edit')" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save">
         <h2 class="font-mono text-lg font-semibold">{{ adding ? `${g.nova} ${info.one}` : `${kind === 'command' ? '/' : ''}${loaded?.id}` }}</h2>
         <label class="field">

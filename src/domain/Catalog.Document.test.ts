@@ -13,6 +13,7 @@ import {
   docDocument,
   FALLBACK_SHAPE,
   FALLBACK_STEP_SHAPE,
+  IMPORT_PROBLEM_SHAPE,
   IAgentLinks,
   MCP_CONTAINER_SHAPE,
   MCP_PROCESS_SHAPE,
@@ -78,6 +79,7 @@ describe('Catalog.Document — exaustividade dos campos', () => {
     ['models/McpServer.Model.ts', 'IMcpServerConfig', MCP_SHAPE],
     ['models/McpServer.Model.ts', 'IMcpContainer', MCP_CONTAINER_SHAPE],
     ['models/McpServer.Model.ts', 'IMcpProcess', MCP_PROCESS_SHAPE],
+    ['models/ImportProblem.Model.ts', 'IImportProblem', IMPORT_PROBLEM_SHAPE],
   ]
 
   for (const [file, name, shape] of cases) {
@@ -127,6 +129,7 @@ const fullAgent: Required<IAgent> = {
   fallback: { mode: 'own', chain: [{ provider: 'openai', model: 'gpt' }] },
   env: { GIT_AUTHOR_NAME: 'Theo', LANG: 'pt_BR.UTF-8' },
   files: [{ path: 'scripts/run.sh', sha256: 'a'.repeat(64), bytes: 12 }],
+  importIssues: [{ code: 'skill-missing', message: 'libera a skill x', target: 'x', link: 'skill' }],
 }
 const links: IAgentLinks = { resources: { skills: ['revisar', 'commitar'], commands: ['*'] }, initialContext: ['visao', 'api'] }
 

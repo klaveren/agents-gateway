@@ -8,7 +8,9 @@ export type TGuidanceScope = string | null
 
 /** `projectId: null` move para o global. */
 export type TRulePatch = Partial<Pick<IRule, 'title' | 'body' | 'enabled' | 'position' | 'updatedAt' | 'updatedBy'>> & { projectId?: string | null }
-export type TDocPatch = Partial<Pick<IProjectDoc, 'kind' | 'title' | 'summary' | 'body' | 'docIds' | 'docRefs' | 'updatedAt' | 'updatedBy'>> & { projectId?: string | null }
+export type TDocPatch = Partial<Pick<IProjectDoc, 'kind' | 'title' | 'summary' | 'body' | 'docIds' | 'docRefs' | 'importIssues' | 'updatedAt' | 'updatedBy'>> & {
+  projectId?: string | null
+}
 
 /** Um documento achado pela busca de texto: sem o corpo, com o trecho que casou (entre « »). */
 export interface IDocHit {

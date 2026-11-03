@@ -7,13 +7,15 @@ import BuildTabs from '@/components/BuildTabs.vue'
 import MasterDetail from '@/components/MasterDetail.vue'
 import HistoryPanel from '@/components/HistoryPanel.vue'
 import HistoryTabs from '@/components/HistoryTabs.vue'
+import ImportIssues from '@/components/ImportIssues.vue'
+import ImportIssuesBadge from '@/components/ImportIssuesBadge.vue'
 import { ApiError } from '@/lib/api'
 import { sizeHint } from '@/lib/format'
 import { pendingDraft } from '@/lib/builder'
 import { attachableDocs, attachedRefs, attachmentsChanged, docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId, setAttachMode, type TAttachMode } from '@/lib/guidance'
 import type { IRestoreResult } from '@/lib/catalogHistory'
 import { renderMarkdown } from '@/lib/markdown'
-import type { IProjectDoc, TDocKind } from '@/lib/types'
+import type { IImportIssue, IProjectDoc, TDocKind } from '@/lib/types'
 import { useScopedDocs } from '@/composables/useCatalogLists'
 import { useResource } from '@/composables/useResource'
 import { useAuthStore } from '@/stores/auth'
@@ -248,6 +250,11 @@ async function save() {
   }
 }
 
+/** "Resolvido": a store grava e devolve o documento (o formulário fica como está). */
+async function resolveIssue(issue: IImportIssue) {
+  if (loaded.value) loaded.value = await docsStore.resolveIssue(loaded.value.id, issue)
+}
+
 /** Restaurou uma versão: a store relê o item e as listas; se a versão era a de antes de existir, o item sumiu. */
 async function restored(result: IRestoreResult) {
   const id = loaded.value?.id ?? props.id
@@ -310,11 +317,13 @@ function describe(failure: unknown): string {
         <span class="block truncate text-sm font-medium">{{ doc.title }}</span>
         <span class="block truncate text-xs text-zinc-500">{{ doc.id }}<template v-if="doc.summary"> · {{ doc.summary }}</template></span>
         <span v-if="loadedLabel(doc)" class="mt-1 inline-block max-w-full truncate rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-300">usada em {{ loadedLabel(doc) }}</span>
+        <ImportIssuesBadge :count="doc.importIssues?.length" class="mt-1" />
       </RouterLink>
     </template>
 
     <template #detail>
       <div v-if="!adding && loaded" class="mx-auto mb-4 max-w-3xl"><HistoryTabs v-model="tab" edit-label="Editar" /></div>
+      <ImportIssues v-if="!adding && loaded" class="mx-auto mb-4 max-w-3xl" :issues="loaded.importIssues" :resolve="resolveIssue" />
       <form v-if="adding || (loaded && tab === 'edit')" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save">
         <h2 class="text-lg font-semibold">{{ adding ? `${g.nova} ${info.one}` : loaded?.title }}</h2>
         <label class="field">Título<input v-model="form.title" required maxlength="160" class="input" :placeholder="info.placeholder" @blur="slug" /><small v-for="m in issues.title" :key="m" class="error">{{ m }}</small></label>

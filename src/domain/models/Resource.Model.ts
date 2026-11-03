@@ -1,3 +1,4 @@
+import type { IImportProblem } from './ImportProblem.Model'
 import type { IResourceFile } from './ResourceFile.Model'
 
 /**
@@ -30,6 +31,8 @@ export interface IResource {
   docRefs?: string[]
   /** Os arquivos da pasta da skill/command (scripts, modelos): ver `ResourceFile.Model`. Ausente = nenhum. */
   files?: IResourceFile[]
+  /** Os problemas da importação que ficaram no recurso (ver `ImportProblem.Model`). Ausente = nenhum. */
+  importIssues?: IImportProblem[]
   createdAt: Date
   updatedAt: Date
   updatedBy?: string

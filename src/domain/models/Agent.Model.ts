@@ -1,5 +1,6 @@
 import type { IAgentFallback } from '@domain/Fallback.Policy'
 import type { IPermissionRule } from '@domain/Permission.Policy'
+import type { IImportProblem } from '@domain/models/ImportProblem.Model'
 import type { IResourceFile } from '@domain/models/ResourceFile.Model'
 import { EMode } from '../enums/EMode.Enum'
 import type { TSandboxLevel } from '../Sandbox.Policy'
@@ -73,6 +74,8 @@ export interface IAgent {
   env?: Record<string, string>
   /** Os arquivos da pasta do agente (scripts, modelos): ver `ResourceFile.Model`. Ausente = nenhum. */
   files?: IResourceFile[]
+  /** Os problemas da importação que ficaram no agente (ver `ImportProblem.Model`). Ausente = nenhum. */
+  importIssues?: IImportProblem[]
 }
 
 export interface IAgentTerminal {

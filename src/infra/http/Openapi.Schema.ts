@@ -274,7 +274,33 @@ const agentSchema = {
     role: { type: 'string', enum: ['subagent'], description: 'Present on subagents: only called by another agent.' },
     adminOnly: { type: 'boolean', description: 'Present when only administrators can talk to the agent.' },
     projectId: { type: 'string', description: 'The project the agent belongs to. Absent = global (every project).' },
+    importIssueCount: { type: 'integer', description: 'List, administrators only: how many import issues the agent has (the detail lists them). Absent = none.' },
   },
+}
+
+/** Os problemas da importação que ficam no artefato (doc, skill, command, agente): não impediram a gravação. */
+const importIssuesSchema = {
+  type: 'array',
+  description:
+    'Import issues: problems the importer recorded in the artifact instead of blocking the write (a citation that is not a document, a link still pending, a skill not imported yet). Only the importer adds them; a normal edit keeps them; POST …/import-issues/resolve removes one. `link-pending`, `skill-missing` and `command-missing` resolve by themselves when a later import writes the target.',
+  items: {
+    type: 'object',
+    properties: {
+      code: { type: 'string', enum: ['link-not-document', 'link-not-spec', 'link-missing', 'link-scope', 'link-pending', 'skill-missing', 'command-missing'] },
+      message: { type: 'string', description: 'In Portuguese, for the person and for the agent that fixes it.' },
+      target: { type: 'string', description: 'The id the link cited.' },
+      link: { type: 'string', enum: ['attach', 'reference', 'initialContext', 'skill', 'command'], description: 'The link left out (what comes back by itself).' },
+    },
+    required: ['code', 'message'],
+  },
+}
+const importIssueMatch = {
+  type: 'object',
+  properties: {
+    code: { type: 'string', description: 'The issue code' },
+    target: { type: 'string', description: 'Only the issue with this target; absent = every issue with the code' },
+  },
+  required: ['code'],
 }
 
 const agentDetailSchema = {
@@ -286,6 +312,7 @@ const agentDetailSchema = {
       properties: {
         systemPrompt: { type: 'string' },
         soul: { type: 'string', description: 'Who the agent is: identity, tone, values. Composed before the system prompt.' },
+        importIssues: importIssuesSchema,
         updatedAt: { type: 'string', format: 'date-time' },
         updatedBy: { type: 'string' },
       },
@@ -722,7 +749,7 @@ const importApplySelection = {
     ready: {
       type: 'boolean',
       description:
-        'Only the READY items: an item with a blocked document (error or conflict in the plan) stays out, and so does what depends on it; the preview lists them in `heldBack` with the reason.',
+        'Only the READY items: an item with a blocked document (error or conflict in the plan) stays out; the preview lists them in `heldBack` with the reason. What only CITES a left-out document is not held back: it is written without that link, with a `link-pending` import issue (see `importIssues`).',
     },
   },
 }
@@ -795,6 +822,7 @@ const docSchema = {
       properties: { projects: { type: 'array', items: { type: 'string' } }, agents: { type: 'array', items: { type: 'string' } } },
     },
     tokens: { type: 'integer', description: 'List only: estimated tokens of the body (≈ 4 characters per token).' },
+    importIssues: importIssuesSchema,
     createdAt: { type: 'string', format: 'date-time' },
     updatedAt: { type: 'string', format: 'date-time' },
     updatedBy: { type: 'string' },
@@ -842,6 +870,7 @@ const resourceSchema = {
       description: 'Which of docIds go by reference: the loaded resource lists id, title and size, and the agent reads them with read_doc if needed. Absent on update = keep.',
     },
     files: { ...resourceFiles, description: 'The files of the resource folder (content uploaded with POST /files). Absent on update = keep.' },
+    importIssues: { ...importIssuesSchema, readOnly: true },
     createdAt: { type: 'string', format: 'date-time' },
     updatedAt: { type: 'string', format: 'date-time' },
     updatedBy: { type: 'string' },
@@ -2004,7 +2033,7 @@ export const OPENAPI_DOCUMENT = {
     '/projects/{id}/import/jobs/{job}/apply/plan': {
       post: {
         summary:
-          'The PREVIEW of writing the importer to the catalog: the APPROVED items (of a saved batch, of `keys`, or all of the newest job) become canonical documents — each draft checked again against the source on disk (same sha256, same final text of source + operations; a changed source is 409 `import_source_changed`), the triggers inside their agent, the cited paths as links (`docIds`/`docRefs`/initial context). The agent is born CLOSED: the wide rules of the permission translator stay out unless included in `wide`; its reach (tools and rules) is a later step of the batch, and `resources.skills` is the skills it releases. Returns the catalog plan over those documents (diff, widenings, broken references, missing secrets, order, `planHash`), `missing` (each reference that exists neither in the catalog nor in the package, with the job item that produces it: key, kind, state, path), the agents (model, rules with `wide` and `included`), the active models, what was skipped and, with `ready`, `heldBack` (the items left out by a block, with the reason). Every document goes to the project: an import is never global. Writes nothing. Administrators only',
+          'The PREVIEW of writing the importer to the catalog: the APPROVED items (of a saved batch, of `keys`, or all of the newest job) become canonical documents — each draft checked again against the source on disk (same sha256, same final text of source + operations; a changed source is 409 `import_source_changed`), the triggers inside their agent, the cited paths as links (`docIds`/`docRefs`/initial context). The agent is born CLOSED: the wide rules of the permission translator stay out unless included in `wide`; its reach (tools and rules) is a later step of the batch, and `resources.skills` is the skills it releases. Returns the catalog plan over those documents (diff, widenings, broken references, missing secrets, order, `planHash`), `missing` (each reference that exists neither in the catalog nor in the package, with the job item that produces it: key, kind, state, path), the agents (model, rules with `wide` and `included`), the active models, what was skipped and, with `ready`, `heldBack` (the items left out by a block, with the reason). IMPORT ISSUES do not block: a link to something that is not a document (an agent, a command, a memory file), that exists nowhere, belongs to another project or is a document of this job not written now is left out of the document and recorded in its `importIssues` (`items[].issues`, per `ref`); `resolved` lists the catalog artifacts whose pending link comes back because its target is written now (they go in the same batch). Every document goes to the project: an import is never global. Writes nothing. Administrators only',
         parameters: [...jobParams],
         requestBody: { required: false, ...json(importApplySelection) },
         responses: {
@@ -2667,6 +2696,33 @@ export const OPENAPI_DOCUMENT = {
         summary: 'Delete a spec or ADR. Administrators only',
         parameters: idParam,
         responses: { '200': { description: 'OK' }, '401': failures['401'], '404': failures['404'] },
+      },
+    },
+    '/docs/{id}/import-issues/resolve': {
+      post: {
+        summary:
+          'Mark an import issue of the document as RESOLVED: the issues with this code (and target, when given) leave it; the rest stays. Recorded in the catalog history. Administrators only; 404 when no issue matches',
+        parameters: idParam,
+        requestBody: { required: true, ...json(importIssueMatch) },
+        responses: { '200': { description: 'OK', ...json(envelope(docSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/resources/{id}/import-issues/resolve': {
+      post: {
+        summary:
+          'Mark an import issue of the skill or command as RESOLVED: the issues with this code (and target, when given) leave it; the rest stays. Recorded in the catalog history. Administrators only; 404 when no issue matches',
+        parameters: idParam,
+        requestBody: { required: true, ...json(importIssueMatch) },
+        responses: { '200': { description: 'OK', ...json(envelope(resourceSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/agents/{agentId}/import-issues/resolve': {
+      post: {
+        summary:
+          'Mark an import issue of the agent as RESOLVED: the issues with this code (and target, when given) leave it; the rest stays. Recorded in the catalog history. Administrators only; 404 when no issue matches',
+        parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: true, ...json(importIssueMatch) },
+        responses: { '200': { description: 'OK', ...json(envelope(agentDetailSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
     },
     '/agents/{agentId}/footprint': {
