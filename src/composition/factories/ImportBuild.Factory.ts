@@ -1,6 +1,6 @@
-import { IImportConversationInput, IImportSourceFile, ImportBuildService } from '@application/ImportBuild.Service'
+import { IImportConversationInput, IImportRepositoryFiles, IImportSourceFile, ImportBuildService } from '@application/ImportBuild.Service'
 import { IImportTurnResult, ImportRunService } from '@application/ImportRun.Service'
-import { readRepoFile } from '@infra/import/Repo.Tree'
+import { listRepoFiles, listRepoTop, readRepoFile, readRepoText } from '@infra/import/Repo.Tree'
 import { resolveWorkFolder } from '@infra/workspace/Work.Folder'
 import { makeGuidance } from './Guidance.Factory'
 import { importJobRepository } from './ImportJobs.Factory'
@@ -20,6 +20,8 @@ export function makeImportBuild(): ImportBuildService {
   instance ??= new ImportBuildService({
     repository: importJobRepository(),
     readSource: readImportSource,
+    repositoryFiles: importRepositoryFiles(),
+    projectIgnore: (projectId) => makeProjects().importIgnore(projectId),
     openConversation: (input) => {
       if (!opener) throw new Error('the builder conversation cannot be opened yet')
       return opener(input)
@@ -47,6 +49,22 @@ export function readImportSource(projectId: string, repository: string, path: st
   } catch {
     // O repositório sumiu do projeto: para a importação, a fonte não existe mais.
     return undefined
+  }
+}
+
+/**
+ * ⛔ A navegação do construtor: o repositório DO projeto (`resolveWorkFolder`, a mesma contenção da varredura), só
+ * leitura, mascarada. Lança quando o repositório não é do projeto (o serviço devolve o erro à ferramenta).
+ */
+function importRepositoryFiles(): IImportRepositoryFiles {
+  const dir = (projectId: string, repository: string) => resolveWorkFolder(makeProjects().folderOf(projectId), repository).dir
+  return {
+    top: (projectId, repository, exclude) => listRepoTop(dir(projectId, repository), exclude),
+    list: (projectId, repository, under, exclude) => listRepoFiles(dir(projectId, repository), under, exclude),
+    read: (projectId, repository, path, exclude) => {
+      const masker = makeSecretMasker()
+      return readRepoText(dir(projectId, repository), path, { mask: (text) => masker.text(text), exclude })
+    },
   }
 }
 

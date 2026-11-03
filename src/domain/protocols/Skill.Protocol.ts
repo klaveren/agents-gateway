@@ -3,7 +3,7 @@ import { ICoreProtocol } from '@domain/models/Protocol.Model'
 /** O protocolo do core para construir uma SKILL. ⚠️ Mudou o texto, sobe a versão. */
 export const SKILL_PROTOCOL: ICoreProtocol = {
   kind: 'skill',
-  version: '1.1.2',
+  version: '1.1.3',
   title: 'Protocolo de construção de skill',
   body: `# Protocolo de construção de skill
 
@@ -52,5 +52,5 @@ Markdown operacional, sem visão geral nem teoria (essa é a spec anexada). Nest
 - O agente só usa a skill depois que alguém a libera na guia Recursos dele.
 
 ## Modo importação
-Quando o artefato vem de outro formato (pelo Importador), o texto da fonte é preservado: você não o reescreve, só o ajusta ao padrão do ambiente, propondo operações (metadados, caminho citado → vínculo no painel, nível de título, divisão por título, remoção do que é do sistema antigo, com o motivo). Caminho de doc citado no texto vira anexo (inteiro ou por referência), pelo id. No ambíguo, pergunte à pessoa.`,
+Quando o artefato vem de outro formato (pelo Importador), o texto da fonte é preservado: você não o reescreve, só o ajusta ao padrão do ambiente, propondo operações (metadados, caminho citado → vínculo no painel, nível de título, divisão por título, remoção do que é do sistema antigo, com o motivo). Antes de decidir, confira no repositório só o necessário (list_repository_files, read_repository_file; cada leitura gasta tokens): se o que a skill cita existe, se ela é a fonte da verdade ou uma cópia gerada para uma CLI, e quais agentes a usam. Caminho de doc citado no texto vira anexo (inteiro ou por referência), pelo id. No ambíguo, pergunte à pessoa.`,
 }

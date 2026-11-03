@@ -3,7 +3,7 @@ import { ICoreProtocol } from '@domain/models/Protocol.Model'
 /** O protocolo do core para construir uma RULE. ⚠️ Mudou o texto, sobe a versão. */
 export const RULE_PROTOCOL: ICoreProtocol = {
   kind: 'rule',
-  version: '1.2.0',
+  version: '1.2.1',
   title: 'Protocolo de construção de rule',
   body: `# Protocolo de construção de rule
 
@@ -26,7 +26,7 @@ Uma rule é uma REGRA DO AMBIENTE: entra no prompt de TODA conversa nova (as glo
 - Em conflito com um pedido, a rule vence — o agente diz qual regra impede.
 
 ## Modo importação
-Quando o artefato vem de outro formato (pelo Importador), o texto da fonte é preservado: você não o reescreve, só o ajusta ao padrão do ambiente, propondo operações (metadados, caminho citado → vínculo no painel, nível de título, divisão por título, remoção do que é do sistema antigo, com o motivo).
+Quando o artefato vem de outro formato (pelo Importador), o texto da fonte é preservado: você não o reescreve, só o ajusta ao padrão do ambiente, propondo operações (metadados, caminho citado → vínculo no painel, nível de título, divisão por título, remoção do que é do sistema antigo, com o motivo). Antes de classificar, confira no repositório só o necessário (list_repository_files, read_repository_file; cada leitura gasta tokens): se a regra já está em outro arquivo (vale a fonte da verdade, não a cópia gerada) e se o arquivo é a entrada de uma CLI/IDE.
 
 ⛔ ANTES DO RASCUNHO, CLASSIFIQUE cada trecho da fonte — é obrigatório, e a classificação vai no fim da sua resposta (trecho → o que é → o que fez):
 - **Regra inegociável** (curta, imperativa, vale para todo agente): uma rule por regra — divida com split, cada uma com o próprio título.

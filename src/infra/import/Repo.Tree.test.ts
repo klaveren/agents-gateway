@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
 import { parseJsonc } from './Opencode.Detector'
-import { readRepoFile, readRepoTree } from './Repo.Tree'
+import { repositoryExclusion } from '@domain/Import.Ignore'
+import { listRepoFiles, listRepoTop, readRepoFile, readRepoText, readRepoTree, REPO_TEXT_MAX_BYTES } from './Repo.Tree'
 
 describe('Repo.Tree — a árvore contida de um repositório', () => {
   const base = mkdtempSync(join(tmpdir(), 'gw-repo-tree-'))
@@ -55,6 +56,66 @@ describe('Repo.Tree — a árvore contida de um repositório', () => {
     assert.strictEqual(readRepoFile(root, './docs/link-dentro.md', mask)?.text, 'TOKEN=[segredo]')
     for (const path of ['../fora-f.md', 'docs/../../fora-f.md', 'docs/link-fora.md', join(base, 'fora-f.md'), 'node_modules/p/x.md', 'docs', 'nao-existe.md'])
       assert.strictEqual(readRepoFile(root, path, mask), undefined, path)
+  })
+
+  it('⛔ a navegação do construtor (listRepoFiles/listRepoTop/readRepoText): contida, sem os excluídos, mascarada', () => {
+    const root = join(base, 'nav')
+    for (const dir of ['docs/sub', '.credentials', '.git', 'node_modules/p', 'cfg']) mkdirSync(join(root, dir), { recursive: true })
+    writeFileSync(join(root, 'docs/a.md'), 'TOKEN=cru')
+    writeFileSync(join(root, 'docs/sub/b.md'), 'b')
+    writeFileSync(join(root, 'docs/bin.dat'), Buffer.from([1, 0, 2]))
+    writeFileSync(join(root, 'docs/grande.md'), 'x'.repeat(REPO_TEXT_MAX_BYTES + 1))
+    writeFileSync(join(root, '.credentials/key.json'), '{}')
+    writeFileSync(join(root, '.git/config'), '[core]')
+    writeFileSync(join(root, '.env'), 'A=1')
+    writeFileSync(join(root, 'cfg/.env.local'), 'B=2')
+    writeFileSync(join(root, 'node_modules/p/x.md'), 'x')
+    writeFileSync(join(base, 'nav-fora.md'), 'de fora')
+    symlinkSync(join(base, 'nav-fora.md'), join(root, 'docs/link-fora.md'))
+    symlinkSync('../.env', join(root, 'docs/env-link.md'))
+    symlinkSync('docs', join(root, 'atalho'))
+    const exclude = repositoryExclusion([])
+    const listed = listRepoFiles(root, undefined, exclude)
+    assert.ok(Array.isArray(listed))
+    assert.deepStrictEqual(
+      listed.map((entry) => entry.path),
+      ['docs/a.md', 'docs/bin.dat', 'docs/grande.md', 'docs/sub/b.md'],
+    )
+    assert.deepStrictEqual(listed[0].aliases, ['atalho/a.md'])
+    assert.deepStrictEqual(listRepoTop(root, exclude), ['atalho', 'cfg', 'docs'])
+    assert.deepStrictEqual(
+      (listRepoFiles(root, 'docs/sub', exclude) as Array<{ path: string }>).map((entry) => entry.path),
+      ['docs/sub/b.md'],
+    )
+    assert.deepStrictEqual(
+      ['../', '/etc', '.credentials', '.git', 'node_modules', 'nao-existe', 'docs/a.md'].map((under) => listRepoFiles(root, under, exclude)),
+      ['outside', 'outside', 'excluded', 'excluded', 'excluded', 'not_found', 'not_found'],
+    )
+    const read = { mask: (text: string) => text.replace('cru', '[segredo]'), exclude }
+    assert.deepStrictEqual(readRepoText(root, './docs/a.md', read), { path: 'docs/a.md', bytes: 9, text: 'TOKEN=[segredo]' })
+    assert.deepStrictEqual(readRepoText(root, 'atalho/a.md', read), { path: 'docs/a.md', bytes: 9, text: 'TOKEN=[segredo]' })
+    const refused = {
+      '../nav-fora.md': 'outside',
+      'docs/../../nav-fora.md': 'outside',
+      [join(base, 'nav-fora.md')]: 'outside',
+      'docs/link-fora.md': 'outside',
+      '.env': 'excluded',
+      'cfg/.env.local': 'excluded',
+      'docs/env-link.md': 'excluded',
+      '.credentials/key.json': 'excluded',
+      '.git/config': 'excluded',
+      'node_modules/p/x.md': 'excluded',
+      'docs/bin.dat': 'binary',
+      'docs/grande.md': 'too_large',
+      docs: 'not_found',
+      '': 'not_found',
+      'nao-existe.md': 'not_found',
+    }
+    for (const [path, reason] of Object.entries(refused)) assert.strictEqual(readRepoText(root, path, read), reason, path)
+    // O ignorar do projeto também tira (na lista e na leitura).
+    const project = repositoryExclusion(['sub'])
+    assert.ok(!(listRepoFiles(root, undefined, project) as Array<{ path: string }>).some((entry) => entry.path.includes('sub/')))
+    assert.strictEqual(readRepoText(root, 'docs/sub/b.md', { ...read, exclude: project }), 'excluded')
   })
 
   it('JSONC: comentário fora de string e vírgula sobrando', () => {

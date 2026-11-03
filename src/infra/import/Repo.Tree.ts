@@ -4,7 +4,7 @@ import { Dirent, existsSync, readdirSync, readFileSync, realpathSync, statSync }
 import { isAbsolute, join, relative, sep } from 'node:path'
 import { generatedSources } from '@domain/Import.Refs'
 import { IInventoryLink } from '@domain/models/ImportInventory.Model'
-import { IRepoEntry, IRepoFile, IRepoTree } from '@domain/ports/FormatDetector.Port'
+import { IRepoEntry, IRepoFile, IRepoText, IRepoTree, TRepoRefusal } from '@domain/ports/FormatDetector.Port'
 import { estimateTokens } from '@domain/Token.Estimate'
 
 /** Pastas de dependência, de build e de cache: nunca são recurso agêntico, e pesam. O relatório conta quantas pulou. */
@@ -61,30 +61,27 @@ function git(dir: string, args: string[]): string | undefined {
   }
 }
 
+interface IRepoWalk {
+  files: Map<string, { path: string; aliases: Set<string>; bytes: number }>
+  ignored: Record<string, number>
+  refused: IInventoryLink[]
+}
+
 /**
- * ⛔ O LEITOR DO REPOSITÓRIO, com contenção: parte da pasta já resolvida (`resolveWorkFolder`, com `realpath`) e nunca
- * sai dela.
- *
- * - Link: seguido só se o destino (depois do `realpath`) fica dentro da raiz. Para fora, quebrado ou em ciclo, é
- *   recusado e listado — sem o destino, que é caminho do servidor.
- * - Arquivo alcançado por dois caminhos aparece UMA vez, pelo caminho real, com os outros em `aliases`.
- * - Pastas de `IGNORED_DIRS` são puladas e contadas; binário (byte nulo nos primeiros 8 KB) é marcado na leitura.
- * - O conteúdo é lido sob demanda, e sai MASCARADO: o texto cru não deixa este arquivo.
- *
- * Só lê: `git status` roda com `--no-optional-locks`, para não mexer nem no índice.
+ * ⛔ A CAMINHADA contida: de `start` (já resolvida, dentro de `realRoot`) para baixo, com os caminhos relativos à raiz.
+ * `exclude` tira a pasta (pelo caminho lógico) e o arquivo (pelo real e pelo lógico), sem contar.
  */
-export function readRepoTree(root: string, options: IRepoTreeOptions): IRepoTree {
-  const realRoot = realpathSync(root)
+function walkRepo(realRoot: string, start: string, logical: string, exclude?: (path: string) => boolean): IRepoWalk {
   const files = new Map<string, { path: string; aliases: Set<string>; bytes: number }>()
   const ignored: Record<string, number> = {}
   const refused: IInventoryLink[] = []
-  const cache = new Map<string, IRepoFile | undefined>()
 
   const skip = (name: string) => (ignored[name] = (ignored[name] ?? 0) + 1)
 
   const addFile = (logical: string, real: string) => {
     const path = toPosix(relative(realRoot, real))
-    if (hasIgnoredSegment(path)) return
+    if (hasIgnoredSegment(path) || exclude?.(path)) return
+    if (exclude?.(logical)) return
     let entry = files.get(path)
     if (!entry) {
       entry = { path, aliases: new Set(), bytes: statSync(real).size }
@@ -105,6 +102,7 @@ export function readRepoTree(root: string, options: IRepoTreeOptions): IRepoTree
     for (const child of children) {
       const abs = join(dir, child.name)
       const path = logical ? `${logical}/${child.name}` : child.name
+      if (exclude?.(path) && !child.isFile()) continue
       if (child.isSymbolicLink()) {
         let target: string
         try {
@@ -144,7 +142,26 @@ export function readRepoTree(root: string, options: IRepoTreeOptions): IRepoTree
       if (child.isFile()) addFile(path, realpathSync(abs))
     }
   }
-  walk(realRoot, '', new Set([realRoot]), 0)
+  walk(start, logical, new Set([realRoot, start]), 0)
+  return { files, ignored, refused }
+}
+
+/**
+ * ⛔ O LEITOR DO REPOSITÓRIO, com contenção: parte da pasta já resolvida (`resolveWorkFolder`, com `realpath`) e nunca
+ * sai dela.
+ *
+ * - Link: seguido só se o destino (depois do `realpath`) fica dentro da raiz. Para fora, quebrado ou em ciclo, é
+ *   recusado e listado — sem o destino, que é caminho do servidor.
+ * - Arquivo alcançado por dois caminhos aparece UMA vez, pelo caminho real, com os outros em `aliases`.
+ * - Pastas de `IGNORED_DIRS` são puladas e contadas; binário (byte nulo nos primeiros 8 KB) é marcado na leitura.
+ * - O conteúdo é lido sob demanda, e sai MASCARADO: o texto cru não deixa este arquivo.
+ *
+ * Só lê: `git status` roda com `--no-optional-locks`, para não mexer nem no índice.
+ */
+export function readRepoTree(root: string, options: IRepoTreeOptions): IRepoTree {
+  const realRoot = realpathSync(root)
+  const { files, ignored, refused } = walkRepo(realRoot, realRoot, '')
+  const cache = new Map<string, IRepoFile | undefined>()
 
   const byAlias = new Map<string, string>()
   for (const entry of files.values()) for (const alias of entry.aliases) byAlias.set(alias, entry.path)
@@ -236,4 +253,81 @@ export function readRepoBytes(root: string, path: string): Buffer | undefined {
   } catch {
     return undefined
   }
+}
+
+/** O arquivo de texto que a navegação do construtor lê (acima disto, recusa: mascarar e paginar não compensam). */
+export const REPO_TEXT_MAX_BYTES = 2 * 1024 * 1024
+
+/** O caminho pedido, limpo; `undefined` se sai da raiz pelo texto (`..`, absoluto). Vazio = a raiz. */
+function cleanPath(path: string): string | undefined {
+  const clean = path
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^(\.\/)+/, '')
+    .replace(/\/+$/, '')
+  if (isAbsolute(clean) || clean.startsWith('/') || /^[A-Za-z]:\//.test(clean) || clean.split('/').includes('..')) return undefined
+  return clean === '.' ? '' : clean
+}
+
+/** O caminho resolvido (com `realpath`) e contido, ou o motivo da recusa. */
+function containedPath(root: string, path: string, exclude: (path: string) => boolean): { realRoot: string; absolute: string; rel: string } | TRepoRefusal {
+  const clean = cleanPath(path)
+  if (clean === undefined) return 'outside'
+  if (clean && (hasIgnoredSegment(clean) || exclude(clean))) return 'excluded'
+  const realRoot = realpathSync(root)
+  let absolute: string
+  try {
+    absolute = realpathSync(join(realRoot, clean))
+  } catch {
+    return 'not_found'
+  }
+  if (!inside(realRoot, absolute)) return 'outside'
+  const rel = toPosix(relative(realRoot, absolute))
+  if (rel && (hasIgnoredSegment(rel) || exclude(rel))) return 'excluded'
+  return { realRoot, absolute, rel }
+}
+
+/**
+ * ⛔ Os ARQUIVOS do repositório abaixo de `under` (a raiz por padrão), para o construtor conferir: a mesma contenção da
+ * árvore (link para fora recusado, `IGNORED_DIRS` pulado) e sem o que `exclude` tira — pelo caminho real e por cada
+ * alias. Não lê conteúdo nem roda git.
+ */
+export function listRepoFiles(root: string, under: string | undefined, exclude: (path: string) => boolean): IRepoEntry[] | TRepoRefusal {
+  const found = containedPath(root, under ?? '', exclude)
+  if (typeof found === 'string') return found
+  if (!statSync(found.absolute).isDirectory()) return 'not_found'
+  const { files } = walkRepo(found.realRoot, found.absolute, cleanPath(under ?? '') ?? '', exclude)
+  return [...files.values()].map((entry) => ({ path: entry.path, aliases: [...entry.aliases].sort(), bytes: entry.bytes })).sort((a, b) => a.path.localeCompare(b.path))
+}
+
+/** As pastas do primeiro nível do repositório (sem as ignoradas, as excluídas e os links para fora). */
+export function listRepoTop(root: string, exclude: (path: string) => boolean): string[] {
+  const realRoot = realpathSync(root)
+  const out: string[] = []
+  for (const child of readdirSync(realRoot, { withFileTypes: true })) {
+    if (IGNORED_DIRS.has(child.name) || exclude(child.name)) continue
+    if (child.isDirectory()) out.push(child.name)
+    else if (child.isSymbolicLink()) {
+      const found = containedPath(realRoot, child.name, exclude)
+      if (typeof found !== 'string' && statSync(found.absolute).isDirectory()) out.push(child.name)
+    }
+  }
+  return out.sort((a, b) => a.localeCompare(b))
+}
+
+/**
+ * ⛔ UM arquivo de TEXTO do repositório, para o construtor conferir: o caminho (relativo à raiz) é recusado se sai da
+ * raiz pelo texto ou pelo `realpath` (link para fora), se passa por pasta ignorada ou se `exclude` o tira (o pedido E o
+ * real: link para o `.env` também). Binário e arquivo grande demais são recusados. O texto sai MASCARADO.
+ */
+export function readRepoText(root: string, path: string, options: IRepoTreeOptions & { exclude: (path: string) => boolean }): IRepoText | TRepoRefusal {
+  if (!cleanPath(path)) return cleanPath(path) === undefined ? 'outside' : 'not_found'
+  const found = containedPath(root, path, options.exclude)
+  if (typeof found === 'string') return found
+  const stats = statSync(found.absolute)
+  if (!stats.isFile()) return 'not_found'
+  if (stats.size > REPO_TEXT_MAX_BYTES) return 'too_large'
+  const buffer = readFileSync(found.absolute)
+  if (buffer.subarray(0, BINARY_SNIFF).includes(0)) return 'binary'
+  return { path: found.rel, bytes: buffer.length, text: options.mask(buffer.toString('utf8')) }
 }

@@ -2,6 +2,8 @@ import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import { IImportDraft } from '@domain/Import.Draft'
 import { IImportDesk, makeImportTools } from './Import.Tools'
+import { loopLimits } from '@domain/Loop.Policy'
+import { LoopGuard } from './Loop.Guard'
 import { makeLocalTools } from './Local.Tools'
 import { ToolCatalog } from './Tool.Catalog'
 
@@ -18,14 +20,19 @@ describe('Import.Tools — as ferramentas do construtor em modo importação', (
       if (kind === 'mcp') throw new Error('no builder imports a mcp')
       return calls.push(`reclassify:${conversation}:${key}:${String(kind)}:${String(reason)}`)
     },
+    listRepository: (conversation, options) => (calls.push(`files:${conversation}:${JSON.stringify(options)}`), 'arquivos'),
+    readRepository: (conversation, options) => {
+      if (options.path === '.env') throw new Error('.env: excluded')
+      return (calls.push(`file:${conversation}:${JSON.stringify(options)}`), 'conteúdo')
+    },
   }
-  const [list, read, propose, reclassify] = makeImportTools(desk)
+  const [list, read, propose, reclassify, files, file] = makeImportTools(desk)
   const importer = { agentId: 'builder-import-spec', sessionId: 'c1' }
 
   it('⛔ só o construtor em modo importação, e só numa conversa', async () => {
     for (const context of [{ agentId: 'builder-spec', sessionId: 'c1' }, { agentId: 'atlas', sessionId: 'c1' }, { agentId: 'builder-import-spec' }, undefined]) {
-      for (const tool of [list, read, propose, reclassify]) {
-        const result = await tool.execute({ item: 'spec:x', ops: [{}] }, context)
+      for (const tool of [list, read, propose, reclassify, files, file]) {
+        const result = await tool.execute({ item: 'spec:x', ops: [{}], path: 'a.md' }, context)
         assert.strictEqual(result.status, 'error', `${tool.name} ${JSON.stringify(context)}`)
       }
     }
@@ -50,6 +57,28 @@ describe('Import.Tools — as ferramentas do construtor em modo importação', (
     assert.deepStrictEqual(await reclassify.execute({ item: 'knowledge:x', kind: 'mcp', reason: 'r' }, importer), { status: 'error', result: 'no builder imports a mcp' })
   })
 
+  it('o repositório da conversa: lista (path, pattern) e lê em páginas; a recusa volta como erro', async () => {
+    calls.length = 0
+    assert.deepStrictEqual(await files.execute({ path: 'docs', pattern: '*.md' }, importer), { status: 'success', result: 'arquivos' })
+    assert.deepStrictEqual(await files.execute({}, importer), { status: 'success', result: 'arquivos' })
+    assert.deepStrictEqual(await file.execute({ path: 'docs/a.md', offset: 3.2, limit: 10 }, importer), { status: 'success', result: 'conteúdo' })
+    assert.deepStrictEqual(calls, ['files:c1:{"path":"docs","pattern":"*.md"}', 'files:c1:{}', 'file:c1:{"path":"docs/a.md","offset":3,"limit":10}'])
+    assert.deepStrictEqual(await file.execute({ path: '.env' }, importer), { status: 'error', result: '.env: excluded' })
+    assert.strictEqual((await file.execute({}, importer)).status, 'error')
+  })
+
+  it('⛔ as ferramentas do repositório passam pela mesma guarda de repetição das locais', async () => {
+    const loops = new LoopGuard(() => ({ ...loopLimits(), refuseAt: 2 }))
+    loops.open('c1')
+    const tools = makeLocalTools({ imports: desk, loops })
+    const guarded = tools.find((tool) => tool.name === 'read_repository_file')!
+    assert.strictEqual((await guarded.execute({ path: 'docs/b.md' }, importer)).status, 'success')
+    const before = calls.length
+    const repeated = await guarded.execute({ path: 'docs/b.md' }, importer)
+    assert.strictEqual(repeated.status, 'error')
+    assert.strictEqual(calls.length, before, 'recusada antes de rodar')
+  })
+
   it('os problemas voltam campo a campo, para o construtor corrigir', async () => {
     const result = await propose.execute({ item: 'spec:x', ops: [] }, importer)
     assert.deepStrictEqual(result, { status: 'error', result: 'the draft has problems — fix and call again:\n- ops[0].text: excerpt not found' })
@@ -57,7 +86,9 @@ describe('Import.Tools — as ferramentas do construtor em modo importação', (
 
   it('⛔ nenhum agente do catálogo pode escolher as ferramentas de importação', () => {
     const catalog = new ToolCatalog(undefined as never, makeLocalTools({ imports: desk }), undefined)
-    assert.ok(!catalog.localNames().some((name) => ['list_import_items', 'read_import_source', 'propose_import_draft'].includes(name)))
+    assert.ok(
+      !catalog.localNames().some((name) => ['list_import_items', 'read_import_source', 'propose_import_draft', 'list_repository_files', 'read_repository_file'].includes(name)),
+    )
     assert.deepStrictEqual(
       catalog.localFor(['read_import_source']).map((tool) => tool.name),
       ['read_import_source'],
