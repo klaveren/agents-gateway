@@ -1,12 +1,14 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api, ApiError, authHeaders, CALLER_TOKEN_KEY, setUnauthorizedHandler } from '@/lib/api'
+import { clearResources } from '@/lib/resource'
 import { readLocal, writeLocal } from '@/lib/storage'
 import type { ISession, ISettings, IUser } from '@/lib/types'
 import { useAgentsStore } from './agents'
 import { useConversationsStore } from './conversations'
 import { useMcpStore } from './mcp'
 import { usePackagesStore } from './packages'
+import { useImportsStore } from './imports'
 import { useProvidersStore } from './providers'
 import { useSchedulesStore } from './schedules'
 import { useSettingsStore } from './settings'
@@ -56,6 +58,9 @@ export const useAuthStore = defineStore('auth', () => {
     useUsersStore().reset()
     useSchedulesStore().reset()
     usePackagesStore().reset()
+    useImportsStore().reset()
+    // As stores do catálogo, da importação e as outras: todo dado lido pelo `keyedResource`.
+    clearResources()
   }
 
   /**

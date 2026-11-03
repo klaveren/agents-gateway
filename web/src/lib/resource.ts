@@ -47,6 +47,14 @@ export interface IKeyedResourceOptions {
   now?: () => number
 }
 
+/** Todos os recursos criados: o logout esquece todos de uma vez (`clearResources`), sem cada store lembrar de si. */
+const created = new Set<IKeyedResource<unknown>>()
+
+/** ⛔ Esquece o que todas as stores leram (o logout): quem entra depois no mesmo navegador não vê os dados do anterior. */
+export function clearResources(): void {
+  for (const resource of created) resource.clear()
+}
+
 export function keyedResource<T>(fetcher: (key: string) => Promise<T>, options: IKeyedResourceOptions = {}): IKeyedResource<T> {
   const entries = shallowRef(new Map<string, IEntry<T>>())
   const now = options.now ?? Date.now
@@ -77,7 +85,7 @@ export function keyedResource<T>(fetcher: (key: string) => Promise<T>, options: 
 
   const fresh = (current: IEntry<T>) => current.has && (options.staleMs === undefined || now() - (current.at ?? 0) < options.staleMs)
 
-  return {
+  const resource: IKeyedResource<T> = {
     get: (key) => entry(key)?.data,
     has: (key) => !!entry(key)?.has,
     loading: (key) => !!entry(key)?.pending,
@@ -113,4 +121,6 @@ export function keyedResource<T>(fetcher: (key: string) => Promise<T>, options: 
       await Promise.all(loaded.map((key) => fetchKey(key).catch(() => undefined)))
     },
   }
+  created.add(resource as IKeyedResource<unknown>)
+  return resource
 }
