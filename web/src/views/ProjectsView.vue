@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import Icon from '@/components/Icon.vue'
 import MasterDetail from '@/components/MasterDetail.vue'
+import { useResource } from '@/composables/useResource'
 import { ApiError } from '@/lib/api'
 import { initials } from '@/lib/format'
 import type { IProject } from '@/lib/types'
@@ -33,8 +34,12 @@ const form = ref({ id: '', name: '', description: '' })
 const formIssues = ref<Record<string, string[]>>({})
 const formError = ref<string>()
 const edit = ref({ name: '', description: '' })
+/** Os membros gravados do projeto aberto, da store (lidos uma vez; salvar põe a resposta lá). */
+const memberList = useResource(projects.memberLists, () => (auth.isAdmin ? selected.value?.id : undefined))
+const savedMembers = computed(() => new Set((memberList.data.value ?? []).map((member) => member.userId)))
+/** A marcação em edição: volta à gravada quando o projeto (ou o gravado) muda. */
 const members = ref<Set<string>>(new Set())
-const savedMembers = ref<Set<string>>(new Set())
+watch(savedMembers, (saved) => (members.value = new Set(saved)), { immediate: true })
 const busy = ref(false)
 const error = ref<string>()
 const note = ref<string>()
@@ -43,19 +48,16 @@ const removeError = ref<string>()
 
 onMounted(async () => {
   if (!auth.isAdmin) return
-  await Promise.all([projects.load(), users.load(), settings.current ? undefined : settings.load()]).catch((failure) => (loadError.value = describe(failure)))
+  await Promise.all([projects.ensure(), users.ensure(), settings.ensure()]).catch((failure) => (loadError.value = describe(failure)))
 })
 
 watch(
   selected,
-  async (project, previous) => {
+  (project, previous) => {
     if (!project || project.id === previous?.id) return
     edit.value = { name: project.name, description: project.description ?? '' }
     error.value = undefined
     note.value = undefined
-    const list = await projects.members(project.id).catch(() => [])
-    savedMembers.value = new Set(list.map((member) => member.userId))
-    members.value = new Set(savedMembers.value)
   },
   { immediate: true },
 )
@@ -113,7 +115,6 @@ const save = () => run(() => projects.update(selected.value!.id, { name: edit.va
 const saveMembers = () =>
   run(async () => {
     await projects.setMembers(selected.value!.id, [...members.value])
-    savedMembers.value = new Set(members.value)
   }, 'Membros salvos.')
 function toggleMember(id: string) {
   const next = new Set(members.value)

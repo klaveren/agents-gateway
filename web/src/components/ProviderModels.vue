@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
+import { useResource } from '@/composables/useResource'
 import { ApiError } from '@/lib/api'
 import { fullTime } from '@/lib/format'
 import type { ICatalogModel, IProviderStatus } from '@/lib/types'
@@ -15,11 +16,14 @@ const props = defineProps<{ provider: IProviderStatus }>()
 
 const providers = useProvidersStore()
 
-const models = ref<ICatalogModel[]>([])
-const loading = ref(false)
+/** O catálogo do provider, da store: lido uma vez; "Atualizar a lista", ativar e o preço o trocam lá. */
+const catalog = useResource(providers.catalogs, () => props.provider.id)
+const models = computed(() => catalog.data.value ?? [])
+const loading = catalog.loading
 const syncing = ref(false)
 const note = ref<string>()
-const error = ref<string>()
+const syncError = ref<string>()
+const error = computed(() => syncError.value ?? (catalog.error.value === undefined ? undefined : describe(catalog.error.value)))
 const search = ref('')
 const onlyEnabled = ref(false)
 const editing = ref<string>()
@@ -41,29 +45,19 @@ const visible = computed(() => {
 const enabledCount = computed(() => models.value.filter((model) => model.enabled).length)
 const lastSync = computed(() => models.value.map((model) => model.syncedAt).filter(Boolean).sort().at(-1))
 
-onMounted(load)
-
-async function load() {
-  loading.value = true
-  try {
-    models.value = await providers.models(props.provider.id)
-  } catch (failure) {
-    error.value = failure instanceof Error ? failure.message : String(failure)
-  } finally {
-    loading.value = false
-  }
+function describe(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause)
 }
 
 async function sync() {
   syncing.value = true
   note.value = undefined
-  error.value = undefined
+  syncError.value = undefined
   try {
     const result = await providers.syncModels(props.provider.id)
-    models.value = result.models
     note.value = `${result.total} modelos na lista · ${result.added} novos (desligados)${result.missing ? ` · ${result.missing} sumiram da lista` : ''}.`
-  } catch (failure) {
-    error.value = failure instanceof Error ? failure.message : String(failure)
+  } catch (cause) {
+    syncError.value = describe(cause)
   } finally {
     syncing.value = false
   }
@@ -81,9 +75,8 @@ async function addById() {
   }
   adding.value = true
   try {
+    // Idempotente: se já existia, o servidor devolve o mesmo modelo e a store só troca a linha.
     const added = await providers.addModel(props.provider.id, modelId)
-    // Idempotente: se já existia, o servidor devolve o mesmo modelo e a linha só é atualizada.
-    models.value = models.value.some((model) => model.modelId === added.modelId) ? models.value.map((model) => (model.modelId === added.modelId ? added : model)) : [...models.value, added]
     newId.value = ''
     note.value = `${added.modelId} adicionado (desligado até você ativar).`
   } catch (failure) {
@@ -93,14 +86,10 @@ async function addById() {
   }
 }
 
-function replace(updated: ICatalogModel) {
-  models.value = models.value.map((model) => (model.modelId === updated.modelId ? updated : model))
-}
-
 async function toggle(model: ICatalogModel) {
   rowError.value = { ...rowError.value, [model.modelId]: '' }
   try {
-    replace(await providers.updateModel(props.provider.id, { modelId: model.modelId, enabled: !model.enabled }))
+    await providers.updateModel(props.provider.id, { modelId: model.modelId, enabled: !model.enabled })
   } catch (failure) {
     rowError.value = { ...rowError.value, [model.modelId]: failure instanceof Error ? failure.message : String(failure) }
   }
@@ -119,7 +108,7 @@ async function savePrice(model: ICatalogModel, reset = false) {
     return
   }
   try {
-    replace(await providers.updateModel(props.provider.id, { modelId: model.modelId, price: reset ? null : { input, output } }))
+    await providers.updateModel(props.provider.id, { modelId: model.modelId, price: reset ? null : { input, output } })
     editing.value = undefined
     rowError.value = { ...rowError.value, [model.modelId]: '' }
   } catch (failure) {

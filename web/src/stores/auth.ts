@@ -2,13 +2,18 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api, ApiError, authHeaders, CALLER_TOKEN_KEY, setUnauthorizedHandler } from '@/lib/api'
 import { readLocal, writeLocal } from '@/lib/storage'
-import type { ISession, IUser } from '@/lib/types'
+import type { ISession, ISettings, IUser } from '@/lib/types'
 import { useAgentsStore } from './agents'
 import { useConversationsStore } from './conversations'
+import { useMcpStore } from './mcp'
+import { usePackagesStore } from './packages'
+import { useProvidersStore } from './providers'
+import { useSchedulesStore } from './schedules'
 import { useSettingsStore } from './settings'
 import { useThreadStore } from './thread'
 import { useUsageStore } from './usage'
 import { useProjectsStore } from './projects'
+import { useUsersStore } from './users'
 
 /**
  * A sessão: quem está logado, e se é admin.
@@ -35,8 +40,9 @@ export const useAuthStore = defineStore('auth', () => {
   const signedIn = computed(() => !!user.value)
 
   /**
-   * Esquece o que é de quem estava logado: a lista de conversas, a conversa aberta, as não lidas, o uso e as
-   * configurações. ⚠️ Sem isto, quem entra depois no mesmo navegador vê, por um instante, os dados do anterior.
+   * Esquece o que é de quem estava logado: a lista de conversas, a conversa aberta, as não lidas, o uso, as
+   * configurações e o que as stores guardam (agentes, providers, MCPs, contas, agendamentos, pacotes). ⚠️ Sem isto,
+   * quem entra depois no mesmo navegador vê, por um instante — ou de vez, no que é lido uma vez só —, os dados do anterior.
    */
   function clearClientState(): void {
     useConversationsStore().reset()
@@ -44,11 +50,17 @@ export const useAuthStore = defineStore('auth', () => {
     useUsageStore().reset()
     useSettingsStore().reset()
     useProjectsStore().reset()
+    useAgentsStore().reset()
+    useProvidersStore().reset()
+    useMcpStore().reset()
+    useUsersStore().reset()
+    useSchedulesStore().reset()
+    usePackagesStore().reset()
   }
 
   /**
-   * Refaz o que depende de QUEM é e do que PODE: agentes, configurações (só admin) e o stream de eventos das
-   * conversas (que muda de escopo com o papel). Roda quando o papel ou a conta muda, e no logout.
+   * Refaz o que depende de QUEM é e do que PODE: agentes, as ferramentas, configurações (só admin) e o stream de
+   * eventos das conversas (que muda de escopo com o papel). Roda quando o papel ou a conta muda, e no logout.
    */
   async function rescope(): Promise<void> {
     // Saiu de uma conta e há login: não há escopo até entrar de novo (a tela de login é quem refaz).
@@ -61,11 +73,12 @@ export const useAuthStore = defineStore('auth', () => {
     conversations.subscribe(isAdmin.value)
     void conversations.load(isAdmin.value)
     const settings = useSettingsStore()
+    const agents = useAgentsStore()
     await Promise.all([
-      useAgentsStore()
-        .load()
-        .catch(() => undefined),
-      isAdmin.value ? settings.load().catch(() => undefined) : settings.reset(),
+      agents.load().catch(() => undefined),
+      agents.loadTools().catch(() => undefined),
+      // ⚖️ `ensure`: a pergunta "é admin?" (`scan`) acabou de trazê-las.
+      isAdmin.value ? settings.ensure().catch(() => undefined) : settings.reset(),
     ])
   }
 
@@ -87,8 +100,9 @@ export const useAuthStore = defineStore('auth', () => {
       const [found, me, admin] = await Promise.all([
         status,
         api<IUser>('/auth/me').catch(() => undefined),
-        api('/settings').then(
-          () => undefined,
+        // ⚖️ A resposta não é descartada: vira as configurações guardadas (a tela de Sistema não pergunta de novo).
+        api<ISettings>('/settings').then(
+          (settings) => void useSettingsStore().seed(settings),
           (error: unknown) => error,
         ),
       ])

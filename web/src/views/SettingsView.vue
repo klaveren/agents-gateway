@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { ApiError } from '@/lib/api'
-import type { IFallbackStep, TAudience, TLimitName } from '@/lib/types'
+import type { IFallbackStep, IProviderStatus, TAudience, TLimitName } from '@/lib/types'
 import FallbackChain from '@/components/FallbackChain.vue'
 import { useAgentsStore } from '@/stores/agents'
 import { useAuthStore } from '@/stores/auth'
@@ -21,11 +21,9 @@ const agentId = ref('')
 const model = ref('')
 /** `provider::modelo` — o classificador é um modelo ATIVADO de um provider, escolhido numa lista. */
 const classifier = ref('')
-const classifierOptions = ref<Array<{ value: string; provider: string; model: string }>>([])
 const classifyTurns = ref(false)
 /** `provider::modelo` do construtor de skills e commands — vazio = o do Atlas. Lane agent: assinatura serve. */
 const builder = ref('')
-const builderOptions = ref<Array<{ value: string; provider: string; model: string }>>([])
 const saved = ref<string>()
 const failure = ref<string>()
 /** Os problemas de um 422, campo a campo — mostrados junto do Salvar. */
@@ -73,26 +71,23 @@ const agent = computed(() => agents.byId.get(agentId.value || settings.current?.
 
 onMounted(async () => {
   if (!auth.isAdmin) return
-  await settings.load().catch((error) => (failure.value = String(error)))
-  await loadClassifierOptions()
+  void providers.ensure().catch(() => undefined)
+  await settings.ensure().catch((error) => (failure.value = String(error)))
 })
 
+/** Os providers ligados que rodam (assinatura, ou com chave): os modelos deles vêm da store, lidos uma vez cada. */
+const runnableProviders = computed(() => providers.list.filter((provider) => provider.enabled && (provider.subscription || provider.credential.configured)))
+watch(
+  () => runnableProviders.value.map((provider) => provider.id),
+  (ids) => ids.forEach((id) => void providers.models(id).catch(() => undefined)),
+  { immediate: true },
+)
+const enabledModels = (provider: IProviderStatus) =>
+  (providers.catalogs.get(provider.id) ?? []).filter((model) => model.enabled).map((model) => ({ value: `${provider.id}::${model.modelId}`, provider: provider.id, model: model.modelId }))
 /** Os modelos ativados de cada provider ligado e com chave de API — a lista do classificador (assinatura não classifica). */
-async function loadClassifierOptions() {
-  await providers.load().catch(() => undefined)
-  const lists = await Promise.all(
-    providers.list
-      .filter((provider) => provider.enabled && !provider.subscription && provider.credential.configured)
-      .map(async (provider) => (await providers.models(provider.id).catch(() => [])).filter((model) => model.enabled).map((model) => ({ value: `${provider.id}::${model.modelId}`, provider: provider.id, model: model.modelId }))),
-  )
-  classifierOptions.value = lists.flat()
-  const runnable = await Promise.all(
-    providers.list
-      .filter((provider) => provider.enabled && (provider.subscription || provider.credential.configured))
-      .map(async (provider) => (await providers.models(provider.id).catch(() => [])).filter((model) => model.enabled).map((model) => ({ value: `${provider.id}::${model.modelId}`, provider: provider.id, model: model.modelId }))),
-  )
-  builderOptions.value = runnable.flat()
-}
+const classifierOptions = computed(() => runnableProviders.value.filter((provider) => !provider.subscription).flatMap(enabledModels))
+/** O construtor roda na lane agent: a assinatura serve. */
+const builderOptions = computed(() => runnableProviders.value.flatMap(enabledModels))
 
 watch(
   () => settings.current,

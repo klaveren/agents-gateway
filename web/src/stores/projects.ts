@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api } from '@/lib/api'
+import { keyedResource } from '@/lib/resource'
 import { readLocal, writeLocal } from '@/lib/storage'
 import type { IProject, IProjectMember } from '@/lib/types'
 import { useAgentsStore } from './agents'
@@ -12,7 +13,8 @@ const CURRENT_KEY = 'gw.project'
 
 /**
  * Os projetos que a pessoa pode usar e o ATUAL (o seletor do trilho). ⚖️ O atual recorta Conversas, Agentes e
- * a conversa nova; fica no navegador (`localStorage`), e sem escolha vale o primeiro.
+ * a conversa nova; fica no navegador (`localStorage`), e sem escolha vale o primeiro. Os membros de cada projeto
+ * (só admin) por projeto (`memberLists`). A gravação põe a resposta do servidor na lista, sem reler.
  */
 export const useProjectsStore = defineStore('projects', () => {
   const list = ref<IProject[]>([])
@@ -32,13 +34,24 @@ export const useProjectsStore = defineStore('projects', () => {
 
   function load(): Promise<void> {
     loading ??= (async () => {
-      list.value = await api<IProject[]>('/projects')
+      put(await api<IProject[]>('/projects'))
       loaded.value = true
-      // O guardado sumiu (apagado, ou a pessoa saiu dele): vale o primeiro que ela tem.
-      if (!list.value.some((project) => project.id === current.value)) setCurrent(list.value[0]?.id)
     })().finally(() => (loading = undefined))
     return loading
   }
+
+  /** A lista já lida, ou lida uma vez. */
+  function ensure(): Promise<void> {
+    return loaded.value ? Promise.resolve() : load()
+  }
+
+  function put(projects: IProject[]): void {
+    list.value = projects
+    // O guardado sumiu (apagado, ou a pessoa saiu dele): vale o primeiro que ela tem.
+    if (!list.value.some((project) => project.id === current.value)) setCurrent(list.value[0]?.id)
+  }
+
+  const memberLists = keyedResource((id) => api<IProjectMember[]>(`/projects/${encodeURIComponent(id)}/members`))
 
   function setCurrent(id: string | undefined): void {
     current.value = id
@@ -53,6 +66,7 @@ export const useProjectsStore = defineStore('projects', () => {
     useThreadStore().reset()
     const conversations = useConversationsStore()
     conversations.subscribe(admin)
+    // ⚖️ Trocar de projeto relê os agentes dele (o `unavailable` muda por fora); a lista guardada aparece enquanto isso.
     await Promise.all([
       useAgentsStore()
         .load()
@@ -64,32 +78,41 @@ export const useProjectsStore = defineStore('projects', () => {
   function reset(): void {
     list.value = []
     loaded.value = false
+    memberLists.clear()
+  }
+
+  /** Troca (ou acrescenta) o projeto na lista, como o servidor o devolveu. */
+  function putOne(project: IProject): void {
+    put(list.value.some((one) => one.id === project.id) ? list.value.map((one) => (one.id === project.id ? project : one)) : [...list.value, project])
   }
 
   async function create(input: { id: string; name: string; description?: string }): Promise<IProject> {
     const created = await api<IProject>('/projects', { method: 'POST', body: input })
-    await load()
+    putOne(created)
     return created
   }
 
   async function update(id: string, change: { name?: string; description?: string }): Promise<void> {
-    await api(`/projects/${encodeURIComponent(id)}`, { method: 'PUT', body: change })
-    await load()
+    putOne(await api<IProject>(`/projects/${encodeURIComponent(id)}`, { method: 'PUT', body: change }))
   }
 
   async function remove(id: string): Promise<void> {
     await api(`/projects/${encodeURIComponent(id)}`, { method: 'DELETE' })
-    await load()
+    put(list.value.filter((one) => one.id !== id))
+    memberLists.drop(id)
   }
 
+  /** Os membros do projeto: os guardados, ou lidos uma vez. */
   function members(id: string): Promise<IProjectMember[]> {
-    return api<IProjectMember[]>(`/projects/${encodeURIComponent(id)}/members`)
+    return memberLists.ensure(id)
   }
 
   async function setMembers(id: string, userIds: string[]): Promise<void> {
-    await api(`/projects/${encodeURIComponent(id)}/members`, { method: 'PUT', body: { userIds } })
-    await load()
+    const saved = await api<IProjectMember[]>(`/projects/${encodeURIComponent(id)}/members`, { method: 'PUT', body: { userIds } })
+    memberLists.set(id, saved)
+    // A contagem na lista é a mesma coisa: troca aqui, sem reler.
+    list.value = list.value.map((one) => (one.id === id ? { ...one, members: saved.length } : one))
   }
 
-  return { list, current, currentProject, query, loaded, load, select, reset, create, update, remove, members, setMembers }
+  return { list, current, currentProject, query, loaded, load, ensure, select, reset, create, update, remove, memberLists, members, setMembers }
 })

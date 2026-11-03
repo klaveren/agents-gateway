@@ -1,7 +1,7 @@
 <script setup lang="ts">
   import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
   import { useRoute } from 'vue-router'
-  import { api, ApiError } from '@/lib/api'
+  import { ApiError } from '@/lib/api'
   import type { IResourceFile } from '@/lib/resourceFiles'
   import { effortLabel, sizeHint } from '@/lib/format'
   import { BUILD_KINDS, builderAgentId, type TBuildKind } from '@/lib/builder'
@@ -60,7 +60,7 @@
   async function loadBase() {
     loadError.value = undefined
     try {
-      await Promise.all([providers.load(), protocols.loaded ? undefined : protocols.load()])
+      await Promise.all([providers.ensure(), protocols.ensure()])
       ready.value = true
     } catch (error) {
       loadError.value = error instanceof Error ? error.message : String(error)
@@ -69,16 +69,16 @@
 
   /**
    * Os MCPs: por servidor ligado, "todas as ferramentas" (`mcp:<id>/*`) ou uma a uma (`mcp:<id>/<tool>`).
-   * As ferramentas de cada servidor são lidas ao abrir o formulário.
+   * As ferramentas de cada servidor ficam na store: lidas uma vez, não a cada formulário aberto.
    */
   const mcpReady = ref(false)
   onMounted(async () => {
     void loadBase()
-    const loaded = await mcp.load().then(
+    const loaded = await mcp.ensure().then(
       () => true,
       () => false,
     )
-    await Promise.all(mcp.list.filter((server) => server.enabled).map((server) => mcp.loadTools(server.key).catch(() => [])))
+    await Promise.all(mcp.list.filter((server) => server.enabled).map((server) => mcp.ensureTools(server.key).catch(() => [])))
     mcpReady.value = loaded
   })
   const mcpRef = (server: string, tool: string) => `mcp:${server}/${tool}`
@@ -221,9 +221,15 @@
    * Os modelos que cada provider PODE oferecer ao agente: os ativados no catálogo dele. Sem nenhum ativado,
    * o formulário manda para Modelos.
    */
-  const catalogs = ref<Record<string, ICatalogModel[] | undefined>>({})
-  /** Os catálogos a caminho: o watcher dispara de novo antes de a resposta chegar. */
-  const fetching = new Set<string>()
+  const catalogs = computed<Record<string, ICatalogModel[] | undefined>>(() =>
+    Object.fromEntries(
+      chosen.value.map((id) => {
+        // Ausente: ainda lendo. A leitura que falhou vale como nenhum ativado (manda para Modelos).
+        const known = providers.catalogs.has(id) || providers.catalogs.error(id) !== undefined
+        return [id, known ? (providers.catalogs.get(id) ?? []).filter((model) => model.enabled) : undefined]
+      }),
+    ),
+  )
   const modelSearch = ref('')
   function visibleModels(providerId: string): ICatalogModel[] {
     const term = modelSearch.value.trim().toLowerCase()
@@ -313,7 +319,7 @@
   const agentFiles = ref<IResourceFile[]>([])
   async function saveAgentFiles(files: IResourceFile[]) {
     if (!props.agent) return
-    await api(`/agents/${encodeURIComponent(props.agent.id)}/files`, { method: 'PUT', body: { files } })
+    await agents.saveFiles(props.agent.id, files)
     agentFiles.value = files
   }
   const envRepeated = computed(() => envDuplicates(envList.value))
@@ -491,25 +497,12 @@
     chosen,
     (ids) => {
       // Em paralelo: um catálogo lento (o do Google lista centenas) não segura o dos outros.
-      for (const id of ids) {
-        if (catalogs.value[id] !== undefined) {
-          settleAdded(id)
-          continue
-        }
-        if (fetching.has(id)) continue
-        fetching.add(id)
+      // A store guarda cada catálogo e junta os pedidos iguais: o que já foi lido não é lido de novo.
+      for (const id of ids)
         void providers
           .models(id)
-          .then(
-            (models) => models.filter((model) => model.enabled),
-            () => [] as ICatalogModel[],
-          )
-          .then((models) => {
-            fetching.delete(id)
-            catalogs.value = { ...catalogs.value, [id]: models }
-            settleAdded(id)
-          })
-      }
+          .catch(() => undefined)
+          .then(() => settleAdded(id))
     },
     { immediate: true },
   )

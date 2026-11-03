@@ -4,6 +4,7 @@
   import HistoryPanel from '@/components/HistoryPanel.vue'
   import HistoryTabs from '@/components/HistoryTabs.vue'
   import MasterDetail from '@/components/MasterDetail.vue'
+  import { useResource } from '@/composables/useResource'
   import { initials, redactUrl } from '@/lib/format'
   import type { TMcpAuth, TMcpKind, TMcpTransport } from '@/lib/types'
   import { useMcpStore } from '@/stores/mcp'
@@ -18,7 +19,6 @@
 
   const mcp = useMcpStore()
   const projects = useProjectsStore()
-  const loadError = ref<string>()
   const route = useRoute()
   /** Detalhes ou o histórico do MCP — que o membro lê, sem restaurar (é de quem administra). */
   const tab = ref<'edit' | 'history'>(route.hash === '#historico' ? 'history' : 'edit')
@@ -31,23 +31,14 @@
   const TRANSPORT_LABEL: Record<TMcpTransport, string> = { auto: 'Automático', http: 'Streamable HTTP', sse: 'SSE' }
   const AUTH_LABEL: Record<TMcpAuth, string> = { caller: 'Login de quem conversa', header: 'Chave fixa', none: 'Nenhuma' }
 
-  const selected = computed(() => (props.id ? mcp.list.find((server) => server.key === props.id) : undefined))
-
-  // Trocou de projeto: a lista passa a ser a do novo (a de antes some, mesmo que a leitura falhe).
-  watch(
-    () => projects.current,
-    async (project) => {
-      mcp.list = []
-      loadError.value = undefined
-      if (!project) return
-      try {
-        await mcp.loadProject(project)
-      } catch (error) {
-        loadError.value = error instanceof Error ? error.message : String(error)
-      }
-    },
-    { immediate: true },
-  )
+  // A lista do projeto atual, da store (por projeto): trocar de projeto mostra a do novo — a de antes não aparece nele.
+  const current = useResource(mcp.byProject, () => projects.current)
+  const list = computed(() => current.data.value ?? [])
+  const loadError = computed(() => {
+    const error = current.error.value
+    return error === undefined ? undefined : error instanceof Error ? error.message : String(error)
+  })
+  const selected = computed(() => (props.id ? list.value.find((server) => server.key === props.id) : undefined))
 </script>
 
 <template>
@@ -64,9 +55,9 @@
         Os servidores de ferramentas do projeto {{ projects.currentProject?.name ?? projects.current }}. Só leitura: quem administra cadastra e edita.
       </p>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
-      <p v-if="!mcp.list.length && !loadError" class="px-4 py-2 text-sm text-zinc-500">Este projeto não tem MCP próprio.</p>
+      <p v-if="!list.length && !loadError" class="px-4 py-2 text-sm text-zinc-500">Este projeto não tem MCP próprio.</p>
       <RouterLink
-        v-for="server in mcp.list"
+        v-for="server in list"
         :key="server.key"
         :to="`/mcp/${server.key}`"
         class="mx-2 flex items-center gap-3 rounded-xl px-3 py-2"

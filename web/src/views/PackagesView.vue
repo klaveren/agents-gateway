@@ -26,7 +26,7 @@ const removing = ref<string>()
 const showDeps = ref(false)
 
 onMounted(async () => {
-  if (auth.isAdmin) await packages.load().catch((error) => (loadError.value = describe(error)))
+  if (auth.isAdmin) await packages.ensure().catch((error) => (loadError.value = describe(error)))
 })
 
 const installed = computed(() => packages.state?.packages ?? [])

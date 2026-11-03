@@ -24,3 +24,19 @@ describe('useSettingsStore', () => {
     expect(settings.current).toBeUndefined()
   })
 })
+
+describe('useSettingsStore — guardadas', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.mocked(api).mockReset()
+  })
+
+  it('o que o início do app já leu (`seed`) não é lido de novo pela tela', async () => {
+    const settings = useSettingsStore()
+    settings.seed({ audience: 'all' } as never)
+    await settings.ensure()
+
+    expect(api).not.toHaveBeenCalled()
+    expect(settings.current?.audience).toBe('all')
+  })
+})
