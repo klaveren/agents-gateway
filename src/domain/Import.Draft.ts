@@ -1,5 +1,9 @@
+import { AGENT_NAME_MAX } from './Agent.Policy'
 import { TProtocolKind } from './models/Protocol.Model'
 import { TInventoryKind } from './models/ImportInventory.Model'
+import { DOC_SUMMARY_MAX, DOC_TITLE_MAX } from './models/ProjectDoc.Model'
+import { RESOURCE_DESCRIPTION_MAX } from './models/Resource.Model'
+import { RULE_TITLE_MAX } from './models/Rule.Model'
 import { diffText, ITextDiff } from './Text.Diff'
 
 /**
@@ -156,7 +160,10 @@ const SLUG: Record<TImportDraftKind, RegExp> = {
 /** O id de um vínculo: um doc, recurso ou agente do gateway (ou do mapa de ids da importação). */
 const TARGET_ID = /^[a-z0-9][a-z0-9-]{1,63}$/
 
-/** Os metadados que cada tipo aceita, e os obrigatórios. `scope`: `project` (o padrão) ou `global`. */
+/**
+ * Os metadados que cada tipo aceita, e os obrigatórios. `scope` fica para conferir os rascunhos antigos: o rascunho novo
+ * não o leva (`proposalIssues`), e a gravação põe tudo no projeto.
+ */
 export const IMPORT_META: Readonly<Record<TImportDraftKind, { fields: readonly string[]; required: readonly string[] }>> = {
   rule: { fields: ['title', 'scope'], required: ['title'] },
   spec: { fields: ['id', 'title', 'summary', 'scope'], required: ['id', 'title', 'summary'] },
@@ -226,6 +233,37 @@ export function importMetaIssues(kind: TImportDraftKind, meta: Readonly<Record<s
   }
   for (const name of spec.required) if (meta[name] === undefined) issues.push({ field: `${field}.${name}`, message: 'required' })
   return issues
+}
+
+/** Os limites do CATÁLOGO por tipo e campo (os que a gravação confere): o rascunho que passa aqui grava. */
+const CATALOG_MAX: Readonly<Partial<Record<TImportDraftKind, Readonly<Record<string, number>>>>> = {
+  rule: { title: RULE_TITLE_MAX },
+  spec: { title: DOC_TITLE_MAX, summary: DOC_SUMMARY_MAX },
+  adr: { title: DOC_TITLE_MAX, summary: DOC_SUMMARY_MAX },
+  knowledge: { title: DOC_TITLE_MAX, summary: DOC_SUMMARY_MAX },
+  skill: { description: RESOURCE_DESCRIPTION_MAX },
+  command: { description: RESOURCE_DESCRIPTION_MAX },
+  agent: { name: AGENT_NAME_MAX },
+}
+
+/**
+ * O que o RASCUNHO NOVO não pode ter, além do que as operações conferem: o metadado acima do limite do catálogo (senão
+ * só a gravação recusaria, depois da revisão) e ⛔ o `scope` — a importação vem do repositório de um projeto e nasce
+ * nele; quem quiser global muda depois, no catálogo.
+ */
+export function proposalIssues(kind: TImportDraftKind, outputs: readonly Pick<IImportDraftOutput, 'meta'>[]): IImportIssue[] {
+  const limits = CATALOG_MAX[kind] ?? {}
+  return outputs.flatMap((output, index) => {
+    const field = index === 0 ? 'meta' : `outputs[${index}].meta`
+    const issues: IImportIssue[] = []
+    if (output.meta.scope !== undefined) issues.push({ field: `${field}.scope`, message: 'an import always goes to the project: drop scope' })
+    for (const [name, max] of Object.entries(limits)) {
+      const value = output.meta[name]
+      if (value !== undefined && value.length > max)
+        issues.push({ field: `${field}.${name}`, message: `at most ${max} characters in the catalog (this one has ${value.length}): shorten it` })
+    }
+    return issues
+  })
 }
 
 /** Tira as linhas em branco do começo e do fim (a única normalização do texto final). */

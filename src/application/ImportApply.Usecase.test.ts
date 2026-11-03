@@ -290,6 +290,25 @@ describe('ImportApplyUseCase — a gravação do importador pelo catálogo', () 
     assert.ok(preview.agents[0].notes.some((note) => note.includes('modelo')))
   })
 
+  it('só os prontos (`ready`): o bloqueado fica de fora com o motivo, e com ele o que depende dele; o resto grava', async () => {
+    const { apply, repository } = await setup()
+    const selection = { keys: ALL.keys, ready: true }
+    const preview = await apply.preview('alfa', 'j1', selection)
+    assert.deepStrictEqual(
+      preview.plan.items.filter((item) => item.op === 'error' || item.op === 'conflict'),
+      [],
+    )
+    const held = preview.heldBack.map((one) => one.key).sort()
+    assert.ok(held.includes('agent:maya'), JSON.stringify(preview.heldBack))
+    assert.ok(preview.heldBack.every((one) => one.reason.length > 0))
+    assert.ok(!preview.items.some((item) => held.includes(item.key)))
+    const result = await apply.apply('alfa', 'j1', { ...selection, planHash: preview.plan.planHash, confirm: preview.plan.widenings.map((one) => one.key) }, ADMIN)
+    assert.ok(result.items.applied.includes('spec:arq'))
+    assert.deepStrictEqual([...result.items.notApplied].sort(), held)
+    assert.strictEqual(repository.item('j1', 'agent:maya')!.state, 'approved')
+    assert.strictEqual(repository.item('j1', 'spec:arq')!.state, 'applied')
+  })
+
   it('um lote salvo: só os aprovados dele; sem seleção: todos os aprovados do trabalho', async () => {
     const { apply, repository } = await setup()
     repository.createBatch({ id: 'b1', jobId: 'j1', name: 'docs', prefix: '', keys: ['spec:arq', 'spec:outro'], order: ['spec:arq', 'spec:outro'], by: 'ana', at: new Date() })

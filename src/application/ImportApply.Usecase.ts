@@ -32,6 +32,11 @@ export interface IImportApplySelection {
   wide?: Readonly<Record<string, readonly string[]>>
   /** Por agente (a chave do item): o modelo que ele vai usar (o agente novo precisa de um). */
   models?: Readonly<Record<string, { provider: string; model: string }>>
+  /**
+   * Só os PRONTOS: o item com documento bloqueado (erro ou conflito no plano) fica de fora, e com ele o que depende
+   * dele (a cascata). O que fica de fora vai em `heldBack`, com o motivo.
+   */
+  ready?: boolean
 }
 
 /** Uma regra do alcance proposto: a do tradutor, se é ampla, e se entra. */
@@ -78,6 +83,8 @@ export interface IImportApplyPreview {
   plan: ICatalogImportPlan
   /** O que falta (nem no catálogo, nem no pacote), com o item do trabalho que o produz, quando há. */
   missing: IImportMissingRef[]
+  /** Com `ready`: os itens que ficaram de fora por bloqueio (o deles ou o de quem citam), e o motivo. */
+  heldBack: Array<{ key: string; ref: string; reason: string }>
 }
 
 /** Uma referência que falta no catálogo e no pacote, e o item do trabalho que a resolve (ausente: não vem deste repositório). */
@@ -161,8 +168,7 @@ export class ImportApplyUseCase {
   constructor(private readonly deps: IImportApplyDeps) {}
 
   async preview(projectId: string, jobId: string, selection: IImportApplySelection, caller?: Pick<IRestoreCaller, 'viaAccessToken'>): Promise<IImportApplyPreview> {
-    const prepared = this.prepare(projectId, jobId, selection)
-    const { plan } = await this.deps.catalog.plan({ documents: prepared.documents, scope: prepared.scope }, { viaAccessToken: !!caller?.viaAccessToken })
+    const { prepared, plan, heldBack } = await this.planned(this.prepare(projectId, jobId, selection), !!selection.ready, !!caller?.viaAccessToken)
     return {
       jobId: prepared.record.id,
       repository: prepared.record.repository,
@@ -174,6 +180,42 @@ export class ImportApplyUseCase {
       models: this.deps.models?.() ?? [],
       plan,
       missing: missingRefs(plan, prepared.all, prepared.prefix, prepared.produced),
+      heldBack,
+    }
+  }
+
+  /**
+   * O plano do catálogo sobre os documentos. Com `ready`, tira os itens bloqueados (todos os documentos deles) e planeja
+   * de novo, até não sobrar bloqueio: o que citava um tirado passa a bloquear na volta seguinte (a cascata). O mesmo
+   * cálculo na prévia e na gravação: o `planHash` confere.
+   */
+  private async planned(
+    prepared: IPrepared,
+    ready: boolean,
+    viaAccessToken: boolean,
+  ): Promise<{ prepared: IPrepared; plan: ICatalogImportPlan; heldBack: IImportApplyPreview['heldBack'] }> {
+    const heldBack: IImportApplyPreview['heldBack'] = []
+    let current = prepared
+    for (;;) {
+      const { plan } = await this.deps.catalog.plan({ documents: current.documents, scope: current.scope }, { viaAccessToken })
+      const blocked = new Map(plan.items.filter((item) => item.op === 'error' || item.op === 'conflict').map((item) => [item.ref, item.issues[0]?.message ?? item.op]))
+      if (!ready || !blocked.size) return { prepared: current, plan, heldBack }
+      const held = new Set<string>()
+      for (const [key, refs] of Object.entries(current.produced)) {
+        const ref = refs.find((one) => blocked.has(one))
+        if (!ref) continue
+        held.add(key)
+        heldBack.push({ key, ref, reason: blocked.get(ref)! })
+      }
+      const out = new Set([...blocked.keys(), ...[...held].flatMap((key) => current.produced[key])])
+      // Sem item a tirar (o bloqueio não é de um item): não há como avançar; o plano volta como está.
+      if (!held.size) return { prepared: current, plan, heldBack }
+      current = {
+        ...current,
+        documents: current.documents.filter((document) => !out.has(refOfDocument(document))),
+        produced: Object.fromEntries(Object.entries(current.produced).filter(([key]) => !held.has(key))),
+        entries: current.entries.filter((entry) => !held.has(entry.key)),
+      }
     }
   }
 
@@ -183,7 +225,7 @@ export class ImportApplyUseCase {
     request: IImportApplySelection & { planHash: string; confirm?: readonly string[] },
     caller: IRestoreCaller,
   ): Promise<IImportApplyOutcome> {
-    const prepared = this.prepare(projectId, jobId, request)
+    const { prepared, heldBack } = await this.planned(this.prepare(projectId, jobId, request), !!request.ready, !!caller.viaAccessToken)
     const { record, produced } = prepared
     const provenance = {
       importJob: record.id,
@@ -202,7 +244,8 @@ export class ImportApplyUseCase {
     const done = new Set(result.applied.filter((step) => step.part !== 'record').map((step) => step.ref))
     const pending = new Set([...(result.failed ? [result.failed.ref] : []), ...result.pending.map((step) => step.ref)])
     const at = (this.deps.now ?? (() => new Date()))()
-    const items = { applied: [] as string[], notApplied: [] as string[] }
+    // O que ficou de fora por bloqueio (`ready`) não foi gravado: continua aprovado.
+    const items = { applied: [] as string[], notApplied: [...new Set(heldBack.map((one) => one.key))] }
     for (const entry of prepared.entries) {
       const refs = produced[entry.key]
       if (!refs) continue

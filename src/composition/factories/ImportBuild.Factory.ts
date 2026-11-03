@@ -2,6 +2,7 @@ import { IImportConversationInput, IImportSourceFile, ImportBuildService } from 
 import { IImportTurnResult, ImportRunService } from '@application/ImportRun.Service'
 import { readRepoFile } from '@infra/import/Repo.Tree'
 import { resolveWorkFolder } from '@infra/workspace/Work.Folder'
+import { makeGuidance } from './Guidance.Factory'
 import { importJobRepository } from './ImportJobs.Factory'
 import { makeProjects } from './Projects.Factory'
 import { makeSecretMasker } from './SecretMask.Factory'
@@ -22,6 +23,14 @@ export function makeImportBuild(): ImportBuildService {
     openConversation: (input) => {
       if (!opener) throw new Error('the builder conversation cannot be opened yet')
       return opener(input)
+    },
+    docExists: (id, projectId) => {
+      try {
+        const doc = makeGuidance().doc(id)
+        return !doc.projectId || doc.projectId === projectId
+      } catch {
+        return false
+      }
     },
   })
   return instance

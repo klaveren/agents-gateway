@@ -13,6 +13,8 @@ export interface IApplySelection {
   keys?: string[]
   wide?: Record<string, string[]>
   models?: Record<string, { provider: string; model: string }>
+  /** Só os prontos: o bloqueado (e o que depende dele) fica de fora (`heldBack`). */
+  ready?: boolean
 }
 
 export type TPlanOp = 'create' | 'update' | 'unchanged' | 'conflict' | 'error' | 'delete'
@@ -77,6 +79,8 @@ export interface IApplyPreview {
   plan: IApplyPlan
   /** O que falta (nem no catálogo, nem no pacote), com o item do trabalho que o produz, quando há. */
   missing?: IMissingRef[]
+  /** Com `ready`: os itens que ficaram de fora por bloqueio, e o motivo. */
+  heldBack?: Array<{ key: string; ref: string; reason: string }>
 }
 
 export interface IMissingRef {

@@ -100,6 +100,7 @@ const applySelectionSchema = z.object({
   keys: z.array(itemKey).min(1).max(IMPORT_BATCH_MAX).optional(),
   wide: z.record(itemKey, z.array(z.string().min(1).max(2_000)).max(1_000)).optional(),
   models: z.record(itemKey, z.object({ provider: z.string().min(1).max(100), model: z.string().min(1).max(200) })).optional(),
+  ready: z.boolean().optional(),
 })
 const applySchema = applySelectionSchema.extend({
   planHash: z.string().regex(/^[a-f0-9]{64}$/, 'expected the planHash of the plan (64 hex)'),
@@ -502,5 +503,6 @@ function selection(body: z.infer<typeof applySelectionSchema>) {
     ...(body.keys ? { keys: body.keys } : {}),
     ...(body.wide ? { wide: body.wide } : {}),
     ...(body.models ? { models: body.models } : {}),
+    ...(body.ready ? { ready: true } : {}),
   }
 }

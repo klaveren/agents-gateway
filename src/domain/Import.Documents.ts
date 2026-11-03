@@ -83,7 +83,11 @@ function docLinks(draft: IImportDraft): { docIds: string[]; docRefs?: string[] }
   return { docIds, ...(docRefs.length ? { docRefs } : {}) }
 }
 
-const scopeOf = (output: IImportDraftOutput, projectId: string) => (output.meta.scope === 'global' ? undefined : projectId)
+/**
+ * ⛔ A importação vem do repositório DE UM PROJETO: tudo nasce nele. O `scope: global` de um rascunho antigo é ignorado;
+ * quem quiser global muda depois, no catálogo.
+ */
+const scopeOf = (_output: IImportDraftOutput, projectId: string): string | undefined => projectId
 
 export function importDocuments(input: IImportDocumentsInput): IImportDocuments {
   const documents: ICatalogDocument[] = []

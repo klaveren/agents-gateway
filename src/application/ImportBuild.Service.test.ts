@@ -9,7 +9,7 @@ import { IInventoryItem, TInventoryKind } from '@domain/models/ImportInventory.M
 import { readRepoFile } from '@infra/import/Repo.Tree'
 import { SqliteImportRepository } from '@infra/persistence/Sqlite.ImportRepository'
 import { FAKE_TOKEN } from '../testing/Import.Fixture'
-import { IImportConversationInput, ImportBuildError, ImportBuildService, lastDraft } from './ImportBuild.Service'
+import { IImportBuildDeps, IImportConversationInput, ImportBuildError, ImportBuildService, lastDraft } from './ImportBuild.Service'
 
 const SPEC = '<!-- gerado por agents-sync -->\n# Arquitetura\nLeia `.agents/specs/filas.md` antes.\n'
 
@@ -18,7 +18,7 @@ describe('ImportBuildService', () => {
   after(() => rmSync(base, { recursive: true, force: true }))
   let seq = 0
 
-  function setup() {
+  function setup(extra: Partial<IImportBuildDeps> = {}) {
     const root = join(base, `repo-${++seq}`)
     const file = (path: string, body: string) => {
       mkdirSync(dirname(join(root, path)), { recursive: true })
@@ -81,6 +81,7 @@ describe('ImportBuildService', () => {
         return `c${opened.length}`
       },
       now: () => new Date('2026-10-30T12:00:00.000Z'),
+      ...extra,
     })
     return { root, file, repository, service, opened, job }
   }
@@ -255,6 +256,33 @@ describe('ImportBuildService', () => {
     assert.throws(() => service.propose('c1', 'spec:arquitetura', { body: 'texto livre' }, []), /draft has problems/)
     assert.strictEqual(repository.item('j1', 'spec:arquitetura')!.state, 'drafting')
     code(() => service.propose('c1', 'spec:filas', META, []), 'not_found')
+  })
+
+  it('⛔ o rascunho que só a gravação recusaria é recusado ao propor: limite do catálogo e escopo', async () => {
+    const { service, repository } = setup()
+    await service.open('alfa', 'j1', 'ana', { keys: ['spec:arquitetura'] })
+    const issues = (meta: Record<string, string>) => {
+      try {
+        service.propose('c1', 'spec:arquitetura', meta, OPS)
+        return []
+      } catch (error) {
+        return (error as ImportBuildError).issues.map((issue) => `${issue.field}: ${issue.message}`)
+      }
+    }
+    assert.deepStrictEqual(issues({ ...META, summary: 'x'.repeat(301) }), ['meta.summary: at most 300 characters in the catalog (this one has 301): shorten it'])
+    assert.deepStrictEqual(issues({ ...META, title: 'x'.repeat(161) }), ['meta.title: at most 160 characters in the catalog (this one has 161): shorten it'])
+    assert.deepStrictEqual(issues({ ...META, scope: 'global' }), ['meta.scope: an import always goes to the project: drop scope'])
+    assert.strictEqual(repository.item('j1', 'spec:arquitetura')!.state, 'drafting')
+  })
+
+  it('⛔ vínculo para id que não é do trabalho nem documento do catálogo é recusado; o do catálogo passa', async () => {
+    const { service } = setup({ docExists: (id) => id === 'ja-no-catalogo' })
+    await service.open('alfa', 'j1', 'ana', { keys: ['spec:arquitetura'] })
+    assert.throws(
+      () => service.propose('c1', 'spec:arquitetura', META, [OPS[0], { ...OPS[1], target: 'memory-decisions-md' }]),
+      (error: unknown) => error instanceof ImportBuildError && /memory-decisions-md is no document of this import job nor of the catalog/.test(error.issues[0].message),
+    )
+    assert.strictEqual(service.propose('c1', 'spec:arquitetura', META, [OPS[0], { ...OPS[1], target: 'ja-no-catalogo' }]).item.state, 'review')
   })
 
   it('⛔ vínculo para um item do trabalho que não é documento (uma skill) é recusado: o painel só anexa spec, ADR ou knowledge', async () => {

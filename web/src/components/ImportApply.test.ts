@@ -204,6 +204,24 @@ describe('ImportApply — gravar no catálogo', () => {
     expect(member.querySelector('[data-test="apply-write"]')).toBeNull()
   })
 
+  it('"Gravar só os prontos": refaz o plano sem os bloqueados, lista o que ficou de fora e libera o botão; volta a ver todos', async () => {
+    next = preview({
+      items: [
+        { ref: 'agent/maya', kind: 'agent', id: 'maya', op: 'error', widenings: [], attentions: [], issues: [{ field: 'providers', message: 'pick a model' }], brokenRefs: [] },
+      ],
+    })
+    const host = await mount()
+    expect(host.querySelector('[data-test="apply-held"]')).toBeNull()
+    next = { ...preview({ widenings: [] }), heldBack: [{ key: 'agent:maya', ref: 'agent/maya', reason: 'pick a model' }] }
+    await click(host.querySelector('[data-test="apply-ready"]'))
+    expect(bodies('/projects/alfa/import/jobs/j1/apply/plan').at(-1)).toEqual({ batchId: 'b1', ready: true })
+    expect(host.querySelector('[data-test="apply-held-item"]')!.textContent).toContain('agent:maya — pick a model')
+    expect(host.querySelector('[data-test="apply-ready-offer"]')).toBeNull()
+    expect(host.querySelector<HTMLButtonElement>('[data-test="apply-write"]')!.disabled).toBe(false)
+    await click(host.querySelector('[data-test="apply-ready-off"]'))
+    expect(bodies('/projects/alfa/import/jobs/j1/apply/plan').at(-1)).toEqual({ batchId: 'b1' })
+  })
+
   it('o que falta diz o tipo e o estado; vem deste repositório: "Adicionar à migração" (uma ou todas) e "Ver no inventário"', async () => {
     const item = (key: string, kind: string, state: string) => ({ key, kind, state, path: `.agents/${key}.md` })
     next = {

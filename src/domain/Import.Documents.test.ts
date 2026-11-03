@@ -23,7 +23,7 @@ const base: Omit<IImportDocumentsInput, 'entries'> = {
 }
 
 describe('importDocuments', () => {
-  it('split vira outro item do mesmo tipo; reference vai em docIds e docRefs; scope global sai sem projeto', () => {
+  it('split vira outro item do mesmo tipo; reference vai em docIds e docRefs; ⛔ o scope global de rascunho antigo fica no projeto', () => {
     const text = '# Guia\nVer `docs/a.md`.\n## Anexo\nOutra parte.\n'
     const spec = draft('spec:guia', 'spec', text, [
       { op: 'linkCitation', text: 'docs/a.md', target: 'doc-a', link: 'reference' },
@@ -33,7 +33,7 @@ describe('importDocuments', () => {
     const { documents, produced } = importDocuments({ ...base, entries: [{ key: 'spec:guia', kind: 'spec', draft: spec }] })
     assert.deepStrictEqual(produced['spec:guia'], ['spec/guia', 'spec/guia-anexo'])
     const [main, part] = documents
-    assert.deepStrictEqual([main.projectId, main.body.docIds, main.body.docRefs, main.body.body], [undefined, ['doc-a'], ['doc-a'], '# Guia\nVer `doc-a`.'])
+    assert.deepStrictEqual([main.projectId, main.body.docIds, main.body.docRefs, main.body.body], ['alfa', ['doc-a'], ['doc-a'], '# Guia\nVer `doc-a`.'])
     assert.deepStrictEqual([part.projectId, part.body.body, part.body.docIds], ['alfa', '## Anexo\nOutra parte.', []])
   })
 
