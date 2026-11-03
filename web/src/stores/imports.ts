@@ -281,7 +281,17 @@ export const useImportsStore = defineStore('imports', () => {
     return result.runs
   }
 
+  /** O logout: esquece o estado dos itens (os recursos, o `clearResources` já esquece). */
+  function reset(): void {
+    states.value = new Map()
+    latest.value = new Map()
+    full.clear()
+    pending.clear()
+    version.clear()
+  }
+
   return {
+    reset,
     jobs,
     job,
     batches,

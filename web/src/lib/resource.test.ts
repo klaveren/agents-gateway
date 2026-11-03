@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createApp, defineComponent, h, nextTick, ref } from 'vue'
 import { useResource } from '@/composables/useResource'
-import { keyedResource } from './resource'
+import { clearResources, keyedResource } from './resource'
 
 const deferred = <T>() => {
   let resolve!: (value: T) => void
@@ -72,6 +72,16 @@ describe('keyedResource — o dado do servidor guardado por chave', () => {
     clock = 2000
     await resource.refreshLoaded()
     expect([resource.get('a'), fetcher.mock.calls.length]).toEqual(['a@2000', 3])
+  })
+})
+
+describe('clearResources — o logout', () => {
+  it('esquece o que todos os recursos leram', async () => {
+    const one = keyedResource(async () => 1)
+    const two = keyedResource(async () => 2)
+    await Promise.all([one.ensure('a'), two.ensure('b')])
+    clearResources()
+    expect([one.has('a'), two.has('b')]).toEqual([false, false])
   })
 })
 
