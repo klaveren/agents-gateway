@@ -1,7 +1,7 @@
 import assert from 'node:assert'
 import { connect } from 'node:net'
 import { after, before, describe, it } from 'node:test'
-import { addressKind, NetworkGate } from './Network.Gate'
+import { addressKind, NetworkGate, preferredAddress } from './Network.Gate'
 
 /** Um CONNECT cru na porta, com ou sem token; devolve a linha de status da resposta. */
 function connectThrough(port: number, target: string, token?: string): Promise<string> {
@@ -92,5 +92,17 @@ describe('Network.Gate', () => {
       'private',
       'public',
     ])
+  })
+
+  it('⚖️ o túnel liga no IPv4 antes do IPv6 (o host sem rota IPv6 perdia a conexão); só IPv6, o IPv6', () => {
+    assert.strictEqual(
+      preferredAddress([
+        { address: '2606:4700:3037::6815:5150', family: 6 },
+        { address: '104.21.81.80', family: 4 },
+      ]),
+      '104.21.81.80',
+    )
+    assert.strictEqual(preferredAddress([{ address: '2606:4700::1', family: 6 }]), '2606:4700::1')
+    assert.throws(() => preferredAddress([]))
   })
 })
