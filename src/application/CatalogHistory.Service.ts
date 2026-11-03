@@ -1,5 +1,6 @@
 import { ICatalogDocument, TCanonicalValue, TCatalogKind } from '@domain/Catalog.Document'
 import { mcpServerKey, parseMcpServerKey } from '@domain/models/McpServer.Model'
+import { ICatalogEvents } from '@domain/ports/CatalogEvents.Port'
 import { ICatalogHistoryRepository, ICatalogRevision, TRevisionOp, TRevisionSource } from '@domain/ports/CatalogHistoryRepository.Port'
 import { CatalogReader, TCatalogScope } from './Catalog.Reader'
 
@@ -64,6 +65,8 @@ export class CatalogHistoryService implements ICatalogRecorder {
     private readonly repository: ICatalogHistoryRepository,
     private readonly reader: Pick<CatalogReader, 'read' | 'list'>,
     private readonly now: () => Date = () => new Date(),
+    /** Quem avisa as telas abertas (a rota SSE): sai daqui porque toda escrita do catálogo passa pelo histórico. */
+    private readonly events?: Pick<ICatalogEvents, 'publish'>,
   ) {}
 
   record(keys: readonly ICatalogItemKey[], change: ICatalogChange): ICatalogRevision[] {
@@ -90,6 +93,8 @@ export class CatalogHistoryService implements ICatalogRecorder {
         written.push(this.repository.append({ ...base, ...scopeOf(last ? last.projectId : key.projectId), op: 'delete' }))
       }
     }
+    // ⛔ O aviso nunca derruba a escrita (o barramento já engole o ouvinte que falha).
+    if (written.length) this.events?.publish(written.map((one) => ({ kind: one.kind, id: one.itemId, ...(one.projectId ? { projectId: one.projectId } : {}), op: one.op })))
     return written
   }
 

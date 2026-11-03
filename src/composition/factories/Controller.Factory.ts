@@ -1,3 +1,4 @@
+import { makeCatalogEvents } from './CatalogEvents.Factory'
 import { readFileSync } from 'node:fs'
 import { AsyncResource } from 'node:async_hooks'
 import { join } from 'node:path'
@@ -100,6 +101,7 @@ export function makeController(): AgentController {
     sessionContext: sessionContextFromEnv(),
     conversations: usecases.conversations,
     events: usecases.events,
+    catalogEvents: makeCatalogEvents(),
     live: usecases.live,
     bench: providerBench(),
     pricing: loadPricing(),

@@ -1,3 +1,4 @@
+import { makeCatalogEvents } from './CatalogEvents.Factory'
 import { CatalogHistoryQuery } from '@application/CatalogHistory.Query'
 import { CatalogHistoryService } from '@application/CatalogHistory.Service'
 import { CatalogReader } from '@application/Catalog.Reader'
@@ -37,7 +38,7 @@ function build() {
     projects: projectRepository(),
   })
   const repository = new SqliteCatalogHistoryRepository(configured === 'off' ? ':memory:' : configured || DEFAULT_DB_PATH)
-  instance = { service: new CatalogHistoryService(repository, reader), query: new CatalogHistoryQuery(repository, reader), repository, reader }
+  instance = { service: new CatalogHistoryService(repository, reader, undefined, makeCatalogEvents()), query: new CatalogHistoryQuery(repository, reader), repository, reader }
   return instance
 }
 

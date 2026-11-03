@@ -75,6 +75,20 @@ describe('keyedResource — o dado do servidor guardado por chave', () => {
   })
 })
 
+describe('markStale — o aviso de fora', () => {
+  it('o dado fica na tela; o próximo ensure busca de novo', async () => {
+    let n = 0
+    const resource = keyedResource(async () => ++n)
+    await resource.ensure('a')
+    await resource.ensure('b')
+    resource.markStale('a')
+    expect(resource.get('a')).toBe(1)
+    expect([await resource.ensure('a'), await resource.ensure('b')]).toEqual([3, 2])
+    resource.markAllStale()
+    expect([await resource.ensure('a'), await resource.ensure('b')]).toEqual([4, 5])
+  })
+})
+
 describe('clearResources — o logout', () => {
   it('esquece o que todos os recursos leram', async () => {
     const one = keyedResource(async () => 1)
