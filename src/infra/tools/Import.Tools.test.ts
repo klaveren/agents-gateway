@@ -14,13 +14,17 @@ describe('Import.Tools — as ferramentas do construtor em modo importação', (
       if (!Array.isArray(ops) || !ops.length) throw Object.assign(new Error('the draft has problems'), { issues: [{ field: 'ops[0].text', message: 'excerpt not found' }] })
       return { draft: { key, ops, removals: [{}], outputs: [{ meta: { id: 'x' } }] } as unknown as IImportDraft }
     },
+    reclassify: (conversation, key, kind, reason) => {
+      if (kind === 'mcp') throw new Error('no builder imports a mcp')
+      return calls.push(`reclassify:${conversation}:${key}:${String(kind)}:${String(reason)}`)
+    },
   }
-  const [list, read, propose] = makeImportTools(desk)
+  const [list, read, propose, reclassify] = makeImportTools(desk)
   const importer = { agentId: 'builder-import-spec', sessionId: 'c1' }
 
   it('⛔ só o construtor em modo importação, e só numa conversa', async () => {
     for (const context of [{ agentId: 'builder-spec', sessionId: 'c1' }, { agentId: 'atlas', sessionId: 'c1' }, { agentId: 'builder-import-spec' }, undefined]) {
-      for (const tool of [list, read, propose]) {
+      for (const tool of [list, read, propose, reclassify]) {
         const result = await tool.execute({ item: 'spec:x', ops: [{}] }, context)
         assert.strictEqual(result.status, 'error', `${tool.name} ${JSON.stringify(context)}`)
       }
@@ -35,6 +39,15 @@ describe('Import.Tools — as ferramentas do construtor em modo importação', (
     const ok = await propose.execute({ item: 'spec:x', ops: [{ op: 'remove' }] }, importer)
     assert.strictEqual(ok.status, 'success')
     assert.match(ok.result, /Draft saved on spec:x .*1 removal.*Nothing went to the catalog/)
+  })
+
+  it('reclassificar: a conversa do contexto, o tipo e o motivo; diz à pessoa como seguir', async () => {
+    calls.length = 0
+    const ok = await reclassify.execute({ item: 'knowledge:x', kind: 'spec', reason: 'a pessoa disse: spec' }, importer)
+    assert.strictEqual(ok.status, 'success')
+    assert.match(ok.result, /knowledge:x is now a spec .*Retomar as paradas/)
+    assert.deepStrictEqual(calls, ['reclassify:c1:knowledge:x:spec:a pessoa disse: spec'])
+    assert.deepStrictEqual(await reclassify.execute({ item: 'knowledge:x', kind: 'mcp', reason: 'r' }, importer), { status: 'error', result: 'no builder imports a mcp' })
   })
 
   it('os problemas voltam campo a campo, para o construtor corrigir', async () => {

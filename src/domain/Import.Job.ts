@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { IImportItemStatus, IImportReuse, TImportItemState } from './models/ImportJob.Model'
+import { IImportItemStatus, IImportReuse, TImportItemPatch, TImportItemState } from './models/ImportJob.Model'
 import { IInventoryItem } from './models/ImportInventory.Model'
 
 /**
@@ -35,11 +35,20 @@ export function canTransition(from: TImportItemState, to: TImportItemState): boo
   return IMPORT_TRANSITIONS[from].includes(to)
 }
 
-/** Reclassificar só sem rascunho no caminho: com construtor rodando, rascunho a revisar, aprovado ou aplicado, não. */
+/**
+ * Reclassificar só sem rascunho no caminho: com rascunho a revisar, aprovado ou aplicado, não. O item no construtor
+ * (`drafting`) AINDA SEM RASCUNHO também (`drafted: false`): ele sai da conversa e volta a `pending`, para o construtor
+ * do tipo novo.
+ */
 export const RECLASSIFIABLE_STATES: readonly TImportItemState[] = ['pending', 'skipped', 'rejected', 'error', 'stale']
 
-export function canReclassify(state: TImportItemState): boolean {
-  return RECLASSIFIABLE_STATES.includes(state)
+export function canReclassify(state: TImportItemState, drafted = true): boolean {
+  return RECLASSIFIABLE_STATES.includes(state) || (state === 'drafting' && !drafted)
+}
+
+/** O item que sai da conversa do construtor (sem rascunho) e volta à fila. */
+export function releasedFromBuilder(fingerprint: string): TImportItemPatch {
+  return { state: 'pending', conversationId: null, review: null, staleFrom: null, basis: fingerprint }
 }
 
 /**

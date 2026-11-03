@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import ImportItemReview from '@/components/ImportItemReview.vue'
 import { api, ApiError } from '@/lib/api'
 import { type IImportBuildStatus, lastDraft } from '@/lib/importDraft'
-import { STATE_HINT, STATE_LABEL, type TImportItemState } from '@/lib/importer'
+import { BUILDER_KINDS, canReclassifyState, KIND_LABEL, STATE_HINT, STATE_LABEL, type TImportItemState, type TInventoryKind } from '@/lib/importer'
 
 /**
  * A FILA DE REVISÃO de uma conversa de importação (ao lado da conversa, na tela do construtor e na mesa do passo
@@ -108,6 +108,32 @@ async function review(key: string, action: 'approve' | 'adjust', body: { removal
     statuses.value = { ...statuses.value, [key]: { ...statuses.value[key], ...updated } }
     emit('updated', [statuses.value[key]])
     open.value = next
+  } catch (failure) {
+    reviewError.value = { key, text: message(failure) }
+  } finally {
+    busyKey.value = undefined
+  }
+}
+
+/** O tipo em vigor do item (o reclassificado, senão o da chave). */
+function kindOf(key: string): TInventoryKind {
+  return statuses.value[key]?.kind ?? (key.slice(0, key.indexOf(':')) as TInventoryKind)
+}
+
+/** Reclassificar daqui: o item sem rascunho (mesmo já com o construtor) sai da conversa e volta à fila. */
+function canMove(key: string): boolean {
+  const status = statuses.value[key]
+  return latest.value && !!status && canReclassifyState(status.state, !!lastDraft(status))
+}
+
+async function reclassify(key: string, kind: TInventoryKind) {
+  busyKey.value = key
+  reviewError.value = undefined
+  try {
+    const updated = await api<IImportBuildStatus>(`${jobPath()}/items`, { method: 'PATCH', body: { key, kind } })
+    // ⚠️ Substitui (não mescla): a conversa de que o item saiu não vem na resposta.
+    statuses.value = { ...statuses.value, [key]: updated }
+    emit('updated', [updated])
   } catch (failure) {
     reviewError.value = { key, text: message(failure) }
   } finally {
@@ -221,6 +247,20 @@ async function approveQuick() {
             @adjust="review(key, 'adjust', { comment: $event })"
           />
           <p v-else-if="statuses[key]?.state === 'drafting'" class="px-2 text-xs text-zinc-500">Ainda sem rascunho: quando o construtor propuser, ele aparece aqui.</p>
+          <label v-if="canMove(key)" class="flex flex-wrap items-center gap-2 px-2 text-xs text-zinc-400" data-test="import-draft-reclassify">
+            Não é {{ KIND_LABEL[kindOf(key)] }}? Reclassificar
+            <select
+              class="input w-auto py-0.5 text-xs"
+              :value="kindOf(key)"
+              :disabled="busyKey === key"
+              data-test="import-draft-reclassify-kind"
+              @change="reclassify(key, ($event.target as HTMLSelectElement).value as TInventoryKind)"
+            >
+              <option v-for="kind in BUILDER_KINDS" :key="kind" :value="kind">{{ KIND_LABEL[kind] }}</option>
+            </select>
+            <span class="text-zinc-500">sai da conversa e vai ao construtor do tipo novo no próximo "Retomar".</span>
+          </label>
+          <p v-if="reviewError?.key === key && !lastDraft(statuses[key])" class="px-2 text-xs text-rose-300" data-test="import-draft-error">{{ reviewError.text }}</p>
         </template>
       </li>
     </ul>

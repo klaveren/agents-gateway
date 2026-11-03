@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { fullTime, tokens } from '@/lib/format'
+import { type IImportBuildStatus, lastDraft } from '@/lib/importDraft'
 import {
   bytesLabel,
+  canReclassifyState,
   CATALOG_HINT,
   CATALOG_LABEL,
   EXCLUDABLE_STATES,
@@ -12,7 +14,6 @@ import {
   itemBytes,
   itemTokens,
   KIND_LABEL,
-  RECLASSIFIABLE_STATES,
   RECLASSIFY_KINDS,
   STATE_HINT,
   STATE_LABEL,
@@ -57,7 +58,7 @@ const migrations = computed(() => props.migrations ?? [])
 const state = computed(() => props.status?.state ?? 'pending')
 const canExclude = computed(() => !props.readonly && EXCLUDABLE_STATES.includes(state.value))
 const canInclude = computed(() => !props.readonly && INCLUDABLE_STATES.includes(state.value))
-const canReclassify = computed(() => !props.readonly && RECLASSIFIABLE_STATES.includes(state.value))
+const canReclassify = computed(() => !props.readonly && canReclassifyState(state.value, !!lastDraft(props.status as IImportBuildStatus | undefined)))
 
 const untranslatable = computed(() => props.item.notes.filter((note) => note.level === 'untranslatable'))
 const others = computed(() => props.item.notes.filter((note) => note.level !== 'untranslatable'))

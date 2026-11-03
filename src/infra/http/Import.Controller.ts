@@ -371,6 +371,8 @@ export class ImportController {
       const batch = req.params.batch as string
       if (body.start && !this.deps.runs) throw new HttpError(404, 'not_found', 'Not found')
       const conversations = await this.buildError(async () => {
+        // O item preso numa conversa apagada: solto dela, o Preparar abre outra.
+        if (this.deps.conversationExists) await this.build().releaseLost(projectId, job, batch, this.deps.conversationExists)
         try {
           return await this.build().prepare(projectId, job, batch, by, owner)
         } catch (error) {

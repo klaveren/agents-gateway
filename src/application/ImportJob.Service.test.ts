@@ -166,6 +166,16 @@ describe('ImportJobService', () => {
       () => service.updateItem('alfa', 'j2', 'skill:deploy', { state: 'pending' }, 'bia'),
       (error: unknown) => error instanceof ImportJobError && error.code === 'transition',
     )
+
+    // No construtor SEM rascunho reclassifica: sai da conversa e volta à fila. Com rascunho, não.
+    repository.updateItem('j2', 'skill:deploy', { state: 'drafting', conversationId: 'c1', drafts: [{ ops: [], removals: [] }] })
+    assert.throws(
+      () => service.updateItem('alfa', 'j2', 'skill:deploy', { kind: 'command' }, 'bia'),
+      (error: unknown) => error instanceof ImportJobError && error.code === 'reclassify',
+    )
+    repository.updateItem('j2', 'skill:deploy', { drafts: [] })
+    const moved = service.updateItem('alfa', 'j2', 'skill:deploy', { kind: 'command' }, 'bia')
+    assert.deepStrictEqual([moved.kind, moved.state, moved.conversationId], ['command', 'pending', undefined])
     assert.throws(
       () => service.updateItem('alfa', 'j2', 'skill:nada', { state: 'skipped' }, 'bia'),
       (error: unknown) => error instanceof ImportJobError && error.code === 'not_found' && error.field === 'key',

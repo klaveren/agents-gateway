@@ -12,7 +12,7 @@ import {
   TImportOp,
   verifyImportDraft,
 } from '@domain/Import.Draft'
-import { canTransition } from '@domain/Import.Job'
+import { canReclassify, canTransition, releasedFromBuilder } from '@domain/Import.Job'
 import { IImportJobItem, IImportReview, TImportItemState } from '@domain/models/ImportJob.Model'
 import { IInventorySource, TInventoryKind } from '@domain/models/ImportInventory.Model'
 import { TProtocolKind } from '@domain/models/Protocol.Model'
@@ -76,6 +76,9 @@ const PAGE_DEFAULT = 30_000
 const PAGE_MAX = 60_000
 const KEYS_MAX = 200
 const COMMENT_MAX = 4_000
+const REASON_MAX = 1_000
+/** Quantos motivos de remoção já decididos a lista mostra (os mais frequentes). */
+const DECIDED_MAX = 12
 
 /** Para quem a conversa abre: a seleção (`keys`) ou um lote salvo (`batchId`); `kind` escolhe o construtor no lote misto. */
 export interface IImportOpenOptions {
@@ -303,7 +306,78 @@ export class ImportBuildService {
       const draft = lastDraft(entry)
       if (draft) lines.push(`- last draft: ${draft.ops.length} operation(s), ${draft.removals.length} removal(s), ${draft.outputs.length} item(s), proposed ${draft.proposedAt}`)
     }
+    const decided = this.decidedRemovals(job.id)
+    if (decided.length) {
+      lines.push(
+        '',
+        '## Removals the person already approved in this import job (by reason)',
+        'Removals like these need no question: put them in the draft; the person still gives the OK of each one in the review.',
+      )
+      for (const one of decided) lines.push(`- ${one.reason} — approved ${one.count}× (e.g. ${one.example})`)
+    }
     return lines.join('\n')
+  }
+
+  /**
+   * As remoções que a pessoa já aprovou no trabalho (dos itens aprovados ou gravados), agrupadas pelo motivo: o que o
+   * construtor não precisa perguntar de novo.
+   */
+  private decidedRemovals(jobId: string): Array<{ reason: string; count: number; example: string }> {
+    const byReason = new Map<string, { reason: string; count: number; example: string }>()
+    for (const entry of this.deps.repository.items(jobId)) {
+      if (entry.state !== 'approved' && entry.state !== 'applied') continue
+      for (const removal of lastDraft(entry)?.removals ?? []) {
+        const reason = removal.reason.trim()
+        const found = byReason.get(reason)
+        if (found) found.count++
+        else byReason.set(reason, { reason, count: 1, example: removal.whole ? `whole source ${removal.source}` : excerpt(removal.text) })
+      }
+    }
+    return [...byReason.values()].sort((a, b) => b.count - a.count).slice(0, DECIDED_MAX)
+  }
+
+  /**
+   * `reclassify_import_item`: a PESSOA pediu, nesta conversa, outro tipo para um item que ainda não tem rascunho. O item
+   * sai da conversa e volta à fila (`pending`), para o construtor do tipo novo (o Preparar abre a conversa dele).
+   */
+  reclassify(conversationId: string, key: string, kind: unknown, reason: unknown): IImportJobItem {
+    const { job, items } = this.conversation(conversationId)
+    const entry = items.find((item) => item.key === key)
+    if (!entry) throw new ImportBuildError('not_found', `not an item of this conversation: ${key}`, 'item')
+    if (typeof kind !== 'string' || !builderKindForItem(kind as TInventoryKind)) throw new ImportBuildError('kind', `no builder imports a ${String(kind)}`, 'kind')
+    const text = typeof reason === 'string' ? reason.trim() : ''
+    if (!text) throw new ImportBuildError('invalid', 'say why (what the person asked)', 'reason')
+    if (text.length > REASON_MAX) throw new ImportBuildError('invalid', `at most ${REASON_MAX} characters`, 'reason')
+    if (!canReclassify(entry.state, !!lastDraft(entry))) throw new ImportBuildError('transition', `an item in state ${entry.state} with a draft cannot be reclassified`, 'item')
+    const target = kind as TInventoryKind
+    if (target === (entry.kind ?? entry.item.kind)) throw new ImportBuildError('invalid', `the item is already a ${target}`, 'kind')
+    return this.deps.repository.updateItem(job.id, key, {
+      ...releasedFromBuilder(entry.fingerprint),
+      kind: target === entry.item.kind ? null : target,
+      by: `builder:${conversationId}`,
+      at: this.now(),
+    })!
+  }
+
+  /**
+   * Os itens do lote no construtor cuja conversa SUMIU (apagada): soltos dela, continuam `drafting` sem conversa e o
+   * Preparar abre outra para eles. Devolve as chaves soltas.
+   */
+  async releaseLost(projectId: string, jobId: string, batchId: string, exists: (conversationId: string) => Promise<boolean>): Promise<string[]> {
+    const record = this.latestRecord(projectId, jobId)
+    const batch = this.deps.repository.batch(record.id, batchId)
+    if (!batch) return []
+    const known = new Map<string, boolean>()
+    const released: string[] = []
+    for (const key of new Set([...batch.order, ...batch.keys])) {
+      const entry = this.deps.repository.item(record.id, key)
+      if (entry?.state !== 'drafting' || !entry.conversationId) continue
+      if (!known.has(entry.conversationId)) known.set(entry.conversationId, await exists(entry.conversationId))
+      if (known.get(entry.conversationId)) continue
+      this.deps.repository.updateItem(record.id, key, { conversationId: null, at: this.now() })
+      released.push(key)
+    }
+    return released
   }
 
   /** `read_import_source`: uma página de uma fonte do item (ou do que ele cita), conferindo o `sha256` do trabalho. */
@@ -504,6 +578,12 @@ export class ImportBuildService {
 function sourceFlags(source: IInventorySource): string {
   const flags = [source.generated ? `generated${source.generated.length ? ` from ${source.generated.join(', ')}` : ''}` : '', source.secret ? 'secret masked' : ''].filter(Boolean)
   return flags.length ? ` · ${flags.join(' · ')}` : ''
+}
+
+/** O começo de um trecho, numa linha. */
+function excerpt(text: string): string {
+  const line = text.replace(/\s+/g, ' ').trim()
+  return `"${line.length > 80 ? `${line.slice(0, 80)}…` : line}"`
 }
 
 /** O rascunho em vigor do item (o último). */

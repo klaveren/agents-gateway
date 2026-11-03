@@ -84,6 +84,7 @@ export function makeTools(): ITools {
             listText: (conversationId) => makeImportBuild().listText(conversationId),
             readSource: (conversationId, key, options) => makeImportBuild().readSource(conversationId, key, options),
             propose: (conversationId, key, meta, ops) => makeImportBuild().propose(conversationId, key, meta, ops),
+            reclassify: (conversationId, key, kind, reason) => makeImportBuild().reclassify(conversationId, key, kind, reason),
           },
           todos: todoStore(),
           permissions: lazyPermissions,

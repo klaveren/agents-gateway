@@ -120,7 +120,9 @@ export interface INewImportJob {
 }
 
 /** A mudança de um item: o estado, a reclassificação (`null` volta ao detectado), e o que mais a regra decidiu. */
-export type TImportItemPatch = Partial<Pick<IImportItemStatus, 'state' | 'basis' | 'by' | 'at' | 'conversationId' | 'drafts' | 'approvedBy' | 'approvedAt' | 'batchId'>> & {
+export type TImportItemPatch = Partial<Pick<IImportItemStatus, 'state' | 'basis' | 'by' | 'at' | 'drafts' | 'approvedBy' | 'approvedAt' | 'batchId'>> & {
+  /** A conversa do construtor (`null` solta o item dela). */
+  conversationId?: string | null
   kind?: TInventoryKind | null
   staleFrom?: TImportItemState | null
   /** A revisão (`null` apaga). */
