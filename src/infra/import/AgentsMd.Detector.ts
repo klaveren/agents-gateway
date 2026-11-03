@@ -5,9 +5,8 @@ import { inWorktreeCopy, memoryNotes, memoryTitle } from './Claude.Detector'
 const AGENTS_MD = /^agents\.md$/i
 
 /**
- * O `AGENTS.md` (raiz e subpastas): as instruções do projeto para qualquer agente. Vira rule candidata, com a nota de
- * que também é candidato a complemento de protocolo do projeto; o de subpasta diz a pasta em que vale. As citações
- * saem do texto, como nos outros formatos.
+ * O `AGENTS.md` (raiz e subpastas): a ENTRADA das CLIs que o leem (Codex, opencode…) — sai como desconhecido, com o
+ * motivo (`memoryNotes`): no gateway quem faz esse papel é o próprio gateway. O de subpasta diz a pasta em que vale.
  */
 export class AgentsMdDetector implements IFormatDetector {
   readonly id = 'agents-md'
@@ -23,7 +22,7 @@ export class AgentsMdDetector implements IFormatDetector {
       if (!path) continue
       const file = tree.read(entry.path)
       items.push({
-        kind: 'rule',
+        kind: 'unknown',
         name: path,
         title: memoryTitle(file?.text ?? '') ?? path,
         sources: [{ path: entry.path, role: 'agents-md' }],

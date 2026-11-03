@@ -16,7 +16,6 @@ const OUT_OF_CATALOG = /^(scripts|hooks|todos|plans|(.+[-_])?(memory|memories|le
 /** As cópias de trabalho (git worktree) que o Claude Code cria: outro checkout do mesmo repositório, nunca recurso. */
 const WORKTREES = '.claude/worktrees/'
 /** Rule aceita até 4 KB (`Guidance`): passou disso, vira várias rules ou uma spec. */
-const RULE_MAX_BYTES = 4 * 1024
 /** O Claude Code segue `@arquivo` até 5 níveis. */
 const IMPORT_DEPTH = 5
 
@@ -33,18 +32,21 @@ export function memoryTitle(text: string): string | undefined {
 }
 
 /** As notas de um arquivo de instruções do projeto (`CLAUDE.md`, `AGENTS.md`): onde vale e se cabe numa rule. */
+/**
+ * ⚖️ A ENTRADA DE UMA FERRAMENTA (`CLAUDE.md`, `AGENTS.md`): existe para AQUELA CLI achar o ambiente ("leia o boot",
+ * "carregue as rules"). No gateway quem faz esse papel é o próprio gateway (rules, contexto inicial, agentes): não é
+ * conteúdo a importar. Sai como desconhecido, com o motivo; quem achar conteúdo próprio nela reclassifica.
+ */
 export function memoryNotes(path: string, bytes: number, file: string): IInventoryNote[] {
   const notes: IInventoryNote[] = [
     {
       level: 'info',
-      code: 'protocol-complement',
-      text: `${file}: candidato a rule ou a complemento de protocolo do projeto (língua, padrões); o complemento quem escreve é a pessoa, na tela de protocolos`,
+      code: 'cli-entry',
+      text: `${file}: é a entrada de uma ferramenta (o que ela lê para achar o ambiente); no gateway, quem faz esse papel são as rules, o contexto inicial e os agentes. Fica fora da importação; reclassifique se tiver conteúdo próprio (${Math.ceil(bytes / 1024)} KB)`,
     },
   ]
   const dir = posix.dirname(path)
   if (dir !== '.' && dir !== '.claude') notes.push({ level: 'info', code: 'scoped', text: `vale para a pasta ${dir}/` })
-  if (bytes > RULE_MAX_BYTES)
-    notes.push({ level: 'attention', code: 'over-rule-limit', text: `${Math.ceil(bytes / 1024)} KB: uma rule aceita 4 KB; vira várias rules, ou uma spec` })
   return notes
 }
 
@@ -228,7 +230,7 @@ export class ClaudeDetector implements IFormatDetector {
       .trim()
     if (!own && (sources.length > 1 || cites.length)) notes.push({ level: 'info', code: 'imports-only', text: 'só importa outros arquivos (@arquivo): o conteúdo está neles' })
     const title = memoryTitle(text) ?? (sources[1] ? memoryTitle(tree.read(sources[1].path)?.text ?? '') : undefined) ?? seenAs
-    return { kind: 'rule', name: seenAs, title, sources, cites, notes }
+    return { kind: 'unknown', name: seenAs, title, sources, cites, notes }
   }
 
   /** `.claude/settings*.json` e `.mcp.json`: a configuração do projeto no Claude Code. Só nomes e contagens. */

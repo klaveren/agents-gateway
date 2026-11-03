@@ -21,12 +21,14 @@ function item(key: string, sha = 'a'): IInventoryItem {
 /** Um repositório falso: cada análise devolve o que `files` tem agora (chave → sha). */
 function setup() {
   const files = new Map<string, string>()
+  /** O que o catálogo diz de cada chave (ausente: não se sabe; `new`: não está lá). */
+  const catalog = new Map<string, IInventoryItem['catalog']>()
   let clock = Date.parse('2026-10-30T10:00:00.000Z')
   let seq = 0
   const repository = new SqliteImportRepository()
   const scan = (projectId: string, name: string): IImportScan => {
     if (name === 'fora') throw new Error('repository is not in this project')
-    const items = [...files.entries()].map(([key, sha]) => item(key, sha))
+    const items = [...files.entries()].map(([key, sha]) => ({ ...item(key, sha), ...(catalog.has(key) ? { catalog: catalog.get(key) } : {}) }))
     return {
       projectId,
       repository: name,
@@ -48,10 +50,25 @@ function setup() {
   const tick = () => (clock += 60_000)
   const state = (job: { states: Array<{ key: string; state: string; staleFrom?: string; kind?: string; goneAt?: Date }> }, key: string) =>
     job.states.find((entry) => entry.key === key)
-  return { files, service, repository, tick, state }
+  return { files, catalog, service, repository, tick, state }
 }
 
 describe('ImportJobService', () => {
+  it('⚖️ gravado que saiu do catálogo volta à revisão com o rascunho; o que virou tipo sem construtor, a pendente', () => {
+    const { files, catalog, service, repository, state } = setup()
+    files.set('spec:base', 'a').set('rule:boot', 'b')
+    service.create('alfa', 'app', 'ana', {})
+    repository.updateItem('j1', 'spec:base', { state: 'applied', drafts: [{ ops: [], removals: [] }] })
+    repository.updateItem('j1', 'rule:boot', { state: 'applied', kind: 'unknown' })
+    catalog.set('spec:base', 'same-project')
+    service.create('alfa', 'app', 'ana', {})
+    assert.strictEqual(state(service.get('alfa', 'j1'), 'spec:base')?.state, 'applied', 'ainda no catálogo: fica gravado')
+    catalog.set('spec:base', 'new')
+    service.create('alfa', 'app', 'ana', {})
+    const job = service.get('alfa', 'j1')
+    assert.deepStrictEqual([state(job, 'spec:base')?.state, state(job, 'rule:boot')?.state], ['review', 'pending'])
+  })
+
   it('analisar salva o trabalho com todos os itens pendentes; abrir devolve o inventário e os estados', () => {
     const { files, service } = setup()
     files.set('skill:deploy', 'a').set('spec:base', 'b')
