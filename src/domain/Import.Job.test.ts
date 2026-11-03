@@ -1,6 +1,7 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { canReclassify, canTransition, carryOver, countByState, IMPORT_TRANSITIONS, reuseSummary, sourceFingerprint } from './Import.Job'
+import { IImportItemStatus } from './models/ImportJob.Model'
+import { analysisOf, canReclassify, canTransition, carryOver, consolidatedItem, countByState, IMPORT_TRANSITIONS, sourceFingerprint } from './Import.Job'
 import { IMPORT_ITEM_STATES } from './models/ImportJob.Model'
 
 const source = (path: string, sha: string) => ({ path, aliases: [], bytes: 1, tokens: 1, sha256: sha.repeat(64) })
@@ -62,9 +63,10 @@ describe('Import.Job', () => {
     })
   })
 
-  it('o resumo da reanálise e a contagem por estado', () => {
-    const summary = reuseSummary(
-      'j1',
+  it('o registro da análise e a contagem por estado', () => {
+    const at = new Date('2026-11-01T10:00:00.000Z')
+    const summary = analysisOf(
+      { at, by: 'ana', head: 'h1' },
       [
         { key: 'a', outcome: 'kept' },
         { key: 'b', outcome: 'stale' },
@@ -72,8 +74,31 @@ describe('Import.Job', () => {
         { key: 'd', outcome: 'kept' },
       ],
       ['e'],
+      ['d'],
     )
-    assert.deepStrictEqual(summary, { from: 'j1', kept: 2, stale: ['b'], restored: [], added: ['c'], gone: ['e'] })
+    assert.deepStrictEqual(summary, { at, by: 'ana', head: 'h1', kept: 2, stale: ['b'], added: ['c'], gone: ['e'], restored: [], returned: ['d'] })
     assert.deepStrictEqual(countByState([{ state: 'pending' }, { state: 'pending' }, { state: 'stale' }]), { pending: 2, stale: 1 })
+  })
+
+  describe('consolidatedItem (a migração para uma importação por repositório)', () => {
+    const fresh: IImportItemStatus = { key: 'a', state: 'pending', fingerprint: 'f1', drafts: [] }
+
+    it('o item sem processado leva o da análise antiga (fonte igual: o estado; mudada: stale)', () => {
+      const old = { key: 'a', state: 'approved' as const, fingerprint: 'f1', basis: 'f1', drafts: [{ ops: [] }], conversationId: 'c1', approvedBy: 'bia' }
+      const same = consolidatedItem(fresh, [old])!
+      assert.deepStrictEqual([same.state, same.conversationId, same.drafts.length, same.approvedBy, same.fingerprint], ['approved', 'c1', 1, 'bia', 'f1'])
+      const changed = consolidatedItem({ ...fresh, fingerprint: 'f2' }, [old])!
+      assert.deepStrictEqual([changed.state, changed.staleFrom, changed.basis, changed.fingerprint], ['stale', 'approved', 'f1', 'f2'])
+    })
+
+    it('⛔ o processado da importação que fica nunca é sobrescrito; sem processado nas antigas, nada muda', () => {
+      const old = { key: 'a', state: 'approved' as const, fingerprint: 'f1', drafts: [] }
+      assert.strictEqual(consolidatedItem({ ...fresh, state: 'skipped' }, [old]), undefined)
+      assert.strictEqual(consolidatedItem({ ...fresh, conversationId: 'c9' }, [old]), undefined)
+      assert.strictEqual(consolidatedItem(fresh, [{ ...fresh }]), undefined)
+      // A mais nova das antigas com processado vence.
+      const picked = consolidatedItem(fresh, [{ ...fresh }, { ...old, state: 'review' }, old])!
+      assert.strictEqual(picked.state, 'review')
+    })
   })
 })

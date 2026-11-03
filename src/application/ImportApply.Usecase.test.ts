@@ -336,6 +336,25 @@ describe('ImportApplyUseCase — a gravação do importador pelo catálogo', () 
     assert.strictEqual(all.items.length, 7)
   })
 
+  it('⛔ o aprovado que SAIU DA FONTE fica de fora, com o motivo; a gravação dos outros não falha por falta da fonte', async () => {
+    const { apply, repository, files } = await setup()
+    delete files['.agents/specs/guia.md']
+    repository.reanalyze({
+      jobId: 'j1',
+      scannedAt: new Date('2026-10-30T11:00:00.000Z'),
+      by: 'ana',
+      inventory: repository.get('alfa', 'j1')!.inventory,
+      present: [],
+      gone: ['spec:guia'],
+      analysis: { at: new Date('2026-10-30T11:00:00.000Z'), by: 'ana', kept: 0, stale: [], added: [], gone: ['spec:guia'], restored: [], returned: [] },
+    })
+    assert.strictEqual(repository.item('j1', 'spec:guia')!.state, 'approved', 'continua aprovado: nada é desfeito')
+    const all = await apply.preview('alfa', 'j1', { models: MODEL })
+    assert.deepStrictEqual(all.skipped, [{ key: 'spec:guia', reason: 'saiu da fonte: o item não está mais no repositório' }])
+    assert.strictEqual(all.items.length, 6)
+    assert.ok(!all.items.some((one) => one.key === 'spec:guia'))
+  })
+
   it('a skill sem a spec selecionada NÃO bloqueia: entra sem o vínculo, com `link-pending` (nada falta no plano)', async () => {
     const { apply } = await setup()
     const preview = await apply.preview('alfa', 'j1', { keys: ['skill:revisar'] })

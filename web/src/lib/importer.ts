@@ -301,6 +301,10 @@ export function canReclassifyState(state: TImportItemState, drafted: boolean): b
 /** Os tipos que têm construtor (o destino de reclassificar um item que já está na migração). */
 export const BUILDER_KINDS: readonly TInventoryKind[] = ['agent', 'trigger', 'skill', 'command', 'rule', 'spec', 'adr', 'knowledge']
 
+/** ⚠️ "Saiu da fonte": o item não está mais no repositório; nada foi apagado do catálogo. */
+export const GONE_LABEL = 'saiu da fonte'
+export const GONE_HINT = 'O item não está mais no repositório; nada foi apagado do catálogo — decida: excluir ou deixar.'
+
 export interface IImportItemStatus {
   key: string
   state: TImportItemState
@@ -314,15 +318,26 @@ export interface IImportItemStatus {
   drafted?: boolean
   by?: string
   at?: string
+  /** ⚠️ Presente = o item SAIU DA FONTE (mantém o estado; nada foi apagado do catálogo). Some se voltar numa análise. */
+  goneAt?: string
 }
 
-export interface IImportReuse {
-  from: string
+/** Uma análise do repositório (a importação é uma só por repositório; cada "Analisar" entra no histórico). */
+export interface IImportAnalysis {
+  at: string
+  by: string
+  head?: string
+  dirty?: boolean
   kept: number
+  /** Fonte mudou depois da decisão. */
   stale: string[]
-  restored: string[]
   added: string[]
+  /** Saiu da fonte nesta análise. */
   gone: string[]
+  /** Estava com a fonte mudada e a fonte voltou. */
+  restored: string[]
+  /** Tinha saído da fonte e voltou. */
+  returned: string[]
 }
 
 export interface IImportJobSummary {
@@ -333,12 +348,14 @@ export interface IImportJobSummary {
   dirty?: boolean
   scannedAt: string
   by: string
-  previousId?: string
   items: number
   byState: Partial<Record<TImportItemState, number>>
-  /** O mais novo do repositório: só ele muda. */
+  /** ⚖️ Sempre `true` (uma importação por repositório); mantido por compatibilidade. */
   latest: boolean
-  reuse?: IImportReuse
+  /** Itens que saíram da fonte. */
+  gone: number
+  /** O histórico das análises, a mais nova primeiro (até 20). */
+  analyses: IImportAnalysis[]
 }
 
 export interface IImportJob extends IImportJobSummary {
@@ -558,6 +575,8 @@ export interface IImportBatch {
   order: string[]
   by: string
   at: string
+  /** Chaves do lote cujo item saiu da fonte. */
+  gone?: string[]
 }
 
 /** O lote salvo, aberto: com o lote recalculado sobre o estado de agora. */

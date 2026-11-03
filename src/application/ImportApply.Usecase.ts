@@ -379,8 +379,6 @@ export class ImportApplyUseCase {
   private prepare(projectId: string, jobId: string, selection: IImportApplySelection): IPrepared {
     const record = this.deps.repository.get(projectId, jobId)
     if (!record) throw new ImportBuildError('not_found', `import job not found: ${jobId}`)
-    if (this.deps.repository.latest(projectId, record.repository)?.id !== record.id)
-      throw new ImportBuildError('outdated', 'there is a newer analysis of this repository: open it to write to the catalog')
     const all = this.deps.repository.items(record.id)
     const byKey = new Map(all.map((entry) => [entry.key, entry]))
     const batch = selection.batchId ? this.deps.repository.batch(record.id, selection.batchId) : undefined
@@ -393,6 +391,11 @@ export class ImportApplyUseCase {
       const entry = byKey.get(key)
       if (!entry) {
         skipped.push({ key, reason: 'não está neste trabalho' })
+        continue
+      }
+      // ⛔ Saiu da fonte: não há fonte para conferir o rascunho. Fica de fora com o motivo (a gravação dos outros segue).
+      if (entry.goneAt) {
+        if (explicit || entry.state === 'approved') skipped.push({ key, reason: 'saiu da fonte: o item não está mais no repositório' })
         continue
       }
       if (entry.state !== 'approved') {

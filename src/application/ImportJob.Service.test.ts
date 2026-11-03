@@ -46,7 +46,8 @@ function setup() {
     newId: () => `j${++seq}`,
   })
   const tick = () => (clock += 60_000)
-  const state = (job: { states: Array<{ key: string; state: string; staleFrom?: string; kind?: string }> }, key: string) => job.states.find((entry) => entry.key === key)
+  const state = (job: { states: Array<{ key: string; state: string; staleFrom?: string; kind?: string; goneAt?: Date }> }, key: string) =>
+    job.states.find((entry) => entry.key === key)
   return { files, service, repository, tick, state }
 }
 
@@ -58,14 +59,15 @@ describe('ImportJobService', () => {
     assert.strictEqual(job.id, 'j1')
     assert.strictEqual(job.by, 'ana')
     assert.strictEqual(job.latest, true)
-    assert.strictEqual(job.reuse, undefined)
     assert.deepStrictEqual(job.byState, { pending: 2 })
+    assert.deepStrictEqual([job.analysis.added, job.analysis.kept, job.analyses.length], [['skill:deploy', 'spec:base'], 0, 1])
     assert.deepStrictEqual(
       job.scan.items.map((entry) => entry.key),
       ['skill:deploy', 'spec:base'],
     )
     assert.ok(job.states.every((entry) => !('basis' in entry)))
-    assert.deepStrictEqual(service.get('alfa', 'j1'), job)
+    const { analysis: _analysis, ...opened } = job
+    assert.deepStrictEqual(service.get('alfa', 'j1'), opened)
     assert.deepStrictEqual(
       service.list('alfa').map((entry) => entry.id),
       ['j1'],
@@ -92,22 +94,28 @@ describe('ImportJobService', () => {
     assert.strictEqual(service.updateItem('alfa', 'j1', 'skill:deploy', { state: 'pending' }, 'ana').state, 'pending')
   })
 
-  it('reanalisar com a fonte igual mantém estado e reclassificação', () => {
+  it('reanalisar ATUALIZA a mesma importação (o id não muda) e mantém estado e reclassificação da fonte igual', () => {
     const { files, service, tick, state } = setup()
     files.set('unknown:notes', 'a').set('skill:deploy', 'b')
     service.create('alfa', 'app', 'ana', {})
     service.updateItem('alfa', 'j1', 'skill:deploy', { state: 'skipped' }, 'bia')
     service.updateItem('alfa', 'j1', 'unknown:notes', { kind: 'spec' }, 'bia')
     tick()
-    const again = service.create('alfa', 'app', 'ana', {})
-    assert.strictEqual(again.previousId, 'j1')
-    assert.deepStrictEqual(again.reuse, { from: 'j1', kept: 2, stale: [], restored: [], added: [], gone: [] })
+    const again = service.create('alfa', 'app', 'caio', {})
+    assert.strictEqual(again.id, 'j1')
+    assert.deepStrictEqual(
+      service.list('alfa').map((entry) => [entry.id, entry.by, entry.analyses.length]),
+      [['j1', 'caio', 2]],
+    )
+    const { at: _at, ...analysis } = again.analysis
+    assert.deepStrictEqual(analysis, { by: 'caio', head: 'h1', dirty: false, kept: 2, stale: [], added: [], gone: [], restored: [], returned: [] })
+    assert.strictEqual(again.analyses[0].by, 'caio')
     assert.strictEqual(state(again, 'skill:deploy')?.state, 'skipped')
     assert.strictEqual(state(again, 'unknown:notes')?.kind, 'spec')
     assert.strictEqual((state(again, 'skill:deploy') as { by?: string }).by, 'bia')
   })
 
-  it('reanalisar com a fonte mudada marca stale o que tinha decisão; o pendente continua pendente; o novo entra e o sumido é contado', () => {
+  it('reanalisar com a fonte mudada marca stale no lugar; o pendente continua pendente; o novo entra; o que saiu fica marcado e volta', () => {
     const { files, service, tick, state } = setup()
     files.set('skill:deploy', 'a').set('spec:base', 'b').set('command:ship', 'c')
     service.create('alfa', 'app', 'ana', {})
@@ -119,15 +127,61 @@ describe('ImportJobService', () => {
     assert.deepStrictEqual(state(again, 'skill:deploy'), { ...state(again, 'skill:deploy'), state: 'stale', staleFrom: 'skipped' })
     assert.strictEqual(state(again, 'spec:base')?.state, 'pending')
     assert.strictEqual(state(again, 'rule:nova')?.state, 'pending')
-    assert.deepStrictEqual(again.reuse, { from: 'j1', kept: 1, stale: ['skill:deploy'], restored: [], added: ['rule:nova'], gone: ['command:ship'] })
+    assert.deepStrictEqual(
+      [again.analysis.kept, again.analysis.stale, again.analysis.added, again.analysis.gone, again.analysis.returned],
+      [1, ['skill:deploy'], ['rule:nova'], ['command:ship'], []],
+    )
+    // ⚖️ O que saiu da fonte FICA, com o estado e a marca; não é um estado novo.
+    const ship = again.states.find((entry) => entry.key === 'command:ship')
+    assert.deepStrictEqual([ship?.state, ship?.goneAt?.toISOString()], ['pending', '2026-10-30T10:01:00.000Z'])
+    assert.strictEqual(again.gone, 1)
+    assert.ok(
+      again.scan.items.some((entry) => entry.key === 'command:ship'),
+      'o inventário guarda o item que saiu',
+    )
 
-    // A fonte de volta à da decisão: o estado de antes volta.
+    // De novo sem ele: não conta como "saiu" outra vez, e a data de quando saiu fica.
     tick()
-    files.set('skill:deploy', 'a')
+    const still = service.create('alfa', 'app', 'ana', {})
+    assert.deepStrictEqual(still.analysis.gone, [])
+    assert.strictEqual(state(still, 'command:ship')?.goneAt?.toISOString(), '2026-10-30T10:01:00.000Z')
+
+    // A fonte de volta à da decisão: o estado de antes volta; o que saiu volta e perde a marca.
+    tick()
+    files.set('skill:deploy', 'a').set('command:ship', 'c')
     const back = service.create('alfa', 'app', 'ana', {})
     assert.strictEqual(state(back, 'skill:deploy')?.state, 'skipped')
     assert.strictEqual(state(back, 'skill:deploy')?.staleFrom, undefined)
-    assert.deepStrictEqual(back.reuse?.restored, ['skill:deploy'])
+    assert.deepStrictEqual([back.analysis.restored, back.analysis.returned], [['skill:deploy'], ['command:ship']])
+    assert.strictEqual(state(back, 'command:ship')?.goneAt, undefined)
+    assert.strictEqual(back.gone, 0)
+    assert.deepStrictEqual(
+      back.analyses.map((entry) => entry.added.length),
+      [0, 0, 1, 3],
+    )
+  })
+
+  it('reanalisar não mexe no processado da fonte igual (rascunho, aprovação, conversa, lote); o que saiu com rascunho continua com ele', () => {
+    const { files, service, repository, tick, state } = setup()
+    files.set('skill:deploy', 'a').set('spec:base', 'b')
+    service.create('alfa', 'app', 'ana', {})
+    const draft = { ops: [], removals: [] }
+    repository.updateItem('j1', 'skill:deploy', { state: 'approved', conversationId: 'c1', drafts: [draft], basis: 'x', approvedBy: 'bia' })
+    repository.updateItem('j1', 'skill:deploy', { basis: repository.item('j1', 'skill:deploy')!.fingerprint })
+    repository.updateItem('j1', 'spec:base', { state: 'review', conversationId: 'c2', drafts: [draft], basis: repository.item('j1', 'spec:base')!.fingerprint })
+    repository.createBatch({ id: 'b1', jobId: 'j1', name: 'tudo', prefix: '', keys: ['skill:deploy', 'spec:base'], order: [], by: 'ana', at: new Date() })
+    tick()
+    files.delete('spec:base')
+    const again = service.create('alfa', 'app', 'ana', {})
+    const deploy = repository.item('j1', 'skill:deploy')!
+    assert.deepStrictEqual([deploy.state, deploy.conversationId, deploy.drafts.length, deploy.approvedBy], ['approved', 'c1', 1, 'bia'])
+    const base = repository.item('j1', 'spec:base')!
+    assert.deepStrictEqual([base.state, base.conversationId, base.drafts.length, !!base.goneAt], ['review', 'c2', 1, true])
+    assert.strictEqual(state(again, 'spec:base')?.state, 'review')
+    assert.deepStrictEqual(
+      repository.batches('j1').map((batch) => batch.keys),
+      [['skill:deploy', 'spec:base']],
+    )
   })
 
   it('decidir de novo um stale grava a fonte de agora como base', () => {
@@ -137,47 +191,47 @@ describe('ImportJobService', () => {
     service.updateItem('alfa', 'j1', 'skill:deploy', { state: 'skipped' }, 'bia')
     tick()
     files.set('skill:deploy', 'x')
-    service.create('alfa', 'app', 'ana', {})
-    assert.strictEqual(service.updateItem('alfa', 'j2', 'skill:deploy', { state: 'skipped' }, 'bia').state, 'skipped')
+    assert.strictEqual(state(service.create('alfa', 'app', 'ana', {}), 'skill:deploy')?.state, 'stale')
+    assert.strictEqual(service.updateItem('alfa', 'j1', 'skill:deploy', { state: 'skipped' }, 'bia').state, 'skipped')
     tick()
     const again = service.create('alfa', 'app', 'ana', {})
     assert.strictEqual(state(again, 'skill:deploy')?.state, 'skipped')
   })
 
-  it('⛔ só o trabalho mais novo do repositório muda; transição e reclassificação fora da regra são recusadas', () => {
+  it('⛔ transição e reclassificação fora da regra são recusadas', () => {
     const { files, service, repository, tick } = setup()
     files.set('skill:deploy', 'a')
     service.create('alfa', 'app', 'ana', {})
     tick()
+    // A reanálise atualiza a mesma importação: o id `j1` continua valendo (o `j2` nunca nasce).
     service.create('alfa', 'app', 'ana', {})
     assert.throws(
-      () => service.updateItem('alfa', 'j1', 'skill:deploy', { state: 'skipped' }, 'bia'),
-      (error: unknown) => error instanceof ImportJobError && error.code === 'outdated',
+      () => service.get('alfa', 'j2'),
+      (error: unknown) => error instanceof ImportJobError && error.code === 'not_found',
     )
-    assert.strictEqual(service.get('alfa', 'j1').latest, false)
 
     // Um item com rascunho a revisar (o PR 7 o põe lá) não reclassifica, e "incluir" não é transição de `review`.
-    repository.updateItem('j2', 'skill:deploy', { state: 'review' })
+    repository.updateItem('j1', 'skill:deploy', { state: 'review' })
     assert.throws(
-      () => service.updateItem('alfa', 'j2', 'skill:deploy', { kind: 'command' }, 'bia'),
+      () => service.updateItem('alfa', 'j1', 'skill:deploy', { kind: 'command' }, 'bia'),
       (error: unknown) => error instanceof ImportJobError && error.code === 'reclassify',
     )
     assert.throws(
-      () => service.updateItem('alfa', 'j2', 'skill:deploy', { state: 'pending' }, 'bia'),
+      () => service.updateItem('alfa', 'j1', 'skill:deploy', { state: 'pending' }, 'bia'),
       (error: unknown) => error instanceof ImportJobError && error.code === 'transition',
     )
 
     // No construtor SEM rascunho reclassifica: sai da conversa e volta à fila. Com rascunho, não.
-    repository.updateItem('j2', 'skill:deploy', { state: 'drafting', conversationId: 'c1', drafts: [{ ops: [], removals: [] }] })
+    repository.updateItem('j1', 'skill:deploy', { state: 'drafting', conversationId: 'c1', drafts: [{ ops: [], removals: [] }] })
     assert.throws(
-      () => service.updateItem('alfa', 'j2', 'skill:deploy', { kind: 'command' }, 'bia'),
+      () => service.updateItem('alfa', 'j1', 'skill:deploy', { kind: 'command' }, 'bia'),
       (error: unknown) => error instanceof ImportJobError && error.code === 'reclassify',
     )
-    repository.updateItem('j2', 'skill:deploy', { drafts: [] })
-    const moved = service.updateItem('alfa', 'j2', 'skill:deploy', { kind: 'command' }, 'bia')
+    repository.updateItem('j1', 'skill:deploy', { drafts: [] })
+    const moved = service.updateItem('alfa', 'j1', 'skill:deploy', { kind: 'command' }, 'bia')
     assert.deepStrictEqual([moved.kind, moved.state, moved.conversationId], ['command', 'pending', undefined])
     assert.throws(
-      () => service.updateItem('alfa', 'j2', 'skill:nada', { state: 'skipped' }, 'bia'),
+      () => service.updateItem('alfa', 'j1', 'skill:nada', { state: 'skipped' }, 'bia'),
       (error: unknown) => error instanceof ImportJobError && error.code === 'not_found' && error.field === 'key',
     )
   })

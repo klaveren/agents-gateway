@@ -33,6 +33,8 @@ function setup() {
   let clock = Date.parse('2026-10-30T10:00:00.000Z')
   let seq = 0
   const repository = new SqliteImportRepository()
+  /** As chaves que saíram da fonte (a próxima análise não as acha). */
+  const left = new Set<string>()
   const scan = (projectId: string, name: string): IImportScan => ({
     projectId,
     repository: name,
@@ -40,7 +42,7 @@ function setup() {
     formats: ['agents-dir'],
     totals: { files: ITEMS.length, items: ITEMS.length, tokens: 60, byKind: {} },
     ignored: { dirs: {}, binaries: [], links: [], patterns: [] },
-    items: ITEMS,
+    items: ITEMS.filter((entry) => !left.has(entry.key)),
   })
   const jobs = new ImportJobService({ repository, scan, now: () => new Date(clock), newId: () => `j${++seq}` })
   const batches = new ImportBatchService({
@@ -51,7 +53,7 @@ function setup() {
     newId: () => `b${++seq}`,
   })
   const tick = () => (clock += 60_000)
-  return { repository, jobs, batches, tick }
+  return { repository, jobs, batches, tick, left }
 }
 
 const code = (expected: ImportJobError['code'], field?: string) => (error: unknown) => error instanceof ImportJobError && error.code === expected && error.field === field
@@ -90,16 +92,41 @@ describe('ImportBatchService — o lote por seleção de um trabalho', () => {
     assert.deepStrictEqual([...saved.keys].sort(), ['knowledge:fila', 'skill:revisar', 'spec:guia'])
   })
 
-  it('acrescentar ao lote salvo: os itens novos (com as dependências) entram e a ordem é recalculada; só no trabalho mais novo', () => {
-    const { jobs, batches, tick } = setup()
+  it('acrescentar ao lote salvo: os itens novos (com as dependências) entram e a ordem é recalculada', () => {
+    const { jobs, batches } = setup()
     const job = jobs.create('alfa', 'app', 'ana@x.test')
     const saved = batches.create('alfa', job.id, { name: 'guia', keys: ['spec:guia'] }, 'ana@x.test')
     const grown = batches.addItems('alfa', job.id, saved.id, { keys: ['skill:revisar'], closure: true })
     assert.deepStrictEqual(grown.order, ['knowledge:fila', 'spec:guia', 'skill:revisar'])
     assert.deepStrictEqual(batches.get('alfa', job.id, saved.id).keys.sort(), ['knowledge:fila', 'skill:revisar', 'spec:guia'])
+  })
+
+  it('⚖️ o lote sobrevive à reanálise; a chave que saiu da fonte fica nele, marcada, fora da ordem', () => {
+    const { jobs, batches, tick, left } = setup()
+    const job = jobs.create('alfa', 'app', 'ana@x.test')
+    const saved = batches.create('alfa', job.id, { name: 'revisar', keys: ['skill:revisar', 'spec:guia', 'knowledge:fila'] }, 'ana@x.test')
     tick()
+    left.add('spec:guia')
+    assert.strictEqual(jobs.create('alfa', 'app', 'ana@x.test').id, job.id)
+
+    const view = batches.get('alfa', job.id, saved.id)
+    assert.deepStrictEqual([view.keys.length, view.gone], [3, ['spec:guia']])
+    assert.ok(!view.plan.steps.some((step) => step.key === 'spec:guia'), 'fora da ordem')
+    assert.deepStrictEqual(
+      batches.list('alfa', job.id).map((one) => [one.id, one.gone]),
+      [[saved.id, ['spec:guia']]],
+    )
+    // Acrescentar não perde a chave que saiu; as dependências não puxam o que saiu.
+    const grown = batches.addItems('alfa', job.id, saved.id, { keys: ['spec:core-a'], closure: true })
+    assert.ok(grown.keys.includes('spec:guia') && grown.keys.includes('spec:core-b'))
+    assert.deepStrictEqual(grown.gone, ['spec:guia'])
+    assert.ok(!grown.order.includes('spec:guia'))
+
+    // A fonte voltou: a chave volta a contar.
+    tick()
+    left.clear()
     jobs.create('alfa', 'app', 'ana@x.test')
-    assert.throws(() => batches.addItems('alfa', job.id, saved.id, { keys: ['spec:core-a'] }), code('outdated'))
+    assert.deepStrictEqual(batches.get('alfa', job.id, saved.id).gone, [])
   })
 
   it('lote salvo, ida e volta: nome, itens, ordem, prefixo, autor e hora; a lista e o abrir o devolvem', () => {
@@ -118,6 +145,7 @@ describe('ImportBatchService — o lote por seleção de um trabalho', () => {
         order: ['knowledge:fila', 'spec:guia'],
         by: 'ana@x.test',
         at: new Date('2026-10-30T10:01:00.000Z'),
+        gone: [],
         plan: undefined,
       },
     )
@@ -154,16 +182,6 @@ describe('ImportBatchService — o lote por seleção de um trabalho', () => {
     const reopened = batches.get('alfa', job.id, first.id)
     assert.strictEqual(reopened.plan.steps[0].done, 'approved')
     assert.ok(!reopened.plan.notes.some((note) => note.code === 'other-batch'))
-  })
-
-  it('⛔ só o trabalho mais novo ganha lote; o antigo ainda mostra a prévia', () => {
-    const { jobs, batches, tick } = setup()
-    const old = jobs.create('alfa', 'app', 'ana')
-    tick()
-    jobs.create('alfa', 'app', 'ana')
-    assert.throws(() => batches.create('alfa', old.id, { name: 'x', keys: ['spec:guia'] }, 'ana'), code('outdated'))
-    assert.strictEqual(batches.plan('alfa', old.id, { keys: ['spec:guia'] }).steps.length, 1)
-    assert.deepStrictEqual(batches.list('alfa', old.id), [])
   })
 
   it('pedido inválido no campo: seleção vazia ou fora do trabalho, prefixo, nome em branco', () => {

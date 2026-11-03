@@ -205,14 +205,17 @@ describe('POST /projects/:id/import/scan', () => {
       assert.strictEqual(opened.status, 200)
       assert.strictEqual((opened.body?.result.states as Array<{ key: string; state: string }>).find((entry) => entry.key === 'agent:maya')?.state, 'skipped')
 
+      // Reanalisar atualiza a MESMA importação: o id não muda, a resposta diz o que mudou.
       const again = await call(ADMIN, 'alfa', { repository: 'app' }, 'createJob')
-      assert.strictEqual(again.body?.result.previousId, job.id)
-      assert.strictEqual(again.body?.result.reuse.stale.length, 0)
+      assert.strictEqual(again.body?.result.id, job.id)
+      assert.deepStrictEqual([again.body?.result.analysis.stale, again.body?.result.analysis.gone, again.body?.result.analyses.length], [[], [], 2])
       assert.strictEqual((again.body?.result.states as Array<{ key: string; state: string }>).find((entry) => entry.key === 'agent:maya')?.state, 'skipped')
-
-      // O antigo é registro: não muda.
-      const outdated = await call(ADMIN, 'alfa', { key: 'agent:maya', state: 'pending' }, 'updateItem', { job: job.id })
-      assert.deepStrictEqual([outdated.status, outdated.body?.code], [409, 'import_job_outdated'])
+      assert.deepStrictEqual(
+        ((await call(ADMIN, 'alfa', undefined, 'listJobs')).body?.result as Array<{ id: string }>).map((entry) => entry.id),
+        [job.id],
+      )
+      const back = await call(ADMIN, 'alfa', { key: 'agent:maya', state: 'pending' }, 'updateItem', { job: job.id })
+      assert.deepStrictEqual([back.status, back.body?.result.state], [200, 'pending'])
     })
 
     it('⛔ quem não é admin recebe 404 em todas, e nada é salvo', async () => {
@@ -289,6 +292,8 @@ describe('POST /projects/:id/import/scan', () => {
 
     it('⛔ quem não é admin recebe 404 em todas, e nada é salvo', async () => {
       const job = (await call(ADMIN, 'alfa', { repository: 'lote' }, 'createJob')).body?.result
+      // ⚖️ A importação do repositório é a mesma entre os testes: conta o que já havia.
+      const before = (await call(ADMIN, 'alfa', undefined, 'listBatches', { job: job.id })).body?.result.length
       for (const [handler, body, params] of [
         ['planBatch', { keys: ['spec:base'] }, { job: job.id }],
         ['createBatch', { name: 'x', keys: ['spec:base'] }, { job: job.id }],
@@ -299,7 +304,7 @@ describe('POST /projects/:id/import/scan', () => {
         assert.strictEqual(reply.status, 404, handler)
         assert.strictEqual(reply.body?.result, undefined)
       }
-      assert.strictEqual((await call(ADMIN, 'alfa', undefined, 'listBatches', { job: job.id })).body?.result.length, 0)
+      assert.strictEqual((await call(ADMIN, 'alfa', undefined, 'listBatches', { job: job.id })).body?.result.length, before)
     })
 
     it('⛔ o trabalho e o lote de outro projeto não existem aqui (404); projeto inexistente, 404', async () => {
@@ -316,7 +321,7 @@ describe('POST /projects/:id/import/scan', () => {
       assert.strictEqual((await call(ADMIN, 'gama', undefined, 'listBatches', { job: theirs.id })).status, 404)
     })
 
-    it('corpo inválido é 422 no campo; trabalho antigo é 409', async () => {
+    it('corpo inválido é 422 no campo; reanalisar mantém a importação e os lotes', async () => {
       const old = (await call(ADMIN, 'alfa', { repository: 'lote' }, 'createJob')).body?.result
       for (const [body, field] of [
         [{ keys: [] }, 'keys'],
@@ -328,9 +333,12 @@ describe('POST /projects/:id/import/scan', () => {
       }
       assert.strictEqual((await call(ADMIN, 'alfa', { name: ' ', keys: ['spec:base'] }, 'createBatch', { job: old.id })).status, 422)
       assert.strictEqual((await call(ADMIN, 'alfa', { keys: ['spec:base'] }, 'createBatch', { job: old.id })).status, 422)
-      await call(ADMIN, 'alfa', { repository: 'lote' }, 'createJob')
-      const outdated = await call(ADMIN, 'alfa', { name: 'x', keys: ['spec:base'] }, 'createBatch', { job: old.id })
-      assert.deepStrictEqual([outdated.status, outdated.body?.code], [409, 'import_job_outdated'])
+      const saved = await call(ADMIN, 'alfa', { name: 'x', keys: ['spec:base'] }, 'createBatch', { job: old.id })
+      assert.strictEqual(saved.status, 200)
+      assert.strictEqual((await call(ADMIN, 'alfa', { repository: 'lote' }, 'createJob')).body?.result.id, old.id)
+      const batches = await call(ADMIN, 'alfa', undefined, 'listBatches', { job: old.id })
+      const kept = (batches.body?.result as Array<{ id: string; gone: string[] }>).find((one) => one.id === saved.body?.result.id)
+      assert.deepStrictEqual(kept?.gone, [])
     })
   })
 })

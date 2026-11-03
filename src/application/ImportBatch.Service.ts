@@ -40,7 +40,8 @@ export interface IImportBatchView extends IImportBatch {
  * para fora e a estimativa, e salva o lote com um nome.
  *
  * ⛔ Nada daqui grava no catálogo, chama modelo ou dispara construtor. Salvar o lote é só o registro no trabalho.
- * Só o trabalho mais novo do repositório ganha lote; o antigo é registro.
+ * ⚖️ O lote sobrevive à reanálise. A chave cujo item SAIU DA FONTE continua no lote (`gone`), fora do cálculo: não
+ * entra na ordem nem nas dependências.
  */
 export class ImportBatchService {
   private readonly protocolTokens: (kind: TInventoryKind) => number
@@ -55,49 +56,51 @@ export class ImportBatchService {
     return this.compute(record, this.deps.repository.items(record.id), selection)
   }
 
-  /** Salva o lote da seleção no trabalho mais novo do repositório. */
+  /** Salva o lote da seleção na importação. */
   create(projectId: string, jobId: string, selection: IImportSelection & { name: string }, by: string): IImportBatchView {
     const record = this.record(projectId, jobId)
-    const latest = this.deps.repository.latest(projectId, record.repository)
-    if (latest?.id !== record.id) throw new ImportJobError('outdated', 'there is a newer analysis of this repository: open it to build batches')
     const name = selection.name.trim()
     if (!name) throw new ImportJobError('invalid', 'name is required', 'name')
-    const plan = this.compute(record, this.deps.repository.items(record.id), selection)
+    const entries = this.deps.repository.items(record.id)
+    const plan = this.compute(record, entries, selection)
+    const keys = withGone(plan.keys, selection.keys, entries)
     const batch: IImportBatch = {
       id: (this.deps.newId ?? randomUUID)(),
       jobId: record.id,
       name: name.slice(0, IMPORT_BATCH_NAME_MAX),
       prefix: plan.prefix,
-      keys: plan.keys,
+      keys,
       order: plan.steps.map((step) => step.key),
       by,
       at: (this.deps.now ?? (() => new Date()))(),
     }
     this.deps.repository.createBatch(batch)
-    return { ...batch, plan }
+    return { ...batch, gone: goneKeys(keys, entries), plan }
   }
 
   /**
    * ACRESCENTA itens a um lote salvo (o "gravar junto" do passo Gravar, ou mais itens do inventário), com as
-   * dependências deles quando `closure`: a ordem é recalculada sobre todos. ⛔ Só no trabalho mais novo.
+   * dependências deles quando `closure`: a ordem é recalculada sobre todos. A chave que saiu da fonte fica no lote.
    */
   addItems(projectId: string, jobId: string, batchId: string, input: { keys: readonly string[]; closure?: boolean }): IImportBatchView {
     const record = this.record(projectId, jobId)
-    if (this.deps.repository.latest(projectId, record.repository)?.id !== record.id)
-      throw new ImportJobError('outdated', 'there is a newer analysis of this repository: open it to change batches')
     const batch = this.deps.repository.batch(record.id, batchId)
     if (!batch) throw new ImportJobError('not_found', `import batch not found: ${batchId}`)
     const entries = this.deps.repository.items(record.id)
-    const added = this.compute(record, entries, { keys: input.keys, ...(input.closure ? { closure: true } : {}), prefix: batch.prefix }, batch.id).keys
+    const added = this.compute(record, entries, { keys: input.keys, ...(input.closure ? { closure: true } : {}), prefix: batch.prefix }, batch.id, true).keys
     const keys = [...new Set([...batch.keys, ...added])]
     const plan = this.compute(record, entries, { keys, prefix: batch.prefix }, batch.id)
     const order = plan.steps.map((step) => step.key)
-    this.deps.repository.updateBatchItems(record.id, batch.id, plan.keys, order)
-    return { ...batch, keys: plan.keys, order, plan }
+    const kept = withGone(plan.keys, keys, entries)
+    this.deps.repository.updateBatchItems(record.id, batch.id, kept, order)
+    return { ...batch, keys: kept, order, gone: goneKeys(kept, entries), plan }
   }
 
+  /** Os lotes, cada um com as chaves que saíram da fonte. */
   list(projectId: string, jobId: string): IImportBatch[] {
-    return this.deps.repository.batches(this.record(projectId, jobId).id)
+    const record = this.record(projectId, jobId)
+    const entries = this.deps.repository.items(record.id)
+    return this.deps.repository.batches(record.id).map((batch) => ({ ...batch, gone: goneKeys(batch.keys, entries) }))
   }
 
   /** O lote salvo, com o lote recalculado sobre o estado de agora (aprovado, aplicado, outros lotes). */
@@ -105,21 +108,25 @@ export class ImportBatchService {
     const record = this.record(projectId, jobId)
     const batch = this.deps.repository.batch(record.id, batchId)
     if (!batch) throw new ImportJobError('not_found', `import batch not found: ${batchId}`)
-    return { ...batch, plan: this.compute(record, this.deps.repository.items(record.id), batch, batch.id) }
+    const entries = this.deps.repository.items(record.id)
+    return { ...batch, gone: goneKeys(batch.keys, entries), plan: this.compute(record, entries, batch, batch.id) }
   }
 
-  private compute(record: IImportJobRecord, entries: readonly IImportJobItem[], selection: IImportSelection, self?: string): ISelectionPlan {
+  /** `strict`: a chave que não é da importação é recusada (a seleção nova); no lote salvo ela só fica de fora (`gone`). */
+  private compute(record: IImportJobRecord, entries: readonly IImportJobItem[], selection: IImportSelection, self?: string, strict = self === undefined): ISelectionPlan {
     const prefix = (selection.prefix ?? '').trim().toLowerCase()
     if (prefix && !IMPORT_PREFIX_PATTERN.test(prefix)) throw new ImportJobError('invalid', 'prefix: lowercase letters, digits and "-", up to 16 characters', 'prefix')
     const projectId = record.projectId
     const catalog = (query: { kind: TInventoryKind; id: string; parent?: string; title?: string }) => this.deps.catalogState({ ...query, projectId })
-    const items = entries.map((entry) => effective(entry, catalog))
+    // ⚖️ O que saiu da fonte fica fora do cálculo (ordem, dependências, estimativa); o lote guarda a chave.
+    const live = entries.filter((entry) => !entry.goneAt)
+    const items = live.map((entry) => effective(entry, catalog))
     const keys = selection.closure ? withClosure(items, selection.keys) : [...new Set(selection.keys)]
     if (!keys.length) throw new ImportJobError('invalid', 'select at least one item', 'keys')
     if (keys.length > IMPORT_BATCH_MAX) throw new ImportJobError('invalid', `at most ${IMPORT_BATCH_MAX} items in a batch`, 'keys')
     const known = new Set(entries.map((entry) => entry.key))
     const unknown = keys.filter((key) => !known.has(key))
-    if (unknown.length) throw new ImportJobError('invalid', `not in this import job: ${unknown.slice(0, 5).join(', ')}${unknown.length > 5 ? '…' : ''}`, 'keys')
+    if (unknown.length && strict) throw new ImportJobError('invalid', `not in this import job: ${unknown.slice(0, 5).join(', ')}${unknown.length > 5 ? '…' : ''}`, 'keys')
 
     const batchOf = new Map<string, { id: string; name: string }>()
     for (const other of this.deps.repository.batches(record.id)) {
@@ -132,7 +139,7 @@ export class ImportBatchService {
       prefix,
       catalog,
       protocolTokens: this.protocolTokens,
-      states: new Map(entries.map((entry) => [entry.key, entry.state])),
+      states: new Map(live.map((entry) => [entry.key, entry.state])),
       batchOf,
     })
   }
@@ -151,6 +158,18 @@ function effective(entry: IImportJobItem, catalog: (query: { kind: TInventoryKin
   const state =
     CATALOG_KINDS.includes(entry.kind) && entry.kind !== 'trigger' ? catalog({ kind: entry.kind, id: item.candidateId, ...(item.title ? { title: item.title } : {}) }) : undefined
   return { ...item, kind: entry.kind, ...(state ? { catalog: state } : {}) }
+}
+
+/** As chaves do lote cujo item saiu da fonte (ou não está mais na importação). */
+function goneKeys(keys: readonly string[], entries: readonly IImportJobItem[]): string[] {
+  const live = new Set(entries.filter((entry) => !entry.goneAt).map((entry) => entry.key))
+  return keys.filter((key) => !live.has(key))
+}
+
+/** As chaves calculadas e, depois, as escolhidas que saíram da fonte (o cálculo as deixa de fora; o lote não). */
+function withGone(planned: readonly string[], chosen: readonly string[], entries: readonly IImportJobItem[]): string[] {
+  const gone = new Set(goneKeys(chosen, entries))
+  return [...new Set([...planned, ...chosen.filter((key) => gone.has(key))])]
 }
 
 /** As chaves com o fecho de cada uma, na ordem em que aparecem (a escolhida primeiro). */

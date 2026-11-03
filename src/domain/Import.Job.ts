@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto'
-import { IImportItemStatus, IImportReuse, TImportItemPatch, TImportItemState } from './models/ImportJob.Model'
+import { IImportAnalysis, IImportItemStatus, TImportItemPatch, TImportItemState } from './models/ImportJob.Model'
 import { IInventoryItem } from './models/ImportInventory.Model'
 
 /**
  * As regras do TRABALHO DE IMPORTAÇÃO, puras (`docs/integration/plano-importador.md`, PR 6): as transições de estado de
- * um item, quando a reclassificação vale e o reaproveitamento na reanálise.
+ * um item, quando a reclassificação vale e o que a reanálise (na mesma importação) faz com cada item.
  *
  * ⛔ Nada daqui grava no catálogo nem dispara construtor: o dono opera item a item, à mão.
  */
@@ -92,11 +92,59 @@ export function carryOver(previous: Pick<IImportItemStatus, 'state' | 'staleFrom
   return { outcome: 'stale', state: 'stale', ...(from ? { staleFrom: from } : {}) }
 }
 
-/** O resumo da reanálise, a partir do que cada item virou e das chaves que sumiram. */
-export function reuseSummary(from: string, outcomes: ReadonlyArray<{ key: string; outcome: TCarryOutcome }>, gone: readonly string[]): IImportReuse {
+/** O registro da análise, a partir do que cada item virou, das chaves que saíram e das que voltaram. */
+export function analysisOf(
+  header: Pick<IImportAnalysis, 'at' | 'by' | 'head' | 'dirty'>,
+  outcomes: ReadonlyArray<{ key: string; outcome: TCarryOutcome }>,
+  gone: readonly string[],
+  returned: readonly string[],
+): IImportAnalysis {
   const pick = (outcome: TCarryOutcome) => outcomes.filter((entry) => entry.outcome === outcome).map((entry) => entry.key)
-  return { from, kept: pick('kept').length, stale: pick('stale'), restored: pick('restored'), added: pick('added'), gone: [...gone] }
+  return {
+    at: header.at,
+    by: header.by,
+    ...(header.head ? { head: header.head } : {}),
+    ...(header.dirty !== undefined ? { dirty: header.dirty } : {}),
+    kept: pick('kept').length,
+    stale: pick('stale'),
+    added: pick('added'),
+    gone: [...gone],
+    restored: pick('restored'),
+    returned: [...returned],
+  }
 }
+
+/** O item já foi PROCESSADO: tem decisão, conversa de construtor, rascunho ou revisão. */
+export function isProcessed(entry: Pick<IImportItemStatus, 'state' | 'conversationId' | 'drafts' | 'review'>): boolean {
+  return entry.state !== 'pending' || !!entry.conversationId || entry.drafts.length > 0 || entry.review !== undefined
+}
+
+/**
+ * A CONSOLIDAÇÃO de um item (a migração de "um trabalho por análise" para "uma importação por repositório"): o item da
+ * importação que fica, ou o de uma análise antiga que sabe MAIS. ⛔ O processado da importação nunca é sobrescrito; o da
+ * antiga só entra se a de agora não tem nada, com as regras de `carryOver` (fonte mudada desde a decisão: `stale`).
+ * Devolve o item como deve ficar, ou `undefined` (fica como está).
+ */
+export function consolidatedItem<T extends IImportItemStatus>(current: T, older: readonly IImportItemStatus[]): T | undefined {
+  if (isProcessed(current)) return undefined
+  const source = older.find(isProcessed)
+  if (!source) return undefined
+  const carried = carryOver(source, current.fingerprint)
+  // ⚖️ Só o que é do processamento: o inventário (`item`), a fonte e a marca de saída são os da importação que fica.
+  const copied: Partial<IImportItemStatus> = {}
+  for (const field of PROCESSED_FIELDS) if (source[field] !== undefined) Object.assign(copied, { [field]: source[field] })
+  const { staleFrom: _staleFrom, ...rest } = current
+  return {
+    ...rest,
+    ...copied,
+    basis: source.basis ?? source.fingerprint,
+    state: carried.state,
+    ...(carried.staleFrom ? { staleFrom: carried.staleFrom } : {}),
+  } as T
+}
+
+/** O que a consolidação leva de uma análise antiga para a importação que fica. */
+const PROCESSED_FIELDS = ['kind', 'targetId', 'conversationId', 'drafts', 'review', 'approvedBy', 'approvedAt', 'batchId', 'by', 'at'] as const
 
 /** Quantos itens em cada estado. */
 export function countByState(states: ReadonlyArray<{ state: TImportItemState }>): Partial<Record<TImportItemState, number>> {

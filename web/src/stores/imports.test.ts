@@ -27,6 +27,8 @@ function leanJob(states: IImportJob['states']): IImportJob {
     items: states.length,
     byState: {},
     latest: true,
+    gone: 0,
+    analyses: [],
     scan: {} as IImportJob['scan'],
     states,
   }

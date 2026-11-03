@@ -3,7 +3,7 @@ import { shallowRef, triggerRef } from 'vue'
 import { api } from '@/lib/api'
 import type { IApplyResult } from '@/lib/importApply'
 import type { IImportBatchRun, IImportBuildStatus } from '@/lib/importDraft'
-import type { IImportBatch, IImportBatchView, IImportItemStatus, IImportJob, IImportJobSummary, TImportItemState, TInventoryKind } from '@/lib/importer'
+import type { IImportAnalysis, IImportBatch, IImportBatchView, IImportItemStatus, IImportJob, IImportJobSummary, TImportItemState, TInventoryKind } from '@/lib/importer'
 import { keyedResource } from '@/lib/resource'
 
 /** O trabalho aberto, sem os estados dos itens: eles moram numa cópia só, em `statesOf`. */
@@ -204,24 +204,19 @@ export const useImportsStore = defineStore('imports', () => {
 
   // ── As gravações ───────────────────────────────────────────────────────────
 
-  /** Analisa o repositório: o trabalho novo entra na lista (o anterior do mesmo repositório vira registro) e abre. */
-  async function analyze(projectId: string, repository: string): Promise<IImportJobView> {
-    const { states: lean, ...created } = await api<IImportJob>(`${importPath(projectId)}/jobs`, { method: 'POST', body: { repository } })
+  /**
+   * Analisa o repositório: a primeira vez cria a importação; depois reanalisa a MESMA (mesmo id), no lugar. A resposta
+   * já traz tudo (inventário, estados de todos os itens, histórico): nenhuma leitura a mais. A importação vai ao topo
+   * da lista (a mais recém-analisada primeiro).
+   */
+  async function analyze(projectId: string, repository: string): Promise<{ job: IImportJobView; analysis: IImportAnalysis }> {
+    const { states: lean, analysis, ...created } = await api<IImportJob & { analysis: IImportAnalysis }>(`${importPath(projectId)}/jobs`, { method: 'POST', body: { repository } })
     const key = jobKey(projectId, created.id)
-    // O trabalho anterior do mesmo repositório, já lido, vira registro (só o mais novo muda).
-    for (const other of job.keys())
-      if (other !== key && other.startsWith(`${projectId}\n`) && job.get(other)?.repository === created.repository) {
-        job.update(other, (view) => ({ ...view, latest: false }))
-        setLatest(other, false)
-      }
     job.set(key, created)
     const { scan: _scan, ...summary } = created
-    jobs.update(projectId, (list) => [
-      summary,
-      ...list.filter((entry) => entry.id !== created.id).map((entry) => (entry.repository === created.repository ? { ...entry, latest: false } : entry)),
-    ])
-    mergeLean(key, lean, created.latest)
-    return created
+    jobs.update(projectId, (list) => [summary, ...list.filter((entry) => entry.id !== created.id && entry.repository !== created.repository)])
+    mergeLean(key, lean, true)
+    return { job: created, analysis }
   }
 
   /** Excluir/incluir e reclassificar um item (`kind: null` volta ao detectado). */

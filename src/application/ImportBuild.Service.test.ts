@@ -83,7 +83,18 @@ describe('ImportBuildService', () => {
       now: () => new Date('2026-10-30T12:00:00.000Z'),
       ...extra,
     })
-    return { root, file, repository, service, opened, job }
+    /** A próxima análise não acha estas chaves: elas saem da fonte (ficam, marcadas). */
+    const leave = (...keys: string[]) =>
+      repository.reanalyze({
+        jobId: 'j1',
+        scannedAt: new Date('2026-10-30T11:00:00.000Z'),
+        by: 'ana',
+        inventory: repository.get('alfa', 'j1')!.inventory,
+        present: [],
+        gone: keys,
+        analysis: { at: new Date('2026-10-30T11:00:00.000Z'), by: 'ana', kept: 0, stale: [], added: [], gone: keys, restored: [], returned: [] },
+      })
+    return { root, file, repository, service, opened, job, leave }
   }
 
   const code = (work: () => unknown, expected: ImportBuildError['code']) => assert.throws(work, (error: unknown) => error instanceof ImportBuildError && error.code === expected)
@@ -180,14 +191,31 @@ describe('ImportBuildService', () => {
     assert.strictEqual(repository.item('j1', 'agent:maya')!.conversationId, agent.conversationId)
   })
 
-  it('⛔ abrir recusa: construtores misturados, tipo sem construtor, item fora do trabalho, trabalho antigo', async () => {
-    const { service, job } = setup()
+  it('⛔ abrir recusa: construtores misturados, tipo sem construtor, item fora do trabalho, item que saiu da fonte', async () => {
+    const { service, leave } = setup()
     await rejects(() => service.open('alfa', 'j1', 'ana', { keys: ['spec:arquitetura', 'skill:revisar'] }), 'kind')
     await rejects(() => service.open('alfa', 'j1', 'ana', { keys: ['mcp:github'] }), 'kind')
     await rejects(() => service.open('alfa', 'j1', 'ana', { keys: ['spec:nada'] }), 'not_found')
     await rejects(() => service.open('beta', 'j1', 'ana', { keys: ['spec:filas'] }), 'not_found')
-    job('j2', '2026-10-30T11:00:00.000Z')
-    await rejects(() => service.open('alfa', 'j1', 'ana', { keys: ['spec:filas'] }), 'outdated')
+    leave('spec:filas')
+    await rejects(() => service.open('alfa', 'j1', 'ana', { keys: ['spec:filas'] }), 'transition')
+  })
+
+  it('⛔ o que saiu da fonte não vai ao Preparar nem fica na conversa; os outros do lote seguem', async () => {
+    const { service, repository, leave } = setup()
+    const keys = ['spec:filas', 'spec:outra', 'spec:arquitetura']
+    repository.createBatch({ id: 'b7', jobId: 'j1', name: 'specs', prefix: '', keys, order: keys, by: 'ana', at: new Date('2026-10-30T11:30:00.000Z') })
+    await service.open('alfa', 'j1', 'ana', { keys: ['spec:arquitetura'] })
+    leave('spec:filas', 'spec:arquitetura')
+    const [opened] = await service.prepare('alfa', 'j1', 'b7', 'ana')
+    assert.deepStrictEqual(opened.keys, ['spec:outra'])
+    assert.strictEqual(repository.item('j1', 'spec:filas')!.state, 'pending', 'fica como estava')
+    assert.deepStrictEqual(
+      service.batchConversations('alfa', 'j1', 'b7').map((one) => one.keys),
+      [['spec:outra']],
+    )
+    // A conversa de um item que saiu da fonte não tem mais o que fazer.
+    code(() => service.listText('c1'), 'not_found')
   })
 
   it('list_import_items: os itens da conversa, as fontes e o mapa de ids do que citam', async () => {
