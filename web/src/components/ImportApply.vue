@@ -48,6 +48,8 @@ const result = shallowRef<IApplyResult>()
 /** As regras amplas incluídas, por agente; o modelo escolhido, por agente. */
 const wide = ref<Record<string, string[]>>({})
 const models = ref<Record<string, { provider: string; model: string }>>({})
+/** Só os prontos: o bloqueado (e o que depende dele) fica de fora, e o resto grava. */
+const ready = ref(false)
 /** A confirmação aberta (a lista do plano, ou a que o servidor devolveu). */
 const confirming = ref(false)
 const openDiff = ref<Set<string>>(new Set())
@@ -57,12 +59,19 @@ const selection = computed<IApplySelection>(() => ({
   ...(props.target.keys ? { keys: props.target.keys } : {}),
   ...(Object.values(wide.value).some((keys) => keys.length) ? { wide: wide.value } : {}),
   ...(Object.keys(models.value).length ? { models: models.value } : {}),
+  ...(ready.value ? { ready: true } : {}),
 }))
 
 const plan = computed(() => preview.value?.plan)
 const changing = computed(() => (plan.value?.items ?? []).filter((item) => item.op !== 'unchanged'))
 const blockers = computed(() => (plan.value?.items ?? []).filter(blocking))
 const missing = computed(() => preview.value?.missing ?? [])
+const heldBack = computed(() => preview.value?.heldBack ?? [])
+
+function setReady(on: boolean) {
+  ready.value = on
+  void load()
+}
 /** Uma falta que vem deste repositório entra na migração (com as dependências); em "todos os aprovados" só se vê. */
 const canAdd = computed(() => !!(props.target.keys || props.target.batchId))
 const addable = computed(() => missing.value.filter((one) => one.item).map((one) => one.item!.key))
@@ -161,6 +170,21 @@ const partLabel = (part?: string) => (part === 'record' ? ' (registro)' : part =
           · <span class="text-rose-300">{{ blockers.length }} bloqueando</span></template
         >
       </p>
+      <div v-if="blockers.length && !ready" class="flex flex-wrap items-center gap-2 text-xs" data-test="apply-ready-offer">
+        <button type="button" class="btn btn-secondary btn-sm" :disabled="loading" data-test="apply-ready" @click="setReady(true)">Gravar só os prontos</button>
+        <span class="text-zinc-500">deixa de fora os bloqueados e o que depende deles; eles continuam aprovados, para gravar depois.</span>
+      </div>
+      <section v-if="ready" class="flex flex-col gap-1 rounded-lg border border-amber-500/40 p-2 text-xs" data-test="apply-held">
+        <p class="flex flex-wrap items-center gap-2 text-amber-200">
+          {{ heldBack.length }} item(ns) de fora por bloqueio (o deles ou o de quem citam)
+          <button type="button" class="btn btn-ghost btn-sm ml-auto" :disabled="loading" data-test="apply-ready-off" @click="setReady(false)">Ver todos de novo</button>
+        </p>
+        <ul class="scroll-thin flex max-h-48 flex-col gap-0.5 overflow-y-auto">
+          <li v-for="one in heldBack" :key="one.key" class="text-zinc-400" data-test="apply-held-item">
+            <code class="text-zinc-200">{{ one.key }}</code> — {{ one.reason }}
+          </li>
+        </ul>
+      </section>
       <ul v-if="preview.skipped.length" class="text-xs text-zinc-500" data-test="apply-skipped">
         <li v-for="entry in preview.skipped" :key="entry.key">fica de fora: <code>{{ entry.key }}</code> — {{ entry.reason }}</li>
       </ul>

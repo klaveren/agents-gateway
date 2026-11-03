@@ -719,6 +719,11 @@ const importApplySelection = {
       additionalProperties: { type: 'object', properties: { provider: { type: 'string' }, model: { type: 'string' } } },
       description: 'Per agent key: the model it will use.',
     },
+    ready: {
+      type: 'boolean',
+      description:
+        'Only the READY items: an item with a blocked document (error or conflict in the plan) stays out, and so does what depends on it; the preview lists them in `heldBack` with the reason.',
+    },
   },
 }
 const jobParams = [
@@ -1999,7 +2004,7 @@ export const OPENAPI_DOCUMENT = {
     '/projects/{id}/import/jobs/{job}/apply/plan': {
       post: {
         summary:
-          'The PREVIEW of writing the importer to the catalog: the APPROVED items (of a saved batch, of `keys`, or all of the newest job) become canonical documents — each draft checked again against the source on disk (same sha256, same final text of source + operations; a changed source is 409 `import_source_changed`), the triggers inside their agent, the cited paths as links (`docIds`/`docRefs`/initial context). The agent is born CLOSED: the wide rules of the permission translator stay out unless included in `wide`; its reach (tools and rules) is a later step of the batch, and `resources.skills` is the skills it releases. Returns the catalog plan over those documents (diff, widenings, broken references, missing secrets, order, `planHash`), `missing` (each reference that exists neither in the catalog nor in the package, with the job item that produces it: key, kind, state, path), the agents (model, rules with `wide` and `included`), the active models and what was skipped. Writes nothing. Administrators only',
+          'The PREVIEW of writing the importer to the catalog: the APPROVED items (of a saved batch, of `keys`, or all of the newest job) become canonical documents — each draft checked again against the source on disk (same sha256, same final text of source + operations; a changed source is 409 `import_source_changed`), the triggers inside their agent, the cited paths as links (`docIds`/`docRefs`/initial context). The agent is born CLOSED: the wide rules of the permission translator stay out unless included in `wide`; its reach (tools and rules) is a later step of the batch, and `resources.skills` is the skills it releases. Returns the catalog plan over those documents (diff, widenings, broken references, missing secrets, order, `planHash`), `missing` (each reference that exists neither in the catalog nor in the package, with the job item that produces it: key, kind, state, path), the agents (model, rules with `wide` and `included`), the active models, what was skipped and, with `ready`, `heldBack` (the items left out by a block, with the reason). Every document goes to the project: an import is never global. Writes nothing. Administrators only',
         parameters: [...jobParams],
         requestBody: { required: false, ...json(importApplySelection) },
         responses: {

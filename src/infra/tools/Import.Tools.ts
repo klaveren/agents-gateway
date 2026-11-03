@@ -107,7 +107,7 @@ export function makeImportTools(desk: IImportDesk): ILocalTool[] {
           meta: {
             type: 'object',
             description:
-              'Metadata as text fields — rule: title; spec/adr/knowledge: id, title, summary; skill/command: id, description; agent: id, name, description; trigger: id, when. Optional scope: project (default) or global.',
+              'Metadata as text fields — rule: title; spec/adr/knowledge: id, title, summary; skill/command: id, description; agent: id, name, description; trigger: id, when. Never scope: an import always goes to the project. Catalog limits: title 160 (rule 120), summary 300, skill/command description 300, agent name 80.',
           },
           ops: {
             type: 'array',

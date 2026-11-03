@@ -9,6 +9,7 @@ import {
   IMPORT_LINK_KINDS,
   missingRemovalOks,
   parseImportOps,
+  proposalIssues,
   TImportOp,
   verifyImportDraft,
 } from '@domain/Import.Draft'
@@ -65,6 +66,8 @@ export interface IImportBuildDeps {
   readSource: (projectId: string, repository: string, path: string) => IImportSourceFile | undefined
   /** Abre a conversa com o construtor e devolve o id dela. Ausente: não há como abrir (`unavailable`). */
   openConversation?: (input: IImportConversationInput) => Promise<string>
+  /** O documento de texto (spec, ADR, knowledge) existe no catálogo, visível ao projeto? Ausente: não confere o que não é do trabalho. */
+  docExists?: (id: string, projectId: string) => boolean
   now?: () => Date
 }
 
@@ -440,6 +443,9 @@ export class ImportBuildService {
     const sources = this.sourceTexts(job, entry, textSources(effective, entry.item.sources))
     const result = applyImportOps(kind, sources, ops)
     if (!result.ok) throw new ImportBuildError('invalid', 'the draft has problems', 'ops', result.issues)
+    // O que só a gravação recusaria (limite do catálogo, escopo): recusado AGORA, para o construtor acertar de primeira.
+    const strict = proposalIssues(kind, result.applied.outputs)
+    if (strict.length) throw new ImportBuildError('invalid', 'the draft has problems', 'ops', strict)
     const draft: IImportDraft = {
       key,
       kind,
@@ -451,7 +457,7 @@ export class ImportBuildService {
     }
     const check = verifyImportDraft(draft, sources)
     if (check.length) throw new ImportBuildError('invalid', 'the draft does not match source + operations', 'ops', check)
-    const wrong = this.wrongLinks(job.id, draft.links)
+    const wrong = this.wrongLinks(job, draft.links)
     if (wrong.length) throw new ImportBuildError('invalid', 'the draft has problems', 'ops', wrong)
     const updated = this.deps.repository.updateItem(job.id, key, {
       state: 'review',
@@ -526,19 +532,30 @@ export class ImportBuildService {
   }
 
   /**
-   * ⛔ O vínculo que aponta um item do trabalho que não é documento (um command, uma skill, um agente): o painel só
-   * anexa spec, ADR ou knowledge, e o catálogo recusaria. A citação fica como texto. Id fora do trabalho não se julga
-   * aqui (pode já estar no catálogo).
+   * ⛔ O vínculo que aponta um item do trabalho que não é documento (um command, uma skill, um agente), ou um id que
+   * não é do trabalho nem documento do catálogo: o painel só anexa spec, ADR ou knowledge, e o catálogo recusaria. A
+   * citação fica como texto.
    */
-  private wrongLinks(jobId: string, links: IImportDraft['links']): IImportIssue[] {
+  private wrongLinks(job: IImportJobRecord, links: IImportDraft['links']): IImportIssue[] {
     const kindsById = new Map<string, Array<{ key: string; kind: TInventoryKind }>>()
-    for (const entry of this.deps.repository.items(jobId)) {
+    for (const entry of this.deps.repository.items(job.id)) {
+      if (entry.state === 'skipped') continue
       const id = entry.targetId ?? entry.item.candidateId
       kindsById.set(id, [...(kindsById.get(id) ?? []), { key: entry.key, kind: entry.kind ?? entry.item.kind }])
     }
     return links.flatMap((link) => {
       const found = kindsById.get(link.target)
-      if (!found || found.some((one) => IMPORT_LINK_KINDS.includes(one.kind))) return []
+      if (found?.some((one) => IMPORT_LINK_KINDS.includes(one.kind))) return []
+      // ⛔ Nem item do trabalho nem documento do catálogo: a gravação recusaria ("no such document").
+      if (!found) {
+        if (!this.deps.docExists || this.deps.docExists(link.target, job.projectId)) return []
+        return [
+          {
+            field: `ops[${link.op}].target`,
+            message: `${link.target} is no document of this import job nor of the catalog. Drop this linkCitation and leave the citation as text`,
+          },
+        ]
+      }
       const { key, kind } = found[0]
       return [
         {
