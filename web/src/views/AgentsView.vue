@@ -3,7 +3,6 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AgentAvatar from '@/components/AgentAvatar.vue'
 import AgentForm from '@/components/AgentForm.vue'
-import ImportIssues from '@/components/ImportIssues.vue'
 import ImportIssuesBadge from '@/components/ImportIssuesBadge.vue'
 import BuildTabs from '@/components/BuildTabs.vue'
 import Icon from '@/components/Icon.vue'
@@ -191,8 +190,6 @@ watch(creating, (value) => {
           <RouterLink v-if="detail.role !== 'subagent'" :to="{ path: '/new', query: { agent: detail.id } }" class="btn btn-secondary ml-auto">Conversar</RouterLink>
         </div>
         <p v-if="draftNote" class="mx-auto mb-4 max-w-3xl text-sm text-emerald-300">{{ draftNote }}</p>
-        <!-- Da store direto (não do `detail`): o "resolvido" troca a lista no mesmo objeto, e o formulário não se refaz. -->
-        <ImportIssues class="mx-auto mb-4 max-w-3xl" :issues="agents.details.get(detail.id)?.importIssues" :resolve="(issue) => agents.resolveIssue(detail!.id, issue)" />
         <AgentForm :agent="detail" :creating="false" @saved="drafted = undefined" @duplicate="duplicate" @removed="router.push('/agents')" />
       </template>
       <p v-else-if="error" class="text-sm text-rose-300">{{ error }}</p>
