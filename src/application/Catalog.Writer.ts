@@ -186,8 +186,9 @@ export class CatalogWriter implements ICatalogWriter {
       files: filesOf(body.files),
       // O documento é a verdade inteira: sem a lista, nenhum problema.
       importIssues: problemList(body.importIssues),
-      // Idem: sem a lista, nenhum trigger.
+      // Idem: sem a lista, nenhum trigger nem tag.
       triggers: triggersOf(body.triggers),
+      tags: list(body.tags),
     }
     return {
       commit: (by) => {
@@ -201,7 +202,8 @@ export class CatalogWriter implements ICatalogWriter {
     const { guidance } = this.deps
     const exists = !!quietly(() => guidance.rule(target.id))
     const body = target.body
-    const input = { projectId: text(body.projectId) || null, title: text(body.title), body: text(body.body), enabled: body.enabled !== false }
+    // O documento é a verdade inteira: sem a lista, nenhuma tag.
+    const input = { projectId: text(body.projectId) || null, title: text(body.title), body: text(body.body), enabled: body.enabled !== false, tags: list(body.tags) }
     return {
       commit: (by) => {
         if (exists) guidance.updateRule(target.id, input, by)
@@ -224,6 +226,7 @@ export class CatalogWriter implements ICatalogWriter {
       docIds: list(body.docIds),
       docRefs: list(body.docRefs),
       importIssues: problemList(body.importIssues),
+      tags: list(body.tags),
     }
     return {
       commit: (by) => {
@@ -285,6 +288,8 @@ export class CatalogWriter implements ICatalogWriter {
     const proc = body.process as unknown as IMcpProcess | undefined
     const change = {
       name: text(body.name),
+      // Sem a lista, nenhuma tag (o documento é a verdade inteira).
+      tags: list(body.tags),
       url: text(body.url),
       transport: (text(body.transport) || 'auto') as TMcpTransport,
       auth: (text(body.auth) || 'none') as TMcpAuth,

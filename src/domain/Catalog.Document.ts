@@ -121,6 +121,8 @@ export const FILE_SHAPE: TShape<IResourceFile> = { path: 'value', sha256: 'value
 export const AGENT_SHAPE: TShape<IAgent> = {
   id: 'value',
   name: 'value',
+  // Agrupar e filtrar: a ordem não importa.
+  tags: 'set',
   // O primeiro provider é o padrão.
   providers: { list: TARGET_SHAPE },
   soul: 'value',
@@ -180,6 +182,8 @@ export const RESOURCE_SHAPE: TShape<IResource> = {
   importIssues: { list: IMPORT_PROBLEM_SHAPE },
   // A ordem é a da lista "## Triggers" da skill carregada.
   triggers: { list: TRIGGER_SHAPE },
+  // Agrupar e filtrar: a ordem não importa.
+  tags: 'set',
   createdAt: { omit: META },
   updatedAt: { omit: META },
   updatedBy: { omit: META },
@@ -192,6 +196,8 @@ export const RULE_SHAPE: TShape<IRule> = {
   title: 'value',
   body: 'value',
   enabled: 'value',
+  // Agrupar e filtrar: a ordem não importa.
+  tags: 'set',
   createdAt: { omit: META },
   updatedAt: { omit: META },
   updatedBy: { omit: META },
@@ -208,6 +214,8 @@ export const DOC_SHAPE: TShape<IProjectDoc> = {
   docIds: 'list',
   docRefs: 'set',
   importIssues: { list: IMPORT_PROBLEM_SHAPE },
+  // Agrupar e filtrar: a ordem não importa.
+  tags: 'set',
   createdAt: { omit: META },
   updatedAt: { omit: META },
   updatedBy: { omit: META },
@@ -263,6 +271,8 @@ export const MCP_PROCESS_SHAPE: TShape<IMcpProcess> = {
 export const MCP_SHAPE: TShape<IMcpServerConfig> = {
   id: 'value',
   name: 'value',
+  // Agrupar e filtrar: a ordem não importa.
+  tags: 'set',
   kind: 'value',
   container: { object: MCP_CONTAINER_SHAPE },
   process: { object: MCP_PROCESS_SHAPE },

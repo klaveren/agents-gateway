@@ -7,7 +7,7 @@ import { issueMatch } from './docs'
 import { useAgentCatalogStore } from './agentCatalog'
 
 /** O corpo que a gravação manda (o `id` e o `kind` só ao criar). */
-export type TResourceInput = Pick<IResource, 'description' | 'body'> & { projectId: string | null; docIds: string[]; docRefs: string[] }
+export type TResourceInput = Pick<IResource, 'description' | 'body' | 'tags'> & { projectId: string | null; docIds: string[]; docRefs: string[] }
 
 /**
  * As skills e os commands (só admin): as listas por escopo (`lists`, a chave é `listKey(escopo, tipo?)`; a lista é SÓ

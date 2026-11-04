@@ -45,6 +45,8 @@ const createSchema = z.object({
   id: z.string().max(64),
   projectId: projectId.optional(),
   name: z.string().max(200),
+  /** As tags (ver `Tag.Policy`: o serviço normaliza e confere). */
+  tags: z.array(z.string().max(80)).max(50).optional(),
   kind: z.enum(['remote', 'container', 'process']).optional(),
   container: containerSchema.optional(),
   process: processSchema.optional(),
@@ -59,6 +61,8 @@ const updateSchema = z.object({
   /** Troca o escopo: um projeto, ou `null` para global. */
   projectId: projectId.nullable().optional(),
   name: z.string().max(200).optional(),
+  /** Ausente = mantém; `[]` tira todas. */
+  tags: z.array(z.string().max(80)).max(50).optional(),
   container: containerSchema.optional(),
   process: processSchema.optional(),
   url: z.string().max(2000).optional(),
@@ -261,6 +265,7 @@ export class McpServersController {
       id: server.id,
       ...(server.projectId ? { projectId: server.projectId } : {}),
       name: server.name,
+      ...(server.tags?.length ? { tags: server.tags } : {}),
       kind: server.kind ?? 'remote',
       ...(server.container ? { container: server.container, env: this.deps.service.envStatus(key) } : {}),
       ...(server.process ? { process: server.process, env: this.deps.service.envStatus(key), install: installStatus(key, server.process.package) } : {}),

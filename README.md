@@ -773,6 +773,18 @@ one-line "when to use it" and the procedure itself.
 - A skill is a shared way of doing something, from the catalog; a trigger is the agent's own
   subcommand. They load the same way, but stay apart in data, screen and permissions.
 
+### Search and tags in the lists
+
+Every list (agents, skills, commands, specs, ADRs, knowledge, rules, MCPs, projects, providers,
+users) has a search box at the top. It filters as you type, ignoring accents and case, and every
+word must appear in the id, name, description or tags.
+
+Agents, skills, commands, documents, rules and MCP servers have free **tags**. The server
+normalizes them to lowercase with hyphens, so `Infra`, `infra ` and `ínfra` are the same `infra`,
+and keeps at most 20 per item. Each list shows its tags as filter chips with counts. Tags are part
+of the item in the catalog history and export. On the MCP, the `save_*` tools take `tags` (absent
+on update = keep, `[]` removes all).
+
 ### Skill and command triggers
 
 Skills and commands have a **Triggers** tab too: the procedure of one situation inside the skill or

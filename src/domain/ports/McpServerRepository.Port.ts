@@ -1,7 +1,7 @@
 import { IMcpServerConfig } from '@domain/models/McpServer.Model'
 
 export type TMcpServerPatch = Partial<
-  Pick<IMcpServerConfig, 'name' | 'url' | 'container' | 'process' | 'transport' | 'auth' | 'headerName' | 'identity' | 'enabled' | 'updatedAt' | 'updatedBy'>
+  Pick<IMcpServerConfig, 'name' | 'tags' | 'url' | 'container' | 'process' | 'transport' | 'auth' | 'headerName' | 'identity' | 'enabled' | 'updatedAt' | 'updatedBy'>
 >
 
 /**

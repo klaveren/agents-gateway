@@ -36,6 +36,8 @@ export interface IProjectDoc {
   docRefs?: string[]
   /** Os problemas da importação que ficaram no documento (ver `ImportProblem.Model`). Ausente = nenhum. */
   importIssues?: IImportProblem[]
+  /** As tags (ver `Tag.Policy`): para agrupar e filtrar nas listas. Ausente = nenhuma. */
+  tags?: string[]
   createdAt: Date
   updatedAt: Date
   updatedBy?: string

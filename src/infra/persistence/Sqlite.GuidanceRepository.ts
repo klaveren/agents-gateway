@@ -67,6 +67,7 @@ const SCHEMA = `
     files       TEXT NOT NULL DEFAULT '[]',
     import_issues TEXT NOT NULL DEFAULT '[]',
     triggers    TEXT NOT NULL DEFAULT '[]',
+    tags        TEXT NOT NULL DEFAULT '[]',
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL,
     updated_by  TEXT
@@ -108,6 +109,10 @@ const ADDED_COLUMNS: ReadonlyArray<{ table: string; column: string; definition: 
   { table: 'resources', column: 'import_issues', definition: "TEXT NOT NULL DEFAULT '[]'" },
   // Os triggers da skill e do command (ver `IResource.triggers`): antes, só o agente tinha.
   { table: 'resources', column: 'triggers', definition: "TEXT NOT NULL DEFAULT '[]'" },
+  // As tags (ver `Tag.Policy`) da skill, do command, do documento e da rule.
+  { table: 'resources', column: 'tags', definition: "TEXT NOT NULL DEFAULT '[]'" },
+  { table: 'project_docs', column: 'tags', definition: "TEXT NOT NULL DEFAULT '[]'" },
+  { table: 'rules', column: 'tags', definition: "TEXT NOT NULL DEFAULT '[]'" },
 ]
 
 type TRow = Record<string, unknown>
@@ -118,6 +123,7 @@ const RULE_COLUMNS: Record<keyof TRulePatch, string> = {
   body: 'body',
   enabled: 'enabled',
   position: 'position',
+  tags: 'tags',
   updatedAt: 'updated_at',
   updatedBy: 'updated_by',
 }
@@ -130,6 +136,7 @@ const DOC_COLUMNS: Record<keyof TDocPatch, string> = {
   docIds: 'doc_ids',
   docRefs: 'doc_refs',
   importIssues: 'import_issues',
+  tags: 'tags',
   updatedAt: 'updated_at',
   updatedBy: 'updated_by',
 }
@@ -205,7 +212,7 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
 
   insertRule(rule: IRule): void {
     this.db
-      .prepare('INSERT INTO rules (id, project_id, position, title, body, enabled, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .prepare('INSERT INTO rules (id, project_id, position, title, body, enabled, tags, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .run(
         rule.id,
         rule.projectId ?? null,
@@ -213,6 +220,7 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
         rule.title,
         rule.body,
         rule.enabled ? 1 : 0,
+        JSON.stringify(rule.tags ?? []),
         rule.createdAt.toISOString(),
         rule.updatedAt.toISOString(),
         rule.updatedBy ?? null,
@@ -242,7 +250,7 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
   insertDoc(doc: IProjectDoc): void {
     this.db
       .prepare(
-        'INSERT INTO project_docs (id, kind, project_id, title, summary, body, doc_ids, doc_refs, import_issues, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO project_docs (id, kind, project_id, title, summary, body, doc_ids, doc_refs, import_issues, tags, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         doc.id,
@@ -254,6 +262,7 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
         JSON.stringify(doc.docIds ?? []),
         JSON.stringify(doc.docRefs ?? []),
         JSON.stringify(doc.importIssues ?? []),
+        JSON.stringify(doc.tags ?? []),
         doc.createdAt.toISOString(),
         doc.updatedAt.toISOString(),
         doc.updatedBy ?? null,
@@ -331,9 +340,9 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
   saveResource(resource: IResource): void {
     this.db
       .prepare(
-        `INSERT INTO resources (id, kind, project_id, description, body, doc_ids, doc_refs, files, import_issues, triggers, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO resources (id, kind, project_id, description, body, doc_ids, doc_refs, files, import_issues, triggers, tags, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, project_id = excluded.project_id, description = excluded.description, body = excluded.body,
-           doc_ids = excluded.doc_ids, doc_refs = excluded.doc_refs, files = excluded.files, import_issues = excluded.import_issues, triggers = excluded.triggers,
+           doc_ids = excluded.doc_ids, doc_refs = excluded.doc_refs, files = excluded.files, import_issues = excluded.import_issues, triggers = excluded.triggers, tags = excluded.tags,
            updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
       )
       .run(
@@ -347,6 +356,7 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
         JSON.stringify(sortFiles(resource.files ?? [])),
         JSON.stringify(resource.importIssues ?? []),
         JSON.stringify(resource.triggers ?? []),
+        JSON.stringify(resource.tags ?? []),
         resource.createdAt.toISOString(),
         resource.updatedAt.toISOString(),
         resource.updatedBy ?? null,
@@ -465,6 +475,7 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
 }
 
 function toRule(row: TRow): IRule {
+  const tags = idList(row.tags)
   return {
     id: row.id as string,
     ...(row.project_id ? { projectId: row.project_id as string } : {}),
@@ -472,6 +483,7 @@ function toRule(row: TRow): IRule {
     title: row.title as string,
     body: row.body as string,
     enabled: !!row.enabled,
+    ...(tags.length ? { tags } : {}),
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
     ...(row.updated_by ? { updatedBy: row.updated_by as string } : {}),
@@ -482,6 +494,7 @@ function toDoc(row: TRow): IProjectDoc {
   const docIds = idList(row.doc_ids)
   const docRefs = idList(row.doc_refs).filter((id) => docIds.includes(id))
   const importIssues = problemsOf(row.import_issues)
+  const tags = idList(row.tags)
   return {
     id: row.id as string,
     kind: row.kind as TDocKind,
@@ -492,6 +505,7 @@ function toDoc(row: TRow): IProjectDoc {
     docIds,
     ...(docRefs.length ? { docRefs } : {}),
     ...(importIssues.length ? { importIssues } : {}),
+    ...(tags.length ? { tags } : {}),
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
     ...(row.updated_by ? { updatedBy: row.updated_by as string } : {}),
@@ -504,6 +518,7 @@ function toResource(row: TRow): IResource {
   const files = fileList(row.files)
   const importIssues = problemsOf(row.import_issues)
   const triggers = triggerList(row.triggers)
+  const tags = idList(row.tags)
   return {
     id: row.id as string,
     kind: row.kind as TResourceKind,
@@ -515,6 +530,7 @@ function toResource(row: TRow): IResource {
     ...(files.length ? { files } : {}),
     ...(importIssues.length ? { importIssues } : {}),
     ...(triggers.length ? { triggers } : {}),
+    ...(tags.length ? { tags } : {}),
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
     ...(row.updated_by ? { updatedBy: row.updated_by as string } : {}),

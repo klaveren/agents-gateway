@@ -149,6 +149,14 @@ describe('CatalogRestoreUseCase — restaurar uma revisão', () => {
     assert.deepStrictEqual(guidance.resource('tabela').triggers, [deploy])
   })
 
+  it('as tags entram na revisão: voltar traz as de antes', async () => {
+    const { guidance, restore } = build()
+    guidance.createResource({ id: 'tabela', kind: 'skill', description: 'Tabelas', body: 'v1', tags: ['infra'] }, 'ana')
+    guidance.updateResource('tabela', { tags: ['outra'] }, 'bia')
+    await restore.restore({ item: { kind: 'skill', itemId: 'tabela' }, revision: 1, expectedRevision: 2 }, ADMIN)
+    assert.deepStrictEqual(guidance.resource('tabela').tags, ['infra'])
+  })
+
   it('delete: o item apagado volta com o mesmo id; a rule volta no fim da lista do escopo', async () => {
     const { guidance, restore, revisions, last } = build()
     guidance.createDoc({ id: 'guia', kind: 'spec', title: 'Guia', summary: 'S', body: 'B' }, 'ana')

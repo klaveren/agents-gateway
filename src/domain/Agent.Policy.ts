@@ -7,6 +7,7 @@ import { SANDBOX_NETWORK, sandboxLevelsOf } from './Sandbox.Policy'
 import { isSubscription, lanesOf, nativeFamily } from './Subscription.Policy'
 import { EProvider } from './enums/EProvider.Enum'
 import { IAgent, IAgentTarget, IAgentTrigger, TRIGGER_ID_PATTERN } from './models/Agent.Model'
+import { tagIssues } from './Tag.Policy'
 import { isNativeTool, nativeTool } from './Native.Tools'
 import { REASONING_LEVELS } from './Reasoning.Levels'
 import { isMcpToolRef, parseMcpToolRef } from './models/McpServer.Model'
@@ -183,6 +184,7 @@ export function agentIssues(agent: IAgent, rules: IAgentRules): IAgentIssue[] {
   }
 
   for (const item of triggerIssues(agent.triggers)) issue(item.field, item.message)
+  for (const item of tagIssues(agent.tags)) issue(item.field, item.message)
   for (const item of envIssues(agent.env)) issue(item.field, item.message)
   for (const item of fileIssues(agent.files)) issue(item.field, item.message)
 

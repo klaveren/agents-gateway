@@ -104,6 +104,7 @@ const at = new Date('2026-10-30T12:00:00.000Z')
 const fullAgent: Required<IAgent> = {
   id: 'theo',
   name: 'Theo',
+  tags: ['infra'],
   providers: [
     { provider: 'claude', models: ['opus', 'sonnet'], sandbox: 'workspace-write', network: true },
     { provider: 'openai', models: ['gpt'] },

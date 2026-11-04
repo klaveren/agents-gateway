@@ -33,10 +33,13 @@ const ADDED_COLUMNS: Array<{ column: string; definition: string }> = [
   { column: 'identity', definition: 'INTEGER NOT NULL DEFAULT 0' },
   // Ausente (NULL) = global: o banco antigo continua todo global, sem migração.
   { column: 'project_id', definition: 'TEXT' },
+  // As tags (ver `Tag.Policy`), em JSON.
+  { column: 'tags', definition: "TEXT NOT NULL DEFAULT '[]'" },
 ]
 
 const COLUMNS: Record<keyof TMcpServerPatch, string> = {
   name: 'name',
+  tags: 'tags',
   url: 'url',
   container: 'container',
   process: 'process',
@@ -82,12 +85,13 @@ export class SqliteMcpServerRepository implements IMcpServerRepository {
   insert(server: IMcpServerConfig): void {
     this.db
       .prepare(
-        'INSERT INTO mcp_servers (id, project_id, name, kind, container, process, url, transport, auth, header_name, identity, enabled, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO mcp_servers (id, project_id, name, tags, kind, container, process, url, transport, auth, header_name, identity, enabled, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         mcpServerKey(server),
         server.projectId ?? null,
         server.name,
+        JSON.stringify(server.tags ?? []),
         server.kind ?? 'remote',
         server.container ? JSON.stringify(server.container) : null,
         server.process ? JSON.stringify(server.process) : null,
@@ -150,10 +154,12 @@ export class SqliteMcpServerRepository implements IMcpServerRepository {
 function toServer(row: TRow): IMcpServerConfig {
   const projectId = typeof row.project_id === 'string' && row.project_id ? row.project_id : undefined
   const key = String(row.id)
+  const tags = tagList(row.tags)
   return {
     id: projectId && key.startsWith(`${projectId}${MCP_SCOPE_SEPARATOR}`) ? key.slice(projectId.length + 1) : key,
     ...(projectId ? { projectId } : {}),
     name: String(row.name),
+    ...(tags.length ? { tags } : {}),
     kind: (typeof row.kind === 'string' ? row.kind : 'remote') as TMcpKind,
     ...(typeof row.container === 'string' ? { container: JSON.parse(row.container) as IMcpContainer } : {}),
     ...(typeof row.process === 'string' ? { process: JSON.parse(row.process) as IMcpProcess } : {}),
@@ -166,5 +172,15 @@ function toServer(row: TRow): IMcpServerConfig {
     createdAt: new Date(String(row.created_at)),
     updatedAt: new Date(String(row.updated_at)),
     updatedBy: typeof row.updated_by === 'string' ? row.updated_by : undefined,
+  }
+}
+
+/** As tags gravadas em JSON; o que não for texto fica de fora. */
+function tagList(raw: unknown): string[] {
+  try {
+    const parsed: unknown = JSON.parse(typeof raw === 'string' ? raw : '[]')
+    return Array.isArray(parsed) ? parsed.filter((tag): tag is string => typeof tag === 'string') : []
+  } catch {
+    return []
   }
 }

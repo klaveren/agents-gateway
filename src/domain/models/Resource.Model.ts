@@ -40,6 +40,8 @@ export interface IResource {
    * (`use_resource`, tipo trigger, id `<recurso>/<trigger>`). Ausente = nenhum.
    */
   triggers?: IAgentTrigger[]
+  /** As tags (ver `Tag.Policy`): para agrupar e filtrar nas listas. Ausente = nenhuma. */
+  tags?: string[]
   createdAt: Date
   updatedAt: Date
   updatedBy?: string

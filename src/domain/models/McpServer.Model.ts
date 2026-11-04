@@ -86,6 +86,8 @@ export interface IMcpServerConfig {
    */
   projectId?: string
   name: string
+  /** As tags (ver `Tag.Policy`): para agrupar e filtrar nas listas. Ausente = nenhuma. */
+  tags?: string[]
   /** Padrão `remote`. */
   kind?: TMcpKind
   /** Só em `container`. */

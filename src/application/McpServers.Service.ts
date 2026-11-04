@@ -1,3 +1,4 @@
+import { normalizeTags, tagIssues } from '@domain/Tag.Policy'
 import { InvalidMcpServerError, McpServerInUseError, McpServerNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgent } from '@domain/models/Agent.Model'
 import {
@@ -36,11 +37,13 @@ export interface IMcpServerInput {
   headerName?: string
   /** Envia a identidade do agente em cabeçalhos (ver `Agent.Identity`). */
   identity?: boolean
+  /** As tags (ver `Tag.Policy`). */
+  tags?: string[]
   /** O segredo de `auth: header`, na criação. Depois, por `saveSecret`. */
   secret?: string
 }
 
-export type TMcpServerChange = Partial<Pick<IMcpServerConfig, 'name' | 'url' | 'transport' | 'auth' | 'headerName' | 'identity' | 'enabled'>> & {
+export type TMcpServerChange = Partial<Pick<IMcpServerConfig, 'name' | 'tags' | 'url' | 'transport' | 'auth' | 'headerName' | 'identity' | 'enabled'>> & {
   container?: Partial<IMcpContainer>
   process?: Partial<IMcpProcess>
   /** Troca o escopo: um projeto, ou `null` para global. Ausente = fica onde está. */
@@ -128,6 +131,7 @@ export class McpServersService {
       id: input.id.trim(),
       ...(projectId ? { projectId } : {}),
       name: input.name.trim(),
+      ...(normalizeTags(input.tags).length ? { tags: normalizeTags(input.tags) } : {}),
       kind,
       ...(kind === 'container' ? { container: containerOf(input.container) } : {}),
       ...(kind === 'process' ? { process: processOf(input.process) } : {}),
@@ -143,7 +147,7 @@ export class McpServersService {
       updatedAt: this.now(),
       updatedBy: by,
     }
-    const issues = issuesOf(config)
+    const issues = [...tagIssues(input.tags), ...issuesOf(config)]
     const projectIssue = this.projectIssue(projectId)
     if (projectIssue) issues.unshift({ field: 'projectId', message: projectIssue })
     const scopeIssue = MCP_SERVER_ID_PATTERN.test(config.id) ? this.scopeIssue(config.id, projectId) : undefined
@@ -172,11 +176,12 @@ export class McpServersService {
     const next: IMcpServerConfig = {
       ...current,
       ...definedOnly(rest),
+      ...(rest.tags !== undefined ? { tags: normalizeTags(rest.tags) } : {}),
       ...(current.kind === 'container' ? { container: containerOf({ ...current.container, ...definedOnly(container ?? {}) }) } : {}),
       ...(current.kind === 'process' ? { process: processOf({ ...current.process, ...definedOnly(proc ?? {}) }) } : {}),
     }
     next.headerName = next.auth === 'none' ? undefined : next.headerName?.trim() || undefined
-    const issues = issuesOf(next)
+    const issues = [...tagIssues(rest.tags), ...issuesOf(next)]
     // ⛔ O servidor do próprio gateway é este processo: a URL dele não se edita, e a credencial é sempre a de quem
     // conversa (com outra, o MCP do gateway recusa toda chamada e o Atlas fica sem ferramenta).
     if (id === SELF_MCP_SERVER_ID && next.url !== current.url) issues.push({ field: 'url', message: 'the gateway server URL is fixed' })
@@ -201,6 +206,7 @@ export class McpServersService {
 
     const saved = this.servers.update(key, {
       name: next.name,
+      tags: next.tags ?? [],
       url: next.url,
       transport: next.transport,
       auth: next.auth,
