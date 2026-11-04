@@ -30,6 +30,11 @@ export interface IPermissionRule {
   note?: string
 }
 
+/** A regra de SISTEMA (fixa, nunca gravada): pode poupar o que o padrão pega mas ela não quer (os modelos `.env.example`). */
+export interface ISystemRule extends IPermissionRule {
+  except?: readonly string[]
+}
+
 /** O que se pede: um comando (as palavras dele), um caminho, um destino, uma ferramenta, uma skill, um agente. */
 export interface IPermissionSubject {
   category: TPermissionCategory
@@ -55,11 +60,31 @@ export interface IPermissionLayers {
 export const PERMISSION_LIMITS = { rules: 300, pattern: 300, note: 200 } as const
 
 /** ⛔ A camada SISTEMA: segredos e comandos que derrubam o servidor. Sem exceção em nenhuma camada. */
-export const SYSTEM_RULES: readonly IPermissionRule[] = [
-  ...['**/.env', '**/.env.*', '**/*.key', '**/*.pem', '**/id_rsa*', '**/id_ed25519*', '**/secrets.*'].flatMap((pattern) => [
-    { category: 'read' as const, pattern, decision: 'deny' as const, note: 'segredo' },
-    { category: 'write' as const, pattern, decision: 'deny' as const, note: 'segredo' },
-  ]),
+/**
+ * Os MODELOS de segredo: `.env.example`, `.env.local.sample`… vão para o repositório de propósito, sem valor. Escondidos,
+ * o git do cerco quebra (o arquivo versionado vira `/dev/null`: "unsupported file type").
+ */
+export const SECRET_TEMPLATES: readonly string[] = ['**/*.example', '**/*.sample', '**/*.template', '**/*.dist']
+
+/** `secrets.*` só em arquivo de DADOS: `secrets.js`, `secrets.sh` são código (quem lê o valor), não o segredo. */
+const SECRET_DATA = ['json', 'yaml', 'yml', 'toml', 'env', 'txt', 'ini'].map((extension) => `**/secrets.${extension}`)
+
+const SECRETS: readonly { pattern: string; except?: readonly string[] }[] = [
+  { pattern: '**/.env' },
+  { pattern: '**/.env.*', except: SECRET_TEMPLATES },
+  ...['**/*.key', '**/*.pem', '**/id_rsa*', '**/id_ed25519*', ...SECRET_DATA].map((pattern) => ({ pattern })),
+]
+
+export const SYSTEM_RULES: readonly ISystemRule[] = [
+  ...SECRETS.flatMap((secret) =>
+    (['read', 'write'] as const).map((category) => ({
+      category,
+      pattern: secret.pattern,
+      decision: 'deny' as const,
+      note: 'segredo',
+      ...(secret.except ? { except: secret.except } : {}),
+    })),
+  ),
   ...['rm -rf /', 'rm -rf /*', 'rm -fr /', 'mkfs*', 'mkfs* *', 'shutdown *', 'reboot *', 'halt *', 'poweroff *', 'sudo *', 'doas *', 'chmod -R 777 /', 'dd * of=/dev/*'].map(
     (pattern) => ({ category: 'terminal' as const, pattern, decision: 'deny' as const, note: 'pode derrubar o servidor' }),
   ),
@@ -105,7 +130,7 @@ export const CATEGORY_LABEL: Readonly<Record<TPermissionCategory, string>> = {
   trigger: 'trigger',
 }
 
-export function matches(rule: IPermissionRule, subject: IPermissionSubject): boolean {
+export function matches(rule: ISystemRule, subject: IPermissionSubject): boolean {
   if (rule.category !== subject.category) return false
   switch (rule.category) {
     case 'terminal':
@@ -115,7 +140,7 @@ export function matches(rule: IPermissionRule, subject: IPermissionSubject): boo
       // ⛔ Liberação RELATIVA vale só dentro da pasta: `**` não alcança `/outra/pasta` nem `~/.ssh` (fora dela, o caminho
       // chega absoluto). Para liberar fora, a regra é absoluta. A negação vale em qualquer lugar (`**/.env`).
       if (rule.decision === 'allow' && isOutsidePath(subject.value) && !isOutsidePath(rule.pattern.trim())) return false
-      return pathMatches(rule.pattern, subject.value)
+      return pathMatches(rule.pattern, subject.value) && !rule.except?.some((pattern) => pathMatches(pattern, subject.value))
     case 'network':
       return hostMatches(rule.pattern, subject.value)
     default:

@@ -1,5 +1,5 @@
 import { exec } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { type Dirent, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -7,6 +7,7 @@ import { dataDir, projectWorkspace } from '@infra/adapters/support/Subscription.
 import { esmImport } from '@infra/adapters/support/Esm.Import'
 import { networkGate } from '@infra/permissions/Network.Gate'
 import type { ICercoBase, ICercoPlan } from '@domain/Cerco.Plan'
+import { pathMatches } from '@domain/Permission.Policy'
 import { globalResourcesDir, projectResourceDirs, readOnlyResourceDirs } from '@infra/workspace/Resource.Files'
 
 const run = promisify(exec)
@@ -114,6 +115,7 @@ export class ProjectSandbox implements IProjectSandbox {
       alwaysDeny: [dataDir(this.env), process.cwd(), homedir()],
       // Os arquivos de recurso: o global sempre; os do projeto quando a raiz é dele. Lê, não grava.
       readOnly: existing(readOnlyResourceDirs(root, this.env)),
+      find: (pattern) => findUnder(root, pattern),
     }
   }
 
@@ -302,6 +304,37 @@ function denyAllBut(dir: string, keep: readonly string[], list: (dir: string) =>
 function isAtOrUnder(path: string, dir: string): boolean {
   const rel = relative(dir, path)
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+}
+
+/** Teto da busca dos modelos: numa árvore maior, o que sobra fica escondido (falha fechada). */
+const FIND_LIMIT = 50_000
+
+/**
+ * Os arquivos de um padrão relativo dentro da raiz (o casamento é o da regra), sem descer em `node_modules` nem `.git`:
+ * lá dentro segue escondido. O `glob` do Node não serve: o `**` dele pula as entradas com ponto.
+ */
+export function findUnder(root: string, pattern: string): string[] {
+  if (isAbsolute(pattern) || pattern.startsWith('~')) return []
+  const found: string[] = []
+  const pending = ['']
+  let seen = 0
+  while (pending.length && seen < FIND_LIMIT) {
+    const dir = pending.pop()!
+    let entries: Dirent[]
+    try {
+      entries = readdirSync(join(root, dir), { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      seen += 1
+      const path = dir ? `${dir}/${entry.name}` : entry.name
+      if (entry.isDirectory()) {
+        if (entry.name !== 'node_modules' && entry.name !== '.git') pending.push(path)
+      } else if (entry.isFile() && pathMatches(pattern, path)) found.push(path)
+    }
+  }
+  return found
 }
 
 function listDir(dir: string): string[] {

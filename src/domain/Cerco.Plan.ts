@@ -1,5 +1,5 @@
 import { isAbsolute, join, relative } from 'node:path'
-import { IPermissionLayers, IPermissionRule, SYSTEM_RULES } from './Permission.Policy'
+import { decide, IPermissionLayers, IPermissionRule, ISystemRule, SYSTEM_RULES } from './Permission.Policy'
 
 /**
  * O CERCO MONTADO DAS REGRAS: as listas de leitura e escrita que o sistema operacional aplica ao comando do terminal
@@ -44,6 +44,11 @@ export interface ICercoBase {
    * para ler e gravar (objetos, refs, locks — `status`, `commit`, `push`), menos o que roda código fora do cerco.
    */
   gitCommonDir?: string
+  /**
+   * Os arquivos que um padrão pega dentro da raiz (relativos a ela). Com ele, o modelo que a regra de sistema poupa
+   * (`.env.example` sob `**\/.env.*`) é reaberto para leitura, um a um: o runtime não tem negação no padrão.
+   */
+  find?: (pattern: string) => string[]
 }
 
 /**
@@ -86,7 +91,7 @@ export function cercoPlan(layers: IPermissionLayers, base: ICercoBase): ICercoPl
   return {
     // A raiz fechada para leitura por padrão: só o que as regras liberam (e as pastas de trabalho) se lê dentro dela.
     readDeny: [...new Set([...base.alwaysDeny, base.root, ...read.deny])],
-    readAllow: [...new Set([...base.scratch, ...base.alwaysRead, ...git, ...read.allow, ...(base.readOnly ?? [])])],
+    readAllow: [...new Set([...base.scratch, ...base.alwaysRead, ...git, ...read.allow, ...(base.readOnly ?? []), ...sparedTemplates(layers, base)])],
     writeAllow: [...new Set([...base.scratch, ...git, ...write.allow])],
     writeDeny: [
       ...new Set([
@@ -97,6 +102,19 @@ export function cercoPlan(layers: IPermissionLayers, base: ICercoBase): ICercoPl
       ]),
     ],
   }
+}
+
+/**
+ * ⚖️ Os modelos poupados, para LER: o arquivo que o padrão de uma regra de sistema com exceção pega e que a decisão
+ * inteira (sistema, agente, projeto) deixa ler. Uma negação do agente ou do projeto que o cubra continua valendo. A
+ * escrita fica como está: no runtime a negação vence a liberação, e o modelo segue só leitura no terminal.
+ */
+function sparedTemplates(layers: IPermissionLayers, base: ICercoBase): string[] {
+  if (!base.find) return []
+  const system: readonly ISystemRule[] = [...SYSTEM_RULES, ...(base.system ?? [])]
+  const patterns = system.filter((rule) => rule.category === 'read' && rule.decision === 'deny' && rule.except?.length).map((rule) => rule.pattern)
+  const files = [...new Set(patterns.flatMap((pattern) => base.find!(pattern)))]
+  return files.filter((file) => decide({ category: 'read', value: file }, layers, base.system).allowed).map((file) => join(base.root, file))
 }
 
 /** `parent` contém `child` (ou é ele)? */
