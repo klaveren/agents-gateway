@@ -39,9 +39,11 @@
     }
   }
 
-  // Colar "a, b, c" ou escolher uma sugestão da lista adiciona na hora.
-  function onInput() {
-    if (draft.value.includes(',') || offered.value.includes(draft.value)) add(draft.value)
+  // Colar "a, b, c" ou ESCOLHER uma sugestão da lista adiciona na hora. Digitar a palavra de uma sugestão, não: quem
+  // digita `logiccus` pode estar a caminho de `logiccus-core`.
+  function onInput(event: Event) {
+    const typed = (event as InputEvent).inputType?.startsWith('insertText') || (event as InputEvent).inputType?.startsWith('delete')
+    if (draft.value.includes(',') || (!typed && offered.value.includes(draft.value))) add(draft.value)
   }
 </script>
 
