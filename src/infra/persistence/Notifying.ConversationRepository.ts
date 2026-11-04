@@ -1,3 +1,4 @@
+import { emptyPanel, IConversationPanel } from '@domain/models/ConversationPanel.Model'
 import type { IErrorLog, IErrorLogQuery } from '@domain/models/ErrorLog.Model'
 import { ITodoItem } from '@domain/models/ConversationTodo.Model'
 import { TClassification } from '@domain/models/Classification.Model'
@@ -120,6 +121,15 @@ export class NotifyingConversationRepository implements IConversationRepository 
   async saveTodos(sessionId: string, items: ITodoItem[]): Promise<void> {
     if (!this.inner.saveTodos) throw new Error('This conversation store has no task list')
     await this.inner.saveTodos(sessionId, items)
+  }
+
+  async panel(sessionId: string): Promise<IConversationPanel> {
+    return (await this.inner.panel?.(sessionId)) ?? emptyPanel()
+  }
+
+  async savePanel(sessionId: string, panel: IConversationPanel): Promise<void> {
+    if (!this.inner.savePanel) throw new Error('This conversation store has no panel')
+    await this.inner.savePanel(sessionId, panel)
   }
 
   findByShareId(shareId: string): Promise<IConversationSession | undefined> {

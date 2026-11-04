@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import AgentsView from './views/AgentsView.vue'
 import InboxView from './views/InboxView.vue'
+import ConversationPanelView from './views/ConversationPanelView.vue'
 import ImportView from './views/ImportView.vue'
 import AuthView from './views/AuthView.vue'
 import McpView from './views/McpView.vue'
@@ -35,6 +36,7 @@ export const router = createRouter({
   routes: [
     { path: '/', name: 'inbox', component: InboxView },
     { path: '/c/:id', name: 'conversation', component: InboxView, props: true },
+    { path: '/c/:id/painel', name: 'conversation-panel', component: ConversationPanelView, props: true },
     { path: '/new', name: 'new', component: InboxView },
     { path: '/agents', name: 'agents', component: AgentsView },
     { path: '/agents/new', name: 'agent-new', component: AgentsView },

@@ -46,6 +46,8 @@ export interface ISessionRecord {
   compactSummary?: string
   /** Pedida à mão (`compact`): o próximo turno compacta, passe ou não do gatilho. */
   compactNext?: boolean
+  /** O turno anterior teve mensagem da pessoa e o agente não mexeu no painel da conversa (o próximo começa com o aviso). */
+  panelSkipped?: boolean
   /** As mensagens que esperam o turno rodando (ver `Interjection.Policy`). */
   queued?: string[]
   metadata?: Record<string, unknown>

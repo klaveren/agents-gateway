@@ -385,6 +385,17 @@ describe('SqliteConversationRepository', () => {
     assert.strictEqual((await repo.errors({ since })).byKind.tool, 0, 'a conversa apagada sai do registro')
   })
 
+  it('o painel da conversa grava e lê o documento inteiro; apagar a conversa apaga o painel', async () => {
+    const repo = repository()
+    assert.deepStrictEqual(await repo.panel('s1'), { items: [], decisions: [], questions: [], history: [] })
+    const panel = { goal: 'Migrar', items: [{ id: 'p1', title: 'Ledgers', status: 'done' as const }], decisions: [], questions: [], history: [] }
+    await repo.savePanel('s1', panel)
+    assert.deepStrictEqual(await repo.panel('s1'), panel)
+    await repo.saveSession(session({ id: 's1' }))
+    await repo.deleteSession('s1')
+    assert.deepStrictEqual((await repo.panel('s1')).items, [])
+  })
+
   it('swallows a database failure instead of taking the turn down with it', async () => {
     // ⛔ O contrato do port: perder o registro é ruim, perder o turno de quem estava trabalhando é
     // pior. Com o banco fechado, gravar não pode lançar.

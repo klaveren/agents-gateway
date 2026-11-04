@@ -14,7 +14,8 @@ import { McpRegistry } from '@infra/mcp/Mcp.Registry'
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
 import { SqliteMcpServerRepository } from '@infra/persistence/Sqlite.McpServerRepository'
 import { DelegationSlot, makeDelegateTool } from '@infra/tools/Delegate.Tool'
-import { ITodoStore, makeLocalTools } from '@infra/tools/Local.Tools'
+import { ILocalToolDeps, ITodoStore, makeLocalTools } from '@infra/tools/Local.Tools'
+import { makeSessionStore } from './Orchestrator.Factory'
 import { makeLedgerTools } from '@infra/tools/Ledger.Tools'
 import { makeLedger } from './Ledger.Factory'
 import { LoopGuard } from '@infra/tools/Loop.Guard'
@@ -101,6 +102,7 @@ export function makeTools(): ITools {
             },
             repositoryBrowse: makeRepositoryBrowse(),
             todos: todoStore(),
+            panels: panelStore(),
             permissions: lazyPermissions,
             agentTerminal: (agentId) => makeAgents().get(agentId)?.terminal,
             agentEnv: (agentId) => makeAgents().get(agentId)?.env,
@@ -146,6 +148,23 @@ function todoStore(): ITodoStore {
       todos ??= makeConversationRepository()
       if (!todos.saveTodos) throw new Error('Conversations are not being recorded on this gateway')
       await todos.saveTodos(sessionId, items)
+    },
+  }
+}
+
+/** Onde o `conversation_panel` grava: o mesmo banco das conversas; o turno em curso vem da sessão viva. */
+function panelStore(): NonNullable<ILocalToolDeps['panels']> {
+  const store = () => {
+    todos ??= makeConversationRepository()
+    if (!todos.panel || !todos.savePanel) throw new Error('Conversations are not being recorded on this gateway')
+    return todos as Required<Pick<IConversationRepository, 'panel' | 'savePanel'>>
+  }
+  return {
+    get: (sessionId) => store().panel(sessionId),
+    save: (sessionId, panel) => store().savePanel(sessionId, panel),
+    turnOf: (sessionId) => {
+      const turns = makeSessionStore().get(sessionId)?.turns
+      return turns !== undefined ? Math.max(turns - 1, 0) : undefined
     },
   }
 }

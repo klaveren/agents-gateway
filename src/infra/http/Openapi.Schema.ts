@@ -4118,6 +4118,26 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/conversations/{id}/panel': {
+      get: {
+        summary:
+          'The PANEL of a conversation: the goal, items (queued, doing, blocked, done, dropped — with notes, links and the agent doing it), decisions, questions and the timeline. The agent keeps it with the conversation_panel tool. `?format=md` returns Markdown. Who can see the conversation',
+        parameters: [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'format', in: 'query', schema: { type: 'string', enum: ['md'] } },
+        ],
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object' })) }, '404': failures['404'] },
+      },
+      patch: {
+        summary: 'Change the panel (the person correcting it): one operation — set_goal, add, update (status, note, links), move, decide, ask, answer',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          ...json({ type: 'object', required: ['op'], properties: { op: { type: 'string', enum: ['set_goal', 'add', 'update', 'move', 'decide', 'ask', 'answer'] } } }),
+        },
+        responses: { '200': { description: 'The panel', ...json(envelope({ type: 'object' })) }, '404': failures['404'], '422': failures['422'] },
+      },
+    },
     '/secret-requests': {
       post: {
         summary:

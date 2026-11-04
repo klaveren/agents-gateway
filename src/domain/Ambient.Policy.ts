@@ -18,6 +18,8 @@ export interface IAmbient {
   files?: string
   /** As variáveis secretas que o agente pode usar (só os nomes; ver `ResourceSecret.Model`). */
   secrets?: IAmbientSecrets
+  /** A conversa tem o painel (ver `ConversationPanel.Model`). */
+  panel?: boolean
 }
 
 /** Os NOMES das variáveis secretas: as do agente e as de cada skill ou command que ele pode carregar. */
@@ -40,6 +42,12 @@ export function ambientSection(ambient: IAmbient): string {
   else if (repository) lines.push(`- Diretório de trabalho: ${directory}. Fora dele você não lê nem grava; o git dele funciona (status, commit, push).`)
   else lines.push(`- Diretório de trabalho: ${directory} — persistente e compartilhado pelas conversas do projeto. Fora dele você não lê nem grava.`)
   if (ambient.files) lines.push(`- Seus arquivos (scripts, modelos): ${ambient.files} — só leitura; rode-os pelo terminal a partir dessa pasta.`)
+  if (ambient.panel)
+    lines.push(
+      '',
+      '## Painel da conversa',
+      'A pessoa vê, ao lado da conversa, o painel que VOCÊ mantém com `conversation_panel`, sem precisar pedir: cada pedido novo dela entra (`add`); o que você começa vai a `doing`; o entregue vai a `done`, com o que entregou e os links; o que trava vai a `blocked`, com o motivo; o rumo mudou → `set_goal`; o combinado → `decide`; o que depende dela → `ask`. O resumo dele vem no começo de cada turno: siga a rota, não se desvie.',
+    )
   if (ambient.secrets) lines.push('', secretsSection(ambient.secrets))
   return lines.join('\n')
 }

@@ -1,3 +1,4 @@
+import { applyPanelOp, emptyPanel, panelMarkdown, TPanelOp } from '@domain/models/ConversationPanel.Model'
 import { ERROR_KINDS } from '@domain/models/ErrorLog.Model'
 import type { ResourceSecretsService } from '@application/ResourceSecrets.Service'
 import { IModelGroup, modelGroupIssues, NO_MODEL_GROUP } from '@domain/Fallback.Policy'
@@ -234,6 +235,8 @@ export class AgentController {
     this.deleteConversation = this.deleteConversation.bind(this)
     this.archiveConversation = this.archiveConversation.bind(this)
     this.listErrors = this.listErrors.bind(this)
+    this.getConversationPanel = this.getConversationPanel.bind(this)
+    this.updateConversationPanel = this.updateConversationPanel.bind(this)
     this.getSharedConversation = this.getSharedConversation.bind(this)
     this.conversationEvents = this.conversationEvents.bind(this)
     this.sessionLive = this.sessionLive.bind(this)
@@ -1441,6 +1444,46 @@ export class AgentController {
           ...(Number.isFinite(limit) && limit > 0 ? { limit } : {}),
         })) ?? { items: [], byKind: { tool: 0, turn: 0, aborted: 0 }, byTool: [] }
       )
+    })
+  }
+
+  /**
+   * `GET /conversations/:id/panel` (`?format=md` = o Markdown) e `PATCH /conversations/:id/panel { op, … }` — ⚖️ o PAINEL
+   * DA CONVERSA (ver `ConversationPanel.Model`): o agente o mantém pela ferramenta; aqui a pessoa lê e corrige (reordena,
+   * descarta, reabre). Quem pode é quem pode ver a conversa.
+   */
+  async getConversationPanel(req: Request, res: Response) {
+    const id = req.params.id as string
+    if (req.query.format === 'md') {
+      try {
+        await this.requireConversationAccess(id)
+        const panel = (await this.usecases.conversations.panel?.(id)) ?? emptyPanel()
+        res.type('text/markdown').send(panelMarkdown(panel))
+      } catch (error: unknown) {
+        this.sendFailure(res, error, '[AgentController.getConversationPanel]')
+      }
+      return
+    }
+    await this.respond(res, async () => {
+      await this.requireConversationAccess(id)
+      return (await this.usecases.conversations.panel?.(id)) ?? emptyPanel()
+    })
+  }
+
+  async updateConversationPanel(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const id = req.params.id as string
+      const { resolved } = await this.requireConversationAccess(id)
+      if (!this.usecases.conversations.panel || !this.usecases.conversations.savePanel) throw new HttpError(404, 'not_found', 'Not found')
+      const current = await this.usecases.conversations.panel(id)
+      let next
+      try {
+        next = applyPanelOp(current, req.body as TPanelOp, { by: resolved.identity?.email ?? resolved.identity?.id ?? 'pessoa', now: new Date() })
+      } catch (error: unknown) {
+        throw new HttpError(422, 'validation_error', error instanceof Error ? error.message : String(error))
+      }
+      await this.usecases.conversations.savePanel(id, next.panel)
+      return next.panel
     })
   }
 

@@ -1,3 +1,4 @@
+import { emptyPanel, IConversationPanel, normalizePanel } from '@domain/models/ConversationPanel.Model'
 import type { IErrorLog, IErrorLogQuery, TErrorKind } from '@domain/models/ErrorLog.Model'
 import { ITodoItem } from '@domain/models/ConversationTodo.Model'
 import { parseUsageKey } from '@domain/models/Session.Model'
@@ -95,6 +96,12 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS conversation_todos (
     conversation_id TEXT NOT NULL PRIMARY KEY,
     items           TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+  );
+  -- O painel da conversa (ver ConversationPanel.Model): o documento inteiro, em JSON. Sem FK, como as tarefas.
+  CREATE TABLE IF NOT EXISTS conversation_panels (
+    conversation_id TEXT NOT NULL PRIMARY KEY,
+    document        TEXT NOT NULL,
     updated_at      TEXT NOT NULL
   );
 `
@@ -618,6 +625,25 @@ export class SqliteConversationRepository implements IConversationRepository {
       .run(sessionId, JSON.stringify(items), new Date().toISOString())
   }
 
+  async panel(sessionId: string): Promise<IConversationPanel> {
+    return (
+      this.guard('panel', () => {
+        const row = this.db.prepare('SELECT document FROM conversation_panels WHERE conversation_id = ?').get(sessionId) as { document: string } | undefined
+        return row ? normalizePanel(JSON.parse(row.document)) : emptyPanel()
+      }) ?? emptyPanel()
+    )
+  }
+
+  /** ⛔ Não engole o erro: a escrita é a ação pedida (como `saveTodos`). */
+  async savePanel(sessionId: string, panel: IConversationPanel): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO conversation_panels (conversation_id, document, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT (conversation_id) DO UPDATE SET document = excluded.document, updated_at = excluded.updated_at`,
+      )
+      .run(sessionId, JSON.stringify(panel), new Date().toISOString())
+  }
+
   async findSession(sessionId: string): Promise<IConversationSession | undefined> {
     return this.guard('findSession', () => {
       const row = this.db.prepare(`SELECT ${SESSION_COLUMNS} FROM conversations WHERE id = ? AND deleted_at IS NULL`).get(sessionId) as TRow | undefined
@@ -684,6 +710,7 @@ export class SqliteConversationRepository implements IConversationRepository {
         .prepare('UPDATE conversations SET deleted_at = ?, deleted_by = ?, shared = 0 WHERE id = ? AND deleted_at IS NULL')
         .run(new Date().toISOString(), by ?? null, sessionId)
       this.db.prepare('DELETE FROM conversation_todos WHERE conversation_id = ?').run(sessionId)
+      this.db.prepare('DELETE FROM conversation_panels WHERE conversation_id = ?').run(sessionId)
     })
   }
 
