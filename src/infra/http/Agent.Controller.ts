@@ -231,6 +231,7 @@ export class AgentController {
     this.getConversationTodos = this.getConversationTodos.bind(this)
     this.shareConversation = this.shareConversation.bind(this)
     this.deleteConversation = this.deleteConversation.bind(this)
+    this.archiveConversation = this.archiveConversation.bind(this)
     this.getSharedConversation = this.getSharedConversation.bind(this)
     this.conversationEvents = this.conversationEvents.bind(this)
     this.sessionLive = this.sessionLive.bind(this)
@@ -1057,17 +1058,25 @@ export class AgentController {
           this.requireProject({ userId: identity?.id, admin: (await checkAdminAccess(this.usecases.proof)).allowed }, query.project)
 
         const limit = Number.parseInt(String(query.limit ?? ''), 10)
+        // `?archived=1`: só as arquivadas; sem, a caixa de entrada (sem elas) e quantas estão arquivadas.
+        const archived = query.archived === '1' || query.archived === 'true'
+        const owner = identity?.id ? { id: identity.id, account: identity.account } : null
         const sessions = await this.usecases.conversations.listSessions({
           limit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
           filter: metadataFilter(query),
           // Sem identidade (anônimo) = só as SEM dono; com identidade = só as dela.
-          owner: identity?.id ? { id: identity.id, account: identity.account } : null,
+          owner,
+          archived,
         })
 
         // Cinto e suspensório: o SQL já recortou, e a mesma regra do resto da API confere de novo.
         const view = this.viewFor(false)
+        const archivedCount = archived ? undefined : await this.usecases.conversations.countArchived?.(owner)
 
-        return { sessions: sessions.filter((session) => ownsSession(resolved, session.metadata)).map((session) => toConversationDto(session, view)) }
+        return {
+          sessions: sessions.filter((session) => ownsSession(resolved, session.metadata)).map((session) => toConversationDto(session, view)),
+          ...(archivedCount !== undefined ? { archivedCount } : {}),
+        }
       },
       { message: 'Conversations listed' },
     )
@@ -1392,6 +1401,22 @@ export class AgentController {
    *
    * ⚠️ A sessão VIVA, se houver, segue: quem a encerra é `DELETE /sessions/:id`. São coisas distintas.
    */
+  /**
+   * `PUT /conversations/:id/archive { archived }` — ⚖️ ARQUIVAR não apaga: a conversa sai da caixa de entrada (fica em
+   * "Arquivadas"), não é retomada sozinha (a delegação recusa) e volta ao desarquivar — ou quando a pessoa manda mensagem
+   * nela. Quem pode é quem pode apagar.
+   */
+  async archiveConversation(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const id = req.params.id as string
+      const { resolved } = await this.requireConversationAccess(id)
+      const archived = (req.body as { archived?: unknown } | undefined)?.archived !== false
+      if (!this.usecases.conversations.setArchived) throw new HttpError(404, 'not_found', 'Not found')
+      await this.usecases.conversations.setArchived(id, archived, resolved.identity?.email ?? resolved.identity?.id)
+      return { id, archived }
+    })
+  }
+
   async deleteConversation(req: Request, res: Response) {
     await this.respond(
       res,
@@ -1544,6 +1569,9 @@ export class AgentController {
     // `/nome argumentos`: o command liberado ao agente vira o texto dele (com os documentos anexados); o turno grava o
     // que a pessoa digitou.
     const session = await this.usecases.getSession.execute(sessionId)
+    // Mandar mensagem numa conversa arquivada a desarquiva: ela volta à caixa de entrada.
+    const stored = this.usecases.conversations.setArchived ? await this.usecases.conversations.findSession(sessionId).catch(() => undefined) : undefined
+    if (stored?.archivedAt) await this.usecases.conversations.setArchived!(sessionId, false, resolved.identity?.email ?? resolved.identity?.id)
     const project = session.metadata?.[PROJECT_METADATA_KEY]
     const expanded = this.usecases.guidance?.expandCommand(body.message, session.agentId, typeof project === 'string' ? project : undefined)
     // `/skill` e `/command` carregam o recurso: as variáveis secretas dele passam a valer nesta conversa.

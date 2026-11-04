@@ -57,7 +57,11 @@ export interface IConversationRepository {
    * `owner` recorta pelo DONO (`metadata.owner`): `{ id, account? }` devolve só as dele, `null` só as
    * SEM dono, ausente não recorta. É o que impede a lista de uma pessoa de ser a de todo mundo.
    */
-  listSessions(options?: { limit?: number; filter?: Record<string, unknown>; owner?: IOwnerFilter | null }): Promise<IConversationSession[]>
+  listSessions(options?: { limit?: number; filter?: Record<string, unknown>; owner?: IOwnerFilter | null; archived?: boolean }): Promise<IConversationSession[]>
+  /** Arquiva (ou desarquiva) a conversa: sai da caixa de entrada, não é retomada sozinha, nada some. */
+  setArchived?(sessionId: string, archived: boolean, by?: string): Promise<void>
+  /** Quantas arquivadas a pessoa tem. */
+  countArchived?(owner?: IOwnerFilter | null): Promise<number>
 
   /** Põe as conversas destes agentes no projeto (a migração para projetos). Devolve quantas mudaram. */
   assignProject(agentIds: readonly string[], projectId: string): Promise<number>

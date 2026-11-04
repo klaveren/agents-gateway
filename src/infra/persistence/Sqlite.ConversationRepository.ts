@@ -117,6 +117,9 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   // ⚖️ APAGADA, não excluída (ver `deleteSession`): some de tudo, e o consumo dela continua no relatório.
   { table: 'conversations', column: 'deleted_at', definition: 'TEXT' },
   { table: 'conversations', column: 'deleted_by', definition: 'TEXT' },
+  // ⚖️ ARQUIVADA: sai da caixa de entrada (fica em "Arquivadas") e não é retomada sozinha; nada some, e desarquiva.
+  { table: 'conversations', column: 'archived_at', definition: 'TEXT' },
+  { table: 'conversations', column: 'archived_by', definition: 'TEXT' },
   // O estado do SDK (JSON: `{ protocol, mode, data }`) para a retomada continuar com a memória dele.
   { table: 'conversations', column: 'native', definition: 'TEXT' },
   { table: 'conversations', column: 'cache_write_tokens', definition: 'INTEGER NOT NULL DEFAULT 0' },
@@ -417,7 +420,7 @@ export class SqliteConversationRepository implements IConversationRepository {
     )
   }
 
-  async listSessions(options: { limit?: number; filter?: Record<string, unknown>; owner?: IOwnerFilter | null } = {}): Promise<IConversationSession[]> {
+  async listSessions(options: { limit?: number; filter?: Record<string, unknown>; owner?: IOwnerFilter | null; archived?: boolean } = {}): Promise<IConversationSession[]> {
     return (
       this.guard('listSessions', () => {
         const where: string[] = []
@@ -451,6 +454,8 @@ export class SqliteConversationRepository implements IConversationRepository {
         if (!Object.prototype.hasOwnProperty.call(options.filter ?? {}, BUILDER_METADATA_KEY)) where.push(`json_extract(metadata, '$.${BUILDER_METADATA_KEY}') IS NULL`)
 
         where.push('deleted_at IS NULL')
+        // A caixa de entrada sem as arquivadas; `archived: true` lista só elas.
+        where.push(options.archived ? 'archived_at IS NOT NULL' : 'archived_at IS NULL')
         const limit = Math.min(Math.max(options.limit ?? 100, 1), 500)
         const clause = where.length ? `WHERE ${where.join(' AND ')}` : ''
 
@@ -647,6 +652,31 @@ export class SqliteConversationRepository implements IConversationRepository {
    * relatório (bastaria apagar para esconder o gasto). O link compartilhado fecha. NÃO encosta na sessão viva do
    * provider: apagar histórico não para conversa (o turno que chegar depois fica, escondido, e conta no consumo).
    */
+  /** Arquiva (ou desarquiva) a conversa. Apagada não muda. */
+  async setArchived(sessionId: string, archived: boolean, by?: string): Promise<void> {
+    this.guard('setArchived', () => {
+      this.db
+        .prepare('UPDATE conversations SET archived_at = ?, archived_by = ? WHERE id = ? AND deleted_at IS NULL')
+        .run(archived ? new Date().toISOString() : null, archived ? (by ?? null) : null, sessionId)
+    })
+  }
+
+  /** Quantas arquivadas a pessoa tem (a linha "Arquivadas (N)" da caixa de entrada). */
+  async countArchived(owner?: IOwnerFilter | null): Promise<number> {
+    return (
+      this.guard('countArchived', () => {
+        const where = ['deleted_at IS NULL', 'archived_at IS NOT NULL', `json_extract(metadata, '$.${BUILDER_METADATA_KEY}') IS NULL`]
+        const params: Array<string | number> = []
+        if (owner !== undefined) {
+          const clause = ownerClause(owner)
+          where.push(clause.sql)
+          params.push(...clause.params)
+        }
+        return count((this.db.prepare(`SELECT COUNT(*) AS n FROM conversations WHERE ${where.join(' AND ')}`).get(...params) as TRow).n)
+      }) ?? 0
+    )
+  }
+
   async deleteSession(sessionId: string, by?: string): Promise<void> {
     this.guard('deleteSession', () => {
       this.db
@@ -802,6 +832,7 @@ export class SqliteConversationRepository implements IConversationRepository {
       // Sempre booleano: a coluna é `NOT NULL DEFAULT 0`, então "ausente" é "fechada".
       shared: count(row.shared) === 1,
       shareId: typeof row.share_id === 'string' ? row.share_id : undefined,
+      ...(typeof row.archived_at === 'string' ? { archivedAt: new Date(row.archived_at) } : {}),
       preview: typeof row.last_at === 'string' ? { at: new Date(row.last_at), request: text(row.last_request), text: text(row.last_response) } : undefined,
     }
   }

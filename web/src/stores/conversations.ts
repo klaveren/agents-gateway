@@ -47,7 +47,8 @@ export function applyEvent(items: IConversation[], event: TConversationEvent, fi
   const existed = items.some((item) => item.id === id)
   const rest = items.filter((item) => item.id !== id)
 
-  if (event.type === 'conversation.deleted' || !matchesFilters(event.session, filters)) return { items: rest, added: false, removed: existed }
+  // ⚖️ Arquivada sai da caixa de entrada (e volta, quando o `archivedAt` some): quem decide é o evento, não a tela.
+  if (event.type === 'conversation.deleted' || event.session.archivedAt || !matchesFilters(event.session, filters)) return { items: rest, added: false, removed: existed }
 
   const next = [...rest]
   const at = next.findIndex((item) => item.updatedAt < event.session.updatedAt)
@@ -66,6 +67,15 @@ export function applyEvent(items: IConversation[], event: TConversationEvent, fi
 export const useConversationsStore = defineStore('conversations', () => {
   const items = ref<IConversation[]>([])
   const total = ref(0)
+  /** Quantas arquivadas existem: a entrada "Arquivadas (N)" da lista. */
+  const archivedCount = ref(0)
+  /** A lista de arquivadas. ⚠️ Pode estar parcial até `loadArchived` rodar (guarda só o que passou por aqui). */
+  const archivedItems = ref<IConversation[]>([])
+  const archivedLoading = ref(false)
+  /** Qual lista a tela mostra: a caixa de entrada ou as arquivadas. */
+  const view = ref<'inbox' | 'archived'>('inbox')
+  /** Falha de arquivar/desarquivar/apagar na linha: a lista mostra e dispensa. */
+  const actionError = ref<string>()
   const facets = ref<IConversationPage['facets']>()
   const page = ref(1)
   const scope = ref<'all' | 'mine'>('mine')
@@ -106,12 +116,15 @@ export const useConversationsStore = defineStore('conversations', () => {
         items.value = result.sessions
         total.value = result.total ?? result.sessions.length
         facets.value = result.facets
+        archivedCount.value = result.archivedCount ?? 0
       } else {
         const result = await api<IConversationPage>('/conversations', { query: { limit: 500, ...useProjectsStore().query } })
         if (current !== generation) return
         all = result.sessions
+        archivedCount.value = result.archivedCount ?? 0
         refilter()
       }
+      if (view.value === 'archived') void loadArchived()
     } catch (failure) {
       if (current === generation) error.value = failure instanceof Error ? failure.message : String(failure)
     } finally {
@@ -141,6 +154,26 @@ export const useConversationsStore = defineStore('conversations', () => {
     }
   }
 
+  /** As arquivadas, de uma vez só: costumam ser poucas, e não têm filtro nem paginação. */
+  async function loadArchived(): Promise<void> {
+    archivedLoading.value = true
+    try {
+      const result = await api<IConversationPage>('/conversations', { query: { archived: 1, limit: 500, ...useProjectsStore().query } })
+      archivedItems.value = result.sessions
+      archivedCount.value = Math.max(archivedCount.value, result.sessions.length)
+      actionError.value = undefined
+    } catch (failure) {
+      actionError.value = failure instanceof Error ? failure.message : String(failure)
+    } finally {
+      archivedLoading.value = false
+    }
+  }
+
+  function showView(next: 'inbox' | 'archived'): void {
+    view.value = next
+    if (next === 'archived') void loadArchived()
+  }
+
   function fetchPage(number: number): Promise<IConversationPage> {
     const { q, agentId, classification } = filters.value
     return api<IConversationPage>('/conversations', { query: { scope: 'all', page: number, pageSize: PAGE_SIZE, q, agentId, classification, ...useProjectsStore().query } })
@@ -162,17 +195,33 @@ export const useConversationsStore = defineStore('conversations', () => {
   }
 
   function apply(event: TConversationEvent): void {
-    const gone = event.type === 'conversation.deleted' ? (items.value.find((item) => item.id === event.sessionId) ?? all.find((item) => item.id === event.sessionId)) : undefined
+    const id = event.type === 'conversation.updated' ? event.session.id : event.sessionId
+    const archivedNow = event.type === 'conversation.updated' && !!event.session.archivedAt
+    const inArchived = archivedItems.value.some((item) => item.id === id)
+    // Sai da caixa de entrada (apagada ou arquivada): a aba do agente perde uma.
+    const gone = event.type === 'conversation.deleted' || archivedNow ? (items.value.find((item) => item.id === id) ?? all.find((item) => item.id === id)) : undefined
     const known = event.type === 'conversation.updated' && (items.value.some((item) => item.id === event.session.id) || all.some((item) => item.id === event.session.id))
     if (scope.value === 'mine') {
       all = applyEvent(all, event, { q: '', agentId: '', classification: '' }).items
+    }
+
+    // As arquivadas: a contagem só muda quando sei de onde a conversa veio (caixa de entrada ou lista de arquivadas).
+    if (event.type === 'conversation.updated' && archivedNow) {
+      if (known && !inArchived) archivedCount.value += 1
+      const rest = archivedItems.value.filter((item) => item.id !== id)
+      const at = rest.findIndex((item) => item.updatedAt < event.session.updatedAt)
+      rest.splice(at === -1 ? rest.length : at, 0, event.session)
+      archivedItems.value = rest
+    } else if (inArchived) {
+      archivedItems.value = archivedItems.value.filter((item) => item.id !== id)
+      archivedCount.value = Math.max(archivedCount.value - 1, 0)
     }
 
     const result = applyEvent(items.value, event, filters.value)
     items.value = result.items
     if (result.added) total.value += 1
     // A aba do agente conta a conversa nova na hora; o resto das contagens acerta na próxima leitura.
-    if (event.type === 'conversation.updated' && !known && facets.value) {
+    if (event.type === 'conversation.updated' && !known && !archivedNow && facets.value) {
       const agent = facets.value.agent
       facets.value = { ...facets.value, agent: { ...agent, [event.session.agentId]: (agent[event.session.agentId] ?? 0) + 1 } }
     }
@@ -183,7 +232,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     }
     if (result.removed) total.value = Math.max(total.value - 1, 0)
 
-    if (event.type === 'conversation.updated' && event.session.id !== selectedId.value) unread.value = new Set([...unread.value, event.session.id])
+    if (event.type === 'conversation.updated' && !archivedNow && event.session.id !== selectedId.value) unread.value = new Set([...unread.value, event.session.id])
   }
 
   function select(id: string | undefined): void {
@@ -289,6 +338,11 @@ export const useConversationsStore = defineStore('conversations', () => {
     items.value = []
     total.value = 0
     facets.value = undefined
+    archivedCount.value = 0
+    archivedItems.value = []
+    archivedLoading.value = false
+    view.value = 'inbox'
+    actionError.value = undefined
     page.value = 1
     scope.value = 'mine'
     loading.value = false
@@ -301,7 +355,7 @@ export const useConversationsStore = defineStore('conversations', () => {
   }
 
   function find(id: string): IConversation | undefined {
-    return items.value.find((item) => item.id === id) ?? all.find((item) => item.id === id)
+    return items.value.find((item) => item.id === id) ?? all.find((item) => item.id === id) ?? archivedItems.value.find((item) => item.id === id)
   }
 
   async function share(id: string, shared: boolean): Promise<{ shareId?: string }> {
@@ -316,7 +370,42 @@ export const useConversationsStore = defineStore('conversations', () => {
     apply({ type: 'conversation.deleted', sessionId: id })
   }
 
+  /**
+   * Arquiva (ou desarquiva) na hora e confirma no servidor; se o servidor recusar, desfaz.
+   *
+   * ⚖️ Reusa `apply` nos dois sentidos, com a sessão como estava: lista, contagem e abas andam juntas, e o
+   * evento que o servidor manda depois não conta de novo (a conversa já está no lugar certo).
+   */
+  async function archive(id: string, archived = true): Promise<void> {
+    const before = find(id) ?? archivedItems.value.find((item) => item.id === id)
+    if (!before) return
+    const unreadBefore = unread.value.has(id)
+    actionError.value = undefined
+    apply({ type: 'conversation.updated', session: { ...before, archivedAt: archived ? new Date().toISOString() : undefined } })
+    // Mexer na lista não é atividade nova.
+    if (!unreadBefore && unread.value.has(id)) {
+      const next = new Set(unread.value)
+      next.delete(id)
+      unread.value = next
+    }
+    try {
+      await api(`/conversations/${encodeURIComponent(id)}/archive`, { method: 'PUT', body: { archived } })
+    } catch (failure) {
+      apply({ type: 'conversation.updated', session: before })
+      actionError.value = `Não foi possível ${archived ? 'arquivar' : 'desarquivar'}: ${failure instanceof Error ? failure.message : String(failure)}`
+      throw failure
+    }
+  }
+
   return {
+    archivedCount,
+    archivedItems,
+    archivedLoading,
+    view,
+    actionError,
+    loadArchived,
+    showView,
+    archive,
     items,
     total,
     facets,

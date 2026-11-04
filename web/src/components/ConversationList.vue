@@ -60,11 +60,20 @@ onBeforeUnmount(() => {
 
 /** As conversas delegadas por outro agente (filhas) aparecem dentro da conversa que as originou, não na lista. */
 const topLevel = computed(() => conversations.items.filter((conversation) => !conversation.metadata?.delegatedBy))
+const archivedTop = computed(() => conversations.archivedItems.filter((conversation) => !conversation.metadata?.delegatedBy))
+const inArchived = computed(() => conversations.view === 'archived')
 </script>
 
 <template>
   <section class="flex h-full flex-col">
-    <header class="flex items-center gap-2 px-4 pt-4 pb-2">
+    <header v-if="inArchived" class="flex items-center gap-2 px-4 pt-4 pb-2">
+      <button type="button" class="flex items-center gap-1 rounded-full py-1 pr-2 text-sm text-zinc-300 hover:text-white" data-testid="archived-back" @click="conversations.showView('inbox')">
+        <Icon name="back" class="h-4 w-4" /> Conversas
+      </button>
+      <h1 class="ml-auto text-xl font-semibold">Arquivadas</h1>
+      <span class="text-sm text-zinc-500">{{ conversations.archivedCount }}</span>
+    </header>
+    <header v-else class="flex items-center gap-2 px-4 pt-4 pb-2">
       <h1 class="text-xl font-semibold">Conversas</h1>
       <span class="text-sm text-zinc-500">{{ conversations.total }}</span>
       <RouterLink to="/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Nova conversa">
@@ -72,14 +81,14 @@ const topLevel = computed(() => conversations.items.filter((conversation) => !co
       </RouterLink>
     </header>
 
-    <div class="px-4 pb-2">
+    <div v-if="!inArchived" class="px-4 pb-2">
       <label class="flex items-center gap-2 rounded-full bg-zinc-800/80 px-3 py-2 text-sm focus-within:ring-1 focus-within:ring-emerald-500/60">
         <Icon name="search" class="h-4 w-4 text-zinc-500" />
         <input v-model="search" type="search" :placeholder="auth.isAdmin ? 'Buscar por título, e-mail, conta…' : 'Buscar por título…'" class="w-full bg-transparent outline-none placeholder:text-zinc-500" />
       </label>
     </div>
 
-    <div v-if="agentTabs.length > 1 || conversations.filters.agentId" class="scroll-thin flex gap-1.5 overflow-x-auto px-4 pb-2">
+    <div v-if="!inArchived && (agentTabs.length > 1 || conversations.filters.agentId)" class="scroll-thin flex gap-1.5 overflow-x-auto px-4 pb-2">
       <button
         v-for="tab in agentTabs"
         :key="tab.id"
@@ -91,7 +100,7 @@ const topLevel = computed(() => conversations.items.filter((conversation) => !co
       </button>
     </div>
 
-    <div v-if="classificationTabs.length" class="flex gap-1.5 px-4 pb-2">
+    <div v-if="!inArchived && classificationTabs.length" class="flex gap-1.5 px-4 pb-2">
       <button
         v-for="tab in classificationTabs"
         :key="tab.value"
@@ -105,6 +114,35 @@ const topLevel = computed(() => conversations.items.filter((conversation) => !co
     </div>
 
     <div class="scroll-thin min-h-0 flex-1 overflow-y-auto px-2 pb-4">
+      <p v-if="conversations.actionError" class="m-3 flex items-start gap-2 text-sm text-rose-300" role="alert">
+        <span class="min-w-0 flex-1">{{ conversations.actionError }}</span>
+        <button type="button" class="shrink-0 text-zinc-400 hover:text-white" title="Dispensar" @click="conversations.actionError = undefined"><Icon name="x" class="h-4 w-4" /></button>
+      </p>
+      <template v-if="inArchived">
+        <ConversationRow
+          v-for="conversation in archivedTop"
+          :key="conversation.id"
+          :conversation="conversation"
+          :active="conversation.id === conversations.selectedId"
+          :unread="false"
+          :show-owner="auth.isAdmin"
+          archived
+        />
+        <p v-if="conversations.archivedLoading" class="py-2 text-center text-xs text-zinc-500">Carregando…</p>
+        <p v-else-if="!archivedTop.length" class="m-6 text-center text-sm text-zinc-500">Nenhuma conversa arquivada.</p>
+      </template>
+      <template v-else>
+      <button
+        v-if="conversations.archivedCount > 0"
+        type="button"
+        class="mb-1 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-zinc-300 hover:bg-zinc-800/60"
+        data-testid="archived-entry"
+        @click="conversations.showView('archived')"
+      >
+        <span class="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-zinc-800 text-emerald-400"><Icon name="archive" class="h-4 w-4" /></span>
+        <span class="font-medium">Arquivadas</span>
+        <span class="ml-auto text-xs text-zinc-500">{{ conversations.archivedCount }}</span>
+      </button>
       <p v-if="auth.unauthorized" class="m-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
         Sua sessão expirou. <RouterLink to="/login" class="underline">Entre de novo</RouterLink>.
       </p>
@@ -122,6 +160,7 @@ const topLevel = computed(() => conversations.items.filter((conversation) => !co
       />
       <div ref="sentinel" class="h-6" />
       <p v-if="conversations.loading" class="py-2 text-center text-xs text-zinc-500">Carregando…</p>
+      </template>
     </div>
   </section>
 </template>

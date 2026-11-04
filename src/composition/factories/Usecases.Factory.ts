@@ -43,6 +43,8 @@ export function makeUsecases() {
         if (!stored) return undefined
         const delegatedBy = stored.metadata?.delegatedBy
         if (delegatedBy !== parentId) return { agentId: stored.agentId, delegatedBy }
+        // ⛔ Arquivada não volta sozinha: quem arquivou decide (desarquiva pela tela).
+        if (stored.archivedAt) throw new Error('the conversation is archived; unarchive it on the screen to continue')
         const [turns, native] = await Promise.all([conversations.listTurns(sessionId), conversations.findNative?.(sessionId)])
         await agentProvider.resume?.({ session: stored, turns, delegatedBy: parentId, ...(native ? { native } : {}) })
         return { agentId: stored.agentId, delegatedBy }
