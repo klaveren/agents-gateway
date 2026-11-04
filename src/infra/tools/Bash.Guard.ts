@@ -21,7 +21,12 @@ const DEFAULT_MAX_OUTPUT_CHARS = 4_000
  * processo (container, usuário sem privilégio), não filtrar string.
  */
 const DENIED: ReadonlyArray<{ pattern: RegExp; reason: string }> = [
-  { pattern: /\brm\b[^|;&\n]*-[a-z]*r[a-z]*f|\brm\b[^|;&\n]*-[a-z]*f[a-z]*r/i, reason: 'recursive force delete' },
+  // ⚖️ Só as OPÇÕES do `rm` (`-rf`, `-r -f`, `--recursive --force`), nunca o texto do caminho: "-surf" em
+  // `mcp-tool-surface.md` casava e recusava um `git rm` inocente.
+  {
+    pattern: /\brm\b(?=[^|;&\n]*\s(?:-[a-z]*r[a-z]*|--recursive)(?=\s|$))(?=[^|;&\n]*\s(?:-[a-z]*f[a-z]*|--force)(?=\s|$))/i,
+    reason: 'recursive force delete',
+  },
   { pattern: /\bmkfs(\.\w+)?\b/i, reason: 'filesystem format' },
   { pattern: /\bdd\b[^|;&\n]*\bof=\/dev\//i, reason: 'raw write to a block device' },
   { pattern: />\s*\/dev\/(sd|nvme|disk|hd)/i, reason: 'redirect into a block device' },
