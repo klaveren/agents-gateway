@@ -1,4 +1,10 @@
-import { IConversationPanel, PANEL_TOOL, panelMarkdown, panelTurnNote } from '@domain/models/ConversationPanel.Model'
+import { freshAnswers, IConversationPanel, PANEL_TOOL, panelMarkdown, panelTurnNote } from '@domain/models/ConversationPanel.Model'
+
+/** O painel para o provider: ler e marcar como vistas as respostas que a pessoa deu nele. */
+export interface IPanelAccess {
+  get(sessionId: string): Promise<IConversationPanel>
+  markDelivered?(sessionId: string, ids: readonly string[]): Promise<void>
+}
 import { DELEGATE_TOOL_NAME } from '@domain/models/Delegation.Model'
 import { offers, targetFor } from '@domain/Agent.Policy'
 import { conversationNote, IAmbient, IAmbientSecrets } from '@domain/Ambient.Policy'
@@ -208,7 +214,11 @@ export class AgentProvider implements IAgentProvider {
     const { context: systemContext, ...asked } = input
     // ⚖️ O PAINEL DA CONVERSA no começo de cada turno (ver `ConversationPanel.Model`): a rota — objetivo, em andamento,
     // fila, perguntas —, e o aviso quando o turno anterior não o atualizou. Só na entrada do modelo, nunca no turno gravado.
-    const panelNote = this.panels ? panelTurnNote(await this.panels.get(record.id).catch(() => undefined), record.panelSkipped) : ''
+    const panelNow = this.panels ? await this.panels.get(record.id).catch(() => undefined) : undefined
+    const panelNote = this.panels ? panelTurnNote(panelNow, record.panelSkipped) : ''
+    // A resposta que a pessoa deu no painel vai UMA vez: entregue neste turno, sai do próximo aviso.
+    const delivered = panelNow ? freshAnswers(panelNow).map((question) => question.id) : []
+    if (delivered.length) await this.panels?.markDelivered?.(record.id, delivered).catch(() => undefined)
     const message = panelNote ? { ...asked, text: `${panelNote}\n\n${asked.text}` } : asked
     let panelTouched = false
     // ⚖️ O id da conversa vai UMA VEZ por histórico do modelo: no primeiro turno e quando ele recomeça (repasse, compactação,
@@ -551,11 +561,11 @@ export class AgentProvider implements IAgentProvider {
   }
 
   /** O painel da conversa (ver `ConversationPanel.Model`): a ferramenta em todo agente, a rota no começo do turno. */
-  usePanels(panels: { get(sessionId: string): Promise<IConversationPanel> }): void {
+  usePanels(panels: IPanelAccess): void {
     this.panels = panels
   }
 
-  private panels?: { get(sessionId: string): Promise<IConversationPanel> }
+  private panels?: IPanelAccess
 
   /** As variáveis secretas (ver `ResourceSecrets.Service`): o ambiente do turno e os nomes do prompt. Ligadas na composição. */
   useSecrets(secrets: { envFor(agentId: string, sessionId: string): { env: Record<string, string> }; ambientFor(agent: IAgent): IAmbientSecrets | undefined }): void {

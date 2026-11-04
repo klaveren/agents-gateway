@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { applyPanelOp, emptyPanel, IConversationPanel, normalizePanel, panelMarkdown, panelTurnNote, TPanelOp } from './ConversationPanel.Model'
+import { applyPanelOp, emptyPanel, freshAnswers, IConversationPanel, markAnswersDelivered, normalizePanel, panelMarkdown, panelTurnNote, TPanelOp } from './ConversationPanel.Model'
 
 const now = new Date('2026-11-04T21:00:00Z')
 const run = (panel: IConversationPanel, ...ops: TPanelOp[]) => ops.reduce((current, op, turn) => applyPanelOp(current, op, { turn, by: 'maya', now }).panel, panel)
@@ -66,12 +66,27 @@ describe('ConversationPanel.Model', () => {
     assert.match(note, /Objetivo: Fechar a migração/)
     assert.match(note, /Em andamento:\n- p2 Triggers \(com agent-god, gw_1\)/)
     assert.match(note, /Na fila:\n- p3 Specs/)
-    assert.match(note, /Perguntas para a pessoa:\n- q1 Aprovar\?/)
+    assert.match(note, /Perguntas para a pessoa \(.*feche com conversation_panel answer\):\n- q1 Aprovar\?/)
     assert.doesNotMatch(note, /Ledgers/)
     assert.match(note, /\(1 entregue;/)
     assert.match(panelTurnNote(panel, true), /não entrou no painel/)
     assert.strictEqual(panelTurnNote(emptyPanel()), '')
     assert.match(panelTurnNote(emptyPanel(), true), /não entrou no painel/)
+  })
+
+  it('a resposta da pessoa no painel vai ao agente UMA vez; a do agente, nunca', () => {
+    const asked = run(emptyPanel(), { op: 'ask', text: 'Qual porta?' }, { op: 'ask', text: 'Pode subir?' })
+    const byPerson = applyPanelOp(asked, { op: 'answer', id: 'q1', answer: '27017' }, { by: 'henrique', now, actor: 'person' }).panel
+    const both = applyPanelOp(byPerson, { op: 'answer', id: 'q2', answer: 'sim, no chat' }, { by: 'maya', now }).panel
+    assert.deepStrictEqual(
+      freshAnswers(both).map((question) => question.id),
+      ['q1'],
+    )
+    assert.match(panelTurnNote(both), /A pessoa respondeu no painel \(considere agora\):\n- q1 Qual porta\? → 27017/)
+    assert.doesNotMatch(panelTurnNote(both), /Pode subir/)
+    const seen = markAnswersDelivered(both, ['q1'])
+    assert.deepStrictEqual(freshAnswers(seen), [])
+    assert.doesNotMatch(panelTurnNote(seen), /respondeu no painel/)
   })
 
   it('o Markdown tem tudo, e o gravado é lido tolerante', () => {

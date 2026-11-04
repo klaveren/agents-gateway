@@ -148,6 +148,21 @@ describe('ConversationPanel', () => {
     expect(patches()).toEqual([{ op: 'answer', id: 'q1', answer: 'sábado' }])
   })
 
+  it('as respondidas descem recolhidas, com o aviso de que o agente ainda não viu', async () => {
+    current = {
+      ...fake(),
+      questions: [
+        { id: 'q1', text: 'Qual janela?' },
+        { id: 'q2', text: 'Qual porta?', answer: '27017', answeredBy: 'person', delivered: false },
+      ],
+    }
+    const host = await mount()
+    expect(host.querySelector('[data-question="q1"]')).not.toBeNull()
+    expect(host.querySelector('[data-question="q2"]')).toBeNull()
+    await click(host.querySelector('[data-test="answered-toggle"]'))
+    expect(host.querySelector('[data-test="answered"]')?.textContent).toContain('o agente vê no próximo turno')
+  })
+
   it('edita o objetivo com set_goal', async () => {
     const host = await mount()
     await click(host.querySelector('[data-test="goal-edit"]'))
