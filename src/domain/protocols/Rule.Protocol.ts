@@ -1,9 +1,10 @@
 import { ICoreProtocol } from '@domain/models/Protocol.Model'
+import { MIGRATION_SECTION } from './Migration.Section'
 
 /** O protocolo do core para construir uma RULE. ⚠️ Mudou o texto, sobe a versão. */
 export const RULE_PROTOCOL: ICoreProtocol = {
   kind: 'rule',
-  version: '1.2.1',
+  version: '1.2.2',
   title: 'Protocolo de construção de rule',
   body: `# Protocolo de construção de rule
 
@@ -35,5 +36,7 @@ Quando o artefato vem de outro formato (pelo Importador), o texto da fonte é pr
 - **Carimbo, histórico de autoria, metadado do sistema antigo**: remova sempre (remove, com o motivo).
 - **Arquivo misto** (leis e explicação juntas): as leis saem com split, uma rule cada; o que sobra de explicação não é rule — diga que vai para uma spec e qual trecho.
 
-⛔ Uma rule acima de 4 KB é recusada ao entregar: divida em várias ou diga que o item é spec. No ambíguo, pergunte à pessoa (na conversa que roda sozinha, fique com o mais fiel à fonte e avise no fim).`,
+⛔ Uma rule acima de 4 KB é recusada ao entregar: divida em várias ou diga que o item é spec. No ambíguo, pergunte à pessoa (na conversa que roda sozinha, fique com o mais fiel à fonte e avise no fim).
+
+${MIGRATION_SECTION}`,
 }

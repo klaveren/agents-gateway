@@ -19,7 +19,7 @@ import { IEditDiagnostics, makeEditDiagnostics } from '@infra/tools/Edit.Diagnos
 import { DEFAULT_MCP_SERVER, ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { makeAgents } from './Agents.Factory'
 import { makeCredentials } from './Credentials.Factory'
-import { makeImportBuild } from './ImportBuild.Factory'
+import { makeImportBuild, makeRepositoryBrowse } from './ImportBuild.Factory'
 
 export interface ITools {
   /** Onde a ferramenta `delegate_to_agent` encontra o serviço (preenchido em `makeUsecases`). */
@@ -91,6 +91,7 @@ export function makeTools(): ITools {
               listRepository: (conversationId, options) => makeImportBuild().listRepository(conversationId, options),
               readRepository: (conversationId, options) => makeImportBuild().readRepository(conversationId, options),
             },
+            repositoryBrowse: makeRepositoryBrowse(),
             todos: todoStore(),
             permissions: lazyPermissions,
             agentTerminal: (agentId) => makeAgents().get(agentId)?.terminal,

@@ -1,7 +1,8 @@
 import { IImportConversationInput, IImportRepositoryFiles, IImportSourceFile, ImportBuildService } from '@application/ImportBuild.Service'
 import { IImportTurnResult, ImportRunService } from '@application/ImportRun.Service'
 import { listRepoFiles, readRepoFile, readRepoText } from '@infra/import/Repo.Tree'
-import { resolveWorkFolder } from '@infra/workspace/Work.Folder'
+import { listRepositories, resolveWorkFolder } from '@infra/workspace/Work.Folder'
+import { RepositoryBrowseService } from '@application/RepositoryBrowse.Service'
 import { makeGuidance } from './Guidance.Factory'
 import { importJobRepository } from './ImportJobs.Factory'
 import { makeProjects } from './Projects.Factory'
@@ -87,4 +88,25 @@ export function makeImportRuns(): ImportRunService {
 /** Quem roda o turno de fundo (o controller de agentes, no contexto de quem pediu). */
 export function useImportTurns(prepare: (conversationId: string, message: string) => () => Promise<IImportTurnResult>): void {
   turns = prepare
+}
+
+let browse: RepositoryBrowseService | undefined
+
+/**
+ * A leitura do repositório pelo CONSTRUTOR do tipo (fora do Importador): o mesmo repositório do projeto e a mesma
+ * contenção, mascarada — com o código, para conferir o que a fonte cita antes de gravar.
+ */
+export function makeRepositoryBrowse(): RepositoryBrowseService {
+  browse ??= new RepositoryBrowseService({
+    files: importRepositoryFiles(),
+    repositories: (projectId) => {
+      try {
+        return listRepositories(makeProjects().folderOf(projectId)).map((item) => item.name)
+      } catch {
+        return []
+      }
+    },
+    projectIgnore: (projectId) => makeProjects().importIgnore(projectId),
+  })
+  return browse
 }

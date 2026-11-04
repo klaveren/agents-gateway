@@ -521,6 +521,62 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   )
 
   server.registerTool(
+    'import_items',
+    {
+      description:
+        'The IMPORTER queue of a project, without content: per repository, how many items are in each state and, per item, its key, kind, state, source path and who imported it outside the importer (importedBy). Filter by state (pending, applied, skipped…), kind or repository. Use it to plan a migration and to CHECK, after saving with importedFrom, that the item left the queue.',
+      inputSchema: {
+        projectId: z.string(),
+        repository: z.string().optional(),
+        state: z.string().optional().describe('pending, drafting, review, approved, rejected, skipped, applied, error or stale'),
+        kind: z.string().optional().describe('skill, command, rule, spec, adr, knowledge, agent, trigger…'),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ projectId, repository, state, kind }) => {
+      const base = `/projects/${encodeURIComponent(projectId)}/import/jobs`
+      const jobs = await api('GET', base)
+      if (!jobs.ok) return reply(jobs)
+      const summaries = ((jobs.result ?? []) as Array<{ id: string; repository: string; byState?: Record<string, number> }>).filter(
+        (job) => !repository || job.repository === repository,
+      )
+      const out: Array<Record<string, unknown>> = []
+      for (const summary of summaries) {
+        const full = await api('GET', `${base}/${encodeURIComponent(summary.id)}`)
+        if (!full.ok) return reply(full)
+        const job = full.result as {
+          scan?: { items?: Array<{ key: string; kind: string; sources?: Array<{ path: string }> }> }
+          states?: Array<{ key: string; state: string; kind?: string; goneAt?: string; importedBy?: { kind: string; id: string; agentId?: string } }>
+        }
+        const states = new Map((job.states ?? []).map((entry) => [entry.key, entry]))
+        const items = (job.scan?.items ?? [])
+          .map((item) => {
+            const status = states.get(item.key)
+            const effective = status?.kind ?? item.kind
+            return {
+              key: item.key,
+              kind: effective,
+              state: status?.state ?? 'pending',
+              path: item.sources?.[0]?.path,
+              ...(status?.goneAt ? { gone: true } : {}),
+              ...(status?.importedBy ? { importedBy: `${status.importedBy.agentId ?? 'api'} → ${status.importedBy.kind} ${status.importedBy.id}` } : {}),
+            }
+          })
+          .filter((item) => (!state || item.state === state) && (!kind || item.kind === kind))
+        out.push({
+          repository: summary.repository,
+          jobId: summary.id,
+          byState: summary.byState,
+          items: items.length,
+          list: items.slice(0, 400),
+          ...(items.length > 400 ? { truncated: 'narrow it with state or kind' } : {}),
+        })
+      }
+      return text(out)
+    },
+  )
+
+  server.registerTool(
     'catalog_history',
     {
       description:

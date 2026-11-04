@@ -1,9 +1,10 @@
 import { ICoreProtocol } from '@domain/models/Protocol.Model'
+import { MIGRATION_SECTION } from './Migration.Section'
 
 /** O protocolo do core para construir uma ADR. ⚠️ Mudou o texto, sobe a versão. */
 export const ADR_PROTOCOL: ICoreProtocol = {
   kind: 'adr',
-  version: '1.2.0',
+  version: '1.2.1',
   title: 'Protocolo de construção de ADR',
   body: `# Protocolo de construção de ADR
 
@@ -45,5 +46,7 @@ Uma ADR registra UMA DECISÃO e o PORQUÊ. A conversa recebe só o índice e o a
 - Relação com outro documento é ANEXO no painel (docIds; o grande, por referência em docRefs), nunca caminho de arquivo citado no texto.
 
 ## Modo importação
-Quando o artefato vem de outro formato (pelo Importador), o texto da fonte é preservado: você não o reescreve, só o ajusta ao padrão do ambiente, propondo operações (metadados, caminho citado → vínculo no painel, nível de título, divisão por título, remoção do que é do sistema antigo, com o motivo). Antes de decidir, confira no repositório só o necessário (list_repository_files, read_repository_file; cada leitura gasta tokens): se o que a ADR cita existe e se ela é a fonte da verdade ou uma cópia gerada. ADR com o histórico de decisões: o histórico é conteúdo; só o carimbo do sistema antigo sai. No ambíguo, pergunte à pessoa.`,
+Quando o artefato vem de outro formato (pelo Importador), o texto da fonte é preservado: você não o reescreve, só o ajusta ao padrão do ambiente, propondo operações (metadados, caminho citado → vínculo no painel, nível de título, divisão por título, remoção do que é do sistema antigo, com o motivo). Antes de decidir, confira no repositório só o necessário (list_repository_files, read_repository_file; cada leitura gasta tokens): se o que a ADR cita existe e se ela é a fonte da verdade ou uma cópia gerada. ADR com o histórico de decisões: o histórico é conteúdo; só o carimbo do sistema antigo sai. No ambíguo, pergunte à pessoa.
+
+${MIGRATION_SECTION}`,
 }

@@ -5,6 +5,7 @@ import {
   ATLAS_AGENT_LINE,
   ATLAS_BUILDERS_SECTION,
   ATLAS_KNOWLEDGE_LINE,
+  ATLAS_MIGRATION_SECTION,
   BUILDER_DELEGATIONS,
   RETIRED_ATLAS_AGENT_TOOL,
   RETIRED_ATLAS_TOOLS,
@@ -67,6 +68,13 @@ export const AGENT_MIGRATIONS: readonly IAgentMigration[] = [
     agentIds: ['atlas', 'atlas-admin'],
     change: (agent) =>
       agent.systemPrompt.includes('save_schedule') ? undefined : { ...agent, systemPrompt: `${agent.systemPrompt.trimEnd()}\n\n## Agendamentos\n${ATLAS_SCHEDULES_SECTION}` },
+  },
+  {
+    // Migrar um ambiente: o Atlas que já existe aprende o fluxo (as ferramentas, `import_items`, chegam pela semente).
+    key: 'atlas-migration',
+    agentIds: ['atlas', 'atlas-admin'],
+    change: (agent) =>
+      agent.systemPrompt.includes('## Migrar um ambiente para o gateway') ? undefined : { ...agent, systemPrompt: `${agent.systemPrompt.trimEnd()}\n\n${ATLAS_MIGRATION_SECTION}` },
   },
   {
     // A lista de tarefas passou a ser do gateway: quem tinha a nativa do Claude (`sdk:TodoWrite`) ganha a `update_todos`.

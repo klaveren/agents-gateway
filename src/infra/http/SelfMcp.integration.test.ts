@@ -146,6 +146,7 @@ describe('MCP do próprio gateway (integração)', () => {
       'get_initial_context',
       'get_protocol',
       'hook_deliveries',
+      'import_items',
       'list_docs',
       'list_hooks',
       'list_models',

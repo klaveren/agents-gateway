@@ -104,6 +104,16 @@ describe('AGENT_SEED', () => {
     assert.strictEqual(migration.change(AGENT_SEED[0]), undefined)
   })
 
+  it('a migração da migração: o Atlas que já existe aprende a migrar um ambiente (import_items, construtor, importedFrom) — uma vez', () => {
+    const migration = AGENT_MIGRATIONS.find((item) => item.key === 'atlas-migration')!
+    const changed = migration.change({ ...AGENT_SEED[0], systemPrompt: 'antigo' })!
+    assert.match(changed.systemPrompt, /^antigo\n\n## Migrar um ambiente para o gateway[\s\S]*import_items[\s\S]*importedFrom/)
+    assert.strictEqual(migration.change(changed), undefined)
+    // O Atlas novo já nasce com a seção e com a ferramenta.
+    assert.strictEqual(migration.change(AGENT_SEED[0]), undefined)
+    assert.ok(AGENT_SEED[0].allowedTools.includes('mcp:gateway/import_items'))
+  })
+
   it('a migração do construtor de agentes tira o save_agent do Atlas que já existe e ensina a delegar — uma vez', () => {
     const repository = new NullAgentRepository()
     repository.save({ ...AGENT_SEED[0], systemPrompt: 'antigo', allowedTools: ['mcp:gateway/save_agent', 'mcp:gateway/list_agents'] }, 'seed')
