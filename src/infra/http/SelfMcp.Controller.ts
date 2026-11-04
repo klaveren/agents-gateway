@@ -36,6 +36,21 @@ function enabledOnly(result: unknown, keep: (item: Record<string, unknown>) => b
   return Array.isArray(result) ? (result as Array<Record<string, unknown>>).filter((item) => item.enabled === true && keep(item)) : result
 }
 
+/** O índice dos recursos: o que diz QUAL é e QUANDO usar, sem o corpo (lido um a um, com o id). */
+function resourceIndex(result: unknown): unknown {
+  if (!Array.isArray(result)) return result
+  return (result as Array<Record<string, unknown>>).map((resource) => ({
+    id: resource.id,
+    kind: resource.kind,
+    ...(resource.projectId ? { projectId: resource.projectId } : {}),
+    description: resource.description,
+    ...(Array.isArray(resource.docIds) && resource.docIds.length ? { docIds: resource.docIds } : {}),
+    ...(Array.isArray(resource.files) && resource.files.length ? { files: resource.files.length } : {}),
+    ...(Array.isArray(resource.importIssues) && resource.importIssues.length ? { importIssues: resource.importIssues.length } : {}),
+    bodyChars: typeof resource.body === 'string' ? resource.body.length : 0,
+  }))
+}
+
 /** O turno agregado, sem o que só a tela usa. */
 function turnView(result: unknown) {
   const turn = (result ?? {}) as Record<string, unknown>
@@ -493,11 +508,19 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'list_resources',
     {
       description:
-        'The skills and commands of one scope, in full. A skill is a way of doing something that an agent loads with use_resource when the subject comes up; a command is a ready request the person fires with /name args (its body uses $ARGUMENTS). Both can carry specs/ADRs (docIds). Agents use all of their scope by default (global ones, plus those of their project); the Resources tab of an agent can restrict that. Absent projectId = the global ones.',
-      inputSchema: { projectId: z.string().optional(), kind: z.enum(['skill', 'command']).optional() },
+        'The skills and commands of one scope: without id, the INDEX (id, kind, description, attached docs, file count and body size, never the body); with id, that one in full (body, files, importIssues). A skill is a way of doing something that an agent loads with use_resource when the subject comes up; a command is a ready request the person fires with /name args (its body uses $ARGUMENTS). Both can carry specs/ADRs (docIds). Agents use all of their scope by default (global ones, plus those of their project); the Resources tab of an agent can restrict that. Absent projectId = the global ones.',
+      inputSchema: {
+        id: z.string().optional().describe('One resource in full; absent = the index of the scope'),
+        projectId: z.string().optional(),
+        kind: z.enum(['skill', 'command']).optional(),
+      },
       annotations: { readOnlyHint: true },
     },
-    async ({ projectId, kind }) => reply(await api('GET', '/resources', { query: { project: projectId ?? 'global', kind } })),
+    async ({ id, projectId, kind }) => {
+      if (id) return reply(await api('GET', `/resources/${encodeURIComponent(id)}`))
+      // ⚖️ O índice, nunca os corpos: 55 skills inteiras passavam de 100 mil caracteres e estouravam a resposta.
+      return reply(await api('GET', '/resources', { query: { project: projectId ?? 'global', kind } }), resourceIndex)
+    },
   )
 
   server.registerTool(

@@ -309,6 +309,20 @@ describe('MCP do próprio gateway (integração)', () => {
     )
   })
 
+  it('⚖️ list_resources sem id é o ÍNDICE (sem os corpos); com id, o recurso inteiro', async () => {
+    const client = await connect(admin)
+    const body = 'passo '.repeat(5_000)
+    const saved = (await client.callTool({ name: 'save_resource', arguments: { id: 'revisar-pr', kind: 'skill', description: 'Revisa um pull request', body } })) as {
+      isError?: boolean
+    }
+    assert.ok(!saved.isError, JSON.stringify(saved).slice(0, 300))
+    const index = json(await client.callTool({ name: 'list_resources', arguments: { kind: 'skill' } }))
+    const entry = index.find((one: { id: string }) => one.id === 'revisar-pr')
+    assert.deepStrictEqual(entry, { id: 'revisar-pr', kind: 'skill', description: 'Revisa um pull request', bodyChars: body.length })
+    assert.ok(!JSON.stringify(index).includes('passo passo'), 'o corpo não vem no índice')
+    assert.strictEqual(json(await client.callTool({ name: 'list_resources', arguments: { id: 'revisar-pr' } })).body, body)
+  })
+
   it('get_doc traz os problemas da importação, e resolve_import_issue tira um (pela mesma rota da tela)', async () => {
     guidance.createDoc(
       {
