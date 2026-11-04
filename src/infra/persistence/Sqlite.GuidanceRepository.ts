@@ -4,7 +4,7 @@ import { dirname } from 'node:path'
 import { DatabaseSync, SQLInputValue } from 'node:sqlite'
 import type { IAgentTrigger } from '@domain/models/Agent.Model'
 import { IImportProblem, problemList } from '@domain/models/ImportProblem.Model'
-import { IProjectDoc, TDocKind } from '@domain/models/ProjectDoc.Model'
+import { DOC_STATUSES, IProjectDoc, TDocKind, TDocStatus } from '@domain/models/ProjectDoc.Model'
 import { IProtocolAddendum, TProtocolKind } from '@domain/models/Protocol.Model'
 import { IAgentResources, IResource, NO_RESOURCES, TResourceKind } from '@domain/models/Resource.Model'
 import { IRule } from '@domain/models/Rule.Model'
@@ -113,6 +113,9 @@ const ADDED_COLUMNS: ReadonlyArray<{ table: string; column: string; definition: 
   { table: 'resources', column: 'tags', definition: "TEXT NOT NULL DEFAULT '[]'" },
   { table: 'project_docs', column: 'tags', definition: "TEXT NOT NULL DEFAULT '[]'" },
   { table: 'rules', column: 'tags', definition: "TEXT NOT NULL DEFAULT '[]'" },
+  // O status e a substituição do documento (ver `TDocStatus`); sem status = aceito.
+  { table: 'project_docs', column: 'status', definition: 'TEXT' },
+  { table: 'project_docs', column: 'supersedes', definition: "TEXT NOT NULL DEFAULT '[]'" },
 ]
 
 type TRow = Record<string, unknown>
@@ -136,6 +139,8 @@ const DOC_COLUMNS: Record<keyof TDocPatch, string> = {
   docIds: 'doc_ids',
   docRefs: 'doc_refs',
   importIssues: 'import_issues',
+  status: 'status',
+  supersedes: 'supersedes',
   tags: 'tags',
   updatedAt: 'updated_at',
   updatedBy: 'updated_by',
@@ -183,7 +188,8 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
     const where = [`docs_fts MATCH ?`, `project_id IN (${scopes.map(() => '?').join(', ')})`, ...(kind ? ['kind = ?'] : [])]
     const rows = this.db
       .prepare(
-        `SELECT id, kind, project_id, title, summary, snippet(docs_fts, 5, '«', '»', '…', 24) AS excerpt
+        `SELECT id, kind, project_id, title, summary, snippet(docs_fts, 5, '«', '»', '…', 24) AS excerpt,
+                (SELECT status FROM project_docs WHERE project_docs.id = docs_fts.id) AS status
          FROM docs_fts WHERE ${where.join(' AND ')} ORDER BY bm25(docs_fts, 0, 0, 0, 10, 4, 1) LIMIT ?`,
       )
       .all(match, ...scopes.map((scope) => scope ?? ''), ...(kind ? [kind] : []), limit) as TRow[]
@@ -194,6 +200,7 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
       title: row.title as string,
       summary: row.summary as string,
       excerpt: row.excerpt as string,
+      ...(typeof row.status === 'string' && row.status !== 'accepted' ? { status: row.status as TDocStatus } : {}),
     }))
   }
 
@@ -250,7 +257,7 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
   insertDoc(doc: IProjectDoc): void {
     this.db
       .prepare(
-        'INSERT INTO project_docs (id, kind, project_id, title, summary, body, doc_ids, doc_refs, import_issues, tags, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO project_docs (id, kind, project_id, title, summary, body, doc_ids, doc_refs, import_issues, tags, status, supersedes, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         doc.id,
@@ -263,6 +270,8 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
         JSON.stringify(doc.docRefs ?? []),
         JSON.stringify(doc.importIssues ?? []),
         JSON.stringify(doc.tags ?? []),
+        doc.status ?? null,
+        JSON.stringify(doc.supersedes ?? []),
         doc.createdAt.toISOString(),
         doc.updatedAt.toISOString(),
         doc.updatedBy ?? null,
@@ -289,6 +298,11 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
         docIds: (parent.docIds ?? []).filter((docId) => docId !== id),
         docRefs: (parent.docRefs ?? []).filter((docId) => docId !== id),
       } satisfies TDocPatch)
+    // E da substituição de quem o substituía (o substituído que sobra continua com o status que tem).
+    for (const row of this.db.prepare('SELECT * FROM project_docs WHERE supersedes LIKE ?').all(`%"${id}"%`) as TRow[]) {
+      const other = toDoc(row)
+      if (other.supersedes?.includes(id)) this.patch('project_docs', DOC_COLUMNS, other.id, { supersedes: other.supersedes.filter((docId) => docId !== id) } satisfies TDocPatch)
+    }
     this.db.prepare('DELETE FROM docs_fts WHERE id = ?').run(id)
     return this.db.prepare('DELETE FROM project_docs WHERE id = ?').run(id).changes > 0
   }
@@ -495,6 +509,8 @@ function toDoc(row: TRow): IProjectDoc {
   const docRefs = idList(row.doc_refs).filter((id) => docIds.includes(id))
   const importIssues = problemsOf(row.import_issues)
   const tags = idList(row.tags)
+  const supersedes = idList(row.supersedes)
+  const status = typeof row.status === 'string' && (DOC_STATUSES as readonly string[]).includes(row.status) && row.status !== 'accepted' ? (row.status as TDocStatus) : undefined
   return {
     id: row.id as string,
     kind: row.kind as TDocKind,
@@ -506,6 +522,8 @@ function toDoc(row: TRow): IProjectDoc {
     ...(docRefs.length ? { docRefs } : {}),
     ...(importIssues.length ? { importIssues } : {}),
     ...(tags.length ? { tags } : {}),
+    ...(status ? { status } : {}),
+    ...(supersedes.length ? { supersedes } : {}),
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
     ...(row.updated_by ? { updatedBy: row.updated_by as string } : {}),

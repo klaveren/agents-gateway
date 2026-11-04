@@ -1,4 +1,4 @@
-import { IProjectDoc, TDocKind } from '@domain/models/ProjectDoc.Model'
+import { IProjectDoc, TDocKind, TDocStatus } from '@domain/models/ProjectDoc.Model'
 import { IProtocolAddendum, TProtocolKind } from '@domain/models/Protocol.Model'
 import { IAgentResources, IResource, TResourceKind } from '@domain/models/Resource.Model'
 import { IRule } from '@domain/models/Rule.Model'
@@ -8,7 +8,9 @@ export type TGuidanceScope = string | null
 
 /** `projectId: null` move para o global. */
 export type TRulePatch = Partial<Pick<IRule, 'title' | 'body' | 'enabled' | 'position' | 'tags' | 'updatedAt' | 'updatedBy'>> & { projectId?: string | null }
-export type TDocPatch = Partial<Pick<IProjectDoc, 'kind' | 'title' | 'summary' | 'body' | 'docIds' | 'docRefs' | 'importIssues' | 'tags' | 'updatedAt' | 'updatedBy'>> & {
+export type TDocPatch = Partial<
+  Pick<IProjectDoc, 'kind' | 'title' | 'summary' | 'body' | 'docIds' | 'docRefs' | 'importIssues' | 'tags' | 'status' | 'supersedes' | 'updatedAt' | 'updatedBy'>
+> & {
   projectId?: string | null
 }
 
@@ -20,6 +22,8 @@ export interface IDocHit {
   title: string
   summary: string
   excerpt: string
+  /** Ausente = aceito (ver `TDocStatus`): a busca acha também o substituído e o arquivado, marcados. */
+  status?: TDocStatus
 }
 
 /** As rules e os documentos (specs e ADRs). Síncrono, como o resto do cadastro. */

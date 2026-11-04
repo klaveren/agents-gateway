@@ -5,7 +5,7 @@ import { CatalogRestoreInvalidError } from '@domain/errors/Domain.Error'
 import { IAgent, IAgentTrigger } from '@domain/models/Agent.Model'
 import { problemList } from '@domain/models/ImportProblem.Model'
 import { IMcpContainer, IMcpProcess, IMcpServerConfig, mcpServerKey, TMcpAuth, TMcpKind, TMcpTransport } from '@domain/models/McpServer.Model'
-import { TDocKind } from '@domain/models/ProjectDoc.Model'
+import { TDocKind, TDocStatus } from '@domain/models/ProjectDoc.Model'
 import { ALL_RESOURCES, IAgentResources, TResourceKind } from '@domain/models/Resource.Model'
 import { IPermissionRule } from '@domain/Permission.Policy'
 import type { AgentCatalog } from './Agent.Catalog'
@@ -227,6 +227,9 @@ export class CatalogWriter implements ICatalogWriter {
       docRefs: list(body.docRefs),
       importIssues: problemList(body.importIssues),
       tags: list(body.tags),
+      // Sem status no documento = aceito; sem a lista = não substitui nenhum.
+      status: (text(body.status) || 'accepted') as TDocStatus,
+      supersedes: list(body.supersedes),
     }
     return {
       commit: (by) => {

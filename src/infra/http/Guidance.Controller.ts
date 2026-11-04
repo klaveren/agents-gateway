@@ -1,7 +1,7 @@
 import { Request, Response } from 'express'
 import { z } from 'zod'
 import { estimateTokens, GuidanceService } from '@application/Guidance.Service'
-import { DOC_KINDS, TDocKind } from '@domain/models/ProjectDoc.Model'
+import { DOC_KINDS, DOC_STATUSES, TDocKind, TDocStatus } from '@domain/models/ProjectDoc.Model'
 import { TProtocolKind } from '@domain/models/Protocol.Model'
 import { RESOURCE_KINDS, TResourceKind } from '@domain/models/Resource.Model'
 import { TGuidanceScope } from '@domain/ports/GuidanceRepository.Port'
@@ -69,6 +69,9 @@ const docSchema = z.object({
   docIds: z.array(z.string().max(80)).max(50).optional(),
   docRefs: z.array(z.string().max(80)).max(50).optional(),
   tags,
+  status: z.enum(DOC_STATUSES as [TDocStatus, ...TDocStatus[]]).optional(),
+  /** Os que este substitui (ver `IProjectDoc.supersedes`). Ausente na edição = mantém; `[]` tira todos. */
+  supersedes: z.array(z.string().max(80)).max(50).optional(),
 })
 
 /**
@@ -154,14 +157,25 @@ export class GuidanceController {
       await this.requireAdmin('listDocs')
       const kind = typeof req.query.kind === 'string' && (DOC_KINDS as readonly string[]).includes(req.query.kind) ? (req.query.kind as TDocKind) : undefined
       // `loadedIn`: os projetos que carregam a spec inteira (o contexto inicial deles). `tokens`: o peso estimado dela.
-      return this.deps.guidance.docs(scopeOf(req), kind).map(({ body, ...doc }) => ({ ...doc, tokens: estimateTokens(body), loadedIn: this.deps.guidance.loadedIn(doc.id) }))
+      const docs = this.deps.guidance.docs(scopeOf(req), kind)
+      // Quem substitui cada um (o inverso de `supersedes`), da própria lista: sem uma leitura por documento.
+      const by = new Map<string, string[]>()
+      for (const doc of docs) for (const other of doc.supersedes ?? []) by.set(other, [...(by.get(other) ?? []), doc.id])
+      return docs.map(({ body, ...doc }) => ({
+        ...doc,
+        ...(by.get(doc.id)?.length ? { supersededBy: by.get(doc.id) } : {}),
+        tokens: estimateTokens(body),
+        loadedIn: this.deps.guidance.loadedIn(doc.id),
+      }))
     })
   }
 
   async getDoc(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
       await this.requireAdmin('getDoc')
-      return this.deps.guidance.doc(req.params.id as string)
+      const doc = this.deps.guidance.doc(req.params.id as string)
+      const by = this.deps.guidance.supersededBy(doc)
+      return by.length ? { ...doc, supersededBy: by } : doc
     })
   }
 

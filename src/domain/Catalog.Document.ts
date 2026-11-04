@@ -216,6 +216,9 @@ export const DOC_SHAPE: TShape<IProjectDoc> = {
   importIssues: { list: IMPORT_PROBLEM_SHAPE },
   // Agrupar e filtrar: a ordem não importa.
   tags: 'set',
+  status: 'value',
+  // Quais este substitui: a ordem não importa.
+  supersedes: 'set',
   createdAt: { omit: META },
   updatedAt: { omit: META },
   updatedBy: { omit: META },
