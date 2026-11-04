@@ -1062,6 +1062,23 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   )
 
   server.registerTool(
+    'attach_resource_files',
+    {
+      description:
+        'Bring files (scripts, templates, data) INTO a skill, command or agent: the GATEWAY copies them on the server from a folder of the project — e.g. `repositories/logiccus/.agents/skills/business-bank-efi/scripts` (the old format) — you only point the path; you never read or write the content. Files land in the resource folder (`projects/<project>/skills/<id>/…`, `…/commands/<id>/…`, `…/agents/<id>/…`), which is READ-ONLY for agents: use_resource lists them with the absolute path, run them from there, cite them in the body by relative path (`scripts/balance.mjs`). Left out, with the reason: node_modules, .git, .env*, .credentials, private keys, binaries, files over 1 MB, and any file where the secret mask finds a secret — secrets are secret variables (request_secret), never files. Adds to the current list (same path replaces); `remove` drops paths or folders. Recorded in the catalog history. Confirm with the person first.',
+      inputSchema: {
+        scope: z.enum(['resource', 'agent']).describe('resource (a skill or command) or agent'),
+        id: z.string().describe('The skill/command id, or the agent id.'),
+        from: z.string().describe('A file or folder, relative to the PROJECT folder (e.g. repositories/<repo>/.agents/skills/<id>/scripts).'),
+        to: z.string().optional().describe('Where inside the resource, e.g. scripts (default: the resource root).'),
+        remove: z.array(z.string()).optional().describe('Paths (or folders) to drop from the resource.'),
+        projectId: z.string().optional().describe('Only for a GLOBAL resource: the project whose folder holds `from`.'),
+      },
+    },
+    async ({ scope, id, ...body }) => reply(await api('POST', `/${scope === 'agent' ? 'agents' : 'resources'}/${encodeURIComponent(id)}/files/import`, { body })),
+  )
+
+  server.registerTool(
     'save_resource',
     {
       description:

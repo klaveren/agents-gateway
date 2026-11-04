@@ -3988,6 +3988,80 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/resources/{id}/files/import': {
+      post: {
+        summary:
+          'Copy files into the skill or command from a folder of the project (its repositories), on the server: the caller only points the path. Left out with the reason: node_modules, .git, .env*, .credentials, private keys, binaries, files over 1 MB and any file with a secret. Adds to the current list (same path replaces); `remove` drops paths or folders. Administrators only',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            required: ['from'],
+            properties: {
+              from: { type: 'string', description: 'A file or folder relative to the project folder, e.g. repositories/<repo>/.agents/skills/<id>/scripts.' },
+              to: { type: 'string', description: 'Where inside the resource (default: its root).' },
+              remove: { type: 'array', items: { type: 'string' } },
+              projectId: { type: 'string', description: 'Only for a global resource: the project whose folder holds `from`.' },
+            },
+          }),
+        },
+        responses: {
+          '200': {
+            description: 'Imported',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  added: { type: 'array', items: { type: 'string' } },
+                  skipped: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, reason: { type: 'string' } } } },
+                  files: { type: 'array', items: { type: 'string' } },
+                },
+              }),
+            ),
+          },
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
+    '/agents/{agentId}/files/import': {
+      post: {
+        summary:
+          'Copy files into the agent from a folder of the project (its repositories), on the server: the caller only points the path. Left out with the reason: node_modules, .git, .env*, .credentials, private keys, binaries, files over 1 MB and any file with a secret. Adds to the current list (same path replaces); `remove` drops paths or folders. Administrators only',
+        parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            required: ['from'],
+            properties: {
+              from: { type: 'string', description: 'A file or folder relative to the project folder, e.g. repositories/<repo>/.agents/skills/<id>/scripts.' },
+              to: { type: 'string', description: 'Where inside the resource (default: its root).' },
+              remove: { type: 'array', items: { type: 'string' } },
+              projectId: { type: 'string', description: 'Only for a global resource: the project whose folder holds `from`.' },
+            },
+          }),
+        },
+        responses: {
+          '200': {
+            description: 'Imported',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  added: { type: 'array', items: { type: 'string' } },
+                  skipped: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, reason: { type: 'string' } } } },
+                  files: { type: 'array', items: { type: 'string' } },
+                },
+              }),
+            ),
+          },
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
     '/secret-requests': {
       post: {
         summary:

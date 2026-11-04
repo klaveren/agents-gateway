@@ -252,6 +252,11 @@ export function makeGuidanceController(): GuidanceController {
     files: makeResourceFiles(),
     agentFiles: (agentId, files, by) => makeAgents().saveFiles(agentId, files, by),
     resourceRemoved: (kind, id) => makeResourceSecrets().removeScope(kind, id),
+    projectDir: (projectId) => (makeProjects().exists(projectId) ? makeProjects().folderOf(projectId) : undefined),
+    agentFilesOf: (agentId) => {
+      const agent = makeAgents().entry(agentId)?.agent
+      return agent ? { files: agent.files ?? [], ...(agent.projectId ? { projectId: agent.projectId } : {}) } : undefined
+    },
     secretsIn: (text) =>
       makeSecretMasker()
         .scan(text)

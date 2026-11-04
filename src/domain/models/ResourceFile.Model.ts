@@ -87,5 +87,5 @@ export function filesNote(dir: string, files: readonly IResourceFile[], what: st
     .slice(0, 50)
     .map((file) => `- ${file.path} (${file.bytes} bytes)`)
   const more = files.length > 50 ? `\n- … e mais ${files.length - 50}` : ''
-  return `\n\n## Arquivos ${what}\n\nPasta (só leitura): ${dir}\nRode pelo terminal a partir dela (ex.: \`node ${dir}/${sortFiles(files)[0].path}\`); não grave nela.\n\n${list.join('\n')}${more}`
+  return `\n\n## Arquivos ${what}\n\nPasta (só leitura): ${dir}\nRode pelo terminal a partir dela (ex.: \`node ${dir}/${sortFiles(files)[0].path}\`); não grave nela — para trazer ou trocar arquivos, \`attach_resource_files\` (o gateway copia do repositório).\n\n${list.join('\n')}${more}`
 }

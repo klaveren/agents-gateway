@@ -1,3 +1,4 @@
+import { importRepositoryFiles, mergeFiles } from '@application/ResourceFileImport'
 import { Request, Response } from 'express'
 import { z } from 'zod'
 import { estimateTokens, GuidanceService } from '@application/Guidance.Service'
@@ -24,6 +25,10 @@ export interface IGuidanceControllerDeps {
   resourceRemoved?: (kind: 'skill' | 'command', id: string) => void
   /** Os segredos que um texto traz (a máscara do gateway): arquivo com segredo não entra. */
   secretsIn?: (text: string) => string[]
+  /** A pasta de um projeto (de onde `…/files/import` copia: os repositórios dele). Ausente = sem a rota. */
+  projectDir?: (projectId: string) => string | undefined
+  /** Os arquivos de um agente e o projeto dele (a importação soma à lista de agora). */
+  agentFilesOf?: (agentId: string) => { files: IResourceFile[]; projectId?: string } | undefined
 }
 
 const project = z.string().max(64).nullable().optional()
@@ -53,6 +58,12 @@ const resourceSchema = z.object({
 })
 const filesSchema = z.object({ files: z.array(z.object({ path: z.string().max(400), sha256: z.string().max(64), bytes: z.number() })).max(1_000) })
 /** O conteúdo de um arquivo, em base64 (o texto passa inteiro, e o tamanho é o do arquivo). */
+const importFilesSchema = z.object({
+  from: z.string().min(1).max(400),
+  to: z.string().max(200).optional(),
+  remove: z.array(z.string().max(400)).max(200).optional(),
+  projectId: z.string().max(64).optional(),
+})
 const uploadSchema = z.object({ content: z.string().max(Math.ceil((RESOURCE_FILE_MAX_BYTES * 4) / 3) + 8) })
 const addendumSchema = z.object({ projectId: project, body: z.string() })
 const agentResourcesSchema = z.object({ skills: z.array(z.string().max(80)).max(200).optional(), commands: z.array(z.string().max(80)).max(200).optional() })
@@ -110,6 +121,7 @@ export class GuidanceController {
       'readFile',
       'setResourceFiles',
       'setAgentFiles',
+      'importFiles',
       'getProtocol',
       'setProtocolAddendum',
     ] as const)
@@ -367,6 +379,46 @@ export class GuidanceController {
       const { files } = parseBody(filesSchema, req.body)
       this.deps.agentFiles(req.params.agentId as string, files, by)
       return { files }
+    })
+  }
+
+  /**
+   * `POST /resources/:id/files/import` e `POST /agents/:agentId/files/import { from, to?, remove?, projectId? }` — ⚖️ o
+   * GATEWAY copia os arquivos de uma pasta do projeto (o repositório: `repositories/<repo>/.agents/skills/<id>/scripts`)
+   * para o recurso, no servidor (ver `ResourceFileImport`). O que entra soma à lista de agora (mesmo caminho troca);
+   * `remove` tira caminhos (ou pastas). Grava pelo caminho normal: histórico do catálogo, reverter.
+   */
+  async importFiles(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const by = await this.requireAdmin('importFiles')
+      const files = this.requireFiles()
+      const body = parseBody(importFilesSchema, req.body)
+      const agentId = typeof req.params.agentId === 'string' ? req.params.agentId : undefined
+      const owner = agentId
+        ? this.deps.agentFilesOf?.(agentId)
+        : (() => {
+            const resource = this.deps.guidance.resource(req.params.id as string)
+            return { files: resource.files ?? [], ...(resource.projectId ? { projectId: resource.projectId } : {}) }
+          })()
+      if (!owner) throw new HttpError(404, 'not_found', `agent not found: ${agentId}`)
+      const projectId = owner.projectId ?? body.projectId
+      if (!projectId) throw new HttpError(422, 'validation_error', 'projectId: the project whose folder holds `from` (the resource is global)')
+      const root = this.deps.projectDir?.(projectId)
+      if (!root) throw new HttpError(404, 'not_found', `project not found: ${projectId}`)
+      let imported
+      try {
+        imported = importRepositoryFiles(root, body.from, body.to ?? '', { files, ...(this.deps.secretsIn ? { secretsIn: this.deps.secretsIn } : {}) })
+      } catch (error: unknown) {
+        throw new HttpError(422, 'validation_error', error instanceof Error ? error.message : String(error), [
+          { field: 'from', message: error instanceof Error ? error.message : String(error) },
+        ])
+      }
+      const merged = mergeFiles(owner.files, imported.added, body.remove)
+      if (agentId) {
+        if (!this.deps.agentFiles) throw new HttpError(404, 'not_found', 'Not found')
+        this.deps.agentFiles(agentId, merged, by)
+      } else this.deps.guidance.updateResource(req.params.id as string, { files: merged }, by)
+      return { added: imported.added.map((file) => file.path), skipped: imported.skipped, files: merged.map((file) => file.path) }
     })
   }
 
