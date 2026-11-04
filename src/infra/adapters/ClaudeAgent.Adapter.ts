@@ -246,7 +246,16 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     const effort = this.toEffort(record.reasoning)
     if (effort) options.effort = effort
 
-    const stream = this.query({ prompt: this.buildPrompt(turnInput, blocks), options })
+    /**
+     * ⛔ A ENTRADA FICA ABERTA ATÉ O `result` DO TURNO. Com o pedido em texto (`prompt: string`), o SDK fecha a entrada do CLI
+     * assim que ACHA que o turno acabou — e uma tarefa lateral do CLI (o título da conversa) bastava: a ferramenta local que
+     * estava rodando (`delegate_to_agent` esperando o Zeus) perdia a resposta, "The tool call was interrupted", e o turno
+     * da Maya acabava sem ler o que o outro agente disse. Pelo iterável, quem fecha somos nós, no fim de verdade.
+     */
+    let releaseInput!: () => void
+    const inputHeld = new Promise<void>((resolve) => (releaseInput = resolve))
+    abort.signal.addEventListener('abort', () => releaseInput(), { once: true })
+    const stream = this.query({ prompt: this.buildPrompt(turnInput, blocks, inputHeld), options })
 
     // O bloco `tool_result` só traz o `tool_use_id`. Sem guardar o nome da chamada, o
     // evento de resultado sairia identificado por um id opaco.
@@ -346,6 +355,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
 
         if (message.type === 'result') {
           native.started = true
+          releaseInput()
 
           yield {
             type: 'usage',
@@ -394,6 +404,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       console.error('[ClaudeAgent] Error:', message)
       yield { type: 'error', sessionId, timestamp: new Date(), payload: errorPayload(rateLimit ?? error, message) }
     } finally {
+      releaseInput()
       record.abort = undefined
       stream.return(undefined).catch(() => undefined)
     }
@@ -563,11 +574,12 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
    * Sem anexos, um prompt de texto basta. Com anexos é preciso o modo de entrada em
    * streaming, que é o único caminho para mandar blocos `image` e `document`.
    */
-  private buildPrompt(input: IMessageInput, blocks: SDKUserMessage['message']['content']): string | AsyncIterable<SDKUserMessage> {
-    if (typeof blocks === 'string') return input.text
-
+  /** A mensagem do turno como entrada do SDK, e a entrada segura aberta até `held` (o `result` do turno, ou o fim dele). */
+  private buildPrompt(input: IMessageInput, blocks: SDKUserMessage['message']['content'], held: Promise<void>): AsyncIterable<SDKUserMessage> {
+    const content = typeof blocks === 'string' ? input.text : blocks
     async function* once(): AsyncGenerator<SDKUserMessage> {
-      yield { type: 'user', message: { role: 'user', content: blocks }, parent_tool_use_id: null }
+      yield { type: 'user', message: { role: 'user', content }, parent_tool_use_id: null }
+      await held
     }
 
     return once()

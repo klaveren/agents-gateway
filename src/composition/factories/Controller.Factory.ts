@@ -137,6 +137,15 @@ export function makeController(): AgentController {
   // ⛔ O turno de fundo do Importador amarrado ao contexto de quem pediu (a identidade da requisição): a fila roda depois,
   // e o turno passa pelas mesmas regras do `POST …/turns`.
   useImportTurns((conversationId, message) => AsyncResource.bind(() => controller.serverTurn(conversationId, message)))
+  // A resposta de uma delegação que chegou depois do turno da mãe vira um turno novo dela, com as regras do `POST …/turns`.
+  makeTools()
+    .delegation.get()
+    ?.useLateDelivery(
+      (parentId, text) =>
+        void controller
+          .serverTurn(parentId, text)
+          .catch((error: unknown) => console.warn('[delegação] a resposta atrasada não entrou:', error instanceof Error ? error.message : String(error))),
+    )
   // O rascunho de agente do construtor é conferido com as MESMAS regras do cadastro, que moram aqui.
   makeGuidance().useAgentChecker((agent) => controller.agentDraftIssues(agent))
   agentController = controller

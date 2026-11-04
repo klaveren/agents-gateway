@@ -117,8 +117,8 @@ describe('AgentProvider — o ambiente e o id da conversa', () => {
       `Você escreve código.\n\n## Ambiente\n- Agente: dev.\n- Projeto: Alfa (projectId "alfa").\n- Diretório de trabalho: ${directory} — persistente e compartilhado pelas conversas do projeto. Fora dele você não lê nem grava.`,
     )
     assert.strictEqual(queries[0].options?.cwd, directory, 'o diretório dito é o `cwd` da lane')
-    assert.strictEqual(queries[0].prompt, `<contexto>id desta conversa: ${session.id}</contexto>\n\noi`)
-    assert.strictEqual(queries[1].prompt, 'e agora?', 'o id vai uma vez por histórico')
+    assert.strictEqual(await promptText(queries[0].prompt), `<contexto>id desta conversa: ${session.id}</contexto>\n\noi`)
+    assert.strictEqual(await promptText(queries[1].prompt), 'e agora?', 'o id vai uma vez por histórico')
     assert.deepStrictEqual(
       store.get(session.id)!.transcript?.map((turn) => turn.request),
       ['oi', 'e agora?'],
@@ -178,3 +178,13 @@ describe('AgentProvider — o ambiente e o id da conversa', () => {
     assert.ok(!JSON.stringify(events).includes('<contexto>'), 'nenhum evento leva o id como fala')
   })
 })
+
+/** O texto que a lane do Claude entregou ao SDK (pelo iterável, que fica aberto até o `result`; aqui o turno já acabou). */
+async function promptText(prompt: unknown): Promise<string> {
+  if (typeof prompt === 'string') return prompt
+  for await (const message of prompt as AsyncIterable<{ message: { content: unknown } }>) {
+    const content = message.message.content
+    return typeof content === 'string' ? content : JSON.stringify(content)
+  }
+  return ''
+}

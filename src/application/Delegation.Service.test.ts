@@ -79,6 +79,30 @@ describe('DelegationService', () => {
     assert.strictEqual(created[0].delegated, true)
   })
 
+  it('⚖️ a resposta não se perde: chegou depois do turno da mãe, vira um turno novo dela; noutro turno dela, entra na fila', async () => {
+    const { service, sessions } = build()
+    const late: Array<{ parent: string; text: string }> = []
+    service.useLateDelivery((parent, text) => void late.push({ parent, text }))
+    const parent = sessions.get('pai')!
+    // A mãe no mesmo turno que delegou: a resposta volta pela ferramenta, nada a mais.
+    parent.status = 'running'
+    parent.turns = 3
+    await service.delegate({ allowed: ['tradutor'], agentId: 'tradutor', message: 'um' }, { sessionId: 'pai' })
+    assert.strictEqual(late.length, 0)
+
+    // A chamada caiu e o turno da mãe acabou enquanto a filha trabalhava.
+    const original = (service as unknown as { sendMessage: { execute: (id: string, input: { text: string }) => AsyncIterable<unknown> } }).sendMessage
+    const execute = original.execute.bind(original)
+    original.execute = async function* (id: string, input: { text: string }) {
+      parent.status = 'idle'
+      yield* execute(id, input)
+    }
+    await service.delegate({ allowed: ['tradutor'], agentId: 'tradutor', message: 'dois' }, { sessionId: 'pai' })
+    assert.strictEqual(late.length, 1)
+    assert.strictEqual(late[0].parent, 'pai')
+    assert.match(late[0].text, /Resposta de tradutor à sua delegação \(sessionId filha-2\)[\s\S]*\[tradutor\] dois/)
+  })
+
   it('a filha trabalha no projeto da conversa-mãe (o construtor grava nele)', async () => {
     const { service, created } = build({ owner: { id: 'ana' }, project: 'xpto' })
     await service.delegate({ allowed: ['tradutor'], agentId: 'tradutor', message: 'x' }, { sessionId: 'pai' })
