@@ -283,6 +283,8 @@ describe('MCP do próprio gateway (integração)', () => {
     const big = 'x'.repeat(300_000)
     const saved = (await client.callTool({ name: 'save_doc', arguments: { id: 'enorme', kind: 'spec', title: 'Enorme', summary: 'grande', body: big } })) as { isError?: boolean }
     assert.ok(!saved.isError, JSON.stringify(saved).slice(0, 300))
+    // A gravação não ecoa o corpo: volta o tamanho; o texto se lê com get_doc.
+    assert.strictEqual(json(saved).body, '[300000 caracteres]')
     assert.strictEqual(json(await client.callTool({ name: 'get_doc', arguments: { id: 'enorme' } })).body, big)
   })
 
@@ -330,7 +332,7 @@ describe('MCP do próprio gateway (integração)', () => {
         kind: 'spec',
         title: 'Importado',
         summary: '',
-        body: 'x',
+        body: 'x'.repeat(5_000),
         importIssues: [
           { code: 'link-missing', message: 'cita memoria, que não existe', target: 'memoria', link: 'attach' },
           { code: 'link-pending', message: 'vínculo com api pendente', target: 'api', link: 'attach' },
@@ -345,6 +347,12 @@ describe('MCP do próprio gateway (integração)', () => {
       isError?: boolean
     }
     assert.ok(!resolved.isError, JSON.stringify(resolved))
+    // ⚖️ A resposta é o item sem os textos longos (o agente inteiro estourava a resposta a cada chamada).
+    assert.strictEqual(json(resolved).body, '[5000 caracteres]')
+    assert.deepStrictEqual(
+      json(resolved).importIssues.map((one: { code: string }) => one.code),
+      ['link-pending'],
+    )
     assert.deepStrictEqual(await codes(), ['link-pending'])
     const again = (await client.callTool({ name: 'resolve_import_issue', arguments: { kind: 'doc', id: 'importado', code: 'link-missing' } })) as { isError?: boolean }
     assert.strictEqual(again.isError, true)

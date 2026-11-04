@@ -36,6 +36,21 @@ function enabledOnly(result: unknown, keep: (item: Record<string, unknown>) => b
   return Array.isArray(result) ? (result as Array<Record<string, unknown>>).filter((item) => item.enabled === true && keep(item)) : result
 }
 
+/** Acima disto, um texto da resposta de gravação vira só o tamanho. */
+const ECHO_TEXT_MAX = 300
+
+/**
+ * ⚖️ A RESPOSTA DE UMA GRAVAÇÃO: o item salvo sem os textos longos (corpo, prompt, soul, corpo de trigger), que viram
+ * `"[N caracteres]"`. Quem gravou já tem o texto; ecoá-lo inteiro estourava a resposta (o agente inteiro, ~160 mil
+ * caracteres, a cada `resolve_import_issue`). O resto (ids, listas, problemas) volta como está. Ler: as de leitura.
+ */
+export function savedEcho(value: unknown): unknown {
+  if (typeof value === 'string') return value.length > ECHO_TEXT_MAX ? `[${value.length} caracteres]` : value
+  if (Array.isArray(value)) return value.map(savedEcho)
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, savedEcho(item)]))
+  return value
+}
+
 /** O índice dos recursos: o que diz QUAL é e QUANDO usar, sem o corpo (lido um a um, com o id). */
 function resourceIndex(result: unknown): unknown {
   if (!Array.isArray(result)) return result
@@ -479,7 +494,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
       if (action === 'show') return reply(await api('GET', `/catalog/history/revisions/${revision}`, { query: item }))
       if (!access.write) return refuse('restore is disabled on this server (SELF_MCP_WRITE=0)')
       if (expectedRevision === undefined) return refuse('expectedRevision is required for restore: the latest revision from list')
-      return reply(await api('POST', '/catalog/history/restore', { body: { ...item, revision, expectedRevision } }))
+      return reply(await api('POST', '/catalog/history/restore', { body: { ...item, revision, expectedRevision } }), savedEcho)
     },
   )
 
@@ -697,7 +712,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     async (agent) => {
       // ⚖️ Sem trava própria: o MCP grava o que a tela grava, e quem decide o alcance do agente é o admin.
       const exists = (await api('GET', `/agents/${encodeURIComponent(agent.id)}`)).ok
-      return reply(exists ? await api('PUT', `/agents/${encodeURIComponent(agent.id)}`, { body: agent }) : await api('POST', '/agents', { body: agent }))
+      return reply(exists ? await api('PUT', `/agents/${encodeURIComponent(agent.id)}`, { body: agent }) : await api('POST', '/agents', { body: agent }), savedEcho)
     },
   )
 
@@ -743,7 +758,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
         enabled: z.boolean().optional(),
       },
     },
-    async ({ id, ...rule }) => reply(id ? await api('PUT', `/rules/${encodeURIComponent(id)}`, { body: rule }) : await api('POST', '/rules', { body: rule })),
+    async ({ id, ...rule }) => reply(id ? await api('PUT', `/rules/${encodeURIComponent(id)}`, { body: rule }) : await api('POST', '/rules', { body: rule }), savedEcho),
   )
 
   server.registerTool(
@@ -780,7 +795,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     },
     async ({ id, ...doc }) => {
       const exists = (await api('GET', `/docs/${encodeURIComponent(id)}`)).ok
-      return reply(exists ? await api('PUT', `/docs/${encodeURIComponent(id)}`, { body: doc }) : await api('POST', '/docs', { body: { id, ...doc } }))
+      return reply(exists ? await api('PUT', `/docs/${encodeURIComponent(id)}`, { body: doc }) : await api('POST', '/docs', { body: { id, ...doc } }), savedEcho)
     },
   )
 
@@ -825,7 +840,10 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     },
     async ({ id, kind, ...resource }) => {
       const exists = (await api('GET', `/resources/${encodeURIComponent(id)}`)).ok
-      return reply(exists ? await api('PUT', `/resources/${encodeURIComponent(id)}`, { body: resource }) : await api('POST', '/resources', { body: { id, kind, ...resource } }))
+      return reply(
+        exists ? await api('PUT', `/resources/${encodeURIComponent(id)}`, { body: resource }) : await api('POST', '/resources', { body: { id, kind, ...resource } }),
+        savedEcho,
+      )
     },
   )
 
@@ -859,7 +877,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     },
     async ({ kind, id, code, target }) => {
       const base = kind === 'agent' ? '/agents' : kind === 'resource' ? '/resources' : '/docs'
-      return reply(await api('POST', `${base}/${encodeURIComponent(id)}/import-issues/resolve`, { body: { code, ...(target ? { target } : {}) } }))
+      return reply(await api('POST', `${base}/${encodeURIComponent(id)}/import-issues/resolve`, { body: { code, ...(target ? { target } : {}) } }), savedEcho)
     },
   )
 
