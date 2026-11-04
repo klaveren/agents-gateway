@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { api } from '@/lib/api'
 import { keyedResource } from '@/lib/resource'
 
-export type TAccountKind = 'github-app' | 'github-token' | 'gcp-service-account' | 'ssh-ca' | 'ssh-key' | 'secret-env'
+export type TAccountKind = 'github-app' | 'github-token' | 'git-https' | 'gcp-service-account' | 'ssh-ca' | 'ssh-key' | 'secret-env'
 
 /** Uma conta do projeto como a tela a recebe: ⛔ nunca o segredo (só o fim dele). */
 export interface IProjectAccount {
@@ -11,6 +11,8 @@ export interface IProjectAccount {
   label: string
   public: {
     owner?: string
+    baseUrl?: string
+    username?: string
     appId?: string
     installationId?: string
     repositories?: string[]

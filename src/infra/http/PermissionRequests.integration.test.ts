@@ -5,6 +5,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { makeAgents } from '@composition/factories/Agents.Factory'
 import { makeAuth } from '@composition/factories/Auth.Factory'
+import { makeSessionStore } from '@composition/factories/Orchestrator.Factory'
 import {
   makeAuthController,
   makeCatalogController,
@@ -308,5 +309,70 @@ describe('pedidos de permissão (integração: MCP do gateway, API, cookie da te
       preview.parts.slice(0, 2).map((part: { key: string }) => part.key),
       ['instructions', 'ambient'],
     )
+  })
+
+  it('⛔ list_permission_rules: qualquer agente lê as PRÓPRIAS regras (a sessão viva prova quem é); outro agente, projeto ou id forjado, só admin', async () => {
+    const memberId = (await call('/users', { method: 'POST', headers: bearer(admin), body: { email: 'bia@x.test', name: 'Bia', password: PASSWORD } })).body.result.id
+    const member = (await call('/auth/login', { method: 'POST', body: { email: 'bia@x.test', password: PASSWORD } })).body.result.token
+    makeAgents().save(
+      {
+        id: 'nina',
+        name: 'Nina',
+        providers: [{ provider: EProvider.CLAUDE, models: ['claude-sonnet-5'] }],
+        systemPrompt: 'x',
+        modes: [EMode.AGENT],
+        allowedTools: [],
+        permissions: [],
+      },
+      { rules: { knownTools: [] }, by: 'seed', creating: true },
+    )
+    const live = (agentId: string, owner: Record<string, string>, running = true) => {
+      const record = makeSessionStore().create({
+        agentId,
+        provider: 'claude',
+        protocol: EProvider.CLAUDE,
+        mode: EMode.AGENT,
+        model: 'claude-sonnet-5',
+        tools: true,
+        systemPrompt: 'x',
+        metadata: { owner },
+      })
+      record.status = running ? 'running' : 'idle'
+      return record.id
+    }
+    const theoSession = live('theo', { id: memberId, email: 'bia@x.test' })
+    const as = async (token: string, agent: string, conversation: string) => {
+      const client = new Client({ name: 'teste', version: '1.0.0' })
+      const headers = { ...bearer(token), 'x-gateway-agent': agent, 'x-gateway-conversation': conversation }
+      await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers } }))
+      return async (args: Record<string, unknown>) => {
+        const result = (await client.callTool({ name: 'list_permission_rules', arguments: args })) as { isError?: boolean; content: Array<{ text: string }> }
+        return { isError: !!result.isError, body: JSON.parse(result.content[0].text) }
+      }
+    }
+
+    // O próprio, sem `id` (= eu) e com o id dele: regras, sem ser admin.
+    const theo = await as(member, 'theo', theoSession)
+    const own = await theo({ scope: 'agent' })
+    assert.strictEqual(own.isError, false)
+    assert.deepStrictEqual([own.body.agentId, own.body.rules.some((rule: { pattern: string }) => rule.pattern === 'git status')], ['theo', true])
+    assert.strictEqual((await theo({ scope: 'agent', id: 'theo' })).body.agentId, 'theo')
+    // Outro agente e um projeto: 404 (como sempre para quem não é admin).
+    assert.deepStrictEqual([(await theo({ scope: 'agent', id: 'nina' })).isError, (await theo({ scope: 'agent', id: 'nina' })).body.status], [true, 404])
+    assert.strictEqual((await theo({ scope: 'project', id: 'alfa' })).body.status, 404)
+    // Forjado: o cabeçalho diz nina, a sessão é do theo; a sessão de outra pessoa; a sessão parada; a que não existe.
+    assert.strictEqual((await (await as(member, 'nina', theoSession))({ scope: 'agent' })).body.status, 404)
+    assert.strictEqual((await (await as(member, 'theo', live('theo', { id: 'outra-pessoa' })))({ scope: 'agent' })).body.status, 404)
+    assert.strictEqual((await (await as(member, 'theo', live('theo', { id: memberId }, false)))({ scope: 'agent' })).body.status, 404)
+    assert.strictEqual((await (await as(member, 'theo', 'nao-existe'))({ scope: 'agent' })).body.status, 404)
+    // Pela API direta, o mesmo: a rota de outro agente com a sessão do theo.
+    assert.strictEqual(
+      (await call('/agents/nina/permission-rules', { headers: { ...bearer(member), 'x-gateway-agent': 'nina', 'x-gateway-conversation': theoSession } })).status,
+      404,
+    )
+    // Admin: qualquer alvo, como antes (sem sessão viva).
+    const byAdmin = await as(admin, 'theo', 'c-42')
+    assert.strictEqual((await byAdmin({ scope: 'agent', id: 'nina' })).body.agentId, 'nina')
+    assert.strictEqual((await byAdmin({ scope: 'agent' })).body.agentId, 'theo')
   })
 })

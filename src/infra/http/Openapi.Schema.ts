@@ -953,12 +953,12 @@ const projectAccountSchema = {
   properties: {
     projectId: { type: 'string' },
     id: { type: 'string' },
-    kind: { type: 'string', enum: ['github-app', 'github-token', 'gcp-service-account', 'ssh-ca', 'ssh-key', 'secret-env'] },
+    kind: { type: 'string', enum: ['github-app', 'github-token', 'git-https', 'gcp-service-account', 'ssh-ca', 'ssh-key', 'secret-env'] },
     label: { type: 'string' },
     public: {
       type: 'object',
       additionalProperties: true,
-      description: 'What may be shown: owner, app and installation ids, repositories, variable name, last 4 chars of the secret',
+      description: 'What may be shown: owner, git base URL and username, app and installation ids, repositories, variable name, last 4 chars of the secret',
     },
     exposesSecret: { type: 'boolean', description: 'The command receives the secret itself (not a short-lived derivative)' },
     updatedAt: { type: 'string', format: 'date-time' },
@@ -3312,12 +3312,14 @@ export const OPENAPI_DOCUMENT = {
               schema: {
                 type: 'object',
                 properties: {
-                  kind: { type: 'string', enum: ['github-app', 'github-token', 'gcp-service-account', 'ssh-ca', 'ssh-key', 'secret-env'] },
+                  kind: { type: 'string', enum: ['github-app', 'github-token', 'git-https', 'gcp-service-account', 'ssh-ca', 'ssh-key', 'secret-env'] },
                   label: { type: 'string' },
                   public: {
                     type: 'object',
                     properties: {
                       owner: { type: 'string' },
+                      baseUrl: { type: 'string', description: 'git-https: https URL (host and optional path prefix) the credential helper is scoped to' },
+                      username: { type: 'string', description: 'git-https: the git server user' },
                       appId: { type: 'string' },
                       installationId: { type: 'string' },
                       repositories: { type: 'array', items: { type: 'string' } },
@@ -3367,7 +3369,8 @@ export const OPENAPI_DOCUMENT = {
     },
     '/agents/{agentId}/permission-rules': {
       get: {
-        summary: "An agent's permission rules, its project's rules and its open permission requests (the self MCP `list_permission_rules`). Administrators only (404 otherwise)",
+        summary:
+          "An agent's permission rules, its project's rules and its open permission requests (the self MCP `list_permission_rules`). Administrators, or the agent itself: the `x-gateway-conversation` header must be a live session with a running turn of this agent, owned by the caller (404 otherwise)",
         parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
         responses: {
           '200': {

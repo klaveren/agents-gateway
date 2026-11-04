@@ -686,7 +686,7 @@ enters the same turn:
   most six connections per host. An API client can use `GET /v1/sessions/:id/live` (SSE) instead.
 
 **Project accounts (Project → Accounts).** Each project keeps its own credentials, which its
-agents' terminal receives: a GitHub App, a GitHub token, a GCP service account, SSH (a
+agents' terminal receives: a GitHub App, a GitHub token, Git over HTTPS on your own server, a GCP service account, SSH (a
 certificate from the gateway's CA or an imported key), or a secret variable. They are stored in
 the same vault as the provider keys (AES-256-GCM, with `conta:<project>:<id>` as the AAD), and the
 secret goes in and never comes back to the screen.
@@ -697,6 +697,11 @@ secret goes in and never comes back to the screen.
   chosen repositories. The App's private key never enters the sandbox.
 - A **GitHub token** or a **secret variable** is the secret itself, and the screen says so: what
   the shell uses, the shell can print.
+- **Git HTTPS (own server)**: an https base URL (host and optional path prefix, e.g.
+  `https://git.example.com/group`), a username and a token. The agent's git gets a credential
+  helper only for that URL (`credential.<url>.helper`, which also overrides the repository's own
+  helper there); the token goes in a process variable, so the shell can print it. Credentials in
+  the URL, plain http and loopback or link-local hosts are refused.
 - A **GCP service account** goes in as a 1-hour access token for `gcloud`
   (`CLOUDSDK_AUTH_ACCESS_TOKEN`, plus the default project). The JSON key stays in the gateway, and
   the token exchange always goes to `oauth2.googleapis.com`, whatever `token_uri` the JSON says.

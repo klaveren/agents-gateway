@@ -217,6 +217,13 @@ describe('PermissionRequestsService — o agente pede, a pessoa confirma na tela
     )
   })
 
+  it('list_permission_rules de um agente global: a camada de baixo é a do projeto da conversa (o do agente vence)', () => {
+    agents.save({ ...theo, id: 'atlas', name: 'Atlas', projectId: undefined }, { rules: agentRules, by: 'seed', creating: true })
+    assert.strictEqual(service.rules({ agentId: 'atlas' }).project, undefined)
+    assert.deepStrictEqual(service.rules({ agentId: 'atlas' }, { conversationProjectId: 'alfa' }).project, { projectId: 'alfa', rules: projectRules })
+    assert.strictEqual(service.rules(theoRef, { conversationProjectId: 'beta' }).project?.projectId, 'alfa')
+  })
+
   describe('as regras do PROJETO (a camada de baixo)', () => {
     const alfa = { projectId: 'alfa' }
 

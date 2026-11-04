@@ -1,4 +1,4 @@
-import { accountIssues, IGcpServiceAccountKey, IProjectAccount, parseGcpKey, SSH_VALIDITY } from '@domain/models/ProjectAccount.Model'
+import { accountIssues, gitBaseUrl, IGcpServiceAccountKey, IProjectAccount, parseGcpKey, SSH_VALIDITY } from '@domain/models/ProjectAccount.Model'
 import { IProjectAccountRepository, IProjectAccountSave } from '@domain/ports/ProjectAccountRepository.Port'
 
 /** Quem gera e confere os tokens do GitHub (fora do cerco, no gateway). */
@@ -73,6 +73,10 @@ export class ProjectAccountsService {
     // GCP: o e-mail da conta e o projeto padrão saem do próprio JSON (o projeto escolhido na tela vence).
     const key = input.kind === 'gcp-service-account' && secret ? parseGcpKey(secret) : undefined
     if (key) visible = { ...visible, clientEmail: key.client_email, gcpProject: visible.gcpProject ?? key.project_id }
+    if (input.kind === 'git-https') {
+      const base = gitBaseUrl(visible.baseUrl)
+      if ('url' in base) visible = { ...visible, baseUrl: base.url }
+    }
     if (input.kind === 'ssh-ca') {
       // ⛔ A CA nasce aqui e a privada nunca sai: o que se cola na tela é ignorado. Editar mantém a mesma CA.
       if (creating) {
@@ -106,6 +110,8 @@ export class ProjectAccountsService {
     if (!account || !secret) throw new Error(account ? 'o segredo não abre com a chave-mestra de agora: cadastre de novo' : `Conta não encontrada: ${id}`)
     if (account.kind === 'secret-env') return `a variável ${account.public.envName} vai para os comandos`
     if (account.kind === 'github-token') return this.tokens.describeGitHub(secret, false)
+    // O gateway não fala com o servidor próprio: quem confere é o `git ls-remote` do agente, com a regra de rede.
+    if (account.kind === 'git-https') return `usuário ${account.public.username} em ${account.public.baseUrl}/ — o token só se confere no git do agente`
     if (account.kind === 'gcp-service-account') return this.tokens.describeGcp((await this.gcpToken(account, secret)).token)
     if (account.kind === 'ssh-ca') return this.requireSsh().describeCertificate((await this.sshCertificate(account, secret, 'teste')).certificate)
     if (account.kind === 'ssh-key')
@@ -121,12 +127,16 @@ export class ProjectAccountsService {
    *
    * GitHub: cada conta ganha um credential helper do git só para a URL dela (`https://github.com/<owner>`, ou o
    * github.com inteiro) — com várias contas, cada repositório usa a do dono. O `GH_TOKEN` (do `gh`) só quando há uma.
+   * Git HTTPS (servidor próprio): o mesmo helper, só para a URL da conta (`credential.<baseUrl>.helper`).
+   *
+   * ⚠️ O token vai numa variável do processo (`GATEWAY_GH_<n>`, `GATEWAY_GIT_<n>`): o shell a lê (`exposesSecret`).
    */
   async commandEnv(projectId: string, allowed: (id: string) => boolean): Promise<IAccountCommandEnv> {
     const env: Record<string, string> = {}
     const problems: string[] = []
     const config: Array<[string, string]> = []
     const github: string[] = []
+    let gitSlots = 0
     let gcp: string | undefined
     const ssh: IAccountSshIdentity[] = []
     for (const account of this.repository.list(projectId).filter((item) => allowed(item.id))) {
@@ -161,6 +171,21 @@ export class ProjectAccountsService {
         } catch (error: unknown) {
           problems.push(`conta ${account.id}: ${error instanceof Error ? error.message : String(error)}`)
         }
+        continue
+      }
+      if (account.kind === 'git-https') {
+        const base = gitBaseUrl(account.public.baseUrl)
+        if ('issue' in base || !account.public.username) {
+          problems.push(`conta ${account.id}: URL ou usuário inválidos; cadastre de novo`)
+          continue
+        }
+        const slot = `GATEWAY_GIT_${gitSlots++}`
+        env[slot] = secret
+        // O usuário passou pela validação (sem aspas nem espaço); o valor vazio zera os helpers do repositório para a URL.
+        config.push(
+          [`credential.${base.url}.helper`, ''],
+          [`credential.${base.url}.helper`, `!f() { test "$1" = get && echo 'username=${account.public.username}' && echo "password=$${slot}"; }; f`],
+        )
         continue
       }
       let token = secret

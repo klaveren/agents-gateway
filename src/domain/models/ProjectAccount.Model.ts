@@ -8,14 +8,17 @@
  *
  * ⚖️ Quem usa cada conta: as permissões (`account <id>`), nas camadas do agente e do projeto. Sem regra, ninguém.
  */
-export type TProjectAccountKind = 'github-app' | 'github-token' | 'gcp-service-account' | 'ssh-ca' | 'ssh-key' | 'secret-env'
+export type TProjectAccountKind = 'github-app' | 'github-token' | 'git-https' | 'gcp-service-account' | 'ssh-ca' | 'ssh-key' | 'secret-env'
 
-export const PROJECT_ACCOUNT_KINDS: readonly TProjectAccountKind[] = ['github-app', 'github-token', 'gcp-service-account', 'ssh-ca', 'ssh-key', 'secret-env']
+export const PROJECT_ACCOUNT_KINDS: readonly TProjectAccountKind[] = ['github-app', 'github-token', 'git-https', 'gcp-service-account', 'ssh-ca', 'ssh-key', 'secret-env']
 
 /** O que pode aparecer na tela e no log. O segredo fica à parte, selado. */
 export interface IProjectAccountPublic {
   /** GitHub: a organização ou o usuário dono dos repositórios (o credential helper do git vale só para ele). */
   owner?: string
+  /** Git HTTPS (servidor próprio): a URL em que a conta vale (o credential helper só para ela) e o usuário. */
+  baseUrl?: string
+  username?: string
   /** GitHub App: o id do app e o da instalação. */
   appId?: string
   installationId?: string
@@ -83,8 +86,41 @@ export const ACCOUNT_ID = /^[a-z0-9][a-z0-9-]{0,47}$/
 const ENV_NAME = /^[A-Z][A-Z0-9_]{1,63}$/
 const GITHUB_OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/
 const GITHUB_REPO = /^[A-Za-z0-9._-]{1,100}$/
+const GIT_USERNAME = /^[A-Za-z0-9._@+-]{1,128}$/
+const GIT_PATH = /^(\/[A-Za-z0-9._~-]+)*$/
 const SSH_PRINCIPAL = /^[A-Za-z0-9._@-]{1,64}$/
 const SSH_HOST_PATTERN = /^!?[A-Za-z0-9.*?_:[\]-]{1,253}$/
+
+/**
+ * A URL de um servidor git próprio, normalizada (`https://host[:porta][/prefixo]`, sem a barra do fim), ou o problema.
+ *
+ * ⛔ Só https, sem credencial na URL (ela iria para o log e para a tela) e nunca loopback, link-local ou metadados da
+ * nuvem — os mesmos destinos que o portão de rede nega sempre.
+ */
+export function gitBaseUrl(raw: string | undefined): { url: string } | { issue: string } {
+  let parsed: URL
+  try {
+    parsed = new URL((raw ?? '').trim())
+  } catch {
+    return { issue: 'baseUrl: uma URL https (ex.: https://git.empresa.com.br/grupo)' }
+  }
+  if (parsed.protocol !== 'https:') return { issue: 'baseUrl: só https' }
+  if (parsed.username || parsed.password) return { issue: 'baseUrl: sem usuário ou senha na URL (use os campos)' }
+  if (parsed.search || parsed.hash) return { issue: 'baseUrl: sem ? nem #' }
+  const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  if (blockedGitHost(host)) return { issue: `baseUrl: ${host} é sempre negado` }
+  if (!host.includes('.') && !host.includes(':')) return { issue: 'baseUrl: o nome completo do servidor' }
+  const path = parsed.pathname.replace(/\/+$/, '')
+  if (!GIT_PATH.test(path)) return { issue: 'baseUrl: o prefixo do caminho só com letras, números e . _ ~ -' }
+  return { url: `https://${parsed.host.toLowerCase()}${path}` }
+}
+
+/** Loopback, link-local, não especificado e o de metadados: nunca (como no portão de rede). */
+function blockedGitHost(host: string): boolean {
+  if (host === 'localhost' || host.endsWith('.localhost') || host === 'metadata.google.internal') return true
+  const ip = host.replace(/^::ffff:(?=\d+\.)/, '')
+  return /^(127|0)\.\d+\.\d+\.\d+$/.test(ip) || /^169\.254\.\d+\.\d+$/.test(ip) || ip === '::1' || ip === '::' || /^fe[89ab][0-9a-f]?:/.test(ip)
+}
 
 /**
  * ⛔ Nomes que uma variável secreta não pode tomar: os que o cerco e o gateway montam (HOME, o proxy, o ssh do git) e
@@ -102,6 +138,12 @@ export function accountIssues(kind: TProjectAccountKind, input: IProjectAccountP
     if (!/^\d{1,15}$/.test(input.installationId ?? '')) issues.push('installationId: o número da instalação')
     if ((input.repositories ?? []).some((repo) => !GITHUB_REPO.test(repo))) issues.push('repositories: só o nome do repositório, sem o dono')
     if (secret !== undefined && !/-----BEGIN (RSA )?PRIVATE KEY-----/.test(secret)) issues.push('secret: a chave privada do App (.pem)')
+  }
+  if (kind === 'git-https') {
+    const base = gitBaseUrl(input.baseUrl)
+    if ('issue' in base) issues.push(base.issue)
+    if (!GIT_USERNAME.test(input.username ?? '')) issues.push('username: o usuário do servidor git (letras, números e . _ @ + -)')
+    if (secret !== undefined && /[\r\n]/.test(secret.trim())) issues.push('secret: o token ou a senha, numa linha só')
   }
   if (kind === 'gcp-service-account') {
     if (input.gcpProject !== undefined && !/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(input.gcpProject)) issues.push('gcpProject: o id do projeto do GCP')

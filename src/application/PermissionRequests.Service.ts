@@ -166,7 +166,7 @@ export class PermissionRequestsService {
     this.validation = validation
   }
 
-  rules(ref: IRulesRef): IPermissionRulesView {
+  rules(ref: IRulesRef, options: { conversationProjectId?: string } = {}): IPermissionRulesView {
     const target = this.rulesTarget(ref)
     if (target.kind === 'project-rules')
       return {
@@ -177,7 +177,9 @@ export class PermissionRequestsService {
         pending: this.list({ projectId: target.projectId, kind: 'project-rules' }),
       }
     const agent = this.agent(target.agentId!)
-    const project = agent.projectId && this.deps.projects ? { projectId: agent.projectId, rules: this.deps.projects.rules(agent.projectId) } : undefined
+    // O agente global: a camada de baixo é a do projeto da conversa, quando quem chama a conhece.
+    const projectId = agent.projectId ?? options.conversationProjectId
+    const project = projectId && this.deps.projects ? { projectId, rules: this.deps.projects.rules(projectId) } : undefined
     return {
       layer: 'agent',
       agentId: agent.id,

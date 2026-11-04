@@ -123,4 +123,45 @@ describe('ProjectAccountsService', () => {
     assert.match(await accounts.sign('p1', 'chave', 'token', 'dados'), /^assinado\(true,token,dados\)$/)
     await assert.rejects(accounts.sign('p1', 'nao-existe', 'token', 'x'), /Não há chave SSH/)
   })
+
+  it('⛔ Git HTTPS (servidor próprio): o helper vale só sob a URL da conta, com o usuário dela; o token numa variável, nunca na config', async () => {
+    const { accounts } = service()
+    const saved = await accounts.save(
+      'p1',
+      'infoccus',
+      { kind: 'git-https', label: 'Infoccus', public: { baseUrl: 'HTTPS://Git.Infoccus.com.br/infoccus/', username: 'agente' }, secret: 'tok-wxyz' },
+      'admin',
+    )
+    assert.deepStrictEqual(saved.public, { baseUrl: 'https://git.infoccus.com.br/infoccus', username: 'agente', last4: 'wxyz' })
+    assert.strictEqual(await accounts.test('p1', 'infoccus'), 'usuário agente em https://git.infoccus.com.br/infoccus/ — o token só se confere no git do agente')
+
+    assert.strictEqual((await accounts.commandEnv('p1', () => false)).env.GATEWAY_GIT_0, undefined)
+    const { env, problems } = await accounts.commandEnv('p1', (id) => id === 'infoccus')
+    assert.deepStrictEqual(problems, [])
+    assert.strictEqual(env.GATEWAY_GIT_0, 'tok-wxyz')
+    assert.strictEqual(env.GH_TOKEN, undefined)
+    const config = Array.from({ length: Number(env.GIT_CONFIG_COUNT) }, (_, i) => [env[`GIT_CONFIG_KEY_${i}`], env[`GIT_CONFIG_VALUE_${i}`]])
+    assert.deepStrictEqual(config, [
+      ['credential.https://git.infoccus.com.br/infoccus.helper', ''],
+      ['credential.https://git.infoccus.com.br/infoccus.helper', `!f() { test "$1" = get && echo 'username=agente' && echo "password=$GATEWAY_GIT_0"; }; f`],
+    ])
+    assert.ok(!config.flat().join('\n').includes('tok-wxyz'))
+  })
+
+  it('⛔ Git HTTPS: só https, sem credencial na URL, nunca loopback/link-local; usuário sem aspas; token numa linha', async () => {
+    const { accounts } = service()
+    const save = (baseUrl: string, username = 'agente', secret = 'tok') =>
+      accounts.save('p1', 'g', { kind: 'git-https', label: '', public: { baseUrl, username }, secret }, 'admin')
+    await assert.rejects(save('http://git.empresa.com.br'), /só https/)
+    await assert.rejects(save('https://agente:tok@git.empresa.com.br/grupo'), /sem usuário ou senha na URL/)
+    await assert.rejects(save('https://git.empresa.com.br/grupo?x=1'), /sem \? nem #/)
+    for (const host of ['localhost', 'git.localhost', '127.0.0.1', '169.254.169.254', '[::1]', '[fe80::1]', 'metadata.google.internal'])
+      await assert.rejects(save(`https://${host}/grupo`), /sempre negado/, host)
+    await assert.rejects(save('não é url'), /baseUrl: uma URL https/)
+    await assert.rejects(save('https://git.empresa.com.br', "agente' ; rm -rf ~ #"), /username/)
+    await assert.rejects(save('https://git.empresa.com.br', 'agente', 'tok\nhost=outro'), /numa linha só/)
+    await assert.rejects(accounts.save('p1', 'g', { kind: 'git-https', label: '', public: { baseUrl: 'https://git.empresa.com.br' } }, 'admin'), /username/)
+    // Rede local passa (o portão de rede exige a regra exata); a porta fica na URL.
+    assert.strictEqual((await save('https://10.0.0.5:8443/grupo')).public.baseUrl, 'https://10.0.0.5:8443/grupo')
+  })
 })
