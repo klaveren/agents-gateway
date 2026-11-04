@@ -11,16 +11,19 @@ import BuildTabs from '@/components/BuildTabs.vue'
 import MasterDetail from '@/components/MasterDetail.vue'
 import HistoryPanel from '@/components/HistoryPanel.vue'
 import AttachedDocs from '@/components/AttachedDocs.vue'
+import DocStatusBadge from '@/components/DocStatusBadge.vue'
+import SupersedesPicker from '@/components/SupersedesPicker.vue'
 import HistoryTabs from '@/components/HistoryTabs.vue'
 import ImportIssues from '@/components/ImportIssues.vue'
 import ImportIssuesBadge from '@/components/ImportIssuesBadge.vue'
 import { ApiError } from '@/lib/api'
+import { DOC_STATUS_FILTER_LABEL, DOC_STATUS_FILTERS, DOC_STATUS_LABEL, DOC_STATUSES, docStatusOf, filterByStatus, isInactive, sameIds, statusCounts, type TDocStatusFilter } from '@/lib/docStatus'
 import { sizeHint } from '@/lib/format'
 import { pendingDraft } from '@/lib/builder'
 import { attachableDocs, attachedRefs, attachmentsChanged, docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId, setAttachMode, type TAttachMode } from '@/lib/guidance'
 import type { IRestoreResult } from '@/lib/catalogHistory'
 import { renderMarkdown } from '@/lib/markdown'
-import type { IProjectDoc, TDocKind, TImportIssueMatch } from '@/lib/types'
+import type { IProjectDoc, TDocKind, TDocStatus, TImportIssueMatch } from '@/lib/types'
 import { useScopedDocs } from '@/composables/useCatalogLists'
 import { useResource } from '@/composables/useResource'
 import { useAuthStore } from '@/stores/auth'
@@ -92,7 +95,7 @@ const info = computed(() => KIND[props.kind])
 /** As palavras que concordam com o tipo: "Novo estudo", "Nova spec". */
 const g = computed(() => (info.value.masc ? { nova: 'Novo', nenhuma: 'Nenhum', uma: 'um', a: 'o' } : { nova: 'Nova', nenhuma: 'Nenhuma', uma: 'uma', a: 'a' }))
 
-const form = ref({ id: '', kind: 'spec' as TDocKind, title: '', summary: '', tags: [] as string[], body: '', global: true, project: '', docIds: [] as string[], docRefs: [] as string[] })
+const form = ref({ id: '', kind: 'spec' as TDocKind, title: '', summary: '', tags: [] as string[], body: '', global: true, project: '', docIds: [] as string[], docRefs: [] as string[], status: 'accepted' as TDocStatus, supersedes: [] as string[] })
 /** A guia da edição: o formulário ou o histórico (`#historico` no endereço abre nele). */
 type TDocTab = 'edit' | 'instructions' | 'attachments' | 'issues' | 'history'
 const HASH_TAB: Record<string, TDocTab> = { '#historico': 'history', '#instrucoes': 'instructions', '#anexos': 'attachments', '#problemas': 'issues' }
@@ -112,13 +115,26 @@ const ofKind = computed(() => list.value.filter((doc) => doc.kind === props.kind
 /** A busca e a tag do topo da lista. */
 const query = ref('')
 const tag = ref('')
-const shown = computed(() => filterList(ofKind.value, { query: query.value, tag: tag.value }, (doc) => [doc.id, doc.title, doc.summary]))
+/** O status do topo da lista (combina com a busca e a tag). */
+const statusFilter = ref<TDocStatusFilter>('all')
+const searched = computed(() => filterList(ofKind.value, { query: query.value, tag: tag.value }, (doc) => [doc.id, doc.title, doc.summary]))
+/** Quantos há de cada status, já com a busca e a tag aplicadas. */
+const statusTotals = computed(() => statusCounts(searched.value))
+const shown = computed(() => filterByStatus(searched.value, statusFilter.value))
+/** O filtro de status só aparece quando algum documento não é aceito (senão não há o que separar). */
+const showStatusFilter = computed(() => ofKind.value.some((doc) => docStatusOf(doc) !== 'accepted') || statusFilter.value !== 'all')
 /** As tags que a lista já usa (as sugestões do campo). */
 const knownTags = computed(() => tagNames(ofKind.value))
 const formScope = computed(() => (form.value.global ? GLOBAL_SCOPE : form.value.project))
 /** Os documentos que este pode anexar: os globais e os do projeto do formulário (a lista não segue o filtro de escopo). */
 const { list: docs } = useScopedDocs(() => (auth.isAdmin ? scopeToProjectId(formScope.value) : undefined))
 const attachable = computed(() => attachableDocs(docs.value, scopeToProjectId(formScope.value), form.value.id || undefined))
+/** Os que este pode substituir: os de mesmo tipo, globais ou do projeto (o global só substitui global), nunca ele mesmo. */
+const replaceable = computed(() => attachable.value.filter((doc) => doc.kind === form.value.kind))
+/** Os documentos que o salvo diz que o substituem (o título vem da lista, quando está nela). */
+const supersededBy = computed(() => (loaded.value?.supersededBy ?? []).map((id) => ({ id, title: docs.value.find((doc) => doc.id === id)?.title ?? id })))
+/** O salvo está substituído ou arquivado: o aviso do topo do formulário. */
+const savedStatus = computed(() => docStatusOf(loaded.value ?? {}))
 const dirty = computed(() => {
   const doc = loaded.value
   if (!doc) return true
@@ -128,6 +144,8 @@ const dirty = computed(() => {
     !sameTags(form.value.tags, doc.tags) ||
     form.value.body !== (doc.body ?? '') ||
     formScope.value !== (doc.projectId ?? GLOBAL_SCOPE) ||
+    form.value.status !== docStatusOf(doc) ||
+    !sameIds(form.value.supersedes, doc.supersedes) ||
     attachmentsChanged(form.value, doc)
   )
 })
@@ -160,6 +178,8 @@ watch(
         project: scope.value === GLOBAL_SCOPE ? (projects.current ?? '') : scope.value,
         docIds: [],
         docRefs: [],
+        status: 'accepted',
+        supersedes: [],
       }
       applyDraft(kind)
       return
@@ -183,6 +203,8 @@ watch(
         project: doc.projectId ?? projects.current ?? '',
         docIds: [...(doc.docIds ?? [])],
         docRefs: [...(doc.docRefs ?? [])],
+        status: docStatusOf(doc),
+        supersedes: [...(doc.supersedes ?? [])],
       }
       applyDraft(kind, doc.id)
     } catch (failure) {
@@ -213,12 +235,19 @@ function applyDraft(kind: TDocKind, id?: string) {
     project: draft.projectId ?? projects.current ?? '',
     docIds: [...draft.docIds],
     docRefs: [...draft.docRefs],
+    // O rascunho do construtor não traz status nem substituição: ficam os do formulário.
+    status: form.value.status,
+    supersedes: form.value.supersedes,
   }
   note.value = 'Rascunho do construtor aplicado: revise e salve.'
 }
 
 function toggleDoc(id: string) {
   form.value.docIds = form.value.docIds.includes(id) ? form.value.docIds.filter((item) => item !== id) : [...form.value.docIds, id]
+}
+
+function toggleSuperseded(id: string) {
+  form.value.supersedes = form.value.supersedes.includes(id) ? form.value.supersedes.filter((item) => item !== id) : [...form.value.supersedes, id]
 }
 
 function attachMode(id: string): TAttachMode {
@@ -240,6 +269,8 @@ async function save() {
   busy.value = true
   // Um doc de outro projeto não vai junto quando o escopo muda.
   const docIds = form.value.docIds.filter((id) => attachable.value.some((doc) => doc.id === id))
+  // Um doc de outro escopo não vai junto como substituído quando o escopo muda.
+  const supersedes = form.value.supersedes.filter((id) => replaceable.value.some((doc) => doc.id === id))
   const body = {
     kind: form.value.kind,
     title: form.value.title,
@@ -249,6 +280,8 @@ async function save() {
     projectId: scopeToProjectId(formScope.value),
     docIds,
     docRefs: attachedRefs(docIds, form.value.docRefs),
+    status: form.value.status,
+    supersedes,
   }
   try {
     if (adding.value) {
@@ -260,6 +293,8 @@ async function save() {
       form.value.tags = [...(loaded.value.tags ?? [])]
       form.value.docIds = [...(loaded.value.docIds ?? [])]
       form.value.docRefs = [...(loaded.value.docRefs ?? [])]
+      form.value.status = docStatusOf(loaded.value)
+      form.value.supersedes = [...(loaded.value.supersedes ?? [])]
       note.value = 'Salvo. Vale para as próximas conversas.'
     }
   } catch (failure) {
@@ -353,10 +388,18 @@ function onInvalid(event: Event) {
       </div>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
       <ListFilter v-if="ofKind.length" v-model:query="query" v-model:tag="tag" :placeholder="`Buscar ${info.one}…`" :items="ofKind" />
+      <div v-if="showStatusFilter" class="scroll-thin flex gap-1.5 overflow-x-auto px-3 pb-2" role="group" aria-label="Status" data-test="status-filter">
+        <button v-for="item in DOC_STATUS_FILTERS" :key="item" type="button" class="chip shrink-0" :class="{ on: statusFilter === item }" @click="statusFilter = item">
+          {{ DOC_STATUS_FILTER_LABEL[item] }} <span class="text-zinc-500">{{ statusTotals[item] }}</span>
+        </button>
+      </div>
       <p v-if="!loadError && ofKind.length && !shown.length" class="px-4 py-2 text-sm text-zinc-500">{{ g.nenhuma }} {{ info.one }} com essa busca.</p>
       <p v-else-if="!loadError && !ofKind.length" class="px-4 py-2 text-sm text-zinc-500">{{ g.nenhuma }} {{ info.one }} em {{ scopeLabel(scope, projects.list) }}.</p>
-      <RouterLink v-for="doc in shown" :key="doc.id" :to="`${info.base}/${doc.id}`" class="mx-2 block rounded-xl px-3 py-2" :class="doc.id === id ? 'bg-emerald-500/15' : 'hover:bg-zinc-800/60'">
-        <span class="block truncate text-sm font-medium">{{ doc.title }}</span>
+      <RouterLink v-for="doc in shown" :key="doc.id" :to="`${info.base}/${doc.id}`" class="mx-2 block rounded-xl px-3 py-2" :class="[doc.id === id ? 'bg-emerald-500/15' : 'hover:bg-zinc-800/60', { 'opacity-60': isInactive(docStatusOf(doc)) }]">
+        <span class="flex items-center gap-1.5">
+          <span class="min-w-0 flex-1 truncate text-sm font-medium">{{ doc.title }}</span>
+          <DocStatusBadge :status="doc.status" />
+        </span>
         <span class="block truncate text-xs text-zinc-500">{{ doc.id }}<template v-if="doc.summary"> · {{ doc.summary }}</template></span>
         <span v-if="loadedLabel(doc)" class="mt-1 inline-block max-w-full truncate rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-300">usada em {{ loadedLabel(doc) }}</span>
         <TagChips :tags="doc.tags" />
@@ -368,6 +411,15 @@ function onInvalid(event: Event) {
       <div v-if="adding || loaded" class="mx-auto mb-4 max-w-3xl"><HistoryTabs v-model="tab" edit-label="Documento" :extra="extraTabs" :history="!adding" /></div>
       <form v-if="adding || (loaded && (tab === 'edit' || tab === 'instructions' || tab === 'attachments'))" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save" @invalid.capture="onInvalid">
         <h2 class="text-lg font-semibold">{{ adding ? `${g.nova} ${info.one}` : loaded?.title }}</h2>
+        <!-- O aviso de quem lê: o salvo está fora do índice da conversa (vale em todas as guias, inclusive a prévia). -->
+        <p v-if="!adding && isInactive(savedStatus)" class="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200" data-test="inactive-banner">
+          <template v-if="savedStatus === 'superseded' && supersededBy.length">
+            Substituída por
+            <template v-for="(item, index) in supersededBy" :key="item.id"><template v-if="index">, </template><RouterLink :to="`${info.base}/${item.id}`" class="font-medium underline">{{ item.title }}</RouterLink></template>
+            — siga {{ supersededBy.length > 1 ? 'esses' : 'esse' }}.
+          </template>
+          <template v-else>{{ savedStatus === 'superseded' ? 'Substituída' : 'Arquivada' }}: fora do que a conversa vê.</template>
+        </p>
         <div v-show="tab === 'edit'" class="flex flex-col gap-3">
         <label class="field">Título<input v-model="form.title" required maxlength="160" class="input" :placeholder="info.placeholder" @blur="slug" /><small v-for="m in issues.title" :key="m" class="error">{{ m }}</small></label>
         <label class="field">
@@ -383,6 +435,24 @@ function onInvalid(event: Event) {
           <small v-for="m in issues.summary" :key="m" class="error">{{ m }}</small>
         </label>
         <TagsInput v-model="form.tags" label="Tags" :suggestions="knownTags" :issues="issues.tags" />
+        <label class="field">
+          Status
+          <select v-model="form.status" class="input w-auto py-1.5 text-sm">
+            <option v-for="item in DOC_STATUSES" :key="item" :value="item">{{ DOC_STATUS_LABEL[item] }}</option>
+          </select>
+          <small class="hint">Substituída e arquivada saem do que a conversa vê; continuam na lista.</small>
+          <small v-for="m in issues.status" :key="m" class="error">{{ m }}</small>
+        </label>
+        <div class="field" role="group" aria-label="Substitui">
+          Substitui
+          <SupersedesPicker :options="replaceable" :selected="form.supersedes" :empty-text="form.global ? 'Nenhum outro documento global.' : 'Nenhum outro documento global ou deste projeto.'" @toggle="toggleSuperseded" />
+          <small v-if="form.supersedes.length" class="hint">Ao salvar, as substituídas ficam com status substituída.</small>
+          <small v-for="m in issues.supersedes" :key="m" class="error">{{ m }}</small>
+        </div>
+        <p v-if="supersededBy.length" class="text-sm text-zinc-400" data-test="superseded-by">
+          Substituída por:
+          <template v-for="(item, index) in supersededBy" :key="item.id"><template v-if="index">, </template><RouterLink :to="`${info.base}/${item.id}`" class="text-emerald-300 hover:underline">{{ item.title }}</RouterLink></template>
+        </p>
         <div class="flex flex-wrap items-center gap-3 text-sm">
           <label class="flex items-center gap-2"><input v-model="form.global" type="checkbox" class="accent-emerald-500" /> Global (todos os projetos)</label>
           <select v-if="!form.global" v-model="form.project" required class="input w-auto py-1.5 text-sm" aria-label="Projeto">
