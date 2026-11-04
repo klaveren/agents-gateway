@@ -120,7 +120,17 @@ describe('MCP do próprio gateway (integração)', () => {
   })
 
   it('⛔ o membro só vê as ferramentas comuns; o admin vê as de admin e as de escrita (SELF_MCP_WRITE=0 desliga a escrita)', async () => {
-    const common = ['get_conversation', 'list_agents', 'list_conversations', 'list_projects', 'my_usage', 'send_message', 'start_conversation', 'switch_model']
+    const common = [
+      'get_conversation',
+      'list_agents',
+      'list_conversations',
+      'list_permission_rules',
+      'list_projects',
+      'my_usage',
+      'send_message',
+      'start_conversation',
+      'switch_model',
+    ]
     const adminRead = [
       'get_agent',
       'get_agent_initial_context',
@@ -133,7 +143,6 @@ describe('MCP do próprio gateway (integração)', () => {
       'list_hooks',
       'list_models',
       'list_packages',
-      'list_permission_rules',
       'list_providers',
       'list_resources',
       'list_rules',

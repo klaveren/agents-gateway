@@ -10,7 +10,8 @@ import { ISelfReply, selfApi, selfBase, TSelfApi } from './Self.Api'
 /**
  * ⛔ Só o header da credencial (`X-Tool-Authorization`, a conta) de quem chamou o MCP segue adiante. Nada do
  * corpo do MCP vira identidade. ⚖️ Os cabeçalhos de identidade do agente (agente, conversa) vão junto como RÓTULO: a
- * API os usa só para dizer quem fez o pedido de permissão, nunca para decidir acesso.
+ * API os usa para dizer quem fez o pedido de permissão. A única leitura que eles abrem (as próprias regras) a API
+ * confere contra a sessão viva da conta que chama.
  */
 function callerApi(req: Request): TSelfApi {
   const credentials: Record<string, string> = {}
@@ -113,7 +114,7 @@ const permissionRuleShape = z.object({
  * `SELF_MCP_WRITE=0` desligando — o cliente não vê o que não pode usar. A API, por baixo, recusaria de qualquer jeito.
  * ⛔ Chave de API e senha não passam por aqui: não há ferramenta para elas.
  */
-function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolean; write: boolean }) {
+function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolean; write: boolean; agentId?: string }) {
   server.registerTool(
     'list_projects',
     {
@@ -232,6 +233,23 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     async ({ days }) => reply(await api('GET', '/usage/me', { query: { days } })),
   )
 
+  server.registerTool(
+    'list_permission_rules',
+    {
+      description:
+        "The permission rules { category, pattern, decision: allow|deny } of a target — `{ scope: 'agent' | 'project', id }` — and its requests waiting for an administrator. Agent rules decide before the project's; deny wins within a layer; no rule = denied. Any agent may read its OWN rules (`scope: 'agent'` without `id`); other agents and projects are for administrators.",
+      inputSchema: { scope: permissionTarget.scope, id: permissionTarget.id.optional().describe("The agent id or the project id. Absent with scope 'agent' = you.") },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ scope, id }) => {
+      // ⛔ "Eu" é o agente do cabeçalho de identidade, que o gateway põe; a API confere contra a sessão viva.
+      const target = id ?? (scope === 'agent' ? access.agentId : undefined)
+      if (!target)
+        return { ...text({ code: 'validation_error', message: scope === 'agent' ? 'no agent identity in this call: pass `id`' : '`id` is required for a project' }), isError: true }
+      return reply(await api('GET', `${targetPath(scope, target)}/permission-rules`))
+    },
+  )
+
   if (!access.admin) return
 
   server.registerTool(
@@ -327,17 +345,6 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
       annotations: { readOnlyHint: true },
     },
     async ({ agentId, projectId }) => reply(await api('GET', `/agents/${encodeURIComponent(agentId)}/system-prompt`, { query: { project: projectId } })),
-  )
-
-  server.registerTool(
-    'list_permission_rules',
-    {
-      description:
-        "The permission rules { category, pattern, decision: allow|deny } of a target — `{ scope: 'agent' | 'project', id }` — and its requests waiting for an administrator. Agent rules decide before the project's; deny wins within a layer; no rule = denied.",
-      inputSchema: permissionTarget,
-      annotations: { readOnlyHint: true },
-    },
-    async ({ scope, id }) => reply(await api('GET', `${targetPath(scope, id)}/permission-rules`)),
   )
 
   server.registerTool(
@@ -823,7 +830,8 @@ async function serve(req: Request, res: Response): Promise<void> {
   const server = new McpServer({ name: 'agents-gateway', version: '1.0.0' })
   // ⚖️ Escrita LIGADA para admin por padrão (o Atlas precisa dela); `SELF_MCP_WRITE=0` desliga. A API, por
   // baixo, continua só deixando admin escrever.
-  registerTools(server, api, { admin, write: process.env.SELF_MCP_WRITE !== '0' })
+  const agentId = req.headers[IDENTITY_HEADERS.agent]
+  registerTools(server, api, { admin, write: process.env.SELF_MCP_WRITE !== '0', ...(typeof agentId === 'string' && agentId.trim() ? { agentId: agentId.trim() } : {}) })
 
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
   res.on('close', () => {

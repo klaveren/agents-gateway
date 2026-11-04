@@ -18,6 +18,11 @@ const KINDS: Array<{ kind: TAccountKind; label: string; hint: string }> = [
   { kind: 'github-app', label: 'GitHub App', hint: 'Recomendado. O comando recebe um token de 1h, só dos repositórios escolhidos; a chave do App fica no gateway.' },
   { kind: 'github-token', label: 'GitHub token', hint: 'Um token pessoal (PAT). O comando recebe o próprio token.' },
   {
+    kind: 'git-https',
+    label: 'Git HTTPS (servidor próprio)',
+    hint: 'Um servidor git que não é o GitHub (GitLab, Gitea…). O git do agente usa a conta só nos repositórios sob a URL. O comando recebe o próprio token.',
+  },
+  {
     kind: 'gcp-service-account',
     label: 'GCP (conta de serviço)',
     hint: 'O comando recebe um access token de 1h para o gcloud (CLOUDSDK_AUTH_ACCESS_TOKEN) e o projeto padrão; o JSON da conta fica no gateway.',
@@ -50,7 +55,7 @@ const editing = ref<string | null>(null)
 const form = ref(blank())
 
 function blank() {
-  return { id: '', kind: 'github-app' as TAccountKind, label: '', owner: '', appId: '', installationId: '', repositories: '', envName: '', gcpProject: '', principals: '', validityMinutes: '', hostPatterns: '', knownHosts: '', certificate: '', secret: '' }
+  return { id: '', kind: 'github-app' as TAccountKind, label: '', owner: '', baseUrl: '', username: '', appId: '', installationId: '', repositories: '', envName: '', gcpProject: '', principals: '', validityMinutes: '', hostPatterns: '', knownHosts: '', certificate: '', secret: '' }
 }
 
 const kindLabel = (kind: TAccountKind) => KINDS.find((item) => item.kind === kind)?.label ?? kind
@@ -70,6 +75,8 @@ function startEdit(account: IProjectAccount) {
     kind: account.kind,
     label: account.label,
     owner: account.public.owner ?? '',
+    baseUrl: account.public.baseUrl ?? '',
+    username: account.public.username ?? '',
     appId: account.public.appId ?? '',
     installationId: account.public.installationId ?? '',
     repositories: (account.public.repositories ?? []).join(', '),
@@ -89,7 +96,7 @@ async function save() {
   busy.value = true
   actionError.value = undefined
   try {
-    const { id, kind, label, owner, appId, installationId, repositories, envName, gcpProject, principals, validityMinutes, hostPatterns, knownHosts, certificate, secret } = form.value
+    const { id, kind, label, owner, baseUrl, username, appId, installationId, repositories, envName, gcpProject, principals, validityMinutes, hostPatterns, knownHosts, certificate, secret } = form.value
     const isSsh = kind === 'ssh-ca' || kind === 'ssh-key'
     const list = (value: string) => value.split(/[\s,]+/).filter(Boolean)
     const isGitHub = kind === 'github-app' || kind === 'github-token'
@@ -98,6 +105,7 @@ async function save() {
       label,
       public: {
         ...(isGitHub && owner.trim() ? { owner: owner.trim() } : {}),
+        ...(kind === 'git-https' ? { baseUrl: baseUrl.trim(), username: username.trim() } : {}),
         ...(kind === 'github-app' ? { appId, installationId, repositories: repositories.split(/[\s,]+/).filter(Boolean) } : {}),
         ...(kind === 'secret-env' ? { envName: envName.trim() } : {}),
         ...(kind === 'gcp-service-account' && gcpProject.trim() ? { gcpProject: gcpProject.trim() } : {}),
@@ -143,10 +151,22 @@ function suggested(account: IProjectAccount): IPermissionRule[] {
   const rules: IPermissionRule[] = [{ category: 'account', pattern: account.id, decision: 'allow' }]
   if (account.kind === 'github-app' || account.kind === 'github-token')
     rules.push({ category: 'network', pattern: 'github.com:443', decision: 'allow' }, { category: 'network', pattern: 'api.github.com:443', decision: 'allow' })
+  const git = account.kind === 'git-https' ? gitHost(account.public.baseUrl) : undefined
+  if (git) rules.push({ category: 'network', pattern: git, decision: 'allow' })
   if (account.kind === 'gcp-service-account') rules.push({ category: 'network', pattern: '*.googleapis.com:443', decision: 'allow' })
   if (account.kind === 'ssh-ca' || account.kind === 'ssh-key')
     for (const host of knownHostNames(account.public.knownHosts)) rules.push({ category: 'network', pattern: `${host}:22`, decision: 'allow' })
   return rules
+}
+
+/** `host:porta` da URL do servidor git (443 quando ela não diz), para a regra de rede. */
+function gitHost(baseUrl = ''): string | undefined {
+  try {
+    const url = new URL(baseUrl)
+    return `${url.hostname}:${url.port || '443'}`
+  } catch {
+    return undefined
+  }
 }
 
 /** Os hosts dos known_hosts (o primeiro campo, sem `[...]:porta` nem os hasheados), para sugerir a regra de rede. */
@@ -242,6 +262,13 @@ watch(
           <label v-else-if="form.kind === 'gcp-service-account'" class="field">
             Projeto do GCP (vazio = o do JSON)<input v-model="form.gcpProject" class="input font-mono" placeholder="projeto-empresa-1" />
           </label>
+          <template v-else-if="form.kind === 'git-https'">
+            <div class="grid gap-3 sm:grid-cols-2">
+              <label class="field">URL do servidor (https, com o prefixo)<input v-model="form.baseUrl" class="input font-mono" placeholder="https://git.empresa.com.br/grupo" /></label>
+              <label class="field">Usuário<input v-model="form.username" class="input font-mono" placeholder="agente" autocomplete="off" /></label>
+            </div>
+            <p class="text-xs text-zinc-500">Só os repositórios sob essa URL usam a conta. Sem usuário ou senha na URL: o token vai no campo abaixo.</p>
+          </template>
           <div v-else-if="form.kind !== 'secret-env'" class="grid gap-3 sm:grid-cols-2">
             <label class="field">Dono (organização ou usuário)<input v-model="form.owner" class="input font-mono" placeholder="empresa1" /></label>
             <template v-if="form.kind === 'github-app'">
@@ -254,7 +281,7 @@ watch(
 
           <p v-if="form.kind === 'ssh-ca'" class="text-xs text-zinc-500">A chave da CA nasce no gateway ao salvar e não sai dele; a pública aparece na lista, para os servidores.</p>
           <label v-else class="field">
-            {{ { 'github-app': 'Chave privada do App (.pem)', 'github-token': 'Token', 'gcp-service-account': 'JSON da conta de serviço', 'ssh-key': 'Chave privada SSH (sem senha)', 'ssh-ca': '', 'secret-env': 'Valor' }[form.kind] }}
+            {{ { 'github-app': 'Chave privada do App (.pem)', 'github-token': 'Token', 'git-https': 'Token ou senha', 'gcp-service-account': 'JSON da conta de serviço', 'ssh-key': 'Chave privada SSH (sem senha)', 'ssh-ca': '', 'secret-env': 'Valor' }[form.kind] }}
             <textarea v-model="form.secret" class="input font-mono text-xs" :rows="form.kind === 'github-app' || form.kind === 'gcp-service-account' || form.kind === 'ssh-key' ? 6 : 2" :placeholder="editing ? 'Em branco: mantém o guardado' : ''" autocomplete="off" spellcheck="false" />
           </label>
           <div class="flex gap-2">
@@ -278,6 +305,7 @@ watch(
             </div>
             <p class="text-xs text-zinc-500">
               <template v-if="account.public.owner">dono {{ account.public.owner }} · </template>
+              <template v-if="account.public.baseUrl">{{ account.public.username }} em {{ account.public.baseUrl }} · </template>
               <template v-if="account.public.appId">App {{ account.public.appId }}, instalação {{ account.public.installationId }} · </template>
               <template v-if="account.public.repositories?.length">repositórios {{ account.public.repositories.join(', ') }} · </template>
               <template v-if="account.public.envName">variável {{ account.public.envName }} · </template>

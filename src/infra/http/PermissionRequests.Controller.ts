@@ -4,8 +4,10 @@ import { PermissionRequestsService } from '@application/PermissionRequests.Servi
 import { IDENTITY_HEADERS } from '@domain/Agent.Identity'
 import { AGENT_PATCH_FIELDS, TAgentPatch, TAgentPatchField } from '@domain/AgentPatch.Policy'
 import { IPermissionRequester } from '@domain/models/PermissionRequest.Model'
+import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
 import { agentBodySchema } from './Request.Schema'
 import { viaAccessToken } from './Auth.Controller'
+import { ownsSession, resolveCaller } from './Caller.Access'
 import { checkAdminAccess } from './Caller.Admin'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
@@ -17,6 +19,8 @@ export interface IPermissionRequestsControllerDeps {
   /** Ausente (o servidor de teste sem banco): as rotas respondem 404. */
   service?: PermissionRequestsService
   proof?: ICallerProof
+  /** A sessão VIVA pelo id (o agente dela, se o turno roda, o dono): é o que ancora a leitura das próprias regras. */
+  liveSession?: (sessionId: string) => { agentId: string; status: string; metadata?: Record<string, unknown> } | undefined
 }
 
 // ⚖️ As regras em si NÃO passam por zod aqui: o validador é o do formulário do agente (`permissionIssues`), com as
@@ -44,12 +48,36 @@ export class PermissionRequestsController {
     for (const name of ['rules', 'change', 'list', 'listForAgent', 'listForProject', 'approve', 'reject', 'patchAgent'] as const) this[name] = this[name].bind(this)
   }
 
-  /** `GET /agents/:agentId/permission-rules` e `GET /projects/:projectId/permission-rules` — as regras e os pedidos abertos. */
+  /**
+   * `GET /agents/:agentId/permission-rules` e `GET /projects/:projectId/permission-rules` — as regras e os pedidos abertos.
+   * Admin lê qualquer alvo; o agente, só as PRÓPRIAS (ver `ownRules`).
+   */
   async rules(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
-      const { service } = await this.admin('getPermissionRules')
-      return service.rules(refOf(req))
+      const access = await checkAdminAccess(this.deps.proof)
+      if (access.allowed && this.deps.service) return this.deps.service.rules(refOf(req))
+      const own = await this.ownRules(req)
+      if (own) return own
+      if (!access.allowed) console.warn('[admin] acesso negado a getPermissionRules:', access.reason)
+      throw new HttpError(404, 'not_found', 'Not found')
     })
+  }
+
+  /**
+   * ⛔ O AGENTE LENDO AS PRÓPRIAS REGRAS (só leitura), sem ser admin. Quem ele é NÃO vem do argumento: a conversa do
+   * cabeçalho de identidade tem de ser uma sessão viva, com o turno rodando, DESTE agente (o da rota e o do cabeçalho) e
+   * da conta provada que chama. Qualquer outro agente, ou um projeto, segue só para admin.
+   */
+  private async ownRules(req: Request) {
+    const agentId = typeof req.params.agentId === 'string' ? req.params.agentId : undefined
+    const { agentId: claimed, conversationId } = identityOf(req)
+    if (!this.deps.service || !this.deps.liveSession || !agentId || !conversationId || claimed !== agentId) return undefined
+    const resolved = await resolveCaller(this.deps.proof)
+    const session = resolved ? this.deps.liveSession(conversationId) : undefined
+    if (!resolved || !session || session.status !== 'running' || session.agentId !== agentId || !ownsSession(resolved, session.metadata)) return undefined
+    // O agente global responde pelo projeto da conversa: é a camada de baixo que vale para ele ali.
+    const project = session.metadata?.[PROJECT_METADATA_KEY]
+    return this.deps.service.rules({ agentId }, typeof project === 'string' ? { conversationProjectId: project } : {})
   }
 
   /** `POST /agents/:agentId/permission-rules` e `POST /projects/:projectId/permission-rules` — restringe já; amplia como pedido. */
@@ -147,11 +175,15 @@ function refOf(req: Request): { agentId?: string; projectId?: string } {
  * próprio MCP. ⚠️ Não decide nada: quem pode pedir é a conta (admin); o rótulo só diz à pessoa de onde veio.
  */
 function requesterOf(req: Request, by: string): IPermissionRequester {
+  const { agentId, conversationId } = identityOf(req)
+  return { by, ...(agentId ? { agentId } : {}), ...(conversationId ? { conversationId } : {}) }
+}
+
+/** Os cabeçalhos de identidade, se bem formados. ⚠️ Sozinhos não provam nada: quem decide confere contra a sessão viva. */
+function identityOf(req: Request): { agentId?: string; conversationId?: string } {
   const header = (name: string) => {
     const value = req.headers[name]
     return typeof value === 'string' && /^[\w.:@-]{1,128}$/.test(value.trim()) ? value.trim() : undefined
   }
-  const agentId = header(IDENTITY_HEADERS.agent)
-  const conversationId = header(IDENTITY_HEADERS.conversation)
-  return { by, ...(agentId ? { agentId } : {}), ...(conversationId ? { conversationId } : {}) }
+  return { agentId: header(IDENTITY_HEADERS.agent), conversationId: header(IDENTITY_HEADERS.conversation) }
 }

@@ -60,7 +60,7 @@ import { UsageController } from '@infra/http/Usage.Controller'
 import { makeCredentials } from './Credentials.Factory'
 import { makeProviders } from './Providers.Factory'
 import { makeModelCatalog } from './Catalog.Factory'
-import { providerBench } from './Orchestrator.Factory'
+import { makeSessionStore, providerBench } from './Orchestrator.Factory'
 import { makeTools } from './Tools.Factory'
 import { loadPricing } from '@infra/pricing/Pricing.File'
 import { sessionContextFromEnv } from '@infra/session/Template.SessionContext'
@@ -166,7 +166,7 @@ export function makePermissionsController(): PermissionsController {
 }
 
 export function makePermissionRequestsController(): PermissionRequestsController {
-  return new PermissionRequestsController({ service: makePermissionRequests(), proof: makeAuth().proof })
+  return new PermissionRequestsController({ service: makePermissionRequests(), proof: makeAuth().proof, liveSession: (id) => makeSessionStore().get(id) })
 }
 
 export function makeLedgerController(): LedgerController {

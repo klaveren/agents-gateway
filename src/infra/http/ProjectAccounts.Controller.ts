@@ -20,6 +20,8 @@ const saveSchema = z.object({
   public: z
     .object({
       owner: z.string().trim().max(39).optional(),
+      baseUrl: z.string().trim().max(500).optional(),
+      username: z.string().trim().max(128).optional(),
       appId: z.string().trim().max(12).optional(),
       installationId: z.string().trim().max(15).optional(),
       repositories: z.array(z.string().trim().max(100)).max(100).optional(),
