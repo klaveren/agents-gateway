@@ -6,6 +6,9 @@ describe('BashGuard', () => {
   const denied = [
     'rm -rf /',
     'rm -fr ~/projects',
+    'rm -r -f ./dist',
+    'rm --recursive --force ./dist',
+    'git rm -rf docs/',
     'sudo rm something',
     'mkfs.ext4 /dev/sda1',
     'dd if=/dev/zero of=/dev/sda',
@@ -24,6 +27,8 @@ describe('BashGuard', () => {
     'ps aux | head -5',
     'rm ./build/artifact.txt',
     'rm -r ./node_modules',
+    'git rm .agents/agents/agent-administrator/maya-ledger/contextos/mcp-tool-surface.md',
+    'rm ./notas/how-to-surf-the-web.md',
     'git status',
     'curl -s https://example.com > out.json',
     'grep -rn "todo" src',
