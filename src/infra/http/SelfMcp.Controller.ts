@@ -543,7 +543,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'list_packages',
     {
       description:
-        'The server tools installed from the Packages tab (micromamba, conda-forge) into a persistent folder on the PATH of every agent Bash, run_bash and local MCP. `explicit` = asked for; the rest came as dependencies.',
+        'The server tools installed from the Packages tab — conda-forge (micromamba) in `packages`, and the npm registry in `npm.packages` — into a persistent folder on the PATH of every agent Bash, run_bash and local MCP. `explicit` = asked for; the rest came as dependencies.',
       annotations: { readOnlyHint: true },
     },
     async () => reply(await api('GET', '/packages')),
@@ -553,11 +553,11 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'search_packages',
     {
       description:
-        'Search conda-forge for a server tool by name (git, curl, jq, ffmpeg, ripgrep…): one hit per package, newest version, exact name first. The first search on a fresh server takes ~15s.',
-      inputSchema: { query: z.string().min(2).max(100) },
+        'Search for a server tool by name: conda-forge by default (git, curl, jq, ffmpeg, ripgrep…), or the npm registry with `source: "npm"` (Node CLIs such as mongosh). One hit per package, newest version, exact name first. The first conda search on a fresh server takes ~15s.',
+      inputSchema: { query: z.string().min(2).max(100), source: z.enum(['conda', 'npm']).optional() },
       annotations: { readOnlyHint: true },
     },
-    async ({ query }) => reply(await api('GET', '/packages/search', { query: { q: query } })),
+    async ({ query, source }) => reply(await api('GET', '/packages/search', { query: { q: query, ...(source ? { source } : {}) } })),
   )
 
   server.registerTool(
@@ -877,19 +877,23 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'install_package',
     {
       description:
-        'Install a conda-forge package into the persistent server tools folder (survives restarts; no root needed). Once installed, its commands work right away in every agent Bash, run_bash and local MCP (the folder is on the gateway PATH). One install at a time: a busy error means wait and retry. Confirm with the person before installing.',
-      inputSchema: { name: z.string().describe('Exact conda-forge name, from search_packages'), version: z.string().optional().describe('e.g. 2.45 or 2.*; absent = newest') },
+        'Install a package into the persistent server tools folder (survives restarts; no root needed): from conda-forge by default, or from the npm registry with `source: "npm"` (then `version` is required and EXACT, e.g. 2.14.1, and install scripts do not run). Once installed, its commands work right away in every agent Bash, run_bash and local MCP (the folder is on the gateway PATH). One install at a time: a busy error means wait and retry. Confirm with the person before installing.',
+      inputSchema: {
+        name: z.string().describe('Exact name, from search_packages (npm: may be @scope/name)'),
+        version: z.string().optional().describe('conda: e.g. 2.45 or 2.*, absent = newest; npm: exact, required'),
+        source: z.enum(['conda', 'npm']).optional(),
+      },
     },
-    async ({ name, version }) => reply(await api('POST', '/packages', { body: { name, ...(version ? { version } : {}) } })),
+    async ({ name, version, source }) => reply(await api('POST', '/packages', { body: { name, ...(version ? { version } : {}), ...(source ? { source } : {}) } })),
   )
 
   server.registerTool(
     'remove_package',
     {
       description: 'Uninstall a package from the server tools folder. Agents and local MCPs that call its commands stop finding them. Confirm with the person before removing.',
-      inputSchema: { name: z.string() },
+      inputSchema: { name: z.string(), source: z.enum(['conda', 'npm']).optional() },
     },
-    async ({ name }) => reply(await api('DELETE', `/packages/${encodeURIComponent(name)}`)),
+    async ({ name, source }) => reply(await api('DELETE', `/packages/${encodeURIComponent(name)}`, { query: { ...(source ? { source } : {}) } })),
   )
 
   server.registerTool(
