@@ -769,7 +769,20 @@ export interface IPackagesState {
   /** Onde as ferramentas moram (persistente). */
   prefix: string
   packages: IInstalledPackage[]
+  /** O npm do servidor (pacotes globais num prefixo próprio). */
+  npm?: INpmPackagesState
 }
+
+export interface INpmPackagesState {
+  /** O `npm` existe no servidor. */
+  available: boolean
+  version?: string
+  prefix: string
+  packages: IInstalledPackage[]
+}
+
+/** De onde vem o pacote: conda-forge (micromamba) ou registro npm. */
+export type TPackageSource = 'conda' | 'npm'
 
 export interface IPackageHit {
   name: string
