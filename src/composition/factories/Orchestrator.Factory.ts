@@ -1,3 +1,4 @@
+import { makeResourceSecrets } from './ResourceSecrets.Factory'
 import { makePermissions } from './Permissions.Factory'
 import { makeGuidance } from './Guidance.Factory'
 import { setTracingDisabled } from '@openai/agents'
@@ -92,6 +93,19 @@ export function makeOrchestrator(): AgentProvider {
     },
   )
   provider.useAgentFiles((agent) => makeAgents().filesDir(agent))
+  provider.useSecrets({
+    envFor: (agentId, sessionId) => makeResourceSecrets().envFor(agentId, sessionId),
+    // Os nomes das skills e commands que o agente pode carregar: os liberados para ele (o índice do prompt).
+    ambientFor: (agent) =>
+      makeResourceSecrets().ambientFor(agent.id, [
+        ...makeGuidance()
+          .usableResources('skill', agent.id)
+          .map((resource) => ({ kind: 'skill' as const, id: resource.id })),
+        ...makeGuidance()
+          .usableResources('command', agent.id)
+          .map((resource) => ({ kind: 'command' as const, id: resource.id })),
+      ]),
+  })
   return provider
 }
 

@@ -65,6 +65,11 @@ export function knownForms(secrets: readonly IKnownSecret[]): IKnownSecret[] {
     if (value.length < MIN_LENGTH) continue
     forms.push({ value, label: secret.label })
     forms.push({ value: Buffer.from(value).toString('base64'), label: secret.label })
+    // ⚖️ As outras codificações que um comando costuma produzir sem querer (um `curl --data-urlencode`, um `xxd`).
+    forms.push({ value: Buffer.from(value).toString('base64url'), label: secret.label })
+    forms.push({ value: Buffer.from(value).toString('hex'), label: secret.label })
+    const encoded = encodeURIComponent(value)
+    if (encoded !== value) forms.push({ value: encoded, label: secret.label })
     const password = /:\/\/[^:/@\s]+:([^@/\s]+)@/.exec(value)?.[1]
     if (password && password.length >= MIN_LENGTH) forms.push({ value: password, label: secret.label })
   }

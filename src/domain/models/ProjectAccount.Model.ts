@@ -83,7 +83,7 @@ export function parseGcpKey(secret: string): IGcpServiceAccountKey | undefined {
 }
 
 export const ACCOUNT_ID = /^[a-z0-9][a-z0-9-]{0,47}$/
-const ENV_NAME = /^[A-Z][A-Z0-9_]{1,63}$/
+export const ENV_NAME = /^[A-Z][A-Z0-9_]{1,63}$/
 const GITHUB_OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/
 const GITHUB_REPO = /^[A-Za-z0-9._-]{1,100}$/
 const GIT_USERNAME = /^[A-Za-z0-9._@+-]{1,128}$/
@@ -126,7 +126,7 @@ function blockedGitHost(host: string): boolean {
  * ⛔ Nomes que uma variável secreta não pode tomar: os que o cerco e o gateway montam (HOME, o proxy, o ssh do git) e
  * os que mudam o que o shell ou o Node executam.
  */
-const RESERVED_ENV =
+export const RESERVED_ENV =
   /^(HOME|PATH|TMPDIR|SHELL|ENV|BASH_ENV|IFS|PS4|PROMPT_COMMAND|NODE_OPTIONS|NODE_USE_ENV_PROXY|NO_PROXY|GIT_SSH_COMMAND|GH_TOKEN|GITHUB_TOKEN|GOOGLE_CLOUD_PROJECT)$|PROXY$|^(LD_|DYLD_|GIT_CONFIG|GATEWAY_|npm_config_|CLOUDSDK_)/i
 
 /** O que se valida no cadastro: o público e o segredo de cada tipo. Devolve os problemas (vazio = ok). */

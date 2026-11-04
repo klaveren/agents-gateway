@@ -3805,7 +3805,17 @@ export const OPENAPI_DOCUMENT = {
         parameters: [{ name: 'requestId', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: {
           required: true,
-          ...json({ type: 'object', properties: { confirm: { type: 'array', items: { type: 'string' }, description: 'The widening keys being accepted.' } } }),
+          ...json({
+            type: 'object',
+            properties: {
+              confirm: { type: 'array', items: { type: 'string' }, description: 'The widening keys being accepted.' },
+              value: {
+                type: 'string',
+                maxLength: 16384,
+                description: 'Kind `secret` only: the value of the requested variable, typed on the screen. It goes straight to the vault, never to the request.',
+              },
+            },
+          }),
         },
         responses: {
           '200': {
@@ -3832,6 +3842,171 @@ export const OPENAPI_DOCUMENT = {
           '404': failures['404'],
           '409': { description: 'Code `permission_request_closed`: already decided.', ...json(failureEnvelope) },
         },
+      },
+    },
+    '/agents/{agentId}/secrets': {
+      get: {
+        summary: 'The SECRET VARIABLES of this agent: names, descriptions and when they changed — never the value. Administrators only (404 otherwise)',
+        parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    scope: { type: 'string', enum: ['agent', 'skill', 'command'] },
+                    scopeId: { type: 'string' },
+                    name: { type: 'string' },
+                    description: { type: 'string' },
+                    updatedAt: { type: 'string', format: 'date-time' },
+                    updatedBy: { type: 'string' },
+                  },
+                },
+              }),
+            ),
+          },
+          '404': failures['404'],
+        },
+      },
+    },
+    '/agents/{agentId}/secrets/{name}': {
+      put: {
+        summary:
+          'Set a secret variable (the value only goes in: no route returns it). ⛔ Only an administrator on the screen (the login cookie, not an access token or an agent). Without `value`, only the description changes',
+        parameters: [
+          { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'name', in: 'path', required: true, schema: { type: 'string', pattern: '^[A-Z][A-Z0-9_]{1,63}$' } },
+        ],
+        requestBody: { required: true, ...json({ type: 'object', properties: { value: { type: 'string', maxLength: 16384 }, description: { type: 'string', maxLength: 300 } } }) },
+        responses: {
+          '200': {
+            description: 'Saved (without the value)',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  scope: { type: 'string', enum: ['agent', 'skill', 'command'] },
+                  scopeId: { type: 'string' },
+                  name: { type: 'string' },
+                  description: { type: 'string' },
+                  updatedAt: { type: 'string', format: 'date-time' },
+                  updatedBy: { type: 'string' },
+                },
+              }),
+            ),
+          },
+          '403': { description: 'Not on the screen', ...json(failureEnvelope) },
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+      delete: {
+        summary: 'Delete a secret variable. ⛔ Only an administrator on the screen',
+        parameters: [
+          { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'name', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'Deleted', ...json(envelope({ type: 'null' })) },
+          '403': { description: 'Not on the screen', ...json(failureEnvelope) },
+          '404': failures['404'],
+        },
+      },
+    },
+    '/resources/{resourceId}/secrets': {
+      get: {
+        summary: 'The SECRET VARIABLES of this skill or command: names, descriptions and when they changed — never the value. Administrators only (404 otherwise)',
+        parameters: [{ name: 'resourceId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    scope: { type: 'string', enum: ['agent', 'skill', 'command'] },
+                    scopeId: { type: 'string' },
+                    name: { type: 'string' },
+                    description: { type: 'string' },
+                    updatedAt: { type: 'string', format: 'date-time' },
+                    updatedBy: { type: 'string' },
+                  },
+                },
+              }),
+            ),
+          },
+          '404': failures['404'],
+        },
+      },
+    },
+    '/resources/{resourceId}/secrets/{name}': {
+      put: {
+        summary:
+          'Set a secret variable (the value only goes in: no route returns it). ⛔ Only an administrator on the screen (the login cookie, not an access token or an agent). Without `value`, only the description changes',
+        parameters: [
+          { name: 'resourceId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'name', in: 'path', required: true, schema: { type: 'string', pattern: '^[A-Z][A-Z0-9_]{1,63}$' } },
+        ],
+        requestBody: { required: true, ...json({ type: 'object', properties: { value: { type: 'string', maxLength: 16384 }, description: { type: 'string', maxLength: 300 } } }) },
+        responses: {
+          '200': {
+            description: 'Saved (without the value)',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  scope: { type: 'string', enum: ['agent', 'skill', 'command'] },
+                  scopeId: { type: 'string' },
+                  name: { type: 'string' },
+                  description: { type: 'string' },
+                  updatedAt: { type: 'string', format: 'date-time' },
+                  updatedBy: { type: 'string' },
+                },
+              }),
+            ),
+          },
+          '403': { description: 'Not on the screen', ...json(failureEnvelope) },
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+      delete: {
+        summary: 'Delete a secret variable. ⛔ Only an administrator on the screen',
+        parameters: [
+          { name: 'resourceId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'name', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'Deleted', ...json(envelope({ type: 'null' })) },
+          '403': { description: 'Not on the screen', ...json(failureEnvelope) },
+          '404': failures['404'],
+        },
+      },
+    },
+    '/secret-requests': {
+      post: {
+        summary:
+          'An agent asks for a SECRET VARIABLE by name: a pending request (kind `secret`) in Notifications; the administrator types the value on the screen when approving (`value` on the approve body). Administrators only',
+        requestBody: {
+          required: true,
+          ...json({
+            type: 'object',
+            required: ['scope', 'scopeId', 'name', 'reason'],
+            properties: {
+              scope: { type: 'string', enum: ['agent', 'skill', 'command'] },
+              scopeId: { type: 'string' },
+              name: { type: 'string' },
+              description: { type: 'string' },
+              reason: { type: 'string' },
+            },
+          }),
+        },
+        responses: { '200': { description: 'Pending request', ...json(envelope(permissionRequestSchema)) }, '404': failures['404'], '422': failures['422'] },
       },
     },
     '/projects/{projectId}/permissions': {

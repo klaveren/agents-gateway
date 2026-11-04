@@ -180,4 +180,39 @@ describe('PermissionRequestsBadge e pendingCount', () => {
     expect(shown[0].textContent).toBe('2 pedidos')
     badge.unmount()
   })
+
+  it('pedido de variável secreta: Aprovar só liga com a caixa e o valor, e manda { confirm, value }', async () => {
+    const key = 'secret/agent/theo#GITLAB_TOKEN'
+    lists = {
+      '/agents/theo/permission-requests': [
+        request({
+          kind: 'secret',
+          add: [],
+          remove: [],
+          secret: { scope: 'agent', scopeId: 'theo', name: 'GITLAB_TOKEN', description: 'token da API' },
+          widenings: [{ key, description: 'Variável secreta GITLAB_TOKEN' }],
+        }),
+      ],
+    }
+    const host = await mount({ agentId: 'theo' })
+    expect(host.textContent).toContain('Variável secreta pedida: GITLAB_TOKEN para agente theo')
+    expect(host.textContent).toContain('token da API')
+    const approve = host.querySelector<HTMLButtonElement>('[data-test="secret-approve"]')!
+    const box = host.querySelector<HTMLInputElement>(`input[data-key="${key}"]`)!
+    const value = host.querySelector<HTMLInputElement>('[data-test="secret-value"]')!
+    expect(value.type).toBe('password')
+    expect(approve.disabled).toBe(true)
+    box.checked = true
+    box.dispatchEvent(new Event('change'))
+    await flush()
+    expect(approve.disabled).toBe(true)
+    value.value = 's3gredo'
+    value.dispatchEvent(new Event('input'))
+    await flush()
+    expect(approve.disabled).toBe(false)
+    approve.click()
+    await flush()
+    expect(vi.mocked(api)).toHaveBeenCalledWith('/permission-requests/pr-1/approve', { method: 'POST', body: { confirm: [key], value: 's3gredo' } })
+    expect(host.innerHTML).not.toContain('s3gredo')
+  })
 })

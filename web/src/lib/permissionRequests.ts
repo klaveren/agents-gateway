@@ -7,11 +7,11 @@ export type TPermissionRequestStatus = 'pending' | 'approved' | 'rejected' | 'ex
  * Um pedido de permissão de um agente (o servidor recalcula `widenings` sobre o agente de agora). ⛔ Só um administrador
  * na tela aprova: o `confirm` são EXATAMENTE as chaves de `widenings`.
  */
-export type TPermissionRequestKind = 'agent-rules' | 'project-rules' | 'agent-patch'
+export type TPermissionRequestKind = 'agent-rules' | 'project-rules' | 'agent-patch' | 'secret'
 
 export interface IPermissionRequest {
   id: string
-  /** O que muda: as regras de um agente, as de um projeto, ou campos de um agente (`patch_agent`). */
+  /** O que muda: as regras de um agente, as de um projeto, campos de um agente (`patch_agent`) ou uma variável secreta. */
   kind: TPermissionRequestKind
   agentId?: string
   agentName?: string
@@ -23,6 +23,8 @@ export interface IPermissionRequest {
   patch?: Record<string, unknown>
   /** `agent-patch` de um campo-lista: a entrada a ACRESCENTAR ao valor de agora (`allowedTools` + `agent:ana`). */
   entries?: { field: string; add: string[] }
+  /** `secret`: a variável pedida (só o nome — ⛔ o valor é digitado por quem aprova, nunca vem no pedido). */
+  secret?: { scope: 'agent' | 'skill' | 'command'; scopeId: string; name: string; description?: string }
   widenings: IWideningRef[]
   requestedWidenings: IWideningRef[]
   /** As regras do agente mudaram desde o pedido: `widenings` foi recalculado. */
@@ -77,4 +79,11 @@ export function pendingCount(requests: readonly IPermissionRequest[] | undefined
   return (requests ?? []).filter(
     (request) => request.status === 'pending' && (target.agentId ? request.agentId === target.agentId : request.kind === 'project-rules' && request.projectId === target.projectId),
   ).length
+}
+
+const SECRET_SCOPE: Record<NonNullable<IPermissionRequest['secret']>['scope'], string> = { agent: 'agente', skill: 'skill', command: 'command' }
+
+/** "Variável secreta pedida: GITLAB_TOKEN para skill gitlab" — o título do pedido `secret`. */
+export function secretLine(secret: NonNullable<IPermissionRequest['secret']>): string {
+  return `Variável secreta pedida: ${secret.name} para ${SECRET_SCOPE[secret.scope] ?? secret.scope} ${secret.scopeId}`
 }

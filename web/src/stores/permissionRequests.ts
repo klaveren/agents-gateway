@@ -27,11 +27,14 @@ export const usePermissionRequestsStore = defineStore('permissionRequests', () =
     }
   }
 
-  /** ⛔ Aprovar: só passa pela sessão da tela (o cookie). `confirm` = as chaves de `widenings`, todas. */
-  async function approve(id: string, confirm: string[]): Promise<{ request: IPermissionRequest; permissions?: IPermissionRule[] }> {
+  /**
+   * ⛔ Aprovar: só passa pela sessão da tela (o cookie). `confirm` = as chaves de `widenings`, todas. `value` é o valor
+   * digitado de um pedido `secret` (só ele leva; não fica na store).
+   */
+  async function approve(id: string, confirm: string[], value?: string): Promise<{ request: IPermissionRequest; permissions?: IPermissionRule[] }> {
     const result = await api<{ request: IPermissionRequest; permissions?: IPermissionRule[] }>(`/permission-requests/${encodeURIComponent(id)}/approve`, {
       method: 'POST',
-      body: { confirm },
+      body: value === undefined ? { confirm } : { confirm, value },
     })
     put(result.request)
     return result

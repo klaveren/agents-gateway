@@ -16,6 +16,14 @@ export interface IAmbient {
   directory?: string
   /** A pasta com os arquivos do próprio agente (scripts, modelos): só leitura para ele. */
   files?: string
+  /** As variáveis secretas que o agente pode usar (só os nomes; ver `ResourceSecret.Model`). */
+  secrets?: IAmbientSecrets
+}
+
+/** Os NOMES das variáveis secretas: as do agente e as de cada skill ou command que ele pode carregar. */
+export interface IAmbientSecrets {
+  agent: string[]
+  resources: Array<{ kind: 'skill' | 'command'; id: string; names: string[] }>
 }
 
 /** A seção "## Ambiente" do system prompt. */
@@ -32,6 +40,22 @@ export function ambientSection(ambient: IAmbient): string {
   else if (repository) lines.push(`- Diretório de trabalho: ${directory}. Fora dele você não lê nem grava; o git dele funciona (status, commit, push).`)
   else lines.push(`- Diretório de trabalho: ${directory} — persistente e compartilhado pelas conversas do projeto. Fora dele você não lê nem grava.`)
   if (ambient.files) lines.push(`- Seus arquivos (scripts, modelos): ${ambient.files} — só leitura; rode-os pelo terminal a partir dessa pasta.`)
+  if (ambient.secrets) lines.push('', secretsSection(ambient.secrets))
+  return lines.join('\n')
+}
+
+/**
+ * ⛔ As variáveis secretas: o agente sabe o NOME e usa `$NOME` no terminal; o valor nunca passa por ele. Imprimir é recusado
+ * e o que sair com o valor é mascarado.
+ */
+function secretsSection(secrets: IAmbientSecrets): string {
+  const lines = [
+    '## Variáveis secretas',
+    'Estão no ambiente dos seus comandos: use `$NOME` (ex.: `curl -H "Authorization: Bearer $NOME"`). Nunca as imprima, copie para arquivo nem as passe ao modelo; o valor não está aqui de propósito. Falta uma? Peça com `request_secret`.',
+  ]
+  if (secrets.agent.length) lines.push(`- Suas: ${secrets.agent.map((name) => `\`${name}\``).join(', ')}.`)
+  for (const resource of secrets.resources)
+    lines.push(`- ${resource.kind === 'skill' ? 'Skill' : 'Command'} ${resource.id} (valem depois de carregá-la): ${resource.names.map((name) => `\`${name}\``).join(', ')}.`)
   return lines.join('\n')
 }
 

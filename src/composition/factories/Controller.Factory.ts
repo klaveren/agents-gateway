@@ -1,3 +1,4 @@
+import { makeResourceSecrets } from './ResourceSecrets.Factory'
 import { makeCatalogEvents } from './CatalogEvents.Factory'
 import { readFileSync } from 'node:fs'
 import { AsyncResource } from 'node:async_hooks'
@@ -122,11 +123,13 @@ export function makeController(): AgentController {
       makeHooks().removeAgent(agentId)
       makeGuidance().removeAgent(agentId)
       makeSchedules().removeAgent(agentId)
+      makeResourceSecrets().removeScope('agent', agentId)
     },
     projects: makeProjects(),
     sandbox: projectSandbox(),
     docker: () => dockerStatus(),
     guidance: makeGuidance(),
+    secrets: makeResourceSecrets(),
     repositoryAllowed: (agentId, projectId, repository) => makePermissions().test({ agentId, projectId }, { category: 'repository', value: repository }).allowed,
     callbackAllowed: (url) => callbackAllowed(url),
     sessionEnded: (sessionId) => backgroundProcesses().stopSession(sessionId),
@@ -166,7 +169,13 @@ export function makePermissionsController(): PermissionsController {
 }
 
 export function makePermissionRequestsController(): PermissionRequestsController {
-  return new PermissionRequestsController({ service: makePermissionRequests(), proof: makeAuth().proof, liveSession: (id) => makeSessionStore().get(id) })
+  return new PermissionRequestsController({
+    service: makePermissionRequests(),
+    proof: makeAuth().proof,
+    liveSession: (id) => makeSessionStore().get(id),
+    secrets: makeResourceSecrets(),
+    resourceKindOf: (id) => makeGuidance().resourceKindOf(id),
+  })
 }
 
 export function makeLedgerController(): LedgerController {
@@ -233,6 +242,7 @@ export function makeGuidanceController(): GuidanceController {
     proof: makeAuth().proof,
     files: makeResourceFiles(),
     agentFiles: (agentId, files, by) => makeAgents().saveFiles(agentId, files, by),
+    resourceRemoved: (kind, id) => makeResourceSecrets().removeScope(kind, id),
     secretsIn: (text) =>
       makeSecretMasker()
         .scan(text)

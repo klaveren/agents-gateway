@@ -38,6 +38,7 @@
   import AgentHooks from './AgentHooks.vue'
   import AgentSchedules from './AgentSchedules.vue'
   import AgentLedger from './AgentLedger.vue'
+  import SecretVariables from './SecretVariables.vue'
   import PermissionRules from './PermissionRules.vue'
   import PermissionTester from './PermissionTester.vue'
   import PermissionRequests from './PermissionRequests.vue'
@@ -393,7 +394,7 @@
     agents.setPermissions(props.agent.id, permissions)
   }
 
-  type TTab = 'agente' | 'instrucoes' | 'triggers' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'arquivos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos' | 'memoria' | 'historico' | 'problemas'
+  type TTab = 'agente' | 'instrucoes' | 'triggers' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'arquivos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos' | 'memoria' | 'variaveis' | 'historico' | 'problemas'
   // `#agendamentos` no link (a visão geral dos agendamentos) abre direto na guia.
   /** O nome das ferramentas do gateway na guia Ferramentas (o id técnico fica na dica). */
   const LOCAL_TOOL_LABEL: Record<string, string> = {
@@ -408,7 +409,7 @@
   }
 
   const initialHash = useRoute().hash
-  const HASH_TAB: Record<string, TTab> = { '#agendamentos': 'agendamentos', '#memoria': 'memoria', '#historico': 'historico', '#problemas': 'problemas', '#instrucoes': 'instrucoes' }
+  const HASH_TAB: Record<string, TTab> = { '#agendamentos': 'agendamentos', '#memoria': 'memoria', '#variaveis': 'variaveis', '#historico': 'historico', '#problemas': 'problemas', '#instrucoes': 'instrucoes' }
   const tab = ref<TTab>(HASH_TAB[initialHash] ?? 'agente')
 
   /** Sobram guias à direita (a barra rola de lado): a borda esmaece, para ninguém achar que acabaram. */
@@ -444,6 +445,7 @@
     hooks: [],
     agendamentos: [],
     memoria: [],
+    variaveis: [],
     historico: [],
     problemas: [],
   }
@@ -473,6 +475,8 @@
       { id: 'agendamentos', label: 'Agendamentos' },
       // O ledger do agente (o que ele aprendeu de como agir): só para agente já gravado.
       { id: 'memoria', label: 'Memória' },
+      // As variáveis secretas do agente: só admin e só para agente já gravado (o valor entra e nunca volta).
+      ...(auth.isAdmin && props.agent && !props.creating ? [{ id: 'variaveis' as const, label: 'Variáveis' }] : []),
       { id: 'historico', label: 'Histórico' },
       // Só aparece com problema: o que a importação deixou anotado no agente (não impediu a gravação).
       ...(importIssues.value.length ? [{ id: 'problemas' as const, label: 'Problemas da importação', count: importIssues.value.length }] : []),
@@ -1280,6 +1284,12 @@
       <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
     </section>
 
+    <!-- As variáveis secretas também têm o próprio cadastro: fora do Salvar do agente. -->
+    <section v-if="tab === 'variaveis'">
+      <SecretVariables v-if="agent && !creating && auth.isAdmin" :base-path="`/agents/${encodeURIComponent(agent.id)}`" scope-label="deste agente (sempre disponíveis para ele)" />
+      <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
+    </section>
+
     <section v-if="tab === 'problemas' && agent">
       <ImportIssues :issues="importIssues" :resolve="(issue) => agents.resolveIssue(agent!.id, issue)" />
     </section>
@@ -1305,7 +1315,7 @@
     </p>
     <p v-else-if="!ready" class="text-xs text-zinc-500">Carregando provedores…</p>
 
-    <div v-show="tab !== 'hooks' && tab !== 'agendamentos' && tab !== 'memoria' && tab !== 'historico'" class="flex gap-2">
+    <div v-show="tab !== 'hooks' && tab !== 'agendamentos' && tab !== 'memoria' && tab !== 'variaveis' && tab !== 'historico'" class="flex gap-2">
       <button type="submit" :disabled="saving || !ready || !!loadError || !form.providers.length" class="btn btn-primary">
         {{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar' }}
       </button>

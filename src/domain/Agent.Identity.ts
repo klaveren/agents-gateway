@@ -43,5 +43,6 @@ export function terminalEnv<T extends Record<string, string | undefined>>(
   gateway: T,
   context: IExecutionContext | undefined,
 ): T & Record<string, string> {
-  return { ...agentEnv, ...gateway, ...identityEnv(context) } as T & Record<string, string>
+  // ⚖️ As variáveis secretas do turno por cima do que o gateway monta: o nome já recusa os reservados (`secretNameIssue`).
+  return { ...agentEnv, ...gateway, ...context?.secretEnv, ...identityEnv(context) } as T & Record<string, string>
 }

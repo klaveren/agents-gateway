@@ -45,6 +45,7 @@ describe('PermissionRequestsService — o agente pede, a pessoa confirma na tela
   let now: Date
   let projectRules: IPermissionRule[]
   let service: PermissionRequestsService
+  let savedSecrets: Array<{ scope: string; scopeId: string; name: string; value?: string; by: string }>
 
   beforeEach(() => {
     agents = new AgentCatalog(new NullAgentRepository())
@@ -76,7 +77,12 @@ describe('PermissionRequestsService — o agente pede, a pessoa confirma na tela
       events: { publish: (changes) => void events.push(...changes) },
       now: () => now,
       newId: () => `pr-${++next}`,
+      secrets: {
+        save: (scope, scopeId, input, by) => savedSecrets.push({ scope, scopeId, name: input.name, ...(input.value ? { value: input.value } : {}), by }),
+        exists: (scope, id) => (scope === 'agent' && id === 'theo') || (scope === 'skill' && id === 'gitlab'),
+      },
     })
+    savedSecrets = []
     service.useAgentValidation(async () => ({ rules: agentRules, issues: () => [] }))
   })
 
@@ -338,6 +344,31 @@ describe('PermissionRequestsService — o agente pede, a pessoa confirma na tela
       assert.strictEqual(approved.request.status, 'approved')
       assert.deepStrictEqual(agents.entry('theo')!.agent.allowedTools, ['read_doc', 'cap:web.search'])
       assert.deepStrictEqual(revisions.at(-1)!.change.widenings, keys)
+    })
+  })
+
+  describe('variável secreta pedida (`request_secret`)', () => {
+    it('⛔ o pedido guarda só o nome; o valor entra na aprovação, pela tela, e vai direto ao cofre', async () => {
+      const request = service.requestSecret({ scope: 'skill', scopeId: 'gitlab', name: 'GITLAB_TOKEN', description: 'deploy', reason: 'publicar' }, asker)
+      assert.deepStrictEqual(
+        [request.kind, request.secret, request.agentId],
+        ['secret', { scope: 'skill', scopeId: 'gitlab', name: 'GITLAB_TOKEN', description: 'deploy' }, 'theo'],
+      )
+      const keys = request.widenings.map((item) => item.key)
+      assert.deepStrictEqual(keys, ['secret/skill/gitlab#GITLAB_TOKEN'])
+      await assert.rejects(service.approve(request.id, keys, { by: 'root@x.test', onScreen: false }, 'glpat-x'), PermissionRequestForbiddenError)
+      await assert.rejects(service.approve(request.id, keys, screen), InvalidPermissionsError)
+      await assert.rejects(service.approve(request.id, [], screen, 'glpat-x'), CatalogWideningConfirmationError)
+      const approved = await service.approve(request.id, keys, screen, 'glpat-valor-real')
+      assert.strictEqual(approved.request.status, 'approved')
+      assert.deepStrictEqual(savedSecrets, [{ scope: 'skill', scopeId: 'gitlab', name: 'GITLAB_TOKEN', value: 'glpat-valor-real', by: 'root@x.test' }])
+      assert.ok(!JSON.stringify(service.get(request.id)).includes('glpat-valor-real'), 'o valor não fica no pedido')
+    })
+
+    it('nome inválido, recurso que não existe e sem motivo: recusados', () => {
+      assert.throws(() => service.requestSecret({ scope: 'skill', scopeId: 'gitlab', name: 'minusculo', reason: 'x' }, asker), InvalidPermissionsError)
+      assert.throws(() => service.requestSecret({ scope: 'command', scopeId: 'nao-existe', name: 'TOKEN', reason: 'x' }, asker), InvalidPermissionsError)
+      assert.throws(() => service.requestSecret({ scope: 'agent', scopeId: 'theo', name: 'TOKEN', reason: ' ' }, asker), InvalidPermissionsError)
     })
   })
 })

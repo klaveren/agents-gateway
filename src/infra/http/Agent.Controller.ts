@@ -1,3 +1,4 @@
+import type { ResourceSecretsService } from '@application/ResourceSecrets.Service'
 import { IModelGroup, modelGroupIssues, NO_MODEL_GROUP } from '@domain/Fallback.Policy'
 import { CAPABILITIES, CAPABILITY_PREFIX, CAPABILITY_TOOLS, capability, capabilityRuns, toCapabilities } from '@domain/Capability.Catalog'
 import { agentUnavailable, IAvailabilityFacts, TAgentUnavailable, targetUnavailable, UNAVAILABLE_LABEL } from '@domain/Agent.Availability'
@@ -152,6 +153,8 @@ export interface IAgentControllerDeps {
   docker?: () => Promise<IDockerStatus>
   /** As rules e os documentos — o que o ambiente põe no prompt (a guia Tamanho do agente pesa). Ausente = nada. */
   guidance?: GuidanceService
+  /** As variáveis secretas dos recursos (ver `ResourceSecrets.Service`): o `/skill` e o `/command` as liberam na conversa. */
+  secrets?: Pick<ResourceSecretsService, 'markLoaded' | 'ambientFor'>
   /** Os providers configurados — para o agente apontar para um que existe. Ausente = só os oficiais. */
   providers?: IProviderDirectory
   /** O catálogo de modelos: preços por provider, e os modelos que um agente pode oferecer. */
@@ -603,6 +606,12 @@ export class AgentController {
         ...(agent.projectId ? { directory: projectWorkspacePath(agent.projectId) } : {}),
         ...(files ? { files } : {}),
       }
+      // As variáveis secretas (só os nomes), como o `AgentProvider` põe na conversa.
+      const secrets = this.usecases.secrets?.ambientFor(agent.id, [
+        ...(this.usecases.guidance?.usableResources('skill', agent.id) ?? []).map((resource) => ({ kind: 'skill' as const, id: resource.id })),
+        ...(this.usecases.guidance?.usableResources('command', agent.id) ?? []).map((resource) => ({ kind: 'command' as const, id: resource.id })),
+      ])
+      if (secrets) ambient.secrets = secrets
       const guidance = this.usecases.guidance
       const environment = guidance?.environmentFor(projectId, agent.id)
       const prompt = composeSystemPrompt(agent, { ambient, ...(environment ? { environment } : {}) } as ICreateSessionInput)
@@ -1531,6 +1540,9 @@ export class AgentController {
     const session = await this.usecases.getSession.execute(sessionId)
     const project = session.metadata?.[PROJECT_METADATA_KEY]
     const expanded = this.usecases.guidance?.expandCommand(body.message, session.agentId, typeof project === 'string' ? project : undefined)
+    // `/skill` e `/command` carregam o recurso: as variáveis secretas dele passam a valer nesta conversa.
+    const kind = expanded?.command ? this.usecases.guidance?.resourceKindOf(expanded.command) : undefined
+    if (kind && expanded?.command) this.usecases.secrets?.markLoaded(sessionId, kind, expanded.command)
     return { text: expanded?.text ?? body.message, files: body.files, context, ...(expanded ? { recordAs: expanded.label } : {}) }
   }
 

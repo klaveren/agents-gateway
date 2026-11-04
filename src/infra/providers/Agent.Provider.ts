@@ -1,5 +1,5 @@
 import { offers, targetFor } from '@domain/Agent.Policy'
-import { conversationNote, IAmbient } from '@domain/Ambient.Policy'
+import { conversationNote, IAmbient, IAmbientSecrets } from '@domain/Ambient.Policy'
 import { resolveCapabilities } from '@domain/Capability.Catalog'
 import { COMPACT_REQUEST, compactHandoff, shouldCompact } from '@domain/Compaction.Policy'
 import { benchKeyOf, DEFAULT_COOLDOWN_MINUTES, fallbackChain, groupOf, IFallbackStep, IModelGroup, nextStep, stepKey, switchesOn, withGroupTargets } from '@domain/Fallback.Policy'
@@ -273,6 +273,9 @@ export class AgentProvider implements IAgentProvider {
         ...(conversationProject ? { conversationProjectId: conversationProject } : {}),
         ...(workFolder ? { workFolder } : {}),
       }
+      // ⛔ As variáveis secretas do turno (ver `ResourceSecret.Model`), para os terminais nativos: já entram na máscara.
+      const secretEnv = this.secrets?.envFor(record.agentId, sessionId).env
+      if (secretEnv && Object.keys(secretEnv).length) context.secretEnv = secretEnv
 
       // O passo da conversa ficou de lado em outra conversa (cota, modelo fora): este turno já começa no próximo do grupo.
       if (this.isStepBenched(record)) {
@@ -527,6 +530,13 @@ export class AgentProvider implements IAgentProvider {
     this.agentFiles = dirOf
   }
 
+  /** As variáveis secretas (ver `ResourceSecrets.Service`): o ambiente do turno e os nomes do prompt. Ligadas na composição. */
+  useSecrets(secrets: { envFor(agentId: string, sessionId: string): { env: Record<string, string> }; ambientFor(agent: IAgent): IAmbientSecrets | undefined }): void {
+    this.secrets = secrets
+  }
+
+  private secrets?: { envFor(agentId: string, sessionId: string): { env: Record<string, string> }; ambientFor(agent: IAgent): IAmbientSecrets | undefined }
+
   private agentFiles?: (agent: IAgent) => string | undefined
 
   private ambientOf(agent: IAgent, metadata: Record<string, unknown> | undefined): IAmbient {
@@ -546,6 +556,7 @@ export class AgentProvider implements IAgentProvider {
       ...(folder?.repository ? { repository: { name: folder.repository, ...(folder.worktree ? { worktree: folder.worktree } : {}), ...(branch ? { branch } : {}) } } : {}),
       ...(folder ? { directory: folder.dir } : agent.projectId ? { directory: projectWorkspacePath(agent.projectId) } : {}),
       ...(this.agentFiles?.(agent) ? { files: this.agentFiles(agent) } : {}),
+      ...(this.secrets?.ambientFor(agent) ? { secrets: this.secrets.ambientFor(agent)! } : {}),
     }
   }
 

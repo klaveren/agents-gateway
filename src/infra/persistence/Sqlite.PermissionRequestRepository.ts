@@ -1,7 +1,14 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { IPermissionRequest, IPermissionRequester, IPermissionWidening, TPermissionRequestKind, TStoredPermissionRequestStatus } from '@domain/models/PermissionRequest.Model'
+import {
+  IPermissionRequest,
+  IPermissionRequester,
+  IPermissionRequestSecret,
+  IPermissionWidening,
+  TPermissionRequestKind,
+  TStoredPermissionRequestStatus,
+} from '@domain/models/PermissionRequest.Model'
 import { IPermissionRule } from '@domain/Permission.Policy'
 import { IPermissionRequestDecision, IPermissionRequestFilter, IPermissionRequestRepository } from '@domain/ports/PermissionRequestRepository.Port'
 
@@ -33,6 +40,7 @@ const SCHEMA = `
 const ADDED_COLUMNS: ReadonlyArray<[string, string]> = [
   ['entries', 'TEXT'],
   ['batch_id', 'TEXT'],
+  ['secret', 'TEXT'],
 ]
 
 type TRow = Record<string, unknown>
@@ -53,8 +61,8 @@ export class SqlitePermissionRequestRepository implements IPermissionRequestRepo
   create(request: IPermissionRequest): void {
     this.db
       .prepare(
-        `INSERT INTO permission_requests (id, kind, agent_id, project_id, add_rules, remove_rules, patch, entries, batch_id, widenings, reason, requested_by, base_hash, created_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO permission_requests (id, kind, agent_id, project_id, add_rules, remove_rules, patch, entries, batch_id, secret, widenings, reason, requested_by, base_hash, created_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         request.id,
@@ -66,6 +74,7 @@ export class SqlitePermissionRequestRepository implements IPermissionRequestRepo
         request.patch ? JSON.stringify(request.patch) : null,
         request.entries ? JSON.stringify(request.entries) : null,
         request.batchId ?? null,
+        request.secret ? JSON.stringify(request.secret) : null,
         JSON.stringify(request.widenings),
         request.reason,
         JSON.stringify(request.requestedBy),
@@ -119,6 +128,7 @@ function toRequest(row: TRow): IPermissionRequest {
     ...(typeof row.patch === 'string' ? { patch: JSON.parse(row.patch) as Record<string, unknown> } : {}),
     ...(typeof row.entries === 'string' ? { entries: JSON.parse(row.entries) as { field: string; add: string[] } } : {}),
     ...(typeof row.batch_id === 'string' && row.batch_id ? { batchId: row.batch_id } : {}),
+    ...(typeof row.secret === 'string' ? { secret: JSON.parse(row.secret) as IPermissionRequestSecret } : {}),
     widenings: JSON.parse(String(row.widenings)) as IPermissionWidening[],
     reason: String(row.reason),
     requestedBy: JSON.parse(String(row.requested_by)) as IPermissionRequester,

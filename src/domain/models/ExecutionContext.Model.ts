@@ -35,6 +35,11 @@ export interface IExecutionContext {
    * a raiz do cerco.
    */
   workFolder?: IContextWorkFolder
+  /**
+   * ⛔ AS VARIÁVEIS SECRETAS do turno (ver `ResourceSecret.Model`), já com valor: o ambiente dos terminais nativos (o Bash do
+   * Claude, o shell do Codex e do Antigravity). Nunca vai ao modelo nem ao log; os valores já estão na máscara da conversa.
+   */
+  secretEnv?: Readonly<Record<string, string>>
 }
 
 /** A pasta resolvida e o git dela (o `.git` comum de uma worktree fica fora da pasta). */

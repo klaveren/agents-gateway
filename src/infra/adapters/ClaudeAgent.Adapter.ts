@@ -1,3 +1,4 @@
+import { printsSecret } from '@domain/models/ResourceSecret.Model'
 import { terminalEnv } from '@domain/Agent.Identity'
 import { sessionChoice } from '@domain/Agent.Policy'
 import { errorPayload } from '@domain/Provider.Failure'
@@ -185,10 +186,13 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     // A pasta da conversa (repositório ou worktree, ver `Work.Folder`) vence a do projeto inteiro.
     const workDir = context.workFolder?.dir ?? workspaceFor(agent.projectId, sessionId)
     const project = agent.projectId || context.workFolder ? { projectId: agent.projectId ?? context.conversationProjectId ?? '', dir: workDir } : undefined
-    const gate = this.makeGate([...agent.allowedTools, ...natives, ...local.map((tool) => tool.name)], remotes, project, {
-      asker: askerOf(context),
-      cwd: workDir,
-    })
+    const gate = this.makeGate(
+      [...agent.allowedTools, ...natives, ...local.map((tool) => tool.name)],
+      remotes,
+      project,
+      { asker: askerOf(context), cwd: workDir },
+      Object.keys(context.secretEnv ?? {}),
+    )
     const options: Options = {
       model: record.model,
       systemPrompt: record.systemPrompt,
@@ -449,6 +453,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     remotes: readonly IAgentMcpServer[] = [],
     project?: { projectId: string; dir: string },
     who?: { asker: ReturnType<typeof askerOf>; cwd: string },
+    secretNames: readonly string[] = [],
   ): CanUseTool {
     const byServer = new Map(remotes.map((remote) => [claudeMcpServerName(remote.config.id), remote]))
     // Os comandos que ESTE portão já embrulhou: o hook e o `canUseTool` podem passar pelo mesmo Bash, e um
@@ -469,6 +474,9 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
         // ⛔ Em qualquer agente, de projeto ou global: as nativas de arquivo nunca tocam .env, chaves nem os dados do gateway.
         const protectedPath = protectedPathOf(bare, input, project?.dir)
         if (protectedPath) return { behavior: 'deny', message: `${protectedPath}: este arquivo é protegido.` }
+        // ⛔ O Bash que só mostra uma variável secreta (ver `printsSecret`): use a variável, não a imprima.
+        const printing = bare === 'Bash' ? printsSecret(String(input.command ?? ''), secretNames) : undefined
+        if (printing) return { behavior: 'deny', message: `Recusado: ${printing}. Use a variável no comando ($NOME), nunca a imprima.` }
         const refused = who && this.permissions ? this.fileRefusal(bare, input, who) : undefined
         if (refused) return { behavior: 'deny', message: refused }
         return project ? this.confined(bare, input, project, wrapped) : { behavior: 'allow' }

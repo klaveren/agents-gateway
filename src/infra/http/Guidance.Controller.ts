@@ -20,6 +20,8 @@ export interface IGuidanceControllerDeps {
   files?: IResourceFilesPort
   /** Os arquivos de um agente gravado (a guia Arquivos dele). */
   agentFiles?: (agentId: string, files: IResourceFile[], by: string) => unknown
+  /** O recurso foi apagado: as variáveis secretas dele vão junto (ver `ResourceSecrets.Service`). */
+  resourceRemoved?: (kind: 'skill' | 'command', id: string) => void
   /** Os segredos que um texto traz (a máscara do gateway): arquivo com segredo não entra. */
   secretsIn?: (text: string) => string[]
 }
@@ -288,7 +290,10 @@ export class GuidanceController {
     await this.respond(
       res,
       async () => {
-        this.deps.guidance.deleteResource(req.params.id as string, await this.requireAdmin('deleteResource'))
+        const id = req.params.id as string
+        const kind = this.deps.guidance.resourceKindOf(id)
+        this.deps.guidance.deleteResource(id, await this.requireAdmin('deleteResource'))
+        if (kind) this.deps.resourceRemoved?.(kind, id)
         return null
       },
       { message: 'Resource deleted' },

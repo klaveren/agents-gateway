@@ -1,3 +1,5 @@
+import type { ResourceSecretsService } from '@application/ResourceSecrets.Service'
+import { SECRET_LIMITS, SECRET_SCOPES, TSecretScope } from '@domain/models/ResourceSecret.Model'
 import { Request, Response } from 'express'
 import { z } from 'zod'
 import { PermissionRequestsService } from '@application/PermissionRequests.Service'
@@ -21,6 +23,10 @@ export interface IPermissionRequestsControllerDeps {
   proof?: ICallerProof
   /** A sessão VIVA pelo id (o agente dela, se o turno roda, o dono): é o que ancora a leitura das próprias regras. */
   liveSession?: (sessionId: string) => { agentId: string; status: string; metadata?: Record<string, unknown> } | undefined
+  /** As variáveis secretas dos recursos (ver `ResourceSecrets.Service`). Ausente: as rotas delas respondem 404. */
+  secrets?: Pick<ResourceSecretsService, 'list' | 'save' | 'remove'>
+  /** O tipo de um recurso pelo id (as variáveis de `/resources/:id` são da skill ou do command). */
+  resourceKindOf?: (id: string) => 'skill' | 'command' | undefined
 }
 
 // ⚖️ As regras em si NÃO passam por zod aqui: o validador é o do formulário do agente (`permissionIssues`), com as
@@ -33,7 +39,15 @@ const changeSchema = z.object({
 // O `patch_agent`: os campos do `PUT /agents` que o patch muda (sem id, arquivos e problemas da importação).
 const patchFields = Object.fromEntries(AGENT_PATCH_FIELDS.map((field) => [field, true])) as { [K in TAgentPatchField]: true }
 const patchSchema = z.object({ patch: agentBodySchema.pick(patchFields).partial().strict(), reason: z.string().max(1000) })
-const approveSchema = z.object({ confirm: z.array(z.string().max(1000)).max(500).optional() })
+const approveSchema = z.object({ confirm: z.array(z.string().max(1000)).max(500).optional(), value: z.string().max(SECRET_LIMITS.value).optional() })
+const secretSchema = z.object({ value: z.string().max(SECRET_LIMITS.value).optional(), description: z.string().max(SECRET_LIMITS.description).optional() }).strict()
+const secretRequestSchema = z.object({
+  scope: z.enum(SECRET_SCOPES as [TSecretScope, ...TSecretScope[]]),
+  scopeId: z.string().min(1).max(64),
+  name: z.string().min(1).max(64),
+  description: z.string().max(SECRET_LIMITS.description).optional(),
+  reason: z.string().max(1000),
+})
 const rejectSchema = z.object({ note: z.string().max(500).optional() })
 
 /**
@@ -45,7 +59,21 @@ const rejectSchema = z.object({ note: z.string().max(500).optional() })
  */
 export class PermissionRequestsController {
   constructor(private readonly deps: IPermissionRequestsControllerDeps) {
-    for (const name of ['rules', 'change', 'list', 'listForAgent', 'listForProject', 'approve', 'reject', 'patchAgent'] as const) this[name] = this[name].bind(this)
+    for (const name of [
+      'rules',
+      'change',
+      'list',
+      'listForAgent',
+      'listForProject',
+      'approve',
+      'reject',
+      'patchAgent',
+      'listSecrets',
+      'saveSecret',
+      'removeSecret',
+      'requestSecret',
+    ] as const)
+      this[name] = this[name].bind(this)
   }
 
   /**
@@ -131,8 +159,8 @@ export class PermissionRequestsController {
   async approve(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
       const { service, by } = await this.admin('approvePermissionRequest')
-      const { confirm } = parseBody(approveSchema, req.body)
-      return service.approve(req.params.requestId as string, confirm, { by, onScreen: viaSessionCookie(res) && !viaAccessToken(res) })
+      const { confirm, value } = parseBody(approveSchema, req.body)
+      return service.approve(req.params.requestId as string, confirm, { by, onScreen: viaSessionCookie(res) && !viaAccessToken(res) }, value)
     })
   }
 
@@ -143,6 +171,59 @@ export class PermissionRequestsController {
       const { note } = parseBody(rejectSchema, req.body)
       return service.reject(req.params.requestId as string, { by }, note)
     })
+  }
+
+  /** `GET /agents/:agentId/secrets` e `GET /resources/:resourceId/secrets` — os nomes e quando mudaram. ⛔ Nunca o valor. */
+  async listSecrets(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      await this.admin('listSecrets')
+      const { scope, scopeId } = this.secretScope(req)
+      return this.deps.secrets!.list(scope, scopeId)
+    })
+  }
+
+  /**
+   * `PUT …/secrets/:name { value?, description? }` — ⛔ SÓ NA TELA, como aprovar: o valor entra pela pessoa, nunca por um
+   * agente ou token de acesso. A resposta não traz o valor.
+   */
+  async saveSecret(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const { by } = await this.admin('saveSecret')
+      if (!(viaSessionCookie(res) && !viaAccessToken(res))) throw new HttpError(403, 'forbidden', 'Só quem administra, entrando pela tela, grava uma variável secreta.')
+      const { scope, scopeId } = this.secretScope(req)
+      const body = parseBody(secretSchema, req.body)
+      return this.deps.secrets!.save(scope, scopeId, { name: String(req.params.name), ...body }, by)
+    })
+  }
+
+  /** `DELETE …/secrets/:name` — ⛔ só na tela. */
+  async removeSecret(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      await this.admin('removeSecret')
+      if (!(viaSessionCookie(res) && !viaAccessToken(res))) throw new HttpError(403, 'forbidden', 'Só quem administra, entrando pela tela, apaga uma variável secreta.')
+      const { scope, scopeId } = this.secretScope(req)
+      if (!this.deps.secrets!.remove(scope, scopeId, String(req.params.name))) throw new HttpError(404, 'not_found', `Variable not found: ${String(req.params.name)}`)
+      return null
+    })
+  }
+
+  /** `POST /secret-requests { scope, scopeId, name, description?, reason }` — o agente pede a variável; o valor, só na tela. */
+  async requestSecret(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const { service, by } = await this.admin('requestSecret')
+      const body = parseBody(secretRequestSchema, req.body)
+      return service.requestSecret(body, requesterOf(req, by))
+    })
+  }
+
+  /** O alvo das rotas de variável: o agente, ou a skill ou o command pelo id. */
+  private secretScope(req: Request): { scope: TSecretScope; scopeId: string } {
+    if (!this.deps.secrets) throw new HttpError(404, 'not_found', 'Not found')
+    if (typeof req.params.agentId === 'string') return { scope: 'agent', scopeId: req.params.agentId }
+    const id = String(req.params.resourceId)
+    const kind = this.deps.resourceKindOf?.(id)
+    if (!kind) throw new HttpError(404, 'not_found', `Resource not found: ${id}`)
+    return { scope: kind, scopeId: id }
   }
 
   private async admin(operation: string): Promise<{ service: PermissionRequestsService; by: string }> {
