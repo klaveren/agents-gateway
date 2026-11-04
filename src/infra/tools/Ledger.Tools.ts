@@ -56,6 +56,17 @@ function contextText(context: ILedgerContextDetail, owner: string, readOnly: boo
   ].join('\n')
 }
 
+/** Uma linha do lote (`linhas`), com os nomes dos argumentos. */
+function lineOf(raw: Record<string, unknown>) {
+  return {
+    ...(raw.tipo !== undefined ? { type: String(raw.tipo) as never } : {}),
+    ...(raw.situacao !== undefined ? { trigger: String(raw.situacao) } : {}),
+    ...(raw.aprendizado !== undefined ? { learning: String(raw.aprendizado) } : {}),
+    ...(raw.ref !== undefined ? { ref: String(raw.ref) } : {}),
+    ...(raw.data !== undefined ? { date: String(raw.data) } : {}),
+  }
+}
+
 /** O erro da regra vira resultado de ferramenta com os campos pelo nome do argumento. */
 function failure(error: unknown): IToolResult {
   if (error instanceof InvalidLedgerError)
@@ -133,7 +144,7 @@ export function makeLedgerTools(desk: TLedgerDesk): ILocalTool[] {
     origin: 'local',
     name: LEDGER_WRITE_TOOL,
     description:
-      'Change YOUR ledger (only yours). Write right away when you learn something durable — how to act from now on ("when X, I do Y"), a recurring root cause, a fix that really worked, a convention you were taught — never session state (where you stopped, next steps, pending). One line = one learning in one sentence; an existing line about it? edit it, do not stack; check the index before creating a theme. Wrong data is worse than none: fix or delete it on the spot. acao: criar (tema + gatilho [+ playbook]); gatilho (new trigger); playbook (set the markdown appendix; empty clears); linha_nova (tipo, situacao, aprendizado [, ref, data]); linha_editar (linha = the id, plus the fields to change); linha_apagar (linha); excluir (the whole context and its lines).',
+      'Change YOUR ledger (only yours). Write right away when you learn something durable — how to act from now on ("when X, I do Y"), a recurring root cause, a fix that really worked, a convention you were taught — never session state (where you stopped, next steps, pending). One line = one learning in one sentence; an existing line about it? edit it, do not stack; check the index before creating a theme. Wrong data is worse than none: fix or delete it on the spot. acao: criar (tema + gatilho [+ playbook]); gatilho (new trigger); playbook (set the markdown appendix; empty clears); linha_nova (tipo, situacao, aprendizado [, ref, data], or `linhas` = several at once); linha_editar (linha = the id, plus the fields to change); linha_apagar (linha); excluir (the whole context and its lines).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -146,6 +157,11 @@ export function makeLedgerTools(desk: TLedgerDesk): ILocalTool[] {
           type: 'string',
           enum: [...LEDGER_LINE_TYPES],
           description: 'APRENDIZADO = verified how-to/rule; POSTURA = how to act (tone, mode); DIFICULDADE = an honest episode or failure, NOT a rule.',
+        },
+        linhas: {
+          type: 'array',
+          description: 'linha_nova: several lines at once (migrating, a batch of learnings): each { tipo, situacao, aprendizado, ref?, data? }.',
+          items: { type: 'object' },
         },
         situacao: { type: 'string', description: 'The trigger/context of the line: when it applies (one line).' },
         aprendizado: { type: 'string', description: 'The learning, in one sentence (≤ 300 characters).' },
@@ -177,27 +193,61 @@ export function makeLedgerTools(desk: TLedgerDesk): ILocalTool[] {
           : typeof args.linha === 'string' && /^\d+$/.test(args.linha.replace(/^#/, ''))
             ? Number(args.linha.replace(/^#/, ''))
             : undefined
+      const author = { kind: 'agent' as const, agentId: reader.agentId, ...(context?.sessionId ? { conversationId: context.sessionId } : {}) }
+      const topic = str(args.tema) ?? ''
+      // Várias linhas numa chamada (a migração, um lote de aprendizados): uma gravação por linha, cada uma com a sua versão.
+      const batch = action === 'linha_nova' && Array.isArray(args.linhas) ? (args.linhas as Array<Record<string, unknown>>) : undefined
+      const lines = batch ? batch.map(lineOf) : [line]
+      const written: string[] = []
+      let last: ReturnType<typeof desk.write> | undefined
       try {
-        const result = desk.write(
-          reader.agentId,
-          {
-            action,
-            topic: str(args.tema) ?? '',
-            ...(args.gatilho !== undefined ? { trigger: String(args.gatilho) } : {}),
-            ...(args.playbook !== undefined ? { playbook: String(args.playbook) } : {}),
-            ...(lineId !== undefined ? { lineId } : {}),
-            line,
-          },
-          { kind: 'agent', agentId: reader.agentId, ...(context?.sessionId ? { conversationId: context.sessionId } : {}) },
-        )
-        const head = result.changed ? `Gravado: ${action} em ${result.topic}.` : `Nada mudou em ${result.topic} (já estava assim).`
-        const body = result.context
-          ? contextText(result.context, reader.agentId, false, result.warnings)
-          : [`Contexto ${result.topic} excluído.`, ...warningsText(result.warnings)].join('\n')
-        return { status: 'success', result: [head, '', body].join('\n') }
+        for (const [index, one] of lines.entries()) {
+          try {
+            last = desk.write(
+              reader.agentId,
+              {
+                action,
+                topic,
+                ...(args.gatilho !== undefined ? { trigger: String(args.gatilho) } : {}),
+                ...(args.playbook !== undefined ? { playbook: String(args.playbook) } : {}),
+                ...(lineId !== undefined ? { lineId } : {}),
+                line: one,
+              },
+              author,
+            )
+          } catch (error: unknown) {
+            // No lote, o que já entrou fica (cada linha é uma versão); o erro diz qual parou.
+            if (!batch || !written.length) throw error
+            const stopped = failure(error)
+            return { status: 'error', result: [`${written.length} linha(s) gravada(s) em ${topic}; parou na ${index + 1}ª:`, ...written, stopped.result].join('\n') }
+          }
+          const changedLine =
+            action === 'linha_nova'
+              ? last.context?.lines.reduce((max, entry) => (entry.id > max.id ? entry : max), last.context.lines[0])
+              : lineId !== undefined
+                ? last.context?.lines.find((entry) => entry.id === lineId)
+                : undefined
+          if (changedLine) written.push(`#${changedLine.id} ${lineText(changedLine)}`)
+        }
       } catch (error: unknown) {
         return failure(error)
       }
+      // ⚖️ Só a CONFIRMAÇÃO, nunca o contexto inteiro: devolver 24 linhas e o playbook a cada gravação pesa no resto da
+      // conversa. Quem quer ver o todo chama `ledger_read { tema }`.
+      const result = last!
+      const head = result.changed ? `Gravado: ${action} em ${result.topic}.` : `Nada mudou em ${result.topic} (já estava assim).`
+      const detail =
+        action === 'excluir'
+          ? [`Contexto ${result.topic} excluído.`]
+          : action === 'criar' || action === 'gatilho'
+            ? [`Gatilho: ${result.context?.trigger ?? ''}`]
+            : action === 'playbook'
+              ? [`Playbook: ${result.context?.playbook ? `${result.context.playbook.length} caracteres` : 'vazio'}`]
+              : action === 'linha_apagar'
+                ? [`Linha #${lineId} apagada.`]
+                : written
+      const mine = result.warnings.filter((warning) => !warning.topic || warning.topic === result.topic || warning.related === result.topic)
+      return { status: 'success', result: [head, ...detail, ...warningsText(mine)].join('\n') }
     },
   }
 
