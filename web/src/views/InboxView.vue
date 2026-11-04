@@ -1,53 +1,63 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import ConversationList from '@/components/ConversationList.vue'
-import NewConversation from '@/components/NewConversation.vue'
-import ThreadView from '@/components/ThreadView.vue'
-import { useAuthStore } from '@/stores/auth'
-import { useConversationsStore } from '@/stores/conversations'
-import { useThreadStore } from '@/stores/thread'
+  import { computed, onMounted, watch } from 'vue'
+  import { useRoute } from 'vue-router'
+  import ConversationList from '@/components/ConversationList.vue'
+  import ListResizer from '@/components/ListResizer.vue'
+  import { useListWidth } from '@/composables/useListWidth'
+  import NewConversation from '@/components/NewConversation.vue'
+  import ThreadView from '@/components/ThreadView.vue'
+  import { useAuthStore } from '@/stores/auth'
+  import { useConversationsStore } from '@/stores/conversations'
+  import { useThreadStore } from '@/stores/thread'
 
-const props = defineProps<{ id?: string }>()
+  const props = defineProps<{ id?: string }>()
 
-const route = useRoute()
-const auth = useAuthStore()
-const conversations = useConversationsStore()
-const thread = useThreadStore()
+  const route = useRoute()
+  const auth = useAuthStore()
+  const conversations = useConversationsStore()
+  const thread = useThreadStore()
+  const { width: listWidth } = useListWidth()
 
-const isNew = computed(() => route.name === 'new')
-const hasDetail = computed(() => isNew.value || !!props.id)
+  const isNew = computed(() => route.name === 'new')
+  const hasDetail = computed(() => isNew.value || !!props.id)
 
-onMounted(() => void conversations.load(auth.isAdmin))
+  onMounted(() => void conversations.load(auth.isAdmin))
 
-watch(
-  () => props.id,
-  (id) => {
-    conversations.select(id)
-    // A conversa que acabou de nascer aqui já está aberta — reabrir apagaria o turno em andamento.
-    if (id && id !== thread.sessionId) void thread.open(id, conversations.find(id))
-  },
-  { immediate: true },
-)
+  watch(
+    () => props.id,
+    (id) => {
+      conversations.select(id)
+      // A conversa que acabou de nascer aqui já está aberta — reabrir apagaria o turno em andamento.
+      if (id && id !== thread.sessionId) void thread.open(id, conversations.find(id))
+    },
+    { immediate: true },
+  )
 
-// O cabeçalho acompanha a lista: o evento ao vivo traz título, contagem e rótulo novos.
-watch(
-  () => (props.id ? conversations.find(props.id) : undefined),
-  (conversation) => {
-    thread.setHeader(conversation)
-    if (conversation && !thread.sending) void thread.refresh()
-  },
-)
-
+  // O cabeçalho acompanha a lista: o evento ao vivo traz título, contagem e rótulo novos.
+  watch(
+    () => (props.id ? conversations.find(props.id) : undefined),
+    (conversation) => {
+      thread.setHeader(conversation)
+      if (conversation && !thread.sending) void thread.refresh()
+    },
+  )
 </script>
 
 <template>
   <div class="flex h-full">
-    <aside class="h-full w-full shrink-0 border-r border-zinc-800/80 lg:w-[340px]" :class="hasDetail ? 'hidden lg:block' : 'block'">
+    <aside
+      class="relative h-full w-full shrink-0 border-r border-zinc-800/80 lg:w-(--list-w)"
+      :class="hasDetail ? 'hidden lg:block' : 'block'"
+      :style="{ '--list-w': `${listWidth}px` }"
+    >
       <ConversationList />
+      <ListResizer />
     </aside>
     <!-- No celular a conversa abre por cima de tudo (inclusive da barra de navegação), como num app de mensagens. -->
-    <div class="h-full min-w-0 flex-1 bg-zinc-950" :class="hasDetail ? 'block max-md:fixed max-md:inset-0 max-md:z-40 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)]' : 'hidden lg:block'">
+    <div
+      class="h-full min-w-0 flex-1 bg-zinc-950"
+      :class="hasDetail ? 'block max-md:fixed max-md:inset-0 max-md:z-40 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)]' : 'hidden lg:block'"
+    >
       <NewConversation v-if="isNew" />
       <ThreadView v-else-if="id" :key="id" />
       <div v-else class="grid h-full place-items-center text-center text-zinc-500">
