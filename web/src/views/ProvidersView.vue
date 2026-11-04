@@ -178,7 +178,7 @@ function sourceLabel(provider: IProviderStatus): string {
         <RouterLink to="/models/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Adicionar provedor"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
       <p class="px-4 pb-3 text-xs text-zinc-500">Provedores oficiais e APIs compatíveis com OpenAI ou Anthropic.</p>
-      <ListFilter v-if="providers.list.length > 1" v-model:query="query" placeholder="Buscar provedor…" />
+      <ListFilter v-model:query="query" placeholder="Buscar provedor…" />
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
       <RouterLink
         v-for="provider in shownProviders"

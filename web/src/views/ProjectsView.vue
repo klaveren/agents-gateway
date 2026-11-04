@@ -155,7 +155,7 @@ async function confirmRemove() {
       </header>
       <p class="px-4 pb-3 text-xs text-zinc-500">Cada projeto tem seus agentes, conversas e pasta.</p>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
-      <ListFilter v-if="projects.list.length > 1" v-model:query="query" placeholder="Buscar projeto…" />
+      <ListFilter v-model:query="query" placeholder="Buscar projeto…" />
       <p v-if="!projects.list.length && !loadError" class="px-4 py-2 text-sm text-zinc-500">Nenhum projeto ainda.</p>
       <RouterLink
         v-for="project in shownProjects"

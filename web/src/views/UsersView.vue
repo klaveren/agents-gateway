@@ -182,7 +182,7 @@ async function doReset() {
         <span class="text-sm text-zinc-500">{{ users.list.length }}</span>
         <RouterLink to="/users/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Novo usuário"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
-      <ListFilter v-if="users.list.length > 1" v-model:query="query" placeholder="Buscar por nome ou e-mail…" />
+      <ListFilter v-model:query="query" placeholder="Buscar por nome ou e-mail…" />
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
       <RouterLink
         v-for="user in shownUsers"
