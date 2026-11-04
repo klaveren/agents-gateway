@@ -81,8 +81,14 @@ async function withImported(
     : { ok: false, status: 422, message: 'importedFrom.projectId: the saved item is global; send the project of the import' }
   const importer = marked.ok
     ? { marked: true, key: (marked.result as { key?: string } | undefined)?.key, repository: (marked.result as { repository?: string } | undefined)?.repository }
-    : { marked: false, message: marked.message }
+    : { marked: false, message: detailOf(marked) }
   return text({ ...(savedEcho(saved.result) as Record<string, unknown>), importer })
+}
+
+/** O motivo de uma recusa da API: o problema do campo, quando há (a mensagem sozinha é só "Request body is invalid"). */
+function detailOf(answer: ISelfReply): string | undefined {
+  const issues = Array.isArray(answer.details) ? (answer.details as Array<{ field?: string; message?: string }>) : []
+  return issues.length ? issues.map((issue) => (issue.field ? `${issue.field}: ${issue.message}` : String(issue.message))).join('; ') : answer.message
 }
 
 /** O índice dos recursos: o que diz QUAL é e QUANDO usar, sem o corpo (lido um a um, com o id). */

@@ -171,7 +171,8 @@ export class ImportJobService {
    * importação do projeto com essa fonte (o arquivo, ou a pasta dele) vira `applied`, com o que nasceu e quem gravou —
    * e sai da fila. ⚖️ Registro, não decisão: nada é aprovado nem gravado no catálogo aqui.
    *
-   * ⛔ A fonte tem de apontar UM item: nenhum, ou um em cada repositório (sem `repository`), é recusado. O tipo tem de
+   * ⛔ A fonte tem de apontar UM item: nenhum, ou um em cada repositório (sem `repository`), é recusado. Com vários (a pasta
+   * que tem outros itens dentro), vale o que tem o id gravado. O tipo tem de
    * bater (skill com skill). O item com o construtor trabalhando não muda: o rascunho dele sairia do nada.
    */
   markImported(
@@ -191,14 +192,19 @@ export class ImportJobService {
     )
     if (!hits.length)
       throw new ImportJobError('not_found', `no import item of project ${projectId} comes from ${path}${source.repository ? ` in ${source.repository}` : ''}`, 'path')
-    const matching = hits.filter(({ entry }) => sameKind(entry.kind ?? entry.item.kind, target.kind))
+    const kinded = hits.filter(({ entry }) => sameKind(entry.kind ?? entry.item.kind, target.kind))
+    // A pasta pega também o que mora dentro dela (os `triggers/*.md` de um command): o item com o id gravado desempata.
+    const named = kinded.filter(({ entry }) => entry.targetId === target.id || entry.item.candidateId === target.id)
+    const matching = kinded.length > 1 && named.length ? named : kinded
     if (!matching.length) throw new ImportJobError('invalid', `${path} is a ${hits[0].entry.kind ?? hits[0].entry.item.kind} in the importer, not a ${target.kind}`, 'kind')
-    if (matching.length > 1)
+    if (matching.length > 1) {
+      const repositories = new Set(matching.map(({ job }) => job.repository)).size
       throw new ImportJobError(
         'invalid',
-        `${path} matches ${matching.length} import items (${matching.map(({ job, entry }) => `${job.repository}: ${entry.key}`).join(', ')}): send the repository`,
-        'repository',
+        `${path} matches ${matching.length} import items (${matching.map(({ job, entry }) => `${job.repository}: ${entry.key}`).join(', ')}): ${repositories > 1 ? 'send the repository' : 'send the path of the file'}`,
+        repositories > 1 ? 'repository' : 'path',
       )
+    }
     const [{ job, entry }] = matching
     if (entry.state === 'drafting') throw new ImportJobError('transition', `${entry.key} is with the builder right now: wait or release it on the screen`, 'state')
     const importedBy = {

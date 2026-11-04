@@ -4,14 +4,14 @@ import { IImportScan, IInventoryItem } from '@domain/models/ImportInventory.Mode
 import { SqliteImportRepository } from '@infra/persistence/Sqlite.ImportRepository'
 import { ImportJobError, ImportJobService } from './ImportJob.Service'
 
-function item(key: string, sha = 'a'): IInventoryItem {
+function item(key: string, sha = 'a', path?: string): IInventoryItem {
   const [kind, id] = key.split(':') as [IInventoryItem['kind'], string]
   return {
     key,
     kind,
     candidateId: id,
     detectors: ['agents-dir'],
-    sources: [{ path: `${id}.md`, aliases: [], bytes: 1, tokens: 1, sha256: sha.repeat(64) }],
+    sources: [{ path: path ?? `${id}.md`, aliases: [], bytes: 1, tokens: 1, sha256: sha.repeat(64) }],
     refs: [],
     unresolved: [],
     notes: [],
@@ -23,12 +23,14 @@ function setup() {
   const files = new Map<string, string>()
   /** O que o catálogo diz de cada chave (ausente: não se sabe; `new`: não está lá). */
   const catalog = new Map<string, IInventoryItem['catalog']>()
+  /** O caminho da fonte de uma chave (ausente: `<id>.md`). */
+  const paths = new Map<string, string>()
   let clock = Date.parse('2026-10-30T10:00:00.000Z')
   let seq = 0
   const repository = new SqliteImportRepository()
   const scan = (projectId: string, name: string): IImportScan => {
     if (name === 'fora') throw new Error('repository is not in this project')
-    const items = [...files.entries()].map(([key, sha]) => ({ ...item(key, sha), ...(catalog.has(key) ? { catalog: catalog.get(key) } : {}) }))
+    const items = [...files.entries()].map(([key, sha]) => ({ ...item(key, sha, paths.get(key)), ...(catalog.has(key) ? { catalog: catalog.get(key) } : {}) }))
     return {
       projectId,
       repository: name,
@@ -50,7 +52,7 @@ function setup() {
   const tick = () => (clock += 60_000)
   const state = (job: { states: Array<{ key: string; state: string; staleFrom?: string; kind?: string; goneAt?: Date }> }, key: string) =>
     job.states.find((entry) => entry.key === key)
-  return { files, catalog, service, repository, tick, state }
+  return { files, catalog, paths, service, repository, tick, state }
 }
 
 describe('ImportJobService', () => {
@@ -96,7 +98,7 @@ describe('ImportJobService', () => {
   })
 
   it('importado por fora (o agente gravou com `importedFrom`): o item da fonte vira aplicado, com o que nasceu e quem; ⛔ fonte sem item, tipo errado, ambígua', () => {
-    const { files, service, state } = setup()
+    const { files, paths, service, state } = setup()
     files.set('skill:deploy', 'a').set('spec:base', 'b')
     service.create('alfa', 'app', 'ana', {})
     const marked = service.markImported('alfa', { path: './deploy.md' }, { kind: 'skill', id: 'deploy', agentId: 'maya', conversationId: 'gw_1' }, 'root')
@@ -110,6 +112,12 @@ describe('ImportJobService', () => {
     refused(() => service.markImported('alfa', { path: 'nada.md' }, { kind: 'skill', id: 'x' }, 'root'), 'path')
     refused(() => service.markImported('alfa', { path: 'deploy.md' }, { kind: 'rule', id: 'x' }, 'root'), 'kind')
     refused(() => service.markImported('beta', { path: 'deploy.md' }, { kind: 'skill', id: 'x' }, 'root'), 'path')
+    // A pasta com outro item do mesmo tipo dentro (o `triggers/x.md` de um command): o id gravado desempata.
+    files.set('command:drain', 'c').set('command:drain-triggers-x', 'd')
+    paths.set('command:drain', 'commands/drain/COMMAND.md').set('command:drain-triggers-x', 'commands/drain/triggers/x.md')
+    service.create('alfa', 'app', 'ana', {})
+    assert.strictEqual(service.markImported('alfa', { path: 'commands/drain/' }, { kind: 'command', id: 'drain' }, 'root').key, 'command:drain')
+    refused(() => service.markImported('alfa', { path: 'commands/drain' }, { kind: 'command', id: 'outro' }, 'root'), 'path')
     // A mesma fonte em dois repositórios: sem `repository`, ambígua; com ele, a certa.
     service.create('alfa', 'outro', 'ana', {})
     refused(() => service.markImported('alfa', { path: 'deploy.md' }, { kind: 'skill', id: 'deploy' }, 'root'), 'repository')
