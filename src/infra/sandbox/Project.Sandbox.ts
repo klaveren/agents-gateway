@@ -1,5 +1,5 @@
 import { exec } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -136,6 +136,7 @@ export class ProjectSandbox implements IProjectSandbox {
     // que leva à porta do gateway no host. No Mac o seatbelt divide a rede com o host, e a porta é a própria.
     const proxy = `http://${networkToken}:x@127.0.0.1:${process.platform === 'linux' ? LINUX_BRIDGE_PORT : port}`
     const connector = writeConnector(home)
+    ensureGitProxyAuth(home)
     const scoped: Record<string, string> = {
       HOME: home,
       TMPDIR: scratch('.tmp'),
@@ -327,6 +328,18 @@ function runtimeHelpers(): string[] {
  * O auxiliar de ProxyCommand do SSH: abre um CONNECT na porta do gateway (com o token do `HTTPS_PROXY`) e liga a
  * entrada e a saída do ssh ao túnel. Escrito na HOME do comando (dentro do cerco), que ele pode ler.
  */
+/**
+ * ⚖️ O git (libcurl) só manda a senha do proxy DEPOIS do 407, e o portão fecha a conexão junto com o 407: o `git fetch`
+ * por HTTPS caía com "Proxy CONNECT aborted" mesmo com a regra de rede. `proxyAuthMethod = basic` manda o token já no
+ * primeiro CONNECT, como o curl faz. Vai no `.gitconfig` da casa do comando, sem apagar o que o agente pôs lá.
+ */
+export function ensureGitProxyAuth(home: string): void {
+  const path = join(home, '.gitconfig')
+  const current = existsSync(path) ? readFileSync(path, 'utf8') : ''
+  if (/proxyAuthMethod/i.test(current)) return
+  writeFileSync(path, `${current}${current && !current.endsWith('\n') ? '\n' : ''}[http]\n\tproxyAuthMethod = basic\n`)
+}
+
 function writeConnector(home: string): string {
   const path = join(home, '.gateway-connect.cjs')
   if (!existsSync(path))
