@@ -3,6 +3,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import Icon from '@/components/Icon.vue'
+import ListFilter from '@/components/ListFilter.vue'
+import { filterList } from '@/lib/listFilter'
 import BuildTabs from '@/components/BuildTabs.vue'
 import MasterDetail from '@/components/MasterDetail.vue'
 import HistoryPanel from '@/components/HistoryPanel.vue'
@@ -104,7 +106,11 @@ const busy = ref(false)
 const removing = ref(false)
 
 const scopes = computed(() => [{ id: GLOBAL_SCOPE, name: 'Global — todos os projetos' }, ...projects.list.map((project) => ({ id: project.id, name: project.name }))])
-const shown = computed(() => list.value.filter((doc) => doc.kind === props.kind))
+const ofKind = computed(() => list.value.filter((doc) => doc.kind === props.kind))
+/** A busca e a tag do topo da lista. */
+const query = ref('')
+const tag = ref('')
+const shown = computed(() => filterList(ofKind.value, { query: query.value, tag: tag.value }, (doc) => [doc.id, doc.title, doc.summary]))
 const formScope = computed(() => (form.value.global ? GLOBAL_SCOPE : form.value.project))
 /** Os documentos que este pode anexar: os globais e os do projeto do formulário (a lista não segue o filtro de escopo). */
 const { list: docs } = useScopedDocs(() => (auth.isAdmin ? scopeToProjectId(formScope.value) : undefined))
@@ -335,7 +341,9 @@ function onInvalid(event: Event) {
         </select>
       </div>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
-      <p v-else-if="!shown.length" class="px-4 py-2 text-sm text-zinc-500">{{ g.nenhuma }} {{ info.one }} em {{ scopeLabel(scope, projects.list) }}.</p>
+      <ListFilter v-if="ofKind.length" v-model:query="query" v-model:tag="tag" :placeholder="`Buscar ${info.one}…`" :items="ofKind" />
+      <p v-if="!loadError && ofKind.length && !shown.length" class="px-4 py-2 text-sm text-zinc-500">{{ g.nenhuma }} {{ info.one }} com essa busca.</p>
+      <p v-else-if="!loadError && !ofKind.length" class="px-4 py-2 text-sm text-zinc-500">{{ g.nenhuma }} {{ info.one }} em {{ scopeLabel(scope, projects.list) }}.</p>
       <RouterLink v-for="doc in shown" :key="doc.id" :to="`${info.base}/${doc.id}`" class="mx-2 block rounded-xl px-3 py-2" :class="doc.id === id ? 'bg-emerald-500/15' : 'hover:bg-zinc-800/60'">
         <span class="block truncate text-sm font-medium">{{ doc.title }}</span>
         <span class="block truncate text-xs text-zinc-500">{{ doc.id }}<template v-if="doc.summary"> · {{ doc.summary }}</template></span>

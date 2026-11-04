@@ -3,6 +3,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import Icon from '@/components/Icon.vue'
+import ListFilter from '@/components/ListFilter.vue'
+import { filterList } from '@/lib/listFilter'
 import MasterDetail from '@/components/MasterDetail.vue'
 import { useResource } from '@/composables/useResource'
 import { ApiError } from '@/lib/api'
@@ -22,6 +24,9 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const projects = useProjectsStore()
+/** A busca do topo da lista. */
+const query = ref('')
+const shownProjects = computed(() => filterList(projects.list, { query: query.value }, (project) => [project.id, project.name, project.description]))
 const users = useUsersStore()
 const settings = useSettingsStore()
 const sandbox = computed(() => settings.current?.deployment?.sandbox)
@@ -150,9 +155,10 @@ async function confirmRemove() {
       </header>
       <p class="px-4 pb-3 text-xs text-zinc-500">Cada projeto tem seus agentes, conversas e pasta.</p>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
+      <ListFilter v-if="projects.list.length > 1" v-model:query="query" placeholder="Buscar projeto…" />
       <p v-if="!projects.list.length && !loadError" class="px-4 py-2 text-sm text-zinc-500">Nenhum projeto ainda.</p>
       <RouterLink
-        v-for="project in projects.list"
+        v-for="project in shownProjects"
         :key="project.id"
         :to="`/projects/${project.id}`"
         class="mx-2 flex items-center gap-3 rounded-xl px-3 py-2"

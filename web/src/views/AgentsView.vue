@@ -9,6 +9,8 @@ import { pendingCount } from '@/lib/permissionRequests'
 import { usePermissionRequestsStore } from '@/stores/permissionRequests'
 import BuildTabs from '@/components/BuildTabs.vue'
 import Icon from '@/components/Icon.vue'
+import ListFilter from '@/components/ListFilter.vue'
+import { filterList } from '@/lib/listFilter'
 import MasterDetail from '@/components/MasterDetail.vue'
 import { pendingDraft } from '@/lib/builder'
 import type { IAgent, IAgentDetail, TMode, TSandboxLevel } from '@/lib/types'
@@ -87,8 +89,12 @@ function takeDraft(id?: string): IAgentDetail | undefined {
 }
 
 const creating = computed(() => route.name === 'agent-new')
-const created = computed(() => agents.list.filter((agent) => agent.role !== 'subagent'))
-const subagents = computed(() => agents.list.filter((agent) => agent.role === 'subagent'))
+/** A busca e a tag do topo da lista. */
+const query = ref('')
+const tag = ref('')
+const visible = computed(() => filterList(agents.list, { query: query.value, tag: tag.value }, (agent) => [agent.id, agent.name]))
+const created = computed(() => visible.value.filter((agent) => agent.role !== 'subagent'))
+const subagents = computed(() => visible.value.filter((agent) => agent.role === 'subagent'))
 
 onMounted(() => {
   void agents.ensureTools().catch(() => undefined)
@@ -157,6 +163,8 @@ watch(creating, (value) => {
         <RouterLink to="/agents/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Novo agente" @click="template = undefined"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
       <BuildTabs kind="agent" active="list" class="px-3 pb-2" />
+      <ListFilter v-model:query="query" v-model:tag="tag" placeholder="Buscar agente…" :items="agents.list" />
+      <p v-if="agents.list.length && !visible.length" class="px-4 py-2 text-sm text-zinc-500">Nenhum agente com essa busca.</p>
       <template v-for="group in [{ label: 'Agentes', items: created }, { label: 'Subagentes', items: subagents }]" :key="group.label">
         <h2 v-if="group.items.length" class="px-4 pt-3 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">{{ group.label }}</h2>
         <RouterLink

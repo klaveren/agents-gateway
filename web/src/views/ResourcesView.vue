@@ -3,6 +3,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import Icon from '@/components/Icon.vue'
+import ListFilter from '@/components/ListFilter.vue'
+import { filterList } from '@/lib/listFilter'
 import MasterDetail from '@/components/MasterDetail.vue'
 import HistoryPanel from '@/components/HistoryPanel.vue'
 import AttachedDocs from '@/components/AttachedDocs.vue'
@@ -67,7 +69,11 @@ const scope = ref<string>(projects.current ?? GLOBAL_SCOPE)
 /** Lê quando a tela abre (só admin, com a lista de projetos). */
 const ready = ref(false)
 const listed = useResource(resources.lists, () => (ready.value ? resources.listKey(scope.value, props.kind) : undefined))
-const list = computed(() => listed.data.value ?? [])
+const all = computed(() => listed.data.value ?? [])
+/** A busca e a tag do topo da lista. */
+const query = ref('')
+const tag = ref('')
+const list = computed(() => filterList(all.value, { query: query.value, tag: tag.value }, (resource) => [resource.id, resource.description]))
 const loadError = computed(() => (listed.error.value === undefined ? undefined : describe(listed.error.value)))
 const adding = computed(() => route.name === `${props.kind}-new`)
 const info = computed(() => KIND[props.kind])
@@ -329,7 +335,9 @@ function onInvalid(event: Event) {
         </select>
       </div>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
-      <p v-else-if="!list.length" class="px-4 py-2 text-sm text-zinc-500">{{ g.nenhuma }} {{ info.one }} em {{ scopeLabel(scope, projects.list) }}.</p>
+      <ListFilter v-if="all.length" v-model:query="query" v-model:tag="tag" :placeholder="`Buscar ${info.one}…`" :items="all" />
+      <p v-if="!loadError && all.length && !list.length" class="px-4 py-2 text-sm text-zinc-500">{{ g.nenhuma }} {{ info.one }} com essa busca.</p>
+      <p v-else-if="!loadError && !all.length" class="px-4 py-2 text-sm text-zinc-500">{{ g.nenhuma }} {{ info.one }} em {{ scopeLabel(scope, projects.list) }}.</p>
       <RouterLink v-for="resource in list" :key="resource.id" :to="`${info.base}/${resource.id}`" class="mx-2 block rounded-xl px-3 py-2" :class="resource.id === id ? 'bg-emerald-500/15' : 'hover:bg-zinc-800/60'">
         <span class="block truncate font-mono text-sm">{{ kind === 'command' ? '/' : '' }}{{ resource.id }}</span>
         <span class="block truncate text-xs text-zinc-500">{{ resource.description }}<template v-if="resource.docIds.length"> · {{ resource.docIds.length }} doc(s)</template></span>
