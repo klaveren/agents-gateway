@@ -171,6 +171,21 @@ WantedBy=multi-user.target
 UNIT
 systemctl daemon-reload
 systemctl enable "$SERVICE" >/dev/null 2>&1
+# ⛔ O reinício nunca corta uma conversa: com o serviço no ar, espera até nenhum turno estar rodando (o build já foi
+# feito; o reinício leva segundos), pelo tempo que for. `DEPLOY_WAIT_MINUTES=<n>` põe um teto (0 = reinicia já).
+if systemctl is-active --quiet "$SERVICE"; then
+  started=$(date +%s)
+  while :; do
+    running=$(curl -fsS --max-time 5 "http://$GATEWAY_HOST:$GATEWAY_PORT/v1/health?turns=1" 2>/dev/null | sed -n 's/.*"running":\([0-9]*\).*/\1/p')
+    [[ -z "$running" || "$running" == "0" ]] && break
+    if [[ -n "${DEPLOY_WAIT_MINUTES:-}" ]] && (( $(date +%s) - started >= DEPLOY_WAIT_MINUTES * 60 )); then
+      log "Ainda há $running turno(s) rodando; o teto de espera (DEPLOY_WAIT_MINUTES=$DEPLOY_WAIT_MINUTES) acabou"
+      break
+    fi
+    log "Esperando $running turno(s) terminar antes de reiniciar…"
+    sleep 15
+  done
+fi
 systemctl restart "$SERVICE"
 
 # --- 9. Conferência ---

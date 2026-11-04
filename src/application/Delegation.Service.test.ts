@@ -103,6 +103,38 @@ describe('DelegationService', () => {
     assert.match(late[0].text, /Resposta de tradutor à sua delegação \(sessionId filha-2\)[\s\S]*\[tradutor\] dois/)
   })
 
+  it('⚖️ a filha encerrada (o gateway reiniciou) volta pelo histórico; a de outra mãe e a apagada, não', async () => {
+    const { sessions, service: base } = build()
+    const internals = base as unknown as { provider: IAgentProvider; createSession: CreateSessionUseCase; sendMessage: SendMessageUseCase }
+    const stored = new Map<string, { agentId: string; delegatedBy?: unknown }>([
+      ['filha-velha', { agentId: 'tradutor', delegatedBy: 'pai' }],
+      ['de-outra', { agentId: 'tradutor', delegatedBy: 'outra-mae' }],
+    ])
+    const resumed: string[] = []
+    const service = new DelegationService(
+      internals.provider,
+      internals.createSession,
+      internals.sendMessage,
+      () => 2,
+      () => [EMode.CHAT],
+      async (id, parentId) => {
+        const found = stored.get(id)
+        if (found && found.delegatedBy === parentId) {
+          resumed.push(id)
+          // A retomada põe a filha de volta na memória do provider.
+          sessions.set(id, session(id, found.agentId, { delegatedBy: parentId }))
+        }
+        return found
+      },
+    )
+    const back = await service.delegate({ allowed: ['tradutor'], agentId: 'tradutor', sessionId: 'filha-velha', message: 'continue' }, { sessionId: 'pai' })
+    assert.deepStrictEqual([back.ok, resumed], [true, ['filha-velha']])
+    const other = await service.delegate({ allowed: ['tradutor'], agentId: 'tradutor', sessionId: 'de-outra', message: 'x' }, { sessionId: 'pai' })
+    assert.deepStrictEqual(other, { ok: false, error: 'conversation de-outra is not a delegation of this conversation to tradutor' })
+    const gone = await service.delegate({ allowed: ['tradutor'], agentId: 'tradutor', sessionId: 'apagada', message: 'x' }, { sessionId: 'pai' })
+    assert.match(gone.ok ? '' : gone.error, /was deleted or does not exist/)
+  })
+
   it('a filha trabalha no projeto da conversa-mãe (o construtor grava nele)', async () => {
     const { service, created } = build({ owner: { id: 'ana' }, project: 'xpto' })
     await service.delegate({ allowed: ['tradutor'], agentId: 'tradutor', message: 'x' }, { sessionId: 'pai' })

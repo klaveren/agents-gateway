@@ -254,8 +254,14 @@ export class AgentController {
     return this.usecases.conversations
   }
 
-  async health(_req: Request, res: Response) {
+  async health(req: Request, res: Response) {
     await this.respond(res, async () => {
+      // ⚖️ Do PRÓPRIO servidor (o deploy, antes de reiniciar): quantos turnos estão rodando. O deploy espera zerar — uma
+      // conversa nunca é cortada por um reinício.
+      if (sameHost(req)) {
+        const running = (await this.usecases.listSessions.execute()).filter((session) => session.status === 'running').length
+        if (req.query.turns !== undefined) return { status: 'ok', running }
+      }
       // ⛔ Rota pública e BARATA: sem reconectar MCP (cada chamada abria conexão com todos os servidores
       // — amplificação de graça para quem martelar) e sem contagens. O detalhe é só para admin.
       if (!(await checkAdminAccess(this.usecases.proof)).allowed) return { status: 'ok' }
@@ -1911,4 +1917,11 @@ function toAgentInput(id: string, body: TAgentBody): IAgent {
 
 function unauthorized(): HttpError {
   return new HttpError(401, 'unauthorized', 'Missing or unverifiable caller credential')
+}
+
+/** A requisição veio do próprio servidor (loopback, ou o mesmo endereço em que ele escuta). */
+function sameHost(req: Request): boolean {
+  const remote = req.socket?.remoteAddress?.replace(/^::ffff:/, '')
+  const local = req.socket?.localAddress?.replace(/^::ffff:/, '')
+  return !!remote && (remote === '127.0.0.1' || remote === '::1' || remote === local)
 }

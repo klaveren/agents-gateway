@@ -1,3 +1,4 @@
+import { DELEGATE_TOOL_NAME } from '@domain/models/Delegation.Model'
 import { offers, targetFor } from '@domain/Agent.Policy'
 import { conversationNote, IAmbient, IAmbientSecrets } from '@domain/Ambient.Policy'
 import { resolveCapabilities } from '@domain/Capability.Catalog'
@@ -336,6 +337,13 @@ export class AgentProvider implements IAgentProvider {
           // ⚖️ A mensagem que entrou junto do resultado de uma ferramenta (o `PostToolUse` do Claude a tira da fila ANTES de o
           // resultado chegar aqui) sai depois dele: na tela, o balão vem depois da ferramenta concluída.
           const toolEnd = event.type === 'tool.result' || event.type === 'tool.error'
+          // ⚖️ A DELEGAÇÃO CORTADA PELO CLIENTE DO MODELO não é a conversa cortada: o outro agente segue no gateway, e a
+          // resposta dele entra aqui quando chegar (ver `Delegation.Service`). O agente fica sabendo agora, em vez de só
+          // ver "interrupted" e refazer o pedido ou desistir.
+          if (toolEnd && event.payload.tool === DELEGATE_TOOL_NAME && interruptedCall(event)) {
+            ;(record.queued ??= []).push(DELEGATION_CUT_NOTICE)
+            console.warn(`[delegação] o cliente do modelo cortou a chamada de ${record.agentId} (${sessionId}); a outra conversa segue`)
+          }
           if (!toolEnd) yield* announce()
           if (event.type === 'message.started' && extraRound) continue
           if (event.type === 'message.completed') {
@@ -595,7 +603,9 @@ export class AgentProvider implements IAgentProvider {
   async resume(input: IResumeInput): Promise<void> {
     const stored = input.session
     if (this.sessions.get(stored.id)) return
-    if (stored.metadata?.delegatedBy) throw new ConversationNotResumableError(stored.id, 'it belongs to a subagent, opened only by delegation')
+    // ⛔ Conversa de delegação só volta pela MÃE dela (a delegação continuando, ver `Delegation.Service`).
+    const parent = stored.metadata?.delegatedBy
+    if (parent && parent !== input.delegatedBy) throw new ConversationNotResumableError(stored.id, 'it belongs to a delegation, resumed only by the conversation that opened it')
 
     const last = input.turns[input.turns.length - 1]
     const created = await this.createSession({
@@ -606,6 +616,7 @@ export class AgentProvider implements IAgentProvider {
       ...(last?.effort ? { reasoning: last.effort } : {}),
       ...(stored.metadata ? { metadata: stored.metadata } : {}),
       ...(input.adminAccess ? { adminAccess: true } : {}),
+      ...(typeof parent === 'string' ? { delegated: true, parentSessionId: parent } : {}),
     })
     if (!this.sessions.adopt(created.id, stored.id)) return
     if (this.adminSessions.delete(created.id)) this.adminSessions.add(stored.id)
@@ -868,4 +879,15 @@ const FAILURE_LABEL: Readonly<Record<TProviderFailure, string>> = {
   overloaded: 'Provedor sobrecarregado',
   auth: 'Credencial recusada',
   other: 'Falha',
+}
+
+/** O aviso que entra no turno quando o cliente do modelo corta a chamada de delegação (ver o laço do `sendMessage`). */
+const DELEGATION_CUT_NOTICE =
+  '[gateway] A sua chamada a delegate_to_agent foi cortada pelo cliente do modelo, mas a conversa com o outro agente CONTINUA no gateway. Não repita o pedido: a resposta dele entra nesta conversa, como mensagem, quando ele terminar. Enquanto isso, siga com o que não depende dela ou diga à pessoa que está esperando.'
+
+/** O resultado de ferramenta que o CLI inventa quando a chamada cai no meio ("The tool call was interrupted…"). */
+function interruptedCall(event: IAgentEvent): boolean {
+  const payload = event.payload as { result?: unknown; message?: unknown }
+  const text = typeof payload.message === 'string' ? payload.message : JSON.stringify(payload.result ?? '')
+  return /tool call was interrupted|interrupted before a result|session ended before this call/i.test(text)
 }

@@ -306,7 +306,7 @@
 
     <div v-if="parentId" class="flex items-center gap-2 border-b border-violet-500/20 bg-violet-500/10 px-4 py-2 text-xs text-violet-200">
       Delegada por {{ parentAgent }}.
-      <RouterLink :to="`/c/${parentId}`" class="ml-auto hover:text-white">Abrir a conversa original →</RouterLink>
+      <RouterLink :to="`/c/${parentId}`" class="ml-auto hover:text-white">← Voltar à conversa original</RouterLink>
     </div>
     <div v-if="children.length" class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-zinc-800/80 bg-zinc-900/40 px-4 py-1.5 text-xs text-zinc-400">
       <span>
