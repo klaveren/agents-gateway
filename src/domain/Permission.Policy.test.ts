@@ -98,6 +98,15 @@ describe('Permission.Policy', () => {
     assert.ok(hostMatches('github.com', 'github.com:443'))
   })
 
+  it('⚖️ a regra exata decide antes do curinga, em qualquer ordem (o portão exige a exata para a rede local)', () => {
+    const agent: IPermissionRule[] = [
+      { category: 'network', pattern: '*', decision: 'allow' },
+      { category: 'network', pattern: '10.10.0.2:22', decision: 'allow' },
+    ]
+    assert.strictEqual(decide({ category: 'network', value: '10.10.0.2:22' }, { agent }).rule?.pattern, '10.10.0.2:22')
+    assert.strictEqual(decide({ category: 'network', value: 'api.github.com:443' }, { agent }).rule?.pattern, '*')
+  })
+
   it('MCP, skill e delegação por glob no nome', () => {
     assert.ok(decide({ category: 'mcp', value: 'logiccus/ticket_get' }, { project: [rule('mcp', 'logiccus/ticket_*')] }).allowed)
     assert.ok(!decide({ category: 'mcp', value: 'logiccus/meeting_create' }, { project: [rule('mcp', 'logiccus/*'), rule('mcp', 'logiccus/meeting_create', 'deny')] }).allowed)

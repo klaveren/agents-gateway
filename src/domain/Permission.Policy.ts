@@ -102,7 +102,9 @@ export function decide(subject: IPermissionSubject, layers: IPermissionLayers, s
   for (const layer of ['agent', 'project'] as const) {
     const hit = (layers[layer] ?? []).filter((rule) => matches(rule, subject))
     if (!hit.length) continue
-    const rule = hit.find((item) => item.decision === 'deny') ?? hit[0]
+    // ⚖️ Entre as que liberam, a EXATA vem antes do curinga: o portão só deixa a rede local passar com regra exata, e um
+    // `network *` salvo antes de `10.10.0.1:22` fazia o `*` decidir (e a rede local ser recusada).
+    const rule = hit.find((item) => item.decision === 'deny') ?? hit.find((item) => !item.pattern.includes('*')) ?? hit[0]
     const where = layer === 'agent' ? 'do agente' : 'do projeto'
     return { allowed: rule.decision === 'allow', layer, rule, reason: `${rule.decision === 'allow' ? 'permitido' : 'negado'} pela regra ${where} "${rule.pattern}"` }
   }
