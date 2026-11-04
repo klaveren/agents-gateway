@@ -1,3 +1,4 @@
+import { applyPanelOp, IConversationPanel, PANEL_TOOL, panelMarkdown, TPanelOp } from '@domain/models/ConversationPanel.Model'
 import { printsSecret } from '@domain/models/ResourceSecret.Model'
 import { terminalEnv } from '@domain/Agent.Identity'
 import type { IPermissionAsker, IPermissionChecker } from '@application/Permissions.Service'
@@ -102,6 +103,12 @@ export interface ILocalToolDeps {
   repositoryBrowse?: IRepositoryBrowser
   /** Onde fica a lista de tarefas da conversa (o repositório de conversas). Ausente = sem `update_todos`. */
   todos?: ITodoStore
+  /** O painel da conversa (ver `ConversationPanel.Model`) e o turno em curso de cada conversa. Ausente = sem a ferramenta. */
+  panels?: {
+    get(sessionId: string): Promise<IConversationPanel>
+    save(sessionId: string, panel: IConversationPanel): Promise<void>
+    turnOf?(sessionId: string): number | undefined
+  }
   /** As permissões dos agentes (ver `Permission.Policy`). Ausente = sem regras (só as travas fixas valem). */
   permissions?: IPermissionChecker
   /** As variáveis de ambiente fixas de cada agente (o campo `env` dele). Ausente = nenhuma. */
@@ -446,6 +453,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     ...(deps.drafts ? [proposeDraftTool(deps.drafts)] : []),
     ...(deps.imports ? makeImportTools(deps.imports, deps.repositoryBrowse) : []),
     ...(deps.todos?.saveTodos ? [updateTodosTool(deps.todos)] : []),
+    ...(deps.panels ? [conversationPanelTool(deps.panels)] : []),
   ]
   // ⛔ A chamada repetida é recusada antes de rodar (ver `Loop.Policy`); a edição que deu certo ganha o diagnóstico do
   // pacote (ver `Edit.Diagnostics`); e toda saída passa pela máscara (ver `Secret.Mask`): o `read_file` de uma config, a
@@ -536,6 +544,69 @@ function updateTodosTool(store: ITodoStore): ILocalTool {
         return { status: 'error', result: `Could not save the task list: ${toMessage(error)}` }
       }
       return { status: 'success', result: todoText(items) }
+    },
+  }
+}
+
+/**
+ * `conversation_panel`: o PAINEL DA CONVERSA (ver `ConversationPanel.Model`) — o agente registra o que a pessoa pede, o
+ * andamento, o que entregou (com os links), as decisões e as perguntas. Cada chamada é UMA operação, e a resposta traz o
+ * painel inteiro (para o agente se orientar). Quem grava é o agente do turno.
+ */
+function conversationPanelTool(panels: NonNullable<ILocalToolDeps['panels']>): ILocalTool {
+  return {
+    origin: 'local',
+    name: PANEL_TOOL,
+    description:
+      'The PANEL of this conversation, which the person sees next to the chat: the goal, what is being done, the queue, what was delivered (with links), decisions and questions for the person. Keep it up to date WITHOUT being asked: every new request of the person → `add` (one per request); when you start it → `update` status doing; when it is delivered → `update` status done with `note` (what was delivered) and `links` (PR, file, conversation); blocked → status blocked with the reason; the person changed course → `set_goal`; something was agreed → `decide`; you need the person → `ask`. Delegated to another agent → `delegatedTo`. `read` returns the whole panel. Its summary comes at the start of every turn — follow it, do not drift.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        op: { type: 'string', enum: ['read', 'set_goal', 'add', 'update', 'move', 'decide', 'ask', 'answer'] },
+        id: { type: 'string', description: 'update/move: the item (p1, p2…); answer: the question (q1…).' },
+        goal: { type: 'string', description: 'set_goal: what this conversation wants to achieve, in one or two sentences.' },
+        title: { type: 'string', description: 'add/update: the request, short.' },
+        detail: { type: 'string', description: 'add/update: more of what was asked.' },
+        status: { type: 'string', enum: ['queued', 'doing', 'blocked', 'done', 'dropped'] },
+        note: { type: 'string', description: 'update: what was delivered, or why it is blocked or dropped.' },
+        links: {
+          type: 'array',
+          items: { type: 'object', properties: { label: { type: 'string' }, href: { type: 'string' } }, required: ['label'], additionalProperties: false },
+          description: 'update: where the delivery is (PR url, file path, conversation id).',
+        },
+        delegatedTo: {
+          type: 'object',
+          properties: { agentId: { type: 'string' }, sessionId: { type: 'string' } },
+          required: ['agentId'],
+          additionalProperties: false,
+          description: 'add/update: the agent (and its conversation) doing it.',
+        },
+        before: { type: 'string', description: 'move: put the item before this one (absent = at the end).' },
+        text: { type: 'string', description: 'decide/ask: the decision or the question.' },
+        why: { type: 'string', description: 'decide: the reason.' },
+        answer: { type: 'string', description: 'answer: what the person answered.' },
+      },
+      required: ['op'],
+      additionalProperties: false,
+    },
+    execute: async (args, context) => {
+      if (!context?.sessionId) return { status: 'error', result: `${PANEL_TOOL} only works inside a conversation.` }
+      const sessionId = context.sessionId
+      let current: IConversationPanel
+      try {
+        current = await panels.get(sessionId)
+      } catch (error: unknown) {
+        return { status: 'error', result: `Could not read the panel: ${toMessage(error)}` }
+      }
+      if (args.op === 'read') return { status: 'success', result: panelMarkdown(current) }
+      const turn = panels.turnOf?.(sessionId)
+      try {
+        const { panel, changed } = applyPanelOp(current, args as unknown as TPanelOp, { ...(turn !== undefined ? { turn } : {}), by: context.agentId ?? 'agent', now: new Date() })
+        await panels.save(sessionId, panel)
+        return { status: 'success', result: `Saved: ${changed}\n\n${panelMarkdown(panel)}` }
+      } catch (error: unknown) {
+        return { status: 'error', result: `Not saved — fix and call again: ${toMessage(error)}` }
+      }
     },
   }
 }

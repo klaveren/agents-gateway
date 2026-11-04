@@ -35,6 +35,7 @@
       | 'git'
       | 'bell'
       | 'warn'
+      | 'panel'
   }>()
 </script>
 
@@ -43,6 +44,10 @@
     <template v-if="name === 'inbox'">
       <path d="M4 13h4l1.5 3h5L16 13h4" />
       <path d="M5.5 5h13L21 13v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5z" />
+    </template>
+    <template v-else-if="name === 'panel'">
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+      <path d="M4 9h16M9 9v11" />
     </template>
     <template v-else-if="name === 'warn'">
       <path d="M12 4 2.8 19.5h18.4z" />

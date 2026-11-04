@@ -13,11 +13,13 @@
   import { useAuthStore } from '@/stores/auth'
   import { useConversationsStore } from '@/stores/conversations'
   import { useProjectsStore } from '@/stores/projects'
+  import { openCount, type IConversationPanel } from '@/lib/conversationPanel'
   import { useThreadStore, type IOutgoingFile } from '@/stores/thread'
   import AgentAvatar from './AgentAvatar.vue'
   import Composer from './Composer.vue'
   import ConfirmDialog from './ConfirmDialog.vue'
   import Icon from './Icon.vue'
+  import PanelToggle from './PanelToggle.vue'
   import SessionTuner from './SessionTuner.vue'
   import TodoPanel from './TodoPanel.vue'
   import TurnBubbles from './TurnBubbles.vue'
@@ -50,6 +52,31 @@
 
   /** As alterações (o painel tipo IDE): só numa conversa aberta num repositório. O diff (e o destaque) só carrega ao abrir. */
   const ChangesPanel = defineAsyncComponent(() => import('./ChangesPanel.vue'))
+  const ConversationPanel = defineAsyncComponent(() => import('./ConversationPanel.vue'))
+  /** O Painel da conversa: o selo do ícone (itens em aberto) vale com o painel fechado; o painel relê quando abre, quando o turno acaba e quando o agente mexe nele. */
+  const panelOpen = ref(false)
+  const panelCount = ref<number>()
+  const panelRefresh = ref(0)
+  async function loadPanelCount() {
+    const id = header.value?.id
+    if (!id) return void (panelCount.value = undefined)
+    const result = await api<IConversationPanel>(`/conversations/${encodeURIComponent(id)}/panel`).catch(() => undefined)
+    if (id === header.value?.id) panelCount.value = result ? openCount(result) : undefined
+  }
+  watch(() => header.value?.id, () => void loadPanelCount(), { immediate: true })
+  function refreshPanel() {
+    panelRefresh.value += 1
+    if (!panelOpen.value) void loadPanelCount()
+  }
+  // O agente mexeu no painel (resultado da ferramenta no turno ao vivo)…
+  watch(() => thread.panelVersion, refreshPanel)
+  // …ou o turno acabou (pode ter mexido sem a gente ver o evento).
+  watch(
+    () => !!thread.pending,
+    (running, before) => {
+      if (before && !running) refreshPanel()
+    },
+  )
   const changesOpen = ref(false)
   const changesCount = ref<number>()
   const changesRefresh = ref(0)
@@ -288,6 +315,7 @@
             Alterações
             <span v-if="changesCount" class="rounded-full bg-emerald-500/20 px-1.5 text-emerald-300">{{ changesCount }}</span>
           </button>
+          <PanelToggle :count="panelCount" :active="panelOpen" @click="panelOpen = !panelOpen" />
           <button
             v-if="!embedded"
             class="grid h-9 w-9 place-items-center rounded-full hover:bg-zinc-800"
@@ -364,6 +392,14 @@
       @confirm="remove"
       @cancel="confirming = false"
     />
+    <!-- Celular: tela cheia; desktop: gaveta à direita, e a conversa ao lado segue usável (como as Alterações). -->
+    <div v-if="panelOpen && header" class="fixed inset-0 z-40 bg-black/40 md:pointer-events-none md:bg-transparent" @click.self="panelOpen = false">
+      <aside class="pointer-events-auto absolute top-0 right-0 flex h-full w-full flex-col border-l border-zinc-800 bg-zinc-950 p-4 shadow-2xl md:w-[460px]" aria-label="Painel da conversa">
+        <div class="scroll-thin min-h-0 flex-1 overflow-y-auto">
+          <ConversationPanel :conversation-id="header.id" :refresh-key="panelRefresh" closable @close="panelOpen = false" @count="panelCount = $event" />
+        </div>
+      </aside>
+    </div>
     <TodoPanel v-if="thread.todos.length" :items="thread.todos" />
     <ChangesPanel v-if="changesOpen && thread.sessionId" :session-id="thread.sessionId" :refresh-key="changesRefresh" @close="changesOpen = false" @count="changesCount = $event" />
     <!-- ⚖️ Sessão encerrada (expirou, ou o gateway reiniciou) não tranca a conversa: ao enviar, o gateway a retoma com o histórico. -->

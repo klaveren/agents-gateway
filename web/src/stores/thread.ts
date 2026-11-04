@@ -118,6 +118,8 @@ export const useThreadStore = defineStore('thread', () => {
   const following = ref(false)
   /** A lista de tarefas que o agente mantém na conversa (`update_todos`); vazia = nenhuma. */
   const todos = ref<ITodoItem[]>([])
+  /** Sobe a cada resultado da ferramenta do painel (`conversation_panel`): o painel aberto se relê. */
+  const panelVersion = ref(0)
   /** As mensagens mandadas com o turno rodando que ainda não entraram nele (`whileBusy: 'queue'`). */
   const queued = ref<string[]>([])
   /** O que estava na fila quando o turno parou: volta para a caixa de texto (o servidor descartou). */
@@ -453,6 +455,7 @@ export const useThreadStore = defineStore('thread', () => {
   }
 
   /** A ferramenta das tarefas, com ou sem o prefixo do servidor MCP local (`mcp__local__update_todos`). */
+  const isPanelTool = (name: unknown) => typeof name === 'string' && (name === 'conversation_panel' || name.endsWith('__conversation_panel'))
   const isTodoTool = (name: unknown) => typeof name === 'string' && (name === 'update_todos' || name.endsWith('__update_todos'))
 
   function applyEvent(turn: IPendingTurn, event: IAgentEvent): void {
@@ -475,6 +478,7 @@ export const useThreadStore = defineStore('thread', () => {
           running.message = event.type === 'tool.error' ? String(payload.message ?? '') : undefined
         }
         if (event.type === 'tool.result' && isTodoTool(payload.tool)) void loadTodos()
+        if (event.type === 'tool.result' && isPanelTool(payload.tool)) panelVersion.value += 1
         break
       }
       case 'usage': {
@@ -511,6 +515,7 @@ export const useThreadStore = defineStore('thread', () => {
     agentId,
     turns,
     todos,
+    panelVersion,
     loading,
     error,
     liveSession,

@@ -1,3 +1,4 @@
+import type { IConversationPanel } from '@domain/models/ConversationPanel.Model'
 import type { IErrorLog, IErrorLogQuery } from '@domain/models/ErrorLog.Model'
 import { ITodoItem } from '@domain/models/ConversationTodo.Model'
 import { TClassification } from '@domain/models/Classification.Model'
@@ -94,6 +95,9 @@ export interface IConversationRepository {
   todos?(sessionId: string): Promise<{ items: ITodoItem[]; updatedAt?: Date }>
   /** ⛔ Grava ou falha: a escrita É o que a ferramenta pediu. A conversa já tem de existir. */
   saveTodos?(sessionId: string, items: ITodoItem[]): Promise<void>
+  /** O painel da conversa (ver `ConversationPanel.Model`). */
+  panel?(sessionId: string): Promise<IConversationPanel>
+  savePanel?(sessionId: string, panel: IConversationPanel): Promise<void>
 
   /**
    * Abre ou fecha a conversa por link. `shareId` só entra quando vem: fechar não o apaga, para

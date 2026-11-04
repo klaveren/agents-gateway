@@ -1,3 +1,4 @@
+import { IConversationPanel, PANEL_TOOL, panelMarkdown, panelTurnNote } from '@domain/models/ConversationPanel.Model'
 import { DELEGATE_TOOL_NAME } from '@domain/models/Delegation.Model'
 import { offers, targetFor } from '@domain/Agent.Policy'
 import { conversationNote, IAmbient, IAmbientSecrets } from '@domain/Ambient.Policy'
@@ -204,7 +205,12 @@ export class AgentProvider implements IAgentProvider {
     let handoff = record.handoff
     // O contexto do sistema que não foi na mensagem (ver `SendMessageUseCase.withContext`): volta com o repasse feito
     // no meio do turno, quando o modelo recomeça do zero. O adapter nunca o recebe solto.
-    const { context: systemContext, ...message } = input
+    const { context: systemContext, ...asked } = input
+    // ⚖️ O PAINEL DA CONVERSA no começo de cada turno (ver `ConversationPanel.Model`): a rota — objetivo, em andamento,
+    // fila, perguntas —, e o aviso quando o turno anterior não o atualizou. Só na entrada do modelo, nunca no turno gravado.
+    const panelNote = this.panels ? panelTurnNote(await this.panels.get(record.id).catch(() => undefined), record.panelSkipped) : ''
+    const message = panelNote ? { ...asked, text: `${panelNote}\n\n${asked.text}` } : asked
+    let panelTouched = false
     // ⚖️ O id da conversa vai UMA VEZ por histórico do modelo: no primeiro turno e quando ele recomeça (repasse, compactação,
     // retomada, troca de provedor). Só na entrada do modelo: a transcrição e o turno gravado ficam com o `input`.
     const note = conversationNote(record.id)
@@ -298,6 +304,9 @@ export class AgentProvider implements IAgentProvider {
         record.native = undefined
         record.compactSummary = summary
         handoff = summary ? compactHandoff(summary, record.transcript ?? []) : handoffText(record.transcript ?? [], HANDOFF_MAX_CHARS, 'compact')
+        // O painel inteiro vai junto: o que foi entregue e decidido não se perde no resumo.
+        const panel = this.panels ? await this.panels.get(record.id).catch(() => undefined) : undefined
+        if (panel && (panel.goal || panel.items.length || panel.decisions.length)) handoff = `${handoff}\n\n${panelMarkdown(panel)}`
         record.handoff = handoff
         record.handoffKind = 'compact'
         sent = opening(handoff)
@@ -357,6 +366,7 @@ export class AgentProvider implements IAgentProvider {
           else if (event.type === 'text.delta') turn.text += event.payload.text
           else if (event.type === 'tool.started') turn.tools.push(event.payload.tool)
           if (event.type === 'tool.started') this.loops?.observe(sessionId, { type: 'tool.started', tool: event.payload.tool, args: event.payload.args })
+          if (event.type === 'tool.started' && event.payload.tool === PANEL_TOOL) panelTouched = true
           else if (event.type === 'tool.error' || event.type === 'tool.result') this.loops?.observe(sessionId, { type: event.type })
           yield event
           if (toolEnd) yield* announce()
@@ -399,6 +409,8 @@ export class AgentProvider implements IAgentProvider {
         if (unavailable.length) yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: `Indisponível em ${record.provider}: ${unavailable.join(', ')}.` } }
       }
     } finally {
+      // A pessoa falou e o painel não mudou: o próximo turno começa com o aviso (o agente corrige sozinho).
+      if (this.panels) record.panelSkipped = !panelTouched && !!asked.text.trim()
       record.status = 'idle'
       record.queued = undefined
       this.loops?.close(sessionId)
@@ -538,6 +550,13 @@ export class AgentProvider implements IAgentProvider {
     this.agentFiles = dirOf
   }
 
+  /** O painel da conversa (ver `ConversationPanel.Model`): a ferramenta em todo agente, a rota no começo do turno. */
+  usePanels(panels: { get(sessionId: string): Promise<IConversationPanel> }): void {
+    this.panels = panels
+  }
+
+  private panels?: { get(sessionId: string): Promise<IConversationPanel> }
+
   /** As variáveis secretas (ver `ResourceSecrets.Service`): o ambiente do turno e os nomes do prompt. Ligadas na composição. */
   useSecrets(secrets: { envFor(agentId: string, sessionId: string): { env: Record<string, string> }; ambientFor(agent: IAgent): IAmbientSecrets | undefined }): void {
     this.secrets = secrets
@@ -565,6 +584,7 @@ export class AgentProvider implements IAgentProvider {
       ...(folder ? { directory: folder.dir } : agent.projectId ? { directory: projectWorkspacePath(agent.projectId) } : {}),
       ...(this.agentFiles?.(agent) ? { files: this.agentFiles(agent) } : {}),
       ...(this.secrets?.ambientFor(agent) ? { secrets: this.secrets.ambientFor(agent)! } : {}),
+      ...(this.panels ? { panel: true } : {}),
     }
   }
 
@@ -589,6 +609,8 @@ export class AgentProvider implements IAgentProvider {
       ...(this.guidance?.hasResources?.(agent.id) ? [USE_RESOURCE_TOOL, SEARCH_RESOURCES_TOOL] : []),
       // O ledger: todo agente lê e escreve o PRÓPRIO (o dono é o agente do turno, ver `Ledger.Tools`).
       ...(this.guidance?.hasLedger?.() ? LEDGER_TOOLS : []),
+      // O painel da conversa: todo agente mantém o da conversa em que está.
+      ...(this.panels ? [PANEL_TOOL] : []),
     ].filter((tool) => !agent.allowedTools.includes(tool))
     return extra.length ? { ...agent, allowedTools: [...agent.allowedTools, ...extra] } : agent
   }

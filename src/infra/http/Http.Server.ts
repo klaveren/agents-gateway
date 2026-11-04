@@ -534,6 +534,9 @@ function buildRoutes(
     { method: 'put', path: '/conversations/:id/share', handler: controller.shareConversation },
     { method: 'delete', path: '/conversations/:id', handler: controller.deleteConversation },
     { method: 'put', path: '/conversations/:id/archive', handler: controller.archiveConversation },
+    // O painel da conversa (ver `ConversationPanel.Model`): o agente mantém; a pessoa lê e corrige.
+    { method: 'get', path: '/conversations/:id/panel', handler: controller.getConversationPanel },
+    { method: 'patch', path: '/conversations/:id/panel', handler: controller.updateConversationPanel },
     // O registro de erros (só admin): ferramentas que falharam, turnos com erro, interrompidos.
     { method: 'get', path: '/errors', handler: controller.listErrors },
     { method: 'get', path: '/shared/:id', handler: controller.getSharedConversation },
