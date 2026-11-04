@@ -4,6 +4,7 @@ import { IUsageFigure, IUsageSummary, usageDays, UsageService } from '@applicati
 import { MODEL_PRICING, TModelPricing } from '@domain/models/Model.Pricing'
 import { PROJECT_ID_PATTERN } from '@domain/models/Project.Model'
 import { IUsageQuery, metadataKeyIssue } from '@domain/models/Usage.Model'
+import type { IToolUsage } from '@domain/models/ToolUsage.Model'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { Request, Response } from 'express'
 import { resolveCaller } from './Caller.Access'
@@ -26,6 +27,8 @@ export interface IUsageControllerDeps {
 const PERIODS = [7, 30, 90]
 /** O valor de `:value` que pede as conversas SEM a chave. */
 const NO_VALUE = '~none'
+/** As ferramentas que a tela mostra (as que mais pesaram). */
+const TOOLS = 25
 const DAY = 86_400_000
 
 /**
@@ -51,7 +54,8 @@ export class UsageController {
 
       const { query, days, period } = this.range(req, { id: identity.id, account: identity.account })
       const rows = await this.deps.conversations.usage(query)
-      return { period, ...withoutCost(this.service.summarize(rows, { days })) }
+      const byTool = await this.toolsOf(query)
+      return { period, ...withoutCost(this.service.summarize(rows, { days })), ...(byTool ? { byTool } : {}) }
     })
   }
 
@@ -90,6 +94,7 @@ export class UsageController {
         name: user?.name,
         email: user?.email ?? rows.find((row) => row.ownerEmail)?.ownerEmail,
         ...this.service.summarize(rows, { days }, (provider) => this.pricingOf(provider)),
+        ...(await this.toolsOf(query).then((byTool) => (byTool ? { byTool } : {}))),
       }
     })
   }
@@ -157,6 +162,11 @@ export class UsageController {
     if (PROJECT_ID_PATTERN.test(project)) query.metadata = { project }
 
     return { query, days: usageDays(since, now, tz), period: { days: period, since: since.toISOString(), tzOffsetMinutes: tz } }
+  }
+
+  /** O peso de cada ferramenta no mesmo recorte (estimativa; ver `ToolUsage.Model`). Ausente sem o repositório que o conta. */
+  private async toolsOf(query: IUsageQuery): Promise<IToolUsage[] | undefined> {
+    return this.deps.conversations.toolUsage ? (await this.deps.conversations.toolUsage(query)).slice(0, TOOLS) : undefined
   }
 
   private pricingOf(provider: string): TModelPricing {

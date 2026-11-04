@@ -3,6 +3,7 @@ import type { IErrorLog, IErrorLogQuery } from '@domain/models/ErrorLog.Model'
 import { ITodoItem } from '@domain/models/ConversationTodo.Model'
 import { TClassification } from '@domain/models/Classification.Model'
 import { IUsageQuery, IUsageRow } from '@domain/models/Usage.Model'
+import type { IToolUsage } from '@domain/models/ToolUsage.Model'
 import {
   IConversationPage,
   IConversationPageQuery,
@@ -43,6 +44,8 @@ export interface IConversationRepository {
    * "meu uso" de uma pessoa de somar as conversas de outra.
    */
   usage(query: IUsageQuery): Promise<IUsageRow[]>
+  /** O peso de cada ferramenta no recorte (estimativa, ver `ToolUsage.Model`). Opcional: sem ele, a tela não mostra o bloco. */
+  toolUsage?(query: IUsageQuery): Promise<IToolUsage[]>
   /** O registro de erros: ferramentas que falharam, turnos com erro e interrompidos (ver `ErrorLog.Model`). */
   errors?(query: IErrorLogQuery): Promise<IErrorLog>
 

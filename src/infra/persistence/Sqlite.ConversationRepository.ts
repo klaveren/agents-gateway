@@ -19,6 +19,7 @@ import {
   PREVIEW_MAX,
 } from '@domain/models/Conversation.Model'
 import { IUsageQuery, IUsageRow, metadataKeyIssue } from '@domain/models/Usage.Model'
+import { IStoredToolCall, IToolUsage, sumToolUsage, toolUsageOfTurn } from '@domain/models/ToolUsage.Model'
 import { BUILDER_METADATA_KEY } from '@domain/Builder.Agents'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 
@@ -798,29 +799,9 @@ export class SqliteConversationRepository implements IConversationRepository {
   async usage(query: IUsageQuery): Promise<IUsageRow[]> {
     return (
       this.guard('usage', () => {
-        const where = ['t.at >= ?']
-        const params: Array<string | number> = [`${Math.trunc(query.tzOffsetMinutes)} minutes`, query.since.toISOString()]
-
-        if (query.owner !== undefined) {
-          // O recorte de dono é escrito sobre `metadata` sem prefixo: aqui ela é a da conversa (`c`).
-          const owner = ownerClause(query.owner)
-          where.push(owner.sql.replaceAll('json_extract(metadata', 'json_extract(c.metadata'))
-          params.push(...owner.params)
-        }
-
-        /**
-         * ⛔ A chave vira caminho JSON DENTRO do SQL: só passa a que `metadataKeyIssue` aceita (lança, e o
-         * `guard` devolve vazio — quem valida antes, com a mensagem, é o controller). O valor é parâmetro.
-         */
-        const path = (key: string) => {
-          if (metadataKeyIssue(key)) throw new Error(`metadata key not allowed: ${key}`)
-          return `CAST(json_extract(c.metadata, '$.${key}') AS TEXT)`
-        }
-        for (const [key, value] of Object.entries(query.metadata ?? {})) {
-          where.push(`${path(key)} = ?`)
-          params.push(value)
-        }
-        const group = query.groupBy ? `${path(query.groupBy)} AS group_value,` : ''
+        const { where, params: filters } = usageFilter(query)
+        const params: Array<string | number> = [`${Math.trunc(query.tzOffsetMinutes)} minutes`, ...filters]
+        const group = query.groupBy ? `${metadataPath(query.groupBy)} AS group_value,` : ''
 
         const rows = this.db
           .prepare(
@@ -850,6 +831,28 @@ export class SqliteConversationRepository implements IConversationRepository {
           turns: count(row.turns),
           usage: usageOf(row),
         }))
+      }) ?? []
+    )
+  }
+
+  /** O peso de cada ferramenta no recorte (ver `ToolUsage.Model`): estimativa pelo que os turnos gravaram. */
+  async toolUsage(query: IUsageQuery): Promise<IToolUsage[]> {
+    return (
+      this.guard('toolUsage', () => {
+        const { where, params } = usageFilter(query)
+        const rows = this.db
+          .prepare(
+            `SELECT t.tool_calls AS tool_calls, COALESCE(t.input_tokens, 0) + COALESCE(t.cache_read_tokens, 0) + COALESCE(t.cache_write_tokens, 0) AS input
+             FROM conversation_turns t JOIN conversations c ON c.id = t.conversation_id
+             WHERE ${where.join(' AND ')} AND t.tool_calls IS NOT NULL`,
+          )
+          .all(...params) as TRow[]
+        return sumToolUsage(
+          rows.map((row) => {
+            const calls = json<IStoredToolCall[]>(row.tool_calls, [])
+            return Array.isArray(calls) ? toolUsageOfTurn(calls, count(row.input)) : []
+          }),
+        )
       }) ?? []
     )
   }
@@ -972,4 +975,32 @@ export class SqliteConversationRepository implements IConversationRepository {
       return undefined
     }
   }
+}
+
+/**
+ * O recorte do uso sobre `conversation_turns t JOIN conversations c`: desde quando, de quem e os filtros de `metadata`.
+ * O recorte de dono é escrito sobre `metadata` sem prefixo: aqui ela é a da conversa (`c`).
+ */
+function usageFilter(query: IUsageQuery): { where: string[]; params: Array<string | number> } {
+  const where = ['t.at >= ?']
+  const params: Array<string | number> = [query.since.toISOString()]
+  if (query.owner !== undefined) {
+    const owner = ownerClause(query.owner)
+    where.push(owner.sql.replaceAll('json_extract(metadata', 'json_extract(c.metadata'))
+    params.push(...owner.params)
+  }
+  for (const [key, value] of Object.entries(query.metadata ?? {})) {
+    where.push(`${metadataPath(key)} = ?`)
+    params.push(value)
+  }
+  return { where, params }
+}
+
+/**
+ * ⛔ A chave vira caminho JSON DENTRO do SQL: só passa a que `metadataKeyIssue` aceita (lança, e o `guard` devolve
+ * vazio — quem valida antes, com a mensagem, é o controller). O valor é parâmetro.
+ */
+function metadataPath(key: string): string {
+  if (metadataKeyIssue(key)) throw new Error(`metadata key not allowed: ${key}`)
+  return `CAST(json_extract(c.metadata, '$.${key}') AS TEXT)`
 }

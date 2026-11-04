@@ -507,6 +507,16 @@ export interface IUsageSummary {
   byAgent: Array<IUsageFigure & { agentId: string }>
   byModel: Array<IUsageFigure & { provider: string; model: string }>
   top: Array<IUsageFigure & { id: string; title?: string; agentId: string; provider: string; model: string }>
+  /** ESTIMATIVA por ferramenta (o provedor não separa): diretos = argumentos + resultado; contexto = o resultado relido no turno. */
+  byTool?: IToolUsage[]
+}
+
+export interface IToolUsage {
+  tool: string
+  calls: number
+  errors: number
+  directTokens: number
+  contextTokens: number
 }
 
 /** Um valor de uma chave do `metadata` (ex.: `accountId`). Sem `value` = as conversas sem a chave. */

@@ -1243,6 +1243,15 @@ const usageSummary = (withCost: boolean) => ({
       type: 'array',
       items: { allOf: [usageFigure(withCost), { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' }, agentId: { type: 'string' } } }] },
     },
+    byTool: {
+      type: 'array',
+      description:
+        'ESTIMATE per tool (providers bill per model call, never per tool): `directTokens` = arguments + result once; `contextTokens` = the result re-read by the later steps of its turn, capped at the input the provider reported for the turn. The 25 heaviest.',
+      items: {
+        type: 'object',
+        properties: { tool: { type: 'string' }, calls: { type: 'integer' }, errors: { type: 'integer' }, directTokens: { type: 'integer' }, contextTokens: { type: 'integer' } },
+      },
+    },
   },
 })
 const usageParams = [

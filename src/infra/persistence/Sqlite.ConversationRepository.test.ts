@@ -121,6 +121,24 @@ describe('SqliteConversationRepository', () => {
     ])
   })
 
+  it('o peso por ferramenta sai dos turnos gravados, no mesmo recorte do uso', async () => {
+    const repo = repository()
+    await repo.saveSession(session())
+    await repo.appendTurn(
+      turn({
+        index: 0,
+        usage: { inputTokens: 10, cacheReadTokens: 5000, totalTokens: 5010 },
+        toolCalls: [
+          { tool: 'Read', args: { path: 'a' }, result: [{ type: 'text', text: 'x'.repeat(400) }] },
+          { tool: 'run_bash', args: { command: 'ls' }, error: 'falhou' },
+        ],
+      }),
+    )
+    const [read, bash] = await repo.toolUsage({ since: new Date('2026-08-01T00:00:00.000Z'), tzOffsetMinutes: 0 })
+    assert.deepStrictEqual([read.tool, read.calls, read.contextTokens, bash.tool, bash.errors], ['Read', 1, 100, 'run_bash', 1])
+    assert.deepStrictEqual(await repo.toolUsage({ since: new Date('2099-01-01T00:00:00.000Z'), tzOffsetMinutes: 0 }), [])
+  })
+
   it('never overwrites a turn: a repeated index goes to the next free one', async () => {
     const repo = repository()
     await repo.saveSession(session())
