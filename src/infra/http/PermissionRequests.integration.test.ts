@@ -300,15 +300,21 @@ describe('pedidos de permissão (integração: MCP do gateway, API, cookie da te
     const full = JSON.parse(texts(await client.callTool({ name: 'get_agent', arguments: { agentId: 'theo' } }))[0])
     assert.ok('systemPrompt' in full && 'providers' in full)
 
-    const preview = JSON.parse(texts(await client.callTool({ name: 'preview_system_prompt', arguments: { agentId: 'theo', projectId: 'alfa' } }))[0])
-    assert.match(preview.prompt, /faça melhor/)
-    assert.strictEqual(preview.projectId, 'alfa')
-    assert.strictEqual(preview.chars, preview.prompt.length)
-    assert.ok(preview.tokens > 0)
+    // Sem `part`: o RESUMO (o total e as partes, sem o texto).
+    const summary = JSON.parse(texts(await client.callTool({ name: 'preview_system_prompt', arguments: { agentId: 'theo', projectId: 'alfa' } }))[0])
+    assert.strictEqual(summary.prompt, undefined)
+    assert.strictEqual(summary.projectId, 'alfa')
+    assert.ok(summary.tokens > 0 && summary.chars > 0)
     assert.deepStrictEqual(
-      preview.parts.slice(0, 2).map((part: { key: string }) => part.key),
+      summary.parts.slice(0, 2).map((part: { key: string }) => part.key),
       ['instructions', 'ambient'],
     )
+    // `part`: aquela parte inteira; `all`: o prompt inteiro.
+    const one = JSON.parse(texts(await client.callTool({ name: 'preview_system_prompt', arguments: { agentId: 'theo', projectId: 'alfa', part: 'instructions' } }))[0])
+    assert.match(one.part.text, /faça melhor/)
+    const all = JSON.parse(texts(await client.callTool({ name: 'preview_system_prompt', arguments: { agentId: 'theo', projectId: 'alfa', part: 'all' } }))[0])
+    assert.match(all.prompt, /faça melhor/)
+    assert.strictEqual(all.chars, summary.chars)
   })
 
   it('⛔ list_permission_rules: qualquer agente lê as PRÓPRIAS regras (a sessão viva prova quem é); outro agente, projeto ou id forjado, só admin', async () => {
