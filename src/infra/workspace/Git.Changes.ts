@@ -175,10 +175,13 @@ export async function fileDiff(dir: string, changes: IChanges, path: string): Pr
   let diff: string
   if (changes.commit) diff = await git(dir, ['diff', ...DIFF_FLAGS, '-U3', `${changes.commit}^!`, ...paths], CHANGE_LIMITS.diffBytes * 4)
   else {
-    const tracked = await git(dir, ['ls-files', '--error-unmatch', '--', file.path]).then(
-      () => true,
-      () => false,
-    )
+    // ⚠️ O APAGADO também sai do índice: sem isto caía no caminho do não rastreado (`/dev/null` contra nada) e vinha vazio.
+    const tracked =
+      file.status === 'D' ||
+      (await git(dir, ['ls-files', '--error-unmatch', '--', file.path]).then(
+        () => true,
+        () => false,
+      ))
     diff = tracked
       ? await git(dir, ['diff', ...DIFF_FLAGS, '-U3', ...(changes.from ? [changes.from] : []), ...paths], CHANGE_LIMITS.diffBytes * 4)
       : await git(dir, ['diff', ...DIFF_FLAGS, '-U3', '--no-index', '--', '/dev/null', file.path], CHANGE_LIMITS.diffBytes * 4).catch(

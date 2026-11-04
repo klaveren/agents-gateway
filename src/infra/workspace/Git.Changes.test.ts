@@ -57,6 +57,8 @@ describe('Git.Changes (o que mudou na pasta da conversa)', () => {
 
     assert.match((await fileDiff(repo, changes, 'a.txt')).diff, /\+tres/)
     assert.match((await fileDiff(repo, changes, 'nao-rastreado.txt')).diff, /\+novo/)
+    // O apagado mostra as linhas que saíram (não "sem diferença").
+    assert.match((await fileDiff(repo, changes, 'apagar.txt')).diff, /^-/m)
     assert.deepStrictEqual(await fileDiff(repo, changes, '.env'), { diff: '', truncated: false, protected: true })
     await assert.rejects(fileDiff(repo, changes, '../../etc/passwd'), /não está entre as alterações/)
     assert.ok(!existsSync(canary), 'nenhuma config do repositório rodou programa')

@@ -81,8 +81,6 @@ export interface IClaudeAgentAdapterDeps {
  * `while` de tool aqui, e é esse justamente o ponto do experimento.
  */
 export class ClaudeAgentAdapter implements IAgentAdapter {
-  /** O CLI compacta o próprio contexto (ver `Compaction.Policy`). */
-  readonly compactsItself = true
   private readonly query: TQuery
   private readonly store: SessionStore
   private readonly catalog?: ToolCatalog
@@ -269,7 +267,8 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
           continue
         }
 
-        // O CLI compactou o próprio contexto (ligado por padrão): aparece no turno, com os tokens de antes e depois.
+        // O CLI compactou o próprio contexto (a rede de segurança perto do fim da janela; antes disso o gateway já
+        // compactou, ver `Compaction.Policy`): aparece no turno, com os tokens de antes e depois.
         if (message.type === 'system' && message.subtype === 'compact_boundary') {
           const { pre_tokens: before, post_tokens: after } = message.compact_metadata
           yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: `Contexto compactado pelo SDK do Claude (${before} → ${after ?? '?'} tokens).` } }

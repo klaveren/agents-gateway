@@ -8,6 +8,7 @@ import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
+import type { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { fakeMcpRegistry, mcpTool } from '@infra/mcp/Mcp.Fake'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { CLAUDE_TEST_AGENT } from '../../testing/Agents.Fixture'
@@ -76,6 +77,11 @@ describe('ClaudeAgentAdapter', () => {
   })
 
   const catalogWith = (connected: boolean) => new ToolCatalog(fakeMcpRegistry([{ id: 'crm', connected, tools: [mcpTool('read_file')] }]), [localTool('run_bash')])
+
+  it('⚖️ o gateway compacta o Claude (gatilho e botão): a compactação do SDK, só no fim da janela, fica de rede', () => {
+    const adapter: IAgentAdapter = new ClaudeAgentAdapter({ query: queryWith(() => []) })
+    assert.ok(!adapter.compactsItself)
+  })
 
   it('creates a session on the agent lane', async () => {
     const adapter = new ClaudeAgentAdapter({ query: queryWith(() => []) })

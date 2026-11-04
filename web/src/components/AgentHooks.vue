@@ -6,6 +6,7 @@ import type { IAgentHook, IHookDelivery, THookInput } from '@/lib/types'
 import { useResource } from '@/composables/useResource'
 import { useHooksStore } from '@/stores/hooks'
 import ConfirmDialog from './ConfirmDialog.vue'
+import { copyText } from '@/lib/clipboard'
 
 /**
  * A guia Hooks de um agente: cada hook é `POST /v1/hook/<agente>/<hook>`, e o agente executa o prompt dele
@@ -111,7 +112,11 @@ async function confirmed() {
 }
 
 async function copy(label: string, text: string) {
-  await navigator.clipboard?.writeText(text).catch(() => undefined)
+  const ok = await copyText(text).then(
+    () => true,
+    () => false,
+  )
+  if (!ok) return
   copied.value = label
   setTimeout(() => (copied.value = undefined), 1500)
 }

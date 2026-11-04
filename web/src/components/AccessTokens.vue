@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/auth'
 import { type IAccessToken, useTokensStore } from '@/stores/tokens'
 import ConfirmDialog from './ConfirmDialog.vue'
 import Icon from './Icon.vue'
+import { copyText } from '@/lib/clipboard'
 
 /**
  * Os tokens de acesso pessoais: para o Claude Code (MCP), scripts e integrações. A lista mora na store, pela conta.
@@ -60,7 +61,11 @@ async function create() {
 }
 
 async function copy(label: string, value: string) {
-  await navigator.clipboard.writeText(value).catch(() => undefined)
+  const ok = await copyText(value).then(
+    () => true,
+    () => false,
+  )
+  if (!ok) return
   copied.value = label
   setTimeout(() => (copied.value = undefined), 1500)
 }
