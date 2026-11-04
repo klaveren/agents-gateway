@@ -151,6 +151,8 @@ export interface IAgent {
   unavailable?: { reason: 'provider_disabled' | 'no_model' | 'no_key' | 'admin_only'; label: string }
   /** Só na lista, só para admin: quantos problemas da importação ele tem (o detalhe traz a lista). */
   importIssueCount?: number
+  /** Só na lista, só para admin: o grupo de modelos do agente (ausente = o padrão; `none` = não troca). */
+  modelGroup?: string
   /** Etiquetas para achar o agente na lista (minúsculas, com hífen). Ausente = nenhuma. */
   tags?: string[]
 }
@@ -186,7 +188,8 @@ export interface IAgentDetail extends IAgent {
   diagnostics?: IAgentDiagnostics
   /** As ações ativadas sob demanda (guia Triggers). */
   triggers?: IAgentTrigger[]
-  fallback?: IAgentFallback
+  /** O grupo de modelos: ausente = o padrão; `none` = não troca. */
+  modelGroup?: string
   /** As variáveis de ambiente fixas do agente, em todo terminal dele. */
   env?: Record<string, string>
   /** Os arquivos da pasta do agente (guia Arquivos): ver `lib/resourceFiles`. */
@@ -196,16 +199,25 @@ export interface IAgentDetail extends IAgent {
   updatedBy?: string
 }
 
-/** Um passo da troca de provedor (ver `Fallback.Policy` no servidor). */
+/** Um passo de um grupo de modelos (ver `Fallback.Policy` no servidor). */
 export interface IFallbackStep {
   provider: string
   model: string
 }
 
-/** A troca de provedor do agente. Ausente = `global`. */
-export interface IAgentFallback {
-  mode: 'global' | 'own' | 'off'
-  chain?: IFallbackStep[]
+/** As falhas que fazem a conversa trocar de passo. */
+export type TSwitchFailure = 'quota' | 'rate_limit' | 'model' | 'overloaded' | 'auth'
+
+/** Um GRUPO DE MODELOS: os passos em ordem e quando trocar de um para o próximo (ver `Fallback.Policy` no servidor). */
+export interface IModelGroup {
+  id: string
+  name: string
+  description?: string
+  steps: IFallbackStep[]
+  /** Ausente = cota, limite de uso e modelo indisponível. */
+  switchOn?: TSwitchFailure[]
+  /** Ausente = 15. */
+  cooldownMinutes?: number
 }
 
 /** Um trigger do agente: o nome, quando usar (vai no índice do prompt) e o procedimento (carregado sob demanda). */
@@ -251,8 +263,8 @@ export interface IAgentInput {
   diagnostics?: IAgentDiagnostics | null
   /** Vazio apaga todos. */
   triggers?: IAgentTrigger[]
-  /** `null` volta à cadeia global. */
-  fallback?: IAgentFallback | null
+  /** Ausente mantém; `null` volta ao grupo padrão; `none` = não troca; senão o id de um grupo. */
+  modelGroup?: string | null
   /** `null` apaga todas. */
   env?: Record<string, string> | null
   /** Ausente mantém; vazio apaga todas. */
@@ -352,8 +364,10 @@ export interface ISettings {
   builderProvider?: string
   builderModel?: string
   classifyTurns?: boolean
-  /** A troca de provedor global: para onde o turno vai quando a cota acaba. */
-  fallback?: { chain: IFallbackStep[]; cooldownMinutes?: number }
+  /** Os grupos de modelos (Configuração → Grupos de modelos). */
+  modelGroups?: IModelGroup[]
+  /** O grupo dos agentes que não escolheram um. Ausente = nenhum. */
+  defaultModelGroup?: string
   /** Os provedores sem cota agora, e quando voltam (só leitura). */
   benched?: Array<{ provider: string; until: string }>
   updatedAt?: string

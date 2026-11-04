@@ -1,12 +1,9 @@
 /**
- * ⚖️ POR QUE O TURNO FALHOU, do lado do provedor: é o que decide se vale tentar outro (ver `Fallback.Policy`). Cota e
- * limite de taxa passam para o próximo da cadeia; credencial errada, pedido inválido e o resto, não — outro provedor não
- * conserta um pedido quebrado, e trocar esconderia o problema.
+ * ⚖️ POR QUE O TURNO FALHOU, do lado do provedor: é o que decide se vale tentar outro (ver `Fallback.Policy`). O grupo
+ * de modelos diz quais trocam (`switchOn`); pedido inválido e o resto (`other`) nunca — outro provedor não conserta um
+ * pedido quebrado, e trocar esconderia o problema.
  */
-export type TProviderFailure = 'quota' | 'rate_limit' | 'overloaded' | 'auth' | 'other'
-
-/** As falhas que mandam para o próximo da cadeia. `overloaded` fica: costuma passar em segundos, e o SDK já repete. */
-export const FALLBACK_FAILURES: readonly TProviderFailure[] = ['quota', 'rate_limit']
+export type TProviderFailure = 'quota' | 'rate_limit' | 'model' | 'overloaded' | 'auth' | 'other'
 
 const QUOTA = [
   /insufficient[_ ]quota/i,
@@ -18,11 +15,18 @@ const QUOTA = [
 ]
 const RATE = [/rate[_ -]?limit/i, /too many requests/i, /\b429\b/]
 const OVERLOADED = [/overloaded/i, /\b529\b/, /service unavailable|\b503\b/i]
+/** O modelo que não existe, saiu do ar ou não está liberado para a conta. */
+const MODEL = [
+  /model[_ ]not[_ ]found/i,
+  /\bmodel\b.{0,80}(?:does not exist|not found|is not available|not available|not supported|is deprecated|has been (?:deprecated|retired)|do(?:es)? not have access)/i,
+  /(?:invalid|unknown|unsupported) model/i,
+]
 const AUTH = [/\b401\b|unauthori[sz]ed|invalid (?:x-)?api[_ -]?key|authentication/i, /\b403\b|permission denied|forbidden/i]
 
 /**
  * A falha de um erro de SDK ou de uma mensagem. O status HTTP, quando existe, vence o texto: 429 é limite (ou cota, se
- * o texto diz cota), 529 é sobrecarga, 401/403 é credencial.
+ * o texto diz cota), 529 é sobrecarga, 401/403 é credencial — e o modelo que não existe vem antes da credencial (o 403 de
+ * "sem acesso a este modelo" é do modelo, não da chave).
  */
 export function failureKind(error: unknown): TProviderFailure {
   const status = statusOf(error)
@@ -30,6 +34,7 @@ export function failureKind(error: unknown): TProviderFailure {
   if (QUOTA.some((pattern) => pattern.test(text))) return 'quota'
   if (status === 429 || RATE.some((pattern) => pattern.test(text))) return 'rate_limit'
   if (status === 529 || status === 503 || OVERLOADED.some((pattern) => pattern.test(text))) return 'overloaded'
+  if (MODEL.some((pattern) => pattern.test(text))) return 'model'
   if (status === 401 || status === 403 || AUTH.some((pattern) => pattern.test(text))) return 'auth'
   return 'other'
 }

@@ -412,6 +412,20 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   )
 
   server.registerTool(
+    'list_model_groups',
+    {
+      description:
+        'The model groups (Settings → model groups): ordered steps (provider + model) and when to switch. An agent points to one (`modelGroup`; absent = `defaultModelGroup`, `none` = no switching): a conversation opened without a model starts at the first available step, and when a model fails (quota, rate limit, model unavailable…) the conversation moves to the next step and STAYS there. Groups are edited only on the screen.',
+      annotations: { readOnlyHint: true },
+    },
+    async () =>
+      reply(await api('GET', '/settings'), (result) => {
+        const settings = result as { modelGroups?: unknown[]; defaultModelGroup?: string }
+        return { defaultModelGroup: settings.defaultModelGroup ?? null, modelGroups: settings.modelGroups ?? [] }
+      }),
+  )
+
+  server.registerTool(
     'list_models',
     {
       description:

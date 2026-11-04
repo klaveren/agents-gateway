@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import type { IAgentFallback, IFallbackStep } from './Fallback.Policy'
+import type { IFallbackStep, IModelGroup } from './Fallback.Policy'
 import type { IAgent, IAgentDiagnostics, IAgentTarget, IAgentTerminal, IAgentTrigger } from './models/Agent.Model'
 import type { IImportProblem } from './models/ImportProblem.Model'
 import type { IMcpContainer, IMcpProcess, IMcpServerConfig } from './models/McpServer.Model'
@@ -96,7 +96,14 @@ export const TRIGGER_SHAPE: TShape<IAgentTrigger> = { id: 'value', when: 'value'
 
 export const FALLBACK_STEP_SHAPE: TShape<IFallbackStep> = { provider: 'value', model: 'value' }
 
-export const FALLBACK_SHAPE: TShape<IAgentFallback> = { mode: 'value', chain: { list: FALLBACK_STEP_SHAPE } }
+export const MODEL_GROUP_SHAPE: TShape<IModelGroup> = {
+  id: 'value',
+  name: 'value',
+  description: 'value',
+  steps: { list: FALLBACK_STEP_SHAPE },
+  switchOn: 'set',
+  cooldownMinutes: 'value',
+}
 
 /**
  * ⚖️ Lista ORDENADA, e não conjunto: negar vence permitir qualquer que seja a ordem, mas a ordem é o que a pessoa vê na
@@ -139,7 +146,7 @@ export const AGENT_SHAPE: TShape<IAgent> = {
   diagnostics: { object: DIAGNOSTICS_SHAPE },
   // A ordem é a do índice "## Triggers" no prompt.
   triggers: { list: TRIGGER_SHAPE },
-  fallback: { object: FALLBACK_SHAPE },
+  modelGroup: 'value',
   /**
    * ⚖️ ENTRA, nomes e valores: é dado do agente (a autoria do git, um idioma), e o contrato do campo é "nunca segredo" —
    * a regra (`envIssues`) recusa nome com cara de chave, e segredo mora em Segredos e nas contas do projeto. ⚠️ A regra

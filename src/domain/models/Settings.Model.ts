@@ -1,6 +1,7 @@
 import { InvalidSettingsError } from '@domain/errors/Domain.Error'
 import { ILimits, normalizeLimits } from './Limits.Model'
-import type { IFallbackSettings, IFallbackStep } from '@domain/Fallback.Policy'
+import type { IFallbackStep, IModelGroup } from '@domain/Fallback.Policy'
+import type { TProviderFailure } from '@domain/Provider.Failure'
 
 /**
  * As decisões que mudam sem deploy.
@@ -76,8 +77,10 @@ export interface IAgentSettings {
   /** Os tetos ajustáveis (ver `Limits.Model`). Ausente, ou um limite ausente = o `.env` ou o padrão. */
   limits?: ILimits
 
-  /** A troca de provedor quando a cota acaba, para os agentes que não têm a própria (ver `Fallback.Policy`). */
-  fallback?: IFallbackSettings
+  /** Os grupos de modelos (ver `Fallback.Policy`): a ordem de troca quando um modelo falha. */
+  modelGroups?: IModelGroup[]
+  /** O grupo dos agentes que não apontam para um. Ausente = nenhum: sem grupo, o modelo que falha encerra o turno. */
+  defaultModelGroup?: string
 
   updatedAt?: Date
   updatedBy?: string
@@ -127,7 +130,8 @@ export function normalizeSettings(raw: unknown): IAgentSettings {
     builderProvider: text(stored.builderProvider),
     builderModel: text(stored.builderModel),
     limits: normalizeLimits(stored.limits),
-    fallback: normalizeFallback(stored.fallback),
+    modelGroups: normalizeModelGroups(stored.modelGroups),
+    defaultModelGroup: text(stored.defaultModelGroup),
     updatedAt: date(stored.updatedAt),
     updatedBy: text(stored.updatedBy),
   }
@@ -136,16 +140,26 @@ export function normalizeSettings(raw: unknown): IAgentSettings {
   return Object.fromEntries(Object.entries(settings).filter(([, value]) => value !== undefined)) as unknown as IAgentSettings
 }
 
-/** A cadeia gravada, só com passos bem formados. Vazia e sem tempo = ausente. */
-function normalizeFallback(raw: unknown): IFallbackSettings | undefined {
-  if (typeof raw !== 'object' || raw === null) return undefined
-  const stored = raw as Record<string, unknown>
-  const chain = (Array.isArray(stored.chain) ? stored.chain : [])
-    .filter((step): step is IFallbackStep => typeof step?.provider === 'string' && typeof step?.model === 'string' && !!step.provider && !!step.model)
-    .map((step) => ({ provider: step.provider, model: step.model }))
-  const cooldown = typeof stored.cooldownMinutes === 'number' && Number.isFinite(stored.cooldownMinutes) ? stored.cooldownMinutes : undefined
-  if (!chain.length && cooldown === undefined) return undefined
-  return { chain, ...(cooldown !== undefined ? { cooldownMinutes: cooldown } : {}) }
+/** Os grupos gravados, só com o que é bem formado (passo sem provedor ou modelo cai). Nenhum = ausente. */
+function normalizeModelGroups(raw: unknown): IModelGroup[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const groups = raw
+    .filter((group): group is Record<string, unknown> => typeof group === 'object' && group !== null && typeof group.id === 'string' && !!group.id)
+    .map((group): IModelGroup => {
+      const steps = (Array.isArray(group.steps) ? group.steps : [])
+        .filter((step): step is IFallbackStep => typeof step?.provider === 'string' && typeof step?.model === 'string' && !!step.provider && !!step.model)
+        .map((step) => ({ provider: step.provider, model: step.model }))
+      const cooldown = typeof group.cooldownMinutes === 'number' && Number.isFinite(group.cooldownMinutes) ? group.cooldownMinutes : undefined
+      return {
+        id: String(group.id),
+        name: typeof group.name === 'string' && group.name.trim() ? group.name : String(group.id),
+        ...(typeof group.description === 'string' && group.description.trim() ? { description: group.description } : {}),
+        steps,
+        ...(Array.isArray(group.switchOn) ? { switchOn: group.switchOn.filter((kind): kind is TProviderFailure => typeof kind === 'string') } : {}),
+        ...(cooldown !== undefined ? { cooldownMinutes: cooldown } : {}),
+      }
+    })
+  return groups.length ? groups : undefined
 }
 
 /**
@@ -173,7 +187,8 @@ const EDITABLE = [
   'builderProvider',
   'builderModel',
   'limits',
-  'fallback',
+  'modelGroups',
+  'defaultModelGroup',
 ] as const
 const REQUIRED = ['audience'] as const
 

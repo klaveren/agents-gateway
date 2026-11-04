@@ -4,8 +4,8 @@ import type { IFallbackStep } from '@/lib/types'
 import { useProtocolsStore } from '@/stores/protocols'
 
 /**
- * A CADEIA da troca de provedor: na ordem, para onde o turno vai quando a cota de um acaba. Serve à cadeia global
- * (Configuração) e à do agente. `options` = os pares que podem entrar (os do agente, ou os prontos no gateway).
+ * Os PASSOS de um grupo de modelos, na ordem: onde a conversa começa e para onde vai quando o modelo falha.
+ * `options` = os pares que podem entrar (os modelos ativados dos provedores prontos no gateway).
  */
 const props = defineProps<{ options: IFallbackStep[] }>()
 const chain = defineModel<IFallbackStep[]>({ required: true })
@@ -45,7 +45,7 @@ function remove(index: number) {
         <button type="button" class="btn btn-ghost btn-sm text-rose-300" title="Tirar" @click="remove(index)">×</button>
       </li>
     </ol>
-    <p v-else class="text-xs text-zinc-500">Nenhum passo: a cota acabou, o turno para com o erro.</p>
+    <p v-else class="text-xs text-zinc-500">Nenhum passo ainda: adicione ao menos um modelo.</p>
     <div v-if="free.length" class="flex gap-2">
       <select v-model="adding" class="h-9 min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-900 px-2 text-sm">
         <option value="">Adicionar passo…</option>

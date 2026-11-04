@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { ApiError } from '@/lib/api'
-import type { IFallbackStep, IProviderStatus, TAudience, TLimitName } from '@/lib/types'
-import FallbackChain from '@/components/FallbackChain.vue'
+import type { IProviderStatus, TAudience, TLimitName } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import { useAuthStore } from '@/stores/auth'
 import { useProvidersStore } from '@/stores/providers'
@@ -28,11 +27,10 @@ const saved = ref<string>()
 const failure = ref<string>()
 /** Os problemas de um 422, campo a campo — mostrados junto do Salvar. */
 const issues = ref<Array<{ field: string; message: string }>>([])
-/** A troca de provedor global, em edição (ver `FallbackChain`). */
-const fallbackChain = ref<IFallbackStep[]>([])
-const cooldownMinutes = ref<number | ''>('')
-const fallbackSaved = ref<string>()
-const fallbackFailure = ref<string>()
+/** O grupo de modelos padrão, em edição (vazio = nenhum). Os grupos em si moram em `/model-groups`. */
+const defaultGroup = ref('')
+const groupSaved = ref<string>()
+const groupFailure = ref<string>()
 /** Os limites em edição; vazio = volta ao padrão do `.env` (vai como `null`). */
 const limitDrafts = ref<Partial<Record<TLimitName, number | ''>>>({})
 
@@ -100,8 +98,7 @@ watch(
     classifier.value = current.classifierModel ? `${current.classifierProvider ?? ''}::${current.classifierModel}` : ''
     classifyTurns.value = current.classifyTurns ?? false
     builder.value = current.builderModel ? `${current.builderProvider ?? ''}::${current.builderModel}` : ''
-    fallbackChain.value = (current.fallback?.chain ?? []).map((step) => ({ ...step }))
-    cooldownMinutes.value = current.fallback?.cooldownMinutes ?? ''
+    defaultGroup.value = current.defaultModelGroup ?? ''
     limitDrafts.value = Object.fromEntries(LIMITS.map(({ name }) => [name, current.limits?.[name] ?? ''])) as Partial<Record<TLimitName, number | ''>>
   },
   { immediate: true },
@@ -117,14 +114,14 @@ function onAgentChange() {
   model.value = ''
 }
 
-/** A troca de provedor salva à parte: é outra decisão, e a cadeia vazia a desliga. */
-async function saveFallback() {
-  fallbackSaved.value = fallbackFailure.value = undefined
+/** O grupo padrão salva à parte: é outra decisão, e "Nenhum" (`null`) desliga a troca dos agentes sem grupo. */
+async function saveDefaultGroup() {
+  groupSaved.value = groupFailure.value = undefined
   try {
-    await settings.save({ fallback: fallbackChain.value.length || cooldownMinutes.value !== '' ? { chain: fallbackChain.value, ...(cooldownMinutes.value !== '' ? { cooldownMinutes: Number(cooldownMinutes.value) } : {}) } : null })
-    fallbackSaved.value = 'Troca de provedor salva. Vale no próximo turno.'
+    await settings.save({ defaultModelGroup: defaultGroup.value || null })
+    groupSaved.value = 'Grupo padrão salvo. Vale no próximo turno.'
   } catch (error) {
-    fallbackFailure.value =
+    groupFailure.value =
       error instanceof ApiError && Array.isArray(error.details) ? (error.details as Array<{ message?: string }>).map((item) => item.message).join('; ') : error instanceof Error ? error.message : String(error)
   }
 }
@@ -255,25 +252,26 @@ async function saveSettings() {
       </section>
 
       <section v-if="auth.isAdmin && settings.current" class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
-        <h2 class="font-medium">Troca de provedor</h2>
+        <h2 class="font-medium">Grupo de modelos padrão</h2>
         <p class="text-xs text-zinc-400">
-          Quando a cota (ou o limite de uso) de um provedor acaba no meio de um turno, o turno segue no próximo da lista, com a transcrição e o que já foi feito. Vale para os agentes sem
-          lista própria, e só com os pares que cada agente oferece.
+          O grupo dos agentes que não escolheram um: a conversa começa no primeiro modelo disponível dele e, se o modelo falha (cota, limite de uso…), segue no próximo e fica nele.
         </p>
-        <FallbackChain v-model="fallbackChain" :options="builderOptions.map(({ provider, model }) => ({ provider, model }))" />
         <label class="flex max-w-xs flex-col gap-1 text-sm text-zinc-300">
-          Tempo de espera do provedor sem cota (minutos)
-          <input v-model="cooldownMinutes" type="number" min="1" max="1440" placeholder="15" class="h-9 rounded-lg border border-zinc-800 bg-zinc-900 px-3 text-sm tabular-nums" />
-          <small class="text-xs text-zinc-500">Quando o erro não diz quando a cota volta.</small>
+          Grupo padrão
+          <select v-model="defaultGroup" aria-label="Grupo de modelos padrão" class="h-9 rounded-lg border border-zinc-800 bg-zinc-900 px-2 text-sm">
+            <option value="">Nenhum</option>
+            <option v-for="group in settings.current.modelGroups ?? []" :key="group.id" :value="group.id">{{ group.name }}</option>
+          </select>
         </label>
+        <RouterLink to="/model-groups" class="text-sm text-emerald-300 underline">Gerenciar grupos de modelos</RouterLink>
         <p v-if="settings.current.benched?.length" class="text-xs text-amber-300">
           Sem cota agora:
           {{ settings.current.benched.map((item) => `${protocols.providerName(item.provider)} até ${new Date(item.until).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`).join(', ') }}
         </p>
         <div class="flex items-center gap-3">
-          <button class="btn btn-primary" @click="saveFallback">Salvar troca</button>
-          <span v-if="fallbackSaved" class="text-sm text-emerald-300">{{ fallbackSaved }}</span>
-          <span v-if="fallbackFailure" class="text-sm text-rose-300">{{ fallbackFailure }}</span>
+          <button class="btn btn-primary" @click="saveDefaultGroup">Salvar grupo padrão</button>
+          <span v-if="groupSaved" class="text-sm text-emerald-300">{{ groupSaved }}</span>
+          <span v-if="groupFailure" class="text-sm text-rose-300">{{ groupFailure }}</span>
         </div>
       </section>
 

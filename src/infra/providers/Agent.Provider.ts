@@ -2,9 +2,9 @@ import { offers, targetFor } from '@domain/Agent.Policy'
 import { conversationNote, IAmbient } from '@domain/Ambient.Policy'
 import { resolveCapabilities } from '@domain/Capability.Catalog'
 import { COMPACT_REQUEST, compactHandoff, shouldCompact } from '@domain/Compaction.Policy'
-import { DEFAULT_COOLDOWN_MINUTES, fallbackChain, IFallbackStep, nextStep } from '@domain/Fallback.Policy'
+import { benchKeyOf, DEFAULT_COOLDOWN_MINUTES, fallbackChain, groupOf, IFallbackStep, IModelGroup, nextStep, stepKey, switchesOn, withGroupTargets } from '@domain/Fallback.Policy'
 import { HANDOFF_MAX_CHARS, handoffText, ITranscriptTurn } from '@domain/Handoff.Policy'
-import { FALLBACK_FAILURES } from '@domain/Provider.Failure'
+import type { TProviderFailure } from '@domain/Provider.Failure'
 import { INTERJECTION_QUEUE_MAX, interjectionRound } from '@domain/Interjection.Policy'
 import { resolveSessionMode } from '@domain/Session.Policy'
 import { EMode } from '@domain/enums/EMode.Enum'
@@ -218,8 +218,8 @@ export class AgentProvider implements IAgentProvider {
     record.status = 'running'
     this.loops?.open(sessionId)
     record.turns += 1
-    // Os provedores já tentados neste turno: a cota é da conta, então o provedor inteiro sai, não só o modelo.
-    const tried = new Set<string>([record.provider])
+    // Os passos já tentados neste turno (ver `benchKeyOf`): na cota, o provedor inteiro sai; no erro do modelo, só ele.
+    const tried = new Set<string>([stepKey(record)])
     // As mensagens que a pessoa mandou com o turno rodando (ver `Interjection.Policy`): as que entraram, e as que entraram
     // e ainda não saíram como evento (a lane as tira da fila no meio da chamada; o evento sai antes do próximo dela).
     const interjections: string[] = []
@@ -250,7 +250,7 @@ export class AgentProvider implements IAgentProvider {
       record.handoffKind = partial ? 'quota' : 'switch'
       sent = opening(handoff)
       turn.by = `${record.provider} · ${record.model}`
-      tried.add(record.provider)
+      tried.add(stepKey(record))
       ;({ agent, unavailable } = this.prepare(this.getAgent(record.agentId), conversationProject, record.provider, record.protocol, record.mode))
       adapter = this.getAdapter(record.protocol, record.mode)
       return from
@@ -274,8 +274,8 @@ export class AgentProvider implements IAgentProvider {
         ...(workFolder ? { workFolder } : {}),
       }
 
-      // O provedor da conversa ficou sem cota em outra conversa: este turno já começa no próximo da cadeia.
-      if (this.bench?.isBenched(record.provider)) {
+      // O passo da conversa ficou de lado em outra conversa (cota, modelo fora): este turno já começa no próximo do grupo.
+      if (this.isStepBenched(record)) {
         const next = this.nextFallback(record, tried)
         if (next) {
           const from = switchTo(next, false)
@@ -314,16 +314,19 @@ export class AgentProvider implements IAgentProvider {
         yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: `Indisponível em ${record.provider}: ${unavailable.join(', ')}.` } }
 
       for (;;) {
-        let exhausted: { message: string; resetsAt?: string; next: IFallbackStep } | undefined
+        let exhausted: { message: string; resetsAt?: string; kind: TProviderFailure; next: IFallbackStep } | undefined
         // O fim da rodada fica retido: com mensagem na fila, o turno ainda não acabou.
         let completed: IAgentEvent | undefined
         let stopped = false
         for await (const event of adapter.sendMessage(agent, sessionId, { ...sent, interjections: take }, context)) {
-          // ⚖️ COTA OU LIMITE com um próximo na cadeia: o erro não sai, o turno segue no próximo (ver `Fallback.Policy`).
-          if (event.type === 'error' && event.payload.kind && FALLBACK_FAILURES.includes(event.payload.kind)) {
+          // ⚖️ A FALHA QUE O GRUPO TROCA (cota, limite, modelo fora…) com um próximo nele: o erro não sai, o turno segue no
+          // próximo (ver `Fallback.Policy`). O passo que falhou sai do turno: o provedor inteiro na cota, só o modelo no erro dele.
+          const kind = event.type === 'error' ? event.payload.kind : undefined
+          if (event.type === 'error' && kind && switchesOn(this.groupFor(record), kind)) {
+            tried.add(benchKeyOf(record, kind))
             const next = this.nextFallback(record, tried)
             if (next) {
-              exhausted = { message: event.payload.message, ...(event.payload.resetsAt ? { resetsAt: event.payload.resetsAt } : {}), next }
+              exhausted = { message: event.payload.message, ...(event.payload.resetsAt ? { resetsAt: event.payload.resetsAt } : {}), kind, next }
               break
             }
           }
@@ -374,13 +377,13 @@ export class AgentProvider implements IAgentProvider {
           break
         }
 
-        this.benchProvider(record.provider, exhausted.resetsAt)
+        this.benchStep(record, exhausted.kind, exhausted.resetsAt)
         const from = switchTo(exhausted.next, true)
         yield {
           type: 'warning',
           sessionId,
           timestamp: new Date(),
-          payload: { message: `Cota de ${from} esgotada (${exhausted.message.slice(0, 200)}); o turno segue em ${turn.by}.` },
+          payload: { message: `${FAILURE_LABEL[exhausted.kind]} em ${from} (${exhausted.message.slice(0, 200)}); a conversa segue em ${turn.by}.` },
         }
         if (unavailable.length) yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: `Indisponível em ${record.provider}: ${unavailable.join(', ')}.` } }
       }
@@ -466,16 +469,26 @@ export class AgentProvider implements IAgentProvider {
     return this.view(record)
   }
 
-  /** O próximo passo da cadeia que pode rodar agora, ou nada (aí o erro sai como sempre). */
+  /** O grupo de modelos da conversa: o do agente, senão o padrão (ver `Fallback.Policy`). */
+  private groupFor(record: Pick<ISessionRecord, 'agentId'>): IModelGroup | undefined {
+    return groupOf(this.agents.get(record.agentId) ?? {}, this.current)
+  }
+
+  /** O próximo passo do grupo que pode rodar agora, ou nada (aí o erro sai como sempre). */
   private nextFallback(record: ISessionRecord, tried: ReadonlySet<string>): IFallbackStep | undefined {
     if (!this.bench) return undefined
     const agent = this.getAgent(record.agentId)
-    return nextStep(fallbackChain(agent, this.current?.fallback), tried, (step) => this.canRun(agent, record.mode, step))
+    return nextStep(fallbackChain(this.groupFor(record)), tried, (step) => this.canRun(agent, record.mode, step))
+  }
+
+  /** O passo está de lado: o provedor inteiro (cota) ou só o modelo (erro dele). */
+  private isStepBenched(step: IFallbackStep): boolean {
+    return !!this.bench && (this.bench.isBenched(step.provider) || this.bench.isBenched(stepKey(step)))
   }
 
   /** O passo roda nesta lane, com chave (ou assinatura), fora do banco de reservas e com o provider ligado. */
   private canRun(agent: IAgent, mode: EMode, step: IFallbackStep): boolean {
-    if (this.bench?.isBenched(step.provider)) return false
+    if (this.isStepBenched(step)) return false
     try {
       const protocol = this.protocolOf(step.provider)
       if (!lanesOf(protocol).includes(mode) || !this.adapters.has(adapterKey(protocol, mode))) return false
@@ -487,11 +500,11 @@ export class AgentProvider implements IAgentProvider {
     }
   }
 
-  /** Fica de lado até a cota voltar (quando o erro diz) ou pelo tempo configurado. */
-  private benchProvider(provider: string, resetsAt: string | undefined): void {
+  /** O passo que falhou fica de lado até voltar (quando o erro diz) ou pelo tempo do grupo: o provedor na cota, o modelo no erro dele. */
+  private benchStep(record: ISessionRecord, kind: TProviderFailure, resetsAt: string | undefined): void {
     const back = resetsAt ? Date.parse(resetsAt) : Number.NaN
-    const cooldown = (this.current?.fallback?.cooldownMinutes ?? DEFAULT_COOLDOWN_MINUTES) * 60_000
-    this.bench?.bench(provider, Number.isFinite(back) && back > Date.now() ? back : Date.now() + cooldown)
+    const cooldown = (this.groupFor(record)?.cooldownMinutes ?? DEFAULT_COOLDOWN_MINUTES) * 60_000
+    this.bench?.bench(benchKeyOf(record, kind), Number.isFinite(back) && back > Date.now() ? back : Date.now() + cooldown)
   }
 
   /** A sessão passa para outro provedor e modelo: o estado nativo do anterior fica para trás (ver `reconfigure`). */
@@ -713,6 +726,15 @@ export class AgentProvider implements IAgentProvider {
       throw new ModelDisabledError(input.provider ?? agent.providers[0]?.provider ?? '', input.model)
 
     const asked = input.provider || input.model
+    // ⚖️ Sem escolha, com grupo de modelos: o primeiro passo dele que pode rodar agora (fora da reserva, modelo ativo).
+    if (!asked) {
+      const step = fallbackChain(groupOf(agent, settings)).find((candidate) => {
+        if (this.isStepBenched(candidate)) return false
+        const target = agent.providers.find((item) => item.provider === candidate.provider)
+        return !!target && target.models.includes(candidate.model) && (this.agents.isTargetRunnable?.(agent, { ...target, models: [candidate.model] }) ?? true)
+      })
+      if (step) return step
+    }
     // O provedor sem cota agora (ver `Provider.Bench`) não abre conversa nova enquanto houver outro.
     const runnable = (target: IAgentTarget) => !this.bench?.isBenched(target.provider) && (this.agents.isTargetRunnable?.(agent, target) ?? true)
     const choice = asked
@@ -742,7 +764,10 @@ export class AgentProvider implements IAgentProvider {
     const agent = this.agents.get(agentId)
     if (!agent) throw new AgentNotFoundError(agentId)
 
-    return agent
+    // ⚖️ Os passos do grupo de modelos entram como alvos do agente (só os modelos ativos): é o que a troca e a conversa
+    // sem escolha usam, com o sandbox do agente (ver `withGroupTargets`).
+    const group = groupOf(agent, this.current)
+    return withGroupTargets(agent, group && { ...group, steps: group.steps.filter((step) => this.agents.isModelUsable?.(step.provider, step.model) ?? true) })
   }
 
   /**
@@ -822,4 +847,14 @@ function workFolderOf(metadata: Record<string, unknown> | undefined, projectId: 
   const projectDir = projectWorkspace(projectId)
   const folder = resolveWorkFolder(projectDir, repository, typeof worktree === 'string' ? worktree : undefined)
   return { ...folder, projectDir }
+}
+
+/** A falha que trocou o passo, como a pessoa lê no aviso do turno. */
+const FAILURE_LABEL: Readonly<Record<TProviderFailure, string>> = {
+  quota: 'Cota esgotada',
+  rate_limit: 'Limite de uso',
+  model: 'Modelo indisponível',
+  overloaded: 'Provedor sobrecarregado',
+  auth: 'Credencial recusada',
+  other: 'Falha',
 }

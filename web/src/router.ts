@@ -17,6 +17,7 @@ import SchedulesView from './views/SchedulesView.vue'
 import NotificationsView from './views/NotificationsView.vue'
 import PermissionsView from './views/PermissionsView.vue'
 import AccountsView from './views/AccountsView.vue'
+import ModelGroupsView from './views/ModelGroupsView.vue'
 import ProvidersView from './views/ProvidersView.vue'
 import SettingsView from './views/SettingsView.vue'
 import SecretsView from './views/SecretsView.vue'
@@ -103,6 +104,9 @@ export const router = createRouter({
     { path: '/models', name: 'providers', component: ProvidersView },
     { path: '/models/new', name: 'provider-new', component: ProvidersView },
     { path: '/models/:id', name: 'provider', component: ProvidersView, props: true },
+    { path: '/model-groups', name: 'model-groups', component: ModelGroupsView },
+    { path: '/model-groups/new', name: 'model-group-new', component: ModelGroupsView },
+    { path: '/model-groups/:id', name: 'model-group', component: ModelGroupsView, props: true },
     { path: '/providers/:rest(.*)*', redirect: (to) => ({ path: `/models${to.path.slice('/providers'.length)}`, query: to.query }) },
     { path: '/login', name: 'login', component: AuthView },
     { path: '/setup', name: 'setup', component: AuthView },

@@ -117,6 +117,12 @@ describe('Catalog.Widening — agente', () => {
     ])
   })
 
+  it('trocar de grupo de modelos amplia (outros provedores com o sandbox do agente); ir para `none` não', () => {
+    assert.deepStrictEqual(keysOf(agentDoc(), agentDoc({ modelGroup: 'rapido' })), ['agent/theo@alfa#modelGroup~rapido'])
+    assert.deepStrictEqual(keysOf(agentDoc({ modelGroup: 'rapido' }), agentDoc()), ['agent/theo@alfa#modelGroup~padrão'])
+    assert.deepStrictEqual(keysOf(agentDoc({ modelGroup: 'rapido' }), agentDoc({ modelGroup: 'none' })), [])
+  })
+
   it('adminOnly true → false amplia; false → true não', () => {
     assert.deepStrictEqual(keysOf(agentDoc(), agentDoc({ adminOnly: false })), ['agent/theo@alfa#adminOnly-'])
     assert.deepStrictEqual(keysOf(agentDoc(), agentDoc({ adminOnly: undefined })), ['agent/theo@alfa#adminOnly-'])

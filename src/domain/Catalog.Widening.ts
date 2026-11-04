@@ -46,6 +46,8 @@ export type TWideningCategory =
   | 'mcp-reach'
   /** O MCP passa a receber a identidade de quem chama. */
   | 'identity'
+  /** O agente passa a outro grupo de modelos: outros provedores e modelos rodam com o sandbox dele. */
+  | 'models'
 
 export const WIDENING_CATEGORY_LABEL: Readonly<Record<TWideningCategory, string>> = {
   permission: 'permissão',
@@ -58,6 +60,7 @@ export const WIDENING_CATEGORY_LABEL: Readonly<Record<TWideningCategory, string>
   environment: 'ambiente',
   'mcp-reach': 'alcance do MCP',
   identity: 'identidade enviada',
+  models: 'grupo de modelos',
 }
 
 export interface IWidening {
@@ -140,6 +143,7 @@ interface IAgentBody {
   providers?: IAgentTarget[]
   env?: Record<string, string>
   resources?: IAgentResources
+  modelGroup?: string
 }
 
 interface IMcpBody {
@@ -242,6 +246,10 @@ function agentWidenings(out: Collector, before: IAgentBody | undefined, after: I
     if (!(name in env)) out.add('environment', `env+${name}=${digest(value)}`, `nova variável de ambiente ${name}="${value}"`)
     else if (env[name] !== value) out.add('environment', `env~${name}=${digest(value)}`, `variável de ambiente ${name} muda para "${value}"`)
   }
+
+  // Grupo de modelos: o grupo novo põe outros provedores e modelos para rodar com o sandbox do agente. Sair para `none` só fecha.
+  if (!isNew && was.modelGroup !== after.modelGroup && after.modelGroup !== 'none')
+    out.add('models', `modelGroup~${after.modelGroup ?? 'padrão'}`, `passa a usar o grupo de modelos "${after.modelGroup ?? 'padrão'}"`)
 
   // ⚖️ Triggers NÃO contam (decisão do dono, 30/10): são texto, como o prompt.
 }

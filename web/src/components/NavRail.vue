@@ -23,6 +23,7 @@
     const name = String(route.name ?? '')
     if (name.startsWith('agent')) return 'agents'
     if (name.startsWith('provider')) return 'providers'
+    if (name.startsWith('model-group')) return 'model-groups'
     if (name.startsWith('mcp')) return 'mcp'
     if (name === 'user' || name.startsWith('user-')) return 'users'
     if (name === 'rules' || name.startsWith('rule-')) return 'rules'

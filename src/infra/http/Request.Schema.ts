@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { FALLBACK_BOUNDS, FALLBACK_MODES, TFallbackMode } from '@domain/Fallback.Policy'
+import { MODEL_GROUP_BOUNDS, MODEL_GROUP_ID, NO_MODEL_GROUP, SWITCHABLE_FAILURES } from '@domain/Fallback.Policy'
+import type { TProviderFailure } from '@domain/Provider.Failure'
 import { LIMIT_BOUNDS, LIMIT_NAMES, limitInBounds, TLimitName, UNLIMITED } from '@domain/models/Limits.Model'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { AUDIENCES } from '@domain/models/Settings.Model'
@@ -81,6 +82,15 @@ const clearable = z.string().trim().nullable().optional()
 
 /** Um passo da troca de provedor: provedor + modelo. */
 const fallbackStep = z.object({ provider: z.string().trim().min(1).max(100), model: z.string().trim().min(1).max(200) })
+const modelGroupRef = z.string().trim().regex(MODEL_GROUP_ID, '2–48 lowercase letters, digits or hyphens')
+const modelGroup = z.object({
+  id: modelGroupRef,
+  name: z.string().trim().min(1).max(MODEL_GROUP_BOUNDS.name),
+  description: z.string().trim().max(MODEL_GROUP_BOUNDS.description).optional(),
+  steps: z.array(fallbackStep).min(1).max(MODEL_GROUP_BOUNDS.steps),
+  switchOn: z.array(z.enum(SWITCHABLE_FAILURES as [TProviderFailure, ...TProviderFailure[]])).optional(),
+  cooldownMinutes: z.number().int().min(MODEL_GROUP_BOUNDS.cooldownMinutes.min).max(MODEL_GROUP_BOUNDS.cooldownMinutes.max).optional(),
+})
 
 /**
  * Alteração PARCIAL das configurações: só o que mudou vem no corpo. Exigir o objeto inteiro faria
@@ -123,14 +133,10 @@ export const updateSettingsSchema = z.object({
     .strict()
     .nullable()
     .optional(),
-  /** A cadeia global da troca de provedor; `null` desliga. */
-  fallback: z
-    .object({
-      chain: z.array(fallbackStep).max(FALLBACK_BOUNDS.chain),
-      cooldownMinutes: z.number().int().min(FALLBACK_BOUNDS.cooldownMinutes.min).max(FALLBACK_BOUNDS.cooldownMinutes.max).optional(),
-    })
-    .nullable()
-    .optional(),
+  /** Os grupos de modelos (a lista inteira); `null` tira todos. */
+  modelGroups: z.array(modelGroup).max(MODEL_GROUP_BOUNDS.groups).nullable().optional(),
+  /** O grupo dos agentes que não apontam para um; `null` = nenhum. */
+  defaultModelGroup: modelGroupRef.nullable().optional(),
 })
 
 /**
@@ -182,9 +188,9 @@ export const agentBodySchema = z.object({
     )
     .max(300)
     .optional(),
-  /** A troca de provedor deste agente (ver `Fallback.Policy`). Ausente na edição = mantém; `null` volta à global. */
-  fallback: z
-    .object({ mode: z.enum(FALLBACK_MODES as [TFallbackMode, ...TFallbackMode[]]), chain: z.array(fallbackStep).max(FALLBACK_BOUNDS.chain).optional() })
+  /** O grupo de modelos deste agente (ver `Fallback.Policy`). Ausente na edição = mantém; `null` volta ao padrão; `none` = não troca. */
+  modelGroup: z
+    .union([modelGroupRef, z.literal(NO_MODEL_GROUP)])
     .nullable()
     .optional(),
   /** O terminal deste agente (tempo por comando e saída). Ausente na edição = mantém o que ele tem; `null` volta ao global. */

@@ -116,6 +116,10 @@ export class AgentCatalog implements IAgentDirectory {
     return this.list().find((agent) => agent.role !== 'subagent' && this.isRunnable(agent))
   }
 
+  isModelUsable(provider: string, model: string): boolean {
+    return this.usable ? this.usable(provider, model) : true
+  }
+
   /** O agente (já com os modelos utilizáveis) pode abrir conversa agora: algum provider dele roda. */
   isRunnable(agent: IAgent): boolean {
     return agent.providers.some((target) => this.isTargetRunnable(agent, target))
@@ -280,8 +284,6 @@ function toAgent(stored: IStoredAgent): IAgent {
     ...(stored.env && Object.keys(stored.env).length ? { env: { ...stored.env } } : {}),
     ...(stored.files?.length ? { files: stored.files.map((file) => ({ ...file })) } : {}),
     ...(stored.importIssues?.length ? { importIssues: stored.importIssues.map((issue) => ({ ...issue })) } : {}),
-    ...(stored.fallback
-      ? { fallback: { mode: stored.fallback.mode, ...(stored.fallback.chain?.length ? { chain: stored.fallback.chain.map((step) => ({ ...step })) } : {}) } }
-      : {}),
+    ...(stored.modelGroup ? { modelGroup: stored.modelGroup } : {}),
   }
 }
