@@ -10,7 +10,7 @@ export interface IBashPolicy {
   cwd: string
 }
 
-const DEFAULT_TIMEOUT_MS = 20_000
+const DEFAULT_TIMEOUT_MS = 120_000
 const DEFAULT_MAX_OUTPUT_CHARS = 4_000
 
 /**
