@@ -39,7 +39,7 @@ export class NullConversationRepository implements IConversationRepository {
   async findByShareId(): Promise<undefined> {
     return undefined
   }
-  async deleteSession(_sessionId: string): Promise<void> {}
+  async deleteSession(_sessionId: string, _by?: string): Promise<void> {}
   async usage(): Promise<IUsageRow[]> {
     return []
   }

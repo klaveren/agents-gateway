@@ -111,5 +111,5 @@ export interface IConversationRepository {
    * só remove o histórico. São coisas distintas, e apagar as duas de uma vez esconderia que a
    * conversa pode continuar viva na memória do provider depois de sumir da lista.
    */
-  deleteSession(sessionId: string): Promise<void>
+  deleteSession(sessionId: string, by?: string): Promise<void>
 }

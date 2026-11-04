@@ -310,15 +310,25 @@ describe('SqliteConversationRepository', () => {
     )
   })
 
-  it('takes the turns with the conversation when it is deleted', async () => {
+  it('⚖️ apagar é marcar: some da lista, da abertura, do link e do histórico, mas o CONSUMO fica no relatório (sem o título)', async () => {
     const repo = repository()
     await repo.saveSession(session())
     await repo.appendTurn(turn())
+    await repo.setShared('s1', true, 'link-1')
 
-    await repo.deleteSession('s1')
+    await repo.deleteSession('s1', 'ana@x.test')
 
     assert.strictEqual(await repo.findSession('s1'), undefined)
+    assert.strictEqual(await repo.findByShareId('link-1'), undefined)
     assert.deepStrictEqual(await repo.listTurns('s1'), [])
+    assert.deepStrictEqual(await repo.listSessions(), [])
+    assert.strictEqual((await repo.pageSessions({ page: 1, pageSize: 10 })).total, 0)
+    const [row] = await repo.usage({ since: new Date('2026-08-01T00:00:00.000Z'), tzOffsetMinutes: 0 })
+    assert.deepStrictEqual([row.conversationId, row.title, row.usage.totalTokens], ['s1', 'conversa apagada', 125])
+    // O turno que chega depois (a sessão viva seguiu) fica escondido e também conta.
+    await repo.appendTurn(turn({ index: 1 }))
+    assert.deepStrictEqual(await repo.listTurns('s1'), [])
+    assert.strictEqual((await repo.usage({ since: new Date('2026-08-01T00:00:00.000Z'), tzOffsetMinutes: 0 }))[0].turns, 2)
   })
 
   it('swallows a database failure instead of taking the turn down with it', async () => {
