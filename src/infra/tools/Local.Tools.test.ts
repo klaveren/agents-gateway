@@ -507,6 +507,7 @@ describe('LocalTools — agent_trigger', () => {
   const setup = (allowed: string[]) => {
     const stored: Record<string, Array<{ id: string; when: string; body: string }>> = { maya: [], theo: [{ id: 'build', when: 'pedem o build', body: 'Rode pnpm build.' }] }
     const saves: string[] = []
+    const marks: string[] = []
     const tool = makeLocalTools({
       triggers: {
         triggersOf: (agentId) => stored[agentId],
@@ -514,6 +515,10 @@ describe('LocalTools — agent_trigger', () => {
           if (triggers.some((item) => !item.when)) throw Object.assign(new Error('invalid'), { issues: [{ message: `${triggers.at(-1)?.id}: when is required` }] })
           stored[agentId] = triggers
           saves.push(`${agentId} by ${by}`)
+        },
+        markImported: (agentId, triggerId, source, who) => {
+          if (source.path === 'nada.md') throw new Error('no import item comes from nada.md')
+          marks.push(`${agentId}/${triggerId} ← ${source.path} por ${who.agentId}`)
         },
       },
       permissions: {
@@ -523,7 +528,7 @@ describe('LocalTools — agent_trigger', () => {
             : { allowed: false, layer: 'default', reason: `negado: nenhuma regra de trigger permite "${subject.value}"` },
       },
     }).find((item) => item.name === 'agent_trigger')!
-    return { tool, stored, saves }
+    return { tool, stored, saves, marks }
   }
   const ctx = { agentId: 'maya', sessionId: 's1' }
 
@@ -545,6 +550,20 @@ describe('LocalTools — agent_trigger', () => {
     assert.deepStrictEqual(saves, ['maya by agent:maya (conversa s1)', 'maya by agent:maya (conversa s1)', 'theo by agent:maya (conversa s1)'])
     assert.match((await tool.execute({ action: 'create', id: 'vazio', body: 'x' }, ctx)).result, /when is required/)
     assert.match((await tool.execute({ action: 'list', agentId: 'ninguem' }, { ...ctx })).result, /^Not permitted/)
+  })
+
+  it('importedFrom: o trigger migrado do repositório sai da fila do Importador; a marca que falha não desfaz a gravação', async () => {
+    const { tool, stored, marks } = setup(['theo'])
+    const ok = await tool.execute(
+      { action: 'create', agentId: 'theo', id: 'deploy', when: 'quando o deploy falhar', body: 'Reverta.', importedFrom: { path: '.agents/agents/theo/triggers/deploy.md' } },
+      ctx,
+    )
+    assert.match(ok.result, /Created trigger deploy of theo\..* Importer: marked as imported\./)
+    assert.deepStrictEqual(marks, ['theo/deploy ← .agents/agents/theo/triggers/deploy.md por maya'])
+    const failed = await tool.execute({ action: 'update', agentId: 'theo', id: 'deploy', body: 'Reverta já.', importedFrom: { path: 'nada.md' } }, ctx)
+    assert.strictEqual(failed.status, 'success')
+    assert.match(failed.result, /Importer: NOT marked — no import item comes from nada\.md/)
+    assert.strictEqual(stored.theo.find((item) => item.id === 'deploy')?.body, 'Reverta já.')
   })
 })
 

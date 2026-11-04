@@ -1,3 +1,5 @@
+import { ImportJobService } from '@application/ImportJob.Service'
+import { importJobRepository } from './ImportJobs.Factory'
 import type { IPermissionChecker } from '@application/Permissions.Service'
 import { makePermissions } from './Permissions.Factory'
 import { makeProjectAccounts } from './ProjectAccounts.Factory'
@@ -81,6 +83,11 @@ export function makeTools(): ITools {
                 return entry ? (entry.agent.triggers ?? []) : undefined
               },
               saveTriggers: (agentId, triggers, by) => makeAgents().saveTriggers(agentId, triggers, by),
+              markImported: (agentId, triggerId, source, who) => {
+                const projectId = makeAgents().get(agentId)?.projectId
+                if (!projectId) throw new Error(`${agentId} is a global agent: its triggers have no import queue`)
+                triggerImports().markImported(projectId, source, { kind: 'trigger', id: `${agentId}/${triggerId}`, ...who }, `agent:${who.agentId ?? '?'}`)
+              },
             },
             drafts: makeGuidance(),
             imports: {
@@ -202,4 +209,16 @@ function seedFromEnv(env: NodeJS.ProcessEnv = process.env): IMcpServerConfig[] {
   if (!url) return []
   const now = new Date()
   return [{ id: DEFAULT_MCP_SERVER, name: 'MCP do .env', url, transport: 'auto', auth: 'caller', enabled: true, createdAt: now, updatedAt: now, updatedBy: 'MCP_SERVER_URL' }]
+}
+
+let imports: ImportJobService | undefined
+/** A marca do trigger no Importador: só o `markImported` (a varredura não roda por aqui). */
+function triggerImports(): ImportJobService {
+  imports ??= new ImportJobService({
+    repository: importJobRepository(),
+    scan: () => {
+      throw new Error('scan is not available here')
+    },
+  })
+  return imports
 }

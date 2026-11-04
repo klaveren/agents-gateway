@@ -74,6 +74,11 @@ export interface ITriggerStore {
   triggersOf(agentId: string): IAgentTrigger[] | undefined
   /** Grava a lista inteira; lança com os problemas quando ela não passa pela regra. */
   saveTriggers(agentId: string, triggers: IAgentTrigger[], by: string): void
+  /**
+   * O trigger veio de uma fonte do repositório (`importedFrom`): o Importador do projeto do agente marca o item como
+   * importado (ver `ImportJobService.markImported`). Lança com o motivo; ausente = sem a marca.
+   */
+  markImported?(agentId: string, triggerId: string, source: { path: string; repository?: string }, who: { agentId?: string; conversationId?: string }): void
 }
 
 export interface ILocalToolDeps {
@@ -689,6 +694,14 @@ function agentTriggerTool(store: ITriggerStore, permissions?: IPermissionChecker
         id: { type: 'string', description: 'The trigger id (get, create, update, delete): lowercase letters, digits and hyphens' },
         when: { type: 'string', description: 'create/update: one line, when to use it (goes into the agent prompt index)' },
         body: { type: 'string', description: 'create/update: the procedure, in markdown' },
+        importedFrom: {
+          type: 'object',
+          description:
+            'create/update: you migrated this trigger from the repository yourself — the source path (the file, as the importer lists it). The importer marks it as imported (by you), and it leaves the queue.',
+          properties: { path: { type: 'string' }, repository: { type: 'string' } },
+          required: ['path'],
+          additionalProperties: false,
+        },
       },
       required: ['action'],
       additionalProperties: false,
@@ -727,7 +740,25 @@ function agentTriggerTool(store: ITriggerStore, permissions?: IPermissionChecker
         return { status: 'error', result: issues?.length ? issues.map((issue) => issue.message).join('; ') : toMessage(error) }
       }
       const done = { create: 'Created', update: 'Updated', delete: 'Deleted' }[action]
-      return { status: 'success', result: `${done} trigger ${id} of ${target}. It applies to conversations from now on.` }
+      // A gravação vale sozinha: se a marca no Importador falhar, a resposta diz por quê.
+      const source = args.importedFrom as { path?: unknown; repository?: unknown } | undefined
+      let importer = ''
+      if (action !== 'delete' && source && typeof source.path === 'string' && source.path.trim()) {
+        if (!store.markImported) importer = ' Importer: not marked (the importer is not available here).'
+        else
+          try {
+            store.markImported(
+              target,
+              id,
+              { path: source.path.trim(), ...(typeof source.repository === 'string' && source.repository ? { repository: source.repository } : {}) },
+              { ...(context?.agentId ? { agentId: context.agentId } : {}), ...(context?.sessionId ? { conversationId: context.sessionId } : {}) },
+            )
+            importer = ' Importer: marked as imported.'
+          } catch (error: unknown) {
+            importer = ` Importer: NOT marked — ${toMessage(error)}`
+          }
+      }
+      return { status: 'success', result: `${done} trigger ${id} of ${target}. It applies to conversations from now on.${importer}` }
     },
   }
 }
