@@ -352,6 +352,39 @@ describe('SqliteConversationRepository', () => {
     assert.strictEqual(await repo.countArchived(), 0)
   })
 
+  it('o registro de erros lê os turnos: a ferramenta que falhou, o turno com erro e o interrompido; contagens e filtros', async () => {
+    const repo = repository()
+    await repo.saveSession(session({ id: 's1', agentId: 'maya' }))
+    await repo.saveSession(session({ id: 's2', agentId: 'zeus' }))
+    await repo.appendTurn(
+      turn({
+        sessionId: 's1',
+        index: 0,
+        toolCalls: [
+          { tool: 'run_bash', args: {}, result: 'ok' },
+          { tool: 'delegate_to_agent', args: {}, error: 'conversation x is no longer live' },
+        ],
+      } as never),
+    )
+    await repo.appendTurn(turn({ sessionId: 's2', index: 0, error: 'rate limit' } as never))
+    await repo.appendTurn(turn({ sessionId: 's2', index: 1, aborted: true } as never))
+    const since = new Date('2000-01-01T00:00:00Z')
+
+    const all = await repo.errors({ since })
+    assert.deepStrictEqual(all.byKind, { tool: 1, turn: 1, aborted: 1 })
+    assert.deepStrictEqual(all.byTool, [{ tool: 'delegate_to_agent', count: 1 }])
+    const tool = all.items.find((item) => item.kind === 'tool')!
+    assert.deepStrictEqual([tool.conversationId, tool.agentId, tool.tool, tool.message], ['s1', 'maya', 'delegate_to_agent', 'conversation x is no longer live'])
+    assert.deepStrictEqual((await repo.errors({ since, agentId: 'zeus' })).items.map((item) => item.kind).sort(), ['aborted', 'turn'])
+    assert.strictEqual((await repo.errors({ since, tool: 'delegate_to_agent' })).items.length, 1)
+    assert.deepStrictEqual(
+      (await repo.errors({ since, kind: 'turn' })).items.map((item) => item.message),
+      ['rate limit'],
+    )
+    await repo.deleteSession('s1')
+    assert.strictEqual((await repo.errors({ since })).byKind.tool, 0, 'a conversa apagada sai do registro')
+  })
+
   it('swallows a database failure instead of taking the turn down with it', async () => {
     // ⛔ O contrato do port: perder o registro é ruim, perder o turno de quem estava trabalhando é
     // pior. Com o banco fechado, gravar não pode lançar.

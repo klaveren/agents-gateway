@@ -149,6 +149,7 @@ describe('MCP do próprio gateway (integração)', () => {
       'hook_deliveries',
       'import_items',
       'list_docs',
+      'list_errors',
       'list_hooks',
       'list_model_groups',
       'list_models',

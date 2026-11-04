@@ -4074,6 +4074,50 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/errors': {
+      get: {
+        summary:
+          'The error log of the conversations: tool calls that failed, turns that ended in error, interrupted turns — newest first, with counts by kind and by tool. Administrators only',
+        parameters: [
+          { name: 'days', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 90 }, description: 'Default 7.' },
+          { name: 'agentId', in: 'query', schema: { type: 'string' } },
+          { name: 'tool', in: 'query', schema: { type: 'string' } },
+          { name: 'kind', in: 'query', schema: { type: 'string', enum: ['tool', 'turn', 'aborted'] } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 500 } },
+        ],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  items: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        at: { type: 'string', format: 'date-time' },
+                        kind: { type: 'string', enum: ['tool', 'turn', 'aborted'] },
+                        conversationId: { type: 'string' },
+                        turn: { type: 'integer' },
+                        agentId: { type: 'string' },
+                        title: { type: 'string' },
+                        tool: { type: 'string' },
+                        message: { type: 'string' },
+                      },
+                    },
+                  },
+                  byKind: { type: 'object', additionalProperties: { type: 'integer' } },
+                  byTool: { type: 'array', items: { type: 'object', properties: { tool: { type: 'string' }, count: { type: 'integer' } } } },
+                },
+              }),
+            ),
+          },
+          '404': failures['404'],
+        },
+      },
+    },
     '/secret-requests': {
       post: {
         summary:

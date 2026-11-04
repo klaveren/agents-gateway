@@ -412,6 +412,23 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   )
 
   server.registerTool(
+    'list_errors',
+    {
+      description:
+        'The ERROR LOG of the conversations: tool calls that failed (with the tool and the message), turns that ended in error, and interrupted turns — newest first, with counts by kind and the tools that fail most. Filter by `days` (default 7, max 90), `agentId`, `tool`, `kind` (tool | turn | aborted). Use it to find what keeps failing and open a ticket for it.',
+      inputSchema: {
+        days: z.number().int().min(1).max(90).optional(),
+        agentId: z.string().optional(),
+        tool: z.string().optional(),
+        kind: z.enum(['tool', 'turn', 'aborted']).optional(),
+        limit: z.number().int().min(1).max(500).optional(),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (query) => reply(await api('GET', '/errors', { query })),
+  )
+
+  server.registerTool(
     'list_secret_names',
     {
       description:

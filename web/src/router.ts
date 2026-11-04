@@ -12,6 +12,7 @@ import ResourcesView from './views/ResourcesView.vue'
 import BuildView from './views/BuildView.vue'
 import CatalogHistoryView from './views/CatalogHistoryView.vue'
 import RulesView from './views/RulesView.vue'
+import ErrorsView from './views/ErrorsView.vue'
 import EnvironmentView from './views/EnvironmentView.vue'
 import SchedulesView from './views/SchedulesView.vue'
 import NotificationsView from './views/NotificationsView.vue'
@@ -56,6 +57,7 @@ export const router = createRouter({
     { path: '/users', name: 'users', component: UsersView },
     { path: '/users/new', name: 'user-new', component: UsersView },
     { path: '/users/:id', name: 'user', component: UsersView, props: true },
+    { path: '/errors', name: 'errors', component: ErrorsView },
     { path: '/usage', name: 'usage', component: UsageView },
     { path: '/mcp', name: 'mcp', component: McpView },
     { path: '/packages', name: 'packages', component: PackagesView },

@@ -1,3 +1,4 @@
+import { ERROR_KINDS } from '@domain/models/ErrorLog.Model'
 import type { ResourceSecretsService } from '@application/ResourceSecrets.Service'
 import { IModelGroup, modelGroupIssues, NO_MODEL_GROUP } from '@domain/Fallback.Policy'
 import { CAPABILITIES, CAPABILITY_PREFIX, CAPABILITY_TOOLS, capability, capabilityRuns, toCapabilities } from '@domain/Capability.Catalog'
@@ -232,6 +233,7 @@ export class AgentController {
     this.shareConversation = this.shareConversation.bind(this)
     this.deleteConversation = this.deleteConversation.bind(this)
     this.archiveConversation = this.archiveConversation.bind(this)
+    this.listErrors = this.listErrors.bind(this)
     this.getSharedConversation = this.getSharedConversation.bind(this)
     this.conversationEvents = this.conversationEvents.bind(this)
     this.sessionLive = this.sessionLive.bind(this)
@@ -1414,6 +1416,31 @@ export class AgentController {
       if (!this.usecases.conversations.setArchived) throw new HttpError(404, 'not_found', 'Not found')
       await this.usecases.conversations.setArchived(id, archived, resolved.identity?.email ?? resolved.identity?.id)
       return { id, archived }
+    })
+  }
+
+  /**
+   * `GET /errors?days=&agentId=&tool=&kind=&limit=` — ⚖️ O REGISTRO DE ERROS (ver `ErrorLog.Model`): o que falhou nas
+   * conversas, do mais recente, com as contagens por tipo e por ferramenta. Só admin (as mensagens são de todo mundo).
+   */
+  async listErrors(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      await this.requireAdmin('listErrors')
+      const query = req.query as Record<string, unknown>
+      const days = Number.parseInt(String(query.days ?? ''), 10)
+      const limit = Number.parseInt(String(query.limit ?? ''), 10)
+      const id = (value: unknown) => (typeof value === 'string' && /^[\w.:-]{1,100}$/.test(value) ? value : undefined)
+      const kind = ERROR_KINDS.find((item) => item === query.kind)
+      const since = new Date(Date.now() - (Number.isFinite(days) && days > 0 ? Math.min(days, 90) : 7) * 86_400_000)
+      return (
+        (await this.usecases.conversations.errors?.({
+          since,
+          ...(id(query.agentId) ? { agentId: id(query.agentId) } : {}),
+          ...(id(query.tool) ? { tool: id(query.tool) } : {}),
+          ...(kind ? { kind } : {}),
+          ...(Number.isFinite(limit) && limit > 0 ? { limit } : {}),
+        })) ?? { items: [], byKind: { tool: 0, turn: 0, aborted: 0 }, byTool: [] }
+      )
     })
   }
 
