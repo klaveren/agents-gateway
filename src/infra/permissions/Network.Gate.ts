@@ -101,6 +101,8 @@ export class NetworkGate {
     const port = Number(rawPort ?? 443)
     const verdict = await this.decide(tokenOf(req), host, port)
     if (!verdict.allowed) {
+      // O cliente TCP (ssh, mongosh) só vê "Connection refused": o motivo fica no log do serviço.
+      if (tokenOf(req)) console.warn(`[portão] negado ${host}:${port}: ${verdict.reason}`)
       client.end(`HTTP/1.1 ${tokenOf(req) ? 403 : 407} Forbidden\r\nContent-Type: text/plain\r\nProxy-Authenticate: Basic\r\n\r\n${verdict.reason}\n`)
       return
     }
