@@ -2,6 +2,7 @@ import { fileIssues, IResourceFile, sortFiles } from '@domain/models/ResourceFil
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync, SQLInputValue } from 'node:sqlite'
+import type { IAgentTrigger } from '@domain/models/Agent.Model'
 import { IImportProblem, problemList } from '@domain/models/ImportProblem.Model'
 import { IProjectDoc, TDocKind } from '@domain/models/ProjectDoc.Model'
 import { IProtocolAddendum, TProtocolKind } from '@domain/models/Protocol.Model'
@@ -65,6 +66,7 @@ const SCHEMA = `
     doc_refs    TEXT NOT NULL DEFAULT '[]',
     files       TEXT NOT NULL DEFAULT '[]',
     import_issues TEXT NOT NULL DEFAULT '[]',
+    triggers    TEXT NOT NULL DEFAULT '[]',
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL,
     updated_by  TEXT
@@ -104,6 +106,8 @@ const ADDED_COLUMNS: ReadonlyArray<{ table: string; column: string; definition: 
   // Os problemas da importação (ver `ImportProblem.Model`): antes não havia nenhum.
   { table: 'project_docs', column: 'import_issues', definition: "TEXT NOT NULL DEFAULT '[]'" },
   { table: 'resources', column: 'import_issues', definition: "TEXT NOT NULL DEFAULT '[]'" },
+  // Os triggers da skill e do command (ver `IResource.triggers`): antes, só o agente tinha.
+  { table: 'resources', column: 'triggers', definition: "TEXT NOT NULL DEFAULT '[]'" },
 ]
 
 type TRow = Record<string, unknown>
@@ -327,9 +331,10 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
   saveResource(resource: IResource): void {
     this.db
       .prepare(
-        `INSERT INTO resources (id, kind, project_id, description, body, doc_ids, doc_refs, files, import_issues, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO resources (id, kind, project_id, description, body, doc_ids, doc_refs, files, import_issues, triggers, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, project_id = excluded.project_id, description = excluded.description, body = excluded.body,
-           doc_ids = excluded.doc_ids, doc_refs = excluded.doc_refs, files = excluded.files, import_issues = excluded.import_issues, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+           doc_ids = excluded.doc_ids, doc_refs = excluded.doc_refs, files = excluded.files, import_issues = excluded.import_issues, triggers = excluded.triggers,
+           updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
       )
       .run(
         resource.id,
@@ -341,6 +346,7 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
         JSON.stringify(resource.docRefs ?? []),
         JSON.stringify(sortFiles(resource.files ?? [])),
         JSON.stringify(resource.importIssues ?? []),
+        JSON.stringify(resource.triggers ?? []),
         resource.createdAt.toISOString(),
         resource.updatedAt.toISOString(),
         resource.updatedBy ?? null,
@@ -497,6 +503,7 @@ function toResource(row: TRow): IResource {
   const docRefs = idList(row.doc_refs).filter((id) => docIds.includes(id))
   const files = fileList(row.files)
   const importIssues = problemsOf(row.import_issues)
+  const triggers = triggerList(row.triggers)
   return {
     id: row.id as string,
     kind: row.kind as TResourceKind,
@@ -507,9 +514,22 @@ function toResource(row: TRow): IResource {
     ...(docRefs.length ? { docRefs } : {}),
     ...(files.length ? { files } : {}),
     ...(importIssues.length ? { importIssues } : {}),
+    ...(triggers.length ? { triggers } : {}),
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
     ...(row.updated_by ? { updatedBy: row.updated_by as string } : {}),
+  }
+}
+
+/** Os triggers gravados em JSON; o que não tiver a forma fica de fora. */
+function triggerList(raw: unknown): IAgentTrigger[] {
+  try {
+    const parsed: unknown = JSON.parse(typeof raw === 'string' ? raw : '[]')
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is IAgentTrigger => !!item && typeof item.id === 'string' && typeof item.when === 'string' && typeof item.body === 'string')
+      : []
+  } catch {
+    return []
   }
 }
 

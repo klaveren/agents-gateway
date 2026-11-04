@@ -40,6 +40,11 @@ const resourceSchema = z.object({
     .array(z.object({ path: z.string().max(400), sha256: z.string().max(64), bytes: z.number() }))
     .max(1_000)
     .optional(),
+  /** Os triggers da skill ou do command (como os do agente). Ausente na edição = mantém; `[]` tira todos. */
+  triggers: z
+    .array(z.object({ id: z.string().max(80), when: z.string().max(1_000), body: z.string() }))
+    .max(200)
+    .optional(),
 })
 const filesSchema = z.object({ files: z.array(z.object({ path: z.string().max(400), sha256: z.string().max(64), bytes: z.number() })).max(1_000) })
 /** O conteúdo de um arquivo, em base64 (o texto passa inteiro, e o tamanho é o do arquivo). */

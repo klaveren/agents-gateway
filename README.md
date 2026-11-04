@@ -773,6 +773,20 @@ one-line "when to use it" and the procedure itself.
 - A skill is a shared way of doing something, from the catalog; a trigger is the agent's own
   subcommand. They load the same way, but stay apart in data, screen and permissions.
 
+### Skill and command triggers
+
+Skills and commands have a **Triggers** tab too: the procedure of one situation inside the skill or
+command ("when the deploy fails"). The body keeps what always applies; a situation goes to a trigger,
+never to a separate skill.
+
+- The loaded skill (or the fired `/command`) lists only the id and "when" of each trigger, as
+  `<resource>/<trigger>`. `use_resource(kind: trigger, id: <resource>/<trigger>)` loads the body.
+- A resource trigger loads only for an agent that can use the resource. A skill's triggers also go
+  through the `skill` permission rule of their skill.
+- `search_resources` finds them by their "when". They are part of the resource in the catalog
+  history, diff, export and import. On the MCP, `save_resource` takes `triggers` (absent on update
+  = keep), and `list_resources` counts them in the index.
+
 ### Agent ledger: what the agent learned about how to act
 
 Each agent has a **ledger**, its durable learning memory ("from now on, when X, I do Y"), never

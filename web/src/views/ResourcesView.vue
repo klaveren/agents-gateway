@@ -10,6 +10,7 @@ import HistoryTabs from '@/components/HistoryTabs.vue'
 import ImportIssues from '@/components/ImportIssues.vue'
 import ImportIssuesBadge from '@/components/ImportIssuesBadge.vue'
 import ResourceFiles from '@/components/ResourceFiles.vue'
+import TriggersEditor from '@/components/TriggersEditor.vue'
 import BuildTabs from '@/components/BuildTabs.vue'
 import { pendingDraft } from '@/lib/builder'
 import { ApiError } from '@/lib/api'
@@ -17,7 +18,7 @@ import { sizeHint } from '@/lib/format'
 import { attachedRefs, docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId, setAttachMode, type TAttachMode } from '@/lib/guidance'
 import type { IRestoreResult } from '@/lib/catalogHistory'
 import { renderMarkdown } from '@/lib/markdown'
-import type { IResource, TImportIssueMatch, TResourceKind } from '@/lib/types'
+import type { IAgentTrigger, IResource, TImportIssueMatch, TResourceKind } from '@/lib/types'
 import { useScopedDocs } from '@/composables/useCatalogLists'
 import { useResource } from '@/composables/useResource'
 import { useAuthStore } from '@/stores/auth'
@@ -73,10 +74,17 @@ const info = computed(() => KIND[props.kind])
 /** As palavras que concordam com o tipo: "Novo estudo", "Nova spec". */
 const g = computed(() => (info.value.masc ? { nova: 'Novo', nenhuma: 'Nenhum', uma: 'um', a: 'o' } : { nova: 'Nova', nenhuma: 'Nenhuma', uma: 'uma', a: 'a' }))
 
-const form = ref({ id: '', description: '', body: '', global: true, project: '', docIds: [] as string[], docRefs: [] as string[] })
+const form = ref({ id: '', description: '', body: '', global: true, project: '', docIds: [] as string[], docRefs: [] as string[], triggers: [] as IAgentTrigger[] })
 /** A guia da edição: o formulário ou o histórico (`#historico` no endereço abre nele). */
-type TResourceTab = 'edit' | 'instructions' | 'attachments' | 'files' | 'issues' | 'history'
-const HASH_TAB: Record<string, TResourceTab> = { '#historico': 'history', '#instrucoes': 'instructions', '#anexos': 'attachments', '#arquivos': 'files', '#problemas': 'issues' }
+type TResourceTab = 'edit' | 'instructions' | 'triggers' | 'attachments' | 'files' | 'issues' | 'history'
+const HASH_TAB: Record<string, TResourceTab> = {
+  '#historico': 'history',
+  '#instrucoes': 'instructions',
+  '#triggers': 'triggers',
+  '#anexos': 'attachments',
+  '#arquivos': 'files',
+  '#problemas': 'issues',
+}
 const tab = ref<TResourceTab>(HASH_TAB[route.hash] ?? 'edit')
 /** Muda depois de restaurar uma versão: relê o item. */
 const reloadKey = ref(0)
@@ -101,7 +109,8 @@ const dirty = computed(() => {
     form.value.body !== resource.body ||
     formScope.value !== (resource.projectId ?? GLOBAL_SCOPE) ||
     form.value.docIds.join() !== resource.docIds.join() ||
-    attachedRefs(form.value.docIds, form.value.docRefs).join() !== attachedRefs(resource.docIds, resource.docRefs ?? []).join()
+    attachedRefs(form.value.docIds, form.value.docRefs).join() !== attachedRefs(resource.docIds, resource.docRefs ?? []).join() ||
+    JSON.stringify(form.value.triggers) !== JSON.stringify(resource.triggers ?? [])
   )
 })
 
@@ -120,7 +129,16 @@ watch(
     preview.value = false
     if (isNew) {
       loaded.value = undefined
-      form.value = { id: '', description: '', body: KIND[kind].template, global: scope.value === GLOBAL_SCOPE, project: scope.value === GLOBAL_SCOPE ? (projects.current ?? '') : scope.value, docIds: [], docRefs: [] }
+      form.value = {
+        id: '',
+        description: '',
+        body: KIND[kind].template,
+        global: scope.value === GLOBAL_SCOPE,
+        project: scope.value === GLOBAL_SCOPE ? (projects.current ?? '') : scope.value,
+        docIds: [],
+        docRefs: [],
+        triggers: [],
+      }
       applyDraft(kind)
       return
     }
@@ -131,7 +149,16 @@ watch(
       if (props.id !== id) return
       if (resource.kind !== kind) return void router.replace(`${KIND[resource.kind].base}/${resource.id}`)
       loaded.value = resource
-      form.value = { id: resource.id, description: resource.description, body: resource.body, global: !resource.projectId, project: resource.projectId ?? projects.current ?? '', docIds: [...resource.docIds], docRefs: [...(resource.docRefs ?? [])] }
+      form.value = {
+        id: resource.id,
+        description: resource.description,
+        body: resource.body,
+        global: !resource.projectId,
+        project: resource.projectId ?? projects.current ?? '',
+        docIds: [...resource.docIds],
+        docRefs: [...(resource.docRefs ?? [])],
+        triggers: copyTriggers(resource.triggers),
+      }
       applyDraft(kind, resource.id)
     } catch (failure) {
       loaded.value = undefined
@@ -157,8 +184,15 @@ function applyDraft(kind: TResourceKind, id?: string) {
     project: draft.projectId ?? projects.current ?? '',
     docIds: [...draft.docIds],
     docRefs: [...draft.docRefs],
+    // O rascunho não traz triggers: ficam os do recurso aberto.
+    triggers: form.value.triggers,
   }
   note.value = 'Rascunho do construtor aplicado: revise e salve.'
+}
+
+/** Cópia para o formulário (editar não mexe no recurso carregado, que é a base do "mudou?"). */
+function copyTriggers(triggers: IResource['triggers']): IAgentTrigger[] {
+  return (triggers ?? []).map((trigger) => ({ ...trigger }))
 }
 
 function toggleDoc(id: string) {
@@ -195,7 +229,14 @@ async function save() {
   busy.value = true
   // Um doc de outro projeto não vai junto quando o escopo muda.
   const docIds = form.value.docIds.filter((id) => attachable.value.some((doc) => doc.id === id))
-  const body = { description: form.value.description, body: form.value.body, projectId: scopeToProjectId(formScope.value), docIds, docRefs: attachedRefs(docIds, form.value.docRefs) }
+  const body = {
+    description: form.value.description,
+    body: form.value.body,
+    projectId: scopeToProjectId(formScope.value),
+    docIds,
+    docRefs: attachedRefs(docIds, form.value.docRefs),
+    triggers: form.value.triggers,
+  }
   try {
     if (adding.value) {
       const created = await resources.create({ id: form.value.id, kind: props.kind, ...body })
@@ -205,6 +246,7 @@ async function save() {
       loaded.value = await resources.update(form.value.id, body)
       form.value.docIds = [...loaded.value.docIds]
       form.value.docRefs = [...(loaded.value.docRefs ?? [])]
+      form.value.triggers = copyTriggers(loaded.value.triggers)
       note.value = 'Salvo. Vale para as próximas conversas.'
     }
   } catch (failure) {
@@ -252,10 +294,11 @@ const importIssues = computed(() => (adding.value ? [] : (loaded.value?.importIs
 const extraTabs = computed(() =>
   [
     { id: 'instructions' as const, label: 'Instruções' },
+    { id: 'triggers' as const, label: `Triggers${form.value.triggers.length ? ` (${form.value.triggers.length})` : ''}` },
     { id: 'attachments' as const, label: `Anexos${form.value.docIds.length ? ` (${form.value.docIds.length})` : ''}` },
   { id: 'files' as const, label: `Arquivos${loaded.value?.files?.length ? ` (${loaded.value.files.length})` : ''}` },
     ...(importIssues.value.length ? [{ id: 'issues' as const, label: `Problemas da importação (${importIssues.value.length})` }] : []),
-  ].filter((item) => !adding.value || item.id === 'instructions' || item.id === 'attachments'),
+  ].filter((item) => !adding.value || item.id === 'instructions' || item.id === 'triggers' || item.id === 'attachments'),
 )
 // A guia de problemas some quando o último é resolvido: volta à principal.
 watch(importIssues, (list) => {
@@ -264,7 +307,7 @@ watch(importIssues, (list) => {
 /** O campo obrigatório vazio está noutra guia: abre a dele (senão o navegador não consegue apontar para ele). */
 function onInvalid(event: Event) {
   const target = (event.target as HTMLElement).dataset.tab
-  tab.value = target === 'instructions' || target === 'attachments' ? target : 'edit'
+  tab.value = target === 'instructions' || target === 'triggers' || target === 'attachments' ? target : 'edit'
 }
 </script>
 
@@ -296,7 +339,7 @@ function onInvalid(event: Event) {
 
     <template #detail>
       <div v-if="adding || loaded" class="mx-auto mb-4 max-w-3xl"><HistoryTabs v-model="tab" :edit-label="info.one.charAt(0).toUpperCase() + info.one.slice(1)" :extra="extraTabs" :history="!adding" /></div>
-      <form v-if="adding || (loaded && (tab === 'edit' || tab === 'instructions' || tab === 'attachments'))" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save" @invalid.capture="onInvalid">
+      <form v-if="adding || (loaded && (tab === 'edit' || tab === 'instructions' || tab === 'triggers' || tab === 'attachments'))" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save" @invalid.capture="onInvalid">
         <h2 class="font-mono text-lg font-semibold">{{ adding ? `${g.nova} ${info.one}` : `${kind === 'command' ? '/' : ''}${loaded?.id}` }}</h2>
         <div v-show="tab === 'edit'" class="flex flex-col gap-3">
         <label class="field">
@@ -338,6 +381,16 @@ function onInvalid(event: Event) {
         </div>
 
         <!-- Os anexos: os escolhidos em cima, todos os que dá para anexar embaixo. -->
+        <div v-show="tab === 'triggers'">
+          <TriggersEditor
+            v-model="form.triggers"
+            id-prefix="resource-trigger"
+            :title="kind === 'skill' ? 'Triggers da skill' : 'Triggers do command'"
+            :intro="`O procedimento de uma situação dentro ${kind === 'skill' ? 'da skill' : 'do command'}. Carregado ${kind === 'skill' ? 'a skill' : 'o command'}, o agente vê só o nome e o &quot;quando&quot; de cada um, e carrega o procedimento (use_resource, id ${form.id || '<id>'}/<trigger>) quando a situação acontece.`"
+            :empty="`Nenhum trigger. O que vale sempre fica nas instruções; o que vale numa situação vira um trigger.`"
+            :issues="issues.triggers"
+          />
+        </div>
         <div v-show="tab === 'attachments'" class="flex flex-col gap-2">
           <AttachedDocs :attachable="attachable" :selected="form.docIds" :mode-of="attachMode" :empty-text="form.global ? 'Nenhum documento global.' : 'Nenhum documento global ou deste projeto.'" @toggle="toggleDoc" @mode="setMode" />
           <small class="hint">Inteiro: o texto vai junto toda vez. Por referência: vão só id, título e tamanho, e o agente lê com read_doc se precisar — para documento grande.</small>

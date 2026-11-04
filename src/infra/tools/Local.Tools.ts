@@ -64,6 +64,8 @@ export interface IDraftChecker {
 export interface IResourceLoader {
   loadResource(kind: TUsableKind, id: string, agentId?: string): string | undefined
   searchResources?(query: string, kind: TUsableKind | undefined, agentId?: string): Array<{ kind: TUsableKind; id: string; description: string }>
+  /** O tipo de um recurso pelo id (para o trigger `<recurso>/<trigger>` passar pela regra da skill dona). */
+  resourceKindOf?(id: string): 'skill' | 'command' | undefined
 }
 
 /** Onde moram os triggers dos agentes (o catálogo de agentes). */
@@ -611,7 +613,7 @@ function useResourceTool(resources: IResourceLoader, permissions?: IPermissionCh
     origin: 'local',
     name: USE_RESOURCE_TOOL,
     description:
-      'Loads, by kind and id, a resource listed in your instructions: a skill (a way of doing something), a command or one of your triggers (an action you run on demand). Load it before doing what it covers, and follow it.',
+      'Loads, by kind and id, a resource listed in your instructions: a skill (a way of doing something), a command or a trigger (an action you run on demand: one of yours, or one of a loaded skill or command, id `<skill>/<trigger>`). Load it before doing what it covers, and follow it.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -625,8 +627,11 @@ function useResourceTool(resources: IResourceLoader, permissions?: IPermissionCh
       const kind = USABLE_KINDS.find((item) => item === args.kind)
       const id = typeof args.id === 'string' ? args.id.trim() : ''
       if (!kind) return { status: 'error', result: `kind: one of ${USABLE_KINDS.join(', ')}` }
-      if (kind === 'skill' && id) {
-        const verdict = permissions?.check(askerOf(context), { category: 'skill', value: id }, { log: true })
+      // ⛔ O trigger de uma skill passa pela regra da skill dona: negada a skill, negados os triggers dela.
+      const owner = kind === 'trigger' && id.includes('/') ? id.split('/')[0] : undefined
+      const skill = kind === 'skill' ? id : owner && resources.resourceKindOf?.(owner) === 'skill' ? owner : undefined
+      if (skill) {
+        const verdict = permissions?.check(askerOf(context), { category: 'skill', value: skill }, { log: true })
         if (verdict && !verdict.allowed) return { status: 'error', result: `Not permitted: ${verdict.reason}` }
       }
       const body = id ? resources.loadResource(kind, id, context?.agentId) : undefined

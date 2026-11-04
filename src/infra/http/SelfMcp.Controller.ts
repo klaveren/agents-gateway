@@ -47,6 +47,7 @@ function resourceIndex(result: unknown): unknown {
     ...(Array.isArray(resource.docIds) && resource.docIds.length ? { docIds: resource.docIds } : {}),
     ...(Array.isArray(resource.files) && resource.files.length ? { files: resource.files.length } : {}),
     ...(Array.isArray(resource.importIssues) && resource.importIssues.length ? { importIssues: resource.importIssues.length } : {}),
+    ...(Array.isArray(resource.triggers) && resource.triggers.length ? { triggers: resource.triggers.length } : {}),
     bodyChars: typeof resource.body === 'string' ? resource.body.length : 0,
   }))
 }
@@ -508,7 +509,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'list_resources',
     {
       description:
-        'The skills and commands of one scope: without id, the INDEX (id, kind, description, attached docs, file count and body size, never the body); with id, that one in full (body, files, importIssues). A skill is a way of doing something that an agent loads with use_resource when the subject comes up; a command is a ready request the person fires with /name args (its body uses $ARGUMENTS). Both can carry specs/ADRs (docIds). Agents use all of their scope by default (global ones, plus those of their project); the Resources tab of an agent can restrict that. Absent projectId = the global ones.',
+        'The skills and commands of one scope: without id, the INDEX (id, kind, description, attached docs, file and trigger counts and body size, never the body); with id, that one in full (body, files, triggers, importIssues). A skill is a way of doing something that an agent loads with use_resource when the subject comes up; a command is a ready request the person fires with /name args (its body uses $ARGUMENTS). Both can carry specs/ADRs (docIds). Agents use all of their scope by default (global ones, plus those of their project); the Resources tab of an agent can restrict that. Absent projectId = the global ones.',
       inputSchema: {
         id: z.string().optional().describe('One resource in full; absent = the index of the scope'),
         projectId: z.string().optional(),
@@ -807,7 +808,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'save_resource',
     {
       description:
-        'Create or replace a skill or a command. The id is a slug (2–48 lowercase letters, digits or hyphens) — the skill name in the index, the /name of the command. The description is the one line the agent reads to know when to use it. A command body is what goes to the agent; $ARGUMENTS takes what the person typed after /name. docIds: specs/ADRs that go along in full (global ones or of the same project); docRefs: which of them go by reference instead (listed with id, title and size, read with read_doc only if needed) — use it for large docs. By default every agent of its scope uses it (unless its Resources tab restricts). Confirm with the person first.',
+        'Create or replace a skill or a command. The id is a slug (2–48 lowercase letters, digits or hyphens) — the skill name in the index, the /name of the command. The description is the one line the agent reads to know when to use it. A command body is what goes to the agent; $ARGUMENTS takes what the person typed after /name. docIds: specs/ADRs that go along in full (global ones or of the same project); docRefs: which of them go by reference instead (listed with id, title and size, read with read_doc only if needed) — use it for large docs. triggers: the procedure of ONE situation inside the skill or command (never a separate skill): the loaded resource lists only id and when, and the agent loads the body with use_resource (kind trigger, id <resource>/<trigger>) when the situation happens. Absent on update = keep. By default every agent of its scope uses it (unless its Resources tab restricts). Confirm with the person first.',
       inputSchema: {
         id: z.string(),
         kind: z.enum(['skill', 'command']),
@@ -816,6 +817,10 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
         body: z.string().describe('Skill: markdown. Command: the request, with $ARGUMENTS'),
         docIds: z.array(z.string()).optional(),
         docRefs: z.array(z.string()).optional().describe('Which of docIds go by reference instead of in full'),
+        triggers: z
+          .array(z.object({ id: z.string().describe('Slug, unique in the resource'), when: z.string().describe('One line: the situation that fires it'), body: z.string() }))
+          .optional()
+          .describe('Absent on update = keep; [] removes all'),
       },
     },
     async ({ id, kind, ...resource }) => {

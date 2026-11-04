@@ -2,7 +2,7 @@ import type { IResourceFile } from '@domain/models/ResourceFile.Model'
 import { ICatalogDocument, parseProtocolItemId } from '@domain/Catalog.Document'
 import type { IAgentRules } from '@domain/Agent.Policy'
 import { CatalogRestoreInvalidError } from '@domain/errors/Domain.Error'
-import { IAgent } from '@domain/models/Agent.Model'
+import { IAgent, IAgentTrigger } from '@domain/models/Agent.Model'
 import { problemList } from '@domain/models/ImportProblem.Model'
 import { IMcpContainer, IMcpProcess, IMcpServerConfig, mcpServerKey, TMcpAuth, TMcpKind, TMcpTransport } from '@domain/models/McpServer.Model'
 import { TDocKind } from '@domain/models/ProjectDoc.Model'
@@ -186,6 +186,8 @@ export class CatalogWriter implements ICatalogWriter {
       files: filesOf(body.files),
       // O documento é a verdade inteira: sem a lista, nenhum problema.
       importIssues: problemList(body.importIssues),
+      // Idem: sem a lista, nenhum trigger.
+      triggers: triggersOf(body.triggers),
     }
     return {
       commit: (by) => {
@@ -331,4 +333,11 @@ export class CatalogWriter implements ICatalogWriter {
 /** A lista de arquivos de um corpo do catálogo (o que não tiver a forma, a regra do recurso recusa). */
 function filesOf(value: unknown): IResourceFile[] {
   return Array.isArray(value) ? (value as IResourceFile[]) : []
+}
+
+/** Os triggers do documento de uma skill ou command (a forma quem confere é a validação do serviço). */
+export function triggersOf(value: unknown): IAgentTrigger[] {
+  return Array.isArray(value)
+    ? (value as Array<Record<string, unknown>>).map((item) => ({ id: String(item?.id ?? ''), when: String(item?.when ?? ''), body: String(item?.body ?? '') }))
+    : []
 }

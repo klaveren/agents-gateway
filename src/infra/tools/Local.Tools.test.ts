@@ -480,6 +480,27 @@ describe('LocalTools — use_resource e search_resources', () => {
     assert.deepStrictEqual(await search.execute({ query: 'bom dia' }, { agentId: 'dev' }), { status: 'success', result: '- trigger brief — bom dia' })
     assert.deepStrictEqual(await search.execute({ query: 'bom dia' }, { agentId: 'outro' }), { status: 'success', result: 'Nothing found.' })
   })
+
+  it('⛔ o trigger de uma skill (`skill/trigger`) passa pela regra da skill dona; o de um command, não', async () => {
+    const asked: string[] = []
+    const tools = makeLocalTools({
+      resources: {
+        loadResource: (kind, id) => (kind === 'trigger' ? `# Trigger: ${id}` : undefined),
+        resourceKindOf: (id) => (id === 'resumir' ? 'command' : 'skill'),
+      },
+      permissions: {
+        check: (_asker, subject) => (asked.push(subject.value), { allowed: subject.value !== 'proibida', layer: 'agent', reason: `regra ${subject.value}` }),
+        layers: () => ({ agent: [], system: [] }),
+      },
+    })
+    const use = tools.find((item) => item.name === 'use_resource')!
+    assert.deepStrictEqual(await use.execute({ kind: 'trigger', id: 'tabela/deploy' }, { agentId: 'dev' }), { status: 'success', result: '# Trigger: tabela/deploy' })
+    assert.deepStrictEqual(await use.execute({ kind: 'trigger', id: 'proibida/deploy' }, { agentId: 'dev' }), { status: 'error', result: 'Not permitted: regra proibida' })
+    assert.strictEqual((await use.execute({ kind: 'trigger', id: 'resumir/sem-arquivo' }, { agentId: 'dev' })).status, 'success')
+    assert.deepStrictEqual(asked, ['tabela', 'proibida'], 'o do command e o trigger do agente não perguntam a regra de skill')
+    assert.strictEqual((await use.execute({ kind: 'trigger', id: 'brief' }, { agentId: 'dev' })).status, 'success')
+    assert.deepStrictEqual(asked, ['tabela', 'proibida'])
+  })
 })
 
 describe('LocalTools — agent_trigger', () => {
