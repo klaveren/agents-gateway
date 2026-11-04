@@ -164,6 +164,7 @@ describe('MCP do próprio gateway (integração)', () => {
       'usage_by_key',
     ]
     const write = [
+      'attach_resource_files',
       'delete_doc',
       'delete_hook',
       'delete_resource',

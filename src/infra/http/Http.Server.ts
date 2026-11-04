@@ -397,6 +397,9 @@ function buildRoutes(
     { method: 'get', path: '/files/:sha256', handler: guidance.readFile },
     { method: 'put', path: '/resources/:id/files', handler: guidance.setResourceFiles },
     { method: 'put', path: '/agents/:agentId/files', handler: guidance.setAgentFiles },
+    // O gateway copia os arquivos de uma pasta do projeto (o repositório) para o recurso: o agente só aponta o caminho.
+    { method: 'post', path: '/resources/:id/files/import', handler: guidance.importFiles },
+    { method: 'post', path: '/agents/:agentId/files/import', handler: guidance.importFiles },
     { method: 'get', path: '/agents/:agentId/resources', handler: guidance.getAgentResources },
     { method: 'put', path: '/agents/:agentId/resources', handler: guidance.setAgentResources },
     { method: 'get', path: '/protocols/:kind', handler: guidance.getProtocol },
