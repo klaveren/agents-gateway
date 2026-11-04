@@ -617,10 +617,11 @@ output included), writes a summary. The session then restarts with the summary a
 turns in full. The summary is not stored as a turn; its usage counts.
 
 - **By hand:** `POST /v1/sessions/:id/compact`, or the "Compactar" button next to the context
-  meter. It runs at the start of the next turn.
-- **Lanes:** the chat lanes, OpenAI Agents and Google ADK. The Claude Agent SDK, Codex and
-  Antigravity compact their own context; the Claude one now shows a warning with the tokens
-  before and after.
+  meter (from 50% of the window). It runs at the start of the next turn.
+- **Lanes:** the chat lanes, OpenAI Agents, Google ADK and the Claude Agent SDK. The SDK only
+  compacts near the end of its window, so the gateway compacts first; the SDK's own compaction
+  stays as a safety net and shows a warning with the tokens before and after. Codex and
+  Antigravity compact their own context.
 - **If the summary fails** (an error, or the model calls a tool), the session restarts with the
   recent transcript instead.
 

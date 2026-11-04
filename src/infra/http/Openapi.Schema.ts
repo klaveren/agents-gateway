@@ -61,7 +61,7 @@ const sessionSchema = {
     },
     turns: { type: 'integer' },
     compactNext: { type: 'boolean', description: 'Compaction was asked for and runs at the start of the next turn.' },
-    compactsItself: { type: 'boolean', description: 'The lane compacts its own context (Claude Agent SDK, Codex, Antigravity): the gateway does not.' },
+    compactsItself: { type: 'boolean', description: 'The lane compacts its own context (Codex, Antigravity): the gateway does not.' },
     usage: {
       type: 'object',
       properties: {

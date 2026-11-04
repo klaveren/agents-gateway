@@ -49,7 +49,7 @@ export interface ISessionState {
   place?: { repository: string; worktree?: string; branch?: string }
   /** A compactação foi pedida e roda no início do próximo turno. */
   compactNext?: boolean
-  /** A lane compacta o próprio contexto (Claude Agent SDK, Codex, Antigravity): sem botão de compactar. */
+  /** A lane compacta o próprio contexto (Codex, Antigravity): sem botão de compactar. */
   compactsItself?: boolean
 }
 

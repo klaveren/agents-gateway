@@ -456,7 +456,7 @@ export class AgentProvider implements IAgentProvider {
 
   /**
    * Pede a compactação À MÃO: o próximo turno começa com o resumo, passe ou não do gatilho. ⛔ A lane que compacta sozinha
-   * (Claude Agent SDK, Codex, Antigravity) recusa: o gateway não mexe no contexto dela.
+   * (Codex, Antigravity) recusa: o gateway não mexe no contexto dela.
    */
   requestCompaction(sessionId: string): ISession {
     const record = this.requireSession(sessionId)

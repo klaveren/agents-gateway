@@ -13,6 +13,9 @@ export interface IContextMeter {
 
 export const CONTEXT_WARN_PERCENT = 80
 
+/** A partir daqui a tela oferece "Compactar agora": cada chamada relê o contexto inteiro, e metade da janela já pesa. */
+export const COMPACT_OFFER_PERCENT = 50
+
 /**
  * O medidor do contexto da conversa: quanto da janela do modelo a última chamada usou. `undefined` quando o
  * provider não informa o uso (Codex, Antigravity) — sem número não há o que mostrar.

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { IProviderStatus, ISubscriptionLogin } from '@/lib/types'
 import { useProvidersStore } from '@/stores/providers'
+import { copyText } from '@/lib/clipboard'
 
 /**
  * Entrar numa assinatura pela tela: o gateway roda o login oficial do cliente (num HOME só dele) e
@@ -87,7 +88,7 @@ function stop() {
 
 async function copy(text: string, what: string) {
   try {
-    await navigator.clipboard.writeText(text)
+    await copyText(text)
     copied.value = what
     if (copyTimer) clearTimeout(copyTimer)
     copyTimer = setTimeout(() => (copied.value = undefined), 1500)

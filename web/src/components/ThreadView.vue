@@ -5,7 +5,7 @@
   import { useRouter } from 'vue-router'
   import { coreAgentName } from '@/lib/builder'
   import { useAgentCommands } from '@/lib/commands'
-  import { contextMeter } from '@/lib/contextMeter'
+  import { COMPACT_OFFER_PERCENT, contextMeter } from '@/lib/contextMeter'
   import { effortLabel, fullTime, tokens, usd } from '@/lib/format'
   import { useAgentsStore } from '@/stores/agents'
   import { useProtocolsStore } from '@/stores/protocols'
@@ -20,6 +20,7 @@
   import SessionTuner from './SessionTuner.vue'
   import TodoPanel from './TodoPanel.vue'
   import TurnBubbles from './TurnBubbles.vue'
+  import { copyText } from '@/lib/clipboard'
 
   /**
    * `embedded`: dentro de outra tela (a guia Construir) — sem voltar, compartilhar nem "comece uma nova"; apagar avisa quem
@@ -149,9 +150,11 @@
     if (created) await router.replace(`/c/${created}`)
   }
 
-  /** Compactar à mão: só com a conversa viva, perto do limite, numa lane que o gateway compacta (as de SDK compactam sozinhas). */
+  /** Compactar à mão: só com a conversa viva, da metade da janela em diante, numa lane que o gateway compacta (Codex e Antigravity compactam sozinhos). */
   const compacting = ref(false)
-  const canCompact = computed(() => thread.liveSession === true && !thread.session?.compactsItself && (!!thread.session?.compactNext || !!context.value?.warn))
+  const canCompact = computed(
+    () => thread.liveSession === true && !thread.session?.compactsItself && (!!thread.session?.compactNext || (context.value?.percent ?? 0) >= COMPACT_OFFER_PERCENT),
+  )
   async function compactNow() {
     compacting.value = true
     actionError.value = undefined
@@ -177,9 +180,8 @@
   async function copyShare() {
     actionError.value = undefined
     try {
-      // ⚠️ `navigator.clipboard` some fora de HTTPS e pode recusar a permissão: só é "Copiado" se a escrita deu certo.
-      if (!navigator.clipboard) throw new Error('o navegador não permite copiar aqui')
-      await navigator.clipboard.writeText(shareUrl.value)
+      // Só é "Copiado" se a escrita deu certo (ver `copyText`: fora de HTTPS vai pelo caminho antigo).
+      await copyText(shareUrl.value)
       copied.value = true
       setTimeout(() => (copied.value = false), 1500)
     } catch (error) {

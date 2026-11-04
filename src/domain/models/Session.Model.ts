@@ -35,7 +35,7 @@ export interface ISession {
   handoff?: boolean
   /** A compactação foi pedida à mão e roda no início do próximo turno (ver `Compaction.Policy`). */
   compactNext?: boolean
-  /** A lane compacta o próprio contexto (Claude Agent SDK, Codex, Antigravity): o gateway não compacta. */
+  /** A lane compacta o próprio contexto (Codex, Antigravity): o gateway não compacta. */
   compactsItself?: boolean
   createdAt: Date
   lastActivityAt: Date

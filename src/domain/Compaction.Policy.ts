@@ -6,8 +6,9 @@ import { liveLimit } from './models/Limits.Model'
  * próprio modelo (que viu tudo, inclusive a saída das ferramentas) e os últimos turnos por extenso.
  *
  * Roda no INÍCIO do turno seguinte, e não no fim do que encheu: o resumo e o turno saem juntos, e a conversa que
- * ninguém continua não paga um resumo à toa. O Claude Agent SDK, o Codex e o Antigravity compactam sozinhos
- * (`IAgentAdapter.compactsItself`) e ficam de fora.
+ * ninguém continua não paga um resumo à toa. O Codex e o Antigravity compactam sozinhos (`IAgentAdapter.compactsItself`)
+ * e ficam de fora. O Claude Agent SDK também compacta, mas só perto do FIM da janela (1M tokens relidos a cada chamada
+ * de ferramenta): o gateway compacta antes, e a do SDK fica como rede de segurança.
  */
 
 export const DEFAULT_COMPACT_AT_PERCENT = 80
