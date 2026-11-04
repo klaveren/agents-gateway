@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { agentIssues, IAgentRules } from '@domain/Agent.Policy'
 import { toCapabilities } from '@domain/Capability.Catalog'
-import { agentHash, agentWidenings, AGENT_PATCH_FIELDS, applyAgentPatch, splitAgentPatch, TAgentPatch } from '@domain/AgentPatch.Policy'
+import { agentHash, agentWidenings, AGENT_PATCH_FIELDS, applyAgentPatch, requestedAgent, splitAgentPatchItems, TAgentPatch } from '@domain/AgentPatch.Policy'
 import { confirmsWidenings, IWidening, TWideningItem, wideningKeys } from '@domain/Catalog.Widening'
 import {
   AgentNotFoundError,
@@ -75,8 +75,8 @@ export interface IPermissionChangeResult {
   projectId?: string
   /** O que já valeu (as restrições). */
   applied: IRuleChange
-  /** O pedido com as ampliações, se houve. ⛔ Nada dele vale antes da aprovação na tela. */
-  pending?: IPermissionRequestView
+  /** Os pedidos com as ampliações, um por regra, se houve. ⛔ Nada deles vale antes da aprovação na tela. */
+  pending?: IPermissionRequestView[]
   /** As regras agora. */
   rules: IPermissionRule[]
   /** O que o agente diz à pessoa (pt-BR, com o caminho da tela). */
@@ -87,7 +87,8 @@ export interface IAgentPatchResult {
   agentId: string
   /** Os campos que já valeram. */
   applied: string[]
-  pending?: IPermissionRequestView
+  /** Um pedido por item (campo, ou entrada de lista). */
+  pending?: IPermissionRequestView[]
   notice: string
 }
 
@@ -208,18 +209,26 @@ export class PermissionRequestsService {
     const applied = rulesHash(split.rules) !== rulesHash(current) ? split.immediate : { add: [], remove: [] }
     if (applied.add.length || applied.remove.length) target.save(split.rules, label(requester), { source: 'agent', note: `pedido do agente: ${reason}` })
 
-    const pending = split.widenings.length
-      ? this.store({
-          kind: target.kind,
-          ...(target.agentId ? { agentId: target.agentId } : {}),
-          ...(target.projectId ? { projectId: target.projectId } : {}),
-          add: split.pending.add.map(ruleOnly),
-          remove: split.pending.remove.map(ruleOnly),
-          widenings: refs(split.widenings),
-          reason,
-          requestedBy: requester,
-          baseHash: rulesHash(split.rules),
-        })
+    // ⚖️ UM PEDIDO POR REGRA: a pessoa aprova uma e recusa outra. Cada um conta o que ELE abre, sobre as regras de agora.
+    const items: IRuleChange[] = split.widenings.length
+      ? [...split.pending.add.map((rule) => ({ add: [rule], remove: [] })), ...split.pending.remove.map((rule) => ({ add: [], remove: [rule] }))]
+      : []
+    const { ids, batch } = this.batch(items.length)
+    const pending = items.length
+      ? items.map((item, index) =>
+          this.store(ids[index], {
+            kind: target.kind,
+            ...(target.agentId ? { agentId: target.agentId } : {}),
+            ...(target.projectId ? { projectId: target.projectId } : {}),
+            add: item.add.map(ruleOnly),
+            remove: item.remove.map(ruleOnly),
+            widenings: refs(requestWidenings(target.item, split.rules, item)),
+            reason,
+            requestedBy: requester,
+            baseHash: rulesHash(split.rules),
+            ...batch,
+          }),
+        )
       : undefined
     const done = [...applied.add.map((rule) => `+ ${ruleText(rule)}`), ...applied.remove.map((rule) => `- ${ruleText(rule)}`)]
     return {
@@ -255,24 +264,30 @@ export class PermissionRequestsService {
     const issues = [...validation.issues(whole), ...agentIssues(whole, { ...validation.rules, takenIds: [] })]
     if (issues.length) throw new InvalidAgentError(issues)
 
-    const split = splitAgentPatch(current, input.patch)
+    const split = splitAgentPatchItems(current, input.patch)
     const appliedFields = agentHash(split.agent) !== agentHash(current) ? Object.keys(split.immediate) : []
     if (appliedFields.length)
       this.deps.agents.save(split.agent, { rules: validation.rules, by: label(requester), creating: false, change: { source: 'agent', note: `patch do agente: ${reason}` } })
 
-    const pending = Object.keys(split.pending).length
-      ? this.store({
-          kind: 'agent-patch',
-          agentId,
-          ...(split.agent.projectId ? { projectId: split.agent.projectId } : {}),
-          add: [],
-          remove: [],
-          patch: split.pending,
-          widenings: refs(split.widenings),
-          reason,
-          requestedBy: requester,
-          baseHash: agentHash(split.agent),
-        })
+    // ⚖️ UM PEDIDO POR ITEM: um campo, ou uma entrada acrescentada a uma lista (`agent:ana`, `cap:terminal`).
+    const { ids, batch } = this.batch(split.items.length)
+    const pending = split.items.length
+      ? split.items.map((item, index) =>
+          this.store(ids[index], {
+            kind: 'agent-patch',
+            agentId,
+            ...(split.agent.projectId ? { projectId: split.agent.projectId } : {}),
+            add: [],
+            remove: [],
+            ...(item.patch ? { patch: item.patch } : {}),
+            ...(item.entries ? { entries: item.entries } : {}),
+            widenings: refs(item.widenings),
+            reason,
+            requestedBy: requester,
+            baseHash: agentHash(split.agent),
+            ...batch,
+          }),
+        )
       : undefined
     const done = appliedFields.map((field) => `${field}`)
     return { agentId, applied: appliedFields, ...(pending ? { pending } : {}), notice: notice(agentScreen(split.agent.name), done, pending) }
@@ -303,7 +318,7 @@ export class PermissionRequestsService {
     let permissions: IPermissionRule[] | undefined
     if (request.kind === 'agent-patch') {
       const agent = this.agent(request.agentId!)
-      const target = applyAgentPatch(agent, request.patch ?? {})
+      const target = requestedAgent(agent, request)
       const widenings = agentWidenings(agent, target)
       gate(widenings, confirm)
       const issues = validation!.issues(target)
@@ -338,11 +353,17 @@ export class PermissionRequestsService {
     return this.get(id)
   }
 
-  private store(fields: Omit<IPermissionRequest, 'id' | 'createdAt' | 'status'>): IPermissionRequestView {
-    const request: IPermissionRequest = { id: this.newId(), ...fields, createdAt: this.now(), status: 'pending' }
+  private store(id: string, fields: Omit<IPermissionRequest, 'id' | 'createdAt' | 'status'>): IPermissionRequestView {
+    const request: IPermissionRequest = { id, ...fields, createdAt: this.now(), status: 'pending' }
     this.deps.repository.create(request)
     this.publish(request)
     return this.view(request)
+  }
+
+  /** Os ids dos itens de uma chamada e o lote deles (o id do primeiro): só com mais de um — um item só não precisa de grupo. */
+  private batch(items: number): { ids: string[]; batch: { batchId?: string } } {
+    const ids = Array.from({ length: items }, () => this.newId())
+    return { ids, batch: items > 1 ? { batchId: ids[0] } : {} }
   }
 
   /** O pedido aprovável: existe, está pendente e não venceu. */
@@ -405,7 +426,7 @@ export class PermissionRequestsService {
     if (open) {
       try {
         if (request.kind === 'agent-patch' && agent) {
-          widenings = refs(agentWidenings(agent, applyAgentPatch(agent, request.patch ?? {})))
+          widenings = refs(agentWidenings(agent, requestedAgent(agent, request)))
           changed = agentHash(agent) !== baseHash
         } else if (request.kind !== 'agent-patch') {
           const target = this.rulesTarget(request)
@@ -472,16 +493,23 @@ const ruleText = (rule: IPermissionRule) => `${rule.decision === 'allow' ? 'perm
  * ⛔ O QUE O AGENTE DIZ À PESSOA: o que já valeu, e — havendo pedido — que as ampliações NÃO valem até ela confirmar na
  * tela, com o caminho e a lista. Sem isso o agente diria "liberado" a quem não liberou nada.
  */
-function notice(screen: string, done: readonly string[], pending: IPermissionRequestView | undefined): string {
+function notice(screen: string, done: readonly string[], pending: readonly IPermissionRequestView[] | undefined): string {
   const lines: string[] = []
   if (done.length) lines.push(`Aplicado agora (restringe ou não abre acesso):`, ...done.map((line) => `  ${line}`))
-  if (pending) {
+  if (pending?.length) {
     lines.push(
-      `PENDENTE — NÃO aplicado: estas mudanças ampliam acesso e só valem depois que um administrador confirmar NA TELA, em ${screen} (pedido ${pending.id}, vence em ${pending.expiresAt.toISOString().slice(0, 10)}).`,
-      ...(pending.widenings.length ? pending.widenings.map((item) => `  • ${item.description}`) : [`  • ${Object.keys(pending.patch ?? {}).join(', ')}`]),
+      `PENDENTE — NÃO aplicado: ${pending.length === 1 ? 'esta mudança amplia' : `estas ${pending.length} mudanças ampliam`} acesso e só ${pending.length === 1 ? 'vale' : 'valem'} depois que um administrador confirmar NA TELA, em ${screen} (ou no menu da conta → Notificações). Cada item é aprovado ou recusado sozinho; vencem em ${pending[0].expiresAt.toISOString().slice(0, 10)}.`,
+      ...pending.map((item) => `  • ${itemLine(item)} (pedido ${item.id})`),
       `Avise a pessoa agora, com a lista acima. Não diga que o acesso foi liberado: até ela confirmar na tela, nada disso vale.`,
     )
   }
   if (!lines.length) lines.push('Nada mudou: já estava assim.')
   return lines.join('\n')
+}
+
+/** Um item do pedido em uma linha: o que ele amplia, ou o que ele muda. */
+function itemLine(item: IPermissionRequestView): string {
+  if (item.widenings.length) return item.widenings.map((widening) => widening.description).join('; ')
+  if (item.entries) return `${item.entries.field} + ${item.entries.add.join(', ')}`
+  return Object.keys(item.patch ?? {}).join(', ') || [...item.add, ...item.remove].map(ruleText).join(', ')
 }

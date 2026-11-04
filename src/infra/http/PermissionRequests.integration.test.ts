@@ -140,10 +140,10 @@ describe('pedidos de permissão (integração: MCP do gateway, API, cookie da te
     assert.match(notice, /Agentes → Theo → Permissões → Pedidos pendentes/)
     assert.match(notice, /permite terminal "npm test"/)
     const parsed = JSON.parse(json)
-    assert.strictEqual(parsed.pending.requestedBy.agentId, 'theo')
-    assert.strictEqual(parsed.pending.requestedBy.conversationId, 'c-42')
-    requestId = parsed.pending.id
-    keys = parsed.pending.widenings.map((item: { key: string }) => item.key)
+    assert.strictEqual(parsed.pending[0].requestedBy.agentId, 'theo')
+    assert.strictEqual(parsed.pending[0].requestedBy.conversationId, 'c-42')
+    requestId = parsed.pending[0].id
+    keys = parsed.pending[0].widenings.map((item: { key: string }) => item.key)
     assert.deepStrictEqual(keys, ['agent/theo#permissions+allow:terminal:npm test'])
 
     const rules = makeAgents().get('theo')?.permissions ?? []
@@ -213,7 +213,7 @@ describe('pedidos de permissão (integração: MCP do gateway, API, cookie da te
       name: 'save_permission_rules',
       arguments: { scope: 'agent', id: 'theo', add: [{ category: 'read', pattern: '/etc/**', decision: 'allow' }], reason: 'ler config' },
     })
-    const id = JSON.parse(texts(result)[1]).pending.id
+    const id = JSON.parse(texts(result)[1]).pending[0].id
     const rejected = await call(`/permission-requests/${id}/reject`, { method: 'POST', headers: bearer(admin), body: { note: 'não' } })
     assert.strictEqual(rejected.body.result.status, 'rejected')
     assert.ok(!(makeAgents().get('theo')?.permissions ?? []).some((rule) => rule.pattern === '/etc/**'))
@@ -237,7 +237,7 @@ describe('pedidos de permissão (integração: MCP do gateway, API, cookie da te
     })
     const [notice, json] = texts(result)
     assert.match(notice, /Projeto Alfa → Permissões → Pedidos pendentes/)
-    const pending = JSON.parse(json).pending
+    const pending = JSON.parse(json).pending[0]
     assert.deepStrictEqual(
       pending.widenings.map((item: { key: string }) => item.key),
       ['project-permissions/alfa#rules+allow:network:registry.npmjs.org'],
@@ -281,7 +281,7 @@ describe('pedidos de permissão (integração: MCP do gateway, API, cookie da te
     const widening = await client.callTool({ name: 'patch_agent', arguments: { agentId: 'theo', patch: { role: null }, reason: 'conversar direto' } })
     const [warn, data] = texts(widening)
     assert.match(warn, /PENDENTE — NÃO aplicado/)
-    const pending = JSON.parse(data).pending
+    const pending = JSON.parse(data).pending[0]
     assert.deepStrictEqual(
       pending.widenings.map((item: { key: string }) => item.key),
       ['agent/theo#role-subagent'],

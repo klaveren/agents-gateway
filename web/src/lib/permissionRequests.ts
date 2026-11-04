@@ -21,11 +21,15 @@ export interface IPermissionRequest {
   remove: IPermissionRule[]
   /** `agent-patch`: os campos pedidos, com o valor (`null` = tirar). */
   patch?: Record<string, unknown>
+  /** `agent-patch` de um campo-lista: a entrada a ACRESCENTAR ao valor de agora (`allowedTools` + `agent:ana`). */
+  entries?: { field: string; add: string[] }
   widenings: IWideningRef[]
   requestedWidenings: IWideningRef[]
   /** As regras do agente mudaram desde o pedido: `widenings` foi recalculado. */
   changed: boolean
   reason: string
+  /** Os pedidos da mesma chamada do agente dividem o lote (cada pedido leva um item só); sem ele, o pedido é sozinho. */
+  batchId?: string
   /** `agentId` e `conversationId` são rótulo (de onde veio), não credencial. */
   requestedBy: { by: string; agentId?: string; conversationId?: string }
   createdAt: string
@@ -57,6 +61,11 @@ export function ruleLine(rule: IPermissionRule, op: 'add' | 'remove'): string {
 /** "allowedTools → ["read_doc","cap:terminal"]" — o campo do patch como a pessoa lê. */
 export function patchLine(field: string, value: unknown): string {
   return value === null ? `${field}: tirar` : `${field} → ${JSON.stringify(value)}`
+}
+
+/** "allowedTools + agent:ana" — a entrada de lista que o pedido acrescenta. */
+export function entriesLine(entries: { field: string; add: string[] }): string {
+  return `${entries.field} + ${entries.add.join(', ')}`
 }
 
 /** A chave da store: os de um agente, os das regras de um projeto, ou todos (`''`). */

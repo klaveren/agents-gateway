@@ -29,6 +29,12 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS permission_requests_status ON permission_requests (status, created_at DESC);
 `
 
+/** As colunas que vieram depois da tabela: um banco antigo as ganha ao abrir (vazias = o pedido de antes, um lote só). */
+const ADDED_COLUMNS: ReadonlyArray<[string, string]> = [
+  ['entries', 'TEXT'],
+  ['batch_id', 'TEXT'],
+]
+
 type TRow = Record<string, unknown>
 
 /** Os pedidos de permissão, no mesmo arquivo das conversas. Sem arquivo, em memória. */
@@ -40,13 +46,15 @@ export class SqlitePermissionRequestRepository implements IPermissionRequestRepo
     this.db = new DatabaseSync(path)
     this.db.exec('PRAGMA journal_mode = WAL')
     this.db.exec(SCHEMA)
+    const columns = new Set((this.db.prepare('PRAGMA table_info(permission_requests)').all() as TRow[]).map((row) => row.name as string))
+    for (const [name, type] of ADDED_COLUMNS) if (!columns.has(name)) this.db.exec(`ALTER TABLE permission_requests ADD COLUMN ${name} ${type}`)
   }
 
   create(request: IPermissionRequest): void {
     this.db
       .prepare(
-        `INSERT INTO permission_requests (id, kind, agent_id, project_id, add_rules, remove_rules, patch, widenings, reason, requested_by, base_hash, created_at, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO permission_requests (id, kind, agent_id, project_id, add_rules, remove_rules, patch, entries, batch_id, widenings, reason, requested_by, base_hash, created_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         request.id,
@@ -56,6 +64,8 @@ export class SqlitePermissionRequestRepository implements IPermissionRequestRepo
         JSON.stringify(request.add),
         JSON.stringify(request.remove),
         request.patch ? JSON.stringify(request.patch) : null,
+        request.entries ? JSON.stringify(request.entries) : null,
+        request.batchId ?? null,
         JSON.stringify(request.widenings),
         request.reason,
         JSON.stringify(request.requestedBy),
@@ -107,6 +117,8 @@ function toRequest(row: TRow): IPermissionRequest {
     add: JSON.parse(String(row.add_rules)) as IPermissionRule[],
     remove: JSON.parse(String(row.remove_rules)) as IPermissionRule[],
     ...(typeof row.patch === 'string' ? { patch: JSON.parse(row.patch) as Record<string, unknown> } : {}),
+    ...(typeof row.entries === 'string' ? { entries: JSON.parse(row.entries) as { field: string; add: string[] } } : {}),
+    ...(typeof row.batch_id === 'string' && row.batch_id ? { batchId: row.batch_id } : {}),
     widenings: JSON.parse(String(row.widenings)) as IPermissionWidening[],
     reason: String(row.reason),
     requestedBy: JSON.parse(String(row.requested_by)) as IPermissionRequester,

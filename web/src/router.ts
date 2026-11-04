@@ -14,6 +14,7 @@ import CatalogHistoryView from './views/CatalogHistoryView.vue'
 import RulesView from './views/RulesView.vue'
 import EnvironmentView from './views/EnvironmentView.vue'
 import SchedulesView from './views/SchedulesView.vue'
+import NotificationsView from './views/NotificationsView.vue'
 import PermissionsView from './views/PermissionsView.vue'
 import AccountsView from './views/AccountsView.vue'
 import ProvidersView from './views/ProvidersView.vue'
@@ -65,6 +66,7 @@ export const router = createRouter({
     { path: '/rules/protocol', name: 'rule-protocol', component: BuildView, props: { kind: 'rule', tab: 'protocol' } },
     { path: '/environment', name: 'environment', component: EnvironmentView },
     { path: '/schedules', name: 'schedules', component: SchedulesView },
+    { path: '/notifications', name: 'notifications', component: NotificationsView },
     { path: '/permissions', name: 'permissions', component: PermissionsView },
     { path: '/accounts', name: 'accounts', component: AccountsView },
     { path: '/import', name: 'import', component: ImportView },
