@@ -45,6 +45,18 @@ describe('Cerco.Plan', () => {
     assert.ok(plan.readDeny.includes('/w') && !plan.writeDeny.includes('/w') && plan.writeDeny.includes('/srv/data'))
   })
 
+  it('⚖️ o modelo de segredo que a regra deixa ler é reaberto um a um (o runtime não nega no padrão); o resto, não', () => {
+    const files: Record<string, string[]> = { '**/.env.*': ['.env.local', '.env.example', 'apps/.env.local.example', 'infra/.env.sample'] }
+    const find = (pattern: string) => files[pattern] ?? []
+    const plan = cercoPlan({ agent: [rule('read', '**'), rule('read', 'infra/**', 'deny')] }, { ...base, find })
+    assert.ok(plan.readDeny.includes('/w/p/**/.env.*'), 'o padrão segue negado')
+    assert.ok(plan.readAllow.includes('/w/p/.env.example') && plan.readAllow.includes('/w/p/apps/.env.local.example'))
+    assert.ok(!plan.readAllow.includes('/w/p/.env.local'), 'o segredo não')
+    assert.ok(!plan.readAllow.includes('/w/p/infra/.env.sample'), 'a negação da camada vale')
+    assert.ok(!plan.writeAllow.some((path) => path.includes('.env')), 'a escrita não abre')
+    assert.ok(plan.readDeny.includes('/w/p/**/secrets.json') && !plan.readDeny.some((path) => path.endsWith('secrets.*')))
+  })
+
   it('as liberações das camadas abrem; a negação do projeto que o agente reabriu por dentro sai; a outra fica', () => {
     const plan = cercoPlan(
       {

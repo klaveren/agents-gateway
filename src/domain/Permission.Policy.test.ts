@@ -49,6 +49,18 @@ describe('Permission.Policy', () => {
     assert.strictEqual(decide({ category: 'read', value: '/srv/gateway/data/gateway.db' }, { agent: [rule('read', '/srv/**')] }, extra).layer, 'system')
   })
 
+  it('⚖️ segredo de verdade negado; o MODELO (`.env.example`…) e o código `secrets.js` não', () => {
+    const agent = [rule('read', '**'), rule('write', '**')]
+    const read = (value: string) => decide({ category: 'read', value }, { agent })
+    for (const path of ['.env', '.env.local', 'apps/.env.production', 'conf/secrets.json', 'secrets.yaml', 'secrets.env', 'k.key'])
+      assert.deepStrictEqual([read(path).allowed, read(path).layer], [false, 'system'], path)
+    for (const path of ['.env.example', 'apps/.env.local.example', '.env.sample', 'x/.env.template', '.env.dist', 'lib/secrets.js', 'bin/secrets.sh', 'secrets.ts'])
+      assert.strictEqual(read(path).allowed, true, path)
+    assert.strictEqual(decide({ category: 'write', value: '.env.example' }, { agent }).allowed, true)
+    // A negação de uma camada que cobre o modelo continua valendo.
+    assert.strictEqual(decide({ category: 'read', value: '.env.example' }, { agent: [rule('read', '**/.env*', 'deny'), ...agent] }).allowed, false)
+  })
+
   it('comando por palavras; o nome pela base, para /bin/rm não escapar de rm', () => {
     assert.ok(commandMatches('git *', ['git']))
     assert.ok(commandMatches('git *', ['git', 'push', '-f']))
