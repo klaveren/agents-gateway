@@ -114,6 +114,9 @@ const SCHEMA = `
  */
 const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }> = [
   { table: 'conversations', column: 'cache_read_tokens', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  // ⚖️ APAGADA, não excluída (ver `deleteSession`): some de tudo, e o consumo dela continua no relatório.
+  { table: 'conversations', column: 'deleted_at', definition: 'TEXT' },
+  { table: 'conversations', column: 'deleted_by', definition: 'TEXT' },
   // O estado do SDK (JSON: `{ protocol, mode, data }`) para a retomada continuar com a memória dele.
   { table: 'conversations', column: 'native', definition: 'TEXT' },
   { table: 'conversations', column: 'cache_write_tokens', definition: 'INTEGER NOT NULL DEFAULT 0' },
@@ -447,6 +450,7 @@ export class SqliteConversationRepository implements IConversationRepository {
         // a guia Construir as lista; a caixa de entrada é das conversas com agentes.
         if (!Object.prototype.hasOwnProperty.call(options.filter ?? {}, BUILDER_METADATA_KEY)) where.push(`json_extract(metadata, '$.${BUILDER_METADATA_KEY}') IS NULL`)
 
+        where.push('deleted_at IS NULL')
         const limit = Math.min(Math.max(options.limit ?? 100, 1), 500)
         const clause = where.length ? `WHERE ${where.join(' AND ')}` : ''
 
@@ -506,6 +510,7 @@ export class SqliteConversationRepository implements IConversationRepository {
           tabParams.push(query.agentId)
         }
 
+        search.push('deleted_at IS NULL')
         const searchClause = search.length ? `WHERE ${search.join(' AND ')}` : ''
         const listClause = [...search, ...tab].length ? `WHERE ${[...search, ...tab].join(' AND ')}` : ''
         const listParams = [...searchParams, ...tabParams]
@@ -559,7 +564,12 @@ export class SqliteConversationRepository implements IConversationRepository {
   async listTurns(sessionId: string): Promise<IConversationTurn[]> {
     return (
       this.guard('listTurns', () => {
-        const rows = this.db.prepare('SELECT * FROM conversation_turns WHERE conversation_id = ? ORDER BY idx ASC').all(sessionId) as TRow[]
+        // A apagada não tem histórico para ninguém (os turnos ficam só para o relatório de uso).
+        const rows = this.db
+          .prepare(
+            'SELECT * FROM conversation_turns WHERE conversation_id = ? AND NOT EXISTS (SELECT 1 FROM conversations WHERE id = ? AND deleted_at IS NOT NULL) ORDER BY idx ASC',
+          )
+          .all(sessionId, sessionId) as TRow[]
 
         return rows.map((row) => this.toTurn(row))
       }) ?? []
@@ -604,7 +614,7 @@ export class SqliteConversationRepository implements IConversationRepository {
 
   async findSession(sessionId: string): Promise<IConversationSession | undefined> {
     return this.guard('findSession', () => {
-      const row = this.db.prepare(`SELECT ${SESSION_COLUMNS} FROM conversations WHERE id = ?`).get(sessionId) as TRow | undefined
+      const row = this.db.prepare(`SELECT ${SESSION_COLUMNS} FROM conversations WHERE id = ? AND deleted_at IS NULL`).get(sessionId) as TRow | undefined
 
       return row ? this.toSession(row) : undefined
     })
@@ -614,7 +624,7 @@ export class SqliteConversationRepository implements IConversationRepository {
     return this.guard('findByShareId', () => {
       if (!shareId) return undefined
 
-      const row = this.db.prepare(`SELECT ${SESSION_COLUMNS} FROM conversations WHERE share_id = ?`).get(shareId) as TRow | undefined
+      const row = this.db.prepare(`SELECT ${SESSION_COLUMNS} FROM conversations WHERE share_id = ? AND deleted_at IS NULL`).get(shareId) as TRow | undefined
 
       return row ? this.toSession(row) : undefined
     })
@@ -631,11 +641,17 @@ export class SqliteConversationRepository implements IConversationRepository {
     else this.db.prepare('UPDATE conversations SET shared = ? WHERE id = ?').run(shared ? 1 : 0, sessionId)
   }
 
-  async deleteSession(sessionId: string): Promise<void> {
+  /**
+   * ⚖️ APAGAR É MARCAR (soft delete): a conversa some da lista, da busca, da abertura, do link e da retomada — para
+   * quem usa, não existe mais —, mas os turnos ficam: o consumo é custo de verdade, e apagar não pode tirá-lo do
+   * relatório (bastaria apagar para esconder o gasto). O link compartilhado fecha. NÃO encosta na sessão viva do
+   * provider: apagar histórico não para conversa (o turno que chegar depois fica, escondido, e conta no consumo).
+   */
+  async deleteSession(sessionId: string, by?: string): Promise<void> {
     this.guard('deleteSession', () => {
-      // Os turnos saem pelo `ON DELETE CASCADE` — que só funciona com `foreign_keys` ligado, feito
-      // no construtor. NÃO encosta na sessão viva do provider: apagar histórico não para conversa.
-      this.db.prepare('DELETE FROM conversations WHERE id = ?').run(sessionId)
+      this.db
+        .prepare('UPDATE conversations SET deleted_at = ?, deleted_by = ?, shared = 0 WHERE id = ? AND deleted_at IS NULL')
+        .run(new Date().toISOString(), by ?? null, sessionId)
       this.db.prepare('DELETE FROM conversation_todos WHERE conversation_id = ?').run(sessionId)
     })
   }
@@ -681,7 +697,7 @@ export class SqliteConversationRepository implements IConversationRepository {
 
         const rows = this.db
           .prepare(
-            `SELECT date(datetime(t.at, ?)) AS day, t.conversation_id AS conversation_id, c.title AS title, ${group}
+            `SELECT date(datetime(t.at, ?)) AS day, t.conversation_id AS conversation_id, c.title AS title, c.deleted_at AS deleted_at, ${group}
                     json_extract(c.metadata, '$.owner.id') AS owner_id, json_extract(c.metadata, '$.owner.email') AS owner_email,
                     c.agent_id AS agent_id, COALESCE(t.provider, c.provider) AS provider, COALESCE(t.model, c.model) AS model, COUNT(*) AS turns,
                     SUM(t.input_tokens) AS input_tokens, SUM(t.output_tokens) AS output_tokens, SUM(t.reasoning_tokens) AS reasoning_tokens,
@@ -696,7 +712,8 @@ export class SqliteConversationRepository implements IConversationRepository {
         return rows.map((row) => ({
           day: text(row.day),
           conversationId: text(row.conversation_id),
-          title: typeof row.title === 'string' ? row.title : undefined,
+          // ⚖️ A apagada continua no consumo, sem o título (que era dela): só a marca.
+          title: row.deleted_at ? 'conversa apagada' : typeof row.title === 'string' ? row.title : undefined,
           ownerId: typeof row.owner_id === 'string' ? row.owner_id : undefined,
           ownerEmail: typeof row.owner_email === 'string' ? row.owner_email : undefined,
           agentId: text(row.agent_id),

@@ -53,10 +53,10 @@ export class NotifyingConversationRepository implements IConversationRepository 
     await this.announce(sessionId)
   }
 
-  async deleteSession(sessionId: string): Promise<void> {
+  async deleteSession(sessionId: string, by?: string): Promise<void> {
     // Lido ANTES: depois de apagar não há mais de quem era.
     const before = await this.inner.findSession(sessionId)
-    await this.inner.deleteSession(sessionId)
+    await this.inner.deleteSession(sessionId, by)
 
     if (before) this.events.publish({ type: 'conversation.deleted', sessionId, metadata: before.metadata })
   }

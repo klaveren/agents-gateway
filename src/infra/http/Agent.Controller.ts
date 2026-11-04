@@ -1364,9 +1364,9 @@ export class AgentController {
       res,
       async () => {
         const id = req.params.id as string
-        await this.requireConversationAccess(id)
+        const { resolved } = await this.requireConversationAccess(id)
 
-        await this.usecases.conversations.deleteSession(id)
+        await this.usecases.conversations.deleteSession(id, resolved.identity?.email ?? resolved.identity?.id)
         return null
       },
       { message: 'Conversation deleted' },
