@@ -11,6 +11,8 @@ export interface IBashPolicy {
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000
+/** O motivo do `sudo` (ver `remoteSudoAllowed`: dentro do `ssh`, com regra que o cite, passa). */
+export const PRIVILEGE_ESCALATION = 'privilege escalation'
 const DEFAULT_MAX_OUTPUT_CHARS = 4_000
 
 /**
@@ -34,7 +36,7 @@ const DENIED: ReadonlyArray<{ pattern: RegExp; reason: string }> = [
   { pattern: /\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(ba|z|k|fi)?sh\b/i, reason: 'pipe from network straight into a shell' },
   { pattern: /\b(shutdown|reboot|halt|poweroff)\b/i, reason: 'host power control' },
   { pattern: /\bchmod\b[^|;&\n]*-[a-z]*R[a-z]*\s+777\s+\//i, reason: 'recursive world-writable on a root path' },
-  { pattern: /\bsudo\b/i, reason: 'privilege escalation' },
+  { pattern: /\bsudo\b/i, reason: PRIVILEGE_ESCALATION },
 ]
 
 export function bashPolicy(): IBashPolicy {
