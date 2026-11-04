@@ -157,6 +157,11 @@ describe('ledger do agente (integração: API de admin, ferramentas, prompt)', (
     assert.ok(preview.prompt.includes('## Ledger — o que você já aprendeu'))
     assert.ok(preview.prompt.includes('- build-oom — quando o build estourar memória no CI'))
     assert.ok(!preview.prompt.includes('subir o heap'), 'o conteúdo do contexto não vai no prompt')
+    // `?part=`: só o texto daquela parte; parte que não existe é 422 com as que existem.
+    const one = (await call('/agents/theo/system-prompt?part=ledger', { token: admin })).body!.result
+    assert.ok(one.part.text.includes('- build-oom — quando o build estourar memória no CI'))
+    assert.strictEqual(one.prompt, undefined)
+    assert.strictEqual((await call('/agents/theo/system-prompt?part=nada', { token: admin })).status, 422)
     // O ledger da Ana é da Ana.
     assert.ok(!preview.prompt.includes('crm-sync'))
 

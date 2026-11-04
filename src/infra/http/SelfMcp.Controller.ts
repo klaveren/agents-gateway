@@ -414,11 +414,24 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'preview_system_prompt',
     {
       description:
-        'The final system prompt an agent receives in a new conversation (soul, instructions, environment, rules, initial context, indexes, its ledger index), with characters and ≈tokens per part. `projectId`: the conversation project, for a global agent.',
-      inputSchema: { agentId: z.string(), projectId: z.string().optional() },
+        'The final system prompt an agent receives in a new conversation (soul, instructions, environment, rules, initial context, indexes, its ledger index). Without `part`: the SUMMARY, characters and ≈tokens in total and per part, without the text. With `part` (a key from the summary): that part in full; `all` = the whole prompt (it can be very large). `projectId`: the conversation project, for a global agent.',
+      inputSchema: {
+        agentId: z.string(),
+        projectId: z.string().optional(),
+        part: z.string().optional().describe('A part key from the summary (soul, instructions, rules, skills, triggers…), or all'),
+      },
       annotations: { readOnlyHint: true },
     },
-    async ({ agentId, projectId }) => reply(await api('GET', `/agents/${encodeURIComponent(agentId)}/system-prompt`, { query: { project: projectId } })),
+    async ({ agentId, projectId, part }) => {
+      const path = `/agents/${encodeURIComponent(agentId)}/system-prompt`
+      if (part === 'all') return reply(await api('GET', path, { query: { project: projectId } }))
+      if (part) return reply(await api('GET', path, { query: { project: projectId, part } }))
+      // ⚖️ O resumo: o prompt inteiro de um agente grande estourava a resposta.
+      return reply(await api('GET', path, { query: { project: projectId } }), (result) => {
+        const { prompt: _prompt, ...summary } = (result ?? {}) as Record<string, unknown>
+        return summary
+      })
+    },
   )
 
   server.registerTool(
