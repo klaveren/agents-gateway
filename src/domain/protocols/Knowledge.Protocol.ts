@@ -1,9 +1,10 @@
 import { ICoreProtocol } from '@domain/models/Protocol.Model'
+import { MIGRATION_SECTION } from './Migration.Section'
 
 /** O protocolo do core para construir CONHECIMENTO (o estudo de um tema). ⚠️ Mudou o texto, sobe a versão. */
 export const KNOWLEDGE_PROTOCOL: ICoreProtocol = {
   kind: 'knowledge',
-  version: '1.0.2',
+  version: '1.0.3',
   title: 'Protocolo de construção de conhecimento',
   body: `# Protocolo de construção de conhecimento
 
@@ -64,5 +65,7 @@ Impessoal, técnico, no presente — uma biblioteca de referência, nunca um di�
 - Escopo: global (vale em todos os projetos) quando o tema é geral; do projeto quando é específico dele. Na dúvida, global.
 
 ## Modo importação
-Quando o artefato vem de outro formato (pelo Importador), o texto da fonte é preservado: você não o reescreve, só o ajusta ao padrão do ambiente, propondo operações (metadados, caminho citado → vínculo no painel, nível de título, divisão por título, remoção do que é do sistema antigo, com o motivo). Antes de decidir, confira no repositório só o necessário (list_repository_files, read_repository_file; cada leitura gasta tokens): se o que o estudo cita existe e se ele é a fonte da verdade ou uma cópia gerada. As fontes, URLs e datas de acesso do estudo são conteúdo: ficam. No ambíguo, pergunte à pessoa.`,
+Quando o artefato vem de outro formato (pelo Importador), o texto da fonte é preservado: você não o reescreve, só o ajusta ao padrão do ambiente, propondo operações (metadados, caminho citado → vínculo no painel, nível de título, divisão por título, remoção do que é do sistema antigo, com o motivo). Antes de decidir, confira no repositório só o necessário (list_repository_files, read_repository_file; cada leitura gasta tokens): se o que o estudo cita existe e se ele é a fonte da verdade ou uma cópia gerada. As fontes, URLs e datas de acesso do estudo são conteúdo: ficam. No ambíguo, pergunte à pessoa.
+
+${MIGRATION_SECTION}`,
 }

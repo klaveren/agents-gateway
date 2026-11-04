@@ -67,6 +67,23 @@ describe('Import.Tools — as ferramentas do construtor em modo importação', (
     assert.strictEqual((await file.execute({}, importer)).status, 'error')
   })
 
+  it('o CONSTRUTOR do tipo (fora do Importador) lê o repositório do PROJETO da conversa, código incluído; ⛔ outro agente, não', async () => {
+    const browsed: string[] = []
+    const browse = {
+      list: (projectId: string, options: object) => (browsed.push(`list:${projectId}:${JSON.stringify(options)}`), 'lista'),
+      read: (projectId: string, options: object) => (browsed.push(`read:${projectId}:${JSON.stringify(options)}`), 'código'),
+    }
+    const [, , , , repoFiles, repoFile] = makeImportTools(desk, browse)
+    const builder = { agentId: 'builder-skill', sessionId: 's9', conversationProjectId: 'alfa' }
+    assert.deepStrictEqual(await repoFiles.execute({ pattern: '*.vue', repository: 'app' }, builder), { status: 'success', result: 'lista' })
+    assert.deepStrictEqual(await repoFile.execute({ path: 'apps/form.vue' }, builder), { status: 'success', result: 'código' })
+    assert.deepStrictEqual(browsed, ['list:alfa:{"repository":"app","pattern":"*.vue"}', 'read:alfa:{"path":"apps/form.vue"}'])
+    assert.match((await repoFile.execute({ path: 'x' }, { agentId: 'builder-skill', sessionId: 's9' })).result, /say the projectId/)
+    for (const agentId of ['atlas', 'maya'])
+      assert.match((await repoFile.execute({ path: 'x' }, { agentId, sessionId: 's9', conversationProjectId: 'alfa' })).result, /only for the builders/)
+    assert.strictEqual(browsed.length, 2)
+  })
+
   it('⛔ as ferramentas do repositório passam pela mesma guarda de repetição das locais', async () => {
     const loops = new LoopGuard(() => ({ ...loopLimits(), refuseAt: 2 }))
     loops.open('c1')

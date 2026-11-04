@@ -773,6 +773,17 @@ one-line "when to use it" and the procedure itself.
 - A skill is a shared way of doing something, from the catalog; a trigger is the agent's own
   subcommand. They load the same way, but stay apart in data, screen and permissions.
 
+### Migrating an environment with the Atlas
+
+Besides the importer (text preserved, item by item), the Atlas can migrate an environment the way an
+agent would: it plans with `import_items` (the importer queue of a project, without content) and
+delegates each item to the builder of its kind. The builder reads the source in the project
+repository (code included, read-only, secrets masked, never credentials, `.env*`, `.git`, secret
+files or the project ignore), merges its parts, adjusts it to the protocol (situations become
+triggers, ADRs get `status` and `supersedes`), checks in the code every name it cites, and saves
+with `importedFrom`, which takes the item out of the importer queue. Every save still waits for the
+person's confirmation.
+
 ### Search and tags in the lists
 
 Every list (agents, skills, commands, specs, ADRs, knowledge, rules, MCPs, projects, providers,

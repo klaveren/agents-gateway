@@ -11,7 +11,9 @@ import {
   importBuilderAgent,
   importBuilderAgentId,
   isImportBuilder,
+  LIST_REPOSITORY_FILES_TOOL,
   PROPOSE_DRAFT_TOOL,
+  READ_REPOSITORY_FILE_TOOL,
 } from './Builder.Agents'
 
 describe('Builder.Agents', () => {
@@ -25,9 +27,19 @@ describe('Builder.Agents', () => {
 
   it('⛔ cada um com a leitura e a gravação do SEU tipo, e o prompt manda gravar só depois da confirmação', () => {
     const target = { provider: 'claude', models: ['m'] }
-    assert.deepStrictEqual(builderAgent('rule', target).allowedTools, ['mcp:gateway/list_rules', 'mcp:gateway/save_rule', PROPOSE_DRAFT_TOOL, 'cap:todos'])
-    assert.deepStrictEqual(builderAgent('adr', target).allowedTools, ['mcp:gateway/list_docs', 'mcp:gateway/get_doc', 'mcp:gateway/save_doc', PROPOSE_DRAFT_TOOL, 'cap:todos'])
-    assert.deepStrictEqual(builderAgent('skill', target).allowedTools, ['mcp:gateway/list_resources', 'mcp:gateway/save_resource', PROPOSE_DRAFT_TOOL, 'cap:todos'])
+    // Com a leitura do repositório do projeto (só ler): migrar um item e conferir no código o que ele cita.
+    const repo = [LIST_REPOSITORY_FILES_TOOL, READ_REPOSITORY_FILE_TOOL]
+    assert.deepStrictEqual(builderAgent('rule', target).allowedTools, ['mcp:gateway/list_rules', 'mcp:gateway/save_rule', PROPOSE_DRAFT_TOOL, ...repo, 'cap:todos'])
+    assert.deepStrictEqual(builderAgent('adr', target).allowedTools, [
+      'mcp:gateway/list_docs',
+      'mcp:gateway/get_doc',
+      'mcp:gateway/save_doc',
+      PROPOSE_DRAFT_TOOL,
+      ...repo,
+      'cap:todos',
+    ])
+    assert.deepStrictEqual(builderAgent('skill', target).allowedTools, ['mcp:gateway/list_resources', 'mcp:gateway/save_resource', PROPOSE_DRAFT_TOOL, ...repo, 'cap:todos'])
+    assert.match(builderAgent('skill', target).systemPrompt, /## Migrar do repositório \(fora do Importador\)[\s\S]*importedFrom/)
     const spec = builderAgent('spec', target).systemPrompt
     assert.match(spec, /Só grave com save_doc DEPOIS que a pessoa disser nesta conversa \(ou o agente que delegou trouxer a confirmação dela\)/)
     assert.match(spec, /A pessoa confirmou: grave o último rascunho/)

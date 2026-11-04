@@ -1,9 +1,10 @@
 import { ICoreProtocol } from '@domain/models/Protocol.Model'
+import { MIGRATION_SECTION } from './Migration.Section'
 
 /** O protocolo do core para construir uma SPEC. ⚠️ Mudou o texto, sobe a versão. */
 export const SPEC_PROTOCOL: ICoreProtocol = {
   kind: 'spec',
-  version: '1.1.3',
+  version: '1.1.4',
   title: 'Protocolo de construção de spec',
   body: `# Protocolo de construção de spec
 
@@ -45,5 +46,7 @@ Uma spec diz COMO ALGO DEVE SER: um padrão, um contrato, um conceito. A convers
 - Relação com outro documento é ANEXO no painel (docIds; o grande, por referência em docRefs), nunca caminho de arquivo citado no texto.
 
 ## Modo importação
-Quando o artefato vem de outro formato (pelo Importador), o texto da fonte é preservado: você não o reescreve, só o ajusta ao padrão do ambiente, propondo operações (metadados, caminho citado → vínculo no painel, nível de título, divisão por título, remoção do que é do sistema antigo, com o motivo). Antes de decidir, confira no repositório só o necessário (list_repository_files, read_repository_file; cada leitura gasta tokens): se o que a spec cita existe e se ela é a fonte da verdade ou uma cópia gerada. Spec longa ou que mistura assuntos: proponha dividir pelo título (split), não resumir. No ambíguo, pergunte à pessoa.`,
+Quando o artefato vem de outro formato (pelo Importador), o texto da fonte é preservado: você não o reescreve, só o ajusta ao padrão do ambiente, propondo operações (metadados, caminho citado → vínculo no painel, nível de título, divisão por título, remoção do que é do sistema antigo, com o motivo). Antes de decidir, confira no repositório só o necessário (list_repository_files, read_repository_file; cada leitura gasta tokens): se o que a spec cita existe e se ela é a fonte da verdade ou uma cópia gerada. Spec longa ou que mistura assuntos: proponha dividir pelo título (split), não resumir. No ambíguo, pergunte à pessoa.
+
+${MIGRATION_SECTION}`,
 }
