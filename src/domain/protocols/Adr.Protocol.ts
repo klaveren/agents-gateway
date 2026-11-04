@@ -3,7 +3,7 @@ import { ICoreProtocol } from '@domain/models/Protocol.Model'
 /** O protocolo do core para construir uma ADR. ⚠️ Mudou o texto, sobe a versão. */
 export const ADR_PROTOCOL: ICoreProtocol = {
   kind: 'adr',
-  version: '1.1.3',
+  version: '1.2.0',
   title: 'Protocolo de construção de ADR',
   body: `# Protocolo de construção de ADR
 
@@ -11,7 +11,7 @@ Uma ADR registra UMA DECISÃO e o PORQUÊ. A conversa recebe só o índice e o a
 
 ## Princípios
 1. **Uma decisão por ADR.** Duas decisões são duas ADRs, cada uma com o seu porquê.
-2. **Status no corpo.** Proposta, Aceita, Rejeitada ou Substituída por <id>. A ADR nunca é reescrita para mudar a decisão: uma ADR nova a substitui, e a antiga ganha "Substituída por <id>".
+2. **Status é campo, não texto.** \`status\`: \`proposed\` (proposta), \`accepted\` (aceita), \`superseded\` (substituída) ou \`archived\` (rejeitada ou que deixou de valer). A ADR nunca é reescrita para mudar a decisão: uma ADR NOVA lista a antiga em \`supersedes\`, e o gateway marca a antiga como substituída. Substituída e arquivada saem do índice da conversa (a busca ainda as acha, marcadas) — o porquê fica, a decisão morta não compete com a viva.
 3. **Datada.** A data da decisão no corpo: o contexto de hoje não é o de amanhã.
 4. **O contexto é o que forçou a decisão.** Fatos e restrições, medidos quando der — não a narrativa de quem fez o quê.
 5. **As alternativas importam tanto quanto a escolha.** O que foi considerado e por que perdeu: é o que impede alguém de reabrir a mesma discussão.
@@ -24,7 +24,7 @@ Uma ADR registra UMA DECISÃO e o PORQUÊ. A conversa recebe só o índice e o a
 \`\`\`markdown
 # <Título da decisão>
 
-**Status:** Aceita · **Data:** AAAA-MM-DD
+**Data:** AAAA-MM-DD
 
 ## Contexto
 <o problema e as restrições que forçaram a decisão>

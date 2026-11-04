@@ -13,7 +13,11 @@ export const PENDING_ISSUE_CODES: readonly string[] = ['link-pending', 'skill-mi
 export const isPendingIssue = (issue: Pick<IImportIssue, 'code'>) => PENDING_ISSUE_CODES.includes(issue.code)
 
 /** O corpo que a gravação manda (o `id` só ao criar). */
-export type TDocInput = Pick<IProjectDoc, 'kind' | 'title' | 'summary' | 'tags' | 'body'> & { projectId: string | null; docIds: string[]; docRefs: string[] }
+export type TDocInput = Pick<IProjectDoc, 'kind' | 'title' | 'summary' | 'tags' | 'body' | 'status' | 'supersedes'> & {
+  projectId: string | null
+  docIds: string[]
+  docRefs: string[]
+}
 
 /**
  * Os documentos — specs, ADRs e estudos (só admin): as listas por escopo (`lists`, a chave é `listKey(escopo, tipo?)`;
@@ -37,9 +41,15 @@ export const useDocsStore = defineStore('docs', () => {
     await Promise.all(touched.map((key) => lists.refresh(key).catch(() => undefined)))
   }
 
+  /** Salvar com `supersedes` muda o status e o `supersededBy` dos outros: o que estava em `details` deles já não vale. */
+  function staleDetails(...groups: Array<string[] | undefined>): void {
+    for (const id of groups.flatMap((group) => group ?? [])) details.drop(id)
+  }
+
   async function create(input: TDocInput & { id: string }): Promise<IProjectDoc> {
     const created = await api<IProjectDoc>('/docs', { method: 'POST', body: input })
     details.set(created.id, created)
+    staleDetails(created.supersedes)
     useAgentCatalogStore().docsChanged()
     await refreshScopes(scopeOf(created))
     return created
@@ -49,6 +59,7 @@ export const useDocsStore = defineStore('docs', () => {
     const before = details.get(id)
     const saved = await api<IProjectDoc>(`/docs/${encodeURIComponent(id)}`, { method: 'PUT', body: input })
     details.set(id, saved)
+    staleDetails(before?.supersedes, saved.supersedes)
     useAgentCatalogStore().docsChanged()
     await refreshScopes(scopeOf(saved), ...(before ? [scopeOf(before)] : []))
     return saved

@@ -593,6 +593,8 @@ export interface IRule {
 }
 
 export type TDocKind = 'spec' | 'adr' | 'knowledge'
+/** O estado do documento; ausente = aceita (ver `lib/docStatus`). */
+export type TDocStatus = 'proposed' | 'accepted' | 'superseded' | 'archived'
 
 /** Uma spec ou ADR em markdown. A lista vem sem o `body`. */
 export interface IProjectDoc {
@@ -603,6 +605,12 @@ export interface IProjectDoc {
   summary: string
   tags?: string[]
   body?: string
+  /** Ausente = aceita. Substituída e arquivada saem do índice da conversa. */
+  status?: TDocStatus
+  /** Ids de documentos do MESMO tipo que este substitui (global só substitui global). Ao salvar, o servidor marca-os como substituídos. */
+  supersedes?: string[]
+  /** SÓ LEITURA, calculado pelo servidor: os documentos cujo `supersedes` inclui este. */
+  supersededBy?: string[]
   /** Outros documentos anexados, na ordem: vão junto quando este é lido. Globais ou do mesmo projeto (o global só anexa global). */
   docIds?: string[]
   /** Dos anexados, os que vão por referência (o agente lê com `read_doc` se precisar). Ausente = todos inteiros. */

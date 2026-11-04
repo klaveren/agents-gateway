@@ -14,7 +14,7 @@ import { accountsDir, ISshKitIdentity, removeSshKit, writeSshKit } from '@infra/
 import { CLUSTER_SECRET_REFUSAL, dumpsClusterSecret } from '@domain/Secret.Mask'
 import { BACKGROUND_LIMITS, BackgroundProcesses, backgroundProcesses, clipOutput, startCommand, tailOf } from './Background.Processes'
 import { IProjectSandbox, projectSandbox, SANDBOX_SHELL } from '@infra/sandbox/Project.Sandbox'
-import { DOC_KINDS, IProjectDoc, READ_DOC_TOOL, SEARCH_DOCS_TOOL, TDocKind } from '@domain/models/ProjectDoc.Model'
+import { DOC_KINDS, IProjectDoc, READ_DOC_TOOL, SEARCH_DOCS_TOOL, TDocKind, TDocStatus } from '@domain/models/ProjectDoc.Model'
 import { IDocHit } from '@domain/ports/GuidanceRepository.Port'
 import { AGENT_TRIGGER_TOOL, SEARCH_RESOURCES_TOOL, TUsableKind, USABLE_KINDS, USE_RESOURCE_TOOL } from '@domain/models/Resource.Model'
 import type { IAgentTrigger } from '@domain/models/Agent.Model'
@@ -758,11 +758,16 @@ function searchDocsTool(docs: IDocReader): ILocalTool {
       if (!hits.length) return { status: 'success', result: `No document matches "${query}".` }
       return {
         status: 'success',
-        result: hits.map((hit) => `- [${hit.kind}] ${hit.id} — ${hit.title}${hit.summary ? `: ${hit.summary}` : ''}\n  …${hit.excerpt}…`).join('\n'),
+        result: hits
+          .map((hit) => `- [${hit.kind}${hit.status ? ` · ${STATUS_LABEL[hit.status]}` : ''}] ${hit.id} — ${hit.title}${hit.summary ? `: ${hit.summary}` : ''}\n  …${hit.excerpt}…`)
+          .join('\n'),
       }
     },
   }
 }
+
+/** O status na linha da busca: o substituído e o arquivado aparecem, mas marcados (não aplique). */
+const STATUS_LABEL: Readonly<Record<TDocStatus, string>> = { proposed: 'proposta', accepted: 'aceita', superseded: 'SUBSTITUÍDA', archived: 'ARQUIVADA' }
 
 /**
  * `read_doc`: o documento inteiro (markdown) de uma spec ou ADR do índice que a conversa recebeu no prompt.

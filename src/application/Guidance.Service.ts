@@ -5,7 +5,20 @@ import { triggerIssues } from '@domain/Agent.Policy'
 import { normalizeTags, tagIssues } from '@domain/Tag.Policy'
 import type { IAgentTrigger } from '@domain/models/Agent.Model'
 import { AgentNotFoundError, GuidanceNotFoundError, InvalidGuidanceError, ProjectNotFoundError } from '@domain/errors/Domain.Error'
-import { DOC_ID_PATTERN, DOC_INDEX_LIMIT, DOC_KINDS, DOC_SUMMARY_MAX, DOC_TITLE_MAX, IProjectDoc, READ_DOC_TOOL, SEARCH_DOCS_TOOL, TDocKind } from '@domain/models/ProjectDoc.Model'
+import {
+  DOC_ID_PATTERN,
+  DOC_INDEX_LIMIT,
+  DOC_KINDS,
+  DOC_STATUSES,
+  DOC_SUMMARY_MAX,
+  DOC_TITLE_MAX,
+  IProjectDoc,
+  isInactiveDoc,
+  READ_DOC_TOOL,
+  SEARCH_DOCS_TOOL,
+  TDocKind,
+  TDocStatus,
+} from '@domain/models/ProjectDoc.Model'
 import {
   ALL_RESOURCES,
   effectiveResources,
@@ -143,6 +156,10 @@ export interface IDocInput {
   importIssues?: IImportProblem[]
   /** As tags (ver `Tag.Policy`). Ausente na edição = mantém; `[]` tira todas. */
   tags?: string[]
+  /** Ver `TDocStatus`. Ausente na edição = mantém. */
+  status?: TDocStatus
+  /** Os que este substitui (ver `IProjectDoc.supersedes`). Ausente na edição = mantém; `[]` tira todos. */
+  supersedes?: string[]
 }
 
 /**
@@ -319,16 +336,18 @@ export class GuidanceService {
       ...(input.docRefs?.length ? { docRefs: input.docRefs } : {}),
       ...(input.importIssues?.length ? { importIssues: input.importIssues } : {}),
       ...(normalizeTags(input.tags).length ? { tags: normalizeTags(input.tags) } : {}),
+      ...(input.status && input.status !== 'accepted' ? { status: input.status } : {}),
+      ...(input.supersedes?.length ? { supersedes: [...input.supersedes] } : {}),
       createdAt: this.now(),
       updatedAt: this.now(),
       updatedBy: by,
     }
-    const issues = [...tagIssues(input.tags), ...docIssues(doc), ...this.attachIssues(doc, doc.id)]
+    const issues = [...tagIssues(input.tags), ...docIssues(doc), ...this.attachIssues(doc, doc.id), ...this.supersedeIssues(doc, doc.id)]
     if (!DOC_ID_PATTERN.test(doc.id)) issues.unshift({ field: 'id', message: 'use 2–64 lowercase letters, digits or hyphens' })
     else if (this.repository.doc(doc.id)) issues.unshift({ field: 'id', message: `already exists: ${doc.id}` })
     this.check(issues, doc.projectId)
     this.repository.insertDoc(doc)
-    this.history.record([{ kind: doc.kind, id: doc.id }], { by })
+    this.history.record([{ kind: doc.kind, id: doc.id }, ...this.markSuperseded(doc, by)], { by })
     return doc
   }
 
@@ -344,7 +363,11 @@ export class GuidanceService {
       ...(input.docIds !== undefined ? { docIds: input.docIds } : {}),
       ...(input.importIssues !== undefined ? { importIssues: input.importIssues } : {}),
       ...(input.tags !== undefined ? { tags: normalizeTags(input.tags) } : {}),
+      ...(input.status !== undefined ? { status: input.status } : {}),
+      ...(input.supersedes !== undefined ? { supersedes: [...input.supersedes] } : {}),
     }
+    if (next.status === 'accepted') delete next.status
+    if (!next.supersedes?.length) delete next.supersedes
     if (scope) next.projectId = scope
     else delete next.projectId
     // Sem `docRefs` na edição, ficam os de antes — menos os que deixaram de estar anexados.
@@ -352,7 +375,7 @@ export class GuidanceService {
     const refs = input.docRefs ?? (current.docRefs ?? []).filter((docId) => docIds.includes(docId))
     if (refs.length) next.docRefs = refs
     else delete next.docRefs
-    this.check([...tagIssues(input.tags), ...docIssues(next), ...this.attachIssues(next, id)], scope ?? undefined)
+    this.check([...tagIssues(input.tags), ...docIssues(next), ...this.attachIssues(next, id), ...this.supersedeIssues(next, id)], scope ?? undefined)
     const saved = this.repository.updateDoc(id, {
       kind: next.kind,
       title: next.title,
@@ -362,18 +385,14 @@ export class GuidanceService {
       docRefs: next.docRefs ?? [],
       importIssues: next.importIssues ?? [],
       tags: next.tags ?? [],
+      status: next.status ?? 'accepted',
+      supersedes: next.supersedes ?? [],
       ...(input.projectId !== undefined ? { projectId: scope } : {}),
       updatedAt: this.now(),
       updatedBy: by,
     })!
     // O tipo faz parte da chave: spec que vira ADR sai de um e entra no outro.
-    this.history.record(
-      [
-        { kind: current.kind, id },
-        { kind: saved.kind, id },
-      ],
-      { by },
-    )
+    this.history.record([{ kind: current.kind, id }, { kind: saved.kind, id }, ...this.markSuperseded(saved, by)], { by })
     return saved
   }
 
@@ -412,7 +431,18 @@ export class GuidanceService {
    * como seção, os por referência numa lista (ver `INLINE_DEPTH` para a profundidade e os ciclos).
    */
   docText(doc: IProjectDoc): string {
-    return `# ${doc.title} [${doc.kind}]\n\n${doc.body}${this.attachments(doc, new Set([doc.id]))}${importIssuesNote(doc.importIssues)}`
+    return `# ${doc.title} [${doc.kind}]\n\n${this.statusNote(doc)}${doc.body}${this.attachments(doc, new Set([doc.id]))}${importIssuesNote(doc.importIssues)}`
+  }
+
+  /** O aviso no topo do documento que saiu de uso (ou que ainda é proposta): quem o substitui, e o que seguir. */
+  private statusNote(doc: IProjectDoc): string {
+    if (doc.status === 'superseded') {
+      const by = this.supersededBy(doc)
+      return `> ⚠️ SUBSTITUÍDA${by.length ? ` por ${by.join(', ')}` : ''}: não aplique esta decisão${by.length ? `; siga ${by.length > 1 ? 'as que a substituem' : by[0]} (${READ_DOC_TOOL})` : ''}. Fica para o histórico do porquê.\n\n`
+    }
+    if (doc.status === 'archived') return '> ⚠️ ARQUIVADA: não vale mais; fica para o histórico do porquê.\n\n'
+    if (doc.status === 'proposed') return '> PROPOSTA: ainda não aceita.\n\n'
+    return ''
   }
 
   /**
@@ -1043,6 +1073,47 @@ export class GuidanceService {
     this.repository.deleteProject(projectId)
   }
 
+  /**
+   * ⛔ O que este documento substitui: existe, não é ele, é do MESMO tipo e do MESMO escopo (global só substitui global;
+   * do projeto, só do projeto) — substituir marca o outro como substituído, e uma ADR de um projeto não pode aposentar a
+   * global de todos. Sem repetir.
+   */
+  private supersedeIssues(doc: Pick<IProjectDoc, 'kind' | 'projectId' | 'status' | 'supersedes'>, id: string): TIssues {
+    const issues: TIssues = []
+    if (doc.status !== undefined && !DOC_STATUSES.includes(doc.status)) issues.push({ field: 'status', message: `one of ${DOC_STATUSES.join(', ')}` })
+    const ids = doc.supersedes ?? []
+    for (const [index, other] of ids.entries()) {
+      const target = this.repository.doc(other)
+      if (ids.indexOf(other) !== index) issues.push({ field: 'supersedes', message: `repeated: ${other}` })
+      else if (other === id) issues.push({ field: 'supersedes', message: 'a document does not supersede itself' })
+      else if (!target) issues.push({ field: 'supersedes', message: `no such document: ${other}` })
+      else if (target.kind !== doc.kind) issues.push({ field: 'supersedes', message: `${other} is a ${target.kind}, not a ${doc.kind}` })
+      else if ((target.projectId ?? null) !== (doc.projectId ?? null))
+        issues.push({ field: 'supersedes', message: `${other} is in another scope (${target.projectId ?? 'global'})` })
+    }
+    return issues
+  }
+
+  /** Os que este substitui viram `superseded` (o arquivado fica arquivado). Devolve as chaves que mudaram, para o histórico. */
+  private markSuperseded(doc: IProjectDoc, by: string): ICatalogItemKey[] {
+    const changed: ICatalogItemKey[] = []
+    for (const other of doc.supersedes ?? []) {
+      const target = this.repository.doc(other)
+      if (!target || target.status === 'superseded' || target.status === 'archived') continue
+      this.repository.updateDoc(other, { status: 'superseded', updatedAt: this.now(), updatedBy: by })
+      changed.push({ kind: target.kind, id: other })
+    }
+    return changed
+  }
+
+  /** Quem substitui este documento (o inverso de `supersedes`, no mesmo escopo). */
+  supersededBy(doc: Pick<IProjectDoc, 'id' | 'projectId'>): string[] {
+    return this.repository
+      .docs(doc.projectId ?? null)
+      .filter((other) => other.supersedes?.includes(doc.id))
+      .map((other) => other.id)
+  }
+
   /** As specs inteiras da conversa: as do projeto e as do agente — a que está nas duas fica só na do projeto. */
   private loadedFor(projectId?: string, agentId?: string): { project: IProjectDoc[]; agent: IProjectDoc[] } {
     const project = projectId ? this.initialContext(projectId) : []
@@ -1054,12 +1125,15 @@ export class GuidanceService {
   private visibleDocs(projectId?: string, agentId?: string): IProjectDoc[] {
     const { project, agent } = this.loadedFor(projectId, agentId)
     const loaded = new Set([...project, ...agent].map((doc) => doc.id))
-    return [...this.repository.docs(null), ...(projectId ? this.repository.docs(projectId) : [])].filter((doc) => !loaded.has(doc.id))
+    // ⚖️ O substituído e o arquivado saem do índice: a decisão morta não compete com a viva (a busca ainda os acha).
+    return [...this.repository.docs(null), ...(projectId ? this.repository.docs(projectId) : [])].filter((doc) => !loaded.has(doc.id) && !isInactiveDoc(doc))
   }
 
   /** As marcadas que ainda valem: spec, e global ou do escopo dado. ⚖️ A marca do que deixou de valer fica. */
   private validSpecs(docIds: readonly string[], projectId: string | undefined): IProjectDoc[] {
-    return docIds.map((id) => this.repository.doc(id)).filter((doc): doc is IProjectDoc => !!doc && doc.kind === 'spec' && (!doc.projectId || doc.projectId === projectId))
+    return docIds
+      .map((id) => this.repository.doc(id))
+      .filter((doc): doc is IProjectDoc => !!doc && doc.kind === 'spec' && (!doc.projectId || doc.projectId === projectId) && !isInactiveDoc(doc))
   }
 
   /** ⛔ Só spec, global ou do escopo dado, sem repetir. Todos os problemas de uma vez. */

@@ -2,14 +2,25 @@ import type { IImportProblem } from './ImportProblem.Model'
 
 /**
  * Um DOCUMENTO de referência em markdown: uma spec (como algo deve ser), uma ADR (uma decisão de arquitetura e o
- * porquê) ou CONHECIMENTO (o estudo de um tema, com as fontes — a base sólida antes de escrever spec, skill ou ADR). O
- * status de uma ADR ("Proposta", "Aceita"…) fica no próprio texto.
+ * porquê) ou CONHECIMENTO (o estudo de um tema, com as fontes — a base sólida antes de escrever spec, skill ou ADR). O status
+ * (`status`) e a substituição (`supersedes`) são campos: a decisão morta sai do índice e não compete com a viva.
  *
  * ⚖️ O PROMPT LEVA SÓ O ÍNDICE (id, título, resumo): o agente lê o documento inteiro com `read_doc` quando
  * precisa — documento grande não pesa no contexto de toda conversa. Global ou do projeto, como a rule.
  */
 export type TDocKind = 'spec' | 'adr' | 'knowledge'
 export const DOC_KINDS: readonly TDocKind[] = ['spec', 'adr', 'knowledge']
+
+/**
+ * O STATUS do documento (o de ADR, à MADR; vale também para spec e estudo, para arquivar). Ausente = `accepted`.
+ * ⚖️ `superseded` e `archived` saem do índice da conversa e do contexto inicial, mas continuam no `search_docs` e no
+ * `read_doc` (com o aviso): o porquê da decisão não se perde.
+ */
+export type TDocStatus = 'proposed' | 'accepted' | 'superseded' | 'archived'
+export const DOC_STATUSES: readonly TDocStatus[] = ['proposed', 'accepted', 'superseded', 'archived']
+
+/** O documento saiu de uso (substituído ou arquivado)? */
+export const isInactiveDoc = (doc: { status?: TDocStatus }): boolean => doc.status === 'superseded' || doc.status === 'archived'
 
 export interface IProjectDoc {
   /** Slug, único no gateway: é o que o agente passa ao `read_doc`. */
@@ -38,6 +49,13 @@ export interface IProjectDoc {
   importIssues?: IImportProblem[]
   /** As tags (ver `Tag.Policy`): para agrupar e filtrar nas listas. Ausente = nenhuma. */
   tags?: string[]
+  /** Ver `TDocStatus`. Ausente = `accepted`. */
+  status?: TDocStatus
+  /**
+   * Os documentos que ESTE substitui (do mesmo tipo; global ou do mesmo projeto, como o anexo). Gravar marca cada um
+   * como `superseded`. O inverso (quem substitui este) não se grava: sai da leitura (`supersededBy`). Ausente = nenhum.
+   */
+  supersedes?: string[]
   createdAt: Date
   updatedAt: Date
   updatedBy?: string

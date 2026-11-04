@@ -107,6 +107,49 @@ describe('GuidanceService', () => {
     assert.doesNotMatch(service.environmentFor()!, /XPTO|adr-1/)
   })
 
+  it('⚖️ status e substituição: a nova marca a antiga; a substituída sai do índice e do contexto inicial, a busca a acha marcada e o read_doc avisa', () => {
+    const service = build()
+    service.createDoc({ ...doc('adr-velha', 'xpto'), kind: 'adr', body: 'Usar MySQL.' }, 'root')
+    service.createDoc({ ...doc('spec-base', 'xpto') }, 'root')
+    service.setInitialContext('xpto', ['spec-base'], 'root')
+    const nova = service.createDoc({ ...doc('adr-nova', 'xpto'), kind: 'adr', body: 'Usar SQLite.', supersedes: ['adr-velha'] }, 'root')
+    assert.deepStrictEqual(nova.supersedes, ['adr-velha'])
+    assert.strictEqual(service.doc('adr-velha').status, 'superseded')
+    assert.deepStrictEqual(service.supersededBy(service.doc('adr-velha')), ['adr-nova'])
+
+    const text = service.environmentFor('xpto')!
+    assert.match(text, /adr-nova/)
+    assert.doesNotMatch(text, /adr-velha/, 'a substituída sai do índice')
+    assert.match(service.docText(service.doc('adr-velha')), /^# T adr-velha \[adr\]\n\n> ⚠️ SUBSTITUÍDA por adr-nova: não aplique esta decisão; siga adr-nova/)
+    assert.deepStrictEqual(
+      service.searchDocs('mysql', 'xpto').map((hit) => [hit.id, hit.status]),
+      [['adr-velha', 'superseded']],
+    )
+    // Arquivar a spec do contexto inicial a tira de lá (a marca fica: desarquivar, volta).
+    service.updateDoc('spec-base', { status: 'archived' }, 'root')
+    assert.deepStrictEqual(service.initialContext('xpto'), [])
+    service.updateDoc('spec-base', { status: 'accepted' }, 'root')
+    assert.strictEqual(service.doc('spec-base').status, undefined)
+    assert.deepStrictEqual(
+      service.initialContext('xpto').map((item) => item.id),
+      ['spec-base'],
+    )
+
+    const refused = (input: Record<string, unknown>, id = 'adr-nova') =>
+      assert.throws(
+        () => service.updateDoc(id, input, 'root'),
+        (error: unknown) => error instanceof InvalidGuidanceError && error.issues.some((issue) => issue.field === 'supersedes'),
+      )
+    refused({ supersedes: ['adr-nova'] })
+    refused({ supersedes: ['nada'] })
+    refused({ supersedes: ['spec-base'] })
+    service.createDoc({ ...doc('adr-global'), kind: 'adr' }, 'root')
+    refused({ supersedes: ['adr-global'] })
+    // Apagar a substituída tira a ligação.
+    service.deleteDoc('adr-velha', 'root')
+    assert.strictEqual(service.doc('adr-nova').supersedes, undefined)
+  })
+
   it('⛔ read_doc: o global e o do projeto da conversa; o de outro projeto é como se não existisse', () => {
     const service = build()
     service.createDoc(doc('global-doc'), 'root')

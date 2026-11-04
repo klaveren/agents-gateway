@@ -844,7 +844,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'save_doc',
     {
       description:
-        'Create or replace a spec, ADR or knowledge study (markdown). The id is a slug (2–64 lowercase letters, digits or hyphens) that agents pass to read_doc; the summary is the one line shown in the conversation index. For an ADR, write the status (Proposed, Accepted…) in the body. A relation to another document (a spec citing a spec, an ADR pointing to a spec) is an attachment, never a path in the text: docIds lists the attached documents (global ones or of the same project; a global document attaches only global ones), which go along in full when this one is read; docRefs, which of them go by reference instead (id, title and size; read with read_doc only if needed). Absent on update = keep. Confirm with the person before saving.',
+        'Create or replace a spec, ADR or knowledge study (markdown). The id is a slug (2–64 lowercase letters, digits or hyphens) that agents pass to read_doc; the summary is the one line shown in the conversation index. The status of an ADR goes in `status` (not in the text), and a decision that replaces others lists them in `supersedes`. A relation to another document (a spec citing a spec, an ADR pointing to a spec) is an attachment, never a path in the text: docIds lists the attached documents (global ones or of the same project; a global document attaches only global ones), which go along in full when this one is read; docRefs, which of them go by reference instead (id, title and size; read with read_doc only if needed). Absent on update = keep. Confirm with the person before saving.',
       inputSchema: {
         id: z.string(),
         kind: z.enum(['spec', 'adr', 'knowledge']),
@@ -855,6 +855,18 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
         docIds: z.array(z.string()).optional().describe('Other documents attached to this one, in order'),
         docRefs: z.array(z.string()).optional().describe('Which of docIds go by reference instead of in full'),
         tags: z.array(z.string()).optional().describe('Free words to group and filter in the lists (normalized to lowercase-hyphen); absent on update = keep, [] removes all'),
+        status: z
+          .enum(['proposed', 'accepted', 'superseded', 'archived'])
+          .optional()
+          .describe(
+            'Absent on a new one = accepted; on update = keep. Superseded and archived leave the conversation index and the initial context (search_docs and read_doc still find them, marked)',
+          ),
+        supersedes: z
+          .array(z.string())
+          .optional()
+          .describe(
+            'Documents this one replaces (same kind, same scope): saving marks each as superseded, and read_doc of them points here. Absent on update = keep; [] removes all',
+          ),
         importedFrom,
       },
     },
