@@ -3,6 +3,7 @@ import { printsSecret } from '@domain/models/ResourceSecret.Model'
 import { terminalEnv } from '@domain/Agent.Identity'
 import type { IPermissionAsker, IPermissionChecker } from '@application/Permissions.Service'
 import { cercoPlan } from '@domain/Cerco.Plan'
+import { commandMatches } from '@domain/Permission.Policy'
 import type { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { exec } from 'node:child_process'
 import { rmSync } from 'node:fs'
@@ -10,7 +11,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { networkGate } from '@infra/permissions/Network.Gate'
 import { analyzeShell } from '@infra/permissions/Shell.Parse'
-import { bashPolicy, denyReason, truncate, type IBashPolicy } from './Bash.Guard'
+import { bashPolicy, denyReason, PRIVILEGE_ESCALATION, truncate, type IBashPolicy } from './Bash.Guard'
 import { subscriptionEnv, workspaceFor } from '@infra/adapters/support/Subscription.Workspace'
 import { accountsDir, ISshKitIdentity, removeSshKit, writeSshKit } from '@infra/accounts/Ssh.Kit'
 import { CLUSTER_SECRET_REFUSAL, dumpsClusterSecret } from '@domain/Secret.Mask'
@@ -283,6 +284,13 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     }
   }
 
+  /** A trava do `Bash.Guard`, com a exceção do sudo remoto liberado por regra explícita (`remoteSudoAllowed`). */
+  async function guardRefusal(command: string, context: IExecutionContext | undefined): Promise<string | undefined> {
+    const denied = denyReason(command)
+    if (denied === PRIVILEGE_ESCALATION && deps.permissions && (await remoteSudoAllowed(command, deps.permissions, askerOf(context)))) return undefined
+    return denied
+  }
+
   async function guardedBash(command: string, context: IExecutionContext | undefined, permissions: IPermissionChecker, askedSeconds?: number): Promise<IToolResult> {
     const prepared = await prepareSandboxed(command, context, permissions)
     if ('status' in prepared) return prepared
@@ -390,7 +398,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       async execute(args, context): Promise<IToolResult> {
         const command = String(args.command ?? '')
 
-        const denied = denyReason(command)
+        const denied = await guardRefusal(command, context)
         if (denied) {
           return { status: 'error', result: `Refused by the gateway tool policy: ${denied}.` }
         }
@@ -432,7 +440,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
         }
       },
     },
-    ...(deps.permissions && !deps.exec ? backgroundTools(processes, (command, name, context) => startBackground(command, name, context, deps.permissions!)) : []),
+    ...(deps.permissions && !deps.exec ? backgroundTools(processes, (command, name, context) => startBackground(command, name, context, deps.permissions!), guardRefusal) : []),
     ...(deps.accounts?.sign && deps.permissions ? [sshSignTool(deps.accounts.sign.bind(deps.accounts), deps.permissions)] : []),
     ...makeFileTools({
       rootFor: fileRoot,
@@ -494,6 +502,32 @@ export async function terminalRefusal(command: string, root: string, permissions
     if (!verdict.allowed) return verdict.reason
   }
   return undefined
+}
+
+/**
+ * ⚖️ O `sudo` NO HOST REMOTO (`ssh 10.10.0.1 "sudo k3s kubectl …"`): o `Bash.Guard` recusa o sudo em qualquer ponto da
+ * linha, e no cerco o sudo local nem roda. Dentro da string do `ssh` ele passa só com uma regra de terminal que LIBERA e
+ * CITA o sudo (`ssh * sudo*k3s kubectl*`), aprovada pela pessoa: o `terminal *` não basta. O local segue recusado.
+ */
+export async function remoteSudoAllowed(command: string, permissions: IPermissionChecker, asker: IPermissionAsker): Promise<boolean> {
+  const analysis = await analyzeShell(command)
+  if (analysis.opaque.length) return false
+  if (analysis.commands.some((part) => part.name === 'sudo' || part.name === 'doas' || /^\s*(sudo|doas)\b/.test(part.text))) return false
+  const layers = permissions.layers?.(asker)
+  const rules = [...(layers?.agent ?? []), ...(layers?.project ?? [])].filter((rule) => rule.category === 'terminal' && rule.decision === 'allow' && /\bsudo\b/.test(rule.pattern))
+  const withSudo = analysis.commands.filter((part) => /\bsudo\b/.test(part.text))
+  return withSudo.length > 0 && withSudo.every((part) => part.name === 'ssh' && rules.some((rule) => sshRemoteMatches(rule.pattern, part.argv)))
+}
+
+/**
+ * A regra contra o `ssh` com o comando remoto em PALAVRAS (`ssh * sudo k3s kubectl *`). ⛔ Só o comando remoto simples,
+ * que começa pelo sudo: com `;`, `&`, `|`, crase, `$(`, redirecionamento ou quebra de linha, o `*` da regra engoliria
+ * um segundo comando.
+ */
+function sshRemoteMatches(pattern: string, argv: readonly string[]): boolean {
+  const at = argv.findIndex((word, index) => index > 0 && /^sudo\s/.test(word))
+  if (at < 0 || argv.slice(at + 1).length || /[;&|`<>\n]|\$\(/.test(argv[at])) return false
+  return commandMatches(pattern, [...argv.slice(0, at), ...argv[at].trim().split(/\s+/)])
 }
 
 function workPath(root: string, target: string): string {
@@ -1025,6 +1059,7 @@ export function capNotice(askedSeconds: number, ceilingMs: number): string {
 function backgroundTools(
   processes: BackgroundProcesses,
   start: (command: string, name: string | undefined, context: IExecutionContext | undefined) => Promise<IToolResult>,
+  guardRefusal: (command: string, context: IExecutionContext | undefined) => Promise<string | undefined>,
 ): ILocalTool[] {
   const describe = (entry: { id: string; name: string; status: string; code?: number | null; startedAt: Date; background: boolean }) =>
     `${entry.id} · ${entry.background ? 'segundo plano' : 'comando'} · ${entry.status}${entry.code !== undefined && entry.code !== null ? ` (código ${entry.code})` : ''} · ${entry.name} · desde ${entry.startedAt.toISOString().slice(11, 19)}`
@@ -1041,7 +1076,7 @@ function backgroundTools(
       },
       async execute(args, context) {
         const command = String(args.command ?? '')
-        const denied = denyReason(command)
+        const denied = await guardRefusal(command, context)
         if (denied) return { status: 'error', result: `Refused by the gateway tool policy: ${denied}.` }
         if (dumpsClusterSecret(command)) return { status: 'error', result: CLUSTER_SECRET_REFUSAL }
         return start(command, typeof args.name === 'string' ? args.name : undefined, context)

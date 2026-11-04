@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
-import { makeLocalTools, type IExecOptions, type TExec } from './Local.Tools'
+import { makeLocalTools, remoteSudoAllowed, type IExecOptions, type TExec } from './Local.Tools'
 import { realOf } from './File.Tools'
 import type { IPermissionChecker } from '@application/Permissions.Service'
 import type { ICercoPlan } from '@domain/Cerco.Plan'
@@ -716,5 +716,28 @@ describe('update_todos', () => {
 
   it('sem onde gravar, a ferramenta não existe', () => {
     assert.ok(!makeLocalTools({}).some((item) => item.name === 'update_todos'))
+  })
+})
+
+describe('remoteSudoAllowed', () => {
+  const checker = (agent: IPermissionRule[]): IPermissionChecker => ({ check: (_asker, subject) => decide(subject, { agent }), layers: () => ({ agent, system: [] }) })
+  const asker = { agentId: 'agent-sre' }
+  const kubectl = 'ssh -o BatchMode=yes 10.10.0.1 "sudo k3s kubectl get nodes -o wide"'
+
+  it('⛔ o `terminal *` não libera o sudo remoto: só a regra que o cita', async () => {
+    assert.strictEqual(await remoteSudoAllowed(kubectl, checker([{ category: 'terminal', pattern: '*', decision: 'allow' }]), asker), false)
+    const rules: IPermissionRule[] = [
+      { category: 'terminal', pattern: '*', decision: 'allow' },
+      { category: 'terminal', pattern: 'ssh * sudo k3s kubectl *', decision: 'allow' },
+    ]
+    assert.strictEqual(await remoteSudoAllowed(kubectl, checker(rules), asker), true)
+    for (const command of ['ssh 10.10.0.1 "sudo rm -rf /var"', 'ssh 10.10.0.1 "sudo k3s kubectl get nodes; sudo rm -rf /var"', 'ssh 10.10.0.1 "sudo k3s kubectl get $(id)"'])
+      assert.strictEqual(await remoteSudoAllowed(command, checker(rules), asker), false, command)
+  })
+
+  it('⛔ o sudo local segue recusado, mesmo com a regra', async () => {
+    const rules: IPermissionRule[] = [{ category: 'terminal', pattern: '* sudo*', decision: 'allow' }]
+    for (const command of ['sudo ssh 10.10.0.1 "sudo id"', 'ssh 10.10.0.1 "sudo id"; sudo id', 'echo sudo'])
+      assert.strictEqual(await remoteSudoAllowed(command, checker(rules), asker), false, command)
   })
 })
