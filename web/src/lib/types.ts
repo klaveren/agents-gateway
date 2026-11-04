@@ -657,6 +657,8 @@ export interface IResource {
   files?: IResourceFile[]
   /** Os problemas da importação (ver `IImportIssue`). */
   importIssues?: IImportIssue[]
+  /** Os triggers da skill ou do command: o procedimento de uma situação, carregado sob demanda (`<id>/<trigger>`). */
+  triggers?: IAgentTrigger[]
   createdAt: string
   updatedAt: string
   updatedBy?: string

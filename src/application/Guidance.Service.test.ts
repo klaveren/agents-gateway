@@ -329,6 +329,40 @@ describe('GuidanceService', () => {
       assert.match(service.loadResource('command', 'resumir', 'dev')!, /# Command: resumir\n\nResuma \$ARGUMENTS em 3 linhas\./)
     })
 
+    it('⚖️ triggers da skill e do command: a lista (id e quando) vai no carregado, o corpo só pelo trigger; ⛔ só do recurso liberado', () => {
+      const service = seeded()
+      const deploy = { id: 'deploy-falhou', when: 'quando o deploy falhar', body: 'Leia o log e reverta.' }
+      service.updateResource('tabela', { triggers: [deploy] }, 'root')
+      service.updateResource('resumir', { triggers: [{ id: 'sem-arquivo', when: 'quando não vier arquivo', body: 'Peça o arquivo.' }] }, 'root')
+      service.setAgentResources('dev', { skills: ['tabela'], commands: ['resumir'] }, 'root')
+
+      const skill = service.loadResource('skill', 'tabela', 'dev')!
+      assert.match(skill, /## Triggers desta skill\n[^\n]+tabela\/<trigger>[^\n]+\n- tabela\/deploy-falhou — quando o deploy falhar/)
+      assert.ok(!skill.includes('Leia o log'), 'o corpo do trigger não vai com a skill')
+      assert.strictEqual(
+        service.loadResource('trigger', 'tabela/deploy-falhou', 'dev'),
+        '# Trigger: tabela/deploy-falhou\n\nQuando: quando o deploy falhar\n\nLeia o log e reverta.',
+      )
+      assert.strictEqual(service.loadResource('trigger', 'tabela/deploy-falhou', 'resumo'), undefined, 'skill não liberada: o trigger não existe para ele')
+      assert.strictEqual(service.loadResource('trigger', 'tabela/nada', 'dev'), undefined)
+      assert.strictEqual(service.loadResource('trigger', 'tabela/deploy-falhou/x', 'dev'), undefined)
+      assert.match(service.expandCommand('/resumir x', 'dev')!.text, /## Triggers deste command\n[\s\S]*- resumir\/sem-arquivo — quando não vier arquivo/)
+      assert.match(service.expandCommand('/tabela x', 'dev')!.text, /- tabela\/deploy-falhou — quando o deploy falhar/)
+      assert.deepStrictEqual(service.searchResources('deploy falhar', 'trigger', 'dev'), [{ kind: 'trigger', id: 'tabela/deploy-falhou', description: 'quando o deploy falhar' }])
+      assert.strictEqual(service.resourceKindOf('tabela'), 'skill')
+
+      // A edição sem triggers mantém; `[]` tira todos; inválido é recusado com o campo.
+      service.updateResource('tabela', { description: 'Outra' }, 'root')
+      assert.deepStrictEqual(service.resource('tabela').triggers, [deploy])
+      assert.throws(
+        () => service.updateResource('tabela', { triggers: [deploy, { ...deploy }, { id: 'X', when: 'a\nb', body: '' }] }, 'root'),
+        (error: unknown) => error instanceof InvalidGuidanceError && error.issues.every((issue) => issue.field === 'triggers') && error.issues.length >= 3,
+      )
+      service.updateResource('tabela', { triggers: [] }, 'root')
+      assert.strictEqual(service.resource('tabela').triggers, undefined)
+      assert.ok(!service.loadResource('skill', 'tabela', 'dev')!.includes('## Triggers'))
+    })
+
     it('anexo inteiro: sem docRefs, o use_resource sai exatamente como antes', () => {
       const service = seeded()
       service.setAgentResources('dev', { skills: ['tabela'], commands: [] }, 'root')

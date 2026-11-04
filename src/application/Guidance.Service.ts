@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { builderKindOf, PROTOCOLS } from '@domain/Builder.Agents'
 import { estimateTokens } from '@domain/Token.Estimate'
+import { triggerIssues } from '@domain/Agent.Policy'
+import type { IAgentTrigger } from '@domain/models/Agent.Model'
 import { AgentNotFoundError, GuidanceNotFoundError, InvalidGuidanceError, ProjectNotFoundError } from '@domain/errors/Domain.Error'
 import { DOC_ID_PATTERN, DOC_INDEX_LIMIT, DOC_KINDS, DOC_SUMMARY_MAX, DOC_TITLE_MAX, IProjectDoc, READ_DOC_TOOL, SEARCH_DOCS_TOOL, TDocKind } from '@domain/models/ProjectDoc.Model'
 import {
@@ -92,6 +94,8 @@ export interface IResourceInput {
   files?: IResourceFile[]
   /** Os problemas da importação (só o caminho do catálogo grava; ver `ImportProblem.Model`). Ausente na edição = mantém. */
   importIssues?: IImportProblem[]
+  /** Os triggers do recurso (ver `IResource.triggers`). Ausente na edição = mantém; `[]` tira todos. */
+  triggers?: IAgentTrigger[]
 }
 
 /**
@@ -800,6 +804,7 @@ export class GuidanceService {
       ...(input.docRefs?.length ? { docRefs: input.docRefs } : {}),
       ...(input.files?.length ? { files: sortFiles(input.files) } : {}),
       ...(input.importIssues?.length ? { importIssues: input.importIssues } : {}),
+      ...(input.triggers?.length ? { triggers: cleanTriggers(input.triggers) } : {}),
       createdAt: this.now(),
       updatedAt: this.now(),
       updatedBy: by,
@@ -826,11 +831,13 @@ export class GuidanceService {
       ...(input.docIds !== undefined ? { docIds: input.docIds } : {}),
       ...(input.files !== undefined ? { files: sortFiles(input.files) } : {}),
       ...(input.importIssues !== undefined ? { importIssues: input.importIssues } : {}),
+      ...(input.triggers !== undefined ? { triggers: cleanTriggers(input.triggers) } : {}),
       updatedAt: this.now(),
       updatedBy: by,
     }
     if (!next.files?.length) delete next.files
     if (!next.importIssues?.length) delete next.importIssues
+    if (!next.triggers?.length) delete next.triggers
     // Sem `docRefs` na edição, ficam as de antes — menos as que deixaram de estar anexadas.
     const refs = input.docRefs ?? (current.docRefs ?? []).filter((docId) => next.docIds.includes(docId))
     if (refs.length) next.docRefs = refs
@@ -923,13 +930,29 @@ export class GuidanceService {
    */
   loadResource(kind: TUsableKind, id: string, agentId?: string): string | undefined {
     if (kind === 'trigger') {
-      const trigger = this.triggersOf(agentId).find((item) => item.id === id)
-      return trigger ? `# Trigger: ${trigger.id}\n\nQuando: ${trigger.when.trim()}\n\n${trigger.body.trim()}` : undefined
+      const trigger = this.triggersOf(agentId).find((item) => item.id === id) ?? this.resourceTrigger(id, agentId)
+      return trigger ? `# Trigger: ${id}\n\nQuando: ${trigger.when.trim()}\n\n${trigger.body.trim()}` : undefined
     }
     const resource = this.usableResources(kind, agentId).find((item) => item.id === id)
     return resource
-      ? `# ${kind === 'skill' ? 'Skill' : 'Command'}: ${resource.id}\n\n${resource.body.trim()}${this.attachments(resource, new Set())}${this.filesOf(resource)}${importIssuesNote(resource.importIssues)}`
+      ? `# ${kind === 'skill' ? 'Skill' : 'Command'}: ${resource.id}\n\n${resource.body.trim()}${triggerIndexNote(resource)}${this.attachments(resource, new Set())}${this.filesOf(resource)}${importIssuesNote(resource.importIssues)}`
       : undefined
+  }
+
+  /** O tipo de uma skill ou command pelo id (a regra da skill vale para os triggers dela). */
+  resourceKindOf(id: string): 'skill' | 'command' | undefined {
+    return this.repository.resource(id)?.kind
+  }
+
+  /**
+   * ⛔ O trigger de uma skill ou command (`<recurso>/<trigger>`): só do recurso que o agente pode usar — o de outro
+   * responde como inexistente, igual ao próprio recurso.
+   */
+  private resourceTrigger(qualified: string, agentId?: string): IAgentTrigger | undefined {
+    const [resourceId, triggerId, ...rest] = qualified.split('/')
+    if (!resourceId || !triggerId || rest.length) return undefined
+    const resource = [...this.usableResources('skill', agentId), ...this.usableResources('command', agentId)].find((item) => item.id === resourceId)
+    return resource?.triggers?.find((trigger) => trigger.id === triggerId)
   }
 
   /** Onde estão os arquivos do recurso, para o agente rodar os scripts (a pasta é só leitura). */
@@ -945,6 +968,11 @@ export class GuidanceService {
       ...(!kind || kind === 'skill' ? this.usableResources('skill', agentId).map((item) => ({ kind: 'skill' as const, id: item.id, description: item.description })) : []),
       ...(!kind || kind === 'command' ? this.usableResources('command', agentId).map((item) => ({ kind: 'command' as const, id: item.id, description: item.description })) : []),
       ...(!kind || kind === 'trigger' ? this.triggersOf(agentId).map((item) => ({ kind: 'trigger' as const, id: item.id, description: item.when.trim() })) : []),
+      ...(!kind || kind === 'trigger'
+        ? [...this.usableResources('skill', agentId), ...this.usableResources('command', agentId)].flatMap((resource) =>
+            (resource.triggers ?? []).map((item) => ({ kind: 'trigger' as const, id: `${resource.id}/${item.id}`, description: item.when.trim() })),
+          )
+        : []),
     ]
     return all.filter((item) => words.every((word) => `${item.id} ${item.description}`.toLowerCase().includes(word)))
   }
@@ -967,11 +995,11 @@ export class GuidanceService {
     if (!resource) throw new InvalidGuidanceError([{ field: 'message', message: `${existing.kind} /${id} is not enabled for this agent` }])
     const args = (rawArgs ?? '').trim()
     if (resource.kind === 'skill') {
-      const skill = `[A pessoa pediu a skill ${resource.id}: ela já está carregada abaixo — siga-a.]\n\n# Skill: ${resource.id}\n\n${resource.body.trim()}${this.attachments(resource, new Set())}${this.filesOf(resource)}`
+      const skill = `[A pessoa pediu a skill ${resource.id}: ela já está carregada abaixo — siga-a.]\n\n# Skill: ${resource.id}\n\n${resource.body.trim()}${triggerIndexNote(resource)}${this.attachments(resource, new Set())}${this.filesOf(resource)}`
       return { text: `${skill}\n\n# Pedido\n\n${args || '(sem texto: aplique a skill ao que estamos fazendo)'}`, label: text.trim(), command: id }
     }
     const body = resource.body.includes('$ARGUMENTS') ? resource.body.replace(/\$ARGUMENTS/g, args) : `${resource.body.trim()}${args ? `\n\nArgumentos: ${args}` : ''}`
-    return { text: `${body.trim()}${this.attachments(resource, new Set())}${this.filesOf(resource)}`, label: text.trim(), command: id }
+    return { text: `${body.trim()}${triggerIndexNote(resource)}${this.attachments(resource, new Set())}${this.filesOf(resource)}`, label: text.trim(), command: id }
   }
 
   /**
@@ -1211,9 +1239,30 @@ export function attachIssuesIn(lookup: IGuidanceLookup, doc: Pick<IProjectDoc, '
   return issues
 }
 
+/**
+ * A lista dos triggers do recurso carregado: só id e "quando" — o corpo de cada um entra quando a situação acontece.
+ * Vazia sem triggers.
+ */
+export function triggerIndexNote(resource: Pick<IResource, 'id' | 'kind' | 'triggers'>): string {
+  if (!resource.triggers?.length) return ''
+  const what = resource.kind === 'skill' ? 'desta skill' : 'deste command'
+  return [
+    '',
+    '',
+    `## Triggers ${what}`,
+    `Procedimentos de uma situação. Quando ela acontecer, carregue o trigger com ${USE_RESOURCE_TOOL} (tipo trigger, id ${resource.id}/<trigger>) e siga-o; não carregue os outros.`,
+    ...resource.triggers.map((trigger) => `- ${resource.id}/${trigger.id} — ${trigger.when.trim()}`),
+  ].join('\n')
+}
+
+/** Os triggers como vieram, com o "quando" e o corpo aparados (a validação é a dos do agente, `triggerIssues`). */
+function cleanTriggers(triggers: readonly IAgentTrigger[]): IAgentTrigger[] {
+  return triggers.map((trigger) => ({ id: trigger.id?.trim() ?? '', when: trigger.when?.trim() ?? '', body: trigger.body ?? '' }))
+}
+
 /** Os problemas de uma skill ou command (sem o id, que tem regra própria na criação). */
-export function resourceIssuesIn(lookup: IGuidanceLookup, resource: Pick<IResource, 'kind' | 'projectId' | 'description' | 'body' | 'docIds' | 'docRefs'>): TIssues {
-  const issues: TIssues = []
+export function resourceIssuesIn(lookup: IGuidanceLookup, resource: Pick<IResource, 'kind' | 'projectId' | 'description' | 'body' | 'docIds' | 'docRefs' | 'triggers'>): TIssues {
+  const issues: TIssues = [...triggerIssues(resource.triggers)]
   if (!RESOURCE_KINDS.includes(resource.kind)) issues.push({ field: 'kind', message: `one of ${RESOURCE_KINDS.join(', ')}` })
   if (!resource.description) issues.push({ field: 'description', message: 'required: it is what the agent reads to know when to use it' })
   else if (resource.description.length > RESOURCE_DESCRIPTION_MAX) issues.push({ field: 'description', message: `at most ${RESOURCE_DESCRIPTION_MAX} characters` })

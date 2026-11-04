@@ -3,7 +3,7 @@ import { ICoreProtocol } from '@domain/models/Protocol.Model'
 /** O protocolo do core para construir uma SKILL. ⚠️ Mudou o texto, sobe a versão. */
 export const SKILL_PROTOCOL: ICoreProtocol = {
   kind: 'skill',
-  version: '1.1.3',
+  version: '1.2.0',
   title: 'Protocolo de construção de skill',
   body: `# Protocolo de construção de skill
 
@@ -42,8 +42,14 @@ Markdown operacional, sem visão geral nem teoria (essa é a spec anexada). Nest
 - Imperativo e curto. Um passo por linha.
 - Cite os documentos anexados pelo título quando um passo depender deles ("siga a spec Padrões de API").
 - Exemplos só quando o formato da saída importa.
-- **Várias ações** (criar, alterar, usar, validar): o corpo abre com um roteiro (ação → seção) e cada ação tem a sua seção. Uma ação que sozinha é grande vira outra skill.
+- **Várias ações** (criar, alterar, usar, validar): o corpo abre com um roteiro (ação → seção) e cada ação tem a sua seção. Uma ação que sozinha é grande vira outra skill; o procedimento de uma situação vira um trigger (abaixo).
 - **Script:** um passo que roda um script do repositório leva o cartão — comando, argumentos, pré-requisitos, saída esperada e o que fazer na falha.
+
+## Triggers
+O procedimento de UMA situação dentro do skill ("quando o deploy falhar", "quando for a primeira vez no projeto") é um TRIGGER da skill, não uma seção do corpo nem uma skill à parte. Carregado o skill, o agente vê só o id e o "quando" de cada trigger, e carrega o procedimento (use_resource, tipo trigger, id \`<skill>/<trigger>\`) só quando a situação acontece.
+- Um trigger por situação; o id diz o trabalho (minúsculas e hífens); o "quando" é uma linha com a condição de disparo.
+- O corpo do trigger segue o mesmo formato operacional do corpo da skill, só com o que aquela situação pede.
+- O que vale SEMPRE que o skill é usado fica no corpo; o que vale numa situação vai para um trigger. Corpo que cresce com casos especiais é trigger mal colocado.
 
 ## Escopo
 - Global vale em todos os projetos; a do projeto, só nele. Na dúvida, do projeto.

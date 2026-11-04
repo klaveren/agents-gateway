@@ -3,7 +3,7 @@ import { ICoreProtocol } from '@domain/models/Protocol.Model'
 /** O protocolo do core para construir um COMMAND. ⚠️ Mudou o texto, sobe a versão. */
 export const COMMAND_PROTOCOL: ICoreProtocol = {
   kind: 'command',
-  version: '1.1.2',
+  version: '1.2.0',
   title: 'Protocolo de construção de command',
   body: `# Protocolo de construção de command
 
@@ -35,6 +35,12 @@ Revise o pull request $ARGUMENTS (sem número: o mais recente aberto).
 3. Para cada problema: arquivo e linha, o que está errado, a correção. Ordene do mais grave.
 4. Termine com: aprovar, aprovar com ajustes ou pedir mudanças — e por quê.
 \`\`\`
+
+## Triggers
+O procedimento de UMA situação dentro do command ("quando o PR for de migração", "quando faltar o ticket") é um TRIGGER do command, não uma seção do corpo nem um command à parte. Disparado o command, o agente vê só o id e o "quando" de cada trigger, e carrega o procedimento (use_resource, tipo trigger, id \`<command>/<trigger>\`) só quando a situação acontece.
+- Um trigger por situação; o id diz o trabalho (minúsculas e hífens); o "quando" é uma linha com a condição de disparo.
+- O corpo do trigger segue o mesmo formato do pedido, só com o que aquela situação pede.
+- O que vale SEMPRE que o command roda fica no corpo; o que vale numa situação vai para um trigger.
 
 ## Escopo
 - Global vale em todos os projetos; o do projeto, só nele. Na dúvida, do projeto.

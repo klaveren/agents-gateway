@@ -178,6 +178,8 @@ export const RESOURCE_SHAPE: TShape<IResource> = {
   docRefs: 'set',
   files: { set: FILE_SHAPE },
   importIssues: { list: IMPORT_PROBLEM_SHAPE },
+  // A ordem é a da lista "## Triggers" da skill carregada.
+  triggers: { list: TRIGGER_SHAPE },
   createdAt: { omit: META },
   updatedAt: { omit: META },
   updatedBy: { omit: META },

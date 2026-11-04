@@ -131,6 +131,24 @@ describe('CatalogRestoreUseCase — restaurar uma revisão', () => {
     assert.strictEqual(list[2].hash, list[0].hash)
   })
 
+  it('os triggers da skill entram na revisão: voltar traz os de antes (e tira os que vieram depois)', async () => {
+    const { guidance, restore } = build()
+    const deploy = { id: 'deploy-falhou', when: 'quando o deploy falhar', body: 'Reverta.' }
+    guidance.createResource({ id: 'tabela', kind: 'skill', description: 'Tabelas', body: 'v1', triggers: [deploy] }, 'ana')
+    guidance.updateResource(
+      'tabela',
+      {
+        triggers: [
+          { ...deploy, body: 'Outro.' },
+          { id: 'novo', when: 'quando for novo', body: 'X.' },
+        ],
+      },
+      'bia',
+    )
+    await restore.restore({ item: { kind: 'skill', itemId: 'tabela' }, revision: 1, expectedRevision: 2 }, ADMIN)
+    assert.deepStrictEqual(guidance.resource('tabela').triggers, [deploy])
+  })
+
   it('delete: o item apagado volta com o mesmo id; a rule volta no fim da lista do escopo', async () => {
     const { guidance, restore, revisions, last } = build()
     guidance.createDoc({ id: 'guia', kind: 'spec', title: 'Guia', summary: 'S', body: 'B' }, 'ana')

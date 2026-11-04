@@ -1015,6 +1015,20 @@ const resourceSchema = {
       description: 'Which of docIds go by reference: the loaded resource lists id, title and size, and the agent reads them with read_doc if needed. Absent on update = keep.',
     },
     files: { ...resourceFiles, description: 'The files of the resource folder (content uploaded with POST /files). Absent on update = keep.' },
+    triggers: {
+      type: 'array',
+      description:
+        'The procedures of one situation inside this skill or command, like the triggers of an agent: the loaded resource lists only id and when; the agent loads one with use_resource (kind trigger, id <resource>/<trigger>). Absent on update = keep; [] removes all.',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Slug, unique in the resource.' },
+          when: { type: 'string', description: 'One line: the situation that fires it.' },
+          body: { type: 'string' },
+        },
+        required: ['id', 'when', 'body'],
+      },
+    },
     importIssues: { ...importIssuesSchema, readOnly: true },
     createdAt: { type: 'string', format: 'date-time' },
     updatedAt: { type: 'string', format: 'date-time' },

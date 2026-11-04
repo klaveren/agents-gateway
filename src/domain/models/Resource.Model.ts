@@ -1,4 +1,5 @@
 import type { IImportProblem } from './ImportProblem.Model'
+import type { IAgentTrigger } from './Agent.Model'
 import type { IResourceFile } from './ResourceFile.Model'
 
 /**
@@ -33,6 +34,12 @@ export interface IResource {
   files?: IResourceFile[]
   /** Os problemas da importação que ficaram no recurso (ver `ImportProblem.Model`). Ausente = nenhum. */
   importIssues?: IImportProblem[]
+  /**
+   * Os TRIGGERS do recurso, como os do agente (`IAgentTrigger`): o procedimento de uma situação dentro da skill ou do
+   * command. Carregado o recurso, ele lista só id e "quando" de cada um; o corpo entra quando a situação acontece
+   * (`use_resource`, tipo trigger, id `<recurso>/<trigger>`). Ausente = nenhum.
+   */
+  triggers?: IAgentTrigger[]
   createdAt: Date
   updatedAt: Date
   updatedBy?: string

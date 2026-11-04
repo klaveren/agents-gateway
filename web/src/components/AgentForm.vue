@@ -40,6 +40,7 @@
   import type { IPermissionRequest } from '@/lib/permissionRequests'
   import AgentInitialContext from './AgentInitialContext.vue'
   import AgentResources from './AgentResources.vue'
+  import TriggersEditor from './TriggersEditor.vue'
   import ResourceFiles from './ResourceFiles.vue'
   import HistoryPanel from './HistoryPanel.vue'
   import ConfirmDialog from './ConfirmDialog.vue'
@@ -777,48 +778,13 @@
       </label>
     </fieldset>
     <fieldset v-show="tab === 'triggers'" class="flex flex-col gap-4">
-      <div class="flex flex-col gap-1">
-        <h3 class="text-sm font-medium text-zinc-200">Triggers — ações ativadas sob demanda</h3>
-        <p class="text-xs text-zinc-500">
-          Procedimentos deste agente, e de mais ninguém. O prompt lista só o nome e o "quando usar" de cada um; o procedimento entra quando o pedido se encaixa (o agente o carrega
-          com use_resource).
-        </p>
-      </div>
-      <div v-for="(trigger, index) in form.triggers" :key="index" class="flex flex-col gap-2 rounded-xl border border-zinc-800 px-3 py-3">
-        <div class="grid gap-2 sm:grid-cols-[14rem_1fr_auto]">
-          <input
-            :id="`trigger-id-${index}`"
-            v-model="trigger.id"
-            class="input font-mono text-[13px]"
-            placeholder="morning-brief"
-            aria-label="Nome do trigger"
-            @keydown.enter.prevent
-          />
-          <input
-            :id="`trigger-when-${index}`"
-            v-model="trigger.when"
-            class="input"
-            placeholder="Quando usar: a pessoa diz bom dia"
-            aria-label="Quando usar"
-            @keydown.enter.prevent
-          />
-          <button type="button" class="btn btn-sm btn-danger" @click="form.triggers!.splice(index, 1)">Remover</button>
-        </div>
-        <textarea
-          :id="`trigger-body-${index}`"
-          v-model="trigger.body"
-          rows="8"
-          class="input scroll-thin font-mono text-[13px] leading-relaxed"
-          placeholder="O procedimento: o que fazer, passo a passo."
-          aria-label="Procedimento"
-        />
-        <small v-if="trigger.body" class="hint">{{ sizeHint(trigger.body, 'quando carregado') }}</small>
-      </div>
-      <p v-if="!form.triggers?.length" class="text-sm text-zinc-500">
-        Nenhum trigger. Um trigger é um subcomando do agente: o "quando usar" vai no índice do prompt, e o procedimento só quando precisa.
-      </p>
-      <button type="button" class="btn btn-sm btn-ghost self-start" @click="form.triggers = [...(form.triggers ?? []), { id: '', when: '', body: '' }]">+ Trigger</button>
-      <small v-for="message in issues.triggers" :key="message" class="error">{{ message }}</small>
+      <TriggersEditor
+        v-model="form.triggers!"
+        title="Triggers — ações ativadas sob demanda"
+        intro='Procedimentos deste agente, e de mais ninguém. O prompt lista só o nome e o "quando usar" de cada um; o procedimento entra quando o pedido se encaixa (o agente o carrega com use_resource).'
+        empty='Nenhum trigger. Um trigger é um subcomando do agente: o "quando usar" vai no índice do prompt, e o procedimento só quando precisa.'
+        :issues="issues.triggers"
+      />
     </fieldset>
     <fieldset v-show="tab === 'modelos'" class="grid gap-4 sm:grid-cols-2">
       <div class="field sm:col-span-2">
