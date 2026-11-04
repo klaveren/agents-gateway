@@ -1,3 +1,4 @@
+import type { IErrorLog, IErrorLogQuery, TErrorKind } from '@domain/models/ErrorLog.Model'
 import { ITodoItem } from '@domain/models/ConversationTodo.Model'
 import { parseUsageKey } from '@domain/models/Session.Model'
 import { DatabaseSync } from 'node:sqlite'
@@ -698,6 +699,75 @@ export class SqliteConversationRepository implements IConversationRepository {
    * cada dia o que gastou nele. O fuso vai como modificador do `datetime` do SQLite (`'-180 minutes'`),
    * sempre parâmetro.
    */
+  /**
+   * O REGISTRO DE ERROS (ver `ErrorLog.Model`), lido dos turnos: a ferramenta com `error`, o turno com `error` e o
+   * interrompido. Sem as conversas apagadas. ⚖️ As contagens são do recorte inteiro; a lista, do mais recente.
+   */
+  async errors(query: IErrorLogQuery): Promise<IErrorLog> {
+    const empty: IErrorLog = { items: [], byKind: { tool: 0, turn: 0, aborted: 0 }, byTool: [] }
+    return (
+      this.guard('errors', () => {
+        const base = ['c.deleted_at IS NULL', 't.at >= ?']
+        const params: Array<string | number> = [query.since.toISOString()]
+        if (query.agentId) {
+          base.push('c.agent_id = ?')
+          params.push(query.agentId)
+        }
+        const toolFilter = query.tool ? " AND json_extract(j.value, '$.tool') = ?" : ''
+        const toolParams = query.tool ? [query.tool] : []
+        const parts: Array<{ kind: TErrorKind; sql: string; params: Array<string | number> }> = [
+          {
+            kind: 'tool',
+            sql: `SELECT 'tool' AS kind, t.at AS at, t.conversation_id AS conversation_id, t.idx AS idx, c.agent_id AS agent_id, c.title AS title,
+                    json_extract(j.value, '$.tool') AS tool, json_extract(j.value, '$.error') AS message
+                  FROM conversation_turns t JOIN conversations c ON c.id = t.conversation_id, json_each(t.tool_calls) j
+                  WHERE ${base.join(' AND ')} AND json_extract(j.value, '$.error') IS NOT NULL${toolFilter}`,
+            params: [...params, ...toolParams],
+          },
+          {
+            kind: 'turn',
+            sql: `SELECT 'turn' AS kind, t.at AS at, t.conversation_id AS conversation_id, t.idx AS idx, c.agent_id AS agent_id, c.title AS title, NULL AS tool, t.error AS message
+                  FROM conversation_turns t JOIN conversations c ON c.id = t.conversation_id WHERE ${base.join(' AND ')} AND t.error IS NOT NULL`,
+            params: [...params],
+          },
+          {
+            kind: 'aborted',
+            sql: `SELECT 'aborted' AS kind, t.at AS at, t.conversation_id AS conversation_id, t.idx AS idx, c.agent_id AS agent_id, c.title AS title, NULL AS tool, 'interrompido' AS message
+                  FROM conversation_turns t JOIN conversations c ON c.id = t.conversation_id WHERE ${base.join(' AND ')} AND t.aborted = 1`,
+            params: [...params],
+          },
+        ]
+        // A ferramenta filtrada só tem erro de ferramenta; o tipo escolhido, só ele.
+        const chosen = parts.filter((part) => (!query.kind || part.kind === query.kind) && (!query.tool || part.kind === 'tool'))
+        if (!chosen.length) return empty
+        const union = chosen.map((part) => part.sql).join(' UNION ALL ')
+        const unionParams = chosen.flatMap((part) => part.params)
+        const limit = Math.min(Math.max(query.limit ?? 100, 1), 500)
+        const rows = this.db.prepare(`SELECT * FROM (${union}) ORDER BY at DESC LIMIT ?`).all(...unionParams, limit) as TRow[]
+        const kinds = this.db.prepare(`SELECT kind, COUNT(*) AS n FROM (${union}) GROUP BY kind`).all(...unionParams) as TRow[]
+        const tools = chosen.some((part) => part.kind === 'tool')
+          ? (this.db.prepare(`SELECT tool, COUNT(*) AS n FROM (${parts[0].sql}) GROUP BY tool ORDER BY n DESC LIMIT 20`).all(...parts[0].params) as TRow[])
+          : []
+        const byKind = { ...empty.byKind }
+        for (const row of kinds) byKind[text(row.kind) as TErrorKind] = count(row.n)
+        return {
+          items: rows.map((row) => ({
+            at: new Date(text(row.at)),
+            kind: text(row.kind) as TErrorKind,
+            conversationId: text(row.conversation_id),
+            turn: count(row.idx),
+            agentId: text(row.agent_id),
+            ...(typeof row.title === 'string' ? { title: row.title } : {}),
+            ...(typeof row.tool === 'string' ? { tool: row.tool } : {}),
+            message: typeof row.message === 'string' ? row.message : JSON.stringify(row.message ?? ''),
+          })),
+          byKind,
+          byTool: tools.map((row) => ({ tool: text(row.tool), count: count(row.n) })),
+        }
+      }) ?? empty
+    )
+  }
+
   async usage(query: IUsageQuery): Promise<IUsageRow[]> {
     return (
       this.guard('usage', () => {

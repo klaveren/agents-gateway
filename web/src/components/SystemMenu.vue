@@ -2,7 +2,7 @@
   import RailMenu, { type IRailMenuItem } from './RailMenu.vue'
 
   /**
-   * O menu do SISTEMA (só admin): Projetos, Usuários, Modelos, Grupos de modelos, MCPs, Histórico do catálogo, Pacotes e Configuração num botão só, como o da conta.
+   * O menu do SISTEMA (só admin): Projetos, Usuários, Modelos, Grupos de modelos, MCPs, Histórico do catálogo, Erros, Pacotes e Configuração num botão só, como o da conta.
    * ⚖️ O trilho fica com o que se usa todo dia (conversas, uso, agentes); o que se configura de vez em
    * quando mora aqui. Specs, ADRs e conhecimento moram no menu Docs; as rules e o ambiente, no menu Projeto.
    */
@@ -15,6 +15,7 @@
     { to: '/model-groups', key: 'model-groups', label: 'Grupos de modelos', hint: 'A ordem de troca quando um modelo falha', icon: 'key' },
     { to: '/mcp', key: 'mcp', label: 'MCPs', hint: 'Servidores de ferramentas', icon: 'plug' },
     { to: '/catalog/history', key: 'catalog-history', label: 'Histórico do catálogo', hint: 'O que mudou, quem mudou, restaurar e reverter lote', icon: 'clock' },
+    { to: '/errors', key: 'errors', label: 'Erros', hint: 'Ferramentas e turnos que falharam, por período', icon: 'warn' },
     { to: '/packages', key: 'packages', label: 'Pacotes', hint: 'Ferramentas do servidor', icon: 'box' },
     { to: '/security/secrets', key: 'security', label: 'Segurança', hint: 'Segredos: o que a máscara esconde da saída das ferramentas', icon: 'key' },
     { to: '/settings', key: 'settings', label: 'Configuração', hint: 'Operação, limites e implantação', icon: 'settings' },

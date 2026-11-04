@@ -534,6 +534,8 @@ function buildRoutes(
     { method: 'put', path: '/conversations/:id/share', handler: controller.shareConversation },
     { method: 'delete', path: '/conversations/:id', handler: controller.deleteConversation },
     { method: 'put', path: '/conversations/:id/archive', handler: controller.archiveConversation },
+    // O registro de erros (só admin): ferramentas que falharam, turnos com erro, interrompidos.
+    { method: 'get', path: '/errors', handler: controller.listErrors },
     { method: 'get', path: '/shared/:id', handler: controller.getSharedConversation },
     { method: 'post', path: '/sessions', handler: controller.createSession },
     { method: 'get', path: '/sessions', handler: controller.listSessions },

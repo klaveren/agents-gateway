@@ -1,5 +1,6 @@
 <script setup lang="ts">
-  import { computed } from 'vue'
+  import { computed, ref } from 'vue'
+  import { copyText } from '@/lib/clipboard'
   import { CLASSIFICATION_COLOR, CLASSIFICATION_LABEL, shortTime, tokens, usd } from '@/lib/format'
   import { renderMarkdown } from '@/lib/markdown'
   import type { ITurn } from '@/lib/types'
@@ -9,6 +10,20 @@
   /** Um turno vira dois balões: a pergunta (direita) e a resposta do agente (esquerda). */
   const props = defineProps<{ turn?: ITurn; pending?: IPendingTurn; showCost: boolean }>()
   const agents = useAgentsStore()
+
+  /** O chip de ferramenta com erro aberto (o índice dele): o painel mostra a mensagem inteira. ⚖️ Um por vez. */
+  const openError = ref<number | null>(null)
+  const copiedError = ref(false)
+  const failed = computed(() => (openError.value === null ? undefined : tools.value[openError.value]))
+  async function copyError(message: string | undefined) {
+    try {
+      await copyText(message ?? '')
+      copiedError.value = true
+      setTimeout(() => (copiedError.value = false), 1500)
+    } catch {
+      copiedError.value = false
+    }
+  }
 
   const request = computed(() => props.turn?.request ?? props.pending?.request ?? '')
   const files = computed(() => props.turn?.files?.length ?? props.pending?.files ?? 0)
@@ -78,16 +93,20 @@
       </details>
 
       <div v-if="tools.length" class="flex flex-wrap gap-1.5">
-        <span
+        <component
+          :is="tool.status === 'error' ? 'button' : 'span'"
           v-for="(tool, index) in tools"
           :key="index"
+          :type="tool.status === 'error' ? 'button' : undefined"
           class="flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs"
           :class="{
             'border-sky-500/40 bg-sky-500/10 text-sky-300': tool.status === 'running',
             'border-zinc-700 bg-zinc-800/70 text-zinc-300': tool.status === 'done',
-            'border-rose-500/40 bg-rose-500/10 text-rose-300': tool.status === 'error',
+            'cursor-pointer border-rose-500/40 bg-rose-500/10 text-rose-300': tool.status === 'error',
           }"
           :title="tool.message ?? tool.tool"
+          :aria-expanded="tool.status === 'error' ? openError === index : undefined"
+          @click="tool.status === 'error' && (openError = openError === index ? null : index)"
         >
           <span v-if="tool.status === 'running'" class="h-2 w-2 animate-pulse rounded-full bg-sky-400" />
           <span v-else>{{ tool.status === 'done' ? '✓' : '✕' }}</span>
@@ -95,7 +114,17 @@
             Delegou a {{ agents.byId.get(delegated(tool)!.agentId ?? '')?.name ?? delegated(tool)!.agentId ?? 'outro agente' }} →
           </RouterLink>
           <template v-else>{{ agents.toolLabel(tool.tool) }}</template>
-        </span>
+        </component>
+      </div>
+
+      <div v-if="failed" class="rounded-xl border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200" data-test="tool-error">
+        <div class="flex items-center justify-between gap-2">
+          <span class="font-mono font-medium">{{ failed.tool }}</span>
+          <button type="button" class="rounded-md px-2 py-0.5 text-rose-300 ring-1 ring-rose-500/40 hover:bg-rose-500/10" aria-label="Copiar o erro" @click="copyError(failed.message)">
+            {{ copiedError ? 'Copiado' : 'Copiar' }}
+          </button>
+        </div>
+        <p class="mt-1 font-mono break-words whitespace-pre-wrap">{{ failed.message || 'Sem mensagem de erro.' }}</p>
       </div>
 
       <div v-if="text || thinking || error || aborted || segments.length" class="rounded-2xl rounded-bl-md bg-zinc-800/90 px-3.5 py-2 text-sm leading-relaxed shadow">
