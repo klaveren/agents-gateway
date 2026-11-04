@@ -40,6 +40,7 @@ const ATLAS_TOOLS = [
   'delete_rule',
   'list_docs',
   'get_doc',
+  'catalog_history',
   'delete_doc',
   'get_initial_context',
   'set_initial_context',

@@ -3,6 +3,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { Request, Response } from 'express'
 import { z } from 'zod'
 import { IDENTITY_HEADERS } from '@domain/Agent.Identity'
+import { CATALOG_KINDS, TCatalogKind } from '@domain/Catalog.Document'
 import { PERMISSION_CATEGORIES, TPermissionCategory } from '@domain/Permission.Policy'
 import { ISelfReply, selfApi, selfBase, TSelfApi } from './Self.Api'
 
@@ -431,6 +432,39 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
       annotations: { readOnlyHint: true },
     },
     async ({ id }) => reply(await api('GET', `/docs/${encodeURIComponent(id)}`)),
+  )
+
+  server.registerTool(
+    'catalog_history',
+    {
+      description:
+        "The revision history of one catalog item (spec, ADR, knowledge, rule, agent, skill, command, protocol, project, mcp): every save keeps a revision with its author. action list = the revisions, newest first (and the current one); show = one revision in full; diff = the line diff between two revisions (to defaults to the current state); restore = a NEW revision with the content of an old one (nothing is erased). Restore needs expectedRevision (the latest you saw: refused if someone changed it since) and the person's OK first; a restore that widens an agent's permissions is refused here and only the person can accept it on the screen.",
+      inputSchema: {
+        action: z.enum(['list', 'show', 'diff', 'restore']),
+        kind: z.enum(CATALOG_KINDS as unknown as [TCatalogKind, ...TCatalogKind[]]),
+        id: z.string(),
+        projectId: z.string().optional().describe('For an mcp server of a project'),
+        revision: z.number().int().min(1).optional().describe('show and restore: the revision number'),
+        from: z.number().int().min(0).optional().describe('diff: the older revision'),
+        to: z.number().int().min(0).optional().describe('diff: the newer revision; absent = the current state'),
+        expectedRevision: z.number().int().min(0).optional().describe('restore: the latest revision you saw (from list)'),
+        page: z.number().int().min(1).optional().describe('list: the page (newest first)'),
+      },
+    },
+    async ({ action, kind, id, projectId, revision, from, to, expectedRevision, page }) => {
+      const item = { kind, id, ...(projectId ? { project: projectId } : {}) }
+      const refuse = (message: string) => ({ ...text({ status: 422, code: 'validation_error', message }), isError: true })
+      if (action === 'list') return reply(await api('GET', '/catalog/history', { query: { ...item, ...(page ? { page: String(page) } : {}) } }))
+      if (action === 'diff')
+        return reply(
+          await api('GET', '/catalog/history/diff', { query: { ...item, ...(from !== undefined ? { from: String(from) } : {}), to: to !== undefined ? String(to) : 'current' } }),
+        )
+      if (revision === undefined) return refuse(`revision is required for ${action}`)
+      if (action === 'show') return reply(await api('GET', `/catalog/history/revisions/${revision}`, { query: item }))
+      if (!access.write) return refuse('restore is disabled on this server (SELF_MCP_WRITE=0)')
+      if (expectedRevision === undefined) return refuse('expectedRevision is required for restore: the latest revision from list')
+      return reply(await api('POST', '/catalog/history/restore', { body: { ...item, revision, expectedRevision } }))
+    },
   )
 
   server.registerTool(

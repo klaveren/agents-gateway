@@ -4,7 +4,8 @@ import { after, before, describe, it } from 'node:test'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { makeAuth } from '@composition/factories/Auth.Factory'
-import { makeAuthController, makeController, makeProvidersController, makeUsageController } from '@composition/factories/Controller.Factory'
+import { makeAuthController, makeCatalogController, makeController, makeProvidersController, makeUsageController } from '@composition/factories/Controller.Factory'
+import { makeGuidance } from '@composition/factories/Guidance.Factory'
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -18,8 +19,6 @@ import { SqliteCredentialStore } from '@infra/persistence/Sqlite.CredentialStore
 import { SecretBox } from '@infra/secrets/Aes.SecretBox'
 import { HooksController } from './Hooks.Controller'
 import { GuidanceController } from './Guidance.Controller'
-import { GuidanceService } from '@application/Guidance.Service'
-import { SqliteGuidanceRepository } from '@infra/persistence/Sqlite.GuidanceRepository'
 import { PackagesController } from './Packages.Controller'
 
 /** Um micromamba falso: instala `jq` (cria o ambiente) e lista o que está lá. */
@@ -41,7 +40,8 @@ describe('MCP do próprio gateway (integração)', () => {
   let stop: () => void
   let admin = ''
   let member = ''
-  const guidance = new GuidanceService(new SqliteGuidanceRepository(), () => false)
+  // A do composition root: as gravações dela entram no histórico do catálogo (o `catalog_history` lê de lá).
+  const guidance = makeGuidance()
 
   const call = async (path: string, init: { method?: string; body?: unknown; token?: string } = {}) => {
     const res = await fetch(`${base}${path}`, {
@@ -89,6 +89,12 @@ describe('MCP do próprio gateway (integração)', () => {
       hooks,
       undefined,
       new GuidanceController({ guidance, proof: makeAuth().proof }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      makeCatalogController(),
     ).start(0)
     await new Promise((resolve) => server.once('listening', resolve))
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`
@@ -132,6 +138,7 @@ describe('MCP do próprio gateway (integração)', () => {
       'switch_model',
     ]
     const adminRead = [
+      'catalog_history',
       'get_agent',
       'get_agent_initial_context',
       'get_agent_resources',
@@ -277,6 +284,29 @@ describe('MCP do próprio gateway (integração)', () => {
     const saved = (await client.callTool({ name: 'save_doc', arguments: { id: 'enorme', kind: 'spec', title: 'Enorme', summary: 'grande', body: big } })) as { isError?: boolean }
     assert.ok(!saved.isError, JSON.stringify(saved).slice(0, 300))
     assert.strictEqual(json(await client.callTool({ name: 'get_doc', arguments: { id: 'enorme' } })).body, big)
+  })
+
+  it('catalog_history: lista as revisões, mostra uma, compara e volta (uma revisão NOVA, nada apagado)', async () => {
+    const client = await connect(admin)
+    const save = (body: string) => client.callTool({ name: 'save_doc', arguments: { id: 'historico', kind: 'spec', title: 'Histórico', summary: 's', body } })
+    await save('versão um')
+    await save('versão dois')
+    const history = (args: Record<string, unknown>) =>
+      client.callTool({ name: 'catalog_history', arguments: { kind: 'spec', id: 'historico', ...args } }) as Promise<{ isError?: boolean }>
+    const listed = json(await history({ action: 'list' }))
+    const numbers = (listed.revisions as Array<{ revision: number }>).map((one) => one.revision)
+    assert.deepStrictEqual(numbers, [2, 1])
+    assert.match(JSON.stringify(json(await history({ action: 'show', revision: 1 }))), /versão um/)
+    assert.match(JSON.stringify(json(await history({ action: 'diff', from: 1 }))), /versão dois/)
+    assert.ok((await history({ action: 'restore', revision: 1 })).isError, 'sem expectedRevision, recusa')
+    assert.ok((await history({ action: 'restore', revision: 1, expectedRevision: 1 })).isError, 'revisão velha: alguém mexeu depois')
+    const restored = await history({ action: 'restore', revision: 1, expectedRevision: 2 })
+    assert.ok(!restored.isError, JSON.stringify(restored).slice(0, 300))
+    assert.strictEqual(json(await client.callTool({ name: 'get_doc', arguments: { id: 'historico' } })).body, 'versão um')
+    assert.deepStrictEqual(
+      (json(await history({ action: 'list' })).revisions as Array<{ revision: number }>).map((one) => one.revision),
+      [3, 2, 1],
+    )
   })
 
   it('get_doc traz os problemas da importação, e resolve_import_issue tira um (pela mesma rota da tela)', async () => {
