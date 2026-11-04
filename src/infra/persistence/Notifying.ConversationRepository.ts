@@ -12,6 +12,7 @@ import {
   INativeSnapshot,
 } from '@domain/models/Conversation.Model'
 import { IUsageQuery, IUsageRow } from '@domain/models/Usage.Model'
+import type { IToolUsage } from '@domain/models/ToolUsage.Model'
 import { IConversationEvents } from '@domain/ports/ConversationEvents.Port'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 
@@ -73,6 +74,10 @@ export class NotifyingConversationRepository implements IConversationRepository 
 
   usage(query: IUsageQuery): Promise<IUsageRow[]> {
     return this.inner.usage(query)
+  }
+
+  async toolUsage(query: IUsageQuery): Promise<IToolUsage[]> {
+    return (await this.inner.toolUsage?.(query)) ?? []
   }
 
   listSessions(options?: { limit?: number; filter?: Record<string, unknown>; owner?: IOwnerFilter | null; archived?: boolean }): Promise<IConversationSession[]> {
