@@ -7,12 +7,25 @@
    * as setas do teclado ajustam de 20 em 20.
    */
   const { width, set, reset } = useListWidth()
-  let start: { x: number; width: number } | undefined
+  let start: { x: number; width: number; moved: boolean } | undefined
+
+  /** ⛔ Soltar o mouse em cima de uma linha da lista não pode abrir a conversa: o clique que fecha o arraste é engolido. */
+  function swallowClick(event: MouseEvent) {
+    event.preventDefault()
+    event.stopPropagation()
+  }
 
   function move(event: PointerEvent) {
-    if (start) set(start.width + event.clientX - start.x)
+    if (!start) return
+    if (Math.abs(event.clientX - start.x) > 2) start.moved = true
+    set(start.width + event.clientX - start.x)
   }
   function stop() {
+    if (start?.moved) {
+      window.addEventListener('click', swallowClick, { capture: true, once: true })
+      // Sem clique depois (soltou fora da janela): a trava sai sozinha.
+      setTimeout(() => window.removeEventListener('click', swallowClick, { capture: true }), 0)
+    }
     start = undefined
     document.body.style.removeProperty('cursor')
     document.body.style.removeProperty('user-select')
@@ -20,7 +33,7 @@
     window.removeEventListener('pointerup', stop)
   }
   function begin(event: PointerEvent) {
-    start = { x: event.clientX, width: width.value }
+    start = { x: event.clientX, width: width.value, moved: false }
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
     window.addEventListener('pointermove', move)

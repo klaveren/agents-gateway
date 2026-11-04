@@ -30,6 +30,17 @@ describe('ListResizer', () => {
     expect(width.value).toBe(LIST_WIDTH.default)
   })
 
+  it('⛔ o clique que fecha o arraste não chega à linha da lista', async () => {
+    const handle = await mount()
+    let clicked = false
+    document.body.addEventListener('click', () => (clicked = true))
+    handle.dispatchEvent(new PointerEvent('pointerdown', { clientX: 100 }))
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 200 }))
+    window.dispatchEvent(new PointerEvent('pointerup'))
+    document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(clicked).toBe(false)
+  })
+
   it('as setas ajustam de 20 em 20', async () => {
     const { width, reset } = useListWidth()
     reset()
