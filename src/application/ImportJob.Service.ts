@@ -207,17 +207,26 @@ export class ImportJobService {
     }
     const [{ job, entry }] = matching
     if (entry.state === 'drafting') throw new ImportJobError('transition', `${entry.key} is with the builder right now: wait or release it on the screen`, 'state')
+    // ⚖️ UMA FONTE, VÁRIOS ITENS (um `decisions.md` com dezenas de ADRs): cada gravação acrescenta o seu ao registro.
+    const before = entry.importedBy
+    const targets = [...(before?.targets ?? (before ? [{ kind: before.kind, id: before.id }] : [])), { kind: target.kind, id: target.id }].filter(
+      (item, index, all) => all.findIndex((other) => other.kind === item.kind && other.id === item.id) === index,
+    )
     const importedBy = {
-      kind: target.kind,
-      id: target.id,
-      ...(target.agentId ? { agentId: target.agentId } : {}),
-      ...(target.conversationId ? { conversationId: target.conversationId } : {}),
+      kind: before?.kind ?? target.kind,
+      id: before?.id ?? target.id,
+      ...(target.agentId ? { agentId: target.agentId } : before?.agentId ? { agentId: before.agentId } : {}),
+      ...(target.conversationId ? { conversationId: target.conversationId } : before?.conversationId ? { conversationId: before.conversationId } : {}),
+      ...(targets.length > 1 ? { targets } : {}),
     }
+    // O item que o detector não soube classificar ganha o tipo do que o agente leu e gravou.
+    const unclassified = (entry.kind ?? entry.item.kind) === 'unknown'
     const updated = this.deps.repository.updateItem(job.id, entry.key, {
       state: 'applied',
       staleFrom: null,
       basis: entry.fingerprint,
       importedBy,
+      ...(unclassified ? { kind: target.kind as TInventoryKind } : {}),
       by,
       at: (this.deps.now ?? (() => new Date()))(),
     })!
@@ -268,5 +277,6 @@ function strip({ basis: _basis, ...item }: IImportJobItem): Omit<IImportJobItem,
 /** O tipo do item da importação aceita o do catálogo? (Os documentos andam juntos: spec, ADR e conhecimento.) */
 function sameKind(itemKind: string, catalogKind: string): boolean {
   const docs = ['spec', 'adr', 'knowledge']
-  return itemKind === catalogKind || (docs.includes(itemKind) && docs.includes(catalogKind))
+  // O desconhecido é o que o detector não classificou: quem leu a fonte e gravou decide o tipo.
+  return itemKind === 'unknown' || itemKind === catalogKind || (docs.includes(itemKind) && docs.includes(catalogKind))
 }

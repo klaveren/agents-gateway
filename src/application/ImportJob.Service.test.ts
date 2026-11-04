@@ -112,6 +112,22 @@ describe('ImportJobService', () => {
     refused(() => service.markImported('alfa', { path: 'nada.md' }, { kind: 'skill', id: 'x' }, 'root'), 'path')
     refused(() => service.markImported('alfa', { path: 'deploy.md' }, { kind: 'rule', id: 'x' }, 'root'), 'kind')
     refused(() => service.markImported('beta', { path: 'deploy.md' }, { kind: 'skill', id: 'x' }, 'root'), 'path')
+    // O desconhecido (o detector não classificou): vira o tipo gravado; uma fonte com várias ADRs acumula todas.
+    files.set('unknown:decisions', 'u')
+    paths.set('unknown:decisions', 'docs/decisions.md')
+    service.create('alfa', 'app', 'ana', {})
+    service.markImported('alfa', { path: 'docs/decisions.md' }, { kind: 'adr', id: 'adr-um', agentId: 'maya' }, 'root')
+    const twice = service.markImported('alfa', { path: 'docs/decisions.md' }, { kind: 'adr', id: 'adr-dois', agentId: 'maya' }, 'root')
+    assert.deepStrictEqual([twice.state, twice.kind], ['applied', 'adr'])
+    assert.deepStrictEqual(twice.importedBy, {
+      kind: 'adr',
+      id: 'adr-um',
+      agentId: 'maya',
+      targets: [
+        { kind: 'adr', id: 'adr-um' },
+        { kind: 'adr', id: 'adr-dois' },
+      ],
+    })
     // A pasta com outro item do mesmo tipo dentro (o `triggers/x.md` de um command): o id gravado desempata.
     files.set('command:drain', 'c').set('command:drain-triggers-x', 'd')
     paths.set('command:drain', 'commands/drain/COMMAND.md').set('command:drain-triggers-x', 'commands/drain/triggers/x.md')

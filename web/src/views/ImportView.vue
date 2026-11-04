@@ -533,7 +533,8 @@ function importedLabel(key: string): string | undefined {
   const by = statuses.value[key]?.importedBy
   if (!by) return undefined
   const who = by.agentId ? (useAgentsStore().byId.get(by.agentId)?.name ?? by.agentId) : (statuses.value[key]?.by ?? 'fora do importador')
-  return `importado por ${who} → ${by.kind} ${by.id}`
+  const more = (by.targets?.length ?? 1) - 1
+  return `importado por ${who} → ${by.kind} ${by.id}${more > 0 ? ` (+${more})` : ''}`
 }
 
 /** O que uma análise mudou, em texto curto: mantidos, fonte mudada, novos, saíram, fonte de volta, voltaram. */

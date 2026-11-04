@@ -75,6 +75,8 @@ export interface IImportedBy {
   /** O agente e a conversa que gravaram (ausentes quando a pessoa grava direto pela API). */
   agentId?: string
   conversationId?: string
+  /** Uma fonte que virou VÁRIOS itens (um arquivo com dezenas de ADRs): todos, na ordem em que foram gravados. */
+  targets?: Array<{ kind: string; id: string }>
 }
 
 /** Um item do trabalho: o do inventário e o estado. */
