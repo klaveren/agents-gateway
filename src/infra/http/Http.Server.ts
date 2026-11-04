@@ -408,6 +408,7 @@ function buildRoutes(
     { method: 'get', path: '/projects/:id/import/scope', handler: importer.getScope },
     { method: 'put', path: '/projects/:id/import/scope', handler: importer.setScope },
     { method: 'get', path: '/projects/:id/import/jobs', handler: importer.listJobs },
+    { method: 'post', path: '/projects/:id/import/imported', handler: importer.markImported },
     { method: 'post', path: '/projects/:id/import/jobs', handler: importer.createJob },
     { method: 'get', path: '/projects/:id/import/jobs/:job', handler: importer.getJob },
     { method: 'get', path: '/projects/:id/import/jobs/:job/items', handler: importer.getItems },

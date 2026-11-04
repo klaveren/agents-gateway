@@ -5,6 +5,7 @@ import { consolidatedItem, isProcessed } from '@domain/Import.Job'
 import {
   IImportAnalysis,
   IImportBatch,
+  IImportedBy,
   IImportJobItem,
   IImportJobSummary,
   IImportReanalysis,
@@ -89,6 +90,8 @@ const SCHEMA = `
 const ADDED_COLUMNS: ReadonlyArray<[table: string, column: string, definition: string]> = [
   ['import_scans', 'archived_at', 'TEXT'],
   ['import_items', 'gone_at', 'TEXT'],
+  // Gravado no catálogo por um agente, fora do importador (ver `IImportedBy`), em JSON.
+  ['import_items', 'imported_by', 'TEXT'],
 ]
 
 /** Quantas análises a importação mostra. */
@@ -250,6 +253,7 @@ export class SqliteImportRepository implements IImportRepository {
     if (patch.approvedBy !== undefined) set('approved_by', patch.approvedBy)
     if (patch.approvedAt !== undefined) set('approved_at', patch.approvedAt.toISOString())
     if (patch.batchId !== undefined) set('batch_id', patch.batchId)
+    if (patch.importedBy !== undefined) set('imported_by', JSON.stringify(patch.importedBy))
     if (patch.by !== undefined) set('updated_by', patch.by)
     if (patch.at !== undefined) set('updated_at', patch.at.toISOString())
     if (sets.length) this.db.prepare(`UPDATE import_items SET ${sets.join(', ')} WHERE scan_id = ? AND key = ?`).run(...params, jobId, key)
@@ -520,6 +524,7 @@ function toItem(row: TRow): IImportJobItem {
     ...optional('by', text(row.updated_by)),
     ...optional('at', text(row.updated_at) ? new Date(row.updated_at as string) : undefined),
     ...optional('goneAt', text(row.gone_at) ? new Date(row.gone_at as string) : undefined),
+    ...optional('importedBy', typeof row.imported_by === 'string' ? (JSON.parse(row.imported_by) as IImportedBy) : undefined),
   }
 }
 

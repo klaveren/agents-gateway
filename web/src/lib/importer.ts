@@ -337,6 +337,8 @@ export interface IImportItemStatus {
   fingerprint: string
   /** O lote do catálogo em que o item entrou (`applied`). */
   batchId?: string
+  /** Gravado no catálogo por um agente, fora do importador (`save_*` com `importedFrom`): o que nasceu e quem gravou. */
+  importedBy?: { kind: string; id: string; agentId?: string; conversationId?: string }
   /** Tem rascunho (o trabalho aberto não traz o rascunho, só isto; a revisão o lê por `…/items`). */
   drafted?: boolean
   by?: string

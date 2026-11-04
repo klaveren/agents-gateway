@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useAgentsStore } from '@/stores/agents'
 import { computed, inject, onMounted, ref, shallowRef, watch } from 'vue'
 import { routerKey } from 'vue-router'
 import ImportApply from '@/components/ImportApply.vue'
@@ -527,6 +528,14 @@ function stateOf(item: IInventoryItem): TImportItemState {
 
 const isGone = (key: string) => !!statuses.value[key]?.goneAt
 
+/** "Importado pela Maya": o item que um agente gravou por fora do importador (o nome, se o agente existe). */
+function importedLabel(key: string): string | undefined {
+  const by = statuses.value[key]?.importedBy
+  if (!by) return undefined
+  const who = by.agentId ? (useAgentsStore().byId.get(by.agentId)?.name ?? by.agentId) : (statuses.value[key]?.by ?? 'fora do importador')
+  return `importado por ${who} → ${by.kind} ${by.id}`
+}
+
 /** O que uma análise mudou, em texto curto: mantidos, fonte mudada, novos, saíram, fonte de volta, voltaram. */
 function analysisText(one: IImportAnalysis): string {
   const parts = [`${one.kept} mantido(s)`]
@@ -804,6 +813,13 @@ watch(() => projects.current, reset)
                       >
                         <span class="flex flex-wrap items-center gap-2">
                           <span v-if="isGone(item.key)" class="rounded-full bg-amber-500/15 px-2 text-[11px] text-amber-200" :title="GONE_HINT" data-test="gone-badge">{{ GONE_LABEL }}</span>
+                          <span
+                            v-if="importedLabel(item.key)"
+                            class="rounded-full bg-sky-500/15 px-2 text-[11px] text-sky-200"
+                            title="Gravado no catálogo por um agente, fora do importador"
+                            data-test="imported-badge"
+                            >{{ importedLabel(item.key) }}</span
+                          >
                           <span
                             v-if="stateOf(item) !== 'pending'"
                             class="rounded-full px-2 text-[11px]"
