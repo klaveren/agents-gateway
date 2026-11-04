@@ -54,6 +54,25 @@ describe('UsageSummaryView', () => {
     expect(row?.textContent).toContain('3 erros')
   })
 
+  it('10 por página: o passador avança e mostra o intervalo', async () => {
+    const byTool = Array.from({ length: 23 }, (_, index) => ({ tool: `t${index}`, calls: 1, errors: 0, directTokens: 100 - index, contextTokens: 0 }))
+    const host = await mount({ summary: summary({ byTool }), showCost: false })
+    const block = host.querySelector('[data-test="by-tool"]')!
+    expect(block.querySelectorAll('[data-tool]').length).toBe(10)
+    expect(block.querySelector('[data-test="pager"]')?.textContent).toContain('1–10 de 23')
+    for (let click = 0; click < 2; click += 1) {
+      ;(block.querySelector('[data-test="pager-next"]') as HTMLButtonElement).click()
+      await nextTick()
+    }
+    expect([...block.querySelectorAll('[data-tool]')].map((row) => row.getAttribute('data-tool'))).toEqual(['t20', 't21', 't22'])
+    expect((block.querySelector('[data-test="pager-next"]') as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('tudo numa página: sem passador', async () => {
+    const host = await mount({ summary: summary({ byTool: [{ tool: 'Read', calls: 1, errors: 0, directTokens: 1, contextTokens: 0 }] }), showCost: false })
+    expect(host.querySelector('[data-test="pager"]')).toBeNull()
+  })
+
   it('sem dados por ferramenta, o bloco não aparece', async () => {
     const host = await mount({ summary: summary(), showCost: false })
     expect(host.querySelector('[data-test="by-tool"]')).toBeNull()
