@@ -48,9 +48,13 @@ export class ModelCatalogService {
    * O modelo pode ser usado: ATIVADO e DISPONÍVEL. ⚠️ Modelo que sumiu da listagem do provider fica
    * `available: false` na sincronização — e seguia oferecido nos agentes e na conversa, para falhar na hora.
    */
-  /** A janela de contexto do modelo, como a listagem do provider informou. `undefined` = não informou. */
+  /**
+   * A janela de contexto do modelo, como a listagem do provider informou. O provider SEM listagem (a assinatura, com o
+   * modelo posto à mão) não informa: vale a do MESMO modelo em outro provider (`claude-opus-5-5` da assinatura e o da
+   * API são o mesmo modelo). Sem a janela, nem o medidor nem a compactação funcionam. `undefined` = ninguém informou.
+   */
   contextOf(providerId: string, modelId: string): number | undefined {
-    return this.catalog.get(providerId, modelId)?.contextLength
+    return this.catalog.get(providerId, modelId)?.contextLength ?? this.catalog.list().find((model) => model.modelId === modelId && model.contextLength)?.contextLength
   }
 
   isEnabled(providerId: string, modelId: string): boolean {

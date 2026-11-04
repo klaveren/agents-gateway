@@ -102,6 +102,15 @@ describe('ModelCatalogService', () => {
     assert.deepStrictEqual(catalog.pricing('agregador'), { 'x/y': { input: 1, output: 2 } })
   })
 
+  it('a janela do modelo posto à mão (assinatura, sem listagem) é a do mesmo modelo em outro provider', () => {
+    const catalog = build()
+    catalog.sync('claude', [{ id: 'claude-opus-5-5', contextLength: 1_000_000 }], 'root')
+    catalog.addModel('claude-sub', 'claude-opus-5-5', 'root')
+    catalog.addModel('claude-sub', 'so-aqui', 'root')
+    assert.strictEqual(catalog.contextOf('claude-sub', 'claude-opus-5-5'), 1_000_000)
+    assert.strictEqual(catalog.contextOf('claude-sub', 'so-aqui'), undefined)
+  })
+
   it('⛔ utilizável = ativado E disponível: modelo que sumiu da listagem deixa de valer', () => {
     const catalog = build()
     catalog.sync('agregador', [{ id: 'a' }, { id: 'b' }], 'root')
