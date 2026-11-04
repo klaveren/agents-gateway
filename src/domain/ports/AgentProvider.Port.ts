@@ -21,6 +21,11 @@ export interface IResumeInput {
   adminAccess?: boolean
   /** O estado do SDK guardado: da mesma lane e ainda válido, a conversa continua com a memória dele, sem a transcrição. */
   native?: INativeSnapshot
+  /**
+   * ⛔ A conversa-mãe que retoma a FILHA dela (uma delegação): só assim a conversa de delegação volta — e volta como filha
+   * dela (o admin herdado da mãe, nunca mais do que ela).
+   */
+  delegatedBy?: string
 }
 
 export interface IAgentProvider {

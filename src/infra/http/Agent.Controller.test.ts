@@ -172,6 +172,19 @@ describe('AgentController', () => {
     assert.strictEqual(result.mcp.connected, true)
   })
 
+  it('⚖️ do próprio servidor, `?turns` diz quantos turnos estão rodando (o deploy espera zerar); de fora, não', async () => {
+    const catalog = { mcp: { connectAll: async () => undefined, status: () => [] } } as unknown as ToolCatalog
+    const ask = async (remoteAddress: string) => {
+      const { res, locals } = mockResponse()
+      const req = { ...mockRequest(), query: { turns: '1' }, socket: { remoteAddress, localAddress: '10.10.0.4' } } as unknown as Request
+      await controllerWith({}, catalog, healthProof).health(req, res)
+      return locals.body?.result
+    }
+    assert.deepStrictEqual(await ask('127.0.0.1'), { status: 'ok', running: 0 })
+    assert.deepStrictEqual(await ask('::ffff:10.10.0.4'), { status: 'ok', running: 0 })
+    assert.deepStrictEqual(await ask('10.10.0.99'), { status: 'ok' })
+  })
+
   it('lets health retry the MCP connection for the admin, so it heals without any tool traffic', async () => {
     let attempts = 0
     const catalog = {

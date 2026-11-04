@@ -30,7 +30,25 @@ export function makeUsecases() {
   const createSession = new CreateSessionUseCase(agentProvider)
   const sendMessage = new SendMessageUseCase(agentProvider, conversations, makeClassifier(), makeSecretMasker(), live)
   // A delegação usa os MESMOS casos de uso: a conversa filha é gravada e avisada como qualquer outra.
-  makeTools().delegation.bind(new DelegationService(agentProvider, createSession, sendMessage, undefined, (id) => makeAgents().get(id)?.modes))
+  makeTools().delegation.bind(
+    new DelegationService(
+      agentProvider,
+      createSession,
+      sendMessage,
+      undefined,
+      (id) => makeAgents().get(id)?.modes,
+      // A filha encerrada volta pelo histórico, como a conversa da tela: só a desta mãe (o provider confere de novo).
+      async (sessionId, parentId) => {
+        const stored = await conversations.findSession(sessionId)
+        if (!stored) return undefined
+        const delegatedBy = stored.metadata?.delegatedBy
+        if (delegatedBy !== parentId) return { agentId: stored.agentId, delegatedBy }
+        const [turns, native] = await Promise.all([conversations.listTurns(sessionId), conversations.findNative?.(sessionId)])
+        await agentProvider.resume?.({ session: stored, turns, delegatedBy: parentId, ...(native ? { native } : {}) })
+        return { agentId: stored.agentId, delegatedBy }
+      },
+    ),
+  )
   // Os MCPs em contêiner leem a conversa (agente e `metadata`) para os domínios `{meta:…}` e para o proxy.
   makeTools().mcp.setSessionLookup((id) => {
     try {

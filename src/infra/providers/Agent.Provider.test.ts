@@ -831,7 +831,14 @@ describe('AgentProvider — retomar a conversa gravada', () => {
     await provider.resume({ session: stored, turns })
     assert.strictEqual(store.size, 1)
 
-    await assert.rejects(() => provider.resume({ session: { ...stored, id: 'filha', metadata: { delegatedBy: { sessionId: 'mae' } } }, turns }), ConversationNotResumableError)
+    await assert.rejects(() => provider.resume({ session: { ...stored, id: 'filha', metadata: { delegatedBy: 'mae' } }, turns }), ConversationNotResumableError)
+    // ⚖️ A mãe que abriu retoma a filha dela (a delegação continuando); outra mãe, não.
+    await assert.rejects(
+      () => provider.resume({ session: { ...stored, id: 'filha', metadata: { delegatedBy: 'mae' } }, turns, delegatedBy: 'outra' }),
+      ConversationNotResumableError,
+    )
+    await provider.resume({ session: { ...stored, id: 'filha', metadata: { delegatedBy: 'mae' } }, turns, delegatedBy: 'mae' })
+    assert.ok(store.get('filha'))
     await assert.rejects(() => provider.resume({ session: { ...stored, id: 'orfa', agentId: 'nao-existe' }, turns }), AgentNotFoundError)
   })
 })

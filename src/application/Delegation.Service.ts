@@ -36,6 +36,11 @@ export class DelegationService {
     private readonly maxDepth: () => number = () => delegationMaxDepth(),
     /** As lanes do agente de destino: a filha nasce na `agent` quando ele tem, senão na `chat` com as ferramentas ligadas. */
     private readonly modesOf: (agentId: string) => readonly EMode[] | undefined = () => undefined,
+    /**
+     * ⚖️ Retoma a filha que não está mais viva (o gateway reiniciou, a sessão expirou): qualquer conversa volta, a menos
+     * que tenha sido apagada. Devolve a conversa gravada (para conferir de quem é) ou nada. Ausente = sem retomada.
+     */
+    private readonly resumeChild?: (sessionId: string, parentId: string) => Promise<{ agentId: string; delegatedBy?: unknown } | undefined>,
   ) {}
 
   /** Quem entrega a resposta que chegou depois do turno da mãe (um turno novo nela; ligado na composição). */
@@ -65,12 +70,24 @@ export class DelegationService {
 
     let sessionId = request.sessionId
     if (sessionId) {
+      let child: { agentId: string; metadata?: Record<string, unknown> } | undefined
       try {
-        const child = this.provider.describe(sessionId)
-        if (child.metadata?.[DELEGATED_BY] !== parent.id || child.agentId !== request.agentId)
-          return { ok: false, error: `conversation ${sessionId} is not a delegation of this conversation to ${request.agentId}` }
+        child = this.provider.describe(sessionId)
       } catch {
-        return { ok: false, error: `conversation ${sessionId} is no longer live; start a new one (omit sessionId)` }
+        child = undefined
+      }
+      if (child && (child.metadata?.[DELEGATED_BY] !== parent.id || child.agentId !== request.agentId))
+        return { ok: false, error: `conversation ${sessionId} is not a delegation of this conversation to ${request.agentId}` }
+      if (!child) {
+        // ⚖️ Encerrada não é perdida: a filha gravada volta pelo histórico, desde que seja DESTA mãe e deste agente.
+        try {
+          const stored = await this.resumeChild?.(sessionId, parent.id)
+          if (!stored) return { ok: false, error: `conversation ${sessionId} was deleted or does not exist; start a new one (omit sessionId)` }
+          if (stored.delegatedBy !== parent.id || stored.agentId !== request.agentId)
+            return { ok: false, error: `conversation ${sessionId} is not a delegation of this conversation to ${request.agentId}` }
+        } catch (error: unknown) {
+          return { ok: false, error: `could not resume ${sessionId}: ${error instanceof Error ? error.message : String(error)}` }
+        }
       }
     } else {
       try {
@@ -102,14 +119,26 @@ export class DelegationService {
     let failure: string | undefined
     // O turno da mãe que fez a chamada: parada, ou noutro turno, na volta = a chamada caiu e a mãe já seguiu.
     const turnAtCall = parent.turns
-    for await (const event of this.sendMessage.execute(sessionId, { text: request.message })) {
-      const payload = (event.payload ?? {}) as Record<string, unknown>
-      if (event.type === 'text.delta') reply += String(payload.text ?? '')
-      if (event.type === 'error') failure = String(payload.message ?? 'error')
+    const startedAt = Date.now()
+    console.log(`[delegação] ${parent.agentId} → ${request.agentId} (${sessionId}): turno começou`)
+    try {
+      for await (const event of this.sendMessage.execute(sessionId, { text: request.message })) {
+        const payload = (event.payload ?? {}) as Record<string, unknown>
+        if (event.type === 'text.delta') reply += String(payload.text ?? '')
+        if (event.type === 'error') failure = String(payload.message ?? 'error')
+        if (event.type === 'message.aborted') failure ??= 'the turn was interrupted'
+      }
+    } catch (error: unknown) {
+      failure = error instanceof Error ? error.message : String(error)
     }
-
-    if (failure && !reply) return { ok: false, error: `${request.agentId} failed: ${failure}` }
-    this.deliverIfLost(parent.id, turnAtCall, request.agentId, sessionId, reply)
+    const took = `${Math.round((Date.now() - startedAt) / 1000)} s`
+    if (failure && !reply) {
+      console.warn(`[delegação] ${parent.agentId} → ${request.agentId} (${sessionId}): falhou em ${took}: ${failure}`)
+      this.deliverIfLost(parent.id, turnAtCall, request.agentId, sessionId, { ok: false, error: failure })
+      return { ok: false, error: `${request.agentId} failed: ${failure}` }
+    }
+    console.log(`[delegação] ${parent.agentId} → ${request.agentId} (${sessionId}): respondeu em ${took}`)
+    this.deliverIfLost(parent.id, turnAtCall, request.agentId, sessionId, { ok: true, reply })
     return { ok: true, agentId: request.agentId, sessionId, reply }
   }
 
@@ -118,7 +147,7 @@ export class DelegationService {
    * a resposta entra num turno NOVO da mãe — ela lê e continua, como numa conversa. Com a mãe rodando outro turno, entra
    * nele (a fila do turno). Antes, o agente-mãe só ficava sabendo pela tela.
    */
-  private deliverIfLost(parentId: string, turnAtCall: number, agentId: string, childId: string, reply: string): void {
+  private deliverIfLost(parentId: string, turnAtCall: number, agentId: string, childId: string, outcome: { ok: true; reply: string } | { ok: false; error: string }): void {
     let status: string
     let turns: number
     try {
@@ -128,7 +157,10 @@ export class DelegationService {
     }
     // A mãe ainda está no turno que delegou: a resposta chega pela ferramenta, como sempre.
     if (status === 'running' && turns === turnAtCall) return
-    const text = `[Resposta de ${agentId} à sua delegação (sessionId ${childId}), que chegou depois do fim do seu turno: leia e continue de onde parou.]\n\n${reply || '(sem texto)'}`
+    const text = outcome.ok
+      ? `[Resposta de ${agentId} à sua delegação (sessionId ${childId}), que chegou depois do fim do seu turno: leia e continue de onde parou.]\n\n${outcome.reply || '(sem texto)'}`
+      : `[A delegação a ${agentId} (sessionId ${childId}) falhou depois do fim do seu turno: ${outcome.error}. Decida: tentar de novo (com o sessionId, para continuar a mesma conversa), outro caminho, ou avisar a pessoa.]`
+    console.log(`[delegação] a resposta de ${agentId} (${childId}) chegou depois do turno da mãe ${parentId}: entra como mensagem`)
     if (status === 'running' && this.provider.enqueue?.(parentId, text) !== undefined) return
     this.late?.(parentId, text)
   }
