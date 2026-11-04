@@ -59,7 +59,8 @@
     if (from < full.length) parts.push({ kind: 'text', text: full.slice(from) })
     return parts
   })
-  const thinking = computed(() => !!props.pending && !text.value && !props.pending.error)
+  /** O turno ainda roda: os três pontos ficam no fim do balão até ele acabar — também depois do primeiro texto (antes sumiam, e o turno longo parecia travado). */
+  const thinking = computed(() => !!props.pending && !props.pending.error && !props.pending.aborted)
 </script>
 
 <template>
@@ -98,11 +99,6 @@
       </div>
 
       <div v-if="text || thinking || error || aborted || segments.length" class="rounded-2xl rounded-bl-md bg-zinc-800/90 px-3.5 py-2 text-sm leading-relaxed shadow">
-        <div v-if="thinking" class="flex h-5 items-center gap-1">
-          <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400 [animation-delay:-0.3s]" />
-          <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400 [animation-delay:-0.15s]" />
-          <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400" />
-        </div>
         <template v-for="(part, index) in segments" :key="index">
           <!-- eslint-disable-next-line vue/no-v-html -- renderMarkdown escapa antes de marcar -->
           <div v-if="part.kind === 'text'" class="prose-agent break-words" v-html="renderMarkdown(part.text)" />
@@ -114,6 +110,11 @@
             {{ part.text }}
           </div>
         </template>
+        <div v-if="thinking" class="flex h-5 items-center gap-1" :class="{ 'mt-1': text }" aria-label="Trabalhando">
+          <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400 [animation-delay:-0.3s]" />
+          <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400 [animation-delay:-0.15s]" />
+          <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-400" />
+        </div>
         <p v-if="error" class="mt-1 text-sm text-rose-300">Algo deu errado: {{ error }}</p>
         <p v-if="aborted" class="mt-1 text-xs text-zinc-400 italic">Interrompido.</p>
         <div v-if="turn" class="mt-1 flex items-center justify-end gap-2 text-[11px] text-zinc-500">
