@@ -15,14 +15,14 @@ export const useRulesStore = defineStore('rules', () => {
   const path = (id: string) => `/rules/${encodeURIComponent(id)}`
   const scopeOf = (rule: Pick<IRule, 'projectId'>) => rule.projectId ?? GLOBAL_SCOPE
 
-  async function create(scope: string, input: { title: string; body: string }): Promise<IRule> {
+  async function create(scope: string, input: { title: string; body: string; tags?: string[] }): Promise<IRule> {
     const created = await api<IRule>('/rules', { method: 'POST', body: { ...input, projectId: scopeToProjectId(scope) } })
     lists.update(scopeOf(created), (list) => [...list, created])
     useAgentCatalogStore().invalidate()
     return created
   }
 
-  async function update(rule: IRule, change: Partial<Pick<IRule, 'title' | 'body' | 'enabled'>>): Promise<IRule> {
+  async function update(rule: IRule, change: Partial<Pick<IRule, 'title' | 'body' | 'enabled' | 'tags'>>): Promise<IRule> {
     const saved = await api<IRule>(path(rule.id), { method: 'PUT', body: change })
     lists.update(scopeOf(saved), (list) => list.map((item) => (item.id === saved.id ? saved : item)))
     useAgentCatalogStore().invalidate()

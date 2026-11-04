@@ -4,7 +4,9 @@ import { useRoute, useRouter } from 'vue-router'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import Icon from '@/components/Icon.vue'
 import ListFilter from '@/components/ListFilter.vue'
-import { filterList } from '@/lib/listFilter'
+import TagChips from '@/components/TagChips.vue'
+import TagsInput from '@/components/TagsInput.vue'
+import { filterList, sameTags, tagNames } from '@/lib/listFilter'
 import MasterDetail from '@/components/MasterDetail.vue'
 import HistoryPanel from '@/components/HistoryPanel.vue'
 import AttachedDocs from '@/components/AttachedDocs.vue'
@@ -74,13 +76,15 @@ const all = computed(() => listed.data.value ?? [])
 const query = ref('')
 const tag = ref('')
 const list = computed(() => filterList(all.value, { query: query.value, tag: tag.value }, (resource) => [resource.id, resource.description]))
+/** As tags que a lista já usa (as sugestões do campo). */
+const knownTags = computed(() => tagNames(all.value))
 const loadError = computed(() => (listed.error.value === undefined ? undefined : describe(listed.error.value)))
 const adding = computed(() => route.name === `${props.kind}-new`)
 const info = computed(() => KIND[props.kind])
 /** As palavras que concordam com o tipo: "Novo estudo", "Nova spec". */
 const g = computed(() => (info.value.masc ? { nova: 'Novo', nenhuma: 'Nenhum', uma: 'um', a: 'o' } : { nova: 'Nova', nenhuma: 'Nenhuma', uma: 'uma', a: 'a' }))
 
-const form = ref({ id: '', description: '', body: '', global: true, project: '', docIds: [] as string[], docRefs: [] as string[], triggers: [] as IAgentTrigger[] })
+const form = ref({ id: '', description: '', tags: [] as string[], body: '', global: true, project: '', docIds: [] as string[], docRefs: [] as string[], triggers: [] as IAgentTrigger[] })
 /** A guia da edição: o formulário ou o histórico (`#historico` no endereço abre nele). */
 type TResourceTab = 'edit' | 'instructions' | 'triggers' | 'attachments' | 'files' | 'issues' | 'history'
 const HASH_TAB: Record<string, TResourceTab> = {
@@ -112,6 +116,7 @@ const dirty = computed(() => {
   if (!resource) return true
   return (
     form.value.description !== resource.description ||
+    !sameTags(form.value.tags, resource.tags) ||
     form.value.body !== resource.body ||
     formScope.value !== (resource.projectId ?? GLOBAL_SCOPE) ||
     form.value.docIds.join() !== resource.docIds.join() ||
@@ -138,6 +143,7 @@ watch(
       form.value = {
         id: '',
         description: '',
+        tags: [],
         body: KIND[kind].template,
         global: scope.value === GLOBAL_SCOPE,
         project: scope.value === GLOBAL_SCOPE ? (projects.current ?? '') : scope.value,
@@ -158,6 +164,7 @@ watch(
       form.value = {
         id: resource.id,
         description: resource.description,
+        tags: [...(resource.tags ?? [])],
         body: resource.body,
         global: !resource.projectId,
         project: resource.projectId ?? projects.current ?? '',
@@ -185,6 +192,8 @@ function applyDraft(kind: TResourceKind, id?: string) {
   form.value = {
     id: id ?? draft.id,
     description: draft.description,
+    // O rascunho não traz tags: ficam as do formulário.
+    tags: form.value.tags,
     body: draft.body,
     global: !draft.projectId,
     project: draft.projectId ?? projects.current ?? '',
@@ -237,6 +246,7 @@ async function save() {
   const docIds = form.value.docIds.filter((id) => attachable.value.some((doc) => doc.id === id))
   const body = {
     description: form.value.description,
+    tags: form.value.tags,
     body: form.value.body,
     projectId: scopeToProjectId(formScope.value),
     docIds,
@@ -250,6 +260,7 @@ async function save() {
       await router.push(`${info.value.base}/${created.id}`)
     } else {
       loaded.value = await resources.update(form.value.id, body)
+      form.value.tags = [...(loaded.value.tags ?? [])]
       form.value.docIds = [...loaded.value.docIds]
       form.value.docRefs = [...(loaded.value.docRefs ?? [])]
       form.value.triggers = copyTriggers(loaded.value.triggers)
@@ -341,6 +352,7 @@ function onInvalid(event: Event) {
       <RouterLink v-for="resource in list" :key="resource.id" :to="`${info.base}/${resource.id}`" class="mx-2 block rounded-xl px-3 py-2" :class="resource.id === id ? 'bg-emerald-500/15' : 'hover:bg-zinc-800/60'">
         <span class="block truncate font-mono text-sm">{{ kind === 'command' ? '/' : '' }}{{ resource.id }}</span>
         <span class="block truncate text-xs text-zinc-500">{{ resource.description }}<template v-if="resource.docIds.length"> · {{ resource.docIds.length }} doc(s)</template></span>
+        <TagChips :tags="resource.tags" />
         <ImportIssuesBadge :count="resource.importIssues?.length" class="mt-1" />
       </RouterLink>
     </template>
@@ -356,6 +368,7 @@ function onInvalid(event: Event) {
           <small class="hint">Uma linha: diz quando usar.</small>
           <small v-for="m in issues.description" :key="m" class="error">{{ m }}</small>
         </label>
+        <TagsInput v-model="form.tags" label="Tags" :suggestions="knownTags" :issues="issues.tags" />
         <label class="field">
           Identificador
           <input v-model="form.id" :disabled="!adding" required pattern="[a-z0-9][a-z0-9-]{1,47}" class="input font-mono disabled:opacity-60" :placeholder="kind === 'command' ? 'resumir' : 'tabela-markdown'" />

@@ -4,7 +4,9 @@ import { useRoute, useRouter } from 'vue-router'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import Icon from '@/components/Icon.vue'
 import ListFilter from '@/components/ListFilter.vue'
-import { filterList } from '@/lib/listFilter'
+import TagChips from '@/components/TagChips.vue'
+import TagsInput from '@/components/TagsInput.vue'
+import { filterList, sameTags, tagNames } from '@/lib/listFilter'
 import BuildTabs from '@/components/BuildTabs.vue'
 import MasterDetail from '@/components/MasterDetail.vue'
 import HistoryPanel from '@/components/HistoryPanel.vue'
@@ -90,7 +92,7 @@ const info = computed(() => KIND[props.kind])
 /** As palavras que concordam com o tipo: "Novo estudo", "Nova spec". */
 const g = computed(() => (info.value.masc ? { nova: 'Novo', nenhuma: 'Nenhum', uma: 'um', a: 'o' } : { nova: 'Nova', nenhuma: 'Nenhuma', uma: 'uma', a: 'a' }))
 
-const form = ref({ id: '', kind: 'spec' as TDocKind, title: '', summary: '', body: '', global: true, project: '', docIds: [] as string[], docRefs: [] as string[] })
+const form = ref({ id: '', kind: 'spec' as TDocKind, title: '', summary: '', tags: [] as string[], body: '', global: true, project: '', docIds: [] as string[], docRefs: [] as string[] })
 /** A guia da edição: o formulário ou o histórico (`#historico` no endereço abre nele). */
 type TDocTab = 'edit' | 'instructions' | 'attachments' | 'issues' | 'history'
 const HASH_TAB: Record<string, TDocTab> = { '#historico': 'history', '#instrucoes': 'instructions', '#anexos': 'attachments', '#problemas': 'issues' }
@@ -111,6 +113,8 @@ const ofKind = computed(() => list.value.filter((doc) => doc.kind === props.kind
 const query = ref('')
 const tag = ref('')
 const shown = computed(() => filterList(ofKind.value, { query: query.value, tag: tag.value }, (doc) => [doc.id, doc.title, doc.summary]))
+/** As tags que a lista já usa (as sugestões do campo). */
+const knownTags = computed(() => tagNames(ofKind.value))
 const formScope = computed(() => (form.value.global ? GLOBAL_SCOPE : form.value.project))
 /** Os documentos que este pode anexar: os globais e os do projeto do formulário (a lista não segue o filtro de escopo). */
 const { list: docs } = useScopedDocs(() => (auth.isAdmin ? scopeToProjectId(formScope.value) : undefined))
@@ -121,6 +125,7 @@ const dirty = computed(() => {
   return (
     form.value.title !== doc.title ||
     form.value.summary !== doc.summary ||
+    !sameTags(form.value.tags, doc.tags) ||
     form.value.body !== (doc.body ?? '') ||
     formScope.value !== (doc.projectId ?? GLOBAL_SCOPE) ||
     attachmentsChanged(form.value, doc)
@@ -149,6 +154,7 @@ watch(
         kind,
         title: '',
         summary: '',
+        tags: [],
         body: TEMPLATE[kind],
         global: scope.value === GLOBAL_SCOPE,
         project: scope.value === GLOBAL_SCOPE ? (projects.current ?? '') : scope.value,
@@ -171,6 +177,7 @@ watch(
         kind: doc.kind,
         title: doc.title,
         summary: doc.summary,
+        tags: [...(doc.tags ?? [])],
         body: doc.body ?? '',
         global: !doc.projectId,
         project: doc.projectId ?? projects.current ?? '',
@@ -199,6 +206,8 @@ function applyDraft(kind: TDocKind, id?: string) {
     kind,
     title: draft.title,
     summary: draft.summary,
+    // O rascunho do construtor não traz tags: ficam as do formulário.
+    tags: form.value.tags,
     body: draft.body,
     global: !draft.projectId,
     project: draft.projectId ?? projects.current ?? '',
@@ -235,6 +244,7 @@ async function save() {
     kind: form.value.kind,
     title: form.value.title,
     summary: form.value.summary,
+    tags: form.value.tags,
     body: form.value.body,
     projectId: scopeToProjectId(formScope.value),
     docIds,
@@ -247,6 +257,7 @@ async function save() {
       await router.push(`${info.value.base}/${created.id}`)
     } else {
       loaded.value = await docsStore.update(form.value.id, body)
+      form.value.tags = [...(loaded.value.tags ?? [])]
       form.value.docIds = [...(loaded.value.docIds ?? [])]
       form.value.docRefs = [...(loaded.value.docRefs ?? [])]
       note.value = 'Salvo. Vale para as próximas conversas.'
@@ -348,6 +359,7 @@ function onInvalid(event: Event) {
         <span class="block truncate text-sm font-medium">{{ doc.title }}</span>
         <span class="block truncate text-xs text-zinc-500">{{ doc.id }}<template v-if="doc.summary"> · {{ doc.summary }}</template></span>
         <span v-if="loadedLabel(doc)" class="mt-1 inline-block max-w-full truncate rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-300">usada em {{ loadedLabel(doc) }}</span>
+        <TagChips :tags="doc.tags" />
         <ImportIssuesBadge :count="doc.importIssues?.length" class="mt-1" />
       </RouterLink>
     </template>
@@ -370,6 +382,7 @@ function onInvalid(event: Event) {
           <small class="hint">É o que o agente lê para saber quando usar este documento.</small>
           <small v-for="m in issues.summary" :key="m" class="error">{{ m }}</small>
         </label>
+        <TagsInput v-model="form.tags" label="Tags" :suggestions="knownTags" :issues="issues.tags" />
         <div class="flex flex-wrap items-center gap-3 text-sm">
           <label class="flex items-center gap-2"><input v-model="form.global" type="checkbox" class="accent-emerald-500" /> Global (todos os projetos)</label>
           <select v-if="!form.global" v-model="form.project" required class="input w-auto py-1.5 text-sm" aria-label="Projeto">

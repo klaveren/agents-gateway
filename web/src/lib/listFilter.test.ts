@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { filterList, matchesSearch, tagCounts } from './listFilter'
+import { filterList, matchesSearch, normalizeTag, tagCounts, tagNames } from './listFilter'
 
 describe('listFilter', () => {
   it('a busca ignora acento e maiúscula, e cada palavra tem de aparecer em algum campo', () => {
@@ -18,5 +18,19 @@ describe('listFilter', () => {
     expect(filterList(items, { query: '', tag: 'infra' }, (item) => [item.id]).map((item) => item.id)).toEqual(['a', 'b'])
     expect(filterList(items, { query: 'b', tag: 'infra' }, (item) => [item.id]).map((item) => item.id)).toEqual(['b'])
     expect(filterList(items, { query: 'logiccus' }, (item) => [item.id]).map((item) => item.id)).toEqual(['b'])
+  })
+
+  it('normalizeTag: sem acento, minúscula, espaço e sublinhado viram hífen, o resto cai, até 32', () => {
+    expect(normalizeTag('  Integração_Logiccus  ')).toBe('integracao-logiccus')
+    expect(normalizeTag('Infra  Rede')).toBe('infra-rede')
+    expect(normalizeTag('-a!b#c-')).toBe('abc')
+    expect(normalizeTag('a'.repeat(40))).toBe('a'.repeat(32))
+    expect(normalizeTag('ab'.repeat(15) + '-xyz')).toBe('ab'.repeat(15) + '-x')
+    expect(normalizeTag('!!! ---')).toBeUndefined()
+    expect(normalizeTag('')).toBeUndefined()
+  })
+
+  it('tagNames: as tags distintas, em ordem', () => {
+    expect(tagNames([{ tags: ['b', 'a'] }, { tags: ['a'] }, {}])).toEqual(['a', 'b'])
   })
 })

@@ -151,6 +151,8 @@ export interface IAgent {
   unavailable?: { reason: 'provider_disabled' | 'no_model' | 'no_key' | 'admin_only'; label: string }
   /** Só na lista, só para admin: quantos problemas da importação ele tem (o detalhe traz a lista). */
   importIssueCount?: number
+  /** Etiquetas para achar o agente na lista (minúsculas, com hífen). Ausente = nenhuma. */
+  tags?: string[]
 }
 
 /**
@@ -253,6 +255,8 @@ export interface IAgentInput {
   fallback?: IAgentFallback | null
   /** `null` apaga todas. */
   env?: Record<string, string> | null
+  /** Ausente mantém; vazio apaga todas. */
+  tags?: string[]
 }
 
 export type TPermissionCategory = 'terminal' | 'read' | 'write' | 'network' | 'mcp' | 'skill' | 'delegate' | 'account' | 'repository' | 'trigger'
@@ -552,6 +556,7 @@ export interface IMcpServer {
   agents: Array<{ id: string; name: string }>
   /** A URL é o MCP do próprio gateway. */
   selfReference: boolean
+  tags?: string[]
   createdAt: string
   updatedAt: string
   updatedBy?: string
@@ -581,6 +586,7 @@ export interface IRule {
   title: string
   body: string
   enabled: boolean
+  tags?: string[]
   createdAt: string
   updatedAt: string
   updatedBy?: string
@@ -595,6 +601,7 @@ export interface IProjectDoc {
   projectId?: string
   title: string
   summary: string
+  tags?: string[]
   body?: string
   /** Outros documentos anexados, na ordem: vão junto quando este é lido. Globais ou do mesmo projeto (o global só anexa global). */
   docIds?: string[]
@@ -649,6 +656,7 @@ export interface IResource {
   kind: TResourceKind
   projectId?: string
   description: string
+  tags?: string[]
   body: string
   docIds: string[]
   /** Dos anexados, os que vão por referência (o agente lê com `read_doc` se precisar). Ausente = todos inteiros. */
