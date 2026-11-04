@@ -10,6 +10,7 @@ export interface INewMcpServer {
   /** O projeto dono. Ausente = global. */
   projectId?: string
   name: string
+  tags?: string[]
   kind: TMcpKind
   container?: IMcpContainer
   process?: IMcpProcess
@@ -85,7 +86,9 @@ export const useMcpStore = defineStore('mcp', () => {
   /** Devolve o servidor gravado: com `projectId` (ou `null`, global) ele muda de escopo — e de chave. */
   async function update(
     id: string,
-    change: Partial<Pick<IMcpServer, 'name' | 'url' | 'transport' | 'auth' | 'headerName' | 'identity' | 'enabled' | 'container' | 'process'>> & { projectId?: string | null },
+    change: Partial<Pick<IMcpServer, 'name' | 'tags' | 'url' | 'transport' | 'auth' | 'headerName' | 'identity' | 'enabled' | 'container' | 'process'>> & {
+      projectId?: string | null
+    },
   ): Promise<IMcpServer> {
     const saved = await api<IMcpServer>(`/mcp-servers/${encodeURIComponent(id)}`, { method: 'PUT', body: change })
     put(saved, id)

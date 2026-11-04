@@ -6,7 +6,9 @@
   import HistoryTabs from '@/components/HistoryTabs.vue'
   import Icon from '@/components/Icon.vue'
   import ListFilter from '@/components/ListFilter.vue'
-  import { filterList } from '@/lib/listFilter'
+  import TagChips from '@/components/TagChips.vue'
+  import TagsInput from '@/components/TagsInput.vue'
+  import { filterList, sameTags, tagNames } from '@/lib/listFilter'
   import MasterDetail from '@/components/MasterDetail.vue'
   import McpContainerFields from '@/components/McpContainerFields.vue'
   import McpProjectReadOnly from '@/components/McpProjectReadOnly.vue'
@@ -63,6 +65,8 @@
   /** A busca e a tag do topo da lista. */
   const query = ref('')
   const tag = ref('')
+  /** As tags que os MCPs já usam (as sugestões do campo). */
+  const knownTags = computed(() => tagNames(mcp.list))
   const listed = computed(() => filterList(inScope.value, { query: query.value, tag: tag.value }, (server) => [server.id, server.name]))
   /** O escopo escolhido na edição (`''` = global): mover é um passo à parte, porque muda a chave e quem pode usar. */
   const moveTo = ref('')
@@ -84,6 +88,7 @@
     headerName: 'Authorization',
     identity: false,
     secret: '',
+    tags: [],
   })
   const KIND_LABEL: Record<TMcpKind, { label: string; hint: string }> = {
     process: { label: 'Local (npm)', hint: 'Instala o pacote npm e roda no servidor, sem isolamento.' },
@@ -107,9 +112,12 @@
     auth: TMcpAuth
     headerName: string
     identity: boolean
+    tags: string[]
   }
   const edit = ref<IEdit>()
   const editError = ref<string>()
+  /** Os problemas de campo do último 422 da edição (as tags mostram o delas junto do campo). */
+  const editIssues = ref<Record<string, string[]>>({})
   const toolsError = ref<string>()
   const secret = ref('')
   const busy = ref(false)
@@ -153,6 +161,7 @@
     auth: server.auth,
     headerName: server.headerName ?? 'Authorization',
     identity: server.identity === true,
+    tags: [...(server.tags ?? [])],
   })
 
   // Ao abrir um servidor: o formulário de edição com o que está gravado, e as ferramentas dele.
@@ -166,6 +175,7 @@
         testResult.value = undefined
         installResult.value = undefined
         editError.value = undefined
+        editIssues.value = {}
         toolsError.value = undefined
         // ⛔ Segredo digitado é de UM servidor: não pode aparecer no formulário de outro.
         secret.value = ''
@@ -192,9 +202,12 @@
       draft.transport !== server.transport ||
       draft.auth !== server.auth ||
       draft.identity !== (server.identity === true) ||
+      tagsChanged.value ||
       (draft.auth === 'header' && draft.headerName !== (server.headerName ?? 'Authorization'))
     )
   })
+  /** As tags do formulário diferem das gravadas? (vale também nos MCPs de processo e contêiner, que salvam à parte.) */
+  const tagsChanged = computed(() => !!selected.value && !!edit.value && !sameTags(edit.value.tags, selected.value.tags))
   const tools = computed(() => (selected.value ? (mcp.tools[selected.value.key] ?? []) : []))
   /** As mais pesadas primeiro: é por elas que vale começar a cortar. */
   const toolsByWeight = computed(() => [...tools.value].sort((a, b) => toolTokens(b) - toolTokens(a)))
@@ -252,6 +265,7 @@
               id: rest.id,
               projectId: rest.projectId,
               name: rest.name,
+              tags: rest.tags,
               kind: 'container',
               container: container && containerPayload(container),
               url: '',
@@ -263,6 +277,7 @@
                 id: rest.id,
                 projectId: rest.projectId,
                 name: rest.name,
+                tags: rest.tags,
                 kind: 'process',
                 process: proc && processPayload(proc),
                 url: '',
@@ -281,9 +296,11 @@
   async function run(work: () => Promise<void>) {
     busy.value = true
     editError.value = undefined
+    editIssues.value = {}
     try {
       await work()
     } catch (error) {
+      if (error instanceof ApiError && error.status === 422) editIssues.value = error.fieldIssues
       editError.value = describe(error)
     } finally {
       busy.value = false
@@ -307,14 +324,14 @@
   const containerDirty = computed(() => !!selected.value?.container && JSON.stringify(selected.value.container) !== JSON.stringify(containerPayload(containerDraft.value)))
   const saveContainer = () =>
     run(async () => {
-      await mcp.update(selected.value!.key, { name: edit.value!.name, container: containerPayload(containerDraft.value) })
+      await mcp.update(selected.value!.key, { name: edit.value!.name, tags: edit.value!.tags, container: containerPayload(containerDraft.value) })
     })
   const processDirty = computed(
     () => !!selected.value?.process && JSON.stringify(processPayload(withProcessDefaults(selected.value.process))) !== JSON.stringify(processPayload(processDraft.value)),
   )
   const saveProcess = () =>
     run(async () => {
-      await mcp.update(selected.value!.key, { name: edit.value!.name, process: processPayload(processDraft.value) })
+      await mcp.update(selected.value!.key, { name: edit.value!.name, tags: edit.value!.tags, process: processPayload(processDraft.value) })
     })
   const install = () =>
     run(async () => {
@@ -416,6 +433,7 @@
             }}
             · {{ server.agents.length }} agente(s)
           </span>
+          <TagChips :tags="server.tags" />
         </span>
         <span class="h-2 w-2 shrink-0 rounded-full" :class="server.enabled && server.status.connected ? 'bg-emerald-400' : 'bg-zinc-600'" />
       </RouterLink>
@@ -475,6 +493,7 @@
               </small>
               <small v-for="m in formIssues.projectId" :key="m" class="error">{{ m }}</small>
             </label>
+            <TagsInput v-model="form.tags" label="Tags" :suggestions="knownTags" :issues="formIssues.tags" class="sm:col-span-2" />
             <label v-if="form.kind === 'remote'" class="field sm:col-span-2">
               URL
               <input v-model="form.url" required class="input font-mono" placeholder="https://mcp.exemplo.com/mcp" />
@@ -568,8 +587,9 @@
               Nome
               <input v-model="edit.name" required class="input" />
             </label>
+            <TagsInput v-model="edit.tags" label="Tags" :suggestions="knownTags" :issues="editIssues.tags" />
             <McpContainerFields v-model="containerDraft" />
-            <div v-if="containerDirty || edit.name !== selected.name" class="flex gap-2">
+            <div v-if="containerDirty || edit.name !== selected.name || tagsChanged" class="flex gap-2">
               <button type="button" :disabled="busy" class="btn btn-primary" @click="saveContainer">Salvar alterações</button>
               <span class="self-center text-xs text-zinc-500">Vale para as próximas conversas.</span>
             </div>
@@ -599,8 +619,9 @@
               Nome
               <input v-model="edit.name" required class="input" />
             </label>
+            <TagsInput v-model="edit.tags" label="Tags" :suggestions="knownTags" :issues="editIssues.tags" />
             <McpProcessFields v-model="processDraft" />
-            <div v-if="processDirty || edit.name !== selected.name" class="flex gap-2">
+            <div v-if="processDirty || edit.name !== selected.name || tagsChanged" class="flex gap-2">
               <button type="button" :disabled="busy" class="btn btn-primary" @click="saveProcess">Salvar alterações</button>
               <span class="self-center text-xs text-zinc-500">As execuções em andamento serão encerradas.</span>
             </div>
@@ -654,6 +675,7 @@
                 URL
                 <input v-model="edit.url" required :readonly="isSelf" class="input font-mono read-only:opacity-60" />
               </label>
+              <TagsInput v-model="edit.tags" label="Tags" :suggestions="knownTags" :issues="editIssues.tags" class="sm:col-span-2" />
             </div>
             <div class="field">
               Conexão

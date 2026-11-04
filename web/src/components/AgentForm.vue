@@ -3,6 +3,8 @@
   import { useRoute } from 'vue-router'
   import { ApiError } from '@/lib/api'
   import ImportIssues from '@/components/ImportIssues.vue'
+  import TagsInput from '@/components/TagsInput.vue'
+  import { tagNames } from '@/lib/listFilter'
   import type { IResourceFile } from '@/lib/resourceFiles'
   import { effortLabel, sizeHint } from '@/lib/format'
   import { BUILD_KINDS, builderAgentId, type TBuildKind } from '@/lib/builder'
@@ -298,6 +300,7 @@
     role: 'Só subagente',
     adminOnly: 'Só administradores',
     projectId: 'Projeto',
+    tags: 'Tags',
     env: 'Variáveis de ambiente',
   }
 
@@ -316,8 +319,11 @@
     projectId: projects.current ?? null,
     permissions: [],
     triggers: [],
+    tags: [],
   })
   const form = ref<IAgentInput>(blank())
+  /** As tags que os agentes já usam (as sugestões do campo). */
+  const knownTags = computed(() => tagNames(agents.list))
   /** As variáveis de ambiente do agente, em linhas (o par nome/valor): viram o registro só ao salvar. */
   const envList = ref<IEnvRow[]>([])
   /** Os arquivos da pasta do agente: guia própria, gravada à parte (o Salvar do agente não os manda nem os apaga). */
@@ -419,7 +425,7 @@
     immediate: true,
   })
   const TAB_FIELDS: Record<TTab, string[]> = {
-    agente: ['id', 'name', 'role', 'adminOnly', 'projectId'],
+    agente: ['id', 'name', 'role', 'adminOnly', 'projectId', 'tags'],
     instrucoes: ['soul', 'systemPrompt'],
     triggers: ['triggers'],
     modelos: ['providers', 'models', 'modes', 'reasoningEfforts'],
@@ -579,6 +585,7 @@
             terminal: agent.terminal ? { ...agent.terminal } : null,
             diagnostics: agent.diagnostics ? { ...agent.diagnostics } : null,
             triggers: (agent.triggers ?? []).map((trigger) => ({ ...trigger })),
+            tags: [...(agent.tags ?? [])],
             fallback: agent.fallback ? { mode: agent.fallback.mode, chain: (agent.fallback.chain ?? []).map((step) => ({ ...step })) } : null,
           }
         : blank()
@@ -713,6 +720,7 @@
         <small class="hint">{{ form.projectId ? 'Só os membros do projeto veem o agente.' : 'Qualquer projeto vê o agente.' }}</small>
         <small v-for="message in issues.projectId" :key="message" class="error">{{ message }}</small>
       </label>
+      <TagsInput v-model="form.tags" label="Tags" :suggestions="knownTags" :issues="issues.tags" class="sm:col-span-2" />
       <div class="field">
         <label class="flex items-center gap-3">
           <button

@@ -10,6 +10,7 @@ import { usePermissionRequestsStore } from '@/stores/permissionRequests'
 import BuildTabs from '@/components/BuildTabs.vue'
 import Icon from '@/components/Icon.vue'
 import ListFilter from '@/components/ListFilter.vue'
+import TagChips from '@/components/TagChips.vue'
 import { filterList } from '@/lib/listFilter'
 import MasterDetail from '@/components/MasterDetail.vue'
 import { pendingDraft } from '@/lib/builder'
@@ -178,6 +179,7 @@ watch(creating, (value) => {
           <span class="min-w-0 flex-1">
             <span class="block truncate text-sm font-medium">{{ agent.name }}</span>
             <span class="block truncate text-xs text-zinc-500">{{ providersLine(agent) }}</span>
+            <TagChips :tags="agent.tags" />
           </span>
           <span v-if="agent.unavailable" class="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-300" :title="`Indisponível agora: ${agent.unavailable.label}`">{{ agent.unavailable.label }}</span>
           <span v-if="agent.adminOnly" class="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300" title="Só administradores conversam com este agente">só administradores</span>

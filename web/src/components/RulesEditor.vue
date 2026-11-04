@@ -2,8 +2,12 @@
 import { computed, ref, watch } from 'vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import Icon from '@/components/Icon.vue'
+import ListFilter from '@/components/ListFilter.vue'
+import TagChips from '@/components/TagChips.vue'
+import TagsInput from '@/components/TagsInput.vue'
 import { ApiError } from '@/lib/api'
 import { sizeHint } from '@/lib/format'
+import { filterList, tagNames } from '@/lib/listFilter'
 import { pendingDraft } from '@/lib/builder'
 import { GLOBAL_SCOPE, rulesTokens } from '@/lib/guidance'
 import type { IRule } from '@/lib/types'
@@ -28,13 +32,24 @@ const globals = computed(() => (props.showGlobals && props.scope !== GLOBAL_SCOP
 const loading = computed(() => own.loading.value || global.loading.value)
 const actionError = ref<string>()
 const error = computed(() => actionError.value ?? describeLoad(own.error.value ?? global.error.value))
-const draft = ref({ title: '', body: '' })
+const draft = ref({ title: '', body: '', tags: [] as string[] })
 const draftIssues = ref<Record<string, string[]>>({})
 const draftNote = ref<string>()
 const editing = ref<string>()
-const edit = ref({ title: '', body: '' })
+const edit = ref({ title: '', body: '', tags: [] as string[] })
+const editIssues = ref<Record<string, string[]>>({})
 const removing = ref<IRule>()
 const busy = ref(false)
+
+/** A busca e a tag do topo da lista (valem para as do escopo e para as globais mostradas). */
+const query = ref('')
+const tag = ref('')
+const fieldsOf = (rule: IRule) => [rule.title, rule.body]
+const visibleRules = computed(() => filterList(rules.value, { query: query.value, tag: tag.value }, fieldsOf))
+const visibleGlobals = computed(() => filterList(globals.value, { query: query.value, tag: tag.value }, fieldsOf))
+const listed = computed(() => [...globals.value, ...rules.value])
+/** As tags que as rules já usam (as sugestões do campo). */
+const knownTags = computed(() => tagNames(listed.value))
 
 /** O número com que cada rule ligada entra no prompt: as globais primeiro, depois as do escopo. */
 const numberOf = computed(() => {
@@ -64,7 +79,7 @@ function applyDraft() {
   const pending = pendingDraft.value
   if (pending?.kind !== 'rule' || (pending.projectId ?? GLOBAL_SCOPE) !== props.scope) return
   pendingDraft.value = undefined
-  draft.value = { title: pending.title, body: pending.body }
+  draft.value = { title: pending.title, body: pending.body, tags: [] }
   draftNote.value = 'Rascunho do construtor aplicado: revise e adicione.'
 }
 
@@ -74,6 +89,7 @@ async function run(work: () => Promise<unknown>) {
   try {
     await work()
   } catch (failure) {
+    if (failure instanceof ApiError && failure.status === 422) editIssues.value = failure.fieldIssues
     actionError.value = describe(failure)
   } finally {
     busy.value = false
@@ -86,7 +102,7 @@ async function add() {
   actionError.value = undefined
   try {
     await store.create(props.scope, draft.value)
-    draft.value = { title: '', body: '' }
+    draft.value = { title: '', body: '', tags: [] }
     draftNote.value = undefined
   } catch (failure) {
     if (failure instanceof ApiError && failure.status === 422) draftIssues.value = failure.fieldIssues
@@ -98,7 +114,8 @@ async function add() {
 
 function startEdit(rule: IRule) {
   editing.value = rule.id
-  edit.value = { title: rule.title, body: rule.body }
+  editIssues.value = {}
+  edit.value = { title: rule.title, body: rule.body, tags: [...(rule.tags ?? [])] }
 }
 
 const saveEdit = (rule: IRule) =>
@@ -127,22 +144,27 @@ const describeLoad = (failure: unknown) => (failure === undefined ? undefined : 
   <section class="flex flex-col gap-3">
     <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
 
+    <ListFilter v-if="listed.length" v-model:query="query" v-model:tag="tag" placeholder="Buscar regra…" :items="listed" class="-mx-3" />
+    <p v-if="listed.length && !visibleRules.length && !visibleGlobals.length" class="text-sm text-zinc-500">Nenhuma regra com essa busca.</p>
+
     <ol class="flex flex-col gap-2">
-      <li v-for="rule in showGlobals ? globals : []" :key="rule.id" class="rounded-xl border border-zinc-800/60 p-3 opacity-60" title="Regra global: vale em todos os projetos">
+      <li v-for="rule in showGlobals ? visibleGlobals : []" :key="rule.id" class="rounded-xl border border-zinc-800/60 p-3 opacity-60" title="Regra global: vale em todos os projetos">
         <div class="flex items-start gap-3">
           <span class="mt-0.5 shrink-0 rounded-md bg-zinc-800 px-1.5 py-0.5 font-mono text-[11px] text-zinc-300">{{ numberOf.get(rule.id) ? `Regra ${numberOf.get(rule.id)}` : '—' }}</span>
           <div class="min-w-0 flex-1">
             <p class="text-sm font-medium">{{ rule.title }}<span v-if="!rule.enabled" class="ml-2 text-xs font-normal text-zinc-500">desligada</span></p>
             <p class="mt-0.5 text-sm whitespace-pre-line text-zinc-400">{{ rule.body }}</p>
+            <TagChips :tags="rule.tags" />
           </div>
           <span class="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-400">global</span>
         </div>
       </li>
-      <li v-for="(rule, index) in rules" :key="rule.id" class="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3" :class="rule.enabled ? '' : 'opacity-60'">
+      <li v-for="rule in visibleRules" :key="rule.id" class="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3" :class="rule.enabled ? '' : 'opacity-60'">
         <form v-if="editing === rule.id" class="flex flex-col gap-2" @submit.prevent="saveEdit(rule)">
           <input v-model="edit.title" required maxlength="120" class="input text-sm font-medium" aria-label="Título" />
           <textarea v-model="edit.body" required rows="3" class="input text-sm" aria-label="Regra" />
           <small v-if="edit.body" class="hint">{{ sizeHint(edit.body, 'a cada turno') }}</small>
+          <TagsInput v-model="edit.tags" label="Tags" :suggestions="knownTags" :issues="editIssues.tags" />
           <div class="flex gap-2">
             <button type="submit" :disabled="busy" class="btn btn-sm btn-primary">Salvar</button>
             <button type="button" class="btn btn-sm btn-ghost" @click="editing = undefined">Cancelar</button>
@@ -153,10 +175,11 @@ const describeLoad = (failure: unknown) => (failure === undefined ? undefined : 
           <div class="min-w-0 flex-1">
             <p class="text-sm font-medium">{{ rule.title }}<span v-if="!rule.enabled" class="ml-2 text-xs font-normal text-zinc-500">desligada</span></p>
             <p class="mt-0.5 text-sm whitespace-pre-line text-zinc-400">{{ rule.body }}</p>
+            <TagChips :tags="rule.tags" />
           </div>
           <div v-if="!readonly" class="flex shrink-0 items-center gap-0.5 text-zinc-400">
-            <button type="button" class="grid h-7 w-7 place-items-center rounded-full hover:bg-zinc-800 disabled:opacity-30" :disabled="busy || index === 0" title="Subir" @click="move(rule, 'up')">↑</button>
-            <button type="button" class="grid h-7 w-7 place-items-center rounded-full hover:bg-zinc-800 disabled:opacity-30" :disabled="busy || index === rules.length - 1" title="Descer" @click="move(rule, 'down')">↓</button>
+            <button type="button" class="grid h-7 w-7 place-items-center rounded-full hover:bg-zinc-800 disabled:opacity-30" :disabled="busy || rules.indexOf(rule) === 0" title="Subir" @click="move(rule, 'up')">↑</button>
+            <button type="button" class="grid h-7 w-7 place-items-center rounded-full hover:bg-zinc-800 disabled:opacity-30" :disabled="busy || rules.indexOf(rule) === rules.length - 1" title="Descer" @click="move(rule, 'down')">↓</button>
             <button type="button" class="btn btn-sm btn-ghost" :disabled="busy" @click="toggle(rule)">{{ rule.enabled ? 'Desligar' : 'Ligar' }}</button>
             <button type="button" class="btn btn-sm btn-ghost" @click="startEdit(rule)">Editar</button>
             <button type="button" class="grid h-7 w-7 place-items-center rounded-full hover:bg-zinc-800 hover:text-rose-300" title="Apagar" @click="removing = rule"><Icon name="trash" class="h-4 w-4" /></button>
@@ -178,6 +201,7 @@ const describeLoad = (failure: unknown) => (failure === undefined ? undefined : 
         <small class="hint">Curta e direta: uma regra por vez.<template v-if="draft.body"> {{ sizeHint(draft.body, 'a cada turno') }}.</template></small>
         <small v-for="m in draftIssues.body" :key="m" class="error">{{ m }}</small>
       </label>
+      <TagsInput v-model="draft.tags" label="Tags" :suggestions="knownTags" :issues="draftIssues.tags" />
       <div><button type="submit" :disabled="busy" class="btn btn-primary">Adicionar</button></div>
     </form>
 

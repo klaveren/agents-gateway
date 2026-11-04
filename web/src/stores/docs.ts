@@ -13,7 +13,7 @@ export const PENDING_ISSUE_CODES: readonly string[] = ['link-pending', 'skill-mi
 export const isPendingIssue = (issue: Pick<IImportIssue, 'code'>) => PENDING_ISSUE_CODES.includes(issue.code)
 
 /** O corpo que a gravação manda (o `id` só ao criar). */
-export type TDocInput = Pick<IProjectDoc, 'kind' | 'title' | 'summary' | 'body'> & { projectId: string | null; docIds: string[]; docRefs: string[] }
+export type TDocInput = Pick<IProjectDoc, 'kind' | 'title' | 'summary' | 'tags' | 'body'> & { projectId: string | null; docIds: string[]; docRefs: string[] }
 
 /**
  * Os documentos — specs, ADRs e estudos (só admin): as listas por escopo (`lists`, a chave é `listKey(escopo, tipo?)`;
