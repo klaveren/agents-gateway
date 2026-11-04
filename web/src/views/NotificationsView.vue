@@ -3,7 +3,7 @@
   import ConfirmDialog from '@/components/ConfirmDialog.vue'
   import { ApiError } from '@/lib/api'
   import type { IWideningRef } from '@/lib/catalogHistory'
-  import { type IPermissionRequest, entriesLine, patchLine, ruleLine } from '@/lib/permissionRequests'
+  import { type IPermissionRequest, entriesLine, patchLine, ruleLine, secretLine } from '@/lib/permissionRequests'
   import { useResource } from '@/composables/useResource'
   import { useAuthStore } from '@/stores/auth'
   import { usePermissionRequestsStore } from '@/stores/permissionRequests'
@@ -44,11 +44,18 @@
   // As caixas: por pedido, as chaves de ampliação marcadas; e os pedidos sem ampliação que a pessoa escolheu.
   const checked = ref<Record<string, string[]>>({})
   const selected = ref<string[]>([])
+  /** ⛔ O valor digitado de cada pedido `secret`: só existe aqui, até aprovar (aí é apagado), e nunca vem do servidor. */
+  const values = ref<Record<string, string>>({})
+  const valueOf = (request: IPermissionRequest) => values.value[request.id] ?? ''
 
   const keysOf = (request: IPermissionRequest) => request.widenings.map((item) => item.key)
   const isChecked = (request: IPermissionRequest, key: string) => (checked.value[request.id] ?? []).includes(key)
-  /** Marcado = pronto para aprovar em lote: todas as ampliações marcadas, ou (sem ampliação) escolhido. */
+  /**
+   * Marcado = pronto para aprovar em lote: todas as ampliações marcadas, ou (sem ampliação) escolhido. ⛔ Pedido `secret`
+   * também exige o valor digitado: sem ele, "aprovar marcados" o pula.
+   */
   function marked(request: IPermissionRequest): boolean {
+    if (request.kind === 'secret' && !valueOf(request)) return false
     if (!request.widenings.length) return selected.value.includes(request.id)
     return keysOf(request).every((key) => isChecked(request, key))
   }
@@ -76,8 +83,13 @@
   const confirmOpen = ref(false)
   const failures = ref<Record<string, string>>({})
   const when = (iso: string) => new Date(iso).toLocaleString('pt-BR')
+  const SECRET_SCOPE = { agent: 'agente', skill: 'skill', command: 'command' } as const
   const target = (request: IPermissionRequest) =>
-    request.kind === 'project-rules' ? `projeto ${request.projectName ?? request.projectId ?? ''}` : `agente ${request.agentName ?? request.agentId ?? ''}`
+    request.kind === 'secret' && request.secret
+      ? `${SECRET_SCOPE[request.secret.scope] ?? request.secret.scope} ${request.secret.scopeId}`
+      : request.kind === 'project-rules'
+        ? `projeto ${request.projectName ?? request.projectId ?? ''}`
+        : `agente ${request.agentName ?? request.agentId ?? ''}`
 
   function fail(id: string, error: unknown) {
     let message = error instanceof Error ? error.message : String(error)
@@ -104,10 +116,19 @@
     }
   }
 
-  const approve = (request: IPermissionRequest) =>
-    act(request, async () => {
-      await store.approve(request.id, keysOf(request))
-    })
+  /** ⛔ Só o pedido `secret` leva o valor, e ele é apagado da tela deu certo ou não. */
+  async function approveRequest(request: IPermissionRequest) {
+    const value = request.kind === 'secret' ? valueOf(request) : undefined
+    try {
+      await store.approve(request.id, keysOf(request), value)
+    } finally {
+      if (request.kind === 'secret') {
+        const { [request.id]: _gone, ...rest } = values.value
+        values.value = rest
+      }
+    }
+  }
+  const approve = (request: IPermissionRequest) => act(request, () => approveRequest(request))
   const reject = (request: IPermissionRequest) =>
     act(request, async () => {
       await store.reject(request.id)
@@ -126,9 +147,7 @@
 
   async function approveMarked() {
     confirmOpen.value = false
-    await eachMarked(async (request) => {
-      await store.approve(request.id, keysOf(request))
-    })
+    await eachMarked(approveRequest)
   }
   const rejectMarked = () => eachMarked(async (request) => void (await store.reject(request.id)))
 </script>
@@ -199,6 +218,10 @@
             :data-request="request.id"
             data-test="request-item"
           >
+            <div v-if="request.secret" class="flex flex-col gap-0.5" data-test="secret-request">
+              <p class="text-sm text-zinc-100">{{ secretLine(request.secret) }}</p>
+              <p v-if="request.secret.description" class="text-xs text-zinc-400" data-test="secret-description">{{ request.secret.description }}</p>
+            </div>
             <ul class="flex flex-col gap-0.5 text-xs text-zinc-300">
               <li v-for="rule in request.add" :key="`+${rule.category}:${rule.pattern}`">{{ ruleLine(rule, 'add') }}</li>
               <li v-for="rule in request.remove" :key="`-${rule.category}:${rule.pattern}`">{{ ruleLine(rule, 'remove') }}</li>
@@ -230,6 +253,18 @@
                   </label>
                 </li>
               </ul>
+              <label v-if="request.kind === 'secret'" class="flex flex-col gap-1 text-sm text-zinc-200">
+                Valor da variável
+                <input
+                  type="password"
+                  autocomplete="new-password"
+                  class="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 font-mono font-normal text-zinc-100 outline-none focus:border-emerald-500/60"
+                  :value="valueOf(request)"
+                  data-test="secret-value"
+                  @input="values = { ...values, [request.id]: ($event.target as HTMLInputElement).value }"
+                />
+                <span class="text-xs text-zinc-500">Só você digita: o valor vai criptografado e não aparece de novo, nem aqui.</span>
+              </label>
               <div class="flex gap-2">
                 <button type="button" class="btn btn-primary" :disabled="!marked(request) || busy.includes(request.id)" data-test="item-approve" @click="approve(request)">
                   {{ busy.includes(request.id) ? 'Gravando…' : 'Aprovar' }}

@@ -1,3 +1,4 @@
+import { secretNameIssue } from '@domain/models/ResourceSecret.Model'
 import { randomUUID } from 'node:crypto'
 import { agentIssues, IAgentRules } from '@domain/Agent.Policy'
 import { toCapabilities } from '@domain/Capability.Catalog'
@@ -17,6 +18,7 @@ import { IAgent } from '@domain/models/Agent.Model'
 import {
   IPermissionRequest,
   IPermissionRequester,
+  IPermissionRequestSecret,
   IPermissionWidening,
   PERMISSION_REQUEST_LIMITS,
   PERMISSION_REQUEST_TTL_DAYS,
@@ -115,6 +117,11 @@ export interface IProjectRulesPort {
 }
 
 export interface IPermissionRequestsDeps {
+  /** As variáveis secretas: a aprovação de um pedido `secret` grava o valor digitado na tela. Ausente = sem esse pedido. */
+  secrets?: {
+    save(scope: 'agent' | 'skill' | 'command', scopeId: string, input: { name: string; description?: string; value?: string }, by: string): unknown
+    exists(scope: 'agent' | 'skill' | 'command', scopeId: string): boolean
+  }
   repository: IPermissionRequestRepository
   agents: Pick<AgentCatalog, 'entry' | 'save' | 'savePermissions'>
   /** As regras dos projetos (a camada de baixo). Ausente: sem pedido de projeto. */
@@ -293,6 +300,41 @@ export class PermissionRequestsService {
     return { agentId, applied: appliedFields, ...(pending ? { pending } : {}), notice: notice(agentScreen(split.agent.name), done, pending) }
   }
 
+  /**
+   * `request_secret`: o agente pede uma VARIÁVEL SECRETA pelo nome (ver `ResourceSecret.Model`). ⛔ Nada de valor aqui: a
+   * pessoa digita o valor na tela, ao aprovar. Já existe? O pedido troca o valor (a pessoa decide).
+   */
+  requestSecret(input: IPermissionRequestSecret & { reason: string }, requester: IPermissionRequester): IPermissionRequestView {
+    const reason = input.reason.trim()
+    const issues: Array<{ field: string; message: string }> = []
+    if (!this.deps.secrets) throw new PermissionRequestForbiddenError()
+    if (!reason) issues.push({ field: 'reason', message: 'required: what the variable is for (shown to whoever fills it)' })
+    const nameIssue = secretNameIssue(input.name)
+    if (nameIssue) issues.push({ field: 'name', message: nameIssue })
+    if (!this.deps.secrets.exists(input.scope, input.scopeId)) issues.push({ field: 'scopeId', message: `${input.scope} not found: ${input.scopeId}` })
+    if (issues.length) throw new InvalidPermissionsError(issues)
+    const secret: IPermissionRequestSecret = {
+      scope: input.scope,
+      scopeId: input.scopeId,
+      name: input.name,
+      ...(input.description?.trim() ? { description: input.description.trim() } : {}),
+    }
+    const agentId = input.scope === 'agent' ? input.scopeId : requester.agentId
+    const agent = agentId ? this.deps.agents.entry(agentId)?.agent : undefined
+    return this.store(this.newId(), {
+      kind: 'secret',
+      ...(agentId ? { agentId } : {}),
+      ...(agent?.projectId ? { projectId: agent.projectId } : {}),
+      add: [],
+      remove: [],
+      secret,
+      widenings: refs([secretWidening(secret)]),
+      reason,
+      requestedBy: requester,
+      baseHash: '',
+    })
+  }
+
   /** Os pedidos: os abertos (pendentes e vencidos) por padrão; `all` traz os decididos também. */
   list(filter: { agentId?: string; projectId?: string; kind?: TPermissionRequestKind; all?: boolean } = {}): IPermissionRequestView[] {
     const { all, ...rest } = filter
@@ -310,8 +352,29 @@ export class PermissionRequestsService {
    * pelo caminho normal (do agente ou do projeto), com as chaves aceitas na revisão. Depois de ler as regras do momento
    * (a única espera), tudo é síncrono: nada entra entre conferir e gravar.
    */
-  async approve(id: string, confirm: readonly string[] | undefined, decider: IPermissionDecider): Promise<{ request: IPermissionRequestView; permissions?: IPermissionRule[] }> {
+  async approve(
+    id: string,
+    confirm: readonly string[] | undefined,
+    decider: IPermissionDecider,
+    value?: string,
+  ): Promise<{ request: IPermissionRequestView; permissions?: IPermissionRule[] }> {
     if (!decider.onScreen) throw new PermissionRequestForbiddenError()
+    // ⛔ A variável pedida: o valor que a pessoa digitou na tela vai direto ao cofre — nunca ao pedido, nunca ao histórico.
+    const pending = this.open(id)
+    if (pending.kind === 'secret' && pending.secret) {
+      gate([secretWidening(pending.secret)], confirm)
+      if (!value?.trim()) throw new InvalidPermissionsError([{ field: 'value', message: 'type the value of the variable' }])
+      if (!this.deps.secrets) throw new PermissionRequestForbiddenError()
+      this.deps.secrets.save(
+        pending.secret.scope,
+        pending.secret.scopeId,
+        { name: pending.secret.name, ...(pending.secret.description ? { description: pending.secret.description } : {}), value },
+        decider.by,
+      )
+      this.deps.repository.decide(id, { status: 'approved', by: decider.by, at: this.now() })
+      this.publish(pending)
+      return { request: this.get(id) }
+    }
     const validation = this.open(id).kind === 'agent-patch' ? await this.agentValidation() : undefined
     const request = this.open(id)
     const note = `pedido de permissão ${request.id} aprovado (pedido por ${label(request.requestedBy)}): ${request.reason}`
@@ -425,7 +488,9 @@ export class PermissionRequestsService {
     let changed = false
     if (open) {
       try {
-        if (request.kind === 'agent-patch' && agent) {
+        if (request.kind === 'secret') {
+          // Nada a recalcular: a variável é só o nome pedido.
+        } else if (request.kind === 'agent-patch' && agent) {
           widenings = refs(agentWidenings(agent, requestedAgent(agent, request)))
           changed = agentHash(agent) !== baseHash
         } else if (request.kind !== 'agent-patch') {
@@ -512,4 +577,16 @@ function itemLine(item: IPermissionRequestView): string {
   if (item.widenings.length) return item.widenings.map((widening) => widening.description).join('; ')
   if (item.entries) return `${item.entries.field} + ${item.entries.add.join(', ')}`
   return Object.keys(item.patch ?? {}).join(', ') || [...item.add, ...item.remove].map(ruleText).join(', ')
+}
+
+/** A ampliação de um pedido `secret`: o recurso passa a ter a variável (o valor que a pessoa digitar). */
+function secretWidening(secret: IPermissionRequestSecret): IWidening {
+  const target = secret.scope === 'agent' ? `o agente ${secret.scopeId}` : `a ${secret.scope === 'skill' ? 'skill' : 'command'} ${secret.scopeId}`
+  return {
+    kind: secret.scope,
+    id: secret.scopeId,
+    category: 'environment',
+    key: `secret/${secret.scope}/${secret.scopeId}#${secret.name}`,
+    description: `variável secreta ${secret.name} para ${target}`,
+  }
 }

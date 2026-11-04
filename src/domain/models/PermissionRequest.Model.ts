@@ -24,8 +24,19 @@ export interface IPermissionRequester {
  * O que o pedido muda: as regras de um agente, as regras de um projeto (a camada de baixo), ou campos de um agente
  * (`patch_agent`: ferramentas, delegação, exposição, sandbox…).
  */
-export type TPermissionRequestKind = 'agent-rules' | 'project-rules' | 'agent-patch'
-export const PERMISSION_REQUEST_KINDS: readonly TPermissionRequestKind[] = ['agent-rules', 'project-rules', 'agent-patch']
+export type TPermissionRequestKind = 'agent-rules' | 'project-rules' | 'agent-patch' | 'secret'
+export const PERMISSION_REQUEST_KINDS: readonly TPermissionRequestKind[] = ['agent-rules', 'project-rules', 'agent-patch', 'secret']
+
+/**
+ * `secret`: o agente pediu uma VARIÁVEL SECRETA (ver `ResourceSecret.Model`) pelo nome — a pessoa digita o valor na tela, ao
+ * aprovar. O pedido guarda só o alvo e o nome (em `secret`), nunca valor.
+ */
+export interface IPermissionRequestSecret {
+  scope: 'agent' | 'skill' | 'command'
+  scopeId: string
+  name: string
+  description?: string
+}
 
 /**
  * UM PEDIDO DE PERMISSÃO: as ampliações que um agente pediu — para as regras de um agente (o dele ou outro), as de um
@@ -50,6 +61,8 @@ export interface IPermissionRequest {
    * saíram da MESMA chamada do agente dividem o `batchId` (a tela agrupa; o motivo é o mesmo). Ausente: um item só.
    */
   batchId?: string
+  /** `secret`: a variável pedida (o valor entra só na aprovação, pela tela). */
+  secret?: IPermissionRequestSecret
   /** As ampliações calculadas no pedido (a auditoria). A tela confirma as recalculadas sobre o agente de agora. */
   widenings: IPermissionWidening[]
   reason: string

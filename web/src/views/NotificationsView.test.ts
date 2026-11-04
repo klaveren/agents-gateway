@@ -175,6 +175,54 @@ describe('NotificationsView', () => {
     expect(item(host, 'a2').querySelector<HTMLButtonElement>('[data-test="item-approve"]')!.disabled).toBe(true)
   })
 
+  describe('pedido de variável secreta', () => {
+    const secret = (id: string) =>
+      request(id, {
+        kind: 'secret',
+        add: [],
+        secret: { scope: 'skill', scopeId: 'gitlab', name: 'GITLAB_TOKEN', description: 'token da API' },
+        widenings: [{ key: 'secret/skill/gitlab#GITLAB_TOKEN', description: 'Variável secreta GITLAB_TOKEN' }],
+        createdAt: '2026-11-04T12:00:00Z',
+      })
+    const typeValue = async (host: HTMLElement, id: string, value: string) => {
+      const input = item(host, id).querySelector<HTMLInputElement>('[data-test="secret-value"]')!
+      input.value = value
+      input.dispatchEvent(new Event('input'))
+      await flush()
+    }
+
+    it('mostra nome, escopo, descrição e motivo; Aprovar só liga com a caixa E o valor; manda { confirm, value } e limpa', async () => {
+      all = [secret('v1')]
+      const host = await mount(NotificationsView)
+      expect(item(host, 'v1').textContent).toContain('Variável secreta pedida: GITLAB_TOKEN para skill gitlab')
+      expect(item(host, 'v1').textContent).toContain('token da API')
+      expect(host.textContent).toContain('preciso disto')
+      expect(item(host, 'v1').querySelector<HTMLInputElement>('[data-test="secret-value"]')!.type).toBe('password')
+      const approve = item(host, 'v1').querySelector<HTMLButtonElement>('[data-test="item-approve"]')!
+      await tick(item(host, 'v1').querySelector('input[data-key]'))
+      expect(approve.disabled).toBe(true)
+      await typeValue(host, 'v1', 's3gredo')
+      expect(approve.disabled).toBe(false)
+      await tick(item(host, 'v1').querySelector('input[data-key]'), false)
+      expect(approve.disabled).toBe(true)
+      await tick(item(host, 'v1').querySelector('input[data-key]'))
+      await click(approve)
+      expect(vi.mocked(api)).toHaveBeenCalledWith('/permission-requests/v1/approve', { method: 'POST', body: { confirm: ['secret/skill/gitlab#GITLAB_TOKEN'], value: 's3gredo' } })
+      expect(host.innerHTML).not.toContain('s3gredo')
+    })
+
+    it('em lote, o secreto sem valor não conta como marcado', async () => {
+      all = [secret('v1'), request('a1')]
+      const host = await mount(NotificationsView)
+      await tick(host.querySelector('[data-test="select-all"]'))
+      expect(host.querySelector('[data-test="approve-selected"]')!.textContent).toContain('(1)')
+      await typeValue(host, 'v1', 'abc')
+      expect(host.querySelector('[data-test="approve-selected"]')!.textContent).toContain('(2)')
+      await typeValue(host, 'v1', '')
+      expect(host.querySelector('[data-test="approve-selected"]')!.textContent).toContain('(1)')
+    })
+  })
+
   it('"Marcar todos do lote" marca só o lote', async () => {
     const host = await mount(NotificationsView)
     await tick(host.querySelector('[data-group="batch:b1"] [data-test="group-toggle"]'))

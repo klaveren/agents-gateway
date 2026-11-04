@@ -1,3 +1,5 @@
+import { makeGuidance } from './Guidance.Factory'
+import { makeResourceSecrets } from './ResourceSecrets.Factory'
 import { PermissionRequestsService } from '@application/PermissionRequests.Service'
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
 import { SqlitePermissionRequestRepository } from '@infra/persistence/Sqlite.PermissionRequestRepository'
@@ -22,6 +24,10 @@ export function makePermissionRequests(): PermissionRequestsService {
       save: (projectId, rules, by, change) => makePermissions().saveProjectRules(projectId, rules, by, change),
     },
     events: makeCatalogEvents(),
+    secrets: {
+      save: (scope, scopeId, input, by) => makeResourceSecrets().save(scope, scopeId, input, by),
+      exists: (scope, scopeId) => (scope === 'agent' ? !!makeAgents().get(scopeId) : makeGuidance().resourceKindOf(scopeId) === scope),
+    },
   })
   return service
 }

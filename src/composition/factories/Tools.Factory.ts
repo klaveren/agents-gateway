@@ -1,3 +1,4 @@
+import { makeResourceSecrets } from './ResourceSecrets.Factory'
 import { ImportJobService } from '@application/ImportJob.Service'
 import { importJobRepository } from './ImportJobs.Factory'
 import type { IPermissionChecker } from '@application/Permissions.Service'
@@ -104,6 +105,11 @@ export function makeTools(): ITools {
             agentTerminal: (agentId) => makeAgents().get(agentId)?.terminal,
             agentEnv: (agentId) => makeAgents().get(agentId)?.env,
             mask: makeSecretMasker(),
+            secrets: {
+              envFor: (agentId, sessionId) => makeResourceSecrets().envFor(agentId, sessionId),
+              sources: (agentId, sessionId) => makeResourceSecrets().sources(agentId, sessionId),
+              markLoaded: (sessionId, kind, id) => makeResourceSecrets().markLoaded(sessionId, kind, id),
+            },
             loops: loopGuard(),
             diagnostics: editDiagnostics(),
             agentDiagnostics: (agentId) => makeAgents().get(agentId)?.diagnostics,

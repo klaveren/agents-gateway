@@ -461,6 +461,35 @@ describe('LocalTools — read_doc do anexo de documento', () => {
   })
 })
 
+describe('LocalTools — variáveis secretas', () => {
+  it('⛔ o run_bash recusa o comando que só mostra uma variável que vale agora, antes de rodar; o use_resource libera as da skill', async () => {
+    let ran = 0
+    const loaded: string[] = []
+    const tools = makeLocalTools({
+      exec: async () => ((ran += 1), { stdout: 'ok', stderr: '' }),
+      fetchHtml: async () => '',
+      policy: { timeoutMs: 1000, maxOutputChars: 50, cwd: '/tmp/sandbox' },
+      resources: { loadResource: (kind, id) => (kind === 'skill' && id === 'gitlab' ? '# Skill: gitlab' : undefined) },
+      secrets: {
+        envFor: () => ({ env: {} }),
+        sources: () => (loaded.includes('skill:gitlab') ? [{ name: 'GITLAB_TOKEN' }] : []),
+        markLoaded: (_sessionId, kind, id) => void loaded.push(`${kind}:${id}`),
+      },
+    })
+    const bash = tools.find((tool) => tool.name === 'run_bash')!
+    const use = tools.find((tool) => tool.name === 'use_resource')!
+    const context = { agentId: 'dev', sessionId: 'c1' }
+    // Antes de a skill entrar, o nome não é de ninguém: o comando roda.
+    assert.strictEqual((await bash.execute({ command: 'echo $GITLAB_TOKEN' }, context)).status, 'success')
+    assert.strictEqual((await use.execute({ kind: 'skill', id: 'gitlab' }, context)).status, 'success')
+    assert.deepStrictEqual(loaded, ['skill:gitlab'])
+    const refused = await bash.execute({ command: 'echo $GITLAB_TOKEN' }, context)
+    assert.deepStrictEqual([refused.status, /Recusado: mostrar GITLAB_TOKEN/.test(refused.result)], ['error', true])
+    assert.strictEqual(ran, 1, 'o recusado não roda')
+    assert.strictEqual((await bash.execute({ command: 'curl -H "PRIVATE-TOKEN: $GITLAB_TOKEN" https://gitlab.com' }, context)).status, 'success')
+  })
+})
+
 describe('LocalTools — use_resource e search_resources', () => {
   it('só existem com o carregador; carregam pelo agente DA CHAMADA, por tipo', async () => {
     assert.ok(!makeLocalTools().some((tool) => tool.name === 'use_resource' || tool.name === 'search_resources'))

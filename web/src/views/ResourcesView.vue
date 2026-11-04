@@ -14,6 +14,7 @@ import HistoryTabs from '@/components/HistoryTabs.vue'
 import ImportIssues from '@/components/ImportIssues.vue'
 import ImportIssuesBadge from '@/components/ImportIssuesBadge.vue'
 import ResourceFiles from '@/components/ResourceFiles.vue'
+import SecretVariables from '@/components/SecretVariables.vue'
 import TriggersEditor from '@/components/TriggersEditor.vue'
 import BuildTabs from '@/components/BuildTabs.vue'
 import { pendingDraft } from '@/lib/builder'
@@ -86,13 +87,14 @@ const g = computed(() => (info.value.masc ? { nova: 'Novo', nenhuma: 'Nenhum', u
 
 const form = ref({ id: '', description: '', tags: [] as string[], body: '', global: true, project: '', docIds: [] as string[], docRefs: [] as string[], triggers: [] as IAgentTrigger[] })
 /** A guia da edição: o formulário ou o histórico (`#historico` no endereço abre nele). */
-type TResourceTab = 'edit' | 'instructions' | 'triggers' | 'attachments' | 'files' | 'issues' | 'history'
+type TResourceTab = 'edit' | 'instructions' | 'triggers' | 'attachments' | 'files' | 'variables' | 'issues' | 'history'
 const HASH_TAB: Record<string, TResourceTab> = {
   '#historico': 'history',
   '#instrucoes': 'instructions',
   '#triggers': 'triggers',
   '#anexos': 'attachments',
   '#arquivos': 'files',
+  '#variaveis': 'variables',
   '#problemas': 'issues',
 }
 const tab = ref<TResourceTab>(HASH_TAB[route.hash] ?? 'edit')
@@ -314,6 +316,8 @@ const extraTabs = computed(() =>
     { id: 'triggers' as const, label: `Triggers${form.value.triggers.length ? ` (${form.value.triggers.length})` : ''}` },
     { id: 'attachments' as const, label: `Anexos${form.value.docIds.length ? ` (${form.value.docIds.length})` : ''}` },
   { id: 'files' as const, label: `Arquivos${loaded.value?.files?.length ? ` (${loaded.value.files.length})` : ''}` },
+    // As variáveis secretas (só admin; o valor entra e nunca volta).
+    ...(auth.isAdmin ? [{ id: 'variables' as const, label: 'Variáveis' }] : []),
     ...(importIssues.value.length ? [{ id: 'issues' as const, label: `Problemas da importação (${importIssues.value.length})` }] : []),
   ].filter((item) => !adding.value || item.id === 'instructions' || item.id === 'triggers' || item.id === 'attachments'),
 )
@@ -434,6 +438,10 @@ function onInvalid(event: Event) {
       <section v-else-if="loaded && tab === 'files'" class="mx-auto flex max-w-3xl flex-col gap-3">
         <h2 class="font-mono text-lg font-semibold">{{ kind === 'command' ? '/' : '' }}{{ loaded.id }}</h2>
         <ResourceFiles :files="loaded.files ?? []" :where="`${loaded.projectId ? `projects/${loaded.projectId}` : 'global'}/${kind}s/${loaded.id}`" :save="saveFiles" />
+      </section>
+      <section v-else-if="loaded && tab === 'variables'" class="mx-auto flex max-w-3xl flex-col gap-3">
+        <h2 class="font-mono text-lg font-semibold">{{ kind === 'command' ? '/' : '' }}{{ loaded.id }}</h2>
+        <SecretVariables :base-path="`/resources/${encodeURIComponent(loaded.id)}`" :scope-label="kind === 'command' ? 'deste command (valem depois que ele é carregado na conversa)' : 'desta skill (valem depois que ela é carregada na conversa)'" />
       </section>
       <section v-else-if="loaded && tab === 'history'" class="mx-auto flex max-w-3xl flex-col gap-3">
         <h2 class="font-mono text-lg font-semibold">{{ kind === 'command' ? '/' : '' }}{{ loaded.id }}</h2>

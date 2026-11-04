@@ -412,6 +412,17 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   )
 
   server.registerTool(
+    'list_secret_names',
+    {
+      description:
+        'The SECRET VARIABLES of an agent, skill or command: only names, descriptions and when they changed — never the value. They are in the environment of your commands as `$NAME` (an agent one always; a skill or command one after you load it). Use them in commands, never print them.',
+      inputSchema: { scope: z.enum(['agent', 'resource']).describe('agent, or resource (a skill or command)'), id: z.string().describe('The agent id or the skill/command id.') },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ scope, id }) => reply(await api('GET', `/${scope === 'agent' ? 'agents' : 'resources'}/${encodeURIComponent(id)}/secrets`)),
+  )
+
+  server.registerTool(
     'list_model_groups',
     {
       description:
@@ -918,6 +929,22 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
       },
     },
     async ({ scope, id, ...change }) => pendingReply(await api('POST', `${targetPath(scope, id)}/permission-rules`, { body: change })),
+  )
+
+  server.registerTool(
+    'request_secret',
+    {
+      description:
+        'Ask for a SECRET VARIABLE (a token, a password) by NAME for an agent, skill or command. ⛔ You never send or see the value: an administrator types it on the screen (account menu → Notificações). Tell the person what you asked and where; until then the variable does not exist.',
+      inputSchema: {
+        scope: z.enum(['agent', 'skill', 'command']),
+        scopeId: z.string().describe('The agent id, or the skill/command id.'),
+        name: z.string().describe('UPPERCASE_WITH_UNDERSCORES, e.g. GITLAB_TOKEN.'),
+        description: z.string().optional().describe('What it is (shown with the variable).'),
+        reason: z.string().describe('Why it is needed; shown to whoever fills it.'),
+      },
+    },
+    async (body) => reply(await api('POST', '/secret-requests', { body })),
   )
 
   server.registerTool(

@@ -1,3 +1,4 @@
+import { printsSecret } from '@domain/models/ResourceSecret.Model'
 import { terminalEnv } from '@domain/Agent.Identity'
 import type { IPermissionAsker, IPermissionChecker } from '@application/Permissions.Service'
 import { cercoPlan } from '@domain/Cerco.Plan'
@@ -111,6 +112,15 @@ export interface ILocalToolDeps {
   processes?: BackgroundProcesses
   /** A máscara de segredos (ver `Secret.Masker`). Ausente = a saída vai como saiu. */
   mask?: ILocalMask
+  /**
+   * ⛔ As variáveis secretas do agente e das skills e commands carregados (ver `ResourceSecrets.Service`): o valor entra no
+   * ambiente do comando, nunca na linha dele. Ausente = sem variáveis.
+   */
+  secrets?: {
+    envFor(agentId: string | undefined, sessionId: string | undefined): { env: Record<string, string> }
+    sources(agentId: string | undefined, sessionId: string | undefined): Array<{ name: string }>
+    markLoaded(sessionId: string | undefined, kind: 'skill' | 'command', id: string): void
+  }
   /** O detector de laço (ver `Loop.Guard`): recusa a chamada repetida antes de ela rodar. Ausente = sem detector. */
   loops?: { check(sessionId: string | undefined, tool: string, args: unknown): string | undefined }
   /** O diagnóstico depois de editar (ver `Edit.Diagnostics`): vai junto do `write_file`/`edit_file`. Ausente = nenhum. */
@@ -247,7 +257,10 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     try {
       const line = await sandbox.wrapWith(command, root, (base) => cercoPlan(layers, { ...base, system }), token, { ...place, localPorts })
       // As variáveis do agente por baixo, a identidade de quem chama por cima (ver `Agent.Identity`); as contas do projeto vêm depois.
-      const env: Record<string, string> = { ...terminalEnv(envOf(context), subscriptionEnv({ HOME: root }), context), ...accounts?.env }
+      // ⛔ As variáveis secretas por cima das contas (a do recurso é mais específica), lidas AGORA: a skill carregada no meio
+      // do turno já vale aqui. A máscara as recebe antes do processo nascer.
+      const secrets = deps.secrets?.envFor(context?.agentId, context?.sessionId).env
+      const env: Record<string, string> = { ...terminalEnv(envOf(context), subscriptionEnv({ HOME: root }), context), ...accounts?.env, ...secrets }
       if (accounts?.ssh?.length) {
         const home = join(place.scratchBase ?? root, '.home')
         sshKit = accountsDir(home, token)
@@ -309,6 +322,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
   async function startBackground(command: string, name: string | undefined, context: IExecutionContext | undefined, permissions: IPermissionChecker): Promise<IToolResult> {
     const sessionId = context?.sessionId
     if (!sessionId) return { status: 'error', result: 'bash_start só funciona dentro de uma conversa.' }
+    const printing = secretPrintRefusal(command, context, deps.secrets)
+    if (printing) return { status: 'error', result: printing }
     if (processes.running(sessionId).length >= BACKGROUND_LIMITS.perSession)
       return { status: 'error', result: `Já há ${BACKGROUND_LIMITS.perSession} processos em segundo plano nesta conversa: pare um com bash_stop.` }
     const prepared = await prepareSandboxed(command, context, permissions)
@@ -371,6 +386,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
           return { status: 'error', result: `Refused by the gateway tool policy: ${denied}.` }
         }
         if (dumpsClusterSecret(command)) return { status: 'error', result: CLUSTER_SECRET_REFUSAL }
+        const printing = secretPrintRefusal(command, context, deps.secrets)
+        if (printing) return { status: 'error', result: printing }
         const asked = Number(args.timeoutSeconds)
         if (deps.permissions) return guardedBash(command, context, deps.permissions, Number.isFinite(asked) ? asked : undefined)
 
@@ -421,7 +438,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     }),
     ...(deps.docs ? [readDocTool(deps.docs, deps.permissions)] : []),
     ...(deps.docs?.searchDocs ? [searchDocsTool(deps.docs)] : []),
-    ...(deps.resources ? [useResourceTool(deps.resources, deps.permissions)] : []),
+    ...(deps.resources ? [useResourceTool(deps.resources, deps.permissions, deps.secrets)] : []),
     ...(deps.resources?.searchResources ? [searchResourcesTool(deps.resources)] : []),
     ...(deps.triggers ? [agentTriggerTool(deps.triggers, deps.permissions)] : []),
     ...(deps.drafts ? [proposeDraftTool(deps.drafts)] : []),
@@ -610,12 +627,19 @@ function proposeDraftTool(drafts: IDraftChecker): ILocalTool {
   }
 }
 
+/** ⛔ O comando que só mostra uma variável secreta que vale agora (ver `printsSecret`): o motivo da recusa, ou nada. */
+function secretPrintRefusal(command: string, context: IExecutionContext | undefined, secrets: ILocalToolDeps['secrets']): string | undefined {
+  const names = secrets?.sources(context?.agentId, context?.sessionId).map((source) => source.name) ?? []
+  const reason = printsSecret(command, names)
+  return reason ? `Recusado: ${reason}. Use a variável no comando ($NOME), nunca a imprima.` : undefined
+}
+
 /**
  * `use_resource`: um recurso inteiro, dos que o índice do prompt lista — a skill e o command liberados (com os documentos
  * anexados) ou um trigger do próprio agente. ⛔ Só o que ESTE agente (o `agentId` do contexto) pode usar; o resto responde
  * como inexistente. A skill ainda passa pela regra de permissão `skill`.
  */
-function useResourceTool(resources: IResourceLoader, permissions?: IPermissionChecker): ILocalTool {
+function useResourceTool(resources: IResourceLoader, permissions?: IPermissionChecker, secrets?: ILocalToolDeps['secrets']): ILocalTool {
   return {
     origin: 'local',
     name: USE_RESOURCE_TOOL,
@@ -643,6 +667,8 @@ function useResourceTool(resources: IResourceLoader, permissions?: IPermissionCh
       }
       const body = id ? resources.loadResource(kind, id, context?.agentId) : undefined
       if (!body) return { status: 'error', result: `${kind} not found: ${id || '(no id)'}` }
+      // As variáveis secretas da skill ou do command passam a valer nesta conversa (ver `ResourceSecret.Model`).
+      if (kind === 'skill' || kind === 'command') secrets?.markLoaded(context?.sessionId, kind, id)
       return { status: 'success', result: body }
     },
   }

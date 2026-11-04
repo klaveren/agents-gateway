@@ -337,6 +337,14 @@ function buildRoutes(
     { method: 'get', path: '/permission-requests', handler: permissionRequests.list },
     { method: 'post', path: '/permission-requests/:requestId/approve', handler: permissionRequests.approve },
     { method: 'post', path: '/permission-requests/:requestId/reject', handler: permissionRequests.reject },
+    // As variáveis secretas dos agentes, skills e commands (só admin; gravar e apagar, só na tela). ⛔ Nenhuma devolve valor.
+    { method: 'get', path: '/agents/:agentId/secrets', handler: permissionRequests.listSecrets },
+    { method: 'put', path: '/agents/:agentId/secrets/:name', handler: permissionRequests.saveSecret },
+    { method: 'delete', path: '/agents/:agentId/secrets/:name', handler: permissionRequests.removeSecret },
+    { method: 'get', path: '/resources/:resourceId/secrets', handler: permissionRequests.listSecrets },
+    { method: 'put', path: '/resources/:resourceId/secrets/:name', handler: permissionRequests.saveSecret },
+    { method: 'delete', path: '/resources/:resourceId/secrets/:name', handler: permissionRequests.removeSecret },
+    { method: 'post', path: '/secret-requests', handler: permissionRequests.requestSecret },
     // O histórico do catálogo (só leitura). O item vai na query: o id do complemento de protocolo tem barra.
     { method: 'get', path: '/catalog/history', handler: catalog.history },
     { method: 'get', path: '/catalog/history/diff', handler: catalog.diff },
