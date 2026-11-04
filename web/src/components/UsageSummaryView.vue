@@ -7,6 +7,8 @@
   import { useProtocolsStore } from '@/stores/protocols'
   import UsageDailyChart from './UsageDailyChart.vue'
   import UsageTiles from './UsageTiles.vue'
+  import ListPager from './ListPager.vue'
+  import { usePaged } from '@/composables/usePaged'
 
   /** O resumo de uso — o meu, ou o de um usuário (admin, com custo). */
   const props = defineProps<{ summary: IUsageSummary; showCost: boolean }>()
@@ -25,6 +27,11 @@
   const toolMax = computed(() => Math.max(1, ...tools.value.map((item) => item.directTokens + item.contextTokens)))
   const toolWidth = (value: number) => `${(value / toolMax.value) * 100}%`
   const toolTotal = (item: IToolUsage) => item.directTokens + item.contextTokens
+  // 10 por página em cada relatório; a barra continua medida contra a lista inteira.
+  const agentPage = usePaged(computed(() => props.summary.byAgent))
+  const modelPage = usePaged(computed(() => props.summary.byModel))
+  const toolPage = usePaged(tools)
+  const topPage = usePaged(computed(() => props.summary.top))
 </script>
 
 <template>
@@ -43,7 +50,7 @@
         <section class="card">
           <h2 class="card-title">Por agente</h2>
           <ul class="flex flex-col gap-2.5">
-            <li v-for="item in summary.byAgent" :key="item.agentId">
+            <li v-for="item in agentPage.items.value" :key="item.agentId">
               <div class="flex items-baseline gap-2 text-sm">
                 <span class="truncate text-zinc-200">{{ agentName(item.agentId) }}</span>
                 <span class="ml-auto shrink-0 text-xs text-zinc-400">
@@ -54,11 +61,12 @@
               <div class="mt-1 h-1.5 rounded-full bg-zinc-800"><div class="h-1.5 rounded-full bg-emerald-500/70" :style="{ width: share(item, summary.byAgent) }" /></div>
             </li>
           </ul>
+          <ListPager v-model="agentPage.page.value" :pages="agentPage.pages.value" :total="agentPage.total.value" :size="agentPage.size" />
         </section>
         <section class="card">
           <h2 class="card-title">Por modelo</h2>
           <ul class="flex flex-col gap-2.5">
-            <li v-for="item in summary.byModel" :key="`${item.provider}:${item.model}`">
+            <li v-for="item in modelPage.items.value" :key="`${item.provider}:${item.model}`">
               <div class="flex items-baseline gap-2 text-sm">
                 <span class="truncate font-mono text-[13px] text-zinc-200">{{ item.model }}</span>
                 <span class="shrink-0 text-xs text-zinc-500">{{ protocols.providerName(item.provider) }}</span>
@@ -70,6 +78,7 @@
               <div class="mt-1 h-1.5 rounded-full bg-zinc-800"><div class="h-1.5 rounded-full bg-emerald-500/70" :style="{ width: share(item, summary.byModel) }" /></div>
             </li>
           </ul>
+          <ListPager v-model="modelPage.page.value" :pages="modelPage.pages.value" :total="modelPage.total.value" :size="modelPage.size" />
         </section>
       </div>
 
@@ -91,7 +100,7 @@
           passos seguintes do turno.
         </p>
         <ul class="flex flex-col gap-2.5">
-          <li v-for="item in tools" :key="item.tool" :data-tool="item.tool">
+          <li v-for="item in toolPage.items.value" :key="item.tool" :data-tool="item.tool">
             <div class="flex items-baseline gap-2 text-sm">
               <span class="truncate font-mono text-[13px] text-zinc-200">{{ item.tool }}</span>
               <span class="shrink-0 text-xs text-zinc-500">{{ item.calls }}×</span>
@@ -106,12 +115,13 @@
             </div>
           </li>
         </ul>
+        <ListPager v-model="toolPage.page.value" :pages="toolPage.pages.value" :total="toolPage.total.value" :size="toolPage.size" />
       </section>
 
       <section class="card">
         <h2 class="card-title">Conversas que mais usaram</h2>
         <ul class="divide-y divide-zinc-800">
-          <li v-for="item in summary.top" :key="item.id" class="flex items-center gap-3 py-2 text-sm">
+          <li v-for="item in topPage.items.value" :key="item.id" class="flex items-center gap-3 py-2 text-sm">
             <RouterLink :to="`/c/${item.id}`" class="min-w-0 flex-1 truncate text-zinc-200 hover:text-emerald-300">{{ item.title || 'Conversa sem título' }}</RouterLink>
             <span class="shrink-0 text-xs text-zinc-500">{{ agentName(item.agentId) }}</span>
             <span class="w-24 shrink-0 text-right text-xs text-zinc-400">
@@ -123,6 +133,7 @@
             </span>
           </li>
         </ul>
+        <ListPager v-model="topPage.page.value" :pages="topPage.pages.value" :total="topPage.total.value" :size="topPage.size" />
       </section>
     </template>
   </div>

@@ -32,7 +32,7 @@ export interface IGroupUsage extends IUsageFigure {
   value?: string
 }
 
-const TOP = 10
+const TOP = 50
 
 /**
  * O uso montado a partir das linhas (um dia de uma conversa cada): totais, por dia, por agente, por

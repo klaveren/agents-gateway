@@ -28,7 +28,7 @@ const PERIODS = [7, 30, 90]
 /** O valor de `:value` que pede as conversas SEM a chave. */
 const NO_VALUE = '~none'
 /** As ferramentas que a tela mostra (as que mais pesaram). */
-const TOOLS = 25
+const TOOLS = 100
 const DAY = 86_400_000
 
 /**
