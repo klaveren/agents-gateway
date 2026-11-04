@@ -86,11 +86,16 @@ export function lineIssues(line: Partial<Pick<ILedgerLine, 'date' | 'type' | 'tr
   return issues
 }
 
-/** ⚠️ Os verbos de ESTADO DE MISSÃO (§6, o teste do verbo): o que diz onde parei, e não como agir, não é ledger. */
-const STATE_VERBS = /\b(retomar|retome|proximo passo|proximos passos|pendente|pendentes|aguarda|aguardando|aguardar)\b/
+/**
+ * ⚠️ Os MARCADORES de estado de missão (§6, o teste do verbo): o que diz onde parei, e não como agir, não é ledger.
+ * ⚖️ Só em CAIXA ALTA ("RETOMAR", "PENDENTE", "PRÓXIMO PASSO"), como a spec os escreve: a palavra solta ("o que tem
+ * pendente?", "retomar uma sessão") é texto comum, não marcador — avisar ali era ruído para todo agente.
+ */
+const STATE_MARKERS = /(?:^|[^\p{L}])(RETOMAR|RETOME|PROXIMO PASSO|PROXIMOS PASSOS|PENDENTES?|AGUARDA(?:NDO|R)?)(?![\p{L}])/u
 
 export function stateVerbOf(text: string): string | undefined {
-  return STATE_VERBS.exec(foldText(text))?.[1]
+  const plain = text.normalize('NFD').replace(/\p{Diacritic}/gu, '')
+  return STATE_MARKERS.exec(plain)?.[1]?.toLowerCase()
 }
 
 /** O tema "espremido": sem hífen e sem o plural do fim — `build-ooms` e `buildoom` são o mesmo. */
@@ -131,11 +136,14 @@ export function ledgerWarnings(input: ILedgerHealthInput): ILedgerWarning[] {
     if (verb)
       warnings.push({ code: 'state-verb', topic: line.topic, lineId: line.id, message: `${line.topic} #${line.id}: "${verb}" — estado de missão (onde parei), não como agir` })
   }
-  if (input.lines.length > LEDGER_LIMITS.healthyLines)
-    warnings.push({
-      code: 'too-many-lines',
-      message: `${input.lines.length} linhas (meta: < ${LEDGER_LIMITS.healthyLines}) — pode o "fiz", funda duplicatas, tire o defasado`,
-    })
+  // Por CONTEXTO (o ledger é LSA: cada contexto carrega sozinho), não o ledger inteiro.
+  for (const [topic, count] of counts)
+    if (count > LEDGER_LIMITS.healthyLines)
+      warnings.push({
+        code: 'too-many-lines',
+        topic,
+        message: `${topic}: ${count} linhas (meta: < ${LEDGER_LIMITS.healthyLines}) — pode o "fiz", funda duplicatas, tire o defasado`,
+      })
   const topics = input.contexts.map((context) => context.topic).sort()
   for (let i = 0; i < topics.length; i++)
     for (let j = i + 1; j < topics.length; j++)

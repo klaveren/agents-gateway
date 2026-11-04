@@ -79,6 +79,38 @@ describe('ledger_read / ledger_write', () => {
     )
   })
 
+  it('⚖️ a gravação devolve só a CONFIRMAÇÃO (nunca o contexto inteiro); `linhas` grava várias numa chamada', async () => {
+    const { ledger, write } = setup()
+    const as = (args: Record<string, unknown>) => write.execute(args, turn('theo'))
+    await as({ ...CREATE, playbook: 'x'.repeat(2000) })
+    const batch = await as({
+      tema: 'build-oom',
+      acao: 'linha_nova',
+      linhas: [
+        { tipo: 'APRENDIZADO', situacao: 'build no CI', aprendizado: 'subir o heap para 4 GB' },
+        { tipo: 'POSTURA', situacao: 'build lento', aprendizado: 'medir antes de mexer no heap' },
+      ],
+    })
+    assert.strictEqual(batch.status, 'success')
+    assert.strictEqual(ledger.context('theo', 'build-oom').lines.length, 2)
+    const [first, second] = ledger.context('theo', 'build-oom').lines
+    assert.ok(batch.result.includes(`#${first.id} `) && batch.result.includes(`#${second.id} `))
+    assert.ok(!batch.result.includes('x'.repeat(100)), 'o playbook não volta')
+    const one = await as({ tema: 'build-oom', acao: 'linha_nova', tipo: 'APRENDIZADO', situacao: 'cache', aprendizado: 'limpar o cache do pnpm' })
+    assert.ok(!one.result.includes('subir o heap'), 'as outras linhas não voltam')
+    // No lote, o que já entrou fica; o erro diz onde parou.
+    const broken = await as({
+      tema: 'build-oom',
+      acao: 'linha_nova',
+      linhas: [
+        { tipo: 'APRENDIZADO', situacao: 'a', aprendizado: 'ok' },
+        { tipo: 'NADA', situacao: 'b', aprendizado: 'x' },
+      ],
+    })
+    assert.strictEqual(broken.status, 'error')
+    assert.match(broken.result, /1 linha\(s\) gravada\(s\) em build-oom; parou na 2ª/)
+  })
+
   it('a validação volta com os nomes dos argumentos', async () => {
     const { write } = setup()
     const short = await write.execute({ tema: 'x-y', acao: 'criar', gatilho: 'curto' }, turn('theo'))

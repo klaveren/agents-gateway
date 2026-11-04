@@ -58,10 +58,12 @@ describe('Ledger.Policy — validação', () => {
 })
 
 describe('Ledger.Policy — saúde', () => {
-  it('⚠️ verbo de estado de missão (RETOMAR, PRÓXIMO PASSO, pendente, aguarda), sem acento nem caixa', () => {
+  it('⚠️ marcador de estado de missão em CAIXA ALTA (RETOMAR, PRÓXIMO PASSO, PENDENTE, AGUARDA), sem acento; a palavra solta não', () => {
     assert.strictEqual(stateVerbOf('RETOMAR o deploy'), 'retomar')
-    assert.strictEqual(stateVerbOf('Próximo passo: rodar'), 'proximo passo')
-    assert.strictEqual(stateVerbOf('ainda aguardando o review'), 'aguardando')
+    assert.strictEqual(stateVerbOf('PRÓXIMO PASSO: rodar'), 'proximo passo')
+    assert.strictEqual(stateVerbOf('ainda AGUARDANDO o review'), 'aguardando')
+    assert.strictEqual(stateVerbOf('o que tem pendente?'), undefined)
+    assert.strictEqual(stateVerbOf('retomar uma sessão do opencode pelo id'), undefined)
     assert.strictEqual(stateVerbOf('quando o build estourar memória'), undefined)
   })
 
@@ -72,7 +74,7 @@ describe('Ledger.Policy — saúde', () => {
     assert.ok(!similarTopics('a-b', 'a-b'))
   })
 
-  it('cada aviso: gatilho ausente e fraco, verbo de estado (gatilho e linha), contexto vazio, > 40 linhas, temas parecidos', () => {
+  it('cada aviso: gatilho ausente e fraco, marcador de estado (gatilho e linha), contexto vazio, > 40 linhas no contexto, temas parecidos', () => {
     const warnings = ledgerWarnings({
       contexts: [
         { topic: 'sem-gatilho', trigger: 'curto', playbook: 'algo' },
@@ -83,7 +85,7 @@ describe('Ledger.Policy — saúde', () => {
       ],
       lines: [
         ...Array.from({ length: 41 }, (_, index) => ({ id: index + 1, topic: 'fraco', trigger: 'deploy', learning: 'aplicar com --wait' })),
-        { id: 99, topic: 'wireguard', trigger: 'vpn caiu', learning: 'pendente: falar com o time de rede' },
+        { id: 99, topic: 'wireguard', trigger: 'vpn caiu', learning: 'PENDENTE: falar com o time de rede' },
       ],
     })
     const codes = (topic: string | undefined) =>
@@ -92,11 +94,11 @@ describe('Ledger.Policy — saúde', () => {
         .map((warning) => warning.code)
         .sort()
     assert.deepStrictEqual(codes('sem-gatilho'), ['trigger-missing'])
-    assert.deepStrictEqual(codes('fraco'), ['trigger-weak'])
+    assert.deepStrictEqual(codes('fraco'), ['too-many-lines', 'trigger-weak'], 'o teto de linhas é por contexto')
     assert.deepStrictEqual(codes('missao'), ['state-verb'])
     assert.deepStrictEqual(codes('wireguard'), ['similar-topics', 'state-verb'])
     assert.deepStrictEqual(codes('wireguard-vpn'), ['empty-context'])
-    assert.deepStrictEqual(codes(undefined), ['too-many-lines'])
+    assert.deepStrictEqual(codes(undefined), [])
     assert.strictEqual(warnings.find((warning) => warning.code === 'similar-topics')?.related, 'wireguard-vpn')
     assert.strictEqual(warnings.find((warning) => warning.code === 'state-verb' && warning.topic === 'wireguard')?.lineId, 99)
   })
