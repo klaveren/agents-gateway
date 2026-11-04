@@ -55,12 +55,13 @@ case "$(dpkg --print-architecture)" in
   *) die "Arquitetura não suportada: $(dpkg --print-architecture)" ;;
 esac
 
-# --- 1. Pacotes do sistema: o cerco (bubblewrap, socat), o navegador do agente, git e ssh das contas ---
+# --- 1. Pacotes do sistema: o cerco (bubblewrap, socat, proxychains4 — o TCP dos clientes de banco e do ssh pelo
+#        portão), o navegador do agente, git e ssh das contas ---
 if [[ "${SKIP_APT:-}" != 1 ]]; then
   log "Pacotes do sistema"
   apt-get update -qq
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-    ca-certificates curl rsync git openssh-client bubblewrap socat ripgrep chromium fonts-liberation >/dev/null
+    ca-certificates curl rsync git openssh-client bubblewrap socat proxychains4 ripgrep chromium fonts-liberation >/dev/null
 fi
 
 # --- 2. Binários fora do apt, verificados por checksum ---

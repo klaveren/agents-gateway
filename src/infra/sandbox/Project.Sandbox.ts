@@ -47,6 +47,42 @@ export interface ICercoPlace {
   gitCommonDir?: string
   /** As portas de serviço LOCAL que as regras liberam exatas (`localhost:<porta>`): no Linux ganham um encaminhador. */
   localPorts?: readonly number[]
+  /**
+   * Há regra EXATA de TCP fora do HTTP (`10.10.0.1:32017`, `db.interno:5432`): no Linux o comando roda com o
+   * interceptador (`tcpInterceptor`), que leva a conexão de qualquer cliente (mongosh, psql, ssh) pelo portão.
+   */
+  tcp?: boolean
+}
+
+/** A biblioteca do proxychains-ng (Debian/Ubuntu). Sem ela, o TCP fora do HTTP segue sem caminho (como antes). */
+export const PROXYCHAINS_LIBS = ['/usr/lib/x86_64-linux-gnu/libproxychains.so.4', '/usr/lib/aarch64-linux-gnu/libproxychains.so.4', '/usr/lib/libproxychains4.so']
+
+/**
+ * ⚖️ O TCP DE QUALQUER CLIENTE PELO PORTÃO: o cliente de banco e o ssh não falam o proxy HTTP. O `proxychains-ng`
+ * (`LD_PRELOAD`) intercepta o `connect` e o leva pelo CONNECT da ponte do cerco, com o token do comando — quem decide
+ * continua sendo a regra, conexão a conexão (rede local só com regra exata). A ponte e o loopback ficam de fora.
+ * Devolve o trecho do prelúdio, ou nada sem a biblioteca.
+ */
+export function tcpInterceptor(confDir: string, token: string, bridgePort: number, libs: readonly string[] = PROXYCHAINS_LIBS): string {
+  const lib = libs.find((path) => existsSync(path))
+  if (!lib) return ''
+  const conf = join(confDir, `proxychains-${token.slice(0, 16)}.conf`)
+  writeFileSync(
+    conf,
+    [
+      'strict_chain',
+      'proxy_dns',
+      'quiet_mode',
+      'tcp_read_time_out 15000',
+      'tcp_connect_time_out 8000',
+      'localnet 127.0.0.0/255.0.0.0',
+      '[ProxyList]',
+      `http 127.0.0.1 ${bridgePort} ${token} x`,
+      '',
+    ].join('\n'),
+    { mode: 0o600 },
+  )
+  return `export LD_PRELOAD=${quote(lib)} PROXYCHAINS_CONF_FILE=${quote(conf)} PROXYCHAINS_QUIET_MODE=1;`
 }
 
 /**
@@ -169,7 +205,9 @@ export class ProjectSandbox implements IProjectSandbox {
       .join('; ')
     // No Mac o seatbelt divide a rede com o host: lá só o cliente que fala proxy chega ao serviço local.
     const forwards = process.platform === 'linux' ? localForwards(place.localPorts ?? [], networkToken, LINUX_BRIDGE_PORT) : ''
-    return manager.wrapWithSandbox(`${prelude}; ${forwards} ${command}`, SANDBOX_SHELL, {
+    // Depois dos encaminhadores (eles mesmos não passam pelo interceptador): só o comando do agente.
+    const tcp = process.platform === 'linux' && place.tcp ? tcpInterceptor(cache, networkToken, LINUX_BRIDGE_PORT) : ''
+    return manager.wrapWithSandbox(`${prelude}; ${forwards} ${tcp} ${command}`, SANDBOX_SHELL, {
       ...(this.nested() ? { enableWeakerNestedSandbox: true } : {}),
       filesystem: { denyRead: cerco.readDeny, allowRead: cerco.readAllow, allowWrite: cerco.writeAllow, denyWrite: cerco.writeDeny },
     })

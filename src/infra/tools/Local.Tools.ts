@@ -224,6 +224,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       .map(Number)
       // ⛔ A porta do próprio gateway nunca ganha encaminhador (o portão também a nega): o cliente recebe a recusa.
       .filter((port) => port !== (Number(process.env.PORT) || 3000))
+    // TCP fora do HTTP liberado por regra EXATA (`10.10.0.1:32017`): o comando ganha o interceptador (ver `tcpInterceptor`).
+    const tcp = [...(layers.agent ?? []), ...(layers.project ?? [])].some((rule) => rule.category === 'network' && rule.decision === 'allow' && exactTcpTarget(rule.pattern))
     // ⛔ As contas do projeto DA CONVERSA que este agente pode usar (`account <id>`), em variáveis do processo — nunca na
     // linha do comando, que aparece na lista de processos.
     const accounts =
@@ -255,7 +257,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       if (sshKit) removeSshKit(sshKit)
     }
     try {
-      const line = await sandbox.wrapWith(command, root, (base) => cercoPlan(layers, { ...base, system }), token, { ...place, localPorts })
+      const line = await sandbox.wrapWith(command, root, (base) => cercoPlan(layers, { ...base, system }), token, { ...place, localPorts, tcp })
       // As variáveis do agente por baixo, a identidade de quem chama por cima (ver `Agent.Identity`); as contas do projeto vêm depois.
       // ⛔ As variáveis secretas por cima das contas (a do recurso é mais específica), lidas AGORA: a skill carregada no meio
       // do turno já vale aqui. A máscara as recebe antes do processo nascer.
@@ -1033,4 +1035,12 @@ export interface ILocalMask {
   text(text: string, sessionId?: string): string
   register(sessionId: string, secrets: ReadonlyArray<{ value: string; label: string }>): void
   literalIn(command: string, sessionId?: string): string | undefined
+}
+
+/** A regra é um destino TCP exato fora do HTTP: `host:porta`, sem `*`, porta que não é 80/443, e não o localhost (esse tem encaminhador). */
+export function exactTcpTarget(pattern: string): boolean {
+  const match = /^([^\s:*]+|\[[0-9a-f:]+\]):(\d{1,5})$/i.exec(pattern.trim())
+  if (!match) return false
+  const [, host, port] = match
+  return !['80', '443'].includes(port) && !/^(?:localhost|127\.0\.0\.1|\[::1\])$/i.test(host)
 }
