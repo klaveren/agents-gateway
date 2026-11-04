@@ -43,6 +43,13 @@ export interface IPermissionRequest {
   remove: IPermissionRule[]
   /** `agent-patch`: os campos do agente com o valor pedido (`null` = tirar). Só os que ampliam. */
   patch?: Record<string, unknown>
+  /** `agent-patch` de um campo-lista: as entradas a ACRESCENTAR ao valor de agora (uma por pedido; ver `splitAgentPatchItems`). */
+  entries?: { field: string; add: string[] }
+  /**
+   * ⚖️ UM PEDIDO É UM ITEM (uma regra, um campo, uma entrada de lista): a pessoa aprova ou recusa cada um. Os itens que
+   * saíram da MESMA chamada do agente dividem o `batchId` (a tela agrupa; o motivo é o mesmo). Ausente: um item só.
+   */
+  batchId?: string
   /** As ampliações calculadas no pedido (a auditoria). A tela confirma as recalculadas sobre o agente de agora. */
   widenings: IPermissionWidening[]
   reason: string

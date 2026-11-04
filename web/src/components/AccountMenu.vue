@@ -1,26 +1,35 @@
 <script setup lang="ts">
-import { useRouter } from 'vue-router'
-import { initials } from '@/lib/format'
-import { usePopover } from '@/lib/popover'
-import { useAuthStore } from '@/stores/auth'
-import Icon from './Icon.vue'
+  import { computed } from 'vue'
+  import { useRouter } from 'vue-router'
+  import { useResource } from '@/composables/useResource'
+  import { initials } from '@/lib/format'
+  import { usePopover } from '@/lib/popover'
+  import { useAuthStore } from '@/stores/auth'
+  import { usePermissionRequestsStore } from '@/stores/permissionRequests'
+  import Icon from './Icon.vue'
 
-/**
- * O menu da conta: o avatar abre um submenu com quem está logado, o perfil e o sair.
- * `placement`: no trilho (desktop) abre para o lado; na barra inferior (celular), para cima.
- */
-defineProps<{ placement: 'side' | 'up' }>()
+  /**
+   * O menu da conta: o avatar abre um submenu com quem está logado, o perfil e o sair.
+   * `placement`: no trilho (desktop) abre para o lado; na barra inferior (celular), para cima.
+   */
+  defineProps<{ placement: 'side' | 'up' }>()
 
-const auth = useAuthStore()
-const router = useRouter()
-const { open, root } = usePopover()
+  const auth = useAuthStore()
+  const router = useRouter()
+  const { open, root } = usePopover()
 
-async function logout() {
-  open.value = false
-  // ⚠️ `logout` limpa o estado de quem saiu e refaz o escopo (conversas, agentes, eventos) sozinho.
-  await auth.logout()
-  await router.push('/login')
-}
+  // ⛔ Só o admin lê os pedidos (a rota recusa o resto). ⚖️ A lista de todos (`''`) é a mesma do selo da lista de agentes e
+  // anda sozinha com o `catalog.changed`: o número aqui não precisa de tela aberta nem de releitura.
+  const requests = usePermissionRequestsStore()
+  const { data: allRequests } = useResource(requests.lists, () => (auth.isAdmin ? '' : undefined))
+  const pending = computed(() => (auth.isAdmin ? (allRequests.value ?? []).filter((request) => request.status === 'pending').length : 0))
+
+  async function logout() {
+    open.value = false
+    // ⚠️ `logout` limpa o estado de quem saiu e refaz o escopo (conversas, agentes, eventos) sozinho.
+    await auth.logout()
+    await router.push('/login')
+  }
 </script>
 
 <template>
@@ -35,10 +44,23 @@ async function logout() {
       @click="open = !open"
     >
       <span
-        class="grid place-items-center rounded-full text-xs font-semibold"
-        :class="[auth.isAdmin ? 'bg-emerald-500/20 text-emerald-300' : 'bg-zinc-800 text-zinc-300', placement === 'up' ? 'h-[22px] w-[22px] text-[9px]' : 'h-9 w-9', open ? 'ring-2 ring-emerald-500/60' : '']"
-        >{{ initials(auth.user.name) }}</span
+        class="relative grid place-items-center rounded-full text-xs font-semibold"
+        :class="[
+          auth.isAdmin ? 'bg-emerald-500/20 text-emerald-300' : 'bg-zinc-800 text-zinc-300',
+          placement === 'up' ? 'h-[22px] w-[22px] text-[9px]' : 'h-9 w-9',
+          open ? 'ring-2 ring-emerald-500/60' : '',
+        ]"
       >
+        {{ initials(auth.user.name) }}
+        <span
+          v-if="pending"
+          class="absolute -top-1 -right-1.5 grid min-w-4 place-items-center rounded-full bg-amber-500 px-1 text-[10px] leading-4 font-semibold text-zinc-950"
+          :title="`${pending} pedido(s) de permissão esperando confirmação`"
+          data-test="notifications-badge"
+        >
+          {{ pending }}
+        </span>
+      </span>
       <span v-if="placement === 'up'">Conta</span>
     </button>
 
@@ -50,11 +72,35 @@ async function logout() {
     >
       <div class="border-b border-zinc-800 px-3 py-2.5">
         <div class="truncate font-medium text-zinc-100">{{ auth.user.name }}</div>
-        <div class="truncate text-xs text-zinc-500">{{ auth.user.email }}<template v-if="auth.isAdmin"> · administrador</template></div>
+        <div class="truncate text-xs text-zinc-500">
+          {{ auth.user.email }}
+          <template v-if="auth.isAdmin">· administrador</template>
+        </div>
       </div>
-      <RouterLink to="/profile" role="menuitem" class="flex items-center gap-2.5 px-3 py-2.5 text-zinc-200 hover:bg-zinc-800"><Icon name="user" class="h-4 w-4 text-zinc-400" /> Perfil</RouterLink>
-      <button type="button" role="menuitem" class="flex w-full items-center gap-2.5 border-t border-zinc-800 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800 hover:text-rose-300" @click="logout">
-        <Icon name="logout" class="h-4 w-4 text-zinc-400" /> Sair
+      <RouterLink to="/profile" role="menuitem" class="flex items-center gap-2.5 px-3 py-2.5 text-zinc-200 hover:bg-zinc-800">
+        <Icon name="user" class="h-4 w-4 text-zinc-400" />
+        Perfil
+      </RouterLink>
+      <RouterLink
+        v-if="auth.isAdmin"
+        to="/notifications"
+        role="menuitem"
+        class="flex items-center gap-2.5 px-3 py-2.5 text-zinc-200 hover:bg-zinc-800"
+        data-test="notifications-item"
+        @click="open = false"
+      >
+        <Icon name="bell" class="h-4 w-4 text-zinc-400" />
+        Notificações
+        <span v-if="pending" class="ml-auto rounded-full bg-amber-500 px-1.5 text-[10px] leading-4 font-semibold text-zinc-950" data-test="notifications-pill">{{ pending }}</span>
+      </RouterLink>
+      <button
+        type="button"
+        role="menuitem"
+        class="flex w-full items-center gap-2.5 border-t border-zinc-800 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800 hover:text-rose-300"
+        @click="logout"
+      >
+        <Icon name="logout" class="h-4 w-4 text-zinc-400" />
+        Sair
       </button>
     </div>
   </div>

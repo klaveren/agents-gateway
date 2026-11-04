@@ -96,3 +96,86 @@ export function splitAgentPatch(current: IAgent, patch: TAgentPatch): IAgentPatc
   const widenings = agentWidenings(agent, applyAgentPatch(agent, pick(pending)))
   return { immediate: pick(immediate), pending: pick(pending), agent, widenings }
 }
+
+/** Os campos-lista cujo pedido sai UM ITEM POR ENTRADA acrescentada: a pessoa libera `agent:ana` e recusa `cap:terminal`. */
+export const AGENT_PATCH_LIST_FIELDS = ['allowedTools', 'modes'] as const
+export type TAgentPatchListField = (typeof AGENT_PATCH_LIST_FIELDS)[number]
+
+export interface IAgentPatchEntries {
+  field: string
+  add: string[]
+}
+
+const isListField = (field: string): field is TAgentPatchListField => (AGENT_PATCH_LIST_FIELDS as readonly string[]).includes(field)
+
+function listOf(agent: IAgent, field: string): string[] {
+  const value = (agent as unknown as Record<string, unknown>)[field]
+  return Array.isArray(value) ? (value as string[]) : []
+}
+
+/** O agente com as entradas acrescentadas ao campo-lista (as que já estão lá não repetem). */
+export function withEntries(agent: IAgent, entries: IAgentPatchEntries | undefined): IAgent {
+  if (!entries || !isListField(entries.field)) return agent
+  const now = listOf(agent, entries.field)
+  return applyAgentPatch(agent, { [entries.field]: [...now, ...entries.add.filter((entry) => !now.includes(entry))] })
+}
+
+/** O agente que o pedido pede, sobre o agente de AGORA (a aprovação e a tela recalculam por aqui). */
+export function requestedAgent(agent: IAgent, request: { patch?: TAgentPatch; entries?: IAgentPatchEntries }): IAgent {
+  return withEntries(applyAgentPatch(agent, request.patch ?? {}), request.entries)
+}
+
+/** Um item do pedido: um campo inteiro (`patch`) ou uma entrada de lista (`entries`), com o que ele amplia sobre `agent`. */
+export interface IAgentPatchItem {
+  patch?: TAgentPatch
+  entries?: IAgentPatchEntries
+  widenings: IWidening[]
+}
+
+export interface IAgentPatchItemsSplit {
+  immediate: TAgentPatch
+  /** O agente depois do que vale já. */
+  agent: IAgent
+  items: IAgentPatchItem[]
+}
+
+/**
+ * O `splitAgentPatch` em ITENS: cada campo pendente vira um item; num campo-lista, o que ele TIRA vale já (se tirar
+ * não amplia) e cada entrada que ele acrescenta vira um item. ⛔ Cada item conta as próprias ampliações, sobre o agente
+ * com o que já valeu — e a aprovação recalcula sobre o de agora (`requestedAgent`).
+ */
+export function splitAgentPatchItems(current: IAgent, patch: TAgentPatch): IAgentPatchItemsSplit {
+  const base = splitAgentPatch(current, patch)
+  let agent = base.agent
+  const immediate: TAgentPatch = { ...base.immediate }
+  const items: IAgentPatchItem[] = []
+  const whole = (field: TAgentPatchField, value: unknown) => {
+    const single = { [field]: value }
+    items.push({ patch: single, widenings: agentWidenings(agent, applyAgentPatch(agent, single)) })
+  }
+  for (const field of AGENT_PATCH_FIELDS) {
+    if (!(field in base.pending)) continue
+    const value = base.pending[field]
+    if (!isListField(field) || !Array.isArray(value) || !value.every((entry) => typeof entry === 'string')) {
+      whole(field, value)
+      continue
+    }
+    const wanted = value as string[]
+    const kept = listOf(agent, field).filter((entry) => wanted.includes(entry))
+    if (kept.length !== listOf(agent, field).length) {
+      const trimmed = applyAgentPatch(agent, { [field]: kept })
+      // ⚖️ Lane vazia não existe, e tirar que amplia (não deveria) não vale já: o campo vai inteiro, como antes.
+      if ((field === 'modes' && !kept.length) || agentWidenings(agent, trimmed).length) {
+        whole(field, value)
+        continue
+      }
+      agent = trimmed
+      immediate[field] = kept
+    }
+    for (const entry of [...new Set(wanted)].filter((item) => !kept.includes(item))) {
+      const entries = { field, add: [entry] }
+      items.push({ entries, widenings: agentWidenings(agent, withEntries(agent, entries)) })
+    }
+  }
+  return { immediate, agent, items }
+}

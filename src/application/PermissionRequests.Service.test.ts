@@ -94,10 +94,10 @@ describe('PermissionRequestsService — o agente pede, a pessoa confirma na tela
     assert.deepStrictEqual(revisions[0].change, { source: 'agent', note: 'pedido do agente: rodar os testes', by: 'agent:theo (conversa c-1) por root@x.test' })
 
     assert.ok(result.pending)
-    assert.deepStrictEqual([result.pending.kind, result.pending.status], ['agent-rules', 'pending'])
-    assert.deepStrictEqual(result.pending.add, [allow('terminal', 'npm test')])
+    assert.deepStrictEqual([result.pending[0].kind, result.pending[0].status], ['agent-rules', 'pending'])
+    assert.deepStrictEqual(result.pending[0].add, [allow('terminal', 'npm test')])
     assert.deepStrictEqual(
-      result.pending.widenings.map((item) => item.key),
+      result.pending[0].widenings.map((item) => item.key),
       ['agent/theo@alfa#permissions+allow:terminal:npm test'],
     )
     assert.ok(!rulesOf().some((rule) => rule.pattern === 'npm test'), 'a ampliação não pode valer antes da aprovação')
@@ -135,58 +135,75 @@ describe('PermissionRequestsService — o agente pede, a pessoa confirma na tela
     const { pending } = service.change(theoRef, { add: [allow('terminal', 'npm test')], reason: 'testes' }, asker)
     await assert.rejects(
       service.approve(
-        pending!.id,
-        pending!.widenings.map((item) => item.key),
+        pending![0].id,
+        pending![0].widenings.map((item) => item.key),
         { by: 'root@x.test', onScreen: false },
       ),
       PermissionRequestForbiddenError,
     )
-    assert.strictEqual(service.get(pending!.id).status, 'pending')
+    assert.strictEqual(service.get(pending![0].id).status, 'pending')
     assert.ok(!rulesOf().some((rule) => rule.pattern === 'npm test'))
   })
 
   it('aprovar na tela aplica exatamente o confirmado e grava as chaves na revisão; confirm a menos ou a mais é recusado', async () => {
     const { pending } = service.change(theoRef, { add: [allow('terminal', 'npm test')], remove: [deny('terminal', 'git push *')], reason: 'publicar' }, asker)
-    const keys = pending!.widenings.map((item) => item.key)
-    await assert.rejects(service.approve(pending!.id, keys.slice(1), screen), CatalogWideningConfirmationError)
-    await assert.rejects(service.approve(pending!.id, [...keys, 'agent/theo@alfa#permissions+allow:read:**'], screen), CatalogWideningConfirmationError)
-    await assert.rejects(service.approve(pending!.id, undefined, screen), CatalogWideningConfirmationError)
+    const keys = pending![0].widenings.map((item) => item.key)
+    await assert.rejects(service.approve(pending![0].id, keys.slice(1), screen), CatalogWideningConfirmationError)
+    await assert.rejects(service.approve(pending![0].id, [...keys, 'agent/theo@alfa#permissions+allow:read:**'], screen), CatalogWideningConfirmationError)
+    await assert.rejects(service.approve(pending![0].id, undefined, screen), CatalogWideningConfirmationError)
 
-    const approved = await service.approve(pending!.id, [...keys].reverse(), screen)
+    const approved = await service.approve(pending![0].id, [...keys].reverse(), screen)
     assert.strictEqual(approved.request.status, 'approved')
     assert.strictEqual(approved.request.decidedBy, 'root@x.test')
-    assert.deepStrictEqual(approved.permissions, [allow('terminal', 'git status'), allow('read', 'src/**'), allow('terminal', 'npm test')])
+    // ⚖️ Um item por regra: aprovado o `npm test`, a outra (tirar o deny do push) segue pendente e não vale.
+    assert.deepStrictEqual(approved.permissions, [allow('terminal', 'git status'), deny('terminal', 'git push *'), allow('read', 'src/**'), allow('terminal', 'npm test')])
     assert.deepStrictEqual(rulesOf(), approved.permissions)
     const last = revisions.at(-1)!
     assert.deepStrictEqual(last.change.widenings, keys)
     assert.strictEqual(last.change.by, 'root@x.test')
     assert.match(last.change.note ?? '', /pedido de permissão pr-1 aprovado \(pedido por agent:theo \(conversa c-1\) por root@x.test\): publicar/)
-    await assert.rejects(service.approve(pending!.id, keys, screen), PermissionRequestClosedError)
+    await assert.rejects(service.approve(pending![0].id, keys, screen), PermissionRequestClosedError)
   })
 
   it('o agente mudou no meio: as ampliações são recalculadas, o confirm antigo é recusado com a lista nova', async () => {
     const { pending } = service.change(theoRef, { add: [allow('terminal', 'npm test'), allow('read', 'docs/**')], reason: 'x' }, asker)
-    const old = pending!.widenings.map((item) => item.key)
-    // Alguém liberou `npm *` pela tela: uma das ampliações já não amplia.
+    const [npm, docs] = pending!
+    const old = npm.widenings.map((item) => item.key)
+    // Alguém liberou `npm *` pela tela: o item do `npm test` já não amplia; o do `docs/**` segue igual.
     agents.savePermissions('theo', [...rulesOf(), allow('terminal', 'npm *')], 'ana@x.test')
-    const seen = service.get(pending!.id)
+    const seen = service.get(npm.id)
     assert.strictEqual(seen.changed, true)
+    assert.deepStrictEqual(seen.widenings, [])
     assert.deepStrictEqual(
-      seen.widenings.map((item) => item.key),
+      service.get(docs.id).widenings.map((item) => item.key),
       ['agent/theo@alfa#permissions+allow:read:docs/**'],
     )
-    await assert.rejects(service.approve(pending!.id, old, screen), (error: unknown) => error instanceof CatalogWideningConfirmationError && error.widenings.length === 1)
-    assert.strictEqual((await service.approve(pending!.id, ['agent/theo@alfa#permissions+allow:read:docs/**'], screen)).request.status, 'approved')
+    await assert.rejects(service.approve(npm.id, old, screen), (error: unknown) => error instanceof CatalogWideningConfirmationError && error.widenings.length === 0)
+    assert.strictEqual((await service.approve(npm.id, [], screen)).request.status, 'approved')
+  })
+
+  it('⚖️ um pedido por regra: os itens da mesma chamada dividem o lote, e cada um se aprova ou se recusa sozinho', async () => {
+    const { pending, notice } = service.change(theoRef, { add: [allow('terminal', 'npm test'), allow('read', 'docs/**')], reason: 'x' }, asker)
+    assert.strictEqual(pending!.length, 2)
+    assert.ok(pending![0].batchId)
+    assert.strictEqual(pending![0].batchId, pending![1].batchId)
+    assert.match(notice, /estas 2 mudanças ampliam/)
+    await service.approve(pending![1].id, ['agent/theo@alfa#permissions+allow:read:docs/**'], screen)
+    service.reject(pending![0].id, { by: 'root@x.test' })
+    assert.ok(rulesOf().some((rule) => rule.pattern === 'docs/**'))
+    assert.ok(!rulesOf().some((rule) => rule.pattern === 'npm test'))
+    // Um item só não tem lote.
+    assert.strictEqual(service.change(theoRef, { add: [allow('read', 'lib/**')], reason: 'y' }, asker).pending![0].batchId, undefined)
   })
 
   it('recusar: nada muda no agente; decidido não se decide de novo', async () => {
     const { pending } = service.change(theoRef, { add: [allow('terminal', 'npm test')], reason: 'x' }, asker)
     const before = revisions.length
-    const rejected = service.reject(pending!.id, { by: 'root@x.test' }, 'não agora')
+    const rejected = service.reject(pending![0].id, { by: 'root@x.test' }, 'não agora')
     assert.deepStrictEqual([rejected.status, rejected.decisionNote], ['rejected', 'não agora'])
     assert.strictEqual(revisions.length, before)
-    assert.throws(() => service.reject(pending!.id, { by: 'root@x.test' }), PermissionRequestClosedError)
-    await assert.rejects(service.approve(pending!.id, [], screen), PermissionRequestClosedError)
+    assert.throws(() => service.reject(pending![0].id, { by: 'root@x.test' }), PermissionRequestClosedError)
+    await assert.rejects(service.approve(pending![0].id, [], screen), PermissionRequestClosedError)
     assert.strictEqual(service.list().length, 0)
     assert.strictEqual(service.list({ all: true }).length, 1)
   })
@@ -197,13 +214,13 @@ describe('PermissionRequestsService — o agente pede, a pessoa confirma na tela
     assert.strictEqual(service.list({ agentId: 'theo' })[0].status, 'expired')
     await assert.rejects(
       service.approve(
-        pending!.id,
-        pending!.widenings.map((item) => item.key),
+        pending![0].id,
+        pending![0].widenings.map((item) => item.key),
         screen,
       ),
       (error: unknown) => error instanceof PermissionRequestClosedError && error.status === 'expired',
     )
-    assert.strictEqual(service.reject(pending!.id, { by: 'root@x.test' }).status, 'rejected')
+    assert.strictEqual(service.reject(pending![0].id, { by: 'root@x.test' }).status, 'rejected')
   })
 
   it('list_permission_rules: as do agente, as do projeto dele e os pedidos abertos', () => {
@@ -231,24 +248,27 @@ describe('PermissionRequestsService — o agente pede, a pessoa confirma na tela
       const result = service.change(alfa, { add: [deny('network', '*.evil.com'), allow('read', 'docs/**')], remove: [deny('write', '**/*.lock')], reason: 'docs' }, asker)
       assert.deepStrictEqual(projectRules, [allow('network', 'api.github.com'), deny('write', '**/*.lock'), deny('network', '*.evil.com')])
       assert.strictEqual(revisions.at(-1)!.change.source, 'agent')
-      assert.deepStrictEqual([result.pending?.kind, result.pending?.projectId, result.pending?.agentId], ['project-rules', 'alfa', undefined])
+      assert.deepStrictEqual([result.pending?.[0]?.kind, result.pending?.[0]?.projectId, result.pending?.[0]?.agentId], ['project-rules', 'alfa', undefined])
       assert.deepStrictEqual(
-        result.pending?.widenings.map((item) => item.key),
-        ['project-permissions/alfa#rules+allow:read:docs/**', 'project-permissions/alfa#rules-deny:write:**/*.lock'],
+        result.pending?.map((item) => item.widenings.map((widening) => widening.key)),
+        [['project-permissions/alfa#rules+allow:read:docs/**'], ['project-permissions/alfa#rules-deny:write:**/*.lock']],
       )
       assert.match(result.notice, /Projeto Alfa → Permissões → Pedidos pendentes/)
       assert.deepStrictEqual(
-        service.list({ projectId: 'alfa', kind: 'project-rules' }).map((request) => request.id),
-        [result.pending!.id],
+        service
+          .list({ projectId: 'alfa', kind: 'project-rules' })
+          .map((request) => request.id)
+          .sort(),
+        result.pending!.map((request) => request.id).sort(),
       )
       assert.strictEqual(service.rules(alfa).layer, 'project')
     })
 
     it('aprovar só na tela; aplica nas regras do projeto com as chaves na revisão', async () => {
       const { pending } = service.change(alfa, { add: [allow('read', 'docs/**')], reason: 'docs' }, asker)
-      const keys = pending!.widenings.map((item) => item.key)
-      await assert.rejects(service.approve(pending!.id, keys, { by: 'root@x.test', onScreen: false }), PermissionRequestForbiddenError)
-      const approved = await service.approve(pending!.id, keys, screen)
+      const keys = pending![0].widenings.map((item) => item.key)
+      await assert.rejects(service.approve(pending![0].id, keys, { by: 'root@x.test', onScreen: false }), PermissionRequestForbiddenError)
+      const approved = await service.approve(pending![0].id, keys, screen)
       assert.ok(approved.permissions?.some((rule) => rule.pattern === 'docs/**'))
       assert.deepStrictEqual(revisions.at(-1)!.change.widenings, keys)
     })
@@ -265,13 +285,39 @@ describe('PermissionRequestsService — o agente pede, a pessoa confirma na tela
       assert.deepStrictEqual([stored.name, stored.allowedTools], ['Theo 2', ['read_doc']])
       assert.deepStrictEqual(result.applied, ['name'])
       assert.deepStrictEqual(revisions.at(-1)!.change, { source: 'agent', note: 'patch do agente: precisa do terminal', by: 'agent:theo (conversa c-1) por root@x.test' })
-      assert.deepStrictEqual([result.pending?.kind, result.pending?.patch], ['agent-patch', { allowedTools: ['read_doc', 'cap:terminal'] }])
       assert.deepStrictEqual(
-        result.pending?.widenings.map((item) => item.key),
+        [result.pending?.[0]?.kind, result.pending?.[0]?.patch, result.pending?.[0]?.entries],
+        ['agent-patch', undefined, { field: 'allowedTools', add: ['cap:terminal'] }],
+      )
+      assert.deepStrictEqual(
+        result.pending?.[0]?.widenings.map((item) => item.key),
         ['agent/theo@alfa#allowedTools+cap:terminal'],
       )
       assert.match(result.notice, /PENDENTE — NÃO aplicado/)
       assert.match(result.notice, /Agentes → Theo 2 → Permissões → Pedidos pendentes/)
+    })
+
+    it('⚖️ campo-lista: o que ele tira vale já; cada entrada nova é um pedido, aprovado sozinho sobre o agente de agora', async () => {
+      agents.save({ ...agents.entry('theo')!.agent, allowedTools: ['read_doc', 'search_web'] }, { rules: agentRules, by: 'ana@x.test', creating: false })
+      const result = await service.patchAgent('theo', { patch: { allowedTools: ['read_doc', 'cap:terminal', 'cap:web.fetch'] }, reason: 'mais' }, asker)
+      assert.deepStrictEqual(agents.entry('theo')!.agent.allowedTools, ['read_doc'])
+      assert.deepStrictEqual(
+        result.pending?.map((item) => item.entries),
+        [
+          { field: 'allowedTools', add: ['cap:terminal'] },
+          { field: 'allowedTools', add: ['cap:web.fetch'] },
+        ],
+      )
+      assert.strictEqual(result.pending![0].batchId, result.pending![1].batchId)
+      const [terminal, fetch] = result.pending!
+      await service.approve(
+        fetch.id,
+        fetch.widenings.map((item) => item.key),
+        screen,
+      )
+      assert.deepStrictEqual(agents.entry('theo')!.agent.allowedTools, ['read_doc', 'cap:web.fetch'])
+      service.reject(terminal.id, { by: 'root@x.test' })
+      assert.deepStrictEqual(agents.entry('theo')!.agent.allowedTools, ['read_doc', 'cap:web.fetch'])
     })
 
     it('tirar ferramenta e restringir não pedem nada', async () => {
@@ -285,10 +331,10 @@ describe('PermissionRequestsService — o agente pede, a pessoa confirma na tela
       await assert.rejects(service.patchAgent('theo', { patch: { allowedTools: ['nao_existe'] }, reason: 'x' }, asker), InvalidAgentError)
       await assert.rejects(service.patchAgent('theo', { patch: {}, reason: '' }, asker), InvalidAgentError)
       const { pending } = await service.patchAgent('theo', { patch: { allowedTools: ['read_doc', 'search_web'] }, reason: 'buscar' }, asker)
-      const keys = pending!.widenings.map((item) => item.key)
-      await assert.rejects(service.approve(pending!.id, keys, { by: 'root@x.test', onScreen: false }), PermissionRequestForbiddenError)
-      await assert.rejects(service.approve(pending!.id, [], screen), CatalogWideningConfirmationError)
-      const approved = await service.approve(pending!.id, keys, screen)
+      const keys = pending![0].widenings.map((item) => item.key)
+      await assert.rejects(service.approve(pending![0].id, keys, { by: 'root@x.test', onScreen: false }), PermissionRequestForbiddenError)
+      await assert.rejects(service.approve(pending![0].id, [], screen), CatalogWideningConfirmationError)
+      const approved = await service.approve(pending![0].id, keys, screen)
       assert.strictEqual(approved.request.status, 'approved')
       assert.deepStrictEqual(agents.entry('theo')!.agent.allowedTools, ['read_doc', 'cap:web.search'])
       assert.deepStrictEqual(revisions.at(-1)!.change.widenings, keys)

@@ -1,61 +1,61 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { ApiError } from '@/lib/api'
-import type { IWideningRef } from '@/lib/catalogHistory'
-import { type IPermissionRequest, patchLine, requestsKey, ruleLine } from '@/lib/permissionRequests'
-import type { IPermissionRule } from '@/lib/types'
-import { useResource } from '@/composables/useResource'
-import { usePermissionRequestsStore } from '@/stores/permissionRequests'
-import WideningConfirm from './WideningConfirm.vue'
+  import { computed, ref } from 'vue'
+  import { ApiError } from '@/lib/api'
+  import type { IWideningRef } from '@/lib/catalogHistory'
+  import { type IPermissionRequest, entriesLine, patchLine, requestsKey, ruleLine } from '@/lib/permissionRequests'
+  import type { IPermissionRule } from '@/lib/types'
+  import { useResource } from '@/composables/useResource'
+  import { usePermissionRequestsStore } from '@/stores/permissionRequests'
+  import WideningConfirm from './WideningConfirm.vue'
 
-/**
- * OS PEDIDOS PENDENTES de um agente (guia Permissões) ou das regras de um projeto (tela Permissões): o que um agente
- * pediu e não vale até alguém daqui confirmar. ⛔ Aprovar pede cada ampliação marcada (`WideningConfirm`) e só passa
- * pela sessão da tela — o servidor recusa o resto.
- */
-const props = defineProps<{ agentId?: string; projectId?: string }>()
-const emit = defineEmits<{ approved: [request: IPermissionRequest, permissions: IPermissionRule[] | undefined] }>()
+  /**
+   * OS PEDIDOS PENDENTES de um agente (guia Permissões) ou das regras de um projeto (tela Permissões): o que um agente
+   * pediu e não vale até alguém daqui confirmar. ⛔ Aprovar pede cada ampliação marcada (`WideningConfirm`) e só passa
+   * pela sessão da tela — o servidor recusa o resto.
+   */
+  const props = defineProps<{ agentId?: string; projectId?: string }>()
+  const emit = defineEmits<{ approved: [request: IPermissionRequest, permissions: IPermissionRule[] | undefined] }>()
 
-const store = usePermissionRequestsStore()
-const { data } = useResource(store.lists, () => (props.agentId || props.projectId ? requestsKey(props) : undefined))
-const requests = computed(() => data.value ?? [])
-const pending = computed(() => requests.value.filter((request) => request.status === 'pending').length)
+  const store = usePermissionRequestsStore()
+  const { data } = useResource(store.lists, () => (props.agentId || props.projectId ? requestsKey(props) : undefined))
+  const requests = computed(() => data.value ?? [])
+  const pending = computed(() => requests.value.filter((request) => request.status === 'pending').length)
 
-const busy = ref<string>()
-const failures = ref<Record<string, string>>({})
-const when = (iso: string) => new Date(iso).toLocaleString('pt-BR')
+  const busy = ref<string>()
+  const failures = ref<Record<string, string>>({})
+  const when = (iso: string) => new Date(iso).toLocaleString('pt-BR')
 
-function fail(id: string, error: unknown) {
-  let message = error instanceof Error ? error.message : String(error)
-  if (error instanceof ApiError && error.code === 'widening_confirmation_required') {
-    store.recomputed(id, ((error.details ?? {}) as { widenings?: IWideningRef[] }).widenings ?? [])
-    message = 'As regras do agente mudaram desde que você abriu: a lista foi recalculada. Confira e confirme de novo.'
-  } else if (error instanceof ApiError && error.status === 403) message = 'Só quem administra, entrando pela tela, aprova um pedido de permissão.'
-  failures.value = { ...failures.value, [id]: message }
-}
-
-async function act(request: IPermissionRequest, work: () => Promise<void>) {
-  busy.value = request.id
-  const { [request.id]: _cleared, ...rest } = failures.value
-  failures.value = rest
-  try {
-    await work()
-  } catch (error) {
-    fail(request.id, error)
-  } finally {
-    busy.value = undefined
+  function fail(id: string, error: unknown) {
+    let message = error instanceof Error ? error.message : String(error)
+    if (error instanceof ApiError && error.code === 'widening_confirmation_required') {
+      store.recomputed(id, ((error.details ?? {}) as { widenings?: IWideningRef[] }).widenings ?? [])
+      message = 'As regras do agente mudaram desde que você abriu: a lista foi recalculada. Confira e confirme de novo.'
+    } else if (error instanceof ApiError && error.status === 403) message = 'Só quem administra, entrando pela tela, aprova um pedido de permissão.'
+    failures.value = { ...failures.value, [id]: message }
   }
-}
 
-const approve = (request: IPermissionRequest, keys: string[]) =>
-  act(request, async () => {
-    const result = await store.approve(request.id, keys)
-    emit('approved', result.request, result.permissions)
-  })
-const reject = (request: IPermissionRequest) =>
-  act(request, async () => {
-    await store.reject(request.id)
-  })
+  async function act(request: IPermissionRequest, work: () => Promise<void>) {
+    busy.value = request.id
+    const { [request.id]: _cleared, ...rest } = failures.value
+    failures.value = rest
+    try {
+      await work()
+    } catch (error) {
+      fail(request.id, error)
+    } finally {
+      busy.value = undefined
+    }
+  }
+
+  const approve = (request: IPermissionRequest, keys: string[]) =>
+    act(request, async () => {
+      const result = await store.approve(request.id, keys)
+      emit('approved', result.request, result.permissions)
+    })
+  const reject = (request: IPermissionRequest) =>
+    act(request, async () => {
+      await store.reject(request.id)
+    })
 </script>
 
 <template>
@@ -71,10 +71,12 @@ const reject = (request: IPermissionRequest) =>
       <p class="text-xs text-zinc-400">
         Pedido
         <template v-if="request.requestedBy.agentId">
-          pelo agente <code>{{ request.requestedBy.agentId }}</code>
+          pelo agente
+          <code>{{ request.requestedBy.agentId }}</code>
         </template>
         <template v-if="request.requestedBy.conversationId">
-          na <RouterLink :to="`/c/${request.requestedBy.conversationId}`" class="underline hover:text-zinc-200" data-test="request-conversation">conversa</RouterLink>
+          na
+          <RouterLink :to="`/c/${request.requestedBy.conversationId}`" class="underline hover:text-zinc-200" data-test="request-conversation">conversa</RouterLink>
         </template>
         com a conta {{ request.requestedBy.by }}, em {{ when(request.createdAt) }}.
       </p>
@@ -85,8 +87,11 @@ const reject = (request: IPermissionRequest) =>
         <li v-for="(value, field) in request.patch ?? {}" :key="`patch:${field}`" class="truncate" :title="patchLine(String(field), value)">
           {{ patchLine(String(field), value) }}
         </li>
+        <li v-if="request.entries" data-test="request-entries">{{ entriesLine(request.entries) }}</li>
       </ul>
-      <p v-if="request.changed" class="text-xs text-amber-300">{{ request.kind === 'agent-patch' ? 'O agente mudou' : 'As regras mudaram' }} desde o pedido: a lista abaixo foi recalculada sobre o que vale agora.</p>
+      <p v-if="request.changed" class="text-xs text-amber-300">
+        {{ request.kind === 'agent-patch' ? 'O agente mudou' : 'As regras mudaram' }} desde o pedido: a lista abaixo foi recalculada sobre o que vale agora.
+      </p>
 
       <template v-if="request.status === 'expired'">
         <p class="text-xs text-amber-300" data-test="request-expired">Vencido em {{ when(request.expiresAt) }}: não pode mais ser aprovado. O agente precisa pedir de novo.</p>
