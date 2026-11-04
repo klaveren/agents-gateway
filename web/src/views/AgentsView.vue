@@ -179,13 +179,16 @@ watch(creating, (value) => {
           <span class="min-w-0 flex-1">
             <span class="block truncate text-sm font-medium">{{ agent.name }}</span>
             <span class="block truncate text-xs text-zinc-500">{{ providersLine(agent) }}</span>
+            <!-- ⚖️ Os selos quebram linha embaixo do nome: ao lado dele, dois ou três selos espremiam o nome até sumir. -->
+            <span v-if="agent.unavailable || agent.adminOnly || !agent.projectId || pendingCount(openRequests, { agentId: agent.id }) || agent.importIssueCount" class="mt-1 flex flex-wrap gap-1">
+              <span v-if="agent.unavailable" class="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-300" :title="`Indisponível agora: ${agent.unavailable.label}`">{{ agent.unavailable.label }}</span>
+              <span v-if="agent.adminOnly" class="rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300" title="Só administradores conversam com este agente">só administradores</span>
+              <span v-if="!agent.projectId" class="rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] text-sky-300" title="Aparece em todos os projetos">global</span>
+              <PermissionRequestsBadge :count="pendingCount(openRequests, { agentId: agent.id })" />
+              <ImportIssuesBadge :count="agent.importIssueCount" />
+            </span>
             <TagChips :tags="agent.tags" />
           </span>
-          <span v-if="agent.unavailable" class="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-300" :title="`Indisponível agora: ${agent.unavailable.label}`">{{ agent.unavailable.label }}</span>
-          <span v-if="agent.adminOnly" class="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300" title="Só administradores conversam com este agente">só administradores</span>
-          <span v-if="!agent.projectId" class="shrink-0 rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] text-sky-300" title="Aparece em todos os projetos">global</span>
-          <PermissionRequestsBadge :count="pendingCount(openRequests, { agentId: agent.id })" />
-          <ImportIssuesBadge :count="agent.importIssueCount" />
         </RouterLink>
       </template>
       <p v-if="!created.length && !subagents.length" class="px-4 py-2 text-sm text-zinc-500">Nenhum agente criado ainda.</p>
