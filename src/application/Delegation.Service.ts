@@ -38,6 +38,13 @@ export class DelegationService {
     private readonly modesOf: (agentId: string) => readonly EMode[] | undefined = () => undefined,
   ) {}
 
+  /** Quem entrega a resposta que chegou depois do turno da mãe (um turno novo nela; ligado na composição). */
+  private late?: (parentSessionId: string, text: string) => void
+
+  useLateDelivery(deliver: (parentSessionId: string, text: string) => void): void {
+    this.late = deliver
+  }
+
   async delegate(request: IDelegationRequest, context: IExecutionContext | undefined): Promise<TDelegationResult> {
     if (!context?.sessionId) return { ok: false, error: 'delegation needs the calling conversation; none in this call' }
     let parent
@@ -93,6 +100,8 @@ export class DelegationService {
 
     let reply = ''
     let failure: string | undefined
+    // O turno da mãe que fez a chamada: parada, ou noutro turno, na volta = a chamada caiu e a mãe já seguiu.
+    const turnAtCall = parent.turns
     for await (const event of this.sendMessage.execute(sessionId, { text: request.message })) {
       const payload = (event.payload ?? {}) as Record<string, unknown>
       if (event.type === 'text.delta') reply += String(payload.text ?? '')
@@ -100,6 +109,27 @@ export class DelegationService {
     }
 
     if (failure && !reply) return { ok: false, error: `${request.agentId} failed: ${failure}` }
+    this.deliverIfLost(parent.id, turnAtCall, request.agentId, sessionId, reply)
     return { ok: true, agentId: request.agentId, sessionId, reply }
+  }
+
+  /**
+   * ⚖️ A RESPOSTA NÃO SE PERDE: se o turno da mãe já acabou quando a filha respondeu (a chamada da ferramenta caiu antes),
+   * a resposta entra num turno NOVO da mãe — ela lê e continua, como numa conversa. Com a mãe rodando outro turno, entra
+   * nele (a fila do turno). Antes, o agente-mãe só ficava sabendo pela tela.
+   */
+  private deliverIfLost(parentId: string, turnAtCall: number, agentId: string, childId: string, reply: string): void {
+    let status: string
+    let turns: number
+    try {
+      ;({ status, turns } = this.provider.describe(parentId))
+    } catch {
+      return
+    }
+    // A mãe ainda está no turno que delegou: a resposta chega pela ferramenta, como sempre.
+    if (status === 'running' && turns === turnAtCall) return
+    const text = `[Resposta de ${agentId} à sua delegação (sessionId ${childId}), que chegou depois do fim do seu turno: leia e continue de onde parou.]\n\n${reply || '(sem texto)'}`
+    if (status === 'running' && this.provider.enqueue?.(parentId, text) !== undefined) return
+    this.late?.(parentId, text)
   }
 }

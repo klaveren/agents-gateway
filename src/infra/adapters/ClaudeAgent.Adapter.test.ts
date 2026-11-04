@@ -242,7 +242,8 @@ describe('ClaudeAgentAdapter', () => {
       ),
     )
 
-    assert.strictEqual(typeof seen[0].prompt, 'string')
+    // ⛔ Sempre pelo iterável (a entrada fica aberta até o `result`): o texto vai como conteúdo, o anexo como blocos.
+    assert.strictEqual(await promptText(seen[0].prompt), 'plain')
     assert.strictEqual(typeof seen[1].prompt, 'object')
   })
 
@@ -413,6 +414,30 @@ describe('ClaudeAgentAdapter', () => {
 
     assert.ok(!events.some((e) => e.type === 'tool.result'))
     assert.deepStrictEqual(events.find((e) => e.type === 'tool.error')?.payload, { tool: 'list_docs', message: 'Tool "list_docs" is not enabled for this agent.' })
+  })
+
+  it('⛔ a entrada do CLI fica aberta até o `result`: uma ferramenta longa (a delegação) não perde a resposta', async () => {
+    const states: string[] = []
+    const query = ((params: TQueryParams) =>
+      (async function* () {
+        const input = (params.prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]()
+        await input.next()
+        let closed = false
+        void input.next().then((step) => (closed = !!step.done))
+        // A ferramenta rodando (e uma tarefa lateral do CLI no meio): a entrada não pode ter fechado.
+        yield { type: 'assistant', message: { content: [{ type: 'tool_use', id: 't1', name: 'delegate_to_agent', input: {} }] } }
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        states.push(closed ? 'fechada antes' : 'aberta')
+        yield { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'resposta do Zeus' }] } }
+        yield turn().at(-1)
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        states.push(closed ? 'fechada depois' : 'ainda aberta')
+      })()) as unknown as TQuery
+    const adapter = new ClaudeAgentAdapter({ query })
+    const session = await adapter.createSession(getAgent(), { agentId: CLAUDE_TEST_AGENT.id })
+    const events = await drain(adapter.sendMessage(getAgent(), session.id, { text: 'delegue' }, {}))
+    assert.deepStrictEqual(states, ['aberta', 'fechada depois'])
+    assert.ok(events.some((event) => event.type === 'tool.result'))
   })
 
   it('sends an attachment with no text without an empty text block', async () => {
@@ -662,6 +687,16 @@ describe('ClaudeAgentAdapter — a memória do CLI na retomada', () => {
     for await (const _event of adapter.sendMessage(sub, session.id, { text: 'sim pode salvar' }, {})) void _event
     assert.strictEqual(seen[1].options?.resume, undefined)
     assert.match(String(seen[1].options?.sessionId), /^[0-9a-f-]{36}$/)
-    assert.match(String(seen[1].prompt), /salva o teste[\s\S]*sim pode salvar$/)
+    assert.match(await promptText(seen[1].prompt), /salva o teste[\s\S]*sim pode salvar$/)
   })
 })
+
+/** O texto da mensagem que o adapter entregou ao SDK (o iterável já liberado: o turno acabou). */
+async function promptText(prompt: unknown): Promise<string> {
+  if (typeof prompt === 'string') return prompt
+  for await (const message of prompt as AsyncIterable<{ message: { content: unknown } }>) {
+    const content = message.message.content
+    return typeof content === 'string' ? content : JSON.stringify(content)
+  }
+  return ''
+}
