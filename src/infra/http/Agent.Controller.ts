@@ -1,3 +1,4 @@
+import { IModelGroup, modelGroupIssues, NO_MODEL_GROUP } from '@domain/Fallback.Policy'
 import { CAPABILITIES, CAPABILITY_PREFIX, CAPABILITY_TOOLS, capability, capabilityRuns, toCapabilities } from '@domain/Capability.Catalog'
 import { agentUnavailable, IAvailabilityFacts, TAgentUnavailable, targetUnavailable, UNAVAILABLE_LABEL } from '@domain/Agent.Availability'
 import { clientMetadata } from '@domain/Session.Metadata'
@@ -304,6 +305,8 @@ export class AgentController {
             ...this.listedAgent(entry.agent, admin),
             // Só quem administra vê que há problema da importação (a tela marca a lista); o texto vem no detalhe.
             ...(admin && entry.agent.importIssues?.length ? { importIssueCount: entry.agent.importIssues.length } : {}),
+            // O grupo de modelos, para a tela dos grupos contar quem usa cada um sem abrir agente por agente.
+            ...(admin && entry.agent.modelGroup ? { modelGroup: entry.agent.modelGroup } : {}),
             ...(unavailable ? { unavailable: { reason: unavailable, label: UNAVAILABLE_LABEL[unavailable] } } : {}),
           }))
       )
@@ -319,13 +322,19 @@ export class AgentController {
     classifierProvider?: string | null
     builderProvider?: string | null
     builderModel?: string | null
-    fallback?: { chain: Array<{ provider: string; model: string }> } | null
+    modelGroups?: IModelGroup[] | null
+    defaultModelGroup?: string | null
   }) {
     const issues: Array<{ field: string; message: string }> = []
-    // A cadeia global: só provedor que existe (o agente ainda filtra pelo que oferece, na hora da troca).
-    for (const step of body.fallback?.chain ?? [])
-      if (this.usecases.providers && !this.usecases.providers.get(step.provider)) issues.push({ field: 'fallback', message: `unknown provider: ${step.provider}` })
     const current = await this.usecases.settings.read()
+    // Os grupos: bem formados e só com provedor que existe. O padrão tem de ser um deles; o grupo que um agente usa não sai.
+    const groups = body.modelGroups === undefined ? (current.modelGroups ?? []) : (body.modelGroups ?? [])
+    issues.push(...modelGroupIssues(groups, this.usecases.providers ? (provider) => !!this.usecases.providers!.get(provider) : undefined))
+    const defaultGroup = body.defaultModelGroup === undefined ? current.defaultModelGroup : body.defaultModelGroup || undefined
+    if (defaultGroup && !groups.some((group) => group.id === defaultGroup)) issues.push({ field: 'defaultModelGroup', message: `unknown model group: ${defaultGroup}` })
+    for (const agent of this.agents.list())
+      if (agent.modelGroup && agent.modelGroup !== NO_MODEL_GROUP && !groups.some((group) => group.id === agent.modelGroup))
+        issues.push({ field: 'modelGroups', message: `${agent.modelGroup} is used by agent ${agent.id}` })
     const agentId = body.agentId === undefined ? current.agentId : body.agentId || undefined
     const agent = agentId ? this.agents.get(agentId) : this.agents.fallback()
     if (body.agentId && agent && !this.agents.isRunnable(agent))
@@ -683,7 +692,7 @@ export class AgentController {
         const current = body.permissions === undefined ? this.agents.get(parsed.id)?.permissions : undefined
         // O mesmo para o terminal: ausente mantém; `null` volta ao global.
         const terminal = body.terminal === undefined ? this.agents.get(parsed.id)?.terminal : undefined
-        const fallback = body.fallback === undefined ? this.agents.get(parsed.id)?.fallback : undefined
+        const modelGroup = body.modelGroup === undefined ? this.agents.get(parsed.id)?.modelGroup : undefined
         const diagnostics = body.diagnostics === undefined ? this.agents.get(parsed.id)?.diagnostics : undefined
         const triggers = body.triggers === undefined ? this.agents.get(parsed.id)?.triggers : undefined
         const tags = body.tags === undefined ? this.agents.get(parsed.id)?.tags : undefined
@@ -696,7 +705,7 @@ export class AgentController {
           ...parsed,
           ...(current ? { permissions: current } : {}),
           ...(terminal ? { terminal } : {}),
-          ...(fallback ? { fallback } : {}),
+          ...(modelGroup ? { modelGroup } : {}),
           ...(diagnostics ? { diagnostics } : {}),
           ...(triggers?.length ? { triggers } : {}),
           ...(tags?.length ? { tags } : {}),
@@ -759,9 +768,11 @@ export class AgentController {
    */
   async agentRules(): Promise<Omit<IAgentRules, 'takenIds'>> {
     const tools = await this.usecases.catalog.list(this.localTools)
+    const settings = await this.usecases.settings.read()
 
     return {
       knownTools: tools.map((tool) => tool.name),
+      modelGroupExists: (id) => !!settings.modelGroups?.some((group) => group.id === id),
       // ⛔ Servidor DESLIGADO não serve: o agente o perdia em silêncio na hora de rodar. E só o do escopo do agente:
       // o global ou o do projeto dele — nunca o de outro projeto.
       mcpServerExists: (id, projectId) => this.usecases.catalog.mcp.resolve(id, projectId)?.enabled === true,
@@ -1881,10 +1892,8 @@ function toAgentInput(id: string, body: TAgentBody): IAgent {
     ...(body.triggers?.length ? { triggers: body.triggers.map((trigger) => ({ id: trigger.id.trim(), when: trigger.when.trim(), body: trigger.body })) } : {}),
     ...(body.env && Object.keys(body.env).length ? { env: { ...body.env } } : {}),
     ...(body.files?.length ? { files: body.files.map(({ path, sha256, bytes }) => ({ path, sha256, bytes })) } : {}),
-    // `global` é o padrão: não se grava.
-    ...(body.fallback && body.fallback.mode !== 'global'
-      ? { fallback: { mode: body.fallback.mode, ...(body.fallback.mode === 'own' ? { chain: body.fallback.chain ?? [] } : {}) } }
-      : {}),
+    // Ausente é o grupo padrão: não se grava.
+    ...(body.modelGroup ? { modelGroup: body.modelGroup } : {}),
   }
 }
 

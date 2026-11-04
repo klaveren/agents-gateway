@@ -44,4 +44,6 @@ export interface IAgentDirectory {
   fallback?(): IAgent | undefined
   /** Este provider do agente pode rodar agora (ligado, modelo ativo, chave). Ausente: basta ter modelo. */
   isTargetRunnable?(agent: IAgent, target: IAgentTarget): boolean
+  /** O modelo está ativo no catálogo do provider (o passo de um grupo de modelos só entra assim). Ausente: todos. */
+  isModelUsable?(provider: string, model: string): boolean
 }

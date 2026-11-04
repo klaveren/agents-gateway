@@ -1,4 +1,3 @@
-import type { IAgentFallback } from '@domain/Fallback.Policy'
 import type { IPermissionRule } from '@domain/Permission.Policy'
 import type { IImportProblem } from '@domain/models/ImportProblem.Model'
 import type { IResourceFile } from '@domain/models/ResourceFile.Model'
@@ -64,8 +63,11 @@ export interface IAgent {
    * um (o índice "## Triggers"), e o corpo só entra quando o agente o carrega (`use_resource`, tipo trigger).
    */
   triggers?: IAgentTrigger[]
-  /** A troca de provedor quando a cota acaba (ver `Fallback.Policy`). Ausente = a cadeia global. */
-  fallback?: IAgentFallback
+  /**
+   * O grupo de modelos do agente (ver `Fallback.Policy`): onde a conversa sem escolha começa e para onde vai quando o
+   * modelo falha. Ausente = o grupo padrão das Configurações; `none` = não troca.
+   */
+  modelGroup?: string
   /**
    * As variáveis de ambiente FIXAS do agente, em todo terminal dele (o `run_bash`, o Bash do Claude, o shell do Codex e
    * do Antigravity): a autoria do git (`GIT_AUTHOR_NAME`…), um idioma, uma região. ⛔ Nunca segredo — a regra recusa

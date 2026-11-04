@@ -2,7 +2,7 @@ import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { IAgentFallback } from '@domain/Fallback.Policy'
+import { IModelGroup } from '@domain/Fallback.Policy'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
@@ -11,25 +11,38 @@ import { SessionStore } from '@infra/session/Session.Store'
 import { adapterKey, AgentProvider } from './Agent.Provider'
 import { ProviderBench } from './Provider.Bench'
 
-/** A troca de provedor quando a cota acaba (ver `Fallback.Policy`), com adapters falsos. */
-describe('AgentProvider — troca de provedor quando a cota acaba', () => {
+/** O grupo de modelos quando o modelo falha (ver `Fallback.Policy`), com adapters falsos. */
+describe('AgentProvider — grupo de modelos: troca quando o modelo falha', () => {
   const PROTOCOL: Record<string, EProvider> = { claude: EProvider.CLAUDE, openai: EProvider.OPENAI, google: EProvider.GOOGLE }
 
-  function setup(options: { quota?: Set<string>; fallback?: IAgentFallback; chain?: Array<{ provider: string; model: string }>; bench?: ProviderBench } = {}) {
+  function setup(
+    options: {
+      /** Os provedores sem cota. */
+      quota?: Set<string>
+      /** Os passos (`provedor/modelo`) cujo modelo está fora. */
+      broken?: Set<string>
+      /** O grupo do agente (`none` desliga). */
+      modelGroup?: string
+      groups?: IModelGroup[]
+      defaultModelGroup?: string
+      bench?: ProviderBench
+      sandbox?: 'workspace-write'
+    } = {},
+  ) {
     const agent: IAgent = {
       id: 'reserva',
       name: 'Reserva',
       providers: [
-        { provider: 'claude', models: ['claude-sonnet-5'] },
+        { provider: 'claude', models: ['claude-sonnet-5'], ...(options.sandbox ? { sandbox: options.sandbox } : {}) },
         { provider: 'openai', models: ['gpt-5.6-sol'] },
       ],
       systemPrompt: 'p',
       modes: [EMode.CHAT],
       allowedTools: [],
-      ...(options.fallback ? { fallback: options.fallback } : {}),
+      ...(options.modelGroup ? { modelGroup: options.modelGroup } : {}),
     }
     const store = new SessionStore()
-    const seen: Array<{ provider: string; text: string; native: unknown }> = []
+    const seen: Array<{ provider: string; model: string; text: string; native: unknown; sandbox?: string }> = []
     const answer = (protocol: EProvider): IAgentAdapter => ({
       async createSession(created, input) {
         const record = store.create({
@@ -44,13 +57,18 @@ describe('AgentProvider — troca de provedor quando a cota acaba', () => {
         })
         return { id: record.id, provider: protocol, mode: record.mode, createdAt: record.createdAt }
       },
-      async *sendMessage(_agent, sessionId, input): AsyncIterable<IAgentEvent> {
+      async *sendMessage(running, sessionId, input): AsyncIterable<IAgentEvent> {
         const record = store.get(sessionId)!
-        seen.push({ provider: record.provider, text: input.text, native: record.native })
+        const sandbox = running.providers.find((target) => target.provider === record.provider)?.sandbox
+        seen.push({ provider: record.provider, model: record.model, text: input.text, native: record.native, ...(sandbox ? { sandbox } : {}) })
         yield { type: 'text.delta', sessionId, timestamp: new Date(), payload: { text: `parte de ${record.provider}` } }
         yield { type: 'tool.started', sessionId, timestamp: new Date(), payload: { tool: 'run_bash', args: {} } }
         if (options.quota?.has(record.provider)) {
           yield { type: 'error', sessionId, timestamp: new Date(), payload: { message: 'You exceeded your current quota', kind: 'quota' } }
+          return
+        }
+        if (options.broken?.has(`${record.provider}/${record.model}`)) {
+          yield { type: 'error', sessionId, timestamp: new Date(), payload: { message: `model ${record.model} does not exist`, kind: 'model' } }
           return
         }
         yield { type: 'message.completed', sessionId, timestamp: new Date() }
@@ -67,7 +85,11 @@ describe('AgentProvider — troca de provedor quando a cota acaba', () => {
         [adapterKey(EProvider.GOOGLE, EMode.CHAT), answer(EProvider.GOOGLE)],
       ]),
       store,
-      new NullSettingsRepository({ audience: 'all', ...(options.chain ? { fallback: { chain: options.chain } } : {}) }),
+      new NullSettingsRepository({
+        audience: 'all',
+        ...(options.groups ? { modelGroups: options.groups } : {}),
+        ...(options.defaultModelGroup ? { defaultModelGroup: options.defaultModelGroup } : {}),
+      }),
       { list: () => [agent], get: (id) => (id === agent.id ? agent : undefined) },
       { list: () => [], get: config, connection: (id) => (config(id) ? { providerId: id, name: id, protocol: PROTOCOL[id], key: 'k' } : undefined) },
       undefined,
@@ -82,22 +104,27 @@ describe('AgentProvider — troca de provedor quando a cota acaba', () => {
     return events
   }
   const settle = () => new Promise((resolve) => setImmediate(resolve))
-  const CHAIN = [
-    { provider: 'claude', model: 'claude-sonnet-5' },
-    { provider: 'openai', model: 'gpt-5.6-sol' },
-  ]
+  const group = (id: string, steps: Array<[string, string]>, extra: Partial<IModelGroup> = {}): IModelGroup => ({
+    id,
+    name: id,
+    steps: steps.map(([provider, model]) => ({ provider, model })),
+    ...extra,
+  })
+  const PADRAO = group('padrao', [
+    ['claude', 'claude-sonnet-5'],
+    ['openai', 'gpt-5.6-sol'],
+  ])
+  const warningOf = (events: IAgentEvent[]) => events.filter((event) => event.type === 'warning').map((event) => (event.type === 'warning' ? event.payload.message : ''))
 
-  it('a cota acaba no meio do turno: o erro não sai, o turno segue no próximo, com o que já foi feito', async () => {
-    const { provider, seen, bench } = setup({ quota: new Set(['claude']), chain: CHAIN })
+  it('a cota acaba no meio do turno: o erro não sai, o turno segue no próximo do grupo, com o que já foi feito', async () => {
+    const { provider, seen, bench } = setup({ quota: new Set(['claude']), groups: [PADRAO], defaultModelGroup: 'padrao' })
     await settle()
     const session = await provider.createSession({ agentId: 'reserva' })
     const events = await run(provider.sendMessage(session.id, { text: 'rode os testes' }))
 
     assert.ok(!events.some((event) => event.type === 'error'))
-    const warning = events.find((event) => event.type === 'warning')
-    assert.match(warning?.type === 'warning' ? warning.payload.message : '', /Cota de claude · claude-sonnet-5 esgotada.*segue em openai · gpt-5\.6-sol/)
+    assert.match(warningOf(events).join('\n'), /Cota esgotada em claude · claude-sonnet-5.*segue em openai · gpt-5\.6-sol/)
     assert.ok(events.some((event) => event.type === 'message.completed'))
-
     assert.deepStrictEqual(
       seen.map((call) => call.provider),
       ['claude', 'openai'],
@@ -106,7 +133,6 @@ describe('AgentProvider — troca de provedor quando a cota acaba', () => {
     assert.strictEqual(seen[1].native, undefined)
     assert.match(seen[1].text, /cota do modelo anterior acabou/)
     assert.match(seen[1].text, /Assistente: parte de claude/)
-    assert.match(seen[1].text, /Ferramentas usadas: run_bash/)
     assert.match(seen[1].text, /rode os testes$/)
 
     const after = provider.describe(session.id)
@@ -114,9 +140,60 @@ describe('AgentProvider — troca de provedor quando a cota acaba', () => {
     assert.ok(bench.isBenched('claude'))
   })
 
-  it('a próxima conversa já nasce fora do provedor sem cota; e a que estava nele troca antes de tentar', async () => {
+  it('⚖️ a conversa FICA no passo que funcionou: o turno seguinte não volta ao primeiro, nem depois que ele se recupera', async () => {
+    let now = Date.now()
+    const bench = new ProviderBench(() => now)
+    const quota = new Set(['claude'])
+    const { provider, seen } = setup({ quota, groups: [PADRAO], defaultModelGroup: 'padrao', bench })
+    await settle()
+    const session = await provider.createSession({ agentId: 'reserva' })
+    await run(provider.sendMessage(session.id, { text: 'um' }))
+    quota.clear()
+    now += 24 * 60 * 60_000
+    await run(provider.sendMessage(session.id, { text: 'dois' }))
+    assert.deepStrictEqual(
+      seen.map((call) => call.provider),
+      ['claude', 'openai', 'openai'],
+    )
+  })
+
+  it('o erro do MODELO tira só ele: o próximo modelo do mesmo provedor segue', async () => {
+    const groups = [
+      group('claudes', [
+        ['claude', 'claude-sonnet-5'],
+        ['claude', 'claude-opus-5'],
+        ['openai', 'gpt-5.6-sol'],
+      ]),
+    ]
+    const { provider, seen, bench } = setup({ broken: new Set(['claude/claude-sonnet-5']), groups, modelGroup: 'claudes' })
+    await settle()
+    const session = await provider.createSession({ agentId: 'reserva' })
+    const events = await run(provider.sendMessage(session.id, { text: 'oi' }))
+    assert.match(warningOf(events).join('\n'), /Modelo indisponível em claude · claude-sonnet-5/)
+    assert.deepStrictEqual(
+      seen.map((call) => `${call.provider}/${call.model}`),
+      ['claude/claude-sonnet-5', 'claude/claude-opus-5'],
+    )
+    assert.ok(bench.isBenched('claude/claude-sonnet-5'))
+    assert.ok(!bench.isBenched('claude'))
+  })
+
+  it('sem modelo escolhido, a conversa nasce no primeiro passo disponível do grupo; a escolhida no chat vale como antes', async () => {
+    const groups = [
+      group('openai-antes', [
+        ['openai', 'gpt-5.6-sol'],
+        ['claude', 'claude-sonnet-5'],
+      ]),
+    ]
+    const { provider } = setup({ groups, modelGroup: 'openai-antes' })
+    await settle()
+    assert.strictEqual(provider.describe((await provider.createSession({ agentId: 'reserva' })).id).provider, 'openai')
+    assert.strictEqual(provider.describe((await provider.createSession({ agentId: 'reserva', provider: 'claude', model: 'claude-sonnet-5' })).id).provider, 'claude')
+  })
+
+  it('a próxima conversa já nasce fora do passo sem cota; e a que estava nele troca antes de tentar', async () => {
     const bench = new ProviderBench()
-    const { provider, seen } = setup({ chain: CHAIN, bench })
+    const { provider, seen } = setup({ groups: [PADRAO], defaultModelGroup: 'padrao', bench })
     await settle()
     const old = await provider.createSession({ agentId: 'reserva' })
     bench.bench('claude', Date.now() + 60_000)
@@ -127,15 +204,14 @@ describe('AgentProvider — troca de provedor quando a cota acaba', () => {
       seen.map((call) => call.provider),
       ['openai'],
     )
-    assert.ok(events.some((event) => event.type === 'warning' && /sem cota agora/.test(event.payload.message)))
+    assert.ok(warningOf(events).some((message) => /sem cota agora/.test(message)))
   })
 
   it('sem próximo que rode, o erro sai como sempre; cada provedor é tentado uma vez por turno', async () => {
-    const { provider, seen } = setup({ quota: new Set(['claude', 'openai']), chain: CHAIN })
+    const { provider, seen } = setup({ quota: new Set(['claude', 'openai']), groups: [PADRAO], defaultModelGroup: 'padrao' })
     await settle()
     const session = await provider.createSession({ agentId: 'reserva' })
     const events = await run(provider.sendMessage(session.id, { text: 'oi' }))
-
     assert.deepStrictEqual(
       seen.map((call) => call.provider),
       ['claude', 'openai'],
@@ -143,26 +219,42 @@ describe('AgentProvider — troca de provedor quando a cota acaba', () => {
     assert.ok(events.some((event) => event.type === 'error' && event.payload.kind === 'quota'))
   })
 
-  it('⛔ passo que o agente não oferece nunca roda; `off` desliga; `own` usa a cadeia do agente', async () => {
-    const outside = setup({ quota: new Set(['claude']), chain: [CHAIN[0], { provider: 'google', model: 'gemini-x' }] })
+  it('⚖️ passo de um provedor que o agente não tem roda com o sandbox do agente; `none` desliga; a falha fora do `switchOn` sai', async () => {
+    const outside = setup({
+      quota: new Set(['claude']),
+      sandbox: 'workspace-write',
+      groups: [
+        group('com-google', [
+          ['claude', 'claude-sonnet-5'],
+          ['google', 'gemini-x'],
+        ]),
+      ],
+      defaultModelGroup: 'com-google',
+    })
     await settle()
     const one = await outside.provider.createSession({ agentId: 'reserva' })
-    assert.ok((await run(outside.provider.sendMessage(one.id, { text: 'oi' }))).some((event) => event.type === 'error'))
+    assert.ok(!(await run(outside.provider.sendMessage(one.id, { text: 'oi' }))).some((event) => event.type === 'error'))
     assert.deepStrictEqual(
-      outside.seen.map((call) => call.provider),
-      ['claude'],
+      outside.seen.map((call) => [call.provider, call.sandbox]),
+      [
+        ['claude', 'workspace-write'],
+        ['google', 'workspace-write'],
+      ],
     )
 
-    const off = setup({ quota: new Set(['claude']), chain: CHAIN, fallback: { mode: 'off' } })
+    const off = setup({ quota: new Set(['claude']), groups: [PADRAO], defaultModelGroup: 'padrao', modelGroup: 'none' })
     await settle()
     const two = await off.provider.createSession({ agentId: 'reserva' })
     assert.ok((await run(off.provider.sendMessage(two.id, { text: 'oi' }))).some((event) => event.type === 'error'))
 
-    const own = setup({ quota: new Set(['claude']), fallback: { mode: 'own', chain: CHAIN } })
+    const strict = setup({ quota: new Set(['claude']), groups: [{ ...PADRAO, switchOn: ['model'] }], defaultModelGroup: 'padrao' })
     await settle()
-    const three = await own.provider.createSession({ agentId: 'reserva' })
-    assert.ok(!(await run(own.provider.sendMessage(three.id, { text: 'oi' }))).some((event) => event.type === 'error'))
-    assert.strictEqual(own.provider.describe(three.id).provider, 'openai')
+    const three = await strict.provider.createSession({ agentId: 'reserva' })
+    assert.ok((await run(strict.provider.sendMessage(three.id, { text: 'oi' }))).some((event) => event.type === 'error'))
+    assert.deepStrictEqual(
+      strict.seen.map((call) => call.provider),
+      ['claude'],
+    )
   })
 
   it('o banco de reservas devolve o provedor quando a cota volta', () => {

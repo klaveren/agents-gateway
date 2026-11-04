@@ -865,6 +865,23 @@ describe('AgentController', () => {
         assert.strictEqual((await withRules({ agentId: 'pesquisa-teste', model: 'gemini-3.6-flash' })).locals.statusCode, 200)
       })
 
+      it('grupos de modelos: provedor que não existe, padrão que não é grupo e id repetido são 422; o válido grava', async () => {
+        const group = { id: 'padrao', name: 'Padrão', steps: [{ provider: 'google', model: 'gemini-3.6-flash' }] }
+        for (const body of [
+          { modelGroups: [{ ...group, steps: [{ provider: 'nao-existe', model: 'x' }] }] },
+          { modelGroups: [group], defaultModelGroup: 'outro' },
+          { modelGroups: [group, group] },
+          { modelGroups: [{ ...group, steps: [] }] },
+        ]) {
+          const { locals, settings } = await withRules(body)
+          assert.strictEqual(locals.statusCode, 422, JSON.stringify(body))
+          assert.deepStrictEqual(await settings.read(), { audience: 'all' }, 'nada é gravado')
+        }
+        const { locals, settings } = await withRules({ modelGroups: [group], defaultModelGroup: 'padrao' })
+        assert.strictEqual(locals.statusCode, 200)
+        assert.deepStrictEqual([(await settings.read()).modelGroups, (await settings.read()).defaultModelGroup], [[group], 'padrao'])
+      })
+
       it('limites: gravados na faixa, um a um; fora da faixa é 422; a leitura traz o que vale e a faixa', async () => {
         const settings = new NullSettingsRepository()
 

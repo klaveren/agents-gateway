@@ -24,7 +24,9 @@
     type IEnvRow,
   } from '@/lib/agentForm'
   import { useProvidersStore } from '@/stores/providers'
-  import FallbackChain from './FallbackChain.vue'
+  import { useSettingsStore } from '@/stores/settings'
+  import { useAuthStore } from '@/stores/auth'
+  import { NO_MODEL_GROUP } from '@/lib/modelGroups'
   import { useProtocolsStore } from '@/stores/protocols'
   import type { IAgentDetail, IAgentInput, ICatalogModel, IMcpServer, INativeTool, TMode, TSandboxLevel } from '@/lib/types'
   import { useAgentsStore } from '@/stores/agents'
@@ -81,6 +83,7 @@
   const mcpReady = ref(false)
   onMounted(async () => {
     void loadBase()
+    if (auth.isAdmin) void settings.ensure().catch(() => undefined)
     const loaded = await mcp.ensure().then(
       () => true,
       () => false,
@@ -340,16 +343,18 @@
     { key: 'lint', label: 'Lint (eslint)' },
     { key: 'format', label: 'Formato (prettier)' },
   ]
-  const FALLBACK_MODES: Array<{ value: 'global' | 'own' | 'off'; label: string }> = [
-    { value: 'global', label: 'A lista global' },
-    { value: 'own', label: 'Lista própria' },
-    { value: 'off', label: 'Desligada' },
-  ]
-  /** Os pares que a lista própria pode ter: os provedores e modelos deste agente. */
-  const ownSteps = computed(() => form.value.providers.flatMap((target) => target.models.map((model) => ({ provider: target.provider, model }))))
-  function setFallbackMode(mode: 'global' | 'own' | 'off') {
-    form.value.fallback = mode === 'global' ? null : { mode, chain: mode === 'own' ? (form.value.fallback?.chain ?? []) : [] }
-  }
+  /**
+   * O GRUPO DE MODELOS do agente: `''` = o padrão (vai como `null`), `none` = não troca, senão o id. ⚖️ Os grupos vêm
+   * das Configurações (só admin): sem elas, a lista fica só com as opções fixas.
+   */
+  const settings = useSettingsStore()
+  const auth = useAuthStore()
+  const modelGroups = computed(() => settings.current?.modelGroups ?? [])
+  const defaultGroupName = computed(() => modelGroups.value.find((group) => group.id === settings.current?.defaultModelGroup)?.name ?? 'nenhum')
+  const groupChoice = computed({
+    get: () => (form.value.modelGroup === undefined || form.value.modelGroup === null ? '' : form.value.modelGroup),
+    set: (value: string) => (form.value.modelGroup = value === '' ? null : value),
+  })
 
   /** Entradas `sdk:`/`agent:`/`mcp:` que nenhuma lista oferece: sem checkbox, mas o servidor recusa o salvamento. */
   const orphans = computed(() =>
@@ -586,7 +591,7 @@
             diagnostics: agent.diagnostics ? { ...agent.diagnostics } : null,
             triggers: (agent.triggers ?? []).map((trigger) => ({ ...trigger })),
             tags: [...(agent.tags ?? [])],
-            fallback: agent.fallback ? { mode: agent.fallback.mode, chain: (agent.fallback.chain ?? []).map((step) => ({ ...step })) } : null,
+            modelGroup: agent.modelGroup ?? null,
           }
         : blank()
       envList.value = envRows(agent?.env)
@@ -648,8 +653,8 @@
         diagnostics: form.value.diagnostics?.typecheck || form.value.diagnostics?.lint || form.value.diagnostics?.format ? form.value.diagnostics : null,
         // Nenhuma apaga todas.
         env: envRecord(envList.value),
-        // `global` é o padrão: vai como `null`.
-        fallback: form.value.fallback && form.value.fallback.mode !== 'global' ? form.value.fallback : null,
+        // Padrão vai como `null` (na edição volta ao grupo padrão); criando, ausente.
+        modelGroup: form.value.modelGroup ?? null,
       }
       const saved = await agents.save(input, props.creating)
       emit('saved', saved.id)
@@ -1134,17 +1139,18 @@
         </label>
       </div>
       <div class="flex flex-col gap-2">
-        <h3 class="text-sm font-medium text-zinc-200">Troca de provedor</h3>
+        <h3 class="text-sm font-medium text-zinc-200">Grupo de modelos</h3>
         <p class="text-xs text-zinc-500">
-          Quando a cota de um provedor acaba no meio do turno, o turno segue no próximo da lista, com a transcrição. Só entre os provedores deste agente.
+          A conversa aberta sem modelo escolhido começa no primeiro modelo disponível do grupo; se ele falha (cota, limite de uso…), segue no próximo e fica nele. No chat, a pessoa continua escolhendo
+          entre os “Modelos do agente”.
         </p>
-        <div class="flex flex-wrap gap-3 text-sm">
-          <label v-for="option in FALLBACK_MODES" :key="option.value" class="flex items-center gap-2">
-            <input type="radio" class="accent-emerald-500" :checked="(form.fallback?.mode ?? 'global') === option.value" @change="setFallbackMode(option.value)" />
-            {{ option.label }}
-          </label>
-        </div>
-        <FallbackChain v-if="form.fallback?.mode === 'own'" v-model="form.fallback.chain!" :options="ownSteps" />
+        <select v-model="groupChoice" aria-label="Grupo de modelos" class="h-9 max-w-xs rounded-lg border border-zinc-800 bg-zinc-900 px-2 text-sm">
+          <option value="">Padrão ({{ defaultGroupName }})</option>
+          <option :value="NO_MODEL_GROUP">Nenhum — não troca de modelo</option>
+          <option v-for="group in modelGroups" :key="group.id" :value="group.id">{{ group.name }}</option>
+          <option v-if="groupChoice && groupChoice !== NO_MODEL_GROUP && !modelGroups.some((group) => group.id === groupChoice)" :value="groupChoice">{{ groupChoice }}</option>
+        </select>
+        <RouterLink v-if="auth.isAdmin" to="/model-groups" class="text-xs text-emerald-300 underline">Gerenciar grupos de modelos</RouterLink>
       </div>
       <p class="text-xs text-zinc-500">Só no modo Agente: o nível de acesso das assinaturas e os extras que só um provedor tem. Terminal, arquivos e busca ficam em Ferramentas.</p>
       <p v-if="!form.modes.includes('agent')" class="text-xs text-amber-300">O modo Agente está desligado: nada daqui é usado.</p>

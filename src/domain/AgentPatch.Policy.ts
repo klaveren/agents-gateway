@@ -25,7 +25,7 @@ export const AGENT_PATCH_FIELDS = [
   'adminOnly',
   'projectId',
   'permissions',
-  'fallback',
+  'modelGroup',
   'terminal',
   'triggers',
   'env',
@@ -50,7 +50,7 @@ function emptyValue(field: TAgentPatchField, value: unknown): boolean {
   if (value === null || value === undefined) return true
   if (field === 'adminOnly') return value !== true
   if (field === 'soul') return typeof value === 'string' && !value.trim()
-  if (field === 'fallback') return (value as { mode?: string }).mode === 'global'
+  if (field === 'modelGroup') return typeof value !== 'string' || !value.trim()
   if (field === 'env') return typeof value === 'object' && !Object.keys(value as object).length
   if (field === 'triggers' || field === 'permissions' || field === 'reasoningEfforts') return Array.isArray(value) && !value.length
   return false

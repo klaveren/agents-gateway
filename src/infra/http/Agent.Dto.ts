@@ -1,7 +1,6 @@
 import type { IImportProblem } from '@domain/models/ImportProblem.Model'
 import type { IResourceFile } from '@domain/models/ResourceFile.Model'
 import type { IPermissionRule } from '@domain/Permission.Policy'
-import type { IAgentFallback } from '@domain/Fallback.Policy'
 import { IAgent, IAgentDiagnostics, IAgentTerminal, IAgentTrigger } from '@domain/models/Agent.Model'
 import { IModelPrice, MODEL_PRICING, TModelPricing } from '@domain/models/Model.Pricing'
 import { EProvider } from '@domain/enums/EProvider.Enum'
@@ -90,7 +89,8 @@ export interface IAgentDetailDto extends IAgentDto {
   diagnostics?: IAgentDiagnostics
   /** Os triggers do agente (o corpo também): só para quem administra, como o prompt. */
   triggers?: IAgentTrigger[]
-  fallback?: IAgentFallback
+  /** O grupo de modelos (ausente = o padrão; `none` = não troca). */
+  modelGroup?: string
   /** As variáveis de ambiente fixas do agente: só para quem administra, como o prompt. */
   env?: Record<string, string>
   /** Os arquivos da pasta do agente (caminho, sha256, tamanho). */
@@ -164,7 +164,7 @@ export function toAgentDetailDto(
     ...(entry.agent.terminal ? { terminal: entry.agent.terminal } : {}),
     ...(entry.agent.diagnostics ? { diagnostics: entry.agent.diagnostics } : {}),
     ...(entry.agent.triggers?.length ? { triggers: entry.agent.triggers } : {}),
-    ...(entry.agent.fallback ? { fallback: entry.agent.fallback } : {}),
+    ...(entry.agent.modelGroup ? { modelGroup: entry.agent.modelGroup } : {}),
     ...(entry.agent.env && Object.keys(entry.agent.env).length ? { env: entry.agent.env } : {}),
     ...(entry.agent.files?.length ? { files: entry.agent.files } : {}),
     ...(entry.agent.importIssues?.length ? { importIssues: entry.agent.importIssues } : {}),

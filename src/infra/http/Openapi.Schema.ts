@@ -273,6 +273,11 @@ const agentSchema = {
     allowedTools: { type: 'array', items: { type: 'string' } },
     role: { type: 'string', enum: ['subagent'], description: 'Present on subagents: only called by another agent.' },
     adminOnly: { type: 'boolean', description: 'Present when only administrators can talk to the agent.' },
+    modelGroup: {
+      type: 'string',
+      description:
+        'The model group (Settings → model groups) the agent switches through when a model fails, and starts in when no model is picked. Absent = the default group; `none` = no switching.',
+    },
     projectId: { type: 'string', description: 'The project the agent belongs to. Absent = global (every project).' },
     importIssueCount: { type: 'integer', description: 'List, administrators only: how many import issues the agent has (the detail lists them). Absent = none.' },
   },
@@ -405,20 +410,35 @@ const settingsSchema = {
     builderProvider: { type: 'string', description: 'Provider of the builder (the core agent that drafts skills and commands). Absent: the one of Atlas.' },
     builderModel: { type: 'string', description: 'Model of the builder — an enabled model of `builderProvider`. Absent: the one of Atlas.' },
     classifyTurns: { type: 'boolean', description: 'Stored only for now: the turn classifier arrives in a later phase.' },
-    fallback: {
-      type: 'object',
+    modelGroups: {
+      type: 'array',
+      maxItems: 50,
       description:
-        'Provider fallback when a quota or rate limit runs out mid-turn: the next step of the chain the agent offers continues the turn with the transcript. Agents may set their own (`fallback.mode: own`) or turn it off. Empty chain = off.',
-      properties: {
-        chain: { type: 'array', maxItems: 10, items: { type: 'object', required: ['provider', 'model'], properties: { provider: { type: 'string' }, model: { type: 'string' } } } },
-        cooldownMinutes: {
-          type: 'integer',
-          minimum: 1,
-          maximum: 1440,
-          description: 'How long a provider out of quota stays aside when the error does not say when it resets. Default 15.',
+        'Model groups: ordered steps (provider + model) and switch rules. When a model fails for a reason the group switches on (quota, rate limit, model unavailable…), the conversation moves to the next available step and STAYS there. A conversation opened without a model starts at the first available step. Agents point to one (`modelGroup`).',
+      items: {
+        type: 'object',
+        required: ['id', 'name', 'steps'],
+        properties: {
+          id: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{1,47}$' },
+          name: { type: 'string', maxLength: 80 },
+          description: { type: 'string', maxLength: 500 },
+          steps: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 10,
+            items: { type: 'object', required: ['provider', 'model'], properties: { provider: { type: 'string' }, model: { type: 'string' } } },
+          },
+          switchOn: { type: 'array', items: { type: 'string', enum: ['quota', 'rate_limit', 'model', 'overloaded', 'auth'] }, description: 'Default: quota, rate_limit, model.' },
+          cooldownMinutes: {
+            type: 'integer',
+            minimum: 1,
+            maximum: 1440,
+            description: 'How long a failed step stays aside when the error does not say when it resets. Default 15.',
+          },
         },
       },
     },
+    defaultModelGroup: { type: 'string', description: 'The group of agents that point to none. Absent = no group: a failing model ends the turn.' },
     updatedAt: { type: 'string', format: 'date-time' },
     updatedBy: { type: 'string' },
   },
