@@ -371,9 +371,10 @@ describe('SendMessageUseCase', () => {
     for await (const _event of build(1).execute('s', { text: 'segunda pergunta' })) void _event
     await done
 
+    // O primeiro turno grava o cabeçalho ao COMEÇAR (a conversa já aparece na lista) e de novo ao acabar; o título é dele.
     assert.deepStrictEqual(
       repository.sessions.map((item) => item.title),
-      ['primeira pergunta', undefined],
+      ['primeira pergunta', 'primeira pergunta', undefined],
     )
   })
 
