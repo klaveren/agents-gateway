@@ -113,6 +113,9 @@ export class SendMessageUseCase {
     const ticket = this.live?.start(sessionId, recorded.recordAs ?? recorded.text ?? '', described?.metadata)
     // O turno ao vivo acaba quando o turno está GRAVADO (a tela relê o histórico nesse aviso), antes do rótulo.
     const finished = () => (ticket !== undefined ? this.live?.finish(sessionId, ticket) : undefined)
+    // ⚖️ O PRIMEIRO TURNO JÁ APARECE: o cabeçalho vai ao banco agora, não só no fim. Sem isso a conversa que roda pela
+    // primeira vez — a delegada, sobretudo, que ninguém abriu na tela — não estava na lista nem no MCP até acabar.
+    if (index === 0) void this.saveHeader(sessionId, titleFrom(recorded.recordAs ?? recorded.text)).catch(() => undefined)
 
     try {
       for await (const event of this.agentProvider.sendMessage(sessionId, sent)) {
