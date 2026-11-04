@@ -225,8 +225,22 @@ describe('LocalTools', () => {
         sandbox,
         permissions: checker(agent),
       })
-      return { seen, run: (command: string) => find(tools, 'run_bash').execute({ command }, { sessionId: 's1', agentId: 'dev' }) }
+      return {
+        seen,
+        run: (command: string, timeoutSeconds?: number) =>
+          find(tools, 'run_bash').execute({ command, ...(timeoutSeconds ? { timeoutSeconds } : {}) }, { sessionId: 's1', agentId: 'dev' }),
+      }
     }
+
+    it('⚠️ pedir mais tempo que o limite não é cortado calado: o resultado diz o que valeu e aponta o bash_start', async () => {
+      const { run } = setup([rule('terminal', 'git *')])
+      const long = await run('git status', 600)
+      assert.strictEqual(long.status, 'success')
+      assert.ok(long.result.startsWith('Aviso: você pediu 600s, mas o limite do run_bash deste agente é 1s'))
+      assert.match(long.result, /use bash_start/)
+      assert.ok(!(await run('git status', 1)).result.includes('Aviso:'), 'dentro do limite, sem aviso')
+      assert.ok(!(await run('git status')).result.includes('Aviso:'))
+    })
 
     it('cada comando da linha passa pela regra: o permitido não leva o negado junto', async () => {
       const { seen, run } = setup([rule('terminal', 'git *')])

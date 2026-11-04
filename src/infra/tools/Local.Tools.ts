@@ -257,7 +257,11 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     if ('status' in prepared) return prepared
     const limits = terminalOf(context)
     // O modelo pode pedir menos tempo, ou mais até o teto do agente.
-    const timeoutMs = askedSeconds && askedSeconds > 0 ? Math.min(askedSeconds * 1000, Math.max(limits.timeoutMs, policy.timeoutMs)) : limits.timeoutMs
+    const ceiling = Math.max(limits.timeoutMs, policy.timeoutMs)
+    const timeoutMs = askedSeconds && askedSeconds > 0 ? Math.min(askedSeconds * 1000, ceiling) : limits.timeoutMs
+    // ⚠️ Pediu mais que o teto: o corte não é calado. Sem o aviso, o agente lia "Tempo esgotado" sem saber que o tempo
+    // pedido nem valeu, e repetia (um pre-commit de 40 s morto aos 20 deixou lock órfão no repositório).
+    if (askedSeconds && askedSeconds * 1000 > ceiling) prepared.notes += capNotice(askedSeconds, ceiling)
     if (deps.exec) return legacyRun(prepared, timeoutMs, limits.maxOutputChars)
     const id = processes.newId()
     const logFile = join(prepared.logDir, `${id}.log`)
@@ -279,12 +283,13 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
   async function legacyRun(prepared: IPrepared, timeoutMs: number, maxOutputChars: number): Promise<IToolResult> {
     try {
       const { stdout, stderr } = await run(prepared.line, { cwd: prepared.root, timeout: timeoutMs, maxBuffer: EXEC_BUFFER_BYTES, env: prepared.env, shell: SANDBOX_SHELL })
-      return { status: 'success', result: clipOutput(prepared.notes + (stdout || stderr || 'Command executed successfully with no output.'), maxOutputChars) }
+      // Os avisos ficam fora do corte, como no caminho de verdade (`guardedBash`).
+      return { status: 'success', result: prepared.notes + clipOutput(stdout || stderr || 'Command executed successfully with no output.', maxOutputChars) }
     } catch (error: unknown) {
       // A linha embrulhada (a política do cerco) não interessa a quem lê; a saída de erro, sim.
       const failure = error as { stderr?: string; stdout?: string; code?: number }
       const output = [failure.stdout?.trim(), failure.stderr?.trim()].filter(Boolean).join('\n')
-      if (output) return { status: 'error', result: clipOutput(`${prepared.notes}Exit code ${failure.code ?? 1}: ${output}`, maxOutputChars) }
+      if (output) return { status: 'error', result: prepared.notes + clipOutput(`Exit code ${failure.code ?? 1}: ${output}`, maxOutputChars) }
       return { status: 'error', result: `Execution failed: ${toMessage(error)}` }
     } finally {
       prepared.release()
@@ -866,6 +871,12 @@ interface IPrepared {
   notes: string
   release: () => void
   logDir: string
+}
+
+/** O aviso do tempo cortado: o que valeu e o caminho para o comando longo. */
+export function capNotice(askedSeconds: number, ceilingMs: number): string {
+  const ceiling = Math.round(ceilingMs / 1000)
+  return `Aviso: você pediu ${askedSeconds}s, mas o limite do run_bash deste agente é ${ceiling}s; o comando roda com ${ceiling}s. Para comando longo (build, testes, pre-commit), use bash_start e acompanhe com bash_logs.\n`
 }
 
 /** `bash_logs`, `bash_stop` e `bash_list`: os processos da conversa (cada uma só vê os seus). */
