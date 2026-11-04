@@ -4062,6 +4062,18 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/conversations/{id}/archive': {
+      put: {
+        summary:
+          'Archive (or unarchive) a conversation: it leaves the inbox (listed with `?archived=1`), is not resumed by itself (a delegation refuses it), and nothing is deleted. Sending a message to it unarchives it. The same people who can delete it',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: { required: false, ...json({ type: 'object', properties: { archived: { type: 'boolean', description: 'false unarchives. Default true.' } } }) },
+        responses: {
+          '200': { description: 'OK', ...json(envelope({ type: 'object', properties: { id: { type: 'string' }, archived: { type: 'boolean' } } })) },
+          '404': failures['404'],
+        },
+      },
+    },
     '/secret-requests': {
       post: {
         summary:

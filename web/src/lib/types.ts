@@ -36,6 +36,8 @@ export interface IConversation {
   costUsd?: number
   /** O custo passou por modelo sem preço: é um piso. */
   costIsFloor?: boolean
+  /** Quando foi arquivada; ausente = está na caixa de entrada. */
+  archivedAt?: string
 }
 
 /** O que a sessão viva usa AGORA — pode trocar no meio da conversa. */
@@ -97,6 +99,8 @@ export interface IConversationPage {
   total?: number
   page?: number
   pageSize?: number
+  /** Quantas conversas arquivadas existem (a lista traz só as ativas). */
+  archivedCount?: number
   facets?: { classification: Record<string, number>; provider: Record<string, number>; agent: Record<string, number> }
 }
 

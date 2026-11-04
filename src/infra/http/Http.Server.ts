@@ -533,6 +533,7 @@ function buildRoutes(
     { method: 'get', path: '/conversations/:id/todos', handler: controller.getConversationTodos },
     { method: 'put', path: '/conversations/:id/share', handler: controller.shareConversation },
     { method: 'delete', path: '/conversations/:id', handler: controller.deleteConversation },
+    { method: 'put', path: '/conversations/:id/archive', handler: controller.archiveConversation },
     { method: 'get', path: '/shared/:id', handler: controller.getSharedConversation },
     { method: 'post', path: '/sessions', handler: controller.createSession },
     { method: 'get', path: '/sessions', handler: controller.listSessions },

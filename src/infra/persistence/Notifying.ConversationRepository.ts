@@ -69,8 +69,19 @@ export class NotifyingConversationRepository implements IConversationRepository 
     return this.inner.usage(query)
   }
 
-  listSessions(options?: { limit?: number; filter?: Record<string, unknown>; owner?: IOwnerFilter | null }): Promise<IConversationSession[]> {
+  listSessions(options?: { limit?: number; filter?: Record<string, unknown>; owner?: IOwnerFilter | null; archived?: boolean }): Promise<IConversationSession[]> {
     return this.inner.listSessions(options)
+  }
+
+  /** Arquivar avisa a caixa de entrada (a conversa sai da lista, ou volta a ela). */
+  async setArchived(sessionId: string, archived: boolean, by?: string): Promise<void> {
+    await this.inner.setArchived?.(sessionId, archived, by)
+    const session = await this.inner.findSession(sessionId)
+    if (session) this.events.publish({ type: 'conversation.updated', session })
+  }
+
+  countArchived(owner?: IOwnerFilter | null): Promise<number> {
+    return this.inner.countArchived?.(owner) ?? Promise.resolve(0)
   }
 
   assignProject(agentIds: readonly string[], projectId: string): Promise<number> {

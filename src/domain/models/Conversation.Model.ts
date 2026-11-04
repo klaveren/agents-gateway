@@ -68,6 +68,8 @@ export interface IConversationSession {
   usageByModel?: Record<string, IStoredUsage>
   /** Espaço para quem chama identificar o dono da conversa. O gateway não interpreta o conteúdo. */
   metadata?: Record<string, unknown>
+  /** Arquivada (fora da caixa de entrada). Ausente = na caixa. */
+  archivedAt?: Date
   /**
    * A conversa está aberta por link, para quem não tem credencial.
    *

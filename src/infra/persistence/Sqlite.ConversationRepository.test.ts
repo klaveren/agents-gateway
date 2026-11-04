@@ -331,6 +331,27 @@ describe('SqliteConversationRepository', () => {
     assert.strictEqual((await repo.usage({ since: new Date('2026-08-01T00:00:00.000Z'), tzOffsetMinutes: 0 }))[0].turns, 2)
   })
 
+  it('⚖️ arquivar tira da caixa de entrada sem apagar: lista própria, contagem, abre e desarquiva', async () => {
+    const repo = repository()
+    await repo.saveSession(session({ id: 's1' }))
+    await repo.saveSession(session({ id: 's2' }))
+    await repo.setArchived('s1', true, 'ana@x.test')
+
+    assert.deepStrictEqual(
+      (await repo.listSessions()).map((item) => item.id),
+      ['s2'],
+    )
+    assert.deepStrictEqual(
+      (await repo.listSessions({ archived: true })).map((item) => item.id),
+      ['s1'],
+    )
+    assert.strictEqual(await repo.countArchived(), 1)
+    assert.ok((await repo.findSession('s1'))?.archivedAt, 'arquivada continua abrindo')
+    await repo.setArchived('s1', false)
+    assert.strictEqual((await repo.findSession('s1'))?.archivedAt, undefined)
+    assert.strictEqual(await repo.countArchived(), 0)
+  })
+
   it('swallows a database failure instead of taking the turn down with it', async () => {
     // ⛔ O contrato do port: perder o registro é ruim, perder o turno de quem estava trabalhando é
     // pior. Com o banco fechado, gravar não pode lançar.

@@ -32,6 +32,8 @@ export interface IConversationDto {
   shareId?: string
   /** O último turno, encurtado. Conteúdo da própria conversa: sai para quem já pode lê-la. */
   preview?: IConversationPreview
+  /** Arquivada (fora da caixa de entrada). */
+  archivedAt?: Date
   /** Só para administrador. */
   classification?: TClassification
   /** Só para administrador. Ausente quando o modelo não tem preço — nunca zero. */
@@ -61,6 +63,7 @@ export function toConversationDto(session: IConversationSession, view: IConversa
     shared: session.shared === true,
     shareId: session.shared ? session.shareId : undefined,
     preview: session.preview,
+    ...(session.archivedAt ? { archivedAt: session.archivedAt } : {}),
   }
 
   if (!view.admin) return dto
