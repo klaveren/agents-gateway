@@ -1,6 +1,7 @@
 <script setup lang="ts">
   import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
   import { api } from '@/lib/api'
+  import { useStickToBottom } from '@/composables/useStickToBottom'
   import type { IConversation, TMode } from '@/lib/types'
   import { useRouter } from 'vue-router'
   import { coreAgentName } from '@/lib/builder'
@@ -139,12 +140,21 @@
     return `trocou para ${providerChanged ? `${protocols.providerName(provider)} · ` : ''}${turn.model}${turn.effort ? ` · raciocínio ${effortLabel(turn.effort).toLowerCase()}` : ''}`
   }
 
+  // ⚖️ A rolagem segue o fim só enquanto a pessoa está nele (ver `useStickToBottom`).
+  const { pinned, unseen, onScroll, toBottom, grew } = useStickToBottom(scroller)
   watch(
     () => [thread.turns.length, thread.pending?.text.length, thread.pending?.tools.length],
-    () => void nextTick(() => scroller.value?.scrollTo({ top: scroller.value.scrollHeight })),
+    () => grew(),
+  )
+  // Outra conversa aberta: começa no fim, seguindo.
+  watch(
+    () => thread.sessionId,
+    () => toBottom(),
   )
 
   async function send(text: string, files: IOutgoingFile[], settle: (ok: boolean) => void) {
+    // Quem envia quer ver a resposta: a rolagem volta a seguir o fim.
+    toBottom()
     const { ok, created } = await thread.send(text, files)
     settle(ok)
     if (created) await router.replace(`/c/${created}`)
@@ -324,6 +334,8 @@
 
     <div
       ref="scroller"
+      data-test="thread-scroller"
+      @scroll.passive="onScroll"
       class="scroll-thin min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(circle_at_1px_1px,rgb(39_39_42/0.6)_1px,transparent_0)] [background-size:22px_22px] px-4 py-5"
     >
       <div class="mx-auto flex max-w-3xl flex-col gap-5">
@@ -335,6 +347,12 @@
         </template>
         <TurnBubbles v-if="thread.pending" :pending="thread.pending" :show-cost="auth.isAdmin" />
         <p v-if="thread.error" class="mx-auto text-sm text-rose-300">{{ thread.error }}</p>
+      </div>
+      <!-- A pessoa subiu para ler e chegou coisa nova embaixo: o atalho de volta ao fim (e a rolagem volta a seguir). -->
+      <div v-if="!pinned" class="pointer-events-none sticky bottom-2 flex justify-center">
+        <button type="button" class="btn btn-sm btn-secondary pointer-events-auto shadow-lg shadow-black/40" data-test="thread-to-bottom" @click="toBottom">
+          ↓ {{ unseen ? 'Novas mensagens' : 'Ir para o fim' }}
+        </button>
       </div>
     </div>
 
