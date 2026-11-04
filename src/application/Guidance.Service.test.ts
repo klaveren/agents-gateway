@@ -363,6 +363,31 @@ describe('GuidanceService', () => {
       assert.ok(!service.loadResource('skill', 'tabela', 'dev')!.includes('## Triggers'))
     })
 
+    it('tags na skill, no documento e na rule: normalizadas e sem repetir; a edição sem tags mantém; `[]` tira; ⛔ demais é recusado', () => {
+      const service = seeded()
+      service.updateResource('tabela', { tags: ['Infra', 'infra ', 'Lógica Core'] }, 'root')
+      assert.deepStrictEqual(service.resource('tabela').tags, ['infra', 'logica-core'])
+      service.updateResource('tabela', { description: 'Outra' }, 'root')
+      assert.deepStrictEqual(service.resource('tabela').tags, ['infra', 'logica-core'])
+      service.updateResource('tabela', { tags: [] }, 'root')
+      assert.strictEqual(service.resource('tabela').tags, undefined)
+      assert.throws(
+        () => service.updateResource('tabela', { tags: Array.from({ length: 21 }, (_, index) => `t${index}`) }, 'root'),
+        (error: unknown) => error instanceof InvalidGuidanceError && error.issues.some((issue) => issue.field === 'tags'),
+      )
+
+      const doc = service.createDoc({ id: 'com-tag', kind: 'spec', title: 'T', summary: '', body: 'b', tags: ['K3s', 'k3s'] }, 'root')
+      assert.deepStrictEqual(doc.tags, ['k3s'])
+      assert.deepStrictEqual(service.doc('com-tag').tags, ['k3s'])
+      service.updateDoc('com-tag', { title: 'Outro' }, 'root')
+      assert.deepStrictEqual(service.doc('com-tag').tags, ['k3s'])
+
+      const rule = service.createRule({ title: 'Regra', body: 'Faça.', tags: ['Segurança'] }, 'root')
+      assert.deepStrictEqual(service.rule(rule.id).tags, ['seguranca'])
+      service.updateRule(rule.id, { tags: [] }, 'root')
+      assert.strictEqual(service.rule(rule.id).tags, undefined)
+    })
+
     it('anexo inteiro: sem docRefs, o use_resource sai exatamente como antes', () => {
       const service = seeded()
       service.setAgentResources('dev', { skills: ['tabela'], commands: [] }, 'root')

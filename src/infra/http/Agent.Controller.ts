@@ -82,6 +82,7 @@ import {
 } from './Request.Schema'
 import { toSessionDto } from './Session.Dto'
 import { ToolCatalog } from '@infra/tools/Tool.Catalog'
+import { normalizeTags } from '@domain/Tag.Policy'
 import { SseStream } from './Sse.Stream'
 import { NextFunction, Request, Response } from 'express'
 
@@ -678,6 +679,7 @@ export class AgentController {
         const fallback = body.fallback === undefined ? this.agents.get(parsed.id)?.fallback : undefined
         const diagnostics = body.diagnostics === undefined ? this.agents.get(parsed.id)?.diagnostics : undefined
         const triggers = body.triggers === undefined ? this.agents.get(parsed.id)?.triggers : undefined
+        const tags = body.tags === undefined ? this.agents.get(parsed.id)?.tags : undefined
         const env = body.env === undefined ? this.agents.get(parsed.id)?.env : undefined
         // Os arquivos têm guia própria: o formulário que não os manda não os apaga.
         const files = body.files === undefined ? this.agents.get(parsed.id)?.files : undefined
@@ -690,6 +692,7 @@ export class AgentController {
           ...(fallback ? { fallback } : {}),
           ...(diagnostics ? { diagnostics } : {}),
           ...(triggers?.length ? { triggers } : {}),
+          ...(tags?.length ? { tags } : {}),
           ...(env && Object.keys(env).length ? { env } : {}),
           ...(files?.length ? { files } : {}),
           ...(importIssues?.length ? { importIssues } : {}),
@@ -1864,6 +1867,7 @@ function toAgentInput(id: string, body: TAgentBody): IAgent {
     ...(body.role ? { role: body.role } : {}),
     ...(body.adminOnly ? { adminOnly: true } : {}),
     ...(body.projectId ? { projectId: body.projectId } : {}),
+    ...(normalizeTags(body.tags ?? undefined).length ? { tags: normalizeTags(body.tags ?? undefined) } : {}),
     ...(body.permissions ? { permissions: body.permissions } : {}),
     ...(body.terminal && (body.terminal.timeoutSeconds || body.terminal.maxOutputChars) ? { terminal: body.terminal } : {}),
     ...(body.diagnostics && diagnosticsOn(body.diagnostics) ? { diagnostics: body.diagnostics } : {}),

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { builderKindOf, PROTOCOLS } from '@domain/Builder.Agents'
 import { estimateTokens } from '@domain/Token.Estimate'
 import { triggerIssues } from '@domain/Agent.Policy'
+import { normalizeTags, tagIssues } from '@domain/Tag.Policy'
 import type { IAgentTrigger } from '@domain/models/Agent.Model'
 import { AgentNotFoundError, GuidanceNotFoundError, InvalidGuidanceError, ProjectNotFoundError } from '@domain/errors/Domain.Error'
 import { DOC_ID_PATTERN, DOC_INDEX_LIMIT, DOC_KINDS, DOC_SUMMARY_MAX, DOC_TITLE_MAX, IProjectDoc, READ_DOC_TOOL, SEARCH_DOCS_TOOL, TDocKind } from '@domain/models/ProjectDoc.Model'
@@ -34,6 +35,8 @@ export interface IRuleInput {
   title?: string
   body?: string
   enabled?: boolean
+  /** As tags (ver `Tag.Policy`). Ausente na edição = mantém; `[]` tira todas. */
+  tags?: string[]
 }
 
 /** Uma spec do contexto inicial, para a tela: sem o corpo, com o peso estimado. */
@@ -96,6 +99,8 @@ export interface IResourceInput {
   importIssues?: IImportProblem[]
   /** Os triggers do recurso (ver `IResource.triggers`). Ausente na edição = mantém; `[]` tira todos. */
   triggers?: IAgentTrigger[]
+  /** As tags (ver `Tag.Policy`). Ausente na edição = mantém; `[]` tira todas. */
+  tags?: string[]
 }
 
 /**
@@ -136,6 +141,8 @@ export interface IDocInput {
   docRefs?: string[]
   /** Os problemas da importação (só o caminho do catálogo grava; ver `ImportProblem.Model`). Ausente na edição = mantém. */
   importIssues?: IImportProblem[]
+  /** As tags (ver `Tag.Policy`). Ausente na edição = mantém; `[]` tira todas. */
+  tags?: string[]
 }
 
 /**
@@ -187,11 +194,12 @@ export class GuidanceService {
       title: input.title?.trim() ?? '',
       body: input.body?.trim() ?? '',
       enabled: input.enabled ?? true,
+      ...(normalizeTags(input.tags).length ? { tags: normalizeTags(input.tags) } : {}),
       createdAt: this.now(),
       updatedAt: this.now(),
       updatedBy: by,
     }
-    this.check(ruleIssues(rule), rule.projectId)
+    this.check([...tagIssues(input.tags), ...ruleIssues(rule)], rule.projectId)
     this.repository.insertRule(rule)
     this.history.record([ruleKey(rule.id)], { by })
     return rule
@@ -207,14 +215,16 @@ export class GuidanceService {
       ...(input.title !== undefined ? { title: input.title.trim() } : {}),
       ...(input.body !== undefined ? { body: input.body.trim() } : {}),
       ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+      ...(input.tags !== undefined ? { tags: normalizeTags(input.tags) } : {}),
     }
-    this.check(ruleIssues(next), scope ?? undefined)
+    this.check([...tagIssues(input.tags), ...ruleIssues(next)], scope ?? undefined)
     // Trocar de escopo renumera o antigo: as vizinhas também mudam.
     const touched = moved ? this.history.withDependents(ruleKey(id)) : [ruleKey(id)]
     const saved = this.repository.updateRule(id, {
       title: next.title,
       body: next.body,
       enabled: next.enabled,
+      tags: next.tags ?? [],
       ...(moved ? { projectId: scope, position: this.nextPosition(scope) } : {}),
       updatedAt: this.now(),
       updatedBy: by,
@@ -246,11 +256,12 @@ export class GuidanceService {
       title: input.title?.trim() ?? '',
       body: input.body?.trim() ?? '',
       enabled: input.enabled ?? true,
+      ...(normalizeTags(input.tags).length ? { tags: normalizeTags(input.tags) } : {}),
       createdAt: this.now(),
       updatedAt: this.now(),
       updatedBy: by,
     }
-    this.check(ruleIssues(rule), rule.projectId)
+    this.check([...tagIssues(input.tags), ...ruleIssues(rule)], rule.projectId)
     this.repository.insertRule(rule)
     this.history.record([ruleKey(rule.id)], { by })
     return rule
@@ -307,11 +318,12 @@ export class GuidanceService {
       docIds: input.docIds ?? [],
       ...(input.docRefs?.length ? { docRefs: input.docRefs } : {}),
       ...(input.importIssues?.length ? { importIssues: input.importIssues } : {}),
+      ...(normalizeTags(input.tags).length ? { tags: normalizeTags(input.tags) } : {}),
       createdAt: this.now(),
       updatedAt: this.now(),
       updatedBy: by,
     }
-    const issues = [...docIssues(doc), ...this.attachIssues(doc, doc.id)]
+    const issues = [...tagIssues(input.tags), ...docIssues(doc), ...this.attachIssues(doc, doc.id)]
     if (!DOC_ID_PATTERN.test(doc.id)) issues.unshift({ field: 'id', message: 'use 2–64 lowercase letters, digits or hyphens' })
     else if (this.repository.doc(doc.id)) issues.unshift({ field: 'id', message: `already exists: ${doc.id}` })
     this.check(issues, doc.projectId)
@@ -331,6 +343,7 @@ export class GuidanceService {
       ...(input.body !== undefined ? { body: input.body } : {}),
       ...(input.docIds !== undefined ? { docIds: input.docIds } : {}),
       ...(input.importIssues !== undefined ? { importIssues: input.importIssues } : {}),
+      ...(input.tags !== undefined ? { tags: normalizeTags(input.tags) } : {}),
     }
     if (scope) next.projectId = scope
     else delete next.projectId
@@ -339,7 +352,7 @@ export class GuidanceService {
     const refs = input.docRefs ?? (current.docRefs ?? []).filter((docId) => docIds.includes(docId))
     if (refs.length) next.docRefs = refs
     else delete next.docRefs
-    this.check([...docIssues(next), ...this.attachIssues(next, id)], scope ?? undefined)
+    this.check([...tagIssues(input.tags), ...docIssues(next), ...this.attachIssues(next, id)], scope ?? undefined)
     const saved = this.repository.updateDoc(id, {
       kind: next.kind,
       title: next.title,
@@ -348,6 +361,7 @@ export class GuidanceService {
       docIds,
       docRefs: next.docRefs ?? [],
       importIssues: next.importIssues ?? [],
+      tags: next.tags ?? [],
       ...(input.projectId !== undefined ? { projectId: scope } : {}),
       updatedAt: this.now(),
       updatedBy: by,
@@ -805,11 +819,12 @@ export class GuidanceService {
       ...(input.files?.length ? { files: sortFiles(input.files) } : {}),
       ...(input.importIssues?.length ? { importIssues: input.importIssues } : {}),
       ...(input.triggers?.length ? { triggers: cleanTriggers(input.triggers) } : {}),
+      ...(normalizeTags(input.tags).length ? { tags: normalizeTags(input.tags) } : {}),
       createdAt: this.now(),
       updatedAt: this.now(),
       updatedBy: by,
     }
-    const issues = this.resourceIssues(resource)
+    const issues = [...tagIssues(input.tags), ...this.resourceIssues(resource)]
     if (!RESOURCE_ID_PATTERN.test(resource.id)) issues.unshift({ field: 'id', message: 'use 2–48 lowercase letters, digits or hyphens' })
     else if (this.repository.resource(resource.id)) issues.unshift({ field: 'id', message: `already exists: ${resource.id}` })
     this.check(issues, resource.projectId)
@@ -832,10 +847,12 @@ export class GuidanceService {
       ...(input.files !== undefined ? { files: sortFiles(input.files) } : {}),
       ...(input.importIssues !== undefined ? { importIssues: input.importIssues } : {}),
       ...(input.triggers !== undefined ? { triggers: cleanTriggers(input.triggers) } : {}),
+      ...(input.tags !== undefined ? { tags: normalizeTags(input.tags) } : {}),
       updatedAt: this.now(),
       updatedBy: by,
     }
     if (!next.files?.length) delete next.files
+    if (!next.tags?.length) delete next.tags
     if (!next.importIssues?.length) delete next.importIssues
     if (!next.triggers?.length) delete next.triggers
     // Sem `docRefs` na edição, ficam as de antes — menos as que deixaram de estar anexadas.
@@ -843,7 +860,7 @@ export class GuidanceService {
     if (refs.length) next.docRefs = refs
     else delete next.docRefs
     if (!next.projectId) delete next.projectId
-    this.check(this.resourceIssues(next), next.projectId)
+    this.check([...tagIssues(input.tags), ...this.resourceIssues(next)], next.projectId)
     this.repository.saveResource(next)
     // Mudou de escopo: a pasta muda de lugar (a do escopo antigo sai).
     if (current.projectId !== next.projectId) this.files?.remove(current.kind, id, current.projectId)

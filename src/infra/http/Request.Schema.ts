@@ -195,6 +195,8 @@ export const agentBodySchema = z.object({
     })
     .nullable()
     .optional(),
+  /** As tags (ver `Tag.Policy`: normalizadas na gravação). Ausente na edição = mantém; `[]` ou `null` tira todas. */
+  tags: z.array(z.string().max(80)).max(50).nullable().optional(),
   /** Os triggers do agente (ações sob demanda). Ausente na edição = mantém; `[]` ou `null` apaga todos. */
   triggers: z
     .array(z.object({ id: z.string(), when: z.string(), body: z.string() }))

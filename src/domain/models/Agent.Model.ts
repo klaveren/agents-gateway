@@ -42,6 +42,8 @@ export interface IAgent {
    * agente GLOBAL (o Atlas): aparece em todos os projetos.
    */
   projectId?: string
+  /** As tags (ver `Tag.Policy`): para agrupar e filtrar nas listas. Ausente = nenhuma. */
+  tags?: string[]
   /**
    * As regras de permissão DESTE agente (a camada do agente, ver `Permission.Policy`): o que ele pode além (ou aquém)
    * das regras do projeto. Ausente = nenhuma: valem as do projeto.

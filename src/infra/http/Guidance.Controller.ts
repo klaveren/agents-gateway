@@ -25,7 +25,9 @@ export interface IGuidanceControllerDeps {
 }
 
 const project = z.string().max(64).nullable().optional()
-const ruleSchema = z.object({ projectId: project, title: z.string().max(400).optional(), body: z.string().optional(), enabled: z.boolean().optional() })
+/** As tags (ver `Tag.Policy`: o serviço normaliza e confere). Ausente na edição = mantém; `[]` tira todas. */
+const tags = z.array(z.string().max(80)).max(50).optional()
+const ruleSchema = z.object({ projectId: project, title: z.string().max(400).optional(), body: z.string().optional(), enabled: z.boolean().optional(), tags })
 const moveSchema = z.object({ direction: z.enum(['up', 'down']) })
 const contextSchema = z.object({ docIds: z.array(z.string().max(80)).max(100) })
 const resourceSchema = z.object({
@@ -45,6 +47,7 @@ const resourceSchema = z.object({
     .array(z.object({ id: z.string().max(80), when: z.string().max(1_000), body: z.string() }))
     .max(200)
     .optional(),
+  tags,
 })
 const filesSchema = z.object({ files: z.array(z.object({ path: z.string().max(400), sha256: z.string().max(64), bytes: z.number() })).max(1_000) })
 /** O conteúdo de um arquivo, em base64 (o texto passa inteiro, e o tamanho é o do arquivo). */
@@ -65,6 +68,7 @@ const docSchema = z.object({
   body: z.string().optional(),
   docIds: z.array(z.string().max(80)).max(50).optional(),
   docRefs: z.array(z.string().max(80)).max(50).optional(),
+  tags,
 })
 
 /**

@@ -70,6 +70,8 @@ export interface IAgentDto {
   adminOnly?: boolean
   /** O projeto do agente; ausente = global. */
   projectId?: string
+  /** As tags (ver `Tag.Policy`). */
+  tags?: string[]
 }
 
 /**
@@ -146,6 +148,7 @@ export function toAgentDto(agent: IAgent, factsOf: (providerId: string) => IAgen
     ...(agent.role ? { role: agent.role } : {}),
     ...(agent.adminOnly ? { adminOnly: true } : {}),
     ...(agent.projectId ? { projectId: agent.projectId } : {}),
+    ...(agent.tags?.length ? { tags: agent.tags } : {}),
   }
 }
 

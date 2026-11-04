@@ -63,6 +63,7 @@ function resourceIndex(result: unknown): unknown {
     ...(Array.isArray(resource.files) && resource.files.length ? { files: resource.files.length } : {}),
     ...(Array.isArray(resource.importIssues) && resource.importIssues.length ? { importIssues: resource.importIssues.length } : {}),
     ...(Array.isArray(resource.triggers) && resource.triggers.length ? { triggers: resource.triggers.length } : {}),
+    ...(Array.isArray(resource.tags) && resource.tags.length ? { tags: resource.tags } : {}),
     bodyChars: typeof resource.body === 'string' ? resource.body.length : 0,
   }))
 }
@@ -83,6 +84,7 @@ function turnView(result: unknown) {
 const agentShape = {
   id: z.string().describe('2–48 lowercase letters, digits or hyphens.'),
   name: z.string(),
+  tags: z.array(z.string()).optional().describe('Free words to group and filter in the lists (normalized to lowercase-hyphen); absent on update = keep, [] removes all'),
   soul: z.string().optional().describe('Who the agent is: identity, tone, values, way of speaking. The system prompt says what it does.'),
   providers: z
     .array(
@@ -756,6 +758,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
         title: z.string().optional(),
         body: z.string().optional().describe('The rule itself, imperative and short'),
         enabled: z.boolean().optional(),
+        tags: z.array(z.string()).optional().describe('Free words to group and filter in the lists (normalized to lowercase-hyphen); absent on update = keep, [] removes all'),
       },
     },
     async ({ id, ...rule }) => reply(id ? await api('PUT', `/rules/${encodeURIComponent(id)}`, { body: rule }) : await api('POST', '/rules', { body: rule }), savedEcho),
@@ -791,6 +794,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
         body: z.string().describe('Markdown'),
         docIds: z.array(z.string()).optional().describe('Other documents attached to this one, in order'),
         docRefs: z.array(z.string()).optional().describe('Which of docIds go by reference instead of in full'),
+        tags: z.array(z.string()).optional().describe('Free words to group and filter in the lists (normalized to lowercase-hyphen); absent on update = keep, [] removes all'),
       },
     },
     async ({ id, ...doc }) => {
@@ -836,6 +840,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
           .array(z.object({ id: z.string().describe('Slug, unique in the resource'), when: z.string().describe('One line: the situation that fires it'), body: z.string() }))
           .optional()
           .describe('Absent on update = keep; [] removes all'),
+        tags: z.array(z.string()).optional().describe('Free words to group and filter in the lists (normalized to lowercase-hyphen); absent on update = keep, [] removes all'),
       },
     },
     async ({ id, kind, ...resource }) => {

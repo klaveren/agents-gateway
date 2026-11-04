@@ -14,6 +14,8 @@ export interface IRule {
   body: string
   /** Desligada fica no cadastro e fora do prompt. */
   enabled: boolean
+  /** As tags (ver `Tag.Policy`): para agrupar e filtrar nas listas. Ausente = nenhuma. */
+  tags?: string[]
   createdAt: Date
   updatedAt: Date
   updatedBy?: string

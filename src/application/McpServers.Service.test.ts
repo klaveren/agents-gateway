@@ -33,6 +33,16 @@ describe('McpServersService', () => {
     assert.deepStrictEqual([service.secretStatus('crm').configured, service.secretStatus('crm').last4], [true, 'r3d0'])
   })
 
+  it('as tags: normalizadas na criação; a edição sem tags mantém; `[]` tira', () => {
+    const { service } = build()
+    service.create({ id: 'crm', name: 'CRM', url: 'https://mcp.exemplo.com/mcp', tags: ['Vendas', 'vendas'] }, 'root')
+    assert.deepStrictEqual(service.get('crm').tags, ['vendas'])
+    service.update('crm', { name: 'CRM 2' }, 'root')
+    assert.deepStrictEqual(service.get('crm').tags, ['vendas'])
+    service.update('crm', { tags: [] }, 'root')
+    assert.strictEqual(service.get('crm').tags, undefined)
+  })
+
   it('a identidade do agente: desligada por padrão, ligada no cadastro, e desligável', () => {
     const { service } = build()
     assert.strictEqual(service.create({ id: 'crm', name: 'CRM', url: 'https://mcp.exemplo.com/mcp' }, 'root').identity, undefined)

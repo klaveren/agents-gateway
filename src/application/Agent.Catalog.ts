@@ -272,6 +272,7 @@ function toAgent(stored: IStoredAgent): IAgent {
     ...(stored.role ? { role: stored.role } : {}),
     ...(stored.adminOnly ? { adminOnly: true } : {}),
     ...(stored.projectId ? { projectId: stored.projectId } : {}),
+    ...(stored.tags?.length ? { tags: [...stored.tags] } : {}),
     ...(stored.permissions?.length ? { permissions: stored.permissions } : {}),
     ...(stored.terminal && (stored.terminal.timeoutSeconds || stored.terminal.maxOutputChars) ? { terminal: { ...stored.terminal } } : {}),
     ...(diagnosticsOn(stored.diagnostics) ? { diagnostics: { ...stored.diagnostics } } : {}),
