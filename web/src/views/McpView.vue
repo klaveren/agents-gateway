@@ -5,6 +5,8 @@
   import HistoryPanel from '@/components/HistoryPanel.vue'
   import HistoryTabs from '@/components/HistoryTabs.vue'
   import Icon from '@/components/Icon.vue'
+  import ListFilter from '@/components/ListFilter.vue'
+  import { filterList } from '@/lib/listFilter'
   import MasterDetail from '@/components/MasterDetail.vue'
   import McpContainerFields from '@/components/McpContainerFields.vue'
   import McpProjectReadOnly from '@/components/McpProjectReadOnly.vue'
@@ -55,9 +57,13 @@
   const scopeLabel = (projectId?: string) => (projectId ? (projects.list.find((project) => project.id === projectId)?.name ?? projectId) : 'Global')
   /** O filtro da lista: todos, só os globais (`''`) ou um projeto. */
   const scopeFilter = ref<string>('*')
-  const listed = computed(() =>
+  const inScope = computed(() =>
     mcp.list.filter((server) => scopeFilter.value === '*' || (scopeFilter.value === '' ? !server.projectId : server.projectId === scopeFilter.value)),
   )
+  /** A busca e a tag do topo da lista. */
+  const query = ref('')
+  const tag = ref('')
+  const listed = computed(() => filterList(inScope.value, { query: query.value, tag: tag.value }, (server) => [server.id, server.name]))
   /** O escopo escolhido na edição (`''` = global): mover é um passo à parte, porque muda a chave e quem pode usar. */
   const moveTo = ref('')
   const moveDirty = computed(() => !!selected.value && moveTo.value !== (selected.value.projectId ?? ''))
@@ -382,7 +388,9 @@
         </select>
       </label>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
+      <ListFilter v-if="mcp.list.length" v-model:query="query" v-model:tag="tag" placeholder="Buscar MCP…" :items="inScope" />
       <p v-if="!mcp.list.length && !loadError" class="px-4 py-2 text-sm text-zinc-500">Nenhum MCP cadastrado ainda.</p>
+      <p v-else-if="inScope.length && !listed.length" class="px-4 py-2 text-sm text-zinc-500">Nenhum MCP com essa busca.</p>
       <RouterLink
         v-for="server in listed"
         :key="server.key"

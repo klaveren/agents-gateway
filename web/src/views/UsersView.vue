@@ -3,6 +3,8 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import Icon from '@/components/Icon.vue'
+import ListFilter from '@/components/ListFilter.vue'
+import { filterList } from '@/lib/listFilter'
 import MasterDetail from '@/components/MasterDetail.vue'
 import { ApiError } from '@/lib/api'
 import { fullTime, initials } from '@/lib/format'
@@ -16,6 +18,9 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const users = useUsersStore()
+/** A busca do topo da lista. */
+const query = ref('')
+const shownUsers = computed(() => filterList(users.list, { query: query.value }, (user) => [user.name, user.email]))
 
 /** `/users/new` abre o formulário no lugar do detalhe. */
 const creating = computed(() => route.name === 'user-new')
@@ -177,9 +182,10 @@ async function doReset() {
         <span class="text-sm text-zinc-500">{{ users.list.length }}</span>
         <RouterLink to="/users/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Novo usuário"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
+      <ListFilter v-if="users.list.length > 1" v-model:query="query" placeholder="Buscar por nome ou e-mail…" />
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
       <RouterLink
-        v-for="user in users.list"
+        v-for="user in shownUsers"
         :key="user.id"
         :to="`/users/${user.id}`"
         class="mx-2 flex items-center gap-3 rounded-xl px-3 py-2"
