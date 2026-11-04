@@ -27,6 +27,9 @@ export interface IPanelQuestion {
   id: string
   text: string
   answer?: string
+  answeredBy?: 'person' | 'agent'
+  /** `false`: você respondeu no painel e o agente ainda não viu (vê no próximo turno). */
+  delivered?: boolean
   turn?: number
 }
 export interface IPanelEvent {

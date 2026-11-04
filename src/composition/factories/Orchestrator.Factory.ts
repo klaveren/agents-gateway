@@ -1,3 +1,4 @@
+import { markAnswersDelivered } from '@domain/models/ConversationPanel.Model'
 import type { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { makeConversationRepository } from './Conversations.Factory'
 import { makeResourceSecrets } from './ResourceSecrets.Factory'
@@ -97,7 +98,13 @@ export function makeOrchestrator(): AgentProvider {
   provider.useAgentFiles((agent) => makeAgents().filesDir(agent))
   // O painel da conversa: lido do banco das conversas (quem grava é a ferramenta, ver `Tools.Factory`).
   const panelRepository: IConversationRepository = makeConversationRepository()
-  if (panelRepository.panel) provider.usePanels({ get: (sessionId) => panelRepository.panel!(sessionId) })
+  if (panelRepository.panel)
+    provider.usePanels({
+      get: (sessionId) => panelRepository.panel!(sessionId),
+      ...(panelRepository.savePanel
+        ? { markDelivered: async (sessionId, ids) => panelRepository.savePanel!(sessionId, markAnswersDelivered(await panelRepository.panel!(sessionId), ids)) }
+        : {}),
+    })
   provider.useSecrets({
     envFor: (agentId, sessionId) => makeResourceSecrets().envFor(agentId, sessionId),
     // Os nomes das skills e commands que o agente pode carregar: os liberados para ele (o índice do prompt).

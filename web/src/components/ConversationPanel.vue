@@ -25,6 +25,7 @@
   const answers = ref<Record<string, string>>({})
   const showDropped = ref(false)
   const showTimeline = ref(false)
+  const showAnswered = ref(false)
 
   const base = computed(() => `/conversations/${encodeURIComponent(props.conversationId)}/panel`)
 
@@ -45,6 +46,9 @@
   const items = computed(() => panel.value?.items ?? [])
   const inSection = (status: TPanelStatus) => items.value.filter((item) => item.status === status)
   const dropped = computed(() => inSection('dropped'))
+  // As em aberto no topo; as respondidas, recolhidas embaixo (corrigir a resposta continua possível).
+  const openQuestions = computed(() => (panel.value?.questions ?? []).filter((question) => !question.answer))
+  const answeredQuestions = computed(() => (panel.value?.questions ?? []).filter((question) => question.answer))
   const isEmpty = computed(() => !!panel.value && !panel.value.goal && !items.value.length && !panel.value.decisions.length && !panel.value.questions.length)
   /** O que o menu de um item oferece: os outros estados; um item entregue ou descartado só reabre. */
   const actionsFor = (item: IPanelItem) =>
@@ -279,16 +283,36 @@
       </section>
 
       <section v-if="panel.questions.length" data-test="questions">
-        <h3 class="mb-2 text-xs font-medium tracking-wide text-amber-300 uppercase">Perguntas para você</h3>
-        <ul class="flex flex-col gap-2">
-          <li v-for="question in panel.questions" :key="question.id" :data-question="question.id" class="rounded-xl border border-zinc-800 p-3 text-sm">
+        <h3 v-if="openQuestions.length" class="mb-2 text-xs font-medium tracking-wide text-amber-300 uppercase">Perguntas para você</h3>
+        <ul v-if="openQuestions.length" class="flex flex-col gap-2">
+          <li v-for="question in openQuestions" :key="question.id" :data-question="question.id" class="rounded-xl border border-zinc-800 p-3 text-sm">
             <p class="text-zinc-100">{{ question.text }}</p>
-            <p v-if="question.answer" class="mt-1 text-xs text-emerald-300">Resposta: {{ question.answer }}</p>
+            <form class="mt-2 flex gap-2" @submit.prevent="answer(question.id)">
+              <input v-model="answers[question.id]" class="input min-w-0 flex-1" placeholder="Sua resposta…" :aria-label="`Responder ${question.id}`" data-test="answer-input" />
+              <button class="btn btn-sm btn-secondary self-center" type="submit" :disabled="busy || !(answers[question.id] ?? '').trim()" data-test="answer-send">Responder</button>
+            </form>
+          </li>
+        </ul>
+        <button
+          v-if="answeredQuestions.length"
+          class="mt-2 text-xs font-medium tracking-wide text-zinc-500 uppercase hover:text-zinc-300"
+          data-test="answered-toggle"
+          @click="showAnswered = !showAnswered"
+        >
+          {{ showAnswered ? '▾' : '▸' }} Respondidas · {{ answeredQuestions.length }}
+        </button>
+        <ul v-if="showAnswered" class="mt-2 flex flex-col gap-2" data-test="answered">
+          <li v-for="question in answeredQuestions" :key="question.id" :data-question="question.id" class="rounded-xl border border-zinc-800/70 p-3 text-sm">
+            <p class="text-zinc-400">{{ question.text }}</p>
+            <p class="mt-1 text-xs text-emerald-300">
+              Resposta: {{ question.answer }}
+              <span v-if="question.delivered === false" class="text-zinc-500">· o agente vê no próximo turno</span>
+            </p>
             <form class="mt-2 flex gap-2" @submit.prevent="answer(question.id)">
               <input
                 v-model="answers[question.id]"
                 class="input min-w-0 flex-1"
-                :placeholder="question.answer ? 'Corrigir a resposta…' : 'Sua resposta…'"
+                placeholder="Corrigir a resposta…"
                 :aria-label="`Responder ${question.id}`"
                 data-test="answer-input"
               />

@@ -1478,7 +1478,7 @@ export class AgentController {
       const current = await this.usecases.conversations.panel(id)
       let next
       try {
-        next = applyPanelOp(current, req.body as TPanelOp, { by: resolved.identity?.email ?? resolved.identity?.id ?? 'pessoa', now: new Date() })
+        next = applyPanelOp(current, req.body as TPanelOp, { by: resolved.identity?.email ?? resolved.identity?.id ?? 'pessoa', now: new Date(), actor: 'person' })
       } catch (error: unknown) {
         throw new HttpError(422, 'validation_error', error instanceof Error ? error.message : String(error))
       }

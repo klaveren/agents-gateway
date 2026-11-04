@@ -46,6 +46,10 @@ export interface IPanelQuestion {
   id: string
   text: string
   answer?: string
+  /** Quem respondeu. A resposta da PESSOA (no painel) vai ao agente no turno seguinte, uma vez (`delivered`). */
+  answeredBy?: 'person' | 'agent'
+  /** `false`: a pessoa respondeu no painel e o agente ainda não viu. */
+  delivered?: boolean
   turn?: number
 }
 
@@ -104,7 +108,11 @@ function nextId(prefix: string, taken: readonly { id: string }[]): string {
  * Aplica a operação e devolve o painel novo e o que mudou (para a resposta da ferramenta). Lança com o motivo quando a
  * operação não serve (id que não existe, texto vazio, teto). Pura: `turn`, `by` e `now` vêm de fora.
  */
-export function applyPanelOp(current: IConversationPanel, op: TPanelOp, context: { turn?: number; by: string; now: Date }): { panel: IConversationPanel; changed: string } {
+export function applyPanelOp(
+  current: IConversationPanel,
+  op: TPanelOp,
+  context: { turn?: number; by: string; now: Date; actor?: 'person' | 'agent' },
+): { panel: IConversationPanel; changed: string } {
   const panel: IConversationPanel = {
     ...current,
     items: current.items.map((item) => ({ ...item })),
@@ -196,6 +204,9 @@ export function applyPanelOp(current: IConversationPanel, op: TPanelOp, context:
       const question = panel.questions.find((candidate) => candidate.id === op.id)
       if (!question) throw new Error(`question not found: ${op.id}`)
       question.answer = clip(need(op.answer, 'answer'), PANEL_LIMITS.detail)
+      question.answeredBy = context.actor ?? 'agent'
+      if (question.answeredBy === 'person') question.delivered = false
+      else delete question.delivered
       changed = `pergunta ${question.id} respondida: ${question.answer}`
       break
     }
@@ -220,6 +231,7 @@ export function panelTurnNote(panel: IConversationPanel | undefined, skippedLast
     ? `[gateway] A mensagem anterior da pessoa não entrou no painel da conversa: registre o que ela pediu (${PANEL_TOOL} add) ou o que mudou (update).`
     : ''
   if (!panel || (!panel.goal && !panel.items.length && !panel.questions.length)) return reminder
+  const fresh = freshAnswers(panel)
   const open = (status: TPanelItemStatus) => panel.items.filter((item) => item.status === status)
   const lines = ['<painel da conversa>']
   if (panel.goal) lines.push(`Objetivo: ${panel.goal}`)
@@ -231,12 +243,27 @@ export function panelTurnNote(panel: IConversationPanel | undefined, skippedLast
     const items = open(status)
     if (items.length) lines.push(`${label}:`, ...items.map(itemLine))
   }
+  if (fresh.length) lines.push('A pessoa respondeu no painel (considere agora):', ...fresh.map((question) => `- ${question.id} ${question.text} → ${question.answer}`))
   const asked = panel.questions.filter((question) => !question.answer)
-  if (asked.length) lines.push('Perguntas para a pessoa:', ...asked.map((question) => `- ${question.id} ${question.text}`))
+  if (asked.length)
+    lines.push(
+      `Perguntas para a pessoa (a que o chat ou o trabalho já respondeu: feche com ${PANEL_TOOL} answer):`,
+      ...asked.map((question) => `- ${question.id} ${question.text}`),
+    )
   const done = open('done').length
   if (done) lines.push(`(${done} entregue${done > 1 ? 's' : ''}; decisões e histórico: ${PANEL_TOOL} read)`)
   lines.push('</painel da conversa>')
   return [reminder, lines.join('\n')].filter(Boolean).join('\n\n')
+}
+
+/** As respostas que a pessoa deu no painel e o agente ainda não viu (vão no próximo `panelTurnNote`). */
+export function freshAnswers(panel: IConversationPanel): IPanelQuestion[] {
+  return panel.questions.filter((question) => question.answer && question.answeredBy === 'person' && question.delivered === false)
+}
+
+/** O painel com essas respostas marcadas como vistas pelo agente. */
+export function markAnswersDelivered(panel: IConversationPanel, ids: readonly string[]): IConversationPanel {
+  return { ...panel, questions: panel.questions.map((question) => (ids.includes(question.id) ? { ...question, delivered: true } : question)) }
 }
 
 /** O painel inteiro em Markdown: a exportação e o que vai junto na compactação. */
