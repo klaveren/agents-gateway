@@ -15,6 +15,8 @@ import { ProjectAccountsController } from '@infra/http/ProjectAccounts.Controlle
 import { PermissionsController } from '@infra/http/Permissions.Controller'
 import { PermissionRequestsController } from '@infra/http/PermissionRequests.Controller'
 import { makePermissionRequests } from './PermissionRequests.Factory'
+import { LedgerController } from '@infra/http/Ledger.Controller'
+import { makeLedger } from './Ledger.Factory'
 import { SchedulesController } from '@infra/http/Schedules.Controller'
 import { makeScheduleRunner, makeSchedules } from './Schedules.Factory'
 import { dockerStatus } from '@infra/sandbox/Docker.Sandbox'
@@ -165,6 +167,10 @@ export function makePermissionsController(): PermissionsController {
 
 export function makePermissionRequestsController(): PermissionRequestsController {
   return new PermissionRequestsController({ service: makePermissionRequests(), proof: makeAuth().proof, liveSession: (id) => makeSessionStore().get(id) })
+}
+
+export function makeLedgerController(): LedgerController {
+  return new LedgerController({ service: makeLedger(), proof: makeAuth().proof })
 }
 
 export function makeProjectAccountsController(): ProjectAccountsController {

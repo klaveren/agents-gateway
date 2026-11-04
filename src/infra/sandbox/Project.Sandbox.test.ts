@@ -1,9 +1,9 @@
 import assert from 'node:assert'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
-import { forBubblewrap, localForwards, ProjectSandbox, projectPathIssue, writeFolders } from './Project.Sandbox'
+import { ensureGitProxyAuth, forBubblewrap, localForwards, projectPathIssue, ProjectSandbox, writeFolders } from './Project.Sandbox'
 
 describe('ProjectSandbox', () => {
   const root = mkdtempSync(join(tmpdir(), 'gw-sandbox-test-'))
@@ -52,6 +52,18 @@ describe('ProjectSandbox', () => {
     assert.ok(line.endsWith('; npm install'))
     assert.ok(line.includes(`export HOME='${join(project, '.home')}'`) && line.includes(`export npm_config_cache='${join(project, '.cache', 'npm')}'`))
     assert.deepStrictEqual((srt.calls.at(-1)?.config as { filesystem: { allowWrite: string[] } }).filesystem.allowWrite, [project])
+  })
+
+  it('⚖️ o git manda o token do proxy já no CONNECT (sem isto caía com "Proxy CONNECT aborted"), sem apagar o que havia', () => {
+    const home = join(root, 'casa-git')
+    mkdirSync(home, { recursive: true })
+    ensureGitProxyAuth(home)
+    const gitconfig = join(home, '.gitconfig')
+    assert.strictEqual(readFileSync(gitconfig, 'utf8'), '[http]\n\tproxyAuthMethod = basic\n')
+    writeFileSync(gitconfig, '[user]\n\tname = Maya')
+    ensureGitProxyAuth(home)
+    ensureGitProxyAuth(home)
+    assert.strictEqual(readFileSync(gitconfig, 'utf8'), '[user]\n\tname = Maya\n[http]\n\tproxyAuthMethod = basic\n')
   })
 
   it('⛔ cerco que não sobe: status indisponível com o erro real, e o wrap recusa', async () => {

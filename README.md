@@ -772,6 +772,28 @@ one-line "when to use it" and the procedure itself.
 - A skill is a shared way of doing something, from the catalog; a trigger is the agent's own
   subcommand. They load the same way, but stay apart in data, screen and permissions.
 
+### Agent ledger: what the agent learned about how to act
+
+Each agent has a **ledger**, its durable learning memory ("from now on, when X, I do Y"), never
+session state. It is organized in **contexts** (a theme with a one-line trigger saying when to load
+it, and an optional markdown playbook) holding telegraphic **lines**
+(`[DATE] | TYPE | trigger | learning | ref`, TYPE = APRENDIZADO, POSTURA or DIFICULDADE).
+
+- The prompt of every conversation carries only the agent's **index** (theme → trigger, never the
+  content), capped at 60 contexts / ~4 KB, with the read-gate rule. `preview_system_prompt` shows it
+  as its own part.
+- Every agent gets two tools: `ledger_read { agente?, tema?, busca? }` (no arguments = its index
+  with health warnings; `agente` reads another visible agent's ledger, read-only) and
+  `ledger_write { tema, acao, … }` with `acao` = `criar`, `gatilho`, `playbook`, `linha_nova`,
+  `linha_editar`, `linha_apagar`, `excluir`. The owner is the agent of the turn, set by the server:
+  writing someone else's ledger is refused.
+- Health warnings are computed on read: missing or weak trigger, mission-state verbs (RETOMAR,
+  PRÓXIMO PASSO, pendente, aguarda), more than ~40 lines, similar themes, empty contexts.
+- The agent form has a **Memória** tab (admins): list, edit, history per context (every change is a
+  revision with its author: the agent and conversation, or the admin) and **Exportar**, a `.tar.gz`
+  in the old folder format (`<agent>-ledger/index.md` + `contextos/<theme>.md`).
+- Deleting an agent keeps its ledger (restoring or recreating the agent brings it back).
+
 ### Agent hooks: an event becomes a conversation
 
 Each agent has a **Hooks** tab. A hook is `POST /v1/hook/<agent>/<hook>` with its own key and a

@@ -820,6 +820,109 @@ const failures = {
 
 const json = (schema: object) => ({ content: { 'application/json': { schema } } })
 
+// O ledger dos agentes (a guia Memória). Os nomes são os do domínio; o `ledger_write` do agente traduz para cá.
+const ledgerAuthorSchema = {
+  type: 'object',
+  description: 'Who changed it: the agent itself (in a conversation) or an administrator on the screen.',
+  properties: { kind: { type: 'string', enum: ['agent', 'admin'] }, agentId: { type: 'string' }, conversationId: { type: 'string' }, email: { type: 'string' } },
+}
+const ledgerWarningSchema = {
+  type: 'object',
+  description: 'A health warning, computed on read (never stored). Without `topic` it is about the whole ledger.',
+  properties: {
+    code: { type: 'string', enum: ['trigger-missing', 'trigger-weak', 'state-verb', 'too-many-lines', 'similar-topics', 'empty-context'] },
+    topic: { type: 'string' },
+    related: { type: 'string', description: '`similar-topics`: the other theme.' },
+    lineId: { type: 'integer' },
+    message: { type: 'string' },
+  },
+}
+const ledgerLineTypes = { type: 'string', enum: ['APRENDIZADO', 'POSTURA', 'DIFICULDADE'], description: 'REGRA, MODO and FALHA are accepted as aliases on write.' }
+const ledgerLineSchema = {
+  type: 'object',
+  properties: {
+    id: { type: 'integer' },
+    date: { type: 'string', description: 'YYYY-MM-DD: when it was learned.' },
+    type: ledgerLineTypes,
+    trigger: { type: 'string', description: 'When it applies (one line).' },
+    learning: { type: 'string', description: 'The learning, one sentence (≤ 300 characters).' },
+    ref: { type: 'string' },
+    createdAt: { type: 'string', format: 'date-time' },
+    createdBy: ledgerAuthorSchema,
+    updatedAt: { type: 'string', format: 'date-time' },
+    updatedBy: ledgerAuthorSchema,
+  },
+}
+const ledgerSummaryFields = {
+  topic: { type: 'string', description: 'The theme slug, unique in the agent ledger.' },
+  trigger: { type: 'string', description: 'WHEN to load it (one line, ≥ 15 characters).' },
+  lineCount: { type: 'integer' },
+  hasPlaybook: { type: 'boolean' },
+  createdAt: { type: 'string', format: 'date-time' },
+  createdBy: ledgerAuthorSchema,
+  updatedAt: { type: 'string', format: 'date-time' },
+  updatedBy: ledgerAuthorSchema,
+  warnings: { type: 'array', items: ledgerWarningSchema },
+}
+const ledgerContextSchema = {
+  type: 'object',
+  properties: { ...ledgerSummaryFields, playbook: { type: 'string', description: 'Markdown appendix; empty = none.' }, lines: { type: 'array', items: ledgerLineSchema } },
+}
+const ledgerIndexSchema = {
+  type: 'object',
+  properties: {
+    agentId: { type: 'string' },
+    contexts: { type: 'array', items: { type: 'object', properties: ledgerSummaryFields } },
+    lineCount: { type: 'integer' },
+    warnings: { type: 'array', items: ledgerWarningSchema },
+  },
+}
+const ledgerWriteSchema = {
+  type: 'object',
+  description: 'The change applied: the context after it (absent after a delete) and the whole index, so the screen updates without re-reading.',
+  properties: {
+    action: { type: 'string', enum: ['criar', 'gatilho', 'playbook', 'linha_nova', 'linha_editar', 'linha_apagar', 'excluir'] },
+    topic: { type: 'string' },
+    context: ledgerContextSchema,
+    index: ledgerIndexSchema,
+    warnings: { type: 'array', items: ledgerWarningSchema },
+    changed: { type: 'boolean', description: 'false = nothing changed (same text): no revision.' },
+  },
+}
+const ledgerSnapshotSchema = { type: 'object', description: 'A context ({ trigger, playbook, lines? }) or a line ({ id, date, type, trigger, learning, ref }).' }
+const ledgerRevisionSchema = {
+  type: 'object',
+  properties: {
+    id: { type: 'integer' },
+    agentId: { type: 'string' },
+    topic: { type: 'string' },
+    action: ledgerWriteSchema.properties.action,
+    lineId: { type: 'integer' },
+    at: { type: 'string', format: 'date-time' },
+    by: ledgerAuthorSchema,
+    before: ledgerSnapshotSchema,
+    after: ledgerSnapshotSchema,
+  },
+}
+const ledgerParams = [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }]
+const ledgerTopicParams = [...ledgerParams, { name: 'topic', in: 'path', required: true, schema: { type: 'string' } }]
+const ledgerLineParams = [...ledgerTopicParams, { name: 'lineId', in: 'path', required: true, schema: { type: 'integer' } }]
+const ledgerLineBody = {
+  type: 'object',
+  properties: {
+    type: ledgerLineTypes,
+    trigger: { type: 'string' },
+    learning: { type: 'string' },
+    ref: { type: 'string' },
+    date: { type: 'string', description: 'YYYY-MM-DD; default today.' },
+  },
+}
+const ledgerWriteResponses = (status: '200' | '201') => ({
+  [status]: { description: 'OK', ...json(envelope(ledgerWriteSchema)) },
+  '404': failures['404'],
+  '422': failures['422'],
+})
+
 const guidanceScope = { name: 'project', in: 'query', required: false, schema: { type: 'string' }, description: 'A project id; absent or `global` = the global scope.' }
 const ruleSchema = {
   type: 'object',
@@ -2889,6 +2992,114 @@ export const OPENAPI_DOCUMENT = {
         parameters: [{ name: 'agentId', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: { required: true, ...json(importIssueMatch) },
         responses: { '200': { description: 'OK', ...json(envelope(agentDetailSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/agents/{agentId}/ledger': {
+      get: {
+        summary:
+          "The agent's ledger (its durable learning memory): the contexts without their content (theme, trigger, line count, last change), the total of lines and the health warnings. Administrators only; 404 for an unknown agent",
+        parameters: ledgerParams,
+        responses: { '200': { description: 'OK', ...json(envelope(ledgerIndexSchema)) }, '404': failures['404'] },
+      },
+    },
+    '/agents/{agentId}/ledger/search': {
+      get: {
+        summary: 'Lines and contexts of the agent ledger matching every word of `q` (accent and case insensitive; triggers, lines and playbooks). Administrators only',
+        parameters: [...ledgerParams, { name: 'q', in: 'query', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  agentId: { type: 'string' },
+                  query: { type: 'string' },
+                  contexts: { type: 'array', items: { type: 'object', properties: ledgerSummaryFields } },
+                  lines: { type: 'array', items: { type: 'object', properties: { ...ledgerLineSchema.properties, topic: { type: 'string' } } } },
+                },
+              }),
+            ),
+          },
+          '404': failures['404'],
+        },
+      },
+    },
+    '/agents/{agentId}/ledger/export': {
+      get: {
+        summary:
+          'The agent ledger in the legacy folder format: `<agent>-ledger/index.md` (the trigger map) and `contextos/<topic>.md` (lines, playbook, `@trigger` in the [AKM-STAMP]). `format=tar` (default) returns a `.tar.gz`; `format=json`, `{ files: { path: content } }`. Administrators only',
+        parameters: [...ledgerParams, { name: 'format', in: 'query', required: false, schema: { type: 'string', enum: ['tar', 'json'] } }],
+        responses: {
+          '200': {
+            description: 'OK',
+            content: {
+              'application/gzip': { schema: { type: 'string', format: 'binary' } },
+              'application/json': { schema: envelope({ type: 'object', properties: { files: { type: 'object', additionalProperties: { type: 'string' } } } }) },
+            },
+          },
+          '404': failures['404'],
+          '422': failures['422'],
+        },
+      },
+    },
+    '/agents/{agentId}/ledger/contexts': {
+      post: {
+        summary:
+          'Create a context in the agent ledger: the theme (normalized to a slug), the one-line trigger (≥ 15 characters) and an optional markdown playbook. Recorded as a revision with the administrator as author. Administrators only',
+        parameters: ledgerParams,
+        requestBody: {
+          required: true,
+          ...json({ type: 'object', required: ['topic', 'trigger'], properties: { topic: { type: 'string' }, trigger: { type: 'string' }, playbook: { type: 'string' } } }),
+        },
+        responses: ledgerWriteResponses('201'),
+      },
+    },
+    '/agents/{agentId}/ledger/contexts/{topic}': {
+      get: {
+        summary: 'One context in full: trigger, playbook and lines (with ids). Administrators only',
+        parameters: ledgerTopicParams,
+        responses: { '200': { description: 'OK', ...json(envelope(ledgerContextSchema)) }, '404': failures['404'] },
+      },
+      put: {
+        summary: 'Change the trigger and/or the playbook (empty clears it) of a context; one revision per field that changed. Administrators only',
+        parameters: ledgerTopicParams,
+        requestBody: { required: true, ...json({ type: 'object', properties: { trigger: { type: 'string' }, playbook: { type: 'string' } } }) },
+        responses: ledgerWriteResponses('200'),
+      },
+      delete: {
+        summary: 'Delete a context and its lines; the revision keeps what left (trigger, playbook, lines). Administrators only',
+        parameters: ledgerTopicParams,
+        responses: ledgerWriteResponses('200'),
+      },
+    },
+    '/agents/{agentId}/ledger/contexts/{topic}/revisions': {
+      get: {
+        summary:
+          'The revisions of a theme, newest first: who (agent and conversation, or administrator), when, the action and the before/after. Kept after the context is deleted. Administrators only',
+        parameters: ledgerTopicParams,
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'array', items: ledgerRevisionSchema })) }, '404': failures['404'] },
+      },
+    },
+    '/agents/{agentId}/ledger/contexts/{topic}/lines': {
+      post: {
+        summary: 'Add a line `[DATE] | TYPE | trigger | learning | ref` to a context. Administrators only',
+        parameters: ledgerTopicParams,
+        requestBody: { required: true, ...json({ ...ledgerLineBody, required: ['type', 'trigger', 'learning'] }) },
+        responses: ledgerWriteResponses('201'),
+      },
+    },
+    '/agents/{agentId}/ledger/contexts/{topic}/lines/{lineId}': {
+      put: {
+        summary: 'Change only the fields sent of a line. Administrators only',
+        parameters: ledgerLineParams,
+        requestBody: { required: true, ...json(ledgerLineBody) },
+        responses: ledgerWriteResponses('200'),
+      },
+      delete: {
+        summary: 'Delete a line (the revision keeps it). Administrators only',
+        parameters: ledgerLineParams,
+        responses: ledgerWriteResponses('200'),
       },
     },
     '/agents/{agentId}/system-prompt': {

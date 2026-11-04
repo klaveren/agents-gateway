@@ -24,6 +24,8 @@ import {
   InvalidGuidanceError,
   ConversationNotResumableError,
   GuidanceNotFoundError,
+  InvalidLedgerError,
+  LedgerNotFoundError,
   ProjectNotFoundError,
   ProjectInUseError,
   ProviderNotFoundError,
@@ -260,6 +262,14 @@ export function toHttpFailure(error: unknown): IHttpFailure {
 
   if (error instanceof InvalidGuidanceError) {
     return { status: 422, code: 'validation_error', message: 'Guidance is invalid', details: error.issues }
+  }
+
+  if (error instanceof InvalidLedgerError) {
+    return { status: 422, code: 'validation_error', message: 'Ledger change is invalid', details: error.issues }
+  }
+
+  if (error instanceof LedgerNotFoundError) {
+    return { status: 404, code: 'not_found', message: error.message }
   }
 
   if (error instanceof GuidanceNotFoundError) {
