@@ -4,7 +4,7 @@ import { MIGRATION_SECTION } from './Migration.Section'
 /** O protocolo do core para construir uma SKILL. ⚠️ Mudou o texto, sobe a versão. */
 export const SKILL_PROTOCOL: ICoreProtocol = {
   kind: 'skill',
-  version: '1.2.1',
+  version: '1.3.0',
   title: 'Protocolo de construção de skill',
   body: `# Protocolo de construção de skill
 
@@ -45,6 +45,13 @@ Markdown operacional, sem visão geral nem teoria (essa é a spec anexada). Nest
 - Exemplos só quando o formato da saída importa.
 - **Várias ações** (criar, alterar, usar, validar): o corpo abre com um roteiro (ação → seção) e cada ação tem a sua seção. Uma ação que sozinha é grande vira outra skill; o procedimento de uma situação vira um trigger (abaixo).
 - **Script:** um passo que roda um script do repositório leva o cartão — comando, argumentos, pré-requisitos, saída esperada e o que fazer na falha.
+
+## Arquivos e variáveis
+- **Arquivos (scripts, modelos, dados)** moram na pasta da skill no gateway — \`projects/<projeto>/skills/<id>/…\` (\`global/skills/<id>/…\` se for global) —, SÓ LEITURA para os agentes. O use_resource mostra a pasta e o caminho de cada arquivo.
+- O corpo cita o arquivo pelo caminho RELATIVO (\`scripts/balance.mjs\`) e manda rodá-lo a partir da pasta.
+- **Pôr ou trocar arquivos:** \`attach_resource_files\` — o gateway copia, no servidor, de uma pasta do projeto (do formato antigo: \`repositories/<repo>/.agents/skills/<id>/scripts\`). Ninguém escreve na pasta à mão. Fica de fora, com o motivo: \`node_modules\`, \`.git\`, \`.env*\`, \`.credentials\`, chaves, binários, acima de 1 MB e todo arquivo com segredo.
+- **Segredo nunca em arquivo nem no corpo:** o script lê a variável de ambiente (\`process.env.NOME\`, \`$NOME\`) e a variável é cadastrada na guia **Variáveis** da skill (peça com \`request_secret\`, pelo nome e para quê; o valor, só a pessoa digita). Ela vale depois que a skill é carregada na conversa. Imprimir a variável é recusado, e o que sair com o valor é mascarado.
+- Liste no corpo as variáveis de que a skill precisa (nome e para quê) — é o que diz a quem usa o que falta.
 
 ## Triggers
 O procedimento de UMA situação dentro do skill ("quando o deploy falhar", "quando for a primeira vez no projeto") é um TRIGGER da skill, não uma seção do corpo nem uma skill à parte. Carregado o skill, o agente vê só o id e o "quando" de cada trigger, e carrega o procedimento (use_resource, tipo trigger, id \`<skill>/<trigger>\`) só quando a situação acontece.

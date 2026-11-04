@@ -4,7 +4,7 @@ import { MIGRATION_SECTION } from './Migration.Section'
 /** O protocolo do core para construir um COMMAND. ⚠️ Mudou o texto, sobe a versão. */
 export const COMMAND_PROTOCOL: ICoreProtocol = {
   kind: 'command',
-  version: '1.2.1',
+  version: '1.3.0',
   title: 'Protocolo de construção de command',
   body: `# Protocolo de construção de command
 
@@ -36,6 +36,13 @@ Revise o pull request $ARGUMENTS (sem número: o mais recente aberto).
 3. Para cada problema: arquivo e linha, o que está errado, a correção. Ordene do mais grave.
 4. Termine com: aprovar, aprovar com ajustes ou pedir mudanças — e por quê.
 \`\`\`
+
+## Arquivos e variáveis
+- **Arquivos (scripts, modelos, dados)** moram na pasta do command no gateway — \`projects/<projeto>/commands/<id>/…\` (\`global/commands/<id>/…\` se for global) —, SÓ LEITURA para os agentes. O use_resource mostra a pasta e o caminho de cada arquivo.
+- O corpo cita o arquivo pelo caminho RELATIVO (\`scripts/balance.mjs\`) e manda rodá-lo a partir da pasta.
+- **Pôr ou trocar arquivos:** \`attach_resource_files\` — o gateway copia, no servidor, de uma pasta do projeto (do formato antigo: \`repositories/<repo>/.agents/commands/<id>/scripts\`). Ninguém escreve na pasta à mão. Fica de fora, com o motivo: \`node_modules\`, \`.git\`, \`.env*\`, \`.credentials\`, chaves, binários, acima de 1 MB e todo arquivo com segredo.
+- **Segredo nunca em arquivo nem no corpo:** o script lê a variável de ambiente (\`process.env.NOME\`, \`$NOME\`) e a variável é cadastrada na guia **Variáveis** do command (peça com \`request_secret\`, pelo nome e para quê; o valor, só a pessoa digita). Ela vale depois que o command é carregado na conversa. Imprimir a variável é recusado, e o que sair com o valor é mascarado.
+- Liste no corpo as variáveis de que o command precisa (nome e para quê) — é o que diz a quem usa o que falta.
 
 ## Triggers
 O procedimento de UMA situação dentro do command ("quando o PR for de migração", "quando faltar o ticket") é um TRIGGER do command, não uma seção do corpo nem um command à parte. Disparado o command, o agente vê só o id e o "quando" de cada trigger, e carrega o procedimento (use_resource, tipo trigger, id \`<command>/<trigger>\`) só quando a situação acontece.

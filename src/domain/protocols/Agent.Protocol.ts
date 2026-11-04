@@ -4,7 +4,7 @@ import { MIGRATION_SECTION } from './Migration.Section'
 /** O protocolo do core para construir um AGENTE. ⚠️ Mudou o texto, sobe a versão. */
 export const AGENT_PROTOCOL: ICoreProtocol = {
   kind: 'agent',
-  version: '1.2.5',
+  version: '1.3.0',
   title: 'Protocolo de construção de agente',
   body: `# Protocolo de construção de agente
 
@@ -74,6 +74,13 @@ Um trigger é o procedimento de uma situação, carregado sob demanda. O corpo:
 ## Quando parar
 - <o que exige a pessoa ou outro agente>
 \`\`\`
+
+## Arquivos e variáveis
+- **Arquivos (scripts, modelos, dados)** moram na pasta do agente no gateway — \`projects/<projeto>/agents/<id>/…\` (\`global/agents/<id>/…\` se for global) —, SÓ LEITURA para os agentes. O "## Ambiente" do agente mostra a pasta.
+- O corpo (o prompt, no agente) cita o arquivo pelo caminho RELATIVO (\`scripts/balance.mjs\`) e manda rodá-lo a partir da pasta.
+- **Pôr ou trocar arquivos:** \`attach_resource_files\` — o gateway copia, no servidor, de uma pasta do projeto (do formato antigo: \`repositories/<repo>/.agents/agents/<id>/scripts\`). Ninguém escreve na pasta à mão. Fica de fora, com o motivo: \`node_modules\`, \`.git\`, \`.env*\`, \`.credentials\`, chaves, binários, acima de 1 MB e todo arquivo com segredo.
+- **Segredo nunca em arquivo nem no corpo:** o script lê a variável de ambiente (\`process.env.NOME\`, \`$NOME\`) e a variável é cadastrada na guia **Variáveis** do agente (peça com \`request_secret\`, pelo nome e para quê; o valor, só a pessoa digita). Ela vale em todo comando do agente. Imprimir a variável é recusado, e o que sair com o valor é mascarado.
+- Liste no corpo as variáveis de que o agente precisa (nome e para quê) — é o que diz a quem usa o que falta.
 
 ## A soul
 Três a seis frases: quem é, o tom (formal, direto, didático…), o que valoriza, o que não faz. Sem regra operacional — essa é do prompt.
