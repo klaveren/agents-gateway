@@ -197,7 +197,7 @@ tools and is retried with exponential backoff (1s up to 60s). No restart either 
 | `LOOP_STOP_AT`          | `6`                         | The identical tool call that stops the turn.                                                           |
 | `LOOP_MAX_ERRORS`       | `8`                         | Tool errors in a row that stop the turn.                                                               |
 | `BASH_CWD`              | _(process cwd)_             | Working directory of `run_bash`.                                                                       |
-| `BASH_TIMEOUT_MS`       | `20000`                     | `run_bash` timeout.                                                                                    |
+| `BASH_TIMEOUT_MS`       | `120000`                    | `run_bash` timeout.                                                                                    |
 | `BASH_MAX_OUTPUT_CHARS` | `4000`                      | `run_bash` output cap.                                                                                 |
 | `CONVERSATIONS_DB`      | `data/gateway.db`           | SQLite file for conversations **and** settings. `off` disables recording and keeps settings in memory. |
 | `GEMINI_API_KEY`        | _(none)_                    | Alternative to `GOOGLE_GENAI_API_KEY` for the agent lane (`@google/adk`).                              |
