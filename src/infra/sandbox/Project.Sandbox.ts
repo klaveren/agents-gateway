@@ -23,6 +23,9 @@ export interface ISandboxStatus {
 interface ISandboxManager {
   initialize(config: Record<string, unknown>, ask?: (target: { host: string; port?: number }) => Promise<boolean>): Promise<void>
   wrapWithSandbox(command: string, binShell?: string, customConfig?: Record<string, unknown>): Promise<string>
+  /** Linux: os sockets da ponte do proxy, no `/tmp` do host. */
+  getLinuxHttpSocketPath?(): string | undefined
+  getLinuxSocksSocketPath?(): string | undefined
 }
 
 /** Onde o comando embrulhado roda e quem o roda (o `run_bash`, o Bash do Claude). */
@@ -90,13 +93,13 @@ export class ProjectSandbox implements IProjectSandbox {
   ) {}
 
   /** A política de UM projeto: o que o comando pode ler e gravar. */
-  policy(projectId: string): Record<string, unknown> {
+  policy(projectId: string, bridge: readonly string[] = []): Record<string, unknown> {
     const project = projectWorkspace(projectId, this.env)
     return {
       ...(this.nested() ? { enableWeakerNestedSandbox: true } : {}),
       filesystem: {
-        denyRead: [dataDir(this.env), process.cwd(), homedir()],
-        allowRead: [project, join(dataDir(this.env), 'tools'), ...existing([globalResourcesDir(this.env)]), ...runtimeHelpers()],
+        denyRead: [dataDir(this.env), process.cwd(), homedir(), ...hostSocketDirs()],
+        allowRead: [project, join(dataDir(this.env), 'tools'), ...existing([globalResourcesDir(this.env)]), ...runtimeHelpers(), ...bridge],
         allowWrite: [project],
         // Os arquivos de recurso do projeto (dentro dele) e os globais: só leitura.
         denyWrite: existing([...projectResourceDirs(projectId, this.env), globalResourcesDir(this.env)]),
@@ -112,7 +115,7 @@ export class ProjectSandbox implements IProjectSandbox {
       ...(place.gitCommonDir ? { gitCommonDir: place.gitCommonDir } : {}),
       // A instalação do Node em uso (num Mac com nvm, fica na pasta pessoal, que o cerco fecha) e as ferramentas.
       alwaysRead: [join(dataDir(this.env), 'tools'), dirname(dirname(process.execPath)), ...runtimeHelpers()],
-      alwaysDeny: [dataDir(this.env), process.cwd(), homedir()],
+      alwaysDeny: [dataDir(this.env), process.cwd(), homedir(), ...hostSocketDirs()],
       // Os arquivos de recurso: o global sempre; os do projeto quando a raiz é dele. Lê, não grava.
       readOnly: existing(readOnlyResourceDirs(root, this.env)),
       find: (pattern) => findUnder(root, pattern),
@@ -125,6 +128,7 @@ export class ProjectSandbox implements IProjectSandbox {
     const manager = await this.ready()
     const port = await networkGate().start()
     const planned = plan(this.base(root, place))
+    planned.readAllow.push(...bridgeSockets(manager))
     const cerco = process.platform === 'linux' ? forBubblewrap(planned, root, listDir) : planned
     for (const dir of writeFolders(cerco, root)) mkdirSync(dir, { recursive: true, mode: 0o700 })
     const scratch = (name: string) => {
@@ -193,7 +197,8 @@ export class ProjectSandbox implements IProjectSandbox {
     const prelude = Object.entries(scoped)
       .map(([name, value]) => `export ${name}=${quote(value)}`)
       .join('; ')
-    return (await this.ready()).wrapWithSandbox(`${prelude}; ${command}`, SANDBOX_SHELL, this.policy(projectId))
+    const manager = await this.ready()
+    return manager.wrapWithSandbox(`${prelude}; ${command}`, SANDBOX_SHELL, this.policy(projectId, bridgeSockets(manager)))
   }
 
   /** Funciona aqui? Testado UMA vez (um `true` embrulhado), e o resultado fica. */
@@ -230,7 +235,9 @@ export class ProjectSandbox implements IProjectSandbox {
       const port = await networkGate().start()
       await SandboxManager.initialize({
         ...(this.nested() ? { enableWeakerNestedSandbox: true } : {}),
-        network: { allowedDomains: [], deniedDomains: [], httpProxyPort: port, socksProxyPort: port },
+        // ⚖️ Socket Unix liberado no Linux (o `tsx`, o pre-commit, servidores de linguagem abrem um no TMPDIR): é seguro
+        // SÓ porque os do host ficam fora de alcance (`hostSocketDirs`); os abstratos, a rede própria do cerco isola.
+        network: { allowedDomains: [], deniedDomains: [], httpProxyPort: port, socksProxyPort: port, ...(process.platform === 'linux' ? { allowAllUnixSockets: true } : {}) },
         filesystem: { denyRead: [], allowWrite: [], denyWrite: [] },
       })
       return SandboxManager
@@ -335,6 +342,20 @@ export function findUnder(root: string, pattern: string): string[] {
     }
   }
   return found
+}
+
+/**
+ * ⛔ Onde moram os sockets do HOST, fechados no Linux (onde o cerco libera socket Unix): o `docker.sock` (o usuário do
+ * gateway está no grupo docker: um contêiner privilegiado seria root no host), o bus do systemd (`systemd-run --user`
+ * roda fora do cerco) e o `/tmp` (ssh-agent, outros processos). O comando usa o TMPDIR dele, na pasta do projeto.
+ */
+export function hostSocketDirs(platform: NodeJS.Platform = process.platform): string[] {
+  return platform === 'linux' ? ['/run', '/var/run', '/tmp'] : []
+}
+
+/** A ponte do proxy mora no `/tmp` do host, que o cerco fecha: só os sockets dela voltam (sem eles, a rede cai). */
+function bridgeSockets(manager: ISandboxManager): string[] {
+  return [...new Set([manager.getLinuxHttpSocketPath?.(), manager.getLinuxSocksSocketPath?.()].filter((path): path is string => !!path))]
 }
 
 function listDir(dir: string): string[] {

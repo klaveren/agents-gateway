@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
-import { ensureGitProxyAuth, forBubblewrap, localForwards, projectPathIssue, ProjectSandbox, writeFolders } from './Project.Sandbox'
+import { ensureGitProxyAuth, forBubblewrap, hostSocketDirs, localForwards, projectPathIssue, ProjectSandbox, writeFolders } from './Project.Sandbox'
 
 describe('ProjectSandbox', () => {
   const root = mkdtempSync(join(tmpdir(), 'gw-sandbox-test-'))
@@ -17,6 +17,8 @@ describe('ProjectSandbox', () => {
       load: async () => ({
         SandboxManager: {
           initialize: async () => undefined,
+          getLinuxHttpSocketPath: () => '/tmp/claude-http-x.sock',
+          getLinuxSocksSocketPath: () => '/tmp/claude-http-x.sock',
           wrapWithSandbox: async (command: string, _shell?: string, config?: Record<string, unknown>) => {
             calls.push({ command, config })
             return fail ? `echo '${fail}' >&2; exit 1` : command
@@ -30,7 +32,7 @@ describe('ProjectSandbox', () => {
     const policy = new ProjectSandbox(env, fakeSrt().load).policy('xpto') as { filesystem: Record<string, string[]>; enableWeakerNestedSandbox?: boolean }
     const project = join(root, 'projects', 'xpto')
     assert.deepStrictEqual(policy.filesystem.allowWrite, [project])
-    assert.deepStrictEqual(policy.filesystem.denyRead, [root, process.cwd(), homedir()])
+    assert.deepStrictEqual(policy.filesystem.denyRead, [root, process.cwd(), homedir(), ...hostSocketDirs()])
     assert.deepStrictEqual(policy.filesystem.allowRead.slice(0, 3), [project, join(root, 'tools'), join(root, 'global')])
     // E só o auxiliar de seccomp do srt, que mora em `node_modules` (dentro do app, que fica fechado).
     assert.ok(policy.filesystem.allowRead.slice(3).every((path) => /sandbox-runtime[/\\]vendor[/\\]seccomp$/.test(path)))
@@ -52,6 +54,15 @@ describe('ProjectSandbox', () => {
     assert.ok(line.endsWith('; npm install'))
     assert.ok(line.includes(`export HOME='${join(project, '.home')}'`) && line.includes(`export npm_config_cache='${join(project, '.cache', 'npm')}'`))
     assert.deepStrictEqual((srt.calls.at(-1)?.config as { filesystem: { allowWrite: string[] } }).filesystem.allowWrite, [project])
+    // A ponte do proxy (no `/tmp` do host, fechado no Linux) volta: uma vez só, mesmo quando HTTP e SOCKS são o mesmo.
+    assert.strictEqual((srt.calls.at(-1)?.config as { filesystem: { allowRead: string[] } }).filesystem.allowRead.filter((path) => path === '/tmp/claude-http-x.sock').length, 1)
+  })
+
+  it('⛔ socket Unix liberado só no Linux, e lá os sockets do host ficam fora de alcance (docker, bus do systemd, /tmp)', () => {
+    assert.deepStrictEqual(hostSocketDirs('linux'), ['/run', '/var/run', '/tmp'])
+    assert.deepStrictEqual(hostSocketDirs('darwin'), [])
+    const base = new ProjectSandbox(env, fakeSrt().load).base('/w/p')
+    for (const dir of hostSocketDirs()) assert.ok(base.alwaysDeny.includes(dir), dir)
   })
 
   it('⚖️ o git manda o token do proxy já no CONNECT (sem isto caía com "Proxy CONNECT aborted"), sem apagar o que havia', () => {
