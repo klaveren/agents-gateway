@@ -1,26 +1,30 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { coreAgentName } from '@/lib/builder'
-import { tokens, usd } from '@/lib/format'
-import type { IUsageFigure, IUsageSummary } from '@/lib/types'
-import { useAgentsStore } from '@/stores/agents'
-import { useProtocolsStore } from '@/stores/protocols'
-import UsageDailyChart from './UsageDailyChart.vue'
-import UsageTiles from './UsageTiles.vue'
+  import { computed } from 'vue'
+  import { coreAgentName } from '@/lib/builder'
+  import { tokens, usd } from '@/lib/format'
+  import type { IToolUsage, IUsageFigure, IUsageSummary } from '@/lib/types'
+  import { useAgentsStore } from '@/stores/agents'
+  import { useProtocolsStore } from '@/stores/protocols'
+  import UsageDailyChart from './UsageDailyChart.vue'
+  import UsageTiles from './UsageTiles.vue'
 
-/** O resumo de uso — o meu, ou o de um usuário (admin, com custo). */
-const props = defineProps<{ summary: IUsageSummary; showCost: boolean }>()
+  /** O resumo de uso — o meu, ou o de um usuário (admin, com custo). */
+  const props = defineProps<{ summary: IUsageSummary; showCost: boolean }>()
 
-const agents = useAgentsStore()
-const protocols = useProtocolsStore()
+  const agents = useAgentsStore()
+  const protocols = useProtocolsStore()
 
-const t = computed(() => props.summary.totals)
-const cost = (item: IUsageFigure) => (item.costUsd === undefined ? '' : `${item.costIsFloor ? '≥ ' : ''}${usd(item.costUsd)}`)
-const share = (item: IUsageFigure, list: IUsageFigure[]) => {
-  const max = Math.max(1, ...list.map((other) => other.usage.totalTokens))
-  return `${Math.max(2, (item.usage.totalTokens / max) * 100)}%`
-}
-const agentName = (id: string) => agents.byId.get(id)?.name ?? coreAgentName(id) ?? id
+  const t = computed(() => props.summary.totals)
+  const cost = (item: IUsageFigure) => (item.costUsd === undefined ? '' : `${item.costIsFloor ? '≥ ' : ''}${usd(item.costUsd)}`)
+  const share = (item: IUsageFigure, list: IUsageFigure[]) => {
+    const max = Math.max(1, ...list.map((other) => other.usage.totalTokens))
+    return `${Math.max(2, (item.usage.totalTokens / max) * 100)}%`
+  }
+  const agentName = (id: string) => agents.byId.get(id)?.name ?? coreAgentName(id) ?? id
+  const tools = computed(() => props.summary.byTool ?? [])
+  const toolMax = computed(() => Math.max(1, ...tools.value.map((item) => item.directTokens + item.contextTokens)))
+  const toolWidth = (value: number) => `${(value / toolMax.value) * 100}%`
+  const toolTotal = (item: IToolUsage) => item.directTokens + item.contextTokens
 </script>
 
 <template>
@@ -42,7 +46,10 @@ const agentName = (id: string) => agents.byId.get(id)?.name ?? coreAgentName(id)
             <li v-for="item in summary.byAgent" :key="item.agentId">
               <div class="flex items-baseline gap-2 text-sm">
                 <span class="truncate text-zinc-200">{{ agentName(item.agentId) }}</span>
-                <span class="ml-auto shrink-0 text-xs text-zinc-400">{{ tokens(item.usage.totalTokens) }}<template v-if="showCost"> · {{ cost(item) }}</template></span>
+                <span class="ml-auto shrink-0 text-xs text-zinc-400">
+                  {{ tokens(item.usage.totalTokens) }}
+                  <template v-if="showCost">· {{ cost(item) }}</template>
+                </span>
               </div>
               <div class="mt-1 h-1.5 rounded-full bg-zinc-800"><div class="h-1.5 rounded-full bg-emerald-500/70" :style="{ width: share(item, summary.byAgent) }" /></div>
             </li>
@@ -55,7 +62,10 @@ const agentName = (id: string) => agents.byId.get(id)?.name ?? coreAgentName(id)
               <div class="flex items-baseline gap-2 text-sm">
                 <span class="truncate font-mono text-[13px] text-zinc-200">{{ item.model }}</span>
                 <span class="shrink-0 text-xs text-zinc-500">{{ protocols.providerName(item.provider) }}</span>
-                <span class="ml-auto shrink-0 text-xs text-zinc-400">{{ tokens(item.usage.totalTokens) }}<template v-if="showCost"> · {{ cost(item) }}</template></span>
+                <span class="ml-auto shrink-0 text-xs text-zinc-400">
+                  {{ tokens(item.usage.totalTokens) }}
+                  <template v-if="showCost">· {{ cost(item) }}</template>
+                </span>
               </div>
               <div class="mt-1 h-1.5 rounded-full bg-zinc-800"><div class="h-1.5 rounded-full bg-emerald-500/70" :style="{ width: share(item, summary.byModel) }" /></div>
             </li>
@@ -63,13 +73,54 @@ const agentName = (id: string) => agents.byId.get(id)?.name ?? coreAgentName(id)
         </section>
       </div>
 
+      <section v-if="tools.length" class="card" data-test="by-tool">
+        <div class="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h2 class="text-sm font-medium text-zinc-300">Por ferramenta</h2>
+          <span class="rounded-full border border-zinc-700 px-2 text-[11px] text-zinc-400">estimativa</span>
+          <span class="flex items-center gap-1.5 text-xs text-zinc-400">
+            <i class="inline-block h-2 w-2 rounded-sm bg-emerald-500/80" />
+            Diretos
+          </span>
+          <span class="flex items-center gap-1.5 text-xs text-zinc-400">
+            <i class="inline-block h-2 w-2 rounded-sm bg-sky-400/60" />
+            No contexto
+          </span>
+        </div>
+        <p class="mb-3 text-xs text-zinc-500">
+          O provedor cobra por chamada ao modelo, não por ferramenta: a conta sai do tamanho gravado. Diretos são os argumentos e o resultado; no contexto é o resultado relido nos
+          passos seguintes do turno.
+        </p>
+        <ul class="flex flex-col gap-2.5">
+          <li v-for="item in tools" :key="item.tool" :data-tool="item.tool">
+            <div class="flex items-baseline gap-2 text-sm">
+              <span class="truncate font-mono text-[13px] text-zinc-200">{{ item.tool }}</span>
+              <span class="shrink-0 text-xs text-zinc-500">{{ item.calls }}×</span>
+              <span v-if="item.errors" class="shrink-0 text-xs text-rose-300">{{ item.errors }} erro{{ item.errors > 1 ? 's' : '' }}</span>
+              <span class="ml-auto shrink-0 text-xs text-zinc-400" :title="`Diretos ${tokens(item.directTokens)} · no contexto ${tokens(item.contextTokens)}`">
+                ~{{ tokens(toolTotal(item)) }}
+              </span>
+            </div>
+            <div class="mt-1 flex h-1.5 gap-0.5 rounded-full bg-zinc-800">
+              <div class="h-1.5 rounded-full bg-emerald-500/80" :style="{ width: toolWidth(item.directTokens) }" />
+              <div v-if="item.contextTokens" class="h-1.5 rounded-full bg-sky-400/60" :style="{ width: toolWidth(item.contextTokens) }" />
+            </div>
+          </li>
+        </ul>
+      </section>
+
       <section class="card">
         <h2 class="card-title">Conversas que mais usaram</h2>
         <ul class="divide-y divide-zinc-800">
           <li v-for="item in summary.top" :key="item.id" class="flex items-center gap-3 py-2 text-sm">
             <RouterLink :to="`/c/${item.id}`" class="min-w-0 flex-1 truncate text-zinc-200 hover:text-emerald-300">{{ item.title || 'Conversa sem título' }}</RouterLink>
             <span class="shrink-0 text-xs text-zinc-500">{{ agentName(item.agentId) }}</span>
-            <span class="w-24 shrink-0 text-right text-xs text-zinc-400">{{ tokens(item.usage.totalTokens) }}<template v-if="showCost"><br />{{ cost(item) }}</template></span>
+            <span class="w-24 shrink-0 text-right text-xs text-zinc-400">
+              {{ tokens(item.usage.totalTokens) }}
+              <template v-if="showCost">
+                <br />
+                {{ cost(item) }}
+              </template>
+            </span>
           </li>
         </ul>
       </section>
@@ -78,12 +129,12 @@ const agentName = (id: string) => agents.byId.get(id)?.name ?? coreAgentName(id)
 </template>
 
 <style scoped>
-@reference '../style.css';
+  @reference '../style.css';
 
-.card {
-  @apply rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4;
-}
-.card-title {
-  @apply mb-3 text-sm font-medium text-zinc-300;
-}
+  .card {
+    @apply rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4;
+  }
+  .card-title {
+    @apply mb-3 text-sm font-medium text-zinc-300;
+  }
 </style>
