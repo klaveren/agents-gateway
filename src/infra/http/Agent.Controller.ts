@@ -613,10 +613,17 @@ export class AgentController {
         ['ledger', 'Índice do ledger', env.ledger],
         ['protocol', 'Complemento do protocolo', env.protocol],
         ['existing', 'O que já existe', env.existing],
-      ]
-        .filter((part): part is [string, string, string] => !!part[2]?.trim())
-        .map(([key, label, text]) => ({ key, label, chars: text.length, tokens: estimateTokens(text) }))
-      return { agentId: agent.id, ...(projectId ? { projectId } : {}), prompt, chars: prompt.length, tokens: estimateTokens(prompt), parts }
+      ].filter((part): part is [string, string, string] => !!part[2]?.trim())
+      // `?part=<chave>`: só o texto daquela parte (o prompt inteiro de um agente grande passa de 60 mil caracteres).
+      const wanted = typeof req.query.part === 'string' ? req.query.part : undefined
+      if (wanted) {
+        const found = parts.find(([key]) => key === wanted)
+        if (!found) throw new HttpError(422, 'validation_error', 'Request query is invalid', [{ field: 'part', message: `one of ${parts.map(([key]) => key).join(', ')}` }])
+        const [key, label, text] = found
+        return { agentId: agent.id, ...(projectId ? { projectId } : {}), part: { key, label, chars: text.length, tokens: estimateTokens(text), text } }
+      }
+      const sizes = parts.map(([key, label, text]) => ({ key, label, chars: text.length, tokens: estimateTokens(text) }))
+      return { agentId: agent.id, ...(projectId ? { projectId } : {}), prompt, chars: prompt.length, tokens: estimateTokens(prompt), parts: sizes }
     })
   }
 
