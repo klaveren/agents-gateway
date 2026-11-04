@@ -39,6 +39,14 @@ describe('NotifyingConversationRepository', () => {
     assert.strictEqual(first.type === 'conversation.updated' && first.session.preview?.text, 'olá')
   })
 
+  it('⛔ o peso por ferramenta passa pelo decorador (sem ele, a tela de Uso não mostrava o bloco)', async () => {
+    const { repo } = build()
+    await repo.saveSession(session)
+    await repo.appendTurn({ sessionId: 's1', index: 0, at: new Date('2026-09-01T10:01:00Z'), request: 'oi', text: 'olá', toolCalls: [{ tool: 'Read', result: 'x'.repeat(40) }] })
+    const [read] = await repo.toolUsage({ since: new Date('2026-08-01T00:00:00Z'), tzOffsetMinutes: 0 })
+    assert.deepStrictEqual([read.tool, read.calls], ['Read', 1])
+  })
+
   it('apagar o que não existe não avisa nada', async () => {
     const { repo, seen } = build()
 
