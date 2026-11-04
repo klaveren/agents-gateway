@@ -4115,7 +4115,7 @@ export const OPENAPI_DOCUMENT = {
     '/mcp': {
       post: {
         summary:
-          'The gateway as an MCP server (Streamable HTTP, stateless, JSON responses): list_agents, start_conversation, send_message, switch_model, list_conversations, get_conversation, my_usage — plus, for administrators, usage_by_key, list_providers, list_models, list_tools, get_agent and — unless SELF_MCP_WRITE=0 — set_model_enabled, set_model_price and save_agent. Same credentials and rules as this API',
+          'The gateway as an MCP server (Streamable HTTP, stateless, JSON responses): list_agents, start_conversation, send_message, get_turn (not offered to agents, which delegate with delegate_to_agent), switch_model, list_conversations, get_conversation, my_usage — plus, for administrators, usage_by_key, list_providers, list_models, list_tools, get_agent and — unless SELF_MCP_WRITE=0 — set_model_enabled, set_model_price and save_agent. Same credentials and rules as this API',
         requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', description: 'A JSON-RPC 2.0 message' } } } },
         responses: { '200': { description: 'JSON-RPC response', content: { 'application/json': { schema: { type: 'object' } } } }, '401': failures['401'] },
       },

@@ -108,17 +108,108 @@ function resourceIndex(result: unknown): unknown {
   }))
 }
 
-/** O turno agregado, sem o que só a tela usa. */
-function turnView(result: unknown) {
+/**
+ * ⚖️ QUANTO O MCP ESPERA UM TURNO antes de devolver `running`: abaixo dos 60 s em que os clientes MCP (Claude Code,
+ * o SDK) desistem da chamada. Turno mais longo segue no servidor; quem chamou acompanha com `get_turn`.
+ */
+const TURN_WAIT_DEFAULT_SECONDS = 45
+const TURN_WAIT_MAX_SECONDS = 50
+const TURN_POLL_MS = 1000
+
+const waitSecondsShape = z
+  .number()
+  .int()
+  .min(0)
+  .max(TURN_WAIT_MAX_SECONDS)
+  .optional()
+  .describe(
+    `How long to wait for the turn to finish (default ${TURN_WAIT_DEFAULT_SECONDS}, max ${TURN_WAIT_MAX_SECONDS}). Still running after that: \`status: running\`; call get_turn.`,
+  )
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** O turno `turn` até acabar ou até `waitSeconds` passar — o que vier primeiro. */
+async function awaitTurn(api: TSelfApi, sessionId: string, turn: number, waitSeconds = TURN_WAIT_DEFAULT_SECONDS): Promise<ISelfReply> {
+  const deadline = Date.now() + Math.min(Math.max(waitSeconds, 0), TURN_WAIT_MAX_SECONDS) * 1000
+  for (;;) {
+    const answer = await api('GET', `/sessions/${encodeURIComponent(sessionId)}/turns/${turn}`)
+    if (!answer.ok || (answer.result as { status?: string }).status !== 'running' || Date.now() + TURN_POLL_MS > deadline) return answer
+    await sleep(TURN_POLL_MS)
+  }
+}
+
+/** Começa o turno (`POST …/turns`, assíncrono) e espera o quanto der. */
+async function startTurn(api: TSelfApi, sessionId: string, message: string, waitSeconds?: number): Promise<ISelfReply> {
+  const started = await api('POST', `/sessions/${encodeURIComponent(sessionId)}/turns`, { body: { message } })
+  if (!started.ok) return started
+  return awaitTurn(api, sessionId, (started.result as { turn: number }).turn, waitSeconds)
+}
+
+/** O estado do turno para quem chamou: o texto até aqui, as ferramentas, o fim. */
+function turnStatusView(result: unknown) {
   const turn = (result ?? {}) as Record<string, unknown>
   return {
+    sessionId: turn.conversationId,
+    turn: turn.turn,
+    status: turn.status,
     text: turn.text,
-    toolCalls: Array.isArray(turn.toolCalls) ? (turn.toolCalls as Array<{ tool?: string; error?: string }>).map((call) => ({ tool: call.tool, error: call.error })) : undefined,
-    usage: turn.usage,
-    warnings: turn.warnings,
-    error: turn.error,
-    aborted: turn.aborted,
+    tools: turn.tools,
+    ...(turn.error ? { error: turn.error } : {}),
+    ...(turn.usage ? { usage: turn.usage } : {}),
+    ...(turn.durationMs !== undefined ? { durationMs: turn.durationMs } : {}),
   }
+}
+
+/**
+ * ⛔ AS FERRAMENTAS DE CONVERSA, só para quem está de fora (pessoa, integração) — ver `PEOPLE_ONLY_GATEWAY_TOOLS`.
+ * ⚖️ NENHUMA SEGURA A CHAMADA ATÉ O FIM DO TURNO: começa, espera até `waitSeconds` e devolve. Antes, `send_message`
+ * esperava o turno inteiro, e o cliente MCP desistia em 60 s — o turno seguia no servidor e a resposta se perdia.
+ */
+function registerConversationTools(server: McpServer, api: TSelfApi) {
+  server.registerTool(
+    'start_conversation',
+    {
+      description:
+        'Open a conversation with an agent. With `message`, also starts the first turn and waits up to `waitSeconds` for it; a longer turn comes back as `status: running` — follow it with get_turn. `metadata` is stored with the conversation (e.g. { accountId, userId }) for billing and filtering.',
+      inputSchema: {
+        agentId: z.string(),
+        mode: z.enum(['chat', 'agent']).optional().describe('chat = plain SDK; agent = the provider Agents SDK.'),
+        provider: z.string().optional().describe('One of the agent providers; default: the first that offers `model`.'),
+        model: z.string().optional(),
+        reasoning: z.string().optional(),
+        metadata: z.record(z.string(), z.unknown()).optional(),
+        projectId: z.string().optional().describe('For a global agent: the project the conversation belongs to. A project agent always opens in its own project.'),
+        message: z.string().optional(),
+        waitSeconds: waitSecondsShape,
+      },
+    },
+    async ({ message, waitSeconds, ...body }) => {
+      const created = await api('POST', '/sessions', { body })
+      if (!created.ok || !message) return reply(created)
+      return reply(await startTurn(api, (created.result as { id: string }).id, message, waitSeconds), turnStatusView)
+    },
+  )
+
+  server.registerTool(
+    'send_message',
+    {
+      description:
+        'Send a message in a live conversation: starts the turn and waits up to `waitSeconds` for it. Still running after that: `status: running` — follow it with get_turn.',
+      inputSchema: { sessionId: z.string(), message: z.string(), waitSeconds: waitSecondsShape },
+    },
+    async ({ sessionId, message, waitSeconds }) => reply(await startTurn(api, sessionId, message, waitSeconds), turnStatusView),
+  )
+
+  server.registerTool(
+    'get_turn',
+    {
+      description:
+        'Follow a turn started by start_conversation or send_message: waits up to `waitSeconds` for it to finish, then returns its status (`running`, `ok`, `error`, `aborted`) and text.',
+      inputSchema: { sessionId: z.string(), turn: z.number().int().min(0), waitSeconds: waitSecondsShape },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ sessionId, turn, waitSeconds }) => reply(await awaitTurn(api, sessionId, turn, waitSeconds), turnStatusView),
+  )
 }
 
 const agentShape = {
@@ -210,36 +301,8 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     async ({ projectId }) => reply(await api('GET', '/agents', { query: { project: projectId } })),
   )
 
-  server.registerTool(
-    'start_conversation',
-    {
-      description:
-        'Open a conversation with an agent. With `message`, also sends the first message and returns the reply. `metadata` is stored with the conversation (e.g. { accountId, userId }) for billing and filtering.',
-      inputSchema: {
-        agentId: z.string(),
-        mode: z.enum(['chat', 'agent']).optional().describe('chat = plain SDK; agent = the provider Agents SDK.'),
-        provider: z.string().optional().describe('One of the agent providers; default: the first that offers `model`.'),
-        model: z.string().optional(),
-        reasoning: z.string().optional(),
-        metadata: z.record(z.string(), z.unknown()).optional(),
-        projectId: z.string().optional().describe('For a global agent: the project the conversation belongs to. A project agent always opens in its own project.'),
-        message: z.string().optional(),
-      },
-    },
-    async ({ message, ...body }) => {
-      const created = await api('POST', '/sessions', { body })
-      if (!created.ok || !message) return reply(created)
-      const sessionId = (created.result as { id: string }).id
-      const turn = await api('POST', `/sessions/${encodeURIComponent(sessionId)}/messages`, { body: { message } })
-      return turn.ok ? text({ sessionId, ...turnView(turn.result) }) : reply(turn)
-    },
-  )
-
-  server.registerTool(
-    'send_message',
-    { description: 'Send a message in a live conversation and wait for the full reply.', inputSchema: { sessionId: z.string(), message: z.string() } },
-    async ({ sessionId, message }) => reply(await api('POST', `/sessions/${encodeURIComponent(sessionId)}/messages`, { body: { message } }), turnView),
-  )
+  // ⛔ Agente não conversa por aqui: fala com outro só por `delegate_to_agent`, com as travas da delegação.
+  if (!access.agentId) registerConversationTools(server, api)
 
   server.registerTool(
     'switch_model',

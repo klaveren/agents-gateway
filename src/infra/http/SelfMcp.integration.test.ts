@@ -128,6 +128,7 @@ describe('MCP do próprio gateway (integração)', () => {
   it('⛔ o membro só vê as ferramentas comuns; o admin vê as de admin e as de escrita (SELF_MCP_WRITE=0 desliga a escrita)', async () => {
     const common = [
       'get_conversation',
+      'get_turn',
       'list_agents',
       'list_conversations',
       'list_permission_rules',
@@ -242,6 +243,21 @@ describe('MCP do próprio gateway (integração)', () => {
 
     const byKey = json(await (await connect(admin)).callTool({ name: 'usage_by_key', arguments: { key: 'accountId', days: 30 } }))
     assert.deepStrictEqual(byKey.groups, [])
+  })
+
+  it('⛔ chamado por um agente (identidade no header), o MCP não oferece as ferramentas de conversa', async () => {
+    const client = new Client({ name: 'agente', version: '1.0.0' })
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { 'X-Tool-Authorization': `Bearer ${admin}`, 'x-gateway-agent': 'agent-x' } } }),
+    )
+    const listed = (await client.listTools()).tools.map((tool) => tool.name)
+    for (const name of ['start_conversation', 'send_message', 'get_turn']) assert.strictEqual(listed.includes(name), false, name)
+    assert.strictEqual(listed.includes('list_agents'), true)
+  })
+
+  it('get_turn de conversa que não existe vira isError, sem esperar', async () => {
+    const result = (await (await connect(member)).callTool({ name: 'get_turn', arguments: { sessionId: 'nao-existe', turn: 0, waitSeconds: 5 } })) as { isError?: boolean }
+    assert.strictEqual(result.isError, true)
   })
 
   it('erro da API vira isError com a mensagem, sem derrubar o cliente', async () => {

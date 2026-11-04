@@ -2,7 +2,8 @@ import { IMPORT_TOOLS, PROPOSE_DRAFT_TOOL } from '@domain/Builder.Agents'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IMcpServerConfig, isLaunchedMcp, MCP_ALL_TOOLS, mcpSelection, mcpServerKey, mcpServesProject, parseMcpToolRef } from '@domain/models/McpServer.Model'
 import { McpRegistry } from '@infra/mcp/Mcp.Registry'
-import { delegatesOf } from '@domain/models/Delegation.Model'
+import { delegatesOf, PEOPLE_ONLY_GATEWAY_TOOLS } from '@domain/models/Delegation.Model'
+import { SELF_MCP_SERVER_ID } from '@application/McpServers.Service'
 import { LEDGER_TOOLS } from '@domain/models/Ledger.Model'
 import { ILocalTool, IToolDefinition, IToolResult } from './Tool.Types'
 import type { IPermissionChecker } from '@application/Permissions.Service'
@@ -116,7 +117,7 @@ export class ToolCatalog {
       const key = mcpServerKey(config)
       // Contêiner: a instância DESTA conversa (o `sessionId` do contexto); sem conversa, não há instância.
       // A credencial de quem conversa: um MCP `caller` (o do próprio gateway) recusa até a listagem sem ela.
-      const tools = await this.mcp.tools(key, context?.sessionId, context?.token).catch(() => [])
+      const tools = agentFacing(server, await this.mcp.tools(key, context?.sessionId, context?.token).catch(() => []))
       for (const tool of tools)
         if ((choice.all || choice.tools.has(tool.name)) && this.mcpAllowed(server, tool.name, context)?.allowed !== false) remote.push({ server, key, tool })
     }
@@ -163,11 +164,16 @@ export class ToolCatalog {
     choice: { all: boolean; tools: ReadonlySet<string> },
     context?: IExecutionContext,
   ): Promise<{ tools?: string[]; hidden: string[] }> {
-    if (!this.permissions) return choice.all ? { hidden: [] } : { tools: [...choice.tools], hidden: await this.hiddenOf(key, choice.tools, context) }
+    if (!this.permissions) {
+      const blocked = id === SELF_MCP_SERVER_ID ? [...PEOPLE_ONLY_GATEWAY_TOOLS] : []
+      if (choice.all) return { hidden: blocked }
+      return { tools: [...choice.tools].filter((name) => !blocked.includes(name)), hidden: [...new Set([...(await this.hiddenOf(key, choice.tools, context)), ...blocked])] }
+    }
     const listed = await this.mcp.tools(key, context?.sessionId, context?.token).catch(() => undefined)
     if (!listed) return { tools: [], hidden: [] }
+    const facing = new Set(agentFacing(id, listed).map((tool) => tool.name))
     const names = listed.map((tool) => tool.name)
-    const tools = names.filter((name) => (choice.all || choice.tools.has(name)) && this.mcpAllowed(id, name, context)?.allowed !== false)
+    const tools = names.filter((name) => facing.has(name) && (choice.all || choice.tools.has(name)) && this.mcpAllowed(id, name, context)?.allowed !== false)
     return { tools, hidden: names.filter((name) => !tools.includes(name)) }
   }
 
@@ -256,4 +262,9 @@ export class ToolCatalog {
     if (!client) return { status: 'error', result: `MCP server unavailable: ${config.id}` }
     return client.callTool(tool, args, context)
   }
+}
+
+/** ⛔ O que um agente vê de um servidor: do MCP do gateway, nunca as ferramentas de conversa (ver `PEOPLE_ONLY_GATEWAY_TOOLS`). */
+function agentFacing<T extends { name: string }>(server: string, tools: readonly T[]): T[] {
+  return server === SELF_MCP_SERVER_ID ? tools.filter((tool) => !PEOPLE_ONLY_GATEWAY_TOOLS.includes(tool.name)) : [...tools]
 }
