@@ -95,6 +95,27 @@ describe('ImportJobService', () => {
     )
   })
 
+  it('importado por fora (o agente gravou com `importedFrom`): o item da fonte vira aplicado, com o que nasceu e quem; ⛔ fonte sem item, tipo errado, ambígua', () => {
+    const { files, service, state } = setup()
+    files.set('skill:deploy', 'a').set('spec:base', 'b')
+    service.create('alfa', 'app', 'ana', {})
+    const marked = service.markImported('alfa', { path: './deploy.md' }, { kind: 'skill', id: 'deploy', agentId: 'maya', conversationId: 'gw_1' }, 'root')
+    assert.deepStrictEqual([marked.key, marked.state, marked.repository, marked.by], ['skill:deploy', 'applied', 'app', 'root'])
+    assert.deepStrictEqual(marked.importedBy, { kind: 'skill', id: 'deploy', agentId: 'maya', conversationId: 'gw_1' })
+    assert.strictEqual(state(service.get('alfa', 'j1'), 'skill:deploy')?.state, 'applied')
+    // O documento: spec, ADR e conhecimento andam juntos.
+    assert.strictEqual(service.markImported('alfa', { path: 'base.md' }, { kind: 'adr', id: 'base' }, 'root').state, 'applied')
+
+    const refused = (fn: () => unknown, field: string) => assert.throws(fn, (error: unknown) => error instanceof ImportJobError && error.field === field)
+    refused(() => service.markImported('alfa', { path: 'nada.md' }, { kind: 'skill', id: 'x' }, 'root'), 'path')
+    refused(() => service.markImported('alfa', { path: 'deploy.md' }, { kind: 'rule', id: 'x' }, 'root'), 'kind')
+    refused(() => service.markImported('beta', { path: 'deploy.md' }, { kind: 'skill', id: 'x' }, 'root'), 'path')
+    // A mesma fonte em dois repositórios: sem `repository`, ambígua; com ele, a certa.
+    service.create('alfa', 'outro', 'ana', {})
+    refused(() => service.markImported('alfa', { path: 'deploy.md' }, { kind: 'skill', id: 'deploy' }, 'root'), 'repository')
+    assert.strictEqual(service.markImported('alfa', { path: 'deploy.md', repository: 'outro' }, { kind: 'skill', id: 'deploy' }, 'root').repository, 'outro')
+  })
+
   it('excluir e incluir gravam quem e quando; a reclassificação persiste e volta ao detectado com null', () => {
     const { files, service, tick, state } = setup()
     files.set('unknown:notes', 'a').set('skill:deploy', 'b')

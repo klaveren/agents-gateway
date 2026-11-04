@@ -166,6 +166,58 @@ export class ImportJobService {
     return { repository: record.repository, states: new Map(this.deps.repository.items(record.id).map((entry) => [entry.key, entry.state])) }
   }
 
+  /**
+   * O AGENTE IMPORTOU POR FORA: gravou no catálogo (`save_*` com `importedFrom`) o que veio desta fonte. O item da
+   * importação do projeto com essa fonte (o arquivo, ou a pasta dele) vira `applied`, com o que nasceu e quem gravou —
+   * e sai da fila. ⚖️ Registro, não decisão: nada é aprovado nem gravado no catálogo aqui.
+   *
+   * ⛔ A fonte tem de apontar UM item: nenhum, ou um em cada repositório (sem `repository`), é recusado. O tipo tem de
+   * bater (skill com skill). O item com o construtor trabalhando não muda: o rascunho dele sairia do nada.
+   */
+  markImported(
+    projectId: string,
+    source: { path: string; repository?: string },
+    target: { kind: string; id: string; agentId?: string; conversationId?: string },
+    by: string,
+  ): Omit<IImportJobItem, 'basis'> & { repository: string; jobId: string } {
+    const path = source.path.trim().replace(/^\.\//, '').replace(/\/+$/, '')
+    if (!path) throw new ImportJobError('invalid', 'path: the source path in the repository', 'path')
+    const jobs = this.deps.repository.list(projectId).filter((job) => !source.repository || job.repository === source.repository)
+    const hits = jobs.flatMap((job) =>
+      this.deps.repository
+        .items(job.id)
+        .filter((entry) => !entry.goneAt && entry.item.sources.some((item) => item.path === path || item.path.startsWith(`${path}/`)))
+        .map((entry) => ({ job, entry })),
+    )
+    if (!hits.length)
+      throw new ImportJobError('not_found', `no import item of project ${projectId} comes from ${path}${source.repository ? ` in ${source.repository}` : ''}`, 'path')
+    const matching = hits.filter(({ entry }) => sameKind(entry.kind ?? entry.item.kind, target.kind))
+    if (!matching.length) throw new ImportJobError('invalid', `${path} is a ${hits[0].entry.kind ?? hits[0].entry.item.kind} in the importer, not a ${target.kind}`, 'kind')
+    if (matching.length > 1)
+      throw new ImportJobError(
+        'invalid',
+        `${path} matches ${matching.length} import items (${matching.map(({ job, entry }) => `${job.repository}: ${entry.key}`).join(', ')}): send the repository`,
+        'repository',
+      )
+    const [{ job, entry }] = matching
+    if (entry.state === 'drafting') throw new ImportJobError('transition', `${entry.key} is with the builder right now: wait or release it on the screen`, 'state')
+    const importedBy = {
+      kind: target.kind,
+      id: target.id,
+      ...(target.agentId ? { agentId: target.agentId } : {}),
+      ...(target.conversationId ? { conversationId: target.conversationId } : {}),
+    }
+    const updated = this.deps.repository.updateItem(job.id, entry.key, {
+      state: 'applied',
+      staleFrom: null,
+      basis: entry.fingerprint,
+      importedBy,
+      by,
+      at: (this.deps.now ?? (() => new Date()))(),
+    })!
+    return { ...strip(updated), repository: job.repository, jobId: job.id }
+  }
+
   /** Apagar o projeto apaga os trabalhos dele. */
   removeProject(projectId: string): void {
     this.deps.repository.deleteProject(projectId)
@@ -205,4 +257,10 @@ function reopenedIfGone(carried: ReturnType<typeof carryOver>, old: IImportJobIt
 
 function strip({ basis: _basis, ...item }: IImportJobItem): Omit<IImportJobItem, 'basis'> {
   return item
+}
+
+/** O tipo do item da importação aceita o do catálogo? (Os documentos andam juntos: spec, ADR e conhecimento.) */
+function sameKind(itemKind: string, catalogKind: string): boolean {
+  const docs = ['spec', 'adr', 'knowledge']
+  return itemKind === catalogKind || (docs.includes(itemKind) && docs.includes(catalogKind))
 }

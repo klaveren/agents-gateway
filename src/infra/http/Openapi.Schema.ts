@@ -2085,6 +2085,31 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/projects/{id}/import/imported': {
+      post: {
+        summary:
+          'An agent saved in the catalog, OUTSIDE the importer, what came from this source (the `save_*` MCP tools with `importedFrom`): the import item of the project with that source (the file, or its folder) becomes `applied`, with `importedBy` (the catalog kind and id, and the agent and conversation from the identity headers). It leaves the queue. A record, not a decision: nothing is approved or written to the catalog here. 422 when no item has the source, the kind does not match, or the source is in more than one repository without `repository`; 409 while the builder holds the item. Administrators only (404 for the others)',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['path', 'kind', 'id'],
+                properties: {
+                  path: { type: 'string', description: 'The source path in the repository, as the importer lists it.' },
+                  repository: { type: 'string', description: 'The repository, when the path is in more than one import.' },
+                  kind: { type: 'string', description: 'The catalog kind of what was saved (skill, command, spec, adr, knowledge, rule, agent).' },
+                  id: { type: 'string', description: 'The catalog id of what was saved.' },
+                },
+              },
+            },
+          },
+        },
+        responses: { '200': { description: 'The import item, now applied, with its repository and job id' } },
+      },
+    },
     '/projects/{id}/import/jobs': {
       get: {
         summary:

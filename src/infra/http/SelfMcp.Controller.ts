@@ -51,6 +51,40 @@ export function savedEcho(value: unknown): unknown {
   return value
 }
 
+/** A fonte no repositório de um item gravado por fora do importador (ver `withImported`). */
+const importedFrom = z
+  .object({
+    path: z.string().describe('The source path in the repository, as the importer lists it (a file, or its folder)'),
+    repository: z.string().optional().describe('The repository id, when the same path exists in more than one'),
+    projectId: z.string().optional().describe('The project of the import; absent = the project of the saved item'),
+  })
+  .optional()
+  .describe('You migrated this item from the repository yourself: the importer marks the source as imported (by you), and it leaves the queue.')
+
+/**
+ * Gravou e veio de uma fonte do repositório (`importedFrom`): avisa o importador, que marca o item como importado pelo
+ * agente. A gravação vale sozinha: se o aviso falhar, a resposta diz por quê, e o item do catálogo fica como gravado.
+ */
+async function withImported(
+  api: TSelfApi,
+  saved: ISelfReply,
+  source: z.infer<typeof importedFrom>,
+  target: (result: Record<string, unknown>) => { kind: string; id: string; projectId?: string },
+): Promise<ReturnType<typeof reply>> {
+  if (!saved.ok || !source) return reply(saved, savedEcho)
+  const item = target((saved.result ?? {}) as Record<string, unknown>)
+  const projectId = source.projectId ?? item.projectId
+  const marked = projectId
+    ? await api('POST', `/projects/${encodeURIComponent(projectId)}/import/imported`, {
+        body: { path: source.path, ...(source.repository ? { repository: source.repository } : {}), kind: item.kind, id: item.id },
+      })
+    : { ok: false, status: 422, message: 'importedFrom.projectId: the saved item is global; send the project of the import' }
+  const importer = marked.ok
+    ? { marked: true, key: (marked.result as { key?: string } | undefined)?.key, repository: (marked.result as { repository?: string } | undefined)?.repository }
+    : { marked: false, message: marked.message }
+  return text({ ...(savedEcho(saved.result) as Record<string, unknown>), importer })
+}
+
 /** O índice dos recursos: o que diz QUAL é e QUANDO usar, sem o corpo (lido um a um, com o id). */
 function resourceIndex(result: unknown): unknown {
   if (!Array.isArray(result)) return result
@@ -709,12 +743,13 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     {
       description:
         'Create an agent, or replace the one with the same id: send every field, since an omitted adminOnly, sandbox or network falls back to its default (open to everyone, read-only, no network). Every problem comes back at once, field by field.',
-      inputSchema: agentShape,
+      inputSchema: { ...agentShape, importedFrom },
     },
-    async (agent) => {
+    async ({ importedFrom: source, ...agent }) => {
       // ⚖️ Sem trava própria: o MCP grava o que a tela grava, e quem decide o alcance do agente é o admin.
       const exists = (await api('GET', `/agents/${encodeURIComponent(agent.id)}`)).ok
-      return reply(exists ? await api('PUT', `/agents/${encodeURIComponent(agent.id)}`, { body: agent }) : await api('POST', '/agents', { body: agent }), savedEcho)
+      const saved = exists ? await api('PUT', `/agents/${encodeURIComponent(agent.id)}`, { body: agent }) : await api('POST', '/agents', { body: agent })
+      return withImported(api, saved, source, (result) => ({ kind: 'agent', id: agent.id, ...(typeof result.projectId === 'string' ? { projectId: result.projectId } : {}) }))
     },
   )
 
@@ -759,9 +794,15 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
         body: z.string().optional().describe('The rule itself, imperative and short'),
         enabled: z.boolean().optional(),
         tags: z.array(z.string()).optional().describe('Free words to group and filter in the lists (normalized to lowercase-hyphen); absent on update = keep, [] removes all'),
+        importedFrom,
       },
     },
-    async ({ id, ...rule }) => reply(id ? await api('PUT', `/rules/${encodeURIComponent(id)}`, { body: rule }) : await api('POST', '/rules', { body: rule }), savedEcho),
+    async ({ id, importedFrom: source, ...rule }) =>
+      withImported(api, id ? await api('PUT', `/rules/${encodeURIComponent(id)}`, { body: rule }) : await api('POST', '/rules', { body: rule }), source, (result) => ({
+        kind: 'rule',
+        id: String(result.id ?? id ?? ''),
+        ...(typeof result.projectId === 'string' ? { projectId: result.projectId } : {}),
+      })),
   )
 
   server.registerTool(
@@ -789,17 +830,23 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
         id: z.string(),
         kind: z.enum(['spec', 'adr', 'knowledge']),
         projectId: z.string().nullable().optional().describe('The project it belongs to; null or absent on a new one = global'),
-        title: z.string(),
-        summary: z.string(),
-        body: z.string().describe('Markdown'),
+        title: z.string().optional().describe('Required on a new one; absent on update = keep'),
+        summary: z.string().optional().describe('Required on a new one; absent on update = keep'),
+        body: z.string().optional().describe('Markdown. Required on a new one; absent on update = keep'),
         docIds: z.array(z.string()).optional().describe('Other documents attached to this one, in order'),
         docRefs: z.array(z.string()).optional().describe('Which of docIds go by reference instead of in full'),
         tags: z.array(z.string()).optional().describe('Free words to group and filter in the lists (normalized to lowercase-hyphen); absent on update = keep, [] removes all'),
+        importedFrom,
       },
     },
-    async ({ id, ...doc }) => {
+    async ({ id, importedFrom: source, ...doc }) => {
       const exists = (await api('GET', `/docs/${encodeURIComponent(id)}`)).ok
-      return reply(exists ? await api('PUT', `/docs/${encodeURIComponent(id)}`, { body: doc }) : await api('POST', '/docs', { body: { id, ...doc } }), savedEcho)
+      const saved = exists ? await api('PUT', `/docs/${encodeURIComponent(id)}`, { body: doc }) : await api('POST', '/docs', { body: { id, ...doc } })
+      return withImported(api, saved, source, (result) => ({
+        kind: String(result.kind ?? doc.kind),
+        id,
+        ...(typeof result.projectId === 'string' ? { projectId: result.projectId } : {}),
+      }))
     },
   )
 
@@ -832,8 +879,8 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
         id: z.string(),
         kind: z.enum(['skill', 'command']),
         projectId: z.string().nullable().optional().describe('The project; null or absent on a new one = global'),
-        description: z.string(),
-        body: z.string().describe('Skill: markdown. Command: the request, with $ARGUMENTS'),
+        description: z.string().optional().describe('Required on a new one; absent on update = keep'),
+        body: z.string().optional().describe('Skill: markdown. Command: the request, with $ARGUMENTS. Required on a new one; absent on update = keep'),
         docIds: z.array(z.string()).optional(),
         docRefs: z.array(z.string()).optional().describe('Which of docIds go by reference instead of in full'),
         triggers: z
@@ -841,14 +888,17 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
           .optional()
           .describe('Absent on update = keep; [] removes all'),
         tags: z.array(z.string()).optional().describe('Free words to group and filter in the lists (normalized to lowercase-hyphen); absent on update = keep, [] removes all'),
+        importedFrom,
       },
     },
-    async ({ id, kind, ...resource }) => {
+    async ({ id, kind, importedFrom: source, ...resource }) => {
       const exists = (await api('GET', `/resources/${encodeURIComponent(id)}`)).ok
-      return reply(
-        exists ? await api('PUT', `/resources/${encodeURIComponent(id)}`, { body: resource }) : await api('POST', '/resources', { body: { id, kind, ...resource } }),
-        savedEcho,
-      )
+      const saved = exists ? await api('PUT', `/resources/${encodeURIComponent(id)}`, { body: resource }) : await api('POST', '/resources', { body: { id, kind, ...resource } })
+      return withImported(api, saved, source, (result) => ({
+        kind: String(result.kind ?? kind),
+        id,
+        ...(typeof result.projectId === 'string' ? { projectId: result.projectId } : {}),
+      }))
     },
   )
 

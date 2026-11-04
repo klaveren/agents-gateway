@@ -14,6 +14,7 @@ import { TInventoryKind } from '@domain/models/ImportInventory.Model'
 import { WorkFolderError } from '@infra/workspace/Work.Folder'
 import { viaAccessToken } from './Auth.Controller'
 import { checkAdminAccess } from './Caller.Admin'
+import { IDENTITY_HEADERS } from '@domain/Agent.Identity'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
@@ -73,6 +74,12 @@ const INVENTORY_KINDS = [
   'unknown',
   'skip',
 ] as const satisfies readonly TInventoryKind[]
+const importedSchema = z.object({
+  path: z.string().min(1).max(1_000),
+  repository: z.string().max(200).optional(),
+  kind: z.string().min(1).max(40),
+  id: z.string().min(1).max(200),
+})
 const itemSchema = z
   .object({
     key: z.string().min(1).max(1_000),
@@ -132,6 +139,7 @@ export class ImportController {
     const jobs = deps.jobs
     this.planner = deps.plan ?? new ImportPlanUseCase({ scan: deps.scan, ...(jobs ? { jobStates: (projectId, jobId) => jobs.statesOf(projectId, jobId) } : {}) })
     this.scan = this.scan.bind(this)
+    this.markImported = this.markImported.bind(this)
     this.plan = this.plan.bind(this)
     this.getIgnore = this.getIgnore.bind(this)
     this.setIgnore = this.setIgnore.bind(this)
@@ -370,6 +378,31 @@ export class ImportController {
       const body = parseBody(itemSchema, req.body)
       const change = { ...(body.state !== undefined ? { state: body.state } : {}), ...(body.kind !== undefined ? { kind: body.kind } : {}) }
       return this.jobError(() => this.jobs().updateItem(projectId, req.params.job as string, body.key, change, by))
+    })
+  }
+
+  /**
+   * `POST /projects/:id/import/imported { path, repository?, kind, id }` — um agente gravou no catálogo, por fora, o que
+   * veio desta fonte (`save_*` com `importedFrom`): o item da importação vira `applied`, com o que nasceu e quem gravou.
+   * O agente e a conversa vêm dos cabeçalhos de identidade (só registro: quem grava é o admin da chamada).
+   */
+  async markImported(req: Request, res: Response): Promise<void> {
+    await this.respond(res, 'markImported', req, async (projectId, by) => {
+      const body = parseBody(importedSchema, req.body)
+      const header = (name: string) => {
+        const value = req.headers[name]
+        return typeof value === 'string' && /^[\w.:@-]{1,128}$/.test(value.trim()) ? value.trim() : undefined
+      }
+      const agentId = header(IDENTITY_HEADERS.agent)
+      const conversationId = header(IDENTITY_HEADERS.conversation)
+      return this.jobError(() =>
+        this.jobs().markImported(
+          projectId,
+          { path: body.path, ...(body.repository ? { repository: body.repository } : {}) },
+          { kind: body.kind, id: body.id, ...(agentId ? { agentId } : {}), ...(conversationId ? { conversationId } : {}) },
+          by,
+        ),
+      )
     })
   }
 

@@ -51,6 +51,11 @@ export interface IImportItemStatus {
   approvedAt?: Date
   /** O lote do catálogo em que entrou (PR 9). */
   batchId?: string
+  /**
+   * IMPORTADO FORA DO IMPORTADOR: um agente gravou o item no catálogo (`save_*` com `importedFrom`) e avisou. O item
+   * fica `applied`, sem lote, com o que nasceu dele e quem gravou. ⚖️ É registro, não decisão de ninguém.
+   */
+  importedBy?: IImportedBy
   /** Quem mudou o item por último, e quando (estado ou reclassificação). */
   by?: string
   at?: Date
@@ -60,6 +65,16 @@ export interface IImportItemStatus {
    * não é tocado.
    */
   goneAt?: Date
+}
+
+/** Quem gravou o item fora do importador, e o que nasceu dele no catálogo. */
+export interface IImportedBy {
+  /** O item do catálogo: o tipo e o id. */
+  kind: string
+  id: string
+  /** O agente e a conversa que gravaram (ausentes quando a pessoa grava direto pela API). */
+  agentId?: string
+  conversationId?: string
 }
 
 /** Um item do trabalho: o do inventário e o estado. */
@@ -157,7 +172,7 @@ export interface IImportReanalysis {
 }
 
 /** A mudança de um item: o estado, a reclassificação (`null` volta ao detectado), e o que mais a regra decidiu. */
-export type TImportItemPatch = Partial<Pick<IImportItemStatus, 'state' | 'basis' | 'by' | 'at' | 'drafts' | 'approvedBy' | 'approvedAt' | 'batchId'>> & {
+export type TImportItemPatch = Partial<Pick<IImportItemStatus, 'state' | 'basis' | 'by' | 'at' | 'drafts' | 'approvedBy' | 'approvedAt' | 'batchId' | 'importedBy'>> & {
   /** A conversa do construtor (`null` solta o item dela). */
   conversationId?: string | null
   kind?: TInventoryKind | null
