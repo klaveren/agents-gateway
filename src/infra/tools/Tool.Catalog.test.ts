@@ -99,6 +99,19 @@ describe('ToolCatalog', () => {
     assert.deepStrictEqual((await withSelf.toolbox(['mcp:gateway/*'])).tools, [])
   })
 
+  it('⛔ do MCP do gateway, agente nunca recebe as ferramentas de conversa: fala com outro só por delegate_to_agent', async () => {
+    const tools = [mcpTool('save_agent'), mcpTool('start_conversation'), mcpTool('send_message'), mcpTool('get_turn')]
+    const withSelf = new ToolCatalog(fakeMcpRegistry([{ id: 'gateway', tools }]), [])
+    assert.deepStrictEqual(
+      (await withSelf.toolbox(['mcp:gateway/*'])).tools.map((tool) => tool.name),
+      ['save_agent'],
+    )
+    assert.deepStrictEqual((await withSelf.toolbox(['mcp:gateway/send_message'])).tools, [])
+    const [sdk] = await withSelf.mcpServersFor(['mcp:gateway/*', 'mcp:gateway/start_conversation'])
+    assert.strictEqual(sdk.tools?.includes('start_conversation') ?? false, false)
+    assert.deepStrictEqual([...(sdk.hidden ?? [])].sort(), ['get_turn', 'send_message', 'start_conversation'])
+  })
+
   it('leva a credencial da chamada até o cliente MCP', async () => {
     contexts.length = 0
     const box = await catalog().toolbox(['mcp:crm/stats'])

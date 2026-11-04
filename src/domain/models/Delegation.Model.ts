@@ -39,3 +39,10 @@ export function delegatesOf(allowedTools: readonly string[]): string[] {
     ),
   ]
 }
+
+/**
+ * ⛔ AS FERRAMENTAS DE CONVERSA DO MCP DO GATEWAY SÃO DE QUEM ESTÁ DE FORA (pessoa, integração), nunca de agente: por
+ * elas um agente chegava a qualquer outro sem nenhuma trava da delegação (lista `agent:<id>`, regra `delegate`,
+ * profundidade, ciclo). Agente fala com agente só por `delegate_to_agent`.
+ */
+export const PEOPLE_ONLY_GATEWAY_TOOLS: readonly string[] = ['start_conversation', 'send_message', 'get_turn']
