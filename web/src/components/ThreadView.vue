@@ -115,7 +115,8 @@
     computed(() => (typeof header.value?.metadata?.project === 'string' ? header.value.metadata.project : (projects.current ?? undefined))),
   )
   /** A sessão não está viva, mas a conversa volta ao enviar (o gateway a retoma do histórico gravado). */
-  const resumable = computed(() => thread.liveSession === false)
+  // Com um turno rodando a conversa não está encerrada, mesmo que o servidor ainda não a tenha marcado viva de novo.
+  const resumable = computed(() => thread.liveSession === false && !thread.pending)
 
   /** De quem esta conversa é filha (delegada por outro agente) e as filhas que ela abriu. */
   const parentId = computed(() => (typeof header.value?.metadata?.delegatedBy === 'string' ? header.value.metadata.delegatedBy : undefined))

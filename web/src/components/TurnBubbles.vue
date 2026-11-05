@@ -1,5 +1,5 @@
 <script setup lang="ts">
-  import { computed, ref } from 'vue'
+  import { computed, onBeforeUnmount, ref } from 'vue'
   import { copyText } from '@/lib/clipboard'
   import { CLASSIFICATION_COLOR, CLASSIFICATION_LABEL, shortTime, tokens, usd } from '@/lib/format'
   import { renderMarkdown } from '@/lib/markdown'
@@ -53,6 +53,28 @@
     const agentId = (call.args as { agentId?: string } | undefined)?.agentId ?? /agentId\\*"\s*:\s*\\*"([^"\\]+)/.exec(serialized)?.[1]
     return { agentId, sessionId }
   }
+  /**
+   * ⚖️ NO CELULAR, a tripa de ferramentas encolhe: ficam as últimas, as que ainda rodam e as delegações (são links); o
+   * resto entra num botão com o contador, que abre a lista inteira. Em tela larga, todas à vista.
+   */
+  const COMPACT_KEEP = 3
+  const COMPACT_FROM = 6
+  const narrow = ref(typeof window !== 'undefined' && !!window.matchMedia?.('(max-width: 767px)').matches)
+  const media = typeof window !== 'undefined' ? window.matchMedia?.('(max-width: 767px)') : undefined
+  const onMedia = (event: MediaQueryListEvent) => (narrow.value = event.matches)
+  media?.addEventListener?.('change', onMedia)
+  onBeforeUnmount(() => media?.removeEventListener?.('change', onMedia))
+  const showAllTools = ref(false)
+  const shownTools = computed(() => {
+    const all = tools.value.map((tool, index) => ({ tool, index }))
+    if (!narrow.value || showAllTools.value || all.length < COMPACT_FROM) return all
+    return all.filter(({ tool, index }) => index >= all.length - COMPACT_KEEP || tool.status === 'running' || !!delegated(tool))
+  })
+  const hiddenTools = computed(() => tools.value.length - shownTools.value.length)
+  const hiddenErrors = computed(() => {
+    const shown = new Set(shownTools.value.map(({ index }) => index))
+    return tools.value.filter((tool, index) => !shown.has(index) && tool.status === 'error').length
+  })
   const warnings = computed(() => props.turn?.warnings ?? props.pending?.warnings ?? [])
   const aborted = computed(() => props.turn?.aborted ?? props.pending?.aborted ?? false)
   const error = computed(() => props.turn?.error ?? props.pending?.error)
@@ -92,10 +114,24 @@
         <p class="mt-1 whitespace-pre-wrap">{{ reasoning }}</p>
       </details>
 
-      <div v-if="tools.length" class="flex flex-wrap gap-1.5">
+      <div v-if="tools.length" class="flex flex-wrap gap-1.5" data-test="tools">
+        <button
+          v-if="hiddenTools || (showAllTools && narrow && tools.length >= COMPACT_FROM)"
+          type="button"
+          class="flex items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-900 px-2.5 py-0.5 text-xs text-zinc-400 hover:text-zinc-200"
+          :aria-expanded="showAllTools"
+          data-test="tools-toggle"
+          @click="showAllTools = !showAllTools"
+        >
+          <template v-if="showAllTools">▾ recolher</template>
+          <template v-else>
+            ▸ +{{ hiddenTools }} ferramenta{{ hiddenTools > 1 ? 's' : '' }}
+            <span v-if="hiddenErrors" class="text-rose-300">· {{ hiddenErrors }} com erro</span>
+          </template>
+        </button>
         <component
           :is="tool.status === 'error' ? 'button' : 'span'"
-          v-for="(tool, index) in tools"
+          v-for="{ tool, index } in shownTools"
           :key="index"
           :type="tool.status === 'error' ? 'button' : undefined"
           class="flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs"
@@ -120,7 +156,12 @@
       <div v-if="failed" class="rounded-xl border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200" data-test="tool-error">
         <div class="flex items-center justify-between gap-2">
           <span class="font-mono font-medium">{{ failed.tool }}</span>
-          <button type="button" class="rounded-md px-2 py-0.5 text-rose-300 ring-1 ring-rose-500/40 hover:bg-rose-500/10" aria-label="Copiar o erro" @click="copyError(failed.message)">
+          <button
+            type="button"
+            class="rounded-md px-2 py-0.5 text-rose-300 ring-1 ring-rose-500/40 hover:bg-rose-500/10"
+            aria-label="Copiar o erro"
+            @click="copyError(failed.message)"
+          >
             {{ copiedError ? 'Copiado' : 'Copiar' }}
           </button>
         </div>
