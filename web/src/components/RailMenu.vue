@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { usePopover } from '@/lib/popover'
+import { useAboveBar, usePopover } from '@/lib/popover'
 import Icon from './Icon.vue'
 
 export type TRailIcon = 'users' | 'key' | 'plug' | 'box' | 'settings' | 'agents' | 'rule' | 'doc' | 'bolt' | 'slash' | 'folder' | 'clock' | 'warn'
@@ -18,6 +18,7 @@ export interface IRailMenuItem {
  */
 const props = defineProps<{ title: string; icon: TRailIcon; items: readonly IRailMenuItem[]; placement: 'side' | 'up'; active?: string }>()
 const { open, root } = usePopover()
+const above = useAboveBar(open, root)
 
 const lit = computed(() => props.items.some((item) => item.key === props.active))
 
@@ -52,9 +53,9 @@ watch(open, (isOpen) => {
     <div
       v-if="open"
       role="menu"
-      class="scroll-thin absolute z-50 w-64 overflow-y-auto overscroll-contain rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-xl shadow-black/40"
-      :class="placement === 'side' ? 'top-0 left-full ml-3' : 'right-1 bottom-full mb-2'"
-      :style="room ? { maxHeight: `${room}px` } : undefined"
+      class="scroll-thin z-50 overflow-y-auto overscroll-contain rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-xl shadow-black/40"
+      :class="placement === 'side' ? 'absolute top-0 left-full ml-3 w-64' : 'fixed inset-x-2'"
+      :style="{ ...(room ? { maxHeight: `${room}px` } : {}), ...(placement === 'up' && above ? { bottom: `${above}px` } : {}) }"
     >
       <div class="border-b border-zinc-800 px-3 py-2 text-xs font-medium text-zinc-500">{{ title }}</div>
       <RouterLink

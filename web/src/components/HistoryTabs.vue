@@ -13,7 +13,8 @@ const items = computed(() => [{ id: 'edit' as T, label: props.editLabel }, ...pr
 </script>
 
 <template>
-  <nav class="flex gap-1 border-b border-zinc-800" role="tablist">
+  <!-- No celular as guias não cabem: a barra rola de lado. -->
+  <nav class="no-scrollbar flex gap-1 overflow-x-auto overscroll-x-contain border-b border-zinc-800" role="tablist">
     <button
       v-for="item in items"
       :key="item.id"
