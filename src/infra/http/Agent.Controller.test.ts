@@ -356,8 +356,9 @@ describe('AgentController', () => {
     assert.strictEqual(locals.ended, false, 'não deve abrir stream para pedido inválido')
   })
 
-  it('cancels the provider stream when the client disconnects', async () => {
+  it('keeps the turn running on the server when the client disconnects', async () => {
     let cancelled = 0
+    let drained = false
     let disconnect: () => void = () => {}
 
     const controller = controllerWith({
@@ -368,6 +369,7 @@ describe('AgentController', () => {
         yield { type: 'text.delta' as const, sessionId: 's1', timestamp: new Date(), payload: { text: 'first' } }
         disconnect()
         yield { type: 'text.delta' as const, sessionId: 's1', timestamp: new Date(), payload: { text: 'second' } }
+        drained = true
       },
     })
 
@@ -376,7 +378,8 @@ describe('AgentController', () => {
 
     await controller.sendMessage(mockRequest({ params: { id: 's1' }, body: { message: 'hi' } }), res)
 
-    assert.strictEqual(cancelled, 1)
+    assert.strictEqual(cancelled, 0, 'sair da tela não cancela o turno')
+    assert.strictEqual(drained, true, 'o turno vai até o fim sem o cliente')
     assert.ok(locals.written.includes('first'))
     assert.ok(!locals.written.includes('second'), 'nada deve ser escrito depois do disconnect')
   })
