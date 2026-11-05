@@ -10,6 +10,12 @@ export interface ITurnCallbackPayload {
   error?: string
   usage?: unknown
   durationMs: number
+  /** O agente que respondeu: quem orquestra vários sabe de quem é o turno sem ler a conversa. */
+  agentId: string
+  /** A `metadata` que quem abriu a conversa declarou (sem as chaves do servidor): o `epicCode` volta junto. */
+  metadata: Record<string, unknown>
+  /** O fim do turno, ISO. Vai assinado: quem recebe recusa aviso velho (repetição). */
+  at: string
 }
 
 export const CALLBACK_SIGNATURE_HEADER = 'X-Gateway-Signature'

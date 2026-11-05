@@ -1,7 +1,7 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import { isMetaHost, resolveAllowedHosts } from '@infra/sandbox/Egress.Proxy'
-import { clientMetadata } from './Session.Metadata'
+import { clientMetadata, declaredMetadata } from './Session.Metadata'
 
 describe('clientMetadata — o que o cliente pode declarar', () => {
   it('⛔ dono e delegação vindos do corpo saem; quem não é admin perde as chaves do egresso', () => {
@@ -14,6 +14,14 @@ describe('clientMetadata — o que o cliente pode declarar', () => {
     const many = Object.fromEntries(Array.from({ length: 40 }, (_, index) => [`k${index}`, 1]))
     assert.strictEqual(clientMetadata(many, { admin: true, protectedKeys: [] }).issues.length, 1)
     assert.strictEqual(clientMetadata({ big: 'x'.repeat(9000) }, { admin: true, protectedKeys: [] }).issues.length, 1)
+  })
+})
+
+describe('declaredMetadata — o que volta no aviso de fim de turno', () => {
+  it('⛔ só o que o cliente declarou: dono, projeto, pasta e callback ficam de fora', () => {
+    const stored = { epicCode: 'EP-1', owner: { id: 'u1' }, project: 'logiccus', repository: 'logiccus', worktree: 'wt', callbackUrl: 'http://x', builder: 'agent' }
+    assert.deepStrictEqual(declaredMetadata(stored, ['builder']), { epicCode: 'EP-1' })
+    assert.deepStrictEqual(declaredMetadata(undefined), {})
   })
 })
 

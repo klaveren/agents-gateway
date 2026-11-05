@@ -26,6 +26,12 @@ export const RESERVED_METADATA_KEYS: readonly string[] = [
   CALLBACK_METADATA_KEY,
 ]
 
+/** A `metadata` como quem abriu a conversa a declarou: sem as chaves que só o servidor escreve. */
+export function declaredMetadata(metadata: Record<string, unknown> | undefined, internal: readonly string[] = []): Record<string, unknown> {
+  const hidden = new Set([...RESERVED_METADATA_KEYS, ...internal])
+  return Object.fromEntries(Object.entries(metadata ?? {}).filter(([key]) => !hidden.has(key)))
+}
+
 export const METADATA_MAX_KEYS = 32
 export const METADATA_MAX_BYTES = 8 * 1024
 

@@ -4,7 +4,7 @@ import { describe, it } from 'node:test'
 import { callbackAllowed, CALLBACK_SIGNATURE_HEADER, deliverCallback } from './Turn.Callbacks'
 
 const env = { TURN_CALLBACK_HOSTS: 'localhost:4000, api.interna', TURN_CALLBACK_SECRET: 'segredo' }
-const payload = { conversationId: 'c1', turn: 0, status: 'ok' as const, durationMs: 10 }
+const payload = { conversationId: 'c1', turn: 0, status: 'ok' as const, durationMs: 10, agentId: 'theo', metadata: { epicCode: 'EP-1' }, at: '2026-11-05T16:00:00.000Z' }
 
 describe('Turn.Callbacks (o aviso de fim de turno)', () => {
   it('⛔ só para host listado, com segredo, sem usuário na URL', () => {
