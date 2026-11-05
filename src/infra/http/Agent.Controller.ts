@@ -1819,30 +1819,27 @@ export class AgentController {
     const stream = new SseStream(res)
     stream.open()
 
-    let finished = false
-    // Fechar a aba tem de matar a geração no provider, senão o gateway segue queimando
-    // token para uma resposta que ninguém vai ler.
+    // ⛔ A CONVERSA NÃO É CORTADA quando a tela sai: trocar de conversa derruba o stream (`leave`), e o
+    // celular o derruba ao pôr o navegador no fundo. O turno segue no servidor até o fim, gravado, e a
+    // tela que voltar o pega pelo turno ao vivo. Parar é só pelo botão (`POST /sessions/:id/cancel`).
     //
-    // O listener vai em `res`, não em `req`: o `close` do request dispara assim que o
-    // corpo do POST termina de ser lido, o que aqui é imediato — e cancelaria todo turno
-    // antes do primeiro evento sair.
+    // O laço continua consumindo sem o cliente: parar de iterar encerraria o gerador, e com ele o turno.
+    // O listener vai em `res`, não em `req`: o `close` do request dispara assim que o corpo do POST
+    // termina de ser lido.
+    let detached = false
     res.on('close', () => {
-      if (finished) return
-      finished = true
-      void this.usecases.cancelSession.execute(sessionId).catch(() => undefined)
+      detached = true
     })
 
     try {
       for await (const event of this.usecases.sendMessage.execute(sessionId, input)) {
-        if (finished) break
-        stream.send(event)
+        if (!detached) stream.send(event)
       }
     } catch (error: unknown) {
       const failure = toHttpFailure(error)
       console.error('[AgentController.sendMessage] Error:', failure.message)
       stream.send({ type: 'error', sessionId, timestamp: new Date(), payload: { message: failure.message } })
     } finally {
-      finished = true
       stream.close()
     }
   }
