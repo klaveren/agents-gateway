@@ -63,7 +63,11 @@
     const result = await api<IConversationPanel>(`/conversations/${encodeURIComponent(id)}/panel`).catch(() => undefined)
     if (id === header.value?.id) panelCount.value = result ? openCount(result) : undefined
   }
-  watch(() => header.value?.id, () => void loadPanelCount(), { immediate: true })
+  watch(
+    () => header.value?.id,
+    () => void loadPanelCount(),
+    { immediate: true },
+  )
   function refreshPanel() {
     panelRefresh.value += 1
     if (!panelOpen.value) void loadPanelCount()
@@ -336,12 +340,17 @@
       Delegada por {{ parentAgent }}.
       <RouterLink :to="`/c/${parentId}`" class="ml-auto hover:text-white">← Voltar à conversa original</RouterLink>
     </div>
-    <div v-if="children.length" class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-zinc-800/80 bg-zinc-900/40 px-4 py-1.5 text-xs text-zinc-400">
-      <span>
+    <!-- No celular, uma linha só que rola de lado; em tela larga, quebra em linhas. -->
+    <div
+      v-if="children.length"
+      class="scroll-thin flex items-center gap-x-3 gap-y-1 overflow-x-auto border-b border-zinc-800/80 bg-zinc-900/40 px-4 py-1.5 text-xs whitespace-nowrap text-zinc-400 md:flex-wrap md:overflow-x-visible md:whitespace-normal"
+      data-test="delegations"
+    >
+      <span class="shrink-0">
         {{ children.length }} delegaç{{ children.length === 1 ? 'ão' : 'ões' }} · {{ tokens(childTokens) }} tokens
         <template v-if="auth.isAdmin && childCost !== undefined">· {{ usd(childCost) }}</template>
       </span>
-      <RouterLink v-for="child in children" :key="child.id" :to="`/c/${child.id}`" class="btn btn-sm btn-secondary">
+      <RouterLink v-for="child in children" :key="child.id" :to="`/c/${child.id}`" class="btn btn-sm btn-secondary shrink-0">
         {{ agents.byId.get(child.agentId)?.name ?? child.agentId }}
       </RouterLink>
     </div>
@@ -394,7 +403,10 @@
     />
     <!-- Celular: tela cheia; desktop: gaveta à direita, e a conversa ao lado segue usável (como as Alterações). -->
     <div v-if="panelOpen && header" class="fixed inset-0 z-40 bg-black/40 md:pointer-events-none md:bg-transparent" @click.self="panelOpen = false">
-      <aside class="pointer-events-auto absolute top-0 right-0 flex h-full w-full flex-col border-l border-zinc-800 bg-zinc-950 p-4 shadow-2xl md:w-[460px]" aria-label="Painel da conversa">
+      <aside
+        class="pointer-events-auto absolute top-0 right-0 flex h-full w-full flex-col border-l border-zinc-800 bg-zinc-950 p-4 shadow-2xl md:w-[460px]"
+        aria-label="Painel da conversa"
+      >
         <div class="scroll-thin min-h-0 flex-1 overflow-y-auto">
           <ConversationPanel :conversation-id="header.id" :refresh-key="panelRefresh" closable @close="panelOpen = false" @count="panelCount = $event" />
         </div>
