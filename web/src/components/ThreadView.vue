@@ -13,6 +13,7 @@
   import { useAuthStore } from '@/stores/auth'
   import { useConversationsStore } from '@/stores/conversations'
   import DelegationsPanel from './DelegationsPanel.vue'
+  import { usePopover } from '@/lib/popover'
   import { useProjectsStore } from '@/stores/projects'
   import { openCount, type IConversationPanel } from '@/lib/conversationPanel'
   import { useThreadStore, type IOutgoingFile } from '@/stores/thread'
@@ -206,6 +207,21 @@
     }
   }
 
+  /**
+   * ⚖️ NO CELULAR, as ações do cabeçalho (painel, alterações, compactar, compartilhar, arquivar, apagar) moram num menu
+   * "⋯", no estilo do menu da conta: o título ganha o espaço. O medidor de contexto continua à vista.
+   */
+  const { open: menuOpen, root: menuRoot } = usePopover()
+  function fromMenu(action: () => unknown) {
+    menuOpen.value = false
+    void action()
+  }
+  async function archiveConversation() {
+    if (!header.value) return
+    await conversations.archive(header.value.id)
+    if (!props.embedded) await router.push('/')
+  }
+
   async function toggleShare() {
     if (!header.value) return
     actionError.value = undefined
@@ -295,7 +311,7 @@
         </div>
         <button
           v-if="canCompact"
-          class="mr-1 h-9 whitespace-nowrap rounded-full px-2.5 text-xs hover:bg-zinc-800 disabled:hover:bg-transparent"
+          class="mr-1 h-9 whitespace-nowrap max-md:hidden rounded-full px-2.5 text-xs hover:bg-zinc-800 disabled:hover:bg-transparent"
           :class="thread.session?.compactNext ? 'text-zinc-500' : 'text-amber-300'"
           :disabled="thread.session?.compactNext || compacting"
           :title="thread.session?.compactNext ? 'A próxima mensagem começa com um resumo da conversa' : 'Resumir a conversa e recomeçar com o resumo, na próxima mensagem'"
@@ -309,7 +325,7 @@
           </span>
           <button
             v-if="inRepository"
-            class="flex h-9 items-center gap-1.5 rounded-full px-2.5 text-xs text-zinc-300 hover:bg-zinc-800"
+            class="flex h-9 items-center gap-1.5 rounded-full px-2.5 text-xs text-zinc-300 hover:bg-zinc-800 max-md:hidden"
             title="O que o agente mudou nesta conversa"
             @click="changesOpen = true"
           >
@@ -317,19 +333,102 @@
             Alterações
             <span v-if="changesCount" class="rounded-full bg-emerald-500/20 px-1.5 text-emerald-300">{{ changesCount }}</span>
           </button>
-          <PanelToggle :count="panelCount" :active="panelOpen" @click="panelOpen = !panelOpen" />
+          <PanelToggle class="max-md:hidden" :count="panelCount" :active="panelOpen" @click="panelOpen = !panelOpen" />
           <button
             v-if="!embedded"
-            class="grid h-9 w-9 place-items-center rounded-full hover:bg-zinc-800"
+            class="grid h-9 w-9 place-items-center rounded-full hover:bg-zinc-800 max-md:hidden"
             :class="header.shared ? 'text-emerald-400' : 'text-zinc-400'"
             :title="header.shared ? 'Parar de compartilhar' : 'Compartilhar por link'"
             @click="toggleShare"
           >
             <Icon name="share" class="h-5 w-5" />
           </button>
-          <button class="grid h-9 w-9 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 hover:text-rose-300" title="Apagar histórico" @click="confirming = true">
+          <button
+            class="grid h-9 w-9 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 hover:text-rose-300 max-md:hidden"
+            title="Apagar histórico"
+            @click="confirming = true"
+          >
             <Icon name="trash" class="h-5 w-5" />
           </button>
+          <div ref="menuRoot" class="relative md:hidden">
+            <button
+              type="button"
+              class="relative grid h-9 w-9 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800"
+              title="Mais ações"
+              aria-haspopup="menu"
+              :aria-expanded="menuOpen"
+              data-test="thread-menu"
+              @click="menuOpen = !menuOpen"
+            >
+              <Icon name="more" class="h-5 w-5" />
+              <span v-if="panelCount" class="absolute -top-0.5 -right-0.5 min-w-4 rounded-full bg-emerald-500/20 px-1 text-center text-[10px] leading-4 text-emerald-300">
+                {{ panelCount }}
+              </span>
+            </button>
+            <div
+              v-if="menuOpen"
+              role="menu"
+              class="absolute top-full right-0 z-50 mt-2 w-60 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-xl shadow-black/40"
+              data-test="thread-menu-items"
+            >
+              <button
+                role="menuitem"
+                class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
+                @click="fromMenu(() => (panelOpen = !panelOpen))"
+              >
+                <Icon name="panel" class="h-4 w-4 text-zinc-400" />
+                Painel da conversa
+                <span v-if="panelCount" class="ml-auto rounded-full bg-emerald-500/20 px-1.5 text-[10px] leading-4 text-emerald-300">{{ panelCount }}</span>
+              </button>
+              <button
+                v-if="inRepository"
+                role="menuitem"
+                class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
+                @click="fromMenu(() => (changesOpen = true))"
+              >
+                <Icon name="git" class="h-4 w-4 text-zinc-400" />
+                Alterações
+                <span v-if="changesCount" class="ml-auto rounded-full bg-emerald-500/20 px-1.5 text-[10px] leading-4 text-emerald-300">{{ changesCount }}</span>
+              </button>
+              <button
+                v-if="canCompact"
+                role="menuitem"
+                class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left hover:bg-zinc-800 disabled:text-zinc-500"
+                :class="thread.session?.compactNext ? 'text-zinc-500' : 'text-amber-300'"
+                :disabled="thread.session?.compactNext || compacting"
+                @click="fromMenu(compactNow)"
+              >
+                <Icon name="refresh" class="h-4 w-4" />
+                {{ thread.session?.compactNext ? 'Compacta na próxima mensagem' : 'Compactar o contexto' }}
+              </button>
+              <button
+                v-if="!embedded"
+                role="menuitem"
+                class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
+                @click="fromMenu(toggleShare)"
+              >
+                <Icon name="share" class="h-4 w-4" :class="header.shared ? 'text-emerald-400' : 'text-zinc-400'" />
+                {{ header.shared ? 'Parar de compartilhar' : 'Compartilhar por link' }}
+              </button>
+              <button
+                role="menuitem"
+                class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800"
+                data-test="thread-menu-archive"
+                @click="fromMenu(archiveConversation)"
+              >
+                <Icon name="archive" class="h-4 w-4 text-zinc-400" />
+                Arquivar
+              </button>
+              <button
+                role="menuitem"
+                class="flex w-full items-center gap-2.5 border-t border-zinc-800 px-3 py-2.5 text-left text-zinc-200 hover:bg-zinc-800 hover:text-rose-300"
+                @click="fromMenu(() => (confirming = true))"
+              >
+                <Icon name="trash" class="h-4 w-4 text-zinc-400" />
+                Apagar histórico
+              </button>
+            </div>
+          </div>
         </template>
       </div>
     </header>
