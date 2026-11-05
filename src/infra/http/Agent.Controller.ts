@@ -1363,7 +1363,14 @@ export class AgentController {
         const turns = await this.usecases.conversations.listTurns(id)
 
         // `agentId`: a tela sabe de quem é a conversa mesmo quando ela é de outro projeto que o atual (o autocompletar de `/`).
-        return { sessionId: id, agentId: conversation.agentId, turns: turns.map((turn) => toTurnDto(turn, conversation, view)) }
+        // `conversation`: o cabeçalho (título, consumo, de quem foi delegada), para a conversa que NÃO está na caixa de
+        // entrada — a delegada, a de outra pessoa aberta pelo admin.
+        return {
+          sessionId: id,
+          agentId: conversation.agentId,
+          conversation: toConversationDto(conversation, view),
+          turns: turns.map((turn) => toTurnDto(turn, conversation, view)),
+        }
       },
       { message: 'Turns listed' },
     )
