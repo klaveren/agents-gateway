@@ -4719,7 +4719,19 @@ export const OPENAPI_DOCUMENT = {
           { name: 'scope', in: 'query', schema: { type: 'string', enum: ['all'] }, description: 'Administrators only; anyone else gets 404.' },
           { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 }, description: '`scope=all` only. Turns on server-side pagination.' },
           { name: 'pageSize', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 50, default: 10 } },
-          { name: 'q', in: 'query', schema: { type: 'string', maxLength: 100 }, description: 'Searches title and owner e-mail, id and account (case-insensitive for ASCII).' },
+          {
+            name: 'mine',
+            in: 'query',
+            schema: { type: 'string', enum: ['1'] },
+            description:
+              '`scope=all` with `page`: only the caller conversations (the administrator inbox), with the same search and counts; `scope` comes back as `mine`. Without it, everyone (the monitor). The paginated list never includes archived or delegated conversations, and `total` counts what it lists.',
+          },
+          {
+            name: 'q',
+            in: 'query',
+            schema: { type: 'string', maxLength: 100 },
+            description: 'Searches the title, the owner e-mail, id and account, and the conversation id (`gw_…`), case-insensitive for ASCII.',
+          },
           { name: 'classification', in: 'query', schema: classificationSchema },
           { name: 'provider', in: 'query', schema: { type: 'string' } },
           { name: 'agentId', in: 'query', schema: { type: 'string' }, description: '`scope=all` with `page` only.' },

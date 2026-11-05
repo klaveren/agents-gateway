@@ -81,11 +81,28 @@ const inArchived = computed(() => conversations.view === 'archived')
       </RouterLink>
     </header>
 
-    <div v-if="!inArchived" class="px-4 pb-2">
-      <label class="flex items-center gap-2 rounded-full bg-zinc-800/80 px-3 py-2 text-sm focus-within:ring-1 focus-within:ring-emerald-500/60">
+    <div v-if="!inArchived" class="flex items-center gap-2 px-4 pb-2">
+      <label class="flex min-w-0 flex-1 items-center gap-2 rounded-full bg-zinc-800/80 px-3 py-2 text-sm focus-within:ring-1 focus-within:ring-emerald-500/60">
         <Icon name="search" class="h-4 w-4 text-zinc-500" />
-        <input v-model="search" type="search" :placeholder="auth.isAdmin ? 'Buscar por título, e-mail, conta…' : 'Buscar por título…'" class="w-full bg-transparent outline-none placeholder:text-zinc-500" />
+        <input
+          v-model="search"
+          type="search"
+          :placeholder="auth.isAdmin && conversations.everyone ? 'Buscar por título, e-mail, conta ou id…' : 'Buscar por título ou id…'"
+          class="w-full bg-transparent outline-none placeholder:text-zinc-500"
+        />
       </label>
+      <button
+        v-if="auth.isAdmin"
+        type="button"
+        class="chip shrink-0"
+        :class="{ on: conversations.everyone }"
+        :aria-pressed="conversations.everyone"
+        title="Ver as conversas de todo mundo (o monitor), não só as suas"
+        data-test="everyone-toggle"
+        @click="conversations.setEveryone(!conversations.everyone)"
+      >
+        De todos
+      </button>
     </div>
 
     <div v-if="!inArchived && (agentTabs.length > 1 || conversations.filters.agentId)" class="flex gap-1.5 overflow-x-auto px-4 pb-2">
@@ -125,7 +142,7 @@ const inArchived = computed(() => conversations.view === 'archived')
           :conversation="conversation"
           :active="conversation.id === conversations.selectedId"
           :unread="false"
-          :show-owner="auth.isAdmin"
+          :show-owner="auth.isAdmin && conversations.everyone"
           archived
         />
         <p v-if="conversations.archivedLoading" class="py-2 text-center text-xs text-zinc-500">Carregando…</p>
@@ -156,7 +173,7 @@ const inArchived = computed(() => conversations.view === 'archived')
         :active="conversation.id === conversations.selectedId"
         :unread="conversations.unread.has(conversation.id)"
         :running="conversations.running.has(conversation.id)"
-        :show-owner="auth.isAdmin"
+        :show-owner="auth.isAdmin && conversations.everyone"
       />
       <div ref="sentinel" class="h-6" />
       <p v-if="conversations.loading" class="py-2 text-center text-xs text-zinc-500">Carregando…</p>

@@ -570,6 +570,32 @@ describe('SqliteConversationRepository — monitor, rótulos e compartilhamento'
       assert.deepStrictEqual(await ids('acme'), ['a', 'b', 'd'])
     })
 
+    it('⛔ a caixa de entrada é o que se vê: sem arquivadas nem delegadas, na lista e no total; com `owner`, só as dele; acha pelo id', async () => {
+      const repo = await seed()
+      await repo.saveSession(session({ id: 'gw_filha', title: 'Delegada', metadata: { ...owner('u1'), delegatedBy: 'a' }, updatedAt: new Date('2026-08-30T10:06:00Z') }))
+      await repo.setArchived('b', true, 'u2')
+
+      const all = await repo.pageSessions({ page: 1, pageSize: 10 })
+      assert.deepStrictEqual(
+        all.sessions.map((item) => item.id),
+        ['a', 'c', 'd', 'e'],
+      )
+      assert.strictEqual(all.total, 4)
+
+      const mine = await repo.pageSessions({ page: 1, pageSize: 10, owner: { id: 'u1', account: 'acme' } })
+      assert.deepStrictEqual(
+        mine.sessions.map((item) => item.id),
+        ['a', 'd'],
+      )
+      assert.deepStrictEqual(mine.facets.provider, { google: 1, claude: 1 })
+
+      await repo.saveSession(session({ id: 'gw_01M6P3NGTK', title: 'Migração', metadata: owner('u1'), updatedAt: new Date('2026-08-30T10:07:00Z') }))
+      assert.deepStrictEqual(
+        (await repo.pageSessions({ page: 1, pageSize: 10, q: 'gw_01m6p3' })).sessions.map((item) => item.id),
+        ['gw_01M6P3NGTK'],
+      )
+    })
+
     it('o termo digitado é literal: % e _ não viram padrão', async () => {
       const repo = await seed()
 

@@ -58,6 +58,36 @@ describe('applyEvent', () => {
     expect(applyEvent([], { type: 'conversation.updated', session: owned }, { ...none, q: 'pedi' }).added).toBe(true)
     expect(applyEvent([], { type: 'conversation.updated', session: owned }, { ...none, q: 'bia' }).added).toBe(false)
   })
+
+  it('a busca acha pelo id (gw_…)', () => {
+    const cited = conversation('gw_01M6P3NGTK9PFHYSET4GPWHDK4', '2026-10-22T10:09:00Z', { title: 'Migração' })
+    expect(applyEvent([], { type: 'conversation.updated', session: cited }, { ...none, q: 'gw_01m6p3ng' }).added).toBe(true)
+  })
+
+  it('⛔ a delegada não entra na caixa de entrada (aparece dentro da conversa que a originou)', () => {
+    const child = conversation('filha', '2026-10-22T10:09:00Z', { metadata: { delegatedBy: 'mae' } })
+    expect(applyEvent([], { type: 'conversation.updated', session: child }, none).added).toBe(false)
+  })
+})
+
+describe('store: a caixa do admin é dele; "De todos" liga o monitor', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.mocked(api).mockReset()
+  })
+
+  it('por padrão pede só as suas (mine=1); com De todos, sem', async () => {
+    const store = useConversationsStore()
+    vi.mocked(api).mockResolvedValue({ sessions: [], total: 0 } as never)
+    await store.load(true)
+    expect(vi.mocked(api).mock.calls.at(-1)?.[1]).toMatchObject({ query: { scope: 'all', mine: 1 } })
+
+    await store.setEveryone(true)
+    const query = (vi.mocked(api).mock.calls.at(-1)?.[1] as { query: Record<string, unknown> }).query
+    expect(query.scope).toBe('all')
+    expect(query.mine).toBeUndefined()
+    store.unsubscribe()
+  })
 })
 
 describe('store: respostas obsoletas', () => {
