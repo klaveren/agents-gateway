@@ -39,7 +39,7 @@ export class LoopGuard {
     turn.checked.set(signature, times)
     const limits = this.limits()
     this.stopIfRepeated(turn, tool, signature, limits)
-    return times >= limits.refuseAt ? loopRefusal(times - 1) : undefined
+    return times >= limits.refuseAt ? loopRefusal(times, limits.stopAt) : undefined
   }
 
   /** Um evento do turno: `tool.started` conta a chamada; `tool.error` soma um erro seguido; `tool.result` zera. */

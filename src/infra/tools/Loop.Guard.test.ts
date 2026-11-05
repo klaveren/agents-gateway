@@ -15,7 +15,10 @@ describe('LoopGuard — o detector de laço', () => {
       verdicts.map((verdict) => !!verdict),
       [false, false, false, true, true, true],
     )
-    assert.match(verdicts[3]!, /mesma chamada 3 vezes/)
+    assert.match(verdicts[3]!, /4ª chamada idêntica neste turno \(você já fez 3\)/)
+    assert.match(verdicts[3]!, /Mais 1 recusa e, na 6ª chamada idêntica, o seu turno é parado/)
+    assert.match(verdicts[4]!, /A PRÓXIMA chamada idêntica \(a 6ª\) PARA o seu turno/)
+    assert.match(verdicts[3]!, /bash_start e bash_logs/)
     assert.match(guard.stopReason('s') ?? '', /run_bash \{"command":"cat x"\} repetido 6 vezes/)
     assert.strictEqual(guard.check('s', 'run_bash', { command: 'cat y' }), undefined)
   })
