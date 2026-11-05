@@ -5,6 +5,7 @@
   import { renderMarkdown } from '@/lib/markdown'
   import type { ITurn } from '@/lib/types'
   import { useAgentsStore } from '@/stores/agents'
+  import Icon from './Icon.vue'
   import type { IPendingTurn } from '@/stores/thread'
 
   /** Um turno vira dois balões: a pergunta (direita) e a resposta do agente (esquerda). */
@@ -54,27 +55,23 @@
     return { agentId, sessionId }
   }
   /**
-   * ⚖️ NO CELULAR, a tripa de ferramentas encolhe: ficam as últimas, as que ainda rodam e as delegações (são links); o
-   * resto entra num botão com o contador, que abre a lista inteira. Em tela larga, todas à vista.
+   * ⚖️ NO CELULAR, as ferramentas viram UMA linha: "Executou N ferramentas ›", que abre a lista inteira. À vista ficam só
+   * as que ainda rodam e as delegações (são links para a conversa filha). Em tela larga, todas à vista.
    */
-  const COMPACT_KEEP = 3
-  const COMPACT_FROM = 6
-  const narrow = ref(typeof window !== 'undefined' && !!window.matchMedia?.('(max-width: 767px)').matches)
-  const media = typeof window !== 'undefined' ? window.matchMedia?.('(max-width: 767px)') : undefined
+  const narrowQuery = typeof window !== 'undefined' ? window.matchMedia?.('(max-width: 767px)') : undefined
+  const narrow = ref(!!narrowQuery?.matches)
   const onMedia = (event: MediaQueryListEvent) => (narrow.value = event.matches)
-  media?.addEventListener?.('change', onMedia)
-  onBeforeUnmount(() => media?.removeEventListener?.('change', onMedia))
+  narrowQuery?.addEventListener?.('change', onMedia)
+  onBeforeUnmount(() => narrowQuery?.removeEventListener?.('change', onMedia))
   const showAllTools = ref(false)
+  const grouped = computed(() => narrow.value && tools.value.length > 1)
   const shownTools = computed(() => {
     const all = tools.value.map((tool, index) => ({ tool, index }))
-    if (!narrow.value || showAllTools.value || all.length < COMPACT_FROM) return all
-    return all.filter(({ tool, index }) => index >= all.length - COMPACT_KEEP || tool.status === 'running' || !!delegated(tool))
+    if (!grouped.value || showAllTools.value) return all
+    return all.filter(({ tool }) => tool.status === 'running' || !!delegated(tool))
   })
-  const hiddenTools = computed(() => tools.value.length - shownTools.value.length)
-  const hiddenErrors = computed(() => {
-    const shown = new Set(shownTools.value.map(({ index }) => index))
-    return tools.value.filter((tool, index) => !shown.has(index) && tool.status === 'error').length
-  })
+  const finishedTools = computed(() => tools.value.filter((tool) => tool.status !== 'running').length)
+  const toolErrors = computed(() => tools.value.filter((tool) => tool.status === 'error').length)
   const warnings = computed(() => props.turn?.warnings ?? props.pending?.warnings ?? [])
   const aborted = computed(() => props.turn?.aborted ?? props.pending?.aborted ?? false)
   const error = computed(() => props.turn?.error ?? props.pending?.error)
@@ -114,21 +111,22 @@
         <p class="mt-1 whitespace-pre-wrap">{{ reasoning }}</p>
       </details>
 
-      <div v-if="tools.length" class="flex flex-wrap gap-1.5" data-test="tools">
-        <button
-          v-if="hiddenTools || (showAllTools && narrow && tools.length >= COMPACT_FROM)"
-          type="button"
-          class="flex items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-900 px-2.5 py-0.5 text-xs text-zinc-400 hover:text-zinc-200"
-          :aria-expanded="showAllTools"
-          data-test="tools-toggle"
-          @click="showAllTools = !showAllTools"
-        >
-          <template v-if="showAllTools">▾ recolher</template>
-          <template v-else>
-            ▸ +{{ hiddenTools }} ferramenta{{ hiddenTools > 1 ? 's' : '' }}
-            <span v-if="hiddenErrors" class="text-rose-300">· {{ hiddenErrors }} com erro</span>
-          </template>
-        </button>
+      <button
+        v-if="grouped"
+        type="button"
+        class="flex w-fit items-center gap-2 text-sm text-zinc-400 hover:text-zinc-200"
+        :aria-expanded="showAllTools"
+        data-test="tools-toggle"
+        @click="showAllTools = !showAllTools"
+      >
+        <Icon name="list" class="h-4 w-4 text-zinc-500" />
+        <span>
+          {{ pending && finishedTools < tools.length ? 'Executando' : 'Executou' }} {{ finishedTools }} ferramenta{{ finishedTools === 1 ? '' : 's' }}
+          <span v-if="toolErrors" class="text-rose-300">· {{ toolErrors }} com erro</span>
+        </span>
+        <Icon name="chevron" class="h-3.5 w-3.5 transition-transform" :class="{ 'rotate-90': showAllTools }" />
+      </button>
+      <div v-if="shownTools.length" class="flex flex-wrap gap-1.5" data-test="tools">
         <component
           :is="tool.status === 'error' ? 'button' : 'span'"
           v-for="{ tool, index } in shownTools"

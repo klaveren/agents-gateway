@@ -70,17 +70,24 @@ describe('TurnBubbles — ferramentas no celular', () => {
     { tool: 'Read', args: {} },
   ] as ITurn['toolCalls']
 
-  it('ficam as 3 últimas; o resto vai para o botão com o contador e os erros, que abre e recolhe', async () => {
+  it('uma linha "Executou N ferramentas", com os erros, que abre a lista inteira e recolhe', async () => {
     narrow(true)
     const host = await mount({ toolCalls: calls })
     const toggle = host.querySelector<HTMLButtonElement>('[data-test="tools-toggle"]')!
-    expect(toggle.textContent).toContain('+4 ferramentas')
+    expect(toggle.textContent).toContain('Executou 7 ferramentas')
     expect(toggle.textContent).toContain('1 com erro')
-    expect(host.querySelector('[data-test="tools"]')!.textContent).not.toContain('run_bash')
+    expect(host.querySelector('[data-test="tools"]')).toBeNull()
     toggle.click()
     await nextTick()
     expect(host.querySelector('[data-test="tools"]')!.textContent).toContain('run_bash')
-    expect(host.querySelector('[data-test="tools-toggle"]')!.textContent).toContain('recolher')
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('uma ferramenta só fica como chip, sem a linha', async () => {
+    narrow(true)
+    const host = await mount({ toolCalls: [{ tool: 'Read', args: {} }] as ITurn['toolCalls'] })
+    expect(host.querySelector('[data-test="tools-toggle"]')).toBeNull()
+    expect(host.querySelector('[data-test="tools"]')!.textContent).toContain('Read')
   })
 
   it('em tela larga, todas à vista e sem botão', async () => {
