@@ -128,6 +128,20 @@ select:not([multiple]) {
 }
 
 /*
+ * ⛔ O iPhone AMPLIA a página ao focar um campo com fonte menor que 16px, e a tela fica fora do lugar. Nos aparelhos de
+ * toque do Safari, todo campo tem 16px — o zoom de pinça continua livre (nada de `maximum-scale` no viewport).
+ */
+@supports (-webkit-touch-callout: none) {
+  @media (pointer: coarse) {
+    input,
+    textarea,
+    select {
+      font-size: 16px !important;
+    }
+  }
+}
+
+/*
  * Os CAMPOS de uma linha (`.input`) têm a altura dos botões de ação (36px): campo e botão lado a lado alinham.
  * Fora de camada e mais específico que o `.input` de cada tela, de propósito; a área de texto não entra.
  */
