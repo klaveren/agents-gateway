@@ -99,7 +99,7 @@
 
 <template>
   <div class="flex flex-col gap-2">
-    <div v-if="request || files" class="ml-auto max-w-[78%] rounded-2xl rounded-br-md bg-emerald-600/90 px-3.5 py-2 text-sm whitespace-pre-wrap text-white shadow">
+    <div v-if="request || files" class="ml-auto max-w-[78%] rounded-2xl rounded-br-md bg-emerald-600/90 px-3.5 py-2 text-sm whitespace-pre-wrap wrap-anywhere text-white shadow">
       {{ request }}
       <div v-if="files" class="mt-1 text-xs text-emerald-100/80">📎 {{ files }} anexo(s)</div>
       <div v-if="turn" class="mt-0.5 text-right text-[11px] text-emerald-100/70">{{ shortTime(turn.at) }}</div>
@@ -108,7 +108,7 @@
     <div class="mr-auto flex max-w-[85%] flex-col gap-1.5">
       <details v-if="reasoning" class="w-fit max-w-full rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-1.5 text-xs text-zinc-400">
         <summary class="cursor-pointer select-none">Raciocínio</summary>
-        <p class="mt-1 whitespace-pre-wrap">{{ reasoning }}</p>
+        <p class="mt-1 whitespace-pre-wrap wrap-anywhere">{{ reasoning }}</p>
       </details>
 
       <button
@@ -163,16 +163,16 @@
             {{ copiedError ? 'Copiado' : 'Copiar' }}
           </button>
         </div>
-        <p class="mt-1 font-mono break-words whitespace-pre-wrap">{{ failed.message || 'Sem mensagem de erro.' }}</p>
+        <p class="mt-1 font-mono whitespace-pre-wrap wrap-anywhere">{{ failed.message || 'Sem mensagem de erro.' }}</p>
       </div>
 
       <div v-if="text || thinking || error || aborted || segments.length" class="rounded-2xl rounded-bl-md bg-zinc-800/90 px-3.5 py-2 text-sm leading-relaxed shadow">
         <template v-for="(part, index) in segments" :key="index">
           <!-- eslint-disable-next-line vue/no-v-html -- renderMarkdown escapa antes de marcar -->
-          <div v-if="part.kind === 'text'" class="prose-agent break-words" v-html="renderMarkdown(part.text)" />
+          <div v-if="part.kind === 'text'" class="prose-agent wrap-anywhere" v-html="renderMarkdown(part.text)" />
           <div
             v-else
-            class="my-2 ml-auto w-fit max-w-[90%] rounded-2xl rounded-br-md bg-emerald-600/90 px-3 py-1.5 text-sm whitespace-pre-wrap text-white"
+            class="my-2 ml-auto w-fit max-w-[90%] rounded-2xl rounded-br-md bg-emerald-600/90 px-3 py-1.5 text-sm whitespace-pre-wrap wrap-anywhere text-white"
             title="Mandada durante o turno"
           >
             {{ part.text }}
