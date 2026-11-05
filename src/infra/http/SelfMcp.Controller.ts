@@ -109,12 +109,53 @@ function resourceIndex(result: unknown): unknown {
 }
 
 /**
- * ⚖️ QUANTO O MCP ESPERA UM TURNO antes de devolver `running`: abaixo dos 60 s em que os clientes MCP (Claude Code,
- * o SDK) desistem da chamada. Turno mais longo segue no servidor; quem chamou acompanha com `get_turn`.
+ * ⚖️ QUANTO O MCP ESPERA UM TURNO antes de devolver `running`, conforme o que o cliente aguenta:
+ * - resposta JSON (sem fluxo): 50 s, abaixo dos 60 s em que o SDK desiste da chamada;
+ * - em fluxo (SSE), com `progressToken`: até o turno acabar, com teto de 30 min. O aviso de progresso a cada 15 s
+ *   mantém viva a chamada (o Claude Code aborta depois de 5 min sem resposta nem progresso);
+ * - em fluxo sem `progressToken`: 4 min, abaixo desses 5 min.
+ * Turno mais longo segue no servidor; quem chamou acompanha com `get_turn`.
  */
-const TURN_WAIT_DEFAULT_SECONDS = 45
-const TURN_WAIT_MAX_SECONDS = 50
+const TURN_WAIT = {
+  json: { default: 45, max: 50 },
+  stream: { default: 240, max: 240 },
+  progress: { default: 1800, max: 1800 },
+} as const
+const TURN_WAIT_MAX_SECONDS = TURN_WAIT.progress.max
 const TURN_POLL_MS = 1000
+const TURN_PROGRESS_MS = 15_000
+/** As ferramentas que seguram a chamada até o fim do turno: só elas respondem em fluxo (ver `serve`). */
+const TURN_TOOLS = new Set(['start_conversation', 'send_message', 'get_turn'])
+
+/** O que a chamada da ferramenta traz do cliente para a espera: o progresso, o cancelamento e o modo da resposta. */
+export interface ITurnWait {
+  streaming: boolean
+  progressToken?: string | number
+  signal?: AbortSignal
+  notify?: (progress: number, message: string) => Promise<void>
+  /** Os intervalos de consulta e de progresso (o teste encurta). */
+  pollMs?: number
+  progressMs?: number
+}
+
+/** A espera de uma chamada, a partir do que o SDK entrega ao handler. */
+function turnWait(streaming: boolean, extra: { _meta?: { progressToken?: string | number }; signal?: AbortSignal; sendNotification?: (n: never) => Promise<void> }): ITurnWait {
+  const progressToken = streaming ? extra._meta?.progressToken : undefined
+  const send = extra.sendNotification
+  return {
+    streaming,
+    ...(progressToken !== undefined ? { progressToken } : {}),
+    ...(extra.signal ? { signal: extra.signal } : {}),
+    ...(progressToken !== undefined && send
+      ? { notify: (progress: number, message: string) => send({ method: 'notifications/progress', params: { progressToken, progress, message } } as never) }
+      : {}),
+  }
+}
+
+/** O teto da espera para esta chamada, segundo o modo (ver `TURN_WAIT`). */
+function waitLimits(wait: ITurnWait): { default: number; max: number } {
+  return !wait.streaming ? TURN_WAIT.json : wait.progressToken !== undefined ? TURN_WAIT.progress : TURN_WAIT.stream
+}
 
 const waitSecondsShape = z
   .number()
@@ -123,26 +164,41 @@ const waitSecondsShape = z
   .max(TURN_WAIT_MAX_SECONDS)
   .optional()
   .describe(
-    `How long to wait for the turn to finish (default ${TURN_WAIT_DEFAULT_SECONDS}, max ${TURN_WAIT_MAX_SECONDS}). Still running after that: \`status: running\`; call get_turn.`,
+    `How long to wait for the turn to finish. Default: until it ends, up to ${TURN_WAIT.progress.max} s, when the client streams (SSE) and sends a progressToken (a progress notification every ${TURN_PROGRESS_MS / 1000} s keeps the call alive); ${TURN_WAIT.stream.max} s when it streams without one; ${TURN_WAIT.json.max} s on a plain JSON response. Still running after that: \`status: running\`; call get_turn.`,
   )
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
-/** O turno `turn` até acabar ou até `waitSeconds` passar — o que vier primeiro. */
-async function awaitTurn(api: TSelfApi, sessionId: string, turn: number, waitSeconds = TURN_WAIT_DEFAULT_SECONDS): Promise<ISelfReply> {
-  const deadline = Date.now() + Math.min(Math.max(waitSeconds, 0), TURN_WAIT_MAX_SECONDS) * 1000
+/**
+ * O turno `turn` até acabar ou até `waitSeconds` passar — o que vier primeiro. Em fluxo, avisa o progresso a cada 15 s
+ * (as ferramentas usadas até ali). ⛔ O cliente que desliga (`signal`) encerra a espera: o turno segue no servidor.
+ */
+export async function awaitTurn(api: TSelfApi, sessionId: string, turn: number, waitSeconds: number | undefined, wait: ITurnWait): Promise<ISelfReply> {
+  const limits = waitLimits(wait)
+  const pollMs = wait.pollMs ?? TURN_POLL_MS
+  const progressMs = wait.progressMs ?? TURN_PROGRESS_MS
+  const startedAt = Date.now()
+  const deadline = startedAt + Math.min(Math.max(waitSeconds ?? limits.default, 0), limits.max) * 1000
+  let nextProgress = startedAt + progressMs
   for (;;) {
     const answer = await api('GET', `/sessions/${encodeURIComponent(sessionId)}/turns/${turn}`)
-    if (!answer.ok || (answer.result as { status?: string }).status !== 'running' || Date.now() + TURN_POLL_MS > deadline) return answer
-    await sleep(TURN_POLL_MS)
+    const running = answer.ok && (answer.result as { status?: string }).status === 'running'
+    if (!running || wait.signal?.aborted || Date.now() + pollMs > deadline) return answer
+    if (wait.notify && Date.now() >= nextProgress) {
+      nextProgress = Date.now() + progressMs
+      const tools = ((answer.result as { tools?: unknown }).tools as string[] | undefined) ?? []
+      const seconds = Math.round((Date.now() - startedAt) / 1000)
+      await wait.notify(seconds, `running for ${seconds} s${tools.length ? ` · ${tools.length} tool calls, last: ${tools.at(-1)}` : ''}`).catch(() => undefined)
+    }
+    await sleep(pollMs)
   }
 }
 
 /** Começa o turno (`POST …/turns`, assíncrono) e espera o quanto der. */
-async function startTurn(api: TSelfApi, sessionId: string, message: string, waitSeconds?: number): Promise<ISelfReply> {
+async function startTurn(api: TSelfApi, sessionId: string, message: string, waitSeconds: number | undefined, wait: ITurnWait): Promise<ISelfReply> {
   const started = await api('POST', `/sessions/${encodeURIComponent(sessionId)}/turns`, { body: { message } })
   if (!started.ok) return started
-  return awaitTurn(api, sessionId, (started.result as { turn: number }).turn, waitSeconds)
+  return awaitTurn(api, sessionId, (started.result as { turn: number }).turn, waitSeconds, wait)
 }
 
 /** O estado do turno para quem chamou: o texto até aqui, as ferramentas, o fim. */
@@ -162,15 +218,15 @@ function turnStatusView(result: unknown) {
 
 /**
  * ⛔ AS FERRAMENTAS DE CONVERSA, só para quem está de fora (pessoa, integração) — ver `PEOPLE_ONLY_GATEWAY_TOOLS`.
- * ⚖️ NENHUMA SEGURA A CHAMADA ATÉ O FIM DO TURNO: começa, espera até `waitSeconds` e devolve. Antes, `send_message`
- * esperava o turno inteiro, e o cliente MCP desistia em 60 s — o turno seguia no servidor e a resposta se perdia.
+ * ⚖️ A ESPERA SEGUE O CLIENTE (ver `TURN_WAIT`): em fluxo com progresso, a chamada fica aberta até o turno acabar, e
+ * quem conversa não precisa perguntar de novo; em JSON, 50 s e `running`, como antes.
  */
-function registerConversationTools(server: McpServer, api: TSelfApi) {
+function registerConversationTools(server: McpServer, api: TSelfApi, streaming: boolean) {
   server.registerTool(
     'start_conversation',
     {
       description:
-        'Open a conversation with an agent. With `message`, also starts the first turn and waits up to `waitSeconds` for it; a longer turn comes back as `status: running` — follow it with get_turn. `metadata` is stored with the conversation (e.g. { accountId, userId }) for billing and filtering.',
+        'Open a conversation with an agent. With `message`, also starts the first turn and waits for it (see `waitSeconds`: on a streaming client, until it ends); a longer turn comes back as `status: running` — follow it with get_turn. `metadata` is stored with the conversation (e.g. { accountId, userId }) for billing and filtering.',
       inputSchema: {
         agentId: z.string(),
         mode: z.enum(['chat', 'agent']).optional().describe('chat = plain SDK; agent = the provider Agents SDK.'),
@@ -183,10 +239,10 @@ function registerConversationTools(server: McpServer, api: TSelfApi) {
         waitSeconds: waitSecondsShape,
       },
     },
-    async ({ message, waitSeconds, ...body }) => {
+    async ({ message, waitSeconds, ...body }, extra) => {
       const created = await api('POST', '/sessions', { body })
       if (!created.ok || !message) return reply(created)
-      return reply(await startTurn(api, (created.result as { id: string }).id, message, waitSeconds), turnStatusView)
+      return reply(await startTurn(api, (created.result as { id: string }).id, message, waitSeconds, turnWait(streaming, extra)), turnStatusView)
     },
   )
 
@@ -194,21 +250,21 @@ function registerConversationTools(server: McpServer, api: TSelfApi) {
     'send_message',
     {
       description:
-        'Send a message in a live conversation: starts the turn and waits up to `waitSeconds` for it. Still running after that: `status: running` — follow it with get_turn.',
+        'Send a message in a live conversation: starts the turn and waits for it (see `waitSeconds`: on a streaming client, until it ends, with progress while it runs). Still running after that: `status: running` — follow it with get_turn.',
       inputSchema: { sessionId: z.string(), message: z.string(), waitSeconds: waitSecondsShape },
     },
-    async ({ sessionId, message, waitSeconds }) => reply(await startTurn(api, sessionId, message, waitSeconds), turnStatusView),
+    async ({ sessionId, message, waitSeconds }, extra) => reply(await startTurn(api, sessionId, message, waitSeconds, turnWait(streaming, extra)), turnStatusView),
   )
 
   server.registerTool(
     'get_turn',
     {
       description:
-        'Follow a turn started by start_conversation or send_message: waits up to `waitSeconds` for it to finish, then returns its status (`running`, `ok`, `error`, `aborted`) and text.',
+        'Follow a turn started by start_conversation or send_message: waits for it to finish (see `waitSeconds`), then returns its status (`running`, `ok`, `error`, `aborted`) and text.',
       inputSchema: { sessionId: z.string(), turn: z.number().int().min(0), waitSeconds: waitSecondsShape },
       annotations: { readOnlyHint: true },
     },
-    async ({ sessionId, turn, waitSeconds }) => reply(await awaitTurn(api, sessionId, turn, waitSeconds), turnStatusView),
+    async ({ sessionId, turn, waitSeconds }, extra) => reply(await awaitTurn(api, sessionId, turn, waitSeconds, turnWait(streaming, extra)), turnStatusView),
   )
 }
 
@@ -279,7 +335,7 @@ const permissionRuleShape = z.object({
  * `SELF_MCP_WRITE=0` desligando — o cliente não vê o que não pode usar. A API, por baixo, recusaria de qualquer jeito.
  * ⛔ Chave de API e senha não passam por aqui: não há ferramenta para elas.
  */
-function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolean; write: boolean; agentId?: string }) {
+function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolean; write: boolean; agentId?: string; streaming?: boolean }) {
   server.registerTool(
     'list_projects',
     {
@@ -302,7 +358,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   )
 
   // ⛔ Agente não conversa por aqui: fala com outro só por `delegate_to_agent`, com as travas da delegação.
-  if (!access.agentId) registerConversationTools(server, api)
+  if (!access.agentId) registerConversationTools(server, api, access.streaming === true)
 
   server.registerTool(
     'switch_model',
@@ -1195,15 +1251,24 @@ async function serve(req: Request, res: Response): Promise<void> {
   // ⚖️ Escrita LIGADA para admin por padrão (o Atlas precisa dela); `SELF_MCP_WRITE=0` desliga. A API, por
   // baixo, continua só deixando admin escrever.
   const agentId = req.headers[IDENTITY_HEADERS.agent]
-  registerTools(server, api, { admin, write: process.env.SELF_MCP_WRITE !== '0', ...(typeof agentId === 'string' && agentId.trim() ? { agentId: agentId.trim() } : {}) })
+  // ⚖️ EM FLUXO SÓ A CHAMADA QUE ESPERA TURNO, e só para cliente que aceita SSE: o resto segue em JSON, como sempre.
+  const streaming = streamsTurn(req)
+  registerTools(server, api, { admin, write: process.env.SELF_MCP_WRITE !== '0', streaming, ...(typeof agentId === 'string' && agentId.trim() ? { agentId: agentId.trim() } : {}) })
 
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: !streaming })
   res.on('close', () => {
     void transport.close()
     void server.close()
   })
   await server.connect(transport)
   await transport.handleRequest(req, res, req.body)
+}
+
+/** A requisição é a chamada de uma ferramenta que espera turno, de um cliente que aceita SSE. */
+export function streamsTurn(req: Pick<Request, 'headers' | 'body'>): boolean {
+  if (!/\btext\/event-stream\b/.test(String(req.headers.accept ?? ''))) return false
+  const body = req.body as { method?: unknown; params?: { name?: unknown } } | undefined
+  return !Array.isArray(body) && body?.method === 'tools/call' && typeof body.params?.name === 'string' && TURN_TOOLS.has(body.params.name)
 }
 
 /** No modo sem estado não há stream nem sessão para abrir ou encerrar. */
