@@ -45,7 +45,19 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value ?? null)
 }
 
-/** O texto da recusa: o que o modelo lê no lugar do resultado. */
-export function loopRefusal(times: number): string {
-  return `Recusado pelo detector de laço: você já fez esta mesma chamada ${times} vezes neste turno, e o resultado não muda. Mude a abordagem ou responda com o que já sabe.`
+/**
+ * O texto da recusa: o que o modelo lê no lugar do resultado. `times` é o número DESTA chamada; `stopAt`, a que para o
+ * turno. ⚖️ Com a contagem regressiva: o agente que insiste sabe, antes, que a próxima idêntica encerra o turno dele.
+ */
+export function loopRefusal(times: number, stopAt: number): string {
+  const left = stopAt - times
+  const countdown =
+    left <= 1
+      ? `⛔ A PRÓXIMA chamada idêntica (a ${stopAt}ª) PARA o seu turno.`
+      : `⚠️ Mais ${left - 1} recusa${left - 1 > 1 ? 's' : ''} e, na ${stopAt}ª chamada idêntica, o seu turno é parado.`
+  return [
+    `Recusado pelo detector de laço do gateway: esta é a ${times}ª chamada idêntica neste turno (você já fez ${times - 1}), e o resultado não muda.`,
+    countdown,
+    'Mude a abordagem ou responda com o que já sabe. Para esperar algo (um processo, um horário), não repita a chamada: use bash_start e bash_logs, ou encerre o turno dizendo quando retomar.',
+  ].join(' ')
 }
