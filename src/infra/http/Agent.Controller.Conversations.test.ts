@@ -4,6 +4,7 @@ import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 import { IAgentProvider } from '@domain/ports/AgentProvider.Port'
 import { IConversationTurn } from '@domain/models/Conversation.Model'
+import { SessionNotFoundError } from '@domain/errors/Domain.Error'
 import { CancelSessionUseCase } from '@application/CancelSession.Usecase'
 import { ReconfigureSessionUseCase } from '@application/ReconfigureSession.Usecase'
 import { CreateSessionUseCase } from '@application/CreateSession.Usecase'
@@ -51,14 +52,18 @@ describe('AgentController — conversas, monitor e compartilhamento', () => {
       invoke: async () => ({ status: 'success', result: '' }),
     }) as unknown as ToolCatalog
 
-  const build = (extra: { pricing?: Record<string, { input: number; output: number }>; proof?: ICallerProof | null } = {}) => {
+  const build = (extra: { pricing?: Record<string, { input: number; output: number }>; proof?: ICallerProof | null; live?: boolean; resumed?: string[] } = {}) => {
     const conversations = new SqliteConversationRepository(':memory:')
     const provider = {
       createSession: async () => ({ id: 'x', provider: EProvider.OPENAI, mode: EMode.CHAT, createdAt: new Date() }),
       sendMessage: async function* () {},
       cancel: async () => {},
       dispose: async () => {},
-      describe: () => ({}),
+      // `live: false`: nenhuma sessão em memória (a conversa só gravada, como depois do `DELETE /sessions/:id`).
+      describe: (id: string) => {
+        if (extra.live === false) throw new SessionNotFoundError(id)
+        return {}
+      },
       reconfigure: () => {
         throw new Error('not used')
       },
@@ -79,6 +84,7 @@ describe('AgentController — conversas, monitor e compartilhamento', () => {
       settings: new NullSettingsRepository(),
       conversations,
       pricing: extra.pricing,
+      ...(extra.resumed ? { resumeSession: { execute: async (stored: { id: string }) => void extra.resumed!.push(stored.id) } as never } : {}),
     })
 
     return { controller, conversations }
@@ -350,6 +356,23 @@ describe('AgentController — conversas, monitor e compartilhamento', () => {
       const mine = await call(ALICE, (res) => todos('a1')(res, controller))
       assert.deepStrictEqual(mine.body!.result.items, [{ title: 'Ler', status: 'in_progress' }])
       assert.strictEqual((await call(BOB, (res) => todos('a1')(res, controller))).status, 404)
+    })
+  })
+
+  describe('GET /sessions/:id/turns/:turn — ler não reabre', () => {
+    it('⛔ a conversa fechada (só gravada) responde o turno gravado ao dono, sem voltar à memória; outra pessoa, 404', async () => {
+      const resumed: string[] = []
+      const { controller, conversations } = build({ live: false, resumed })
+      await seed(conversations)
+      const status = (id: string, turn: string) => (res: Response) => controller.turnStatus(request({ params: { id, turn } }), res)
+
+      const out = await call(ALICE, status('a1', '0'))
+      assert.strictEqual(out.status, 200)
+      assert.deepStrictEqual([out.body!.result.status, out.body!.result.text], ['ok', 'Há 10 unidades.'])
+      assert.deepStrictEqual(resumed, [], 'a leitura não retomou a sessão')
+
+      assert.strictEqual((await call(BOB, status('a1', '0'))).status, 404)
+      assert.strictEqual((await call(ALICE, status('nao-existe', '0'))).status, 404)
     })
   })
 

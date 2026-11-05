@@ -1705,9 +1705,7 @@ export class AgentController {
   async changes(req: Request, res: Response) {
     await this.respond(res, async () => {
       const sessionId = req.params.id as string
-      await this.requireOwnedSession(sessionId, { resume: true })
-      const session = await this.usecases.getSession.execute(sessionId)
-      const metadata = session.metadata
+      const { metadata } = await this.requireOwnedConversation(sessionId)
       const repository = metadata?.[REPOSITORY_METADATA_KEY]
       const projectId = metadata?.[PROJECT_METADATA_KEY]
       if (typeof repository !== 'string' || typeof projectId !== 'string' || !this.usecases.projects?.exists(projectId))
@@ -1744,7 +1742,7 @@ export class AgentController {
   async turnStatus(req: Request, res: Response) {
     await this.respond(res, async () => {
       const sessionId = req.params.id as string
-      await this.requireOwnedSession(sessionId, { resume: true })
+      await this.requireOwnedConversation(sessionId)
       const turn = Number(req.params.turn)
       if (!Number.isInteger(turn) || turn < 0) throw new HttpError(422, 'validation_error', 'turn: a non-negative integer')
       const live = this.liveTurns.get(sessionId)
@@ -1921,6 +1919,26 @@ export class AgentController {
     if (!ownsSession(resolved, metadata)) throw new SessionNotFoundError(sessionId)
 
     return resolved
+  }
+
+  /**
+   * ⛔ LER NÃO REABRE: a conversa do chamador, viva ou só gravada, sem trazê-la de volta à memória. As rotas de leitura
+   * (o estado do turno, as alterações) passam por aqui; só mandar mensagem retoma (`requireOwnedSession` com `resume`).
+   * Antes, ler o turno depois do `DELETE /sessions/:id` ressuscitava a sessão, e quem fecha ao fim do turno (a esteira)
+   * via o fechamento não pegar.
+   */
+  private async requireOwnedConversation(sessionId: string): Promise<{ resolved: IResolvedCaller; metadata: Record<string, unknown> | undefined }> {
+    const resolved = await this.requireCaller()
+    let metadata: Record<string, unknown> | undefined
+    try {
+      metadata = (await this.usecases.getSession.execute(sessionId)).metadata
+    } catch {
+      const stored = await this.usecases.conversations.findSession(sessionId).catch(() => undefined)
+      if (!stored || !ownsSession(resolved, stored.metadata)) throw new SessionNotFoundError(sessionId)
+      return { resolved, metadata: stored.metadata }
+    }
+    if (!ownsSession(resolved, metadata)) throw new SessionNotFoundError(sessionId)
+    return { resolved, metadata }
   }
 
   /** A tabela de preços em vigor. */
