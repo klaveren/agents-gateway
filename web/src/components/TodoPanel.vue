@@ -22,7 +22,7 @@ const finished = computed(() => props.items.every((item) => item.status === 'don
       <span v-if="!open && current" class="min-w-0 flex-1 truncate text-xs text-emerald-300">{{ current.title }}</span>
       <span class="ml-auto text-xs text-zinc-500">{{ open ? '▾' : '▴' }}</span>
     </button>
-    <ol v-if="open" class="scroll-thin mt-1.5 flex max-h-44 flex-col gap-1 overflow-y-auto">
+    <ol v-if="open" class="mt-1.5 flex max-h-44 flex-col gap-1 overflow-y-auto">
       <li v-for="(item, index) in items" :key="index" class="flex items-start gap-2">
         <span
           class="mt-[3px] grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full border text-[9px] leading-none"

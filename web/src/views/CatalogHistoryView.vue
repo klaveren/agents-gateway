@@ -162,7 +162,7 @@ const link = (revision: IRevisionSummary) => itemLink(revision)
     <p class="font-medium text-zinc-200">Só quem administra vê o histórico do catálogo.</p>
   </div>
 
-  <div v-else class="scroll-thin h-full overflow-y-auto px-4 py-5">
+  <div v-else class="h-full overflow-y-auto px-4 py-5">
     <section class="mx-auto flex max-w-3xl flex-col gap-4">
       <header class="flex flex-wrap items-center gap-3">
         <h1 class="text-xl font-semibold">Histórico do catálogo</h1>

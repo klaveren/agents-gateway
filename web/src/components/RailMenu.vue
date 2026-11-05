@@ -53,7 +53,7 @@ watch(open, (isOpen) => {
     <div
       v-if="open"
       role="menu"
-      class="scroll-thin z-50 overflow-y-auto overscroll-contain rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-xl shadow-black/40"
+      class="z-50 overflow-y-auto overscroll-contain rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-xl shadow-black/40"
       :class="placement === 'side' ? 'absolute top-0 left-full ml-3 w-64' : 'fixed inset-x-2'"
       :style="{ ...(room ? { maxHeight: `${room}px` } : {}), ...(placement === 'up' && above ? { bottom: `${above}px` } : {}) }"
     >

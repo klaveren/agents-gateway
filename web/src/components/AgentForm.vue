@@ -767,7 +767,7 @@
         <textarea
           v-model="form.soul"
           rows="4"
-          class="input scroll-thin text-[13px] leading-relaxed"
+          class="input text-[13px] leading-relaxed"
           placeholder="Você é a Íris: gentil, direta, explica sem jargão e admite quando não sabe."
         />
         <small v-if="form.soul" class="hint">{{ sizeHint(form.soul, 'a cada turno') }}</small>
@@ -778,7 +778,7 @@
           Instrução do sistema
           <em class="font-normal text-zinc-500">— o que o agente faz: função, regras, como usar as ferramentas</em>
         </span>
-        <textarea v-model="form.systemPrompt" required rows="18" data-tab="instrucoes" class="input scroll-thin font-mono text-[13px] leading-relaxed" placeholder="Você é o agente…" />
+        <textarea v-model="form.systemPrompt" required rows="18" data-tab="instrucoes" class="input font-mono text-[13px] leading-relaxed" placeholder="Você é o agente…" />
         <small v-if="form.systemPrompt" class="hint">{{ sizeHint(form.systemPrompt, 'a cada turno') }}</small>
         <small v-if="anyGoogle" class="hint">Com Gemini, evite {chaves} no texto: viram variáveis e dão erro.</small>
         <CliPromptMeter
@@ -855,7 +855,7 @@
             <RouterLink to="/models" class="underline">Ative em Modelos</RouterLink>
             .
           </p>
-          <ul v-else class="scroll-thin max-h-64 divide-y divide-zinc-800/70 overflow-y-auto rounded-lg border border-zinc-800">
+          <ul v-else class="max-h-64 divide-y divide-zinc-800/70 overflow-y-auto rounded-lg border border-zinc-800">
             <li v-for="model in visibleModels(target.provider)" :key="model.modelId" class="flex items-center gap-3 px-3 py-2 font-normal">
               <input type="checkbox" class="accent-emerald-500" :checked="target.models.includes(model.modelId)" @change="toggleModel(target, model.modelId)" />
               <span class="min-w-0 flex-1">

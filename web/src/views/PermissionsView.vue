@@ -116,7 +116,7 @@ watch(decisionAgent, () => void loadDecisions())
     <p class="font-medium text-zinc-200">Só quem administra vê as permissões.</p>
   </div>
 
-  <div v-else class="scroll-thin h-full overflow-y-auto px-4 py-5">
+  <div v-else class="h-full overflow-y-auto px-4 py-5">
     <section class="mx-auto flex max-w-3xl flex-col gap-4">
       <header>
         <h1 class="flex items-center gap-2 text-xl font-semibold">

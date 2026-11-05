@@ -33,7 +33,7 @@
       <span v-if="!open && working.length" class="min-w-0 flex-1 truncate text-xs text-sky-300">{{ working.map(nameOf).join(', ') }} trabalhando</span>
       <span class="ml-auto text-xs text-zinc-500">{{ open ? '▾' : '▴' }}</span>
     </button>
-    <ol v-if="open" class="scroll-thin mt-1.5 flex max-h-44 flex-col gap-1 overflow-y-auto">
+    <ol v-if="open" class="mt-1.5 flex max-h-44 flex-col gap-1 overflow-y-auto">
       <li v-for="child in items" :key="child.id">
         <RouterLink :to="`/c/${child.id}`" class="flex items-center gap-2 rounded-md py-0.5 hover:bg-zinc-800/60" :data-child="child.id">
           <span

@@ -273,7 +273,7 @@ const lineWarning = (line: ILedgerLine) => context.value?.warnings.find((warning
         </span>
         <!-- eslint-disable-next-line vue/no-v-html -- renderMarkdown escapa antes de marcar -->
         <div v-if="preview" class="prose-agent rounded-lg border border-zinc-800 p-3 text-sm" data-test="ledger-preview" v-html="renderMarkdown(draft.playbook || '_(vazio)_')" />
-        <textarea v-else v-model="draft.playbook" rows="6" class="input scroll-thin font-mono text-[13px]" placeholder="Árvore, diagrama, contrato — o que fatiar em linhas destruiria." />
+        <textarea v-else v-model="draft.playbook" rows="6" class="input font-mono text-[13px]" placeholder="Árvore, diagrama, contrato — o que fatiar em linhas destruiria." />
         <small v-for="m in issues.playbook" :key="m" class="error">{{ m }}</small>
       </div>
       <div class="flex gap-2">

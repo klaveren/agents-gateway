@@ -23,7 +23,7 @@ onMounted(async () => {
     <p class="font-medium text-zinc-200">Só quem administra vê o ambiente do projeto.</p>
   </div>
 
-  <div v-else class="scroll-thin h-full overflow-y-auto px-4 py-5">
+  <div v-else class="h-full overflow-y-auto px-4 py-5">
     <section class="mx-auto flex max-w-3xl flex-col gap-4">
       <header>
         <h1 class="text-xl font-semibold">Ambiente{{ project ? ` — ${project.name}` : '' }}</h1>

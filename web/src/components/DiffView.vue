@@ -12,7 +12,7 @@ const LABEL: Record<IDiffLine['op'], string> = { add: 'adicionada', remove: 'rem
 </script>
 
 <template>
-  <div class="scroll-thin overflow-x-auto rounded-xl border border-zinc-800 font-mono text-[12px] leading-relaxed" data-test="diff">
+  <div class="overflow-x-auto rounded-xl border border-zinc-800 font-mono text-[12px] leading-relaxed" data-test="diff">
     <section v-for="(hunk, index) in hunks" :key="index" class="border-b border-zinc-800 last:border-b-0">
       <p class="bg-zinc-900 px-3 py-1 text-[11px] text-sky-300">@@ −{{ hunk.oldStart }},{{ hunk.oldLines }} +{{ hunk.newStart }},{{ hunk.newLines }} @@</p>
       <div

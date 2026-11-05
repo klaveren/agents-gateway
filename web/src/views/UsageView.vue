@@ -88,11 +88,11 @@
     </div>
   </div>
 
-  <div v-else class="scroll-thin h-full overflow-y-auto px-4 py-6">
+  <div v-else class="h-full overflow-y-auto px-4 py-6">
     <div class="mx-auto flex max-w-5xl flex-col gap-4">
       <header class="flex flex-wrap items-center gap-x-3 gap-y-2">
         <h1 class="text-xl font-semibold">Uso</h1>
-        <div v-if="auth.isAdmin" class="scroll-thin order-3 flex max-w-full gap-1 overflow-x-auto rounded-full bg-zinc-900 p-1 text-sm whitespace-nowrap sm:order-none">
+        <div v-if="auth.isAdmin" class="order-3 flex max-w-full gap-1 overflow-x-auto rounded-full bg-zinc-900 p-1 text-sm whitespace-nowrap sm:order-none">
           <button class="rounded-full px-3 py-1" :class="tab === 'mine' ? 'bg-zinc-700 text-white' : 'text-zinc-400'" @click="go({ tab: undefined, user: undefined })">
             Meu uso
           </button>

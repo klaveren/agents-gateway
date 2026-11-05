@@ -64,9 +64,29 @@ body {
   @apply text-emerald-400 underline underline-offset-2;
 }
 
-.scroll-thin {
-  scrollbar-width: thin;
-  scrollbar-color: rgb(63 63 70) transparent;
+/* Barra de rolagem quase imperceptível em toda a tela: 4px, apagada, acende sob o cursor.
+   O Chrome ignora o `::-webkit-scrollbar` quando `scrollbar-width` está definido, por isso o padrão
+   fica só para o Firefox. */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: rgb(63 63 70 / 0.45);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(113 113 122 / 0.7);
+}
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(63 63 70 / 0.45) transparent;
+  }
 }
 
 .no-scrollbar {

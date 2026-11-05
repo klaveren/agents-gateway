@@ -196,7 +196,7 @@
     </div>
     <div v-if="slashOpen" class="mb-2 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-lg shadow-black/30">
       <div class="flex items-center gap-1 border-b border-zinc-800 px-2 py-1.5 text-xs">
-        <div class="scroll-thin flex min-w-0 gap-1 overflow-x-auto" role="tablist" aria-label="Tipo">
+        <div class="flex min-w-0 gap-1 overflow-x-auto" role="tablist" aria-label="Tipo">
           <button
             v-for="item in SLASH_TABS"
             :key="item.kind"
@@ -225,7 +225,7 @@
         </label>
       </div>
       <!-- ⚖️ Altura FIXA: a lista rola em vez de a caixa crescer e encolher a cada guia ou letra. -->
-      <div ref="list" class="scroll-thin h-56 overflow-y-auto">
+      <div ref="list" class="h-56 overflow-y-auto">
         <p v-if="slashEmpty" class="px-3 py-2 text-xs text-zinc-400">
           {{ searching ? `Nada encontrado em ${tabLabel}.` : `Nada em ${tabLabel} por aqui.` }}
         </p>
@@ -274,7 +274,7 @@
         rows="1"
         :disabled="disabled"
         :placeholder="shownPlaceholder"
-        class="scroll-thin max-h-[200px] min-h-10 flex-1 resize-none rounded-2xl bg-zinc-800 px-4 py-2.5 text-sm outline-none placeholder:text-zinc-500 focus:ring-1 focus:ring-emerald-500/60 disabled:opacity-50"
+        class="max-h-[200px] min-h-10 flex-1 resize-none rounded-2xl bg-zinc-800 px-4 py-2.5 text-sm outline-none placeholder:text-zinc-500 focus:ring-1 focus:ring-emerald-500/60 disabled:opacity-50"
         @input="grow"
         @keydown="onKey"
       />

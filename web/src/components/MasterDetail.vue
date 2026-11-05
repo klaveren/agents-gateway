@@ -20,7 +20,7 @@
       :class="open ? 'hidden lg:block' : 'block'"
       :style="{ '--list-w': `${listWidth}px` }"
     >
-      <div class="scroll-thin h-full overflow-x-hidden overflow-y-auto"><slot name="list" /></div>
+      <div class="h-full overflow-x-hidden overflow-y-auto"><slot name="list" /></div>
       <ListResizer />
     </aside>
     <section
@@ -34,7 +34,7 @@
         </RouterLink>
         <span v-if="title" class="min-w-0 truncate text-sm font-medium text-zinc-200">· {{ title }}</span>
       </header>
-      <div class="scroll-thin min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 py-5">
+      <div class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 py-5">
         <slot name="detail" />
       </div>
     </section>

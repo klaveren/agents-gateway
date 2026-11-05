@@ -457,7 +457,7 @@
       ref="scroller"
       data-test="thread-scroller"
       @scroll.passive="onScroll"
-      class="scroll-thin min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(circle_at_1px_1px,rgb(39_39_42/0.6)_1px,transparent_0)] [background-size:22px_22px] px-4 py-5"
+      class="min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(circle_at_1px_1px,rgb(39_39_42/0.6)_1px,transparent_0)] [background-size:22px_22px] px-4 py-5"
     >
       <div class="mx-auto flex max-w-3xl flex-col gap-5">
         <p v-if="thread.loading" class="text-center text-sm text-zinc-500">Carregando conversa…</p>
@@ -491,7 +491,7 @@
         class="pointer-events-auto absolute top-0 right-0 flex h-full w-full flex-col border-l border-zinc-800 bg-zinc-950 p-4 shadow-2xl md:w-[460px]"
         aria-label="Painel da conversa"
       >
-        <div class="scroll-thin min-h-0 flex-1 overflow-y-auto">
+        <div class="min-h-0 flex-1 overflow-y-auto">
           <ConversationPanel :conversation-id="header.id" :refresh-key="panelRefresh" closable @close="panelOpen = false" @count="panelCount = $event" />
         </div>
       </aside>

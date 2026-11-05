@@ -246,7 +246,7 @@ function describe(failure: unknown): string {
   <!-- ⚖️ O título e as guias moram numa coluna à esquerda da largura da lista (340px), como em Lista: trocar de guia não
        mexe neles de lugar. Em Construir, a mesma coluna leva as conversas com o construtor. -->
   <div v-else class="flex h-full min-h-0 flex-col lg:flex-row">
-    <aside class="scroll-thin flex shrink-0 flex-col border-b border-zinc-800/80 lg:h-full lg:w-[340px] lg:overflow-y-auto lg:border-r lg:border-b-0">
+    <aside class="flex shrink-0 flex-col border-b border-zinc-800/80 lg:h-full lg:w-[340px] lg:overflow-y-auto lg:border-r lg:border-b-0">
       <!-- A altura do botão "+" das listas: o título não pula ao trocar de guia. -->
       <header class="flex h-9 box-content items-center gap-2 px-4 pt-4 pb-3">
         <h1 class="text-xl font-semibold">{{ title }}</h1>
@@ -264,7 +264,7 @@ function describe(failure: unknown): string {
         <p v-if="buildsError" class="px-1 text-xs text-rose-300">{{ buildsError }}</p>
         <h2 v-else-if="builds.length" class="px-1 pt-3 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Conversas com o construtor</h2>
         <p v-else class="px-1 pt-2 text-xs text-zinc-500">Nenhuma conversa com o construtor{{ scopeProject ? ' neste projeto' : '' }} ainda.</p>
-        <div class="scroll-thin flex max-h-32 flex-col gap-0.5 overflow-y-auto lg:max-h-none">
+        <div class="flex max-h-32 flex-col gap-0.5 overflow-y-auto lg:max-h-none">
           <RouterLink
             v-for="build in builds"
             :key="build.id"
@@ -281,7 +281,7 @@ function describe(failure: unknown): string {
 
     <!-- CONSTRUIR: a conversa aberta e o rascunho. ⚖️ Lado a lado só quando o PRÓPRIO espaço é largo (container query). -->
     <div v-if="tab === 'build'" class="@container min-h-0 min-w-0 flex-1">
-      <div class="scroll-thin flex h-full min-h-0 flex-col overflow-y-auto @3xl:flex-row @3xl:overflow-hidden">
+      <div class="flex h-full min-h-0 flex-col overflow-y-auto @3xl:flex-row @3xl:overflow-hidden">
         <main class="flex min-h-[30rem] min-w-0 flex-1 flex-col @3xl:min-h-0">
           <ThreadView v-if="selected" :key="selected" embedded :agent-id="threadAgent" mode="agent" @removed="removed" />
           <section v-else class="mx-auto flex max-w-xl flex-col gap-3 p-6 text-sm text-zinc-300">
@@ -306,7 +306,7 @@ function describe(failure: unknown): string {
 
         <aside
           v-if="selected && importing"
-          class="scroll-thin flex shrink-0 flex-col gap-3 border-t border-zinc-800/80 p-4 @3xl:w-[22rem] @3xl:overflow-y-auto @3xl:border-t-0 @3xl:border-l"
+          class="flex shrink-0 flex-col gap-3 border-t border-zinc-800/80 p-4 @3xl:w-[22rem] @3xl:overflow-y-auto @3xl:border-t-0 @3xl:border-l"
           data-test="import-aside"
         >
           <h2 class="text-sm font-semibold text-zinc-200">Importação</h2>
@@ -320,7 +320,7 @@ function describe(failure: unknown): string {
             <li v-for="key in importing.keys" :key="key"><code class="break-all text-zinc-300">{{ key }}</code></li>
           </ul>
         </aside>
-        <aside v-else-if="selected" class="scroll-thin flex shrink-0 flex-col gap-3 border-t border-zinc-800/80 p-4 @3xl:w-[22rem] @3xl:overflow-y-auto @3xl:border-t-0 @3xl:border-l">
+        <aside v-else-if="selected" class="flex shrink-0 flex-col gap-3 border-t border-zinc-800/80 p-4 @3xl:w-[22rem] @3xl:overflow-y-auto @3xl:border-t-0 @3xl:border-l">
           <h2 class="text-sm font-semibold text-zinc-200">Rascunho</h2>
           <p v-if="!draft" class="text-xs text-zinc-500">Ainda nenhum. Quando o construtor fechar {{ info.article }}, o rascunho aparece aqui.</p>
           <template v-else>
@@ -409,7 +409,7 @@ function describe(failure: unknown): string {
     </div>
 
     <!-- PROTOCOLO: o do core, só leitura, e os complementos. -->
-    <div v-else class="scroll-thin min-h-0 flex-1 overflow-y-auto p-4">
+    <div v-else class="min-h-0 flex-1 overflow-y-auto p-4">
       <div class="mx-auto flex max-w-3xl flex-col gap-4">
         <p v-if="protocolError" class="text-sm text-rose-300">{{ protocolError }}</p>
         <template v-if="protocol">

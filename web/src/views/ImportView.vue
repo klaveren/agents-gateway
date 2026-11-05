@@ -578,7 +578,7 @@ watch(() => projects.current, reset)
     <p class="font-medium text-zinc-200">Só quem administra usa o importador do projeto.</p>
   </div>
 
-  <div v-else class="scroll-thin h-full overflow-y-auto px-4 py-5">
+  <div v-else class="h-full overflow-y-auto px-4 py-5">
     <section class="mx-auto flex max-w-6xl flex-col gap-4">
       <header>
         <h1 class="text-xl font-semibold">Importador{{ project ? ` — ${project.name}` : '' }}</h1>
@@ -604,7 +604,7 @@ watch(() => projects.current, reset)
 
         <section v-if="jobs.length" class="flex flex-col gap-1.5" data-test="jobs">
           <h2 class="text-xs font-medium text-zinc-500">Importações ({{ jobs.length }})</h2>
-          <ul class="scroll-thin flex max-h-56 flex-col divide-y divide-zinc-800 overflow-y-auto rounded-xl border border-zinc-800">
+          <ul class="flex max-h-56 flex-col divide-y divide-zinc-800 overflow-y-auto rounded-xl border border-zinc-800">
             <li v-for="entry in jobs" :key="entry.id" data-test="job-entry">
               <button
                 type="button"
@@ -852,7 +852,7 @@ watch(() => projects.current, reset)
 
               <aside
                 v-if="selected"
-                class="scroll-thin max-lg:fixed max-lg:inset-0 max-lg:z-40 max-lg:overflow-y-auto max-lg:bg-zinc-950 max-lg:px-4 max-lg:py-5 lg:sticky lg:top-0 lg:max-h-[calc(100vh-2.5rem)] lg:overflow-y-auto lg:rounded-xl lg:border lg:border-zinc-800 lg:p-3"
+                class="max-lg:fixed max-lg:inset-0 max-lg:z-40 max-lg:overflow-y-auto max-lg:bg-zinc-950 max-lg:px-4 max-lg:py-5 lg:sticky lg:top-0 lg:max-h-[calc(100vh-2.5rem)] lg:overflow-y-auto lg:rounded-xl lg:border lg:border-zinc-800 lg:p-3"
               >
                 <ImportItemDetail
                 :item="selected"

@@ -28,7 +28,7 @@ async function changePassword() {
 </script>
 
 <template>
-  <div class="scroll-thin h-full overflow-y-auto px-4 py-6">
+  <div class="h-full overflow-y-auto px-4 py-6">
     <div class="mx-auto flex max-w-2xl flex-col gap-6">
       <h1 class="text-xl font-semibold">Perfil</h1>
 
