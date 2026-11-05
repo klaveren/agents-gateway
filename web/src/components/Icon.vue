@@ -39,6 +39,7 @@
       | 'list'
       | 'chevron'
       | 'compress'
+      | 'tokens'
   }>()
 </script>
 
@@ -50,6 +51,10 @@
     </template>
     <template v-else-if="name === 'list'"><path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01" /></template>
     <template v-else-if="name === 'chevron'"><path d="M9 5l7 7-7 7" /></template>
+    <template v-else-if="name === 'tokens'">
+      <ellipse cx="12" cy="6" rx="7" ry="2.8" />
+      <path d="M5 6v6c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8V6M5 12v6c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8v-6" />
+    </template>
     <template v-else-if="name === 'compress'"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /></template>
     <template v-else-if="name === 'panel'">
       <rect x="4" y="4" width="16" height="16" rx="2" />
