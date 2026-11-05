@@ -25,6 +25,17 @@ export interface IUsageControllerDeps {
 }
 
 const PERIODS = [7, 30, 90]
+/** O período mais longo que se pede em dias (o mesmo teto da série diária). */
+const MAX_DAYS = 400
+/** O recorte de uma consulta de uso: a query, a série de dias e o período como a resposta o descreve. */
+interface IUsageRange {
+  query: IUsageQuery
+  now: Date
+  tz: number
+  days: string[]
+  period: { days: number | 'all'; since: string; tzOffsetMinutes: number }
+}
+
 /** O valor de `:value` que pede as conversas SEM a chave. */
 const NO_VALUE = '~none'
 /** As ferramentas que a tela mostra (as que mais pesaram). */
@@ -110,8 +121,9 @@ export class UsageController {
     await this.respond(res, async () => {
       await this.requireAdmin('usageByKey')
       const key = req.params.key as string
-      const { query, days, period } = this.range(req)
-      const rows = await this.deps.conversations.usage(this.grouped(query, key, req))
+      const range = this.range(req, undefined, { whole: true })
+      const rows = await this.deps.conversations.usage(this.grouped(range.query, key, req))
+      const { days, period } = this.spanned(range, rows)
       const pricingOf = (provider: string) => this.pricingOf(provider)
 
       return { period, key, totals: this.service.summarize(rows, { days }, pricingOf).totals, groups: this.service.byGroup(rows, pricingOf) }
@@ -124,8 +136,9 @@ export class UsageController {
       await this.requireAdmin('usageByKeyValue')
       const key = req.params.key as string
       const value = req.params.value as string
-      const { query, days, period } = this.range(req)
-      const rows = (await this.deps.conversations.usage(this.grouped(query, key, req))).filter((row) => (value === NO_VALUE ? row.group === undefined : row.group === value))
+      const range = this.range(req, undefined, { whole: true })
+      const rows = (await this.deps.conversations.usage(this.grouped(range.query, key, req))).filter((row) => (value === NO_VALUE ? row.group === undefined : row.group === value))
+      const { days, period } = this.spanned(range, rows)
 
       return { period, key, ...(value === NO_VALUE ? {} : { value }), ...this.service.summarize(rows, { days }, (provider) => this.pricingOf(provider)) }
     })
@@ -143,17 +156,19 @@ export class UsageController {
     return { ...query, groupBy: key, ...(Object.keys(filters).length ? { metadata: filters } : {}) }
   }
 
-  /** O período pedido (7, 30 ou 90 dias, contando hoje) e o fuso de quem pede. */
-  private range(req: Request, owner?: IUsageQuery['owner']): { query: IUsageQuery; days: string[]; period: { days: number; since: string; tzOffsetMinutes: number } } {
-    const requested = Number(req.query.days)
-    const period = PERIODS.includes(requested) ? requested : 30
+  /** O período pedido (contando hoje) e o fuso de quem pede. */
+  private range(req: Request, owner?: IUsageQuery['owner'], options: { whole?: boolean } = {}): IUsageRange {
     const rawTz = Number(req.query.tz)
     const tz = Number.isFinite(rawTz) ? Math.max(-14 * 60, Math.min(14 * 60, Math.trunc(rawTz))) : 0
-
     const now = (this.deps.now ?? (() => new Date()))()
+    // ⚖️ Por chave, sem `days`, é o recorte INTEIRO: o custo de um épico é o do épico todo, por mais que ele dure.
+    // Com `days`, qualquer inteiro de 1 a 400; fora disso é 422 (antes caía em 30 sem avisar).
+    const whole = options.whole === true && req.query.days === undefined
+    const period = whole ? undefined : this.periodOf(req.query.days, options.whole === true)
+
     // Meia-noite LOCAL de (período - 1) dias atrás, em UTC.
     const localMidnight = Math.floor((now.getTime() + tz * 60_000) / DAY) * DAY - tz * 60_000
-    const since = new Date(localMidnight - (period - 1) * DAY)
+    const since = new Date(period === undefined ? 0 : localMidnight - (period - 1) * DAY)
 
     const query: IUsageQuery = { since, tzOffsetMinutes: tz }
     if (owner !== undefined) query.owner = owner && owner.account === undefined ? { id: owner.id } : owner
@@ -161,7 +176,25 @@ export class UsageController {
     const project = typeof req.query.project === 'string' ? req.query.project.trim() : ''
     if (PROJECT_ID_PATTERN.test(project)) query.metadata = { project }
 
-    return { query, days: usageDays(since, now, tz), period: { days: period, since: since.toISOString(), tzOffsetMinutes: tz } }
+    return { query, now, tz, days: period === undefined ? [] : usageDays(since, now, tz), period: { days: period ?? 'all', since: since.toISOString(), tzOffsetMinutes: tz } }
+  }
+
+  /** `days` pedido. Na tela (sem chave) segue 7, 30 ou 90, com 30 de reserva; por chave, qualquer inteiro de 1 a 400. */
+  private periodOf(raw: unknown, free: boolean): number {
+    const requested = Number(raw)
+    if (!free) return PERIODS.includes(requested) ? requested : 30
+    if (!Number.isInteger(requested) || requested < 1 || requested > MAX_DAYS)
+      throw new HttpError(422, 'validation_error', 'Invalid period', [{ field: 'days', message: `a whole number from 1 to ${MAX_DAYS}, or absent for the whole history` }])
+    return requested
+  }
+
+  /** O recorte inteiro começa no primeiro dia com uso: a série diária vai dele até hoje. */
+  private spanned(range: IUsageRange, rows: readonly { day: string }[]): Pick<IUsageRange, 'days' | 'period'> {
+    if (range.period.days !== 'all') return range
+    const first = rows.reduce<string | undefined>((min, row) => (min === undefined || row.day < min ? row.day : min), undefined)
+    if (!first) return { days: [], period: { ...range.period, since: range.query.since.toISOString() } }
+    const since = new Date(Date.parse(`${first}T00:00:00.000Z`) - range.tz * 60_000)
+    return { days: usageDays(since, range.now, range.tz), period: { ...range.period, since: since.toISOString() } }
   }
 
   /** O peso de cada ferramenta no mesmo recorte (estimativa; ver `ToolUsage.Model`). Ausente sem o repositório que o conta. */

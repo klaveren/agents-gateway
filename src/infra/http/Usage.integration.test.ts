@@ -72,6 +72,29 @@ describe('uso (integração)', () => {
         usage: { inputTokens: 1_000_000, outputTokens: 100_000, totalTokens: 1_100_000 },
       })
     }
+    // Um épico de 200 dias atrás: fora de qualquer período de tela, mas dentro do recorte inteiro da chave.
+    const old = new Date(now.getTime() - 200 * 86_400_000)
+    await controller.conversations.saveSession({
+      id: 'epico-antigo',
+      agentId: 'operador-teste',
+      provider: 'claude',
+      mode: 'agent',
+      model: 'claude-sonnet-5',
+      createdAt: old,
+      updatedAt: old,
+      turns: 1,
+      usage: {},
+      metadata: { owner: { id: 'outro', email: 'outro@x.test' }, epicCode: 'EP-OLD' },
+    })
+    await controller.conversations.appendTurn({
+      sessionId: 'epico-antigo',
+      index: 0,
+      at: old,
+      request: 'oi',
+      text: 'olá',
+      toolCalls: [],
+      usage: { inputTokens: 1_000_000, outputTokens: 100_000, totalTokens: 1_100_000 },
+    })
   })
 
   after(() => stop())
@@ -138,5 +161,16 @@ describe('uso (integração)', () => {
     assert.strictEqual((await call('/usage/by/owner', { token: admin })).status, 422)
     assert.strictEqual((await call("/usage/by/a'b", { token: admin })).status, 422)
     assert.strictEqual((await call('/usage/by/accountId?x%27%29--=1', { token: admin })).status, 422)
+  })
+  it('por chave, sem `days`, é o histórico inteiro; com `days`, de 1 a 400', async () => {
+    const whole = await call('/usage/by/epicCode/EP-OLD', { token: admin })
+    assert.deepStrictEqual([whole.status, whole.body.result.period.days, whole.body.result.totals.conversations, whole.body.result.totals.costUsd], [200, 'all', 1, 3])
+    assert.ok(whole.body.result.period.since < new Date(Date.now() - 199 * 86_400_000).toISOString(), 'o período começa no primeiro dia com uso')
+    assert.strictEqual((await call('/usage/by/epicCode', { token: admin })).body.result.groups.find((group: { value: string }) => group.value === 'EP-OLD')?.conversations, 1)
+
+    const recent = await call('/usage/by/epicCode/EP-OLD?days=1', { token: admin })
+    assert.deepStrictEqual([recent.status, recent.body.result.period.days, recent.body.result.totals.conversations], [200, 1, 0])
+    for (const days of ['0', '401', 'abc', '1.5']) assert.strictEqual((await call(`/usage/by/epicCode/EP-OLD?days=${days}`, { token: admin })).status, 422, days)
+    assert.strictEqual((await call('/usage/me?days=1', { token: member })).body.result.period.days, 30, 'a tela segue 7, 30 ou 90')
   })
 })
