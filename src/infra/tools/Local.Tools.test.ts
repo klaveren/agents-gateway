@@ -1,5 +1,5 @@
 import assert from 'node:assert'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
@@ -739,5 +739,30 @@ describe('remoteSudoAllowed', () => {
     const rules: IPermissionRule[] = [{ category: 'terminal', pattern: '* sudo*', decision: 'allow' }]
     for (const command of ['sudo ssh 10.10.0.1 "sudo id"', 'ssh 10.10.0.1 "sudo id"; sudo id', 'echo sudo'])
       assert.strictEqual(await remoteSudoAllowed(command, checker(rules), asker), false, command)
+  })
+})
+
+describe('LocalTools — permissão de arquivo numa worktree', () => {
+  const project = realOf(mkdtempSync(join(tmpdir(), 'gw-wt-perm-')))
+  const worktree = join(project, 'repositories', 'logiccus', '_worktrees', 'EP-1')
+  before(() => mkdirSync(join(worktree, 'mcps', 'x'), { recursive: true }))
+  after(() => rmSync(project, { recursive: true, force: true }))
+
+  it('⛔ a regra escrita a partir da pasta do projeto vale dentro da worktree; a negação pela worktree continua vencendo', async () => {
+    const agent: IPermissionRule[] = [
+      { category: 'write', pattern: 'repositories/logiccus/_worktrees/*/**/*.test.ts', decision: 'allow' },
+      { category: 'write', pattern: 'mcps/x/proibido.test.ts', decision: 'deny' },
+    ]
+    const checker: IPermissionChecker = { check: (_asker, subject) => decide(subject, { agent }), layers: () => ({ agent, system: [] }) }
+    const tools = makeLocalTools({ policy: { timeoutMs: 1000, maxOutputChars: 500, cwd: project }, permissions: checker })
+    const write = tools.find((tool) => tool.name === 'write_file')!
+    const context = { agentId: 'agent-test-engineer', projectId: 'logiccus', sessionId: 's1', workFolder: { dir: worktree, projectDir: project } }
+
+    const ok = await write.execute({ path: 'mcps/x/a.test.ts', content: 'teste' }, context)
+    assert.strictEqual(ok.status, 'success', String(ok.result))
+    const absolute = await write.execute({ path: join(worktree, 'mcps/x/b.test.ts'), content: 'teste' }, context)
+    assert.strictEqual(absolute.status, 'success', String(absolute.result))
+    assert.strictEqual((await write.execute({ path: 'mcps/x/proibido.test.ts', content: 'x' }, context)).status, 'error')
+    assert.strictEqual((await write.execute({ path: 'mcps/x/codigo.ts', content: 'x' }, context)).status, 'error', 'fora do padrão, segue negado')
   })
 })

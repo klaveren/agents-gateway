@@ -32,6 +32,7 @@ import { buildClaudeMcpServers, claudeHiddenTools, claudeMcpServerName, LOCAL_SE
 import { IAgentMcpServer, ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { composeSystemPrompt, maxToolTurns } from './support/Prompt.Helper'
 import { isResourceFilePath } from '@infra/workspace/Resource.Files'
+import { projectAliases } from '@infra/workspace/Work.Folder'
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const
 type TImageType = (typeof IMAGE_TYPES)[number]
@@ -190,7 +191,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       [...agent.allowedTools, ...natives, ...local.map((tool) => tool.name)],
       remotes,
       project,
-      { asker: askerOf(context), cwd: workDir },
+      { asker: askerOf(context), cwd: workDir, ...(context.workFolder ? { folder: context.workFolder } : {}) },
       Object.keys(context.secretEnv ?? {}),
     )
     const options: Options = {
@@ -463,7 +464,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     allowed: string[],
     remotes: readonly IAgentMcpServer[] = [],
     project?: { projectId: string; dir: string },
-    who?: { asker: ReturnType<typeof askerOf>; cwd: string },
+    who?: { asker: ReturnType<typeof askerOf>; cwd: string; folder?: { dir: string; projectDir: string } },
     secretNames: readonly string[] = [],
   ): CanUseTool {
     const byServer = new Map(remotes.map((remote) => [claudeMcpServerName(remote.config.id), remote]))
@@ -501,7 +502,11 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
    * As regras (`Permission.Policy`) nas nativas: leitura e escrita pelo caminho canônico, relativo à pasta; o WebFetch
    * pelo destino da URL (a regra de rede). ⚠️ O WebFetch roda no processo do CLI, fora do cerco: a regra é a trava.
    */
-  private fileRefusal(bare: string, input: Record<string, unknown>, who: { asker: ReturnType<typeof askerOf>; cwd: string }): string | undefined {
+  private fileRefusal(
+    bare: string,
+    input: Record<string, unknown>,
+    who: { asker: ReturnType<typeof askerOf>; cwd: string; folder?: { dir: string; projectDir: string } },
+  ): string | undefined {
     if (bare === 'WebFetch') {
       let target: URL
       try {
@@ -522,7 +527,9 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       const target = realOf(resolve(who.cwd, value))
       const inside = relative(root, target)
       const path = inside && !inside.startsWith('..') && !isAbsolute(inside) ? inside : target
-      const verdict = this.permissions!.check(who.asker, { category: kind, value: path }, { log: true })
+      // Numa worktree, o mesmo arquivo também a partir da pasta do projeto: é de lá que as regras do projeto costumam vir.
+      const aliases = projectAliases(target, who.folder)
+      const verdict = this.permissions!.check(who.asker, { category: kind, value: path, ...(aliases.length ? { aliases } : {}) }, { log: true })
       if (!verdict.allowed) return `${bare}: ${verdict.reason}.`
     }
     return undefined

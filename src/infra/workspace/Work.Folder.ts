@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 /** O nome de um repositório em `<projeto>/repositories/`: uma pasta só, sem barra. */
 export const REPOSITORY_NAME = /^[A-Za-z0-9._-]{1,100}$/
@@ -134,4 +134,19 @@ export function listRepositories(projectDir: string): Array<{ name: string; work
           .map((item) => ({ name: item.name, ...(item.branch ? { branch: item.branch } : {}), path: relative(real(projectDir), real(item.path)).split(sep).join('/') })),
       }
     })
+}
+
+/**
+ * O caminho do arquivo também a partir da pasta do PROJETO, quando a conversa trabalha numa worktree ou num repositório
+ * (ver `IPermissionSubject.aliases`): as regras do projeto costumam ser escritas de lá (`repositories/x/_worktrees/*\/**`).
+ * Fora da pasta do projeto, ou com a mesma pasta, nada.
+ */
+export function projectAliases(abs: string, folder: { dir: string; projectDir: string } | undefined): string[] {
+  if (!folder) return []
+  const project = real(folder.projectDir)
+  if (project === real(folder.dir)) return []
+  // O arquivo a criar ainda não existe: vale a pasta dele, canônica, mais o nome.
+  const canonical = existsSync(abs) ? real(abs) : join(real(dirname(abs)), basename(abs))
+  const rel = relative(project, canonical)
+  return rel && !rel.startsWith('..') && !isAbsolute(rel) ? [rel.split(sep).join('/')] : []
 }

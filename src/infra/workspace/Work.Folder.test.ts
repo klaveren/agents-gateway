@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
-import { listRepositories, resolveWorkFolder, WorkFolderError } from './Work.Folder'
+import { listRepositories, projectAliases, resolveWorkFolder, WorkFolderError } from './Work.Folder'
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync('git', ['-C', cwd, ...args], {
@@ -30,6 +30,15 @@ describe('Work.Folder (a pasta de trabalho da conversa)', () => {
   after(() => {
     rmSync(project, { recursive: true, force: true })
     rmSync(outside, { recursive: true, force: true })
+  })
+
+  it('⛔ o arquivo da worktree também a partir da pasta do projeto, mesmo o que ainda não existe; fora dela, nada', () => {
+    const folder = { dir: join(repo, '_worktrees', 'EP-1'), projectDir: project }
+    assert.deepStrictEqual(projectAliases(join(folder.dir, 'a.txt'), folder), ['repositories/abc/_worktrees/EP-1/a.txt'])
+    assert.deepStrictEqual(projectAliases(join(folder.dir, 'novo.test.ts'), folder), ['repositories/abc/_worktrees/EP-1/novo.test.ts'])
+    assert.deepStrictEqual(projectAliases(join(outside, 'x'), folder), [])
+    assert.deepStrictEqual(projectAliases(join(project, 'a'), { dir: project, projectDir: project }), [], 'mesma pasta: nada a acrescentar')
+    assert.deepStrictEqual(projectAliases(join(project, 'a'), undefined), [])
   })
 
   it('sem parâmetro, o projeto; só o repositório, a pasta dele com o .git dentro', () => {

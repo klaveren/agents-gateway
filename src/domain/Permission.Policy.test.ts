@@ -36,6 +36,20 @@ describe('Permission.Policy', () => {
     assert.deepStrictEqual([main.allowed, main.layer, main.rule?.pattern], [false, 'agent', 'git push origin main'])
   })
 
+  it('⛔ o mesmo arquivo por duas pastas-base: a regra casa com qualquer uma, e a negação continua vencendo', () => {
+    const layers = {
+      agent: [
+        { category: 'write' as const, pattern: 'repositories/logiccus/_worktrees/*/**/*.test.ts', decision: 'allow' as const },
+        { category: 'write' as const, pattern: 'packages/validator/**', decision: 'deny' as const },
+      ],
+    }
+    const write = (value: string, aliases: string[]) => decide({ category: 'write', value, aliases }, layers).allowed
+    assert.ok(write('mcps/x/a.test.ts', ['repositories/logiccus/_worktrees/EP-1/mcps/x/a.test.ts']), 'a regra do projeto vale dentro da worktree')
+    assert.ok(!write('mcps/x/a.test.ts', []), 'sem a outra forma, como antes')
+    assert.ok(!write('packages/validator/a.test.ts', ['repositories/logiccus/_worktrees/EP-1/packages/validator/a.test.ts']), 'a negação pela worktree vence')
+    assert.ok(!write('apis/x.ts', ['repositories/logiccus/_worktrees/EP-1/apis/x.ts']), 'fora do padrão, segue negado')
+  })
+
   it('⛔ a camada sistema é final: nem o agente com * levanta', () => {
     const agent = [rule('read', '**'), rule('terminal', '*')]
     for (const path of ['.env', 'apps/api/.env.local', 'deploy/server.pem', 'home/id_rsa']) {

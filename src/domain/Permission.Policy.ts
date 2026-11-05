@@ -42,6 +42,12 @@ export interface IPermissionSubject {
   value: string
   /** Comando: as palavras já analisadas (aspas resolvidas). */
   argv?: string[]
+  /**
+   * Caminho: o MESMO arquivo visto de outra pasta-base. Numa conversa aberta numa worktree (ou num repositório), a pasta
+   * de trabalho é a worktree, mas as regras do projeto costumam ser escritas a partir da pasta do PROJETO
+   * (`repositories/x/_worktrees/*\/**`). A regra casa com qualquer uma das formas; a negação continua vencendo.
+   */
+  aliases?: string[]
 }
 
 export interface IPermissionVerdict {
@@ -141,8 +147,10 @@ export function matches(rule: ISystemRule, subject: IPermissionSubject): boolean
     case 'write':
       // ⛔ Liberação RELATIVA vale só dentro da pasta: `**` não alcança `/outra/pasta` nem `~/.ssh` (fora dela, o caminho
       // chega absoluto). Para liberar fora, a regra é absoluta. A negação vale em qualquer lugar (`**/.env`).
-      if (rule.decision === 'allow' && isOutsidePath(subject.value) && !isOutsidePath(rule.pattern.trim())) return false
-      return pathMatches(rule.pattern, subject.value) && !rule.except?.some((pattern) => pathMatches(pattern, subject.value))
+      return [subject.value, ...(subject.aliases ?? [])].some((value) => {
+        if (rule.decision === 'allow' && isOutsidePath(value) && !isOutsidePath(rule.pattern.trim())) return false
+        return pathMatches(rule.pattern, value) && !rule.except?.some((pattern) => pathMatches(pattern, value))
+      })
     case 'network':
       return hostMatches(rule.pattern, subject.value)
     default:
