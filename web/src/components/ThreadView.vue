@@ -12,6 +12,7 @@
   import { useProtocolsStore } from '@/stores/protocols'
   import { useAuthStore } from '@/stores/auth'
   import { useConversationsStore } from '@/stores/conversations'
+  import DelegationsPanel from './DelegationsPanel.vue'
   import { useProjectsStore } from '@/stores/projects'
   import { openCount, type IConversationPanel } from '@/lib/conversationPanel'
   import { useThreadStore, type IOutgoingFile } from '@/stores/thread'
@@ -133,10 +134,6 @@
       if (id === header.value?.id) children.value = page.sessions
     },
     { immediate: true },
-  )
-  const childTokens = computed(() => children.value.reduce((total, child) => total + (child.usage.totalTokens ?? 0), 0))
-  const childCost = computed(() =>
-    children.value.some((child) => child.costUsd !== undefined) ? children.value.reduce((total, child) => total + (child.costUsd ?? 0), 0) : undefined,
   )
   /** O provider e o modelo em vigor: os da sessão viva (podem ter trocado), senão os da conversa. */
   const currentModel = computed(() => thread.session?.model ?? header.value?.model)
@@ -341,20 +338,7 @@
       Delegada por {{ parentAgent }}.
       <RouterLink :to="`/c/${parentId}`" class="ml-auto hover:text-white">← Voltar à conversa original</RouterLink>
     </div>
-    <!-- No celular, uma linha só que rola de lado; em tela larga, quebra em linhas. -->
-    <div
-      v-if="children.length"
-      class="scroll-thin flex items-center gap-x-3 gap-y-1 overflow-x-auto border-b border-zinc-800/80 bg-zinc-900/40 px-4 py-1.5 text-xs whitespace-nowrap text-zinc-400 md:flex-wrap md:overflow-x-visible md:whitespace-normal"
-      data-test="delegations"
-    >
-      <span class="shrink-0">
-        {{ children.length }} delegaç{{ children.length === 1 ? 'ão' : 'ões' }} · {{ tokens(childTokens) }} tokens
-        <template v-if="auth.isAdmin && childCost !== undefined">· {{ usd(childCost) }}</template>
-      </span>
-      <RouterLink v-for="child in children" :key="child.id" :to="`/c/${child.id}`" class="btn btn-sm btn-secondary shrink-0">
-        {{ agents.byId.get(child.agentId)?.name ?? child.agentId }}
-      </RouterLink>
-    </div>
+    <DelegationsPanel v-if="children.length" :items="children" :show-cost="auth.isAdmin" />
 
     <div v-if="actionError" class="flex items-center gap-2 border-b border-rose-500/20 bg-rose-500/10 px-4 py-2 text-xs text-rose-200">
       {{ actionError }}
