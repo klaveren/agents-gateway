@@ -1117,7 +1117,9 @@ export class AgentController {
       const mine = (query.mine === '1' || query.mine === 'true') && admin.id ? { id: admin.id, ...(admin.account ? { account: admin.account } : {}) } : undefined
       const paging = { ...parsePageQuery(query), ...(mine ? { owner: mine } : {}) }
       const page = await this.usecases.conversations.pageSessions(paging)
-      const archivedCount = await this.usecases.conversations.countArchived?.(mine ?? undefined)
+      // As arquivadas são sempre as DO CHAMADOR, com ou sem "De todos": a lista delas (`?archived=1`) é só dele, e o número
+      // tem de bater com ela.
+      const archivedCount = admin.id ? await this.usecases.conversations.countArchived?.({ id: admin.id, ...(admin.account ? { account: admin.account } : {}) }) : undefined
 
       return {
         ...page,

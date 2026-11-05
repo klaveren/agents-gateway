@@ -252,7 +252,7 @@ describe('AgentController — conversas, monitor e compartilhamento', () => {
       controller.listConversations(request({ query: { scope: 'all', ...query } }), res)
 
     it('⛔ `mine=1`: a caixa do admin traz só as dele (o dono sai da credencial); sem, todas', async () => {
-      const { controller } = await setup()
+      const { controller, conversations } = await setup()
       process.env.ADMIN_ROLES = 'admin'
 
       const mine = await call(ADMIN, all({ page: '1', mine: '1' })(controller))
@@ -263,6 +263,10 @@ describe('AgentController — conversas, monitor e compartilhamento', () => {
       const everyone = await call(ADMIN, all({ page: '1' })(controller))
       assert.deepStrictEqual(ids(everyone.body).sort(), ['a1', 'a2', 'b1', 'n1'])
       assert.strictEqual(everyone.body!.result.scope, 'all')
+      // A contagem das arquivadas é a do chamador nos dois modos: a lista delas é só dele.
+      await conversations.setArchived('a1', true, 'alice')
+      assert.strictEqual((await call(ADMIN, all({ page: '1' })(controller))).body!.result.archivedCount, 0)
+      assert.strictEqual((await call(ADMIN, all({ page: '1', mine: '1' })(controller))).body!.result.archivedCount, 0)
     })
 
     it('⛔ 404 para quem não é administrador provado — comum, forjado, anônimo e sem prova', async () => {
