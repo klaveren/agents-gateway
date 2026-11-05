@@ -201,7 +201,7 @@ describe('AgentProvider', () => {
     assert.deepStrictEqual(chat.calls, [])
   })
 
-  it('⛔ modelo da conversa desativado no meio dela: a mensagem seguinte é model_disabled', async () => {
+  it('⚖️ modelo da conversa desativado no meio dela: a mensagem seguinte segue no modelo de hoje, com aviso; sem nenhum, model_disabled', async () => {
     const store = new SessionStore()
     const chat = spyAdapter(store, EProvider.GOOGLE, EMode.CHAT, [])
     const agent = { id: 'm', name: 'M', providers: [{ provider: 'google', models: ['gemini-a', 'gemini-b'] }], systemPrompt: 'p', modes: [EMode.CHAT], allowedTools: [] }
@@ -210,8 +210,15 @@ describe('AgentProvider', () => {
     const session = await provider.createSession({ agentId: 'm', model: 'gemini-b' })
     agent.providers[0].models = ['gemini-a']
 
+    const events = await drain(provider.sendMessage(session.id, { text: 'oi' }))
+    assert.strictEqual(store.get(session.id)?.model, 'gemini-a')
+    assert.ok(
+      events.some((event) => event.type === 'warning' && /google · gemini-b foi desligado; a conversa segue em google · gemini-a/.test(String(event.payload.message))),
+      'o turno avisa a troca',
+    )
+
+    agent.providers[0].models = []
     await assert.rejects(drain(provider.sendMessage(session.id, { text: 'oi' })), ModelDisabledError)
-    assert.deepStrictEqual(chat.calls, ['createSession'])
   })
 
   it('sem agente pedido e sem nenhum ativo: nenhum agente disponível', async () => {

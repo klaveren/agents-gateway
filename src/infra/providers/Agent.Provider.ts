@@ -202,9 +202,22 @@ export class AgentProvider implements IAgentProvider {
     const record = this.requireSession(sessionId)
     const conversationProject = projectOf(record.metadata)
     let { agent, unavailable } = this.prepare(this.getAgent(record.agentId), conversationProject, record.provider, record.protocol, record.mode)
-    // ⛔ O modelo da conversa foi desativado (ou sumiu do provider) depois que ela começou: erro claro, em
-    // vez de seguir usando um modelo que quem administra tirou. `agent.models` já vem só com os utilizáveis.
-    if (record.model && !offers(agent, record.provider, record.model)) throw new ModelDisabledError(record.provider, record.model)
+    // ⚖️ O modelo da conversa foi desativado (ou sumiu do provider) depois que ela começou: a conversa SEGUE no modelo que
+    // o agente escolheria hoje (o grupo de modelos, as configurações, o padrão), com aviso no turno. Antes era erro, e a
+    // conversa retomada por quem orquestra (a esteira) travava sem ninguém para trocar o modelo à mão.
+    // `agent.models` já vem só com os utilizáveis. Sem nenhum modelo ativo, o erro de antes.
+    let swapped: string | undefined
+    if (record.model && !offers(agent, record.provider, record.model)) {
+      const before = `${record.provider} · ${record.model}`
+      const settings = this.current ?? (await this.settings?.read()) ?? DEFAULT_SETTINGS
+      try {
+        this.reconfigure(sessionId, this.chooseTarget(this.getAgent(record.agentId), {}, settings))
+      } catch {
+        throw new ModelDisabledError(record.provider, record.model)
+      }
+      ;({ agent, unavailable } = this.prepare(this.getAgent(record.agentId), conversationProject, record.provider, record.protocol, record.mode))
+      swapped = `O modelo ${before} foi desligado; a conversa segue em ${record.provider} · ${record.model}.`
+    }
     let adapter = this.getAdapter(record.protocol, record.mode)
     // Acabou de trocar de provider: a transcrição vai antes da mensagem, só para o modelo — o turno
     // gravado continua o que a pessoa escreveu (quem grava é o `SendMessageUseCase`, com o input dele).
@@ -302,6 +315,8 @@ export class AgentProvider implements IAgentProvider {
           yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: `${from} está sem cota agora; a conversa segue em ${turn.by}.` } }
         }
       }
+
+      if (swapped) yield { type: 'warning', sessionId, timestamp: new Date(), payload: { message: swapped } }
 
       // O contexto passou do gatilho, ou a compactação foi pedida: o turno começa com o resumo (ver `Compaction.Policy`).
       // Com repasse pendente não: o provedor novo já recomeça só com a transcrição.
