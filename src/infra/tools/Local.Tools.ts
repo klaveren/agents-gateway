@@ -13,6 +13,7 @@ import { networkGate } from '@infra/permissions/Network.Gate'
 import { analyzeShell } from '@infra/permissions/Shell.Parse'
 import { bashPolicy, denyReason, PRIVILEGE_ESCALATION, truncate, type IBashPolicy } from './Bash.Guard'
 import { subscriptionEnv, workspaceFor } from '@infra/adapters/support/Subscription.Workspace'
+import { projectAliases } from '@infra/workspace/Work.Folder'
 import { accountsDir, ISshKitIdentity, removeSshKit, writeSshKit } from '@infra/accounts/Ssh.Kit'
 import { CLUSTER_SECRET_REFUSAL, dumpsClusterSecret } from '@domain/Secret.Mask'
 import { BACKGROUND_LIMITS, BackgroundProcesses, backgroundProcesses, clipOutput, startCommand, tailOf } from './Background.Processes'
@@ -220,7 +221,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     const place: { scratchBase?: string; gitCommonDir?: string } = folder
       ? { scratchBase: realOf(folder.projectDir), ...(folder.gitCommonDir ? { gitCommonDir: realOf(folder.gitCommonDir) } : {}) }
       : {}
-    const refusal = await terminalRefusal(command, root, permissions, asker)
+    const refusal = await terminalRefusal(command, root, permissions, asker, folder)
     if (refusal) return { status: 'error', result: `Not permitted: ${refusal}` }
     if (!sandbox.wrapWith) return { status: 'error', result: 'O terminal fica bloqueado: este servidor não monta o cerco das permissões.' }
     const { system, ...layers } = permissions.layers?.(asker) ?? { system: [] }
@@ -447,7 +448,9 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       ...(deps.permissions
         ? {
             access: (context, kind, path, log) => {
-              const verdict = deps.permissions!.check(askerOf(context), { category: kind, value: path }, { log })
+              // Numa worktree, o mesmo arquivo também a partir da pasta do projeto (ver `projectAliases`).
+              const aliases = projectAliases(resolve(fileRoot(context), path), context?.workFolder)
+              const verdict = deps.permissions!.check(askerOf(context), { category: kind, value: path, ...(aliases.length ? { aliases } : {}) }, { log })
               return verdict.allowed ? undefined : verdict.reason
             },
           }
@@ -489,7 +492,13 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
  * A primeira trava do terminal: o motivo da negação, ou nada se cada parte da linha é permitida. Registra cada decisão.
  * Redirecionamento: o caminho canônico, relativo à pasta de trabalho (ou absoluto, se fora dela).
  */
-export async function terminalRefusal(command: string, root: string, permissions: IPermissionChecker, asker: IPermissionAsker): Promise<string | undefined> {
+export async function terminalRefusal(
+  command: string,
+  root: string,
+  permissions: IPermissionChecker,
+  asker: IPermissionAsker,
+  folder?: { dir: string; projectDir: string },
+): Promise<string | undefined> {
   const analysis = await analyzeShell(command)
   if (analysis.opaque.length) return `não dá para analisar com segurança (${analysis.opaque.join('; ')})`
   if (!analysis.commands.length && !analysis.redirects.length) return 'nenhum comando'
@@ -498,7 +507,8 @@ export async function terminalRefusal(command: string, root: string, permissions
     if (!verdict.allowed) return verdict.reason
   }
   for (const redirect of analysis.redirects) {
-    const verdict = permissions.check(asker, { category: redirect.kind, value: workPath(root, redirect.target) }, { log: true })
+    const aliases = redirect.target.startsWith('~') ? [] : projectAliases(resolve(root, redirect.target), folder)
+    const verdict = permissions.check(asker, { category: redirect.kind, value: workPath(root, redirect.target), ...(aliases.length ? { aliases } : {}) }, { log: true })
     if (!verdict.allowed) return verdict.reason
   }
   return undefined

@@ -1,6 +1,8 @@
 import assert from 'node:assert'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { decide, type IPermissionRule } from '@domain/Permission.Policy'
+import type { IPermissionChecker } from '@application/Permissions.Service'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import type { query } from '@anthropic-ai/claude-agent-sdk'
@@ -529,6 +531,33 @@ describe('ClaudeAgentAdapter', () => {
       assert.ok(seen[0].options?.hooks?.PreToolUse?.length)
       const decision = (await seen[0].options!.canUseTool!('Bash', { command: 'ls' }, options)) as { behavior: string; updatedInput?: unknown }
       assert.deepStrictEqual([decision.behavior, decision.updatedInput, fake.calls], ['allow', undefined, []])
+    })
+
+    it('⛔ worktree: o Edit pela regra escrita a partir da pasta do projeto passa; o que a regra não cobre, não', async () => {
+      const project = realpathSync(mkdtempSync(join(tmpdir(), 'gw-claude-wt-')))
+      const worktree = join(project, 'repositories', 'logiccus', '_worktrees', 'EP-1')
+      mkdirSync(join(worktree, 'mcps', 'x'), { recursive: true })
+      try {
+        const agentRules: IPermissionRule[] = [{ category: 'write', pattern: 'repositories/logiccus/_worktrees/*/**/*.test.ts', decision: 'allow' }]
+        const permissions: IPermissionChecker = { check: (_asker, subject) => decide(subject, { agent: agentRules }), layers: () => ({ agent: agentRules, system: [] }) }
+        const seen: TQueryParams[] = []
+        const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog: catalogWith(true), sandbox: sandbox(true), permissions })
+        const agent = { ...getAgent(), allowedTools: ['sdk:Edit'] }
+        const session = await adapter.createSession(agent, { agentId: CLAUDE_TEST_AGENT.id })
+        await drain(adapter.sendMessage(agent, session.id, { text: 'oi' }, { workFolder: { dir: worktree, projectDir: project } } as never))
+        const hook = seen[0].options!.hooks!.PreToolUse![0].hooks[0]
+        const edit = async (file: string) =>
+          (
+            (await hook({ hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: file, old_string: 'a', new_string: 'b' }, tool_use_id: 't' } as never, 't', {
+              signal: options.signal,
+            })) as { hookSpecificOutput: { permissionDecision: string } }
+          ).hookSpecificOutput.permissionDecision
+        assert.strictEqual(await edit('mcps/x/a.test.ts'), 'allow')
+        assert.strictEqual(await edit(join(worktree, 'mcps/x/a.test.ts')), 'allow')
+        assert.strictEqual(await edit('mcps/x/a.ts'), 'deny')
+      } finally {
+        rmSync(project, { recursive: true, force: true })
+      }
     })
 
     it('⛔ laço: o PreToolUse recusa a nativa repetida; as locais ficam para o envoltório delas', async () => {
