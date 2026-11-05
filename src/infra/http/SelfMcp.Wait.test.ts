@@ -33,6 +33,12 @@ describe('a espera do turno no MCP do gateway', () => {
     assert.match(seen[0], /running for \d+ s · 1 tool calls, last: run_bash/)
   })
 
+  it('⛔ em fluxo com progresso, sem teto: waitSeconds grande é aceito e a espera vai até o fim', async () => {
+    const { api } = turnApi(3)
+    const answer = await awaitTurn(api, 'c1', 0, 100_000, { streaming: true, progressToken: 't', pollMs: 5 })
+    assert.strictEqual((answer.result as { status: string }).status, 'ok')
+  })
+
   it('em JSON, para no teto de 50 s e devolve running, como antes', async () => {
     const { api } = turnApi(Infinity)
     const answer = await awaitTurn(api, 'c1', 0, 0, { streaming: false, pollMs: 5 })

@@ -111,17 +111,17 @@ function resourceIndex(result: unknown): unknown {
 /**
  * ⚖️ QUANTO O MCP ESPERA UM TURNO antes de devolver `running`, conforme o que o cliente aguenta:
  * - resposta JSON (sem fluxo): 50 s, abaixo dos 60 s em que o SDK desiste da chamada;
- * - em fluxo (SSE), com `progressToken`: até o turno acabar, com teto de 30 min. O aviso de progresso a cada 15 s
- *   mantém viva a chamada (o Claude Code aborta depois de 5 min sem resposta nem progresso);
+ * - em fluxo (SSE), com `progressToken`: ⛔ ATÉ O TURNO ACABAR, SEM TETO — quem conversa com um agente espera a
+ *   resposta, por mais que ela demore. O aviso de progresso a cada 15 s mantém viva a chamada (o Claude Code aborta
+ *   depois de 5 min sem resposta nem progresso); o cliente que desliga encerra a espera (`signal`);
  * - em fluxo sem `progressToken`: 4 min, abaixo desses 5 min.
  * Turno mais longo segue no servidor; quem chamou acompanha com `get_turn`.
  */
 const TURN_WAIT = {
   json: { default: 45, max: 50 },
   stream: { default: 240, max: 240 },
-  progress: { default: 1800, max: 1800 },
+  progress: { default: Infinity, max: Infinity },
 } as const
-const TURN_WAIT_MAX_SECONDS = TURN_WAIT.progress.max
 const TURN_POLL_MS = 1000
 const TURN_PROGRESS_MS = 15_000
 /** As ferramentas que seguram a chamada até o fim do turno: só elas respondem em fluxo (ver `serve`). */
@@ -161,10 +161,9 @@ const waitSecondsShape = z
   .number()
   .int()
   .min(0)
-  .max(TURN_WAIT_MAX_SECONDS)
   .optional()
   .describe(
-    `How long to wait for the turn to finish. Default: until it ends, up to ${TURN_WAIT.progress.max} s, when the client streams (SSE) and sends a progressToken (a progress notification every ${TURN_PROGRESS_MS / 1000} s keeps the call alive); ${TURN_WAIT.stream.max} s when it streams without one; ${TURN_WAIT.json.max} s on a plain JSON response. Still running after that: \`status: running\`; call get_turn.`,
+    `How long to wait for the turn to finish. Default: until it ends, with no limit, when the client streams (SSE) and sends a progressToken (a progress notification every ${TURN_PROGRESS_MS / 1000} s keeps the call alive); ${TURN_WAIT.stream.max} s when it streams without one; ${TURN_WAIT.json.max} s on a plain JSON response. Still running after that: \`status: running\`; call get_turn.`,
   )
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
