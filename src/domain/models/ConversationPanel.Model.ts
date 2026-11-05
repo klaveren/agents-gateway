@@ -228,7 +228,7 @@ const itemLine = (item: IPanelItem) =>
  */
 export function panelTurnNote(panel: IConversationPanel | undefined, skippedLastTurn = false): string {
   const reminder = skippedLastTurn
-    ? `[gateway] A mensagem anterior da pessoa não entrou no painel da conversa: registre o que ela pediu (${PANEL_TOOL} add) ou o que mudou (update).`
+    ? `[gateway] A mensagem anterior da pessoa não entrou no painel da conversa: registre cada pedido dela como um item (${PANEL_TOOL} add, um por pedido) ou o que mudou (update).`
     : ''
   if (!panel || (!panel.goal && !panel.items.length && !panel.questions.length)) return reminder
   const fresh = freshAnswers(panel)
@@ -252,6 +252,7 @@ export function panelTurnNote(panel: IConversationPanel | undefined, skippedLast
     )
   const done = open('done').length
   if (done) lines.push(`(${done} entregue${done > 1 ? 's' : ''}; decisões e histórico: ${PANEL_TOOL} read)`)
+  lines.push('Pedido novo na mensagem abaixo: um item por pedido (add). Etapas do item em andamento: update_todos.')
   lines.push('</painel da conversa>')
   return [reminder, lines.join('\n')].filter(Boolean).join('\n\n')
 }
