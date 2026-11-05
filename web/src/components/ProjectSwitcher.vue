@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { initials } from '@/lib/format'
-import { usePopover } from '@/lib/popover'
+import { useAboveBar, usePopover } from '@/lib/popover'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectsStore } from '@/stores/projects'
 
@@ -13,6 +13,7 @@ defineProps<{ placement: 'side' | 'up' }>()
 const auth = useAuthStore()
 const projects = useProjectsStore()
 const { open, root } = usePopover()
+const above = useAboveBar(open, root)
 
 const label = computed(() => projects.currentProject?.name ?? 'Sem projeto')
 
@@ -44,8 +45,9 @@ async function choose(id: string) {
     <div
       v-if="open"
       role="menu"
-      class="absolute z-50 w-64 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-xl shadow-black/40"
-      :class="placement === 'side' ? 'top-0 left-full ml-3' : 'left-1 bottom-full mb-2'"
+      class="z-50 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-xl shadow-black/40"
+      :class="placement === 'side' ? 'absolute w-64 top-0 left-full ml-3' : 'fixed inset-x-2'"
+      :style="placement === 'up' && above ? { bottom: `${above}px` } : undefined"
     >
       <div class="border-b border-zinc-800 px-3 py-2 text-xs font-medium text-zinc-500">Projeto</div>
       <button

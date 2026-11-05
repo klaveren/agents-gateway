@@ -3,7 +3,7 @@
   import { useRouter } from 'vue-router'
   import { useResource } from '@/composables/useResource'
   import { initials } from '@/lib/format'
-  import { usePopover } from '@/lib/popover'
+  import { useAboveBar, usePopover } from '@/lib/popover'
   import { useAuthStore } from '@/stores/auth'
   import { usePermissionRequestsStore } from '@/stores/permissionRequests'
   import Icon from './Icon.vue'
@@ -17,6 +17,7 @@
   const auth = useAuthStore()
   const router = useRouter()
   const { open, root } = usePopover()
+  const above = useAboveBar(open, root)
 
   // ⛔ Só o admin lê os pedidos (a rota recusa o resto). ⚖️ A lista de todos (`''`) é a mesma do selo da lista de agentes e
   // anda sozinha com o `catalog.changed`: o número aqui não precisa de tela aberta nem de releitura.
@@ -67,8 +68,9 @@
     <div
       v-if="open"
       role="menu"
-      class="absolute z-50 w-60 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-xl shadow-black/40"
-      :class="placement === 'side' ? 'bottom-0 left-full ml-3' : 'right-1 bottom-full mb-2'"
+      class="z-50 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-xl shadow-black/40"
+      :class="placement === 'side' ? 'absolute w-60 bottom-0 left-full ml-3' : 'fixed inset-x-2'"
+      :style="placement === 'up' && above ? { bottom: `${above}px` } : undefined"
     >
       <div class="border-b border-zinc-800 px-3 py-2.5">
         <div class="truncate font-medium text-zinc-100">{{ auth.user.name }}</div>

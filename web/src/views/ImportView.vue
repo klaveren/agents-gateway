@@ -657,7 +657,7 @@ watch(() => projects.current, reset)
         <ImportScope :project-id="projectId" :scope="scan?.scope" />
 
         <template v-if="scan">
-          <nav class="flex gap-1 border-b border-zinc-800" role="tablist" data-test="areas">
+          <nav class="no-scrollbar flex gap-1 overflow-x-auto border-b border-zinc-800" role="tablist" data-test="areas">
             <button type="button" role="tab" class="area-tab" :aria-selected="area === 'inventory'" :class="area === 'inventory' ? 'on' : ''" data-test="area-inventory" @click="area = 'inventory'">
               Inventário
             </button>

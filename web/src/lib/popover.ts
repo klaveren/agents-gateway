@@ -30,3 +30,16 @@ export function usePopover(): { open: Ref<boolean>; root: Ref<HTMLElement | unde
   )
   return { open, root }
 }
+
+/**
+ * ⚖️ O menu que abre da BARRA DO CELULAR ocupa a largura da tela (`fixed inset-x-2`), logo acima da barra: preso ao
+ * botão, ele saía da tela pelo lado. Devolve a distância do fundo da tela até o topo do botão, medida ao abrir.
+ */
+export function useAboveBar(open: Ref<boolean>, root: Ref<HTMLElement | undefined>): Ref<number | undefined> {
+  const above = ref<number>()
+  watch(open, (isOpen) => {
+    const rect = root.value?.getBoundingClientRect()
+    if (isOpen && rect) above.value = window.innerHeight - rect.top + 8
+  })
+  return above
+}
