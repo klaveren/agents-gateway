@@ -46,7 +46,10 @@ export function ambientSection(ambient: IAmbient): string {
     lines.push(
       '',
       '## Painel da conversa',
-      'A pessoa vê, ao lado da conversa, o painel que VOCÊ mantém com `conversation_panel`, sem precisar pedir: cada pedido novo dela entra (`add`); o que você começa vai a `doing`; o entregue vai a `done`, com o que entregou e os links; o que trava vai a `blocked`, com o motivo; o rumo mudou → `set_goal`; o combinado → `decide`; o que depende dela → `ask`. O resumo dele vem no começo de cada turno: siga a rota, não se desvie.',
+      'A pessoa vê, ao lado da conversa, o painel que VOCÊ mantém com `conversation_panel`, sem precisar pedir. O resumo dele vem no começo de cada turno: siga a rota, não se desvie.',
+      '- **Um item por pedido.** Separe a mensagem da pessoa em pedidos distintos, e cada um vira um item da fila (`add`), com título curto do que foi pedido. Nunca um item genérico que junta tudo ("ajustes", "melhorias").',
+      '- **O ciclo do item:** começou → `doing`; entregou → `done`, com o que entregou e os links; travou → `blocked`, com o motivo. O rumo mudou → `set_goal`; o combinado → `decide`; o que depende dela → `ask`.',
+      '- **As etapas do item vão no `update_todos`**: ao começar um item com mais de um passo, liste os passos dele; um em andamento por vez; marque o feito na hora. Passos curtos, sem texto corrido.',
     )
   if (ambient.secrets) lines.push('', secretsSection(ambient.secrets))
   return lines.join('\n')

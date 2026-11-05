@@ -546,7 +546,7 @@ function updateTodosTool(store: ITodoStore): ILocalTool {
     origin: 'local',
     name: UPDATE_TODOS_TOOL,
     description:
-      'Keeps the task list of this conversation, which the person sees next to the chat. Use it for work with 3 or more steps: write the full list at the start, keep exactly one item in_progress while you work on it, and mark it done as soon as it is finished (send the whole list every time). Skip it for simple requests.',
+      'Keeps the task list of this conversation, which the person sees next to the chat: the STEPS of the panel item you are working on (the request itself lives in conversation_panel). When an item has 2 or more steps, write its steps at the start, keep exactly one in_progress, and mark each done as soon as it is finished (send the whole list every time). Short steps, a few words each; no prose. Skip it for one-step items.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -592,7 +592,7 @@ function conversationPanelTool(panels: NonNullable<ILocalToolDeps['panels']>): I
     origin: 'local',
     name: PANEL_TOOL,
     description:
-      'The PANEL of this conversation, which the person sees next to the chat: the goal, what is being done, the queue, what was delivered (with links), decisions and questions for the person. Keep it up to date WITHOUT being asked: every new request of the person → `add` (one per request); when you start it → `update` status doing; when it is delivered → `update` status done with `note` (what was delivered) and `links` (PR, file, conversation); blocked → status blocked with the reason; the person changed course → `set_goal`; something was agreed → `decide`; you need the person → `ask`. Delegated to another agent → `delegatedTo`. `read` returns the whole panel. Its summary comes at the start of every turn — follow it, do not drift.',
+      'The PANEL of this conversation, which the person sees next to the chat: the goal, what is being done, the queue, what was delivered (with links), decisions and questions for the person. Keep it up to date WITHOUT being asked: split the person message into its distinct requests and `add` ONE item per request (a short title of what was asked; never one generic item bundling several); the steps of an item go in update_todos, not here; when you start it → `update` status doing; when it is delivered → `update` status done with `note` (what was delivered) and `links` (PR, file, conversation); blocked → status blocked with the reason; the person changed course → `set_goal`; something was agreed → `decide`; you need the person → `ask`. Delegated to another agent → `delegatedTo`. `read` returns the whole panel. Its summary comes at the start of every turn — follow it, do not drift.',
     inputSchema: {
       type: 'object',
       properties: {

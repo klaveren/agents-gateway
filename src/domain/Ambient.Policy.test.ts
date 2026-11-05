@@ -3,6 +3,13 @@ import { describe, it } from 'node:test'
 import { ambientSection, conversationNote } from './Ambient.Policy'
 
 describe('Ambient.Policy', () => {
+  it('com o painel: um item por pedido, e as etapas do item no update_todos', () => {
+    const section = ambientSection({ agentId: 'atlas', panel: true })
+    assert.match(section, /\*\*Um item por pedido\.\*\*/)
+    assert.match(section, /Nunca um item genérico/)
+    assert.match(section, /As etapas do item vão no `update_todos`/)
+  })
+
   it('sem projeto nem diretório: o agente e a pasta vazia da conversa', () => {
     assert.strictEqual(ambientSection({ agentId: 'atlas' }), '## Ambiente\n- Agente: atlas.\n- Diretório de trabalho: uma pasta vazia, só desta conversa.')
   })
