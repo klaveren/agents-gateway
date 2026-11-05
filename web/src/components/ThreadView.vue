@@ -311,13 +311,14 @@
         </div>
         <button
           v-if="canCompact"
-          class="mr-1 h-9 whitespace-nowrap max-md:hidden rounded-full px-2.5 text-xs hover:bg-zinc-800 disabled:hover:bg-transparent"
+          class="grid h-9 w-9 place-items-center rounded-full hover:bg-zinc-800 disabled:hover:bg-transparent max-md:hidden"
           :class="thread.session?.compactNext ? 'text-zinc-500' : 'text-amber-300'"
           :disabled="thread.session?.compactNext || compacting"
-          :title="thread.session?.compactNext ? 'A próxima mensagem começa com um resumo da conversa' : 'Resumir a conversa e recomeçar com o resumo, na próxima mensagem'"
+          :title="thread.session?.compactNext ? 'A próxima mensagem começa com um resumo da conversa' : 'Compactar: resumir a conversa e recomeçar com o resumo, na próxima mensagem'"
+          :aria-label="thread.session?.compactNext ? 'Compacta na próxima mensagem' : 'Compactar o contexto'"
           @click="compactNow"
         >
-          {{ thread.session?.compactNext ? 'Compacta na próxima' : 'Compactar' }}
+          <Icon name="compress" class="h-5 w-5" />
         </button>
         <template v-if="header">
           <span v-if="auth.isAdmin && header.costUsd !== undefined" class="mr-2 hidden text-xs text-zinc-400 sm:inline">
@@ -398,7 +399,7 @@
                 :disabled="thread.session?.compactNext || compacting"
                 @click="fromMenu(compactNow)"
               >
-                <Icon name="refresh" class="h-4 w-4" />
+                <Icon name="compress" class="h-4 w-4" />
                 {{ thread.session?.compactNext ? 'Compacta na próxima mensagem' : 'Compactar o contexto' }}
               </button>
               <button
