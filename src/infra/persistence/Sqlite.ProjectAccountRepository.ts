@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { exposesSecret, IProjectAccount, IProjectAccountPublic, TProjectAccountKind } from '@domain/models/ProjectAccount.Model'
+import { exposesSecret, IProjectAccount, IProjectAccountPublic, TProjectAccountKind, TURN_CALLBACK_KIND } from '@domain/models/ProjectAccount.Model'
 import { IProjectAccountRepository, IProjectAccountSave } from '@domain/ports/ProjectAccountRepository.Port'
 import { SecretBox } from '@infra/secrets/Aes.SecretBox'
 
@@ -64,7 +64,8 @@ export class SqliteProjectAccountRepository implements IProjectAccountRepository
     if (!sealed) throw new Error('secret: obrigatório')
     const previous = current ? this.get(projectId, id) : undefined
     const last4 = secret ? secret.slice(-4) : previous?.public.last4
-    const visible: IProjectAccountPublic = { ...input.public, ...(last4 && exposesSecret(input.kind) ? { last4 } : {}) }
+    // O fim do segredo aparece onde ele se reconhece: nos que o comando vê e no do aviso (que se copia para quem recebe).
+    const visible: IProjectAccountPublic = { ...input.public, ...(last4 && (exposesSecret(input.kind) || input.kind === TURN_CALLBACK_KIND) ? { last4 } : {}) }
     this.db
       .prepare(
         `INSERT INTO project_accounts (project_id, id, kind, label, public, sealed, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)

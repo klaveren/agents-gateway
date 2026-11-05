@@ -1,4 +1,4 @@
-import { accountIssues, gitBaseUrl, IGcpServiceAccountKey, IProjectAccount, parseGcpKey, SSH_VALIDITY } from '@domain/models/ProjectAccount.Model'
+import { accountIssues, gitBaseUrl, IGcpServiceAccountKey, IProjectAccount, parseGcpKey, SSH_VALIDITY, TURN_CALLBACK_KIND } from '@domain/models/ProjectAccount.Model'
 import { IProjectAccountRepository, IProjectAccountSave } from '@domain/ports/ProjectAccountRepository.Port'
 
 /** Quem gera e confere os tokens do GitHub (fora do cerco, no gateway). */
@@ -66,6 +66,8 @@ export class ProjectAccountsService {
   async save(projectId: string, id: string, input: IProjectAccountSave, by: string): Promise<IProjectAccount> {
     const current = this.repository.get(projectId, id)
     const creating = !current || current.kind !== input.kind
+    if (input.kind === TURN_CALLBACK_KIND && input.public.callbackHost)
+      input = { ...input, public: { ...input.public, callbackHost: input.public.callbackHost.trim().toLowerCase() } }
     const issues = accountIssues(input.kind, input.public, input.secret, creating)
     if (issues.length) throw new AccountValidationError(issues)
     let visible = input.public
@@ -95,6 +97,20 @@ export class ProjectAccountsService {
     return this.repository.save(projectId, id, { kind: input.kind, label: input.label.trim() || id, public: visible, ...(secret ? { secret } : {}) }, by)
   }
 
+  /**
+   * O segredo do aviso de fim de turno para `host` (`host:porta`, já com a porta padrão) no projeto. Ausente = o projeto
+   * não cadastrou esse endereço.
+   */
+  callbackSecret(projectId: string, host: string): string | undefined {
+    const [name, port] = host.toLowerCase().split(':')
+    const account = this.repository
+      .list(projectId)
+      .find(
+        (item) => item.kind === TURN_CALLBACK_KIND && (item.public.callbackHost === host.toLowerCase() || (item.public.callbackHost === name && (port === '80' || port === '443'))),
+      )
+    return account ? this.repository.secret(projectId, account.id) : undefined
+  }
+
   remove(projectId: string, id: string): boolean {
     return this.repository.remove(projectId, id)
   }
@@ -109,6 +125,7 @@ export class ProjectAccountsService {
     const secret = account && this.repository.secret(projectId, id)
     if (!account || !secret) throw new Error(account ? 'o segredo não abre com a chave-mestra de agora: cadastre de novo' : `Conta não encontrada: ${id}`)
     if (account.kind === 'secret-env') return `a variável ${account.public.envName} vai para os comandos`
+    if (account.kind === TURN_CALLBACK_KIND) return `o aviso de fim de turno para ${account.public.callbackHost} sai assinado com este segredo`
     if (account.kind === 'github-token') return this.tokens.describeGitHub(secret, false)
     // O gateway não fala com o servidor próprio: quem confere é o `git ls-remote` do agente, com a regra de rede.
     if (account.kind === 'git-https') return `usuário ${account.public.username} em ${account.public.baseUrl}/ — o token só se confere no git do agente`
@@ -139,7 +156,8 @@ export class ProjectAccountsService {
     let gitSlots = 0
     let gcp: string | undefined
     const ssh: IAccountSshIdentity[] = []
-    for (const account of this.repository.list(projectId).filter((item) => allowed(item.id))) {
+    // ⛔ O segredo do aviso de fim de turno é do gateway, não do agente: nunca entra no comando, com regra ou sem.
+    for (const account of this.repository.list(projectId).filter((item) => item.kind !== TURN_CALLBACK_KIND && allowed(item.id))) {
       const secret = this.repository.secret(projectId, account.id)
       if (!secret) {
         problems.push(`conta ${account.id}: o segredo não abre; cadastre de novo`)

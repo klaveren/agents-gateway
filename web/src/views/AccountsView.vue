@@ -34,6 +34,11 @@ const KINDS: Array<{ kind: TAccountKind; label: string; hint: string }> = [
   },
   { kind: 'ssh-key', label: 'SSH (chave importada)', hint: 'Uma chave sua (sem senha), com o certificado dela se houver. O comando recebe a própria chave; o ssh_sign assina com ela sem expô-la.' },
   { kind: 'secret-env', label: 'Variável secreta', hint: 'Um valor numa variável de ambiente (ex.: GITLAB_TOKEN). O comando recebe o próprio valor.' },
+  {
+    kind: 'turn-callback',
+    label: 'Aviso de fim de turno',
+    hint: 'O endereço que recebe o aviso de fim de turno das conversas deste projeto (o callbackUrl de quem abre a sessão). Cada endereço tem o seu segredo, que assina cada aviso. Não vai para o terminal dos agentes.',
+  },
 ]
 
 const auth = useAuthStore()
@@ -55,7 +60,7 @@ const editing = ref<string | null>(null)
 const form = ref(blank())
 
 function blank() {
-  return { id: '', kind: 'github-app' as TAccountKind, label: '', owner: '', baseUrl: '', username: '', appId: '', installationId: '', repositories: '', envName: '', gcpProject: '', principals: '', validityMinutes: '', hostPatterns: '', knownHosts: '', certificate: '', secret: '' }
+  return { id: '', kind: 'github-app' as TAccountKind, label: '', owner: '', baseUrl: '', username: '', appId: '', installationId: '', repositories: '', envName: '', callbackHost: '', gcpProject: '', principals: '', validityMinutes: '', hostPatterns: '', knownHosts: '', certificate: '', secret: '' }
 }
 
 const kindLabel = (kind: TAccountKind) => KINDS.find((item) => item.kind === kind)?.label ?? kind
@@ -81,6 +86,7 @@ function startEdit(account: IProjectAccount) {
     installationId: account.public.installationId ?? '',
     repositories: (account.public.repositories ?? []).join(', '),
     envName: account.public.envName ?? '',
+    callbackHost: account.public.callbackHost ?? '',
     gcpProject: account.public.gcpProject ?? '',
     principals: (account.public.principals ?? []).join(', '),
     validityMinutes: account.public.validityMinutes ? String(account.public.validityMinutes) : '',
@@ -96,7 +102,7 @@ async function save() {
   busy.value = true
   actionError.value = undefined
   try {
-    const { id, kind, label, owner, baseUrl, username, appId, installationId, repositories, envName, gcpProject, principals, validityMinutes, hostPatterns, knownHosts, certificate, secret } = form.value
+    const { id, kind, label, owner, baseUrl, username, appId, installationId, repositories, envName, callbackHost, gcpProject, principals, validityMinutes, hostPatterns, knownHosts, certificate, secret } = form.value
     const isSsh = kind === 'ssh-ca' || kind === 'ssh-key'
     const list = (value: string) => value.split(/[\s,]+/).filter(Boolean)
     const isGitHub = kind === 'github-app' || kind === 'github-token'
@@ -108,6 +114,7 @@ async function save() {
         ...(kind === 'git-https' ? { baseUrl: baseUrl.trim(), username: username.trim() } : {}),
         ...(kind === 'github-app' ? { appId, installationId, repositories: repositories.split(/[\s,]+/).filter(Boolean) } : {}),
         ...(kind === 'secret-env' ? { envName: envName.trim() } : {}),
+        ...(kind === 'turn-callback' ? { callbackHost: callbackHost.trim().toLowerCase() } : {}),
         ...(kind === 'gcp-service-account' && gcpProject.trim() ? { gcpProject: gcpProject.trim() } : {}),
         ...(isSsh ? { knownHosts, hostPatterns: list(hostPatterns) } : {}),
         ...(kind === 'ssh-ca' ? { principals: list(principals), ...(validityMinutes.trim() ? { validityMinutes: Number(validityMinutes) } : {}) } : {}),
@@ -115,7 +122,10 @@ async function save() {
       },
       ...(secret.trim() && kind !== 'ssh-ca' ? { secret } : {}),
     })
-    notice.value = `Conta ${id} salva. Para um agente usar, libere "${id}" em Contas, nas Permissões.`
+    notice.value =
+      kind === 'turn-callback'
+        ? `Aviso para ${callbackHost.trim()} salvo. Quem recebe confere a assinatura com o mesmo segredo.`
+        : `Conta ${id} salva. Para um agente usar, libere "${id}" em Contas, nas Permissões.`
     editing.value = null
   } catch (failure) {
     actionError.value =
@@ -146,8 +156,25 @@ async function test(account: IProjectAccount) {
   }
 }
 
-/** As regras que a conta pede: a de uso (`Contas`) e a de rede do GitHub. */
+/** O segredo do aviso: 32 bytes aleatórios do navegador, em hex. Aparece no campo para copiar antes de salvar. */
+function generateSecret() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32))
+  form.value.secret = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+  copied.value = false
+}
+const copied = ref(false)
+async function copySecret() {
+  try {
+    await navigator.clipboard.writeText(form.value.secret)
+    copied.value = true
+  } catch {
+    copied.value = false
+  }
+}
+
+/** As regras que a conta pede: a de uso (`Contas`) e a de rede do GitHub. O aviso de fim de turno não pede nenhuma. */
 function suggested(account: IProjectAccount): IPermissionRule[] {
+  if (account.kind === 'turn-callback') return []
   const rules: IPermissionRule[] = [{ category: 'account', pattern: account.id, decision: 'allow' }]
   if (account.kind === 'github-app' || account.kind === 'github-token')
     rules.push({ category: 'network', pattern: 'github.com:443', decision: 'allow' }, { category: 'network', pattern: 'api.github.com:443', decision: 'allow' })
@@ -269,6 +296,10 @@ watch(
             </div>
             <p class="text-xs text-zinc-500">Só os repositórios sob essa URL usam a conta. Sem usuário ou senha na URL: o token vai no campo abaixo.</p>
           </template>
+          <template v-else-if="form.kind === 'turn-callback'">
+            <label class="field">Endereço que recebe (host ou host:porta)<input v-model="form.callbackHost" class="input font-mono" placeholder="10.10.0.4:4003" /></label>
+            <p class="text-xs text-zinc-500">A sessão aberta com um callbackUrl nesse endereço recebe o aviso assinado com o segredo abaixo. Outro endereço é recusado.</p>
+          </template>
           <div v-else-if="form.kind !== 'secret-env'" class="grid gap-3 sm:grid-cols-2">
             <label class="field">Dono (organização ou usuário)<input v-model="form.owner" class="input font-mono" placeholder="empresa1" /></label>
             <template v-if="form.kind === 'github-app'">
@@ -281,9 +312,14 @@ watch(
 
           <p v-if="form.kind === 'ssh-ca'" class="text-xs text-zinc-500">A chave da CA nasce no gateway ao salvar e não sai dele; a pública aparece na lista, para os servidores.</p>
           <label v-else class="field">
-            {{ { 'github-app': 'Chave privada do App (.pem)', 'github-token': 'Token', 'git-https': 'Token ou senha', 'gcp-service-account': 'JSON da conta de serviço', 'ssh-key': 'Chave privada SSH (sem senha)', 'ssh-ca': '', 'secret-env': 'Valor' }[form.kind] }}
+            {{ { 'github-app': 'Chave privada do App (.pem)', 'github-token': 'Token', 'git-https': 'Token ou senha', 'gcp-service-account': 'JSON da conta de serviço', 'ssh-key': 'Chave privada SSH (sem senha)', 'ssh-ca': '', 'secret-env': 'Valor', 'turn-callback': 'Segredo da assinatura' }[form.kind] }}
             <textarea v-model="form.secret" class="input font-mono text-xs" :rows="form.kind === 'github-app' || form.kind === 'gcp-service-account' || form.kind === 'ssh-key' ? 6 : 2" :placeholder="editing ? 'Em branco: mantém o guardado' : ''" autocomplete="off" spellcheck="false" />
           </label>
+          <div v-if="form.kind === 'turn-callback'" class="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+            <button type="button" class="btn btn-ghost btn-sm" @click="generateSecret">Gerar</button>
+            <button v-if="form.secret" type="button" class="btn btn-ghost btn-sm" @click="copySecret">{{ copied ? 'Copiado' : 'Copiar' }}</button>
+            <span>Copie antes de salvar: depois, só os 4 últimos caracteres aparecem.</span>
+          </div>
           <div class="flex gap-2">
             <button type="submit" class="btn btn-primary btn-sm" :disabled="busy || !form.id.trim()">Salvar</button>
             <button type="button" class="btn btn-ghost btn-sm" @click="editing = null">Cancelar</button>
@@ -309,6 +345,7 @@ watch(
               <template v-if="account.public.appId">App {{ account.public.appId }}, instalação {{ account.public.installationId }} · </template>
               <template v-if="account.public.repositories?.length">repositórios {{ account.public.repositories.join(', ') }} · </template>
               <template v-if="account.public.envName">variável {{ account.public.envName }} · </template>
+              <template v-if="account.public.callbackHost">avisa {{ account.public.callbackHost }} · </template>
               <template v-if="account.public.clientEmail">{{ account.public.clientEmail }} · </template>
               <template v-if="account.public.gcpProject">projeto {{ account.public.gcpProject }} · </template>
               <template v-if="account.public.principals?.length">usuários {{ account.public.principals.join(', ') }} · </template>
@@ -321,7 +358,7 @@ watch(
               <code class="break-all text-zinc-200">cert-authority {{ account.public.publicKey }}</code>
             </div>
             <p v-if="tests[account.id]" class="text-xs" :class="tests[account.id].ok ? 'text-emerald-300' : 'text-rose-300'">{{ tests[account.id].detail }}</p>
-            <p class="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+            <p v-if="suggested(account).length" class="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
               Regras:
               <code v-for="rule in suggested(account)" :key="rule.category + rule.pattern" class="text-zinc-300">{{ rule.category === 'account' ? 'conta' : 'rede' }} {{ rule.pattern }}</code>
               <button type="button" class="btn btn-ghost btn-sm" @click="addRules(account)">Adicionar às Permissões do projeto</button>

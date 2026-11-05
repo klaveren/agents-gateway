@@ -28,24 +28,42 @@ export function callbackHosts(env: NodeJS.ProcessEnv = process.env): string[] {
     .filter(Boolean)
 }
 
-/**
- * ⛔ O AVISO SÓ VAI PARA HOST LISTADO, e só com o segredo configurado: sem a lista, o gateway faria POST para qualquer
- * endereço que quem abre a conversa escolhesse (SSRF: a rede interna, o metadado da nuvem). Sem `TURN_CALLBACK_SECRET`,
- * quem recebe não teria como saber que veio daqui.
- */
-export function callbackAllowed(url: string, env: NodeJS.ProcessEnv = process.env): boolean {
-  if (!env.TURN_CALLBACK_SECRET?.trim()) return false
+/** O `host:porta` de uma URL de aviso (com a porta padrão do esquema), ou nada se ela não serve. */
+export function callbackTarget(url: string): string | undefined {
   let parsed: URL
   try {
     parsed = new URL(url)
   } catch {
-    return false
+    return undefined
   }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
-  if (parsed.username || parsed.password) return false
-  const host = parsed.hostname.toLowerCase()
-  const port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80')
-  return callbackHosts(env).some((entry) => entry === host || entry === `${host}:${port}`)
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined
+  if (parsed.username || parsed.password) return undefined
+  return `${parsed.hostname.toLowerCase()}:${parsed.port || (parsed.protocol === 'https:' ? '443' : '80')}`
+}
+
+/**
+ * ⛔ O AVISO SÓ VAI PARA ENDEREÇO CADASTRADO, e sempre assinado: sem isso, o gateway faria POST para qualquer endereço que
+ * quem abre a conversa escolhesse (SSRF: a rede interna, o metadado da nuvem), e quem recebe não saberia que veio daqui.
+ *
+ * O segredo de um endereço, nesta ordem:
+ * 1. o do projeto da conversa (a conta `turn-callback` daquele endereço, na tela do projeto);
+ * 2. o da instalação: `TURN_CALLBACK_HOSTS` (`host` ou `host:porta`, separados por vírgula) e `TURN_CALLBACK_SECRET`.
+ * Nenhum dos dois = o endereço não serve.
+ */
+export function callbackSecret(url: string, project?: (host: string) => string | undefined, env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const target = callbackTarget(url)
+  if (!target) return undefined
+  const own = project?.(target)
+  if (own) return own
+  const secret = env.TURN_CALLBACK_SECRET?.trim()
+  if (!secret) return undefined
+  const host = target.split(':')[0]
+  return callbackHosts(env).some((entry) => entry === host || entry === target) ? secret : undefined
+}
+
+/** O endereço serve para o aviso (com o segredo do projeto ou o da instalação)? */
+export function callbackAllowed(url: string, env: NodeJS.ProcessEnv = process.env, project?: (host: string) => string | undefined): boolean {
+  return callbackSecret(url, project, env) !== undefined
 }
 
 /** A assinatura do corpo: `sha256=<hex>` do HMAC-SHA256 com o segredo da instalação. */
@@ -60,13 +78,14 @@ export function signCallback(body: string, secret: string): string {
 export async function deliverCallback(
   url: string,
   payload: ITurnCallbackPayload,
-  options: { env?: NodeJS.ProcessEnv; http?: TFetch; wait?: (ms: number) => Promise<void> } = {},
+  options: { env?: NodeJS.ProcessEnv; http?: TFetch; wait?: (ms: number) => Promise<void>; secretFor?: (url: string) => string | undefined } = {},
 ): Promise<boolean> {
   const env = options.env ?? process.env
   const http = options.http ?? fetch
   const wait = options.wait ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
-  const secret = env.TURN_CALLBACK_SECRET?.trim()
-  if (!secret || !callbackAllowed(url, env)) return false
+  // O segredo é lido na hora da entrega: trocado na tela, o próximo aviso já sai com o novo.
+  const secret = options.secretFor ? options.secretFor(url) : callbackSecret(url, undefined, env)
+  if (!secret) return false
   const body = JSON.stringify(payload)
   const delays = [0, 1000, 3000]
   for (const [attempt, delay] of delays.entries()) {
