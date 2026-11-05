@@ -28,13 +28,16 @@ const RECONNECT_MS = 3_000
 
 /** A conversa casa com o filtro aberto? Decide se um evento ao vivo entra na lista. */
 export function matchesFilters(conversation: IConversation, filters: IConversationFilters): boolean {
+  // ⚖️ A caixa de entrada é o que se vê: a delegada aparece dentro da conversa que a originou, não na lista nem na conta.
+  if (conversation.metadata?.delegatedBy) return false
   if (filters.agentId && conversation.agentId !== filters.agentId) return false
   if (filters.classification && conversation.classification !== filters.classification) return false
 
   const term = filters.q.trim().toLowerCase()
   if (!term) return true
   const owner = conversation.metadata?.owner
-  return [conversation.title, owner?.email, owner?.id, owner?.account].some((value) => value?.toLowerCase().includes(term))
+  // O id também (`gw_…`): acha a conversa que alguém citou.
+  return [conversation.title, owner?.email, owner?.id, owner?.account, conversation.id].some((value) => value?.toLowerCase().includes(term))
 }
 
 /**
@@ -79,6 +82,11 @@ export const useConversationsStore = defineStore('conversations', () => {
   const facets = ref<IConversationPage['facets']>()
   const page = ref(1)
   const scope = ref<'all' | 'mine'>('mine')
+  /**
+   * ⚖️ O admin vê a PRÓPRIA caixa de entrada, como qualquer pessoa; "De todos" liga o monitor (todas as conversas, de
+   * todo mundo). Desligado por padrão: com a esteira abrindo uma conversa por disparo, a caixa seria dela.
+   */
+  const everyone = ref(false)
   const loading = ref(false)
   const error = ref<string>()
   const filters = ref<IConversationFilters>({ q: '', agentId: '', classification: '' })
@@ -176,7 +184,9 @@ export const useConversationsStore = defineStore('conversations', () => {
 
   function fetchPage(number: number): Promise<IConversationPage> {
     const { q, agentId, classification } = filters.value
-    return api<IConversationPage>('/conversations', { query: { scope: 'all', page: number, pageSize: PAGE_SIZE, q, agentId, classification, ...useProjectsStore().query } })
+    return api<IConversationPage>('/conversations', {
+      query: { scope: 'all', page: number, pageSize: PAGE_SIZE, q, agentId, classification, ...(everyone.value ? {} : { mine: 1 }), ...useProjectsStore().query },
+    })
   }
 
   /** Sem paginação no servidor, o filtro é aplicado aqui sobre a lista inteira. */
@@ -186,6 +196,13 @@ export const useConversationsStore = defineStore('conversations', () => {
     const counts: Record<string, number> = {}
     for (const item of all) counts[item.agentId] = (counts[item.agentId] ?? 0) + 1
     facets.value = { agent: counts, classification: {}, provider: {} }
+  }
+
+  /** Liga ou desliga o "De todos" (só admin): relê a lista e troca a assinatura, para os eventos seguirem o mesmo recorte. */
+  function setEveryone(on: boolean): Promise<void> {
+    everyone.value = on
+    subscribe(true)
+    return load(true)
   }
 
   function setFilters(patch: Partial<IConversationFilters>, admin: boolean): Promise<void> | void {
@@ -258,7 +275,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     const run = async (first: boolean) => {
       while (!controller.signal.aborted) {
         try {
-          const body = await openStream('/conversations/events', { signal: controller.signal, query: useProjectsStore().query })
+          const body = await openStream('/conversations/events', { signal: controller.signal, query: { ...(admin && !everyone.value ? { mine: 1 } : {}), ...useProjectsStore().query } })
           live.value = true
           running.value = new Set()
           if (!first) {
@@ -337,6 +354,7 @@ export const useConversationsStore = defineStore('conversations', () => {
     all = []
     items.value = []
     total.value = 0
+    everyone.value = false
     facets.value = undefined
     archivedCount.value = 0
     archivedItems.value = []
@@ -410,6 +428,8 @@ export const useConversationsStore = defineStore('conversations', () => {
     total,
     facets,
     scope,
+    everyone,
+    setEveryone,
     loading,
     error,
     filters,

@@ -192,6 +192,11 @@ export interface IConversationPageQuery {
   agentId?: string
   /** Só as do projeto (a chave `project` do metadata, escrita pelo servidor). Vale também para as contagens. */
   project?: string
+  /**
+   * ⛔ Só as deste dono (o admin vendo a PRÓPRIA caixa de entrada): sai da credencial, nunca da query. Ausente = de todos
+   * (o monitor).
+   */
+  owner?: { id: string; account?: string }
 }
 
 /**

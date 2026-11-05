@@ -1108,14 +1108,25 @@ export class AgentController {
    * (`checkAdminAccess`) ou 404, sem distinguir os motivos. Com `page`, a paginação é no servidor.
    */
   private async listAllConversations(query: Record<string, unknown>) {
-    await this.requireAdmin('listAllConversations')
+    const admin = await this.requireAdmin('listAllConversations')
     const view = this.viewFor(true)
 
     if (query.page !== undefined) {
-      const paging = parsePageQuery(query)
+      // ⚖️ `?mine=1`: a CAIXA DE ENTRADA do admin, só as dele, com a busca e as contagens do monitor. O dono sai da
+      // credencial; sem `mine`, de todos (o filtro "De todos" da tela).
+      const mine = (query.mine === '1' || query.mine === 'true') && admin.id ? { id: admin.id, ...(admin.account ? { account: admin.account } : {}) } : undefined
+      const paging = { ...parsePageQuery(query), ...(mine ? { owner: mine } : {}) }
       const page = await this.usecases.conversations.pageSessions(paging)
+      const archivedCount = await this.usecases.conversations.countArchived?.(mine ?? undefined)
 
-      return { ...page, sessions: page.sessions.map((session) => toConversationDto(session, view)), page: paging.page, pageSize: paging.pageSize, scope: 'all' }
+      return {
+        ...page,
+        sessions: page.sessions.map((session) => toConversationDto(session, view)),
+        page: paging.page,
+        pageSize: paging.pageSize,
+        scope: mine ? 'mine' : 'all',
+        ...(archivedCount !== undefined ? { archivedCount } : {}),
+      }
     }
 
     const limit = Number.parseInt(String(query.limit ?? ''), 10)
@@ -1162,8 +1173,10 @@ export class AgentController {
     stream.emit('stream.ready', { streamId })
 
     const view = this.viewFor(admin)
+    // ⚖️ `?mine=1`: o admin com a PRÓPRIA caixa de entrada recebe só as suas, como qualquer pessoa. Sem, o monitor (todas).
+    const everyone = admin && !(req.query?.mine === '1' || req.query?.mine === 'true')
     const visible = (metadata: Record<string, unknown> | undefined) =>
-      (admin || ownsSession(resolved, metadata)) &&
+      (everyone || ownsSession(resolved, metadata)) &&
       // Com `?project`, só as conversas daquele projeto.
       (!project || metadata?.[PROJECT_METADATA_KEY] === project) &&
       // As construções não entram na caixa de entrada (a guia Construir as lista).

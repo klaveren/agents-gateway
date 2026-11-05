@@ -251,6 +251,20 @@ describe('AgentController — conversas, monitor e compartilhamento', () => {
     const all = (query: Record<string, unknown>) => (controller: AgentController) => (res: Response) =>
       controller.listConversations(request({ query: { scope: 'all', ...query } }), res)
 
+    it('⛔ `mine=1`: a caixa do admin traz só as dele (o dono sai da credencial); sem, todas', async () => {
+      const { controller } = await setup()
+      process.env.ADMIN_ROLES = 'admin'
+
+      const mine = await call(ADMIN, all({ page: '1', mine: '1' })(controller))
+      assert.strictEqual(mine.status, 200)
+      assert.deepStrictEqual(ids(mine.body), [])
+      assert.strictEqual(mine.body!.result.scope, 'mine')
+
+      const everyone = await call(ADMIN, all({ page: '1' })(controller))
+      assert.deepStrictEqual(ids(everyone.body).sort(), ['a1', 'a2', 'b1', 'n1'])
+      assert.strictEqual(everyone.body!.result.scope, 'all')
+    })
+
     it('⛔ 404 para quem não é administrador provado — comum, forjado, anônimo e sem prova', async () => {
       const { controller } = await setup()
 

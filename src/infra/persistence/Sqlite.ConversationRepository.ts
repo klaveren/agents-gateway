@@ -199,7 +199,8 @@ const OWNER_EMAIL = "json_extract(metadata, '$.owner.email')"
 const OWNER_ACCOUNT = "json_extract(metadata, '$.owner.account')"
 
 /** O que a busca do monitor procura: o que a tela mostra na linha. */
-const SEARCH_EXPRESSIONS = ['title', OWNER_EMAIL, OWNER_ID, OWNER_ACCOUNT]
+/** Onde a busca procura: o título, o dono e o próprio id (`gw_…`), para achar a conversa que alguém citou. */
+const SEARCH_EXPRESSIONS = ['title', OWNER_EMAIL, OWNER_ID, OWNER_ACCOUNT, 'id']
 
 /** Só identificador simples vira caminho JSON. Ver `listSessions`. */
 const SAFE_KEY = /^[A-Za-z0-9_]+$/
@@ -502,6 +503,14 @@ export class SqliteConversationRepository implements IConversationRepository {
         }
         // As conversas do construtor ficam fora da caixa de entrada também na lista paginada (a do admin), e das contagens.
         search.push(`json_extract(metadata, '$.${BUILDER_METADATA_KEY}') IS NULL`)
+        // ⚖️ A CAIXA DE ENTRADA É O QUE SE VÊ: sem as arquivadas (têm lista própria) e sem as delegadas (aparecem dentro da
+        // conversa que as originou). Antes o total contava as duas, e o número não batia com a lista.
+        search.push('archived_at IS NULL', `json_extract(metadata, '$.delegatedBy') IS NULL`)
+        if (query.owner) {
+          const owner = ownerClause(query.owner)
+          search.push(owner.sql)
+          searchParams.push(...(owner.params as string[]))
+        }
 
         const term = query.q?.trim().toLowerCase()
         if (term) {
