@@ -4886,7 +4886,7 @@ export const OPENAPI_DOCUMENT = {
                     type: 'string',
                     format: 'uri',
                     description:
-                      'Where the end of every turn is POSTed, signed with `X-Gateway-Signature: sha256=<HMAC of the body with TURN_CALLBACK_SECRET>`. Only hosts in `TURN_CALLBACK_HOSTS`.',
+                      'Where the end of every turn started with `POST /sessions/{id}/turns` is POSTed (turns from `/messages` send nothing). Body: `{ conversationId, turn, status: ok | error | aborted, error?, usage?, durationMs, agentId, metadata, at }` — `metadata` is what this request declared, `at` the end time (ISO); the reply text is not in it (read `GET /sessions/{id}/turns/{turn}`). Signed with `X-Gateway-Signature: sha256=<HMAC-SHA256 of the raw body with TURN_CALLBACK_SECRET>`. Up to 3 attempts (now, +1 s, +3 s), 10 s each, redirects not followed, any 2xx is delivered: treat `conversationId + turn` as idempotency key. Only hosts in `TURN_CALLBACK_HOSTS`, and only with the secret set (else 422).',
                   },
                 },
               },

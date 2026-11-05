@@ -56,7 +56,7 @@ import { caller as currentCaller } from '@infra/mcp/Caller.Identity'
 import { GuidanceService } from '@application/Guidance.Service'
 import { IDockerStatus } from '@infra/sandbox/Docker.Sandbox'
 import { IProjectSandbox } from '@infra/sandbox/Project.Sandbox'
-import { CALLBACK_METADATA_KEY, PROJECT_METADATA_KEY, REPOSITORY_METADATA_KEY, START_COMMIT_METADATA_KEY, WORKTREE_METADATA_KEY } from '@domain/Session.Metadata'
+import { CALLBACK_METADATA_KEY, declaredMetadata, PROJECT_METADATA_KEY, REPOSITORY_METADATA_KEY, START_COMMIT_METADATA_KEY, WORKTREE_METADATA_KEY } from '@domain/Session.Metadata'
 import { CHANGE_SCOPES, changesOf, fileDiff, headOf, TChangeScope } from '@infra/workspace/Git.Changes'
 import { projectWorkspacePath } from '@infra/adapters/support/Subscription.Workspace'
 import { currentBranch, IWorkFolder, resolveWorkFolder, WorkFolderError } from '@infra/workspace/Work.Folder'
@@ -197,6 +197,13 @@ interface ILiveTurn {
   startedAt: number
   text: string
   tools: string[]
+}
+
+/** Para onde vai o aviso de fim do turno, e o que ele leva da conversa (ver `Turn.Callbacks`). */
+interface ITurnCallbackTarget {
+  url: string
+  agentId: string
+  metadata: Record<string, unknown>
 }
 
 export class AgentController {
@@ -1672,8 +1679,10 @@ export class AgentController {
         const input = await this.turnInput(sessionId, resolved, body)
         const position = body.whileBusy === 'queue' ? this.queue(sessionId, body, input) : undefined
         if (position !== undefined) return { conversationId: sessionId, turn: this.liveTurns.get(sessionId)?.turn ?? session.turns - 1, status: 'queued' as const, position }
-        const callback = session.metadata?.[CALLBACK_METADATA_KEY]
-        const { live } = this.launch(sessionId, session, input, typeof callback === 'string' ? callback : undefined)
+        const url = session.metadata?.[CALLBACK_METADATA_KEY]
+        const callback =
+          typeof url === 'string' ? { url, agentId: session.agentId, metadata: declaredMetadata(session.metadata, [BUILDER_METADATA_KEY, IMPORT_METADATA_KEY]) } : undefined
+        const { live } = this.launch(sessionId, session, input, callback)
         return { conversationId: sessionId, turn: live.turn, status: 'running' as const }
       },
       { status: 202, message: 'Turn started' },
@@ -1764,14 +1773,19 @@ export class AgentController {
   }
 
   /** Começa o turno assíncrono (um por conversa: rodando, é 409). */
-  private launch(sessionId: string, session: { status: string; turns: number }, input: IMessageInput, callback: string | undefined): { live: ILiveTurn; done: Promise<void> } {
+  private launch(
+    sessionId: string,
+    session: { status: string; turns: number },
+    input: IMessageInput,
+    callback: ITurnCallbackTarget | undefined,
+  ): { live: ILiveTurn; done: Promise<void> } {
     if (session.status === 'running' || this.liveTurns.has(sessionId)) throw new SessionBusyError(sessionId)
     const live: ILiveTurn = { turn: session.turns, startedAt: Date.now(), text: '', tools: [] }
     this.liveTurns.set(sessionId, live)
     return { live, done: this.runTurn(sessionId, input, live, callback) }
   }
 
-  private async runTurn(sessionId: string, input: IMessageInput, live: ILiveTurn, callback: string | undefined): Promise<void> {
+  private async runTurn(sessionId: string, input: IMessageInput, live: ILiveTurn, callback: ITurnCallbackTarget | undefined): Promise<void> {
     const events: IAgentEvent[] = []
     let failure: string | undefined
     try {
@@ -1800,7 +1814,20 @@ export class AgentController {
     })
     if (this.finishedTurns.size > 2000) this.finishedTurns.delete(this.finishedTurns.keys().next().value!)
     this.liveTurns.delete(sessionId)
-    if (callback) void deliverCallback(callback, { conversationId: sessionId, turn: live.turn, status, ...(error ? { error } : {}), usage: result.usage, durationMs })
+    if (callback) {
+      const { url, agentId, metadata } = callback
+      void deliverCallback(url, {
+        conversationId: sessionId,
+        turn: live.turn,
+        status,
+        ...(error ? { error } : {}),
+        usage: result.usage,
+        durationMs,
+        agentId,
+        metadata,
+        at: new Date().toISOString(),
+      })
+    }
   }
 
   private async sendMessageAsJson(res: Response, sessionId: string, input: IMessageInput) {
