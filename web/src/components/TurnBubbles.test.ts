@@ -51,3 +51,41 @@ describe('TurnBubbles — ferramenta com erro', () => {
     expect(host.querySelector('[data-test="tool-error"]')).toBeNull()
   })
 })
+
+describe('TurnBubbles — ferramentas no celular', () => {
+  const narrow = (matches: boolean) =>
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: () => ({ matches, addEventListener: () => undefined, removeEventListener: () => undefined }),
+    })
+  afterEach(() => Reflect.deleteProperty(window, 'matchMedia'))
+
+  const calls = [
+    { tool: 'Read', args: {} },
+    { tool: 'run_bash', args: {}, error: 'falhou' },
+    { tool: 'Read', args: {} },
+    { tool: 'Read', args: {} },
+    { tool: 'search_files', args: {} },
+    { tool: 'list_files', args: {} },
+    { tool: 'Read', args: {} },
+  ] as ITurn['toolCalls']
+
+  it('ficam as 3 últimas; o resto vai para o botão com o contador e os erros, que abre e recolhe', async () => {
+    narrow(true)
+    const host = await mount({ toolCalls: calls })
+    const toggle = host.querySelector<HTMLButtonElement>('[data-test="tools-toggle"]')!
+    expect(toggle.textContent).toContain('+4 ferramentas')
+    expect(toggle.textContent).toContain('1 com erro')
+    expect(host.querySelector('[data-test="tools"]')!.textContent).not.toContain('run_bash')
+    toggle.click()
+    await nextTick()
+    expect(host.querySelector('[data-test="tools"]')!.textContent).toContain('run_bash')
+    expect(host.querySelector('[data-test="tools-toggle"]')!.textContent).toContain('recolher')
+  })
+
+  it('em tela larga, todas à vista e sem botão', async () => {
+    narrow(false)
+    const host = await mount({ toolCalls: calls })
+    expect(host.querySelector('[data-test="tools-toggle"]')).toBeNull()
+  })
+})
