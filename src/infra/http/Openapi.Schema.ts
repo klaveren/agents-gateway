@@ -4801,7 +4801,17 @@ export const OPENAPI_DOCUMENT = {
         responses: {
           '200': {
             description: 'OK',
-            ...json(envelope({ type: 'object', properties: { sessionId: { type: 'string' }, turns: { type: 'array', items: turnSchema } } })),
+            ...json(
+              envelope({
+                type: 'object',
+                properties: {
+                  sessionId: { type: 'string' },
+                  agentId: { type: 'string' },
+                  conversation: { type: 'object', description: 'The conversation header (title, usage, cost for admins, metadata such as `delegatedBy`), as in the list.' },
+                  turns: { type: 'array', items: turnSchema },
+                },
+              }),
+            ),
           },
           '401': failures['401'],
           '404': failures['404'],

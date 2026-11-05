@@ -171,7 +171,7 @@ export const useThreadStore = defineStore('thread', () => {
       let historyFailure: string | undefined
       void loadTodos(id, current)
       const [history, live] = await Promise.all([
-        api<{ agentId?: string; turns: ITurn[] }>(`/conversations/${encodeURIComponent(id)}/turns`).catch((failure) => {
+        api<{ agentId?: string; conversation?: IConversation; turns: ITurn[] }>(`/conversations/${encodeURIComponent(id)}/turns`).catch((failure) => {
           if (!isNotFound(failure)) historyFailure = messageOf(failure)
           return { turns: [] as ITurn[] }
         }),
@@ -184,6 +184,8 @@ export const useThreadStore = defineStore('thread', () => {
       if (current !== generation) return
       turns.value = history.turns
       agentId.value = 'agentId' in history ? history.agentId : undefined
+      // ⚖️ A conversa fora da caixa de entrada (a delegada, a de outra pessoa) não tem cabeçalho na lista: vem com o histórico.
+      if (!header.value && 'conversation' in history && history.conversation) header.value = history.conversation
       liveSession.value = !!live || unsure
       session.value = live ? { provider: live.provider, model: live.model, reasoning: live.reasoning, place: live.place } : undefined
       // Depois do histórico: o turno em curso (`turn.started`) entra depois dos já gravados. Também na conversa

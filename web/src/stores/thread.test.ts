@@ -507,3 +507,21 @@ describe('o turno ao vivo (pelo stream da caixa de entrada)', () => {
     inbox.reset()
   })
 })
+
+describe('open: o cabeçalho da conversa fora da caixa de entrada', () => {
+  it('⛔ a delegada (que a lista não traz) abre com o cabeçalho que vem com o histórico', async () => {
+    const header = { id: 'filha', agentId: 'agent-god', title: 'Delegada', metadata: { delegatedBy: 'mae' }, usage: { totalTokens: 10 } }
+    routes({ '/conversations/filha/turns': () => ({ agentId: 'agent-god', conversation: header, turns: [] }), '/conversations/filha/todos': () => ({ items: [] }) })
+    const thread = useThreadStore()
+    await thread.open('filha')
+    expect(thread.header?.id).toBe('filha')
+    expect(thread.header?.metadata?.delegatedBy).toBe('mae')
+  })
+
+  it('a que a lista já conhece fica com o cabeçalho da lista', async () => {
+    routes({ '/conversations/a/turns': () => ({ conversation: { id: 'a', title: 'Do histórico' }, turns: [] }), '/conversations/a/todos': () => ({ items: [] }) })
+    const thread = useThreadStore()
+    await thread.open('a', { id: 'a', title: 'Da lista' } as never)
+    expect(thread.header?.title).toBe('Da lista')
+  })
+})
