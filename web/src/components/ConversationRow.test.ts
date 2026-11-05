@@ -312,7 +312,7 @@ describe('ConversationRow: ações', () => {
 })
 
 describe('ConversationList: Arquivadas', () => {
-  it('a entrada só aparece com arquivadas, mostra a contagem e abre a lista delas', async () => {
+  it('o botão só aparece com arquivadas, mostra a contagem e troca a lista na mesma tela', async () => {
     vi.mocked(api).mockImplementation(async (path: string, options?: { query?: Record<string, unknown> }) => {
       if (path === '/conversations' && options?.query?.archived) return { sessions: [conversation('z', { archivedAt: '2026-11-02T10:00:00Z', title: 'Velha' })] }
       return { sessions: [conversation('a')], archivedCount: 3 }
@@ -320,30 +320,30 @@ describe('ConversationList: Arquivadas', () => {
     const host = await mount(ConversationList)
     const store = useConversationsStore()
 
-    expect(host.querySelector('[data-testid=archived-entry]')).toBeNull()
+    expect(host.querySelector('[data-testid=archived-toggle]')).toBeNull()
     await store.load(false)
     await flush()
-    const entry = host.querySelector<HTMLElement>('[data-testid=archived-entry]')!
-    expect(entry.textContent).toContain('Arquivadas')
-    expect(entry.textContent).toContain('3')
+    const toggle = host.querySelector<HTMLElement>('[data-testid=archived-toggle]')!
+    expect(toggle.textContent?.trim()).toBe('3')
 
-    entry.click()
+    toggle.click()
     await flush()
     expect(host.textContent).toContain('Velha')
     expect(host.textContent).not.toContain('Conversa a')
+    expect(host.querySelector('input[type=search]')).not.toBeNull()
     expect(host.querySelector('[data-action=archive]')!.textContent).toContain('Desarquivar')
 
-    host.querySelector<HTMLElement>('[data-testid=archived-back]')!.click()
+    host.querySelector<HTMLElement>('[data-testid=archived-toggle]')!.click()
     await flush()
     expect(host.textContent).toContain('Conversa a')
   })
 
-  it('sem arquivadas, a entrada não aparece', async () => {
+  it('sem arquivadas, o botão não aparece', async () => {
     vi.mocked(api).mockResolvedValue({ sessions: [conversation('a')], archivedCount: 0 })
     const host = await mount(ConversationList)
     await useConversationsStore().load(false)
     await flush()
 
-    expect(host.querySelector('[data-testid=archived-entry]')).toBeNull()
+    expect(host.querySelector('[data-testid=archived-toggle]')).toBeNull()
   })
 })

@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { CLASSIFICATION_COLOR, CLASSIFICATION_LABEL } from '@/lib/format'
 import { useAgentsStore } from '@/stores/agents'
 import { useAuthStore } from '@/stores/auth'
-import { useConversationsStore } from '@/stores/conversations'
+import { matchesFilters, useConversationsStore } from '@/stores/conversations'
 import ConversationRow from './ConversationRow.vue'
 import Icon from './Icon.vue'
 
@@ -60,48 +60,61 @@ onBeforeUnmount(() => {
 
 /** As conversas delegadas por outro agente (filhas) aparecem dentro da conversa que as originou, não na lista. */
 const topLevel = computed(() => conversations.items.filter((conversation) => !conversation.metadata?.delegatedBy))
-const archivedTop = computed(() => conversations.archivedItems.filter((conversation) => !conversation.metadata?.delegatedBy))
+/** As arquivadas, com a mesma busca da caixa de entrada (feita aqui: a lista delas vem inteira). */
+const archivedTop = computed(() => conversations.archivedItems.filter((conversation) => matchesFilters(conversation, { q: conversations.filters.q, agentId: '', classification: '' })))
 const inArchived = computed(() => conversations.view === 'archived')
 </script>
 
 <template>
   <section class="flex h-full flex-col">
-    <header v-if="inArchived" class="flex items-center gap-2 px-4 pt-4 pb-2">
-      <button type="button" class="flex items-center gap-1 rounded-full py-1 pr-2 text-sm text-zinc-300 hover:text-white" data-testid="archived-back" @click="conversations.showView('inbox')">
-        <Icon name="back" class="h-4 w-4" /> Conversas
-      </button>
-      <h1 class="ml-auto text-xl font-semibold">Arquivadas</h1>
-      <span class="text-sm text-zinc-500">{{ conversations.archivedCount }}</span>
-    </header>
-    <header v-else class="flex items-center gap-2 px-4 pt-4 pb-2">
-      <h1 class="text-xl font-semibold">Conversas</h1>
-      <span class="text-sm text-zinc-500">{{ conversations.total }}</span>
+    <header class="flex items-center gap-2 px-4 pt-4 pb-2">
+      <h1 class="text-xl font-semibold">{{ inArchived ? 'Arquivadas' : 'Conversas' }}</h1>
+      <span class="text-sm text-zinc-500">{{ inArchived ? archivedTop.length : conversations.total }}</span>
       <RouterLink to="/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Nova conversa">
         <Icon name="plus" class="h-5 w-5" />
       </RouterLink>
     </header>
 
-    <div v-if="!inArchived" class="flex items-center gap-2 px-4 pb-2">
+    <!-- A busca e os dois filtros da lista, em botões: as arquivadas (na mesma tela) e, para quem administra, as de todos. -->
+    <div class="flex items-center gap-1.5 px-4 pb-2">
       <label class="flex min-w-0 flex-1 items-center gap-2 rounded-full bg-zinc-800/80 px-3 py-2 text-sm focus-within:ring-1 focus-within:ring-emerald-500/60">
         <Icon name="search" class="h-4 w-4 text-zinc-500" />
         <input
           v-model="search"
           type="search"
-          :placeholder="auth.isAdmin && conversations.everyone ? 'Buscar por título, e-mail, conta ou id…' : 'Buscar por título ou id…'"
+          :placeholder="auth.isAdmin && conversations.everyone && !inArchived ? 'Buscar por título, e-mail, conta ou id…' : 'Buscar por título ou id…'"
           class="w-full bg-transparent outline-none placeholder:text-zinc-500"
         />
       </label>
       <button
-        v-if="auth.isAdmin"
+        v-if="conversations.archivedCount > 0 || inArchived"
         type="button"
-        class="chip shrink-0"
-        :class="{ on: conversations.everyone }"
+        class="relative grid h-9 w-9 shrink-0 place-items-center rounded-full hover:bg-zinc-800"
+        :class="inArchived ? 'bg-zinc-800 text-emerald-400' : 'text-zinc-400'"
+        :aria-pressed="inArchived"
+        :title="inArchived ? 'Voltar às conversas' : `Ver as arquivadas (${conversations.archivedCount})`"
+        data-testid="archived-toggle"
+        @click="conversations.showView(inArchived ? 'inbox' : 'archived')"
+      >
+        <Icon name="archive" class="h-5 w-5" />
+        <span
+          v-if="conversations.archivedCount > 0"
+          class="absolute -top-0.5 -right-0.5 min-w-4 rounded-full bg-emerald-500/20 px-1 text-center text-[10px] leading-4 text-emerald-300"
+        >
+          {{ conversations.archivedCount }}
+        </span>
+      </button>
+      <button
+        v-if="auth.isAdmin && !inArchived"
+        type="button"
+        class="grid h-9 w-9 shrink-0 place-items-center rounded-full hover:bg-zinc-800"
+        :class="conversations.everyone ? 'bg-zinc-800 text-emerald-400' : 'text-zinc-400'"
         :aria-pressed="conversations.everyone"
-        title="Ver as conversas de todo mundo (o monitor), não só as suas"
+        :title="conversations.everyone ? 'Ver só as suas conversas' : 'Ver as conversas de todo mundo (o monitor)'"
         data-test="everyone-toggle"
         @click="conversations.setEveryone(!conversations.everyone)"
       >
-        De todos
+        <Icon name="users" class="h-5 w-5" />
       </button>
     </div>
 
@@ -146,20 +159,9 @@ const inArchived = computed(() => conversations.view === 'archived')
           archived
         />
         <p v-if="conversations.archivedLoading" class="py-2 text-center text-xs text-zinc-500">Carregando…</p>
-        <p v-else-if="!archivedTop.length" class="m-6 text-center text-sm text-zinc-500">Nenhuma conversa arquivada.</p>
+        <p v-else-if="!archivedTop.length" class="m-6 text-center text-sm text-zinc-500">Nenhuma conversa arquivada{{ conversations.filters.q ? ' com essa busca' : '' }}.</p>
       </template>
       <template v-else>
-      <button
-        v-if="conversations.archivedCount > 0"
-        type="button"
-        class="mb-1 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-zinc-300 hover:bg-zinc-800/60"
-        data-testid="archived-entry"
-        @click="conversations.showView('archived')"
-      >
-        <span class="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-zinc-800 text-emerald-400"><Icon name="archive" class="h-4 w-4" /></span>
-        <span class="font-medium">Arquivadas</span>
-        <span class="ml-auto text-xs text-zinc-500">{{ conversations.archivedCount }}</span>
-      </button>
       <p v-if="auth.unauthorized" class="m-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
         Sua sessão expirou. <RouterLink to="/login" class="underline">Entre de novo</RouterLink>.
       </p>
