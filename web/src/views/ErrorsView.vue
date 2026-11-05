@@ -119,7 +119,7 @@
 </script>
 
 <template>
-  <div class="scroll-thin h-full overflow-y-auto px-4 py-6">
+  <div class="h-full overflow-y-auto px-4 py-6">
     <div class="mx-auto flex max-w-5xl flex-col gap-4">
       <header class="flex flex-wrap items-center gap-x-3 gap-y-2">
         <h1 class="text-xl font-semibold">Erros</h1>

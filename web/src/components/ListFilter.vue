@@ -19,7 +19,7 @@
       <Icon name="search" class="h-4 w-4 text-zinc-500" />
       <input v-model="query" type="search" :placeholder="placeholder" :aria-label="placeholder" class="w-full bg-transparent outline-none placeholder:text-zinc-500" />
     </label>
-    <div v-if="tags.length || tag" class="scroll-thin mt-2 flex gap-1.5 overflow-x-auto">
+    <div v-if="tags.length || tag" class="mt-2 flex gap-1.5 overflow-x-auto">
       <button v-for="item in tags" :key="item.tag" type="button" class="chip shrink-0" :class="{ on: tag === item.tag }" @click="tag = tag === item.tag ? '' : item.tag">
         {{ item.tag }} <span class="text-zinc-500">{{ item.count }}</span>
       </button>

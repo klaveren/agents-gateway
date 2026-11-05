@@ -388,7 +388,7 @@ function onInvalid(event: Event) {
       </div>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
       <ListFilter v-if="ofKind.length" v-model:query="query" v-model:tag="tag" :placeholder="`Buscar ${info.one}…`" :items="ofKind" />
-      <div v-if="showStatusFilter" class="scroll-thin flex gap-1.5 overflow-x-auto px-3 pb-2" role="group" aria-label="Status" data-test="status-filter">
+      <div v-if="showStatusFilter" class="flex gap-1.5 overflow-x-auto px-3 pb-2" role="group" aria-label="Status" data-test="status-filter">
         <button v-for="item in DOC_STATUS_FILTERS" :key="item" type="button" class="chip shrink-0" :class="{ on: statusFilter === item }" @click="statusFilter = item">
           {{ DOC_STATUS_FILTER_LABEL[item] }} <span class="text-zinc-500">{{ statusTotals[item] }}</span>
         </button>

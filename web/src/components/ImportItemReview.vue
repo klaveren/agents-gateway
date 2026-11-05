@@ -168,7 +168,7 @@ function clip(text: string, max = 800): string {
           <span class="ml-2 text-emerald-300">+{{ entry.diff.added }}</span>
           <span class="ml-1 text-rose-300">−{{ entry.diff.removed }}</span>
         </summary>
-        <div class="scroll-thin max-h-96 overflow-auto font-mono text-[11px]">
+        <div class="max-h-96 overflow-auto font-mono text-[11px]">
           <div v-for="(hunk, h) in entry.diff.hunks" :key="h" class="border-t border-zinc-800">
             <p class="bg-zinc-900 px-2 text-zinc-500">@@ -{{ hunk.oldStart }},{{ hunk.oldLines }} +{{ hunk.newStart }},{{ hunk.newLines }} @@</p>
             <p

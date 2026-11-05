@@ -230,7 +230,7 @@ const partLabel = (part?: string) => (part === 'record' ? ' (registro)' : part =
           {{ heldBack.length }} item(ns) de fora por bloqueio
           <button type="button" class="btn btn-ghost btn-sm ml-auto" :disabled="loading" data-test="apply-ready-off" @click="setReady(false)">Ver todos de novo</button>
         </p>
-        <ul class="scroll-thin flex max-h-48 flex-col gap-0.5 overflow-y-auto">
+        <ul class="flex max-h-48 flex-col gap-0.5 overflow-y-auto">
           <li v-for="one in heldBack" :key="one.key" class="text-zinc-400" data-test="apply-held-item">
             <code class="text-zinc-200">{{ one.key }}</code> — {{ one.reason }}
           </li>

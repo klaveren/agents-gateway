@@ -48,7 +48,7 @@
         :id="`${idPrefix ?? 'trigger'}-body-${index}`"
         v-model="trigger.body"
         rows="8"
-        class="input scroll-thin font-mono text-[13px] leading-relaxed"
+        class="input font-mono text-[13px] leading-relaxed"
         placeholder="O procedimento: o que fazer, passo a passo."
         aria-label="Procedimento"
       />

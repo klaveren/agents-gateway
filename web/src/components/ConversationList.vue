@@ -88,7 +88,7 @@ const inArchived = computed(() => conversations.view === 'archived')
       </label>
     </div>
 
-    <div v-if="!inArchived && (agentTabs.length > 1 || conversations.filters.agentId)" class="scroll-thin flex gap-1.5 overflow-x-auto px-4 pb-2">
+    <div v-if="!inArchived && (agentTabs.length > 1 || conversations.filters.agentId)" class="flex gap-1.5 overflow-x-auto px-4 pb-2">
       <button
         v-for="tab in agentTabs"
         :key="tab.id"
@@ -113,7 +113,7 @@ const inArchived = computed(() => conversations.view === 'archived')
       </button>
     </div>
 
-    <div class="scroll-thin min-h-0 flex-1 overflow-y-auto px-2 pb-4">
+    <div class="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
       <p v-if="conversations.actionError" class="m-3 flex items-start gap-2 text-sm text-rose-300" role="alert">
         <span class="min-w-0 flex-1">{{ conversations.actionError }}</span>
         <button type="button" class="shrink-0 text-zinc-400 hover:text-white" title="Dispensar" @click="conversations.actionError = undefined"><Icon name="x" class="h-4 w-4" /></button>

@@ -87,7 +87,7 @@
     <p class="font-medium text-zinc-200">Só quem administra vê a máscara de segredos.</p>
   </div>
 
-  <div v-else class="scroll-thin h-full overflow-y-auto px-4 py-5">
+  <div v-else class="h-full overflow-y-auto px-4 py-5">
     <section class="mx-auto flex max-w-3xl flex-col gap-4">
       <header>
         <p class="text-xs text-zinc-500">O que sai das ferramentas vai ao modelo, ao histórico e à tela. Antes, passa por esta máscara.</p>
@@ -170,7 +170,7 @@
         <h2 class="text-sm font-medium text-zinc-200">Testar</h2>
         <textarea v-model="sample" class="input font-mono text-xs" rows="4" placeholder="Cole uma saída de comando, um .env, um JSON…" />
         <div><button class="btn btn-sm" :disabled="!sample.trim()" @click="test">Ver como sai</button></div>
-        <pre v-if="masked !== undefined" class="scroll-thin max-h-60 overflow-auto rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-xs whitespace-pre-wrap text-zinc-200">{{
+        <pre v-if="masked !== undefined" class="max-h-60 overflow-auto rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-xs whitespace-pre-wrap text-zinc-200">{{
           masked
         }}</pre>
       </section>

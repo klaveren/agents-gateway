@@ -172,7 +172,7 @@ async function approveQuick() {
       </button>
       <template v-else>
         <p class="text-zinc-300">Aprovar estes {{ quick.length }} rascunhos? Nenhum remove trecho; cada um é conferido de novo com a fonte.</p>
-        <ul class="scroll-thin max-h-32 overflow-y-auto font-mono text-zinc-400" data-test="quick-approve-list">
+        <ul class="max-h-32 overflow-y-auto font-mono text-zinc-400" data-test="quick-approve-list">
           <li v-for="key in quick" :key="key">{{ key }}</li>
         </ul>
         <div class="flex gap-2">

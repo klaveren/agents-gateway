@@ -157,7 +157,7 @@
     <p class="font-medium text-zinc-200">Só quem administra vê as notificações.</p>
   </div>
 
-  <div v-else class="scroll-thin h-full overflow-y-auto px-4 py-5" data-test="notifications">
+  <div v-else class="h-full overflow-y-auto px-4 py-5" data-test="notifications">
     <section class="mx-auto flex max-w-3xl flex-col gap-4">
       <header>
         <h1 class="text-xl font-semibold">Notificações</h1>

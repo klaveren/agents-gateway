@@ -209,7 +209,7 @@ watch(
 
       <p v-if="error" class="px-4 py-2 text-sm text-rose-300">{{ error }}</p>
       <div v-else class="flex min-h-0 flex-1 flex-col md:flex-row">
-        <nav class="scroll-thin max-h-[40%] shrink-0 overflow-y-auto border-b border-zinc-800 md:max-h-none md:w-72 md:border-r md:border-b-0">
+        <nav class="max-h-[40%] shrink-0 overflow-y-auto border-b border-zinc-800 md:max-h-none md:w-72 md:border-r md:border-b-0">
           <section v-if="changes?.commits.length" class="border-b border-zinc-800 px-2 py-2">
             <div class="px-1 pb-1 text-[11px] font-semibold tracking-wide text-zinc-500 uppercase">Commits</div>
             <button
@@ -253,7 +253,7 @@ watch(
             <button class="chip" :class="{ on: layout === 'line-by-line' }" @click="setLayout('line-by-line')">Em linhas</button>
           </div>
           <p v-if="diffNote" class="px-3 py-2 text-xs text-zinc-400">{{ diffNote }}</p>
-          <div ref="target" class="changes-diff scroll-thin min-h-0 flex-1 overflow-auto" />
+          <div ref="target" class="changes-diff min-h-0 flex-1 overflow-auto" />
         </section>
       </div>
     </aside>

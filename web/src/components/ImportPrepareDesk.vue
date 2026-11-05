@@ -230,7 +230,7 @@ const RUN_LABEL: Record<NonNullable<IImportBatchRun['run']>['state'], string> = 
               <span class="flex-1" />
               <button type="button" class="btn btn-ghost btn-sm" data-test="desk-drawer-close" @click="drawer = undefined">Fechar</button>
             </div>
-            <nav class="scroll-thin flex gap-1 overflow-x-auto" aria-label="Conversas da migração">
+            <nav class="flex gap-1 overflow-x-auto" aria-label="Conversas da migração">
               <button
                 v-for="run in runs"
                 :key="run.conversationId"

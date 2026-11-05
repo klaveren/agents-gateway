@@ -140,7 +140,7 @@ async function send(text: string, files: IOutgoingFile[], settle: (ok: boolean) 
       <h2 class="font-medium">Nova conversa</h2>
     </header>
 
-    <div class="scroll-thin min-h-0 flex-1 overflow-y-auto px-4 py-5">
+    <div class="min-h-0 flex-1 overflow-y-auto px-4 py-5">
       <div class="mx-auto flex max-w-3xl flex-col gap-5">
         <template v-if="!thread.turns.length && !thread.pending">
           <p v-if="!usable.length" class="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 text-center text-sm text-zinc-400">

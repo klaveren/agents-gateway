@@ -149,7 +149,7 @@ function context(tokens?: number): string {
     <p v-if="loading" class="text-xs text-zinc-500">Carregando…</p>
     <p v-else-if="!models.length" class="text-xs text-zinc-500">Nenhum modelo ainda. {{ provider.credential.configured || provider.subscription ? 'Clique em "Atualizar lista" para buscar os do provedor.' : 'Salve uma chave e atualize a lista.' }}</p>
 
-    <ul v-if="visible.length" class="scroll-thin max-h-96 divide-y divide-zinc-800/70 overflow-y-auto">
+    <ul v-if="visible.length" class="max-h-96 divide-y divide-zinc-800/70 overflow-y-auto">
       <li v-for="model in visible" :key="model.modelId" class="flex flex-wrap items-center gap-x-3 gap-y-1 py-2" :class="{ 'opacity-50': !model.available }">
         <button type="button" role="switch" :aria-checked="model.enabled" :aria-label="`Ativar ${model.modelId}`" class="switch shrink-0" :class="{ on: model.enabled }" @click="toggle(model)"><span /></button>
         <div class="min-w-0 flex-1 basis-44">
