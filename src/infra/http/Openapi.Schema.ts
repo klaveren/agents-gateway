@@ -1231,7 +1231,14 @@ const usageFigure = (withCost: boolean) => ({
 const usageSummary = (withCost: boolean) => ({
   type: 'object',
   properties: {
-    period: { type: 'object', properties: { days: { type: 'integer' }, since: { type: 'string', format: 'date-time' }, tzOffsetMinutes: { type: 'integer' } } },
+    period: {
+      type: 'object',
+      properties: {
+        days: { oneOf: [{ type: 'integer' }, { type: 'string', enum: ['all'] }], description: '`all` = the whole history (only by metadata key, without `days`).' },
+        since: { type: 'string', format: 'date-time' },
+        tzOffsetMinutes: { type: 'integer' },
+      },
+    },
     totals: usageFigure(withCost),
     daily: {
       type: 'array',
@@ -1258,6 +1265,16 @@ const usageParams = [
   { name: 'days', in: 'query', schema: { type: 'integer', enum: [7, 30, 90], default: 30 }, description: 'Period, counting today.' },
   { name: 'project', in: 'query', schema: { type: 'string' }, description: 'Only the conversations of this project (absent = all).' },
   { name: 'tz', in: 'query', schema: { type: 'integer' }, description: 'Minutes to add to UTC for local time (São Paulo: -180). Days are cut in this time zone.' },
+]
+/** Por chave do `metadata`: sem `days`, o histórico inteiro (o custo de um épico é o do épico todo). */
+const usageByKeyParams = [
+  {
+    name: 'days',
+    in: 'query',
+    schema: { type: 'integer', minimum: 1, maximum: 400 },
+    description: 'Period, counting today. Absent = the whole history (`period.days: "all"`, `period.since` = the first day with usage). Out of range = 422.',
+  },
+  ...usageParams.slice(1),
 ]
 
 const providerParam = [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }]
@@ -4519,7 +4536,7 @@ export const OPENAPI_DOCUMENT = {
       get: {
         summary:
           'Usage grouped by the value of a session `metadata` key (e.g. `accountId`), with cost, most expensive first — the billing view for whoever integrates the gateway. Any other query parameter filters by metadata (`/usage/by/userId?accountId=xpto`). Metadata is declared by the session creator, not verified. Administrators only',
-        parameters: [{ name: 'key', in: 'path', required: true, schema: { type: 'string', pattern: '^[A-Za-z0-9_]{1,64}$' } }, ...usageParams],
+        parameters: [{ name: 'key', in: 'path', required: true, schema: { type: 'string', pattern: '^[A-Za-z0-9_]{1,64}$' } }, ...usageByKeyParams],
         responses: {
           '200': {
             description: 'OK',
@@ -4549,13 +4566,13 @@ export const OPENAPI_DOCUMENT = {
         parameters: [
           { name: 'key', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'value', in: 'path', required: true, schema: { type: 'string' } },
-          ...usageParams,
+          ...usageByKeyParams,
         ],
         responses: {
           '200': { description: 'OK', ...json(envelope(usageSummary(true))) },
           '401': failures['401'],
           '404': failures['404'],
-          '422': { description: 'Invalid metadata key', ...json(failureEnvelope) },
+          '422': { description: 'Invalid metadata key or period', ...json(failureEnvelope) },
         },
       },
     },
