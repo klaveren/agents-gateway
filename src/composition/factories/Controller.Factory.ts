@@ -5,7 +5,7 @@ import { AsyncResource } from 'node:async_hooks'
 import { join } from 'node:path'
 import { installationRules, makePermissions } from './Permissions.Factory'
 import { makeProjectAccounts } from './ProjectAccounts.Factory'
-import { callbackAllowed } from '@infra/http/Turn.Callbacks'
+import { callbackSecret } from '@infra/http/Turn.Callbacks'
 import { SecretMaskController } from '@infra/http/SecretMask.Controller'
 import { makeSecretMasker } from './SecretMask.Factory'
 import { makeConversationRepository } from './Conversations.Factory'
@@ -131,7 +131,7 @@ export function makeController(): AgentController {
     guidance: makeGuidance(),
     secrets: makeResourceSecrets(),
     repositoryAllowed: (agentId, projectId, repository) => makePermissions().test({ agentId, projectId }, { category: 'repository', value: repository }).allowed,
-    callbackAllowed: (url) => callbackAllowed(url),
+    callbackSecret: (url, projectId) => callbackSecret(url, projectId ? (host) => makeProjectAccounts().callbackSecret(projectId, host) : undefined),
     sessionEnded: (sessionId) => backgroundProcesses().stopSession(sessionId),
   })
   // ⛔ O turno de fundo do Importador amarrado ao contexto de quem pediu (a identidade da requisição): a fila roda depois,

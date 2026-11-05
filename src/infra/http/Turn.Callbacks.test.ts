@@ -1,7 +1,7 @@
 import assert from 'node:assert'
 import { createHmac } from 'node:crypto'
 import { describe, it } from 'node:test'
-import { callbackAllowed, CALLBACK_SIGNATURE_HEADER, deliverCallback } from './Turn.Callbacks'
+import { callbackAllowed, callbackSecret, CALLBACK_SIGNATURE_HEADER, deliverCallback } from './Turn.Callbacks'
 
 const env = { TURN_CALLBACK_HOSTS: 'localhost:4000, api.interna', TURN_CALLBACK_SECRET: 'segredo' }
 const payload = { conversationId: 'c1', turn: 0, status: 'ok' as const, durationMs: 10, agentId: 'theo', metadata: { epicCode: 'EP-1' }, at: '2026-11-05T16:00:00.000Z' }
@@ -28,5 +28,22 @@ describe('Turn.Callbacks (o aviso de fim de turno)', () => {
     assert.deepStrictEqual(JSON.parse(seen[0].body), payload)
     assert.strictEqual(await deliverCallback('http://fora.example/fim', payload, { env, http, wait: async () => undefined }), false)
     assert.strictEqual(seen.length, 3, 'host fora da lista nem é chamado')
+  })
+
+  it('o segredo do projeto vale para o endereço dele, sem nada no ambiente; o da instalação fica de reserva', async () => {
+    const project = (host: string) => (host === '10.10.0.4:4003' ? 'do-projeto' : undefined)
+    assert.strictEqual(callbackSecret('http://10.10.0.4:4003/api/v1/gateway/turn-ended', project, {}), 'do-projeto')
+    assert.strictEqual(callbackSecret('http://10.10.0.4:4004/fim', project, {}), undefined)
+    assert.strictEqual(callbackSecret('http://localhost:4000/fim', project, env), 'segredo', 'a reserva da instalação')
+    assert.strictEqual(callbackSecret('http://u:p@10.10.0.4:4003/fim', project, {}), undefined, 'sem credencial na URL')
+
+    const seen: string[] = []
+    const http = (async (_url: string, init: RequestInit) => {
+      seen.push(new Headers(init.headers).get(CALLBACK_SIGNATURE_HEADER) ?? '')
+      return new Response('', { status: 200 })
+    }) as typeof fetch
+    const url = 'http://10.10.0.4:4003/fim'
+    assert.strictEqual(await deliverCallback(url, payload, { env: {}, http, secretFor: (target) => callbackSecret(target, project, {}) }), true)
+    assert.strictEqual(seen[0], `sha256=${createHmac('sha256', 'do-projeto').update(JSON.stringify(payload)).digest('hex')}`)
   })
 })

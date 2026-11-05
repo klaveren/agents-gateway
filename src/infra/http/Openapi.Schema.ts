@@ -1090,7 +1090,7 @@ const projectAccountSchema = {
   properties: {
     projectId: { type: 'string' },
     id: { type: 'string' },
-    kind: { type: 'string', enum: ['github-app', 'github-token', 'git-https', 'gcp-service-account', 'ssh-ca', 'ssh-key', 'secret-env'] },
+    kind: { type: 'string', enum: ['github-app', 'github-token', 'git-https', 'gcp-service-account', 'ssh-ca', 'ssh-key', 'secret-env', 'turn-callback'] },
     label: { type: 'string' },
     public: {
       type: 'object',
@@ -3608,7 +3608,7 @@ export const OPENAPI_DOCUMENT = {
               schema: {
                 type: 'object',
                 properties: {
-                  kind: { type: 'string', enum: ['github-app', 'github-token', 'git-https', 'gcp-service-account', 'ssh-ca', 'ssh-key', 'secret-env'] },
+                  kind: { type: 'string', enum: ['github-app', 'github-token', 'git-https', 'gcp-service-account', 'ssh-ca', 'ssh-key', 'secret-env', 'turn-callback'] },
                   label: { type: 'string' },
                   public: {
                     type: 'object',
@@ -3620,6 +3620,11 @@ export const OPENAPI_DOCUMENT = {
                       installationId: { type: 'string' },
                       repositories: { type: 'array', items: { type: 'string' } },
                       envName: { type: 'string' },
+                      callbackHost: {
+                        type: 'string',
+                        description:
+                          'turn-callback: the `host` or `host:port` that receives the end-of-turn notice of this project conversations; its secret signs each one. Never reaches an agent command.',
+                      },
                       gcpProject: { type: 'string' },
                       principals: { type: 'array', items: { type: 'string' } },
                       validityMinutes: { type: 'integer', minimum: 1, maximum: 60 },
@@ -4903,7 +4908,7 @@ export const OPENAPI_DOCUMENT = {
                     type: 'string',
                     format: 'uri',
                     description:
-                      'Where the end of every turn started with `POST /sessions/{id}/turns` is POSTed (turns from `/messages` send nothing). Body: `{ conversationId, turn, status: ok | error | aborted, error?, usage?, durationMs, agentId, metadata, at }` — `metadata` is what this request declared, `at` the end time (ISO); the reply text is not in it (read `GET /sessions/{id}/turns/{turn}`). Signed with `X-Gateway-Signature: sha256=<HMAC-SHA256 of the raw body with TURN_CALLBACK_SECRET>`. Up to 3 attempts (now, +1 s, +3 s), 10 s each, redirects not followed, any 2xx is delivered: treat `conversationId + turn` as idempotency key. Only hosts in `TURN_CALLBACK_HOSTS`, and only with the secret set (else 422).',
+                      'Where the end of every turn started with `POST /sessions/{id}/turns` is POSTed (turns from `/messages` send nothing). Body: `{ conversationId, turn, status: ok | error | aborted, error?, usage?, durationMs, agentId, metadata, at }` — `metadata` is what this request declared, `at` the end time (ISO); the reply text is not in it (read `GET /sessions/{id}/turns/{turn}`). Signed with `X-Gateway-Signature: sha256=<HMAC-SHA256 of the raw body with the address secret>`. Up to 3 attempts (now, +1 s, +3 s), 10 s each, redirects not followed, any 2xx is delivered: treat `conversationId + turn` as idempotency key. The address must be registered in the conversation project (an account of kind `turn-callback`, one secret per address), or, as a fallback, be in `TURN_CALLBACK_HOSTS` with `TURN_CALLBACK_SECRET` set; else 422.',
                   },
                 },
               },

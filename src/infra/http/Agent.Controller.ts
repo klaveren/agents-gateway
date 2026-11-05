@@ -167,8 +167,11 @@ export interface IAgentControllerDeps {
   repositoryAllowed?: (agentId: string, projectId: string, repository: string) => boolean
   /** A conversa foi apagada: o que roda por ela (os processos em segundo plano) para. */
   sessionEnded?: (sessionId: string) => void
-  /** O aviso de fim de turno pode ir para este endereço (`TURN_CALLBACK_HOSTS`)? Ausente = nunca. */
-  callbackAllowed?: (url: string) => boolean
+  /**
+   * O segredo do aviso de fim de turno para este endereço: o do projeto da conversa (a conta `turn-callback`), senão o da
+   * instalação (`TURN_CALLBACK_HOSTS`). Ausente, ou sem segredo = o endereço não serve.
+   */
+  callbackSecret?: (url: string, projectId?: string) => string | undefined
 }
 
 /**
@@ -204,6 +207,8 @@ interface ITurnCallbackTarget {
   url: string
   agentId: string
   metadata: Record<string, unknown>
+  /** O projeto da conversa: o segredo do endereço sai dele (ver `callbackSecret`). */
+  project?: string
 }
 
 export class AgentController {
@@ -912,8 +917,10 @@ export class AgentController {
         const project = await this.sessionProject({ userId: resolved.identity?.id, admin: adminAccess }, body.agentId, requested)
         const place = await this.workPlace(body.agentId, project, repository, worktree)
         const startCommit = place ? await headOf(place.dir) : undefined
-        if (callbackUrl && !this.usecases.callbackAllowed?.(callbackUrl))
-          throw new HttpError(422, 'validation_error', 'Request body is invalid', [{ field: 'callbackUrl', message: 'host not in TURN_CALLBACK_HOSTS' }])
+        if (callbackUrl && !this.usecases.callbackSecret?.(callbackUrl, project))
+          throw new HttpError(422, 'validation_error', 'Request body is invalid', [
+            { field: 'callbackUrl', message: "address not registered: add it in the project's turn callbacks (or TURN_CALLBACK_HOSTS)" },
+          ])
         // ⛔ A marca de construção também é só do servidor: vem do agente, nunca do corpo (esconderia a conversa da caixa).
         // A marca da importação idem: só a rota do Importador a escreve.
         const { [BUILDER_METADATA_KEY]: _builder, [IMPORT_METADATA_KEY]: _import, ...declared } = metadata ?? {}
@@ -1680,8 +1687,9 @@ export class AgentController {
         const position = body.whileBusy === 'queue' ? this.queue(sessionId, body, input) : undefined
         if (position !== undefined) return { conversationId: sessionId, turn: this.liveTurns.get(sessionId)?.turn ?? session.turns - 1, status: 'queued' as const, position }
         const url = session.metadata?.[CALLBACK_METADATA_KEY]
-        const callback =
-          typeof url === 'string' ? { url, agentId: session.agentId, metadata: declaredMetadata(session.metadata, [BUILDER_METADATA_KEY, IMPORT_METADATA_KEY]) } : undefined
+        const project = typeof session.metadata?.[PROJECT_METADATA_KEY] === 'string' ? (session.metadata[PROJECT_METADATA_KEY] as string) : undefined
+        const declared = declaredMetadata(session.metadata, [BUILDER_METADATA_KEY, IMPORT_METADATA_KEY])
+        const callback = typeof url === 'string' ? { url, agentId: session.agentId, metadata: declared, ...(project ? { project } : {}) } : undefined
         const { live } = this.launch(sessionId, session, input, callback)
         return { conversationId: sessionId, turn: live.turn, status: 'running' as const }
       },
@@ -1815,18 +1823,24 @@ export class AgentController {
     if (this.finishedTurns.size > 2000) this.finishedTurns.delete(this.finishedTurns.keys().next().value!)
     this.liveTurns.delete(sessionId)
     if (callback) {
-      const { url, agentId, metadata } = callback
-      void deliverCallback(url, {
-        conversationId: sessionId,
-        turn: live.turn,
-        status,
-        ...(error ? { error } : {}),
-        usage: result.usage,
-        durationMs,
-        agentId,
-        metadata,
-        at: new Date().toISOString(),
-      })
+      const { url, agentId, metadata, project } = callback
+      const lookup = this.usecases.callbackSecret
+      const options = lookup ? { secretFor: (target: string) => lookup(target, project) } : {}
+      void deliverCallback(
+        url,
+        {
+          conversationId: sessionId,
+          turn: live.turn,
+          status,
+          ...(error ? { error } : {}),
+          usage: result.usage,
+          durationMs,
+          agentId,
+          metadata,
+          at: new Date().toISOString(),
+        },
+        options,
+      )
     }
   }
 

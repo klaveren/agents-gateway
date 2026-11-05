@@ -32,6 +32,7 @@ const saveSchema = z.object({
       hostPatterns: z.array(z.string().trim().max(253)).max(50).optional(),
       knownHosts: z.string().max(16_384).optional(),
       certificate: z.string().trim().max(16_384).optional(),
+      callbackHost: z.string().trim().max(260).optional(),
     })
     .default({}),
   secret: z.string().max(16_384).optional(),

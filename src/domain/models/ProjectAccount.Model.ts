@@ -8,9 +8,29 @@
  *
  * ⚖️ Quem usa cada conta: as permissões (`account <id>`), nas camadas do agente e do projeto. Sem regra, ninguém.
  */
-export type TProjectAccountKind = 'github-app' | 'github-token' | 'git-https' | 'gcp-service-account' | 'ssh-ca' | 'ssh-key' | 'secret-env'
+export type TProjectAccountKind = 'github-app' | 'github-token' | 'git-https' | 'gcp-service-account' | 'ssh-ca' | 'ssh-key' | 'secret-env' | 'turn-callback'
 
-export const PROJECT_ACCOUNT_KINDS: readonly TProjectAccountKind[] = ['github-app', 'github-token', 'git-https', 'gcp-service-account', 'ssh-ca', 'ssh-key', 'secret-env']
+export const PROJECT_ACCOUNT_KINDS: readonly TProjectAccountKind[] = [
+  'github-app',
+  'github-token',
+  'git-https',
+  'gcp-service-account',
+  'ssh-ca',
+  'ssh-key',
+  'secret-env',
+  'turn-callback',
+]
+
+/**
+ * ⛔ O AVISO DE FIM DE TURNO (`turn-callback`) é a conta que NÃO vai para o terminal: o endereço que recebe o aviso dos
+ * turnos do projeto e o segredo que assina cada um (ver `Turn.Callbacks`). Um segredo por endereço.
+ */
+export const TURN_CALLBACK_KIND: TProjectAccountKind = 'turn-callback'
+
+/** `host` ou `host:porta` de um endereço que recebe o aviso (minúsculas). */
+const CALLBACK_HOST = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*(:\d{1,5})?$/
+/** O segredo que assina o aviso: 32 caracteres ou mais, numa linha. */
+export const CALLBACK_SECRET_MIN = 32
 
 /** O que pode aparecer na tela e no log. O segredo fica à parte, selado. */
 export interface IProjectAccountPublic {
@@ -38,6 +58,8 @@ export interface IProjectAccountPublic {
   certificate?: string
   /** Variável secreta: o nome dela no comando. */
   envName?: string
+  /** Aviso de fim de turno: o `host` ou `host:porta` que recebe (o `callbackUrl` da sessão tem de apontar para ele). */
+  callbackHost?: string
   /** O fim do segredo, para reconhecer qual foi cadastrado. */
   last4?: string
 }
@@ -54,7 +76,7 @@ export interface IProjectAccount {
 
 /** O comando recebe o próprio segredo (não um derivado de vida curta). */
 export function exposesSecret(kind: TProjectAccountKind): boolean {
-  return kind !== 'github-app' && kind !== 'gcp-service-account' && kind !== 'ssh-ca'
+  return kind !== 'github-app' && kind !== 'gcp-service-account' && kind !== 'ssh-ca' && kind !== TURN_CALLBACK_KIND
 }
 
 /** O gateway gera o segredo (a chave da CA): no cadastro, ninguém cola nada. */
@@ -169,6 +191,11 @@ export function accountIssues(kind: TProjectAccountKind, input: IProjectAccountP
   if (kind === 'secret-env') {
     if (!ENV_NAME.test(input.envName ?? '')) issues.push('envName: maiúsculas, números e _ (ex.: GITLAB_TOKEN)')
     else if (RESERVED_ENV.test(input.envName!)) issues.push(`envName: ${input.envName} é do gateway`)
+  }
+  if (kind === TURN_CALLBACK_KIND) {
+    if (!CALLBACK_HOST.test(input.callbackHost ?? '')) issues.push('callbackHost: o host ou host:porta que recebe o aviso (ex.: 10.10.0.4:4003)')
+    if (secret !== undefined && (secret.trim().length < CALLBACK_SECRET_MIN || /[\s]/.test(secret.trim())))
+      issues.push(`secret: ${CALLBACK_SECRET_MIN} caracteres ou mais, sem espaço (use Gerar)`)
   }
   if (creating && !generatesSecret(kind) && !secret?.trim()) issues.push('secret: obrigatório')
   if (secret !== undefined && secret.length > 16_384) issues.push('secret: grande demais')

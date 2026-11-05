@@ -164,4 +164,26 @@ describe('ProjectAccountsService', () => {
     // Rede local passa (o portão de rede exige a regra exata); a porta fica na URL.
     assert.strictEqual((await save('https://10.0.0.5:8443/grupo')).public.baseUrl, 'https://10.0.0.5:8443/grupo')
   })
+
+  it('⛔ aviso de fim de turno: um segredo por endereço, e ele nunca vai para o comando, nem com a conta liberada', async () => {
+    const { accounts } = service()
+    const secret = 'a'.repeat(64)
+    await accounts.save('p1', 'esteira', { kind: 'turn-callback', label: 'Esteira', public: { callbackHost: '10.10.0.4:4003' }, secret }, 'admin')
+    await accounts.save('p1', 'site', { kind: 'turn-callback', label: 'Site', public: { callbackHost: 'Hooks.Empresa.com' }, secret: 'b'.repeat(40) }, 'admin')
+
+    assert.strictEqual(accounts.callbackSecret('p1', '10.10.0.4:4003'), secret)
+    assert.strictEqual(accounts.get('p1', 'esteira')?.public.last4, 'aaaa', 'o fim do segredo aparece na lista')
+    assert.strictEqual(accounts.callbackSecret('p1', 'hooks.empresa.com:443'), 'b'.repeat(40), 'sem porta na conta = a porta padrão')
+    assert.strictEqual(accounts.callbackSecret('p1', '10.10.0.4:4004'), undefined, 'outra porta, outro endereço')
+    assert.strictEqual(accounts.callbackSecret('p2', '10.10.0.4:4003'), undefined, 'outro projeto não vê')
+
+    const { env } = await accounts.commandEnv('p1', () => true)
+    assert.ok(!JSON.stringify(env).includes(secret), 'o segredo do aviso não entra no terminal')
+
+    await assert.rejects(
+      accounts.save('p1', 'curto', { kind: 'turn-callback', label: 'x', public: { callbackHost: '10.10.0.4:4003' }, secret: 'curto' }, 'admin'),
+      AccountValidationError,
+    )
+    await assert.rejects(accounts.save('p1', 'url', { kind: 'turn-callback', label: 'x', public: { callbackHost: 'http://x/fim' }, secret }, 'admin'), AccountValidationError)
+  })
 })
