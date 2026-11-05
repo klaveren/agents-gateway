@@ -7,7 +7,7 @@
   import { coreAgentName } from '@/lib/builder'
   import { useAgentCommands } from '@/lib/commands'
   import { COMPACT_OFFER_PERCENT, contextMeter } from '@/lib/contextMeter'
-  import { effortLabel, fullTime, tokens, usd } from '@/lib/format'
+  import { effortLabel, fullTime } from '@/lib/format'
   import { useAgentsStore } from '@/stores/agents'
   import { useProtocolsStore } from '@/stores/protocols'
   import { useAuthStore } from '@/stores/auth'
@@ -22,6 +22,7 @@
   import ConfirmDialog from './ConfirmDialog.vue'
   import Icon from './Icon.vue'
   import PanelToggle from './PanelToggle.vue'
+  import TokensMenu from './TokensMenu.vue'
   import SessionTuner from './SessionTuner.vue'
   import TodoPanel from './TodoPanel.vue'
   import TurnBubbles from './TurnBubbles.vue'
@@ -321,18 +322,29 @@
           <Icon name="compress" class="h-5 w-5" />
         </button>
         <template v-if="header">
-          <span v-if="auth.isAdmin && header.costUsd !== undefined" class="mr-2 hidden text-xs text-zinc-400 sm:inline">
-            {{ tokens(header.usage.totalTokens) }} tokens · {{ header.costIsFloor ? '≥ ' : '' }}{{ usd(header.costUsd) }}
-          </span>
+          <TokensMenu
+            v-if="header.usage.totalTokens"
+            class="max-md:hidden"
+            :usage="header.usage"
+            :cost-usd="auth.isAdmin ? header.costUsd : undefined"
+            :cost-is-floor="header.costIsFloor"
+            :turns="header.turns"
+            :context="context"
+          />
           <button
             v-if="inRepository"
-            class="flex h-9 items-center gap-1.5 rounded-full px-2.5 text-xs text-zinc-300 hover:bg-zinc-800 max-md:hidden"
-            title="O que o agente mudou nesta conversa"
+            class="relative grid h-9 w-9 place-items-center rounded-full text-zinc-400 hover:bg-zinc-800 max-md:hidden"
+            :title="changesCount ? `O que o agente mudou nesta conversa: ${changesCount}` : 'O que o agente mudou nesta conversa'"
+            data-test="changes-toggle"
             @click="changesOpen = true"
           >
-            <Icon name="git" class="h-4 w-4" />
-            Alterações
-            <span v-if="changesCount" class="rounded-full bg-emerald-500/20 px-1.5 text-emerald-300">{{ changesCount }}</span>
+            <Icon name="git" class="h-5 w-5" />
+            <span
+              v-if="changesCount"
+              class="absolute -top-0.5 -right-0.5 min-w-4 rounded-full bg-emerald-500/20 px-1 text-center text-[10px] leading-4 text-emerald-300"
+            >
+              {{ changesCount }}
+            </span>
           </button>
           <PanelToggle class="max-md:hidden" :count="panelCount" :active="panelOpen" @click="panelOpen = !panelOpen" />
           <button
