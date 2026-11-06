@@ -189,7 +189,7 @@ watch(decisionAgent, () => void loadDecisions())
             </ul>
           </section>
 
-          <PermissionTester :project-id="project.id" />
+          <PermissionTester :project-id="project.id" :initial="section" />
 
           <section class="flex flex-col gap-2">
             <div class="flex items-center gap-2">
