@@ -47,3 +47,40 @@ describe('Turn.Callbacks (o aviso de fim de turno)', () => {
     assert.strictEqual(seen[0], `sha256=${createHmac('sha256', 'do-projeto').update(JSON.stringify(payload)).digest('hex')}`)
   })
 })
+
+describe('Turn.Callbacks — destino interno (SSRF)', () => {
+  it('⛔ o projeto não aponta o aviso para loopback, link-local ou metadado, nem por grafia estranha', () => {
+    const project = () => 'do-projeto'
+    for (const url of [
+      'http://127.0.0.1:2375/x',
+      'http://localhost:2375/x',
+      'http://169.254.169.254/x',
+      'http://[::ffff:7f00:1]:80/x',
+      'http://[::ffff:a9fe:a9fe]/x',
+      'http://2130706433/x',
+      'http://0x7f.1/x',
+      'http://0.0.0.0/x',
+    ])
+      assert.strictEqual(callbackSecret(url, project, {}), undefined, url)
+    assert.strictEqual(callbackSecret('http://10.10.0.4:4003/x', project, {}), 'do-projeto', 'LAN cadastrada passa na validação; a ENTREGA confere o endereço')
+  })
+
+  it('o loopback listado na instalação (TURN_CALLBACK_HOSTS) continua valendo', () => {
+    assert.strictEqual(
+      callbackSecret('http://localhost:4000/fim', () => 'do-projeto', env),
+      'do-projeto',
+    )
+  })
+
+  it('⛔ a entrega recusa LAN não listada e loopback não listado, sem conectar (nem a quem o projeto cadastrou)', async () => {
+    const quiet = console.warn
+    console.warn = () => undefined
+    try {
+      for (const url of ['http://10.10.0.4:4003/fim', 'http://127.0.0.1:2375/fim', 'http://[::ffff:7f00:1]:2375/fim']) {
+        assert.strictEqual(await deliverCallback(url, payload, { env: {}, secretFor: () => 'a'.repeat(40), wait: async () => undefined }), false, url)
+      }
+    } finally {
+      console.warn = quiet
+    }
+  })
+})

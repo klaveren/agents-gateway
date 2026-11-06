@@ -8,6 +8,8 @@
  *
  * ⚖️ Quem usa cada conta: as permissões (`account <id>`), nas camadas do agente e do projeto. Sem regra, ninguém.
  */
+import { isAlwaysBlockedHost } from '../Url.Policy'
+
 export type TProjectAccountKind = 'github-app' | 'github-token' | 'git-https' | 'gcp-service-account' | 'ssh-ca' | 'ssh-key' | 'secret-env' | 'turn-callback'
 
 export const PROJECT_ACCOUNT_KINDS: readonly TProjectAccountKind[] = [
@@ -29,6 +31,19 @@ export const TURN_CALLBACK_KIND: TProjectAccountKind = 'turn-callback'
 
 /** `host` ou `host:porta` de um endereço que recebe o aviso (minúsculas). */
 const CALLBACK_HOST = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*(:\d{1,5})?$/
+/**
+ * ⛔ O aviso nunca vai para loopback, link-local, metadado ou `localhost` (SSRF: o Docker em 127.0.0.1:2375, o 169.254.169.254).
+ * Lido como a URL lê: `2130706433` e `0x7f.1` viram 127.0.0.1. Rede local (10.x…) passa aqui, mas na ENTREGA só
+ * se `TURN_CALLBACK_HOSTS` (variável do gateway, não do projeto) listar o endereço (ver `Turn.Callbacks`).
+ */
+export function callbackHostForbidden(callbackHost: string): boolean {
+  try {
+    return isAlwaysBlockedHost(new URL(`http://${callbackHost}`).hostname)
+  } catch {
+    return true
+  }
+}
+
 /** O segredo que assina o aviso: 32 caracteres ou mais, numa linha. */
 export const CALLBACK_SECRET_MIN = 32
 
@@ -194,6 +209,7 @@ export function accountIssues(kind: TProjectAccountKind, input: IProjectAccountP
   }
   if (kind === TURN_CALLBACK_KIND) {
     if (!CALLBACK_HOST.test(input.callbackHost ?? '')) issues.push('callbackHost: o host ou host:porta que recebe o aviso (ex.: 10.10.0.4:4003)')
+    else if (callbackHostForbidden(input.callbackHost!)) issues.push('callbackHost: loopback, link-local e metadados da nuvem não recebem aviso')
     if (secret !== undefined && (secret.trim().length < CALLBACK_SECRET_MIN || /[\s]/.test(secret.trim())))
       issues.push(`secret: ${CALLBACK_SECRET_MIN} caracteres ou mais, sem espaço (use Gerar)`)
   }
