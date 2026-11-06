@@ -1,4 +1,7 @@
 import { createHmac } from 'node:crypto'
+import { classifyAddress } from '@domain/Address.Policy'
+import { isAlwaysBlockedHost, isCloudMetadataHost } from '@domain/Url.Policy'
+import { egressPolicy, guardedFetch, hostListed } from '@infra/net/Guarded.Fetch'
 
 type TFetch = typeof fetch
 
@@ -38,6 +41,8 @@ export function callbackTarget(url: string): string | undefined {
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined
   if (parsed.username || parsed.password) return undefined
+  // ⛔ Link-local e metadado nunca recebem aviso (a conexão confere o endereço resolvido também).
+  if (isCloudMetadataHost(parsed.hostname) || classifyAddress(parsed.hostname) === 'unspecified') return undefined
   return `${parsed.hostname.toLowerCase()}:${parsed.port || (parsed.protocol === 'https:' ? '443' : '80')}`
 }
 
@@ -53,11 +58,13 @@ export function callbackTarget(url: string): string | undefined {
 export function callbackSecret(url: string, project?: (host: string) => string | undefined, env: NodeJS.ProcessEnv = process.env): string | undefined {
   const target = callbackTarget(url)
   if (!target) return undefined
+  const host = target.slice(0, target.lastIndexOf(':'))
+  // ⛔ Loopback só se a INSTALAÇÃO listou (TURN_CALLBACK_HOSTS): o projeto não aponta o aviso para o próprio servidor.
+  if (isAlwaysBlockedHost(host) && !callbackHosts(env).some((entry) => entry === host || entry === target)) return undefined
   const own = project?.(target)
   if (own) return own
   const secret = env.TURN_CALLBACK_SECRET?.trim()
   if (!secret) return undefined
-  const host = target.split(':')[0]
   return callbackHosts(env).some((entry) => entry === host || entry === target) ? secret : undefined
 }
 
@@ -81,7 +88,16 @@ export async function deliverCallback(
   options: { env?: NodeJS.ProcessEnv; http?: TFetch; wait?: (ms: number) => Promise<void>; secretFor?: (url: string) => string | undefined } = {},
 ): Promise<boolean> {
   const env = options.env ?? process.env
-  const http = options.http ?? fetch
+  // ⛔ O aviso conecta pelo `fetch` guardado: DNS conferido na conexão (sem rebinding), redirect não seguido. Rede local
+  // (10.x…) só com o host/IP/faixa em `TURN_CALLBACK_HOSTS`, variável do gateway que o projeto não edita.
+  const http =
+    options.http ??
+    guardedFetch(
+      egressPolicy({
+        allowPrivate: false,
+        listed: (target, address) => hostListed(callbackHosts(env), target, address),
+      }),
+    )
   const wait = options.wait ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
   // O segredo é lido na hora da entrega: trocado na tela, o próximo aviso já sai com o novo.
   const secret = options.secretFor ? options.secretFor(url) : callbackSecret(url, undefined, env)

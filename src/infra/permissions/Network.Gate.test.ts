@@ -43,6 +43,39 @@ describe('Network.Gate', () => {
     gate.release(token)
   })
 
+  it('⛔ IPv6 mapeado em hexa e ::1 expandido: o mesmo loopback e o mesmo metadado, negados com "*" (inclusive a porta do gateway)', async () => {
+    const token = gate.register(() => ({ allowed: true, reason: 'tudo', pattern: '*' }))
+    const gatewayPort = Number(process.env.PORT) || 3000
+    for (const host of [
+      '::ffff:7f00:1',
+      '::ffff:a9fe:a9fe',
+      '0:0:0:0:0:0:0:1',
+      '0:0:0:0:0:ffff:7f00:1',
+      '::ffff:127.0.0.1',
+      '::127.0.0.1',
+      '64:ff9b::7f00:1',
+      '2002:7f00:1::1',
+      'fe80::1',
+    ]) {
+      assert.strictEqual((await gate.decide(token, host, gatewayPort)).allowed, false, `${host}:${gatewayPort}`)
+      assert.strictEqual((await gate.decide(token, host, 80)).allowed, false, `${host}:80`)
+    }
+    for (const host of ['::ffff:c0a8:101', '::ffff:a00:1']) assert.match((await gate.decide(token, host, 80)).reason, /rede local/, host)
+    assert.match(await connectThrough(port, `[::ffff:7f00:1]:${gatewayPort}`, token), /^HTTP\/1\.1 403/)
+    // loopback por IP literal em outra grafia só com a regra exata, como o `localhost`
+    const exact = gate.register(() => ({ allowed: true, reason: 'o mongo', pattern: 'localhost:27017' }))
+    assert.strictEqual((await gate.decide(exact, '::ffff:7f00:1', 27017)).address, '127.0.0.1')
+    gate.release(token)
+    gate.release(exact)
+  })
+
+  it('⛔ a porta do gateway vale também para o IP privado resolvido (a LAN da própria máquina)', async () => {
+    const gatewayPort = Number(process.env.PORT) || 3000
+    const token = gate.register(() => ({ allowed: true, reason: 'x', pattern: `10.0.0.5:${gatewayPort}` }))
+    assert.match((await gate.decide(token, '10.0.0.5', gatewayPort)).reason, /do próprio gateway/)
+    gate.release(token)
+  })
+
   it('⛔ serviço local só com a regra EXATA localhost:<porta>; as portas do gateway, nunca', async () => {
     const exact = gate.register((host, port) => ({ allowed: host === 'localhost' && port === 27017, reason: 'o mongo', pattern: 'localhost:27017' }))
     for (const host of ['localhost', '127.0.0.1', '::1']) {

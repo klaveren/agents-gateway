@@ -1,4 +1,4 @@
-import { isPrivateAddress } from '@infra/sandbox/Egress.Proxy'
+import { classifyAddress, isAlwaysBlockedKind } from '@domain/Address.Policy'
 import { randomBytes } from 'node:crypto'
 import { lookup } from 'node:dns/promises'
 import { createServer, IncomingMessage, request as httpRequest, Server, ServerResponse } from 'node:http'
@@ -72,7 +72,8 @@ export class NetworkGate {
     const raw = host.replace(/^\[|\]$/g, '').toLowerCase()
     if (raw === 'metadata.google.internal' || raw.endsWith('.localhost')) return { allowed: false, reason: `${raw} é sempre negado` }
     // O loopback tem um nome só para as regras: `localhost` (127.0.0.1 e ::1 também chegam aqui).
-    const loopbackName = raw === 'localhost' || raw === '::1' || /^127\./.test(raw)
+    // ⛔ Pelo endereço lido em binário, não pelo texto: `::ffff:7f00:1` e `0:0:0:0:0:0:0:1` também são o loopback.
+    const loopbackName = raw === 'localhost' || (isIP(raw) !== 0 && classifyAddress(raw) === 'loopback')
     const name = loopbackName ? 'localhost' : raw
     if (loopbackName && this.protectedPorts().includes(port)) return { allowed: false, reason: `localhost:${port} é do próprio gateway: sempre negado` }
     const verdict = decide(name, port)
@@ -91,6 +92,8 @@ export class NetworkGate {
     }
     const kind = addressKind(address)
     if (kind === 'blocked') return { allowed: false, reason: `${name} aponta para ${address}, sempre negado` }
+    // ⛔ As portas do gateway valem pelo ENDEREÇO resolvido também: o IP da LAN da própria máquina não é um atalho.
+    if (kind === 'private' && this.protectedPorts().includes(port)) return { allowed: false, reason: `${name}:${port} é do próprio gateway: sempre negado` }
     if (kind === 'private' && (!verdict.pattern || verdict.pattern.includes('*'))) return { allowed: false, reason: `${name} é rede local: só com regra exata` }
     return { ...verdict, address }
   }
@@ -181,15 +184,12 @@ export function preferredAddress(found: ReadonlyArray<{ address: string; family:
 
 /**
  * `blocked`: loopback, link-local (inclui o de metadados), não especificado — nunca; `private`: o resto do que o
- * `isPrivateAddress` dos contêineres fecha (LAN, CGNAT, multicast, reservados) — só com regra exata; `public`: o resto.
+ * `classifyAddress` fecha (LAN, CGNAT, multicast, reservados, túneis) — só com regra exata; `public`: o resto.
  */
 export function addressKind(address: string): 'blocked' | 'private' | 'public' {
-  const ip = address
-    .trim()
-    .toLowerCase()
-    .replace(/^::ffff:(?=\d+\.)/, '')
-  if (/^(127\.|0\.|169\.254\.)/.test(ip) || ip === '::1' || ip === '::' || ip.startsWith('fe80')) return 'blocked'
-  return isPrivateAddress(ip) ? 'private' : 'public'
+  const kind = classifyAddress(address)
+  if (isAlwaysBlockedKind(kind)) return 'blocked'
+  return kind === 'public' ? 'public' : 'private'
 }
 
 let shared: NetworkGate | undefined

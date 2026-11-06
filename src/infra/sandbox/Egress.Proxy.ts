@@ -10,6 +10,8 @@
  * As funções abaixo são PURAS e testadas aqui; o script do contêiner as embute pelo próprio código-fonte.
  */
 
+import { classifyAddress } from '@domain/Address.Policy'
+
 export const EGRESS_PORT = 3128
 const ALLOWED_PORTS = [80, 443]
 
@@ -27,44 +29,9 @@ export function hostAllowed(host: string, patterns: readonly string[]): boolean 
   })
 }
 
-/** Endereço que um contêiner NUNCA pode alcançar: privado, loopback, link-local, CGNAT, multicast, reservado. */
+/** Endereço que um contêiner NUNCA pode alcançar: tudo que não é público (ver `classifyAddress`). */
 export function isPrivateAddress(address: string): boolean {
-  const ip = address
-    .trim()
-    .toLowerCase()
-    .replace(/^\[|\]$/g, '')
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(ip)
-  if (mapped) return isPrivateAddress(mapped[1])
-
-  const v4 = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(ip)
-  if (v4) {
-    const [a, b] = [Number(v4[1]), Number(v4[2])]
-    return (
-      a === 0 ||
-      a === 10 ||
-      a === 127 ||
-      (a === 100 && b >= 64 && b <= 127) ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) ||
-      (a === 192 && b === 0) ||
-      (a === 198 && (b === 18 || b === 19)) ||
-      a >= 224
-    )
-  }
-
-  if (ip.includes(':')) {
-    if (ip === '::' || ip === '::1') return true
-    const groups = ip.split(':')
-    const first = Number.parseInt(groups[0] || '0', 16)
-    const second = Number.parseInt(groups[1] || '0', 16)
-    // Túneis que embutem um IPv4 (e com ele a rede interna): 6to4 `2002::/16`, Teredo `2001:0::/32`,
-    // NAT64 `64:ff9b::/96`.
-    if (first === 0x2002 || (first === 0x2001 && second === 0) || (first === 0x64 && second === 0xff9b)) return true
-    return (first & 0xfe00) === 0xfc00 || (first & 0xffc0) === 0xfe80 || (first & 0xff00) === 0xff00
-  }
-  // Não é IP: quem decide é a lista e, depois, o DNS.
-  return false
+  return classifyAddress(address) !== 'public'
 }
 
 export function portAllowed(port: number): boolean {
@@ -77,7 +44,10 @@ export function egressProxySource(): string {
 const http = require('http'), net = require('net'), dns = require('dns').promises
 const ALLOWED = JSON.parse(process.env.ALLOWED_HOSTS || '[]')
 const hostAllowed = ${hostAllowed.toString()}
-const isPrivateAddress = ${isPrivateAddress.toString()}
+// (o transpilador de desenvolvimento embrulha funções nomeadas em __name)
+const __name = (target) => target
+const classifyAddress = ${classifyAddress.toString()}
+const isPrivateAddress = (address) => classifyAddress(address) !== 'public'
 const portAllowed = (port) => ${JSON.stringify(ALLOWED_PORTS)}.includes(port)
 async function resolveSafe(host, port) {
   if (!hostAllowed(host, ALLOWED) || !portAllowed(port)) throw new Error('blocked')
