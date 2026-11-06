@@ -147,6 +147,7 @@ export class ProjectSandbox implements IProjectSandbox {
   base(root: string, place: ICercoPlace = {}): ICercoBase {
     return {
       root,
+      ...(place.scratchBase && place.scratchBase !== root ? { projectRoot: place.scratchBase } : {}),
       scratch: ['.home', '.tmp', '.cache'].map((name) => join(place.scratchBase ?? root, name)),
       ...(place.gitCommonDir ? { gitCommonDir: place.gitCommonDir } : {}),
       // A instalação do Node em uso (num Mac com nvm, fica na pasta pessoal, que o cerco fecha) e as ferramentas.

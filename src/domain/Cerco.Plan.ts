@@ -1,5 +1,5 @@
 import { isAbsolute, join, relative } from 'node:path'
-import { decide, IPermissionLayers, IPermissionRule, ISystemRule, SYSTEM_RULES } from './Permission.Policy'
+import { decide, globToRegex, IPermissionLayers, IPermissionRule, ISystemRule, SYSTEM_RULES } from './Permission.Policy'
 
 /**
  * O CERCO MONTADO DAS REGRAS: as listas de leitura e escrita que o sistema operacional aplica ao comando do terminal
@@ -23,6 +23,11 @@ export interface ICercoPlan {
 export interface ICercoBase {
   /** A pasta de trabalho do comando (a do projeto, ou a da conversa no agente global). */
   root: string
+  /**
+   * A pasta do PROJETO, quando a raiz é um repositório ou uma worktree dele: as regras do projeto costumam ser escritas
+   * de lá (`repositories/x/infra/**`), e valem também ancoradas nela (ver `IPermissionSubject.aliases`).
+   */
+  projectRoot?: string
   /** Pastas que o comando sempre lê e escreve: HOME, TMPDIR e caches (na pasta do projeto, fora de uma worktree). */
   scratch: readonly string[]
   /** O que se lê sempre (o auxiliar do runtime, as ferramentas instaladas pela guia Pacotes). */
@@ -66,6 +71,26 @@ export function toSandboxPath(pattern: string, root: string): string {
   return join(root, clean.includes('/') || clean.startsWith('**') ? clean : `**/${clean}`)
 }
 
+/**
+ * O padrão escrito a partir da pasta do projeto, levado para dentro da raiz: `repositories/x/infra/**` numa raiz
+ * `<projeto>/repositories/x` vira `<raiz>/infra/**`; `repositories/x/_worktrees/*\/evidence/**` vale na worktree `EP-1`.
+ * Nada quando o padrão não chega à raiz, é absoluto ou vale em qualquer pasta (sem barra, `**` no começo).
+ */
+export function projectAnchored(pattern: string, root: string, projectRoot: string | undefined): string | undefined {
+  if (!projectRoot || projectRoot === root) return undefined
+  const clean = pattern.trim().replace(/^\.\//, '')
+  if (isAbsolute(clean) || clean.startsWith('~') || !clean.includes('/') || clean.startsWith('**')) return undefined
+  const prefix = relative(projectRoot, root)
+  if (!prefix || prefix.startsWith('..') || isAbsolute(prefix)) return undefined
+  const steps = prefix.split(/[\\/]/)
+  const parts = clean.split('/')
+  for (let i = 0; i < steps.length; i += 1) {
+    if (parts[i] === '**') return join(root, parts.slice(i).join('/'))
+    if (i >= parts.length || !globToRegex(parts[i]!).test(steps[i]!)) return undefined
+  }
+  return join(root, parts.slice(steps.length).join('/'))
+}
+
 /** A negação `deny` sai se uma liberação da camada de cima mora dentro dela (o agente reabriu um pedaço). */
 function reopened(deny: string, allows: readonly IPermissionRule[]): boolean {
   const base = deny.replace(/\/\*\*$/, '')
@@ -80,9 +105,12 @@ export function cercoPlan(layers: IPermissionLayers, base: ICercoBase): ICercoPl
     const projectAllow = pick(layers.project, category, 'allow')
     const system = [...SYSTEM_RULES, ...(base.system ?? [])].filter((rule) => rule.category === category && rule.decision === 'deny')
     const deny = [...system, ...pick(layers.agent, category, 'deny'), ...pick(layers.project, category, 'deny').filter((rule) => !reopened(rule.pattern, agentAllow))]
+    // ⚖️ Cada regra vale ancorada na raiz e, numa worktree ou num repositório, também na pasta do projeto.
+    const paths = (rules: readonly IPermissionRule[]) =>
+      rules.flatMap((rule) => [toSandboxPath(rule.pattern, base.root), projectAnchored(rule.pattern, base.root, base.projectRoot)].filter((path): path is string => !!path))
     return {
-      allow: [...new Set([...agentAllow, ...projectAllow].map((rule) => toSandboxPath(rule.pattern, base.root)))],
-      deny: [...new Set(deny.map((rule) => toSandboxPath(rule.pattern, base.root)))],
+      allow: [...new Set(paths([...agentAllow, ...projectAllow]))],
+      deny: [...new Set(paths(deny))],
     }
   }
   const read = lists('read')
