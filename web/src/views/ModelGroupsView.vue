@@ -105,7 +105,7 @@
       const group = built()
       const next = adding.value ? [...groups.value, group] : groups.value.map((item) => (item.id === group.id ? group : item))
       await settings.save({ modelGroups: next })
-      saved.value = 'Grupo salvo. Vale no próximo turno.'
+      saved.value = 'Sequência salva. Vale no próximo turno.'
       if (adding.value) await router.push(`/model-groups/${group.id}`)
     } catch (error) {
       failure.value = describe(error)
@@ -119,7 +119,7 @@
     saved.value = failure.value = undefined
     try {
       await settings.save({ defaultModelGroup: selected.value.id })
-      saved.value = 'Agora é o grupo padrão.'
+      saved.value = 'Agora é a sequência padrão.'
     } catch (error) {
       failure.value = describe(error)
     }
@@ -149,23 +149,23 @@
 
 <template>
   <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
-    <p class="font-medium text-zinc-200">Só quem administra configura os grupos de modelos.</p>
+    <p class="font-medium text-zinc-200">Só quem administra configura a troca automática.</p>
   </div>
 
-  <MasterDetail v-else :open="!!id || adding" back-to="/model-groups" back-label="Grupos" :title="adding ? 'Novo grupo' : selected?.name">
+  <MasterDetail v-else :open="!!id || adding" back-to="/model-groups" back-label="Sequências" :title="adding ? 'Nova sequência' : selected?.name">
     <template #list>
       <header class="flex items-center gap-2 px-4 pt-4 pb-1">
-        <h1 class="text-xl font-semibold">Grupos de modelos</h1>
-        <RouterLink to="/model-groups/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Novo grupo">
+        <h1 class="text-xl font-semibold">Troca automática</h1>
+        <RouterLink to="/model-groups/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Nova sequência">
           <Icon name="plus" class="h-5 w-5" />
         </RouterLink>
       </header>
       <p class="px-4 pb-3 text-xs text-zinc-500">
-        Um grupo é uma lista de modelos em ordem. A conversa que abre sem modelo escolhido começa no primeiro disponível; se o modelo falha por um dos motivos do grupo, segue no
+        Uma sequência é uma lista de modelos em ordem. A conversa que abre sem modelo escolhido começa no primeiro disponível; se o modelo falha por um dos motivos da sequência, segue no
         próximo disponível e fica nele (não volta). No chat, a pessoa continua escolhendo entre os “Modelos do agente”.
       </p>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
-      <p v-else-if="settings.current && !groups.length" class="px-4 text-sm text-zinc-500">Nenhum grupo ainda. Sem grupo, o agente não troca de modelo quando um falha.</p>
+      <p v-else-if="settings.current && !groups.length" class="px-4 text-sm text-zinc-500">Nenhuma sequência ainda. Sem sequência, o agente não troca de modelo quando um falha.</p>
       <RouterLink
         v-for="group in groups"
         :key="group.id"
@@ -181,7 +181,7 @@
           <span class="block truncate text-xs text-zinc-500">
             <code>{{ group.id }}</code>
             · {{ group.steps.length }} {{ group.steps.length === 1 ? 'passo' : 'passos' }} · {{ countOf(group.id) }} {{ countOf(group.id) === 1 ? 'agente' : 'agentes' }}
-            <template v-if="group.id === defaultId">+ os sem grupo</template>
+            <template v-if="group.id === defaultId">+ os sem sequência</template>
           </span>
         </span>
       </RouterLink>
@@ -189,7 +189,7 @@
 
     <template #detail>
       <section v-if="adding || selected" :key="adding ? 'new' : selected?.id" class="mx-auto flex max-w-3xl flex-col gap-4">
-        <h2 class="text-lg font-semibold">{{ adding ? 'Novo grupo' : selected?.name }}</h2>
+        <h2 class="text-lg font-semibold">{{ adding ? 'Nova sequência' : selected?.name }}</h2>
         <form class="flex flex-col gap-4" @submit.prevent="save">
           <div class="grid gap-3 sm:grid-cols-2">
             <label v-if="adding" class="field">
@@ -249,12 +249,12 @@
               <li v-for="agent in usersOf(selected.id)" :key="agent.id">
                 <RouterLink :to="`/agents/${agent.id}`" class="rounded-full bg-zinc-800 px-2.5 py-0.5 text-xs text-zinc-200 hover:bg-zinc-700">{{ agent.name }}</RouterLink>
               </li>
-              <li v-if="selected.id === defaultId" class="text-xs text-zinc-400">e todos os agentes sem grupo</li>
+              <li v-if="selected.id === defaultId" class="text-xs text-zinc-400">e todos os agentes sem sequência</li>
             </ul>
           </div>
 
           <div class="flex flex-wrap items-center gap-2">
-            <button type="submit" class="btn btn-primary" :disabled="!canSave">{{ adding ? 'Criar grupo' : 'Salvar' }}</button>
+            <button type="submit" class="btn btn-primary" :disabled="!canSave">{{ adding ? 'Criar sequência' : 'Salvar' }}</button>
             <button v-if="selected && selected.id !== defaultId" type="button" class="btn" @click="makeDefault">Tornar padrão</button>
             <button v-if="selected" type="button" class="btn btn-ghost ml-auto text-rose-300" @click="removing = true">Apagar</button>
             <RouterLink v-if="adding" to="/model-groups" class="btn btn-ghost">Cancelar</RouterLink>
@@ -263,15 +263,15 @@
           <p v-if="failure" class="text-sm text-rose-300">{{ failure }}</p>
         </form>
       </section>
-      <p v-else class="mx-auto max-w-3xl text-sm text-zinc-500">Escolha um grupo na lista, ou crie um novo.</p>
+      <p v-else class="mx-auto max-w-3xl text-sm text-zinc-500">Escolha uma sequência na lista, ou crie uma nova.</p>
     </template>
   </MasterDetail>
 
   <ConfirmDialog
     :open="removing"
-    :title="`Apagar o grupo ${selected?.name ?? ''}?`"
+    :title="`Apagar a sequência ${selected?.name ?? ''}?`"
     :message="
-      removeError ?? (selected?.id === defaultId ? 'É o grupo padrão: os agentes sem grupo deixam de trocar de modelo.' : 'Agentes que usam este grupo impedem a exclusão.')
+      removeError ?? (selected?.id === defaultId ? 'É a sequência padrão: os agentes sem sequência deixam de trocar de modelo.' : 'Agentes que usam esta sequência impedem a exclusão.')
     "
     :busy="busy"
     @confirm="remove"

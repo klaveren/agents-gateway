@@ -850,13 +850,13 @@
         :issues="issues.triggers"
       />
     </fieldset>
-    <!-- Duas guias: os modelos do agente (o que a pessoa escolhe) e o grupo de modelos (a ordem de troca quando um falha). -->
+    <!-- Duas guias: os modelos do agente (o que a pessoa escolhe) e a troca automática (a sequência de modelos quando um falha). -->
     <fieldset v-show="tab === 'modelos'" class="flex flex-col gap-3">
       <nav class="no-scrollbar flex gap-1 overflow-x-auto border-b border-zinc-800" role="tablist">
         <button
           v-for="item in [
             { id: 'agente', label: 'Do agente' },
-            { id: 'grupo', label: 'Grupo de modelos' },
+            { id: 'grupo', label: 'Troca automática' },
           ] as const"
           :key="item.id"
           type="button"

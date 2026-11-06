@@ -62,10 +62,10 @@ afterEach(() => {
 describe('AgentModelGroup', () => {
   it('"Padrão" mostra os modelos do grupo padrão; o escolhido, os dele', async () => {
     const standard = await mount('')
-    expect(standard.host.querySelector('[data-test=group-models]')?.textContent).toContain('Modelos do grupo Padrão')
+    expect(standard.host.querySelector('[data-test=group-models]')?.textContent).toContain('Modelos da sequência Padrão')
     app?.unmount()
     const chosen = await mount('rapido')
-    expect(chosen.host.querySelector('[data-test=group-models]')?.textContent).toContain('Modelos do grupo Rápido')
+    expect(chosen.host.querySelector('[data-test=group-models]')?.textContent).toContain('Modelos da sequência Rápido')
     expect(chosen.host.textContent).toContain('usado por 1 agente')
   })
 
@@ -86,6 +86,6 @@ describe('AgentModelGroup', () => {
   it('"Nenhum": sem bloco de modelos, com o aviso', async () => {
     const { host } = await mount(NO_MODEL_GROUP)
     expect(host.querySelector('[data-test=group-models]')).toBeNull()
-    expect(host.textContent).toContain('Sem grupo, o agente fica no modelo escolhido')
+    expect(host.textContent).toContain('Sem troca automática, o agente fica no modelo escolhido')
   })
 })

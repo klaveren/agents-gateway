@@ -56,15 +56,15 @@ describe('SettingsView — grupo de modelos padrão', () => {
     await flush()
     return { host, calls }
   }
-  const select = (host: HTMLElement) => host.querySelector<HTMLSelectElement>('select[aria-label="Grupo de modelos padrão"]')!
-  const save = () => [...document.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Salvar grupo padrão')!
+  const select = (host: HTMLElement) => host.querySelector<HTMLSelectElement>('select[aria-label="Sequência padrão"]')!
+  const save = () => [...document.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Salvar sequência padrão')!
   const putOf = (calls: Array<{ path: string; init?: { method?: string; body?: unknown } }>) => calls.find((call) => call.init?.method === 'PUT')?.init?.body
 
   it('mostra Nenhum + os grupos, o atual selecionado, e o link para gerenciar', async () => {
     const { host } = await mount('rapido')
     expect([...select(host).options].map((option) => option.textContent?.trim())).toEqual(['Nenhum', 'Padrão', 'Rápido'])
     expect(select(host).value).toBe('rapido')
-    expect(host.querySelector('a[href="/model-groups"]')?.textContent).toContain('Gerenciar grupos de modelos')
+    expect(host.querySelector('a[href="/model-groups"]')?.textContent).toContain('Gerenciar as sequências')
   })
 
   it('salva o grupo escolhido como defaultModelGroup, e Nenhum como null', async () => {

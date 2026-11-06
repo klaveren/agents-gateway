@@ -119,7 +119,7 @@ async function saveDefaultGroup() {
   groupSaved.value = groupFailure.value = undefined
   try {
     await settings.save({ defaultModelGroup: defaultGroup.value || null })
-    groupSaved.value = 'Grupo padrão salvo. Vale no próximo turno.'
+    groupSaved.value = 'Sequência padrão salva. Vale no próximo turno.'
   } catch (error) {
     groupFailure.value =
       error instanceof ApiError && Array.isArray(error.details) ? (error.details as Array<{ message?: string }>).map((item) => item.message).join('; ') : error instanceof Error ? error.message : String(error)
@@ -252,24 +252,24 @@ async function saveSettings() {
       </section>
 
       <section v-if="auth.isAdmin && settings.current" class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
-        <h2 class="font-medium">Grupo de modelos padrão</h2>
+        <h2 class="font-medium">Troca automática padrão</h2>
         <p class="text-xs text-zinc-400">
-          O grupo dos agentes que não escolheram um: a conversa começa no primeiro modelo disponível dele e, se o modelo falha (cota, limite de uso…), segue no próximo e fica nele.
+          A sequência dos agentes que não escolheram uma: a conversa começa no primeiro modelo disponível dela e, se o modelo falha (cota, limite de uso…), segue no próximo e fica nele.
         </p>
         <label class="flex max-w-xs flex-col gap-1 text-sm text-zinc-300">
-          Grupo padrão
-          <select v-model="defaultGroup" aria-label="Grupo de modelos padrão" class="h-9 rounded-lg border border-zinc-800 bg-zinc-900 px-2 text-sm">
+          Sequência padrão
+          <select v-model="defaultGroup" aria-label="Sequência padrão" class="h-9 rounded-lg border border-zinc-800 bg-zinc-900 px-2 text-sm">
             <option value="">Nenhum</option>
             <option v-for="group in settings.current.modelGroups ?? []" :key="group.id" :value="group.id">{{ group.name }}</option>
           </select>
         </label>
-        <RouterLink to="/model-groups" class="text-sm text-emerald-300 underline">Gerenciar grupos de modelos</RouterLink>
+        <RouterLink to="/model-groups" class="text-sm text-emerald-300 underline">Gerenciar as sequências</RouterLink>
         <p v-if="settings.current.benched?.length" class="text-xs text-amber-300">
           Sem cota agora:
           {{ settings.current.benched.map((item) => `${protocols.providerName(item.provider)} até ${new Date(item.until).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`).join(', ') }}
         </p>
         <div class="flex items-center gap-3">
-          <button class="btn btn-primary" @click="saveDefaultGroup">Salvar grupo padrão</button>
+          <button class="btn btn-primary" @click="saveDefaultGroup">Salvar sequência padrão</button>
           <span v-if="groupSaved" class="text-sm text-emerald-300">{{ groupSaved }}</span>
           <span v-if="groupFailure" class="text-sm text-rose-300">{{ groupFailure }}</span>
         </div>

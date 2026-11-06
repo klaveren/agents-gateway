@@ -97,7 +97,7 @@ describe('ModelGroupsView', () => {
     const { host } = await mount('/model-groups')
     const text = host.textContent ?? ''
     expect(text).toContain('Padrão')
-    expect(text).toContain('padrao · 1 passo · 0 agentes + os sem grupo')
+    expect(text).toContain('padrao · 1 passo · 0 agentes + os sem sequência')
     expect(text).toContain('padrão')
     expect(text).toContain('rapido · 2 passos · 1 agente')
   })

@@ -101,7 +101,7 @@
       }
       if (draft.value.cooldown === '') delete next.cooldownMinutes
       await settings.save({ modelGroups: groups.value.map((item) => (item.id === group.id ? next : item)) })
-      note.value = 'Grupo salvo. Vale no próximo turno, para todos os agentes que o usam.'
+      note.value = 'Sequência salva. Vale no próximo turno, para todos os agentes que a usam.'
     } catch (error) {
       failure.value = describe(error)
     } finally {
@@ -114,15 +114,15 @@
   <div class="flex flex-col gap-3">
     <section class="card">
       <header>
-        <h3>Qual grupo</h3>
+        <h3>Qual sequência</h3>
         <span class="count">vai com o Salvar do agente</span>
       </header>
       <div class="flex flex-col gap-2 p-3">
         <p class="hint">
-          A conversa aberta sem modelo escolhido começa no primeiro modelo disponível do grupo; se ele falha (cota, limite de uso…), segue no próximo e fica nele. No chat, a pessoa
+          A conversa aberta sem modelo escolhido começa no primeiro modelo disponível da sequência; se ele falha (cota, limite de uso…), segue no próximo e fica nele. No chat, a pessoa
           continua escolhendo entre os modelos do agente.
         </p>
-        <select v-model="choice" aria-label="Grupo de modelos" class="h-9 max-w-xs rounded-lg border border-zinc-800 bg-zinc-900 px-2 text-sm">
+        <select v-model="choice" aria-label="Sequência de troca" class="h-9 max-w-xs rounded-lg border border-zinc-800 bg-zinc-900 px-2 text-sm">
           <option value="">Padrão ({{ defaultName }})</option>
           <option :value="NO_MODEL_GROUP">Nenhum — não troca de modelo</option>
           <option v-for="group in groups" :key="group.id" :value="group.id">{{ group.name }}</option>
@@ -133,12 +133,12 @@
 
     <section v-if="effective && auth.isAdmin" class="card" data-test="group-models">
       <header>
-        <h3>Modelos do grupo {{ effective.name }}</h3>
+        <h3>Modelos da sequência {{ effective.name }}</h3>
         <span class="count">
-          {{ effective.id === defaultId ? 'o padrão: vale para os agentes sem grupo' : '' }}
+          {{ effective.id === defaultId ? 'a padrão: vale para os agentes sem sequência' : '' }}
           {{ usersOf(effective.id) ? `· usado por ${usersOf(effective.id)} ${usersOf(effective.id) === 1 ? 'agente' : 'agentes'}` : '' }}
         </span>
-        <RouterLink to="/model-groups/new" class="ml-auto shrink-0 text-xs text-emerald-300 underline">Novo grupo</RouterLink>
+        <RouterLink to="/model-groups/new" class="ml-auto shrink-0 text-xs text-emerald-300 underline">Nova sequência</RouterLink>
       </header>
       <div class="flex flex-col gap-4 p-3">
         <div class="flex flex-col gap-2">
@@ -169,18 +169,18 @@
         </label>
         <div class="flex flex-wrap items-center gap-2">
           <button type="button" class="btn btn-secondary" :disabled="!dirty || busy || !draft.steps.length" data-test="save-group" @click="saveGroup">
-            {{ busy ? 'Salvando…' : 'Salvar grupo' }}
+            {{ busy ? 'Salvando…' : 'Salvar sequência' }}
           </button>
-          <span v-if="dirty" class="text-xs text-amber-300">Muda o grupo para todos os agentes que o usam.</span>
+          <span v-if="dirty" class="text-xs text-amber-300">Muda a sequência para todos os agentes que a usam.</span>
           <span v-if="note" class="text-xs text-emerald-300">{{ note }}</span>
           <span v-if="failure" class="text-xs text-rose-300">{{ failure }}</span>
         </div>
       </div>
     </section>
-    <p v-else-if="choice === NO_MODEL_GROUP" class="hint">Sem grupo, o agente fica no modelo escolhido mesmo quando ele falha.</p>
+    <p v-else-if="choice === NO_MODEL_GROUP" class="hint">Sem troca automática, o agente fica no modelo escolhido mesmo quando ele falha.</p>
     <p v-else-if="!effective" class="hint">
-      Nenhum grupo padrão ainda.
-      <RouterLink v-if="auth.isAdmin" to="/model-groups/new" class="text-emerald-300 underline">Crie um grupo</RouterLink>
+      Nenhuma sequência padrão ainda.
+      <RouterLink v-if="auth.isAdmin" to="/model-groups/new" class="text-emerald-300 underline">Crie uma sequência</RouterLink>
     </p>
   </div>
 </template>
