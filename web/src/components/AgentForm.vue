@@ -407,6 +407,8 @@
     use_resource: 'Usar recurso (skill, command, trigger)',
     search_resources: 'Buscar recursos',
     agent_trigger: 'Editar triggers',
+    ssh_sign: 'Assinar SSH',
+    conversation_panel: 'Painel da conversa',
   }
 
   const initialHash = useRoute().hash
@@ -917,13 +919,15 @@
         <small v-for="message in issues.reasoningEfforts" :key="message" class="error">{{ message }}</small>
       </div>
     </fieldset>
-    <fieldset v-show="tab === 'ferramentas'" class="grid gap-4 sm:grid-cols-2">
-      <div class="field sm:col-span-2">
-        <span>
-          Capacidades
-          <em class="font-normal text-zinc-500">— o que o agente pode fazer; o gateway decide como roda em cada provedor.</em>
-        </span>
-        <div class="flex flex-wrap gap-1.5">
+    <!-- Um bloco por assunto, no desenho das permissões: o título, quantas estão marcadas e o que o bloco quer dizer. -->
+    <fieldset v-show="tab === 'ferramentas'" class="flex flex-col gap-3">
+      <section class="tool-card">
+        <header>
+          <h3>Capacidades</h3>
+          <span class="count">{{ agents.capabilities.filter((item) => form.allowedTools.includes(item.id)).length || 'nenhuma' }}</span>
+        </header>
+        <p class="hint px-3 pt-2">O que o agente pode fazer. O gateway decide como roda em cada provedor.</p>
+        <div class="flex flex-wrap gap-1.5 p-3">
           <button
             v-for="item in agents.capabilities"
             :key="item.id"
@@ -936,16 +940,21 @@
             {{ item.label }}
           </button>
         </div>
-        <ul v-if="capabilityRows.length && form.providers.length" class="flex flex-col gap-0.5 text-xs text-zinc-500">
-          <li v-for="row in capabilityRows" :key="row.id">
-            <span class="text-zinc-300">{{ row.label }}</span>
-            — {{ row.runs }}
-          </li>
-        </ul>
-      </div>
-      <div v-if="agents.tools.length" class="field sm:col-span-2">
-        <span>Outras ferramentas do gateway</span>
-        <div class="flex flex-wrap gap-1.5">
+        <dl v-if="capabilityRows.length && form.providers.length" class="mx-3 mb-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-lg bg-zinc-900/60 px-3 py-2 text-xs">
+          <template v-for="row in capabilityRows" :key="row.id">
+            <dt class="text-zinc-300">{{ row.label }}</dt>
+            <dd class="text-zinc-500">{{ row.runs }}</dd>
+          </template>
+        </dl>
+      </section>
+
+      <section v-if="agents.tools.length" class="tool-card">
+        <header>
+          <h3>Ferramentas do gateway</h3>
+          <span class="count">{{ agents.tools.filter((tool) => form.allowedTools.includes(tool.name)).length || 'nenhuma' }}</span>
+        </header>
+        <p class="hint px-3 pt-2">Documentos, recursos, o painel da conversa e a assinatura SSH: rodam no gateway, em qualquer provedor.</p>
+        <div class="flex flex-wrap gap-1.5 p-3">
           <button
             v-for="tool in agents.tools"
             :key="tool.name"
@@ -958,53 +967,65 @@
             {{ LOCAL_TOOL_LABEL[tool.name] ?? tool.name }}
           </button>
         </div>
-        <small v-if="dangerousChosen.length" class="text-amber-300">
-          ⚠ {{ dangerousChosen.join(', ') }} dá acesso ao servidor. Quem conversar com este agente também terá esse acesso.
-          <template v-if="!form.adminOnly">Marque "Administradores" na guia Agente se não for para todos.</template>
-        </small>
-        <small v-for="message in issues.allowedTools" :key="message" class="error">{{ message }}</small>
-      </div>
+      </section>
 
-      <div class="field sm:col-span-2">
-        <span>
-          Pode delegar a
-          <em class="font-normal text-zinc-500">— outros agentes a quem este pode pedir ajuda.</em>
-        </span>
-        <div class="flex flex-wrap gap-1.5">
-          <button
-            v-for="other in agents.list.filter((candidate) => candidate.id !== form.id)"
-            :key="other.id"
-            type="button"
-            class="chip"
-            :class="{ on: form.allowedTools.includes(`agent:${other.id}`) }"
-            @click="toggle(form.allowedTools, `agent:${other.id}`)"
-          >
-            {{ other.name }}
-            <span v-if="other.role === 'subagent'" class="ml-1 text-[10px] text-zinc-500">subagente</span>
-          </button>
+      <p v-if="dangerousChosen.length" class="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+        ⚠ {{ dangerousChosen.join(', ') }} dá acesso ao servidor. Quem conversar com este agente também terá esse acesso.
+        <template v-if="!form.adminOnly">Marque "Administradores" na guia Agente se não for para todos.</template>
+      </p>
+      <small v-for="message in issues.allowedTools" :key="message" class="error">{{ message }}</small>
+
+      <section class="tool-card">
+        <header>
+          <h3>Delegação</h3>
+          <span class="count">{{ form.allowedTools.filter((entry) => entry.startsWith('agent:')).length || 'nenhuma' }}</span>
+        </header>
+        <p class="hint px-3 pt-2">Outros agentes a quem este pode pedir ajuda.</p>
+        <div class="flex flex-col gap-3 p-3">
+          <div class="flex flex-col gap-1.5">
+            <span class="text-xs text-zinc-500">Agentes</span>
+            <div class="flex flex-wrap gap-1.5">
+              <button
+                v-for="other in agents.list.filter((candidate) => candidate.id !== form.id)"
+                :key="other.id"
+                type="button"
+                class="chip"
+                :class="{ on: form.allowedTools.includes(`agent:${other.id}`) }"
+                @click="toggle(form.allowedTools, `agent:${other.id}`)"
+              >
+                {{ other.name }}
+                <span v-if="other.role === 'subagent'" class="ml-1 text-[10px] text-zinc-500">subagente</span>
+              </button>
+            </div>
+          </div>
           <!-- Os construtores do core: não estão na lista de agentes, mas recebem delegação (o Atlas cria conteúdo por eles). -->
-          <button
-            v-for="builder in CORE_BUILDERS"
-            :key="builder.id"
-            type="button"
-            class="chip"
-            :class="{ on: form.allowedTools.includes(`agent:${builder.id}`) }"
-            :title="`Agente do sistema, só para administradores`"
-            @click="toggle(form.allowedTools, `agent:${builder.id}`)"
-          >
-            {{ builder.name }}
-            <span class="ml-1 text-[10px] text-zinc-500">sistema</span>
-          </button>
+          <div class="flex flex-col gap-1.5">
+            <span class="text-xs text-zinc-500">Do sistema · só para administradores</span>
+            <div class="flex flex-wrap gap-1.5">
+              <button
+                v-for="builder in CORE_BUILDERS"
+                :key="builder.id"
+                type="button"
+                class="chip"
+                :class="{ on: form.allowedTools.includes(`agent:${builder.id}`) }"
+                title="Agente do sistema, só para administradores"
+                @click="toggle(form.allowedTools, `agent:${builder.id}`)"
+              >
+                {{ builder.name }}
+              </button>
+            </div>
+          </div>
+          <small v-if="form.allowedTools.some((entry) => entry.startsWith('agent:')) && !form.modes.includes('agent')" class="hint">A delegação só funciona no modo Agente.</small>
         </div>
-        <small v-if="form.allowedTools.some((entry) => entry.startsWith('agent:')) && !form.modes.includes('agent')" class="hint">A delegação só funciona no modo Agente.</small>
-      </div>
+      </section>
 
-      <div v-if="orphans.length" class="field sm:col-span-2">
-        <span>
-          Indisponíveis
-          <em class="font-normal text-zinc-500">— escolhidas, mas não oferecidas pelos provedores. Remova para salvar.</em>
-        </span>
-        <div class="flex flex-wrap gap-1.5">
+      <section v-if="orphans.length" class="tool-card border-amber-500/40">
+        <header>
+          <h3>Indisponíveis</h3>
+          <span class="count">{{ orphans.length }}</span>
+        </header>
+        <p class="hint px-3 pt-2">Escolhidas, mas não oferecidas pelos provedores. Remova para salvar.</p>
+        <div class="flex flex-wrap gap-1.5 p-3">
           <button
             v-for="entry in orphans"
             :key="entry"
@@ -1017,7 +1038,7 @@
             {{ entry }} ✕
           </button>
         </div>
-      </div>
+      </section>
     </fieldset>
     <fieldset v-show="tab === 'mcps'" class="grid gap-4 sm:grid-cols-2">
       <div class="field sm:col-span-2">
@@ -1366,6 +1387,18 @@
   }
   .hint {
     @apply text-xs font-normal text-zinc-500;
+  }
+  .tool-card {
+    @apply rounded-xl border border-zinc-800;
+  }
+  .tool-card > header {
+    @apply flex items-baseline gap-2 border-b border-zinc-800 px-3 py-2;
+  }
+  .tool-card h3 {
+    @apply text-sm font-medium text-zinc-200;
+  }
+  .tool-card .count {
+    @apply text-xs text-zinc-500;
   }
   .error {
     @apply text-xs font-normal text-rose-300;
