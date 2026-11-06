@@ -175,6 +175,26 @@ describe('OpenAIAgentAdapter', () => {
     assert.ok(events.find((event) => event.type === 'warning' && String(event.payload.message).includes('compatível')))
   })
 
+  it('⚖️ compatível (Chat Completions) manda `max_completion_tokens`, não `max_tokens` (a NVIDIA recusa); o oficial, o `maxTokens`', async () => {
+    const official: ICall[] = []
+    const adapter = new OpenAIAgentAdapter({ run: runWith(turn, official), catalog })
+    const session = await adapter.createSession(getAgent(), { agentId: OPENAI_TEST_AGENT.id })
+    await drain(adapter.sendMessage(getAgent(), session.id, { text: 'hi' }, {}))
+    assert.ok(official[0].agent.modelSettings.maxTokens)
+
+    const viaCompatible: ICall[] = []
+    const compatible = new OpenAIAgentAdapter({
+      run: runWith(turn, viaCompatible),
+      catalog,
+      connections: { connection: (id) => ({ providerId: id, name: 'NVIDIA', protocol: EProvider.OPENAI, baseUrl: 'https://integrate.api.nvidia.com/v1', key: 'k' }) },
+    })
+    const agent = { ...getAgent(), providers: [{ provider: 'nvidia', models: ['openai/gpt-oss-120b'] }] }
+    const other = await compatible.createSession(agent, { agentId: OPENAI_TEST_AGENT.id })
+    await drain(compatible.sendMessage(agent, other.id, { text: 'hi' }, {}))
+    assert.strictEqual(viaCompatible[0].agent.modelSettings.maxTokens, undefined)
+    assert.ok((viaCompatible[0].agent.modelSettings.providerData as { max_completion_tokens?: number }).max_completion_tokens)
+  })
+
   it('registers the local toolset on the SDK agent', async () => {
     const calls: ICall[] = []
     const adapter = new OpenAIAgentAdapter({ run: runWith(turn, calls), catalog })

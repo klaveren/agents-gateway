@@ -162,6 +162,8 @@ Environment=NODE_ENV=production
 Environment=HOST=$GATEWAY_HOST
 Environment=PORT=$GATEWAY_PORT
 Environment=CONVERSATIONS_DB=$GATEWAY_DATA/gateway.db
+# O cerco lê só o liberado (provado com scripts/cerco-check.ts); o arquivo de ambiente desliga com CERCO_READ_ALLOWLIST=0.
+Environment=CERCO_READ_ALLOWLIST=1
 EnvironmentFile=$GATEWAY_ENV
 ExecStart=$NODE_BIN dist/main.js
 Restart=always
