@@ -51,8 +51,9 @@ describe('Cerco.Plan', () => {
       { ...base, root: repo, projectRoot: '/w/p', gitCommonDir: `${repo}/.git` },
     )
     assert.ok(plan.writeAllow.includes(`${repo}/infra/**`))
-    assert.ok(plan.writeAllow.includes(`${repo}/repositories/abc/infra/**`), 'a forma ancorada na raiz continua')
+    assert.ok(!plan.writeAllow.includes(`${repo}/repositories/abc/infra/**`), 'a liberação não cria a pasta vazia na raiz')
     assert.ok(plan.writeDeny.includes(`${repo}/.git/hooks/**`), 'a negação também é levada')
+    assert.ok(plan.writeDeny.includes(`${repo}/repositories/abc/.git/hooks/**`), 'e a negação segue ancorada na raiz (falha fechada)')
   })
 
   it('⛔ as pastas só leitura (arquivos de recurso): lidas sempre, gravadas nunca — nem com regra de escrita que as cubra', () => {
