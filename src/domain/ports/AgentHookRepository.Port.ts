@@ -1,7 +1,21 @@
 import { IAgentHook, IHookDelivery } from '@domain/models/AgentHook.Model'
 
 export type TAgentHookPatch = Partial<
-  Pick<IAgentHook, 'prompt' | 'enabled' | 'verify' | 'signatureHeader' | 'signaturePrefix' | 'signatureEncoding' | 'session' | 'sessionId' | 'runAs' | 'updatedAt' | 'updatedBy'>
+  Pick<
+    IAgentHook,
+    | 'prompt'
+    | 'enabled'
+    | 'verify'
+    | 'signatureHeader'
+    | 'signaturePrefix'
+    | 'signatureEncoding'
+    | 'requireTimestamp'
+    | 'session'
+    | 'sessionId'
+    | 'runAs'
+    | 'updatedAt'
+    | 'updatedBy'
+  >
 >
 
 /** Onde ficam os hooks dos agentes e as últimas chamadas de cada um. Síncrono, como o resto do cadastro. */
@@ -13,6 +27,11 @@ export interface IAgentHookRepository {
   delete(agentId: string, name: string): boolean
   /** Apaga os hooks de um agente (o agente foi apagado) e devolve os nomes. */
   deleteAgent(agentId: string): string[]
+  /**
+   * ⛔ Anti-reenvio: grava a assinatura vista até `until` (ms). `false` = já estava (e ainda valia). Persiste, para o restart
+   * não reabrir a janela; apaga as vencidas (`now`, ms) a cada gravação.
+   */
+  claimSignature(key: string, until: number, now: number): boolean
   addDelivery(delivery: IHookDelivery): void
   updateDelivery(id: string, patch: Partial<Pick<IHookDelivery, 'status' | 'sessionId' | 'error'>>): void
   /** As últimas, da mais nova para a mais velha. */

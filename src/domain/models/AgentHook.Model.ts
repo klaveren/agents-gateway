@@ -18,6 +18,8 @@ export interface IAgentHook {
   signatureHeader: string
   signaturePrefix: string
   signatureEncoding: 'hex' | 'base64'
+  /** ⛔ HMAC: sem `X-Timestamp` = 401 (só assim o anti-reenvio vale). Desligado por padrão, para não quebrar quem não manda. */
+  requireTimestamp: boolean
   /** `new`: uma conversa por chamada. `continuous`: todas na mesma, em fila (o agente lembra dos eventos). */
   session: THookSession
   /** A conversa de um hook `continuous`. */

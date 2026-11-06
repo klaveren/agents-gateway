@@ -1,5 +1,8 @@
 import assert from 'node:assert'
 import { randomBytes } from 'node:crypto'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { SqliteAgentHookRepository } from '@infra/persistence/Sqlite.AgentHookRepository'
 import { SqliteCredentialStore } from '@infra/persistence/Sqlite.CredentialStore'
@@ -29,5 +32,33 @@ describe('AgentHooksService — o runAs', () => {
     assert.strictEqual(service.get('agente', 'deploy').runAs, 'u_a')
     service.rotate('agente', 'deploy', 'b', 'u_b')
     assert.strictEqual(service.get('agente', 'deploy').runAs, 'u_b')
+  })
+})
+
+describe('AgentHooksService — assinaturas já vistas', () => {
+  it('⛔ a mesma assinatura só passa uma vez na janela, vence depois dela e sobrevive ao restart (SQLite)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hooks-seen-'))
+    const path = join(dir, 'hooks.db')
+    const build = () => new AgentHooksService(new SqliteAgentHookRepository(path), new SqliteCredentialStore(new SecretBox(randomBytes(32)), ':memory:'), () => true)
+    try {
+      const first = build()
+      assert.strictEqual(first.claimSignature('a', 'h', 'sig', 1_000, 300_000), true)
+      assert.strictEqual(first.claimSignature('a', 'h', 'sig', 2_000, 300_000), false)
+      assert.strictEqual(first.claimSignature('a', 'outro', 'sig', 2_000, 300_000), true, 'por hook')
+      // Restart: um serviço novo sobre o mesmo arquivo ainda recusa o reenvio.
+      assert.strictEqual(build().claimSignature('a', 'h', 'sig', 3_000, 300_000), false)
+      assert.strictEqual(build().claimSignature('a', 'h', 'sig', 400_000, 300_000), true, 'vencida (TTL de 5 min)')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('requireTimestamp: padrão desligado, grava e edita', () => {
+    const service = new AgentHooksService(new SqliteAgentHookRepository(':memory:'), new SqliteCredentialStore(new SecretBox(randomBytes(32)), ':memory:'), () => true)
+    const by = { userId: 'u', label: 'u' }
+    assert.strictEqual(service.create('a', { name: 'um', prompt: 'p', verify: 'hmac' }, by).hook.requireTimestamp, false)
+    assert.strictEqual(service.create('a', { name: 'dois', prompt: 'p', verify: 'hmac', requireTimestamp: true }, by).hook.requireTimestamp, true)
+    assert.strictEqual(service.update('a', 'um', { requireTimestamp: true }, 'u').requireTimestamp, true)
+    assert.strictEqual(service.get('a', 'um').requireTimestamp, true)
   })
 })

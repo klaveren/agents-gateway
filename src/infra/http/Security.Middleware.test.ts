@@ -2,7 +2,7 @@ import assert from 'node:assert'
 import { afterEach, describe, it } from 'node:test'
 import { NextFunction, Request, Response } from 'express'
 import { HttpError } from './Http.Error'
-import { corsOptions, requireCaller } from './Security.Middleware'
+import { corsOptions, requireCaller, securityHeaders } from './Security.Middleware'
 
 describe('security middleware', () => {
   it('blocks every cross-origin request by default', () => {
@@ -22,6 +22,18 @@ describe('security middleware', () => {
     } finally {
       delete process.env.CORS_ORIGINS
     }
+  })
+
+  it('⛔ CSP sem domínio de fonte externo: as fontes saem do próprio gateway', () => {
+    const headers: Record<string, string> = {}
+    securityHeaders()(
+      { path: '/', url: '/' } as Request,
+      { setHeader: (name: string, value: string) => (headers[name] = value) } as unknown as Response,
+      (() => {}) as NextFunction,
+    )
+    const csp = headers['Content-Security-Policy']
+    assert.ok(csp.includes("font-src 'self';"))
+    assert.ok(!/google|gstatic/.test(csp))
   })
 
   describe('requireCaller', () => {

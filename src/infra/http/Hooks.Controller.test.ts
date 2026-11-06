@@ -13,6 +13,7 @@ describe('eventMessage — o que o agente recebe de um hook', () => {
     enabled: true,
     verify: 'hmac',
     ...HOOK_DEFAULTS,
+    requireTimestamp: false,
     session: 'new',
     runAs: 'u',
     createdAt: new Date(),
