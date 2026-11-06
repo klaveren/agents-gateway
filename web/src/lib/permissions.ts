@@ -14,7 +14,7 @@ export const PERMISSION_SECTIONS: ReadonlyArray<{ category: TPermissionCategory;
   { category: 'network', label: 'Rede', hint: 'Destinos, com subdomínio e porta opcionais. Vale na etapa do terminal cercado.', example: '*.logiccus.com' },
   { category: 'mcp', label: 'MCP', hint: 'Ferramentas como servidor/ferramenta.', example: 'logiccus/ticket_*' },
   { category: 'skill', label: 'Skills', hint: 'Pelo id da skill.', example: 'akm-*' },
-  { category: 'delegate', label: 'Delegação', hint: 'Pelo id do agente a quem pode pedir ajuda.', example: 'agent-*' },
+  { category: 'delegate', label: 'Delegação', hint: 'O agente a quem pode pedir ajuda (ou um curinga: todos, ou todos os construtores).', example: 'agent-*' },
   { category: 'account', label: 'Contas', hint: 'Pelo id da conta do projeto (Projeto → Contas) que o terminal recebe.', example: 'github-*' },
   {
     category: 'repository',

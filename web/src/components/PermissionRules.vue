@@ -1,7 +1,9 @@
 <script setup lang="ts">
-  import { computed } from 'vue'
+  import { computed, onMounted } from 'vue'
+  import { BUILD_KINDS, builderAgentId, type TBuildKind } from '@/lib/builder'
   import { fixPattern, PERMISSION_SECTIONS, patternWarning } from '@/lib/permissions'
   import type { IPermissionRule, TPermissionCategory } from '@/lib/types'
+  import { useAgentsStore } from '@/stores/agents'
 
   /**
    * O editor de regras de permissão, por categoria. ⚖️ A ordem não importa: dentro da mesma lista, Negar vence Permitir.
@@ -14,6 +16,28 @@
   const byCategory = computed(() =>
     PERMISSION_SECTIONS.filter((section) => !props.only || section.category === props.only).map((section) => ({ ...section, rules: rules.value.map((rule, index) => ({ rule, index })).filter(({ rule }) => rule.category === section.category) })),
   )
+
+  /**
+   * ⚖️ Na DELEGAÇÃO o padrão é um agente: escolhido numa lista (os agentes, os construtores do sistema e os curingas de
+   * sempre), não digitado. O padrão gravado que não está na lista aparece como está, para não sumir.
+   */
+  const agents = useAgentsStore()
+  onMounted(() => void agents.ensure().catch(() => undefined))
+  const delegateGroups = computed(() => [
+    {
+      label: 'Curingas',
+      options: [
+        { value: '*', label: 'Todos os agentes (*)' },
+        { value: 'builder-*', label: 'Todos os construtores do sistema (builder-*)' },
+      ],
+    },
+    { label: 'Agentes', options: agents.list.map((agent) => ({ value: agent.id, label: `${agent.name} (${agent.id})` })) },
+    {
+      label: 'Do sistema',
+      options: (Object.keys(BUILD_KINDS) as TBuildKind[]).map((kind) => ({ value: builderAgentId(kind), label: `${BUILD_KINDS[kind].builder} (${builderAgentId(kind)})` })),
+    },
+  ])
+  const knownDelegate = (pattern: string) => !pattern || delegateGroups.value.some((group) => group.options.some((option) => option.value === pattern))
 
   function add(category: TPermissionCategory) {
     rules.value = [...rules.value, { category, pattern: '', decision: 'allow' }]
@@ -37,7 +61,22 @@
       <p class="px-3 pt-2 text-xs text-zinc-500">{{ section.hint }}</p>
       <ul class="flex flex-col gap-1.5 p-3">
         <li v-for="{ rule, index } in section.rules" :key="index" class="flex flex-wrap items-center gap-2">
+          <select
+            v-if="section.category === 'delegate'"
+            :value="rule.pattern"
+            :disabled="readonly"
+            aria-label="Agente"
+            class="input min-w-0 flex-1 text-[13px]"
+            @change="update(index, { pattern: ($event.target as HTMLSelectElement).value })"
+          >
+            <option value="" disabled>Escolha o agente…</option>
+            <option v-if="!knownDelegate(rule.pattern)" :value="rule.pattern">{{ rule.pattern }}</option>
+            <optgroup v-for="group in delegateGroups" :key="group.label" :label="group.label">
+              <option v-for="option in group.options" :key="option.value" :value="option.value">{{ option.label }}</option>
+            </optgroup>
+          </select>
           <input
+            v-else
             :value="rule.pattern"
             :readonly="readonly"
             :placeholder="section.example"
