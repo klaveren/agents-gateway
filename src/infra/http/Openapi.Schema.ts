@@ -617,6 +617,11 @@ const revisionFields = {
   batchId: { type: 'string' },
   note: { type: 'string' },
   widenings: { type: 'array', items: { type: 'string' }, description: 'The keys of the access widenings the author (`by`) accepted in this change.' },
+  sharing: {
+    type: 'object',
+    description: 'Skill, command, spec, knowledge: project ids this revision added to / removed from `sharedWith`, against the previous revision. Absent when unchanged.',
+    properties: { added: { type: 'array', items: { type: 'string' } }, removed: { type: 'array', items: { type: 'string' } } },
+  },
 }
 const revisionSummarySchema = { type: 'object', properties: revisionFields }
 const revisionPageFields = {

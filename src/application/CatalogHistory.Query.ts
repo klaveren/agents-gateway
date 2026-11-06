@@ -1,8 +1,10 @@
 import { ICatalogDocument, TCatalogKind } from '@domain/Catalog.Document'
 import { parseMcpServerKey } from '@domain/models/McpServer.Model'
-import { ICatalogHistoryRepository, ICatalogRevision, IRevisionPage, TRevisionOp } from '@domain/ports/CatalogHistoryRepository.Port'
+import { ICatalogHistoryRepository, ICatalogRevision, IRevisionPage, TRevisionOp, TRevisionSummary } from '@domain/ports/CatalogHistoryRepository.Port'
 import { diffText, IDiffHunk } from '@domain/Text.Diff'
 import { CatalogReader } from './Catalog.Reader'
+
+const SHARING_KINDS: readonly TCatalogKind[] = ['skill', 'command', 'spec', 'knowledge']
 
 /** Um item no histórico: `itemId` é o `item_id` gravado — no MCP, a CHAVE (`mcpServerKey`, `<projeto>.<id>`). */
 export interface IHistoryItem {
@@ -19,7 +21,16 @@ export interface IHistoryPaging {
   pageSize: number
 }
 
-export interface IHistoryPage extends IRevisionPage {
+/** O que a revisão mudou na lista de compartilhamento (ids de projeto) — derivado do `sharedWith` dela e da anterior. */
+export interface IShareChange {
+  added: string[]
+  removed: string[]
+}
+
+export type THistorySummary = TRevisionSummary & { sharing?: IShareChange }
+
+export interface IHistoryPage extends Omit<IRevisionPage, 'revisions'> {
+  revisions: THistorySummary[]
   page: number
   pageSize: number
 }
@@ -111,7 +122,27 @@ export class CatalogHistoryQuery {
 
   private page(filter: Parameters<ICatalogHistoryRepository['page']>[0], paging: IHistoryPaging): IHistoryPage {
     const result = this.repository.page(filter, { offset: (paging.page - 1) * paging.pageSize, limit: paging.pageSize })
-    return { ...result, page: paging.page, pageSize: paging.pageSize }
+    return { ...result, revisions: result.revisions.map((summary) => this.withSharing(summary)), page: paging.page, pageSize: paging.pageSize }
+  }
+
+  /** Skill, command, spec e conhecimento: o que a revisão acrescentou ou tirou do `sharedWith` em relação à anterior (só ids). */
+  private withSharing(summary: TRevisionSummary): THistorySummary {
+    if (!SHARING_KINDS.includes(summary.kind)) return summary
+    const now = this.sharedOf(this.repository.revision(summary.kind, summary.itemId, summary.revision))
+    const before = summary.revision > 1 ? this.sharedOf(this.repository.revision(summary.kind, summary.itemId, summary.revision - 1)) : []
+    const added = now.filter((id) => !before.includes(id))
+    const removed = before.filter((id) => !now.includes(id))
+    return added.length || removed.length ? { ...summary, sharing: { added, removed } } : summary
+  }
+
+  private sharedOf(revision: ICatalogRevision | undefined): string[] {
+    if (!revision?.document) return []
+    try {
+      const shared = (JSON.parse(revision.document) as { sharedWith?: unknown }).sharedWith
+      return Array.isArray(shared) ? shared.map(String) : []
+    } catch {
+      return []
+    }
   }
 
   /** O texto e a descrição de um lado; `undefined` = a revisão não existe. */

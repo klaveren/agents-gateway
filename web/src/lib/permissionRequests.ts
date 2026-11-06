@@ -23,8 +23,9 @@ export interface IPermissionRequest {
   patch?: Record<string, unknown>
   /** `agent-patch` de um campo-lista: a entrada a ACRESCENTAR ao valor de agora (`allowedTools` + `agent:ana`). */
   entries?: { field: string; add: string[] }
+  /** `secret.project`: skill/command compartilhado — o projeto que recebe e cujo valor o pedido preenche (ausente = a origem). */
   /** `secret`: a variável pedida (só o nome — ⛔ o valor é digitado por quem aprova, nunca vem no pedido). */
-  secret?: { scope: 'agent' | 'skill' | 'command'; scopeId: string; name: string; description?: string }
+  secret?: { scope: 'agent' | 'skill' | 'command'; scopeId: string; name: string; description?: string; project?: string }
   widenings: IWideningRef[]
   requestedWidenings: IWideningRef[]
   /** As regras do agente mudaram desde o pedido: `widenings` foi recalculado. */
@@ -86,4 +87,9 @@ const SECRET_SCOPE: Record<NonNullable<IPermissionRequest['secret']>['scope'], s
 /** "Variável secreta pedida: GITLAB_TOKEN para skill gitlab" — o título do pedido `secret`. */
 export function secretLine(secret: NonNullable<IPermissionRequest['secret']>): string {
   return `Variável secreta pedida: ${secret.name} para ${SECRET_SCOPE[secret.scope] ?? secret.scope} ${secret.scopeId}`
+}
+
+/** "valor do projeto Beta" — só quando o pedido é de um projeto que RECEBE o compartilhamento (`secret.project`). */
+export function secretProjectLine(secret: NonNullable<IPermissionRequest['secret']>, nameOf: (id: string) => string | undefined): string | undefined {
+  return secret.project ? `valor do projeto ${nameOf(secret.project) ?? secret.project}` : undefined
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { renderMarkdown } from './markdown'
-import { attachableDocs, attachedRefs, attachmentsChanged, contextWeight, docSlug, rulesTokens, scopeLabel, scopeToProjectId, setAttachMode } from './guidance'
+import { attachableDocs, withoutShared, attachedRefs, attachmentsChanged, contextWeight, docSlug, rulesTokens, scopeLabel, scopeToProjectId, setAttachMode } from './guidance'
 
 describe('guidance', () => {
   const projects = [{ id: 'xpto', name: 'Loja XPTO', createdAt: '', updatedAt: '' }]
@@ -22,6 +22,13 @@ describe('guidance', () => {
     expect(attachableDocs(docs, null, 'api').map((doc) => doc.id)).toEqual([])
     expect(attachableDocs(docs, null).map((doc) => doc.id)).toEqual(['api'])
     expect(attachableDocs(docs, 'xpto', 'eu').map((doc) => doc.id)).toEqual(['api', 'arq'])
+  })
+
+  it('⛔ anexar inclui o compartilhado com o projeto (sharedFrom); substituir continua só do mesmo escopo; global não anexa de projeto', () => {
+    const docs = [{ id: 'g' }, { id: 'meu', projectId: 'xpto' }, { id: 'alheio', projectId: 'alfa', sharedFrom: 'alfa' }, { id: 'outro', projectId: 'alfa' }]
+    expect(attachableDocs(docs, 'xpto').map((doc) => doc.id)).toEqual(['g', 'meu', 'alheio'])
+    expect(attachableDocs(docs, null).map((doc) => doc.id)).toEqual(['g'])
+    expect(withoutShared(attachableDocs(docs, 'xpto')).map((doc) => doc.id)).toEqual(['g', 'meu'])
   })
 
   it('editor de doc: anexos mudaram (lista, ordem ou modo) liga o Salvar; referência solta não conta', () => {

@@ -159,8 +159,11 @@ class CatalogView {
     resource: (id) => this.slim(this.get('skill', id)),
   }
 
-  private slim<K extends string>(document: ICatalogDocument | undefined): { kind: K; projectId?: string } | undefined {
-    return document ? { kind: document.kind as K, ...(document.projectId ? { projectId: document.projectId } : {}) } : undefined
+  /** ⛔ O `sharedWith` mora no `body` do documento canônico: sem ele, o dry-run recusa o que o apply aceitaria. */
+  private slim<K extends string>(document: ICatalogDocument | undefined): { kind: K; projectId?: string; sharedWith?: string[] } | undefined {
+    if (!document) return undefined
+    const shared = list(document.body.sharedWith)
+    return { kind: document.kind as K, ...(document.projectId ? { projectId: document.projectId } : {}), ...(shared.length ? { sharedWith: shared } : {}) }
   }
 }
 
