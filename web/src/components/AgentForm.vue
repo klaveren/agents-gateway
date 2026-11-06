@@ -412,6 +412,9 @@
   const initialHash = useRoute().hash
   const HASH_TAB: Record<string, TTab> = { '#agendamentos': 'agendamentos', '#memoria': 'memoria', '#variaveis': 'variaveis', '#historico': 'historico', '#problemas': 'problemas', '#personalidade': 'personalidade', '#instrucoes': 'instrucoes' }
   const tab = ref<TTab>(HASH_TAB[initialHash] ?? 'agente')
+  /** Por que o agente não roda agora (e o servidor recusa delegar a ele), ou nada. Só administradores não impede delegar. */
+  const cannotRun = (other: { unavailable?: { reason: string; label: string } }) =>
+    other.unavailable && other.unavailable.reason !== 'admin_only' ? other.unavailable.label : undefined
   /** A guia aberta dentro de Modelos: os modelos do agente ou o grupo de modelos. */
   const modelsTab = ref<'agente' | 'grupo'>('agente')
   /** O que a guia Permissões mostra: as regras (uma guia por categoria) ou o nível de acesso dos CLIs. */
@@ -1194,17 +1197,23 @@
           <div class="flex flex-col gap-1.5">
             <span class="text-xs text-zinc-500">Agentes</span>
             <div class="flex flex-wrap gap-1.5">
+              <!-- ⛔ O servidor só aceita delegar a quem pode rodar agora (com modelo ativo): o resto aparece desligado, com o
+                   motivo. O já marcado continua clicável, para poder tirar. -->
               <button
                 v-for="other in agents.list.filter((candidate) => candidate.id !== form.id)"
                 :key="other.id"
                 type="button"
-                class="chip"
-                :class="{ on: form.allowedTools.includes(`agent:${other.id}`) }"
+                class="chip disabled:cursor-not-allowed disabled:opacity-40"
+                :class="{ on: form.allowedTools.includes(`agent:${other.id}`), danger: !!cannotRun(other) && form.allowedTools.includes(`agent:${other.id}`) }"
+                :disabled="!!cannotRun(other) && !form.allowedTools.includes(`agent:${other.id}`)"
+                :title="cannotRun(other) ? `Não dá para delegar: ${cannotRun(other)}. Ative um modelo dele em Modelos.` : undefined"
                 @click="toggle(form.allowedTools, `agent:${other.id}`)"
               >
                 {{ other.name }}
                 <span v-if="other.role === 'subagent'" class="ml-1 text-[10px] text-zinc-500">subagente</span>
+                <span v-if="cannotRun(other)" class="ml-1 text-[10px] text-amber-300">{{ cannotRun(other) }}</span>
               </button>
+              <span v-if="agents.list.length <= 1" class="text-xs text-zinc-500">Nenhum outro agente ainda.</span>
             </div>
           </div>
           <!-- Os construtores do core: não estão na lista de agentes, mas recebem delegação (o Atlas cria conteúdo por eles). -->
