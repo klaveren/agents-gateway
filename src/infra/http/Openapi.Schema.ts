@@ -1486,7 +1486,11 @@ export const OPENAPI_DOCUMENT = {
           'Create a personal access token (`agw_…`) for scripts and MCP clients — sent in X-Tool-Authorization like a session token. It acts as your account (role changes apply; a disabled account stops it) and survives sign-out. Requires a signed-in session: an access token cannot create tokens',
         requestBody: {
           required: true,
-          ...json({ type: 'object', properties: { name: { type: 'string', maxLength: 60 }, expiresInDays: { type: 'integer', minimum: 1, maximum: 365 } }, required: ['name'] }),
+          ...json({
+            type: 'object',
+            properties: { name: { type: 'string', maxLength: 60 }, expiresInDays: { type: 'integer', minimum: 1, maximum: 365 } },
+            required: ['name', 'expiresInDays'],
+          }),
         },
         responses: {
           '201': {

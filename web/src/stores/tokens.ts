@@ -21,7 +21,7 @@ export interface IAccessToken {
 export const useTokensStore = defineStore('tokens', () => {
   const lists = keyedResource(() => api<IAccessToken[]>('/auth/tokens'))
 
-  async function create(userId: string, input: { name: string; expiresInDays?: number }): Promise<IAccessToken & { token: string }> {
+  async function create(userId: string, input: { name: string; expiresInDays: number }): Promise<IAccessToken & { token: string }> {
     const created = await api<IAccessToken & { token: string }>('/auth/tokens', { method: 'POST', body: input })
     const { token: _token, ...kept } = created
     lists.update(userId, (list) => [kept, ...list.filter((item) => item.id !== kept.id)])

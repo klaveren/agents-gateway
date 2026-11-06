@@ -33,13 +33,14 @@ export class AccessTokensService {
   ) {}
 
   /** ⛔ O token em claro sai UMA vez, aqui; o banco guarda só o hash. */
-  create(userId: string, input: { name: string; expiresInDays?: number }): { token: string; accessToken: IAccessToken } {
+  create(userId: string, input: { name: string; expiresInDays: number }): { token: string; accessToken: IAccessToken } {
     const issues: Array<{ field: string; message: string }> = []
     const name = input.name.trim()
     if (!name) issues.push({ field: 'name', message: 'required' })
     else if (name.length > ACCESS_TOKEN_NAME_MAX) issues.push({ field: 'name', message: `at most ${ACCESS_TOKEN_NAME_MAX} characters` })
-    if (input.expiresInDays !== undefined && (!Number.isInteger(input.expiresInDays) || input.expiresInDays < 1 || input.expiresInDays > ACCESS_TOKEN_MAX_DAYS))
-      issues.push({ field: 'expiresInDays', message: `1 to ${ACCESS_TOKEN_MAX_DAYS} days, or none` })
+    // ⛔ Validade obrigatória, com teto: token eterno vazado é acesso eterno. (Os já criados sem validade seguem valendo.)
+    if (input.expiresInDays === undefined || !Number.isInteger(input.expiresInDays) || input.expiresInDays < 1 || input.expiresInDays > ACCESS_TOKEN_MAX_DAYS)
+      issues.push({ field: 'expiresInDays', message: `required: 1 to ${ACCESS_TOKEN_MAX_DAYS} days` })
     if (this.list(userId).filter((token) => this.usable(token)).length >= ACCESS_TOKENS_PER_USER)
       issues.push({ field: 'name', message: `at most ${ACCESS_TOKENS_PER_USER} active tokens; revoke one first` })
     if (issues.length) throw new InvalidAccessTokenError(issues)
@@ -53,7 +54,7 @@ export class AccessTokensService {
       tokenHash: hash(token),
       prefix: token.slice(0, ACCESS_TOKEN_PREFIX.length + 4),
       createdAt: now,
-      expiresAt: input.expiresInDays ? new Date(now.getTime() + input.expiresInDays * DAY) : undefined,
+      expiresAt: new Date(now.getTime() + input.expiresInDays * DAY),
     }
     this.tokens.insert(stored)
     return { token, accessToken: withoutHash(stored) }
@@ -95,7 +96,14 @@ export class AccessTokensService {
     const now = this.now()
     if (!token.lastUsedAt || now.getTime() - token.lastUsedAt.getTime() >= LAST_USED_EVERY_MS) this.tokens.update(token.id, { lastUsedAt: now })
 
-    return this.sessions.issue({ sub: user.id, email: user.email, role: user.role, ver: user.sessionVersion }).token
+    // ⛔ A marca `via/tid`: a sessão derivada não gere tokens nem vira cookie, e cai quando este token cai (`isLive`).
+    return this.sessions.issue({ sub: user.id, email: user.email, role: user.role, ver: user.sessionVersion, via: 'agw', tid: token.id }).token
+  }
+
+  /** O token de acesso `tokenId` da conta ainda vale (existe, não foi revogado, não venceu)? É o que mantém viva a sessão derivada dele. */
+  isLive(userId: string, tokenId: string): boolean {
+    const token = this.tokens.listByUser(userId).find((candidate) => candidate.id === tokenId)
+    return !!token && this.usable(token)
   }
 
   private usable(token: IAccessToken): boolean {
