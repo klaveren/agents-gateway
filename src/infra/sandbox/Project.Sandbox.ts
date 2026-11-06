@@ -1,5 +1,5 @@
 import { exec } from 'node:child_process'
-import { type Dirent, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { type Dirent, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -213,6 +213,7 @@ export class ProjectSandbox implements IProjectSandbox {
     }
     const home = scratch('.home')
     const cache = scratch('.cache')
+    cleanLegacyScratch(place.scratchBase ?? root)
     // ⚠️ No Linux o comando roda noutro namespace de rede: o runtime põe lá dentro uma ponte (socat) em `localhost:3128`
     // que leva à porta do gateway no host. No Mac o seatbelt divide a rede com o host, e a porta é a própria.
     const proxy = `http://${networkToken}:x@127.0.0.1:${process.platform === 'linux' ? LINUX_BRIDGE_PORT : port}`
@@ -271,6 +272,7 @@ export class ProjectSandbox implements IProjectSandbox {
       return dir
     }
     const cache = scratch('.cache')
+    cleanLegacyScratch(project)
     const scoped = {
       HOME: scratch('.home'),
       TMPDIR: scratch('.tmp'),
@@ -613,6 +615,44 @@ export function ensureGitProxyAuth(home: string): void {
   const current = existsSync(path) ? readFileSync(path, 'utf8') : ''
   if (/proxyAuthMethod/i.test(current)) return
   writeFileSync(path, `${current}${current && !current.endsWith('\n') ? '\n' : ''}[http]\n\tproxyAuthMethod = basic\n`)
+}
+
+/** A marca da limpeza dos restos de antes da correção M4 (dentro do `.cache` do projeto). */
+const LEGACY_CLEANUP_MARK = '.gateway-limpeza-m4'
+const cleanedProjects = new Set<string>()
+
+/** `true` se o caminho é uma pasta de verdade (nem link, nem arquivo). */
+function isRealDirectory(path: string): boolean {
+  try {
+    return lstatSync(path).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+/**
+ * ⛔ Restos de ANTES da correção M4, que ficaram no rascunho do projeto: `.home/.accounts/*` (chaves SSH de comandos antigos),
+ * `.cache/logs/*` e `.cache/proxychains-*.conf` (o token de rede). Uma vez por projeto (marca no `.cache` + memória), idempotente,
+ * só estes caminhos exatos. Não segue link: se `.home` ou `.cache` não é pasta de verdade, nada se apaga; um link dentro deles
+ * sai como link (o alvo fica). Falha de apagar não derruba o comando.
+ */
+export function cleanLegacyScratch(base: string): void {
+  if (cleanedProjects.has(base)) return
+  cleanedProjects.add(base)
+  try {
+    const home = join(base, '.home')
+    const cache = join(base, '.cache')
+    const mark = join(cache, LEGACY_CLEANUP_MARK)
+    if (!isRealDirectory(cache) || existsSync(mark)) return
+    if (isRealDirectory(home)) rmSync(join(home, '.accounts'), { recursive: true, force: true })
+    const logs = join(cache, 'logs')
+    if (isRealDirectory(logs)) for (const entry of readdirSync(logs)) rmSync(join(logs, entry), { recursive: true, force: true })
+    for (const entry of readdirSync(cache)) if (/^proxychains-.*\.conf$/.test(entry)) rmSync(join(cache, entry), { force: true })
+    writeFileSync(mark, `${new Date().toISOString()}\n`, { mode: 0o600 })
+  } catch {
+    // Fica para o próximo comando: a memória só guarda o que deu certo.
+    cleanedProjects.delete(base)
+  }
 }
 
 function writeConnector(home: string): string {

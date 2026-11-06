@@ -582,10 +582,13 @@ describe('ClaudeAgentAdapter', () => {
       }
     })
 
-    it('o agente global adminOnly (o admin do gateway) continua com o Bash nativo, mas com a lista protegida', async () => {
-      const sent = await globalGate(['sdk:Bash'], { adminOnly: true })
-      const decision = (await sent.canUseTool!('Bash', { command: 'ls' }, options)) as { behavior: string }
-      assert.strictEqual(decision.behavior, 'allow')
+    it('⛔ o Bash nativo é recusado até para o agente global adminOnly (roda sem cerco, lê /proc/$PPID/environ); Grep e Glob seguem', async () => {
+      const sent = await globalGate(['sdk:Bash', 'sdk:Grep'], { adminOnly: true })
+      const bash = (await sent.canUseTool!('Bash', { command: 'cat /proc/$PPID/environ' }, options)) as { behavior: string; message?: string }
+      assert.strictEqual(bash.behavior, 'deny')
+      assert.match(bash.message ?? '', /run_bash/)
+      const grep = (await sent.canUseTool!('Grep', { pattern: 'x', path: '.' }, options)) as { behavior: string }
+      assert.strictEqual(grep.behavior, 'allow')
     })
 
     it('⛔ M9: o WebFetch passa pelo portão de rede (loopback, porta do gateway, metadados), não só pela regra', async () => {
@@ -631,7 +634,7 @@ describe('ClaudeAgentAdapter', () => {
       const seen: TQueryParams[] = []
       const loops = new LoopGuard(() => ({ refuseAt: 2, stopAt: 9, maxErrors: 9 }))
       const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog: catalogWith(true), sandbox: sandbox(true), loops })
-      const global = { ...getAgent(), allowedTools: ['sdk:Bash'], adminOnly: true }
+      const global = { ...getAgent(), allowedTools: ['sdk:Grep'], adminOnly: true }
       const session = await adapter.createSession(global, { agentId: CLAUDE_TEST_AGENT.id })
       await drain(adapter.sendMessage(global, session.id, { text: 'oi' }, {}))
       const hook = seen[0].options!.hooks!.PreToolUse![0].hooks[0]
@@ -643,10 +646,10 @@ describe('ClaudeAgentAdapter', () => {
         ).hookSpecificOutput
 
       loops.open(session.id)
-      assert.strictEqual((await call('Bash', { command: 'cat x' })).permissionDecision, 'allow')
-      const second = await call('Bash', { command: 'cat x' })
+      assert.strictEqual((await call('Grep', { pattern: 'x' })).permissionDecision, 'allow')
+      const second = await call('Grep', { pattern: 'x' })
       assert.deepStrictEqual([second.permissionDecision, /detector de laço/.test(second.permissionDecisionReason ?? '')], ['deny', true])
-      assert.strictEqual((await call('Bash', { command: 'cat y' })).permissionDecision, 'allow', 'argumento diferente não conta')
+      assert.strictEqual((await call('Grep', { pattern: 'y' })).permissionDecision, 'allow', 'argumento diferente não conta')
       await call('mcp__local__run_bash', { command: 'ls' })
       assert.notStrictEqual((await call('mcp__local__run_bash', { command: 'ls' })).permissionDecisionReason?.includes('laço'), true)
     })
