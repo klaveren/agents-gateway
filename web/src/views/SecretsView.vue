@@ -200,6 +200,13 @@ import { computed, ref, watch } from 'vue'
 <style scoped>
   @reference '../style.css';
 
+  /* O rótulo em cima do campo, com a dica embaixo, como nas outras telas. */
+  .field {
+    @apply flex min-w-0 flex-col gap-1.5 text-sm font-medium text-zinc-300;
+  }
+  .hint {
+    @apply text-xs font-normal text-zinc-500;
+  }
   .input {
     @apply rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 font-normal text-zinc-100 outline-none focus:border-emerald-500/60;
   }
