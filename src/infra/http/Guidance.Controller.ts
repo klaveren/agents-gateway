@@ -143,13 +143,17 @@ export class GuidanceController {
   }
 
   async createRule(req: Request, res: Response): Promise<void> {
-    await this.respond(res, async () => {
-      const body = parseBody(ruleSchema, req.body)
-      return this.deps.guidance.createRule(body, await this.admin(body.projectId, 'createRule'))
-    }, {
-      status: 201,
-      message: 'Rule created',
-    })
+    await this.respond(
+      res,
+      async () => {
+        const body = parseBody(ruleSchema, req.body)
+        return this.deps.guidance.createRule(body, await this.admin(body.projectId, 'createRule'))
+      },
+      {
+        status: 201,
+        message: 'Rule created',
+      },
+    )
   }
 
   async updateRule(req: Request, res: Response): Promise<void> {
@@ -208,13 +212,17 @@ export class GuidanceController {
   }
 
   async createDoc(req: Request, res: Response): Promise<void> {
-    await this.respond(res, async () => {
-      const body = parseBody(docSchema, req.body)
-      return this.deps.guidance.createDoc(body, await this.admin(body.projectId, 'createDoc'))
-    }, {
-      status: 201,
-      message: 'Document created',
-    })
+    await this.respond(
+      res,
+      async () => {
+        const body = parseBody(docSchema, req.body)
+        return this.deps.guidance.createDoc(body, await this.admin(body.projectId, 'createDoc'))
+      },
+      {
+        status: 201,
+        message: 'Document created',
+      },
+    )
   }
 
   async updateDoc(req: Request, res: Response): Promise<void> {
@@ -304,13 +312,17 @@ export class GuidanceController {
   }
 
   async createResource(req: Request, res: Response): Promise<void> {
-    await this.respond(res, async () => {
-      const body = parseBody(resourceSchema, req.body)
-      return this.deps.guidance.createResource(body, await this.admin(body.projectId, 'createResource'))
-    }, {
-      status: 201,
-      message: 'Resource created',
-    })
+    await this.respond(
+      res,
+      async () => {
+        const body = parseBody(resourceSchema, req.body)
+        return this.deps.guidance.createResource(body, await this.admin(body.projectId, 'createResource'))
+      },
+      {
+        status: 201,
+        message: 'Resource created',
+      },
+    )
   }
 
   async updateResource(req: Request, res: Response): Promise<void> {
@@ -480,9 +492,7 @@ export class GuidanceController {
 
   /** A edição: o admin do escopo de agora e, se o item muda de escopo (`next` dado), também o do novo. */
   private moving(current: string | null | undefined, next: string | null | undefined, operation: string): Promise<string> {
-    return next === undefined || (next || null) === (current || null)
-      ? this.admin(current, operation)
-      : requireProjectsAdmin(this.deps.proof, [current, next], operation)
+    return next === undefined || (next || null) === (current || null) ? this.admin(current, operation) : requireProjectsAdmin(this.deps.proof, [current, next], operation)
   }
 
   private async respond<T>(res: Response, work: () => Promise<T>, options: { status?: number; message?: string } = {}) {

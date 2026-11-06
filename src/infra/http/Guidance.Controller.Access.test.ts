@@ -34,8 +34,10 @@ describe('Guidance: o admin do projeto, só o projeto dele', () => {
   )
   after(() => useProjectAccess(undefined))
 
-  const guidance = new GuidanceService(new SqliteGuidanceRepository(':memory:'), () => true, (id) =>
-    id === 'agente-alfa' ? { id, projectId: 'alfa' } : id === 'agente-global' ? { id } : undefined,
+  const guidance = new GuidanceService(
+    new SqliteGuidanceRepository(':memory:'),
+    () => true,
+    (id) => (id === 'agente-alfa' ? { id, projectId: 'alfa' } : id === 'agente-global' ? { id } : undefined),
   )
   const controller = new GuidanceController({ guidance, proof })
   guidance.createRule({ projectId: 'alfa', title: 'Regra alfa', body: 'a' }, 'root')
