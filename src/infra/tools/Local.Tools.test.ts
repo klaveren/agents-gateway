@@ -341,7 +341,8 @@ describe('LocalTools', () => {
         (await find(tools, 'run_bash').execute({ command: 'ssh deploy@srv uptime' }, { sessionId: 's1', agentId: 'dev', conversationProjectId: 'p1' })).status,
         'success',
       )
-      assert.ok(seen.kit?.startsWith(join(realOf(root), '.home', '.accounts')))
+      // ⛔ Na pasta PRIVADA do servidor (aqui a do fallback, sem cerco que a diga), nunca no .home do projeto.
+      assert.ok(seen.kit?.startsWith(join(tmpdir(), 'gateway-run', 'commands')) && !seen.kit.includes('.home'), String(seen.kit))
       assert.ok(seen.during, 'a chave estava lá durante o comando')
       assert.ok(!existsSync(seen.kit!), 'e saiu no fim')
     })
@@ -581,6 +582,26 @@ describe('LocalTools — agent_trigger', () => {
     assert.match((await tool.execute({ action: 'list', agentId: 'ninguem' }, { ...ctx })).result, /^Not permitted/)
   })
 
+  it('⛔ uma regra `trigger *` não alcança agente de OUTRO projeto; o global só o chamador global', async () => {
+    const projects: Record<string, string | null> = { maya: 'p1', theo: 'p1', alheio: 'p2', global: null, gcaller: null }
+    const stored: Record<string, Array<{ id: string; when: string; body: string }>> = { maya: [], theo: [], alheio: [], global: [], gcaller: [] }
+    const tool = makeLocalTools({
+      triggers: { triggersOf: (id) => stored[id], saveTriggers: (id, triggers) => void (stored[id] = triggers), projectOf: (id) => projects[id] ?? null },
+      permissions: { check: () => ({ allowed: true, layer: 'agent', reason: 'ok' }) },
+    }).find((item) => item.name === 'agent_trigger')!
+    const create = (agentId: string, from: string) => tool.execute({ action: 'create', agentId, id: 'x', when: 'w', body: 'b' }, { agentId: from, sessionId: 's' })
+    assert.strictEqual((await create('theo', 'maya')).status, 'success', 'o mesmo projeto')
+    for (const [target, from] of [
+      ['alheio', 'maya'],
+      ['global', 'maya'],
+      ['theo', 'gcaller'],
+      ['alheio', 'gcaller'],
+    ])
+      assert.match((await create(target, from)).result, /another project/, `${from} -> ${target}`)
+    assert.strictEqual((await create('global', 'gcaller')).status, 'success', 'global alcança global')
+    assert.deepStrictEqual(stored.alheio, [])
+  })
+
   it('importedFrom: o trigger migrado do repositório sai da fila do Importador; a marca que falha não desfaz a gravação', async () => {
     const { tool, stored, marks } = setup(['theo'])
     const ok = await tool.execute(
@@ -768,6 +789,16 @@ describe('remoteSudoAllowed', () => {
     assert.strictEqual(await remoteSudoAllowed("ssh isrv1 'sudo k3s kubectl get nodes; sudo k3s etcd-snapshot save'", checker(rules), asker), false)
     // Um grep com "sudo" ao lado do ssh não atrapalha.
     assert.strictEqual(await remoteSudoAllowed(`grep -n "sudo" x.sh; ${both}`, checker(rules), asker), true)
+  })
+
+  it('⛔ o privilegiado remoto disfarçado nunca passa por regra larga; reboot só com regra que o cita', async () => {
+    const wide: IPermissionRule[] = [{ category: 'terminal', pattern: 'ssh *', decision: 'allow' }]
+    for (const command of ['ssh h "su\'\'do id"', "ssh h 'x=sud; ${x}o id'", 'ssh h "doas id"', "ssh h 'su -c id'", "ssh h 'pkexec id'", 'ssh h "re\'\'boot"'])
+      assert.strictEqual(await remoteSudoAllowed(command, checker(wide), asker), false, command)
+    const reboot: IPermissionRule[] = [{ category: 'terminal', pattern: 'ssh * reboot', decision: 'allow' }]
+    assert.strictEqual(await remoteSudoAllowed("ssh 10.10.0.4 'reboot'", checker(reboot), asker), true)
+    assert.strictEqual(await remoteSudoAllowed("ssh 10.10.0.4 'poweroff'", checker(reboot), asker), false)
+    assert.strictEqual(await remoteSudoAllowed("ssh 10.10.0.4 'reboot; sudo id'", checker(reboot), asker), false)
   })
 
   it('⛔ o sudo local segue recusado, mesmo com a regra', async () => {

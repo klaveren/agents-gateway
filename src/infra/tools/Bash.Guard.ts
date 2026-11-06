@@ -1,5 +1,6 @@
 import { liveLimit } from '@domain/models/Limits.Model'
 import path from 'node:path'
+import { analyzeShell, type IShellCommand } from '@infra/permissions/Shell.Parse'
 
 export interface IBashPolicy {
   /** Tempo máximo por comando. */
@@ -67,22 +68,122 @@ export const COMMAND_REASONS: ReadonlySet<string> = new Set([PRIVILEGE_ESCALATIO
 
 const POWER = new Set(['shutdown', 'reboot', 'halt', 'poweroff'])
 const ESCALATE = new Set(['sudo', 'doas', 'su', 'pkexec', 'run0'])
+const SYSTEMCTL_POWER = new Set(['shutdown', 'reboot', 'halt', 'poweroff', 'kexec', 'soft-reboot'])
+
+/** Um comando que exige regra própria para rodar no host (ou nem isso, no local): o motivo e a palavra que a regra tem de citar. */
+export interface IPrivileged {
+  reason: string
+  cite: string
+}
+
+/**
+ * ⛔ O comando PRIVILEGIADO: a escalada (`sudo`, `doas`, `su`, `pkexec`, `run0`, `machinectl shell`) e o que desliga ou reinicia a
+ * máquina (`reboot`, `shutdown`, `poweroff`, `halt`, `init 0|6`, `systemctl reboot|poweroff|halt|kexec`). `name` é a base do argv[0].
+ */
+export function privilegedOf(command: { name: string; argv: readonly string[] }): IPrivileged | undefined {
+  const { name, argv } = command
+  const rest = argv.slice(1)
+  if (ESCALATE.has(name)) return { reason: PRIVILEGE_ESCALATION, cite: name }
+  if (name === 'machinectl' && rest.some((word) => word === 'shell' || word === 'login')) return { reason: PRIVILEGE_ESCALATION, cite: 'machinectl' }
+  if (POWER.has(name)) return { reason: HOST_POWER, cite: name }
+  if ((name === 'init' || name === 'telinit') && rest.some((word) => word === '0' || word === '6')) return { reason: HOST_POWER, cite: name }
+  if (name === 'systemctl') {
+    const verb = rest.find((word) => SYSTEMCTL_POWER.has(word))
+    if (verb) return { reason: HOST_POWER, cite: verb }
+  }
+  return undefined
+}
+
+/** Tem o sudo e o reboot pelo texto; e os de fora da lista literal (`su''do`) só a análise vê. */
+const BOTH_REASONS: readonly string[] = [PRIVILEGE_ESCALATION, HOST_POWER]
 
 /**
  * ⚖️ O sudo e o reboot pelos comandos que RODAM (a análise do shell), não pelo texto: `grep "sudo"` e um script que só
- * cita "reboot" passavam por escalada. O `ssh` com sudo no comando remoto conta como escalada (quem libera é a regra:
- * `remoteSudoAllowed`). Comando que a análise não vê por inteiro: vale o texto (falha fechada).
+ * cita "reboot" passavam por escalada. Comando que a análise não vê por inteiro: vale o texto (falha fechada). Sem
+ * opacidade o texto não filtra: `su''do id` não tem a palavra, mas roda. O comando REMOTO do `ssh` é outra análise
+ * (ver `remoteReasons`).
  */
 export function realReasons(analysis: { commands: ReadonlyArray<{ name: string; argv: readonly string[] }>; opaque: readonly string[] }, textual: readonly string[]): string[] {
   if (analysis.opaque.length) return textual.filter((reason) => COMMAND_REASONS.has(reason))
   const found = new Set<string>()
   for (const command of analysis.commands) {
-    if (ESCALATE.has(command.name)) found.add(PRIVILEGE_ESCALATION)
-    if (POWER.has(command.name) || (command.name === 'systemctl' && command.argv.some((word) => POWER.has(word) || word === 'kexec'))) found.add(HOST_POWER)
-    if (command.name === 'ssh' && command.argv.slice(1).some((word) => /(^|[\s;&|(])sudo(\s|$)/.test(word))) found.add(PRIVILEGE_ESCALATION)
-    if (command.name === 'ssh' && command.argv.slice(1).some((word) => /(^|[\s;&|(])(shutdown|reboot|halt|poweroff)(\s|$)/.test(word))) found.add(HOST_POWER)
+    const privileged = privilegedOf(command)
+    if (privileged) found.add(privileged.reason)
   }
-  return textual.filter((reason) => COMMAND_REASONS.has(reason) && found.has(reason))
+  return BOTH_REASONS.filter((reason) => found.has(reason))
+}
+
+/** Onde começa o comando remoto do `ssh`: depois das opções e do host. */
+export function sshRemoteStart(argv: readonly string[]): number {
+  let i = 1
+  while (i < argv.length && argv[i]!.startsWith('-')) {
+    if (argv[i] === '--') {
+      i += 1
+      break
+    }
+    i += SSH_VALUE_OPTIONS.test(argv[i]!) ? 2 : 1
+  }
+  return i + 1
+}
+
+/** As opções do `ssh` que levam valor na palavra seguinte (`-o BatchMode=yes`, `-p 22`). */
+const SSH_VALUE_OPTIONS = /^-[BbcDEeFIiJLlmOoPpQRSWw]$/
+
+export interface IRemote {
+  /** A linha que o shell REMOTO vai ler (as palavras depois do host, juntas por espaço, como o ssh faz). */
+  line: string
+  /** O que a análise não vê por inteiro (expansão no nome do comando, `eval`, erro de sintaxe…) ou o que o shell local monta antes. */
+  opaque: boolean
+  commands: IShellCommand[]
+  /** Os comandos privilegiados da linha remota. */
+  privileged: Array<{ command: IShellCommand; kind: IPrivileged }>
+}
+
+/**
+ * ⛔ O COMANDO REMOTO DE UM `ssh`, analisado como shell (o de lá relê a linha): `ssh h "su''do id"`, `'x=sud; ${x}o id'`, `doas`,
+ * `su -c`, `pkexec` e o `reboot` montado por aspas passavam pelo regex do texto. Falha fechada: palavra montada pelo shell
+ * LOCAL (`$x`, `$(…)`) ou linha que a análise não vê por inteiro = opaca. Sem comando remoto (login), não há o que analisar.
+ */
+export async function remoteOf(ssh: IShellCommand, full: string = ssh.text): Promise<IRemote | undefined> {
+  if (ssh.name !== 'ssh') return undefined
+  const at = sshRemoteStart(ssh.argv)
+  const words = ssh.argv.slice(at)
+  if (!words.length) return undefined
+  const line = words.join(' ')
+  // Palavra que o shell local monta em execução: o texto resolvido não é o que o ssh recebe. Ssh embrulhado (`nohup ssh`) perde a marca: vale o texto.
+  const dynamic = ssh.dynamicArgs ? ssh.dynamicArgs.filter((index) => index >= at).some((index) => localExpansionRisky(ssh.argv[index]!, full)) : /[$`]/.test(line)
+  const analysis = await analyzeShell(line)
+  const commands = analysis.commands
+  const privileged = commands.flatMap((command) => {
+    const kind = privilegedOf(command)
+    return kind ? [{ command, kind }] : []
+  })
+  return { line, opaque: dynamic || analysis.opaque.length > 0, commands, privileged }
+}
+
+/**
+ * ⛔ A palavra que o shell LOCAL expande antes do ssh. `$VAR` de uma variável que a própria linha NÃO atribui (o ambiente do
+ * gateway: `ssh h "ls $HOME"`) segue; substituição de comando, expansão que não é um nome simples, ou variável que a linha
+ * atribui (`y="; sudo id"; ssh h "echo $y"`) pode trazer outro comando: opaca.
+ */
+function localExpansionRisky(word: string, full: string): boolean {
+  const simple = word.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name: string) => `$${name}`)
+  if (/\$\(|`|\$\{|\$[^A-Za-z_]|\*|\?|\[/.test(simple)) return true
+  const names = [...word.matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)/g)].map((match) => match[1]!)
+  return names.some((name) => new RegExp(`(^|[\\s;&|(])((export|local|declare|readonly)\\s+)?${name}\\+?=|\\b(read|for|select)\\s+(-\\w+\\s+)*${name}\\b`).test(full))
+}
+
+/** Os motivos do `ssh` pela linha REMOTA: o privilegiado que roda lá, ou a linha opaca (conta como escalada). */
+export async function remoteReasons(analysis: { commands: readonly IShellCommand[]; opaque: readonly string[] }, full?: string): Promise<string[]> {
+  if (analysis.opaque.length) return []
+  const found = new Set<string>()
+  for (const command of analysis.commands) {
+    const remote = await remoteOf(command, full)
+    if (!remote) continue
+    if (remote.opaque) found.add(PRIVILEGE_ESCALATION)
+    for (const item of remote.privileged) found.add(item.kind.reason)
+  }
+  return BOTH_REASONS.filter((reason) => found.has(reason))
 }
 
 export function truncate(output: string, maxChars: number): string {

@@ -141,8 +141,12 @@ export const CATEGORY_LABEL: Readonly<Record<TPermissionCategory, string>> = {
 export function matches(rule: ISystemRule, subject: IPermissionSubject): boolean {
   if (rule.category !== subject.category) return false
   switch (rule.category) {
-    case 'terminal':
-      return commandMatches(rule.pattern, subject.argv ?? subject.value.trim().split(/\s+/))
+    case 'terminal': {
+      const argv = subject.argv ?? subject.value.trim().split(/\s+/)
+      // ⛔ NEGAR olha também o comando sem as opções globais (`git -C . push`, `kubectl -n x delete`) e na dúvida pega.
+      // LIBERAR não: é a palavra literal, nunca mais larga (e o apelido `-c alias.*` do git não é liberado por curinga).
+      return rule.decision === 'deny' ? denyCommandMatches(rule.pattern, argv) : !hasGitAlias(argv) && commandMatches(rule.pattern, argv)
+    }
     case 'read':
     case 'write':
       // ⛔ Liberação RELATIVA vale só dentro da pasta: `**` não alcança `/outra/pasta` nem `~/.ssh` (fora dela, o caminho
@@ -173,6 +177,102 @@ export function commandMatches(pattern: string, argv: readonly string[]): boolea
     return j < got.length && wordMatches(want[i], got[j]) && walk(i + 1, j + 1)
   }
   return walk(0, 0)
+}
+
+/**
+ * ⛔ As opções GLOBAIS (antes do subcomando) de cada ferramenta, com as que levam valor: `git -C . push`, `kubectl -n prod
+ * delete` não podem escapar de `deny git push *` / `deny kubectl delete *`. Opção fora da lista vale como flag sem valor.
+ */
+const GLOBAL_OPTIONS: Record<string, readonly string[]> = {
+  git: ['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--super-prefix', '--config-env', '--attr-source'],
+  kubectl: [
+    '-n',
+    '--namespace',
+    '--context',
+    '--kubeconfig',
+    '--cluster',
+    '--user',
+    '-s',
+    '--server',
+    '--token',
+    '--as',
+    '--as-group',
+    '--as-uid',
+    '--request-timeout',
+    '-v',
+    '--v',
+    '--certificate-authority',
+    '--client-certificate',
+    '--client-key',
+    '--cache-dir',
+    '--tls-server-name',
+    '--profile',
+    '--profile-output',
+    '--username',
+    '--password',
+  ],
+  docker: ['-H', '--host', '--context', '-c', '-l', '--log-level', '--config', '--tlscacert', '--tlscert', '--tlskey'],
+  helm: [
+    '-n',
+    '--namespace',
+    '--kube-context',
+    '--kubeconfig',
+    '--kube-apiserver',
+    '--kube-token',
+    '--kube-as-user',
+    '--kube-as-group',
+    '--kube-ca-file',
+    '--kube-tls-server-name',
+    '--burst-limit',
+    '--qps',
+    '--registry-config',
+    '--repository-cache',
+    '--repository-config',
+  ],
+  gh: ['-R', '--repo', '--hostname'],
+  systemctl: ['-H', '--host', '-M', '--machine', '--root', '-t', '--type', '-p', '--property', '--state', '--kill-whom', '-s', '--signal', '-n', '--lines', '-o', '--output'],
+}
+GLOBAL_OPTIONS.oc = GLOBAL_OPTIONS.kubectl
+GLOBAL_OPTIONS.podman = GLOBAL_OPTIONS.docker
+
+/** O argv sem as opções globais antes do subcomando. `valueless`: toda opção vale como flag, sem valor na palavra seguinte. */
+function withoutGlobalOptions(argv: readonly string[], valueless = false): string[] {
+  const known = GLOBAL_OPTIONS[basename(argv[0])]
+  if (!known) return [...argv]
+  let i = 1
+  while (i < argv.length && argv[i].startsWith('-') && argv[i] !== '-') {
+    if (argv[i] === '--') {
+      i += 1
+      break
+    }
+    // `--opt=valor` e `-nvalor` trazem o valor junto; `-n valor` e `--opt valor` levam a palavra seguinte.
+    i += !valueless && known.includes(argv[i]) ? 2 : 1
+  }
+  return [argv[0], ...argv.slice(i)]
+}
+
+/** `-c alias.p=push p`: o subcomando real some atrás de um apelido definido na própria linha do git. */
+function hasGitAlias(argv: readonly string[]): boolean {
+  if (basename(argv[0] ?? '') !== 'git') return false
+  let i = 1
+  while (i < argv.length && argv[i].startsWith('-') && argv[i] !== '--') {
+    if ((argv[i] === '-c' || argv[i] === '--config-env') && /^alias\./i.test(argv[i + 1] ?? '')) return true
+    if (/^(-c|--config-env=)alias\./i.test(argv[i])) return true
+    i += GLOBAL_OPTIONS.git.includes(argv[i]) ? 2 : 1
+  }
+  return false
+}
+
+/**
+ * ⛔ NEGAR casa o comando como escrito OU sem as opções globais (das duas leituras: a das opções com valor e a que trata
+ * toda opção como flag): na dúvida, vence a negação. E o apelido definido na linha (`-c alias.*`) casa toda negação do
+ * git, porque o subcomando real é incerto.
+ */
+export function denyCommandMatches(pattern: string, argv: readonly string[]): boolean {
+  if (!argv.length) return false
+  if (commandMatches(pattern, argv)) return true
+  if (hasGitAlias(argv) && wordMatches(pattern.trim().split(/\s+/)[0] ?? '', 'git')) return true
+  return [withoutGlobalOptions(argv), withoutGlobalOptions(argv, true)].some((candidate) => candidate.length < argv.length && commandMatches(pattern, candidate))
 }
 
 function wordMatches(pattern: string, word: string): boolean {
