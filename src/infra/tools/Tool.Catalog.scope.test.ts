@@ -5,9 +5,11 @@ import express from 'express'
 import { agentIssues, IAgentRules } from '@domain/Agent.Policy'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
+import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IAgent } from '@domain/models/Agent.Model'
 import { IMcpServerRepository } from '@domain/ports/McpServerRepository.Port'
 import { McpProxyController } from '@infra/http/McpProxy.Controller'
+import { withCaller } from '@infra/mcp/Caller.Identity'
 import { fakeMcpRegistry, mcpTool } from '@infra/mcp/Mcp.Fake'
 import { McpRegistry } from '@infra/mcp/Mcp.Registry'
 import { codexMcpServers } from '@infra/adapters/CodexAgent.Adapter'
@@ -175,5 +177,66 @@ describe('MCP de projeto — validação ao salvar o agente', () => {
     assert.strictEqual(mcpIssues(['mcp:n8n/*'], 'cliente-c').length, 1)
     assert.match(mcpIssues(['mcp:n8n/*'])[0]?.message ?? '', /unknown MCP server: n8n/)
     assert.deepStrictEqual(mcpIssues(['mcp:pw/*']), [])
+  })
+})
+
+describe('MCP remoto externo — a credencial não vai ao argv do CLI', () => {
+  const PROXY = 'http://127.0.0.1:3000/v1/mcp-proxy'
+  const context = { projectId: 'cliente-a', sessionId: 's-a', token: 'jwt-de-quem-conversa' }
+  const remotes = () =>
+    fakeMcpRegistry([
+      { id: 'crm', tools: [mcpTool('stats')] },
+      { id: 'n8n', projectId: 'cliente-a', auth: 'header', secret: 'chave-secreta-do-cadastro', tools: [mcpTool('fluxo_a')] },
+      { id: 'aberto', auth: 'none', tools: [mcpTool('ping')] },
+    ])
+
+  it('⛔ `caller` e `header` vão pela ponte; o que o SDK do CLI recebe não tem token nem segredo', async () => {
+    const catalog = new ToolCatalog(remotes(), [], undefined, { base: PROXY })
+    const servers = await catalog.mcpServersFor(['mcp:crm/*', 'mcp:n8n/*', 'mcp:aberto/*'], context)
+    assert.deepStrictEqual(
+      servers.map((server) => server.config.url),
+      [`${PROXY}/crm`, `${PROXY}/cliente-a.n8n`, 'http://localhost:8000/aberto/mcp'],
+    )
+    const claude = JSON.stringify(buildClaudeMcpServers([], servers, context.token, context, 'grant-1'))
+    const codex = JSON.stringify(codexMcpServers(servers, context.token, context, 'grant-1'))
+    for (const lane of [claude, codex]) {
+      assert.ok(!lane.includes('jwt-de-quem-conversa'))
+      assert.ok(!lane.includes('chave-secreta-do-cadastro'))
+      assert.ok(lane.includes('grant-1'))
+    }
+  })
+
+  it('o MCP do próprio gateway segue direto (leva só a concessão)', async () => {
+    const catalog = new ToolCatalog(fakeMcpRegistry([{ id: 'gateway', tools: [mcpTool('save_agent')] }]), [], undefined, { base: PROXY })
+    const [self] = await catalog.mcpServersFor(['mcp:gateway/*'], context)
+    assert.strictEqual(self.config.url, 'http://localhost:8000/gateway/mcp')
+  })
+
+  it('⛔ a ponte conecta ao remoto com a credencial de quem conversa (tirada da concessão), por dentro', async () => {
+    const seen: Array<IExecutionContext | undefined> = []
+    process.env.REQUIRE_PROVEN_OWNER = '0'
+    const controller = new McpProxyController({
+      registry: fakeMcpRegistry([{ id: 'crm', tools: [mcpTool('stats')], onCall: (_name, _args, ctx) => (seen.push(ctx), { status: 'success', result: 'ok' }) }]),
+      session: () => ({ agentId: 'ag', metadata: { owner: { id: 'u1' } } }),
+      agent: () => ({ allowedTools: ['mcp:crm/*'], projectId: 'cliente-a' }),
+    })
+    const app = express()
+    app.post('/p/:serverId', express.json(), (req, res) => withCaller({ token: 'jwt-de-quem-conversa', id: 'u1' }, () => void controller.handle(req, res)))
+    const server = app.listen(0)
+    await new Promise((resolve) => server.once('listening', resolve))
+    try {
+      const res = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/p/crm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', 'X-Gateway-Session': 's-a' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'stats', arguments: {} } }),
+      })
+      await res.text()
+      assert.strictEqual(res.status, 200)
+      assert.strictEqual(seen[0]?.token, 'jwt-de-quem-conversa')
+      assert.strictEqual(seen[0]?.projectId, 'cliente-a')
+    } finally {
+      server.close()
+      delete process.env.REQUIRE_PROVEN_OWNER
+    }
   })
 })

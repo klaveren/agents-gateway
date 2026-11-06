@@ -123,4 +123,36 @@ describe('SelfMcp.Guard', () => {
       assert.strictEqual(agentScopeOf({ headers: {} }, res(), true), undefined)
     })
   })
+
+  it('⛔ conversa alvo de outro projeto (ou sem projeto): ler, mandar e reconfigurar recusados; a lista traz só as do projeto', async () => {
+    const sessions: Record<string, { agentId: string; metadata?: Record<string, unknown> }> = {
+      sp: { agentId: 'atlas', metadata: { project: 'P' } },
+      sq: { agentId: 'atlas', metadata: { project: 'Q' } },
+      sn: { agentId: 'atlas' },
+      'sa-q': { agentId: 'a-q' },
+    }
+    const api: TSelfApi = async (_method, path) => {
+      const session = /^\/sessions\/([^/]+)$/.exec(path)
+      if (session) return sessions[session[1]] ? { ok: true, status: 200, result: sessions[session[1]] } : { ok: false, status: 404 }
+      const agent = /^\/agents\/([^/]+)$/.exec(path)
+      if (agent) return { ok: true, status: 200, result: agent[1] === 'a-q' ? { projectId: 'Q' } : {} }
+      if (path === '/conversations') return { ok: true, status: 200, result: { sessions: Object.entries(sessions).map(([id, item]) => ({ id, ...item })) } }
+      return { ok: true, status: 200, result: {} }
+    }
+    for (const scope of [{ projectId: 'P', unrestricted: false }, { unrestricted: true }]) {
+      const guarded = scopedWrites(api, scope)
+      const own = scope.projectId ? 'sp' : 'sn'
+      for (const id of Object.keys(sessions).filter((key) => key !== own)) {
+        assert.ok(refused(await guarded('POST', `/sessions/${id}/turns`, { body: { message: 'x' } })), `${id} turns`)
+        assert.ok(refused(await guarded('GET', `/sessions/${id}/turns/0`)), `${id} turn`)
+        assert.ok(refused(await guarded('PATCH', `/sessions/${id}`, { body: {} })), `${id} patch`)
+      }
+      assert.strictEqual((await guarded('POST', `/sessions/${own}/turns`, { body: { message: 'x' } })).ok, true)
+      const listed = (await guarded('GET', '/conversations')).result as { sessions: Array<{ id: string }> }
+      assert.deepStrictEqual(
+        listed.sessions.map((item) => item.id),
+        [own],
+      )
+    }
+  })
 })
