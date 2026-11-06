@@ -414,6 +414,10 @@
   const tab = ref<TTab>(HASH_TAB[initialHash] ?? 'agente')
   /** A guia aberta dentro de Modelos: os modelos do agente ou o grupo de modelos. */
   const modelsTab = ref<'agente' | 'grupo'>('agente')
+  /** O que a guia Permissões mostra: as regras (uma guia por categoria) ou o nível de acesso dos CLIs. */
+  const permissionPane = ref<'rules' | 'access'>('rules')
+  /** A guia aberta dentro de Ferramentas. */
+  const toolsTab = ref<'gateway' | 'provedor' | 'config'>('gateway')
   /** A categoria aberta na guia Permissões: uma guia por categoria, como nas permissões do projeto. */
   const permissionSection = ref<TPermissionCategory>('terminal')
 
@@ -458,6 +462,22 @@
   }
   /** Os problemas da importação do agente (da store: o "Descartar" troca a lista sem refazer o formulário). */
   const importIssues = computed(() => (props.agent ? (agents.details.get(props.agent.id)?.importIssues ?? props.agent.importIssues ?? []) : []))
+  /** Os provedores com nível de acesso (guia Permissões) e os com extras (guia Ferramentas → Do provedor). */
+  const accessSections = computed(() => sdkSections.value.filter((section) => section.levels.length))
+  const toolSections = computed(() => sdkSections.value.filter((section) => section.tools.length))
+  const toolTabs = computed(() => [
+    { id: 'gateway' as const, label: 'Do gateway' },
+    ...(toolSections.value.length ? [{ id: 'provedor' as const, label: 'Do provedor' }] : []),
+    { id: 'config' as const, label: 'Configurações' },
+  ])
+  // A guia que sumiu (o provedor saiu) não fica aberta vazia.
+  watch(toolSections, (list) => {
+    if (!list.length && toolsTab.value === 'provedor') toolsTab.value = 'gateway'
+  })
+  watch(accessSections, (list) => {
+    if (!list.length && permissionPane.value === 'access') permissionPane.value = 'rules'
+  })
+
   const tabs = computed(() => {
     const tools = form.value.allowedTools
     const alert = (id: TTab) => (TAB_FIELDS[id].some((field) => issues.value[field]?.length) ? 'Corrija os campos desta guia.' : undefined)
@@ -970,8 +990,25 @@
         <AgentModelGroup v-model="groupChoice" />
       </div>
     </fieldset>
-    <!-- Um bloco por assunto, no desenho das permissões: o título, quantas estão marcadas e o que o bloco quer dizer. -->
+    <!-- Três guias: as ferramentas do gateway, os extras que só um provedor tem e as configurações do terminal. -->
     <fieldset v-show="tab === 'ferramentas'" class="flex flex-col gap-3">
+      <nav class="no-scrollbar flex gap-1 overflow-x-auto border-b border-zinc-800" role="tablist">
+        <button
+          v-for="item in toolTabs"
+          :key="item.id"
+          type="button"
+          role="tab"
+          :aria-selected="toolsTab === item.id"
+          :data-test="`tools-tab-${item.id}`"
+          class="shrink-0 border-b-2 px-3 py-2 text-sm whitespace-nowrap"
+          :class="toolsTab === item.id ? 'border-emerald-500 text-zinc-100' : 'border-transparent text-zinc-400 hover:text-zinc-200'"
+          @click="toolsTab = item.id"
+        >
+          {{ item.label }}
+        </button>
+      </nav>
+      <!-- Um bloco por assunto, no desenho das permissões: o título, quantas estão marcadas e o que o bloco quer dizer. -->
+      <div v-show="toolsTab === 'gateway'" class="flex flex-col gap-3" role="tabpanel">
       <section class="tool-card">
         <header>
           <h3>Capacidades</h3>
@@ -1046,6 +1083,105 @@
           </button>
         </div>
       </section>
+      </div>
+      <div v-show="toolsTab === 'provedor'" class="flex flex-col gap-3" role="tabpanel">
+        <p class="text-xs text-zinc-500">Só no modo Agente: as ferramentas que só um provedor tem. Terminal, arquivos e busca ficam em Do gateway.</p>
+        <p v-if="!form.modes.includes('agent')" class="text-xs text-amber-300">O modo Agente está desligado: nada daqui é usado.</p>
+          <section v-for="section in toolSections" :key="section.entry.target.provider" class="tool-card">
+            <header>
+              <h3>{{ protocols.providerName(section.entry.target.provider) }}</h3>
+              <span class="count">{{ section.tools.filter((tool) => form.allowedTools.includes(tool.id)).length || 'nenhum' }}</span>
+            </header>
+            <div class="flex flex-col gap-2 p-3">
+        <ul v-if="section.tools.length" class="divide-y divide-zinc-800/70 rounded-lg border border-zinc-800">
+          <li v-for="tool in section.tools" :key="tool.id" class="flex items-center gap-3 px-3 py-2" :class="{ 'opacity-50': nativeBlock(tool, section.entry) }">
+            <input
+              type="checkbox"
+              class="accent-emerald-500"
+              :checked="form.allowedTools.includes(tool.id)"
+              :disabled="!!nativeBlock(tool, section.entry) && !form.allowedTools.includes(tool.id)"
+              @change="toggle(form.allowedTools, tool.id)"
+            />
+            <span class="min-w-0 flex-1">
+              <span class="block text-sm">
+                {{ tool.label }}
+                <code class="text-[11px] text-zinc-500">{{ tool.sdkName }}</code>
+              </span>
+              <span class="block text-xs text-zinc-500">{{ tool.description }}</span>
+              <span v-if="nativeBlock(tool, section.entry)" class="block text-xs text-zinc-500">{{ nativeBlock(tool, section.entry) }}</span>
+            </span>
+            <span class="shrink-0 rounded-full px-2 py-0.5 text-[10px]" :class="RISK_CLASS[tool.risk]">{{ RISK_LABEL[tool.risk] }}</span>
+          </li>
+        </ul>
+            </div>
+          </section>
+        <small v-if="dangerousNatives.length" class="text-amber-300">
+          ⚠ {{ dangerousNatives.join(', ') }} dá acesso ao disco, à internet e aos comandos do servidor. Quem conversar com este agente também terá esse acesso.
+          <template v-if="!form.adminOnly">Marque "Administradores" na guia Agente se não for para todos.</template>
+        </small>
+      </div>
+      <div v-show="toolsTab === 'config'" class="flex flex-col gap-4" role="tabpanel">
+      <div class="flex flex-col gap-2">
+        <h3 class="text-sm font-medium text-zinc-200">Terminal</h3>
+        <p class="text-xs text-zinc-500">
+          Para quem builda e roda teste: quanto um comando pode levar e quanto da saída volta ao modelo (o começo e o fim; o resto fica no log). Vazio = o padrão do sistema.
+        </p>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="field">
+            Tempo por comando (segundos, até 7200)
+            <input
+              class="input"
+              type="number"
+              min="1"
+              max="7200"
+              :value="form.terminal?.timeoutSeconds ?? ''"
+              @input="form.terminal = { ...(form.terminal ?? {}), timeoutSeconds: Number(($event.target as HTMLInputElement).value) || undefined }"
+            />
+          </label>
+          <label class="field">
+            Saída (caracteres, até 200000)
+            <input
+              class="input"
+              type="number"
+              min="500"
+              max="200000"
+              :value="form.terminal?.maxOutputChars ?? ''"
+              @input="form.terminal = { ...(form.terminal ?? {}), maxOutputChars: Number(($event.target as HTMLInputElement).value) || undefined }"
+            />
+          </label>
+        </div>
+      </div>
+      <div class="flex flex-col gap-2">
+        <h3 class="text-sm font-medium text-zinc-200">Diagnóstico depois de editar</h3>
+        <p class="text-xs text-zinc-500">
+          Depois de cada edição de arquivo, o gateway roda o que o pacote já tem em node_modules/.bin, no mesmo cerco do terminal e sem rede, e o resultado volta ao modelo junto da
+          ferramenta.
+        </p>
+        <div class="flex flex-wrap gap-4 text-sm">
+          <label v-for="check in DIAGNOSTIC_CHECKS" :key="check.key" class="flex items-center gap-2">
+            <input
+              type="checkbox"
+              class="accent-emerald-500"
+              :checked="!!form.diagnostics?.[check.key]"
+              @change="form.diagnostics = { ...(form.diagnostics ?? {}), [check.key]: ($event.target as HTMLInputElement).checked }"
+            />
+            {{ check.label }}
+          </label>
+        </div>
+        <label class="field sm:max-w-xs">
+          Tempo de cada ferramenta (segundos, 5 a 600)
+          <input
+            class="input"
+            type="number"
+            min="5"
+            max="600"
+            placeholder="60"
+            :value="form.diagnostics?.timeoutSeconds ?? ''"
+            @input="form.diagnostics = { ...(form.diagnostics ?? {}), timeoutSeconds: Number(($event.target as HTMLInputElement).value) || undefined }"
+          />
+        </label>
+      </div>
+      </div>
     </fieldset>
     <fieldset v-show="tab === 'delegacao'" class="flex flex-col gap-3">
       <section class="tool-card">
@@ -1147,84 +1283,40 @@
         <p class="text-xs text-zinc-500">
           Valem antes das do projeto: liberam o que o projeto fechou, ou fecham mais. Sem regra no agente nem no projeto, negado. As do sistema valem sempre.
         </p>
-        <PermissionCategoryTabs v-model="permissionSection" :rules="form.permissions ?? []" :exclude="['delegate']" />
-        <PermissionRules v-model="form.permissions!" :only="permissionSection" />
-        <PermissionTester
-          v-if="agent && !creating && (agent.projectId ?? projects.current)"
-          :project-id="(agent.projectId ?? projects.current)!"
-          :agent-id="agent.id"
-          :initial="permissionSection"
-        />
-        <small class="hint">O teste usa as regras já salvas.</small>
-      </div>
-      <div class="flex flex-col gap-2">
-        <h3 class="text-sm font-medium text-zinc-200">Terminal</h3>
-        <p class="text-xs text-zinc-500">
-          Para quem builda e roda teste: quanto um comando pode levar e quanto da saída volta ao modelo (o começo e o fim; o resto fica no log). Vazio = o padrão do sistema.
-        </p>
-        <div class="grid gap-3 sm:grid-cols-2">
-          <label class="field">
-            Tempo por comando (segundos, até 7200)
-            <input
-              class="input"
-              type="number"
-              min="1"
-              max="7200"
-              :value="form.terminal?.timeoutSeconds ?? ''"
-              @input="form.terminal = { ...(form.terminal ?? {}), timeoutSeconds: Number(($event.target as HTMLInputElement).value) || undefined }"
-            />
-          </label>
-          <label class="field">
-            Saída (caracteres, até 200000)
-            <input
-              class="input"
-              type="number"
-              min="500"
-              max="200000"
-              :value="form.terminal?.maxOutputChars ?? ''"
-              @input="form.terminal = { ...(form.terminal ?? {}), maxOutputChars: Number(($event.target as HTMLInputElement).value) || undefined }"
-            />
-          </label>
-        </div>
-      </div>
-      <div class="flex flex-col gap-2">
-        <h3 class="text-sm font-medium text-zinc-200">Diagnóstico depois de editar</h3>
-        <p class="text-xs text-zinc-500">
-          Depois de cada edição de arquivo, o gateway roda o que o pacote já tem em node_modules/.bin, no mesmo cerco do terminal e sem rede, e o resultado volta ao modelo junto da
-          ferramenta.
-        </p>
-        <div class="flex flex-wrap gap-4 text-sm">
-          <label v-for="check in DIAGNOSTIC_CHECKS" :key="check.key" class="flex items-center gap-2">
-            <input
-              type="checkbox"
-              class="accent-emerald-500"
-              :checked="!!form.diagnostics?.[check.key]"
-              @change="form.diagnostics = { ...(form.diagnostics ?? {}), [check.key]: ($event.target as HTMLInputElement).checked }"
-            />
-            {{ check.label }}
-          </label>
-        </div>
-        <label class="field sm:max-w-xs">
-          Tempo de cada ferramenta (segundos, 5 a 600)
-          <input
-            class="input"
-            type="number"
-            min="5"
-            max="600"
-            placeholder="60"
-            :value="form.diagnostics?.timeoutSeconds ?? ''"
-            @input="form.diagnostics = { ...(form.diagnostics ?? {}), timeoutSeconds: Number(($event.target as HTMLInputElement).value) || undefined }"
+        <PermissionCategoryTabs v-model="permissionSection" :rules="form.permissions ?? []" :exclude="['delegate']" :active="permissionPane === 'rules'" @pick="permissionPane = 'rules'">
+          <!-- O nível de acesso dos CLIs por assinatura (o sandbox deles): só quando algum provedor do agente o tem. -->
+          <button
+            v-if="accessSections.length"
+            type="button"
+            role="tab"
+            :aria-selected="permissionPane === 'access'"
+            data-test="tab-access"
+            class="shrink-0 border-b-2 px-3 py-2 text-sm whitespace-nowrap"
+            :class="permissionPane === 'access' ? 'border-emerald-500 text-zinc-100' : 'border-transparent text-zinc-400 hover:text-zinc-200'"
+            @click="permissionPane = 'access'"
+          >
+            Nível de acesso
+          </button>
+        </PermissionCategoryTabs>
+        <template v-if="permissionPane === 'rules'">
+          <PermissionRules v-model="form.permissions!" :only="permissionSection" />
+          <PermissionTester
+            v-if="agent && !creating && (agent.projectId ?? projects.current)"
+            :project-id="(agent.projectId ?? projects.current)!"
+            :agent-id="agent.id"
+            :initial="permissionSection"
           />
-        </label>
-      </div>
-      <p class="text-xs text-zinc-500">Só no modo Agente: o nível de acesso das assinaturas e os extras que só um provedor tem. Terminal, arquivos e busca ficam em Ferramentas.</p>
-      <p v-if="!form.modes.includes('agent')" class="text-xs text-amber-300">O modo Agente está desligado: nada daqui é usado.</p>
-      <section v-for="section in sdkSections" :key="section.entry.target.provider" class="flex flex-col gap-2 rounded-xl border border-zinc-800 px-3 py-3">
-        <div class="flex flex-wrap items-center gap-2 text-sm">
-          <span class="font-medium text-zinc-200">{{ protocols.providerName(section.entry.target.provider) }}</span>
-          <span v-if="section.entry.info" class="text-[11px] text-zinc-500">{{ section.entry.info.label }}</span>
-        </div>
-
+          <small class="hint">O teste usa as regras já salvas.</small>
+        </template>
+        <div v-else class="flex flex-col gap-3">
+          <p class="text-xs text-zinc-500">Só no modo Agente: o quanto o CLI do provedor (por assinatura) alcança do servidor, no sandbox dele.</p>
+          <p v-if="!form.modes.includes('agent')" class="text-xs text-amber-300">O modo Agente está desligado: nada daqui é usado.</p>
+          <section v-for="section in accessSections" :key="section.entry.target.provider" class="tool-card">
+            <header>
+              <h3>{{ protocols.providerName(section.entry.target.provider) }}</h3>
+              <span v-if="section.entry.info" class="count">{{ section.entry.info.label }}</span>
+            </header>
+            <div class="p-3">
         <div v-if="section.levels.length" class="flex flex-col gap-1.5">
           <span class="text-xs text-zinc-400">Nível de acesso</span>
           <div class="flex flex-wrap gap-1.5">
@@ -1253,36 +1345,14 @@
           </label>
         </div>
 
-        <span v-if="section.tools.length" class="text-xs text-zinc-400">Extras do provedor</span>
-        <ul v-if="section.tools.length" class="divide-y divide-zinc-800/70 rounded-lg border border-zinc-800">
-          <li v-for="tool in section.tools" :key="tool.id" class="flex items-center gap-3 px-3 py-2" :class="{ 'opacity-50': nativeBlock(tool, section.entry) }">
-            <input
-              type="checkbox"
-              class="accent-emerald-500"
-              :checked="form.allowedTools.includes(tool.id)"
-              :disabled="!!nativeBlock(tool, section.entry) && !form.allowedTools.includes(tool.id)"
-              @change="toggle(form.allowedTools, tool.id)"
-            />
-            <span class="min-w-0 flex-1">
-              <span class="block text-sm">
-                {{ tool.label }}
-                <code class="text-[11px] text-zinc-500">{{ tool.sdkName }}</code>
-              </span>
-              <span class="block text-xs text-zinc-500">{{ tool.description }}</span>
-              <span v-if="nativeBlock(tool, section.entry)" class="block text-xs text-zinc-500">{{ nativeBlock(tool, section.entry) }}</span>
-            </span>
-            <span class="shrink-0 rounded-full px-2 py-0.5 text-[10px]" :class="RISK_CLASS[tool.risk]">{{ RISK_LABEL[tool.risk] }}</span>
-          </li>
-        </ul>
-        <p v-else-if="!section.levels.length" class="text-xs text-zinc-500">Nada a ajustar neste provedor.</p>
-      </section>
-      <small v-if="dangerousNatives.length || openSandboxes.length" class="text-amber-300">
-        ⚠
-        <template v-if="dangerousNatives.length">{{ dangerousNatives.join(', ') }} dá acesso ao disco, à internet e aos comandos do servidor.</template>
-        <template v-if="openSandboxes.length">{{ openSandboxes.join(', ') }}: acesso total.</template>
-        Quem conversar com este agente também terá esse acesso.
-        <template v-if="!form.adminOnly">Marque "Administradores" na guia Agente se não for para todos.</template>
-      </small>
+            </div>
+          </section>
+          <small v-if="openSandboxes.length" class="text-amber-300">
+            ⚠ {{ openSandboxes.join(', ') }}: acesso total. Quem conversar com este agente também terá esse acesso.
+            <template v-if="!form.adminOnly">Marque "Administradores" na guia Agente se não for para todos.</template>
+          </small>
+        </div>
+      </div>
     </fieldset>
 
     <p v-if="failure && !Object.keys(issues).length" class="text-sm whitespace-pre-line text-rose-300">{{ failure }}</p>
