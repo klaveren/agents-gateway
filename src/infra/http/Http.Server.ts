@@ -263,11 +263,11 @@ export class HttpServer {
 
     // ⛔ Login e setup: 20 por minuto por origem. A trava por e-mail não segura quem troca de e-mail.
     const throttled = rateLimit({ windowMs: 60_000, max: Number(process.env.AUTH_RATE_LIMIT) || 20 })
-    // ⛔ Hook: 60 por minuto POR HOOK (`HOOK_RATE_LIMIT`) — cada chamada é um turno de modelo, e a URL é pública.
-    const hookThrottle = rateLimit({ windowMs: 60_000, max: Number(process.env.HOOK_RATE_LIMIT) || 60, key: (req) => `${req.params.agentId}/${req.params.hookName}` })
+    // ⛔ Hook: a cota fica no `HooksController.receive` — a de sucesso por hook (`HOOK_RATE_LIMIT`), a de falha por IP
+    // (`HOOK_FAIL_LIMIT`), contadas DEPOIS de conferir a chave: um anônimo não esgota a cota do webhook legítimo.
     for (const { method, path: routePath, handler } of this.routes) {
       const open = PUBLIC_PATHS.includes(routePath) ? [exchange, callerScope, handler] : [exchange, identity, callerScope, handler]
-      const chain = THROTTLED_PATHS.includes(routePath) ? [throttled, ...open] : routePath === HOOK_PATH ? [hookThrottle, ...open] : open
+      const chain = THROTTLED_PATHS.includes(routePath) ? [throttled, ...open] : open
       this.app[method](`${API_PREFIX}${routePath}`, ...chain)
     }
 

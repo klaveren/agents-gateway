@@ -85,7 +85,8 @@ describe('Schedules: o admin do projeto, só os agendamentos dele', () => {
     runs: () => [],
     nextRun: () => undefined,
   } as unknown as AgentSchedulesService
-  const runner = { runNow: async () => undefined } as unknown as ScheduleRunner
+  const ran: Array<{ name: string; runAs: string }> = []
+  const runner = { runNow: async (entry: IAgentSchedule) => void ran.push({ name: entry.name, runAs: entry.runAs }) } as unknown as ScheduleRunner
   const agentProject = (agentId: string) => ({ 'agente-alfa': 'alfa', 'agente-beta': 'beta' })[agentId]
   const call = callOf(new SchedulesController({ schedules, runner, agentProject, proof }))
   const names = async (as: string, query?: Record<string, string>) =>
@@ -146,5 +147,11 @@ describe('Schedules: o admin do projeto, só os agendamentos dele', () => {
     assert.strictEqual((await move(ANA, 'g-alfa', null)).status, 404)
     assert.strictEqual((await move(ROOT, 'g-global', 'alfa')).status, 404)
     assert.strictEqual((await move(ROOT, 'g-global', null)).status, 200)
+  })
+
+  it('⛔ "rodar agora" o agendamento de OUTRA pessoa roda como quem pediu, nunca com a credencial do criador', async () => {
+    ran.length = 0
+    await call(ANA, 'run', { params: { agentId: 'agente-alfa', scheduleName: 'diario' } })
+    assert.deepStrictEqual(ran, [{ name: 'diario', runAs: 'u_ana' }])
   })
 })

@@ -45,6 +45,7 @@ const COLUMNS: Record<keyof TAgentHookPatch, string> = {
   signatureEncoding: 'signature_encoding',
   session: 'session',
   sessionId: 'session_id',
+  runAs: 'run_as',
   updatedAt: 'updated_at',
   updatedBy: 'updated_by',
 }

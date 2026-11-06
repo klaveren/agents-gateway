@@ -1,3 +1,4 @@
+import { RESOURCE_KINDS } from '@domain/models/Resource.Model'
 import { makeResourceSecrets } from './ResourceSecrets.Factory'
 import { makeCatalogEvents } from './CatalogEvents.Factory'
 import { readFileSync } from 'node:fs'
@@ -261,6 +262,19 @@ export function makeGuidanceController(): GuidanceController {
     agentFilesOf: (agentId) => {
       const agent = makeAgents().entry(agentId)?.agent
       return agent ? { files: agent.files ?? [], ...(agent.projectId ? { projectId: agent.projectId } : {}) } : undefined
+    },
+    fileOwners: (sha256) => {
+      const owners: Array<string | null> = []
+      const guidance = makeGuidance()
+      for (const scope of [
+        null,
+        ...makeProjects()
+          .all()
+          .map((project) => project.id),
+      ])
+        for (const kind of RESOURCE_KINDS) if (guidance.resources(scope, kind).some((resource) => resource.files?.some((file) => file.sha256 === sha256))) owners.push(scope)
+      for (const agent of makeAgents().list()) if (agent.files?.some((file) => file.sha256 === sha256)) owners.push(agent.projectId ?? null)
+      return owners
     },
     secretsIn: (text) =>
       makeSecretMasker()
