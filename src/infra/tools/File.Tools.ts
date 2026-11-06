@@ -1,5 +1,6 @@
-import { existsSync, realpathSync } from 'node:fs'
-import { glob, mkdir, open, readFile, stat, writeFile } from 'node:fs/promises'
+import { constants as fsc, existsSync, realpathSync } from 'node:fs'
+import { FileHandle, glob, lstat, mkdir, open, realpath, rename, unlink } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { dataDir } from '@infra/adapters/support/Subscription.Workspace'
@@ -142,15 +143,61 @@ function listable(abs: string | undefined, root: string, own: IOwnFolder | undef
 
 const relOf = (root: string, abs: string) => relative(realOf(resolve(root)), abs) || '.'
 
-/** Binário = byte NUL nos primeiros 8 KB. */
-async function isBinary(abs: string): Promise<boolean> {
-  const handle = await open(abs, 'r')
+/**
+ * ⛔ Abre o arquivo JÁ CONFERIDO (`abs`, real) sem confiar no nome: `O_NOFOLLOW` (o último componente não pode ser link) e,
+ * com o fd na mão, confere que o nome ainda é este mesmo arquivo (`lstat` com dev/ino do `fstat`) e que a pasta-mãe continua
+ * sendo a conferida (um componente do meio virou link, o `realpath` muda). Tudo é lido/gravado pelo fd, nunca pelo nome.
+ */
+async function openChecked(abs: string, flags: number, mode?: number): Promise<{ handle: FileHandle; size: number }> {
+  const handle = await open(abs, flags | fsc.O_NOFOLLOW, mode)
   try {
-    const buffer = Buffer.alloc(BINARY_SNIFF_BYTES)
-    const { bytesRead } = await handle.read(buffer, 0, BINARY_SNIFF_BYTES, 0)
-    return buffer.subarray(0, bytesRead).includes(0)
-  } finally {
+    const info = await handle.stat()
+    if (!info.isFile()) throw new Error('not a file')
+    const [named, parent] = await Promise.all([lstat(abs), realpath(dirname(abs))])
+    if (parent !== dirname(abs) || !named.isFile() || named.dev !== info.dev || named.ino !== info.ino) throw new Error('path changed while opening: refused')
+    return { handle, size: info.size }
+  } catch (error) {
     await handle.close()
+    throw error
+  }
+}
+
+/** Binário = byte NUL nos primeiros 8 KB (lidos do fd já aberto). */
+async function isBinary(handle: FileHandle): Promise<boolean> {
+  const buffer = Buffer.alloc(BINARY_SNIFF_BYTES)
+  const { bytesRead } = await handle.read(buffer, 0, BINARY_SNIFF_BYTES, 0)
+  return buffer.subarray(0, bytesRead).includes(0)
+}
+
+/**
+ * ⛔ Grava num temporário (`O_EXCL|O_NOFOLLOW`) ao lado e renomeia sobre o destino: o `rename` troca o nome (se virou
+ * link, o link é que é trocado, nada é seguido). Se a pasta-mãe mudou, o temporário não está lá e o rename falha.
+ */
+async function writeChecked(abs: string, content: string): Promise<void> {
+  let mode = 0o644
+  try {
+    const existing = await lstat(abs)
+    if (existing.isFile()) mode = existing.mode & 0o777
+  } catch {
+    // novo
+  }
+  const temp = join(dirname(abs), `.${basename(abs)}.${randomBytes(6).toString('hex')}.tmp`)
+  const handle = await open(temp, fsc.O_WRONLY | fsc.O_CREAT | fsc.O_EXCL | fsc.O_NOFOLLOW, mode)
+  try {
+    await handle.writeFile(content, 'utf8')
+    await handle.chmod(mode)
+    if ((await realpath(dirname(abs))) !== dirname(abs)) throw new Error('path changed while writing: refused')
+  } catch (error) {
+    await handle.close()
+    await unlink(temp).catch(() => undefined)
+    throw error
+  }
+  await handle.close()
+  try {
+    await rename(temp, abs)
+  } catch (error) {
+    await unlink(temp).catch(() => undefined)
+    throw error
   }
 }
 
@@ -193,13 +240,18 @@ function readFileTool(deps: IFileToolDeps): ILocalTool {
       const checked = guard(root, args.path, (rel) => deps.access?.(context, 'read', rel, true), false, own)
       if ('error' in checked) return checked.error
       try {
-        const info = await stat(checked.abs)
-        if (!info.isFile()) return fail('not a file')
-        const sliced = args.offset !== undefined || args.limit !== undefined
-        if (info.size > (sliced ? READ_SLICE_MAX_BYTES : READ_WHOLE_MAX_BYTES))
-          return fail(sliced ? 'file is larger than 5 MB' : `file is larger than 256 KB (${info.size} bytes): pass offset and limit to read part of it`)
-        if (await isBinary(checked.abs)) return fail('binary file: cannot be read as text')
-        const lines = (await readFile(checked.abs, 'utf8')).split('\n')
+        const { handle, size } = await openChecked(checked.abs, fsc.O_RDONLY)
+        let text: string
+        try {
+          const sliced = args.offset !== undefined || args.limit !== undefined
+          if (size > (sliced ? READ_SLICE_MAX_BYTES : READ_WHOLE_MAX_BYTES))
+            return fail(sliced ? 'file is larger than 5 MB' : `file is larger than 256 KB (${size} bytes): pass offset and limit to read part of it`)
+          if (await isBinary(handle)) return fail('binary file: cannot be read as text')
+          text = await handle.readFile('utf8')
+        } finally {
+          await handle.close()
+        }
+        const lines = text.split('\n')
         const offset = Math.max(1, Math.floor(Number(args.offset)) || 1)
         const limit = Math.max(1, Math.floor(Number(args.limit)) || DEFAULT_LINE_LIMIT)
         if (offset > lines.length) return fail(`offset ${offset} is past the end of the file (${lines.length} lines)`)
@@ -283,9 +335,19 @@ function searchFilesTool(deps: IFileToolDeps): ILocalTool {
         for (const name of await walk(checked.abs, fileGlob)) {
           const abs = resolveInside(root, join(checked.abs, name))
           if (!listable(abs, root, own, (item) => !deps.access?.(context, 'read', relOf(root, item), false))) continue
-          const info = await stat(abs)
-          if (!info.isFile() || info.size > SEARCH_FILE_MAX_BYTES || (await isBinary(abs))) continue
-          const lines = (await readFile(abs, 'utf8')).split('\n')
+          let text: string
+          try {
+            const { handle, size } = await openChecked(abs, fsc.O_RDONLY)
+            try {
+              if (size > SEARCH_FILE_MAX_BYTES || (await isBinary(handle))) continue
+              text = await handle.readFile('utf8')
+            } finally {
+              await handle.close()
+            }
+          } catch {
+            continue // não é arquivo, é link, mudou no caminho: fora da busca
+          }
+          const lines = text.split('\n')
           for (let index = 0; index < lines.length; index++) {
             if (!regex.test(lines[index])) continue
             if (matches.length >= SEARCH_MAX) {
@@ -332,7 +394,7 @@ function writeFileTool(deps: IFileToolDeps): ILocalTool {
         // Revalida depois do mkdir: o pai agora existe e pode ser um symlink que escapa.
         const again = guard(root, args.path, (rel) => deps.access?.(context, 'write', rel, false), true, own)
         if ('error' in again) return again.error
-        await writeFile(again.abs, args.content, 'utf8')
+        await writeChecked(again.abs, args.content)
         return { status: 'success', result: `Wrote ${bytes} bytes to ${show(again.abs)}` }
       } catch (error: unknown) {
         return fail(`Could not write ${show(checked.abs)}: ${toMessage(error)}`)
@@ -366,16 +428,20 @@ function editFileTool(deps: IFileToolDeps): ILocalTool {
       if (typeof from !== 'string' || typeof to !== 'string' || !from) return fail('old_string and new_string are required (old_string cannot be empty).')
       if (from === to) return fail('old_string and new_string are identical: nothing to change')
       try {
-        const info = await stat(checked.abs)
-        if (!info.isFile()) return fail('not a file')
-        if (info.size > READ_SLICE_MAX_BYTES) return fail('file is larger than 5 MB')
-        if (await isBinary(checked.abs)) return fail('binary file: cannot be edited as text')
-        const text = await readFile(checked.abs, 'utf8')
+        const { handle, size } = await openChecked(checked.abs, fsc.O_RDONLY)
+        let text: string
+        try {
+          if (size > READ_SLICE_MAX_BYTES) return fail('file is larger than 5 MB')
+          if (await isBinary(handle)) return fail('binary file: cannot be edited as text')
+          text = await handle.readFile('utf8')
+        } finally {
+          await handle.close()
+        }
         const count = text.split(from).length - 1
         if (count === 0) return fail('old_string not found in the file')
         if (count > 1 && args.replace_all !== true) return fail(`old_string appears ${count} times: add more context to make it unique, or pass replace_all: true`)
         // split/join: sem os `$` especiais do replace.
-        await writeFile(checked.abs, text.split(from).join(to), 'utf8')
+        await writeChecked(checked.abs, text.split(from).join(to))
         return { status: 'success', result: `Edited ${show(checked.abs)} (${count} replacement${count === 1 ? '' : 's'})` }
       } catch (error: unknown) {
         return fail(`Could not edit ${show(checked.abs)}: ${toMessage(error)}`)
