@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { cercoPlan, toSandboxPath } from './Cerco.Plan'
+import { cercoPlan, projectAnchored, toSandboxPath } from './Cerco.Plan'
 import { IPermissionRule } from './Permission.Policy'
 
 const rule = (category: IPermissionRule['category'], pattern: string, decision: IPermissionRule['decision'] = 'allow'): IPermissionRule => ({ category, pattern, decision })
@@ -25,6 +25,34 @@ describe('Cerco.Plan', () => {
     for (const path of ['/w/p/repositories/abc/.git/config', '/w/p/repositories/abc/.git/hooks', '/w/p/repositories/abc/.git/worktrees/*/config.worktree'])
       assert.ok(plan.writeDeny.includes(path), path)
     assert.ok(!plan.readAllow.some((path) => path === '/w/p/repositories/abc'), 'o checkout principal fica fora')
+  })
+
+  it('⚖️ repositório ou worktree: a regra escrita da pasta do projeto também vale, levada para dentro da raiz', () => {
+    const repo = '/w/p/repositories/abc'
+    const tree = `${repo}/_worktrees/EP-1`
+    assert.strictEqual(projectAnchored('repositories/abc/infra/**', repo, '/w/p'), `${repo}/infra/**`)
+    assert.strictEqual(projectAnchored('repositories/abc/_worktrees/*/evidence/**', tree, '/w/p'), `${tree}/evidence/**`)
+    assert.strictEqual(projectAnchored('repositories/**', tree, '/w/p'), `${tree}/**`)
+    // Não chega à raiz, vale em qualquer pasta, é absoluto, ou a raiz é o projeto: nada.
+    for (const [pattern, root] of [
+      ['repositories/outro/infra/**', repo],
+      ['tmp/agents/**', repo],
+      ['repositories/abc/_worktrees/EP-2/**', tree],
+      ['*.md', repo],
+      ['**/logs/**', repo],
+      ['/etc/x', repo],
+      ['apps/**', '/w/p'],
+    ] as const)
+      assert.strictEqual(projectAnchored(pattern, root, '/w/p'), undefined, pattern)
+    assert.strictEqual(projectAnchored('repositories/abc/infra/**', repo, undefined), undefined)
+
+    const plan = cercoPlan(
+      { agent: [rule('write', 'repositories/abc/infra/**')], project: [rule('write', 'repositories/abc/.git/hooks/**', 'deny')] },
+      { ...base, root: repo, projectRoot: '/w/p', gitCommonDir: `${repo}/.git` },
+    )
+    assert.ok(plan.writeAllow.includes(`${repo}/infra/**`))
+    assert.ok(plan.writeAllow.includes(`${repo}/repositories/abc/infra/**`), 'a forma ancorada na raiz continua')
+    assert.ok(plan.writeDeny.includes(`${repo}/.git/hooks/**`), 'a negação também é levada')
   })
 
   it('⛔ as pastas só leitura (arquivos de recurso): lidas sempre, gravadas nunca — nem com regra de escrita que as cubra', () => {
