@@ -5,6 +5,7 @@ import { IConversationRepository } from '@domain/ports/ConversationRepository.Po
 import { projectWorkspace, removeProjectWorkspace } from '@infra/adapters/support/Subscription.Workspace'
 import { DEFAULT_DB_PATH } from '@infra/persistence/Sqlite.ConversationRepository'
 import { SqliteProjectRepository } from '@infra/persistence/Sqlite.ProjectRepository'
+import { useProjectAccess } from '@infra/http/Project.Access'
 import { makeAgents } from './Agents.Factory'
 import { makeAuth } from './Auth.Factory'
 import { makeCatalogHistory } from './CatalogHistory.Factory'
@@ -49,6 +50,14 @@ function build() {
     },
   )
   service.history.use(() => makeCatalogHistory())
+  // Quem administra cada projeto: a regra das rotas (ver `Project.Access`).
+  useProjectAccess({
+    roles: service,
+    agentProject: (agentId) => {
+      const agent = makeAgents().get(agentId)
+      return agent ? (agent.projectId ?? null) : undefined
+    },
+  })
   instance = { service, repository }
   return instance
 }

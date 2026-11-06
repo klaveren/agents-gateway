@@ -23,8 +23,9 @@ const DESCRIPTION_MAX = 2_000
 /**
  * O cadastro dos projetos e de quem é membro de cada um.
  *
- * ⛔ UMA REGRA SÓ PARA O ACESSO (`canUse`): admin usa todos; os demais, só os projetos de que são membros. A
- * lista de agentes, a de conversas, abrir conversa e o hook passam todos por aqui.
+ * ⛔ UMA REGRA SÓ PARA O ACESSO (`canUse`): só os projetos de que a conta é MEMBRO — também o administrador do
+ * gateway (ele cuida do sistema; para entrar num projeto, põe-se nos membros). A lista de agentes, a de conversas,
+ * abrir conversa e o hook passam todos por aqui.
  */
 export class ProjectsService {
   /** O histórico do catálogo: o projeto, as permissões dele e, ao apagar, tudo o que ia junto (ver `CatalogHistory.Service`). */
@@ -71,9 +72,13 @@ export class ProjectsService {
     return !!this.projects.get(id)
   }
 
+  /** Os projetos de que a conta é membro (qualquer papel). */
+  projectsOf(userId: string): string[] {
+    return this.projects.projectsOf(userId)
+  }
+
   canUse(caller: IProjectCaller, projectId: string): boolean {
     if (!this.projects.get(projectId)) return false
-    if (caller.admin) return true
     return !!caller.userId && this.projects.projectsOf(caller.userId).includes(projectId)
   }
 
