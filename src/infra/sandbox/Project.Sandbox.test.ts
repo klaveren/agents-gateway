@@ -15,6 +15,7 @@ import {
   localForwards,
   projectPathIssue,
   ProjectSandbox,
+  systemReadAllowlist,
   writeFolders,
 } from './Project.Sandbox'
 
@@ -296,5 +297,44 @@ describe('expandGlobPath — a escrita com curinga no Linux (o runtime a ignora)
     const plan = withWriteGlobsExpanded({ readAllow: [], readDeny: [], writeAllow: [join(repo, '**/*.test.ts')], writeDeny: [join(repo, 'apps/*/src/x.test.ts')] })
     assert.ok(plan.writeAllow.includes(join(repo, '**/*.test.ts')) && plan.writeAllow.includes(join(repo, 'apps/b/y.test.ts')))
     assert.ok(plan.writeDeny.includes(join(repo, 'apps/a/src/x.test.ts')))
+  })
+})
+
+describe('CERCO_READ_ALLOWLIST — o cerco lê só o liberado', () => {
+  const dataEnv = (extra: Record<string, string> = {}) => ({ CONVERSATIONS_DB: '/srv/gw/gateway.db', ...extra }) as NodeJS.ProcessEnv
+  const load = async () => ({ SandboxManager: {} as never })
+
+  it('desligada (padrão) ou fora do Linux: a base não traz lista', () => {
+    assert.strictEqual(new ProjectSandbox(dataEnv(), load, 'linux').base('/srv/gw/projects/x').readAllowlist, undefined)
+    assert.strictEqual(new ProjectSandbox(dataEnv({ CERCO_READ_ALLOWLIST: '1' }), load, 'darwin').base('/srv/gw/projects/x').readAllowlist, undefined)
+    assert.strictEqual(new ProjectSandbox(dataEnv({ CERCO_READ_ALLOWLIST: '0' }), load, 'linux').base('/srv/gw/projects/x').readAllowlist, undefined)
+  })
+
+  it('ligada no Linux: o plano fecha `/` e o bubblewrap fecha cada irmão fora da lista, sem tocar /proc e /dev', () => {
+    const sandbox = new ProjectSandbox(dataEnv({ CERCO_READ_ALLOWLIST: '1' }), load, 'linux')
+    const base = { ...sandbox.base('/srv/gw/projects/x'), readAllowlist: ['/usr', '/bin', '/etc/ssl', '/etc/resolv.conf'] }
+    const plan = cercoPlan({}, base)
+    assert.ok(plan.readDeny.includes('/'))
+    const tree: Record<string, string[]> = {
+      '/': ['usr', 'bin', 'etc', 'opt', 'home', 'proc', 'dev', 'sys', 'srv', 'var'],
+      '/etc': ['ssl', 'hostname', 'resolv.conf', 'passwd'],
+      '/srv': ['gw'],
+      '/srv/gw': ['gateway.db', 'projects'],
+      '/srv/gw/projects': ['x', 'y'],
+    }
+    const linux = forBubblewrap({ ...plan, readDeny: ['/'] }, '/srv/gw/projects/x', (dir) => tree[dir] ?? [])
+    for (const closed of ['/opt', '/home', '/var', '/etc/hostname', '/etc/passwd', '/srv/gw/gateway.db', '/srv/gw/projects/y']) assert.ok(linux.readDeny.includes(closed), closed)
+    for (const open of ['/', '/usr', '/bin', '/etc', '/etc/ssl', '/etc/resolv.conf', '/proc', '/dev', '/sys', '/srv/gw/projects/x']) assert.ok(!linux.readDeny.includes(open), open)
+  })
+
+  it('a lista do sistema: só o que existe, com os prefixos de /etc expandidos e o Node em uso', () => {
+    const present = new Set(['/usr', '/bin', '/etc/ssl', '/etc/hosts', '/etc/ld.so.conf', '/etc/ld.so.conf.d', '/etc/ssh/ssh_config', '/home/u/.nvm/v22'])
+    const list = systemReadAllowlist(
+      (p) => present.has(p),
+      (dir) => (dir === '/etc' ? ['ld.so.conf', 'ld.so.conf.d', 'hostname'] : []),
+      '/home/u/.nvm/v22/bin/node',
+    )
+    assert.deepStrictEqual(list.sort(), ['/bin', '/etc/hosts', '/etc/ld.so.conf', '/etc/ld.so.conf.d', '/etc/ssh/ssh_config', '/etc/ssl', '/home/u/.nvm/v22', '/usr'])
+    assert.ok(!list.includes('/etc/hostname') && !list.includes('/etc/shadow'))
   })
 })

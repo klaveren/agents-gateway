@@ -122,4 +122,14 @@ describe('Cerco.Plan', () => {
     assert.ok(plan.writeDeny.includes('/w/p/secrets/**') && plan.writeDeny.includes('/w/p/apps/legacy/**'))
     assert.ok(plan.readAllow.includes('/w/p/**') && plan.readAllow.includes('~/.ssh/logiccus'))
   })
+
+  it('⛔ lista de leitura: ligada, `/` fecha e só a lista reabre; desligada, o plano é o de sempre', () => {
+    const off = cercoPlan({}, base)
+    assert.ok(!off.readDeny.includes('/') && !off.readAllow.includes('/usr'))
+    const on = cercoPlan({}, { ...base, readAllowlist: ['/usr', '/etc/ssl'] })
+    assert.ok(on.readDeny.includes('/'))
+    for (const path of ['/usr', '/etc/ssl', '/w/p/.home', '/tools']) assert.ok(on.readAllow.includes(path), path)
+    assert.ok(on.readDeny.includes('/w/p') && on.readDeny.includes('/home/gw'), 'as negações de antes seguem')
+    assert.deepStrictEqual({ ...on, readDeny: on.readDeny.filter((p) => p !== '/'), readAllow: on.readAllow.filter((p) => p !== '/usr' && p !== '/etc/ssl') }, off)
+  })
 })
