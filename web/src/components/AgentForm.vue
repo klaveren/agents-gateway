@@ -358,6 +358,8 @@
    */
   const settings = useSettingsStore()
   const auth = useAuthStore()
+  /** Agente global: só o admin do gateway altera; quem administra o projeto lê. */
+  const locked = computed(() => !props.creating && !!props.agent && !props.agent.projectId && !auth.isAdmin)
   const groupChoice = computed({
     get: () => (form.value.modelGroup === undefined || form.value.modelGroup === null ? '' : form.value.modelGroup),
     set: (value: string) => (form.value.modelGroup = value === '' ? null : value),
@@ -799,6 +801,8 @@
         <span v-else-if="unsavedTabs.includes(item.id)" class="h-1.5 w-1.5 rounded-full bg-amber-400" title="Mudança não salva" />
       </button>
     </nav>
+    <p v-if="locked" class="text-xs text-amber-300" data-test="global-readonly">Global: só o administrador do gateway altera.</p>
+    <fieldset :disabled="locked" class="contents">
     <fieldset v-show="tab === 'agente'" class="grid gap-4 sm:grid-cols-2">
       <label class="field">
         <span>Nome</span>
@@ -815,7 +819,7 @@
       <label class="field sm:col-span-2">
         <span>Projeto</span>
         <select v-model="form.projectId" class="input">
-          <option :value="null">Global — aparece em todos os projetos</option>
+          <option :value="null" :disabled="!auth.isAdmin">Global — aparece em todos os projetos</option>
           <!-- Só o projeto escolhido no topo (ou o do agente, se for outro): sem lista de projetos aqui. -->
           <option v-for="project in projects.list.filter((item) => item.id === projects.current || item.id === (agent?.projectId ?? form.projectId))" :key="project.id" :value="project.id">{{ project.name }}</option>
         </select>
@@ -1512,8 +1516,8 @@
           <span class="count">cifradas · cada uma é gravada na hora, à parte do Salvar</span>
         </header>
         <div class="p-3">
-          <SecretVariables v-if="agent && !creating && auth.isAdmin" :base-path="`/agents/${encodeURIComponent(agent.id)}`" scope-label="deste agente (sempre disponíveis para ele)" />
-          <p v-else-if="!auth.isAdmin" class="text-sm text-zinc-400">Só quem administra cadastra variável secreta.</p>
+          <SecretVariables v-if="agent && !creating && !locked" :base-path="`/agents/${encodeURIComponent(agent.id)}`" scope-label="deste agente (sempre disponíveis para ele)" />
+          <p v-else-if="locked" class="text-sm text-zinc-400">Só quem administra o gateway cadastra variável secreta de agente global.</p>
           <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para cadastrar variável secreta.</p>
         </div>
       </section>
@@ -1544,13 +1548,15 @@
     </p>
     <p v-else-if="!ready" class="text-xs text-zinc-500">Carregando provedores…</p>
 
+    </fieldset>
+
     <!-- O rodapé com o Salvar fica preso embaixo, à vista em qualquer guia, por mais longa que seja. -->
     <div v-show="!FOOTERLESS_TABS.includes(tab)" class="form-footer flex gap-2">
-      <button type="submit" :disabled="saving || !ready || !!loadError || !form.providers.length" class="btn btn-primary">
+      <button v-if="!locked" type="submit" :disabled="saving || !ready || !!loadError || !form.providers.length" class="btn btn-primary">
         {{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar agente' }}
       </button>
       <button v-if="!creating && agent" type="button" class="btn btn-secondary" @click="emit('duplicate', agent)">Duplicar agente</button>
-      <button v-if="!creating && agent" type="button" class="btn btn-danger ml-auto" @click="confirming = true">Apagar agente</button>
+      <button v-if="!creating && agent && !locked" type="button" class="btn btn-danger ml-auto" @click="confirming = true">Apagar agente</button>
     </div>
     <ConfirmDialog
       :open="confirmingSave"

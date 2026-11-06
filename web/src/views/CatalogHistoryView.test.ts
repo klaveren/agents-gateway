@@ -63,14 +63,16 @@ async function flush() {
   await nextTick()
 }
 
-async function mount(admin: boolean, path = '/catalog/history'): Promise<HTMLElement> {
+/** `who`: `project` = admin do projeto atual; `gateway` = admin do gateway sem papel no projeto; `member` = membro. */
+async function mount(who: 'project' | 'gateway' | 'member', path = '/catalog/history'): Promise<HTMLElement> {
+  const admin = who === 'gateway'
   const pinia = createPinia()
   setActivePinia(pinia)
   const auth = useAuthStore()
-  auth.user = { id: 'u1', email: 'm@x.com', name: 'Pessoa', role: admin ? 'admin' : 'member', disabled: false, createdAt: '', updatedAt: '' }
+  auth.user = { id: 'u1', email: 'm@x.com', name: 'Pessoa', role: who === 'member' ? 'member' : 'admin', disabled: false, createdAt: '', updatedAt: '' }
   auth.isAdmin = admin
   const projects = useProjectsStore()
-  projects.list = [{ id: 'alfa', name: 'Alfa' } as never]
+  projects.list = [{ id: 'alfa', name: 'Alfa', role: who === 'project' ? 'admin' : 'member' } as never]
   projects.current = 'alfa'
   projects.loaded = true
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:any(.*)*', component: CatalogHistoryView }] })
@@ -110,13 +112,26 @@ describe('CatalogHistoryView', () => {
   })
 
   it('membro: não vê a página (o histórico dele é só o do MCP, na tela do MCP)', async () => {
-    const host = await mount(false)
-    expect(host.textContent).toContain('Só quem administra vê o histórico do catálogo.')
+    const host = await mount('member')
+    expect(host.textContent).toContain('Só quem administra este projeto vê o histórico do catálogo.')
     expect(vi.mocked(api).mock.calls.some(([path]) => path === '/catalog/history')).toBe(false)
   })
 
+  it('admin do projeto: vê a página só com o projeto atual (sem Tudo nem Global)', async () => {
+    const host = await mount('project')
+    expect(api).toHaveBeenCalledWith('/catalog/history', { query: { project: 'alfa', page: 1, pageSize: 20 } })
+    const options = [...host.querySelectorAll('select[aria-label="Escopo"] option')].map((option) => option.textContent)
+    expect(options).toEqual(['Alfa'])
+  })
+
+  it('admin do gateway sem papel no projeto: vê Tudo e Global, não o projeto', async () => {
+    const host = await mount('gateway')
+    const options = [...host.querySelectorAll('select[aria-label="Escopo"] option')].map((option) => option.textContent)
+    expect(options).toEqual(['Tudo', 'Global'])
+  })
+
   it('admin: os recentes do escopo, com link para a guia Histórico do item, e os lotes da rota própria', async () => {
-    const host = await mount(true, '/catalog/history?lote=lote-1')
+    const host = await mount('gateway', '/catalog/history?lote=lote-1')
     expect(api).toHaveBeenCalledWith('/catalog/history', { query: { project: undefined, page: 1, pageSize: 20 } })
     const rows = host.querySelectorAll('[data-test="recent"] li')
     expect(rows).toHaveLength(3)
@@ -155,7 +170,7 @@ describe('CatalogHistoryView', () => {
         conflicts: [{ ref: 'skill/tabela', kind: 'skill', itemId: 'tabela', toRevision: 0, currentRevision: 2 }],
       }
     }
-    const host = await mount(true)
+    const host = await mount('gateway')
     await click(host.querySelector('[data-test="revert-batch"]'))
     await click([...document.body.querySelectorAll('[role="alertdialog"] button')].find((button) => button.textContent?.trim() === 'Reverter'))
 

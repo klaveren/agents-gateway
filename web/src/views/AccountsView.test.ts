@@ -28,11 +28,11 @@ const saved = {
 async function mount() {
   const pinia = createPinia()
   setActivePinia(pinia)
-  useAuthStore().isAdmin = true
+  useAuthStore().isAdmin = false
   const calls: Array<{ path: string; init?: { method?: string; body?: unknown } }> = []
   vi.mocked(api).mockImplementation(async (path: string, init?: { method?: string; body?: unknown }) => {
     calls.push({ path, init })
-    if (path === '/projects') return [{ id: 'p1', name: 'Projeto 1' }]
+    if (path === '/projects') return [{ id: 'p1', name: 'Projeto 1', role: 'admin' }]
     if (path === '/projects/p1/accounts') return { accounts: [] }
     if (init?.method === 'PUT') return saved
     return {}

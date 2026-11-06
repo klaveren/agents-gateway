@@ -523,6 +523,7 @@ function buildRoutes(
     { method: 'get', path: '/tools', handler: controller.getTools },
     { method: 'get', path: '/availability', handler: controller.availability },
     { method: 'get', path: '/settings', handler: controller.getSettings },
+    { method: 'get', path: '/model-groups', handler: controller.getModelGroups },
     { method: 'put', path: '/settings', handler: controller.updateSettings },
     // ⚠️ `/conversations/stats` e `/events` ANTES de qualquer `/conversations/:id`: senão seriam lidos como id.
     { method: 'get', path: '/conversations', handler: controller.listConversations },

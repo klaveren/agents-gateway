@@ -1,16 +1,16 @@
 import { IMcpServerInput, McpServersService } from '@application/McpServers.Service'
 import type { IProjectCaller } from '@application/Projects.Service'
-import { IMcpServerConfig, isLaunchedMcp, mcpServerKey } from '@domain/models/McpServer.Model'
+import { IMcpServerConfig, isLaunchedMcp, mcpServerKey, parseMcpServerKey } from '@domain/models/McpServer.Model'
 import { installPackage, installStatus, moveInstall, removeInstall } from '@infra/mcp/Mcp.Install'
 import { caller } from '@infra/mcp/Caller.Identity'
 import { McpRegistry } from '@infra/mcp/Mcp.Registry'
 import { Request, Response } from 'express'
 import { z } from 'zod'
 import { resolveCaller } from './Caller.Access'
-import { checkAdminAccess } from './Caller.Admin'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
+import { administers, adminView, IAdminView, requireProjectAdmin, requireProjectsAdmin } from './Project.Access'
 import { parseBody } from './Request.Parser'
 
 export interface IMcpServersControllerDeps {
@@ -18,7 +18,7 @@ export interface IMcpServersControllerDeps {
   registry: McpRegistry
   proof?: ICallerProof
   /** Quem é membro de quê (a regra única dos projetos). Ausente = sem projetos: só o admin vê a lista. */
-  projects?: { canUse(caller: IProjectCaller, projectId: string): boolean }
+  projects?: { canUse(caller: IProjectCaller, projectId: string): boolean; exists?(projectId: string): boolean }
 }
 
 const transport = z.enum(['auto', 'http', 'sse'])
@@ -80,8 +80,8 @@ const envSchema = z.object({ value: z.string().max(8000) })
  *
  * ⚖️ O `:id` DAS ROTAS É A CHAVE (`mcpServerKey`): `n8n` é o global; `cliente-a.n8n`, o do projeto `cliente-a`.
  *
- * ⛔ GERENCIAR É SÓ DO ADMINISTRADOR, nos dois escopos (como o cadastro de agentes), e 404 para os demais (como
- * `/providers`): a lista diz que serviços internos existem. A exceção é ver a lista de UM projeto (`?project=`): o
+ * ⛔ GERENCIAR É SÓ DO ADMINISTRADOR DO ESCOPO DO SERVIDOR (ver `Project.Access`): o de projeto, o admin dele; o global,
+ * o do gateway. 404 para os demais (como `/providers`): a lista diz que serviços internos existem. A exceção é ver a lista de UM projeto (`?project=`): o
  * membro dele vê os MCPs daquele projeto (como vê os agentes dele) — nunca os globais, nunca os de outro projeto.
  * ⛔ O segredo nunca sai — só se está configurado e os quatro últimos caracteres.
  */
@@ -92,23 +92,24 @@ export class McpServersController {
   }
 
   /**
-   * Admin: todos, ou com `?project=` os globais e os daquele projeto (o que um agente dele enxerga). Membro: só com
-   * `?project=` de um projeto dele, e só os daquele projeto, sem o erro de conexão (pode trazer endereço interno).
+   * Admin: os globais e os dos projetos que administra; com `?project=` de um projeto dele, os globais e os daquele
+   * projeto (o que um agente dele enxerga). Membro: só com `?project=` de um projeto dele, e só os daquele projeto, sem
+   * o erro de conexão (pode trazer endereço interno). ⛔ O admin do gateway não vê o MCP de projeto de que não é admin.
    */
   async list(req: Request, res: Response) {
     await this.respond(res, async () => {
       const project = typeof req.query.project === 'string' && req.query.project ? req.query.project : undefined
-      const access = await checkAdminAccess(this.deps.proof)
-      if (access.allowed) {
-        if (project && this.deps.projects && !this.deps.projects.canUse({ admin: true }, project)) throw new HttpError(404, 'not_found', `Project not found: ${project}`)
+      const view = await adminView(this.deps.proof)
+      if (view && (!project || administers(view, project))) {
+        if (project && this.deps.projects?.exists && !this.deps.projects.exists(project)) throw new HttpError(404, 'not_found', `Project not found: ${project}`)
         return this.deps.service
           .list()
-          .filter((server) => !project || !server.projectId || server.projectId === project)
-          .map((server) => this.toDto(server))
+          .filter((server) => (project ? !server.projectId || server.projectId === project : !server.projectId || administers(view, server.projectId)))
+          .map((server) => this.toDto(server, true, view))
       }
       const resolved = project && this.deps.projects ? await resolveCaller(this.deps.proof) : undefined
       if (!project || !resolved || !this.deps.projects?.canUse({ userId: resolved.identity?.id, admin: false }, project)) {
-        console.warn('[admin] acesso negado a listMcpServers:', access.reason)
+        console.warn('[admin] acesso negado a listMcpServers:', 'not an administrator or a member of the project')
         throw new HttpError(404, 'not_found', 'Not found')
       }
       return this.deps.service
@@ -122,9 +123,10 @@ export class McpServersController {
     await this.respond(
       res,
       async () => {
-        const by = await this.requireAdmin('createMcpServer')
-        const created = this.deps.service.create(parseBody(createSchema, req.body) as IMcpServerInput, by)
-        return this.toDto(created)
+        const body = parseBody(createSchema, req.body)
+        const by = await this.requireScopes('createMcpServer', body.projectId ?? null, privileged({ kind: body.kind ?? 'remote', auth: body.auth }))
+        const created = this.deps.service.create(body as IMcpServerInput, by)
+        return this.dto(created)
       },
       { status: 201, message: 'MCP server created' },
     )
@@ -134,9 +136,21 @@ export class McpServersController {
     await this.respond(
       res,
       async () => {
-        const by = await this.requireAdmin('updateMcpServer')
         const id = this.idOf(req)
-        const updated = this.deps.service.update(id, parseBody(updateSchema, req.body), by)
+        const body = parseBody(updateSchema, req.body)
+        // ⛔ Trocar o escopo (`projectId`) pede admin dos dois: o de onde sai e o de onde entra.
+        const current = scopeOf(id)
+        const before = this.deps.service.get(id)
+        const by = await requireProjectsAdmin(
+          this.deps.proof,
+          [
+            current,
+            body.projectId === undefined ? current : body.projectId,
+            ...(privileged(before) || privileged({ kind: before.kind, auth: body.auth ?? before.auth }) ? [null] : []),
+          ],
+          'updateMcpServer',
+        )
+        const updated = this.deps.service.update(id, body, by)
         const key = mcpServerKey(updated)
         // Instância de pé roda o cadastro de antes: a próxima ferramenta sobe com o novo.
         if (isLaunchedMcp(updated) || key !== id) await this.deps.registry.closeInstances({ serverId: id })
@@ -145,7 +159,7 @@ export class McpServersController {
           this.deps.registry.forget(id)
           if (updated.kind === 'process') moveInstall(id, key)
         }
-        return this.toDto(updated)
+        return this.dto(updated)
       },
       { message: 'MCP server updated' },
     )
@@ -155,8 +169,8 @@ export class McpServersController {
     await this.respond(
       res,
       async () => {
-        const by = await this.requireAdmin('deleteMcpServer')
         const id = this.idOf(req)
+        const by = await this.requireAdmin('deleteMcpServer', id)
         const kind = this.deps.service.get(id).kind
         this.deps.service.remove(id, by)
         this.deps.registry.forget(id)
@@ -172,10 +186,10 @@ export class McpServersController {
     await this.respond(
       res,
       async () => {
-        const by = await this.requireAdmin('saveMcpSecret')
         const id = this.idOf(req)
+        const by = await this.requireAdmin('saveMcpSecret', id)
         this.deps.service.saveSecret(id, parseBody(secretSchema, req.body).secret, by)
-        return this.toDto(this.deps.service.get(id))
+        return this.dto(this.deps.service.get(id))
       },
       { message: 'Secret saved' },
     )
@@ -185,10 +199,10 @@ export class McpServersController {
     await this.respond(
       res,
       async () => {
-        await this.requireAdmin('clearMcpSecret')
         const id = this.idOf(req)
+        await this.requireAdmin('clearMcpSecret', id)
         this.deps.service.clearSecret(id)
-        return this.toDto(this.deps.service.get(id))
+        return this.dto(this.deps.service.get(id))
       },
       { message: 'Secret removed' },
     )
@@ -199,10 +213,10 @@ export class McpServersController {
     await this.respond(
       res,
       async () => {
-        const by = await this.requireAdmin('saveMcpEnv')
         const id = this.idOf(req)
+        const by = await this.requireAdmin('saveMcpEnv', id, true)
         this.deps.service.saveEnv(id, req.params.name as string, parseBody(envSchema, req.body).value, by)
-        return this.toDto(this.deps.service.get(id))
+        return this.dto(this.deps.service.get(id))
       },
       { message: 'Variable saved' },
     )
@@ -211,8 +225,8 @@ export class McpServersController {
   /** Encerra as instâncias (conversas) de um contêiner — a próxima ferramenta sobe uma nova. */
   async stopInstances(req: Request, res: Response) {
     await this.respond(res, async () => {
-      await this.requireAdmin('stopMcpInstances')
       const id = this.idOf(req)
+      await this.requireAdmin('stopMcpInstances', id)
       this.deps.service.get(id)
       return { stopped: await this.deps.registry.closeInstances({ serverId: id }) }
     })
@@ -224,21 +238,21 @@ export class McpServersController {
    */
   async install(req: Request, res: Response) {
     await this.respond(res, async () => {
-      await this.requireAdmin('installMcpServer')
       const id = this.idOf(req)
+      await this.requireAdmin('installMcpServer', id, true)
       const server = this.deps.service.get(id)
       if (server.kind !== 'process' || !server.process?.package) throw new HttpError(422, 'validation_error', 'Only a local process MCP with an npm package can be installed')
       const result = await installPackage(id, server.process.package)
       if (result.ok) await this.deps.registry.closeInstances({ serverId: id })
-      return { ok: result.ok, ...(result.version ? { version: result.version } : {}), log: result.log, server: this.toDto(this.deps.service.get(id)) }
+      return { ok: result.ok, ...(result.version ? { version: result.version } : {}), log: result.log, server: await this.dto(this.deps.service.get(id)) }
     })
   }
 
   /** Conecta AGORA (ignorando o backoff) e lista as ferramentas — o botão "Testar conexão". */
   async test(req: Request, res: Response) {
     await this.respond(res, async () => {
-      await this.requireAdmin('testMcpServer')
       const id = this.idOf(req)
+      await this.requireAdmin('testMcpServer', id)
       this.deps.service.get(id)
       // O teste conecta como quem está na tela: um MCP `caller` recusa a conexão anônima.
       const result = await this.deps.registry.test(id, caller()?.token)
@@ -248,15 +262,23 @@ export class McpServersController {
 
   async tools(req: Request, res: Response) {
     await this.respond(res, async () => {
-      await this.requireAdmin('listMcpTools')
       const id = this.idOf(req)
+      await this.requireAdmin('listMcpTools', id)
       this.deps.service.get(id)
       return (await this.deps.registry.probeTools(id, caller()?.token)).map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }))
     })
   }
 
-  /** `full`: o admin vê o erro de conexão; o membro, não (a mensagem pode trazer endereço interno). */
-  private toDto(server: IMcpServerConfig, full = true) {
+  /** O servidor para quem administra: o `toDto` com a visão da conta (os agentes de projetos que ela não administra não aparecem). */
+  private async dto(server: IMcpServerConfig) {
+    return this.toDto(server, true, await adminView(this.deps.proof))
+  }
+
+  /**
+   * `full`: o admin vê o erro de conexão; o membro, não (a mensagem pode trazer endereço interno). `view`: ⛔ o global
+   * é lido por qualquer admin, mas os agentes de OUTROS projetos que o usam só aparecem a quem os administra.
+   */
+  private toDto(server: IMcpServerConfig, full = true, view?: IAdminView) {
     const key = mcpServerKey(server)
     const secret = this.deps.service.secretStatus(key)
     const status = this.deps.registry.status().find((entry) => entry.key === key)
@@ -287,7 +309,10 @@ export class McpServersController {
         ...(full && status?.lastError ? { lastError: status.lastError } : {}),
         ...(status?.instances !== undefined ? { instances: status.instances } : {}),
       },
-      agents: this.deps.service.usedBy(key).map((agent) => ({ id: agent.id, name: agent.name })),
+      agents: this.deps.service
+        .usedBy(key)
+        .filter((agent) => !view || administers(view, agent.projectId))
+        .map((agent) => ({ id: agent.id, name: agent.name })),
       /** A URL é o MCP do próprio gateway: agente que conversa com agentes pode entrar em recursão. */
       selfReference: !isLaunchedMcp(server) && /\/v1\/mcp\/?$/.test(safePath(server.url)),
       createdAt: server.createdAt,
@@ -301,13 +326,16 @@ export class McpServersController {
     return req.params.id as string
   }
 
-  private async requireAdmin(operation: string): Promise<string> {
-    const access = await checkAdminAccess(this.deps.proof)
-    if (!access.allowed) {
-      console.warn(`[admin] acesso negado a ${operation}:`, access.reason)
-      throw new HttpError(404, 'not_found', 'Not found')
-    }
-    return access.identity?.email ?? access.identity?.id ?? 'admin'
+  /**
+   * ⛔ O servidor é do escopo da chave: o admin do projeto dele (o global, o do gateway). `launch`: mexer no que roda no
+   * host (o ambiente, o `npm install`) de um MCP privilegiado pede também o admin do gateway (ver `privileged`).
+   */
+  private requireAdmin(operation: string, id: string, launch = false): Promise<string> {
+    return this.requireScopes(operation, scopeOf(id), launch && privileged(this.deps.service.get(id)))
+  }
+
+  private requireScopes(operation: string, projectId: string | null, gateway: boolean): Promise<string> {
+    return gateway ? requireProjectsAdmin(this.deps.proof, [projectId, null], operation) : requireProjectAdmin(this.deps.proof, projectId, operation)
   }
 
   private async respond<T>(res: Response, work: () => Promise<T>, options: { status?: number; message?: string } = {}) {
@@ -321,10 +349,24 @@ export class McpServersController {
   }
 }
 
+/** O escopo de uma chave (`cliente-a.n8n` = o projeto; `n8n` = global, `null`). */
+function scopeOf(key: string): string | null {
+  return parseMcpServerKey(key)?.projectId ?? null
+}
+
 function safePath(url: string): string {
   try {
     return new URL(url).pathname
   } catch {
     return ''
   }
+}
+
+/**
+ * ⛔ O MCP que só o admin do GATEWAY cadastra (além do admin do projeto): o que roda no host (`process`: comando do
+ * servidor, fora do cerco; `container`: imagem e rede) e o que recebe a credencial de quem conversa (`auth: caller` —
+ * a URL de quem cadastrou levaria o token de todo membro). O admin de projeto cadastra o remoto com segredo próprio.
+ */
+function privileged(server: { kind?: string; auth?: string }): boolean {
+  return server.kind === 'process' || server.kind === 'container' || server.auth === 'caller'
 }

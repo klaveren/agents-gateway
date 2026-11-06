@@ -1,12 +1,13 @@
 import { Request, Response } from 'express'
 import { z } from 'zod'
 import { IProjectCaller, ProjectsService } from '@application/Projects.Service'
-import { IProject, PROJECT_ROLES } from '@domain/models/Project.Model'
+import { IProject, PROJECT_ROLES, TProjectRole } from '@domain/models/Project.Model'
 import { resolveCaller } from './Caller.Access'
 import { checkAdminAccess } from './Caller.Admin'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
+import { requireProjectAdmin } from './Project.Access'
 import { parseBody } from './Request.Parser'
 import { listRepositories } from '@infra/workspace/Work.Folder'
 
@@ -29,9 +30,9 @@ const membersSchema = z
   .refine((body) => body.members || body.userIds, { message: 'members (or userIds) is required' })
 
 /**
- * Os projetos: a lista é dos projetos de que a pessoa é membro (o administrador do gateway também). Criar é do
- * administrador do gateway (quem cria vira o primeiro administrador do projeto); os membros, dele ou do administrador
- * do projeto (404 para os demais, como `/mcp-servers`).
+ * Os projetos: a lista é dos projetos de que a pessoa é membro (o administrador do gateway também), com o papel dela.
+ * Criar e apagar são do administrador do gateway (quem cria vira o primeiro administrador do projeto); o nome, do
+ * administrador do projeto; os membros, dele ou do administrador do gateway — o resgate (404 para os demais).
  */
 export class ProjectsController {
   constructor(private readonly deps: IProjectsControllerDeps) {
@@ -54,7 +55,7 @@ export class ProjectsController {
   async list(_req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
       const caller = await this.caller()
-      return this.deps.projects.list(caller).map((project) => this.toDto(project, caller.admin))
+      return this.deps.projects.list(caller).map((project) => this.toDto(project, this.deps.projects.roleOf(project.id, caller.userId)))
     })
   }
 
@@ -64,7 +65,7 @@ export class ProjectsController {
       async () => {
         const by = await this.requireAdmin('createProject')
         const creator = (await this.caller()).userId
-        return this.toDto(this.deps.projects.create(parseBody(createSchema, req.body), by, 'api', creator), true)
+        return this.toDto(this.deps.projects.create(parseBody(createSchema, req.body), by, 'api', creator), 'admin')
       },
       { status: 201, message: 'Project created' },
     )
@@ -72,8 +73,9 @@ export class ProjectsController {
 
   async update(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
-      const by = await this.requireAdmin('updateProject')
-      return this.toDto(this.deps.projects.update(req.params.id as string, parseBody(updateSchema, req.body), by), true)
+      // O nome e a descrição: o admin do projeto (o do gateway só se for admin dele).
+      const by = await requireProjectAdmin(this.deps.proof, req.params.id as string, 'updateProject')
+      return this.toDto(this.deps.projects.update(req.params.id as string, parseBody(updateSchema, req.body), by), 'admin')
     })
   }
 
@@ -104,11 +106,13 @@ export class ProjectsController {
     })
   }
 
-  /** ⛔ A pasta (caminho no servidor) só para o admin. */
-  private toDto(project: IProject, admin: boolean) {
+  /** O papel de quem pede vai junto (a tela libera o que o projeto deixa). ⛔ A pasta (caminho no servidor) só para o admin dele. */
+  private toDto(project: IProject, role: TProjectRole | undefined) {
+    const admin = role === 'admin'
     return {
       id: project.id,
       name: project.name,
+      ...(role ? { role } : {}),
       ...(project.description ? { description: project.description } : {}),
       ...(admin ? { folder: this.deps.projects.folderOf(project.id), members: this.deps.projects.members(project.id).length } : {}),
       createdAt: project.createdAt,

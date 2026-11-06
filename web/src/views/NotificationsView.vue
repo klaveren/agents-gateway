@@ -5,19 +5,19 @@
   import type { IWideningRef } from '@/lib/catalogHistory'
   import { type IPermissionRequest, entriesLine, patchLine, ruleLine, secretLine } from '@/lib/permissionRequests'
   import { useResource } from '@/composables/useResource'
-  import { useAuthStore } from '@/stores/auth'
+  import { useProjectsStore } from '@/stores/projects'
   import { usePermissionRequestsStore } from '@/stores/permissionRequests'
 
   /**
-   * As NOTIFICAÇÕES (só admin): todos os pedidos de permissão abertos, de todos os agentes e projetos, num lugar só. Cada
+   * As NOTIFICAÇÕES (só quem administra projeto): os pedidos de permissão abertos dos agentes (o servidor devolve os dos projetos de que a pessoa é admin), num lugar só. Cada
    * pedido é UM item (uma regra, um campo, uma ferramenta); os da mesma chamada do agente dividem o `batchId` e viram um
    * lote, com o motivo e a origem no cabeçalho. ⛔ Aprovar manda as chaves de TODAS as ampliações do item e só liga com
    * todas marcadas — igual à `WideningConfirm`; "aprovar marcados" nunca pula isso: item com caixa faltando não conta.
    * ⚖️ Os pedidos vêm da lista de todos da store (a mesma do selo), que anda sozinha com o `catalog.changed`.
    */
-  const auth = useAuthStore()
+  const projects = useProjectsStore()
   const store = usePermissionRequestsStore()
-  const { data, loading } = useResource(store.lists, () => (auth.isAdmin ? '' : undefined))
+  const { data, loading } = useResource(store.lists, () => (projects.managesAny ? '' : undefined))
 
   interface IGroup {
     key: string
@@ -153,8 +153,8 @@
 </script>
 
 <template>
-  <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
-    <p class="font-medium text-zinc-200">Só quem administra vê as notificações.</p>
+  <div v-if="!projects.managesAny" class="grid h-full place-items-center p-6 text-center text-zinc-400">
+    <p class="font-medium text-zinc-200">Só quem administra um projeto vê as notificações.</p>
   </div>
 
   <div v-else class="h-full overflow-y-auto px-4 py-5" data-test="notifications">

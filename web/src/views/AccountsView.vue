@@ -6,7 +6,6 @@ import { fullTime } from '@/lib/format'
 import type { IPermissionRule } from '@/lib/types'
 import { useResource } from '@/composables/useResource'
 import { type IProjectAccount, type TAccountKind, useAccountsStore } from '@/stores/accounts'
-import { useAuthStore } from '@/stores/auth'
 import { usePermissionsStore } from '@/stores/permissions'
 import { useProjectsStore } from '@/stores/projects'
 
@@ -42,7 +41,6 @@ const KINDS: Array<{ kind: TAccountKind; label: string; hint: string }> = [
   },
 ]
 
-const auth = useAuthStore()
 const projects = useProjectsStore()
 const project = computed(() => projects.list.find((item) => item.id === projects.current))
 
@@ -219,8 +217,8 @@ async function addRules(account: IProjectAccount) {
 }
 
 onMounted(async () => {
-  if (!auth.isAdmin) return
   if (!projects.loaded) await projects.load().catch(() => undefined)
+  if (!projects.manages) return
   ready.value = true
 })
 watch(
@@ -233,8 +231,8 @@ watch(
 </script>
 
 <template>
-  <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
-    <p class="font-medium text-zinc-200">Só quem administra vê as contas do projeto.</p>
+  <div v-if="!projects.manages" class="grid h-full place-items-center p-6 text-center text-zinc-400">
+    <p class="font-medium text-zinc-200">Só quem administra este projeto vê as contas.</p>
   </div>
 
   <div v-else class="h-full overflow-y-auto px-4 py-5">

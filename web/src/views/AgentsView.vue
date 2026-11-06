@@ -17,6 +17,7 @@ import { pendingDraft } from '@/lib/builder'
 import type { IAgent, IAgentDetail, TMode, TSandboxLevel } from '@/lib/types'
 import { useAgentsStore } from '@/stores/agents'
 import { useAuthStore } from '@/stores/auth'
+import { useProjectsStore } from '@/stores/projects'
 import { useProvidersStore } from '@/stores/providers'
 import { useProtocolsStore } from '@/stores/protocols'
 
@@ -25,6 +26,7 @@ const props = defineProps<{ id?: string }>()
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const projects = useProjectsStore()
 const agents = useAgentsStore()
 const providers = useProvidersStore()
 const protocols = useProtocolsStore()
@@ -103,7 +105,7 @@ onMounted(() => {
   void providers.ensure().catch(() => undefined)
   // A lista traz `unavailable` (só para admin) e muda por fora: relê ao abrir a tela.
   void agents.load().catch(() => undefined)
-  if (auth.isAdmin) void permissionRequests.lists.ensure('').catch(() => undefined)
+  if (projects.manages) void permissionRequests.lists.ensure('').catch(() => undefined)
 })
 
 /** ⚠️ Cada leitura vale uma geração: a resposta de uma seleção anterior chega depois e não pode sobrescrever a atual. */
@@ -150,9 +152,9 @@ watch(creating, (value) => {
 </script>
 
 <template>
-  <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
+  <div v-if="!projects.manages" class="grid h-full place-items-center p-6 text-center text-zinc-400">
     <div>
-      <p class="font-medium text-zinc-200">Só quem administra cria e edita agentes.</p>
+      <p class="font-medium text-zinc-200">Só quem administra este projeto cria e edita agentes.</p>
       <RouterLink v-if="!auth.signedIn && auth.localAccounts" :to="{ path: '/login', query: { next: '/agents' } }" class="btn btn-primary mt-3">Entrar</RouterLink>
     </div>
   </div>

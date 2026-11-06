@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 import ProjectEnvironment from '@/components/ProjectEnvironment.vue'
-import { useAuthStore } from '@/stores/auth'
 import { useProjectsStore } from '@/stores/projects'
 
 /**
@@ -9,18 +8,17 @@ import { useProjectsStore } from '@/stores/projects'
  * rules (só para ler; edita-se em Rules) e as specs carregadas inteiras —, com o peso por conversa. Trocar de projeto
  * no seletor do topo troca o ambiente.
  */
-const auth = useAuthStore()
 const projects = useProjectsStore()
 const project = computed(() => projects.list.find((item) => item.id === projects.current))
 
 onMounted(async () => {
-  if (auth.isAdmin && !projects.loaded) await projects.load().catch(() => undefined)
+  if (!projects.loaded) await projects.load().catch(() => undefined)
 })
 </script>
 
 <template>
-  <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
-    <p class="font-medium text-zinc-200">Só quem administra vê o ambiente do projeto.</p>
+  <div v-if="!projects.manages" class="grid h-full place-items-center p-6 text-center text-zinc-400">
+    <p class="font-medium text-zinc-200">Só quem administra este projeto vê o ambiente.</p>
   </div>
 
   <div v-else class="h-full overflow-y-auto px-4 py-5">

@@ -16,7 +16,6 @@ import { LAYER_LABEL, PERMISSION_SECTIONS } from '@/lib/permissions'
 import type { IPermissionDecision, IPermissionRule, TPermissionCategory } from '@/lib/types'
 import { useResource } from '@/composables/useResource'
 import { useAgentsStore } from '@/stores/agents'
-import { useAuthStore } from '@/stores/auth'
 import { usePermissionsStore } from '@/stores/permissions'
 import { useProjectsStore } from '@/stores/projects'
 
@@ -26,7 +25,6 @@ import { useProjectsStore } from '@/stores/projects'
  * moram na store (as Contas somam a elas); as decisões são lidas na hora.
  */
 const route = useRoute()
-const auth = useAuthStore()
 const projects = useProjectsStore()
 const agents = useAgentsStore()
 const project = computed(() => projects.list.find((item) => item.id === projects.current))
@@ -96,8 +94,9 @@ function restored() {
 }
 
 onMounted(async () => {
-  if (!auth.isAdmin) return
-  await Promise.all([projects.loaded ? undefined : projects.load().catch(() => undefined), agents.loaded ? undefined : agents.load().catch(() => undefined)])
+  if (!projects.loaded) await projects.load().catch(() => undefined)
+  if (!projects.manages) return
+  if (!agents.loaded) await agents.load().catch(() => undefined)
   // O link do histórico (`?projeto=`) abre no projeto do item: troca o projeto em uso, como o seletor do topo.
   const linked = route.query.projeto
   if (typeof linked === 'string' && linked !== projects.current && projects.list.some((item) => item.id === linked)) await projects.select(linked).catch(() => undefined)
@@ -115,8 +114,8 @@ watch(decisionAgent, () => void loadDecisions())
 </script>
 
 <template>
-  <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
-    <p class="font-medium text-zinc-200">Só quem administra vê as permissões.</p>
+  <div v-if="!projects.manages" class="grid h-full place-items-center p-6 text-center text-zinc-400">
+    <p class="font-medium text-zinc-200">Só quem administra este projeto vê as permissões.</p>
   </div>
 
   <div v-else class="h-full overflow-y-auto px-4 py-5">

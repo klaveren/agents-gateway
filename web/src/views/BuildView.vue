@@ -40,6 +40,8 @@ const thread = useThreadStore()
 const builder = useBuilderStore()
 
 const info = computed(() => BUILD_KINDS[props.kind])
+/** Escopo global é do admin do gateway; o do projeto, de quem administra o projeto. */
+const allowed = computed(() => (props.project === null ? auth.isAdmin : projects.manages))
 /** O projeto em que se constrói: o fixo, ou o atual. `undefined` = global. */
 const scopeProject = computed(() => (props.project === undefined ? (projects.current ?? undefined) : (props.project ?? undefined)))
 const base = computed(() => info.value.base)
@@ -65,13 +67,13 @@ const agentResources = computed(() => {
 })
 
 onMounted(async () => {
-  if (!auth.isAdmin) return
   if (!projects.loaded) await projects.load().catch(() => undefined)
+  if (!allowed.value) return
 })
 
 // ── Construir ────────────────────────────────────────────────────────────────
 
-const listed = useResource(builder.builds, () => (auth.isAdmin && props.tab === 'build' ? builder.key(props.kind, scopeProject.value) : undefined))
+const listed = useResource(builder.builds, () => (allowed.value && props.tab === 'build' ? builder.key(props.kind, scopeProject.value) : undefined))
 // Escopo global: só as conversas sem projeto (a busca sem `project` traria as de todos).
 const builds = computed(() => (props.project === null ? (listed.data.value ?? []).filter((build) => !build.metadata?.project) : (listed.data.value ?? [])))
 const startError = ref<string>()
@@ -196,7 +198,7 @@ const savedLink = computed(() => (props.kind === 'rule' || !draft.value?.id ? ba
 
 // ── Protocolo ────────────────────────────────────────────────────────────────
 
-const shown = useResource(builder.protocols, () => (auth.isAdmin && props.tab === 'protocol' ? builder.key(props.kind, scopeProject.value) : undefined))
+const shown = useResource(builder.protocols, () => (allowed.value && props.tab === 'protocol' ? builder.key(props.kind, scopeProject.value) : undefined))
 const protocol = shown.data
 const saveError = ref<string>()
 const protocolError = computed(() => saveError.value ?? (shown.error.value === undefined ? undefined : describe(shown.error.value)))
@@ -239,8 +241,8 @@ function describe(failure: unknown): string {
 </script>
 
 <template>
-  <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
-    <p class="font-medium text-zinc-200">Só quem administra constrói {{ title }}.</p>
+  <div v-if="!allowed" class="grid h-full place-items-center p-6 text-center text-zinc-400">
+    <p class="font-medium text-zinc-200">Só quem administra {{ props.project === null ? 'o gateway' : 'este projeto' }} constrói {{ title }}.</p>
   </div>
 
   <!-- ⚖️ O título e as guias moram numa coluna à esquerda da largura da lista (340px), como em Lista: trocar de guia não
@@ -426,11 +428,13 @@ function describe(failure: unknown): string {
           <section class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-4">
             <h2 class="font-semibold">Complemento global</h2>
             <p class="text-xs text-zinc-500">Vale em todos os projetos e prevalece sobre o protocolo.</p>
+            <p v-if="!auth.isAdmin" class="text-xs text-amber-300" data-test="global-readonly">Global: só o administrador do gateway altera.</p>
             <HistoryTabs v-model="addendumTab.global" edit-label="Complemento" />
-            <HistoryPanel v-if="addendumTab.global === 'history'" kind="protocol" :id="addendumId('global')" @restored="restoredProtocol" />
+            <HistoryPanel v-if="addendumTab.global === 'history'" kind="protocol" :id="addendumId('global')" :readonly="!auth.isAdmin" @restored="restoredProtocol" />
             <template v-else>
               <textarea
                 v-model="addenda.global"
+                :disabled="!auth.isAdmin"
                 rows="6"
                 class="input font-mono text-[13px]"
                 placeholder="Ex.: a descrição é sempre em português; o id começa pelo tema (infra-, api-…)."
@@ -438,6 +442,7 @@ function describe(failure: unknown): string {
               <small v-if="addenda.global" class="hint">{{ sizeHint(addenda.global, 'em cada conversa do construtor') }}</small>
               <div class="flex items-center gap-3">
                 <button
+                  v-if="auth.isAdmin"
                   :disabled="saving === 'global'"
                   class="btn btn-primary"
                   @click="saveAddendum('global')"

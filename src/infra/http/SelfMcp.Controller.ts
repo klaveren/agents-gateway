@@ -327,6 +327,9 @@ const permissionRuleShape = z.object({
   note: z.string().optional(),
 })
 
+/** Onde as ferramentas de sistema caem para quem não administra o gateway. */
+const NO_TOOLS = { registerTool: () => undefined } as unknown as McpServer
+
 /**
  * As ferramentas, segundo quem chama.
  *
@@ -334,7 +337,11 @@ const permissionRuleShape = z.object({
  * `SELF_MCP_WRITE=0` desligando — o cliente não vê o que não pode usar. A API, por baixo, recusaria de qualquer jeito.
  * ⛔ Chave de API e senha não passam por aqui: não há ferramenta para elas.
  */
-function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolean; write: boolean; agentId?: string; streaming?: boolean }) {
+function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolean; gateway?: boolean; write: boolean; agentId?: string; streaming?: boolean }) {
+  // ⛔ As ferramentas de SISTEMA (providers, modelos, grupos de modelos, pacotes) são só do admin do gateway: `system` as
+  // registra, e para o admin só de projeto vira um nada. Todas as demais ferramentas de admin valem para quem administra
+  // QUALQUER coisa — e a rota que cada uma chama, com a credencial de quem chama, decide o escopo (404 fora dele).
+  const system = access.gateway ? server : NO_TOOLS
   server.registerTool(
     'list_projects',
     {
@@ -454,7 +461,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     async ({ key, days, filters }) => reply(await api('GET', `/usage/by/${encodeURIComponent(key)}`, { query: { ...filters, days } })),
   )
 
-  server.registerTool(
+  system.registerTool(
     'list_providers',
     {
       description:
@@ -494,7 +501,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     async ({ scope, id }) => reply(await api('GET', `/${scope === 'agent' ? 'agents' : 'resources'}/${encodeURIComponent(id)}/secrets`)),
   )
 
-  server.registerTool(
+  system.registerTool(
     'list_model_groups',
     {
       description:
@@ -508,7 +515,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
       }),
   )
 
-  server.registerTool(
+  system.registerTool(
     'list_models',
     {
       description:
@@ -594,7 +601,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     },
   )
 
-  server.registerTool(
+  system.registerTool(
     'list_packages',
     {
       description:
@@ -604,7 +611,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     async () => reply(await api('GET', '/packages')),
   )
 
-  server.registerTool(
+  system.registerTool(
     'search_packages',
     {
       description:
@@ -928,7 +935,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     async ({ agentId, name }) => reply(await api('DELETE', `/agents/${encodeURIComponent(agentId)}/schedules/${encodeURIComponent(name)}`)),
   )
 
-  server.registerTool(
+  system.registerTool(
     'install_package',
     {
       description:
@@ -942,7 +949,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     async ({ name, version, source }) => reply(await api('POST', '/packages', { body: { name, ...(version ? { version } : {}), ...(source ? { source } : {}) } })),
   )
 
-  server.registerTool(
+  system.registerTool(
     'remove_package',
     {
       description: 'Uninstall a package from the server tools folder. Agents and local MCPs that call its commands stop finding them. Confirm with the person before removing.',
@@ -951,7 +958,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     async ({ name, source }) => reply(await api('DELETE', `/packages/${encodeURIComponent(name)}`, { query: { ...(source ? { source } : {}) } })),
   )
 
-  server.registerTool(
+  system.registerTool(
     'set_model_enabled',
     {
       description: 'Enable or disable a model in a provider catalog (only enabled models can be offered by agents).',
@@ -960,7 +967,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     async ({ providerId, modelId, enabled }) => reply(await api('PUT', `/providers/${encodeURIComponent(providerId)}/models`, { body: { modelId, enabled } })),
   )
 
-  server.registerTool(
+  system.registerTool(
     'set_model_price',
     {
       description:
@@ -1244,15 +1251,23 @@ export async function handleSelfMcp(req: Request, res: Response): Promise<void> 
 
 async function serve(req: Request, res: Response): Promise<void> {
   const api = callerApi(req)
-  // A mesma regra da tela: só quem administra lê `/settings`.
-  const admin = (await api('GET', '/settings')).ok
+  // A mesma regra da tela: só quem administra o gateway lê `/settings`; quem administra só projetos tem `role: 'admin'` na
+  // lista deles. ⚠️ É só a VISIBILIDADE das ferramentas: cada uma passa pela rota, com a credencial de quem chama.
+  const gateway = (await api('GET', '/settings')).ok
+  const admin = gateway || (((await api('GET', '/projects')).result as Array<{ role?: string }> | undefined) ?? []).some((project) => project.role === 'admin')
   const server = new McpServer({ name: 'agents-gateway', version: '1.0.0' })
   // ⚖️ Escrita LIGADA para admin por padrão (o Atlas precisa dela); `SELF_MCP_WRITE=0` desliga. A API, por
   // baixo, continua só deixando admin escrever.
   const agentId = req.headers[IDENTITY_HEADERS.agent]
   // ⚖️ EM FLUXO SÓ A CHAMADA QUE ESPERA TURNO, e só para cliente que aceita SSE: o resto segue em JSON, como sempre.
   const streaming = streamsTurn(req)
-  registerTools(server, api, { admin, write: process.env.SELF_MCP_WRITE !== '0', streaming, ...(typeof agentId === 'string' && agentId.trim() ? { agentId: agentId.trim() } : {}) })
+  registerTools(server, api, {
+    admin,
+    gateway,
+    write: process.env.SELF_MCP_WRITE !== '0',
+    streaming,
+    ...(typeof agentId === 'string' && agentId.trim() ? { agentId: agentId.trim() } : {}),
+  })
 
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: !streaming })
   res.on('close', () => {

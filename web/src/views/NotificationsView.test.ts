@@ -5,6 +5,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { api, ApiError } from '@/lib/api'
 import type { IPermissionRequest } from '@/lib/permissionRequests'
 import { useAuthStore } from '@/stores/auth'
+import { useProjectsStore } from '@/stores/projects'
 import AccountMenu from '@/components/AccountMenu.vue'
 import NotificationsView from './NotificationsView.vue'
 
@@ -38,12 +39,14 @@ async function flush() {
   await nextTick()
 }
 
-async function mount(component: object, admin = true) {
+/** `admin` = administra algum projeto; `gateway` = admin do gateway (sem papel em projeto nenhum). */
+async function mount(component: object, admin = true, gateway = false) {
   const pinia = createPinia()
   setActivePinia(pinia)
   const auth = useAuthStore()
   auth.user = { name: 'Ana Souza', email: 'ana@x.test' } as never
-  auth.isAdmin = admin
+  auth.isAdmin = gateway
+  useProjectsStore().list = [{ id: 'alfa', name: 'Alfa', role: admin ? 'admin' : 'member', createdAt: '', updatedAt: '' }]
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:any(.*)', component: { render: () => null } }] })
   const host = document.createElement('div')
   document.body.appendChild(host)
@@ -231,6 +234,28 @@ describe('NotificationsView', () => {
   })
 })
 
+describe('NotificationsView: quem entra', () => {
+  beforeEach(() => {
+    all = [request('a1')]
+    vi.mocked(api).mockReset()
+    vi.mocked(api).mockImplementation(async () => all)
+  })
+  afterEach(() => {
+    app?.unmount()
+    app = undefined
+    document.body.innerHTML = ''
+  })
+
+  it('o admin do gateway sem papel em projeto e o membro não veem a tela', async () => {
+    const gateway = await mount(NotificationsView, false, true)
+    expect(gateway.textContent).toContain('Só quem administra um projeto vê as notificações.')
+    app?.unmount()
+    const member = await mount(NotificationsView, false)
+    expect(member.textContent).toContain('Só quem administra um projeto vê as notificações.')
+    expect(vi.mocked(api)).not.toHaveBeenCalled()
+  })
+})
+
 describe('AccountMenu: selo e item Notificações', () => {
   beforeEach(() => {
     all = [request('a1'), request('a2'), request('e1', { status: 'expired' })]
@@ -254,6 +279,14 @@ describe('AccountMenu: selo e item Notificações', () => {
     expect(link?.getAttribute('href')).toBe('/notifications')
     expect(link?.textContent).toContain('Notificações')
     expect(host.querySelector('[data-test="notifications-pill"]')?.textContent).toBe('2')
+  })
+
+  it('admin do gateway sem papel em projeto: sem selo, sem item e sem ler a lista', async () => {
+    vi.mocked(api).mockClear()
+    const host = await mount(AccountMenu, false, true)
+    await click(host.querySelector('button'))
+    expect(host.querySelector('[data-test="notifications-item"]')).toBeNull()
+    expect(vi.mocked(api)).not.toHaveBeenCalled()
   })
 
   it('sem pendente, sem selo; quem não é admin não vê o selo, o item nem lê a lista', async () => {

@@ -10,7 +10,6 @@
   import { effortLabel, fullTime } from '@/lib/format'
   import { useAgentsStore } from '@/stores/agents'
   import { useProtocolsStore } from '@/stores/protocols'
-  import { useAuthStore } from '@/stores/auth'
   import { useConversationsStore } from '@/stores/conversations'
   import DelegationsPanel from './DelegationsPanel.vue'
   import { usePopover } from '@/lib/popover'
@@ -35,7 +34,6 @@
   const props = defineProps<{ embedded?: boolean; agentId?: string; mode?: TMode }>()
   const emit = defineEmits<{ removed: [] }>()
   const router = useRouter()
-  const auth = useAuthStore()
   const agents = useAgentsStore()
   const protocols = useProtocolsStore()
   const conversations = useConversationsStore()
@@ -289,7 +287,7 @@
             · {{ header.metadata.repository }}
             <template v-if="typeof header.metadata.worktree === 'string'">/ {{ header.metadata.worktree }}</template>
           </template>
-          <template v-if="auth.isAdmin && owner">· {{ owner.email ?? owner.id }}</template>
+          <template v-if="projects.manages && owner">· {{ owner.email ?? owner.id }}</template>
         </div>
       </div>
       <div v-if="header || context" class="ml-auto flex items-center gap-1">
@@ -326,7 +324,7 @@
             v-if="header.usage.totalTokens"
             class="max-md:hidden"
             :usage="header.usage"
-            :cost-usd="auth.isAdmin ? header.costUsd : undefined"
+            :cost-usd="projects.manages ? header.costUsd : undefined"
             :cost-is-floor="header.costIsFloor"
             :turns="header.turns"
             :context="context"
@@ -450,7 +448,7 @@
       Delegada por {{ parentAgent }}.
       <RouterLink :to="`/c/${parentId}`" class="ml-auto hover:text-white">← Voltar à conversa original</RouterLink>
     </div>
-    <DelegationsPanel v-if="children.length" :items="children" :show-cost="auth.isAdmin" />
+    <DelegationsPanel v-if="children.length" :items="children" :show-cost="projects.manages" />
 
     <div v-if="actionError" class="flex items-center gap-2 border-b border-rose-500/20 bg-rose-500/10 px-4 py-2 text-xs text-rose-200">
       {{ actionError }}
@@ -477,9 +475,9 @@
         <p v-if="header" class="mx-auto rounded-full bg-zinc-900/80 px-3 py-1 text-xs text-zinc-400">Começou em {{ fullTime(header.createdAt) }}</p>
         <template v-for="(turn, index) in thread.turns" :key="`${turn.sessionId}-${turn.index}`">
           <p v-if="switchBefore(index)" class="mx-auto rounded-full border border-zinc-800 px-3 py-0.5 font-mono text-[11px] text-zinc-500">{{ switchBefore(index) }}</p>
-          <TurnBubbles :turn="turn" :show-cost="auth.isAdmin" />
+          <TurnBubbles :turn="turn" :show-cost="projects.manages" />
         </template>
-        <TurnBubbles v-if="thread.pending" :pending="thread.pending" :show-cost="auth.isAdmin" />
+        <TurnBubbles v-if="thread.pending" :pending="thread.pending" :show-cost="projects.manages" />
         <p v-if="thread.error" class="mx-auto text-sm text-rose-300">{{ thread.error }}</p>
       </div>
       <!-- A pessoa subiu para ler e chegou coisa nova embaixo: o atalho de volta ao fim (e a rolagem volta a seguir). -->

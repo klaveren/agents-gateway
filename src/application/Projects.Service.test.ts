@@ -29,11 +29,11 @@ describe('ProjectsService', () => {
     return { service, repository, agents, root }
   }
 
-  it('⛔ canUse: o admin usa todos; o membro, só os seus; projeto inexistente, ninguém', () => {
+  it('⛔ canUse: só os membros — também o admin do gateway; projeto inexistente, ninguém', () => {
     const { service } = build()
     service.create({ id: 'alfa', name: 'Alfa' }, 'root')
     service.setMembers('alfa', [{ userId: 'u_ana', role: 'admin' }], 'root')
-    assert.strictEqual(service.canUse({ admin: true }, 'alfa'), true)
+    assert.strictEqual(service.canUse({ userId: 'u_root', admin: true }, 'alfa'), false)
     assert.strictEqual(service.canUse({ userId: 'u_ana', admin: false }, 'alfa'), true)
     assert.strictEqual(service.canUse({ userId: 'u_bia', admin: false }, 'alfa'), false)
     assert.strictEqual(service.canUse({ admin: true }, 'nao-existe'), false)

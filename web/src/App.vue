@@ -64,7 +64,7 @@ onMounted(async () => {
   await projectsLoaded
   await loadAgents()
   // Assinado aqui, e não na caixa de entrada: o contador de não lidas vale em qualquer tela.
-  conversations.subscribe(auth.isAdmin)
+  conversations.subscribe(projects.seesAll)
 })
 </script>
 

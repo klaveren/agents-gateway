@@ -3,10 +3,11 @@ import { Request, Response } from 'express'
 import { z } from 'zod'
 import { AgentHooksService } from '@application/AgentHooks.Service'
 import { IAgentHook } from '@domain/models/AgentHook.Model'
-import { checkAdminAccess } from './Caller.Admin'
+import { provenCaller } from './Caller.Access'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
+import { requireAgentAdmin } from './Project.Access'
 import { parseBody } from './Request.Parser'
 import { selfApi, selfBase, TSelfApi } from './Self.Api'
 import { openConversation as openSelfConversation, runTurn, SelfCallError } from './Self.Run'
@@ -38,7 +39,7 @@ const updateSchema = z.object({ ...hookFields, prompt: hookFields.prompt.optiona
 
 /**
  * Os hooks dos agentes: `POST /v1/hook/<agente>/<hook>` (público — a chave do hook é a credencial) e o cadastro
- * deles (só admin, 404 para os demais, como `/mcp-servers`).
+ * deles (só o admin do escopo do agente, 404 para os demais, como `/mcp-servers`).
  *
  * ⚖️ O EVENTO VIRA UMA CONVERSA PELA PRÓPRIA API, com uma sessão curta da conta que criou o hook: valem as
  * mesmas regras de quem abre a conversa pela tela (agente só para admin, audiência, teto de conversas, MCP
@@ -118,8 +119,8 @@ export class HooksController {
 
   async list(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
-      await this.requireAdmin('listHooks')
       const agentId = req.params.agentId as string
+      await this.requireAdmin('listHooks', agentId)
       return this.deps.hooks.list(agentId).map((hook) => this.toDto(hook))
     })
   }
@@ -128,7 +129,7 @@ export class HooksController {
     await this.respond(
       res,
       async () => {
-        const caller = await this.requireAdmin('createHook')
+        const caller = await this.requireAdmin('createHook', req.params.agentId as string)
         if (!caller.userId) throw new HttpError(422, 'validation_error', 'Sign in with a gateway account to create a hook: it runs as you')
         const created = this.deps.hooks.create(req.params.agentId as string, parseBody(createSchema, req.body), { userId: caller.userId, label: caller.label })
         return { ...this.toDto(created.hook), secret: created.secret }
@@ -139,14 +140,14 @@ export class HooksController {
 
   async update(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
-      const caller = await this.requireAdmin('updateHook')
+      const caller = await this.requireAdmin('updateHook', req.params.agentId as string)
       return this.toDto(this.deps.hooks.update(req.params.agentId as string, req.params.hookName as string, parseBody(updateSchema, req.body), caller.label))
     })
   }
 
   async remove(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
-      await this.requireAdmin('deleteHook')
+      await this.requireAdmin('deleteHook', req.params.agentId as string)
       this.deps.hooks.remove(req.params.agentId as string, req.params.hookName as string)
       return null
     })
@@ -155,8 +156,8 @@ export class HooksController {
   /** Uma chave nova (a antiga para de valer na hora). ⛔ Devolvida só aqui. */
   async rotate(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
-      const caller = await this.requireAdmin('rotateHook')
       const agentId = req.params.agentId as string
+      const caller = await this.requireAdmin('rotateHook', agentId)
       const name = req.params.hookName as string
       const secret = this.deps.hooks.rotate(agentId, name, caller.label)
       return { ...this.toDto(this.deps.hooks.get(agentId, name)), secret }
@@ -165,7 +166,7 @@ export class HooksController {
 
   async deliveries(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
-      await this.requireAdmin('listHookDeliveries')
+      await this.requireAdmin('listHookDeliveries', req.params.agentId as string)
       return this.deps.hooks.deliveries(req.params.agentId as string, req.params.hookName as string)
     })
   }
@@ -193,13 +194,10 @@ export class HooksController {
     }
   }
 
-  private async requireAdmin(operation: string): Promise<{ userId?: string; label: string }> {
-    const access = await checkAdminAccess(this.deps.proof)
-    if (!access.allowed) {
-      console.warn(`[admin] acesso negado a ${operation}:`, access.reason)
-      throw new HttpError(404, 'not_found', 'Not found')
-    }
-    return { userId: access.identity?.id, label: access.identity?.email ?? access.identity?.id ?? 'admin' }
+  /** ⛔ O hook é do agente: o admin do projeto dele (agente global, o do gateway). */
+  private async requireAdmin(operation: string, agentId: string): Promise<{ userId?: string; label: string }> {
+    const label = await requireAgentAdmin(this.deps.proof, agentId, operation)
+    return { userId: (await provenCaller(this.deps.proof))?.id, label }
   }
 
   private async respond<T>(res: Response, work: () => Promise<T>, options: { status?: number; message?: string } = {}) {

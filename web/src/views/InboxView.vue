@@ -6,14 +6,14 @@
   import { useListWidth } from '@/composables/useListWidth'
   import NewConversation from '@/components/NewConversation.vue'
   import ThreadView from '@/components/ThreadView.vue'
-  import { useAuthStore } from '@/stores/auth'
   import { useConversationsStore } from '@/stores/conversations'
+  import { useProjectsStore } from '@/stores/projects'
   import { useThreadStore } from '@/stores/thread'
 
   const props = defineProps<{ id?: string }>()
 
   const route = useRoute()
-  const auth = useAuthStore()
+  const projects = useProjectsStore()
   const conversations = useConversationsStore()
   const thread = useThreadStore()
   const { width: listWidth } = useListWidth()
@@ -21,7 +21,7 @@
   const isNew = computed(() => route.name === 'new')
   const hasDetail = computed(() => isNew.value || !!props.id)
 
-  onMounted(() => void conversations.load(auth.isAdmin))
+  onMounted(() => void conversations.load(projects.seesAll))
 
   watch(
     () => props.id,

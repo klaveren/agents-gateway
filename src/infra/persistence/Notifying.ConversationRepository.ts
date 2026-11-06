@@ -5,6 +5,7 @@ import { TClassification } from '@domain/models/Classification.Model'
 import {
   IConversationPage,
   IConversationPageQuery,
+  IConversationScope,
   IConversationSession,
   IConversationStats,
   IConversationTurn,
@@ -64,8 +65,8 @@ export class NotifyingConversationRepository implements IConversationRepository 
     if (before) this.events.publish({ type: 'conversation.deleted', sessionId, metadata: before.metadata })
   }
 
-  stats(): Promise<IConversationStats> {
-    return this.inner.stats()
+  stats(scope?: IConversationScope): Promise<IConversationStats> {
+    return this.inner.stats(scope)
   }
 
   errors(query: IErrorLogQuery): Promise<IErrorLog> {
@@ -80,7 +81,13 @@ export class NotifyingConversationRepository implements IConversationRepository 
     return (await this.inner.toolUsage?.(query)) ?? []
   }
 
-  listSessions(options?: { limit?: number; filter?: Record<string, unknown>; owner?: IOwnerFilter | null; archived?: boolean }): Promise<IConversationSession[]> {
+  listSessions(options?: {
+    limit?: number
+    filter?: Record<string, unknown>
+    owner?: IOwnerFilter | null
+    archived?: boolean
+    scope?: IConversationScope
+  }): Promise<IConversationSession[]> {
     return this.inner.listSessions(options)
   }
 

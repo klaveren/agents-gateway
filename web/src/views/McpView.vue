@@ -52,6 +52,10 @@ import { computed, onMounted, ref, watch } from 'vue'
   }
   const TRANSPORT_LABEL: Record<TMcpTransport, string> = { auto: 'Automático', http: 'Streamable HTTP', sse: 'SSE' }
 
+  /** Mexe nos MCPs: o admin do gateway (os globais) ou o admin do projeto atual (os dele). */
+  const canManage = computed(() => auth.isAdmin || projects.manages)
+  /** O MCP aberto é só leitura: global é do admin do gateway; o de projeto, de quem administra o projeto. */
+  const locked = computed(() => !!selected.value && (selected.value.projectId ? !projects.manages : !auth.isAdmin))
   const adding = computed(() => route.name === 'mcp-new')
   /** ⚖️ A rota leva a CHAVE (`n8n`, `cliente-a.n8n`): o mesmo id pode estar em dois projetos. */
   const selected = computed(() => (props.id ? mcp.list.find((server) => server.key === props.id) : undefined))
@@ -76,7 +80,8 @@ import { computed, onMounted, ref, watch } from 'vue'
   const blankProcess = (): IMcpProcess => ({ package: '', command: '', args: [], env: [], scope: 'conversation' })
   const blank = (): INewMcpServer => ({
     id: '',
-    projectId: undefined,
+    // Quem não administra o gateway só cria no projeto (o global é do admin do gateway).
+    projectId: auth.isAdmin ? undefined : projects.current,
     name: '',
     kind: 'process',
     container: blankContainer(),
@@ -145,7 +150,8 @@ import { computed, onMounted, ref, watch } from 'vue'
   }
 
   onMounted(async () => {
-    if (auth.isAdmin)
+    await projects.ensure().catch(() => undefined)
+    if (canManage.value)
       await Promise.all([
         mcp.ensure().catch((error) => (loadError.value = describe(error))),
         settings.ensure().catch(() => undefined),
@@ -168,7 +174,7 @@ import { computed, onMounted, ref, watch } from 'vue'
     selected,
     (server, previous) => {
       // ⛔ O membro só lê (`McpProjectReadOnly`): sem edição, e as ferramentas são do admin (a API responde 404).
-      if (!server || !auth.isAdmin) return (edit.value = undefined)
+      if (!server || !canManage.value) return (edit.value = undefined)
       const switched = server.key !== previous?.key
       if (switched) {
         testResult.value = undefined
@@ -386,11 +392,11 @@ import { computed, onMounted, ref, watch } from 'vue'
 </script>
 
 <template>
-  <McpProjectReadOnly v-if="!auth.isAdmin && auth.signedIn" :id="id" />
+  <McpProjectReadOnly v-if="!canManage && auth.signedIn" :id="id" />
 
-  <div v-else-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
+  <div v-else-if="!canManage" class="grid h-full place-items-center p-6 text-center text-zinc-400">
     <div>
-      <p class="font-medium text-zinc-200">Só quem administra cadastra os MCPs.</p>
+      <p class="font-medium text-zinc-200">Só quem administra este projeto cadastra os MCPs.</p>
       <RouterLink v-if="!auth.signedIn && auth.localAccounts" :to="{ path: '/login', query: { next: '/mcp' } }" class="mt-3 btn btn-primary">Entrar</RouterLink>
     </div>
   </div>
@@ -484,8 +490,8 @@ import { computed, onMounted, ref, watch } from 'vue'
             <label class="field">
               Escopo
               <select v-model="form.projectId" class="input">
-                <option :value="undefined">Global — qualquer agente</option>
-                <option v-for="project in projects.list.filter((item) => item.id === projects.current || item.id === form.projectId)" :key="project.id" :value="project.id">Projeto {{ project.name }}</option>
+                <option v-if="auth.isAdmin" :value="undefined">Global — qualquer agente</option>
+                <option v-for="project in projects.list.filter((item) => item.role === 'admin' && (item.id === projects.current || item.id === form.projectId))" :key="project.id" :value="project.id">Projeto {{ project.name }}</option>
               </select>
               <small class="hint">
                 {{
@@ -566,13 +572,15 @@ import { computed, onMounted, ref, watch } from 'vue'
           </div>
           <label class="ml-auto flex shrink-0 items-center gap-2 text-xs text-zinc-400">
             Ligado
-            <button type="button" role="switch" :aria-checked="selected.enabled" class="switch" :class="{ on: selected.enabled }" :disabled="busy" @click="toggle"><span /></button>
+            <button type="button" role="switch" :aria-checked="selected.enabled" class="switch" :class="{ on: selected.enabled }" :disabled="busy || locked" @click="toggle"><span /></button>
           </label>
         </div>
 
         <HistoryTabs v-model="tab" edit-label="Configuração" />
-        <HistoryPanel v-if="tab === 'history'" kind="mcp" :id="selected.key" @restored="restored" />
+        <HistoryPanel v-if="tab === 'history'" kind="mcp" :id="selected.key" :readonly="locked" @restored="restored" />
         <template v-else>
+          <p v-if="locked" class="text-xs text-amber-300" data-test="global-readonly">Global: só o administrador do gateway altera.</p>
+          <fieldset :disabled="locked" class="contents">
           <p v-if="selected.selfReference" class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
             MCP do próprio gateway: o agente pode abrir conversas com outros agentes, até com ele mesmo. Dê só o necessário.
           </p>
@@ -774,7 +782,7 @@ import { computed, onMounted, ref, watch } from 'vue'
               Escopo
               <div class="flex flex-wrap items-center gap-2">
                 <select v-model="moveTo" class="input sm:w-1/2">
-                  <option value="">Global — qualquer agente</option>
+                  <option value="" :disabled="!auth.isAdmin">Global — qualquer agente</option>
                   <option v-for="project in projects.list.filter((item) => item.id === projects.current || item.id === selected?.projectId)" :key="project.id" :value="project.id">Projeto {{ project.name }}</option>
                 </select>
                 <button v-if="moveDirty" type="button" class="btn btn-secondary" :disabled="busy" @click="move">Mover</button>
@@ -793,7 +801,8 @@ import { computed, onMounted, ref, watch } from 'vue'
             <button type="button" class="ml-auto text-rose-300 hover:underline" @click="((removing = selected), (removeError = undefined))">Remover MCP</button>
           </div>
           <!-- Um salvar só por tela: a configuração do MCP (o tipo dele decide o que grava). Os segredos gravam na hora, acima. -->
-          <SaveFooter label="Salvar MCP" :busy="busy" :disabled="!mcpDirty" :pending="mcpDirty" @save="saveMcp">
+          </fieldset>
+          <SaveFooter v-if="!locked" label="Salvar MCP" :busy="busy" :disabled="!mcpDirty" :pending="mcpDirty" @save="saveMcp">
             <span v-if="mcpDirty && selected.kind === 'process'" class="text-xs text-zinc-500">As execuções em andamento serão encerradas.</span>
           </SaveFooter>
         </template>

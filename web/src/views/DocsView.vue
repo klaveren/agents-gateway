@@ -106,6 +106,8 @@ const tab = ref<TDocTab>(HASH_TAB[route.hash] ?? 'edit')
 /** Muda depois de restaurar uma versão: relê o item. */
 const reloadKey = ref(0)
 const loaded = ref<IProjectDoc>()
+/** Global: só o admin do gateway altera; quem administra o projeto lê. */
+const locked = computed(() => !auth.isAdmin && (adding.value ? form.value.global : !!loaded.value && !loaded.value.projectId))
 const preview = ref(false)
 const issues = ref<Record<string, string[]>>({})
 const error = ref<string>()
@@ -134,7 +136,7 @@ const showStatusFilter = computed(() => ofKind.value.some((doc) => docStatusOf(d
 const knownTags = computed(() => tagNames(ofKind.value))
 const formScope = computed(() => (form.value.global ? GLOBAL_SCOPE : form.value.project))
 /** Os documentos que este pode anexar: os globais e os do projeto do formulário (a lista não segue o filtro de escopo). */
-const { list: docs } = useScopedDocs(() => (auth.isAdmin ? scopeToProjectId(formScope.value) : undefined))
+const { list: docs } = useScopedDocs(() => (projects.manages ? scopeToProjectId(formScope.value) : undefined))
 const attachable = computed(() => attachableDocs(docs.value, scopeToProjectId(formScope.value), form.value.id || undefined))
 /** Os que este pode substituir: os de mesmo tipo, globais ou do projeto (o global só substitui global), nunca ele mesmo. */
 const replaceable = computed(() => attachable.value.filter((doc) => doc.kind === form.value.kind))
@@ -158,8 +160,8 @@ const dirty = computed(() => {
 })
 
 onMounted(async () => {
-  if (!auth.isAdmin) return
   if (!projects.loaded) await projects.load().catch(() => undefined)
+  if (!projects.manages) return
   // Os nomes dos agentes do selo "carregada em".
   if (!agents.loaded) void agents.load().catch(() => undefined)
   ready.value = true
@@ -181,7 +183,7 @@ watch(
         summary: '',
         tags: [],
         body: TEMPLATE[kind],
-        global: scope.value === GLOBAL_SCOPE,
+        global: scope.value === GLOBAL_SCOPE && auth.isAdmin,
         project: scope.value === GLOBAL_SCOPE ? (projects.current ?? '') : scope.value,
         docIds: [],
         docRefs: [],
@@ -377,8 +379,8 @@ function onInvalid(event: Event) {
 </script>
 
 <template>
-  <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
-    <p class="font-medium text-zinc-200">Só quem administra pode gerenciar {{ info.title }}.</p>
+  <div v-if="!projects.manages" class="grid h-full place-items-center p-6 text-center text-zinc-400">
+    <p class="font-medium text-zinc-200">Só quem administra este projeto pode gerenciar {{ info.title }}.</p>
   </div>
 
   <MasterDetail v-else :open="!!id || adding" :back-to="info.base" :back-label="info.title" :title="adding ? `${g.nova} ${info.one}` : loaded?.title">
@@ -418,6 +420,8 @@ function onInvalid(event: Event) {
       <div v-if="adding || loaded" class="mx-auto mb-4 max-w-3xl"><HistoryTabs v-model="tab" edit-label="Documento" :extra="extraTabs" :history="!adding" /></div>
       <form v-if="adding || (loaded && (tab === 'edit' || tab === 'instructions' || tab === 'attachments'))" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save" @invalid.capture="onInvalid">
         <h2 class="text-lg font-semibold">{{ adding ? `${g.nova} ${info.one}` : loaded?.title }}</h2>
+        <p v-if="locked" class="text-xs text-amber-300" data-test="global-readonly">Global: só o administrador do gateway altera.</p>
+        <fieldset :disabled="locked" class="contents">
         <!-- O aviso de quem lê: o salvo está fora do índice da conversa (vale em todas as guias, inclusive a prévia). -->
         <p v-if="!adding && isInactive(savedStatus)" class="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200" data-test="inactive-banner">
           <template v-if="savedStatus === 'superseded' && supersededBy.length">
@@ -461,7 +465,7 @@ function onInvalid(event: Event) {
           <template v-for="(item, index) in supersededBy" :key="item.id"><template v-if="index">, </template><RouterLink :to="`${info.base}/${item.id}`" class="text-emerald-300 hover:underline">{{ item.title }}</RouterLink></template>
         </p>
         <div class="flex flex-wrap items-center gap-3 text-sm">
-          <label class="flex items-center gap-2"><input v-model="form.global" type="checkbox" class="accent-emerald-500" /> Global (todos os projetos)</label>
+          <label class="flex items-center gap-2"><input v-model="form.global" type="checkbox" :disabled="!auth.isAdmin" class="accent-emerald-500" /> Global (todos os projetos)</label>
           <select v-if="!form.global" v-model="form.project" required class="input w-auto py-1.5 text-sm" aria-label="Projeto">
             <option v-for="project in projects.list.filter((item) => item.id === projects.current || item.id === form.project)" :key="project.id" :value="project.id">{{ project.name }}</option>
           </select>
@@ -496,7 +500,8 @@ function onInvalid(event: Event) {
 
         <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
         <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
-        <SaveFooter submit :label="`${adding ? 'Criar' : 'Salvar'} ${info.one}`" :busy="busy" :disabled="!(dirty)" :pending="!adding && (dirty)">
+        </fieldset>
+        <SaveFooter v-if="!locked" submit :label="`${adding ? 'Criar' : 'Salvar'} ${info.one}`" :busy="busy" :disabled="!(dirty)" :pending="!adding && (dirty)">
           <RouterLink v-if="adding" :to="info.base" class="btn btn-ghost">Cancelar</RouterLink>
           <template v-if="!adding" #end>
             <button type="button" class="btn btn-danger" @click="removing = true">Apagar {{ info.one }}</button>
@@ -509,7 +514,7 @@ function onInvalid(event: Event) {
       </section>
       <section v-else-if="loaded && tab === 'history'" class="mx-auto flex max-w-3xl flex-col gap-3">
         <h2 class="text-lg font-semibold">{{ loaded.title }}</h2>
-        <HistoryPanel :kind="kind" :id="loaded.id" @restored="restored" />
+        <HistoryPanel :kind="kind" :id="loaded.id" :readonly="locked" @restored="restored" />
       </section>
       <p v-else-if="error" class="mx-auto max-w-3xl text-sm text-rose-300">{{ error }}</p>
       <section v-else class="mx-auto flex max-w-2xl flex-col gap-3 text-sm text-zinc-300">

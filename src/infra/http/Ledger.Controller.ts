@@ -5,10 +5,10 @@ import { InvalidLedgerError } from '@domain/errors/Domain.Error'
 import { playbookIssues } from '@domain/Ledger.Policy'
 import { ILedgerWrite, TLedgerAuthor } from '@domain/models/Ledger.Model'
 import { tarGz } from '@infra/catalog/Tar.Archive'
-import { checkAdminAccess } from './Caller.Admin'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
+import { requireAgentAdmin } from './Project.Access'
 import { parseBody } from './Request.Parser'
 
 export interface ILedgerControllerDeps {
@@ -31,7 +31,7 @@ const lineSchema = z.object(lineFields)
 const lineChangeSchema = z.object(lineFields).partial()
 
 /**
- * O LEDGER DOS AGENTES na tela (a guia Memória do agente). Tudo só admin (404 para os demais).
+ * O LEDGER DOS AGENTES na tela (a guia Memória do agente). Tudo só admin do projeto do agente (o agente global, o do gateway; 404 para os demais).
  *
  * ⚖️ A edição do admin passa pela MESMA regra e pelo mesmo serviço da ferramenta `ledger_write`, e vira revisão com o
  * admin como autor. Toda escrita devolve o contexto e o índice de depois: a tela troca o que mostra sem reler.
@@ -185,16 +185,13 @@ export class LedgerController {
     }
   }
 
-  /** ⛔ Só admin; o agente da rota tem de existir. O autor das revisões é o admin. */
+  /** ⛔ Só o admin do projeto do agente (o agente global, o do gateway); o agente da rota tem de existir. O autor das revisões é o admin. */
   private async admin(req: Request, operation: string): Promise<{ service: LedgerService; agentId: string; by: TLedgerAuthor }> {
-    const access = await checkAdminAccess(this.deps.proof)
-    if (!access.allowed || !this.deps.service) {
-      if (!access.allowed) console.warn(`[admin] acesso negado a ${operation}:`, access.reason)
-      throw new HttpError(404, 'not_found', 'Not found')
-    }
     const agentId = req.params.agentId as string
+    const email = await requireAgentAdmin(this.deps.proof, agentId, operation)
+    if (!this.deps.service) throw new HttpError(404, 'not_found', 'Not found')
     this.deps.service.requireAgent(agentId)
-    return { service: this.deps.service, agentId, by: { kind: 'admin', email: access.identity?.email ?? access.identity?.id ?? 'admin' } }
+    return { service: this.deps.service, agentId, by: { kind: 'admin', email } }
   }
 
   private async respond<T>(res: Response, work: () => Promise<T>, status = 200) {

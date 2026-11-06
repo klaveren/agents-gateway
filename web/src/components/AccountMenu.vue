@@ -6,6 +6,7 @@
   import { useAboveBar, usePopover } from '@/lib/popover'
   import { useAuthStore } from '@/stores/auth'
   import { usePermissionRequestsStore } from '@/stores/permissionRequests'
+  import { useProjectsStore } from '@/stores/projects'
   import Icon from './Icon.vue'
 
   /**
@@ -15,15 +16,16 @@
   defineProps<{ placement: 'side' | 'up' }>()
 
   const auth = useAuthStore()
+  const projects = useProjectsStore()
   const router = useRouter()
   const { open, root } = usePopover()
   const above = useAboveBar(open, root)
 
-  // ⛔ Só o admin lê os pedidos (a rota recusa o resto). ⚖️ A lista de todos (`''`) é a mesma do selo da lista de agentes e
+  // ⛔ Só quem administra projeto lê os pedidos (a rota recusa o resto). ⚖️ A lista de todos (`''`) é a mesma do selo da lista de agentes e
   // anda sozinha com o `catalog.changed`: o número aqui não precisa de tela aberta nem de releitura.
   const requests = usePermissionRequestsStore()
-  const { data: allRequests } = useResource(requests.lists, () => (auth.isAdmin ? '' : undefined))
-  const pending = computed(() => (auth.isAdmin ? (allRequests.value ?? []).filter((request) => request.status === 'pending').length : 0))
+  const { data: allRequests } = useResource(requests.lists, () => (projects.managesAny ? '' : undefined))
+  const pending = computed(() => (projects.managesAny ? (allRequests.value ?? []).filter((request) => request.status === 'pending').length : 0))
 
   async function logout() {
     open.value = false
@@ -84,7 +86,7 @@
         Perfil
       </RouterLink>
       <RouterLink
-        v-if="auth.isAdmin"
+        v-if="projects.managesAny"
         to="/notifications"
         role="menuitem"
         class="flex items-center gap-2.5 px-3 py-2.5 text-zinc-200 hover:bg-zinc-800"

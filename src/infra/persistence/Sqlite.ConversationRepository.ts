@@ -9,6 +9,7 @@ import { isClassification, TClassification, worstOf } from '@domain/models/Class
 import {
   IConversationPage,
   IConversationPageQuery,
+  IConversationScope,
   IConversationSession,
   INativeSnapshot,
   IConversationStats,
@@ -241,6 +242,13 @@ function usageOf(row: TRow): IStoredUsage {
   }
 }
 
+/** O recorte por projeto (ver `IConversationScope`): os projetos dados e, com `unscoped`, as sem projeto. Nada = nenhuma. */
+function scopeClause(scope: IConversationScope, column = 'metadata'): { sql: string; params: string[] } {
+  const project = `json_extract(${column}, '$.project')`
+  const parts = [...(scope.projects.length ? [`${project} IN (${scope.projects.map(() => '?').join(', ')})`] : []), ...(scope.unscoped ? [`${project} IS NULL`] : [])]
+  return { sql: parts.length ? `(${parts.join(' OR ')})` : '0', params: [...scope.projects] }
+}
+
 /**
  * O recorte por dono, no mesmo critério de `ownsSession` no controller.
  *
@@ -430,7 +438,9 @@ export class SqliteConversationRepository implements IConversationRepository {
     )
   }
 
-  async listSessions(options: { limit?: number; filter?: Record<string, unknown>; owner?: IOwnerFilter | null; archived?: boolean } = {}): Promise<IConversationSession[]> {
+  async listSessions(
+    options: { limit?: number; filter?: Record<string, unknown>; owner?: IOwnerFilter | null; archived?: boolean; scope?: IConversationScope } = {},
+  ): Promise<IConversationSession[]> {
     return (
       this.guard('listSessions', () => {
         const where: string[] = []
@@ -457,6 +467,11 @@ export class SqliteConversationRepository implements IConversationRepository {
           const owner = ownerClause(options.owner)
           where.push(owner.sql)
           params.push(...owner.params)
+        }
+        if (options.scope) {
+          const scope = scopeClause(options.scope)
+          where.push(scope.sql)
+          params.push(...scope.params)
         }
 
         // ⚖️ As conversas do construtor (`metadata.builder`) ficam fora, a não ser que o filtro as peça (`?builder=skill`):
@@ -500,6 +515,11 @@ export class SqliteConversationRepository implements IConversationRepository {
         if (query.project) {
           search.push(`json_extract(metadata, '$.project') = ?`)
           searchParams.push(query.project)
+        }
+        if (query.scope) {
+          const scope = scopeClause(query.scope)
+          search.push(scope.sql)
+          searchParams.push(...scope.params)
         }
         // As conversas do construtor ficam fora da caixa de entrada também na lista paginada (a do admin), e das contagens.
         search.push(`json_extract(metadata, '$.${BUILDER_METADATA_KEY}') IS NULL`)
@@ -750,6 +770,11 @@ export class SqliteConversationRepository implements IConversationRepository {
           base.push('c.agent_id = ?')
           params.push(query.agentId)
         }
+        if (query.scope) {
+          const scope = scopeClause(query.scope, 'c.metadata')
+          base.push(scope.sql)
+          params.push(...scope.params)
+        }
         const toolFilter = query.tool ? " AND json_extract(j.value, '$.tool') = ?" : ''
         const toolParams = query.tool ? [query.tool] : []
         const parts: Array<{ kind: TErrorKind; sql: string; params: Array<string | number> }> = [
@@ -866,11 +891,12 @@ export class SqliteConversationRepository implements IConversationRepository {
     )
   }
 
-  async stats(): Promise<IConversationStats> {
+  async stats(scope?: IConversationScope): Promise<IConversationStats> {
     const empty: IConversationStats = { conversations: 0, turns: 0, users: 0, accounts: 0, usage: {}, byModel: [], byClassification: {} }
 
     return (
       this.guard('stats', () => {
+        const within = scope ? scopeClause(scope) : { sql: '1', params: [] }
         const totals = this.db
           .prepare(
             `SELECT COUNT(*) AS conversations, COALESCE(SUM(turns), 0) AS turns,
@@ -878,16 +904,16 @@ export class SqliteConversationRepository implements IConversationRepository {
                     COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens,
                     COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens, COALESCE(SUM(total_tokens), 0) AS total_tokens,
                     COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens, COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens
-             FROM conversations`,
+             FROM conversations WHERE ${within.sql}`,
           )
-          .get() as TRow
+          .get(...within.params) as TRow
 
         /**
          * ⚖️ Por conversa, e — quando ela registra o consumo por modelo (trocou de modelo no meio) — por
          * cada modelo dela; as antigas contam inteiras no modelo da conversa. Somado aqui, e não em SQL,
          * porque o consumo por modelo é um JSON por linha.
          */
-        const rows = this.db.prepare('SELECT * FROM conversations').all() as TRow[]
+        const rows = this.db.prepare(`SELECT * FROM conversations WHERE ${within.sql}`).all(...within.params) as TRow[]
         const models = new Map<string, { provider: string; model: string; conversations: number; usage: Required<Omit<IStoredUsage, 'contextTokens'>> }>()
         for (const row of rows) {
           const byModel = json<Record<string, IStoredUsage> | undefined>(row.usage_by_model, undefined)
@@ -903,7 +929,9 @@ export class SqliteConversationRepository implements IConversationRepository {
         }
         const byModel = [...models.values()].sort((a, b) => b.usage.totalTokens - a.usage.totalTokens)
 
-        const bySignal = this.db.prepare('SELECT classification, COUNT(*) AS n FROM conversations WHERE classification IS NOT NULL GROUP BY classification').all() as TRow[]
+        const bySignal = this.db
+          .prepare(`SELECT classification, COUNT(*) AS n FROM conversations WHERE classification IS NOT NULL AND ${within.sql} GROUP BY classification`)
+          .all(...within.params) as TRow[]
 
         return {
           conversations: count(totals.conversations),

@@ -65,7 +65,7 @@ async function choose(id: string) {
         <span v-if="project.id === projects.current" class="text-xs">✓</span>
       </button>
       <p v-if="!projects.list.length" class="px-3 py-2 text-xs text-zinc-500">{{ auth.isAdmin ? 'Nenhum projeto ainda.' : 'Você não está em nenhum projeto: peça a quem administra.' }}</p>
-      <RouterLink v-if="auth.isAdmin" to="/projects" role="menuitem" class="block border-t border-zinc-800 px-3 py-2.5 text-zinc-300 hover:bg-zinc-800">Gerenciar projetos</RouterLink>
+      <RouterLink v-if="auth.isAdmin || projects.managesAny" to="/projects" role="menuitem" class="block border-t border-zinc-800 px-3 py-2.5 text-zinc-300 hover:bg-zinc-800">Gerenciar projetos</RouterLink>
     </div>
   </div>
 </template>

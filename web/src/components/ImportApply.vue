@@ -18,8 +18,10 @@ import {
   type IApplyResult,
   type IApplySelection,
 } from '@/lib/importApply'
+import { GLOBAL_SCOPE } from '@/lib/guidance'
 import { GONE_LABEL, KIND_LABEL, STATE_LABEL } from '@/lib/importer'
 import { useAuthStore } from '@/stores/auth'
+import { useProjectsStore } from '@/stores/projects'
 
 /**
  * GRAVAR NO CATÁLOGO (só admin): os aprovados do alvo (um lote salvo, a seleção, ou todo o trabalho) viram documentos
@@ -42,6 +44,7 @@ const props = defineProps<{
 const emit = defineEmits<{ close: []; applied: [result: IApplyResult]; select: [key: string]; include: [keys: string[]] }>()
 
 const auth = useAuthStore()
+const projects = useProjectsStore()
 /** Sem roteador (um teste da tela de fora), o link do lote é um link comum. */
 const router = inject(routerKey, undefined)
 const preview = shallowRef<IApplyPreview>()
@@ -109,7 +112,9 @@ async function fix(keys: string[]) {
   }
 }
 
-const canWrite = computed(() => auth.isAdmin && !props.readonly && !!plan.value && !blockers.value.length && plan.value.order.length > 0 && !writing.value)
+/** Grava quem administra o projeto; o que é global só o admin do gateway. */
+const allowed = computed(() => projects.manages && (plan.value?.scope !== GLOBAL_SCOPE || auth.isAdmin))
+const canWrite = computed(() => allowed.value && !props.readonly && !!plan.value && !blockers.value.length && plan.value.order.length > 0 && !writing.value)
 
 async function load() {
   loading.value = true
@@ -204,7 +209,7 @@ const partLabel = (part?: string) => (part === 'record' ? ' (registro)' : part =
           · <span class="text-rose-300">{{ blockers.length }} bloqueando</span></template
         >
       </p>
-      <section v-if="fixable.length && !ready && auth.isAdmin && !readonly" class="flex flex-col gap-2 rounded-lg border border-sky-500/40 p-2 text-xs" data-test="apply-fix">
+      <section v-if="fixable.length && !ready && allowed && !readonly" class="flex flex-col gap-2 rounded-lg border border-sky-500/40 p-2 text-xs" data-test="apply-fix">
         <p class="flex flex-wrap items-center gap-2 text-sky-200">
           {{ fixable.length }} item(ns) recusado(s) por problema do rascunho: o construtor corrige.
           <button v-if="!fixConfirm" type="button" class="btn btn-secondary btn-sm ml-auto" :disabled="fixing" data-test="apply-fix-all" @click="fixConfirm = fixable">
@@ -292,7 +297,7 @@ const partLabel = (part?: string) => (part === 'record' ? ' (registro)' : part =
             <span :class="blocking(item) ? 'text-rose-300' : 'text-zinc-400'">{{ OP_LABEL[item.op] }}</span>
             <span v-if="item.entersDisabled" class="text-amber-300">entra desligado (falta segredo)</span>
             <button
-              v-if="!ready && auth.isAdmin && !readonly && fixKeyOf.get(item.ref) && fixable.includes(fixKeyOf.get(item.ref)!)"
+              v-if="!ready && allowed && !readonly && fixKeyOf.get(item.ref) && fixable.includes(fixKeyOf.get(item.ref)!)"
               type="button"
               class="btn btn-ghost btn-sm"
               :disabled="fixing"
@@ -386,7 +391,7 @@ const partLabel = (part?: string) => (part === 'record' ? ' (registro)' : part =
 
       <WideningConfirm v-if="confirming" :widenings="plan.widenings" action="Gravar com estas ampliações" :busy="writing" @confirm="write" @cancel="confirming = false" />
       <div v-else class="flex flex-wrap items-center gap-2">
-        <button v-if="auth.isAdmin" type="button" class="btn btn-primary" :disabled="!canWrite" data-test="apply-write" @click="start">
+        <button v-if="allowed" type="button" class="btn btn-primary" :disabled="!canWrite" data-test="apply-write" @click="start">
           {{ writing ? 'Gravando…' : 'Gravar no catálogo' }}
         </button>
         <span v-if="plan.widenings.length" class="text-xs text-amber-200">{{ plan.widenings.length }} ampliação(ões) a confirmar, uma a uma</span>

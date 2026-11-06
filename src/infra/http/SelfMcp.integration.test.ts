@@ -5,6 +5,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { makeAuth } from '@composition/factories/Auth.Factory'
 import { makeAuthController, makeCatalogController, makeController, makeProvidersController, makeUsageController } from '@composition/factories/Controller.Factory'
+import { makeProjects } from '@composition/factories/Projects.Factory'
 import { makeGuidance } from '@composition/factories/Guidance.Factory'
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -20,6 +21,7 @@ import { SecretBox } from '@infra/secrets/Aes.SecretBox'
 import { HooksController } from './Hooks.Controller'
 import { GuidanceController } from './Guidance.Controller'
 import { PackagesController } from './Packages.Controller'
+import { ProjectsController } from './Projects.Controller'
 
 /** Um micromamba falso: instala `jq` (cria o ambiente) e lista o que está lá. */
 const FAKE_MAMBA = `#!/usr/bin/env node
@@ -87,7 +89,7 @@ describe('MCP do próprio gateway (integração)', () => {
       undefined,
       packages,
       hooks,
-      undefined,
+      new ProjectsController({ projects: makeProjects(), proof: makeAuth().proof }),
       new GuidanceController({ guidance, proof: makeAuth().proof }),
       undefined,
       undefined,
@@ -201,6 +203,27 @@ describe('MCP do próprio gateway (integração)', () => {
     } finally {
       delete process.env.SELF_MCP_WRITE
     }
+  })
+
+  it('⛔ o admin só de projeto vê as ferramentas de admin, menos as de sistema (providers, modelos, pacotes)', async () => {
+    const biaId = (await call('/users', { method: 'POST', token: admin, body: { email: 'bia@x.test', name: 'Bia', password: PASSWORD } })).result.id
+    makeProjects().create({ id: 'beta-mcp', name: 'Beta' }, 'teste', 'api', biaId)
+    const bia = (await call('/auth/login', { method: 'POST', body: { email: 'bia@x.test', password: PASSWORD } })).result.token
+    const listed = await names(bia)
+    for (const tool of ['list_errors', 'usage_by_key', 'save_agent', 'save_permission_rules', 'save_hook', 'list_secret_names']) assert.ok(listed.includes(tool), tool)
+    for (const tool of [
+      'list_providers',
+      'list_models',
+      'list_model_groups',
+      'list_packages',
+      'search_packages',
+      'install_package',
+      'remove_package',
+      'set_model_enabled',
+      'set_model_price',
+    ])
+      assert.ok(!listed.includes(tool), tool)
+    assert.ok((await names(admin)).includes('list_providers'))
   })
 
   it('set_model_price grava como preço manual; list_tools mostra locais, nativas e MCPs', async () => {

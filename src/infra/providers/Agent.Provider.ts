@@ -67,8 +67,11 @@ export function adapterKey(provider: EProvider, mode: EMode): string {
 }
 
 export class AgentProvider implements IAgentProvider {
-  /** As sessões abertas por administrador provado — é o que a filha de uma delegação herda. */
-  private readonly adminSessions = new Set<string>()
+  /**
+   * As sessões abertas por administrador provado, com o escopo que ele administra (o projeto do agente; `null` = o
+   * global, do gateway) — é o que a filha de uma delegação herda, e só no MESMO escopo.
+   */
+  private readonly adminSessions = new Map<string, string | null>()
 
   constructor(
     private readonly adapters: Map<string, IAgentAdapter>,
@@ -167,7 +170,11 @@ export class AgentProvider implements IAgentProvider {
     const protocol = this.protocolOf(choice.provider)
     const mode = resolveSessionMode(agent, input, lanesOf(protocol))
     // A filha de uma delegação vale o que a mãe vale: admin só se a mãe foi aberta por admin.
-    const admin = !!input.adminAccess || (!!input.delegated && !!input.parentSessionId && this.adminSessions.has(input.parentSessionId))
+    // ⛔ E só no mesmo escopo: o admin de um projeto não herda o agente global (nem o de outro projeto) pela delegação.
+    const scope = agent.projectId ?? null
+    const admin =
+      !!input.adminAccess ||
+      (!!input.delegated && !!input.parentSessionId && this.adminSessions.has(input.parentSessionId) && this.adminSessions.get(input.parentSessionId) === scope)
     // ⛔ Só admin quando QUEM CRIOU o agente marcou — nunca inferido do provider ou das ferramentas.
     if (agent.adminOnly && !admin) throw new AgentAdminOnlyError(agent.id)
     // ⛔ Subagente: só pela delegação. Aqui, e não na tela, porque é por aqui que todo caminho passa.
@@ -186,9 +193,9 @@ export class AgentProvider implements IAgentProvider {
       mode,
     })
     if (admin) {
-      this.adminSessions.add(created.id)
+      this.adminSessions.set(created.id, scope)
       // Sessão que o store já despejou não precisa mais da marca.
-      if (this.adminSessions.size > 1000) for (const id of this.adminSessions) if (!this.sessions.get(id)) this.adminSessions.delete(id)
+      if (this.adminSessions.size > 1000) for (const id of this.adminSessions.keys()) if (!this.sessions.get(id)) this.adminSessions.delete(id)
     }
     return created
   }
@@ -674,7 +681,8 @@ export class AgentProvider implements IAgentProvider {
       ...(typeof parent === 'string' ? { delegated: true, parentSessionId: parent } : {}),
     })
     if (!this.sessions.adopt(created.id, stored.id)) return
-    if (this.adminSessions.delete(created.id)) this.adminSessions.add(stored.id)
+    const adminScope = this.adminSessions.get(created.id)
+    if (this.adminSessions.delete(created.id)) this.adminSessions.set(stored.id, adminScope ?? null)
 
     const record = this.sessions.get(stored.id)!
     const transcript = input.turns.map((turn) => ({

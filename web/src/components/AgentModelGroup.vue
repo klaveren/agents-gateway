@@ -1,7 +1,7 @@
 <script setup lang="ts">
   import { computed, onMounted, ref, watch } from 'vue'
   import FallbackChain from './FallbackChain.vue'
-  import { ApiError } from '@/lib/api'
+  import { api, ApiError } from '@/lib/api'
   import { DEFAULT_COOLDOWN_MINUTES, DEFAULT_SWITCH_ON, NO_MODEL_GROUP, SWITCH_OPTIONS } from '@/lib/modelGroups'
   import type { IFallbackStep, IModelGroup, IProviderStatus, TSwitchFailure } from '@/lib/types'
   import { useAgentsStore } from '@/stores/agents'
@@ -29,8 +29,13 @@
     void agents.ensure().catch(() => undefined)
   })
 
-  const groups = computed(() => settings.current?.modelGroups ?? [])
-  const defaultId = computed(() => settings.current?.defaultModelGroup)
+  /** Quem só administra o projeto não lê as Configurações: as sequências vêm da leitura própria delas (`/model-groups`). */
+  const readOnly = ref<{ groups: IModelGroup[]; defaultModelGroup?: string }>()
+  onMounted(() => {
+    if (!auth.isAdmin) void api<{ groups: IModelGroup[]; defaultModelGroup?: string }>('/model-groups').then((found) => (readOnly.value = found), () => undefined)
+  })
+  const groups = computed(() => (auth.isAdmin ? (settings.current?.modelGroups ?? []) : (readOnly.value?.groups ?? [])))
+  const defaultId = computed(() => (auth.isAdmin ? settings.current?.defaultModelGroup : readOnly.value?.defaultModelGroup))
   const defaultName = computed(() => groups.value.find((group) => group.id === defaultId.value)?.name ?? 'nenhum')
   /** O grupo que vale para o agente: o escolhido, ou o padrão quando a escolha é "Padrão". */
   const effective = computed(() => {

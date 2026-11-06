@@ -75,8 +75,10 @@ export const useAuthStore = defineStore('auth', () => {
       .load()
       .catch(() => undefined)
     const conversations = useConversationsStore()
-    conversations.subscribe(isAdmin.value)
-    void conversations.load(isAdmin.value)
+    // ⚖️ "De todos" vale para o admin do gateway e para quem administra o projeto atual (os projetos já foram lidos).
+    const everyone = useProjectsStore().seesAll
+    conversations.subscribe(everyone)
+    void conversations.load(everyone)
     const settings = useSettingsStore()
     const agents = useAgentsStore()
     await Promise.all([

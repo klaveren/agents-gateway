@@ -22,6 +22,12 @@ export const useProjectsStore = defineStore('projects', () => {
   const loaded = ref(false)
 
   const currentProject = computed(() => list.value.find((project) => project.id === current.value))
+  /** ⛔ Administra o projeto ATUAL: o catálogo, os agentes e as regras dele (o admin do gateway só se for admin dele). */
+  const manages = computed(() => currentProject.value?.role === 'admin')
+  /** Vê as conversas de todos: o admin do gateway, ou quem administra o projeto atual. */
+  const seesAll = computed(() => useAuthStore().isAdmin || manages.value)
+  /** Administra algum projeto (a guia Projetos, para cuidar dos membros). */
+  const managesAny = computed(() => list.value.some((project) => project.role === 'admin'))
   /** O `?project=` das listas: vazio quando não há projeto (gateway sem projetos ainda). */
   const query = computed(() => {
     const out: Record<string, string> = {}
@@ -62,7 +68,7 @@ export const useProjectsStore = defineStore('projects', () => {
   async function select(id: string): Promise<void> {
     if (id === current.value) return
     setCurrent(id)
-    const admin = useAuthStore().isAdmin
+    const admin = seesAll.value
     useThreadStore().reset()
     const conversations = useConversationsStore()
     conversations.subscribe(admin)
@@ -115,5 +121,5 @@ export const useProjectsStore = defineStore('projects', () => {
     list.value = list.value.map((one) => (one.id === id ? { ...one, members: saved.length } : one))
   }
 
-  return { list, current, currentProject, query, loaded, load, ensure, select, reset, create, update, remove, memberLists, members, setMembers }
+  return { list, current, currentProject, manages, managesAny, seesAll, query, loaded, load, ensure, select, reset, create, update, remove, memberLists, members, setMembers }
 })
