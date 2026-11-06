@@ -3038,6 +3038,17 @@ export const OPENAPI_DOCUMENT = {
         responses: { '201': { description: 'Created', ...json(envelope(docSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
     },
+    '/docs/{id}/shares': {
+      put: {
+        summary:
+          'Replace the whole list of projects this spec or knowledge is shared with (read-only there; the source project keeps it). Administrators of the source project and of every project added; anyone else gets 404',
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { type: 'object', required: ['projects'], properties: { projects: { type: 'array', items: { type: 'string' } } } } } },
+        },
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object' })) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
     '/docs/{id}': {
       get: {
         summary: 'One spec or ADR, body included. Administrators only',
@@ -3284,6 +3295,17 @@ export const OPENAPI_DOCUMENT = {
         summary: 'Create a skill or a command. Administrators only',
         requestBody: { required: true, ...json({ ...resourceSchema, required: ['id', 'kind', 'description', 'body'] }) },
         responses: { '201': { description: 'Created', ...json(envelope(resourceSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/resources/{id}/shares': {
+      put: {
+        summary:
+          'Replace the whole list of projects this skill or command is shared with (read-only there; the source project keeps it). Administrators of the source project and of every project added; anyone else gets 404',
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { type: 'object', required: ['projects'], properties: { projects: { type: 'array', items: { type: 'string' } } } } } },
+        },
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object' })) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
     },
     '/resources/{id}': {

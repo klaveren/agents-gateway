@@ -113,12 +113,18 @@ const ADDED_COLUMNS: ReadonlyArray<{ table: string; column: string; definition: 
   { table: 'resources', column: 'tags', definition: "TEXT NOT NULL DEFAULT '[]'" },
   { table: 'project_docs', column: 'tags', definition: "TEXT NOT NULL DEFAULT '[]'" },
   { table: 'rules', column: 'tags', definition: "TEXT NOT NULL DEFAULT '[]'" },
+  // Os projetos com que o item é compartilhado (ver `Share.Policy`).
+  { table: 'resources', column: 'shared_with', definition: "TEXT NOT NULL DEFAULT '[]'" },
+  { table: 'project_docs', column: 'shared_with', definition: "TEXT NOT NULL DEFAULT '[]'" },
   // O status e a substituição do documento (ver `TDocStatus`); sem status = aceito.
   { table: 'project_docs', column: 'status', definition: 'TEXT' },
   { table: 'project_docs', column: 'supersedes', definition: "TEXT NOT NULL DEFAULT '[]'" },
 ]
 
 type TRow = Record<string, unknown>
+
+/** O item que o projeto (`?`) recebe compartilhado: está na lista `shared_with` (JSON). */
+const SHARED_WITH = 'EXISTS (SELECT 1 FROM json_each(shared_with) WHERE value = ?)'
 
 const RULE_COLUMNS: Record<keyof TRulePatch, string> = {
   projectId: 'project_id',
@@ -142,6 +148,7 @@ const DOC_COLUMNS: Record<keyof TDocPatch, string> = {
   status: 'status',
   supersedes: 'supersedes',
   tags: 'tags',
+  sharedWith: 'shared_with',
   updatedAt: 'updated_at',
   updatedBy: 'updated_by',
 }
@@ -249,6 +256,13 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
     return (this.db.prepare(`SELECT * FROM project_docs WHERE ${where} ORDER BY kind, title COLLATE NOCASE`).all(...params) as TRow[]).map(toDoc)
   }
 
+  docsSharedWith(projectId: string, kind?: TDocKind): IProjectDoc[] {
+    const params = [projectId, ...(kind ? [kind] : [])]
+    return (this.db.prepare(`SELECT * FROM project_docs WHERE ${SHARED_WITH}${kind ? ' AND kind = ?' : ''} ORDER BY kind, title COLLATE NOCASE`).all(...params) as TRow[]).map(
+      toDoc,
+    )
+  }
+
   doc(id: string): IProjectDoc | undefined {
     const row = this.db.prepare('SELECT * FROM project_docs WHERE id = ?').get(id) as TRow | undefined
     return row ? toDoc(row) : undefined
@@ -257,7 +271,7 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
   insertDoc(doc: IProjectDoc): void {
     this.db
       .prepare(
-        'INSERT INTO project_docs (id, kind, project_id, title, summary, body, doc_ids, doc_refs, import_issues, tags, status, supersedes, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO project_docs (id, kind, project_id, title, summary, body, doc_ids, doc_refs, import_issues, tags, shared_with, status, supersedes, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         doc.id,
@@ -270,6 +284,7 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
         JSON.stringify(doc.docRefs ?? []),
         JSON.stringify(doc.importIssues ?? []),
         JSON.stringify(doc.tags ?? []),
+        JSON.stringify(doc.sharedWith ?? []),
         doc.status ?? null,
         JSON.stringify(doc.supersedes ?? []),
         doc.createdAt.toISOString(),
@@ -346,6 +361,11 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
     return (this.db.prepare(`SELECT * FROM resources WHERE ${where} ORDER BY id`).all(...params) as TRow[]).map(toResource)
   }
 
+  resourcesSharedWith(projectId: string, kind?: TResourceKind): IResource[] {
+    const params = [projectId, ...(kind ? [kind] : [])]
+    return (this.db.prepare(`SELECT * FROM resources WHERE ${SHARED_WITH}${kind ? ' AND kind = ?' : ''} ORDER BY id`).all(...params) as TRow[]).map(toResource)
+  }
+
   resource(id: string): IResource | undefined {
     const row = this.db.prepare('SELECT * FROM resources WHERE id = ?').get(id) as TRow | undefined
     return row ? toResource(row) : undefined
@@ -354,9 +374,9 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
   saveResource(resource: IResource): void {
     this.db
       .prepare(
-        `INSERT INTO resources (id, kind, project_id, description, body, doc_ids, doc_refs, files, import_issues, triggers, tags, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO resources (id, kind, project_id, description, body, doc_ids, doc_refs, files, import_issues, triggers, tags, shared_with, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, project_id = excluded.project_id, description = excluded.description, body = excluded.body,
-           doc_ids = excluded.doc_ids, doc_refs = excluded.doc_refs, files = excluded.files, import_issues = excluded.import_issues, triggers = excluded.triggers, tags = excluded.tags,
+           doc_ids = excluded.doc_ids, doc_refs = excluded.doc_refs, files = excluded.files, import_issues = excluded.import_issues, triggers = excluded.triggers, tags = excluded.tags, shared_with = excluded.shared_with,
            updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
       )
       .run(
@@ -371,6 +391,7 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
         JSON.stringify(resource.importIssues ?? []),
         JSON.stringify(resource.triggers ?? []),
         JSON.stringify(resource.tags ?? []),
+        JSON.stringify(resource.sharedWith ?? []),
         resource.createdAt.toISOString(),
         resource.updatedAt.toISOString(),
         resource.updatedBy ?? null,
@@ -524,6 +545,7 @@ function toDoc(row: TRow): IProjectDoc {
     ...(tags.length ? { tags } : {}),
     ...(status ? { status } : {}),
     ...(supersedes.length ? { supersedes } : {}),
+    ...(idList(row.shared_with).length ? { sharedWith: idList(row.shared_with) } : {}),
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
     ...(row.updated_by ? { updatedBy: row.updated_by as string } : {}),
@@ -549,6 +571,7 @@ function toResource(row: TRow): IResource {
     ...(importIssues.length ? { importIssues } : {}),
     ...(triggers.length ? { triggers } : {}),
     ...(tags.length ? { tags } : {}),
+    ...(idList(row.shared_with).length ? { sharedWith: idList(row.shared_with) } : {}),
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
     ...(row.updated_by ? { updatedBy: row.updated_by as string } : {}),

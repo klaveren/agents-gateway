@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { builderKindOf, PROTOCOLS } from '@domain/Builder.Agents'
 import { estimateTokens } from '@domain/Token.Estimate'
 import { triggerIssues } from '@domain/Agent.Policy'
+import { normalizeShares, shareIssues } from '@domain/Share.Policy'
 import { normalizeTags, tagIssues } from '@domain/Tag.Policy'
 import type { IAgentTrigger } from '@domain/models/Agent.Model'
 import { AgentNotFoundError, GuidanceNotFoundError, InvalidGuidanceError, ProjectNotFoundError } from '@domain/errors/Domain.Error'
@@ -318,6 +319,11 @@ export class GuidanceService {
     return this.repository.docs(scope, kind)
   }
 
+  /** As specs e os conhecimentos que outros projetos compartilham com este (só leitura aqui). */
+  sharedDocs(projectId: string, kind?: TDocKind): IProjectDoc[] {
+    return this.repository.docsSharedWith(projectId, kind)
+  }
+
   doc(id: string): IProjectDoc {
     const doc = this.repository.doc(id)
     if (!doc) throw new GuidanceNotFoundError('doc', id)
@@ -370,6 +376,7 @@ export class GuidanceService {
     if (!next.supersedes?.length) delete next.supersedes
     if (scope) next.projectId = scope
     else delete next.projectId
+    const sharedWith = sharesAfterMove(current.sharedWith, scope)
     // Sem `docRefs` na edição, ficam os de antes — menos os que deixaram de estar anexados.
     const docIds = next.docIds ?? []
     const refs = input.docRefs ?? (current.docRefs ?? []).filter((docId) => docIds.includes(docId))
@@ -387,7 +394,7 @@ export class GuidanceService {
       tags: next.tags ?? [],
       status: next.status ?? 'accepted',
       supersedes: next.supersedes ?? [],
-      ...(input.projectId !== undefined ? { projectId: scope } : {}),
+      ...(input.projectId !== undefined ? { projectId: scope, sharedWith } : {}),
       updatedAt: this.now(),
       updatedBy: by,
     })!
@@ -831,6 +838,11 @@ export class GuidanceService {
     return this.repository.resources(scope, kind)
   }
 
+  /** As skills e os commands que outros projetos compartilham com este (só leitura aqui). */
+  sharedResources(projectId: string, kind?: TResourceKind): IResource[] {
+    return this.repository.resourcesSharedWith(projectId, kind)
+  }
+
   resource(id: string): IResource {
     const resource = this.repository.resource(id)
     if (!resource) throw new GuidanceNotFoundError('resource', id)
@@ -890,6 +902,9 @@ export class GuidanceService {
     if (refs.length) next.docRefs = refs
     else delete next.docRefs
     if (!next.projectId) delete next.projectId
+    const sharedWith = sharesAfterMove(current.sharedWith, next.projectId)
+    if (sharedWith.length) next.sharedWith = sharedWith
+    else delete next.sharedWith
     this.check([...tagIssues(input.tags), ...this.resourceIssues(next)], next.projectId)
     this.repository.saveResource(next)
     // Mudou de escopo: a pasta muda de lugar (a do escopo antigo sai).
@@ -909,6 +924,32 @@ export class GuidanceService {
     this.repository.saveResource(next)
     this.history.record([{ kind: resource.kind, id }], { by })
     return next
+  }
+
+  /**
+   * ⛔ Troca a lista INTEIRA de projetos com que a skill ou o command é compartilhado (ver `Share.Policy`). Quem pode
+   * (admin da origem e de cada destino novo) o controller decide; aqui, o que o item aceita. Vai para o histórico.
+   */
+  shareResource(id: string, projects: readonly string[], by: string): IResource {
+    const resource = this.resource(id)
+    const next = normalizeShares(projects)
+    this.check(shareIssues(resource, next, this.projectExists), undefined)
+    const saved: IResource = { ...resource, updatedAt: this.now(), updatedBy: by }
+    if (next.length) saved.sharedWith = next
+    else delete saved.sharedWith
+    this.repository.saveResource(saved)
+    this.history.record([{ kind: resource.kind, id }], { by })
+    return saved
+  }
+
+  /** O mesmo na spec e no conhecimento (ADR não se compartilha). */
+  shareDoc(id: string, projects: readonly string[], by: string): IProjectDoc {
+    const doc = this.doc(id)
+    const next = normalizeShares(projects)
+    this.check(shareIssues(doc, next, this.projectExists), undefined)
+    const saved = this.repository.updateDoc(id, { sharedWith: next, updatedAt: this.now(), updatedBy: by })!
+    this.history.record([{ kind: doc.kind, id }], { by })
+    return saved
   }
 
   /** Apaga e tira o recurso dos agentes que o liberavam; cada agente atingido ganha revisão também, com o mesmo autor. */
@@ -1071,6 +1112,15 @@ export class GuidanceService {
   /** O projeto foi apagado: as rules e os documentos dele vão junto. */
   removeProject(projectId: string): void {
     this.repository.deleteProject(projectId)
+    // ⛔ O projeto apagado sai das listas de compartilhamento dos outros (um projeto novo com o mesmo id não herda).
+    for (const resource of this.repository.resourcesSharedWith(projectId)) {
+      const rest = (resource.sharedWith ?? []).filter((id) => id !== projectId)
+      const next: IResource = { ...resource }
+      if (rest.length) next.sharedWith = rest
+      else delete next.sharedWith
+      this.repository.saveResource(next)
+    }
+    for (const doc of this.repository.docsSharedWith(projectId)) this.repository.updateDoc(doc.id, { sharedWith: (doc.sharedWith ?? []).filter((id) => id !== projectId) })
   }
 
   /**
@@ -1415,3 +1465,8 @@ function contextView(docs: readonly IProjectDoc[]): { docs: IContextDoc[]; total
 }
 
 const ruleKey = (id: string): ICatalogItemKey => ({ kind: 'rule', id })
+
+/** O item mudou de escopo: o novo projeto sai da lista (é dele agora); virou global, a lista some (vale para todos). */
+function sharesAfterMove(shared: readonly string[] | undefined, scope: string | null | undefined): string[] {
+  return scope ? (shared ?? []).filter((id) => id !== scope) : []
+}
