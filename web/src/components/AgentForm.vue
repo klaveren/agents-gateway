@@ -1489,10 +1489,10 @@
     <!-- O rodapé com o Salvar fica preso embaixo, à vista em qualquer guia, por mais longa que seja. -->
     <div v-show="tab !== 'hooks' && tab !== 'agendamentos' && tab !== 'memoria' && tab !== 'historico'" class="form-footer flex gap-2">
       <button type="submit" :disabled="saving || !ready || !!loadError || !form.providers.length" class="btn btn-primary">
-        {{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar' }}
+        {{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar agente' }}
       </button>
       <button v-if="!creating && agent" type="button" class="btn btn-secondary" @click="emit('duplicate', agent)">Duplicar agente</button>
-      <button v-if="!creating && agent" type="button" class="btn btn-danger ml-auto" @click="confirming = true">Apagar</button>
+      <button v-if="!creating && agent" type="button" class="btn btn-danger ml-auto" @click="confirming = true">Apagar agente</button>
     </div>
     <ConfirmDialog
       :open="confirmingSave"
