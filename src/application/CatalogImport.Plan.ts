@@ -32,6 +32,7 @@ import { PROJECT_ID_PATTERN } from '@domain/models/Project.Model'
 import { DOC_ID_PATTERN, TDocKind } from '@domain/models/ProjectDoc.Model'
 import { ALL_RESOURCES, RESOURCE_ID_PATTERN, TResourceKind } from '@domain/models/Resource.Model'
 import { permissionIssues } from '@domain/Permission.Policy'
+import { normalizeShares, shareIssues } from '@domain/Share.Policy'
 import { diffText } from '@domain/Text.Diff'
 import { attachIssuesIn, docIssues, grantIssuesIn, IGuidanceLookup, resourceIssuesIn, ruleIssues, specIssuesIn } from './Guidance.Service'
 import { mcpScopeIssue, mcpServerIssues, McpServersService, SELF_MCP_SERVER_ID } from './McpServers.Service'
@@ -228,6 +229,15 @@ export class CatalogImportPlanner {
       }
     }
     for (const draft of drafts.filter(writing)) view.bring(draft.target!)
+    // O `sharedWith` do pacote contra ESTE gateway (os projetos de lá podem não existir aqui): limpa antes de validar.
+    for (const draft of drafts.filter(writing)) {
+      const cleaned = cleanShares(draft.target!, view)
+      if (cleaned === draft.target) continue
+      draft.target = cleaned
+      view.bring(cleaned)
+      // Limpo, ficou igual ao que já está aqui (o global que vinha com a lista): nada a gravar.
+      if (draft.current?.hash === cleaned.hash) draft.op = 'unchanged'
+    }
 
     const rules = this.deps.agentRules ? await this.deps.agentRules() : undefined
     for (const draft of drafts.filter(writing)) {
@@ -502,6 +512,7 @@ export class CatalogImportPlanner {
           }),
         )
         projectIssue()
+        issues.push(...sharingIssues(document, view))
         return issues
       case 'spec':
       case 'adr':
@@ -512,6 +523,7 @@ export class CatalogImportPlanner {
           ...attachIssuesIn(view.lookup, { ...(projectId ? { projectId } : {}), docIds: list(body.docIds), docRefs: list(body.docRefs) }, id),
         )
         projectIssue()
+        issues.push(...sharingIssues(document, view))
         return issues
       case 'rule':
         issues.push(...ruleIssues({ title: text(body.title), body: text(body.body) }))
@@ -611,6 +623,42 @@ export class CatalogImportPlanner {
     }
     return issues
   }
+}
+
+/** Os tipos com `sharedWith` no documento (ADR também o carrega na forma, mas não se compartilha: vira problema). */
+const SHARING_KINDS: readonly TCatalogKind[] = ['skill', 'command', 'spec', 'adr', 'knowledge']
+
+/**
+ * ⛔ O `sharedWith` que vem de OUTRO gateway (ou do mesmo, de antes): item global não compartilha (limpa); projeto que não
+ * existe aqui — nem no catálogo nem no pacote — sai da lista e vira problema da importação (`link-missing`, no item,
+ * para a pessoa ver e resolver); o próprio projeto do item sai calado. Quem pode acrescentar é o apply (`gateShares`).
+ */
+function cleanShares(document: ICatalogDocument, view: CatalogView): ICatalogDocument {
+  if (!SHARING_KINDS.includes(document.kind)) return document
+  const shares = normalizeShares(list(document.body.sharedWith))
+  if (!document.body.sharedWith) return document
+  const { sharedWith: _sharedWith, ...rest } = document.body
+  if (!document.projectId) return withBody(document, rest)
+  const kept = shares.filter((project) => project !== document.projectId && !!view.get('project', project))
+  const missing = shares.filter((project) => project !== document.projectId && !view.get('project', project))
+  if (kept.length === list(document.body.sharedWith).length) return document
+  const known = Array.isArray(rest.importIssues) ? rest.importIssues : []
+  const problems = missing.map((project): TCanonicalValue => ({ code: 'link-missing', message: `compartilhado com o projeto ${project}, que não existe aqui`, target: project }))
+  return withBody(document, {
+    ...rest,
+    ...(kept.length ? { sharedWith: kept } : {}),
+    ...(known.length + problems.length ? { importIssues: [...known, ...problems] } : {}),
+  })
+}
+
+/** As regras do serviço (`shareIssues`) sobre o que sobrou da lista, com o catálogo-como-ficaria. */
+function sharingIssues(document: ICatalogDocument, view: CatalogView): TIssues {
+  const shares = list(document.body.sharedWith)
+  if (!shares.length) return []
+  return shareIssues({ kind: document.kind, ...(document.projectId ? { projectId: document.projectId } : {}) }, shares, (id) => !!view.get('project', id)).map((issue) => ({
+    field: 'sharedWith',
+    message: issue.message,
+  }))
 }
 
 /** O escopo do manifesto (`all`, `global`, `project:<id>`); o que não se reconhece fica de fora. */

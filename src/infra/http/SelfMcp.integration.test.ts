@@ -194,6 +194,8 @@ describe('MCP do próprio gateway (integração)', () => {
       'set_model_enabled',
       'set_model_price',
       'set_project_members',
+      'share_doc',
+      'share_resource',
     ]
     assert.deepStrictEqual(await names(member), common)
     assert.deepStrictEqual(await names(admin), [...common, ...adminRead, ...write].sort())
@@ -322,6 +324,36 @@ describe('MCP do próprio gateway (integração)', () => {
     assert.deepStrictEqual(json(await client.callTool({ name: 'hook_deliveries', arguments: { agentId: 'atlas', name: 'deploy' } })), [])
     await client.callTool({ name: 'delete_hook', arguments: { agentId: 'atlas', name: 'deploy' } })
     assert.deepStrictEqual(json(await client.callTool({ name: 'list_hooks', arguments: { agentId: 'atlas' } })), [])
+  })
+
+  it('share_doc e share_resource chamam as rotas de compartilhar; o agente (identidade no header) é recusado, a pessoa passa', async () => {
+    const client = await connect(admin)
+    for (const id of ['orig-mcp', 'dest-mcp']) await client.callTool({ name: 'save_project', arguments: { id, name: id } })
+    await client.callTool({ name: 'save_doc', arguments: { id: 'guia-mcp', kind: 'knowledge', projectId: 'orig-mcp', title: 'Guia', summary: 's', body: 'b' } })
+    await client.callTool({ name: 'save_resource', arguments: { id: 'skill-mcp', kind: 'skill', projectId: 'orig-mcp', description: 'D', body: 'b' } })
+
+    const doc = json(await client.callTool({ name: 'share_doc', arguments: { id: 'guia-mcp', projects: ['dest-mcp'] } }))
+    const resource = json(await client.callTool({ name: 'share_resource', arguments: { id: 'skill-mcp', projects: ['dest-mcp'] } }))
+    assert.deepStrictEqual([doc.sharedWith, resource.sharedWith], [['dest-mcp'], ['dest-mcp']])
+    // O que a API manda (`sharedFrom`) é o que list_docs / list_resources mostram.
+    const seen = json(await client.callTool({ name: 'list_docs', arguments: { projectId: 'dest-mcp' } }))
+    assert.ok(seen.some((item: { id: string; sharedFrom?: string }) => item.id === 'guia-mcp' && item.sharedFrom === 'orig-mcp'))
+
+    // ⛔ O agente da conversa não compartilha, nem com o projeto dele.
+    const agent = new Client({ name: 'agente', version: '1.0.0' })
+    await agent.connect(
+      new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
+        requestInit: { headers: { 'X-Tool-Authorization': `Bearer ${admin}`, 'x-gateway-agent': 'agent-x', 'x-gateway-project': 'orig-mcp' } },
+      }),
+    )
+    for (const [name, id] of [
+      ['share_doc', 'guia-mcp'],
+      ['share_resource', 'skill-mcp'],
+    ]) {
+      const refused = (await agent.callTool({ name, arguments: { id, projects: [] } })) as { isError?: boolean }
+      assert.strictEqual(refused.isError, true, name)
+    }
+    assert.deepStrictEqual(json(await client.callTool({ name: 'get_doc', arguments: { id: 'guia-mcp' } })).sharedWith, ['dest-mcp'])
   })
 
   it('⚖️ save_doc sem teto: 300 KB passa pelo MCP e pela API, e get_doc devolve inteiro', async () => {

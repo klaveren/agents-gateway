@@ -413,6 +413,13 @@ export class CatalogWideningForbiddenError extends DomainError {
   }
 }
 
+/** ⛔ A troca ACRESCENTA projetos ao `sharedWith` que quem pede não administra: compartilhar é só com projeto que se administra. */
+export class CatalogShareForbiddenError extends DomainError {
+  constructor(public readonly projects: readonly string[]) {
+    super(`This change shares an item with projects you do not administer: ${projects.join(', ')}`)
+  }
+}
+
 /**
  * ⛔ O PLANO MUDOU: o `planHash` do pedido não é o do plano recalculado agora (alguém mexeu no catálogo, ou o pacote é
  * outro). Nada foi gravado; volta o plano novo para a pessoa rever.

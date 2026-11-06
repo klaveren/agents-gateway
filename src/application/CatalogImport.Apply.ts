@@ -9,7 +9,7 @@ import type { CatalogReader } from './Catalog.Reader'
 import type { ICatalogWriter, IPreparedWrite } from './Catalog.Writer'
 import { catalogItemKey, CatalogHistoryService, ICatalogChange } from './CatalogHistory.Service'
 import type { CatalogImportPlanner, IPlanOptions, IPlanWithTargets } from './CatalogImport.Plan'
-import { gateWidenings, IRestoreCaller } from './CatalogRestore.Usecase'
+import { gateShares, gateWidenings, IRestoreCaller } from './CatalogRestore.Usecase'
 
 /** O que se aplica: o pacote do export OU os documentos canônicos (o importador entra direto aqui, sem arquivos). */
 export type TImportSource = { package: IPackageInput; documents?: undefined } | { documents: readonly ICatalogDocument[]; package?: undefined }
@@ -121,6 +121,8 @@ export class CatalogImportApplier {
     const blockers = blockersOf(plan)
     if (blockers.length) throw new CatalogImportBlockedError(blockers)
     gateWidenings(plan.widenings, request.confirm, caller)
+    // ⛔ Acrescentar projeto ao `sharedWith` pelo import exige o admin dele (como a rota de compartilhar).
+    for (const target of targets.values()) gateShares(this.deps.reader.read(target.kind, target.id, target.projectId), target, caller)
 
     const result: IImportApplyResult = {
       planHash: plan.planHash,

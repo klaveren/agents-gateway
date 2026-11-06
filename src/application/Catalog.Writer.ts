@@ -8,6 +8,7 @@ import { IMcpContainer, IMcpProcess, IMcpServerConfig, mcpServerKey, TMcpAuth, T
 import { TDocKind, TDocStatus } from '@domain/models/ProjectDoc.Model'
 import { ALL_RESOURCES, IAgentResources, TResourceKind } from '@domain/models/Resource.Model'
 import { IPermissionRule } from '@domain/Permission.Policy'
+import { normalizeShares, shareIssues } from '@domain/Share.Policy'
 import type { AgentCatalog } from './Agent.Catalog'
 import type { GuidanceService } from './Guidance.Service'
 import type { McpServersService } from './McpServers.Service'
@@ -51,6 +52,8 @@ export interface ICatalogWriterDeps {
     | 'doc'
     | 'createDoc'
     | 'updateDoc'
+    | 'shareResource'
+    | 'shareDoc'
     | 'deleteDoc'
     | 'setProtocolAddendum'
     | 'setInitialContext'
@@ -190,10 +193,13 @@ export class CatalogWriter implements ICatalogWriter {
       triggers: triggersOf(body.triggers),
       tags: list(body.tags),
     }
+    // ⛔ Com quem o item é compartilhado (ver `Share.Policy`): as regras do serviço, antes de gravar.
+    const shares = this.sharesOf(target, kind)
     return {
       commit: (by) => {
         if (existing) guidance.updateResource(target.id, input, by)
         else guidance.createResource({ ...input, id: target.id, kind }, by)
+        if (!sameShares(quietly(() => guidance.resource(target.id))?.sharedWith, shares)) guidance.shareResource(target.id, shares, by)
       },
     }
   }
@@ -231,12 +237,27 @@ export class CatalogWriter implements ICatalogWriter {
       status: (text(body.status) || 'accepted') as TDocStatus,
       supersedes: list(body.supersedes),
     }
+    const shares = this.sharesOf(target, kind)
     return {
       commit: (by) => {
         if (existing) guidance.updateDoc(target.id, input, by)
         else guidance.createDoc({ ...input, id: target.id }, by)
+        if (!sameShares(quietly(() => guidance.doc(target.id))?.sharedWith, shares)) guidance.shareDoc(target.id, shares, by)
       },
     }
+  }
+
+  /**
+   * Os projetos com que o documento compartilha, já conferidos nas regras de hoje (`shareIssues`: o projeto existe, o tipo
+   * compartilha, o item não é global). Quem pode acrescentar é a trava do chamador (`gateShares`), não daqui.
+   */
+  private sharesOf(target: ICatalogDocument, kind: string): string[] {
+    const shares = normalizeShares(list(target.body.sharedWith))
+    if (!shares.length) return []
+    const projectId = text(target.body.projectId) || undefined
+    const issues = shareIssues({ kind, ...(projectId ? { projectId } : {}) }, shares, (id) => !!this.deps.projects?.exists(id))
+    if (issues.length) throw new CatalogRestoreInvalidError(issues.map((issue) => ({ field: 'sharedWith', message: issue.message })))
+    return shares
   }
 
   /** Corpo vazio apaga o complemento (a regra de `setProtocolAddendum`). */
@@ -336,6 +357,12 @@ export class CatalogWriter implements ICatalogWriter {
       },
     }
   }
+}
+
+/** A mesma lista de projetos, sem contar a ordem (ausente = vazia). */
+function sameShares(current: readonly string[] | undefined, next: readonly string[]): boolean {
+  const have = [...(current ?? [])].sort()
+  return have.length === next.length && [...next].sort().every((project, index) => project === have[index])
 }
 
 /** A lista de arquivos de um corpo do catálogo (o que não tiver a forma, a regra do recurso recusa). */

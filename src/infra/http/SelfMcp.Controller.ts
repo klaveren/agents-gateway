@@ -1207,6 +1207,16 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   )
 
   server.registerTool(
+    'share_resource',
+    {
+      description:
+        'Share a skill or a command with other projects, which then use it read-only (the owner project keeps editing it, and its secrets stay out: each project sets its own values). Replaces the WHOLE list of projects; [] stops sharing. The person must administer the owner project and each project added. Not available to an agent conversation. Confirm with the person first.',
+      inputSchema: { id: z.string().describe('From list_resources'), projects: z.array(z.string()).describe('Project ids; the full list, [] = none') },
+    },
+    async ({ id, projects }) => reply(await api('PUT', `/resources/${encodeURIComponent(id)}/shares`, { body: { projects } })),
+  )
+
+  server.registerTool(
     'set_agent_resources',
     {
       description:
@@ -1232,6 +1242,16 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
       const base = kind === 'agent' ? '/agents' : kind === 'resource' ? '/resources' : '/docs'
       return reply(await api('POST', `${base}/${encodeURIComponent(id)}/import-issues/resolve`, { body: { code, ...(target ? { target } : {}) } }), savedEcho)
     },
+  )
+
+  server.registerTool(
+    'share_doc',
+    {
+      description:
+        'Share a spec or a knowledge study with other projects, which then read it (the owner project keeps editing it). ADRs are not shared. Replaces the WHOLE list of projects; [] stops sharing. The person must administer the owner project and each project added. Not available to an agent conversation. Confirm with the person first.',
+      inputSchema: { id: z.string().describe('From list_docs'), projects: z.array(z.string()).describe('Project ids; the full list, [] = none') },
+    },
+    async ({ id, projects }) => reply(await api('PUT', `/docs/${encodeURIComponent(id)}/shares`, { body: { projects } })),
   )
 
   server.registerTool(
