@@ -58,10 +58,17 @@ export function attachedRefs(docIds: readonly string[], docRefs: readonly string
 
 /**
  * Os documentos que um documento do escopo dado pode anexar (`null` = global): os globais e, num de projeto, os do mesmo
- * projeto — o global só anexa global. Nunca ele mesmo. A mesma regra do servidor.
+ * projeto — o global só anexa global. Nunca ele mesmo. A mesma regra do servidor. Em item de projeto entram também os
+ * compartilhados com ele (`sharedFrom`, que a lista só traz quando o projeto da consulta os recebe): anexar vale, só leitura.
+ * ⛔ Substituir NÃO usa isto: continua só do mesmo escopo (`withoutShared`).
  */
-export function attachableDocs<T extends { id: string; projectId?: string }>(docs: readonly T[], projectId: string | null, selfId?: string): T[] {
-  return docs.filter((doc) => doc.id !== selfId && (!doc.projectId || doc.projectId === projectId))
+export function attachableDocs<T extends { id: string; projectId?: string; sharedFrom?: string }>(docs: readonly T[], projectId: string | null, selfId?: string): T[] {
+  return docs.filter((doc) => doc.id !== selfId && (!doc.projectId || doc.projectId === projectId || (projectId !== null && !!doc.sharedFrom)))
+}
+
+/** Tira os compartilhados de outro projeto: o que o "substitui" oferece. */
+export function withoutShared<T extends { sharedFrom?: string }>(docs: readonly T[]): T[] {
+  return docs.filter((doc) => !doc.sharedFrom)
 }
 
 /** Os anexos mudaram (a lista, a ordem ou o modo de algum)? É o que liga o "Salvar". */

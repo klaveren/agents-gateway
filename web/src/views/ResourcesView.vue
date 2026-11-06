@@ -23,7 +23,7 @@ import BuildTabs from '@/components/BuildTabs.vue'
 import { pendingDraft } from '@/lib/builder'
 import { ApiError } from '@/lib/api'
 import { sizeHint } from '@/lib/format'
-import { attachedRefs, docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId, setAttachMode, sharedFromOf, type TAttachMode } from '@/lib/guidance'
+import { attachableDocs, attachedRefs, docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId, setAttachMode, sharedFromOf, type TAttachMode } from '@/lib/guidance'
 import type { IRestoreResult } from '@/lib/catalogHistory'
 import { renderMarkdown } from '@/lib/markdown'
 import type { IAgentTrigger, IResource, TImportIssueMatch, TResourceKind } from '@/lib/types'
@@ -126,8 +126,8 @@ watch(
 )
 const formScope = computed(() => (form.value.global ? GLOBAL_SCOPE : form.value.project))
 const { list: docs } = useScopedDocs(() => (projects.manages ? scopeToProjectId(formScope.value) : undefined))
-/** Os documentos que podem ir anexados: os globais e, num recurso de projeto, os do projeto. */
-const attachable = computed(() => docs.value.filter((doc) => !doc.projectId || doc.projectId === scopeToProjectId(formScope.value)))
+/** Os documentos que podem ir anexados: os globais e, num recurso de projeto, os do projeto e os compartilhados com ele. */
+const attachable = computed(() => attachableDocs(docs.value, scopeToProjectId(formScope.value)))
 const dirty = computed(() => {
   const resource = loaded.value
   if (!resource) return true

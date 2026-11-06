@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { TAttachMode } from '@/lib/guidance'
+import SharedBadge from './SharedBadge.vue'
 
 /**
  * OS DOCUMENTOS ANEXADOS de um doc, de uma skill ou de um command: em cima os escolhidos (como vão junto, e o peso
@@ -11,6 +12,8 @@ interface IAttachable {
   kind: string
   title: string
   tokens?: number
+  /** Compartilhado por outro projeto (só leitura): ganha o selo. */
+  sharedFrom?: string
 }
 
 const props = defineProps<{
@@ -45,6 +48,7 @@ const tokens = (value?: number) => `≈ ${(value ?? 0).toLocaleString('pt-BR')} 
       <div v-for="doc in chosen" :key="doc.id" class="flex flex-wrap items-center gap-2 text-sm" data-test="attached-doc">
         <span class="rounded bg-zinc-800 px-1 text-[10px] text-zinc-400 uppercase">{{ doc.kind }}</span>
         <span class="min-w-0 flex-1 truncate">{{ doc.title }}</span>
+        <SharedBadge :from="doc.sharedFrom" />
         <span class="shrink-0 text-xs text-zinc-500 tabular-nums">{{ tokens(doc.tokens) }}</span>
         <select
           :value="modeOf(doc.id)"
@@ -71,6 +75,7 @@ const tokens = (value?: number) => `≈ ${(value ?? 0).toLocaleString('pt-BR')} 
         <input type="checkbox" class="accent-emerald-500" :checked="false" @change="emit('toggle', doc.id)" />
         <span class="rounded bg-zinc-800 px-1 text-[10px] text-zinc-400 uppercase">{{ doc.kind }}</span>
         <span class="min-w-0 truncate">{{ doc.title }}</span>
+        <SharedBadge :from="doc.sharedFrom" />
         <span class="ml-auto shrink-0 text-xs text-zinc-500 tabular-nums">{{ tokens(doc.tokens) }}</span>
       </label>
     </section>

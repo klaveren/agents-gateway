@@ -6,6 +6,7 @@ import { makeCatalogHistory } from './CatalogHistory.Factory'
 import { makeLedger } from './Ledger.Factory'
 import { makeProjects } from './Projects.Factory'
 import { makeResourceFiles } from './ResourceFiles.Factory'
+import { makeResourceSecrets } from './ResourceSecrets.Factory'
 
 let instance: GuidanceService | undefined
 let repository: SqliteGuidanceRepository | undefined
@@ -25,6 +26,8 @@ export function makeGuidance(): GuidanceService {
   )
   instance.history.use(() => makeCatalogHistory())
   instance.useFiles(makeResourceFiles())
+  // ⛔ Toda troca do `sharedWith` (rota, restaurar, import, mudar de dono) apaga os valores secretos de quem saiu.
+  instance.useSharesChanged((id, projects) => makeResourceSecrets().keepProjects(id, projects))
   // O índice do ledger de cada agente no prompt (pedido na hora: o ledger lê os agentes).
   instance.useLedger((agentId) => makeLedger().promptSection(agentId))
   return instance

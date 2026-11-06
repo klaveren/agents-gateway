@@ -14,6 +14,7 @@ import {
   OP_LABEL,
   revertBatch,
   scopeHistory,
+  sharingLabels,
   SOURCE_LABEL,
   type IBatch,
   type IBatchPage,
@@ -51,6 +52,7 @@ const loading = ref(false)
 
 const pages = computed(() => (data.value ? Math.max(1, Math.ceil(data.value.total / data.value.pageSize)) : 1))
 const projectName = (id?: string) => (id ? (projects.list.find((project) => project.id === id)?.name ?? id) : 'Global')
+const projectNameOf = (id: string) => projects.list.find((project) => project.id === id)?.name
 
 /** Os lotes do escopo, do mais novo para o mais velho (página própria). */
 const batchPage = ref<IBatchPage>()
@@ -190,6 +192,7 @@ const link = (revision: IRevisionSummary) => itemLink(revision)
             <span v-else class="font-mono text-zinc-100">{{ revision.itemId }}</span>
             <span class="text-zinc-300">{{ OP_LABEL[revision.op] ?? revision.op }}</span>
             <span class="font-mono text-xs text-zinc-500">rev {{ revision.revision }}</span>
+            <span v-for="label in sharingLabels(revision.sharing, projectNameOf)" :key="label" class="rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] text-sky-300" data-test="sharing-label">{{ label }}</span>
             <span v-if="revision.widenings?.length" class="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-300" :title="revision.widenings.join('\n')">
               ampliação aceita ({{ revision.widenings.length }})
             </span>

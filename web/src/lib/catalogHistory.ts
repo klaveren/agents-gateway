@@ -27,6 +27,15 @@ export interface IRevisionSummary {
   note?: string
   /** As chaves das ampliações que quem gravou aceitou. */
   widenings?: string[]
+  /** Skill, command, spec e conhecimento: os ids de projeto que esta revisão acrescentou ao / tirou do `sharedWith` (derivado no servidor). */
+  sharing?: { added: string[]; removed: string[] }
+}
+
+/** "compartilhado com Alfa, Beta" / "parou de compartilhar com Gama" — os nomes vêm do store; sem nome, o id. */
+export function sharingLabels(sharing: IRevisionSummary['sharing'], nameOf: (id: string) => string | undefined): string[] {
+  if (!sharing) return []
+  const names = (ids: readonly string[]) => ids.map((id) => nameOf(id) ?? id).join(', ')
+  return [...(sharing.added.length ? [`compartilhado com ${names(sharing.added)}`] : []), ...(sharing.removed.length ? [`parou de compartilhar com ${names(sharing.removed)}`] : [])]
 }
 
 export interface IRevisionPage {

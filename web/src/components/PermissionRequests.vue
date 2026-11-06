@@ -2,9 +2,10 @@
   import { computed, ref } from 'vue'
   import { ApiError } from '@/lib/api'
   import type { IWideningRef } from '@/lib/catalogHistory'
-  import { type IPermissionRequest, entriesLine, patchLine, requestsKey, ruleLine, secretLine } from '@/lib/permissionRequests'
+  import { type IPermissionRequest, entriesLine, patchLine, requestsKey, ruleLine, secretLine, secretProjectLine } from '@/lib/permissionRequests'
   import type { IPermissionRule } from '@/lib/types'
   import { useResource } from '@/composables/useResource'
+  import { useProjectsStore } from '@/stores/projects'
   import { usePermissionRequestsStore } from '@/stores/permissionRequests'
   import WideningConfirm from './WideningConfirm.vue'
 
@@ -17,6 +18,8 @@
   const emit = defineEmits<{ approved: [request: IPermissionRequest, permissions: IPermissionRule[] | undefined] }>()
 
   const store = usePermissionRequestsStore()
+  const projects = useProjectsStore()
+  const projectNameOf = (id: string) => projects.list.find((project) => project.id === id)?.name
   const { data } = useResource(store.lists, () => (props.agentId || props.projectId ? requestsKey(props) : undefined))
   const requests = computed(() => data.value ?? [])
   const pending = computed(() => requests.value.filter((request) => request.status === 'pending').length)
@@ -104,6 +107,7 @@
       <p class="text-sm whitespace-pre-wrap text-zinc-100" data-test="request-reason">{{ request.reason }}</p>
       <div v-if="request.secret" class="flex flex-col gap-0.5" data-test="secret-request">
         <p class="text-sm text-zinc-100">{{ secretLine(request.secret) }}</p>
+        <p v-if="secretProjectLine(request.secret, projectNameOf)" class="text-xs text-amber-300" data-test="secret-project">{{ secretProjectLine(request.secret, projectNameOf) }}</p>
         <p v-if="request.secret.description" class="text-xs text-zinc-400" data-test="secret-description">{{ request.secret.description }}</p>
       </div>
       <ul class="flex flex-col gap-0.5 text-xs text-zinc-300">

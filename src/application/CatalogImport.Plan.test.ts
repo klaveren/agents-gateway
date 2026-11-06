@@ -381,4 +381,15 @@ describe('CatalogImportPlanner — compartilhamento (sharedWith)', () => {
     assert.strictEqual(byRef(plan, 'command/cmd-g').op, 'unchanged')
     assert.strictEqual(byRef(plan, 'adr/adr-a').op, 'error')
   })
+
+  it('⛔ o agente de beta libera a skill de alfa compartilhada com beta: o dry-run aceita (e recusa sem o compartilhamento)', async () => {
+    const { planner, projects, guidance } = build()
+    projects.insert({ id: 'beta', name: 'Beta', createdAt: at, updatedAt: at })
+    const docs = () => [agentDocument(agent({ id: 'ze', projectId: 'beta' }), { resources: { skills: ['skill-a'], commands: [] }, initialContext: [] })]
+    const issuesOf = async () => (await planner.planDocuments(docs(), { kind: 'all' })).items.find((item) => item.ref === 'agent/ze')!.issues.map((issue) => issue.message)
+
+    assert.ok((await issuesOf()).length > 0, 'sem compartilhar, recusa')
+    guidance.saveResource({ ...guidance.resource('skill-a')!, sharedWith: ['beta'] })
+    assert.deepStrictEqual(await issuesOf(), [])
+  })
 })

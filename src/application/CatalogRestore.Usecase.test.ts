@@ -19,6 +19,7 @@ import { SqliteGuidanceRepository } from '@infra/persistence/Sqlite.GuidanceRepo
 import { SqliteMcpServerRepository } from '@infra/persistence/Sqlite.McpServerRepository'
 import { SqlitePermissionRepository } from '@infra/persistence/Sqlite.PermissionRepository'
 import { SqliteProjectRepository } from '@infra/persistence/Sqlite.ProjectRepository'
+import { SqliteResourceSecretRepository } from '@infra/persistence/Sqlite.ResourceSecretRepository'
 import { SecretBox } from '@infra/secrets/Aes.SecretBox'
 import { AgentCatalog, ISaveAgentOptions } from './Agent.Catalog'
 import { CatalogReader } from './Catalog.Reader'
@@ -26,6 +27,7 @@ import { CatalogWriter } from './Catalog.Writer'
 import { CatalogHistoryService } from './CatalogHistory.Service'
 import { CatalogRestoreUseCase, IRestoreCaller } from './CatalogRestore.Usecase'
 import { GuidanceService } from './Guidance.Service'
+import { ResourceSecretsService } from './ResourceSecrets.Service'
 import { McpServersService } from './McpServers.Service'
 import { PermissionsService } from './Permissions.Service'
 import { ProjectsService } from './Projects.Service'
@@ -454,6 +456,24 @@ describe('CatalogRestoreUseCase — compartilhamento (sharedWith)', () => {
     await restore.restore(request, owner('alfa', 'beta'))
     assert.deepStrictEqual(guidance.resource('tabela').sharedWith, ['beta'])
     assert.strictEqual(last('skill', 'tabela'), 4)
+  })
+
+  it('⛔ restaurar a revisão sem o projeto apaga os valores secretos dele (o gancho do serviço, não a rota)', async () => {
+    const { restore, guidance, last } = shared()
+    const secrets = new ResourceSecretsService({
+      store: new SqliteResourceSecretRepository(new SecretBox(randomBytes(32))),
+      exists: (scope, id) => scope === 'skill' && id === 'tabela',
+      mask: { register: () => undefined },
+    })
+    guidance.useSharesChanged((id, projects) => secrets.keepProjects(id, projects))
+    guidance.shareResource('tabela', ['beta'], 'ana')
+    secrets.save('skill', 'tabela', { name: 'TOKEN', value: 'valor-do-beta-123' }, 'root', 'beta')
+    assert.strictEqual(secrets.list('skill', 'tabela', 'beta').length, 1)
+
+    await restore.restore({ item: { kind: 'skill', itemId: 'tabela' }, revision: 3, expectedRevision: last('skill', 'tabela') }, owner('alfa'))
+
+    assert.strictEqual(guidance.resource('tabela').sharedWith, undefined)
+    assert.deepStrictEqual(secrets.list('skill', 'tabela', 'beta'), [])
   })
 
   it('tirar projeto do sharedWith pelo restaurar não pede nada além do escopo do item', async () => {
