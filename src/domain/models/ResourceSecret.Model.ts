@@ -10,9 +10,16 @@ import { ENV_NAME, RESERVED_ENV } from './ProjectAccount.Model'
  *
  * ⚖️ QUANDO VALE: a do agente, em todo comando dele; a de uma skill ou de um command, só depois que ele foi CARREGADO na
  * conversa (`use_resource`, `/skill`, `/command`). Nome repetido: command > skill > agente > conta do projeto.
+ *
+ * ⛔ POR PROJETO (skill e command): o segredo NÃO vai junto no compartilhamento. Os valores da ORIGEM (o projeto do recurso,
+ * ou o global) moram sob o projeto `''` (`ORIGIN_PROJECT`); cada projeto que recebeu o recurso configura os SEUS, com os
+ * mesmos nomes, sob o id dele. Um agente do projeto P usa os valores de P — nunca os da origem.
  */
 export type TSecretScope = 'agent' | 'skill' | 'command'
 export const SECRET_SCOPES: readonly TSecretScope[] = ['agent', 'skill', 'command']
+
+/** O "projeto" dos valores da ORIGEM (o projeto dono do recurso, ou o global) e de todo agente. */
+export const ORIGIN_PROJECT = ''
 
 /** O que se lê de uma variável: tudo, menos o valor. */
 export interface IResourceSecretMeta {
@@ -24,11 +31,20 @@ export interface IResourceSecretMeta {
   updatedBy?: string
 }
 
+/**
+ * O que a tela lê: a variável com valor (`configured`) ou só o NOME esperado, que a origem usa e este projeto ainda não
+ * configurou (`configured: false`, sem `updatedAt`).
+ */
+export interface IResourceSecretView extends Omit<IResourceSecretMeta, 'updatedAt'> {
+  updatedAt?: Date
+  configured: boolean
+}
+
 export const SECRET_LIMITS = { perScope: 30, description: 300, value: 16_384 } as const
 
 /** ⛔ AAD do cofre: o cifrado de uma variável não abre como o de outra (outro recurso, outro nome). */
-export function secretOwner(scope: TSecretScope, scopeId: string, name: string): string {
-  return `segredo:${scope}:${scopeId}:${name}`
+export function secretOwner(scope: TSecretScope, scopeId: string, name: string, project: string = ORIGIN_PROJECT): string {
+  return project === ORIGIN_PROJECT ? `segredo:${scope}:${scopeId}:${name}` : `segredo:${scope}:${scopeId}:${name}@projeto:${project}`
 }
 
 /** Os problemas do nome (o mesmo padrão das contas do projeto, sem os que o cerco e o gateway montam). */
@@ -49,6 +65,8 @@ export interface ISecretSource {
   name: string
   scope: TSecretScope
   scopeId: string
+  /** De quem é o valor: `ORIGIN_PROJECT` (a origem) ou o projeto que recebeu o recurso. */
+  project?: string
 }
 
 /**

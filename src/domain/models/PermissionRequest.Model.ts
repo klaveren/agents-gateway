@@ -36,6 +36,8 @@ export interface IPermissionRequestSecret {
   scopeId: string
   name: string
   description?: string
+  /** Skill ou command compartilhado: o projeto que RECEBEU e cujos valores o pedido preenche. Ausente = a origem. */
+  project?: string
 }
 
 /**

@@ -1,5 +1,5 @@
 import type { ResourceSecretsService } from '@application/ResourceSecrets.Service'
-import { SECRET_LIMITS, SECRET_SCOPES, TSecretScope } from '@domain/models/ResourceSecret.Model'
+import { ORIGIN_PROJECT, SECRET_LIMITS, SECRET_SCOPES, TSecretScope } from '@domain/models/ResourceSecret.Model'
 import { Request, Response } from 'express'
 import { z } from 'zod'
 import { PermissionRequestsService } from '@application/PermissionRequests.Service'
@@ -29,6 +29,8 @@ export interface IPermissionRequestsControllerDeps {
   resourceKindOf?: (id: string) => 'skill' | 'command' | undefined
   /** O projeto de um recurso (`null` = global; `undefined` = não existe). Ausente: o recurso conta como global (só o admin do gateway). */
   resourceProjectOf?: (id: string) => string | null | undefined
+  /** Os projetos com que a skill ou o command é compartilhado. Ausente: nenhum. */
+  resourceSharedWithOf?: (id: string) => readonly string[] | undefined
 }
 
 // ⚖️ As regras em si NÃO passam por zod aqui: o validador é o do formulário do agente (`permissionIssues`), com as
@@ -46,6 +48,8 @@ const secretSchema = z.object({ value: z.string().max(SECRET_LIMITS.value).optio
 const secretRequestSchema = z.object({
   scope: z.enum(SECRET_SCOPES as [TSecretScope, ...TSecretScope[]]),
   scopeId: z.string().min(1).max(64),
+  /** Skill ou command compartilhado: o projeto cujos valores o pedido preenche (ausente = o do agente que pede, se recebeu; senão a origem). */
+  project: z.string().min(1).max(64).optional(),
   name: z.string().min(1).max(64),
   description: z.string().max(SECRET_LIMITS.description).optional(),
   reason: z.string().max(1000),
@@ -183,12 +187,16 @@ export class PermissionRequestsController {
     })
   }
 
-  /** `GET /agents/:agentId/secrets` e `GET /resources/:resourceId/secrets` — os nomes e quando mudaram. ⛔ Nunca o valor. */
+  /**
+   * `GET /agents/:agentId/secrets` e `GET /resources/:resourceId/secrets[?project=P]` — os nomes e quando mudaram. ⛔ Nunca o
+   * valor. Com `project`, os valores DAQUELE projeto (a origem ou um que recebeu o recurso), com os nomes que faltam
+   * (`configured: false`).
+   */
   async listSecrets(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
       const { scope, scopeId } = this.secretScope(req)
-      await this.secretAdmin(scope, scopeId, 'listSecrets')
-      return this.deps.secrets!.list(scope, scopeId)
+      const { project } = await this.secretAdmin(scope, scopeId, 'listSecrets', queryProject(req))
+      return this.deps.secrets!.list(scope, scopeId, project)
     })
   }
 
@@ -199,10 +207,10 @@ export class PermissionRequestsController {
   async saveSecret(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
       const { scope, scopeId } = this.secretScope(req)
-      const by = await this.secretAdmin(scope, scopeId, 'saveSecret')
+      const { by, project } = await this.secretAdmin(scope, scopeId, 'saveSecret', queryProject(req))
       if (!(viaSessionCookie(res) && !viaAccessToken(res))) throw new HttpError(403, 'forbidden', 'Só quem administra, entrando pela tela, grava uma variável secreta.')
       const body = parseBody(secretSchema, req.body)
-      return this.deps.secrets!.save(scope, scopeId, { name: String(req.params.name), ...body }, by)
+      return this.deps.secrets!.save(scope, scopeId, { name: String(req.params.name), ...body }, by, project)
     })
   }
 
@@ -210,9 +218,9 @@ export class PermissionRequestsController {
   async removeSecret(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
       const { scope, scopeId } = this.secretScope(req)
-      await this.secretAdmin(scope, scopeId, 'removeSecret')
+      const { project } = await this.secretAdmin(scope, scopeId, 'removeSecret', queryProject(req))
       if (!(viaSessionCookie(res) && !viaAccessToken(res))) throw new HttpError(403, 'forbidden', 'Só quem administra, entrando pela tela, apaga uma variável secreta.')
-      if (!this.deps.secrets!.remove(scope, scopeId, String(req.params.name))) throw new HttpError(404, 'not_found', `Variable not found: ${String(req.params.name)}`)
+      if (!this.deps.secrets!.remove(scope, scopeId, String(req.params.name), project)) throw new HttpError(404, 'not_found', `Variable not found: ${String(req.params.name)}`)
       return null
     })
   }
@@ -221,10 +229,13 @@ export class PermissionRequestsController {
   async requestSecret(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
       const body = parseBody(secretRequestSchema, req.body)
-      const by = await this.secretAdmin(body.scope, body.scopeId, 'requestSecret')
       const service = this.deps.service
       if (!service) throw new HttpError(404, 'not_found', 'Not found')
-      return service.requestSecret(body, requesterOf(req, by))
+      // O agente que pede, de um projeto que RECEBEU a skill, preenche os valores do projeto dele (não os da origem).
+      const asked = body.project ?? this.receiverOf(body.scope, body.scopeId, identityOf(req).agentId)
+      const { by, project } = await this.secretAdmin(body.scope, body.scopeId, 'requestSecret', asked)
+      const { project: _asked, ...input } = body
+      return service.requestSecret({ ...input, ...(project !== ORIGIN_PROJECT ? { project } : {}) }, requesterOf(req, by))
     })
   }
 
@@ -254,10 +265,25 @@ export class PermissionRequestsController {
     return { service, by }
   }
 
-  /** O admin do dono da variável: o projeto do agente, ou do recurso (sem `resourceProjectOf`, global). */
-  private async secretAdmin(scope: TSecretScope | 'resource', scopeId: string, operation: string): Promise<string> {
-    if (scope === 'agent') return requireAgentAdmin(this.deps.proof, scopeId, operation)
-    return requireProjectAdmin(this.deps.proof, this.deps.resourceProjectOf?.(scopeId) ?? null, operation)
+  /**
+   * ⛔ O admin do dono da variável: o projeto do agente, ou do recurso (sem `resourceProjectOf`, global). Com `project`
+   * (só skill e command): sem ser a origem, o projeto tem de ser um com que o recurso é compartilhado, e quem mexe é o
+   * admin DELE (o da origem, ou o gateway, não entra). Tudo o que não passa é 404. `project` devolvido: a chave dos valores.
+   */
+  private async secretAdmin(scope: TSecretScope | 'resource', scopeId: string, operation: string, asked?: string): Promise<{ by: string; project: string }> {
+    if (scope === 'agent') return { by: await requireAgentAdmin(this.deps.proof, scopeId, operation), project: ORIGIN_PROJECT }
+    const origin = this.deps.resourceProjectOf?.(scopeId) ?? null
+    if (!asked || asked === origin) return { by: await requireProjectAdmin(this.deps.proof, origin, operation), project: ORIGIN_PROJECT }
+    const by = await requireProjectAdmin(this.deps.proof, asked, operation)
+    if (!origin || !this.deps.resourceSharedWithOf?.(scopeId)?.includes(asked)) throw new HttpError(404, 'not_found', 'Not found')
+    return { by, project: asked }
+  }
+
+  /** O projeto do agente que pede, se ele recebeu a skill ou o command por compartilhamento. */
+  private receiverOf(scope: TSecretScope, scopeId: string, agentId: string | undefined): string | undefined {
+    if (scope === 'agent' || !agentId) return undefined
+    const mine = agentProjectOf(agentId)
+    return mine && this.deps.resourceSharedWithOf?.(scopeId)?.includes(mine) ? mine : undefined
   }
 
   /**
@@ -266,6 +292,8 @@ export class PermissionRequestsController {
    */
   private projectOf(request: Pick<IPermissionRequest, 'kind' | 'agentId' | 'projectId' | 'secret'>): string | null {
     if (request.kind === 'project-rules') return request.projectId ?? null
+    // ⛔ Valor de projeto que recebeu o recurso: quem decide é o admin DELE.
+    if (request.kind === 'secret' && request.secret?.project) return request.secret.project
     if (request.kind === 'secret' && request.secret && request.secret.scope !== 'agent') return this.deps.resourceProjectOf?.(request.secret.scopeId) ?? null
     const current = request.agentId ? agentProjectOf(request.agentId) : undefined
     return current !== undefined ? current : (request.projectId ?? null)
@@ -291,6 +319,11 @@ export class PermissionRequestsController {
       res.status(failure.status).json(fail(failure.message, failure.code, failure.details))
     }
   }
+}
+
+/** `?project=P` das rotas de variável (vazio = ausente). */
+function queryProject(req: Request): string | undefined {
+  return typeof req.query.project === 'string' && req.query.project ? req.query.project : undefined
 }
 
 /** O alvo da rota: o agente (`/agents/:agentId/…`) ou o projeto (`/projects/:projectId/…`). */

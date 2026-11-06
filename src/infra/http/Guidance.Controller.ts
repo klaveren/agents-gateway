@@ -25,6 +25,8 @@ export interface IGuidanceControllerDeps {
   agentFiles?: (agentId: string, files: IResourceFile[], by: string, base?: readonly string[]) => unknown
   /** O recurso foi apagado: as variáveis secretas dele vão junto (ver `ResourceSecrets.Service`). */
   resourceRemoved?: (kind: 'skill' | 'command', id: string) => void
+  /** ⛔ A lista de projetos com que o recurso é compartilhado mudou (ou ele mudou de dono): quem saiu perde os valores secretos que configurou. */
+  resourceShared?: (id: string, projects: readonly string[]) => void
   /** Os segredos que um texto traz (a máscara do gateway): arquivo com segredo não entra. */
   secretsIn?: (text: string) => string[]
   /** A pasta de um projeto (de onde `…/files/import` copia: os repositórios dele). Ausente = sem a rota. */
@@ -344,7 +346,10 @@ export class GuidanceController {
     await this.respond(res, async () => {
       const { id: _id, kind: _kind, ...change } = parseBody(resourceSchema, req.body)
       const id = req.params.id as string
-      return this.deps.guidance.updateResource(id, change, await this.moving(this.deps.guidance.resource(id).projectId, change.projectId, 'updateResource'))
+      const saved = this.deps.guidance.updateResource(id, change, await this.moving(this.deps.guidance.resource(id).projectId, change.projectId, 'updateResource'))
+      // Mudou de dono: a lista de compartilhamento se ajusta (ver `sharesAfterMove`) e os valores de quem saiu vão junto.
+      if (change.projectId !== undefined) this.deps.resourceShared?.(id, saved.sharedWith ?? [])
+      return saved
     })
   }
 
@@ -482,7 +487,10 @@ export class GuidanceController {
     await this.respond(res, async () => {
       const resource = this.deps.guidance.resource(req.params.id as string)
       const { projects } = parseBody(shareSchema, req.body)
-      return this.deps.guidance.shareResource(resource.id, projects, await this.sharer(resource, projects, 'shareResource'))
+      const saved = this.deps.guidance.shareResource(resource.id, projects, await this.sharer(resource, projects, 'shareResource'))
+      // ⛔ Quem deixou de receber perde os valores secretos que configurou (apagados, não escondidos).
+      this.deps.resourceShared?.(resource.id, saved.sharedWith ?? [])
+      return saved
     })
   }
 
