@@ -12,6 +12,7 @@ export interface IHookInput {
   signatureHeader?: string
   signaturePrefix?: string
   signatureEncoding?: 'hex' | 'base64'
+  requireTimestamp?: boolean
   session?: THookSession
 }
 
@@ -51,6 +52,11 @@ export class AgentHooksService {
     return hook?.enabled && this.agentExists(agentId) ? hook : undefined
   }
 
+  /** ⛔ A assinatura já foi usada na janela? `true` = primeira vez (passa); `false` = reenvio. */
+  claimSignature(agentId: string, name: string, signature: string, now: number, windowMs: number): boolean {
+    return this.hooks.claimSignature(`${agentId}/${name}:${signature}`, now + windowMs, now)
+  }
+
   secretOf(agentId: string, name: string): string | undefined {
     return this.secrets.get(hookSecretKey(agentId, name))
   }
@@ -70,6 +76,7 @@ export class AgentHooksService {
       signatureHeader: input.signatureHeader?.trim() || HOOK_DEFAULTS.signatureHeader,
       signaturePrefix: input.signaturePrefix ?? HOOK_DEFAULTS.signaturePrefix,
       signatureEncoding: input.signatureEncoding ?? HOOK_DEFAULTS.signatureEncoding,
+      requireTimestamp: input.requireTimestamp ?? false,
       session: input.session ?? 'new',
       runAs: by.userId,
       createdAt: this.now(),

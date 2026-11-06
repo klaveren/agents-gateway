@@ -195,6 +195,20 @@ describe('Hooks dos agentes (integração)', () => {
     assert.strictEqual((await fire('carimbado', body, { 'X-Hub-Signature-256': plain })).status, 202, 'quem não manda carimbo segue como antes')
   })
 
+  it('⛔ HMAC com `requireTimestamp`: sem `X-Timestamp` é 401; com ele válido, 202; o padrão segue sem exigir', async () => {
+    const created = (await admin('POST', `/agents/${CLAUDE_TEST_AGENT.id}/hooks`, { name: 'exige-carimbo', prompt: 'p', verify: 'hmac', requireTimestamp: true })).body.result
+    assert.strictEqual(created.requireTimestamp, true)
+    const secret = created.secret as string
+    const body = '{"n":2}'
+    const plain = `sha256=${createHmac('sha256', secret).update(body).digest('hex')}`
+    assert.strictEqual((await fire('exige-carimbo', body, { 'X-Hub-Signature-256': plain })).status, 401, 'sem carimbo')
+    const stamp = String(Math.floor(Date.now() / 1000))
+    const signed = `sha256=${createHmac('sha256', secret).update(`${stamp}.${body}`).digest('hex')}`
+    assert.strictEqual((await fire('exige-carimbo', body, { 'X-Timestamp': stamp, 'X-Hub-Signature-256': signed })).status, 202)
+    const other = (await admin('POST', `/agents/${CLAUDE_TEST_AGENT.id}/hooks`, { name: 'sem-exigir', prompt: 'p', verify: 'hmac' })).body.result
+    assert.strictEqual(other.requireTimestamp, false)
+  })
+
   it('HMAC: a assinatura do corpo CRU (estilo GitHub) passa; errada ou de outro corpo, 401', async () => {
     const secret = (await admin('POST', `/agents/${CLAUDE_TEST_AGENT.id}/hooks`, { name: 'github', prompt: 'Revise o push.', verify: 'hmac' })).body.result.secret as string
     const body = '{"ref":  "main"}'

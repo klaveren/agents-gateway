@@ -14,6 +14,7 @@ const SCHEMA = `
     signature_header    TEXT    NOT NULL,
     signature_prefix    TEXT    NOT NULL,
     signature_encoding  TEXT    NOT NULL,
+    require_timestamp   INTEGER NOT NULL DEFAULT 0,
     session             TEXT    NOT NULL DEFAULT 'new',
     session_id          TEXT,
     run_as              TEXT    NOT NULL,
@@ -31,6 +32,10 @@ const SCHEMA = `
     session_id   TEXT,
     error        TEXT
   );
+  CREATE TABLE IF NOT EXISTS agent_hook_seen (
+    key    TEXT    NOT NULL PRIMARY KEY,
+    until  INTEGER NOT NULL
+  );
   CREATE INDEX IF NOT EXISTS agent_hook_deliveries_hook ON agent_hook_deliveries (agent_id, hook_name, received_at);
 `
 
@@ -43,6 +48,7 @@ const COLUMNS: Record<keyof TAgentHookPatch, string> = {
   signatureHeader: 'signature_header',
   signaturePrefix: 'signature_prefix',
   signatureEncoding: 'signature_encoding',
+  requireTimestamp: 'require_timestamp',
   session: 'session',
   sessionId: 'session_id',
   runAs: 'run_as',
@@ -59,6 +65,9 @@ export class SqliteAgentHookRepository implements IAgentHookRepository {
     this.db = new DatabaseSync(path)
     this.db.exec('PRAGMA journal_mode = WAL')
     this.db.exec(SCHEMA)
+    // Banco que já existia: a coluna nova entra com o padrão (desligado).
+    const columns = this.db.prepare('PRAGMA table_info(agent_hooks)').all() as TRow[]
+    if (!columns.some((column) => column.name === 'require_timestamp')) this.db.exec('ALTER TABLE agent_hooks ADD COLUMN require_timestamp INTEGER NOT NULL DEFAULT 0')
   }
 
   list(agentId: string): IAgentHook[] {
@@ -73,8 +82,8 @@ export class SqliteAgentHookRepository implements IAgentHookRepository {
   insert(hook: IAgentHook): void {
     this.db
       .prepare(
-        `INSERT INTO agent_hooks (agent_id, name, prompt, enabled, verify, signature_header, signature_prefix, signature_encoding, session, session_id, run_as, created_at, updated_at, updated_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO agent_hooks (agent_id, name, prompt, enabled, verify, signature_header, signature_prefix, signature_encoding, require_timestamp, session, session_id, run_as, created_at, updated_at, updated_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         hook.agentId,
@@ -85,6 +94,7 @@ export class SqliteAgentHookRepository implements IAgentHookRepository {
         hook.signatureHeader,
         hook.signaturePrefix,
         hook.signatureEncoding,
+        hook.requireTimestamp ? 1 : 0,
         hook.session,
         hook.sessionId ?? null,
         hook.runAs,
@@ -119,6 +129,11 @@ export class SqliteAgentHookRepository implements IAgentHookRepository {
     this.db.prepare('DELETE FROM agent_hook_deliveries WHERE agent_id = ?').run(agentId)
     this.db.prepare('DELETE FROM agent_hooks WHERE agent_id = ?').run(agentId)
     return names
+  }
+
+  claimSignature(key: string, until: number, now: number): boolean {
+    this.db.prepare('DELETE FROM agent_hook_seen WHERE until <= ?').run(now)
+    return this.db.prepare('INSERT OR IGNORE INTO agent_hook_seen (key, until) VALUES (?, ?)').run(key, until).changes > 0
   }
 
   /** ⚖️ Guarda só as últimas `HOOK_DELIVERIES_KEPT` por hook: é para a tela, não um log de auditoria. */
@@ -165,6 +180,7 @@ function toHook(row: TRow): IAgentHook {
     signatureHeader: String(row.signature_header),
     signaturePrefix: String(row.signature_prefix),
     signatureEncoding: String(row.signature_encoding) as IAgentHook['signatureEncoding'],
+    requireTimestamp: Number(row.require_timestamp) === 1,
     session: String(row.session) as IAgentHook['session'],
     ...(typeof row.session_id === 'string' ? { sessionId: row.session_id } : {}),
     runAs: String(row.run_as),

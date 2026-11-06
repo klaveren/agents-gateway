@@ -37,6 +37,7 @@ const hookFields = {
   signatureHeader: z.string().max(64).optional(),
   signaturePrefix: z.string().max(32).optional(),
   signatureEncoding: z.enum(['hex', 'base64']).optional(),
+  requireTimestamp: z.boolean().optional(),
   session: z.enum(['new', 'continuous']).optional(),
 }
 const createSchema = z.object({ name: z.string().max(64), ...hookFields })
@@ -58,8 +59,6 @@ export class HooksController {
   /** ⛔ A cota de SUCESSO conta por hook (`HOOK_RATE_LIMIT`, 60/min: cada chamada é um turno de modelo); a de FALHA, por IP (`HOOK_FAIL_LIMIT`, 30/min). */
   private readonly accepted: WindowCounter
   private readonly rejected: WindowCounter
-  /** As assinaturas já vistas com `X-Timestamp` (replay dentro da janela). */
-  private readonly seen = new Map<string, number>()
 
   constructor(private readonly deps: IHooksControllerDeps) {
     const now = deps.now ?? Date.now
@@ -130,21 +129,18 @@ export class HooksController {
 
   /**
    * A chave/assinatura confere? Com `X-Timestamp` (HMAC), o carimbo entra na assinatura, tem de estar na janela e a mesma
-   * assinatura não vale duas vezes. Sem ele, vale como sempre (quem não manda não quebra; a repetição só se evita com ele).
+   * assinatura não vale duas vezes (as já vistas ficam no SQLite: o restart não reabre a janela). Sem ele, vale como sempre
+   * (quem não manda não quebra), salvo no hook com `requireTimestamp`: aí sem carimbo é 401.
    */
   private verifiedFresh(hook: IAgentHook, secret: string, req: Request, raw: Buffer): boolean {
     const stamp = hook.verify === 'hmac' ? headerOf(req, 'x-timestamp') : undefined
-    if (stamp === undefined) return verified(hook, secret, req, raw)
+    if (stamp === undefined) return !(hook.verify === 'hmac' && hook.requireTimestamp) && verified(hook, secret, req, raw)
     const now = this.deps.now?.() ?? Date.now()
     const sentAt = /^\d{1,13}$/.test(stamp.trim()) ? Number(stamp.trim()) * 1000 : NaN
     if (!Number.isFinite(sentAt) || Math.abs(now - sentAt) > TIMESTAMP_WINDOW_MS) return false
     if (!verified(hook, secret, req, Buffer.concat([Buffer.from(`${stamp.trim()}.`), raw]))) return false
     const signature = headerOf(req, hook.signatureHeader.toLowerCase())!.trim()
-    const key = `${hook.agentId}/${hook.name}:${signature}`
-    for (const [entry, until] of this.seen) if (until <= now) this.seen.delete(entry)
-    if (this.seen.has(key)) return false
-    this.seen.set(key, now + TIMESTAMP_WINDOW_MS)
-    return true
+    return this.deps.hooks.claimSignature(hook.agentId, hook.name, signature, now, TIMESTAMP_WINDOW_MS)
   }
 
   /** A conversa de um hook contínuo: a gravada, se ainda existe; senão uma nova, gravada no hook. */
@@ -229,6 +225,7 @@ export class HooksController {
       signatureHeader: hook.signatureHeader,
       signaturePrefix: hook.signaturePrefix,
       signatureEncoding: hook.signatureEncoding,
+      requireTimestamp: hook.requireTimestamp,
       session: hook.session,
       ...(hook.sessionId ? { sessionId: hook.sessionId } : {}),
       runAs: hook.runAs,

@@ -553,6 +553,7 @@ const agentHookSchema = {
     signatureHeader: { type: 'string' },
     signaturePrefix: { type: 'string' },
     signatureEncoding: { type: 'string', enum: ['hex', 'base64'] },
+    requireTimestamp: { type: 'boolean', description: 'hmac: reject calls without X-Timestamp (401). Default false.' },
     session: { type: 'string', enum: ['new', 'continuous'] },
     sessionId: { type: 'string' },
     runAs: { type: 'string', description: 'The account the agent runs as (whoever created the hook).' },
@@ -575,6 +576,7 @@ const agentHookBody = {
     signatureHeader: { type: 'string', description: 'hmac: default X-Hub-Signature-256' },
     signaturePrefix: { type: 'string', description: 'hmac: default sha256=' },
     signatureEncoding: { type: 'string', enum: ['hex', 'base64'] },
+    requireTimestamp: { type: 'boolean', description: 'hmac: reject calls without X-Timestamp (401). Default false.' },
     session: { type: 'string', enum: ['new', 'continuous'], description: 'new = one conversation per call; continuous = all calls in one conversation, queued.' },
   },
 }
@@ -3479,7 +3481,7 @@ export const OPENAPI_DOCUMENT = {
             in: 'header',
             required: false,
             description:
-              'HMAC hooks only: unix seconds. When sent, the signature covers `<timestamp>.<raw body>`, must be within 5 minutes, and the same signature is accepted once. Absent = signature of the raw body alone (no replay protection).',
+              'HMAC hooks only: unix seconds. When sent, the signature covers `<timestamp>.<raw body>`, must be within 5 minutes, and the same signature is accepted once. Absent = signature of the raw body alone (no replay protection), unless the hook has requireTimestamp: then 401. Seen signatures are kept in the database.',
             schema: { type: 'string' },
           },
         ],
