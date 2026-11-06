@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { CLASSIFICATION_COLOR, CLASSIFICATION_LABEL } from '@/lib/format'
+import { usePopover } from '@/lib/popover'
 import { useAgentsStore } from '@/stores/agents'
 import { useAuthStore } from '@/stores/auth'
 import { matchesFilters, useConversationsStore } from '@/stores/conversations'
@@ -63,6 +64,15 @@ const topLevel = computed(() => conversations.items.filter((conversation) => !co
 /** As arquivadas, com a mesma busca da caixa de entrada (feita aqui: a lista delas vem inteira). */
 const archivedTop = computed(() => conversations.archivedItems.filter((conversation) => matchesFilters(conversation, { q: conversations.filters.q, agentId: '', classification: '' })))
 const inArchived = computed(() => conversations.view === 'archived')
+
+/** O menu de três pontos ao lado da busca, no desenho do menu principal: as arquivadas e, para quem administra, as de todos. */
+const { open: menuOpen, root: menuRoot } = usePopover()
+const showArchived = computed(() => conversations.archivedCount > 0 || inArchived.value)
+const showEveryone = computed(() => auth.isAdmin && !inArchived.value)
+function pick(action: () => void) {
+  menuOpen.value = false
+  action()
+}
 </script>
 
 <template>
@@ -75,7 +85,7 @@ const inArchived = computed(() => conversations.view === 'archived')
       </RouterLink>
     </header>
 
-    <!-- A busca e os dois filtros da lista, em botões: as arquivadas (na mesma tela) e, para quem administra, as de todos. -->
+    <!-- A busca e o menu de três pontos: as arquivadas (na mesma tela) e, para quem administra, as de todos. -->
     <div class="flex items-center gap-1.5 px-4 pb-2">
       <label class="flex min-w-0 flex-1 items-center gap-2 rounded-full bg-zinc-800/80 px-3 py-2 text-sm focus-within:ring-1 focus-within:ring-emerald-500/60">
         <Icon name="search" class="h-4 w-4 text-zinc-500" />
@@ -86,36 +96,57 @@ const inArchived = computed(() => conversations.view === 'archived')
           class="w-full bg-transparent outline-none placeholder:text-zinc-500"
         />
       </label>
-      <button
-        v-if="conversations.archivedCount > 0 || inArchived"
-        type="button"
-        class="relative grid h-9 w-9 shrink-0 place-items-center rounded-full hover:bg-zinc-800"
-        :class="inArchived ? 'bg-zinc-800 text-emerald-400' : 'text-zinc-400'"
-        :aria-pressed="inArchived"
-        :title="inArchived ? 'Voltar às conversas' : `Ver as arquivadas (${conversations.archivedCount})`"
-        data-testid="archived-toggle"
-        @click="conversations.showView(inArchived ? 'inbox' : 'archived')"
-      >
-        <Icon name="archive" class="h-5 w-5" />
-        <span
-          v-if="conversations.archivedCount > 0"
-          class="absolute -top-0.5 -right-0.5 min-w-4 rounded-full bg-emerald-500/20 px-1 text-center text-[10px] leading-4 text-emerald-300"
+      <div v-if="showArchived || showEveryone" ref="menuRoot" class="relative shrink-0">
+        <button
+          type="button"
+          class="relative grid h-9 w-9 place-items-center rounded-full hover:bg-zinc-800"
+          :class="menuOpen || inArchived || conversations.everyone ? 'bg-zinc-800 text-emerald-400' : 'text-zinc-400'"
+          title="Mais opções"
+          aria-label="Mais opções"
+          aria-haspopup="menu"
+          :aria-expanded="menuOpen"
+          data-testid="list-menu"
+          @click="menuOpen = !menuOpen"
         >
-          {{ conversations.archivedCount }}
-        </span>
-      </button>
-      <button
-        v-if="auth.isAdmin && !inArchived"
-        type="button"
-        class="grid h-9 w-9 shrink-0 place-items-center rounded-full hover:bg-zinc-800"
-        :class="conversations.everyone ? 'bg-zinc-800 text-emerald-400' : 'text-zinc-400'"
-        :aria-pressed="conversations.everyone"
-        :title="conversations.everyone ? 'Ver só as suas conversas' : 'Ver as conversas de todo mundo (o monitor)'"
-        data-test="everyone-toggle"
-        @click="conversations.setEveryone(!conversations.everyone)"
-      >
-        <Icon name="users" class="h-5 w-5" />
-      </button>
+          <Icon name="more" class="h-5 w-5" />
+        </button>
+        <div v-if="menuOpen" role="menu" class="absolute top-full right-0 z-50 mt-1 w-64 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-sm shadow-xl shadow-black/40">
+          <div class="border-b border-zinc-800 px-3 py-2 text-xs font-medium text-zinc-500">Conversas</div>
+          <button
+            v-if="showArchived"
+            type="button"
+            role="menuitem"
+            class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left hover:bg-zinc-800"
+            :class="inArchived ? 'text-emerald-300' : 'text-zinc-200'"
+            data-testid="archived-toggle"
+            @click="pick(() => conversations.showView(inArchived ? 'inbox' : 'archived'))"
+          >
+            <Icon name="archive" class="h-4 w-4 shrink-0 text-zinc-400" />
+            <span class="min-w-0 flex-1">
+              <span class="block">{{ inArchived ? 'Voltar às conversas' : 'Arquivadas' }}</span>
+              <span class="block truncate text-xs text-zinc-500">{{ inArchived ? 'A caixa de entrada' : 'As conversas que você guardou' }}</span>
+            </span>
+            <span v-if="conversations.archivedCount > 0" class="rounded-full bg-zinc-800 px-1.5 text-[10px] text-zinc-400" data-testid="archived-count">{{ conversations.archivedCount }}</span>
+          </button>
+          <button
+            v-if="showEveryone"
+            type="button"
+            role="menuitemcheckbox"
+            :aria-checked="conversations.everyone"
+            class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left hover:bg-zinc-800"
+            :class="conversations.everyone ? 'text-emerald-300' : 'text-zinc-200'"
+            data-test="everyone-toggle"
+            @click="pick(() => conversations.setEveryone(!conversations.everyone))"
+          >
+            <Icon name="users" class="h-4 w-4 shrink-0 text-zinc-400" />
+            <span class="min-w-0 flex-1">
+              <span class="block">Conversas de todo mundo</span>
+              <span class="block truncate text-xs text-zinc-500">O monitor: as de todas as contas</span>
+            </span>
+            <Icon v-if="conversations.everyone" name="check" class="h-4 w-4 shrink-0" />
+          </button>
+        </div>
+      </div>
     </div>
 
     <div v-if="!inArchived && (agentTabs.length > 1 || conversations.filters.agentId)" class="flex gap-1.5 overflow-x-auto px-4 pb-2">

@@ -320,30 +320,34 @@ describe('ConversationList: Arquivadas', () => {
     const host = await mount(ConversationList)
     const store = useConversationsStore()
 
-    expect(host.querySelector('[data-testid=archived-toggle]')).toBeNull()
+    expect(host.querySelector('[data-testid=list-menu]')).toBeNull()
     await store.load(false)
     await flush()
-    const toggle = host.querySelector<HTMLElement>('[data-testid=archived-toggle]')!
-    expect(toggle.textContent?.trim()).toBe('3')
+    // As arquivadas moram no menu de três pontos.
+    host.querySelector<HTMLElement>('[data-testid=list-menu]')!.click()
+    await flush()
+    expect(host.querySelector('[data-testid=archived-count]')!.textContent?.trim()).toBe('3')
 
-    toggle.click()
+    host.querySelector<HTMLElement>('[data-testid=archived-toggle]')!.click()
     await flush()
     expect(host.textContent).toContain('Velha')
     expect(host.textContent).not.toContain('Conversa a')
     expect(host.querySelector('input[type=search]')).not.toBeNull()
     expect(host.querySelector('[data-action=archive]')!.textContent).toContain('Desarquivar')
 
+    host.querySelector<HTMLElement>('[data-testid=list-menu]')!.click()
+    await flush()
     host.querySelector<HTMLElement>('[data-testid=archived-toggle]')!.click()
     await flush()
     expect(host.textContent).toContain('Conversa a')
   })
 
-  it('sem arquivadas, o botão não aparece', async () => {
+  it('sem arquivadas (e sem ser admin), o menu não aparece', async () => {
     vi.mocked(api).mockResolvedValue({ sessions: [conversation('a')], archivedCount: 0 })
     const host = await mount(ConversationList)
     await useConversationsStore().load(false)
     await flush()
 
-    expect(host.querySelector('[data-testid=archived-toggle]')).toBeNull()
+    expect(host.querySelector('[data-testid=list-menu]')).toBeNull()
   })
 })
