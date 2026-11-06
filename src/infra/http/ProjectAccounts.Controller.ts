@@ -2,10 +2,10 @@ import { Request, Response } from 'express'
 import { z } from 'zod'
 import { AccountValidationError, ProjectAccountsService } from '@application/ProjectAccounts.Service'
 import { ACCOUNT_ID, exposesSecret, IProjectAccount, PROJECT_ACCOUNT_KINDS, TProjectAccountKind } from '@domain/models/ProjectAccount.Model'
-import { checkAdminAccess } from './Caller.Admin'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
+import { requireProjectAdmin } from './Project.Access'
 import { parseBody } from './Request.Parser'
 
 export interface IProjectAccountsControllerDeps {
@@ -44,7 +44,7 @@ function view(account: IProjectAccount) {
 }
 
 /**
- * As contas de um projeto (só admin; 404 para os demais). ⛔ O segredo entra e nunca sai: a resposta traz só o
+ * As contas de um projeto (só o admin do projeto; 404 para os demais). ⛔ O segredo entra e nunca sai: a resposta traz só o
  * público (dono, ids, o fim do segredo).
  */
 export class ProjectAccountsController {
@@ -111,14 +111,11 @@ export class ProjectAccountsController {
   }
 
   private async admin(req: Request, operation: string): Promise<{ projectId: string; by: string }> {
-    const access = await checkAdminAccess(this.deps.proof)
-    if (!access.allowed) {
-      console.warn(`[admin] acesso negado a ${operation}:`, access.reason)
-      throw new HttpError(404, 'not_found', 'Not found')
-    }
+    // ⛔ O admin DO PROJETO da rota (o do gateway só entra no projeto de que é admin).
     const projectId = req.params.projectId as string
+    const by = await requireProjectAdmin(this.deps.proof, projectId, operation)
     if (!this.deps.projectExists(projectId)) throw new HttpError(404, 'not_found', `Project not found: ${projectId}`)
-    return { projectId, by: access.identity?.email ?? access.identity?.id ?? 'admin' }
+    return { projectId, by }
   }
 
   private async respond<T>(res: Response, work: () => Promise<T>) {

@@ -181,6 +181,15 @@ export interface IOwnerFilter {
 }
 
 /** Recorte de uma página do monitor. Os filtros são todos opcionais e se somam. */
+/**
+ * ⛔ O recorte de quem administra por projeto (ver `Project.Access`): só as conversas destes projetos e, com `unscoped`,
+ * as sem projeto (do administrador do gateway). Ausente = todas (o trabalho do próprio gateway).
+ */
+export interface IConversationScope {
+  projects: readonly string[]
+  unscoped: boolean
+}
+
 export interface IConversationPageQuery {
   /** 1 em diante. */
   page: number
@@ -192,6 +201,8 @@ export interface IConversationPageQuery {
   agentId?: string
   /** Só as do projeto (a chave `project` do metadata, escrita pelo servidor). Vale também para as contagens. */
   project?: string
+  /** O recorte de quem pede (ver `IConversationScope`). Vale também para as contagens. */
+  scope?: IConversationScope
   /**
    * ⛔ Só as deste dono (o admin vendo a PRÓPRIA caixa de entrada): sai da credencial, nunca da query. Ausente = de todos
    * (o monitor).

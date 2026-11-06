@@ -8,6 +8,7 @@ import { IUser } from '@domain/models/User.Model'
 import { NextFunction, Request, Response } from 'express'
 import { provenCaller } from './Caller.Access'
 import { checkAdminAccess } from './Caller.Admin'
+import { requireAnyAdmin } from './Project.Access'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
@@ -193,8 +194,9 @@ export class AuthController {
 
   async listUsers(_req: Request, res: Response) {
     await this.respond(res, async () => {
-      await this.requireAdmin('listUsers')
-      return this.accounts.list().map(toUserDto)
+      // ⚖️ Quem administra um projeto também lista (escolhe os membros), mas só o nome: papel, datas e acesso são do gateway.
+      const view = await requireAnyAdmin(this.deps.proof, 'listUsers')
+      return this.accounts.list().map((user) => (view.gateway ? toUserDto(user) : { id: user.id, email: user.email, name: user.name, disabled: user.disabled }))
     })
   }
 

@@ -525,6 +525,25 @@ describe('SqliteConversationRepository — monitor, rótulos e compartilhamento'
       return repo
     }
 
+    it('⛔ o recorte por projeto (quem administra só alguns): a lista, o total, as abas e o retrato', async () => {
+      const repo = repository()
+      await repo.saveSession(session({ id: 'alfa-1', metadata: { project: 'alfa' }, updatedAt: new Date('2026-08-30T10:03:00Z') }))
+      await repo.saveSession(session({ id: 'beta-1', metadata: { project: 'beta' }, updatedAt: new Date('2026-08-30T10:02:00Z') }))
+      await repo.saveSession(session({ id: 'solta', updatedAt: new Date('2026-08-30T10:01:00Z') }))
+      const ids = async (scope: { projects: string[]; unscoped: boolean }) => (await repo.pageSessions({ page: 1, pageSize: 10, scope })).sessions.map((item) => item.id)
+
+      assert.deepStrictEqual(await ids({ projects: ['alfa'], unscoped: false }), ['alfa-1'])
+      assert.deepStrictEqual(await ids({ projects: ['alfa'], unscoped: true }), ['alfa-1', 'solta'])
+      assert.deepStrictEqual(await ids({ projects: [], unscoped: false }), [])
+      assert.strictEqual((await repo.pageSessions({ page: 1, pageSize: 10, scope: { projects: ['beta'], unscoped: false } })).total, 1)
+      assert.deepStrictEqual(
+        (await repo.listSessions({ scope: { projects: [], unscoped: true } })).map((item) => item.id),
+        ['solta'],
+      )
+      assert.strictEqual((await repo.stats({ projects: ['alfa', 'beta'], unscoped: false })).conversations, 2)
+      assert.strictEqual((await repo.stats()).conversations, 3)
+    })
+
     it('pagina no banco: o total é de tudo e a página vem em ordem de atualização', async () => {
       const repo = await seed()
 

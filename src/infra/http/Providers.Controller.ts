@@ -13,6 +13,7 @@ import { protocolCatalog } from '@domain/Protocol.Catalog'
 import { Request, Response } from 'express'
 import { z } from 'zod'
 import { checkAdminAccess } from './Caller.Admin'
+import { administers, adminView, IAdminView, requireAnyAdmin } from './Project.Access'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
@@ -95,8 +96,10 @@ export class ProvidersController {
 
   async list(_req: Request, res: Response) {
     await this.respond(res, async () => {
-      await this.requireAdmin('listProviders')
-      return this.deps.providers.list().map((provider) => this.view(provider))
+      // ⚖️ Quem administra um projeto também lê (o formulário do agente escolhe provider e modelo); os agentes que
+      // aparecem são só os dos projetos dele. Gravar segue do administrador do gateway.
+      const view = await requireAnyAdmin(this.deps.proof, 'listProviders')
+      return this.deps.providers.list().map((provider) => this.view(provider, view))
     })
   }
 
@@ -110,7 +113,7 @@ export class ProvidersController {
 
         const provider = this.deps.providers.create(body, admin)
         if (body.key) this.deps.credentials.save(provider.id, body.key, admin)
-        return this.view(provider)
+        return this.view(provider, await adminView(this.deps.proof))
       },
       { status: 201, message: 'Provider created' },
     )
@@ -122,7 +125,7 @@ export class ProvidersController {
       async () => {
         const admin = await this.requireAdmin('updateProvider')
         const body = parseBody(updateSchema, req.body)
-        return this.view(this.deps.providers.update(this.idOf(req), body, admin))
+        return this.view(this.deps.providers.update(this.idOf(req), body, admin), await adminView(this.deps.proof))
       },
       { message: 'Provider updated' },
     )
@@ -156,7 +159,7 @@ export class ProvidersController {
         const admin = await this.requireAdmin('saveProviderKey')
         const id = this.idOf(req)
         this.deps.credentials.save(id, parseBody(keySchema, req.body).key, admin)
-        return this.view(this.deps.providers.get(id) as IProviderConfig)
+        return this.view(this.deps.providers.get(id) as IProviderConfig, await adminView(this.deps.proof))
       },
       { message: 'Key saved' },
     )
@@ -170,7 +173,7 @@ export class ProvidersController {
         await this.requireAdmin('clearProviderKey')
         const id = this.idOf(req)
         this.deps.credentials.clear(id)
-        return this.view(this.deps.providers.get(id) as IProviderConfig)
+        return this.view(this.deps.providers.get(id) as IProviderConfig, await adminView(this.deps.proof))
       },
       { message: 'Key removed' },
     )
@@ -196,7 +199,7 @@ export class ProvidersController {
   /** O catálogo de um provider: tudo o que ele lista, ativado ou não, com o preço e de onde ele veio. */
   async listModels(req: Request, res: Response) {
     await this.respond(res, async () => {
-      await this.requireAdmin('listModels')
+      await requireAnyAdmin(this.deps.proof, 'listModels')
       return this.catalog.list(this.idOf(req)).map(toModelDto)
     })
   }
@@ -326,8 +329,12 @@ export class ProvidersController {
   }
 
   /** O provider como a tela o vê: sem chave nenhuma, com o que ela libera. */
-  private view(provider: IProviderConfig) {
-    const agents = this.deps.agents.list().filter((agent) => agent.providers.some((target) => target.provider === provider.id))
+  /** ⛔ Os agentes que usam o provider: só os dos projetos de quem vê (e os globais, para o admin do gateway). */
+  private view(provider: IProviderConfig, viewer: IAdminView | undefined) {
+    const agents = this.deps.agents
+      .list()
+      .filter((agent) => agent.providers.some((target) => target.provider === provider.id))
+      .filter((agent) => !viewer || administers(viewer, agent.projectId))
     const [credential] = this.deps.credentials.status([provider.id])
 
     return {

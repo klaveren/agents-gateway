@@ -51,7 +51,6 @@ import {
 } from '@/lib/importer'
 import { BUILD_KINDS, type TBuildKind } from '@/lib/builder'
 import { BUILDABLE_STATES, buildLink, builderKindFor, draftingWithoutConversation, type IImportBuildStatus } from '@/lib/importDraft'
-import { useAuthStore } from '@/stores/auth'
 import { batchKey, type IImportJobView, jobKey, useImportsStore } from '@/stores/imports'
 import { useProjectsStore } from '@/stores/projects'
 import { useRepositoriesStore } from '@/stores/repositories'
@@ -78,12 +77,11 @@ import { useRepositoriesStore } from '@/stores/repositories'
 const PAGE = 100
 const CATALOG_STATES: readonly TCatalogState[] = ['new', 'same-project', 'global', 'other-project']
 
-const auth = useAuthStore()
 const projects = useProjectsStore()
 const project = computed(() => projects.list.find((item) => item.id === projects.current))
 const imports = useImportsStore()
-/** O projeto das leituras do importador (só admin). */
-const projectId = computed(() => (auth.isAdmin ? project.value?.id : undefined))
+/** O projeto das leituras do importador (só quem administra o projeto). */
+const projectId = computed(() => (projects.manages ? project.value?.id : undefined))
 
 const { data: repositoryList, error: repositoryError } = useResource(useRepositoriesStore().lists, projectId)
 const repositories = computed(() => (repositoryList.value ?? []).map((item) => item.name))
@@ -575,15 +573,15 @@ function noteBadges(item: IInventoryItem): { untranslatable: number; attention: 
 }
 
 onMounted(async () => {
-  if (auth.isAdmin && !projects.loaded) await projects.load().catch(() => undefined)
+  if (!projects.loaded) await projects.load().catch(() => undefined)
 })
 // ⚖️ As leituras seguem o projeto sozinhas (`useResource`): trocar de projeto só limpa a tela.
 watch(() => projects.current, reset)
 </script>
 
 <template>
-  <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
-    <p class="font-medium text-zinc-200">Só quem administra usa o importador do projeto.</p>
+  <div v-if="!projects.manages" class="grid h-full place-items-center p-6 text-center text-zinc-400">
+    <p class="font-medium text-zinc-200">Só quem administra este projeto usa o importador.</p>
   </div>
 
   <div v-else class="h-full overflow-y-auto px-4 py-5">

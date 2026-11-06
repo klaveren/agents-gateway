@@ -7,6 +7,7 @@ import type { IToolUsage } from '@domain/models/ToolUsage.Model'
 import {
   IConversationPage,
   IConversationPageQuery,
+  IConversationScope,
   IConversationSession,
   IConversationStats,
   IConversationTurn,
@@ -36,7 +37,7 @@ export interface IConversationRepository {
   appendTurn(turn: IConversationTurn): Promise<number | undefined>
 
   /** O retrato agregado de TODAS as conversas — somado no banco, não sobre a página listada. */
-  stats(): Promise<IConversationStats>
+  stats(scope?: IConversationScope): Promise<IConversationStats>
 
   /**
    * O uso de um período, linha por dia de conversa (`IUsageRow`) — quem monta totais e gráficos é
@@ -64,7 +65,13 @@ export interface IConversationRepository {
    * `owner` recorta pelo DONO (`metadata.owner`): `{ id, account? }` devolve só as dele, `null` só as
    * SEM dono, ausente não recorta. É o que impede a lista de uma pessoa de ser a de todo mundo.
    */
-  listSessions(options?: { limit?: number; filter?: Record<string, unknown>; owner?: IOwnerFilter | null; archived?: boolean }): Promise<IConversationSession[]>
+  listSessions(options?: {
+    limit?: number
+    filter?: Record<string, unknown>
+    owner?: IOwnerFilter | null
+    archived?: boolean
+    scope?: IConversationScope
+  }): Promise<IConversationSession[]>
   /** Arquiva (ou desarquiva) a conversa: sai da caixa de entrada, não é retomada sozinha, nada some. */
   setArchived?(sessionId: string, archived: boolean, by?: string): Promise<void>
   /** Quantas arquivadas a pessoa tem. */

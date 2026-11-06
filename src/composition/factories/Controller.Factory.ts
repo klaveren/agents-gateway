@@ -184,6 +184,11 @@ export function makePermissionRequestsController(): PermissionRequestsController
     liveSession: (id) => makeSessionStore().get(id),
     secrets: makeResourceSecrets(),
     resourceKindOf: (id) => makeGuidance().resourceKindOf(id),
+    // O projeto da skill ou do command (a variável dele é do admin desse projeto); sem recurso, `undefined`.
+    resourceProjectOf: (id) => {
+      if (!makeGuidance().resourceKindOf(id)) return undefined
+      return makeGuidance().resource(id).projectId ?? null
+    },
   })
 }
 

@@ -5,6 +5,7 @@ import { ApiError } from '@/lib/api'
 import { useAgentsStore } from '@/stores/agents'
 import { useAuthStore } from '@/stores/auth'
 import { useConversationsStore } from '@/stores/conversations'
+import { useProjectsStore } from '@/stores/projects'
 
 /** Login e setup do primeiro admin: a mesma tela, porque são os mesmos campos menos um. */
 const route = useRoute()
@@ -12,6 +13,7 @@ const router = useRouter()
 const auth = useAuthStore()
 const agents = useAgentsStore()
 const conversations = useConversationsStore()
+const projects = useProjectsStore()
 
 const isSetup = computed(() => route.name === 'setup')
 const name = ref('')
@@ -37,8 +39,10 @@ async function submit() {
     else await auth.login(email.value, password.value)
 
     // Outra pessoa: lista, agentes e assinatura ao vivo recomeçam com a credencial nova.
-    conversations.subscribe(auth.isAdmin)
-    void conversations.load(auth.isAdmin)
+    // O papel no projeto vem da lista de projetos, que o login acaba de refazer.
+    await projects.load().catch(() => undefined)
+    conversations.subscribe(projects.seesAll)
+    void conversations.load(projects.seesAll)
     void agents.load().catch(() => undefined)
     // As ferramentas também dependem de quem pergunta (os MCPs dos projetos da pessoa).
     void agents.loadTools().catch(() => undefined)

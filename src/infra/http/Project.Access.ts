@@ -10,6 +10,8 @@ export interface IProjectRoles {
   roleOf(projectId: string, userId: string | undefined): TProjectRole | undefined
   /** Os projetos de que a conta é membro. */
   projectsOf(userId: string): string[]
+  /** Todos os projetos (para saber se alguém administra TUDO). Ausente = ninguém administra tudo. */
+  all?(): ReadonlyArray<{ id: string }>
 }
 
 export interface IProjectAccessRegistry {
@@ -61,6 +63,18 @@ export function administers(view: IAdminView, projectId: string | null | undefin
   return view.projects === 'all' || view.projects.has(projectId)
 }
 
+/**
+ * Administra TUDO: o gateway e cada projeto que existe (o pacote inteiro do catálogo, o "tudo" do histórico). Sem os
+ * papéis registrados, o administrador do gateway de antes.
+ */
+export function administersEverything(view: IAdminView): boolean {
+  if (!view.gateway) return false
+  if (view.projects === 'all') return true
+  const projects = view.projects
+  const all = registry?.roles.all?.()
+  return !!all && all.every((project) => projects.has(project.id))
+}
+
 /** O sistema e o global: só o administrador do gateway. Devolve quem grava (`by`). */
 export async function requireGatewayAdmin(proof: ICallerProof | undefined, operation: string): Promise<string> {
   const access = await checkAdminAccess(proof)
@@ -83,8 +97,9 @@ export async function requireScopeReader(proof: ICallerProof | undefined, projec
 /** Todos os escopos dados (mover um item de projeto exige os dois). */
 export async function requireProjectsAdmin(proof: ICallerProof | undefined, projectIds: ReadonlyArray<string | null | undefined>, operation: string): Promise<string> {
   const view = await adminView(proof)
-  const outside = projectIds.find((projectId) => !view || !administers(view, projectId))
-  if (!view || outside !== undefined) throw denied(operation, `not an administrator of ${outside ?? 'the global scope'}`)
+  // ⚠️ `findIndex`, não `find`: o escopo negado pode ser o global (`undefined`), e `find` o confundiria com "nenhum".
+  const outside = projectIds.findIndex((projectId) => !view || !administers(view, projectId))
+  if (!view || outside >= 0) throw denied(operation, `not an administrator of ${projectIds[outside] ?? 'the global scope'}`)
   return view.by
 }
 

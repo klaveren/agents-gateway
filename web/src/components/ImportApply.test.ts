@@ -5,6 +5,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { api } from '@/lib/api'
 import type { IApplyPreview, IApplyResult } from '@/lib/importApply'
 import { useAuthStore } from '@/stores/auth'
+import { useProjectsStore } from '@/stores/projects'
 import ImportApply from './ImportApply.vue'
 
 vi.mock('@/lib/api', async (original) => ({ ...(await original<typeof import('@/lib/api')>()), api: vi.fn() }))
@@ -89,7 +90,11 @@ async function mount(admin = true, target: { batchId?: string; keys?: string[]; 
   const pinia = createPinia()
   setActivePinia(pinia)
   const auth = useAuthStore()
-  auth.isAdmin = admin
+  // `admin` = administra o PROJETO (o papel vem do projeto, não do gateway).
+  auth.isAdmin = false
+  const projects = useProjectsStore()
+  projects.list = [{ id: 'alfa', name: 'Alfa', role: admin ? 'admin' : 'member', createdAt: '', updatedAt: '' }]
+  projects.current = 'alfa'
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:any(.*)*', component: { render: () => null } }] })
   await router.push('/import')
   await router.isReady()

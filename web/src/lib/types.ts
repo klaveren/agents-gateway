@@ -724,6 +724,8 @@ export interface IProject {
   id: string
   name: string
   description?: string
+  /** O papel de quem pediu (a lista é só dos projetos de que a pessoa é membro). */
+  role?: TProjectRole
   folder?: string
   members?: number
   createdAt: string

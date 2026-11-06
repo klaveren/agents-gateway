@@ -104,6 +104,8 @@ const tab = ref<TResourceTab>(HASH_TAB[route.hash] ?? 'edit')
 /** Muda depois de restaurar uma versão: relê o item. */
 const reloadKey = ref(0)
 const loaded = ref<IResource>()
+/** Global: só o admin do gateway altera; quem administra o projeto lê. */
+const locked = computed(() => !auth.isAdmin && (adding.value ? form.value.global : !!loaded.value && !loaded.value.projectId))
 const preview = ref(false)
 const issues = ref<Record<string, string[]>>({})
 const error = ref<string>()
@@ -117,7 +119,7 @@ watch(
   (id) => (scope.value = id ?? GLOBAL_SCOPE),
 )
 const formScope = computed(() => (form.value.global ? GLOBAL_SCOPE : form.value.project))
-const { list: docs } = useScopedDocs(() => (auth.isAdmin ? scopeToProjectId(formScope.value) : undefined))
+const { list: docs } = useScopedDocs(() => (projects.manages ? scopeToProjectId(formScope.value) : undefined))
 /** Os documentos que podem ir anexados: os globais e, num recurso de projeto, os do projeto. */
 const attachable = computed(() => docs.value.filter((doc) => !doc.projectId || doc.projectId === scopeToProjectId(formScope.value)))
 const dirty = computed(() => {
@@ -135,8 +137,8 @@ const dirty = computed(() => {
 })
 
 onMounted(async () => {
-  if (!auth.isAdmin) return
   if (!projects.loaded) await projects.load().catch(() => undefined)
+  if (!projects.manages) return
   ready.value = true
 })
 
@@ -154,7 +156,7 @@ watch(
         description: '',
         tags: [],
         body: KIND[kind].template,
-        global: scope.value === GLOBAL_SCOPE,
+        global: scope.value === GLOBAL_SCOPE && auth.isAdmin,
         project: scope.value === GLOBAL_SCOPE ? (projects.current ?? '') : scope.value,
         docIds: [],
         docRefs: [],
@@ -331,7 +333,7 @@ const extraTabs = computed(() =>
     { id: 'attachments' as const, label: `Anexos${form.value.docIds.length ? ` (${form.value.docIds.length})` : ''}` },
   { id: 'files' as const, label: `Arquivos${loaded.value?.files?.length ? ` (${loaded.value.files.length})` : ''}` },
     // As variáveis secretas (só admin; o valor entra e nunca volta).
-    ...(auth.isAdmin ? [{ id: 'variables' as const, label: 'Variáveis' }] : []),
+    ...(projects.manages && !locked.value ? [{ id: 'variables' as const, label: 'Variáveis' }] : []),
     ...(importIssues.value.length ? [{ id: 'issues' as const, label: `Problemas da importação (${importIssues.value.length})` }] : []),
   ].filter((item) => !adding.value || item.id === 'instructions' || item.id === 'triggers' || item.id === 'attachments'),
 )
@@ -347,8 +349,8 @@ function onInvalid(event: Event) {
 </script>
 
 <template>
-  <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
-    <p class="font-medium text-zinc-200">Só quem administra pode gerenciar {{ info.title }}.</p>
+  <div v-if="!projects.manages" class="grid h-full place-items-center p-6 text-center text-zinc-400">
+    <p class="font-medium text-zinc-200">Só quem administra este projeto pode gerenciar {{ info.title }}.</p>
   </div>
 
   <MasterDetail v-else :open="!!id || adding" :back-to="info.base" :back-label="info.title" :title="adding ? `${g.nova} ${info.one}` : loaded?.id">
@@ -381,6 +383,8 @@ function onInvalid(event: Event) {
       <div v-if="adding || loaded" class="mx-auto mb-4 max-w-3xl"><HistoryTabs v-model="tab" :edit-label="info.one.charAt(0).toUpperCase() + info.one.slice(1)" :extra="extraTabs" :history="!adding" /></div>
       <form v-if="adding || (loaded && (tab === 'edit' || tab === 'instructions' || tab === 'triggers' || tab === 'attachments' || tab === 'files'))" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save" @invalid.capture="onInvalid">
         <h2 class="font-mono text-lg font-semibold">{{ adding ? `${g.nova} ${info.one}` : `${kind === 'command' ? '/' : ''}${loaded?.id}` }}</h2>
+        <p v-if="locked" class="text-xs text-amber-300" data-test="global-readonly">Global: só o administrador do gateway altera.</p>
+        <fieldset :disabled="locked" class="contents">
         <div v-show="tab === 'edit'" class="flex flex-col gap-3">
         <label class="field">
           Descrição
@@ -396,7 +400,7 @@ function onInvalid(event: Event) {
           <small v-for="m in issues.id" :key="m" class="error">{{ m }}</small>
         </label>
         <div class="flex flex-wrap items-center gap-3 text-sm">
-          <label class="flex items-center gap-2"><input v-model="form.global" type="checkbox" class="accent-emerald-500" /> Global (todos os projetos)</label>
+          <label class="flex items-center gap-2"><input v-model="form.global" type="checkbox" :disabled="!auth.isAdmin" class="accent-emerald-500" /> Global (todos os projetos)</label>
           <select v-if="!form.global" v-model="form.project" required class="input w-auto py-1.5 text-sm" aria-label="Projeto">
             <!-- Só o projeto escolhido no topo (ou o do item, se for outro): sem lista de projetos aqui. -->
             <option v-for="project in projects.list.filter((item) => item.id === projects.current || item.id === form.project)" :key="project.id" :value="project.id">{{ project.name }}</option>
@@ -452,7 +456,8 @@ function onInvalid(event: Event) {
             :save="saveFiles"
           />
         </div>
-        <SaveFooter submit :label="`${adding ? 'Criar' : 'Salvar'} ${info.one}`" :busy="busy" :disabled="!(dirty || !!filesPart?.dirty)" :pending="!adding && (dirty || !!filesPart?.dirty)">
+        </fieldset>
+        <SaveFooter v-if="!locked" submit :label="`${adding ? 'Criar' : 'Salvar'} ${info.one}`" :busy="busy" :disabled="!(dirty || !!filesPart?.dirty)" :pending="!adding && (dirty || !!filesPart?.dirty)">
           <RouterLink v-if="adding" :to="info.base" class="btn btn-ghost">Cancelar</RouterLink>
           <template v-if="!adding" #end>
             <button type="button" class="btn btn-danger" @click="removing = true">Apagar {{ info.one }}</button>
@@ -469,7 +474,7 @@ function onInvalid(event: Event) {
       </section>
       <section v-else-if="loaded && tab === 'history'" class="mx-auto flex max-w-3xl flex-col gap-3">
         <h2 class="font-mono text-lg font-semibold">{{ kind === 'command' ? '/' : '' }}{{ loaded.id }}</h2>
-        <HistoryPanel :kind="kind" :id="loaded.id" @restored="restored" />
+        <HistoryPanel :kind="kind" :id="loaded.id" :readonly="locked" @restored="restored" />
       </section>
       <p v-else-if="error" class="mx-auto max-w-3xl text-sm text-rose-300">{{ error }}</p>
       <section v-else class="mx-auto flex max-w-2xl flex-col gap-3 text-sm text-zinc-300">

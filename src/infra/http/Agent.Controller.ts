@@ -37,7 +37,7 @@ import { diagnosticsOn, IAgent, IAgentTarget } from '@domain/models/Agent.Model'
 import { AgentUnavailableError } from '@domain/errors/Domain.Error'
 import { AgentNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgentEvent } from '@domain/models/AgentEvent.Model'
-import { toSharedConversation } from '@domain/models/Conversation.Model'
+import { IConversationScope, toSharedConversation } from '@domain/models/Conversation.Model'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { MODEL_PRICING, TModelPricing } from '@domain/models/Model.Pricing'
 import { allowsCaller, mergeSettings } from '@domain/models/Settings.Model'
@@ -73,6 +73,7 @@ import { ICallerProof } from './Caller.Proof'
 import { audienceRules } from './Caller.Roles'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
+import { administers, adminView, IAdminView, requireAnyAdmin, requireProjectAdmin, requireProjectsAdmin } from './Project.Access'
 import { parseBody } from './Request.Parser'
 import {
   agentBodySchema,
@@ -211,6 +212,17 @@ interface ITurnCallbackTarget {
   project?: string
 }
 
+/** O recorte do monitor (ver `IConversationScope`): nenhum para quem administra tudo (sem papéis registrados). */
+function scopeOfView(view: IAdminView): { scope?: IConversationScope } {
+  return view.projects === 'all' ? {} : { scope: { projects: [...view.projects], unscoped: view.gateway } }
+}
+
+/** O projeto carimbado pelo servidor na conversa (`metadata.project`); sem ele, a conversa é do escopo global. */
+function projectKeyOf(metadata: Record<string, unknown> | undefined): string | undefined {
+  const project = metadata?.[PROJECT_METADATA_KEY]
+  return typeof project === 'string' && project ? project : undefined
+}
+
 export class AgentController {
   /** Os turnos assíncronos rodando (por conversa) e o resultado do último de cada uma, até o gravado chegar. */
   private readonly liveTurns = new Map<string, ILiveTurn>()
@@ -238,6 +250,7 @@ export class AgentController {
     this.guardCaller = this.guardCaller.bind(this)
     this.availability = this.availability.bind(this)
     this.getSettings = this.getSettings.bind(this)
+    this.getModelGroups = this.getModelGroups.bind(this)
     this.updateSettings = this.updateSettings.bind(this)
     this.listConversations = this.listConversations.bind(this)
     this.conversationStats = this.conversationStats.bind(this)
@@ -316,8 +329,8 @@ export class AgentController {
   async getAgents(req: Request, res: Response) {
     await this.respond(res, async () => {
       const resolved = await this.requireCaller()
-      const admin = (await checkAdminAccess(this.usecases.proof)).allowed
-      const caller = { userId: resolved.identity?.id, admin }
+      const view = await adminView(this.usecases.proof)
+      const caller = this.callerOf(resolved)
       const project = typeof req.query.project === 'string' && req.query.project ? req.query.project : undefined
       if (project) this.requireProject(caller, project)
       return (
@@ -325,9 +338,11 @@ export class AgentController {
           .entries()
           // ⛔ Com `?project`, os dele e os globais. Sem, tudo o que a pessoa pode usar (os globais e os dos projetos dela).
           .filter((entry) => this.agentVisible(entry.agent, caller, project))
-          .map((entry) => ({ entry, unavailable: this.unavailableOf(entry.agent, admin) }))
-          .filter(({ unavailable }) => admin || !unavailable)
-          .map(({ entry, unavailable }) => ({
+          // ⚖️ Administra ESTE agente: o admin do projeto dele (o global, o do gateway) — não mais "é admin de algo".
+          .map((entry) => ({ entry, admin: !!view && administers(view, entry.agent.projectId), unavailable: undefined as TAgentUnavailable | undefined }))
+          .map((item) => ({ ...item, unavailable: this.unavailableOf(item.entry.agent, item.admin) }))
+          .filter(({ admin, unavailable }) => admin || !unavailable)
+          .map(({ entry, admin, unavailable }) => ({
             // ⛔ Quem não administra só vê os providers que rodam para ele: um desligado não é escolha.
             ...this.listedAgent(entry.agent, admin),
             // Só quem administra vê que há problema da importação (a tela marca a lista); o texto vem no detalhe.
@@ -412,8 +427,7 @@ export class AgentController {
    */
   private async sessionProject(caller: IProjectCaller, agentId: string | undefined, requested: string | undefined): Promise<string | undefined> {
     if (!this.usecases.projects) return undefined
-    const configured = agentId || (await this.usecases.settings.read()).agentId
-    const agent = configured ? this.agents.get(configured) : this.agents.fallback()
+    const agent = this.sessionAgent(agentId, (await this.usecases.settings.read()).agentId)
     if (agent?.projectId) {
       if (!this.usecases.projects.canUse(caller, agent.projectId)) throw new AgentNotFoundError(agent.id)
       return agent.projectId
@@ -454,6 +468,28 @@ export class AgentController {
     } catch {
       return { repository, ...(worktree ? { worktree } : {}) }
     }
+  }
+
+  /** O agente da conversa nova: o do corpo, senão o das configurações, senão o padrão do registro. */
+  private sessionAgent(agentId: string | undefined, defaultId?: string): IAgent | undefined {
+    const configured = agentId || defaultId
+    return configured ? this.agents.get(configured) : this.agents.fallback()
+  }
+
+  /** Quem pergunta, para as regras de membro. ⛔ O passe do admin acabou: `canUse` só conhece o membro (ver `Project.Access`). */
+  private callerOf(resolved: IResolvedCaller): IProjectCaller {
+    return { userId: resolved.identity?.id, admin: false }
+  }
+
+  /**
+   * ⛔ O admin do AGENTE: o do projeto dele; o global, o do gateway; que não existe, passa pelo gateway (o serviço dá o
+   * 404 de sempre). `alsoProject`: o projeto pedido na tela (`?project=`) para ler um agente global dentro de um
+   * projeto — o gateway não lê dado de projeto que não administra, então os DOIS escopos.
+   */
+  private requireAgentAdmin(agentId: string, operation: string, alsoProject?: string): Promise<string> {
+    const projectId = this.agents.get(agentId)?.projectId ?? null
+    // ⚠️ `null`, nunca `undefined`, na lista: `requireProjectsAdmin` acha o escopo negado com `find` e confunde `undefined` com "nenhum".
+    return requireProjectsAdmin(this.usecases.proof, projectId || !alsoProject || !this.usecases.projects?.exists(alsoProject) ? [projectId] : [projectId, alsoProject], operation)
   }
 
   /** O agente aparece para esta pessoa (neste projeto, se pedido)? O global aparece em todos. */
@@ -536,7 +572,7 @@ export class AgentController {
    */
   async getAgent(req: Request, res: Response) {
     await this.respond(res, async () => {
-      await this.requireAdmin('getAgent')
+      await this.requireAgentAdmin(req.params.agentId as string, 'getAgent')
       const entry = this.agents.entry(req.params.agentId as string)
       if (!entry) throw new AgentNotFoundError(req.params.agentId as string)
 
@@ -558,9 +594,9 @@ export class AgentController {
   async getAgentCommands(req: Request, res: Response) {
     await this.respond(res, async () => {
       const resolved = await this.requireCaller()
-      const admin = (await checkAdminAccess(this.usecases.proof)).allowed
+      const caller = this.callerOf(resolved)
       const agent = this.agents.get(req.params.agentId as string)
-      if (!agent || !this.agentVisible(agent, { userId: resolved.identity?.id, admin })) throw new AgentNotFoundError(req.params.agentId as string)
+      if (!agent || !this.agentVisible(agent, caller)) throw new AgentNotFoundError(req.params.agentId as string)
       // Os commands e as skills: a caixa sugere os dois ao digitar `/` (a skill escolhida vai inteira, já carregada).
       const guidance = this.usecases.guidance
       const resources = [...(guidance?.usableResources('command', agent.id) ?? []), ...(guidance?.usableResources('skill', agent.id) ?? [])].map((resource) => ({
@@ -571,9 +607,7 @@ export class AgentController {
       // E os documentos da conversa (os globais e os do projeto dela, como o índice do prompt): `/spec:<id>` o anexa inteiro.
       // ⚖️ Título e resumo só — o mesmo que o agente já vê no índice. O projeto vem da tela, e só vale o que a pessoa usa.
       const requested = typeof req.query.project === 'string' && req.query.project ? req.query.project : undefined
-      const project =
-        agent.projectId ??
-        (requested && this.usecases.projects?.exists(requested) && this.usecases.projects.canUse({ userId: resolved.identity?.id, admin }, requested) ? requested : undefined)
+      const project = agent.projectId ?? (requested && this.usecases.projects?.exists(requested) && this.usecases.projects.canUse(caller, requested) ? requested : undefined)
       const docs = guidance ? [...guidance.docs(null), ...(project ? guidance.docs(project) : [])] : []
       return [...resources, ...docs.map((doc) => ({ id: `${doc.kind}:${doc.id}`, kind: doc.kind, description: doc.summary ? `${doc.title} — ${doc.summary}` : doc.title }))]
     })
@@ -581,10 +615,10 @@ export class AgentController {
 
   async getAgentFootprint(req: Request, res: Response) {
     await this.respond(res, async () => {
-      await this.requireAdmin('getAgentFootprint')
+      const requested = typeof req.query.project === 'string' && req.query.project ? req.query.project : undefined
+      await this.requireAgentAdmin(req.params.agentId as string, 'getAgentFootprint', requested)
       const entry = this.agents.entry(req.params.agentId as string)
       if (!entry) throw new AgentNotFoundError(req.params.agentId as string)
-      const requested = typeof req.query.project === 'string' && req.query.project ? req.query.project : undefined
       const projectId = entry.agent.projectId ?? (requested && this.usecases.projects?.exists(requested) ? requested : undefined)
       const token = currentCaller()?.token
       const catalog = this.usecases.catalog
@@ -618,11 +652,11 @@ export class AgentController {
    */
   async getAgentSystemPrompt(req: Request, res: Response) {
     await this.respond(res, async () => {
-      await this.requireAdmin('getAgentSystemPrompt')
       const id = req.params.agentId as string
+      const requested = typeof req.query.project === 'string' && req.query.project ? req.query.project : undefined
+      await this.requireAgentAdmin(id, 'getAgentSystemPrompt', requested)
       const agent = this.agents.get(id)
       if (!agent) throw new AgentNotFoundError(id)
-      const requested = typeof req.query.project === 'string' && req.query.project ? req.query.project : undefined
       const projectId = agent.projectId ?? (requested && this.usecases.projects?.exists(requested) ? requested : undefined)
       const name = projectId && this.usecases.projects?.exists(projectId) ? this.usecases.projects.get(projectId).name : undefined
       const dir = this.agents.filesDir(agent)
@@ -683,13 +717,14 @@ export class AgentController {
     await this.respond(
       res,
       async () => {
-        const admin = await this.requireAdmin('createAgent')
         const body = parseBody(agentBodySchema, req.body)
+        // ⛔ O admin do projeto do corpo (sem projeto = agente global, só o gateway).
+        const by = await requireProjectAdmin(this.usecases.proof, body.projectId, 'createAgent')
         const input = toAgentInput(body.id ?? '', body)
         const issues = this.projectIssues(input)
         if (issues.length) throw new HttpError(422, 'validation_error', 'Request body is invalid', issues)
 
-        const saved = this.agents.save(input, { rules: await this.agentRules(), by: admin.email ?? admin.id ?? 'admin', creating: true })
+        const saved = this.agents.save(input, { rules: await this.agentRules(), by, creating: true })
 
         return toAgentDetailDto({ agent: saved, updatedAt: saved.updatedAt, updatedBy: saved.updatedBy }, (providerId) => this.providerFacts(providerId))
       },
@@ -723,8 +758,10 @@ export class AgentController {
     await this.respond(
       res,
       async () => {
-        const admin = await this.requireAdmin('updateAgent')
         const body = parseBody(agentBodySchema, req.body)
+        // ⛔ Mover o agente de projeto exige ser admin dos DOIS (o de onde sai e o de onde chega); o global é o do gateway.
+        const existing = this.agents.get(req.params.agentId as string)
+        const by = await requireProjectsAdmin(this.usecases.proof, existing ? [existing.projectId ?? null, body.projectId ?? null] : [body.projectId ?? null], 'updateAgent')
         const parsed = toAgentInput(req.params.agentId as string, body)
         // ⚖️ Quem edita sem mandar as permissões (o MCP, um script) não as apaga: ficam as que o agente já tem.
         const current = body.permissions === undefined ? this.agents.get(parsed.id)?.permissions : undefined
@@ -756,7 +793,7 @@ export class AgentController {
 
         const saved = this.agents.save(input, {
           rules: await this.agentRules(),
-          by: admin.email ?? admin.id ?? 'admin',
+          by,
           creating: false,
         })
 
@@ -773,9 +810,9 @@ export class AgentController {
    */
   async resolveAgentImportIssue(req: Request, res: Response) {
     await this.respond(res, async () => {
-      const admin = await this.requireAdmin('resolveAgentImportIssue')
+      const by = await this.requireAgentAdmin(req.params.agentId as string, 'resolveAgentImportIssue')
       const match = parseBody(importIssueMatchSchema, req.body)
-      const saved = this.agents.resolveImportIssue(req.params.agentId as string, match, admin.email ?? admin.id ?? 'admin')
+      const saved = this.agents.resolveImportIssue(req.params.agentId as string, match, by)
       const entry = this.agents.entry(saved.id)!
       return toAgentDetailDto(entry, (providerId) => this.providerFacts(providerId, this.agents.unusableModels(entry.agent)))
     })
@@ -789,8 +826,8 @@ export class AgentController {
     await this.respond(
       res,
       async () => {
-        const admin = await this.requireAdmin('deleteAgent')
-        this.agents.remove(req.params.agentId as string, admin.email ?? admin.id ?? 'admin', { defaultAgentId: (await this.usecases.settings.read()).agentId })
+        const by = await this.requireAgentAdmin(req.params.agentId as string, 'deleteAgent')
+        this.agents.remove(req.params.agentId as string, by, { defaultAgentId: (await this.usecases.settings.read()).agentId })
         this.usecases.agentRemoved?.(req.params.agentId as string)
 
         return null
@@ -838,11 +875,10 @@ export class AgentController {
   async getAgentTools(req: Request, res: Response) {
     await this.respond(res, async () => {
       const resolved = await this.requireCaller()
-      const admin = (await checkAdminAccess(this.usecases.proof)).allowed
       const agentId = req.params.agentId as string
       const agent = this.agents.get(agentId)
       // ⛔ O agente de um projeto (e os MCPs dele) não existe para quem não é do projeto.
-      if (!agent || !this.agentVisible(agent, { userId: resolved.identity?.id, admin })) throw new AgentNotFoundError(agentId)
+      if (!agent || !this.agentVisible(agent, this.callerOf(resolved))) throw new AgentNotFoundError(agentId)
 
       // As capacidades entram pelas ferramentas do gateway que as implementam (a lista é a mesma em todo provedor).
       // ⛔ Os MCPs: só os do escopo do agente (os globais e os do projeto dele).
@@ -853,7 +889,7 @@ export class AgentController {
   async getTools(req: Request, res: Response) {
     await this.respond(res, async () => {
       const resolved = await this.requireCaller()
-      const caller = { userId: resolved.identity?.id, admin: (await checkAdminAccess(this.usecases.proof)).allowed }
+      const caller = this.callerOf(resolved)
       const project = typeof req.query.project === 'string' && req.query.project ? req.query.project : undefined
       if (project) this.requireProject(caller, project)
       // ⛔ MCP de projeto só para quem é do projeto: com `?project`, os globais e os dele; sem, os dos projetos da pessoa.
@@ -896,21 +932,31 @@ export class AgentController {
         if (!(await this.admits(resolved))) throw new AgentUnavailableError()
 
         const body = parseBody(createSessionSchema, req.body)
-        // O papel PROVADO de administrador: libera assinatura, ferramenta perigosa e o que segue abaixo.
-        const adminAccess = (await checkAdminAccess(this.usecases.proof)).allowed
+        // ⚖️ O papel PROVADO de administrador, POR ITEM (ver `Project.Access`) — não mais um "é admin de algo" que valia para tudo:
+        //  · `agentAdmin`: administra o agente (o projeto dele; o global, o gateway). Libera `adminOnly`, a herança da delegação
+        //    e trocar o `systemPrompt`;
+        //  · `scopeAdmin`: administra o escopo da conversa (o projeto do agente ou, no agente global, o projeto pedido; sem
+        //    projeto, o gateway). Libera as chaves protegidas do `metadata` (a rede de um contêiner);
+        //  · `gatewayAdmin`: o construtor do core e o que é do sistema — só o gateway.
+        const view = await adminView(this.usecases.proof)
+        const gatewayAdmin = !!view?.gateway
+        const sessionAgent = this.sessionAgent(body.agentId, (await this.usecases.settings.read()).agentId)
+        const agentAdmin = !!view && administers(view, sessionAgent?.projectId)
+        const scopeAdmin = !!view && administers(view, sessionAgent?.projectId ?? body.projectId)
+        const adminAccess = agentAdmin
 
         // ⛔ Trocar as instruções do agente é decisão de quem o administra: um membro descartaria as
         // regras que o admin escreveu (as travas do agente vivem no prompt).
-        if (body.systemPrompt?.trim() && !adminAccess) {
+        if (body.systemPrompt?.trim() && !agentAdmin) {
           throw new HttpError(422, 'validation_error', 'Request body is invalid', [{ field: 'systemPrompt', message: 'only administrators can replace the agent instructions' }])
         }
 
         // ⛔ O `owner` (e a delegação) do corpo são descartados SEMPRE: só o servidor os escreve. Para
         // quem não é admin, também as chaves que abrem a rede de um contêiner (`{meta:…}`).
         // ⛔ O construtor é do core e só de admin: para quem não é, ele nem existe (o `adminOnly` do provider é a segunda trava).
-        if (builderKindOf(body.agentId) && !adminAccess) throw new AgentNotFoundError(body.agentId!)
+        if (builderKindOf(body.agentId) && !gatewayAdmin) throw new AgentNotFoundError(body.agentId!)
 
-        const { metadata, issues } = clientMetadata(body.metadata, { admin: adminAccess, protectedKeys: this.egressMetadataKeys() })
+        const { metadata, issues } = clientMetadata(body.metadata, { admin: scopeAdmin, protectedKeys: this.egressMetadataKeys() })
         if (issues.length) throw new HttpError(422, 'validation_error', 'Request body is invalid', issues)
         const owner = ownerOf(resolved)
 
@@ -919,7 +965,7 @@ export class AgentController {
         if (mine >= sessionsPerOwner()) throw new HttpError(429, 'rate_limited', `At most ${sessionsPerOwner()} live conversations per account: close one first`)
 
         const { projectId: requested, repository, worktree, callbackUrl, ...session } = body
-        const project = await this.sessionProject({ userId: resolved.identity?.id, admin: adminAccess }, body.agentId, requested)
+        const project = await this.sessionProject(this.callerOf(resolved), body.agentId, requested)
         const place = await this.workPlace(body.agentId, project, repository, worktree)
         const startCommit = place ? await headOf(place.dir) : undefined
         if (callbackUrl && !this.usecases.callbackSecret?.(callbackUrl, project))
@@ -971,6 +1017,18 @@ export class AgentController {
    * ⛔ SÓ ADMINISTRADOR (`checkAdminAccess`), e quem não é recebe 404, não 403: a existência da rota
    * é informação, e quem lê sabe qual modelo está em uso e para quem o agente está aberto.
    */
+  /**
+   * `GET /model-groups` — as sequências de modelos, só leitura: quem administra um projeto escolhe a do agente (gravar
+   * as sequências segue nas configurações, do administrador do gateway).
+   */
+  async getModelGroups(_req: Request, res: Response) {
+    await this.respond(res, async () => {
+      await requireAnyAdmin(this.usecases.proof, 'getModelGroups')
+      const settings = await this.usecases.settings.read()
+      return { groups: settings.modelGroups ?? [], ...(settings.defaultModelGroup ? { defaultModelGroup: settings.defaultModelGroup } : {}) }
+    })
+  }
+
   async getSettings(_req: Request, res: Response) {
     await this.respond(res, async () => {
       await this.requireAdmin('getSettings')
@@ -1078,8 +1136,7 @@ export class AgentController {
         const resolved = await this.requireCaller()
         const identity = resolved.identity
         // `?project=` filtra pela chave `project` do metadata (escrita só pelo servidor); quem não pode usar o projeto, 404.
-        if (typeof query.project === 'string' && query.project)
-          this.requireProject({ userId: identity?.id, admin: (await checkAdminAccess(this.usecases.proof)).allowed }, query.project)
+        if (typeof query.project === 'string' && query.project) this.requireProject(this.callerOf(resolved), query.project)
 
         const limit = Number.parseInt(String(query.limit ?? ''), 10)
         // `?archived=1`: só as arquivadas; sem, a caixa de entrada (sem elas) e quantas estão arquivadas.
@@ -1107,28 +1164,38 @@ export class AgentController {
   }
 
   /**
-   * TODAS as conversas, de todo mundo — o monitor.
+   * TODAS as conversas que o chamador ADMINISTRA — o monitor.
    *
-   * ⛔ É A EXCEÇÃO AO ISOLAMENTO desta API, e a única junto de `stats`: administrador PROVADO
-   * (`checkAdminAccess`) ou 404, sem distinguir os motivos. Com `page`, a paginação é no servidor.
+   * ⛔ É A EXCEÇÃO AO ISOLAMENTO desta API, e a única junto de `stats`: administrador PROVADO ou 404, sem distinguir os
+   * motivos. ⚖️ E só do que ele administra (ver `Project.Access`): as conversas dos projetos de que é admin; as sem projeto,
+   * o gateway. O admin do gateway NÃO vê a conversa de projeto que não é dele. Com `page`, a paginação é no servidor.
+   *
+   * O recorte vai para o banco (`IConversationScope`): a lista, o total e as contagens das abas são só do recorte.
    */
   private async listAllConversations(query: Record<string, unknown>) {
-    const admin = await this.requireAdmin('listAllConversations')
-    const view = this.viewFor(true)
+    const view = await requireAnyAdmin(this.usecases.proof, 'listAllConversations')
+    const identity = (await this.requireCaller()).identity
+    // Cada conversa sai na projeção de quem LÊ: custo e rótulo só onde ele administra.
+    const viewOf = (metadata: Record<string, unknown> | undefined) => this.viewFor(administers(view, projectKeyOf(metadata)))
 
     if (query.page !== undefined) {
       // ⚖️ `?mine=1`: a CAIXA DE ENTRADA do admin, só as dele, com a busca e as contagens do monitor. O dono sai da
       // credencial; sem `mine`, de todos (o filtro "De todos" da tela).
-      const mine = (query.mine === '1' || query.mine === 'true') && admin.id ? { id: admin.id, ...(admin.account ? { account: admin.account } : {}) } : undefined
-      const paging = { ...parsePageQuery(query), ...(mine ? { owner: mine } : {}) }
-      const page = await this.usecases.conversations.pageSessions(paging)
+      const mine = (query.mine === '1' || query.mine === 'true') && identity?.id ? { id: identity.id, ...(identity.account ? { account: identity.account } : {}) } : undefined
+      const asked = parsePageQuery(query)
+      // ⛔ `?project=` é o escopo pedido: só o admin dele (a caixa de entrada própria dispensa — são as dele).
+      if (!mine && asked.project) await requireProjectAdmin(this.usecases.proof, asked.project, 'listAllConversations')
+      const paging = { ...asked, ...(mine ? { owner: mine } : {}) }
+      const page = await this.usecases.conversations.pageSessions({ ...paging, ...(mine ? {} : scopeOfView(view)) })
       // As arquivadas são sempre as DO CHAMADOR, com ou sem "De todos": a lista delas (`?archived=1`) é só dele, e o número
       // tem de bater com ela.
-      const archivedCount = admin.id ? await this.usecases.conversations.countArchived?.({ id: admin.id, ...(admin.account ? { account: admin.account } : {}) }) : undefined
+      const archivedCount = identity?.id
+        ? await this.usecases.conversations.countArchived?.({ id: identity.id, ...(identity.account ? { account: identity.account } : {}) })
+        : undefined
 
       return {
         ...page,
-        sessions: page.sessions.map((session) => toConversationDto(session, view)),
+        sessions: page.sessions.map((session) => toConversationDto(session, viewOf(session.metadata))),
         page: paging.page,
         pageSize: paging.pageSize,
         scope: mine ? 'mine' : 'all',
@@ -1137,12 +1204,12 @@ export class AgentController {
     }
 
     const limit = Number.parseInt(String(query.limit ?? ''), 10)
-    const sessions = await this.usecases.conversations.listSessions({
-      limit: Number.isFinite(limit) && limit > 0 ? limit : 100,
-      filter: metadataFilter(query, ['page', 'pageSize', 'q', 'classification', 'provider', 'agentId']),
-    })
+    const size = Number.isFinite(limit) && limit > 0 ? limit : 100
+    const filter = metadataFilter(query, ['page', 'pageSize', 'q', 'classification', 'provider', 'agentId'])
+    if (typeof filter?.[PROJECT_METADATA_KEY] === 'string') await requireProjectAdmin(this.usecases.proof, filter[PROJECT_METADATA_KEY], 'listAllConversations')
+    const sessions = await this.usecases.conversations.listSessions({ limit: size, filter, ...scopeOfView(view) })
 
-    return { sessions: sessions.map((session) => toConversationDto(session, view)), scope: 'all' }
+    return { sessions: sessions.map((session) => toConversationDto(session, viewOf(session.metadata))), scope: 'all' }
   }
 
   /**
@@ -1157,13 +1224,13 @@ export class AgentController {
    */
   async conversationEvents(req: Request, res: Response) {
     let resolved: IResolvedCaller
-    let admin: boolean
+    let adminOf: IAdminView | undefined
     const requested = (req.query as Record<string, unknown> | undefined)?.project
     const project = typeof requested === 'string' && requested ? requested : undefined
     try {
       resolved = await this.requireCaller()
-      admin = (await checkAdminAccess(this.usecases.proof)).allowed
-      if (project) this.requireProject({ userId: resolved.identity?.id, admin }, project)
+      adminOf = await adminView(this.usecases.proof)
+      if (project) this.requireProject(this.callerOf(resolved), project)
     } catch (error: unknown) {
       return this.sendFailure(res, error, '[AgentController.conversationEvents]')
     }
@@ -1179,11 +1246,13 @@ export class AgentController {
     this.inboxStreams.set(streamId, inbox)
     stream.emit('stream.ready', { streamId })
 
-    const view = this.viewFor(admin)
-    // ⚖️ `?mine=1`: o admin com a PRÓPRIA caixa de entrada recebe só as suas, como qualquer pessoa. Sem, o monitor (todas).
-    const everyone = admin && !(req.query?.mine === '1' || req.query?.mine === 'true')
+    // ⚖️ Admin DO ESCOPO da conversa (o projeto dela; sem projeto, o gateway) — não mais "é admin de algo".
+    const adminOfScope = (projectId: string | undefined) => !!adminOf && administers(adminOf, projectId)
+    const viewOf = (metadata: Record<string, unknown> | undefined) => this.viewFor(adminOfScope(projectKeyOf(metadata)))
+    // ⚖️ `?mine=1`: o admin com a PRÓPRIA caixa de entrada recebe só as suas, como qualquer pessoa. Sem, o monitor (as que ele administra).
+    const everyone = !!adminOf && !(req.query?.mine === '1' || req.query?.mine === 'true')
     const visible = (metadata: Record<string, unknown> | undefined) =>
-      (everyone || ownsSession(resolved, metadata)) &&
+      ((everyone && adminOfScope(projectKeyOf(metadata))) || ownsSession(resolved, metadata)) &&
       // Com `?project`, só as conversas daquele projeto.
       (!project || metadata?.[PROJECT_METADATA_KEY] === project) &&
       // As construções não entram na caixa de entrada (a guia Construir as lista).
@@ -1191,19 +1260,19 @@ export class AgentController {
     const unsubscribe =
       this.usecases.events?.subscribe((event: TConversationEvent) => {
         if (!visible(event.type === 'conversation.updated' ? event.session.metadata : event.metadata)) return
-        if (event.type === 'conversation.updated') stream.emit(event.type, { session: toConversationDto(event.session, view) })
+        if (event.type === 'conversation.updated') stream.emit(event.type, { session: toConversationDto(event.session, viewOf(event.session.metadata)) })
         else stream.emit(event.type, { sessionId: event.sessionId })
       }) ?? (() => undefined)
-    // ⛔ O catálogo: só o que a pessoa pode ver — o global, e o projeto de que ela é membro (admin vê tudo).
+    // ⛔ O catálogo: só o que a pessoa pode ver — o global, e o projeto de que ela é membro (nem o admin do gateway entra).
     const member = new Map<string, boolean>()
     const sees = (projectId: string | undefined) => {
-      if (!projectId || admin) return true
+      if (!projectId) return true
       if (!member.has(projectId))
         member.set(
           projectId,
           (() => {
             try {
-              this.requireProject({ userId: resolved.identity?.id, admin }, projectId)
+              this.requireProject(this.callerOf(resolved), projectId)
               return true
             } catch {
               return false
@@ -1215,7 +1284,7 @@ export class AgentController {
     const unsubscribeCatalog =
       this.usecases.catalogEvents?.subscribe((changes) => {
         // ⛔ O pedido de permissão é assunto de quem administra: o membro do projeto nem fica sabendo que existe.
-        const visible = changes.filter((change) => (change.kind === 'permission-request' ? admin : sees(change.projectId)))
+        const visible = changes.filter((change) => (change.kind === 'permission-request' ? adminOfScope(change.projectId) : sees(change.projectId)))
         if (visible.length) stream.emit('catalog.changed', { changes: visible })
       }) ?? (() => undefined)
     // Quem conecta (ou reconecta) fica sabendo das que JÁ estão rodando.
@@ -1286,10 +1355,9 @@ export class AgentController {
     })
   }
 
-  /** Dono da conversa ou admin, ou 404. A sessão viva primeiro: a conversa nova só chega ao banco no fim do primeiro turno. */
+  /** Dono da conversa ou admin DO PROJETO dela (sem projeto, o do gateway), ou 404. A sessão viva primeiro: a conversa nova só chega ao banco no fim do primeiro turno. */
   private async requireLiveAccess(sessionId: string): Promise<IResolvedCaller> {
     const resolved = await this.requireCaller()
-    const admin = (await checkAdminAccess(this.usecases.proof)).allowed
     let metadata: Record<string, unknown> | undefined
     let found = true
     try {
@@ -1299,7 +1367,7 @@ export class AgentController {
       found = !!stored
       metadata = stored?.metadata
     }
-    if (!found || (!admin && !ownsSession(resolved, metadata))) throw new SessionNotFoundError(sessionId)
+    if (!found || !(ownsSession(resolved, metadata) || (await this.administersConversation(metadata)))) throw new SessionNotFoundError(sessionId)
     return resolved
   }
 
@@ -1348,9 +1416,11 @@ export class AgentController {
     await this.respond(
       res,
       async () => {
-        await this.requireAdmin('conversationStats')
+        const view = await requireAnyAdmin(this.usecases.proof, 'conversationStats')
+        // ⚖️ Só o que ele administra (o recorte vai para o banco).
+        const stats = await this.usecases.conversations.stats(scopeOfView(view).scope)
 
-        return toStatsDto(await this.usecases.conversations.stats(), (provider) => this.pricingOf(provider))
+        return toStatsDto(stats, (provider) => this.pricingOf(provider))
       },
       { message: 'Stats computed' },
     )
@@ -1469,22 +1539,24 @@ export class AgentController {
    */
   async listErrors(req: Request, res: Response) {
     await this.respond(res, async () => {
-      await this.requireAdmin('listErrors')
+      const view = await requireAnyAdmin(this.usecases.proof, 'listErrors')
       const query = req.query as Record<string, unknown>
       const days = Number.parseInt(String(query.days ?? ''), 10)
       const limit = Number.parseInt(String(query.limit ?? ''), 10)
       const id = (value: unknown) => (typeof value === 'string' && /^[\w.:-]{1,100}$/.test(value) ? value : undefined)
       const kind = ERROR_KINDS.find((item) => item === query.kind)
       const since = new Date(Date.now() - (Number.isFinite(days) && days > 0 ? Math.min(days, 90) : 7) * 86_400_000)
-      return (
-        (await this.usecases.conversations.errors?.({
-          since,
-          ...(id(query.agentId) ? { agentId: id(query.agentId) } : {}),
-          ...(id(query.tool) ? { tool: id(query.tool) } : {}),
-          ...(kind ? { kind } : {}),
-          ...(Number.isFinite(limit) && limit > 0 ? { limit } : {}),
-        })) ?? { items: [], byKind: { tool: 0, turn: 0, aborted: 0 }, byTool: [] }
-      )
+      const wanted = Number.isFinite(limit) && limit > 0 ? limit : undefined
+      const log = (await this.usecases.conversations.errors?.({
+        since,
+        ...(id(query.agentId) ? { agentId: id(query.agentId) } : {}),
+        ...(id(query.tool) ? { tool: id(query.tool) } : {}),
+        ...(kind ? { kind } : {}),
+        ...(wanted ? { limit: wanted } : {}),
+        // ⛔ A mensagem de erro é conteúdo da conversa: só a das conversas que ele administra (o recorte vai para o banco).
+        ...scopeOfView(view),
+      })) ?? { items: [], byKind: { tool: 0, turn: 0, aborted: 0 }, byTool: [] }
+      return log
     })
   }
 
@@ -1939,7 +2011,9 @@ export class AgentController {
     } catch {
       const stored = options.resume && this.usecases.resumeSession ? await this.usecases.conversations.findSession(sessionId).catch(() => undefined) : undefined
       if (!stored || !ownsSession(resolved, stored.metadata)) throw new SessionNotFoundError(sessionId)
-      await this.usecases.resumeSession!.execute(stored, (await checkAdminAccess(this.usecases.proof)).allowed)
+      // ⚖️ O papel de admin da sessão retomada é o do AGENTE dela (o projeto dele; o global, o gateway), como na criação.
+      const view = await adminView(this.usecases.proof)
+      await this.usecases.resumeSession!.execute(stored, !!view && administers(view, this.agents.get(stored.agentId)?.projectId))
       return resolved
     }
 
@@ -1982,12 +2056,18 @@ export class AgentController {
     return this.usecases.models?.pricing(provider) ?? this.pricing
   }
 
+  /** O chamador administra o escopo desta conversa (o projeto do carimbo; sem projeto, o gateway)? */
+  private async administersConversation(metadata: Record<string, unknown> | undefined): Promise<boolean> {
+    const view = await adminView(this.usecases.proof)
+    return !!view && administers(view, projectKeyOf(metadata))
+  }
+
   private viewFor(admin: boolean): IConversationView {
     return { admin, pricingOf: (provider) => this.pricingOf(provider) }
   }
 
   /**
-   * A conversa gravada existe E é do chamador, ou ele é administrador — senão, a MESMA resposta
+   * A conversa gravada existe E é do chamador, ou ele administra o projeto dela — senão, a MESMA resposta
    * (404) para os dois casos.
    *
    * ⛔ FILTRAR A LISTAGEM NÃO PROTEGE NADA se o detalhe abre por id. Ids aparecem em log, em print, no
@@ -1998,10 +2078,12 @@ export class AgentController {
    */
   private async requireConversationAccess(id: string) {
     const resolved = await this.requireCaller()
-    const admin = (await checkAdminAccess(this.usecases.proof)).allowed
 
     const conversation = await this.usecases.conversations.findSession(id)
-    if (!conversation || (!admin && !ownsSession(resolved, conversation.metadata))) throw new HttpError(404, 'not_found', `Conversation not found: ${id}`)
+    if (!conversation) throw new HttpError(404, 'not_found', `Conversation not found: ${id}`)
+    // ⛔ O admin abre a conversa dos PROJETOS QUE ADMINISTRA (a sem projeto, o gateway), não a de qualquer um.
+    const admin = await this.administersConversation(conversation.metadata)
+    if (!admin && !ownsSession(resolved, conversation.metadata)) throw new HttpError(404, 'not_found', `Conversation not found: ${id}`)
 
     return { resolved, admin, conversation }
   }

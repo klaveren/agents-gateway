@@ -1,3 +1,5 @@
+import type { IConversationScope } from './Conversation.Model'
+
 /**
  * ⚖️ O REGISTRO DE ERROS: o que falhou nas conversas — a ferramenta que voltou com erro, o turno que terminou em erro e o
  * que foi interrompido. Não é uma tabela nova: os turnos já guardam tudo (ver `conversation_turns`); isto é a leitura.
@@ -7,6 +9,8 @@ export const ERROR_KINDS: readonly TErrorKind[] = ['tool', 'turn', 'aborted']
 
 export interface IErrorLogQuery {
   since: Date
+  /** Só os erros das conversas deste recorte (ver `IConversationScope`). */
+  scope?: IConversationScope
   agentId?: string
   tool?: string
   kind?: TErrorKind

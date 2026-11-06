@@ -16,8 +16,8 @@
   const auth = useAuthStore()
   const conversations = useConversationsStore()
   const projects = useProjectsStore()
-  /** O menu Projeto: o admin sempre; o membro, quando está num projeto (lá ele vê os MCPs do projeto, só leitura). */
-  const projectMenu = computed(() => auth.isAdmin || (!!auth.user && !!projects.current))
+  /** O menu Projeto: quem está num projeto (o admin dele vê tudo; o membro, os MCPs do projeto, só leitura). */
+  const projectMenu = computed(() => !!auth.user && !!projects.current)
 
   const section = computed(() => {
     const name = String(route.name ?? '')
@@ -48,7 +48,7 @@
   const links = computed<Array<{ to: string; key: string; label: string; short?: string; icon: 'inbox' | 'chart' | 'agents'; badge: number }>>(() => [
     { to: '/', key: 'inbox', label: 'Conversas', short: 'Conversas', icon: 'inbox' as const, badge: conversations.unread.size },
     ...(auth.signedIn ? [{ to: '/usage', key: 'usage', label: 'Uso', icon: 'chart' as const, badge: 0 }] : []),
-    ...(auth.isAdmin ? [{ to: '/agents', key: 'agents', label: 'Agentes', icon: 'agents' as const, badge: 0 }] : []),
+    ...(projects.manages ? [{ to: '/agents', key: 'agents', label: 'Agentes', icon: 'agents' as const, badge: 0 }] : []),
   ])
 </script>
 
@@ -87,10 +87,10 @@
     <!-- Duas instâncias (barra do celular abre para cima; trilho, para o lado), cada uma só no seu tamanho. -->
     <div v-if="projectMenu" class="flex min-w-0 flex-1 md:hidden"><ProjectMenu placement="up" :active="section" /></div>
     <div v-if="projectMenu" class="hidden md:block"><ProjectMenu placement="side" :active="section" /></div>
-    <div v-if="auth.isAdmin" class="flex min-w-0 flex-1 md:hidden"><ResourcesMenu placement="up" :active="section" /></div>
-    <div v-if="auth.isAdmin" class="hidden md:block"><ResourcesMenu placement="side" :active="section" /></div>
-    <div v-if="auth.isAdmin" class="flex min-w-0 flex-1 md:hidden"><DocsMenu placement="up" :active="section" /></div>
-    <div v-if="auth.isAdmin" class="hidden md:block"><DocsMenu placement="side" :active="section" /></div>
+    <div v-if="projects.manages" class="flex min-w-0 flex-1 md:hidden"><ResourcesMenu placement="up" :active="section" /></div>
+    <div v-if="projects.manages" class="hidden md:block"><ResourcesMenu placement="side" :active="section" /></div>
+    <div v-if="projects.manages" class="flex min-w-0 flex-1 md:hidden"><DocsMenu placement="up" :active="section" /></div>
+    <div v-if="projects.manages" class="hidden md:block"><DocsMenu placement="side" :active="section" /></div>
     <div v-if="auth.isAdmin" class="flex min-w-0 flex-1 md:hidden"><SystemMenu placement="up" :active="section" /></div>
     <div v-if="auth.isAdmin" class="hidden md:block"><SystemMenu placement="side" :active="section" /></div>
     <AccountMenu v-if="auth.user" placement="up" class="md:hidden" />

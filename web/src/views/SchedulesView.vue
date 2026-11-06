@@ -4,7 +4,6 @@ import { useResource } from '@/composables/useResource'
 import { describeCron, RUN_STATUS } from '@/lib/cron'
 import { fullTime } from '@/lib/format'
 import { useAgentsStore } from '@/stores/agents'
-import { useAuthStore } from '@/stores/auth'
 import { useProjectsStore } from '@/stores/projects'
 import { useSchedulesStore } from '@/stores/schedules'
 
@@ -12,14 +11,13 @@ import { useSchedulesStore } from '@/stores/schedules'
  * A VISÃO GERAL dos agendamentos do projeto em uso (só admin): os dos agentes do projeto e os dos globais que rodam
  * nele, pela próxima execução. Criar e editar é na guia Agendamentos de cada agente.
  */
-const auth = useAuthStore()
 const projects = useProjectsStore()
 const agents = useAgentsStore()
 const schedules = useSchedulesStore()
 const project = computed(() => projects.list.find((item) => item.id === projects.current))
 
 /** A visão geral do projeto atual, da store (por projeto): lida uma vez; "Atualizar" relê (a próxima execução anda). */
-const overview = useResource(schedules.overview, () => (auth.isAdmin ? (projects.current ?? '') : undefined))
+const overview = useResource(schedules.overview, () => (projects.manages ? (projects.current ?? '') : undefined))
 const list = computed(() => overview.data.value ?? [])
 const loading = computed(() => schedules.overview.loading(projects.current ?? ''))
 const error = computed(() => {
@@ -29,16 +27,17 @@ const error = computed(() => {
 const reload = () => overview.refresh().catch(() => undefined)
 
 onMounted(async () => {
-  if (!auth.isAdmin) return
-  await Promise.all([projects.ensure().catch(() => undefined), agents.ensure().catch(() => undefined)])
+  await projects.ensure().catch(() => undefined)
+  if (!projects.manages) return
+  await agents.ensure().catch(() => undefined)
 })
 
 const agentName = (id: string) => agents.byId.get(id)?.name ?? id
 </script>
 
 <template>
-  <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
-    <p class="font-medium text-zinc-200">Só quem administra vê os agendamentos.</p>
+  <div v-if="!projects.manages" class="grid h-full place-items-center p-6 text-center text-zinc-400">
+    <p class="font-medium text-zinc-200">Só quem administra este projeto vê os agendamentos.</p>
   </div>
 
   <div v-else class="h-full overflow-y-auto px-4 py-5">

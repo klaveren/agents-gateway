@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useAuthStore } from '@/stores/auth'
+import { useProjectsStore } from '@/stores/projects'
 import RailMenu, { type IRailMenuItem } from './RailMenu.vue'
 
 /**
@@ -8,7 +8,7 @@ import RailMenu, { type IRailMenuItem } from './RailMenu.vue'
  * rules e specs inteiras, com o peso), as Rules (o cadastro, globais e do projeto, com o construtor) e os Agendamentos
  * (o que os agentes rodam sozinhos no projeto, pela próxima execução), as Permissões e as Contas (as credenciais do
  * terminal do projeto). E o Importador: o que um repositório do projeto tem de recurso agêntico, só para ler.
- * O MEMBRO (não admin) vê só o que a API lhe abre do projeto: os MCPs dele, só leitura.
+ * Só quem administra o projeto atual vê os itens de cima (o admin do gateway sem papel no projeto não). O MEMBRO vê só o que a API lhe abre do projeto: os MCPs dele, só leitura.
  */
 defineProps<{ placement: 'side' | 'up'; active?: string }>()
 
@@ -19,11 +19,13 @@ const ITEMS: IRailMenuItem[] = [
   { to: '/accounts', key: 'accounts', label: 'Contas', hint: 'As credenciais que o terminal do projeto recebe: GitHub, variáveis', icon: 'key' },
   { to: '/schedules', key: 'schedules', label: 'Agendamentos', hint: 'O que os agentes rodam sozinhos, e quando', icon: 'clock' },
   { to: '/import', key: 'import', label: 'Importador', hint: 'O que um repositório tem de agentes, skills e docs', icon: 'box' },
+  { to: '/mcp', key: 'mcp', label: 'MCPs', hint: 'Os servidores de ferramentas do projeto', icon: 'plug' },
+  { to: '/catalog/history', key: 'catalog-history', label: 'Histórico do catálogo', hint: 'O que mudou no projeto, quem mudou, restaurar e reverter lote', icon: 'clock' },
 ]
 const MEMBER_ITEMS: IRailMenuItem[] = [{ to: '/mcp', key: 'mcp', label: 'MCPs', hint: 'Os servidores de ferramentas do projeto (só leitura)', icon: 'plug' }]
 
-const auth = useAuthStore()
-const items = computed(() => (auth.isAdmin ? ITEMS : MEMBER_ITEMS))
+const projects = useProjectsStore()
+const items = computed(() => (projects.manages ? ITEMS : MEMBER_ITEMS))
 </script>
 
 <template>

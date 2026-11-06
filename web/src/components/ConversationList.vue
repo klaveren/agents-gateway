@@ -5,10 +5,12 @@ import { usePopover } from '@/lib/popover'
 import { useAgentsStore } from '@/stores/agents'
 import { useAuthStore } from '@/stores/auth'
 import { matchesFilters, useConversationsStore } from '@/stores/conversations'
+import { useProjectsStore } from '@/stores/projects'
 import ConversationRow from './ConversationRow.vue'
 import Icon from './Icon.vue'
 
 const auth = useAuthStore()
+const projects = useProjectsStore()
 const agents = useAgentsStore()
 const conversations = useConversationsStore()
 
@@ -19,7 +21,7 @@ let observer: IntersectionObserver | undefined
 
 watch(search, (value) => {
   clearTimeout(debounce)
-  debounce = setTimeout(() => void conversations.setFilters({ q: value }, auth.isAdmin), 250)
+  debounce = setTimeout(() => void conversations.setFilters({ q: value }, projects.seesAll), 250)
 })
 
 /** As abas de agente: os que têm conversa (pela contagem), na ordem da lista de agentes. */
@@ -39,11 +41,11 @@ const classificationTabs = computed(() =>
 )
 
 function toggleAgent(id: string) {
-  void conversations.setFilters({ agentId: conversations.filters.agentId === id ? '' : id }, auth.isAdmin)
+  void conversations.setFilters({ agentId: conversations.filters.agentId === id ? '' : id }, projects.seesAll)
 }
 
 function toggleClassification(value: string) {
-  void conversations.setFilters({ classification: conversations.filters.classification === value ? '' : value }, auth.isAdmin)
+  void conversations.setFilters({ classification: conversations.filters.classification === value ? '' : value }, projects.seesAll)
 }
 
 onMounted(() => {
@@ -68,7 +70,7 @@ const inArchived = computed(() => conversations.view === 'archived')
 /** O menu de três pontos ao lado da busca, no desenho do menu principal: as arquivadas e, para quem administra, as de todos. */
 const { open: menuOpen, root: menuRoot } = usePopover()
 const showArchived = computed(() => conversations.archivedCount > 0 || inArchived.value)
-const showEveryone = computed(() => auth.isAdmin && !inArchived.value)
+const showEveryone = computed(() => projects.seesAll && !inArchived.value)
 function pick(action: () => void) {
   menuOpen.value = false
   action()
@@ -92,7 +94,7 @@ function pick(action: () => void) {
         <input
           v-model="search"
           type="search"
-          :placeholder="auth.isAdmin && conversations.everyone && !inArchived ? 'Buscar por título, e-mail, conta ou id…' : 'Buscar por título ou id…'"
+          :placeholder="projects.seesAll && conversations.everyone && !inArchived ? 'Buscar por título, e-mail, conta ou id…' : 'Buscar por título ou id…'"
           class="w-full bg-transparent outline-none placeholder:text-zinc-500"
         />
       </label>
@@ -186,7 +188,7 @@ function pick(action: () => void) {
           :conversation="conversation"
           :active="conversation.id === conversations.selectedId"
           :unread="false"
-          :show-owner="auth.isAdmin && conversations.everyone"
+          :show-owner="projects.seesAll && conversations.everyone"
           archived
         />
         <p v-if="conversations.archivedLoading" class="py-2 text-center text-xs text-zinc-500">Carregando…</p>
@@ -206,7 +208,7 @@ function pick(action: () => void) {
         :active="conversation.id === conversations.selectedId"
         :unread="conversations.unread.has(conversation.id)"
         :running="conversations.running.has(conversation.id)"
-        :show-owner="auth.isAdmin && conversations.everyone"
+        :show-owner="projects.seesAll && conversations.everyone"
       />
       <div ref="sentinel" class="h-6" />
       <p v-if="conversations.loading" class="py-2 text-center text-xs text-zinc-500">Carregando…</p>

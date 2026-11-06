@@ -17,8 +17,8 @@ import { useUsersStore } from '@/stores/users'
 import { useSettingsStore } from '@/stores/settings'
 
 /**
- * A guia Projetos (só admin): cada projeto tem a sua pasta, os seus agentes e conversas, e os seus membros.
- * ⚖️ O admin vê todos; cada membro, só os projetos em que está.
+ * A guia Projetos: cada projeto tem a sua pasta, os seus agentes e conversas, e os seus membros. Criar e apagar é do admin
+ * do gateway; nome, descrição e membros, de quem administra o projeto (o admin do gateway também, como resgate).
  */
 const props = defineProps<{ id?: string }>()
 const route = useRoute()
@@ -37,6 +37,10 @@ const sandbox = computed(() => settings.current?.deployment?.sandbox)
 
 const adding = computed(() => route.name === 'project-new')
 const selected = computed(() => (props.id ? projects.list.find((project) => project.id === props.id) : undefined))
+/** Abre a guia: o admin do gateway, ou quem administra algum projeto. */
+const canOpen = computed(() => auth.isAdmin || projects.managesAny)
+/** Edita o projeto aberto (nome, descrição, membros): o admin dele ou o do gateway. */
+const canEdit = computed(() => !!selected.value && (selected.value.role === 'admin' || auth.isAdmin))
 
 const loadError = ref<string>()
 const form = ref({ id: '', name: '', description: '' })
@@ -44,7 +48,7 @@ const formIssues = ref<Record<string, string[]>>({})
 const formError = ref<string>()
 const edit = ref({ name: '', description: '' })
 /** Os membros gravados do projeto aberto, da store (lidos uma vez; salvar põe a resposta lá). */
-const memberList = useResource(projects.memberLists, () => (auth.isAdmin ? selected.value?.id : undefined))
+const memberList = useResource(projects.memberLists, () => (canEdit.value ? selected.value?.id : undefined))
 const savedMembers = computed(() => new Map((memberList.data.value ?? []).map((member) => [member.userId, member.role] as const)))
 /** A marcação em edição (conta → papel): volta à gravada quando o projeto (ou o gravado) muda. */
 const members = ref<Map<string, TProjectRole>>(new Map())
@@ -58,8 +62,10 @@ const removing = ref<IProject>()
 const removeError = ref<string>()
 
 onMounted(async () => {
-  if (!auth.isAdmin) return
-  await Promise.all([projects.ensure(), users.ensure(), settings.ensure()]).catch((failure) => (loadError.value = describe(failure)))
+  await projects.ensure().catch((failure) => (loadError.value = describe(failure)))
+  if (!canOpen.value) return
+  // As contas e as configurações são do gateway: quem só administra o projeto pode não ler (a lista de membros fica vazia).
+  await Promise.all([users.ensure(), auth.isAdmin ? settings.ensure() : undefined]).catch(() => undefined)
 })
 
 watch(
@@ -158,15 +164,15 @@ async function confirmRemove() {
 </script>
 
 <template>
-  <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
-    <p class="font-medium text-zinc-200">Só quem administra cadastra os projetos.</p>
+  <div v-if="!canOpen" class="grid h-full place-items-center p-6 text-center text-zinc-400">
+    <p class="font-medium text-zinc-200">Só quem administra um projeto cuida dos projetos.</p>
   </div>
 
   <MasterDetail v-else :open="!!id || adding" back-to="/projects" back-label="Projetos" :title="adding ? 'Novo projeto' : selected?.name">
     <template #list>
       <header class="flex items-center gap-2 px-4 pt-4 pb-1">
         <h1 class="text-xl font-semibold">Projetos</h1>
-        <RouterLink to="/projects/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Novo projeto"><Icon name="plus" class="h-5 w-5" /></RouterLink>
+        <RouterLink v-if="auth.isAdmin" to="/projects/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Novo projeto"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
       <p class="px-4 pb-3 text-xs text-zinc-500">Cada projeto tem seus agentes, conversas e pasta.</p>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
@@ -189,7 +195,7 @@ async function confirmRemove() {
     </template>
 
     <template #detail>
-      <template v-if="adding">
+      <template v-if="adding && auth.isAdmin">
         <h2 class="mx-auto mb-4 max-w-3xl text-lg font-semibold">Novo projeto</h2>
         <form class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="create">
           <div class="grid gap-3 sm:grid-cols-2">
@@ -259,8 +265,8 @@ async function confirmRemove() {
           </div>
 
           <div class="grid gap-3">
-            <label class="field">Nome<input v-model="edit.name" class="input" /></label>
-            <label class="field">Descrição<textarea v-model="edit.description" rows="2" class="input text-sm" /></label>
+            <label class="field">Nome<input v-model="edit.name" :disabled="!canEdit" class="input" /></label>
+            <label class="field">Descrição<textarea v-model="edit.description" :disabled="!canEdit" rows="2" class="input text-sm" /></label>
           </div>
         </div>
 
@@ -269,6 +275,8 @@ async function confirmRemove() {
             Quem pode ver este projeto. O administrador do projeto cuida de tudo dele (agentes, catálogo, permissões, membros); o membro conversa com os agentes. Todo
             projeto precisa de ao menos um administrador.
           </p>
+          <p v-if="!canEdit" class="text-xs text-amber-300">Só quem administra este projeto altera.</p>
+          <fieldset :disabled="!canEdit" class="contents">
           <ul class="divide-y divide-zinc-800">
             <li v-for="user in users.list" :key="user.id" class="flex items-center gap-3 py-1.5">
               <label class="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-sm">
@@ -288,14 +296,15 @@ async function confirmRemove() {
               </select>
             </li>
           </ul>
+          </fieldset>
           <p v-if="noAdmin" class="text-xs text-amber-300">Escolha ao menos um administrador para o projeto.</p>
         </div>
 
         <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
         <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
-        <SaveFooter label="Salvar projeto" :busy="busy" :disabled="(!dirty && !membersDirty) || noAdmin" :pending="dirty || membersDirty" @save="saveProject">
+        <SaveFooter v-if="canEdit" label="Salvar projeto" :busy="busy" :disabled="(!dirty && !membersDirty) || noAdmin" :pending="dirty || membersDirty" @save="saveProject">
           <template #end>
-            <button type="button" class="btn btn-danger" @click="(removing = selected), (removeError = undefined)">Apagar projeto</button>
+            <button v-if="auth.isAdmin" type="button" class="btn btn-danger" @click="(removing = selected), (removeError = undefined)">Apagar projeto</button>
           </template>
         </SaveFooter>
       </section>

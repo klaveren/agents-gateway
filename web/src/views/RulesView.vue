@@ -33,6 +33,8 @@ watch(
   (id) => (scope.value = id ?? GLOBAL_SCOPE),
 )
 const label = computed(() => scopeLabel(scope.value, projects.list))
+// Global: só o admin do gateway altera; o do projeto lê.
+const readonly = computed(() => scope.value === GLOBAL_SCOPE && !auth.isAdmin)
 
 /**
  * O HISTÓRICO das rules do escopo, uma por vez: as de hoje (da store, a mesma lista do editor) e as apagadas que
@@ -72,7 +74,7 @@ watch(
 )
 
 onMounted(async () => {
-  if (auth.isAdmin && !projects.loaded) await projects.load().catch(() => undefined)
+  if (!projects.loaded) await projects.load().catch(() => undefined)
 })
 // Trocou o projeto no seletor do topo: a página acompanha.
 watch(
@@ -85,8 +87,8 @@ watch(
 </script>
 
 <template>
-  <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
-    <p class="font-medium text-zinc-200">Só quem administra pode gerenciar as regras.</p>
+  <div v-if="!projects.manages" class="grid h-full place-items-center p-6 text-center text-zinc-400">
+    <p class="font-medium text-zinc-200">Só quem administra este projeto pode gerenciar as regras.</p>
   </div>
 
   <div v-else class="h-full overflow-y-auto px-4 py-5">
@@ -104,8 +106,9 @@ watch(
       <p class="text-xs text-zinc-500">
         Regras que todo agente respeita. Editar vale para as próximas conversas. Mostrando: <strong class="text-zinc-300">{{ label }}</strong>.
       </p>
+      <p v-if="readonly" class="text-xs text-amber-300" data-test="global-readonly">Global: só o administrador do gateway altera.</p>
       <HistoryTabs v-model="tab" edit-label="Regras" />
-      <RulesEditor v-if="tab === 'edit'" :key="scope" :scope="scope" :show-globals="scope !== GLOBAL_SCOPE" />
+      <RulesEditor v-if="tab === 'edit'" :key="scope" :scope="scope" :show-globals="scope !== GLOBAL_SCOPE" :readonly="readonly" />
       <template v-else>
         <p v-if="!ruleOptions.length" class="text-sm text-zinc-500">Nenhuma rule em {{ label }} ainda.</p>
         <template v-else>
@@ -115,7 +118,7 @@ watch(
               <option v-for="option in ruleOptions" :key="option.id" :value="option.id">{{ option.label }}</option>
             </select>
           </label>
-          <HistoryPanel v-if="historyRule" kind="rule" :id="historyRule" @restored="restored" />
+          <HistoryPanel v-if="historyRule" kind="rule" :id="historyRule" :readonly="readonly" @restored="restored" />
         </template>
       </template>
     </section>

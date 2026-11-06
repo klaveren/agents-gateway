@@ -13,7 +13,8 @@ import { IMPORT_MANUAL_STATES, TImportManualState } from '@domain/models/ImportJ
 import { TInventoryKind } from '@domain/models/ImportInventory.Model'
 import { WorkFolderError } from '@infra/workspace/Work.Folder'
 import { viaAccessToken } from './Auth.Controller'
-import { checkAdminAccess } from './Caller.Admin'
+import { provenCaller } from './Caller.Access'
+import { requireProjectAdmin } from './Project.Access'
 import { IDENTITY_HEADERS } from '@domain/Agent.Identity'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
@@ -589,14 +590,10 @@ export class ImportController {
   private async respond<T>(res: Response, operation: string, req: Request, work: (projectId: string, by: string, owner?: Record<string, string>) => Promise<T>): Promise<void> {
     try {
       const projectId = req.params.id as string
-      const access = await checkAdminAccess(this.deps.proof)
-      if (!access.allowed) {
-        console.warn(`[admin] acesso negado a ${operation}:`, access.reason)
-        throw new HttpError(404, 'not_found', 'Not found')
-      }
+      // ⛔ O import é do projeto: só o admin DELE (o do gateway que não administra o projeto recebe 404, como quem não existe).
+      const by = await requireProjectAdmin(this.deps.proof, projectId, operation)
       if (!this.deps.projectExists(projectId)) throw new HttpError(404, 'not_found', `Project not found: ${projectId}`)
-      const by = access.identity?.email ?? access.identity?.id ?? 'admin'
-      const identity = access.identity
+      const identity = await provenCaller(this.deps.proof)
       const owner = identity?.id ? { id: identity.id, ...(identity.email ? { email: identity.email } : {}), ...(identity.account ? { account: identity.account } : {}) } : undefined
       res.status(200).json(ok(await work(projectId, by, owner)))
     } catch (error: unknown) {

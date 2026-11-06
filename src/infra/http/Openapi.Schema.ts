@@ -4679,6 +4679,19 @@ export const OPENAPI_DOCUMENT = {
         },
       },
     },
+    '/model-groups': {
+      get: {
+        summary: 'The model sequences, read-only (to pick an agent sequence). Gateway or project administrators; anyone else gets 404. Writing stays in /settings',
+        responses: {
+          '200': {
+            description: 'OK',
+            ...json(envelope({ type: 'object', properties: { groups: { type: 'array', items: { type: 'object' } }, defaultModelGroup: { type: 'string' } } })),
+          },
+          '401': failures['401'],
+          '404': failures['404'],
+        },
+      },
+    },
     '/settings': {
       get: {
         summary: 'Operating settings plus the defaults that apply to empty fields. Administrators only; anyone else gets 404',

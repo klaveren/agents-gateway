@@ -41,7 +41,9 @@ const projects = useProjectsStore()
 const route = useRoute()
 
 /** `*` = tudo; `global`; ou o id de um projeto. */
-const scope = ref<string>('*')
+const scope = ref<string>(auth.isAdmin ? '*' : (projects.current ?? '*'))
+/** O admin do gateway vê o global (e tudo); quem administra o projeto, só o dele. */
+const canView = computed(() => auth.isAdmin || projects.manages)
 const page = ref(1)
 const data = ref<IScopeHistory>()
 const error = ref<string>()
@@ -81,8 +83,8 @@ async function load() {
 }
 
 onMounted(async () => {
-  if (!auth.isAdmin) return
   if (!projects.loaded) await projects.load().catch(() => undefined)
+  if (!canView.value) return
 })
 watch(scope, () => {
   page.value = 1
@@ -91,9 +93,11 @@ watch(scope, () => {
 })
 watch([page, batchPageNo], () => void load())
 watch(
-  () => auth.isAdmin,
-  (admin) => {
-    if (admin) void load()
+  canView,
+  (allowed) => {
+    // Sem ser do gateway, o "tudo" não existe: vale o projeto atual.
+    if (allowed && !auth.isAdmin && projects.current) scope.value = projects.current
+    if (allowed) void load()
   },
   { immediate: true },
 )
@@ -158,8 +162,8 @@ const link = (revision: IRevisionSummary) => itemLink(revision)
 </script>
 
 <template>
-  <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
-    <p class="font-medium text-zinc-200">Só quem administra vê o histórico do catálogo.</p>
+  <div v-if="!canView" class="grid h-full place-items-center p-6 text-center text-zinc-400">
+    <p class="font-medium text-zinc-200">Só quem administra este projeto vê o histórico do catálogo.</p>
   </div>
 
   <div v-else class="h-full overflow-y-auto px-4 py-5">
@@ -167,9 +171,9 @@ const link = (revision: IRevisionSummary) => itemLink(revision)
       <header class="flex flex-wrap items-center gap-3">
         <h1 class="text-xl font-semibold">Histórico do catálogo</h1>
         <select v-model="scope" class="input ml-auto w-auto py-1.5 text-sm" aria-label="Escopo">
-          <option value="*">Tudo</option>
-          <option v-if="projects.current" :value="projects.current">{{ projects.list.find((project) => project.id === projects.current)?.name ?? projects.current }}</option>
-          <option value="global">Global</option>
+          <option v-if="auth.isAdmin" value="*">Tudo</option>
+          <option v-if="projects.current && projects.manages" :value="projects.current">{{ projects.list.find((project) => project.id === projects.current)?.name ?? projects.current }}</option>
+          <option v-if="auth.isAdmin" value="global">Global</option>
         </select>
       </header>
       <p class="text-xs text-zinc-500">Toda mudança em agentes, recursos, rules, docs, complementos, MCPs e permissões, da mais nova para a mais velha. Abra o item para ver o diff e restaurar.</p>

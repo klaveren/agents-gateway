@@ -3,16 +3,16 @@ import { ModelCatalogService } from '@application/ModelCatalog.Service'
 import { IUsageFigure, IUsageSummary, usageDays, UsageService } from '@application/Usage.Service'
 import { MODEL_PRICING, TModelPricing } from '@domain/models/Model.Pricing'
 import { PROJECT_ID_PATTERN } from '@domain/models/Project.Model'
-import { IUsageQuery, metadataKeyIssue } from '@domain/models/Usage.Model'
-import type { IToolUsage } from '@domain/models/ToolUsage.Model'
+import { IUsageQuery, IUsageRow, metadataKeyIssue } from '@domain/models/Usage.Model'
+import { sumToolUsage, type IToolUsage } from '@domain/models/ToolUsage.Model'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { Request, Response } from 'express'
 import { resolveCaller } from './Caller.Access'
-import { checkAdminAccess } from './Caller.Admin'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
 import { metadataFilter } from './Monitor.Query'
+import { administers, IAdminView, requireAnyAdmin, requireProjectAdmin } from './Project.Access'
 
 export interface IUsageControllerDeps {
   conversations: IConversationRepository
@@ -34,6 +34,15 @@ interface IUsageRange {
   tz: number
   days: string[]
   period: { days: number | 'all'; since: string; tzOffsetMinutes: number }
+}
+
+/**
+ * ⛔ O que o admin enxerga. `confined` = só os projetos que administra (e o sem-projeto, se for do gateway); `false` =
+ * tudo (sem papéis registrados) ou um projeto que a rota já provou administrado (`?project=`).
+ */
+interface IUsageScope {
+  confined: boolean
+  view: IAdminView
 }
 
 /** O valor de `:value` que pede as conversas SEM a chave. */
@@ -73,9 +82,9 @@ export class UsageController {
   /** Todos os usuários, com custo. Só admin. */
   async users(req: Request, res: Response) {
     await this.respond(res, async () => {
-      await this.requireAdmin('usageUsers')
+      const scope = await this.scopeOf(req, 'usageUsers')
       const { query, days, period } = this.range(req)
-      const rows = await this.deps.conversations.usage(query)
+      const rows = await this.rows(query, scope)
       const names = new Map((this.deps.accounts?.list() ?? []).map((user) => [user.id, user.name]))
       const pricingOf = (provider: string) => this.pricingOf(provider)
 
@@ -93,10 +102,10 @@ export class UsageController {
    */
   async user(req: Request, res: Response) {
     await this.respond(res, async () => {
-      await this.requireAdmin('usageUser')
+      const scope = await this.scopeOf(req, 'usageUser')
       const ownerId = req.params.ownerId as string
       const { query, days, period } = this.range(req, ownerId === 'anonymous' ? null : { id: ownerId })
-      const rows = (await this.deps.conversations.usage(query)).filter((row) => ownerId === 'anonymous' || row.ownerId === ownerId)
+      const rows = (await this.rows(query, scope)).filter((row) => ownerId === 'anonymous' || row.ownerId === ownerId)
       const user = this.deps.accounts?.list().find((account) => account.id === ownerId)
 
       return {
@@ -105,7 +114,7 @@ export class UsageController {
         name: user?.name,
         email: user?.email ?? rows.find((row) => row.ownerEmail)?.ownerEmail,
         ...this.service.summarize(rows, { days }, (provider) => this.pricingOf(provider)),
-        ...(await this.toolsOf(query).then((byTool) => (byTool ? { byTool } : {}))),
+        ...(await this.toolsOf(query, scope).then((byTool) => (byTool ? { byTool } : {}))),
       }
     })
   }
@@ -119,10 +128,10 @@ export class UsageController {
    */
   async byKey(req: Request, res: Response) {
     await this.respond(res, async () => {
-      await this.requireAdmin('usageByKey')
+      const scope = await this.scopeOf(req, 'usageByKey')
       const key = req.params.key as string
       const range = this.range(req, undefined, { whole: true })
-      const rows = await this.deps.conversations.usage(this.grouped(range.query, key, req))
+      const rows = await this.rows(this.grouped(range.query, key, req), scope)
       const { days, period } = this.spanned(range, rows)
       const pricingOf = (provider: string) => this.pricingOf(provider)
 
@@ -133,11 +142,11 @@ export class UsageController {
   /** O detalhe de UM valor da chave (dia, agente, modelo, conversas), com custo. `~none` = as conversas sem a chave. */
   async byKeyValue(req: Request, res: Response) {
     await this.respond(res, async () => {
-      await this.requireAdmin('usageByKeyValue')
+      const scope = await this.scopeOf(req, 'usageByKeyValue')
       const key = req.params.key as string
       const value = req.params.value as string
       const range = this.range(req, undefined, { whole: true })
-      const rows = (await this.deps.conversations.usage(this.grouped(range.query, key, req))).filter((row) => (value === NO_VALUE ? row.group === undefined : row.group === value))
+      const rows = (await this.rows(this.grouped(range.query, key, req), scope)).filter((row) => (value === NO_VALUE ? row.group === undefined : row.group === value))
       const { days, period } = this.spanned(range, rows)
 
       return { period, key, ...(value === NO_VALUE ? {} : { value }), ...this.service.summarize(rows, { days }, (provider) => this.pricingOf(provider)) }
@@ -198,20 +207,44 @@ export class UsageController {
   }
 
   /** O peso de cada ferramenta no mesmo recorte (estimativa; ver `ToolUsage.Model`). Ausente sem o repositório que o conta. */
-  private async toolsOf(query: IUsageQuery): Promise<IToolUsage[] | undefined> {
-    return this.deps.conversations.toolUsage ? (await this.deps.conversations.toolUsage(query)).slice(0, TOOLS) : undefined
+  private async toolsOf(query: IUsageQuery, scope?: IUsageScope): Promise<IToolUsage[] | undefined> {
+    const toolUsage = this.deps.conversations.toolUsage?.bind(this.deps.conversations)
+    if (!toolUsage) return undefined
+    if (!scope?.confined) return (await toolUsage(query)).slice(0, TOOLS)
+    // ⚠️ Confinado: projeto a projeto (a ferramenta não carrega o projeto). O que não tem projeto fica de fora desta soma.
+    const projects = scope.view.projects === 'all' ? [] : [...scope.view.projects]
+    const parts = await Promise.all(projects.map((project) => toolUsage({ ...query, metadata: { ...query.metadata, project } })))
+    return sumToolUsage(parts).slice(0, TOOLS)
+  }
+
+  /**
+   * ⛔ O recorte do admin. `?project=` de um projeto: só o admin dele (404 para os demais, o gateway inclusive); sem ele, o
+   * que a visão administra (ver `IUsageScope`). Quem não administra nada: 404.
+   */
+  private async scopeOf(req: Request, operation: string): Promise<IUsageScope> {
+    const view = await requireAnyAdmin(this.deps.proof, operation)
+    const project = typeof req.query.project === 'string' ? req.query.project.trim() : ''
+    if (PROJECT_ID_PATTERN.test(project)) {
+      await requireProjectAdmin(this.deps.proof, project, operation)
+      return { confined: false, view }
+    }
+    return { confined: view.projects !== 'all', view }
+  }
+
+  /**
+   * As linhas do recorte, só do que o escopo admite. Confinado, uma consulta etiquetada pelo projeto da conversa
+   * (`metadata.project`) diz de quem é cada uma; a que agrupa por outra chave filtra pelas conversas admitidas.
+   */
+  private async rows(query: IUsageQuery, scope: IUsageScope): Promise<IUsageRow[]> {
+    if (!scope.confined) return this.deps.conversations.usage(query)
+    const admitted = (await this.deps.conversations.usage({ ...query, groupBy: 'project' })).filter((row) => administers(scope.view, row.group))
+    if (query.groupBy === undefined) return admitted.map(({ group: _group, ...row }) => row)
+    const ids = new Set(admitted.map((row) => row.conversationId))
+    return (await this.deps.conversations.usage(query)).filter((row) => ids.has(row.conversationId))
   }
 
   private pricingOf(provider: string): TModelPricing {
     return this.deps.models?.pricing(provider) ?? MODEL_PRICING
-  }
-
-  private async requireAdmin(operation: string): Promise<void> {
-    const access = await checkAdminAccess(this.deps.proof)
-    if (!access.allowed) {
-      console.warn(`[admin] acesso negado a ${operation}:`, access.reason)
-      throw new HttpError(404, 'not_found', 'Not found')
-    }
   }
 
   private async respond<T>(res: Response, work: () => Promise<T>) {

@@ -132,8 +132,9 @@ describe('AgentController — eventos das conversas (SSE)', () => {
     await repo.appendTurn({ sessionId: id, index: 0, at: new Date('2026-09-01T10:01:00Z'), request: 'oi', text: 'olá', toolCalls: [] })
   }
 
-  it('catálogo mudou: o admin sabe de tudo; o membro, do global e dos projetos dele; fechar para de avisar', async () => {
-    const { controller, catalogEvents } = build({ canUse: (caller, projectId) => caller.admin || (caller.userId === 'alice' && projectId === 'alfa') })
+  it('catálogo mudou: só o global e os projetos de que a pessoa é membro (nem o admin do gateway entra); fechar para de avisar', async () => {
+    // ⛔ `canUse` é só membro: o passe do admin acabou (ver `Project.Access`).
+    const { controller, catalogEvents } = build({ canUse: (caller, projectId) => caller.userId === 'alice' && projectId === 'alfa' })
     process.env.ADMIN_ROLES = 'admin'
     const admin = await connect(controller, ADMIN)
     const alice = await connect(controller, ALICE)
@@ -144,14 +145,14 @@ describe('AgentController — eventos das conversas (SSE)', () => {
     ])
     const changes = (events: ReturnType<typeof admin.events>) =>
       events.filter((event) => event.type === 'catalog.changed').map((event) => (event as unknown as { changes: Array<{ id: string }> }).changes.map((one) => one.id))
-    assert.deepStrictEqual(changes(admin.events()), [['arq', 'segredo', 'atlas']])
+    assert.deepStrictEqual(changes(admin.events()), [['atlas']])
     assert.deepStrictEqual(changes(alice.events()), [['arq', 'atlas']])
     alice.close()
     catalogEvents.publish([{ kind: 'rule', id: 'r1', op: 'create' }])
     assert.deepStrictEqual(changes(alice.events()), [['arq', 'atlas']])
     // Nada visível: nada sai.
     catalogEvents.publish([{ kind: 'spec', id: 'outra', projectId: 'beta', op: 'update' }])
-    assert.strictEqual(changes(admin.events()).length, 3)
+    assert.strictEqual(changes(admin.events()).length, 2)
   })
 
   it('quem não é admin só recebe as próprias conversas, e sem rótulo', async () => {

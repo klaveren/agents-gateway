@@ -456,9 +456,10 @@ async function mount(items: IInventoryItem[], options: { jobs?: IImportJob[]; an
   document.body.append(host)
   const pinia = createPinia()
   setActivePinia(pinia)
-  useAuthStore().isAdmin = true
+  // ⚖️ O importador é de quem administra o PROJETO: o admin do gateway sem papel nele não entra.
+  useAuthStore().isAdmin = false
   const projects = useProjectsStore()
-  projects.list = [{ id: 'alfa', name: 'Alfa', createdAt: '', updatedAt: '' }]
+  projects.list = [{ id: 'alfa', name: 'Alfa', role: 'admin', createdAt: '', updatedAt: '' }]
   projects.current = 'alfa'
   projects.loaded = true
   createApp(ImportView).use(pinia).mount(host)

@@ -504,6 +504,26 @@ describe('AgentProvider', () => {
     assert.strictEqual(provider.describe(child.id).agentId, 'fechado')
   })
 
+  it('⛔ a filha herda o admin só no mesmo escopo: o admin de um projeto não abre o agente global pela delegação', async () => {
+    const store = new SessionStore()
+    const lane = spyAdapter(store, EProvider.CLAUDE, EMode.AGENT, [])
+    const base = { name: 'X', providers: [{ provider: 'claude', models: ['claude-sonnet-5'] }], systemPrompt: 'p', modes: [EMode.AGENT], allowedTools: [] }
+    const agents = [
+      { ...base, id: 'do-alfa', projectId: 'alfa' },
+      { ...base, id: 'global-fechado', adminOnly: true },
+      { ...base, id: 'alfa-fechado', projectId: 'alfa', adminOnly: true },
+    ]
+    const provider = new AgentProvider(new Map([[adapterKey(EProvider.CLAUDE, EMode.AGENT), lane.adapter]]), store, undefined, {
+      list: () => agents,
+      get: (id: string) => agents.find((agent) => agent.id === id),
+    })
+
+    const parent = await provider.createSession({ agentId: 'do-alfa', adminAccess: true })
+    await assert.rejects(provider.createSession({ agentId: 'global-fechado', delegated: true, parentSessionId: parent.id }), AgentAdminOnlyError)
+    const same = await provider.createSession({ agentId: 'alfa-fechado', delegated: true, parentSessionId: parent.id })
+    assert.strictEqual(provider.describe(same.id).agentId, 'alfa-fechado')
+  })
+
   it('lets the caller override the configured agent', async () => {
     // Quem chama a API direto para comparar dois providers continua mandando no que quer.
     const { provider } = setupWithSettings(new NullSettingsRepository({ audience: 'all', agentId: 'pesquisa-teste' }))
