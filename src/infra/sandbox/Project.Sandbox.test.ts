@@ -365,7 +365,10 @@ describe('CERCO_READ_ALLOWLIST — o cerco lê só o liberado', () => {
       '/srv/gw/projects': ['x', 'y'],
     }
     const linux = forBubblewrap({ ...plan, readDeny: ['/'] }, '/srv/gw/projects/x', (dir) => tree[dir] ?? [])
-    for (const closed of ['/opt', '/home', '/var', '/etc/hostname', '/etc/passwd', '/srv/gw/gateway.db', '/srv/gw/projects/y']) assert.ok(linux.readDeny.includes(closed), closed)
+    // O Node em uso fica aberto (na CI ele mora em /opt): a pasta dele não entra na prova de "fechado".
+    const runtime = (dir: string) => process.execPath.startsWith(`${dir}/`)
+    for (const closed of ['/opt', '/home', '/var', '/etc/hostname', '/etc/passwd', '/srv/gw/gateway.db', '/srv/gw/projects/y'].filter((dir) => !runtime(dir)))
+      assert.ok(linux.readDeny.includes(closed), closed)
     for (const open of ['/', '/usr', '/bin', '/etc', '/etc/ssl', '/etc/resolv.conf', '/proc', '/dev', '/sys', '/srv/gw/projects/x']) assert.ok(!linux.readDeny.includes(open), open)
   })
 
