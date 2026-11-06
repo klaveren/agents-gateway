@@ -33,13 +33,13 @@ export interface ICliPromptPart {
 }
 
 /** Os títulos que o `composeSystemPrompt` põe no soul e na instrução, com o nome que a tela usa. */
-const HEADING_LABEL: Record<string, string> = { 'Quem você é': 'Soul', 'Como você trabalha': 'Instrução do sistema' }
+const HEADING_LABEL: Record<string, string> = { 'Quem você é': 'Soul', 'Como você trabalha': 'Instrução do agente' }
 
 /**
  * As partes de um prompt montado, pelos títulos `## ` (o soul, as rules, as specs, os índices, o ambiente…). O que vem
  * antes do primeiro título é a instrução do sistema.
  */
-export function promptParts(text: string, firstLabel = 'Instrução do sistema'): ICliPromptPart[] {
+export function promptParts(text: string, firstLabel = 'Instrução do agente'): ICliPromptPart[] {
   const parts: ICliPromptPart[] = []
   let label = firstLabel
   let lines: string[] = []

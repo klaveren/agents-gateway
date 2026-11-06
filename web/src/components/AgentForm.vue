@@ -300,7 +300,7 @@
     reasoningEfforts: 'Raciocínio',
     allowedTools: 'Ferramentas',
     soul: 'Personalidade',
-    systemPrompt: 'Instrução do sistema',
+    systemPrompt: 'Instrução do agente',
     role: 'Subagente',
     adminOnly: 'Administradores',
     projectId: 'Projeto',
@@ -394,7 +394,7 @@
     agents.setPermissions(props.agent.id, permissions)
   }
 
-  type TTab = 'agente' | 'instrucoes' | 'triggers' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'arquivos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos' | 'memoria' | 'variaveis' | 'historico' | 'problemas'
+  type TTab = 'agente' | 'personalidade' | 'instrucoes' | 'triggers' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'arquivos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos' | 'memoria' | 'variaveis' | 'historico' | 'problemas'
   // `#agendamentos` no link (a visão geral dos agendamentos) abre direto na guia.
   /** O nome das ferramentas do gateway na guia Ferramentas (o id técnico fica na dica). */
   const LOCAL_TOOL_LABEL: Record<string, string> = {
@@ -409,7 +409,7 @@
   }
 
   const initialHash = useRoute().hash
-  const HASH_TAB: Record<string, TTab> = { '#agendamentos': 'agendamentos', '#memoria': 'memoria', '#variaveis': 'variaveis', '#historico': 'historico', '#problemas': 'problemas', '#instrucoes': 'instrucoes' }
+  const HASH_TAB: Record<string, TTab> = { '#agendamentos': 'agendamentos', '#memoria': 'memoria', '#variaveis': 'variaveis', '#historico': 'historico', '#problemas': 'problemas', '#personalidade': 'personalidade', '#instrucoes': 'instrucoes' }
   const tab = ref<TTab>(HASH_TAB[initialHash] ?? 'agente')
 
   /** Sobram guias à direita (a barra rola de lado): a borda esmaece, para ninguém achar que acabaram. */
@@ -432,7 +432,8 @@
   })
   const TAB_FIELDS: Record<TTab, string[]> = {
     agente: ['id', 'name', 'role', 'adminOnly', 'projectId', 'tags'],
-    instrucoes: ['soul', 'systemPrompt'],
+    personalidade: ['soul'],
+    instrucoes: ['systemPrompt'],
     triggers: ['triggers'],
     modelos: ['providers', 'models', 'modes', 'reasoningEfforts'],
     ferramentas: ['allowedTools'],
@@ -456,6 +457,7 @@
     const alert = (id: TTab) => (TAB_FIELDS[id].some((field) => issues.value[field]?.length) ? 'Corrija os campos desta guia.' : undefined)
     const all: Array<{ id: TTab; label: string; count?: number; alert?: string }> = [
       { id: 'agente', label: 'Agente', alert: alert('agente') },
+      { id: 'personalidade', label: 'Personalidade', alert: alert('personalidade') },
       { id: 'instrucoes', label: 'Protocolo', alert: alert('instrucoes') },
       { id: 'triggers', label: 'Triggers', count: form.value.triggers?.length ?? 0, alert: alert('triggers') },
       { id: 'modelos', label: 'Modelos', count: form.value.providers.reduce((total, target) => total + target.models.length, 0), alert: alert('modelos') },
@@ -757,8 +759,8 @@
       </div>
 
     </fieldset>
-    <!-- As instruções do agente (personalidade e instrução do sistema), numa guia só delas. -->
-    <fieldset v-show="tab === 'instrucoes'" class="grid gap-4 sm:grid-cols-2">
+    <!-- Quem o agente é (Personalidade) e o que ele faz (Protocolo), cada um na sua guia. -->
+    <fieldset v-show="tab === 'personalidade'" class="grid gap-4 sm:grid-cols-2">
       <label class="field sm:col-span-2">
         <span>
           Personalidade
@@ -766,16 +768,18 @@
         </span>
         <textarea
           v-model="form.soul"
-          rows="4"
+          rows="12"
           class="input text-[13px] leading-relaxed"
           placeholder="Você é a Íris: gentil, direta, explica sem jargão e admite quando não sabe."
         />
         <small v-if="form.soul" class="hint">{{ sizeHint(form.soul, 'a cada turno') }}</small>
         <small v-for="message in issues.soul" :key="message" class="error">{{ message }}</small>
       </label>
+    </fieldset>
+    <fieldset v-show="tab === 'instrucoes'" class="grid gap-4 sm:grid-cols-2">
       <label class="field sm:col-span-2">
         <span>
-          Instrução do sistema
+          Instrução do agente
           <em class="font-normal text-zinc-500">— o que o agente faz: função, regras, como usar as ferramentas</em>
         </span>
         <textarea v-model="form.systemPrompt" required rows="18" data-tab="instrucoes" class="input font-mono text-[13px] leading-relaxed" placeholder="Você é o agente…" />
