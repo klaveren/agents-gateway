@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import InitialContextEditor from './InitialContextEditor.vue'
+import SaveFooter from './SaveFooter.vue'
 import RulesEditor from './RulesEditor.vue'
 
 /**
@@ -13,6 +14,24 @@ defineProps<{ projectId: string }>()
 
 type TTab = 'regras' | 'contexto'
 const tab = ref<TTab>('regras')
+
+/** O contexto inicial é o que se grava aqui (as regras só se leem): pelo rodapé, como em toda tela. */
+const editor = ref<{ dirty: boolean; commit: () => Promise<void> }>()
+const busy = ref(false)
+const note = ref<string>()
+const failure = ref<string>()
+async function saveContext() {
+  busy.value = true
+  note.value = failure.value = undefined
+  try {
+    await editor.value?.commit()
+    note.value = 'Contexto inicial salvo. Vale para as próximas conversas.'
+  } catch (error) {
+    failure.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    busy.value = false
+  }
+}
 const tabs: { id: TTab; label: string }[] = [
   { id: 'regras', label: 'Regras' },
   { id: 'contexto', label: 'Contexto inicial' },
@@ -53,6 +72,7 @@ const format = (value: number) => value.toLocaleString('pt-BR')
         @click="tab = item.id"
       >
         {{ item.label }}
+        <span v-if="item.id === 'contexto' && editor?.dirty" class="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-amber-400" title="Mudança não salva" />
       </button>
     </nav>
 
@@ -65,7 +85,7 @@ const format = (value: number) => value.toLocaleString('pt-BR')
     </div>
 
     <div v-show="tab === 'contexto'" class="flex flex-col gap-2" role="tabpanel">
-      <InitialContextEditor owner="projects" :owner-id="projectId" :project-id="projectId" @weight="(tokens) => (specsWeight = tokens)">
+      <InitialContextEditor ref="editor" owner="projects" :owner-id="projectId" :project-id="projectId" embedded @weight="(tokens) => (specsWeight = tokens)">
         <p class="text-sm text-zinc-400">
           As specs marcadas ficam sempre na memória de todo agente do projeto. As demais o agente consulta quando precisa.
         </p>
@@ -73,5 +93,8 @@ const format = (value: number) => value.toLocaleString('pt-BR')
     </div>
 
     <p class="rounded-xl bg-zinc-900/60 px-3 py-2 text-xs text-zinc-400">Cada agente soma o que tem de próprio; veja o total na guia Tamanho do agente.</p>
+    <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
+    <p v-if="failure" class="text-sm text-rose-300">{{ failure }}</p>
+    <SaveFooter v-show="tab === 'contexto'" label="Salvar contexto inicial" :busy="busy" :disabled="!editor?.dirty" :pending="!!editor?.dirty" @save="saveContext" />
   </section>
 </template>

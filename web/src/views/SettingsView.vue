@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SaveFooter from '@/components/SaveFooter.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { ApiError } from '@/lib/api'
 import type { IProviderStatus, TAudience, TLimitName } from '@/lib/types'
@@ -29,8 +30,6 @@ const failure = ref<string>()
 const issues = ref<Array<{ field: string; message: string }>>([])
 /** O grupo de modelos padrão, em edição (vazio = nenhum). Os grupos em si moram em `/model-groups`. */
 const defaultGroup = ref('')
-const groupSaved = ref<string>()
-const groupFailure = ref<string>()
 /** Os limites em edição; vazio = volta ao padrão do `.env` (vai como `null`). */
 const limitDrafts = ref<Partial<Record<TLimitName, number | ''>>>({})
 
@@ -114,18 +113,6 @@ function onAgentChange() {
   model.value = ''
 }
 
-/** O grupo padrão salva à parte: é outra decisão, e "Nenhum" (`null`) desliga a troca dos agentes sem grupo. */
-async function saveDefaultGroup() {
-  groupSaved.value = groupFailure.value = undefined
-  try {
-    await settings.save({ defaultModelGroup: defaultGroup.value || null })
-    groupSaved.value = 'Sequência padrão salva. Vale no próximo turno.'
-  } catch (error) {
-    groupFailure.value =
-      error instanceof ApiError && Array.isArray(error.details) ? (error.details as Array<{ message?: string }>).map((item) => item.message).join('; ') : error instanceof Error ? error.message : String(error)
-  }
-}
-
 async function saveSettings() {
   saved.value = undefined
   failure.value = undefined
@@ -144,6 +131,8 @@ async function saveSettings() {
       classifyTurns: classifyTurns.value,
       builderProvider: builderProvider || null,
       builderModel: builderModel || null,
+      // A sequência padrão vai junto (um salvar só por tela); "Nenhum" = `null` desliga a troca dos agentes sem sequência.
+      defaultModelGroup: defaultGroup.value || null,
       // Vazio = `null`: o limite volta ao padrão do `.env`.
       limits: Object.fromEntries(LIMITS.map(({ name }) => [name, limitDrafts.value[name] === '' || limitDrafts.value[name] === undefined ? null : Number(limitDrafts.value[name])])),
     })
@@ -240,11 +229,6 @@ async function saveSettings() {
           </div>
         </div>
 
-        <div class="flex items-center gap-3">
-          <button class="btn btn-primary" @click="saveSettings">Salvar</button>
-          <span v-if="saved" class="text-sm text-emerald-300">{{ saved }}</span>
-          <span v-if="failure" class="text-sm text-rose-300">{{ failure }}</span>
-        </div>
         <ul v-if="issues.length" class="list-disc pl-5 text-sm text-rose-300">
           <li v-for="(issue, index) in issues" :key="index"><code v-if="issue.field" class="text-xs text-rose-200">{{ issue.field }}</code><template v-if="issue.field">: </template>{{ issue.message }}</li>
         </ul>
@@ -268,11 +252,6 @@ async function saveSettings() {
           Sem cota agora:
           {{ settings.current.benched.map((item) => `${protocols.providerName(item.provider)} até ${new Date(item.until).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`).join(', ') }}
         </p>
-        <div class="flex items-center gap-3">
-          <button class="btn btn-primary" @click="saveDefaultGroup">Salvar sequência padrão</button>
-          <span v-if="groupSaved" class="text-sm text-emerald-300">{{ groupSaved }}</span>
-          <span v-if="groupFailure" class="text-sm text-rose-300">{{ groupFailure }}</span>
-        </div>
       </section>
 
       <section v-if="auth.isAdmin && settings.current?.deployment" class="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
@@ -295,6 +274,11 @@ async function saveSettings() {
         <RouterLink v-if="auth.user" to="/profile" class="text-emerald-300 underline">Ver meu perfil</RouterLink>
         <RouterLink v-else-if="auth.localAccounts" :to="{ path: '/login', query: { next: '/settings' } }" class="text-emerald-300 underline">Entrar</RouterLink>
       </p>
+      <!-- Um salvar só: a operação do gateway e a troca automática de modelo padrão. -->
+      <SaveFooter v-if="auth.isAdmin && settings.current" label="Salvar configurações" @save="saveSettings">
+        <span v-if="saved" class="text-sm text-emerald-300">{{ saved }}</span>
+        <span v-if="failure" class="text-sm text-rose-300">{{ failure }}</span>
+      </SaveFooter>
     </div>
   </div>
 </template>

@@ -57,7 +57,7 @@ describe('SettingsView — grupo de modelos padrão', () => {
     return { host, calls }
   }
   const select = (host: HTMLElement) => host.querySelector<HTMLSelectElement>('select[aria-label="Sequência padrão"]')!
-  const save = () => [...document.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Salvar sequência padrão')!
+  const save = () => [...document.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Salvar configurações')!
   const putOf = (calls: Array<{ path: string; init?: { method?: string; body?: unknown } }>) => calls.find((call) => call.init?.method === 'PUT')?.init?.body
 
   it('mostra Nenhum + os grupos, o atual selecionado, e o link para gerenciar', async () => {
@@ -73,12 +73,12 @@ describe('SettingsView — grupo de modelos padrão', () => {
     select(host).dispatchEvent(new Event('change'))
     save().click()
     await flush()
-    expect(putOf(calls)).toEqual({ defaultModelGroup: 'padrao' })
+    expect(putOf(calls)).toMatchObject({ defaultModelGroup: 'padrao' })
     calls.length = 0
     select(host).value = ''
     select(host).dispatchEvent(new Event('change'))
     save().click()
     await flush()
-    expect(putOf(calls)).toEqual({ defaultModelGroup: null })
+    expect(putOf(calls)).toMatchObject({ defaultModelGroup: null })
   })
 })

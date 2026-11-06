@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import HistoryPanel from '@/components/HistoryPanel.vue'
 import PermissionCategoryTabs from '@/components/PermissionCategoryTabs.vue'
+import SaveFooter from '@/components/SaveFooter.vue'
 import PermissionRules from '@/components/PermissionRules.vue'
 import PermissionRequests from '@/components/PermissionRequests.vue'
 import PermissionRequestsBadge from '@/components/PermissionRequestsBadge.vue'
@@ -152,11 +153,8 @@ watch(decisionAgent, () => void loadDecisions())
 
           <PermissionRequests :project-id="project.id" @approved="requestApproved" />
           <PermissionRules v-model="rules" :only="section" />
-          <div class="flex flex-wrap items-center gap-3">
-            <button type="button" class="btn btn-primary" :disabled="busy || !dirty" @click="save">Salvar</button>
-            <span v-if="notice" class="text-xs text-emerald-300">{{ notice }}</span>
-            <span v-else-if="meta.updatedBy" class="text-xs text-zinc-500">Alterado por {{ meta.updatedBy }} em {{ fullTime(meta.updatedAt) }}</span>
-          </div>
+          <p v-if="notice" class="text-xs text-emerald-300">{{ notice }}</p>
+          <p v-else-if="meta.updatedBy" class="text-xs text-zinc-500">Alterado por {{ meta.updatedBy }} em {{ fullTime(meta.updatedAt) }}</p>
 
           <section class="rounded-xl border border-zinc-800">
             <button type="button" class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-zinc-300" @click="showSystem = !showSystem">
@@ -194,6 +192,7 @@ watch(decisionAgent, () => void loadDecisions())
             </ul>
             <p v-else class="text-xs text-zinc-500">Nenhuma decisão registrada ainda.</p>
           </section>
+          <SaveFooter label="Salvar permissões" :busy="busy" :disabled="!dirty" :pending="dirty" @save="save" />
         </template>
       </template>
     </section>
