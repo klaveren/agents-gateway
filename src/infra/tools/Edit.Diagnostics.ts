@@ -163,7 +163,13 @@ function cercado(permissions: IPermissionChecker, sandbox: IProjectSandbox, root
   const projectId = context?.conversationProjectId ?? context?.projectId
   const asker = { ...(context?.agentId ? { agentId: context.agentId } : {}), ...(projectId ? { projectId } : {}), ...(context?.sessionId ? { sessionId: context.sessionId } : {}) }
   const folder = context?.workFolder
-  const place = folder ? { scratchBase: realOf(folder.projectDir), ...(folder.gitCommonDir ? { gitCommonDir: realOf(folder.gitCommonDir) } : {}) } : {}
+  const place = folder
+    ? {
+        scratchBase: realOf(folder.projectDir),
+        ...(folder.gitCommonDir ? { gitCommonDir: realOf(folder.gitCommonDir) } : {}),
+        ...(folder.worktreeGitDir ? { worktreeGitDir: realOf(folder.worktreeGitDir) } : {}),
+      }
+    : {}
   const { system, ...layers } = permissions.layers?.(asker) ?? { system: [] }
   const realRoot = realOf(resolve(root))
   return async (line, cwd, timeoutMs) => {

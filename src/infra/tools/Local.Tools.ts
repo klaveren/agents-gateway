@@ -221,8 +221,14 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     const root = realOf(folder?.dir ?? (context?.projectId ? workspaceFor(context.projectId, '') : policy.cwd || workspaceFor(undefined, context?.sessionId ?? 'run_bash')))
     // O rascunho (HOME, caches, as contas) fica na pasta do projeto, fora da worktree; o `.git` comum entra no cerco.
     const own = context?.agentId ? deps.agentFolder?.(context.agentId) : undefined
-    const place: { scratchBase?: string; gitCommonDir?: string; agentFolder?: IOwnFolder } = {
-      ...(folder ? { scratchBase: realOf(folder.projectDir), ...(folder.gitCommonDir ? { gitCommonDir: realOf(folder.gitCommonDir) } : {}) } : {}),
+    const place: { scratchBase?: string; gitCommonDir?: string; worktreeGitDir?: string; agentFolder?: IOwnFolder } = {
+      ...(folder
+        ? {
+            scratchBase: realOf(folder.projectDir),
+            ...(folder.gitCommonDir ? { gitCommonDir: realOf(folder.gitCommonDir) } : {}),
+            ...(folder.worktreeGitDir ? { worktreeGitDir: realOf(folder.worktreeGitDir) } : {}),
+          }
+        : {}),
       ...(own ? { agentFolder: { ...own, dir: realOf(own.dir) } } : {}),
     }
     const refusal = await terminalRefusal(command, root, permissions, asker, folder)

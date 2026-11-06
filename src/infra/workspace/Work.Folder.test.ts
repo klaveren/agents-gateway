@@ -1,10 +1,11 @@
 import assert from 'node:assert'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
-import { listRepositories, projectAliases, resolveWorkFolder, WorkFolderError } from './Work.Folder'
+import { changesOf } from './Git.Changes'
+import { currentBranch, listRepositories, listWorktrees, projectAliases, resolveWorkFolder, WorkFolderError } from './Work.Folder'
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync('git', ['-C', cwd, ...args], {
@@ -79,5 +80,88 @@ describe('Work.Folder (a pasta de trabalho da conversa)', () => {
 
   it('a lista para a tela: os repositórios git e só as worktrees dentro do projeto', () => {
     assert.deepStrictEqual(listRepositories(project), [{ name: 'abc', worktrees: [{ name: 'EP-1', branch: 'epic-EP-1', path: 'repositories/abc/_worktrees/EP-1' }] }])
+  })
+})
+
+describe('Work.Folder: o git calculado pelo servidor (o agente reescreve o .git da worktree)', () => {
+  const project = realpathSync(mkdtempSync(join(tmpdir(), 'gw-wf-forja-')))
+  const secrets = realpathSync(mkdtempSync(join(tmpdir(), 'gw-wf-segredos-')))
+  const repo = join(project, 'repositories', 'abc')
+  const wt = join(repo, '_worktrees', 'EP-1')
+  const gitDir = join(repo, '.git', 'worktrees', 'EP-1')
+  before(() => {
+    mkdirSync(repo, { recursive: true })
+    git(repo, 'init', '-q', '-b', 'main')
+    writeFileSync(join(repo, 'a.txt'), 'a')
+    git(repo, 'add', '.')
+    git(repo, 'commit', '-q', '-m', 'a')
+    git(repo, 'worktree', 'add', '-q', '-b', 'epic-EP-1', wt)
+    git(repo, 'worktree', 'add', '-q', '-b', 'epic-EP-2', join(repo, '_worktrees', 'EP-2'))
+  })
+  after(() => {
+    rmSync(project, { recursive: true, force: true })
+    rmSync(secrets, { recursive: true, force: true })
+  })
+  const original = () => readFileSync(join(wt, '.git'), 'utf8')
+
+  it('⛔ o .git da worktree reescrito para um caminho de fora (o cerco liberaria ler e gravar ali): recusado', () => {
+    const before = original()
+    try {
+      for (const target of [join(secrets, 'secrets.key'), secrets, join(project, 'gateway.db'), join(secrets, 'worktrees', 'EP-1'), join(repo, '.git')]) {
+        writeFileSync(join(wt, '.git'), `gitdir: ${target}\n`)
+        assert.throws(() => resolveWorkFolder(project, 'abc', 'EP-1'), WorkFolderError, target)
+      }
+    } finally {
+      writeFileSync(join(wt, '.git'), before)
+    }
+  })
+
+  it('⛔ o .git da worktree apontando para a de OUTRA worktree do mesmo repositório: recusado (o caminho de volta não bate)', () => {
+    const before = original()
+    try {
+      writeFileSync(join(wt, '.git'), `gitdir: ${join(repo, '.git', 'worktrees', 'EP-2')}\n`)
+      assert.throws(() => resolveWorkFolder(project, 'abc', 'EP-1'), WorkFolderError)
+    } finally {
+      writeFileSync(join(wt, '.git'), before)
+    }
+  })
+
+  it('⛔ um commondir forjado não vale: o comum é o .git do repositório, e o git do gateway não lê o do atacante', async () => {
+    // Uma cópia do .git com um filtro armado, e o commondir da worktree apontando para ela.
+    const copy = join(secrets, 'copia.git')
+    cpSync(join(repo, '.git'), copy, { recursive: true })
+    const mark = join(secrets, 'filtro-rodou')
+    git(repo, 'config', '--file', join(copy, 'config'), 'filter.x.clean', `sh -c 'touch ${mark}; cat'`)
+    git(repo, 'config', '--file', join(copy, 'config'), 'core.fsmonitor', `sh -c 'touch ${mark}'`)
+    writeFileSync(join(wt, '.gitattributes'), '* filter=x\n')
+    writeFileSync(join(wt, 'a.txt'), 'mudou')
+    const original = readFileSync(join(gitDir, 'commondir'), 'utf8')
+    writeFileSync(join(gitDir, 'commondir'), `${copy}\n`)
+    try {
+      const folder = resolveWorkFolder(project, 'abc', 'EP-1')
+      assert.strictEqual(folder.gitCommonDir, join(repo, '.git'))
+      assert.strictEqual(folder.worktreeGitDir, gitDir)
+      const changes = await changesOf(folder, 'uncommitted')
+      assert.ok(changes.files.some((file) => file.path === 'a.txt'))
+      assert.strictEqual(currentBranch(folder), 'epic-EP-1')
+      assert.ok(!existsSync(mark), 'o git do gateway leu o commondir forjado')
+    } finally {
+      writeFileSync(join(gitDir, 'commondir'), original)
+      rmSync(join(wt, '.gitattributes'), { force: true })
+      writeFileSync(join(wt, 'a.txt'), 'a')
+    }
+  })
+
+  it('⛔ no modo só repositório o .git tem de ser um diretório: arquivo gitdir: ou link, recusado', () => {
+    const other = join(project, 'repositories', 'forjado')
+    mkdirSync(other, { recursive: true })
+    const real = join(secrets, 'outro.git')
+    cpSync(join(repo, '.git'), real, { recursive: true })
+    writeFileSync(join(other, '.git'), `gitdir: ${real}\n`)
+    assert.throws(() => resolveWorkFolder(project, 'forjado'), /não é um repositório git/)
+    rmSync(join(other, '.git'))
+    symlinkSync(real, join(other, '.git'))
+    assert.throws(() => resolveWorkFolder(project, 'forjado'), /não é um repositório git/)
+    assert.deepStrictEqual(listWorktrees(other), [])
   })
 })

@@ -615,7 +615,7 @@ export class AgentProvider implements IAgentProvider {
       folder = undefined
     }
     const name = projectId ? this.projectName?.(projectId) : undefined
-    const branch = folder?.repository ? currentBranch(folder.dir) : undefined
+    const branch = folder?.repository ? currentBranch(folder) : undefined
     return {
       agentId: agent.id,
       ...(projectId ? { project: { id: projectId, ...(name ? { name } : {}), own: agent.projectId === projectId } } : {}),

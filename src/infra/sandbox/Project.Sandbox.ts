@@ -55,6 +55,7 @@ export interface ICercoPlace {
   /** A pasta do projeto: o rascunho mora nela, nunca dentro da worktree (sujaria o `git status`). Ausente = a raiz. */
   scratchBase?: string
   gitCommonDir?: string
+  worktreeGitDir?: string
   /** A pasta privada do agente do comando e o que ele faz nela (ver `agentFolderAccess`). As dos outros, fechadas. */
   agentFolder?: { dir: string; read: boolean; write: boolean }
   /** As portas de serviço LOCAL que as regras liberam exatas (`localhost:<porta>`): no Linux ganham um encaminhador. */
@@ -163,6 +164,7 @@ export class ProjectSandbox implements IProjectSandbox {
       ...(place.scratchBase && place.scratchBase !== root ? { projectRoot: place.scratchBase } : {}),
       scratch: ['.home', '.tmp', '.cache'].map((name) => join(place.scratchBase ?? root, name)),
       ...(place.gitCommonDir ? { gitCommonDir: place.gitCommonDir } : {}),
+      ...(place.gitCommonDir && place.worktreeGitDir ? { worktreeGitDir: place.worktreeGitDir } : {}),
       // A instalação do Node em uso (num Mac com nvm, fica na pasta pessoal, que o cerco fecha) e as ferramentas.
       alwaysRead: [join(dataDir(this.env), 'tools'), dirname(dirname(process.execPath)), ...runtimeHelpers()],
       // ⛔ As pastas privadas dos OUTROS agentes: fechadas para ler e gravar, mesmo com regra que as cubra (`**`).

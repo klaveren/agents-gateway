@@ -377,7 +377,10 @@ export function makeImportController(): ImportController {
     }
   }
   const scan = new ImportScanUseCase({
-    readTree: (projectId, repository) => readRepoTree(resolveWorkFolder(projects.folderOf(projectId), repository).dir, { mask: (text) => masker.text(text) }),
+    readTree: (projectId, repository) => {
+      const folder = resolveWorkFolder(projects.folderOf(projectId), repository)
+      return readRepoTree(folder.dir, { mask: (text) => masker.text(text), git: folder })
+    },
     detectors: [new AgentsDirDetector(), new OpencodeDetector(), new AgentsMdDetector(), new ClaudeDetector(), new AgenticToolsDetector()],
     projectIgnore: (projectId) => projects.importIgnore(projectId),
     projectScope: (projectId) => projects.importScope(projectId),
