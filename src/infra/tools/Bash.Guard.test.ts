@@ -1,6 +1,7 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
-import { denyReason, truncate } from './Bash.Guard'
+import { analyzeShell } from '@infra/permissions/Shell.Parse'
+import { deniedReasons, denyReason, HOST_POWER, PRIVILEGE_ESCALATION, realReasons, truncate } from './Bash.Guard'
 
 describe('BashGuard', () => {
   const denied = [
@@ -55,5 +56,27 @@ describe('BashGuard', () => {
 
   it('leaves short output untouched', () => {
     assert.strictEqual(truncate('hi', 4000), 'hi')
+  })
+})
+
+describe('BashGuard — o sudo e o reboot pelos comandos que rodam', () => {
+  const real = async (command: string) => realReasons(await analyzeShell(command), deniedReasons(command))
+
+  it('⚖️ a palavra num grep, num caminho ou num texto não é escalada nem reboot', async () => {
+    for (const command of ['grep -n "systemctl\\|sudo" scripts/x.sh', 'cat /etc/sudoers.d/x', 'echo "aguarda janela para apt+reboot" > notas.md', 'git log --grep=shutdown'])
+      assert.deepStrictEqual(await real(command), [], command)
+  })
+
+  it('⛔ o comando de verdade segue recusado: sudo local, reboot, systemctl poweroff, e o sudo ou reboot no ssh', async () => {
+    assert.deepStrictEqual(await real('sudo -n true'), [PRIVILEGE_ESCALATION])
+    assert.deepStrictEqual(await real('ls; env sudo id'), [PRIVILEGE_ESCALATION])
+    assert.deepStrictEqual(await real('reboot'), [HOST_POWER])
+    assert.deepStrictEqual(await real('systemctl poweroff'), [HOST_POWER])
+    assert.deepStrictEqual(await real("ssh h 'sudo ls /root'"), [PRIVILEGE_ESCALATION])
+    assert.deepStrictEqual(await real('ssh h sudo reboot'), [HOST_POWER, PRIVILEGE_ESCALATION])
+  })
+
+  it('⛔ o que a análise não vê por inteiro vale pelo texto (falha fechada)', async () => {
+    assert.deepStrictEqual(await real("python3 - <<'E'\nimport os; os.system('sudo id')\nE"), [PRIVILEGE_ESCALATION])
   })
 })

@@ -4,7 +4,18 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
 import { cercoPlan } from '@domain/Cerco.Plan'
-import { ensureGitProxyAuth, findUnder, forBubblewrap, hostSocketDirs, localForwards, projectPathIssue, ProjectSandbox, writeFolders } from './Project.Sandbox'
+import {
+  ensureGitProxyAuth,
+  expandGlobPath,
+  findUnder,
+  forBubblewrap,
+  withWriteGlobsExpanded,
+  hostSocketDirs,
+  localForwards,
+  projectPathIssue,
+  ProjectSandbox,
+  writeFolders,
+} from './Project.Sandbox'
 
 describe('ProjectSandbox', () => {
   const root = mkdtempSync(join(tmpdir(), 'gw-sandbox-test-'))
@@ -217,5 +228,24 @@ describe('findUnder — os modelos de segredo reabertos para leitura', () => {
     writeFileSync(join(root, '_worktrees', 'EP-1', '.git'), 'gitdir: ../../.git/worktrees/EP-1')
     writeFileSync(join(root, '_worktrees', 'EP-1', 'apps', '.env.example'), 'A=')
     assert.deepStrictEqual(findUnder(root, '**/.env.*'), ['.agents/skills/x/.env.example'])
+  })
+})
+
+describe('expandGlobPath — a escrita com curinga no Linux (o runtime a ignora)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'gw-glob-'))
+  after(() => rmSync(root, { recursive: true, force: true }))
+
+  it('⚖️ vira os caminhos que existem: os arquivos do padrão e a pasta do `/**`; sem node_modules; sem curinga, nada', () => {
+    const repo = join(root, 'repo')
+    for (const dir of ['apps/a/src', 'apps/b', 'node_modules/x', '_worktrees/EP-1/evidence', '_worktrees/EP-2/evidence', '_worktrees/EP-3'])
+      mkdirSync(join(repo, dir), { recursive: true })
+    for (const file of ['apps/a/src/x.test.ts', 'apps/a/src/x.ts', 'apps/b/y.test.ts', 'node_modules/x/z.test.ts']) writeFileSync(join(repo, file), '')
+    assert.deepStrictEqual(expandGlobPath(join(repo, '**/*.test.ts')).sort(), [join(repo, 'apps/a/src/x.test.ts'), join(repo, 'apps/b/y.test.ts')])
+    assert.deepStrictEqual(expandGlobPath(join(repo, '_worktrees/*/evidence/**')).sort(), [join(repo, '_worktrees/EP-1/evidence/**'), join(repo, '_worktrees/EP-2/evidence/**')])
+    assert.deepStrictEqual(expandGlobPath(join(repo, 'apps/**')), [])
+    // O plano: o padrão fica, e os caminhos entram na escrita e na negação.
+    const plan = withWriteGlobsExpanded({ readAllow: [], readDeny: [], writeAllow: [join(repo, '**/*.test.ts')], writeDeny: [join(repo, 'apps/*/src/x.test.ts')] })
+    assert.ok(plan.writeAllow.includes(join(repo, '**/*.test.ts')) && plan.writeAllow.includes(join(repo, 'apps/b/y.test.ts')))
+    assert.ok(plan.writeDeny.includes(join(repo, 'apps/a/src/x.test.ts')))
   })
 })

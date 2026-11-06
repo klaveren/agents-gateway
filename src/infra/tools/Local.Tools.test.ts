@@ -758,6 +758,18 @@ describe('remoteSudoAllowed', () => {
       assert.strictEqual(await remoteSudoAllowed(command, checker(command.includes('other') ? rules : wide), asker), false, command)
   })
 
+  it('entre aspas, vários comandos com sudo valem se cada um tem a SUA regra; o resto da linha remota não conta', async () => {
+    const rules: IPermissionRule[] = [
+      { category: 'terminal', pattern: 'ssh * sudo k3s kubectl *', decision: 'allow' },
+      { category: 'terminal', pattern: 'ssh * sudo ls /var/lib/rancher/*', decision: 'allow' },
+    ]
+    const both = "ssh -o BatchMode=yes isrv1 'sudo k3s kubectl get nodes; sudo ls /var/lib/rancher/k3s | head; df -h /'"
+    assert.strictEqual(await remoteSudoAllowed(both, checker(rules), asker), true)
+    assert.strictEqual(await remoteSudoAllowed("ssh isrv1 'sudo k3s kubectl get nodes; sudo k3s etcd-snapshot save'", checker(rules), asker), false)
+    // Um grep com "sudo" ao lado do ssh não atrapalha.
+    assert.strictEqual(await remoteSudoAllowed(`grep -n "sudo" x.sh; ${both}`, checker(rules), asker), true)
+  })
+
   it('⛔ o sudo local segue recusado, mesmo com a regra', async () => {
     const rules: IPermissionRule[] = [{ category: 'terminal', pattern: '* sudo*', decision: 'allow' }]
     for (const command of ['sudo ssh 10.10.0.1 "sudo id"', 'ssh 10.10.0.1 "sudo id"; sudo id', 'echo sudo'])

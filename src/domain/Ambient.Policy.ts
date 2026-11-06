@@ -20,6 +20,8 @@ export interface IAmbient {
   secrets?: IAmbientSecrets
   /** A conversa tem o painel (ver `ConversationPanel.Model`). */
   panel?: boolean
+  /** O agente tem o terminal: a linha da pasta temporária (o `/tmp` dele some a cada comando). */
+  terminal?: boolean
 }
 
 /** Os NOMES das variáveis secretas: as do agente e as de cada skill ou command que ele pode carregar. */
@@ -42,6 +44,7 @@ export function ambientSection(ambient: IAmbient): string {
   else if (repository) lines.push(`- Diretório de trabalho: ${directory}. Fora dele você não lê nem grava; o git dele funciona (status, commit, push).`)
   else lines.push(`- Diretório de trabalho: ${directory} — persistente e compartilhado pelas conversas do projeto. Fora dele você não lê nem grava.`)
   if (ambient.files) lines.push(agentFolderLine(ambient.files))
+  if (ambient.terminal) lines.push(TEMP_LINE)
   if (ambient.panel)
     lines.push(
       '',
@@ -88,3 +91,10 @@ export function agentFolderLine(files: { dir: string; write: boolean }): string 
     : 'leia e rode por ela seus scripts e modelos (só leitura para você: gravar pede Escrever arquivos)'
   return `- Sua pasta: ${files.dir} — privada, sua: nenhum outro agente a vê. Persiste entre conversas e vale em todas as suas, de qualquer pessoa: não guarde nela o que uma pessoa não pode ver da outra. ${use[0]!.toUpperCase()}${use.slice(1)}. Quem cuida do gateway também pode pôr arquivos nela.`
 }
+
+/**
+ * ⚖️ O terminal roda isolado: o `/tmp` dele é novo a cada comando (o arquivo gravado num some no seguinte), e os agentes
+ * gastavam tentativas nisso. O `$TMPDIR` persiste (fica na pasta do projeto, fora do git).
+ */
+export const TEMP_LINE =
+  '- Arquivos temporários: use `$TMPDIR` (persiste entre os comandos do terminal). O `/tmp` do terminal é apagado a cada comando: o que você grava nele some no comando seguinte.'

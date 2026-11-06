@@ -201,7 +201,8 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     )
     const options: Options = {
       model: record.model,
-      systemPrompt: record.systemPrompt,
+      // ⚖️ No Claude, as do gateway vêm com prefixo: o modelo chamava `use_resource` (sem ele) e inventava `mcp__local__Read`.
+      systemPrompt: local.length ? `${record.systemPrompt}\n\n${CLAUDE_TOOL_NAMES}` : record.systemPrompt,
       // Os built-ins do Claude Code que ESTE agente tem ligados (ferramentas nativas, `sdk:*`) — e só
       // eles. Vazio = nenhum: sem isto o agente ganharia Bash/Read/Edit sobre a máquina do host. As
       // tools nossas (locais e do MCP) chegam por `mcpServers`.
@@ -758,6 +759,10 @@ function agentFolderVerdict(toolName: string, input: Record<string, unknown>, cw
   }
   return { mine: paths > 0 && mine === paths }
 }
+
+/** O nome das ferramentas no Claude: as do gateway com o prefixo do servidor local; as nativas, sem prefixo. */
+export const CLAUDE_TOOL_NAMES = `## Nomes das ferramentas
+Aqui as ferramentas do gateway têm o prefixo \`mcp__${LOCAL_SERVER_NAME}__\` (ex.: \`mcp__${LOCAL_SERVER_NAME}__use_resource\`, \`mcp__${LOCAL_SERVER_NAME}__read_doc\`); as nativas (Read, Write, Edit, Bash, Glob, Grep) não têm prefixo. Quando um texto citar uma ferramenta pelo nome curto, chame-a pelo nome completo da sua lista.`
 
 /** As nativas que gravam: nas pastas de arquivos de recurso, recusadas. */
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
