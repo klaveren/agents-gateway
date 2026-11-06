@@ -76,9 +76,9 @@ Um trigger é o procedimento de uma situação, carregado sob demanda. O corpo:
 \`\`\`
 
 ## Arquivos e variáveis
-- **Arquivos (scripts, modelos, dados)** moram na pasta do agente no gateway — \`projects/<projeto>/agents/<id>/…\` (\`global/agents/<id>/…\` se for global) —, SÓ LEITURA para os agentes. O "## Ambiente" do agente mostra a pasta.
-- O corpo (o prompt, no agente) cita o arquivo pelo caminho RELATIVO (\`scripts/balance.mjs\`) e manda rodá-lo a partir da pasta.
-- **Pôr ou trocar arquivos:** \`attach_resource_files\` — o gateway copia, no servidor, de uma pasta do projeto (do formato antigo: \`repositories/<repo>/.agents/agents/<id>/scripts\`). Ninguém escreve na pasta à mão. Fica de fora, com o motivo: \`node_modules\`, \`.git\`, \`.env*\`, \`.credentials\`, chaves, binários, acima de 1 MB e todo arquivo com segredo.
+- **A pasta do agente** — \`projects/<projeto>/agents/<id>/…\` (\`global/agents/<id>/…\` se for global) — é PRIVADA dele: nenhum outro agente a lê nem grava. Ele a lê com Ler arquivos ou Terminal e grava nela com Escrever arquivos, sem regra de permissão. Persiste e vale em todas as conversas dele, de qualquer pessoa. O "## Ambiente" do agente mostra a pasta.
+- Nela vão os scripts, modelos e dados que vêm com o agente, e o que ele mesmo grava (notas, dados de trabalho). O corpo (o prompt, no agente) cita o arquivo pelo caminho RELATIVO (\`scripts/balance.mjs\`) e manda rodá-lo a partir da pasta.
+- **Pôr ou trocar arquivos de fora:** a guia Arquivos, ou \`attach_resource_files\` — o gateway copia, no servidor, de uma pasta do projeto (do formato antigo: \`repositories/<repo>/.agents/agents/<id>/scripts\`). O que o agente gravou fica. Fica de fora, com o motivo: \`node_modules\`, \`.git\`, \`.env*\`, \`.credentials\`, chaves, binários, acima de 1 MB e todo arquivo com segredo.
 - **Segredo nunca em arquivo nem no corpo:** o script lê a variável de ambiente (\`process.env.NOME\`, \`$NOME\`) e a variável é cadastrada na guia **Variáveis** do agente (peça com \`request_secret\`, pelo nome e para quê; o valor, só a pessoa digita). Ela vale em todo comando do agente. Imprimir a variável é recusado, e o que sair com o valor é mascarado.
 - Liste no corpo as variáveis de que o agente precisa (nome e para quê) — é o que diz a quem usa o que falta.
 

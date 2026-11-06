@@ -8,7 +8,7 @@ export interface IPanelAccess {
 import { DELEGATE_TOOL_NAME } from '@domain/models/Delegation.Model'
 import { offers, targetFor } from '@domain/Agent.Policy'
 import { conversationNote, IAmbient, IAmbientSecrets } from '@domain/Ambient.Policy'
-import { resolveCapabilities } from '@domain/Capability.Catalog'
+import { agentFolderAccess, resolveCapabilities } from '@domain/Capability.Catalog'
 import { COMPACT_REQUEST, compactHandoff, shouldCompact } from '@domain/Compaction.Policy'
 import { benchKeyOf, DEFAULT_COOLDOWN_MINUTES, fallbackChain, groupOf, IFallbackStep, IModelGroup, nextStep, stepKey, switchesOn, withGroupTargets } from '@domain/Fallback.Policy'
 import { HANDOFF_MAX_CHARS, handoffText, ITranscriptTurn } from '@domain/Handoff.Policy'
@@ -591,6 +591,13 @@ export class AgentProvider implements IAgentProvider {
 
   private agentFiles?: (agent: IAgent) => string | undefined
 
+  /** A pasta privada no "## Ambiente", só para o agente que a alcança (Ler, Escrever arquivos ou Terminal). */
+  private agentFolderOf(agent: IAgent): { files?: { dir: string; write: boolean } } {
+    const dir = this.agentFiles?.(agent)
+    const access = agentFolderAccess(agent.allowedTools)
+    return dir && access.read ? { files: { dir, write: access.write } } : {}
+  }
+
   private ambientOf(agent: IAgent, metadata: Record<string, unknown> | undefined): IAmbient {
     const projectId = projectOf(metadata) ?? agent.projectId
     let folder: IContextWorkFolder | undefined
@@ -607,7 +614,7 @@ export class AgentProvider implements IAgentProvider {
       ...(projectId ? { project: { id: projectId, ...(name ? { name } : {}), own: agent.projectId === projectId } } : {}),
       ...(folder?.repository ? { repository: { name: folder.repository, ...(folder.worktree ? { worktree: folder.worktree } : {}), ...(branch ? { branch } : {}) } } : {}),
       ...(folder ? { directory: folder.dir } : agent.projectId ? { directory: projectWorkspacePath(agent.projectId) } : {}),
-      ...(this.agentFiles?.(agent) ? { files: this.agentFiles(agent) } : {}),
+      ...this.agentFolderOf(agent),
       ...(this.secrets?.ambientFor(agent) ? { secrets: this.secrets.ambientFor(agent)! } : {}),
       ...(this.panels ? { panel: true } : {}),
     }

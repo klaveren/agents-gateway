@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { dataDir } from '@infra/adapters/support/Subscription.Workspace'
 import { ILocalTool, IToolResult } from './Tool.Types'
-import { globalResourcesDir, isResourceFilePath } from '@infra/workspace/Resource.Files'
+import { agentFolderOwner, globalResourcesDir, isResourceFilePath } from '@infra/workspace/Resource.Files'
 
 export interface IFileToolDeps {
   /** A pasta-raiz onde as tools podem mexer, por chamada (a pasta do projeto da conversa). */
@@ -15,6 +15,17 @@ export interface IFileToolDeps {
    * permissões (só a raiz e a lista protegida valem).
    */
   access?: (context: IExecutionContext | undefined, kind: 'read' | 'write', path: string, log: boolean) => string | undefined
+  /**
+   * ⛔ A PASTA PRIVADA do agente da conversa e o que ele faz nela (ver `agentFolderAccess`): alcançada pelo caminho
+   * absoluto (ou de dentro da raiz), pela capacidade e sem regra. A de outro agente é recusada sempre.
+   */
+  ownFolder?: (context?: IExecutionContext) => IOwnFolder | undefined
+}
+
+export interface IOwnFolder {
+  dir: string
+  read: boolean
+  write: boolean
 }
 
 const READ_WHOLE_MAX_BYTES = 256 * 1024
@@ -81,17 +92,52 @@ export function deniedPath(absPath: string, root: string): string | undefined {
 const fail = (result: string): IToolResult => ({ status: 'error', result })
 const toMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
+/**
+ * ONDE o caminho mora: na pasta privada do agente (pelo caminho absoluto dela) ou na raiz de trabalho. Na pasta dele, o
+ * que se mostra é o caminho absoluto (o relativo seria lido como da raiz).
+ */
+function placeOf(deps: IFileToolDeps, context: IExecutionContext | undefined, path: unknown): { root: string; own?: IOwnFolder; show: (abs: string) => string } {
+  const own = deps.ownFolder?.(context)
+  const root = deps.rootFor(context)
+  if (own && typeof path === 'string' && isAbsolute(path) && isInside(realOf(resolve(own.dir)), realOf(resolve(path))))
+    return { root: realOf(resolve(own.dir)), own, show: (abs) => abs }
+  return { root, ...(own ? { own } : {}), show: (abs) => relOf(root, abs) }
+}
+
+/** ⛔ A pasta de agente onde o caminho mora: a do próprio (`mine`), a de outro (`other`) ou nenhuma. */
+function folderOf(abs: string, own: IOwnFolder | undefined): 'mine' | 'other' | undefined {
+  const owner = agentFolderOwner(abs)
+  if (!owner) return undefined
+  return own && realOf(resolve(owner.dir)) === realOf(resolve(own.dir)) ? 'mine' : 'other'
+}
+
 /** O caminho já conferido (dentro da raiz e não protegido) ou o erro pronto. `write`: também fora das pastas só leitura. */
-function guard(root: string, path: unknown, permit?: (rel: string) => string | undefined, write = false): { abs: string } | { error: IToolResult } {
+function guard(root: string, path: unknown, permit?: (rel: string) => string | undefined, write = false, own?: IOwnFolder): { abs: string } | { error: IToolResult } {
   if (typeof path !== 'string' || !path.trim()) return { error: fail('path is required.') }
   const abs = resolveInside(root, path)
   if (!abs) return { error: fail('path is outside the allowed folder') }
   const reason = deniedPath(abs, root)
   if (reason) return { error: fail(`${reason}: this file is protected`) }
+  // ⛔ A pasta privada: a de outro agente nunca; a própria pela capacidade, sem regra.
+  const folder = folderOf(abs, own)
+  if (folder === 'other') return { error: fail('private folder of another agent: only that agent reaches it') }
+  if (folder === 'mine') {
+    if (write && !own!.write) return { error: fail('your folder is read-only for you: writing in it needs the Write files capability') }
+    if (!own!.read) return { error: fail('your folder needs the Read files capability') }
+    return { abs }
+  }
   if (write && isResourceFilePath(abs)) return { error: fail('resource files are read-only: they are edited in the gateway (the skill, command or agent page)') }
   const denied = permit?.(relOf(root, abs))
   if (denied) return { error: fail(`Not permitted: ${denied}`) }
   return { abs }
+}
+
+/** Um item de uma listagem que se pode mostrar: não protegido, fora da pasta de outro agente e liberado pela regra (ou da própria pasta). */
+function listable(abs: string | undefined, root: string, own: IOwnFolder | undefined, permitted: (abs: string) => boolean): abs is string {
+  if (!abs || deniedPath(abs, root)) return false
+  const folder = folderOf(abs, own)
+  if (folder === 'other') return false
+  return folder === 'mine' ? !!own?.read : permitted(abs)
 }
 
 const relOf = (root: string, abs: string) => relative(realOf(resolve(root)), abs) || '.'
@@ -143,8 +189,8 @@ function readFileTool(deps: IFileToolDeps): ILocalTool {
       additionalProperties: false,
     },
     async execute(args, context): Promise<IToolResult> {
-      const root = deps.rootFor(context)
-      const checked = guard(root, args.path, (rel) => deps.access?.(context, 'read', rel, true))
+      const { root, own, show } = placeOf(deps, context, args.path)
+      const checked = guard(root, args.path, (rel) => deps.access?.(context, 'read', rel, true), false, own)
       if ('error' in checked) return checked.error
       try {
         const info = await stat(checked.abs)
@@ -161,7 +207,7 @@ function readFileTool(deps: IFileToolDeps): ILocalTool {
         const more = offset - 1 + limit < lines.length ? `\n… ${lines.length - (offset - 1 + limit)} more lines` : ''
         return { status: 'success', result: numbered(slice, offset) + more }
       } catch (error: unknown) {
-        return fail(`Could not read ${relOf(root, checked.abs)}: ${toMessage(error)}`)
+        return fail(`Could not read ${show(checked.abs)}: ${toMessage(error)}`)
       }
     },
   }
@@ -182,16 +228,16 @@ function listFilesTool(deps: IFileToolDeps): ILocalTool {
       additionalProperties: false,
     },
     async execute(args, context): Promise<IToolResult> {
-      const root = deps.rootFor(context)
+      const { root, own, show } = placeOf(deps, context, args.path)
       const pattern = typeof args.pattern === 'string' ? args.pattern.trim() : ''
       if (!pattern) return fail('pattern is required.')
-      const checked = guard(root, args.path ?? '.')
+      const checked = guard(root, args.path ?? '.', undefined, false, own)
       if ('error' in checked) return checked.error
       try {
         const names: string[] = []
         for (const name of await walk(checked.abs, pattern)) {
           const abs = resolveInside(root, join(checked.abs, name))
-          if (abs && !deniedPath(abs, root) && !deps.access?.(context, 'read', relOf(root, abs), false)) names.push(relOf(root, abs))
+          if (listable(abs, root, own, (item) => !deps.access?.(context, 'read', relOf(root, item), false))) names.push(show(abs))
         }
         if (!names.length) return { status: 'success', result: 'No files match.' }
         const shown = names.slice(0, LIST_MAX).join('\n')
@@ -219,7 +265,7 @@ function searchFilesTool(deps: IFileToolDeps): ILocalTool {
       additionalProperties: false,
     },
     async execute(args, context): Promise<IToolResult> {
-      const root = deps.rootFor(context)
+      const { root, own, show } = placeOf(deps, context, args.path)
       const source = typeof args.pattern === 'string' ? args.pattern : ''
       if (!source) return fail('pattern is required.')
       let regex: RegExp
@@ -228,7 +274,7 @@ function searchFilesTool(deps: IFileToolDeps): ILocalTool {
       } catch (error: unknown) {
         return fail(`invalid regular expression: ${toMessage(error)}`)
       }
-      const checked = guard(root, args.path ?? '.')
+      const checked = guard(root, args.path ?? '.', undefined, false, own)
       if ('error' in checked) return checked.error
       const fileGlob = typeof args.glob === 'string' && args.glob.trim() ? args.glob.trim() : '**/*'
       try {
@@ -236,7 +282,7 @@ function searchFilesTool(deps: IFileToolDeps): ILocalTool {
         let truncated = false
         for (const name of await walk(checked.abs, fileGlob)) {
           const abs = resolveInside(root, join(checked.abs, name))
-          if (!abs || deniedPath(abs, root) || deps.access?.(context, 'read', relOf(root, abs), false)) continue
+          if (!listable(abs, root, own, (item) => !deps.access?.(context, 'read', relOf(root, item), false))) continue
           const info = await stat(abs)
           if (!info.isFile() || info.size > SEARCH_FILE_MAX_BYTES || (await isBinary(abs))) continue
           const lines = (await readFile(abs, 'utf8')).split('\n')
@@ -246,7 +292,7 @@ function searchFilesTool(deps: IFileToolDeps): ILocalTool {
               truncated = true
               break
             }
-            matches.push(`${relOf(root, abs)}:${index + 1}: ${lines[index].trim().slice(0, LINE_MAX_CHARS)}`)
+            matches.push(`${show(abs)}:${index + 1}: ${lines[index].trim().slice(0, LINE_MAX_CHARS)}`)
           }
           if (truncated) break
         }
@@ -275,8 +321,8 @@ function writeFileTool(deps: IFileToolDeps): ILocalTool {
       additionalProperties: false,
     },
     async execute(args, context): Promise<IToolResult> {
-      const root = deps.rootFor(context)
-      const checked = guard(root, args.path, (rel) => deps.access?.(context, 'write', rel, true), true)
+      const { root, own, show } = placeOf(deps, context, args.path)
+      const checked = guard(root, args.path, (rel) => deps.access?.(context, 'write', rel, true), true, own)
       if ('error' in checked) return checked.error
       if (typeof args.content !== 'string') return fail('content is required.')
       const bytes = Buffer.byteLength(args.content)
@@ -284,12 +330,12 @@ function writeFileTool(deps: IFileToolDeps): ILocalTool {
       try {
         await mkdir(dirname(checked.abs), { recursive: true })
         // Revalida depois do mkdir: o pai agora existe e pode ser um symlink que escapa.
-        const again = guard(root, args.path, (rel) => deps.access?.(context, 'write', rel, false), true)
+        const again = guard(root, args.path, (rel) => deps.access?.(context, 'write', rel, false), true, own)
         if ('error' in again) return again.error
         await writeFile(again.abs, args.content, 'utf8')
-        return { status: 'success', result: `Wrote ${bytes} bytes to ${relOf(root, again.abs)}` }
+        return { status: 'success', result: `Wrote ${bytes} bytes to ${show(again.abs)}` }
       } catch (error: unknown) {
-        return fail(`Could not write ${relOf(root, checked.abs)}: ${toMessage(error)}`)
+        return fail(`Could not write ${show(checked.abs)}: ${toMessage(error)}`)
       }
     },
   }
@@ -313,8 +359,8 @@ function editFileTool(deps: IFileToolDeps): ILocalTool {
       additionalProperties: false,
     },
     async execute(args, context): Promise<IToolResult> {
-      const root = deps.rootFor(context)
-      const checked = guard(root, args.path, (rel) => deps.access?.(context, 'write', rel, true), true)
+      const { root, own, show } = placeOf(deps, context, args.path)
+      const checked = guard(root, args.path, (rel) => deps.access?.(context, 'write', rel, true), true, own)
       if ('error' in checked) return checked.error
       const { old_string: from, new_string: to } = args
       if (typeof from !== 'string' || typeof to !== 'string' || !from) return fail('old_string and new_string are required (old_string cannot be empty).')
@@ -330,9 +376,9 @@ function editFileTool(deps: IFileToolDeps): ILocalTool {
         if (count > 1 && args.replace_all !== true) return fail(`old_string appears ${count} times: add more context to make it unique, or pass replace_all: true`)
         // split/join: sem os `$` especiais do replace.
         await writeFile(checked.abs, text.split(from).join(to), 'utf8')
-        return { status: 'success', result: `Edited ${relOf(root, checked.abs)} (${count} replacement${count === 1 ? '' : 's'})` }
+        return { status: 'success', result: `Edited ${show(checked.abs)} (${count} replacement${count === 1 ? '' : 's'})` }
       } catch (error: unknown) {
-        return fail(`Could not edit ${relOf(root, checked.abs)}: ${toMessage(error)}`)
+        return fail(`Could not edit ${show(checked.abs)}: ${toMessage(error)}`)
       }
     },
   }

@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
+import { cercoPlan } from '@domain/Cerco.Plan'
 import { ensureGitProxyAuth, findUnder, forBubblewrap, hostSocketDirs, localForwards, projectPathIssue, ProjectSandbox, writeFolders } from './Project.Sandbox'
 
 describe('ProjectSandbox', () => {
@@ -37,10 +38,19 @@ describe('ProjectSandbox', () => {
     const policy = new ProjectSandbox(env, fakeSrt().load).policy('xpto') as { filesystem: Record<string, string[]>; enableWeakerNestedSandbox?: boolean }
     const project = join(root, 'projects', 'xpto')
     assert.deepStrictEqual(policy.filesystem.allowWrite, [project])
-    assert.deepStrictEqual(policy.filesystem.denyRead, [root, process.cwd(), homedir(), ...hostSocketDirs()])
-    assert.deepStrictEqual(policy.filesystem.allowRead.slice(0, 3), [project, join(root, 'tools'), join(root, 'global')])
+    // ⛔ Sem agente aqui: as pastas privadas dos agentes do projeto ficam fechadas.
+    assert.deepStrictEqual(policy.filesystem.denyRead, [root, process.cwd(), homedir(), ...hostSocketDirs(), join(project, 'agents')])
+    // As de recurso só leitura: skills e commands (globais e do projeto); nunca a pasta de agente.
+    assert.deepStrictEqual(policy.filesystem.allowRead.slice(0, 6), [
+      project,
+      join(root, 'tools'),
+      join(root, 'global', 'skills'),
+      join(root, 'global', 'commands'),
+      join(project, 'skills'),
+      join(project, 'commands'),
+    ])
     // E só o auxiliar de seccomp do srt, que mora em `node_modules` (dentro do app, que fica fechado).
-    assert.ok(policy.filesystem.allowRead.slice(3).every((path) => /sandbox-runtime[/\\]vendor[/\\]seccomp$/.test(path)))
+    assert.ok(policy.filesystem.allowRead.slice(6).every((path) => /sandbox-runtime[/\\]vendor[/\\]seccomp$/.test(path)))
     // ⛔ Os arquivos de recurso: lidos, nunca gravados (os do projeto moram dentro da pasta gravável).
     assert.deepStrictEqual(policy.filesystem.denyWrite, [join(project, 'skills'), join(project, 'commands'), join(project, 'agents'), join(root, 'global')])
     assert.strictEqual(policy.enableWeakerNestedSandbox, undefined)
@@ -61,6 +71,29 @@ describe('ProjectSandbox', () => {
     assert.deepStrictEqual((srt.calls.at(-1)?.config as { filesystem: { allowWrite: string[] } }).filesystem.allowWrite, [project])
     // A ponte do proxy (no `/tmp` do host, fechado no Linux) volta: uma vez só, mesmo quando HTTP e SOCKS são o mesmo.
     assert.strictEqual((srt.calls.at(-1)?.config as { filesystem: { allowRead: string[] } }).filesystem.allowRead.filter((path) => path === '/tmp/claude-http-x.sock').length, 1)
+  })
+
+  it('⛔ a pasta privada: a do agente pela capacidade (ler, gravar); as dos outros fechadas, mesmo com a regra `**`', () => {
+    const sandbox = new ProjectSandbox(env, fakeSrt().load)
+    const project = join(root, 'projects', 'xpto')
+    const mine = join(project, 'agents', 'maya')
+    const others = [join(project, 'agents', 'leo'), join(root, 'global', 'agents', 'atlas')]
+    for (const dir of [mine, ...others]) mkdirSync(dir, { recursive: true })
+    const layers = {
+      project: [
+        { category: 'read' as const, pattern: '**', decision: 'allow' as const },
+        { category: 'write' as const, pattern: '**', decision: 'allow' as const },
+      ],
+    }
+    const writer = cercoPlan(layers, sandbox.base(project, { agentFolder: { dir: mine, read: true, write: true } }))
+    assert.ok(writer.readAllow.includes(mine) && writer.writeAllow.includes(mine))
+    for (const dir of others) assert.ok(writer.readDeny.includes(dir) && writer.writeDeny.includes(dir), dir)
+    assert.ok(!writer.readDeny.includes(mine) && !writer.writeDeny.includes(mine))
+    // Só leitura (Terminal, Ler arquivos): lê a dela, não grava fora do que as regras dão.
+    const reader = cercoPlan({}, sandbox.base('/tmp/conversa', { agentFolder: { dir: join(root, 'global', 'agents', 'atlas'), read: true, write: false } }))
+    assert.ok(reader.readAllow.includes(join(root, 'global', 'agents', 'atlas')))
+    assert.ok(!reader.writeAllow.includes(join(root, 'global', 'agents', 'atlas')))
+    assert.ok(!reader.readDeny.includes(join(root, 'global', 'agents', 'atlas')))
   })
 
   it('⛔ socket Unix liberado só no Linux, e lá os sockets do host ficam fora de alcance (docker, bus do systemd, /tmp)', () => {

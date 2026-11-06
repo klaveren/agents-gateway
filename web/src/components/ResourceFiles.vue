@@ -14,6 +14,8 @@ const props = defineProps<{
   save: (files: IResourceFile[]) => Promise<void>
   /** Onde a pasta mora, para a pessoa saber (ex.: `global/skills/banco`). */
   where: string
+  /** A pasta é do AGENTE (privada, ele lê e grava): a lista é a do disco, com o que ele gravou. */
+  owned?: boolean
 }>()
 
 const draft = ref<IResourceFile[]>([])
@@ -136,7 +138,12 @@ const size = (bytes: number) => (bytes < 1024 ? `${bytes} B` : `${(bytes / 1024)
 
 <template>
   <section class="flex flex-col gap-3" data-test="resource-files">
-    <p class="text-sm text-zinc-400">
+    <p v-if="owned" class="text-sm text-zinc-400">
+      A pasta do agente, <code class="text-zinc-300">{{ where }}</code>: privada, só ele a vê. Com Ler arquivos ou Terminal ele lê e roda o que está aqui; com Escrever arquivos,
+      grava nela as notas e os dados dele, que aparecem nesta lista. Você também pode pôr arquivos: só texto, até 1 MB cada; credencial fica numa variável do gateway, nunca no
+      arquivo.
+    </p>
+    <p v-else class="text-sm text-zinc-400">
       Scripts, modelos e dados que vão na pasta <code class="text-zinc-300">{{ where }}</code>. O agente lê e roda pelo terminal, mas não grava nela: mudança é só por aqui. Só
       texto, até 1 MB por arquivo; credencial fica numa variável do gateway, nunca no arquivo.
     </p>

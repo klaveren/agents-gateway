@@ -8,7 +8,8 @@ import { esmImport } from '@infra/adapters/support/Esm.Import'
 import { networkGate } from '@infra/permissions/Network.Gate'
 import type { ICercoBase, ICercoPlan } from '@domain/Cerco.Plan'
 import { pathMatches } from '@domain/Permission.Policy'
-import { globalResourcesDir, projectResourceDirs, readOnlyResourceDirs } from '@infra/workspace/Resource.Files'
+import { FILE_DIRS } from '@domain/models/ResourceFile.Model'
+import { agentFolders, globalResourcesDir, projectResourceDirs, readOnlyResourceDirs } from '@infra/workspace/Resource.Files'
 
 const run = promisify(exec)
 
@@ -54,6 +55,8 @@ export interface ICercoPlace {
   /** A pasta do projeto: o rascunho mora nela, nunca dentro da worktree (sujaria o `git status`). Ausente = a raiz. */
   scratchBase?: string
   gitCommonDir?: string
+  /** A pasta privada do agente do comando e o que ele faz nela (ver `agentFolderAccess`). As dos outros, fechadas. */
+  agentFolder?: { dir: string; read: boolean; write: boolean }
   /** As portas de serviço LOCAL que as regras liberam exatas (`localhost:<porta>`): no Linux ganham um encaminhador. */
   localPorts?: readonly number[]
   /**
@@ -143,8 +146,9 @@ export class ProjectSandbox implements IProjectSandbox {
     return {
       ...(this.nested() ? { enableWeakerNestedSandbox: true } : {}),
       filesystem: {
-        denyRead: [dataDir(this.env), process.cwd(), homedir(), ...hostSocketDirs()],
-        allowRead: [project, join(dataDir(this.env), 'tools'), ...existing([globalResourcesDir(this.env)]), ...runtimeHelpers(), ...bridge],
+        // ⛔ Sem agente aqui: nenhuma pasta privada de agente se alcança (as do projeto ficam fechadas; as globais, fora).
+        denyRead: [dataDir(this.env), process.cwd(), homedir(), ...hostSocketDirs(), ...existing([join(project, FILE_DIRS.agent)])],
+        allowRead: [project, join(dataDir(this.env), 'tools'), ...existing(readOnlyResourceDirs(project, this.env)), ...runtimeHelpers(), ...bridge],
         allowWrite: [project],
         // Os arquivos de recurso do projeto (dentro dele) e os globais: só leitura.
         denyWrite: existing([...projectResourceDirs(projectId, this.env), globalResourcesDir(this.env)]),
@@ -161,7 +165,9 @@ export class ProjectSandbox implements IProjectSandbox {
       ...(place.gitCommonDir ? { gitCommonDir: place.gitCommonDir } : {}),
       // A instalação do Node em uso (num Mac com nvm, fica na pasta pessoal, que o cerco fecha) e as ferramentas.
       alwaysRead: [join(dataDir(this.env), 'tools'), dirname(dirname(process.execPath)), ...runtimeHelpers()],
-      alwaysDeny: [dataDir(this.env), process.cwd(), homedir(), ...hostSocketDirs()],
+      // ⛔ As pastas privadas dos OUTROS agentes: fechadas para ler e gravar, mesmo com regra que as cubra (`**`).
+      alwaysDeny: [dataDir(this.env), process.cwd(), homedir(), ...hostSocketDirs(), ...agentFolders(root, place.agentFolder?.dir, this.env).others],
+      ...(place.agentFolder ? { agentFolder: place.agentFolder } : {}),
       // Os arquivos de recurso: o global sempre; os do projeto quando a raiz é dele. Lê, não grava.
       readOnly: existing(readOnlyResourceDirs(root, this.env)),
       find: (pattern) => findUnder(root, pattern),

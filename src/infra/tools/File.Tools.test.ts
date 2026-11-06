@@ -1,6 +1,6 @@
 import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { deniedPath, makeFileTools, resolveInside } from './File.Tools'
@@ -179,5 +179,63 @@ describe('File.Tools — ⛔ as pastas de arquivos de recurso são só leitura',
     assert.strictEqual(edit.status, 'error')
     assert.strictEqual((await run('write_file', { path: 'agents/maya/novo.txt', content: 'x' })).status, 'error')
     assert.strictEqual((await run('write_file', { path: 'notas/a.md', content: 'x' })).status, 'success')
+  })
+})
+
+describe('File.Tools — ⛔ a pasta privada do agente', () => {
+  let data: string
+  let root: string
+  let mine: string
+  let other: string
+  const before_ = process.env.CONVERSATIONS_DB
+  before(() => {
+    data = mkdtempSync(join(tmpdir(), 'file-tools-own-'))
+    root = join(data, 'projects', 'alfa')
+    mine = join(data, 'global', 'agents', 'atlas')
+    other = join(root, 'agents', 'leo')
+    for (const dir of [root, mine, other]) mkdirSync(dir, { recursive: true })
+    writeFileSync(join(mine, 'notas.md'), 'minha')
+    writeFileSync(join(other, 'segredo.md'), 'dele')
+    process.env.CONVERSATIONS_DB = join(data, 'gateway.db')
+  })
+  after(() => {
+    if (before_ === undefined) delete process.env.CONVERSATIONS_DB
+    else process.env.CONVERSATIONS_DB = before_
+    rmSync(data, { recursive: true, force: true })
+  })
+  // ⛔ Sem regra nenhuma liberando: a própria pasta vale pela capacidade; o resto segue a regra (aqui, tudo negado).
+  const tools = (access: { read: boolean; write: boolean }) => makeFileTools({ rootFor: () => root, ownFolder: () => ({ dir: mine, ...access }), access: () => 'sem regra' })
+  const run = (access: { read: boolean; write: boolean }, name: string, args: Record<string, unknown>) =>
+    tools(access)
+      .find((tool) => tool.name === name)!
+      .execute(args)
+
+  it('lê e grava a própria pasta pelo caminho absoluto, sem regra; mostra o caminho absoluto', async () => {
+    const read = await run({ read: true, write: true }, 'read_file', { path: join(mine, 'notas.md') })
+    assert.equal(read.status, 'success')
+    const wrote = await run({ read: true, write: true }, 'write_file', { path: join(mine, 'dados', 'a.json'), content: '{}' })
+    assert.deepEqual([wrote.status, String(wrote.result).endsWith(join('atlas', 'dados', 'a.json'))], ['success', true])
+    const listed = await run({ read: true, write: true }, 'list_files', { pattern: '**/*', path: mine })
+    const real = realpathSync(mine)
+    assert.deepEqual(String(listed.result).split('\n').sort(), [join(real, 'dados'), join(real, 'dados', 'a.json'), join(real, 'notas.md')])
+  })
+
+  it('⛔ sem Escrever arquivos, a própria pasta é só leitura', async () => {
+    assert.equal((await run({ read: true, write: false }, 'read_file', { path: join(mine, 'notas.md') })).status, 'success')
+    const wrote = await run({ read: true, write: false }, 'write_file', { path: join(mine, 'b.md'), content: 'x' })
+    assert.deepEqual([wrote.status, /read-only for you/.test(String(wrote.result))], ['error', true])
+  })
+
+  it('⛔ a pasta de outro agente: recusada por caminho, e fora da listagem, mesmo dentro da raiz', async () => {
+    const free = makeFileTools({ rootFor: () => root, ownFolder: () => ({ dir: mine, read: true, write: true }) })
+    const call = (name: string, args: Record<string, unknown>) => free.find((tool) => tool.name === name)!.execute(args)
+    const read = await call('read_file', { path: 'agents/leo/segredo.md' })
+    assert.deepEqual([read.status, /another agent/.test(String(read.result))], ['error', true])
+    assert.equal((await call('write_file', { path: 'agents/leo/x.md', content: 'x' })).status, 'error')
+    assert.equal((await call('read_file', { path: join(data, 'global', 'agents', 'outro', 'a') })).status, 'error')
+    const listed = await call('list_files', { pattern: '**/*' })
+    assert.ok(!String(listed.result).includes('segredo.md'))
+    const found = await call('search_files', { pattern: 'dele' })
+    assert.equal(found.result, 'No matches.')
   })
 })

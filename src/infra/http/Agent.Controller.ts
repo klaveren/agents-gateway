@@ -2,7 +2,7 @@ import { applyPanelOp, emptyPanel, panelMarkdown, TPanelOp } from '@domain/model
 import { ERROR_KINDS } from '@domain/models/ErrorLog.Model'
 import type { ResourceSecretsService } from '@application/ResourceSecrets.Service'
 import { IModelGroup, modelGroupIssues, NO_MODEL_GROUP } from '@domain/Fallback.Policy'
-import { CAPABILITIES, CAPABILITY_PREFIX, CAPABILITY_TOOLS, capability, capabilityRuns, toCapabilities } from '@domain/Capability.Catalog'
+import { agentFolderAccess, CAPABILITIES, CAPABILITY_PREFIX, CAPABILITY_TOOLS, capability, capabilityRuns, toCapabilities } from '@domain/Capability.Catalog'
 import { agentUnavailable, IAvailabilityFacts, TAgentUnavailable, targetUnavailable, UNAVAILABLE_LABEL } from '@domain/Agent.Availability'
 import { clientMetadata } from '@domain/Session.Metadata'
 import { metaPlaceholderKeys } from '@infra/sandbox/Egress.Proxy'
@@ -541,7 +541,9 @@ export class AgentController {
       if (!entry) throw new AgentNotFoundError(req.params.agentId as string)
 
       const disabled = this.agents.unusableModels(entry.agent)
-      return toAgentDetailDto(entry, (providerId) => this.providerFacts(providerId, disabled))
+      // ⚖️ A guia Arquivos mostra a pasta como está no disco: o que a tela pôs e o que o agente gravou.
+      const live = this.agents.liveFiles(entry.agent)
+      return toAgentDetailDto(live ? { ...entry, agent: { ...entry.agent, files: live } } : entry, (providerId) => this.providerFacts(providerId, disabled))
     })
   }
 
@@ -623,7 +625,9 @@ export class AgentController {
       const requested = typeof req.query.project === 'string' && req.query.project ? req.query.project : undefined
       const projectId = agent.projectId ?? (requested && this.usecases.projects?.exists(requested) ? requested : undefined)
       const name = projectId && this.usecases.projects?.exists(projectId) ? this.usecases.projects.get(projectId).name : undefined
-      const files = this.agents.filesDir(agent)
+      const dir = this.agents.filesDir(agent)
+      const access = agentFolderAccess(agent.allowedTools)
+      const files = dir && access.read ? { dir, write: access.write } : undefined
       const ambient: IAmbient = {
         agentId: agent.id,
         ...(projectId ? { project: { id: projectId, ...(name ? { name } : {}), own: agent.projectId === projectId } } : {}),

@@ -12,8 +12,8 @@ export function makeResourceFiles(): ResourceFilesStore {
 }
 
 /**
- * No boot: a pasta de cada recurso e agente com arquivos, escrita a partir da lista do catálogo. Cura a pasta que sumiu
- * (banco restaurado, disco trocado) e a que alguém mexeu por fora. O que não dá para escrever fica no log.
+ * No boot: a pasta de cada recurso com arquivos, escrita a partir da lista do catálogo. Cura a pasta que sumiu (banco
+ * restaurado, disco trocado) e a que alguém mexeu por fora. A do agente só ganha o que falta. O que não dá fica no log.
  */
 export function syncResourceFiles(): void {
   const files = makeResourceFiles()
@@ -32,5 +32,12 @@ export function syncResourceFiles(): void {
       .map((project) => project.id),
   ])
     for (const resource of repository.resources(scope)) if (resource.files?.length) sync(resource.kind, resource.id, resource.projectId, resource.files)
-  for (const agent of makeAgents().list()) if (agent.files?.length) sync('agent', agent.id, agent.projectId, agent.files)
+  // ⚖️ A pasta do agente é dele: o boot só repõe o arquivo da lista que sumiu, nunca apaga o que ele gravou.
+  for (const agent of makeAgents().list()) {
+    try {
+      files.restoreAgent(agent.id, agent.projectId, agent.files ?? [])
+    } catch (error) {
+      console.error(`[files] a pasta do agente ${agent.id} não foi reposta: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
 }

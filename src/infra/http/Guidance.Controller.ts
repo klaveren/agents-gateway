@@ -20,7 +20,8 @@ export interface IGuidanceControllerDeps {
   /** O depósito dos arquivos de recurso (ver `ResourceFile.Model`). Ausente = sem arquivos (as rotas respondem 404). */
   files?: IResourceFilesPort
   /** Os arquivos de um agente gravado (a guia Arquivos dele). */
-  agentFiles?: (agentId: string, files: IResourceFile[], by: string) => unknown
+  /** `base`: os caminhos que a tela mostrava (ver `Agent.Catalog.saveFiles`). */
+  agentFiles?: (agentId: string, files: IResourceFile[], by: string, base?: readonly string[]) => unknown
   /** O recurso foi apagado: as variáveis secretas dele vão junto (ver `ResourceSecrets.Service`). */
   resourceRemoved?: (kind: 'skill' | 'command', id: string) => void
   /** Os segredos que um texto traz (a máscara do gateway): arquivo com segredo não entra. */
@@ -56,7 +57,11 @@ const resourceSchema = z.object({
     .optional(),
   tags,
 })
-const filesSchema = z.object({ files: z.array(z.object({ path: z.string().max(400), sha256: z.string().max(64), bytes: z.number() })).max(1_000) })
+const filesSchema = z.object({
+  files: z.array(z.object({ path: z.string().max(400), sha256: z.string().max(64), bytes: z.number() })).max(1_000),
+  /** Só no agente: os caminhos que a tela mostrava. O que ela tirou é apagado da pasta (o resto do que o agente gravou fica). */
+  base: z.array(z.string().max(400)).max(1_000).optional(),
+})
 /** O conteúdo de um arquivo, em base64 (o texto passa inteiro, e o tamanho é o do arquivo). */
 const importFilesSchema = z.object({
   from: z.string().min(1).max(400),
@@ -376,8 +381,8 @@ export class GuidanceController {
       const by = await this.requireAdmin('setAgentFiles')
       this.requireFiles()
       if (!this.deps.agentFiles) throw new HttpError(404, 'not_found', 'Not found')
-      const { files } = parseBody(filesSchema, req.body)
-      this.deps.agentFiles(req.params.agentId as string, files, by)
+      const { files, base } = parseBody(filesSchema, req.body)
+      this.deps.agentFiles(req.params.agentId as string, files, by, base)
       return { files }
     })
   }

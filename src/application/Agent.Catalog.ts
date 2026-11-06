@@ -65,9 +65,17 @@ export class AgentCatalog implements IAgentDirectory {
 
   private files?: IResourceFilesPort
 
-  /** A pasta do agente com os arquivos dele (só leitura para ele), ou nada. */
-  filesDir(agent: Pick<IAgent, 'id' | 'projectId' | 'files'>): string | undefined {
-    return this.files && agent.files?.length ? this.files.dirOf('agent', agent.id, agent.projectId) : undefined
+  /**
+   * ⛔ A PASTA PRIVADA do agente: existe para todo agente (vazia, até alguém pôr algo), e só ele a alcança. Lê com Ler
+   * arquivos ou Terminal; grava com Escrever arquivos (ver `agentFolderAccess`). Nada sem o depósito.
+   */
+  filesDir(agent: Pick<IAgent, 'id' | 'projectId'>): string | undefined {
+    return this.files?.dirOf('agent', agent.id, agent.projectId)
+  }
+
+  /** A pasta como está no disco: os arquivos postos pela tela e os que o agente gravou (o que a guia Arquivos mostra). */
+  liveFiles(agent: Pick<IAgent, 'id' | 'projectId'>): IResourceFile[] | undefined {
+    return this.files?.snapshotAgent(agent.id, agent.projectId)
   }
 
   /** Os agentes com os modelos que podem ser usados agora. */
@@ -152,11 +160,20 @@ export class AgentCatalog implements IAgentDirectory {
     return saved
   }
 
-  /** A pasta do agente acompanha o registro: muda de lugar com o projeto, e a lista vazia a apaga. */
-  private placeFiles(before: Pick<IAgent, 'id' | 'projectId'> | undefined, after: Pick<IAgent, 'id' | 'projectId' | 'files'>): void {
+  /**
+   * ⚖️ A pasta do agente acompanha o registro sem perder o que ELE gravou: muda de lugar com o projeto (inteira), grava
+   * os arquivos da lista nova e apaga só o que saiu dela (ou o que a tela tirou: `base`, os caminhos que ela mostrava).
+   * Lista igual e nada tirado: a pasta fica como está (o Salvar do formulário não desfaz o que o agente mudou).
+   */
+  private placeFiles(before: Pick<IAgent, 'id' | 'projectId' | 'files'> | undefined, after: Pick<IAgent, 'id' | 'projectId' | 'files'>, base: readonly string[] = []): void {
     if (!this.files) return
-    if (before && before.projectId !== after.projectId) this.files.remove('agent', before.id, before.projectId)
-    this.files.sync('agent', after.id, after.projectId, after.files ?? [])
+    if (before && before.projectId !== after.projectId) this.files.moveAgent(after.id, before.projectId, after.projectId)
+    const next = after.files ?? []
+    const same = JSON.stringify(sortFiles(before?.files ?? [])) === JSON.stringify(sortFiles(next))
+    if (same && !base.length) return
+    const kept = new Set(next.map((file) => file.path))
+    const removed = [...new Set([...(before?.files ?? []).map((file) => file.path), ...base])].filter((path) => !kept.has(path))
+    this.files.writeAgent(after.id, after.projectId, next, removed)
   }
 
   /**
@@ -197,7 +214,8 @@ export class AgentCatalog implements IAgentDirectory {
    * Só os ARQUIVOS de um agente gravado (a guia Arquivos): o resto do agente fica como está. A lista passa pela regra
    * (caminho, tetos) e cada conteúdo tem de estar no depósito.
    */
-  saveFiles(id: string, files: IResourceFile[], by: string): IStoredAgent {
+  /** `base`: os caminhos que a tela mostrava (o que ela tirou é apagado, mesmo que o agente o tenha criado). */
+  saveFiles(id: string, files: IResourceFile[], by: string, base: readonly string[] = []): IStoredAgent {
     const stored = this.repository.list().find((agent) => agent.id === id)
     if (!stored) throw new AgentNotFoundError(id)
     const issues = fileIssues(files)
@@ -206,10 +224,11 @@ export class AgentCatalog implements IAgentDirectory {
       else files.forEach((file, index) => !this.files!.has(file.sha256) && issues.push({ field: `files[${index}].sha256`, message: `content not uploaded: ${file.path}` }))
     }
     if (issues.length) throw new InvalidAgentError(issues)
-    const agent: IAgent = { ...toAgent(stored) }
+    const before = toAgent(stored)
+    const agent: IAgent = { ...before }
     delete agent.files
     const saved = this.repository.save(files.length ? { ...agent, files: sortFiles(files) } : agent, by)
-    this.placeFiles(agent, saved)
+    this.placeFiles(before, saved, base)
     this.history.record([{ kind: 'agent', id }], { by })
     return saved
   }

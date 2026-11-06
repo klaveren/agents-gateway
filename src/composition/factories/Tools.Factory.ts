@@ -1,3 +1,5 @@
+import { mkdirSync } from 'node:fs'
+import { agentFolderAccess } from '@domain/Capability.Catalog'
 import { makeResourceSecrets } from './ResourceSecrets.Factory'
 import { ImportJobService } from '@application/ImportJob.Service'
 import { importJobRepository } from './ImportJobs.Factory'
@@ -105,6 +107,7 @@ export function makeTools(): ITools {
             panels: panelStore(),
             permissions: lazyPermissions,
             agentTerminal: (agentId) => makeAgents().get(agentId)?.terminal,
+            agentFolder: (agentId) => agentFolderOf(agentId),
             agentEnv: (agentId) => makeAgents().get(agentId)?.env,
             mask: makeSecretMasker(),
             secrets: {
@@ -246,4 +249,19 @@ function triggerImports(): ImportJobService {
     },
   })
   return imports
+}
+
+/** ⛔ A pasta privada do agente (criada se faltar: o cerco não abre o que não existe) e o que ele faz nela. */
+export function agentFolderOf(agentId: string): { dir: string; read: boolean; write: boolean } | undefined {
+  const agent = makeAgents().get(agentId)
+  const dir = agent ? makeAgents().filesDir(agent) : undefined
+  if (!agent || !dir) return undefined
+  const access = agentFolderAccess(agent.allowedTools)
+  if (!access.read) return undefined
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o755 })
+  } catch {
+    return undefined
+  }
+  return { dir, ...access }
 }

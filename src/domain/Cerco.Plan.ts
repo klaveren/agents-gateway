@@ -45,6 +45,11 @@ export interface ICercoBase {
   /** Regras de sistema da instalação (absolutas). */
   system?: readonly IPermissionRule[]
   /**
+   * ⛔ A PASTA PRIVADA do agente do comando, pelas capacidades dele (ver `agentFolderAccess`), sem regra: lida com `read`,
+   * gravada com `write`. As dos outros agentes vão em `alwaysDeny`.
+   */
+  agentFolder?: { dir: string; read: boolean; write: boolean }
+  /**
    * O `.git` do repositório quando a pasta é um repositório ou uma worktree (o da worktree fica FORA dela): liberado
    * para ler e gravar (objetos, refs, locks — `status`, `commit`, `push`), menos o que roda código fora do cerco.
    */
@@ -124,8 +129,8 @@ export function cercoPlan(layers: IPermissionLayers, base: ICercoBase): ICercoPl
   return {
     // A raiz fechada para leitura por padrão: só o que as regras liberam (e as pastas de trabalho) se lê dentro dela.
     readDeny: [...new Set([...base.alwaysDeny, base.root, ...read.deny])],
-    readAllow: [...new Set([...base.scratch, ...base.alwaysRead, ...git, ...read.allow, ...(base.readOnly ?? []), ...sparedTemplates(layers, base)])],
-    writeAllow: [...new Set([...base.scratch, ...git, ...write.allow])],
+    readAllow: [...new Set([...base.scratch, ...base.alwaysRead, ...git, ...read.allow, ...(base.readOnly ?? []), ...own(base, 'read'), ...sparedTemplates(layers, base)])],
+    writeAllow: [...new Set([...base.scratch, ...git, ...write.allow, ...own(base, 'write')])],
     writeDeny: [
       ...new Set([
         ...base.alwaysDeny.filter((path) => !contains(path, base.root)),
@@ -148,6 +153,11 @@ function sparedTemplates(layers: IPermissionLayers, base: ICercoBase): string[] 
   const patterns = system.filter((rule) => rule.category === 'read' && rule.decision === 'deny' && rule.except?.length).map((rule) => rule.pattern)
   const files = [...new Set(patterns.flatMap((pattern) => base.find!(pattern)))]
   return files.filter((file) => decide({ category: 'read', value: file }, layers, base.system).allowed).map((file) => join(base.root, file))
+}
+
+/** A pasta do próprio agente, se ele a lê (ou grava) por capacidade. */
+function own(base: ICercoBase, access: 'read' | 'write'): string[] {
+  return base.agentFolder?.[access] ? [base.agentFolder.dir] : []
 }
 
 /** `parent` contém `child` (ou é ele)? */

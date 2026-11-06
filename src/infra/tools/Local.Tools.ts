@@ -25,7 +25,7 @@ import type { IAgentTrigger } from '@domain/models/Agent.Model'
 import { IBuilderDraft } from '@domain/models/Protocol.Model'
 import { builderKindOf, PROPOSE_DRAFT_TOOL } from '@domain/Builder.Agents'
 import { ITodoItem, todoIssues, todoText, UPDATE_TODOS_TOOL } from '@domain/models/ConversationTodo.Model'
-import { makeFileTools, realOf } from './File.Tools'
+import { type IOwnFolder, makeFileTools, realOf } from './File.Tools'
 import type { IEditDiagnostics } from './Edit.Diagnostics'
 import type { IAgentDiagnostics } from '@domain/models/Agent.Model'
 import { ILocalTool, IToolResult } from './Tool.Types'
@@ -117,6 +117,8 @@ export interface ILocalToolDeps {
   agentEnv?: (agentId: string) => Readonly<Record<string, string>> | undefined
   /** O tempo e a saída do terminal de cada agente (o campo `terminal` dele). Ausente = o global. */
   agentTerminal?: (agentId: string) => { timeoutSeconds?: number; maxOutputChars?: number } | undefined
+  /** ⛔ A pasta privada do agente e o que ele faz nela (ver `agentFolderAccess`): a ferramenta de arquivo e o cerco a abrem. */
+  agentFolder?: (agentId: string) => IOwnFolder | undefined
   /** Os processos em segundo plano (ver `Background.Processes`). Ausente = o do processo. */
   processes?: BackgroundProcesses
   /** A máscara de segredos (ver `Secret.Masker`). Ausente = a saída vai como saiu. */
@@ -218,9 +220,11 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     const folder = context?.workFolder
     const root = realOf(folder?.dir ?? (context?.projectId ? workspaceFor(context.projectId, '') : policy.cwd || workspaceFor(undefined, context?.sessionId ?? 'run_bash')))
     // O rascunho (HOME, caches, as contas) fica na pasta do projeto, fora da worktree; o `.git` comum entra no cerco.
-    const place: { scratchBase?: string; gitCommonDir?: string } = folder
-      ? { scratchBase: realOf(folder.projectDir), ...(folder.gitCommonDir ? { gitCommonDir: realOf(folder.gitCommonDir) } : {}) }
-      : {}
+    const own = context?.agentId ? deps.agentFolder?.(context.agentId) : undefined
+    const place: { scratchBase?: string; gitCommonDir?: string; agentFolder?: IOwnFolder } = {
+      ...(folder ? { scratchBase: realOf(folder.projectDir), ...(folder.gitCommonDir ? { gitCommonDir: realOf(folder.gitCommonDir) } : {}) } : {}),
+      ...(own ? { agentFolder: { ...own, dir: realOf(own.dir) } } : {}),
+    }
     const refusal = await terminalRefusal(command, root, permissions, asker, folder)
     if (refusal) return { status: 'error', result: `Not permitted: ${refusal}` }
     if (!sandbox.wrapWith) return { status: 'error', result: 'O terminal fica bloqueado: este servidor não monta o cerco das permissões.' }
@@ -454,6 +458,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     ...(deps.accounts?.sign && deps.permissions ? [sshSignTool(deps.accounts.sign.bind(deps.accounts), deps.permissions)] : []),
     ...makeFileTools({
       rootFor: fileRoot,
+      ownFolder: (context) => (context?.agentId ? deps.agentFolder?.(context.agentId) : undefined),
       ...(deps.permissions
         ? {
             access: (context, kind, path, log) => {

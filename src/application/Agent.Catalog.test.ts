@@ -177,16 +177,20 @@ describe('AgentCatalog', () => {
       put: () => ({ sha256: '', bytes: 0 }),
       read: () => undefined,
       dirOf: (_kind, id, projectId) => `/dados/${key(id, projectId)}`,
-      sync: (_kind, id, projectId, files) => (
-        files.length
-          ? dirs.set(
-              key(id, projectId),
-              files.map((file) => file.path),
-            )
-          : dirs.delete(key(id, projectId)),
-        undefined
-      ),
+      sync: () => undefined,
       remove: (_kind, id, projectId) => void dirs.delete(key(id, projectId)),
+      writeAgent: (id, projectId, files, removed) =>
+        void dirs.set(
+          key(id, projectId),
+          [...new Set([...(dirs.get(key(id, projectId)) ?? []).filter((path) => !removed.includes(path)), ...files.map((file) => file.path)])].sort(),
+        ),
+      restoreAgent: () => undefined,
+      moveAgent: (id, from, to) => {
+        const moved = dirs.get(key(id, from))
+        dirs.delete(key(id, from))
+        if (moved) dirs.set(key(id, to), moved)
+      },
+      snapshotAgent: (id, projectId) => (dirs.get(key(id, projectId)) ?? []).map((path) => ({ path, sha256: 'a'.repeat(64), bytes: 3 })),
     })
     const file = (path: string, char: string) => ({ path, sha256: char.repeat(64), bytes: 3 })
     assert.throws(() => catalog.save({ ...base, files: [file('b.sh', 'b')] }, options(true)), /content not uploaded: b\.sh/)
@@ -198,10 +202,51 @@ describe('AgentCatalog', () => {
     // Só os arquivos (a guia Arquivos): o resto do agente fica; conteúdo não enviado é recusado.
     assert.throws(() => catalog.saveFiles('pesquisa', [file('b.sh', 'b')], 'root'), /content not uploaded/)
     catalog.saveFiles('pesquisa', [], 'root')
-    assert.deepStrictEqual([catalog.get('pesquisa')?.files, catalog.get('pesquisa')?.systemPrompt, [...dirs.keys()]], [undefined, 'pesquise', []])
+    assert.deepStrictEqual([catalog.get('pesquisa')?.files, catalog.get('pesquisa')?.systemPrompt, dirs.get('alfa/pesquisa')], [undefined, 'pesquise', []])
     catalog.saveFiles('pesquisa', [file('a.sh', 'a')], 'root')
     catalog.save({ ...base, id: 'outro', name: 'Outro' }, options(true))
     catalog.remove('pesquisa', 'root')
-    assert.deepStrictEqual([...dirs.keys()], [])
+    assert.deepStrictEqual(
+      [...dirs.keys()].filter((name) => name.endsWith('/pesquisa')),
+      [],
+    )
+  })
+
+  it('⚖️ a pasta é do agente: salvar não apaga o que ele gravou; a tela apaga só o que tirou (base)', () => {
+    const blobs = new Set(['a'.repeat(64), 'b'.repeat(64)])
+    const disk = new Set<string>()
+    const writes: Array<{ files: string[]; removed: string[] }> = []
+    const catalog = build()
+    catalog.useFiles({
+      has: (sha) => blobs.has(sha),
+      put: () => ({ sha256: '', bytes: 0 }),
+      read: () => undefined,
+      dirOf: (_kind, id) => `/dados/${id}`,
+      sync: () => assert.fail('a pasta do agente nunca é trocada inteira'),
+      remove: () => undefined,
+      writeAgent: (_id, _projectId, files, removed) => {
+        writes.push({ files: files.map((file) => file.path), removed: [...removed] })
+        for (const path of removed) disk.delete(path)
+        for (const file of files) disk.add(file.path)
+      },
+      restoreAgent: () => undefined,
+      moveAgent: () => undefined,
+      snapshotAgent: () => [...disk].sort().map((path) => ({ path, sha256: 'a'.repeat(64), bytes: 3 })),
+    })
+    const file = (path: string, char: string) => ({ path, sha256: char.repeat(64), bytes: 3 })
+    catalog.save({ ...base, files: [file('run.sh', 'a')] }, options(true))
+    disk.add('notas.md') // o agente gravou
+    // O Salvar do formulário com a lista igual não mexe na pasta.
+    catalog.save({ ...base, systemPrompt: 'outro', files: [file('run.sh', 'a')] }, options(false))
+    assert.strictEqual(writes.length, 1)
+    // A tela troca o run.sh e tira um arquivo que mostrava; o notas.md, que ela não tirou, fica.
+    disk.add('velho.txt')
+    catalog.saveFiles('pesquisa', [file('run.sh', 'b')], 'root', ['run.sh', 'velho.txt'])
+    assert.deepStrictEqual(writes.at(-1), { files: ['run.sh'], removed: ['velho.txt'] })
+    assert.deepStrictEqual([...disk].sort(), ['notas.md', 'run.sh'])
+    assert.deepStrictEqual(
+      catalog.liveFiles(catalog.get('pesquisa')!)?.map((item) => item.path),
+      ['notas.md', 'run.sh'],
+    )
   })
 })

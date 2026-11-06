@@ -330,11 +330,18 @@
   const knownTags = computed(() => tagNames(agents.list))
   /** As variáveis de ambiente do agente, em linhas (o par nome/valor): viram o registro só ao salvar. */
   const envList = ref<IEnvRow[]>([])
-  /** Os arquivos da pasta do agente: guia própria, gravada à parte (o Salvar do agente não os manda nem os apaga). */
+  /**
+   * A pasta do agente como está no disco (o que a tela pôs e o que ele gravou): guia própria, gravada à parte (o Salvar
+   * do agente não a manda nem a apaga). A gravação leva o que a guia mostrava: só o que ela tirou sai da pasta.
+   */
   const agentFiles = ref<IResourceFile[]>([])
   async function saveAgentFiles(files: IResourceFile[]) {
     if (!props.agent) return
-    await agents.saveFiles(props.agent.id, files)
+    await agents.saveFiles(
+      props.agent.id,
+      files,
+      agentFiles.value.map((file) => file.path),
+    )
     agentFiles.value = files
   }
   const envRepeated = computed(() => envDuplicates(envList.value))
@@ -1245,6 +1252,7 @@
         :files="agentFiles"
         :where="`${agent.projectId ? `projects/${agent.projectId}` : 'global'}/agents/${agent.id}`"
         :save="saveAgentFiles"
+        owned
       />
       <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
     </section>
