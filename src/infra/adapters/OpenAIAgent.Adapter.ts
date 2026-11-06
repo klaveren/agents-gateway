@@ -134,7 +134,10 @@ export class OpenAIAgentAdapter implements IAgentAdapter {
       }
     const hosted = compatible ? [] : natives.map((tool) => hostedTool(tool.sdkName)).filter((tool): tool is Tool => !!tool)
 
-    const modelSettings: ModelSettings = { maxTokens: maxOutputTokens() }
+    // ⚖️ Compatível vai por Chat Completions (`modelFor`), onde o SDK manda `max_tokens` — que modelos de raciocínio (e a NVIDIA)
+    // recusam. Lá vai `max_completion_tokens`, como a lane de chat; na Responses API, o `maxTokens` de sempre.
+    const chatCompletions = !!this.connections?.connection(record.provider)?.baseUrl
+    const modelSettings: ModelSettings = chatCompletions ? { providerData: { max_completion_tokens: maxOutputTokens() } } : { maxTokens: maxOutputTokens() }
     const effort = this.toEffort(record.reasoning)
     if (effort) modelSettings.reasoning = { effort }
 
