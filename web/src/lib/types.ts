@@ -649,6 +649,10 @@ export interface IProjectDoc {
   tokens?: number
   /** Os problemas da importação (ver `IImportIssue`), na lista também. */
   importIssues?: IImportIssue[]
+  /** Os projetos que recebem este documento só para leitura (o dono é `projectId`). */
+  sharedWith?: string[]
+  /** Só nas listas de um projeto: veio de outro projeto (o id dele) e aqui é só leitura. */
+  sharedFrom?: string
   createdAt: string
   updatedAt: string
   updatedBy?: string
@@ -703,6 +707,10 @@ export interface IResource {
   importIssues?: IImportIssue[]
   /** Os triggers da skill ou do command: o procedimento de uma situação, carregado sob demanda (`<id>/<trigger>`). */
   triggers?: IAgentTrigger[]
+  /** Os projetos que recebem este recurso só para leitura (o dono é `projectId`). */
+  sharedWith?: string[]
+  /** Só nas listas de um projeto: veio de outro projeto (o id dele) e aqui é só leitura. */
+  sharedFrom?: string
   createdAt: string
   updatedAt: string
   updatedBy?: string

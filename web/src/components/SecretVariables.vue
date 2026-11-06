@@ -13,10 +13,12 @@
    * Enter, e nenhum input tem validação nativa (`pattern`, `required`) — ela barraria o Salvar de quem está em volta.
    * Quem valida é o servidor (422 vira mensagem no campo); a dica do nome é só aviso.
    */
-  const props = defineProps<{ basePath: string; scopeLabel: string }>()
+  const props = defineProps<{ basePath: string; scopeLabel: string; project?: string }>()
   const secrets = useResourceSecretsStore()
+  /** `project`: os valores são DESTE projeto (skill/command): vai como `?project=` em todas as rotas. */
+  const key = computed(() => (props.project ? `${props.basePath}?project=${encodeURIComponent(props.project)}` : props.basePath))
 
-  const { data, error: listError } = useResource(secrets.lists, () => props.basePath)
+  const { data, error: listError } = useResource(secrets.lists, () => key.value)
   const list = computed(() => data.value ?? [])
   const NAME = /^[A-Z][A-Z0-9_]{1,63}$/
 
@@ -60,7 +62,7 @@
     run(async () => {
       const description = draft.value.description.trim()
       try {
-        await secrets.save(props.basePath, draft.value.name.trim(), { value: draft.value.value, ...(description ? { description } : {}) })
+        await secrets.save(key.value, draft.value.name.trim(), { value: draft.value.value, ...(description ? { description } : {}) })
         draft.value = { name: '', description: '', value: '' }
       } finally {
         // ⛔ Deu certo ou não, o valor não fica na memória da tela.
@@ -77,7 +79,7 @@
   const saveValue = (name: string) =>
     run(async () => {
       try {
-        await secrets.save(props.basePath, name, { value: newValue.value })
+        await secrets.save(key.value, name, { value: newValue.value })
         changing.value = undefined
       } finally {
         newValue.value = ''
@@ -93,7 +95,7 @@
 
   const saveDescription = (name: string) =>
     run(async () => {
-      await secrets.save(props.basePath, name, { description: newDescription.value.trim() })
+      await secrets.save(key.value, name, { description: newDescription.value.trim() })
       editing.value = undefined
     })
 
@@ -101,7 +103,7 @@
     const name = removing.value
     removing.value = undefined
     if (!name) return
-    await run(() => secrets.remove(props.basePath, name))
+    await run(() => secrets.remove(key.value, name))
   }
 </script>
 
