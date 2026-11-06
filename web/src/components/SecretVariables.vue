@@ -128,12 +128,15 @@
         <div class="flex flex-wrap items-center gap-2">
           <code class="font-mono text-sm text-zinc-100" data-test="secret-name">{{ secret.name }}</code>
           <span class="flex-1" />
-          <button type="button" class="btn btn-ghost" data-test="secret-change" @click="openChange(secret.name)">Trocar valor</button>
-          <button type="button" class="btn btn-ghost" data-test="secret-describe" @click="openDescription(secret.name, secret.description)">Descrição</button>
-          <button type="button" class="btn btn-danger" data-test="secret-remove" @click="removing = secret.name">Apagar</button>
+          <button type="button" class="btn btn-ghost" data-test="secret-change" @click="openChange(secret.name)">{{ secret.configured === false ? 'Definir valor' : 'Trocar valor' }}</button>
+          <template v-if="secret.configured !== false">
+            <button type="button" class="btn btn-ghost" data-test="secret-describe" @click="openDescription(secret.name, secret.description)">Descrição</button>
+            <button type="button" class="btn btn-danger" data-test="secret-remove" @click="removing = secret.name">Apagar</button>
+          </template>
         </div>
         <p v-if="secret.description" class="text-sm text-zinc-300">{{ secret.description }}</p>
-        <p class="text-[11px] text-zinc-500">
+        <p v-if="secret.configured === false || !secret.updatedAt" class="text-[11px] text-amber-300" data-test="secret-missing">Ainda sem valor neste projeto: a skill usa esta variável.</p>
+        <p v-else class="text-[11px] text-zinc-500">
           Definida em {{ fullTime(secret.updatedAt) }}
           <template v-if="secret.updatedBy">por {{ secret.updatedBy }}</template>
           .

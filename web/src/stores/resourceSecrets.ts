@@ -8,8 +8,11 @@ export interface ISecretMeta {
   scopeId: string
   name: string
   description?: string
-  updatedAt: string
+  /** Ausente quando ainda não há valor (o nome que a origem usa, num projeto que recebeu a skill compartilhada). */
+  updatedAt?: string
   updatedBy?: string
+  /** `false`: o projeto ainda não definiu o valor desta variável. */
+  configured?: boolean
 }
 
 /**

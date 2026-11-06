@@ -74,7 +74,10 @@ async function save() {
   saveError.value = undefined
   note.value = undefined
   try {
-    await catalog.saveResources(props.agentId, selected.value)
+    // ⚖️ O que deixou de estar disponível (o compartilhamento acabou, o item foi apagado) sai ao salvar: o servidor recusa id que o agente não vê.
+    const visible = new Set(available.value.map((resource) => resource.id))
+    const keep = (ids: string[]) => ids.filter((id) => id === '*' || visible.has(id))
+    await catalog.saveResources(props.agentId, { skills: keep(selected.value.skills), commands: keep(selected.value.commands) })
     note.value = 'Salvo. Vale para as próximas conversas.'
   } catch (failure) {
     saveError.value = failure

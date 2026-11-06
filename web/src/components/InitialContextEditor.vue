@@ -79,7 +79,8 @@ async function save() {
   saveError.value = undefined
   note.value = undefined
   try {
-    await catalog.saveContext(props.owner, props.ownerId, selected.value)
+    // ⚖️ A spec que deixou de estar disponível (o compartilhamento acabou, foi apagada) sai ao salvar: o servidor a recusaria.
+    await catalog.saveContext(props.owner, props.ownerId, selected.value.filter((id) => byId.value.has(id)))
     note.value = 'Salvo. Vale para as próximas conversas.'
   } catch (failure) {
     saveError.value = failure
