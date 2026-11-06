@@ -1066,7 +1066,7 @@
     <fieldset v-show="tab === 'sdk'" class="flex flex-col gap-4">
       <PermissionRequests v-if="agent && !creating" :agent-id="agent.id" @approved="permissionsApproved" />
       <div class="flex flex-col gap-2">
-        <h3 class="text-sm font-medium text-zinc-200">Regras deste agente</h3>
+        <h3 class="text-sm font-medium text-zinc-200">Permissões deste agente</h3>
         <p class="text-xs text-zinc-500">
           Valem antes das do projeto: liberam o que o projeto fechou, ou fecham mais. Sem regra no agente nem no projeto, negado. As do sistema valem sempre.
         </p>
