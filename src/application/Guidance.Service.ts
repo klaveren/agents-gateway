@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { builderKindOf, PROTOCOLS } from '@domain/Builder.Agents'
 import { estimateTokens } from '@domain/Token.Estimate'
 import { triggerIssues } from '@domain/Agent.Policy'
-import { normalizeShares, shareIssues } from '@domain/Share.Policy'
+import { normalizeShares, SHAREABLE_DOC_KINDS, SHAREABLE_RESOURCE_KINDS, shareIssues, sharedInto, visibleIn } from '@domain/Share.Policy'
 import { normalizeTags, tagIssues } from '@domain/Tag.Policy'
 import type { IAgentTrigger } from '@domain/models/Agent.Model'
 import { AgentNotFoundError, GuidanceNotFoundError, InvalidGuidanceError, ProjectNotFoundError } from '@domain/errors/Domain.Error'
@@ -424,21 +424,21 @@ export class GuidanceService {
   }
 
   /**
-   * ⛔ O documento que a conversa pode ler: o global ou o do projeto dela. O de outro projeto responde como
-   * inexistente — o id sozinho não abre nada.
+   * ⛔ O documento que a conversa pode ler: o global, o do projeto dela ou o COMPARTILHADO com ele (spec e conhecimento).
+   * O de outro projeto que não o compartilhou responde como inexistente — o id sozinho não abre nada.
    */
   readDoc(id: string, projectId?: string): IProjectDoc | undefined {
     const doc = this.repository.doc(id)
     if (!doc) return undefined
-    return !doc.projectId || doc.projectId === projectId ? doc : undefined
+    return usableIn(doc, projectId) ? doc : undefined
   }
 
   /**
    * O documento como o agente o recebe ao lê-lo (`read_doc`): o texto inteiro e, depois, os anexos dele — os inteiros
    * como seção, os por referência numa lista (ver `INLINE_DEPTH` para a profundidade e os ciclos).
    */
-  docText(doc: IProjectDoc): string {
-    return `# ${doc.title} [${doc.kind}]\n\n${this.statusNote(doc)}${doc.body}${this.attachments(doc, new Set([doc.id]))}${importIssuesNote(doc.importIssues)}`
+  docText(doc: IProjectDoc, projectId?: string): string {
+    return `# ${doc.title} [${doc.kind}]\n\n${this.statusNote(doc)}${doc.body}${this.attachments(doc, new Set([doc.id]), 2, projectId)}${importIssuesNote(doc.importIssues)}`
   }
 
   /** O aviso no topo do documento que saiu de uso (ou que ainda é proposta): quem o substitui, e o que seguir. */
@@ -453,7 +453,7 @@ export class GuidanceService {
   }
 
   /**
-   * ⛔ A busca de texto nos documentos que a conversa pode ler: os globais e os do projeto dela. Termos soltos, em
+   * ⛔ A busca de texto nos documentos que a conversa pode ler: os globais, os do projeto dela e os compartilhados com ele. Termos soltos, em
    * qualquer ordem e sem acento; cada um casa também como prefixo ("flag" acha "flags"). Os mais relevantes primeiro.
    */
   searchDocs(query: string, projectId?: string, kind?: TDocKind): IDocHit[] {
@@ -461,7 +461,7 @@ export class GuidanceService {
     if (!terms.length) return []
     // ⛔ O termo vai entre aspas: nada do que o modelo digitar vira operador do FTS5 (AND, NEAR, coluna:).
     const match = terms.map((term) => `"${term}"*`).join(' OR ')
-    return this.repository.searchDocs(match, [null, ...(projectId ? [projectId] : [])], kind)
+    return this.repository.searchDocs(match, [null, ...(projectId ? [projectId] : [])], kind, undefined, projectId ? this.sharedIn(projectId).map((doc) => doc.id) : [])
   }
 
   /**
@@ -532,11 +532,15 @@ export class GuidanceService {
   hasDocs(projectId?: string, agentId?: string): boolean {
     if (this.visibleDocs(projectId, agentId).length > 0) return true
     const resources = RESOURCE_KINDS.flatMap((kind) => this.usableResources(kind, agentId))
-    if (resources.some((resource) => this.attachedTo(resource).some((doc) => (resource.docRefs ?? []).includes(doc.id)))) return true
+    if (resources.some((resource) => this.attachedTo(resource, this.projectOfAgent(agentId)).some((doc) => (resource.docRefs ?? []).includes(doc.id)))) return true
     // O anexo de um documento que já vem inteiro (contexto inicial, anexo de recurso) chega por referência no 2º nível.
     const { project, agent } = this.loadedFor(projectId, agentId)
-    const whole = [...project, ...agent, ...resources.flatMap((resource) => this.attachedTo(resource).filter((doc) => !(resource.docRefs ?? []).includes(doc.id)))]
-    return whole.some((doc) => this.attachedTo(doc).length > 0)
+    const whole = [
+      ...project,
+      ...agent,
+      ...resources.flatMap((resource) => this.attachedTo(resource, this.projectOfAgent(agentId)).filter((doc) => !(resource.docRefs ?? []).includes(doc.id))),
+    ]
+    return whole.some((doc) => this.attachedTo(doc, projectId).length > 0)
   }
 
   /**
@@ -551,6 +555,7 @@ export class GuidanceService {
     const doc = this.repository.doc(id)
     if (!doc) return undefined
     const resources = RESOURCE_KINDS.flatMap((kind) => this.usableResources(kind, agentId).map((resource) => ({ kind, resource })))
+    const viewer = projectId ?? this.projectOfAgent(agentId)
     const { project, agent } = this.loadedFor(projectId, agentId)
     const inPrompt = new Set([...project, ...agent].map((item) => item.id))
     const via: IAttachedDoc['via'] = []
@@ -559,10 +564,10 @@ export class GuidanceService {
     for (let node = queue.shift(); node; node = queue.shift()) {
       const child = node
       for (const { kind, resource } of resources)
-        if (resource.docIds.includes(child.id) && attachable(child, resource) && !via.some((item) => item.kind === kind && item.id === resource.id))
+        if (resource.docIds.includes(child.id) && attachable(child, resource, viewer) && !via.some((item) => item.kind === kind && item.id === resource.id))
           via.push({ kind, id: resource.id })
       for (const parent of this.repository.docsAttaching(child.id)) {
-        if (seen.has(parent.id) || !attachable(child, parent)) continue
+        if (seen.has(parent.id) || !attachable(child, parent, viewer)) continue
         seen.add(parent.id)
         if (inPrompt.has(parent.id) || this.readDoc(parent.id, projectId)) via.push({ kind: 'doc', id: parent.id })
         else queue.push(parent)
@@ -612,14 +617,14 @@ export class GuidanceService {
       parts.projectSpecs = [
         '## Specs do projeto',
         'Carregadas inteiras: valem como as regras do ambiente. Siga-as em toda resposta e em toda ferramenta que você usar.',
-        ...loaded.map((doc) => `### ${doc.title}\n${doc.body.trim()}${this.attachments(doc, seen, 4)}`),
+        ...loaded.map((doc) => `### ${doc.title}\n${doc.body.trim()}${this.attachments(doc, seen, 4, projectId)}`),
       ].join('\n\n')
     }
     if (own.length) {
       parts.agentSpecs = [
         '## Specs do agente',
         'Carregadas inteiras para o seu papel, além das do projeto: valem como as regras do ambiente.',
-        ...own.map((doc) => `### ${doc.title}\n${doc.body.trim()}${this.attachments(doc, seen, 4)}`),
+        ...own.map((doc) => `### ${doc.title}\n${doc.body.trim()}${this.attachments(doc, seen, 4, projectId)}`),
       ].join('\n\n')
     }
     const skills = this.usableResources('skill', agentId).filter((skill) => !this.skillFilter || this.skillFilter(agentId, projectId, skill.id))
@@ -968,7 +973,7 @@ export class GuidanceService {
   }
 
   /**
-   * ⛔ Agente de projeto: os recursos globais e os do projeto dele. Agente global: só os globais — ele roda em
+   * ⛔ Agente de projeto: os recursos globais, os do projeto dele e os compartilhados com ele. Agente global: só os globais — ele roda em
    * qualquer projeto. `*` sozinho = todos os que ele pode ver. Troca as duas listas inteiras.
    */
   setAgentResources(agentId: string, input: Partial<IAgentResources>, by: string): IAgentResources {
@@ -988,7 +993,8 @@ export class GuidanceService {
   }
 
   /**
-   * Os recursos que o agente pode usar AGORA: os que ele vê (globais e, num agente de projeto, os do projeto dele) e
+   * Os recursos que o agente pode usar AGORA: os que ele vê (globais e, num agente de projeto, os do projeto dele e os
+   * compartilhados com ele) e
    * que a guia Recursos libera (sem marcação, todos). Sem agente, nenhum.
    */
   usableResources(kind: TResourceKind, agentId?: string): IResource[] {
@@ -997,7 +1003,16 @@ export class GuidanceService {
     if (!agent) return []
     const granted = effectiveResources(this.repository.agentResources(agent.id))[kind === 'skill' ? 'skills' : 'commands']
     if (!granted.length) return []
-    const visible = [...this.repository.resources(null, kind), ...(agent.projectId ? this.repository.resources(agent.projectId, kind) : [])]
+    // ⛔ Compartilhado: lido na hora, então parar de compartilhar (ou apagar) o tira daqui; o id liberado fica gravado e é ignorado.
+    const visible = [
+      ...this.repository.resources(null, kind),
+      ...(agent.projectId
+        ? [
+            ...this.repository.resources(agent.projectId, kind),
+            ...this.repository.resourcesSharedWith(agent.projectId, kind).filter((resource) => usableIn(resource, agent.projectId)),
+          ]
+        : []),
+    ]
     return granted.includes(ALL_RESOURCES) ? visible : visible.filter((resource) => granted.includes(resource.id))
   }
 
@@ -1023,7 +1038,7 @@ export class GuidanceService {
     }
     const resource = this.usableResources(kind, agentId).find((item) => item.id === id)
     return resource
-      ? `# ${kind === 'skill' ? 'Skill' : 'Command'}: ${resource.id}\n\n${resource.body.trim()}${triggerIndexNote(resource)}${this.attachments(resource, new Set())}${this.filesOf(resource)}${importIssuesNote(resource.importIssues)}`
+      ? `# ${kind === 'skill' ? 'Skill' : 'Command'}: ${resource.id}\n\n${resource.body.trim()}${triggerIndexNote(resource)}${this.attachments(resource, new Set(), 2, this.projectOfAgent(agentId))}${this.filesOf(resource)}${importIssuesNote(resource.importIssues)}`
       : undefined
   }
 
@@ -1083,11 +1098,15 @@ export class GuidanceService {
     if (!resource) throw new InvalidGuidanceError([{ field: 'message', message: `${existing.kind} /${id} is not enabled for this agent` }])
     const args = (rawArgs ?? '').trim()
     if (resource.kind === 'skill') {
-      const skill = `[A pessoa pediu a skill ${resource.id}: ela já está carregada abaixo — siga-a.]\n\n# Skill: ${resource.id}\n\n${resource.body.trim()}${triggerIndexNote(resource)}${this.attachments(resource, new Set())}${this.filesOf(resource)}`
+      const skill = `[A pessoa pediu a skill ${resource.id}: ela já está carregada abaixo — siga-a.]\n\n# Skill: ${resource.id}\n\n${resource.body.trim()}${triggerIndexNote(resource)}${this.attachments(resource, new Set(), 2, this.projectOfAgent(agentId))}${this.filesOf(resource)}`
       return { text: `${skill}\n\n# Pedido\n\n${args || '(sem texto: aplique a skill ao que estamos fazendo)'}`, label: text.trim(), command: id }
     }
     const body = resource.body.includes('$ARGUMENTS') ? resource.body.replace(/\$ARGUMENTS/g, args) : `${resource.body.trim()}${args ? `\n\nArgumentos: ${args}` : ''}`
-    return { text: `${body.trim()}${triggerIndexNote(resource)}${this.attachments(resource, new Set())}${this.filesOf(resource)}`, label: text.trim(), command: id }
+    return {
+      text: `${body.trim()}${triggerIndexNote(resource)}${this.attachments(resource, new Set(), 2, this.projectOfAgent(agentId))}${this.filesOf(resource)}`,
+      label: text.trim(),
+      command: id,
+    }
   }
 
   /**
@@ -1103,7 +1122,7 @@ export class GuidanceService {
     if (!doc || doc.kind !== kind) return undefined
     const args = (rawArgs ?? '').trim()
     return {
-      text: `[A pessoa anexou o documento ${doc.id} (${doc.kind}): ele está abaixo, inteiro.]\n\n# ${doc.title} [${doc.kind}]\n\n${doc.body.trim()}${this.attachments(doc, new Set([doc.id]))}\n\n# Pedido\n\n${args || '(sem texto: use o documento no que estamos fazendo)'}`,
+      text: `[A pessoa anexou o documento ${doc.id} (${doc.kind}): ele está abaixo, inteiro.]\n\n# ${doc.title} [${doc.kind}]\n\n${doc.body.trim()}${this.attachments(doc, new Set([doc.id]), 2, projectId)}\n\n# Pedido\n\n${args || '(sem texto: use o documento no que estamos fazendo)'}`,
       label: text.trim(),
       command: `${kind}:${id}`,
     }
@@ -1171,19 +1190,21 @@ export class GuidanceService {
     return { project, agent: agentId ? this.agentContext(agentId).filter((doc) => !taken.has(doc.id)) : [] }
   }
 
-  /** O índice da conversa: os globais e os do projeto, menos os que já vão inteiros no prompt. */
+  /** O índice da conversa: os globais, os do projeto e os compartilhados com ele, menos os que já vão inteiros no prompt. */
   private visibleDocs(projectId?: string, agentId?: string): IProjectDoc[] {
     const { project, agent } = this.loadedFor(projectId, agentId)
     const loaded = new Set([...project, ...agent].map((doc) => doc.id))
     // ⚖️ O substituído e o arquivado saem do índice: a decisão morta não compete com a viva (a busca ainda os acha).
-    return [...this.repository.docs(null), ...(projectId ? this.repository.docs(projectId) : [])].filter((doc) => !loaded.has(doc.id) && !isInactiveDoc(doc))
+    const shared = projectId ? this.sharedIn(projectId) : []
+    return [...this.repository.docs(null), ...(projectId ? this.repository.docs(projectId) : []), ...shared].filter((doc) => !loaded.has(doc.id) && !isInactiveDoc(doc))
   }
 
-  /** As marcadas que ainda valem: spec, e global ou do escopo dado. ⚖️ A marca do que deixou de valer fica. */
+  /**
+   * As marcadas que ainda valem: spec, e global, do escopo dado ou compartilhada com ele. ⚖️ A marca do que deixou de valer
+   * fica (também a de uma spec que parou de ser compartilhada): ignorada aqui, volta a entrar se voltar a valer.
+   */
   private validSpecs(docIds: readonly string[], projectId: string | undefined): IProjectDoc[] {
-    return docIds
-      .map((id) => this.repository.doc(id))
-      .filter((doc): doc is IProjectDoc => !!doc && doc.kind === 'spec' && (!doc.projectId || doc.projectId === projectId) && !isInactiveDoc(doc))
+    return docIds.map((id) => this.repository.doc(id)).filter((doc): doc is IProjectDoc => !!doc && doc.kind === 'spec' && usableIn(doc, projectId) && !isInactiveDoc(doc))
   }
 
   /** ⛔ Só spec, global ou do escopo dado, sem repetir. Todos os problemas de uma vez. */
@@ -1204,13 +1225,13 @@ export class GuidanceService {
    * fica de fora, e quem entra aqui passa a estar. `level` é o nível do título das seções (`##` no recurso e no
    * `read_doc`; mais fundo quando a raiz já é uma seção do prompt).
    */
-  private attachments(owner: IAttacher, seen: Set<string>, level = 2): string {
+  private attachments(owner: IAttacher, seen: Set<string>, level = 2, viewer?: string): string {
     const heading = '#'.repeat(level)
     const inline: IProjectDoc[] = []
     const referenced: Array<{ doc: IProjectDoc; from?: IProjectDoc }> = []
     const take = (parent: IAttacher, depth: number, from?: IProjectDoc): IProjectDoc[] => {
       const refs = parent.docRefs ?? []
-      const fresh = this.attachedTo(parent).filter((doc) => !seen.has(doc.id))
+      const fresh = this.attachedTo(parent, viewer).filter((doc) => !seen.has(doc.id))
       for (const doc of fresh) {
         seen.add(doc.id)
         if (depth <= INLINE_DEPTH && !refs.includes(doc.id)) inline.push(doc)
@@ -1230,9 +1251,23 @@ export class GuidanceService {
     return `${whole}\n\n${heading} Documentos anexados por referência\n\nNão vieram inteiros. Leia com ${READ_DOC_TOOL} (pelo id) só o que o passo pedir.\n\n${lines.join('\n')}`
   }
 
-  /** Os anexados que ainda existem e ainda cabem em quem anexa (globais ou do projeto dele), na ordem. */
-  private attachedTo(owner: IAttacher): IProjectDoc[] {
-    return (owner.docIds ?? []).map((id) => this.repository.doc(id)).filter((doc): doc is IProjectDoc => !!doc && attachable(doc, owner))
+  /**
+   * Os anexados que ainda existem e ainda cabem em quem anexa (globais, do projeto dele ou compartilhados com ele), na
+   * ordem. ⛔ `viewer`: o projeto de quem LÊ. Um item compartilhado traz só os anexos que o leitor também enxerga — o anexo
+   * de outro projeto que não foi compartilhado não vaza junto.
+   */
+  private attachedTo(owner: IAttacher, viewer?: string): IProjectDoc[] {
+    return (owner.docIds ?? []).map((id) => this.repository.doc(id)).filter((doc): doc is IProjectDoc => !!doc && attachable(doc, owner, viewer))
+  }
+
+  /** O projeto do agente (ausente = global ou sem agente). */
+  private projectOfAgent(agentId?: string): string | undefined {
+    return agentId ? this.agentOf(agentId)?.projectId : undefined
+  }
+
+  /** Os documentos de outro projeto compartilhados com este, só dos tipos que se compartilham. */
+  private sharedIn(projectId: string): IProjectDoc[] {
+    return this.repository.docsSharedWith(projectId).filter((doc) => usableIn(doc, projectId))
   }
 
   private attachIssues(doc: IProjectDoc, selfId: string): TIssues {
@@ -1300,9 +1335,22 @@ export function importIssuesNote(issues: readonly IImportProblem[] | undefined):
   return `\n\n## Problemas da importação\n\nFicaram registrados ao importar; resolvido um, marque com \`resolve_import_issue\`.\n\n${lines.join('\n')}`
 }
 
-/** O documento cabe em quem o anexa (recurso ou outro documento): global ou do projeto dele (a regra do anexo). */
-function attachable(doc: Pick<IProjectDoc, 'projectId'>, owner: IAttacher): boolean {
-  return !doc.projectId || doc.projectId === owner.projectId
+/**
+ * ⛔ O item vale neste projeto: é global, do projeto ou compartilhado com ele. O compartilhamento só vale para os tipos
+ * que se compartilham (skill, command, spec, conhecimento): ADR e rule nunca entram por ele, mesmo que uma lista de
+ * `sharedWith` apareça num deles.
+ */
+export function usableIn(item: { kind: string; projectId?: string; sharedWith?: readonly string[] }, projectId: string | undefined): boolean {
+  if (!sharedInto(item, projectId)) return visibleIn(item, projectId)
+  return (SHAREABLE_DOC_KINDS as readonly string[]).includes(item.kind) || (SHAREABLE_RESOURCE_KINDS as readonly string[]).includes(item.kind)
+}
+
+/**
+ * O documento cabe em quem o anexa (recurso ou outro documento): global, do projeto dele ou compartilhado com ele (só
+ * leitura). ⛔ `viewer`, o projeto de quem lê: um item compartilhado só traz o anexo que o leitor também pode usar.
+ */
+function attachable(doc: Pick<IProjectDoc, 'kind' | 'projectId' | 'sharedWith'>, owner: IAttacher, viewer?: string): boolean {
+  return usableIn(doc, owner.projectId) && (viewer === undefined || viewer === owner.projectId || usableIn(doc, viewer))
 }
 
 /**
@@ -1310,8 +1358,8 @@ function attachable(doc: Pick<IProjectDoc, 'projectId'>, owner: IAttacher): bool
  * somado ao pacote (o que o pacote traz já conta como existente).
  */
 export interface IGuidanceLookup {
-  doc(id: string): Pick<IProjectDoc, 'kind' | 'projectId'> | undefined
-  resource(id: string): Pick<IResource, 'kind' | 'projectId'> | undefined
+  doc(id: string): Pick<IProjectDoc, 'kind' | 'projectId' | 'sharedWith'> | undefined
+  resource(id: string): Pick<IResource, 'kind' | 'projectId' | 'sharedWith'> | undefined
 }
 
 /** Os problemas de uma liberação de recursos para um agente do projeto dado (ausente = agente global). */
@@ -1326,7 +1374,7 @@ export function grantIssuesIn(lookup: IGuidanceLookup, next: IAgentResources, pr
     for (const id of ids.filter((item) => item !== ALL_RESOURCES)) {
       const resource = lookup.resource(id)
       if (!resource || resource.kind !== kind) issues.push({ field, message: `no such ${kind}: ${id}` })
-      else if (resource.projectId && resource.projectId !== projectId)
+      else if (!usableIn(resource, projectId))
         issues.push({
           field,
           message: projectId ? `${id} belongs to another project (${resource.projectId})` : `${id} belongs to a project (a global agent uses only global resources)`,
@@ -1345,7 +1393,7 @@ export function specIssuesIn(lookup: IGuidanceLookup, docIds: readonly string[],
     if (seen.has(id)) issues.push({ field: 'docIds', message: `repeated: ${id}` })
     else if (!doc) issues.push({ field: 'docIds', message: `no such document: ${id}` })
     else if (doc.kind !== 'spec') issues.push({ field: 'docIds', message: `only specs load in full: ${id} is an ${doc.kind}` })
-    else if (doc.projectId && doc.projectId !== projectId) issues.push({ field: 'docIds', message: `${id} belongs to ${outside} (${doc.projectId})` })
+    else if (!usableIn(doc, projectId)) issues.push({ field: 'docIds', message: `${id} belongs to ${outside} (${doc.projectId})` })
     seen.add(id)
   }
   return issues
@@ -1411,7 +1459,7 @@ export function resourceIssuesIn(lookup: IGuidanceLookup, resource: Pick<IResour
   for (const id of resource.docIds) {
     const doc = lookup.doc(id)
     if (!doc) issues.push({ field: 'docIds', message: `no such document: ${id}` })
-    else if (doc.projectId && doc.projectId !== resource.projectId) issues.push({ field: 'docIds', message: `${id} belongs to another project (${doc.projectId})` })
+    else if (!usableIn(doc, resource.projectId)) issues.push({ field: 'docIds', message: `${id} belongs to another project (${doc.projectId})` })
   }
   const refs = resource.docRefs ?? []
   for (const [index, id] of refs.entries()) {
