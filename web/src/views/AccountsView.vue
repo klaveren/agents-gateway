@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SaveFooter from '@/components/SaveFooter.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { ApiError } from '@/lib/api'
 import { fullTime } from '@/lib/format'
@@ -320,10 +321,9 @@ watch(
             <button v-if="form.secret" type="button" class="btn btn-ghost btn-sm" @click="copySecret">{{ copied ? 'Copiado' : 'Copiar' }}</button>
             <span>Copie antes de salvar: depois, só os 4 últimos caracteres aparecem.</span>
           </div>
-          <div class="flex gap-2">
-            <button type="submit" class="btn btn-primary btn-sm" :disabled="busy || !form.id.trim()">Salvar</button>
-            <button type="button" class="btn btn-ghost btn-sm" @click="editing = null">Cancelar</button>
-          </div>
+          <SaveFooter submit :label="editing ? 'Salvar conta' : 'Criar conta'" :busy="busy" :disabled="!form.id.trim()">
+            <button type="button" class="btn btn-ghost" @click="editing = null">Cancelar</button>
+          </SaveFooter>
         </form>
 
         <ul v-if="accounts.length" class="divide-y divide-zinc-800 rounded-xl border border-zinc-800">
@@ -374,7 +374,11 @@ watch(
 <style scoped>
 @reference '../style.css';
 
+/* O rótulo em cima do campo, como nas outras telas: sem isto cada rótulo ficava na mesma linha do campo, desalinhado. */
+.field {
+  @apply flex min-w-0 flex-col gap-1.5 text-sm font-medium text-zinc-300;
+}
 .input {
-  @apply rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 font-normal text-zinc-100 outline-none focus:border-emerald-500/60;
+  @apply w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 font-normal text-zinc-100 outline-none focus:border-emerald-500/60;
 }
 </style>

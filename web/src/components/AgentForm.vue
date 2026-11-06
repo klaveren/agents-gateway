@@ -26,9 +26,8 @@
   import { useProvidersStore } from '@/stores/providers'
   import { useSettingsStore } from '@/stores/settings'
   import { useAuthStore } from '@/stores/auth'
-  import { NO_MODEL_GROUP } from '@/lib/modelGroups'
   import { useProtocolsStore } from '@/stores/protocols'
-  import type { IAgentDetail, IAgentInput, ICatalogModel, IMcpServer, INativeTool, TMode, TSandboxLevel } from '@/lib/types'
+  import type { IAgentDetail, IAgentInput, ICatalogModel, IMcpServer, INativeTool, TMode, TPermissionCategory, TSandboxLevel } from '@/lib/types'
   import { useAgentsStore } from '@/stores/agents'
   import { useMcpStore } from '@/stores/mcp'
   import { useProjectsStore } from '@/stores/projects'
@@ -39,6 +38,8 @@
   import AgentSchedules from './AgentSchedules.vue'
   import AgentLedger from './AgentLedger.vue'
   import SecretVariables from './SecretVariables.vue'
+  import AgentModelGroup from './AgentModelGroup.vue'
+  import PermissionCategoryTabs from './PermissionCategoryTabs.vue'
   import PermissionRules from './PermissionRules.vue'
   import PermissionTester from './PermissionTester.vue'
   import PermissionRequests from './PermissionRequests.vue'
@@ -300,9 +301,9 @@
     reasoningEfforts: 'Raciocínio',
     allowedTools: 'Ferramentas',
     soul: 'Personalidade',
-    systemPrompt: 'Instrução do sistema',
-    role: 'Só subagente',
-    adminOnly: 'Só administradores',
+    systemPrompt: 'System Prompt',
+    role: 'Subagente',
+    adminOnly: 'Administradores',
     projectId: 'Projeto',
     tags: 'Tags',
     env: 'Variáveis de ambiente',
@@ -357,8 +358,6 @@
    */
   const settings = useSettingsStore()
   const auth = useAuthStore()
-  const modelGroups = computed(() => settings.current?.modelGroups ?? [])
-  const defaultGroupName = computed(() => modelGroups.value.find((group) => group.id === settings.current?.defaultModelGroup)?.name ?? 'nenhum')
   const groupChoice = computed({
     get: () => (form.value.modelGroup === undefined || form.value.modelGroup === null ? '' : form.value.modelGroup),
     set: (value: string) => (form.value.modelGroup = value === '' ? null : value),
@@ -401,7 +400,7 @@
     agents.setPermissions(props.agent.id, permissions)
   }
 
-  type TTab = 'agente' | 'instrucoes' | 'triggers' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'arquivos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos' | 'memoria' | 'variaveis' | 'historico' | 'problemas'
+  type TTab = 'agente' | 'personalidade' | 'instrucoes' | 'triggers' | 'modelos' | 'ferramentas' | 'delegacao' | 'mcps' | 'sdk' | 'recursos' | 'arquivos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos' | 'memoria' | 'variaveis' | 'historico' | 'problemas'
   // `#agendamentos` no link (a visão geral dos agendamentos) abre direto na guia.
   /** O nome das ferramentas do gateway na guia Ferramentas (o id técnico fica na dica). */
   const LOCAL_TOOL_LABEL: Record<string, string> = {
@@ -413,11 +412,24 @@
     use_resource: 'Usar recurso (skill, command, trigger)',
     search_resources: 'Buscar recursos',
     agent_trigger: 'Editar triggers',
+    ssh_sign: 'Assinar SSH',
+    conversation_panel: 'Painel da conversa',
   }
 
   const initialHash = useRoute().hash
-  const HASH_TAB: Record<string, TTab> = { '#agendamentos': 'agendamentos', '#memoria': 'memoria', '#variaveis': 'variaveis', '#historico': 'historico', '#problemas': 'problemas', '#instrucoes': 'instrucoes' }
+  const HASH_TAB: Record<string, TTab> = { '#agendamentos': 'agendamentos', '#memoria': 'memoria', '#variaveis': 'variaveis', '#historico': 'historico', '#problemas': 'problemas', '#personalidade': 'personalidade', '#instrucoes': 'instrucoes' }
   const tab = ref<TTab>(HASH_TAB[initialHash] ?? 'agente')
+  /** Por que o agente não roda agora (e o servidor recusa delegar a ele), ou nada. Só administradores não impede delegar. */
+  const cannotRun = (other: { unavailable?: { reason: string; label: string } }) =>
+    other.unavailable && other.unavailable.reason !== 'admin_only' ? other.unavailable.label : undefined
+  /** A guia aberta dentro de Modelos: os modelos do agente ou o grupo de modelos. */
+  const modelsTab = ref<'agente' | 'grupo'>('agente')
+  /** O que a guia Permissões mostra: as regras (uma guia por categoria) ou o nível de acesso dos CLIs. */
+  const permissionPane = ref<'rules' | 'access'>('rules')
+  /** A guia aberta dentro de Ferramentas. */
+  const toolsTab = ref<'gateway' | 'provedor' | 'config'>('gateway')
+  /** A categoria aberta na guia Permissões: uma guia por categoria, como nas permissões do projeto. */
+  const permissionSection = ref<TPermissionCategory>('terminal')
 
   /** Sobram guias à direita (a barra rola de lado): a borda esmaece, para ninguém achar que acabaram. */
   const tabBar = ref<HTMLElement>()
@@ -439,12 +451,14 @@
   })
   const TAB_FIELDS: Record<TTab, string[]> = {
     agente: ['id', 'name', 'role', 'adminOnly', 'projectId', 'tags'],
-    instrucoes: ['soul', 'systemPrompt'],
+    personalidade: ['soul'],
+    instrucoes: ['systemPrompt'],
     triggers: ['triggers'],
     modelos: ['providers', 'models', 'modes', 'reasoningEfforts'],
     ferramentas: ['allowedTools'],
+    delegacao: [],
     mcps: [],
-    sdk: ['env'],
+    sdk: [],
     recursos: [],
     arquivos: ['files'],
     contexto: [],
@@ -452,18 +466,35 @@
     hooks: [],
     agendamentos: [],
     memoria: [],
-    variaveis: [],
+    variaveis: ['env'],
     historico: [],
     problemas: [],
   }
   /** Os problemas da importação do agente (da store: o "Descartar" troca a lista sem refazer o formulário). */
   const importIssues = computed(() => (props.agent ? (agents.details.get(props.agent.id)?.importIssues ?? props.agent.importIssues ?? []) : []))
+  /** Os provedores com nível de acesso (guia Permissões) e os com extras (guia Ferramentas → Do provedor). */
+  const accessSections = computed(() => sdkSections.value.filter((section) => section.levels.length))
+  const toolSections = computed(() => sdkSections.value.filter((section) => section.tools.length))
+  const toolTabs = computed(() => [
+    { id: 'gateway' as const, label: 'Do gateway' },
+    ...(toolSections.value.length ? [{ id: 'provedor' as const, label: 'Do provedor' }] : []),
+    { id: 'config' as const, label: 'Configurações' },
+  ])
+  // A guia que sumiu (o provedor saiu) não fica aberta vazia.
+  watch(toolSections, (list) => {
+    if (!list.length && toolsTab.value === 'provedor') toolsTab.value = 'gateway'
+  })
+  watch(accessSections, (list) => {
+    if (!list.length && permissionPane.value === 'access') permissionPane.value = 'rules'
+  })
+
   const tabs = computed(() => {
     const tools = form.value.allowedTools
     const alert = (id: TTab) => (TAB_FIELDS[id].some((field) => issues.value[field]?.length) ? 'Corrija os campos desta guia.' : undefined)
     const all: Array<{ id: TTab; label: string; count?: number; alert?: string }> = [
       { id: 'agente', label: 'Agente', alert: alert('agente') },
-      { id: 'instrucoes', label: 'Instruções', alert: alert('instrucoes') },
+      { id: 'personalidade', label: 'Personalidade', alert: alert('personalidade') },
+      { id: 'instrucoes', label: 'Protocolo', alert: alert('instrucoes') },
       { id: 'triggers', label: 'Triggers', count: form.value.triggers?.length ?? 0, alert: alert('triggers') },
       { id: 'modelos', label: 'Modelos', count: form.value.providers.reduce((total, target) => total + target.models.length, 0), alert: alert('modelos') },
       {
@@ -473,7 +504,17 @@
         alert: alert('ferramentas') ?? (orphans.value.length ? 'Há ferramentas indisponíveis' : undefined),
       },
       { id: 'mcps', label: 'MCPs', count: tools.filter((entry) => entry.startsWith('mcp:')).length },
-      { id: 'sdk', label: 'Permissões', count: (form.value.permissions?.length ?? 0) + tools.filter((entry) => entry.startsWith('sdk:')).length },
+      // A delegação numa guia só dela: a quem pede ajuda (as ferramentas `agent:`) e as regras de delegação, juntas.
+      {
+        id: 'delegacao',
+        label: 'Delegação',
+        count: tools.filter((entry) => entry.startsWith('agent:')).length + (form.value.permissions ?? []).filter((rule) => rule.category === 'delegate').length,
+      },
+      {
+        id: 'sdk',
+        label: 'Permissões',
+        count: (form.value.permissions ?? []).filter((rule) => rule.category !== 'delegate').length + tools.filter((entry) => entry.startsWith('sdk:')).length,
+      },
       { id: 'recursos', label: 'Recursos' },
       { id: 'arquivos', label: 'Arquivos', count: agentFiles.value.length },
       { id: 'contexto', label: 'Contexto inicial' },
@@ -483,7 +524,8 @@
       // O ledger do agente (o que ele aprendeu de como agir): só para agente já gravado.
       { id: 'memoria', label: 'Memória' },
       // As variáveis secretas do agente: só admin e só para agente já gravado (o valor entra e nunca volta).
-      ...(auth.isAdmin && props.agent && !props.creating ? [{ id: 'variaveis' as const, label: 'Variáveis' }] : []),
+      // As variáveis do terminal: as fixas (com o Salvar) e as secretas (só admin, agente já gravado).
+      { id: 'variaveis', label: 'Variáveis', count: envList.value.length, alert: alert('variaveis') },
       { id: 'historico', label: 'Histórico' },
       // Só aparece com problema: o que a importação deixou anotado no agente (não impediu a gravação).
       ...(importIssues.value.length ? [{ id: 'problemas' as const, label: 'Problemas da importação', count: importIssues.value.length }] : []),
@@ -632,12 +674,44 @@
   }
 
   /** O que será gravado, em uma linha, para a confirmação do Salvar. */
+  /**
+   * ⚖️ UM SALVAR SÓ: o "Salvar agente" grava o formulário e, depois, as guias com cadastro próprio que mudaram (Recursos,
+   * Arquivos, Contexto inicial e a sequência de Troca automática). Cada uma fica montada e expõe `dirty` e `commit`.
+   */
+  interface IPart {
+    dirty: boolean
+    commit: () => Promise<void>
+  }
+  const resourcesPart = ref<IPart>()
+  const filesPart = ref<IPart>()
+  const contextPart = ref<IPart>()
+  const groupPart = ref<IPart & { name?: string; users?: number }>()
+  const parts = computed(() => {
+    const all: Array<[TTab, string, IPart | undefined]> = [
+      ['recursos', 'Recursos', resourcesPart.value],
+      ['arquivos', 'Arquivos', filesPart.value],
+      ['contexto', 'Contexto inicial', contextPart.value],
+      ['modelos', 'Troca automática', groupPart.value],
+    ]
+    return all.filter((entry): entry is [TTab, string, IPart] => !!entry[2])
+  })
+  /** As guias com mudança não salva (ganham um ponto amarelo). */
+  const unsavedTabs = computed<TTab[]>(() => parts.value.filter(([, , part]) => part.dirty).map(([id]) => id))
+  /** As guias sem nada que o "Salvar agente" grave: só leitura, ou listas que gravam na hora. */
+  const FOOTERLESS_TABS: readonly TTab[] = ['tamanho', 'hooks', 'agendamentos', 'memoria', 'historico', 'problemas']
+
   const saveSummary = computed(() => {
     const { providers: targets, modes, allowedTools } = form.value
     const list = targets.map(
       (target, index) => `${protocols.providerName(target.provider)} (${target.models.length} modelo(s)${index === 0 && target.models[0] ? `, padrão ${target.models[0]}` : ''})`,
     )
-    return `${targets.length > 1 ? 'Provedores' : 'Provedor'} ${list.join(', ') || 'nenhum'}; modos ${modes.map((mode) => (mode === 'chat' ? 'Conversa' : 'Agente')).join(' + ') || 'nenhum'}; ${allowedTools.length} ferramenta(s).`
+    const base = `${targets.length > 1 ? 'Provedores' : 'Provedor'} ${list.join(', ') || 'nenhum'}; modos ${modes.map((mode) => (mode === 'chat' ? 'Conversa' : 'Agente')).join(' + ') || 'nenhum'}; ${allowedTools.length} ferramenta(s).`
+    const changed = parts.value.filter(([, , part]) => part.dirty)
+    const extra = changed.length ? ` Também grava: ${changed.map(([, label]) => label).join(', ')}.` : ''
+    const group = groupPart.value
+    const shared =
+      group?.dirty && (group.users ?? 0) > 1 ? ` A sequência ${group.name ?? ''} muda para os ${group.users} agentes que a usam.` : group?.dirty ? ` A sequência ${group.name ?? ''} muda para todo agente que a usa.` : ''
+    return base + extra + shared
   })
 
   async function save() {
@@ -668,6 +742,16 @@
         modelGroup: form.value.modelGroup ?? null,
       }
       const saved = await agents.save(input, props.creating)
+      // Depois do agente, as guias com cadastro próprio que mudaram, uma a uma: a que falhar diz onde.
+      for (const [id, label, part] of parts.value) {
+        if (!part.dirty) continue
+        try {
+          await part.commit()
+        } catch (error) {
+          tab.value = id
+          throw new Error(`O agente foi salvo, mas ${label} não: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
       emit('saved', saved.id)
     } catch (error) {
       // ⚠️ Todo 422 vira resumo perto do Salvar: o campo com problema pode nem ter input na tela.
@@ -712,6 +796,7 @@
         {{ item.label }}
         <span v-if="item.count" class="rounded-full bg-zinc-800 px-1.5 text-[10px] text-zinc-400">{{ item.count }}</span>
         <span v-if="item.alert" class="h-1.5 w-1.5 rounded-full bg-rose-400" :title="item.alert" />
+        <span v-else-if="unsavedTabs.includes(item.id)" class="h-1.5 w-1.5 rounded-full bg-amber-400" title="Mudança não salva" />
       </button>
     </nav>
     <fieldset v-show="tab === 'agente'" class="grid gap-4 sm:grid-cols-2">
@@ -731,7 +816,8 @@
         <span>Projeto</span>
         <select v-model="form.projectId" class="input">
           <option :value="null">Global — aparece em todos os projetos</option>
-          <option v-for="project in projects.list" :key="project.id" :value="project.id">{{ project.name }}</option>
+          <!-- Só o projeto escolhido no topo (ou o do agente, se for outro): sem lista de projetos aqui. -->
+          <option v-for="project in projects.list.filter((item) => item.id === projects.current || item.id === (agent?.projectId ?? form.projectId))" :key="project.id" :value="project.id">{{ project.name }}</option>
         </select>
         <small class="hint">{{ form.projectId ? 'Só os membros do projeto veem o agente.' : 'Qualquer projeto vê o agente.' }}</small>
         <small v-for="message in issues.projectId" :key="message" class="error">{{ message }}</small>
@@ -749,7 +835,7 @@
           >
             <span />
           </button>
-          <span>Só subagente</span>
+          <span>Subagente</span>
         </label>
         <small class="hint">Só outros agentes o chamam (em "Pode delegar a"). Não aparece em Nova conversa.</small>
       </div>
@@ -758,14 +844,14 @@
           <button type="button" role="switch" :aria-checked="!!form.adminOnly" class="switch" :class="{ on: form.adminOnly }" @click="form.adminOnly = !form.adminOnly">
             <span />
           </button>
-          <span>Só administradores</span>
+          <span>Administradores</span>
         </label>
         <small class="hint">Desligado, qualquer pessoa com conta pode conversar com este agente.</small>
       </div>
 
     </fieldset>
-    <!-- As instruções do agente (personalidade e instrução do sistema), numa guia só delas. -->
-    <fieldset v-show="tab === 'instrucoes'" class="grid gap-4 sm:grid-cols-2">
+    <!-- Quem o agente é (Personalidade) e o que ele faz (Protocolo), cada um na sua guia. -->
+    <fieldset v-show="tab === 'personalidade'" class="grid gap-4 sm:grid-cols-2">
       <label class="field sm:col-span-2">
         <span>
           Personalidade
@@ -773,19 +859,27 @@
         </span>
         <textarea
           v-model="form.soul"
-          rows="4"
-          class="input text-[13px] leading-relaxed"
+          class="input prompt-area text-[13px] leading-relaxed"
           placeholder="Você é a Íris: gentil, direta, explica sem jargão e admite quando não sabe."
         />
         <small v-if="form.soul" class="hint">{{ sizeHint(form.soul, 'a cada turno') }}</small>
         <small v-for="message in issues.soul" :key="message" class="error">{{ message }}</small>
       </label>
+    </fieldset>
+    <fieldset v-show="tab === 'instrucoes'" class="grid gap-4 sm:grid-cols-2">
       <label class="field sm:col-span-2">
         <span>
-          Instrução do sistema
+          System Prompt
           <em class="font-normal text-zinc-500">— o que o agente faz: função, regras, como usar as ferramentas</em>
         </span>
-        <textarea v-model="form.systemPrompt" required rows="18" data-tab="instrucoes" class="input font-mono text-[13px] leading-relaxed" placeholder="Você é o agente…" />
+        <!-- ⚖️ O texto ocupa a altura que sobra da tela (o rodapé com o Salvar fica sempre à vista, ver `.form-footer`). -->
+        <textarea
+          v-model="form.systemPrompt"
+          required
+          data-tab="instrucoes"
+          class="input prompt-area font-mono text-[13px] leading-relaxed"
+          placeholder="Você é o agente…"
+        />
         <small v-if="form.systemPrompt" class="hint">{{ sizeHint(form.systemPrompt, 'a cada turno') }}</small>
         <small v-if="anyGoogle" class="hint">Com Gemini, evite {chaves} no texto: viram variáveis e dão erro.</small>
         <CliPromptMeter
@@ -810,13 +904,34 @@
         :issues="issues.triggers"
       />
     </fieldset>
-    <fieldset v-show="tab === 'modelos'" class="grid gap-4 sm:grid-cols-2">
-      <div class="field sm:col-span-2">
-        <span>
-          Provedores
-          <em class="font-normal text-zinc-500">— onde o agente roda. O primeiro é o padrão.</em>
-        </span>
-        <div class="flex flex-wrap gap-1.5">
+    <!-- Duas guias: os modelos do agente (o que a pessoa escolhe) e a troca automática (a sequência de modelos quando um falha). -->
+    <fieldset v-show="tab === 'modelos'" class="flex flex-col gap-3">
+      <nav class="no-scrollbar flex gap-1 overflow-x-auto border-b border-zinc-800" role="tablist">
+        <button
+          v-for="item in [
+            { id: 'agente', label: 'Do agente' },
+            { id: 'grupo', label: 'Troca automática' },
+          ] as const"
+          :key="item.id"
+          type="button"
+          role="tab"
+          :aria-selected="modelsTab === item.id"
+          :data-test="`models-tab-${item.id}`"
+          class="shrink-0 border-b-2 px-3 py-2 text-sm whitespace-nowrap"
+          :class="modelsTab === item.id ? 'border-emerald-500 text-zinc-100' : 'border-transparent text-zinc-400 hover:text-zinc-200'"
+          @click="modelsTab = item.id"
+        >
+          {{ item.label }}
+        </button>
+      </nav>
+      <div v-show="modelsTab === 'agente'" class="flex flex-col gap-3" role="tabpanel">
+      <section class="tool-card">
+        <header>
+          <h3>Provedores</h3>
+          <span class="count">{{ chosen.length || 'nenhum' }}</span>
+        </header>
+        <p class="hint px-3 pt-2">Onde o agente roda. O primeiro é o padrão.</p>
+        <div class="flex flex-wrap gap-1.5 p-3">
           <button
             v-for="provider in providerOptions"
             :key="provider.id"
@@ -833,14 +948,15 @@
             {{ chosen.length ? chosen.map((id) => protocols.providerName(id)).join(', ') : 'Nenhum provedor pronto. Configure em Modelos.' }}
           </span>
         </div>
-        <small v-for="message in issues.providers" :key="message" class="error">{{ message }}</small>
-      </div>
-
-      <div v-if="form.providers.length" class="field sm:col-span-2">
-        <span>
-          Modelos
-          <em class="font-normal text-zinc-500">— o padrão é o usado quando ninguém escolhe.</em>
-        </span>
+        <small v-for="message in issues.providers" :key="message" class="error px-3 pb-3">{{ message }}</small>
+      </section>
+      <section v-if="form.providers.length" class="tool-card">
+        <header>
+          <h3>Modelos</h3>
+          <span class="count">{{ form.providers.reduce((total, target) => total + target.models.length, 0) || 'nenhum' }}</span>
+        </header>
+        <p class="hint px-3 pt-2">Os que a pessoa escolhe na conversa. O padrão é o usado quando ninguém escolhe.</p>
+        <div class="flex flex-col gap-3 p-3">
         <p v-if="dropped.length" class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-normal text-amber-200">
           Estes modelos foram desligados e saem ao salvar:
           <template v-for="([providerId, models], index) in dropped" :key="providerId">
@@ -878,8 +994,13 @@
         </div>
         <small v-if="anyCompatible" class="hint">Neste provedor, o uso de ferramentas e o raciocínio dependem do modelo.</small>
         <small v-for="message in issues.models" :key="message" class="error">{{ message }}</small>
-      </div>
-
+        </div>
+      </section>
+      <section class="tool-card">
+        <header>
+          <h3>Modos e raciocínio</h3>
+        </header>
+        <div class="grid gap-4 p-3 sm:grid-cols-2">
       <div class="field">
         <span>Modos</span>
         <div class="flex flex-wrap gap-1.5">
@@ -916,14 +1037,39 @@
         <small v-if="reasoningLevels.length" class="hint">Os níveis que a pessoa pode escolher na conversa.</small>
         <small v-for="message in issues.reasoningEfforts" :key="message" class="error">{{ message }}</small>
       </div>
+        </div>
+      </section>
+      </div>
+      <div v-show="modelsTab === 'grupo'" role="tabpanel">
+        <AgentModelGroup ref="groupPart" v-model="groupChoice" />
+      </div>
     </fieldset>
-    <fieldset v-show="tab === 'ferramentas'" class="grid gap-4 sm:grid-cols-2">
-      <div class="field sm:col-span-2">
-        <span>
-          Capacidades
-          <em class="font-normal text-zinc-500">— o que o agente pode fazer; o gateway decide como roda em cada provedor.</em>
-        </span>
-        <div class="flex flex-wrap gap-1.5">
+    <!-- Três guias: as ferramentas do gateway, os extras que só um provedor tem e as configurações do terminal. -->
+    <fieldset v-show="tab === 'ferramentas'" class="flex flex-col gap-3">
+      <nav class="no-scrollbar flex gap-1 overflow-x-auto border-b border-zinc-800" role="tablist">
+        <button
+          v-for="item in toolTabs"
+          :key="item.id"
+          type="button"
+          role="tab"
+          :aria-selected="toolsTab === item.id"
+          :data-test="`tools-tab-${item.id}`"
+          class="shrink-0 border-b-2 px-3 py-2 text-sm whitespace-nowrap"
+          :class="toolsTab === item.id ? 'border-emerald-500 text-zinc-100' : 'border-transparent text-zinc-400 hover:text-zinc-200'"
+          @click="toolsTab = item.id"
+        >
+          {{ item.label }}
+        </button>
+      </nav>
+      <!-- Um bloco por assunto, no desenho das permissões: o título, quantas estão marcadas e o que o bloco quer dizer. -->
+      <div v-show="toolsTab === 'gateway'" class="flex flex-col gap-3" role="tabpanel">
+      <section class="tool-card">
+        <header>
+          <h3>Capacidades</h3>
+          <span class="count">{{ agents.capabilities.filter((item) => form.allowedTools.includes(item.id)).length || 'nenhuma' }}</span>
+        </header>
+        <p class="hint px-3 pt-2">O que o agente pode fazer. O gateway decide como roda em cada provedor.</p>
+        <div class="flex flex-wrap gap-1.5 p-3">
           <button
             v-for="item in agents.capabilities"
             :key="item.id"
@@ -936,16 +1082,21 @@
             {{ item.label }}
           </button>
         </div>
-        <ul v-if="capabilityRows.length && form.providers.length" class="flex flex-col gap-0.5 text-xs text-zinc-500">
-          <li v-for="row in capabilityRows" :key="row.id">
-            <span class="text-zinc-300">{{ row.label }}</span>
-            — {{ row.runs }}
-          </li>
-        </ul>
-      </div>
-      <div v-if="agents.tools.length" class="field sm:col-span-2">
-        <span>Outras ferramentas do gateway</span>
-        <div class="flex flex-wrap gap-1.5">
+        <dl v-if="capabilityRows.length && form.providers.length" class="mx-3 mb-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-lg bg-zinc-900/60 px-3 py-2 text-xs">
+          <template v-for="row in capabilityRows" :key="row.id">
+            <dt class="text-zinc-300">{{ row.label }}</dt>
+            <dd class="text-zinc-500">{{ row.runs }}</dd>
+          </template>
+        </dl>
+      </section>
+
+      <section v-if="agents.tools.length" class="tool-card">
+        <header>
+          <h3>Ferramentas do gateway</h3>
+          <span class="count">{{ agents.tools.filter((tool) => form.allowedTools.includes(tool.name)).length || 'nenhuma' }}</span>
+        </header>
+        <p class="hint px-3 pt-2">Documentos, recursos, o painel da conversa e a assinatura SSH: rodam no gateway, em qualquer provedor.</p>
+        <div class="flex flex-wrap gap-1.5 p-3">
           <button
             v-for="tool in agents.tools"
             :key="tool.name"
@@ -958,53 +1109,21 @@
             {{ LOCAL_TOOL_LABEL[tool.name] ?? tool.name }}
           </button>
         </div>
-        <small v-if="dangerousChosen.length" class="text-amber-300">
-          ⚠ {{ dangerousChosen.join(', ') }} dá acesso ao servidor. Quem conversar com este agente também terá esse acesso.
-          <template v-if="!form.adminOnly">Marque "Só administradores" na guia Agente se não for para todos.</template>
-        </small>
-        <small v-for="message in issues.allowedTools" :key="message" class="error">{{ message }}</small>
-      </div>
+      </section>
 
-      <div class="field sm:col-span-2">
-        <span>
-          Pode delegar a
-          <em class="font-normal text-zinc-500">— outros agentes a quem este pode pedir ajuda.</em>
-        </span>
-        <div class="flex flex-wrap gap-1.5">
-          <button
-            v-for="other in agents.list.filter((candidate) => candidate.id !== form.id)"
-            :key="other.id"
-            type="button"
-            class="chip"
-            :class="{ on: form.allowedTools.includes(`agent:${other.id}`) }"
-            @click="toggle(form.allowedTools, `agent:${other.id}`)"
-          >
-            {{ other.name }}
-            <span v-if="other.role === 'subagent'" class="ml-1 text-[10px] text-zinc-500">subagente</span>
-          </button>
-          <!-- Os construtores do core: não estão na lista de agentes, mas recebem delegação (o Atlas cria conteúdo por eles). -->
-          <button
-            v-for="builder in CORE_BUILDERS"
-            :key="builder.id"
-            type="button"
-            class="chip"
-            :class="{ on: form.allowedTools.includes(`agent:${builder.id}`) }"
-            :title="`Agente do sistema, só para administradores`"
-            @click="toggle(form.allowedTools, `agent:${builder.id}`)"
-          >
-            {{ builder.name }}
-            <span class="ml-1 text-[10px] text-zinc-500">sistema</span>
-          </button>
-        </div>
-        <small v-if="form.allowedTools.some((entry) => entry.startsWith('agent:')) && !form.modes.includes('agent')" class="hint">A delegação só funciona no modo Agente.</small>
-      </div>
+      <p v-if="dangerousChosen.length" class="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+        ⚠ {{ dangerousChosen.join(', ') }} dá acesso ao servidor. Quem conversar com este agente também terá esse acesso.
+        <template v-if="!form.adminOnly">Marque "Administradores" na guia Agente se não for para todos.</template>
+      </p>
+      <small v-for="message in issues.allowedTools" :key="message" class="error">{{ message }}</small>
 
-      <div v-if="orphans.length" class="field sm:col-span-2">
-        <span>
-          Indisponíveis
-          <em class="font-normal text-zinc-500">— escolhidas, mas não oferecidas pelos provedores. Remova para salvar.</em>
-        </span>
-        <div class="flex flex-wrap gap-1.5">
+      <section v-if="orphans.length" class="tool-card border-amber-500/40">
+        <header>
+          <h3>Indisponíveis</h3>
+          <span class="count">{{ orphans.length }}</span>
+        </header>
+        <p class="hint px-3 pt-2">Escolhidas, mas não oferecidas pelos provedores. Remova para salvar.</p>
+        <div class="flex flex-wrap gap-1.5 p-3">
           <button
             v-for="entry in orphans"
             :key="entry"
@@ -1017,7 +1136,161 @@
             {{ entry }} ✕
           </button>
         </div>
+      </section>
       </div>
+      <div v-show="toolsTab === 'provedor'" class="flex flex-col gap-3" role="tabpanel">
+        <p class="text-xs text-zinc-500">Só no modo Agente: as ferramentas que só um provedor tem. Terminal, arquivos e busca ficam em Do gateway.</p>
+        <p v-if="!form.modes.includes('agent')" class="text-xs text-amber-300">O modo Agente está desligado: nada daqui é usado.</p>
+          <section v-for="section in toolSections" :key="section.entry.target.provider" class="tool-card">
+            <header>
+              <h3>{{ protocols.providerName(section.entry.target.provider) }}</h3>
+              <span class="count">{{ section.tools.filter((tool) => form.allowedTools.includes(tool.id)).length || 'nenhum' }}</span>
+            </header>
+            <div class="flex flex-col gap-2 p-3">
+        <ul v-if="section.tools.length" class="divide-y divide-zinc-800/70 rounded-lg border border-zinc-800">
+          <li v-for="tool in section.tools" :key="tool.id" class="flex items-center gap-3 px-3 py-2" :class="{ 'opacity-50': nativeBlock(tool, section.entry) }">
+            <input
+              type="checkbox"
+              class="accent-emerald-500"
+              :checked="form.allowedTools.includes(tool.id)"
+              :disabled="!!nativeBlock(tool, section.entry) && !form.allowedTools.includes(tool.id)"
+              @change="toggle(form.allowedTools, tool.id)"
+            />
+            <span class="min-w-0 flex-1">
+              <span class="block text-sm">
+                {{ tool.label }}
+                <code class="text-[11px] text-zinc-500">{{ tool.sdkName }}</code>
+              </span>
+              <span class="block text-xs text-zinc-500">{{ tool.description }}</span>
+              <span v-if="nativeBlock(tool, section.entry)" class="block text-xs text-zinc-500">{{ nativeBlock(tool, section.entry) }}</span>
+            </span>
+            <span class="shrink-0 rounded-full px-2 py-0.5 text-[10px]" :class="RISK_CLASS[tool.risk]">{{ RISK_LABEL[tool.risk] }}</span>
+          </li>
+        </ul>
+            </div>
+          </section>
+        <small v-if="dangerousNatives.length" class="text-amber-300">
+          ⚠ {{ dangerousNatives.join(', ') }} dá acesso ao disco, à internet e aos comandos do servidor. Quem conversar com este agente também terá esse acesso.
+          <template v-if="!form.adminOnly">Marque "Administradores" na guia Agente se não for para todos.</template>
+        </small>
+      </div>
+      <div v-show="toolsTab === 'config'" class="flex flex-col gap-4" role="tabpanel">
+      <div class="flex flex-col gap-2">
+        <h3 class="text-sm font-medium text-zinc-200">Terminal</h3>
+        <p class="text-xs text-zinc-500">
+          Para quem builda e roda teste: quanto um comando pode levar e quanto da saída volta ao modelo (o começo e o fim; o resto fica no log). Vazio = o padrão do sistema.
+        </p>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="field">
+            Tempo por comando (segundos, até 7200)
+            <input
+              class="input"
+              type="number"
+              min="1"
+              max="7200"
+              :value="form.terminal?.timeoutSeconds ?? ''"
+              @input="form.terminal = { ...(form.terminal ?? {}), timeoutSeconds: Number(($event.target as HTMLInputElement).value) || undefined }"
+            />
+          </label>
+          <label class="field">
+            Saída (caracteres, até 200000)
+            <input
+              class="input"
+              type="number"
+              min="500"
+              max="200000"
+              :value="form.terminal?.maxOutputChars ?? ''"
+              @input="form.terminal = { ...(form.terminal ?? {}), maxOutputChars: Number(($event.target as HTMLInputElement).value) || undefined }"
+            />
+          </label>
+        </div>
+      </div>
+      <div class="flex flex-col gap-2">
+        <h3 class="text-sm font-medium text-zinc-200">Diagnóstico depois de editar</h3>
+        <p class="text-xs text-zinc-500">
+          Depois de cada edição de arquivo, o gateway roda o que o pacote já tem em node_modules/.bin, no mesmo cerco do terminal e sem rede, e o resultado volta ao modelo junto da
+          ferramenta.
+        </p>
+        <div class="flex flex-wrap gap-4 text-sm">
+          <label v-for="check in DIAGNOSTIC_CHECKS" :key="check.key" class="flex items-center gap-2">
+            <input
+              type="checkbox"
+              class="accent-emerald-500"
+              :checked="!!form.diagnostics?.[check.key]"
+              @change="form.diagnostics = { ...(form.diagnostics ?? {}), [check.key]: ($event.target as HTMLInputElement).checked }"
+            />
+            {{ check.label }}
+          </label>
+        </div>
+        <label class="field sm:max-w-xs">
+          Tempo de cada ferramenta (segundos, 5 a 600)
+          <input
+            class="input"
+            type="number"
+            min="5"
+            max="600"
+            placeholder="60"
+            :value="form.diagnostics?.timeoutSeconds ?? ''"
+            @input="form.diagnostics = { ...(form.diagnostics ?? {}), timeoutSeconds: Number(($event.target as HTMLInputElement).value) || undefined }"
+          />
+        </label>
+      </div>
+      </div>
+    </fieldset>
+    <fieldset v-show="tab === 'delegacao'" class="flex flex-col gap-3">
+      <section class="tool-card">
+        <header>
+          <h3>A quem pode pedir ajuda</h3>
+          <span class="count">{{ form.allowedTools.filter((entry) => entry.startsWith('agent:')).length || 'nenhum' }}</span>
+        </header>
+        <p class="hint px-3 pt-2">Os agentes que este chama pela ferramenta de delegação.</p>
+        <div class="flex flex-col gap-3 p-3">
+          <div class="flex flex-col gap-1.5">
+            <span class="text-xs text-zinc-500">Agentes</span>
+            <div class="flex flex-wrap gap-1.5">
+              <!-- ⛔ O servidor só aceita delegar a quem pode rodar agora (com modelo ativo): o resto aparece desligado, com o
+                   motivo. O já marcado continua clicável, para poder tirar. -->
+              <button
+                v-for="other in agents.list.filter((candidate) => candidate.id !== form.id)"
+                :key="other.id"
+                type="button"
+                class="chip disabled:cursor-not-allowed disabled:opacity-40"
+                :class="{ on: form.allowedTools.includes(`agent:${other.id}`), danger: !!cannotRun(other) && form.allowedTools.includes(`agent:${other.id}`) }"
+                :disabled="!!cannotRun(other) && !form.allowedTools.includes(`agent:${other.id}`)"
+                :title="cannotRun(other) ? `Não dá para delegar: ${cannotRun(other)}. Ative um modelo dele em Modelos.` : undefined"
+                @click="toggle(form.allowedTools, `agent:${other.id}`)"
+              >
+                {{ other.name }}
+                <span v-if="other.role === 'subagent'" class="ml-1 text-[10px] text-zinc-500">subagente</span>
+                <span v-if="cannotRun(other)" class="ml-1 text-[10px] text-amber-300">{{ cannotRun(other) }}</span>
+              </button>
+              <span v-if="agents.list.length <= 1" class="text-xs text-zinc-500">Nenhum outro agente ainda.</span>
+            </div>
+          </div>
+          <!-- Os construtores do core: não estão na lista de agentes, mas recebem delegação (o Atlas cria conteúdo por eles). -->
+          <div class="flex flex-col gap-1.5">
+            <span class="text-xs text-zinc-500">Do sistema · só para administradores</span>
+            <div class="flex flex-wrap gap-1.5">
+              <button
+                v-for="builder in CORE_BUILDERS"
+                :key="builder.id"
+                type="button"
+                class="chip"
+                :class="{ on: form.allowedTools.includes(`agent:${builder.id}`) }"
+                title="Agente do sistema, só para administradores"
+                @click="toggle(form.allowedTools, `agent:${builder.id}`)"
+              >
+                {{ builder.name }}
+              </button>
+            </div>
+          </div>
+          <small v-if="form.allowedTools.some((entry) => entry.startsWith('agent:')) && !form.modes.includes('agent')" class="hint">A delegação só funciona no modo Agente.</small>
+        </div>
+      </section>
+
+      <!-- As regras de delegação do agente (padrões de id), antes na guia Permissões: moram aqui, junto da escolha. -->
+      <p class="hint">Marcar acima dá a ferramenta; a regra libera a chamada. Precisa dos dois: a regra pode estar aqui ou nas permissões do projeto.</p>
+      <PermissionRules v-model="form.permissions!" only="delegate" />
     </fieldset>
     <fieldset v-show="tab === 'mcps'" class="grid gap-4 sm:grid-cols-2">
       <div class="field sm:col-span-2">
@@ -1066,111 +1339,44 @@
     <fieldset v-show="tab === 'sdk'" class="flex flex-col gap-4">
       <PermissionRequests v-if="agent && !creating" :agent-id="agent.id" @approved="permissionsApproved" />
       <div class="flex flex-col gap-2">
-        <h3 class="text-sm font-medium text-zinc-200">Regras deste agente</h3>
+        <h3 class="text-sm font-medium text-zinc-200">Permissões deste agente</h3>
         <p class="text-xs text-zinc-500">
           Valem antes das do projeto: liberam o que o projeto fechou, ou fecham mais. Sem regra no agente nem no projeto, negado. As do sistema valem sempre.
         </p>
-        <PermissionRules v-model="form.permissions!" />
-        <PermissionTester v-if="agent && !creating && (agent.projectId ?? projects.current)" :project-id="(agent.projectId ?? projects.current)!" :agent-id="agent.id" />
-        <small class="hint">O teste usa as regras já salvas.</small>
-      </div>
-      <div class="flex flex-col gap-2">
-        <h3 class="text-sm font-medium text-zinc-200">Terminal</h3>
-        <p class="text-xs text-zinc-500">
-          Para quem builda e roda teste: quanto um comando pode levar e quanto da saída volta ao modelo (o começo e o fim; o resto fica no log). Vazio = o padrão do sistema.
-        </p>
-        <div class="grid gap-3 sm:grid-cols-2">
-          <label class="field">
-            Tempo por comando (segundos, até 7200)
-            <input
-              class="input"
-              type="number"
-              min="1"
-              max="7200"
-              :value="form.terminal?.timeoutSeconds ?? ''"
-              @input="form.terminal = { ...(form.terminal ?? {}), timeoutSeconds: Number(($event.target as HTMLInputElement).value) || undefined }"
-            />
-          </label>
-          <label class="field">
-            Saída (caracteres, até 200000)
-            <input
-              class="input"
-              type="number"
-              min="500"
-              max="200000"
-              :value="form.terminal?.maxOutputChars ?? ''"
-              @input="form.terminal = { ...(form.terminal ?? {}), maxOutputChars: Number(($event.target as HTMLInputElement).value) || undefined }"
-            />
-          </label>
-        </div>
-      </div>
-      <div class="flex flex-col gap-2">
-        <h3 class="text-sm font-medium text-zinc-200">Variáveis de ambiente</h3>
-        <p class="text-xs text-zinc-500">
-          Fixas, em todo terminal deste agente — o dele e o dos CLIs. Para a autoria do git (GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL…), idioma, região. Segredo não mora aqui: use
-          Segredos ou as contas do projeto. O que o gateway monta (HOME, PATH, a identidade) vence.
-        </p>
-        <div v-for="(row, index) in envList" :key="index" class="flex flex-wrap items-center gap-2">
-          <input v-model="row.name" class="input w-56 font-mono text-xs" placeholder="GIT_AUTHOR_NAME" :aria-label="`Nome da variável ${index + 1}`" />
-          <input v-model="row.value" class="input min-w-0 flex-1 font-mono text-xs" placeholder="valor" :aria-label="`Valor da variável ${index + 1}`" />
-          <button type="button" class="btn btn-sm btn-danger" @click="envList.splice(index, 1)">Remover</button>
-        </div>
-        <button type="button" class="btn btn-sm btn-ghost self-start" @click="envList.push({ name: '', value: '' })">+ Variável</button>
-        <small v-for="name in envRepeated" :key="`dup-${name}`" class="error">{{ name }} aparece mais de uma vez</small>
-        <small v-for="message in issues.env" :key="message" class="error">{{ message }}</small>
-      </div>
-      <div class="flex flex-col gap-2">
-        <h3 class="text-sm font-medium text-zinc-200">Diagnóstico depois de editar</h3>
-        <p class="text-xs text-zinc-500">
-          Depois de cada edição de arquivo, o gateway roda o que o pacote já tem em node_modules/.bin, no mesmo cerco do terminal e sem rede, e o resultado volta ao modelo junto da
-          ferramenta.
-        </p>
-        <div class="flex flex-wrap gap-4 text-sm">
-          <label v-for="check in DIAGNOSTIC_CHECKS" :key="check.key" class="flex items-center gap-2">
-            <input
-              type="checkbox"
-              class="accent-emerald-500"
-              :checked="!!form.diagnostics?.[check.key]"
-              @change="form.diagnostics = { ...(form.diagnostics ?? {}), [check.key]: ($event.target as HTMLInputElement).checked }"
-            />
-            {{ check.label }}
-          </label>
-        </div>
-        <label class="field sm:max-w-xs">
-          Tempo de cada ferramenta (segundos, 5 a 600)
-          <input
-            class="input"
-            type="number"
-            min="5"
-            max="600"
-            placeholder="60"
-            :value="form.diagnostics?.timeoutSeconds ?? ''"
-            @input="form.diagnostics = { ...(form.diagnostics ?? {}), timeoutSeconds: Number(($event.target as HTMLInputElement).value) || undefined }"
+        <PermissionCategoryTabs v-model="permissionSection" :rules="form.permissions ?? []" :exclude="['delegate']" :active="permissionPane === 'rules'" @pick="permissionPane = 'rules'">
+          <!-- O nível de acesso dos CLIs por assinatura (o sandbox deles): só quando algum provedor do agente o tem. -->
+          <button
+            v-if="accessSections.length"
+            type="button"
+            role="tab"
+            :aria-selected="permissionPane === 'access'"
+            data-test="tab-access"
+            class="shrink-0 border-b-2 px-3 py-2 text-sm whitespace-nowrap"
+            :class="permissionPane === 'access' ? 'border-emerald-500 text-zinc-100' : 'border-transparent text-zinc-400 hover:text-zinc-200'"
+            @click="permissionPane = 'access'"
+          >
+            Nível de acesso
+          </button>
+        </PermissionCategoryTabs>
+        <template v-if="permissionPane === 'rules'">
+          <PermissionRules v-model="form.permissions!" :only="permissionSection" />
+          <PermissionTester
+            v-if="agent && !creating && (agent.projectId ?? projects.current)"
+            :project-id="(agent.projectId ?? projects.current)!"
+            :agent-id="agent.id"
+            :initial="permissionSection"
           />
-        </label>
-      </div>
-      <div class="flex flex-col gap-2">
-        <h3 class="text-sm font-medium text-zinc-200">Grupo de modelos</h3>
-        <p class="text-xs text-zinc-500">
-          A conversa aberta sem modelo escolhido começa no primeiro modelo disponível do grupo; se ele falha (cota, limite de uso…), segue no próximo e fica nele. No chat, a pessoa continua escolhendo
-          entre os “Modelos do agente”.
-        </p>
-        <select v-model="groupChoice" aria-label="Grupo de modelos" class="h-9 max-w-xs rounded-lg border border-zinc-800 bg-zinc-900 px-2 text-sm">
-          <option value="">Padrão ({{ defaultGroupName }})</option>
-          <option :value="NO_MODEL_GROUP">Nenhum — não troca de modelo</option>
-          <option v-for="group in modelGroups" :key="group.id" :value="group.id">{{ group.name }}</option>
-          <option v-if="groupChoice && groupChoice !== NO_MODEL_GROUP && !modelGroups.some((group) => group.id === groupChoice)" :value="groupChoice">{{ groupChoice }}</option>
-        </select>
-        <RouterLink v-if="auth.isAdmin" to="/model-groups" class="text-xs text-emerald-300 underline">Gerenciar grupos de modelos</RouterLink>
-      </div>
-      <p class="text-xs text-zinc-500">Só no modo Agente: o nível de acesso das assinaturas e os extras que só um provedor tem. Terminal, arquivos e busca ficam em Ferramentas.</p>
-      <p v-if="!form.modes.includes('agent')" class="text-xs text-amber-300">O modo Agente está desligado: nada daqui é usado.</p>
-      <section v-for="section in sdkSections" :key="section.entry.target.provider" class="flex flex-col gap-2 rounded-xl border border-zinc-800 px-3 py-3">
-        <div class="flex flex-wrap items-center gap-2 text-sm">
-          <span class="font-medium text-zinc-200">{{ protocols.providerName(section.entry.target.provider) }}</span>
-          <span v-if="section.entry.info" class="text-[11px] text-zinc-500">{{ section.entry.info.label }}</span>
-        </div>
-
+          <small class="hint">O teste usa as regras já salvas.</small>
+        </template>
+        <div v-else class="flex flex-col gap-3">
+          <p class="text-xs text-zinc-500">Só no modo Agente: o quanto o CLI do provedor (por assinatura) alcança do servidor, no sandbox dele.</p>
+          <p v-if="!form.modes.includes('agent')" class="text-xs text-amber-300">O modo Agente está desligado: nada daqui é usado.</p>
+          <section v-for="section in accessSections" :key="section.entry.target.provider" class="tool-card">
+            <header>
+              <h3>{{ protocols.providerName(section.entry.target.provider) }}</h3>
+              <span v-if="section.entry.info" class="count">{{ section.entry.info.label }}</span>
+            </header>
+            <div class="p-3">
         <div v-if="section.levels.length" class="flex flex-col gap-1.5">
           <span class="text-xs text-zinc-400">Nível de acesso</span>
           <div class="flex flex-wrap gap-1.5">
@@ -1199,45 +1405,26 @@
           </label>
         </div>
 
-        <span v-if="section.tools.length" class="text-xs text-zinc-400">Extras do provedor</span>
-        <ul v-if="section.tools.length" class="divide-y divide-zinc-800/70 rounded-lg border border-zinc-800">
-          <li v-for="tool in section.tools" :key="tool.id" class="flex items-center gap-3 px-3 py-2" :class="{ 'opacity-50': nativeBlock(tool, section.entry) }">
-            <input
-              type="checkbox"
-              class="accent-emerald-500"
-              :checked="form.allowedTools.includes(tool.id)"
-              :disabled="!!nativeBlock(tool, section.entry) && !form.allowedTools.includes(tool.id)"
-              @change="toggle(form.allowedTools, tool.id)"
-            />
-            <span class="min-w-0 flex-1">
-              <span class="block text-sm">
-                {{ tool.label }}
-                <code class="text-[11px] text-zinc-500">{{ tool.sdkName }}</code>
-              </span>
-              <span class="block text-xs text-zinc-500">{{ tool.description }}</span>
-              <span v-if="nativeBlock(tool, section.entry)" class="block text-xs text-zinc-500">{{ nativeBlock(tool, section.entry) }}</span>
-            </span>
-            <span class="shrink-0 rounded-full px-2 py-0.5 text-[10px]" :class="RISK_CLASS[tool.risk]">{{ RISK_LABEL[tool.risk] }}</span>
-          </li>
-        </ul>
-        <p v-else-if="!section.levels.length" class="text-xs text-zinc-500">Nada a ajustar neste provedor.</p>
-      </section>
-      <small v-if="dangerousNatives.length || openSandboxes.length" class="text-amber-300">
-        ⚠
-        <template v-if="dangerousNatives.length">{{ dangerousNatives.join(', ') }} dá acesso ao disco, à internet e aos comandos do servidor.</template>
-        <template v-if="openSandboxes.length">{{ openSandboxes.join(', ') }}: acesso total.</template>
-        Quem conversar com este agente também terá esse acesso.
-        <template v-if="!form.adminOnly">Marque "Só administradores" na guia Agente se não for para todos.</template>
-      </small>
+            </div>
+          </section>
+          <small v-if="openSandboxes.length" class="text-amber-300">
+            ⚠ {{ openSandboxes.join(', ') }}: acesso total. Quem conversar com este agente também terá esse acesso.
+            <template v-if="!form.adminOnly">Marque "Administradores" na guia Agente se não for para todos.</template>
+          </small>
+        </div>
+      </div>
     </fieldset>
 
     <p v-if="failure && !Object.keys(issues).length" class="text-sm whitespace-pre-line text-rose-300">{{ failure }}</p>
     <!-- O erro de campo aparece junto do campo, que pode estar fora da tela: aqui, perto do Salvar, o resumo. -->
     <p v-else-if="Object.keys(issues).length" class="text-sm text-rose-300">Não foi possível salvar. Corrija: {{ summarizeIssues(issues, FIELD_LABEL) }}</p>
     <!-- ⚖️ Os recursos (skills e commands) têm o próprio cadastro (fora do Salvar do agente): só para agente já gravado. -->
-    <section v-if="tab === 'recursos'">
+    <!-- ⚖️ Recursos, Arquivos e Contexto inicial ficam montados (v-show): o rascunho de cada uma vai no "Salvar agente". -->
+    <section v-show="tab === 'recursos'">
       <AgentResources
         v-if="agent && !creating"
+        ref="resourcesPart"
+        embedded
         :agent-id="agent.id"
         :project-id="agent.projectId"
         :project-name="projects.list.find((item) => item.id === agent?.projectId)?.name"
@@ -1245,10 +1432,12 @@
       <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
     </section>
 
-    <!-- ⚖️ Os arquivos também têm o próprio cadastro (fora do Salvar do agente): só para agente já gravado. -->
-    <section v-if="tab === 'arquivos'">
+    <!-- Os arquivos moram na pasta do agente: só para agente já gravado. -->
+    <section v-show="tab === 'arquivos'">
       <ResourceFiles
         v-if="agent && !creating"
+        ref="filesPart"
+        embedded
         :files="agentFiles"
         :where="`${agent.projectId ? `projects/${agent.projectId}` : 'global'}/agents/${agent.id}`"
         :save="saveAgentFiles"
@@ -1257,10 +1446,11 @@
       <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
     </section>
 
-    <!-- ⚖️ O contexto inicial também tem o próprio cadastro (fora do Salvar do agente): só para agente já gravado. -->
-    <section v-if="tab === 'contexto'">
+    <!-- O contexto inicial: só para agente já gravado. -->
+    <section v-show="tab === 'contexto'">
       <AgentInitialContext
         v-if="agent && !creating"
+        ref="contextPart"
         :agent-id="agent.id"
         :project-id="agent.projectId"
         :project-name="projects.list.find((item) => item.id === agent?.projectId)?.name"
@@ -1293,9 +1483,40 @@
     </section>
 
     <!-- As variáveis secretas também têm o próprio cadastro: fora do Salvar do agente. -->
-    <section v-if="tab === 'variaveis'">
-      <SecretVariables v-if="agent && !creating && auth.isAdmin" :base-path="`/agents/${encodeURIComponent(agent.id)}`" scope-label="deste agente (sempre disponíveis para ele)" />
-      <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
+    <!-- ⚖️ As duas formas de variável do terminal, juntas: as fixas (texto, no registro do agente, gravadas com o Salvar) e
+         as secretas (cifradas; o valor só entra, gravado à parte). Chegam ao mesmo terminal; a secreta vence a fixa. -->
+    <section v-if="tab === 'variaveis'" class="flex flex-col gap-3">
+      <section class="tool-card">
+        <header>
+          <h3>Fixas</h3>
+          <span class="count">{{ envList.length || 'nenhuma' }} · salvas com o botão Salvar do agente</span>
+        </header>
+        <div class="flex flex-col gap-2 p-3">
+        <p class="hint">
+          Texto comum, em todo terminal deste agente (o dele e o dos CLIs): a autoria do git (GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL…), idioma, região. O que o gateway monta
+          (HOME, PATH, a identidade) vence. Segredo não mora aqui: vai em Secretas, logo abaixo, ou nas contas do projeto.
+        </p>
+        <div v-for="(row, index) in envList" :key="index" class="flex flex-wrap items-center gap-2">
+          <input v-model="row.name" class="input w-56 font-mono text-xs" placeholder="GIT_AUTHOR_NAME" :aria-label="`Nome da variável ${index + 1}`" />
+          <input v-model="row.value" class="input min-w-0 flex-1 font-mono text-xs" placeholder="valor" :aria-label="`Valor da variável ${index + 1}`" />
+          <button type="button" class="btn btn-sm btn-danger" @click="envList.splice(index, 1)">Remover</button>
+        </div>
+        <button type="button" class="btn btn-sm btn-ghost self-start" @click="envList.push({ name: '', value: '' })">+ Variável</button>
+        <small v-for="name in envRepeated" :key="`dup-${name}`" class="error">{{ name }} aparece mais de uma vez</small>
+        <small v-for="message in issues.env" :key="message" class="error">{{ message }}</small>
+        </div>
+      </section>
+      <section class="tool-card">
+        <header>
+          <h3>Secretas</h3>
+          <span class="count">cifradas · cada uma é gravada na hora, à parte do Salvar</span>
+        </header>
+        <div class="p-3">
+          <SecretVariables v-if="agent && !creating && auth.isAdmin" :base-path="`/agents/${encodeURIComponent(agent.id)}`" scope-label="deste agente (sempre disponíveis para ele)" />
+          <p v-else-if="!auth.isAdmin" class="text-sm text-zinc-400">Só quem administra cadastra variável secreta.</p>
+          <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para cadastrar variável secreta.</p>
+        </div>
+      </section>
     </section>
 
     <section v-if="tab === 'problemas' && agent">
@@ -1323,12 +1544,13 @@
     </p>
     <p v-else-if="!ready" class="text-xs text-zinc-500">Carregando provedores…</p>
 
-    <div v-show="tab !== 'hooks' && tab !== 'agendamentos' && tab !== 'memoria' && tab !== 'variaveis' && tab !== 'historico'" class="flex gap-2">
+    <!-- O rodapé com o Salvar fica preso embaixo, à vista em qualquer guia, por mais longa que seja. -->
+    <div v-show="!FOOTERLESS_TABS.includes(tab)" class="form-footer flex gap-2">
       <button type="submit" :disabled="saving || !ready || !!loadError || !form.providers.length" class="btn btn-primary">
-        {{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar' }}
+        {{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar agente' }}
       </button>
-      <button v-if="!creating && agent" type="button" class="btn btn-secondary" @click="emit('duplicate', agent)">Duplicar</button>
-      <button v-if="!creating && agent" type="button" class="btn btn-danger ml-auto" @click="confirming = true">Apagar</button>
+      <button v-if="!creating && agent" type="button" class="btn btn-secondary" @click="emit('duplicate', agent)">Duplicar agente</button>
+      <button v-if="!creating && agent" type="button" class="btn btn-danger ml-auto" @click="confirming = true">Apagar agente</button>
     </div>
     <ConfirmDialog
       :open="confirmingSave"
@@ -1361,6 +1583,27 @@
   }
   .hint {
     @apply text-xs font-normal text-zinc-500;
+  }
+  .prompt-area {
+    /* A tela menos o que fica em volta: o topo, o cabeçalho do agente, as guias, o rótulo, as dicas e o rodapé (a
+       Personalidade e o System Prompt). */
+    height: max(18rem, calc(100dvh - 24rem));
+    resize: vertical;
+  }
+  .form-footer {
+    @apply sticky -bottom-5 z-10 -mx-4 border-t border-zinc-800 bg-zinc-950/95 px-4 py-3 backdrop-blur;
+  }
+  .tool-card {
+    @apply rounded-xl border border-zinc-800;
+  }
+  .tool-card > header {
+    @apply flex items-baseline gap-2 border-b border-zinc-800 px-3 py-2;
+  }
+  .tool-card h3 {
+    @apply text-sm font-medium text-zinc-200;
+  }
+  .tool-card .count {
+    @apply text-xs text-zinc-500;
   }
   .error {
     @apply text-xs font-normal text-rose-300;

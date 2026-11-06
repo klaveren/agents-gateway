@@ -168,8 +168,8 @@ const link = (revision: IRevisionSummary) => itemLink(revision)
         <h1 class="text-xl font-semibold">Histórico do catálogo</h1>
         <select v-model="scope" class="input ml-auto w-auto py-1.5 text-sm" aria-label="Escopo">
           <option value="*">Tudo</option>
+          <option v-if="projects.current" :value="projects.current">{{ projects.list.find((project) => project.id === projects.current)?.name ?? projects.current }}</option>
           <option value="global">Global</option>
-          <option v-for="project in projects.list" :key="project.id" :value="project.id">{{ project.name }}</option>
         </select>
       </header>
       <p class="text-xs text-zinc-500">Toda mudança em agentes, recursos, rules, docs, complementos, MCPs e permissões, da mais nova para a mais velha. Abra o item para ver o diff e restaurar.</p>

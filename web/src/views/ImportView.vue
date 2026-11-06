@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SaveFooter from '@/components/SaveFooter.vue'
 import { useAgentsStore } from '@/stores/agents'
 import { computed, inject, onMounted, ref, shallowRef, watch } from 'vue'
 import { routerKey } from 'vue-router'
@@ -279,6 +280,13 @@ function applied(result: IApplyResult) {
 
 function parseIgnore(text: string): string[] {
   return [...new Set(text.split('\n').map((line) => line.trim()).filter(Boolean))]
+}
+
+/** O painel do ambiente agêntico (montado embutido): o rodapé grava o rascunho dele junto com o ignorar. */
+const scopePart = ref<{ dirty: boolean; commit: () => Promise<void> }>()
+async function saveAnalysis() {
+  if (ignoreDirty.value) await saveIgnore()
+  await scopePart.value?.commit().catch(() => undefined)
 }
 
 async function saveIgnore() {
@@ -647,14 +655,23 @@ watch(() => projects.current, reset)
               <textarea v-model="ignoreText" class="input min-h-24 font-mono" rows="4" placeholder=".agents/benchmark/results&#10;*.log" data-test="ignore-patterns" />
             </label>
             <div class="flex flex-wrap items-center gap-2">
-              <button type="submit" class="btn btn-secondary btn-sm" :disabled="ignoreBusy || !ignoreDirty" data-test="ignore-save">{{ ignoreBusy ? 'Salvando…' : 'Salvar padrões' }}</button>
+              <span v-if="ignoreDirty" class="text-amber-300">Mudança não salva</span>
               <span v-if="ignoreMessage" class="text-emerald-300">{{ ignoreMessage }}</span>
               <span v-if="ignoreError" class="text-rose-300" data-test="ignore-error">{{ ignoreError }}</span>
             </div>
           </form>
         </details>
 
-        <ImportScope :project-id="projectId" :scope="scan?.scope" />
+        <ImportScope ref="scopePart" :project-id="projectId" :scope="scan?.scope" embedded />
+        <!-- Um salvar só para a configuração da análise (o ignorar e o ambiente): aparece quando há o que gravar. -->
+        <SaveFooter
+          v-if="ignoreDirty || scopePart?.dirty"
+          label="Salvar configuração da análise"
+          :busy="ignoreBusy"
+          pending
+          data-test="analysis-save"
+          @save="saveAnalysis"
+        />
 
         <template v-if="scan">
           <nav class="no-scrollbar flex gap-1 overflow-x-auto border-b border-zinc-800" role="tablist" data-test="areas">

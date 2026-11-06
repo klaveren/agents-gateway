@@ -15,6 +15,8 @@
       | 'trash'
       | 'archive'
       | 'more'
+      | 'globe'
+      | 'shield'
       | 'copy'
       | 'bolt'
       | 'check'
@@ -137,6 +139,11 @@
       <path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4" />
       <path d="M15 16l4-4-4-4M19 12H9" />
     </template>
+    <template v-else-if="name === 'globe'">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
+    </template>
+    <template v-else-if="name === 'shield'"><path d="M12 3 5 6v5c0 4.5 3 8.5 7 10 4-1.5 7-5.5 7-10V6z" /></template>
     <template v-else-if="name === 'key'">
       <circle cx="8" cy="15" r="4" />
       <path d="m10.8 12.2 8.7-8.7M16 7l3 3M14 9l2 2" />

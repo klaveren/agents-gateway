@@ -55,7 +55,7 @@ export function cliPromptEstimate(input: { cli?: ICliFootprint; saved?: IIdentit
   const warnAt = cli?.warnAt ?? Math.floor(limit * CLI_ARG_WARN_RATIO)
   const parts = [
     { label: 'Soul', bytes: utf8(soulText(live.soul)) },
-    { label: 'Instrução do sistema', bytes: utf8(live.systemPrompt) },
+    { label: 'System Prompt', bytes: utf8(live.systemPrompt) },
     ...(measured ? cli.parts.filter((part) => part.key !== 'soul' && part.key !== 'instructions') : []),
   ]
   const heavy = parts

@@ -97,7 +97,7 @@ describe('ModelGroupsView', () => {
     const { host } = await mount('/model-groups')
     const text = host.textContent ?? ''
     expect(text).toContain('Padrão')
-    expect(text).toContain('padrao · 1 passo · 0 agentes + os sem grupo')
+    expect(text).toContain('padrao · 1 passo · 0 agentes + os sem sequência')
     expect(text).toContain('padrão')
     expect(text).toContain('rapido · 2 passos · 1 agente')
   })
@@ -132,7 +132,7 @@ describe('ModelGroupsView', () => {
   it('apagar um grupo em uso mostra a mensagem do servidor e mantém o diálogo', async () => {
     const putError = new ApiError(422, 'validation', 'invalid', [{ field: 'modelGroups', message: 'rapido is used by agent a1' }])
     const { calls } = await mount('/model-groups/rapido', { putError })
-    button('Apagar')!.click()
+    button('Apagar sequência')!.click()
     await flush()
     document.querySelector<HTMLButtonElement>('[role=alertdialog] button.btn:last-child')!.click()
     await flush()

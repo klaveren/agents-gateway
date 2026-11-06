@@ -12,7 +12,8 @@ import { useImportsStore } from '@/stores/imports'
  *
  * ⚖️ Salvar grava pela store e fica com o que o servidor devolveu (sem reler); vale no próximo "Analisar de novo".
  */
-const props = defineProps<{ projectId?: string; scope?: IInventoryScope }>()
+/** `embedded`: sem botão próprio — quem grava é o rodapé da tela (`commit`), junto com o ignorar. */
+const props = defineProps<{ projectId?: string; scope?: IInventoryScope; embedded?: boolean }>()
 
 const imports = useImportsStore()
 const { data, error: loadError } = useResource(imports.scope, () => props.projectId)
@@ -52,6 +53,14 @@ function toggle(place: string) {
   off.value = next
   saved.value = undefined
 }
+
+/** O rodapé da importação grava este painel junto: lança se falhar. */
+async function commit(): Promise<void> {
+  if (!dirty.value) return
+  await save()
+  if (saveError.value) throw new Error(saveError.value)
+}
+defineExpose({ dirty, commit })
 
 async function save() {
   if (!props.projectId) return
@@ -109,7 +118,8 @@ function message(failure: unknown): string {
         <textarea v-model="extraText" class="input min-h-16 font-mono" rows="3" placeholder="prompts&#10;docs/agentes/**/*.md" data-test="scope-extra" @input="saved = undefined" />
       </label>
       <div class="flex flex-wrap items-center gap-2">
-        <button type="submit" class="btn btn-secondary btn-sm" :disabled="busy || !dirty" data-test="scope-save">{{ busy ? 'Salvando…' : 'Salvar ambiente' }}</button>
+        <button v-if="!embedded" type="submit" class="btn btn-secondary btn-sm" :disabled="busy || !dirty" data-test="scope-save">{{ busy ? 'Salvando…' : 'Salvar ambiente' }}</button>
+        <span v-else-if="dirty" class="text-amber-300">Mudança não salva</span>
         <span v-if="saved" class="text-emerald-300" data-test="scope-saved">{{ saved }}</span>
         <span v-if="error" class="text-rose-300" data-test="scope-error">{{ error }}</span>
       </div>

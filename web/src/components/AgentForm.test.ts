@@ -63,7 +63,7 @@ async function mount(agent: IAgentDetail) {
   return { host, calls }
 }
 
-const select = (host: HTMLElement) => host.querySelector<HTMLSelectElement>('select[aria-label="Grupo de modelos"]')!
+const select = (host: HTMLElement) => host.querySelector<HTMLSelectElement>('select[aria-label="Sequência de troca"]')!
 
 async function saveWith(host: HTMLElement, value: string) {
   select(host).value = value

@@ -142,14 +142,14 @@
             Novo valor
             <input v-model="newValue" type="password" autocomplete="new-password" class="input font-mono" data-test="secret-new-value" @keydown.enter.prevent />
           </label>
-          <button type="button" class="btn btn-primary" :disabled="!newValue || busy" data-test="secret-save-value" @click="saveValue(secret.name)">Salvar</button>
+          <button type="button" class="btn btn-primary" :disabled="!newValue || busy" data-test="secret-save-value" @click="saveValue(secret.name)">Gravar valor</button>
         </div>
         <div v-if="editing === secret.name" class="flex flex-wrap items-end gap-2">
           <label class="field min-w-0 flex-1">
             Descrição
             <input v-model="newDescription" class="input" maxlength="300" data-test="secret-new-description" @keydown.enter.prevent />
           </label>
-          <button type="button" class="btn btn-primary" :disabled="busy" data-test="secret-save-description" @click="saveDescription(secret.name)">Salvar</button>
+          <button type="button" class="btn btn-primary" :disabled="busy" data-test="secret-save-description" @click="saveDescription(secret.name)">Gravar descrição</button>
         </div>
       </li>
     </ul>

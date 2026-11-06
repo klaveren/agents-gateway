@@ -177,7 +177,7 @@ function context(tokens?: number): string {
           <input v-model="draft.input" inputmode="decimal" placeholder="entrada" class="w-20 rounded border border-zinc-700 bg-zinc-900 px-2 py-1" />
           <input v-model="draft.output" inputmode="decimal" placeholder="saída" class="w-20 rounded border border-zinc-700 bg-zinc-900 px-2 py-1" />
           <span class="text-zinc-500">US$/1M</span>
-          <button type="submit" class="btn btn-sm btn-primary">Salvar</button>
+          <button type="submit" class="btn btn-sm btn-primary">Gravar preço</button>
           <button v-if="model.priceSource === 'manual'" type="button" class="btn btn-sm btn-ghost" title="Remove o preço manual" @click="savePrice(model, true)">Restaurar preço</button>
           <button type="button" class="btn btn-sm btn-ghost" @click="editing = undefined">Cancelar</button>
         </form>

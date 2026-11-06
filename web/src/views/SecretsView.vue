@@ -1,5 +1,6 @@
 <script setup lang="ts">
-  import { computed, ref, watch } from 'vue'
+  import SaveFooter from '@/components/SaveFooter.vue'
+import { computed, ref, watch } from 'vue'
   import { ApiError } from '@/lib/api'
   import { fullTime } from '@/lib/format'
   import { useResource } from '@/composables/useResource'
@@ -29,6 +30,10 @@
       safeNames.value = names?.safe.join('\n') ?? ''
     },
     { immediate: true },
+  )
+  /** Os nomes mudaram e não foram gravados? (o rodapé fica disponível só então.) */
+  const namesDirty = computed(
+    () => secretNames.value !== (data.value?.names?.secret.join('\n') ?? '') || safeNames.value !== (data.value?.names?.safe.join('\n') ?? ''),
   )
   const draft = ref({ id: '', label: '', value: '' })
   const sample = ref('')
@@ -163,7 +168,6 @@
           <textarea v-model="safeNames" class="input font-mono text-xs" rows="4" placeholder="_HINT&#10;_LABEL" />
           <small class="hint">O fim do nome. Os de fábrica: HOST, PORT, URL, USER, NAME, ID, TIMEOUT…</small>
         </label>
-        <div class="sm:col-span-2"><button class="btn btn-sm" @click="saveNames">Salvar nomes</button></div>
       </section>
 
       <section class="flex flex-col gap-2">
@@ -187,6 +191,8 @@
         </ul>
         <p v-else class="text-xs text-zinc-500">Nada mascarado desde que o gateway subiu.</p>
       </section>
+      <!-- Um salvar só por tela: os nomes. Os valores mascarados gravam na hora (Adicionar). -->
+      <SaveFooter label="Salvar nomes" :disabled="!namesDirty" :pending="namesDirty" @save="saveNames" />
     </section>
   </div>
 </template>
@@ -194,6 +200,13 @@
 <style scoped>
   @reference '../style.css';
 
+  /* O rótulo em cima do campo, com a dica embaixo, como nas outras telas. */
+  .field {
+    @apply flex min-w-0 flex-col gap-1.5 text-sm font-medium text-zinc-300;
+  }
+  .hint {
+    @apply text-xs font-normal text-zinc-500;
+  }
   .input {
     @apply rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 font-normal text-zinc-100 outline-none focus:border-emerald-500/60;
   }

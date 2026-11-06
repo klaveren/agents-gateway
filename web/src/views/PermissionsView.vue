@@ -2,7 +2,8 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import HistoryPanel from '@/components/HistoryPanel.vue'
-import HistoryTabs from '@/components/HistoryTabs.vue'
+import PermissionCategoryTabs from '@/components/PermissionCategoryTabs.vue'
+import SaveFooter from '@/components/SaveFooter.vue'
 import PermissionRules from '@/components/PermissionRules.vue'
 import PermissionRequests from '@/components/PermissionRequests.vue'
 import PermissionRequestsBadge from '@/components/PermissionRequestsBadge.vue'
@@ -12,7 +13,7 @@ import PermissionTester from '@/components/PermissionTester.vue'
 import { ApiError } from '@/lib/api'
 import { fullTime } from '@/lib/format'
 import { LAYER_LABEL, PERMISSION_SECTIONS } from '@/lib/permissions'
-import type { IPermissionDecision, IPermissionRule } from '@/lib/types'
+import type { IPermissionDecision, IPermissionRule, TPermissionCategory } from '@/lib/types'
 import { useResource } from '@/composables/useResource'
 import { useAgentsStore } from '@/stores/agents'
 import { useAuthStore } from '@/stores/auth'
@@ -56,6 +57,8 @@ const busy = ref(false)
 const showSystem = ref(false)
 /** A guia: as regras ou o histórico delas (`#historico` no endereço abre nele). */
 const tab = ref<'edit' | 'history'>(route.hash === '#historico' ? 'history' : 'edit')
+/** A categoria aberta: uma guia por categoria, como no agente. */
+const section = ref<TPermissionCategory>('terminal')
 
 const dirty = computed(() => JSON.stringify(rules.value) !== saved.value)
 const label = (category: string) => PERMISSION_SECTIONS.find((section) => section.category === category)?.label ?? category
@@ -131,18 +134,27 @@ watch(decisionAgent, () => void loadDecisions())
           <strong class="font-medium">Sem regra, negado.</strong> Dentro de cada lista, Negar vence Permitir. A regra do agente vale antes da do projeto, e as do sistema
           (segredos e comandos que derrubam o servidor) valem sempre.
         </div>
-        <HistoryTabs v-model="tab" edit-label="Regras" />
+        <PermissionCategoryTabs v-model="section" :rules="rules" :active="tab === 'edit'" @pick="tab = 'edit'">
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="tab === 'history'"
+            data-test="tab-history"
+            class="shrink-0 border-b-2 px-3 py-2 text-sm whitespace-nowrap"
+            :class="tab === 'history' ? 'border-emerald-500 text-zinc-100' : 'border-transparent text-zinc-400 hover:text-zinc-200'"
+            @click="tab = 'history'"
+          >
+            Histórico
+          </button>
+        </PermissionCategoryTabs>
         <HistoryPanel v-if="tab === 'history'" kind="project-permissions" :id="project.id" @restored="restored" />
         <template v-else>
           <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
 
           <PermissionRequests :project-id="project.id" @approved="requestApproved" />
-          <PermissionRules v-model="rules" />
-          <div class="flex flex-wrap items-center gap-3">
-            <button type="button" class="btn btn-primary" :disabled="busy || !dirty" @click="save">Salvar</button>
-            <span v-if="notice" class="text-xs text-emerald-300">{{ notice }}</span>
-            <span v-else-if="meta.updatedBy" class="text-xs text-zinc-500">Alterado por {{ meta.updatedBy }} em {{ fullTime(meta.updatedAt) }}</span>
-          </div>
+          <PermissionRules v-model="rules" :only="section" />
+          <p v-if="notice" class="text-xs text-emerald-300">{{ notice }}</p>
+          <p v-else-if="meta.updatedBy" class="text-xs text-zinc-500">Alterado por {{ meta.updatedBy }} em {{ fullTime(meta.updatedAt) }}</p>
 
           <section class="rounded-xl border border-zinc-800">
             <button type="button" class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-zinc-300" @click="showSystem = !showSystem">
@@ -158,7 +170,7 @@ watch(decisionAgent, () => void loadDecisions())
             </ul>
           </section>
 
-          <PermissionTester :project-id="project.id" />
+          <PermissionTester :project-id="project.id" :initial="section" />
 
           <section class="flex flex-col gap-2">
             <div class="flex items-center gap-2">
@@ -180,6 +192,7 @@ watch(decisionAgent, () => void loadDecisions())
             </ul>
             <p v-else class="text-xs text-zinc-500">Nenhuma decisão registrada ainda.</p>
           </section>
+          <SaveFooter label="Salvar permissões" :busy="busy" :disabled="!dirty" :pending="dirty" @save="save" />
         </template>
       </template>
     </section>

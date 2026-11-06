@@ -28,7 +28,7 @@ function footprint(bytes: number): IAgentFootprint {
       warnAt: Math.floor(CLI_ARG_MAX_BYTES * 0.8),
       parts: [
         { key: 'soul', label: 'Soul', bytes: 50 },
-        { key: 'instructions', label: 'Instrução do sistema', bytes: 8 },
+        { key: 'instructions', label: 'System Prompt', bytes: 8 },
         { key: 'projectSpecs', label: 'Contexto inicial do projeto', bytes: bytes - 1_000 },
         { key: 'skills', label: 'Índice de skills', bytes: 900 },
       ],
@@ -74,7 +74,7 @@ describe('CliPromptMeter', () => {
   it('agente novo: só o soul e a instrução da tela, sem pedir nada ao servidor', async () => {
     const host = await mount({ providers: ['Antigravity'], codex: false, systemPrompt: 'a'.repeat(110_000) })
     expect(api).not.toHaveBeenCalled()
-    expect(host.querySelector('[data-test="cli-warn"]')?.textContent).toContain('Instrução do sistema')
+    expect(host.querySelector('[data-test="cli-warn"]')?.textContent).toContain('System Prompt')
     expect(host.textContent).toContain('entram depois de salvar')
   })
 })
