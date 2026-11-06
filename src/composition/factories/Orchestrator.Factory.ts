@@ -24,7 +24,7 @@ import { makeProjects } from './Projects.Factory'
 import { makeProviders } from './Providers.Factory'
 import { makeSettings } from './Settings.Factory'
 import { makeModelCatalog } from './Catalog.Factory'
-import { editDiagnostics, loopGuard, makeTools, selfUrl } from './Tools.Factory'
+import { agentFolderOf, editDiagnostics, loopGuard, makeTools, selfUrl } from './Tools.Factory'
 
 let store: SessionStore | undefined
 
@@ -62,14 +62,31 @@ export function makeOrchestrator(): AgentProvider {
     [adapterKey(EProvider.GOOGLE, EMode.CHAT), new GoogleChatAdapter({ store: sessions, catalog, connections })],
     [
       adapterKey(EProvider.CLAUDE, EMode.AGENT),
-      new ClaudeAgentAdapter({ store: sessions, catalog, connections, permissions: makePermissions(), loops: loopGuard(), diagnostics: editDiagnostics() }),
+      new ClaudeAgentAdapter({
+        store: sessions,
+        catalog,
+        connections,
+        permissions: makePermissions(),
+        loops: loopGuard(),
+        diagnostics: editDiagnostics(),
+        agentFolder: agentFolderOf,
+      }),
     ],
     [adapterKey(EProvider.OPENAI, EMode.AGENT), new OpenAIAgentAdapter({ store: sessions, catalog, connections })],
     [adapterKey(EProvider.GOOGLE, EMode.AGENT), new GoogleAgentAdapter({ store: sessions, catalog, connections })],
     // As assinaturas: só a lane agent (ver `Subscription.Policy`).
     [
       adapterKey(EProvider.CLAUDE_SUB, EMode.AGENT),
-      new ClaudeAgentAdapter({ store: sessions, catalog, connections, subscription: true, permissions: makePermissions(), loops: loopGuard(), diagnostics: editDiagnostics() }),
+      new ClaudeAgentAdapter({
+        store: sessions,
+        catalog,
+        connections,
+        subscription: true,
+        permissions: makePermissions(),
+        loops: loopGuard(),
+        diagnostics: editDiagnostics(),
+        agentFolder: agentFolderOf,
+      }),
     ],
     [adapterKey(EProvider.CODEX, EMode.AGENT), new CodexAgentAdapter({ store: sessions, catalog, connections, turnTools })],
     [adapterKey(EProvider.ANTIGRAVITY, EMode.AGENT), new AntigravityAgentAdapter({ store: sessions, catalog, connections, turnTools })],

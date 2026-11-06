@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { decide, type IPermissionRule } from '@domain/Permission.Policy'
 import type { IPermissionChecker } from '@application/Permissions.Service'
 import { join } from 'node:path'
+import { dataDir } from '@infra/adapters/support/Subscription.Workspace'
 import { after, before, describe, it } from 'node:test'
 import type { query } from '@anthropic-ai/claude-agent-sdk'
 import { EMode } from '@domain/enums/EMode.Enum'
@@ -177,6 +178,36 @@ describe('ClaudeAgentAdapter', () => {
       assert.match(result.message ?? '', /protegido/)
     }
     assert.strictEqual((await gate('Write', { file_path: 'secrets.json' }, {})).behavior, 'deny')
+  })
+
+  it('⛔ a pasta privada nas nativas: a própria pela capacidade (sem regra), a de outro agente nunca', async () => {
+    const seen: TQueryParams[] = []
+    const init = { type: 'system', subtype: 'init', session_id: 'cli-1', tools: ['Read', 'Write', 'Glob'] }
+    const data = dataDir()
+    const mine = join(data, 'global', 'agents', CLAUDE_TEST_AGENT.id)
+    // Nenhuma regra libera nada: só a pasta própria passa.
+    const permissions = { check: () => ({ allowed: false, layer: 'default' as const, reason: 'sem regra' }) }
+    const run = async (write: boolean) => {
+      const adapter = new ClaudeAgentAdapter({ query: queryWith(() => [init, ...turn()], seen), permissions, agentFolder: () => ({ dir: mine, read: true, write }) })
+      const agent = { ...getAgent(), allowedTools: ['sdk:Read', 'sdk:Write', 'sdk:Glob'] }
+      const session = await adapter.createSession(agent, { agentId: CLAUDE_TEST_AGENT.id })
+      await drain(adapter.sendMessage(agent, session.id, { text: 'hi' }, {}))
+      return seen.at(-1)!.options?.canUseTool as (name: string, input: Record<string, unknown>, options: unknown) => Promise<{ behavior: string; message?: string }>
+    }
+    const gate = await run(true)
+    assert.strictEqual((await gate('Read', { file_path: join(mine, 'notas.md') }, {})).behavior, 'allow')
+    assert.strictEqual((await gate('Write', { file_path: join(mine, 'notas.md'), content: 'x' }, {})).behavior, 'allow')
+    for (const [tool, input] of [
+      ['Read', { file_path: join(data, 'global', 'agents', 'outro', 'a.md') }],
+      ['Glob', { pattern: join(data, 'projects', 'alfa', 'agents', 'leo', '**') }],
+    ] as const) {
+      const result = await gate(tool, input, {})
+      assert.deepStrictEqual([result.behavior, /another agent/.test(result.message ?? '')], ['deny', true], `${tool}: ${result.message}`)
+    }
+    // Fora da pasta, a regra decide (aqui, nega).
+    assert.strictEqual((await gate('Read', { file_path: '/srv/app/notas.md' }, {})).behavior, 'deny')
+    const reader = await run(false)
+    assert.match((await reader('Write', { file_path: join(mine, 'b.md'), content: 'x' }, {})).message ?? '', /read-only for you/)
   })
 
   it('liga só as nativas do agente no CLI, o gate as aprova, e avisa quando o init não traz uma delas', async () => {

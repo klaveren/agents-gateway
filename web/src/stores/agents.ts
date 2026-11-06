@@ -103,8 +103,9 @@ export const useAgentsStore = defineStore('agents', () => {
    * Os arquivos da pasta do agente (guia própria, gravada à parte). ⚖️ Troca só os arquivos no detalhe guardado, no
    * MESMO objeto: o formulário aberto não se refaz (perderia o que ainda não foi salvo), e quem abrir depois já os vê.
    */
-  async function saveFiles(id: string, files: IResourceFile[]): Promise<void> {
-    await api(`/agents/${encodeURIComponent(id)}/files`, { method: 'PUT', body: { files } })
+  /** `base`: os caminhos que a guia mostrava — o que ela tirou sai da pasta; o que o agente gravou depois, fica. */
+  async function saveFiles(id: string, files: IResourceFile[], base: readonly string[] = []): Promise<void> {
+    await api(`/agents/${encodeURIComponent(id)}/files`, { method: 'PUT', body: { files, base } })
     const current = details.get(id)
     if (current) current.files = files
   }

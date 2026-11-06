@@ -12,7 +12,7 @@ import { IConnectionSource, requireConnection, UnavailableProviderError } from '
 import { dataDir, workspaceFor, subscriptionEnv } from './support/Subscription.Workspace'
 import { query, type CanUseTool, type EffortLevel, type Options, type HookCallback, type PermissionResult, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { IProjectSandbox, PATH_FIELDS, projectPathIssue, projectSandbox } from '@infra/sandbox/Project.Sandbox'
-import { deniedPath, realOf } from '@infra/tools/File.Tools'
+import { deniedPath, type IOwnFolder, realOf } from '@infra/tools/File.Tools'
 import { askerOf } from '@infra/tools/Local.Tools'
 import type { IPermissionChecker } from '@application/Permissions.Service'
 import { EMode } from '@domain/enums/EMode.Enum'
@@ -31,7 +31,7 @@ import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
 import { buildClaudeMcpServers, claudeHiddenTools, claudeMcpServerName, LOCAL_SERVER_NAME } from '@infra/tools/bridges/Claude.ToolBridge'
 import { IAgentMcpServer, ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { composeSystemPrompt, maxToolTurns } from './support/Prompt.Helper'
-import { isResourceFilePath } from '@infra/workspace/Resource.Files'
+import { agentFolderOwner, isResourceFilePath } from '@infra/workspace/Resource.Files'
 import { projectAliases } from '@infra/workspace/Work.Folder'
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const
@@ -65,6 +65,8 @@ export interface IClaudeAgentAdapterDeps {
   loops?: { check(sessionId: string | undefined, tool: string, args: unknown): string | undefined }
   /** O diagnóstico depois de editar (ver `Edit.Diagnostics`): o `PostToolUse` das nativas de edição. Ausente = nenhum. */
   diagnostics?: IEditDiagnostics
+  /** ⛔ A pasta privada do agente e o que ele faz nela (ver `agentFolderAccess`): as nativas de arquivo a alcançam. */
+  agentFolder?: (agentId: string) => IOwnFolder | undefined
   /**
    * Pela ASSINATURA (Claude Pro/Max), protocolo `claude-sub`: nenhuma chave de API vai ao CLI, que usa o
    * login do host — ou o `CLAUDE_CODE_OAUTH_TOKEN` (de `claude setup-token`) salvo no lugar da chave.
@@ -90,6 +92,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
   private readonly permissions?: IPermissionChecker
   private readonly loops?: IClaudeAgentAdapterDeps['loops']
   private readonly diagnostics?: IEditDiagnostics
+  private readonly agentFolder?: (agentId: string) => IOwnFolder | undefined
 
   private readonly connections?: IConnectionSource
   private readonly protocol: EProvider
@@ -104,6 +107,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     this.permissions = deps.permissions
     this.loops = deps.loops
     this.diagnostics = deps.diagnostics
+    this.agentFolder = deps.agentFolder
   }
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
@@ -193,6 +197,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       project,
       { asker: askerOf(context), cwd: workDir, ...(context.workFolder ? { folder: context.workFolder } : {}) },
       Object.keys(context.secretEnv ?? {}),
+      this.agentFolder?.(agent.id),
     )
     const options: Options = {
       model: record.model,
@@ -466,6 +471,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     project?: { projectId: string; dir: string },
     who?: { asker: ReturnType<typeof askerOf>; cwd: string; folder?: { dir: string; projectDir: string } },
     secretNames: readonly string[] = [],
+    own?: IOwnFolder,
   ): CanUseTool {
     const byServer = new Map(remotes.map((remote) => [claudeMcpServerName(remote.config.id), remote]))
     // Os comandos que ESTE portão já embrulhou: o hook e o `canUseTool` podem passar pelo mesmo Bash, e um
@@ -483,12 +489,18 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
         return verdict && !verdict.allowed ? { behavior: 'deny', message: `${bare}: ${verdict.reason}.` } : { behavior: 'allow' }
       }
       if (!remote && allowed.includes(bare)) {
+        // ⛔ A pasta privada: a de outro agente nunca; a própria pela capacidade, sem passar pelas regras nem pelo filtro
+        // da pasta do projeto (o agente global numa conversa de projeto também alcança a dele).
+        const folder = agentFolderVerdict(bare, input, who?.cwd ?? project?.dir ?? process.cwd(), own)
+        if (folder.refused) return { behavior: 'deny', message: folder.refused }
         // ⛔ Em qualquer agente, de projeto ou global: as nativas de arquivo nunca tocam .env, chaves nem os dados do gateway.
-        const protectedPath = protectedPathOf(bare, input, project?.dir)
+        // Na própria pasta, ela é a raiz (a do agente de projeto mora nos dados, fora da worktree): só os nomes protegidos valem.
+        const protectedPath = protectedPathOf(bare, input, folder.mine ? own!.dir : project?.dir)
         if (protectedPath) return { behavior: 'deny', message: `${protectedPath}: este arquivo é protegido.` }
         // ⛔ O Bash que só mostra uma variável secreta (ver `printsSecret`): use a variável, não a imprima.
         const printing = bare === 'Bash' ? printsSecret(String(input.command ?? ''), secretNames) : undefined
         if (printing) return { behavior: 'deny', message: `Recusado: ${printing}. Use a variável no comando ($NOME), nunca a imprima.` }
+        if (folder.mine) return { behavior: 'allow' }
         const refused = who && this.permissions ? this.fileRefusal(bare, input, who) : undefined
         if (refused) return { behavior: 'deny', message: refused }
         return project ? this.confined(bare, input, project, wrapped) : { behavior: 'allow' }
@@ -723,6 +735,28 @@ function protectedPathOf(toolName: string, input: Record<string, unknown>, root 
     if (WRITE_TOOLS.has(toolName) && isResourceFilePath(abs)) return `${toolName}: ${value} (resource files are read-only: edit them in the gateway)`
   }
   return undefined
+}
+
+/**
+ * ⛔ A PASTA PRIVADA nas nativas de arquivo: um caminho na pasta de OUTRO agente recusa a chamada; todos na do próprio
+ * (`mine`) dispensam as regras e valem pela capacidade (gravar pede `write`). Glob relativo não sai do cwd.
+ */
+function agentFolderVerdict(toolName: string, input: Record<string, unknown>, cwd: string, own: IOwnFolder | undefined): { refused?: string; mine: boolean } {
+  let paths = 0
+  let mine = 0
+  for (const field of PATH_FIELDS[toolName] ?? []) {
+    const value = input[field]
+    if (typeof value !== 'string' || !value || ((field === 'pattern' || field === 'glob') && !isAbsolute(value))) continue
+    paths += 1
+    const abs = realOf(resolve(cwd, value))
+    const owner = agentFolderOwner(abs)
+    if (!owner) continue
+    if (!own || realOf(owner.dir) !== realOf(own.dir)) return { refused: `${toolName}: ${value} (private folder of another agent: only that agent reaches it)`, mine: false }
+    if (WRITE_TOOLS.has(toolName) && !own.write)
+      return { refused: `${toolName}: ${value} (your folder is read-only for you: writing in it needs the Write files capability)`, mine: false }
+    mine += 1
+  }
+  return { mine: paths > 0 && mine === paths }
 }
 
 /** As nativas que gravam: nas pastas de arquivos de recurso, recusadas. */

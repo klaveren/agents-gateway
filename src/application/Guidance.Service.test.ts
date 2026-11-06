@@ -925,6 +925,10 @@ describe('GuidanceService', () => {
             else dirs.delete(key(kind, id, projectId))
           },
           remove: (kind: 'skill' | 'command' | 'agent', id: string, projectId?: string) => void dirs.delete(key(kind, id, projectId)),
+          writeAgent: () => undefined,
+          restoreAgent: () => undefined,
+          moveAgent: () => undefined,
+          snapshotAgent: () => [],
         },
       }
     }

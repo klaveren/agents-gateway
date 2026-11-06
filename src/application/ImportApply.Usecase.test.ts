@@ -156,6 +156,11 @@ async function setup(
         list.map((file) => file.path),
       ),
     remove: (kind: string, id: string) => void folders.delete(`${kind}/${id}`),
+    writeAgent: (id: string, _projectId: string | undefined, list: ReadonlyArray<{ path: string }>, removed: readonly string[]) =>
+      void folders.set(`agent/${id}`, [...new Set([...(folders.get(`agent/${id}`) ?? []).filter((path) => !removed.includes(path)), ...list.map((file) => file.path)])]),
+    restoreAgent: () => undefined,
+    moveAgent: () => undefined,
+    snapshotAgent: () => [],
   }
   const stack = buildCatalogStack({ ...(options.wrapWriter ? { wrapWriter: options.wrapWriter } : {}), ...(options.withFiles ? { files: filesPort } : {}) })
   stack.projects.create({ id: 'alfa', name: 'Alfa' }, 'ana')

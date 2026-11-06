@@ -196,3 +196,15 @@ export const LEGACY_TO_CAPABILITY: Readonly<Record<string, string>> = {
 export function toCapabilities(allowedTools: readonly string[]): string[] {
   return [...new Set(allowedTools.map((tool) => LEGACY_TO_CAPABILITY[tool] ?? tool))]
 }
+
+/**
+ * ⛔ O que o agente faz na PRÓPRIA PASTA (a privada, ver `Agent.Catalog.filesDir`), pelas capacidades dele, sem regra:
+ * lê com Ler arquivos ou Terminal (roda os scripts dela); grava com Escrever arquivos. Sem nenhuma, não a alcança.
+ */
+export function agentFolderAccess(allowedTools: readonly string[]): { read: boolean; write: boolean } {
+  const caps = new Set(toCapabilities(allowedTools))
+  // A capacidade ou uma das ferramentas dela já resolvida (`read_file`, `write_file`: o agente preparado para o adapter).
+  const has = (id: string) => caps.has(id) || !!capability(id)?.local.some((tool) => caps.has(tool))
+  const write = has('cap:files.write')
+  return { read: write || has('cap:files.read') || has('cap:terminal'), write }
+}

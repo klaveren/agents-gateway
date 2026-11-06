@@ -54,6 +54,9 @@ describe('Ambient.Policy', () => {
   })
 
   it('o agente com arquivos sabe onde eles estão (só leitura)', () => {
-    assert.match(ambientSection({ agentId: 'maya', files: '/dados/global/agents/maya' }), /- Seus arquivos \(scripts, modelos\): \/dados\/global\/agents\/maya — só leitura/)
+    const reading = ambientSection({ agentId: 'maya', files: { dir: '/dados/global/agents/maya', write: false } })
+    assert.match(reading, /- Sua pasta: \/dados\/global\/agents\/maya — privada, sua: nenhum outro agente a vê\./)
+    assert.match(reading, /só leitura para você: gravar pede Escrever arquivos/)
+    assert.match(ambientSection({ agentId: 'maya', files: { dir: '/dados/global/agents/maya', write: true } }), /Leia e grave nela seus scripts, notas e dados de trabalho/)
   })
 })

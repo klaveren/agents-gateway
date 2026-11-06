@@ -14,8 +14,8 @@ export interface IAmbient {
    * (Claude Agent SDK, Codex) e a raiz das ferramentas do gateway (`run_bash`, arquivos). Ausente: a pasta vazia da conversa.
    */
   directory?: string
-  /** A pasta com os arquivos do próprio agente (scripts, modelos): só leitura para ele. */
-  files?: string
+  /** A pasta PRIVADA do agente e se ele grava nela (ver `agentFolderAccess`). Ausente: ele não a alcança. */
+  files?: { dir: string; write: boolean }
   /** As variáveis secretas que o agente pode usar (só os nomes; ver `ResourceSecret.Model`). */
   secrets?: IAmbientSecrets
   /** A conversa tem o painel (ver `ConversationPanel.Model`). */
@@ -41,7 +41,7 @@ export function ambientSection(ambient: IAmbient): string {
   if (!directory) lines.push('- Diretório de trabalho: uma pasta vazia, só desta conversa.')
   else if (repository) lines.push(`- Diretório de trabalho: ${directory}. Fora dele você não lê nem grava; o git dele funciona (status, commit, push).`)
   else lines.push(`- Diretório de trabalho: ${directory} — persistente e compartilhado pelas conversas do projeto. Fora dele você não lê nem grava.`)
-  if (ambient.files) lines.push(`- Seus arquivos (scripts, modelos): ${ambient.files} — só leitura; rode-os pelo terminal a partir dessa pasta.`)
+  if (ambient.files) lines.push(agentFolderLine(ambient.files))
   if (ambient.panel)
     lines.push(
       '',
@@ -76,4 +76,15 @@ function secretsSection(secrets: IAmbientSecrets): string {
  */
 export function conversationNote(conversationId: string): string {
   return `<contexto>id desta conversa: ${conversationId}</contexto>`
+}
+
+/**
+ * ⛔ A pasta PRIVADA do agente, como ele a recebe: é dele, persistente e só dele (nenhum outro agente a alcança), e vale
+ * em todas as conversas dele, de qualquer pessoa. Grava só com Escrever arquivos (`write`).
+ */
+export function agentFolderLine(files: { dir: string; write: boolean }): string {
+  const use = files.write
+    ? 'leia e grave nela seus scripts, notas e dados de trabalho (o caminho absoluto, pelas ferramentas de arquivo ou pelo terminal)'
+    : 'leia e rode por ela seus scripts e modelos (só leitura para você: gravar pede Escrever arquivos)'
+  return `- Sua pasta: ${files.dir} — privada, sua: nenhum outro agente a vê. Persiste entre conversas e vale em todas as suas, de qualquer pessoa: não guarde nela o que uma pessoa não pode ver da outra. ${use[0]!.toUpperCase()}${use.slice(1)}. Quem cuida do gateway também pode pôr arquivos nela.`
 }

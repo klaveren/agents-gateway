@@ -250,7 +250,7 @@ export function makeGuidanceController(): GuidanceController {
     guidance: makeGuidance(),
     proof: makeAuth().proof,
     files: makeResourceFiles(),
-    agentFiles: (agentId, files, by) => makeAgents().saveFiles(agentId, files, by),
+    agentFiles: (agentId, files, by, base) => makeAgents().saveFiles(agentId, files, by, base),
     resourceRemoved: (kind, id) => makeResourceSecrets().removeScope(kind, id),
     projectDir: (projectId) => (makeProjects().exists(projectId) ? makeProjects().folderOf(projectId) : undefined),
     agentFilesOf: (agentId) => {
