@@ -1,5 +1,5 @@
 import { exec } from 'node:child_process'
-import { type Dirent, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { type Dirent, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -148,7 +148,13 @@ export class ProjectSandbox implements IProjectSandbox {
   constructor(
     private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly load: () => Promise<{ SandboxManager: ISandboxManager }> = () => esmImport('@anthropic-ai/sandbox-runtime'),
+    private readonly platform: NodeJS.Platform = process.platform,
   ) {}
+
+  /** ⛔ `CERCO_READ_ALLOWLIST=1` (padrão desligado): o cerco lê só o liberado, não o host inteiro. Só no Linux (bubblewrap). */
+  readAllowlistOn(): boolean {
+    return this.env.CERCO_READ_ALLOWLIST === '1' && this.platform === 'linux'
+  }
 
   /** A política de UM projeto: o que o comando pode ler e gravar. */
   policy(projectId: string, bridge: readonly string[] = []): Record<string, unknown> {
@@ -179,6 +185,7 @@ export class ProjectSandbox implements IProjectSandbox {
       // ⛔ As pastas privadas dos OUTROS agentes: fechadas para ler e gravar, mesmo com regra que as cubra (`**`).
       alwaysDeny: [dataDir(this.env), process.cwd(), homedir(), ...hostSocketDirs(), ...agentFolders(root, place.agentFolder?.dir, this.env).others],
       ...(place.agentFolder ? { agentFolder: place.agentFolder } : {}),
+      ...(this.readAllowlistOn() ? { readAllowlist: systemReadAllowlist() } : {}),
       // Os arquivos de recurso: o global sempre; os do projeto quando a raiz é dele. Lê, não grava.
       readOnly: existing([...readOnlyResourceDirs(root, this.env), ...(place.sharedFolders ?? [])]),
       find: (pattern) => findUnder(root, pattern),
@@ -197,7 +204,7 @@ export class ProjectSandbox implements IProjectSandbox {
     const wantsTcp = process.platform === 'linux' && place.tcp
     if (wantsTcp) mkdirSync(own, { recursive: true, mode: 0o700 })
     if (existsSync(own)) planned.readAllow.push(own)
-    const cerco = process.platform === 'linux' ? withWriteGlobsExpanded(forBubblewrap(planned, root, listDir)) : planned
+    const cerco = this.platform === 'linux' ? withWriteGlobsExpanded(forBubblewrap(planned, root, listDir)) : planned
     for (const dir of writeFolders(cerco, root)) mkdirSync(dir, { recursive: true, mode: 0o700 })
     const scratch = (name: string) => {
       const dir = join(place.scratchBase ?? root, name)
@@ -351,6 +358,66 @@ export function forBubblewrap(plan: ICercoPlan, root: string, list: (dir: string
   return { ...plan, readAllow, readDeny: [...new Set(readDeny)] }
 }
 
+/** Arquivos de `/etc` que os programas precisam (nome exato) e prefixos (`ld.so.conf`, `ld.so.conf.d`…). O resto de `/etc` fica fechado. */
+const ETC_FILES = [
+  'ssl',
+  'ca-certificates',
+  'ca-certificates.conf',
+  'resolv.conf',
+  'hosts',
+  'host.conf',
+  'gai.conf',
+  'nsswitch.conf',
+  'passwd',
+  'group',
+  'localtime',
+  'alternatives',
+  'ld.so.cache',
+  'gitconfig',
+  'os-release',
+  'mime.types',
+  'protocols',
+  'services',
+  'shells',
+]
+const ETC_PREFIXES = ['ld.so.conf']
+
+/**
+ * ⛔ O que o cerco reabre com `CERCO_READ_ALLOWLIST=1`: o sistema que os comandos usam (binários e bibliotecas, alguns arquivos
+ * de `/etc`) e a instalação do Node em uso. Só o que existe. `/etc/ssh/ssh_config.d` o runtime esconde sozinho. O projeto,
+ * o rascunho, os recursos e as ferramentas entram pelo plano, não por aqui.
+ */
+export function systemReadAllowlist(has: (path: string) => boolean = pathExists, list: (dir: string) => string[] = listDir, execPath: string = process.execPath): string[] {
+  const system = ['/usr', '/bin', '/sbin', '/lib', '/lib64', '/lib32', '/libx32']
+  const etc = [
+    ...ETC_FILES.map((name) => `/etc/${name}`),
+    ...list('/etc')
+      .filter((name) => ETC_PREFIXES.some((prefix) => name.startsWith(prefix)))
+      .map((name) => `/etc/${name}`),
+    '/etc/ssh/ssh_config',
+  ]
+  const node = [
+    dirname(dirname(execPath)),
+    ...(() => {
+      try {
+        return [dirname(dirname(realpathSync(execPath)))]
+      } catch {
+        return []
+      }
+    })(),
+  ]
+  return [...new Set([...system, ...etc, ...node].filter((path) => has(path)))]
+}
+
+function pathExists(path: string): boolean {
+  try {
+    lstatSync(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
 /**
  * As PASTAS que as regras de escrita liberam (`notas/**`), dentro da raiz: o gateway as cria antes do comando. Sem
  * isso, o cerco não abre o que ainda não existe, e criar a pasta pediria escrita na raiz. Só pasta explícita (com `/**`)
@@ -378,11 +445,14 @@ function existing(dirs: readonly string[]): string[] {
   return dirs.filter((dir) => existsSync(dir))
 }
 
+/** O que o runtime monta sozinho na raiz (e que fechar quebraria o comando): nunca entra no fechamento de `/`. */
+const KERNEL_DIRS = new Set(['/proc', '/dev', '/sys'])
+
 /** Fecha tudo dentro de `dir` menos o que leva ao que fica aberto (`keep`). */
 function denyAllBut(dir: string, keep: readonly string[], list: (dir: string) => string[]): string[] {
   return list(dir).flatMap((name) => {
     const child = join(dir, name)
-    if (keep.includes(child)) return []
+    if (keep.includes(child) || KERNEL_DIRS.has(child)) return []
     return keep.some((path) => isAtOrUnder(path, child)) ? denyAllBut(child, keep, list) : [child]
   })
 }
