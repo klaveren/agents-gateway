@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SaveFooter from '@/components/SaveFooter.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { ApiError } from '@/lib/api'
 import { fullTime } from '@/lib/format'
@@ -320,10 +321,9 @@ watch(
             <button v-if="form.secret" type="button" class="btn btn-ghost btn-sm" @click="copySecret">{{ copied ? 'Copiado' : 'Copiar' }}</button>
             <span>Copie antes de salvar: depois, só os 4 últimos caracteres aparecem.</span>
           </div>
-          <div class="flex gap-2">
-            <button type="submit" class="btn btn-primary btn-sm" :disabled="busy || !form.id.trim()">Salvar</button>
-            <button type="button" class="btn btn-ghost btn-sm" @click="editing = null">Cancelar</button>
-          </div>
+          <SaveFooter submit :label="editing ? 'Salvar conta' : 'Criar conta'" :busy="busy" :disabled="!form.id.trim()">
+            <button type="button" class="btn btn-ghost" @click="editing = null">Cancelar</button>
+          </SaveFooter>
         </form>
 
         <ul v-if="accounts.length" class="divide-y divide-zinc-800 rounded-xl border border-zinc-800">

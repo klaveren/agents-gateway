@@ -1,5 +1,6 @@
 <script setup lang="ts">
-  import { computed, onMounted, ref, watch } from 'vue'
+  import SaveFooter from '@/components/SaveFooter.vue'
+import { computed, onMounted, ref, watch } from 'vue'
   import { useRoute, useRouter } from 'vue-router'
   import ConfirmDialog from '@/components/ConfirmDialog.vue'
   import HistoryPanel from '@/components/HistoryPanel.vue'
@@ -333,6 +334,15 @@
     run(async () => {
       await mcp.update(selected.value!.key, { name: edit.value!.name, tags: edit.value!.tags, process: processPayload(processDraft.value) })
     })
+  /** O Salvar do rodapé: o que o tipo do MCP grava (contêiner, processo ou remoto), e se há o que gravar. */
+  const mcpDirty = computed(() => {
+    const server = selected.value
+    if (!server || !edit.value) return false
+    if (server.kind === 'container') return containerDirty.value || edit.value.name !== server.name || tagsChanged.value
+    if (server.kind === 'process') return processDirty.value || edit.value.name !== server.name || tagsChanged.value
+    return dirty.value
+  })
+  const saveMcp = () => (selected.value?.kind === 'container' ? saveContainer() : selected.value?.kind === 'process' ? saveProcess() : save())
   const install = () =>
     run(async () => {
       installResult.value = undefined
@@ -589,10 +599,6 @@
             </label>
             <TagsInput v-model="edit.tags" label="Tags" :suggestions="knownTags" :issues="editIssues.tags" />
             <McpContainerFields v-model="containerDraft" />
-            <div v-if="containerDirty || edit.name !== selected.name || tagsChanged" class="flex gap-2">
-              <button type="button" :disabled="busy" class="btn btn-primary" @click="saveContainer">Salvar alterações</button>
-              <span class="self-center text-xs text-zinc-500">Vale para as próximas conversas.</span>
-            </div>
             <div v-if="selected.env?.length" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
               <h3 class="text-sm font-medium text-zinc-200">Variáveis secretas</h3>
               <form v-for="variable in selected.env" :key="variable.name" class="flex flex-wrap items-center gap-2" @submit.prevent="saveEnv(variable.name)">
@@ -604,7 +610,7 @@
                   :placeholder="variable.configured ? 'preenchida — colar para trocar' : 'sem valor'"
                   class="input min-w-0 flex-1 font-mono text-sm"
                 />
-                <button type="submit" :disabled="busy || !envValues[variable.name]" class="btn btn-sm btn-secondary">Salvar</button>
+                <button type="submit" :disabled="busy || !envValues[variable.name]" class="btn btn-sm btn-secondary">Gravar valor</button>
               </form>
             </div>
           </template>
@@ -621,10 +627,6 @@
             </label>
             <TagsInput v-model="edit.tags" label="Tags" :suggestions="knownTags" :issues="editIssues.tags" />
             <McpProcessFields v-model="processDraft" />
-            <div v-if="processDirty || edit.name !== selected.name || tagsChanged" class="flex gap-2">
-              <button type="button" :disabled="busy" class="btn btn-primary" @click="saveProcess">Salvar alterações</button>
-              <span class="self-center text-xs text-zinc-500">As execuções em andamento serão encerradas.</span>
-            </div>
             <div v-if="selected.process?.package" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
               <div class="flex flex-wrap items-center gap-2">
                 <h3 class="text-sm font-medium text-zinc-200">Instalação</h3>
@@ -660,7 +662,7 @@
                   :placeholder="variable.configured ? 'preenchida — colar para trocar' : 'sem valor'"
                   class="input min-w-0 flex-1 font-mono text-sm"
                 />
-                <button type="submit" :disabled="busy || !envValues[variable.name]" class="btn btn-sm btn-secondary">Salvar</button>
+                <button type="submit" :disabled="busy || !envValues[variable.name]" class="btn btn-sm btn-secondary">Gravar valor</button>
               </form>
             </div>
           </template>
@@ -717,9 +719,6 @@
                 <small class="hint block">Cada chamada leva o agente, a conversa e o projeto nos cabeçalhos x-gateway-agent, x-gateway-conversation e x-gateway-project.</small>
               </span>
             </label>
-            <div v-if="dirty" class="flex gap-2">
-              <button type="submit" :disabled="busy" class="btn btn-primary">Salvar alterações</button>
-            </div>
           </form>
 
           <div v-if="selected.kind === 'remote' && selected.auth === 'header'" class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
@@ -739,7 +738,7 @@
                 :placeholder="selected.secret.configured ? 'Colar nova chave para trocar' : 'Colar a chave'"
                 class="input min-w-0 flex-1 font-mono text-sm"
               />
-              <button type="submit" :disabled="busy || !secret.trim()" class="btn btn-primary">Salvar</button>
+              <button type="submit" :disabled="busy || !secret.trim()" class="btn btn-secondary">Gravar segredo</button>
               <button v-if="selected.secret.configured" type="button" class="btn btn-danger" @click="clearSecret">Remover</button>
             </form>
           </div>
@@ -800,6 +799,10 @@
             <span v-if="!selected.agents.length">nenhum ainda — escolha as ferramentas no formulário do agente</span>
             <button type="button" class="ml-auto text-rose-300 hover:underline" @click="((removing = selected), (removeError = undefined))">Remover MCP</button>
           </div>
+          <!-- Um salvar só por tela: a configuração do MCP (o tipo dele decide o que grava). Os segredos gravam na hora, acima. -->
+          <SaveFooter label="Salvar MCP" :busy="busy" :disabled="!mcpDirty" :pending="mcpDirty" @save="saveMcp">
+            <span v-if="mcpDirty && selected.kind === 'process'" class="text-xs text-zinc-500">As execuções em andamento serão encerradas.</span>
+          </SaveFooter>
         </template>
       </section>
       <div v-else class="grid h-full place-items-center text-zinc-500">Escolha um MCP ou adicione um novo.</div>

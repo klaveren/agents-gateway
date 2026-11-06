@@ -1,5 +1,6 @@
 <script setup lang="ts">
-  import { computed, onMounted, ref, watch } from 'vue'
+  import SaveFooter from '@/components/SaveFooter.vue'
+import { computed, onMounted, ref, watch } from 'vue'
   import { useRoute, useRouter } from 'vue-router'
   import ConfirmDialog from '@/components/ConfirmDialog.vue'
   import FallbackChain from '@/components/FallbackChain.vue'
@@ -253,14 +254,15 @@
             </ul>
           </div>
 
-          <div class="flex flex-wrap items-center gap-2">
-            <button type="submit" class="btn btn-primary" :disabled="!canSave">{{ adding ? 'Criar sequência' : 'Salvar' }}</button>
-            <button v-if="selected && selected.id !== defaultId" type="button" class="btn" @click="makeDefault">Tornar padrão</button>
-            <button v-if="selected" type="button" class="btn btn-ghost ml-auto text-rose-300" @click="removing = true">Apagar</button>
-            <RouterLink v-if="adding" to="/model-groups" class="btn btn-ghost">Cancelar</RouterLink>
-          </div>
           <p v-if="saved" class="text-sm text-emerald-300">{{ saved }}</p>
           <p v-if="failure" class="text-sm text-rose-300">{{ failure }}</p>
+          <SaveFooter submit :label="adding ? 'Criar sequência' : 'Salvar sequência'" :busy="busy" :disabled="!canSave">
+            <button v-if="selected && selected.id !== defaultId" type="button" class="btn btn-secondary" @click="makeDefault">Tornar padrão</button>
+            <RouterLink v-if="adding" to="/model-groups" class="btn btn-ghost">Cancelar</RouterLink>
+            <template v-if="selected" #end>
+              <button type="button" class="btn btn-danger" @click="removing = true">Apagar sequência</button>
+            </template>
+          </SaveFooter>
         </form>
       </section>
       <p v-else class="mx-auto max-w-3xl text-sm text-zinc-500">Escolha uma sequência na lista, ou crie uma nova.</p>

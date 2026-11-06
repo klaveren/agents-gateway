@@ -270,7 +270,7 @@ function sourceLabel(provider: IProviderStatus): string {
             class="h-9 min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 font-mono text-sm outline-none focus:border-emerald-500/60"
           />
           <button type="button" :disabled="busy[selected.id] || (!drafts[selected.id] && !selected.credential.configured && !selected.subscription)" class="btn btn-secondary" @click="test(selected.id)">Testar</button>
-          <button type="submit" :disabled="busy[selected.id] || !drafts[selected.id]?.trim()" class="btn btn-primary">Salvar</button>
+          <button type="submit" :disabled="busy[selected.id] || !drafts[selected.id]?.trim()" class="btn btn-primary">Gravar chave</button>
           <button v-if="selected.credential.source === 'stored'" type="button" class="btn btn-danger" @click="removingKey = selected">Remover chave</button>
         </form>
 

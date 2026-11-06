@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SaveFooter from '@/components/SaveFooter.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
@@ -229,6 +230,9 @@ function slug() {
 }
 
 /** A guia Arquivos: grava só a lista (o resto da skill fica). */
+/** A guia Arquivos, montada dentro do formulário: o Salvar grava o rascunho dela (`commit`). */
+const filesPart = ref<{ dirty: boolean; commit: () => Promise<void> }>()
+
 async function saveFiles(files: IResource['files']) {
   if (!loaded.value) return
   loaded.value = await resources.saveFiles(loaded.value.id, files)
@@ -261,11 +265,15 @@ async function save() {
       scope.value = created.projectId ?? GLOBAL_SCOPE
       await router.push(`${info.value.base}/${created.id}`)
     } else {
-      loaded.value = await resources.update(form.value.id, body)
-      form.value.tags = [...(loaded.value.tags ?? [])]
-      form.value.docIds = [...loaded.value.docIds]
-      form.value.docRefs = [...(loaded.value.docRefs ?? [])]
-      form.value.triggers = copyTriggers(loaded.value.triggers)
+      if (dirty.value) {
+        loaded.value = await resources.update(form.value.id, body)
+        form.value.tags = [...(loaded.value.tags ?? [])]
+        form.value.docIds = [...loaded.value.docIds]
+        form.value.docRefs = [...(loaded.value.docRefs ?? [])]
+        form.value.triggers = copyTriggers(loaded.value.triggers)
+      }
+      // Os arquivos vão no mesmo Salvar.
+      await filesPart.value?.commit()
       note.value = 'Salvo. Vale para as próximas conversas.'
     }
   } catch (failure) {
@@ -363,7 +371,7 @@ function onInvalid(event: Event) {
 
     <template #detail>
       <div v-if="adding || loaded" class="mx-auto mb-4 max-w-3xl"><HistoryTabs v-model="tab" :edit-label="info.one.charAt(0).toUpperCase() + info.one.slice(1)" :extra="extraTabs" :history="!adding" /></div>
-      <form v-if="adding || (loaded && (tab === 'edit' || tab === 'instructions' || tab === 'triggers' || tab === 'attachments'))" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save" @invalid.capture="onInvalid">
+      <form v-if="adding || (loaded && (tab === 'edit' || tab === 'instructions' || tab === 'triggers' || tab === 'attachments' || tab === 'files'))" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save" @invalid.capture="onInvalid">
         <h2 class="font-mono text-lg font-semibold">{{ adding ? `${g.nova} ${info.one}` : `${kind === 'command' ? '/' : ''}${loaded?.id}` }}</h2>
         <div v-show="tab === 'edit'" class="flex flex-col gap-3">
         <label class="field">
@@ -425,19 +433,26 @@ function onInvalid(event: Event) {
 
         <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
         <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
-        <div class="flex gap-2">
-          <button type="submit" :disabled="busy || !dirty" class="btn btn-primary">{{ adding ? 'Criar' : 'Salvar' }}</button>
-          <RouterLink v-if="adding" :to="info.base" class="btn btn-ghost">Cancelar</RouterLink>
-          <button v-else type="button" class="btn btn-danger ml-auto" @click="removing = true">Apagar</button>
+        <!-- Os arquivos também vão no Salvar (um salvar só por tela): a guia fica montada, com o rascunho dela. -->
+        <div v-if="loaded" v-show="tab === 'files'">
+          <ResourceFiles
+            ref="filesPart"
+            embedded
+            :files="loaded.files ?? []"
+            :where="`${loaded.projectId ? `projects/${loaded.projectId}` : 'global'}/${kind}s/${loaded.id}`"
+            :save="saveFiles"
+          />
         </div>
+        <SaveFooter submit :label="`${adding ? 'Criar' : 'Salvar'} ${info.one}`" :busy="busy" :disabled="!(dirty || !!filesPart?.dirty)" :pending="!adding && (dirty || !!filesPart?.dirty)">
+          <RouterLink v-if="adding" :to="info.base" class="btn btn-ghost">Cancelar</RouterLink>
+          <template v-if="!adding" #end>
+            <button type="button" class="btn btn-danger" @click="removing = true">Apagar {{ info.one }}</button>
+          </template>
+        </SaveFooter>
       </form>
       <section v-else-if="loaded && tab === 'issues'" class="mx-auto flex max-w-3xl flex-col gap-3">
         <h2 class="font-mono text-lg font-semibold">{{ kind === 'command' ? '/' : '' }}{{ loaded.id }}</h2>
         <ImportIssues :issues="importIssues" :resolve="resolveIssue" />
-      </section>
-      <section v-else-if="loaded && tab === 'files'" class="mx-auto flex max-w-3xl flex-col gap-3">
-        <h2 class="font-mono text-lg font-semibold">{{ kind === 'command' ? '/' : '' }}{{ loaded.id }}</h2>
-        <ResourceFiles :files="loaded.files ?? []" :where="`${loaded.projectId ? `projects/${loaded.projectId}` : 'global'}/${kind}s/${loaded.id}`" :save="saveFiles" />
       </section>
       <section v-else-if="loaded && tab === 'variables'" class="mx-auto flex max-w-3xl flex-col gap-3">
         <h2 class="font-mono text-lg font-semibold">{{ kind === 'command' ? '/' : '' }}{{ loaded.id }}</h2>

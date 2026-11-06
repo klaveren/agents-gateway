@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SaveFooter from '@/components/SaveFooter.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
@@ -489,11 +490,12 @@ function onInvalid(event: Event) {
 
         <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
         <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
-        <div class="flex gap-2">
-          <button type="submit" :disabled="busy || !dirty" class="btn btn-primary">{{ adding ? 'Criar' : 'Salvar' }}</button>
+        <SaveFooter submit :label="`${adding ? 'Criar' : 'Salvar'} ${info.one}`" :busy="busy" :disabled="!(dirty)" :pending="!adding && (dirty)">
           <RouterLink v-if="adding" :to="info.base" class="btn btn-ghost">Cancelar</RouterLink>
-          <button v-else type="button" class="btn btn-danger ml-auto" @click="removing = true">Apagar</button>
-        </div>
+          <template v-if="!adding" #end>
+            <button type="button" class="btn btn-danger" @click="removing = true">Apagar {{ info.one }}</button>
+          </template>
+        </SaveFooter>
       </form>
       <section v-else-if="loaded && tab === 'issues'" class="mx-auto flex max-w-3xl flex-col gap-3">
         <h2 class="text-lg font-semibold">{{ loaded.title }}</h2>
