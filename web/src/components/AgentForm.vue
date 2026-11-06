@@ -395,7 +395,7 @@
     agents.setPermissions(props.agent.id, permissions)
   }
 
-  type TTab = 'agente' | 'personalidade' | 'instrucoes' | 'triggers' | 'modelos' | 'ferramentas' | 'mcps' | 'sdk' | 'recursos' | 'arquivos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos' | 'memoria' | 'variaveis' | 'historico' | 'problemas'
+  type TTab = 'agente' | 'personalidade' | 'instrucoes' | 'triggers' | 'modelos' | 'ferramentas' | 'delegacao' | 'mcps' | 'sdk' | 'recursos' | 'arquivos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos' | 'memoria' | 'variaveis' | 'historico' | 'problemas'
   // `#agendamentos` no link (a visão geral dos agendamentos) abre direto na guia.
   /** O nome das ferramentas do gateway na guia Ferramentas (o id técnico fica na dica). */
   const LOCAL_TOOL_LABEL: Record<string, string> = {
@@ -442,6 +442,7 @@
     triggers: ['triggers'],
     modelos: ['providers', 'models', 'modes', 'reasoningEfforts'],
     ferramentas: ['allowedTools'],
+    delegacao: [],
     mcps: [],
     sdk: ['env'],
     recursos: [],
@@ -473,7 +474,17 @@
         alert: alert('ferramentas') ?? (orphans.value.length ? 'Há ferramentas indisponíveis' : undefined),
       },
       { id: 'mcps', label: 'MCPs', count: tools.filter((entry) => entry.startsWith('mcp:')).length },
-      { id: 'sdk', label: 'Permissões', count: (form.value.permissions?.length ?? 0) + tools.filter((entry) => entry.startsWith('sdk:')).length },
+      // A delegação numa guia só dela: a quem pede ajuda (as ferramentas `agent:`) e as regras de delegação, juntas.
+      {
+        id: 'delegacao',
+        label: 'Delegação',
+        count: tools.filter((entry) => entry.startsWith('agent:')).length + (form.value.permissions ?? []).filter((rule) => rule.category === 'delegate').length,
+      },
+      {
+        id: 'sdk',
+        label: 'Permissões',
+        count: (form.value.permissions ?? []).filter((rule) => rule.category !== 'delegate').length + tools.filter((entry) => entry.startsWith('sdk:')).length,
+      },
       { id: 'recursos', label: 'Recursos' },
       { id: 'arquivos', label: 'Arquivos', count: agentFiles.value.length },
       { id: 'contexto', label: 'Contexto inicial' },
@@ -975,12 +986,34 @@
       </p>
       <small v-for="message in issues.allowedTools" :key="message" class="error">{{ message }}</small>
 
+      <section v-if="orphans.length" class="tool-card border-amber-500/40">
+        <header>
+          <h3>Indisponíveis</h3>
+          <span class="count">{{ orphans.length }}</span>
+        </header>
+        <p class="hint px-3 pt-2">Escolhidas, mas não oferecidas pelos provedores. Remova para salvar.</p>
+        <div class="flex flex-wrap gap-1.5 p-3">
+          <button
+            v-for="entry in orphans"
+            :key="entry"
+            type="button"
+            class="chip on danger font-mono text-xs"
+            title="Clique para tirar do agente"
+            @click="toggle(form.allowedTools, entry)"
+          >
+            <span class="mr-1 rounded-full bg-amber-500/20 px-1.5 text-[10px] text-amber-200">indisponível</span>
+            {{ entry }} ✕
+          </button>
+        </div>
+      </section>
+    </fieldset>
+    <fieldset v-show="tab === 'delegacao'" class="flex flex-col gap-3">
       <section class="tool-card">
         <header>
-          <h3>Delegação</h3>
-          <span class="count">{{ form.allowedTools.filter((entry) => entry.startsWith('agent:')).length || 'nenhuma' }}</span>
+          <h3>A quem pode pedir ajuda</h3>
+          <span class="count">{{ form.allowedTools.filter((entry) => entry.startsWith('agent:')).length || 'nenhum' }}</span>
         </header>
-        <p class="hint px-3 pt-2">Outros agentes a quem este pode pedir ajuda.</p>
+        <p class="hint px-3 pt-2">Os agentes que este chama pela ferramenta de delegação.</p>
         <div class="flex flex-col gap-3 p-3">
           <div class="flex flex-col gap-1.5">
             <span class="text-xs text-zinc-500">Agentes</span>
@@ -1019,26 +1052,9 @@
         </div>
       </section>
 
-      <section v-if="orphans.length" class="tool-card border-amber-500/40">
-        <header>
-          <h3>Indisponíveis</h3>
-          <span class="count">{{ orphans.length }}</span>
-        </header>
-        <p class="hint px-3 pt-2">Escolhidas, mas não oferecidas pelos provedores. Remova para salvar.</p>
-        <div class="flex flex-wrap gap-1.5 p-3">
-          <button
-            v-for="entry in orphans"
-            :key="entry"
-            type="button"
-            class="chip on danger font-mono text-xs"
-            title="Clique para tirar do agente"
-            @click="toggle(form.allowedTools, entry)"
-          >
-            <span class="mr-1 rounded-full bg-amber-500/20 px-1.5 text-[10px] text-amber-200">indisponível</span>
-            {{ entry }} ✕
-          </button>
-        </div>
-      </section>
+      <!-- As regras de delegação do agente (padrões de id), antes na guia Permissões: moram aqui, junto da escolha. -->
+      <p class="hint">Marcar acima dá a ferramenta; a regra libera a chamada. Precisa dos dois: a regra pode estar aqui ou nas permissões do projeto.</p>
+      <PermissionRules v-model="form.permissions!" only="delegate" />
     </fieldset>
     <fieldset v-show="tab === 'mcps'" class="grid gap-4 sm:grid-cols-2">
       <div class="field sm:col-span-2">
@@ -1091,7 +1107,7 @@
         <p class="text-xs text-zinc-500">
           Valem antes das do projeto: liberam o que o projeto fechou, ou fecham mais. Sem regra no agente nem no projeto, negado. As do sistema valem sempre.
         </p>
-        <PermissionCategoryTabs v-model="permissionSection" :rules="form.permissions ?? []" />
+        <PermissionCategoryTabs v-model="permissionSection" :rules="form.permissions ?? []" :exclude="['delegate']" />
         <PermissionRules v-model="form.permissions!" :only="permissionSection" />
         <PermissionTester
           v-if="agent && !creating && (agent.projectId ?? projects.current)"

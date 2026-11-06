@@ -8,12 +8,15 @@ import type { IPermissionRule, TPermissionCategory } from '@/lib/types'
  * projeto e no agente. `active: false`: outra guia da tela está aberta (o Histórico), e nenhuma categoria fica acesa.
  * O que vem no slot entra no fim da barra.
  */
-const props = withDefaults(defineProps<{ rules: readonly IPermissionRule[]; active?: boolean }>(), { active: true })
+const props = withDefaults(defineProps<{ rules: readonly IPermissionRule[]; active?: boolean; /** As categorias que moram noutra guia da tela (a Delegação do agente). */ exclude?: readonly TPermissionCategory[] }>(), {
+  active: true,
+  exclude: () => [],
+})
 const category = defineModel<TPermissionCategory>({ required: true })
 const emit = defineEmits<{ pick: [category: TPermissionCategory] }>()
 
 const items = computed(() =>
-  PERMISSION_SECTIONS.map((section) => ({ category: section.category, label: section.tab ?? section.label, count: props.rules.filter((rule) => rule.category === section.category).length })),
+  PERMISSION_SECTIONS.filter((section) => !props.exclude.includes(section.category)).map((section) => ({ category: section.category, label: section.tab ?? section.label, count: props.rules.filter((rule) => rule.category === section.category).length })),
 )
 
 function pick(next: TPermissionCategory) {
