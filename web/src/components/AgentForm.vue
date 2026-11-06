@@ -444,7 +444,7 @@
     ferramentas: ['allowedTools'],
     delegacao: [],
     mcps: [],
-    sdk: ['env'],
+    sdk: [],
     recursos: [],
     arquivos: ['files'],
     contexto: [],
@@ -452,7 +452,7 @@
     hooks: [],
     agendamentos: [],
     memoria: [],
-    variaveis: [],
+    variaveis: ['env'],
     historico: [],
     problemas: [],
   }
@@ -494,7 +494,8 @@
       // O ledger do agente (o que ele aprendeu de como agir): só para agente já gravado.
       { id: 'memoria', label: 'Memória' },
       // As variáveis secretas do agente: só admin e só para agente já gravado (o valor entra e nunca volta).
-      ...(auth.isAdmin && props.agent && !props.creating ? [{ id: 'variaveis' as const, label: 'Variáveis' }] : []),
+      // As variáveis do terminal: as fixas (com o Salvar) e as secretas (só admin, agente já gravado).
+      { id: 'variaveis', label: 'Variáveis', count: envList.value.length, alert: alert('variaveis') },
       { id: 'historico', label: 'Histórico' },
       // Só aparece com problema: o que a importação deixou anotado no agente (não impediu a gravação).
       ...(importIssues.value.length ? [{ id: 'problemas' as const, label: 'Problemas da importação', count: importIssues.value.length }] : []),
@@ -1148,21 +1149,6 @@
         </div>
       </div>
       <div class="flex flex-col gap-2">
-        <h3 class="text-sm font-medium text-zinc-200">Variáveis de ambiente</h3>
-        <p class="text-xs text-zinc-500">
-          Fixas, em todo terminal deste agente — o dele e o dos CLIs. Para a autoria do git (GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL…), idioma, região. Segredo não mora aqui: use
-          Segredos ou as contas do projeto. O que o gateway monta (HOME, PATH, a identidade) vence.
-        </p>
-        <div v-for="(row, index) in envList" :key="index" class="flex flex-wrap items-center gap-2">
-          <input v-model="row.name" class="input w-56 font-mono text-xs" placeholder="GIT_AUTHOR_NAME" :aria-label="`Nome da variável ${index + 1}`" />
-          <input v-model="row.value" class="input min-w-0 flex-1 font-mono text-xs" placeholder="valor" :aria-label="`Valor da variável ${index + 1}`" />
-          <button type="button" class="btn btn-sm btn-danger" @click="envList.splice(index, 1)">Remover</button>
-        </div>
-        <button type="button" class="btn btn-sm btn-ghost self-start" @click="envList.push({ name: '', value: '' })">+ Variável</button>
-        <small v-for="name in envRepeated" :key="`dup-${name}`" class="error">{{ name }} aparece mais de uma vez</small>
-        <small v-for="message in issues.env" :key="message" class="error">{{ message }}</small>
-      </div>
-      <div class="flex flex-col gap-2">
         <h3 class="text-sm font-medium text-zinc-200">Diagnóstico depois de editar</h3>
         <p class="text-xs text-zinc-500">
           Depois de cada edição de arquivo, o gateway roda o que o pacote já tem em node_modules/.bin, no mesmo cerco do terminal e sem rede, e o resultado volta ao modelo junto da
@@ -1335,9 +1321,40 @@
     </section>
 
     <!-- As variáveis secretas também têm o próprio cadastro: fora do Salvar do agente. -->
-    <section v-if="tab === 'variaveis'">
-      <SecretVariables v-if="agent && !creating && auth.isAdmin" :base-path="`/agents/${encodeURIComponent(agent.id)}`" scope-label="deste agente (sempre disponíveis para ele)" />
-      <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
+    <!-- ⚖️ As duas formas de variável do terminal, juntas: as fixas (texto, no registro do agente, gravadas com o Salvar) e
+         as secretas (cifradas; o valor só entra, gravado à parte). Chegam ao mesmo terminal; a secreta vence a fixa. -->
+    <section v-if="tab === 'variaveis'" class="flex flex-col gap-3">
+      <section class="tool-card">
+        <header>
+          <h3>Fixas</h3>
+          <span class="count">{{ envList.length || 'nenhuma' }} · salvas com o botão Salvar do agente</span>
+        </header>
+        <div class="flex flex-col gap-2 p-3">
+        <p class="hint">
+          Texto comum, em todo terminal deste agente (o dele e o dos CLIs): a autoria do git (GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL…), idioma, região. O que o gateway monta
+          (HOME, PATH, a identidade) vence. Segredo não mora aqui: vai em Secretas, logo abaixo, ou nas contas do projeto.
+        </p>
+        <div v-for="(row, index) in envList" :key="index" class="flex flex-wrap items-center gap-2">
+          <input v-model="row.name" class="input w-56 font-mono text-xs" placeholder="GIT_AUTHOR_NAME" :aria-label="`Nome da variável ${index + 1}`" />
+          <input v-model="row.value" class="input min-w-0 flex-1 font-mono text-xs" placeholder="valor" :aria-label="`Valor da variável ${index + 1}`" />
+          <button type="button" class="btn btn-sm btn-danger" @click="envList.splice(index, 1)">Remover</button>
+        </div>
+        <button type="button" class="btn btn-sm btn-ghost self-start" @click="envList.push({ name: '', value: '' })">+ Variável</button>
+        <small v-for="name in envRepeated" :key="`dup-${name}`" class="error">{{ name }} aparece mais de uma vez</small>
+        <small v-for="message in issues.env" :key="message" class="error">{{ message }}</small>
+        </div>
+      </section>
+      <section class="tool-card">
+        <header>
+          <h3>Secretas</h3>
+          <span class="count">cifradas · cada uma é gravada na hora, à parte do Salvar</span>
+        </header>
+        <div class="p-3">
+          <SecretVariables v-if="agent && !creating && auth.isAdmin" :base-path="`/agents/${encodeURIComponent(agent.id)}`" scope-label="deste agente (sempre disponíveis para ele)" />
+          <p v-else-if="!auth.isAdmin" class="text-sm text-zinc-400">Só quem administra cadastra variável secreta.</p>
+          <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para cadastrar variável secreta.</p>
+        </div>
+      </section>
     </section>
 
     <section v-if="tab === 'problemas' && agent">
@@ -1365,7 +1382,7 @@
     </p>
     <p v-else-if="!ready" class="text-xs text-zinc-500">Carregando provedores…</p>
 
-    <div v-show="tab !== 'hooks' && tab !== 'agendamentos' && tab !== 'memoria' && tab !== 'variaveis' && tab !== 'historico'" class="flex gap-2">
+    <div v-show="tab !== 'hooks' && tab !== 'agendamentos' && tab !== 'memoria' && tab !== 'historico'" class="flex gap-2">
       <button type="submit" :disabled="saving || !ready || !!loadError || !form.providers.length" class="btn btn-primary">
         {{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar' }}
       </button>
