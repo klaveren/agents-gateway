@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia } from 'pinia'
 import { createApp, h, nextTick, type App } from 'vue'
 import { api, ApiError } from '@/lib/api'
 import type { IItemHistory, IRevisionDiff, TCatalogKind } from '@/lib/catalogHistory'
+import { useProjectsStore } from '@/stores/projects'
 import HistoryPanel from './HistoryPanel.vue'
 
 vi.mock('@/lib/api', async (original) => ({ ...(await original<typeof import('@/lib/api')>()), api: vi.fn() }))
@@ -26,7 +28,7 @@ const page: IItemHistory = {
       source: 'api',
       widenings: ['agent/theo#allowedTools+cap:terminal'],
     },
-    { id: 12, kind: 'agent', itemId: 'theo', revision: 2, op: 'update', hash: 'h2', at: '2026-10-29T10:00:00Z', by: 'bia@x.com', source: 'agent', note: 'ajuste do prompt' },
+    { id: 12, kind: 'agent', itemId: 'theo', revision: 2, op: 'update', hash: 'h2', at: '2026-10-29T10:00:00Z', by: 'bia@x.com', source: 'agent', note: 'ajuste do prompt', sharing: { added: ['beta'], removed: ['sumiu'] } },
     { id: 11, kind: 'agent', itemId: 'theo', revision: 1, op: 'create', hash: 'h1', at: '2026-10-28T10:00:00Z', by: 'ana@x.com', source: 'api' },
   ],
 }
@@ -69,6 +71,9 @@ async function mount(props: { kind: TCatalogKind; id: string; readonly?: boolean
   const host = document.createElement('div')
   document.body.appendChild(host)
   app = createApp({ render: () => h(HistoryPanel, { ...props, onRestored }) })
+  const pinia = createPinia()
+  app.use(pinia)
+  useProjectsStore(pinia).list = [{ id: 'beta', name: 'Beta', createdAt: '', updatedAt: '' }]
   app.mount(host)
   await flush()
   return host
@@ -133,6 +138,8 @@ describe('HistoryPanel', () => {
     expect(rows[1].textContent).toContain('ajuste do prompt')
     expect(rows[1].textContent).toContain('agente')
     expect(rows[1].querySelector('[data-test="widening-badge"]')).toBeNull()
+    expect([...rows[1].querySelectorAll('[data-test="sharing-label"]')].map((tag) => tag.textContent)).toEqual(['compartilhado com Beta', 'parou de compartilhar com sumiu'])
+    expect(rows[0].querySelector('[data-test="sharing-label"]')).toBeNull()
     expect(rows[2].textContent).toContain('criado')
     expect(vi.mocked(api)).toHaveBeenCalledWith('/catalog/history', { query: { kind: 'agent', id: 'theo', page: 1, pageSize: 20 } })
   })

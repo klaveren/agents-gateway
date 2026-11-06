@@ -33,7 +33,7 @@ const deliveries = ref<IHookDelivery[]>([])
 const confirm = ref<{ kind: 'rotate' | 'remove'; name: string }>()
 
 function blank(): THookInput & { name: string } {
-  return { name: '', prompt: '', enabled: true, verify: 'key', signatureHeader: 'X-Hub-Signature-256', signaturePrefix: 'sha256=', signatureEncoding: 'hex', session: 'new' }
+  return { name: '', prompt: '', enabled: true, verify: 'key', signatureHeader: 'X-Hub-Signature-256', signaturePrefix: 'sha256=', signatureEncoding: 'hex', requireTimestamp: false, session: 'new' }
 }
 
 
@@ -58,7 +58,7 @@ async function openHook(name: string | undefined) {
   if (open.value === name) return (open.value = undefined)
   open.value = name
   const hook = list.value.find((entry) => entry.name === name)
-  draft.value = hook ? { name: hook.name, prompt: hook.prompt, enabled: hook.enabled, verify: hook.verify, signatureHeader: hook.signatureHeader, signaturePrefix: hook.signaturePrefix, signatureEncoding: hook.signatureEncoding, session: hook.session } : blank()
+  draft.value = hook ? { name: hook.name, prompt: hook.prompt, enabled: hook.enabled, verify: hook.verify, signatureHeader: hook.signatureHeader, signaturePrefix: hook.signaturePrefix, signatureEncoding: hook.signatureEncoding, requireTimestamp: hook.requireTimestamp, session: hook.session } : blank()
   if (hook) await loadDeliveries()
 }
 
@@ -219,6 +219,10 @@ const STATUS: Record<IHookDelivery['status'], { label: string; tone: string }> =
             <button type="button" class="chip" :class="{ on: draft.signatureEncoding === 'hex' }" @click="draft.signatureEncoding = 'hex'">hex</button>
             <button type="button" class="chip" :class="{ on: draft.signatureEncoding === 'base64' }" @click="draft.signatureEncoding = 'base64'">base64</button>
           </div>
+        </div>
+        <div class="field sm:col-span-3">
+          <label class="flex items-center gap-2 text-sm text-zinc-300"><input v-model="draft.requireTimestamp" type="checkbox" class="accent-emerald-500" /> Exigir carimbo de tempo (X-Timestamp)</label>
+          <small class="hint">Sem o carimbo a chamada é recusada. Só com ele o gateway barra o reenvio de uma chamada já assinada; deixe desligado se quem chama não consegue enviá-lo.</small>
         </div>
       </div>
       <div class="field">

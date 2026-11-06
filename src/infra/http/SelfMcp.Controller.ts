@@ -878,6 +878,7 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
         signatureHeader: z.string().optional().describe('hmac: default X-Hub-Signature-256'),
         signaturePrefix: z.string().optional().describe('hmac: default sha256='),
         signatureEncoding: z.enum(['hex', 'base64']).optional(),
+        requireTimestamp: z.boolean().optional().describe('hmac: reject calls without X-Timestamp (401); default false'),
         session: z.enum(['new', 'continuous']).optional(),
       },
     },

@@ -63,6 +63,7 @@ describe('Hooks: o admin do projeto, só os agentes dele', () => {
       signatureHeader: 'x-sig',
       signaturePrefix: '',
       signatureEncoding: 'hex',
+      requireTimestamp: false,
       session: 'new',
       runAs: 'u',
       createdAt: at,

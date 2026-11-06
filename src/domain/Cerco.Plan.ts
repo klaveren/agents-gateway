@@ -42,6 +42,12 @@ export interface ICercoBase {
    * gravadas nunca — nem com uma regra de escrita que as cubra: quem grava é o gateway.
    */
   readOnly?: readonly string[]
+  /**
+   * ⛔ LISTA DE LEITURA (`CERCO_READ_ALLOWLIST=1`): quando presente, o host inteiro (`/`) fecha para leitura e só estes
+   * caminhos reabrem (o sistema que os programas precisam: `/usr`, `/lib`, `/etc/ssl`…). Ausente = como sempre foi: o
+   * comando lê o que o usuário do servidor lê, menos o que `alwaysDeny` nega.
+   */
+  readAllowlist?: readonly string[]
   /** Regras de sistema da instalação (absolutas). */
   system?: readonly IPermissionRule[]
   /**
@@ -143,8 +149,19 @@ export function cercoPlan(layers: IPermissionLayers, base: ICercoBase): ICercoPl
   const git = base.gitCommonDir ? [base.gitCommonDir] : []
   return {
     // A raiz fechada para leitura por padrão: só o que as regras liberam (e as pastas de trabalho) se lê dentro dela.
-    readDeny: [...new Set([...base.alwaysDeny, base.root, ...read.deny])],
-    readAllow: [...new Set([...base.scratch, ...base.alwaysRead, ...git, ...read.allow, ...(base.readOnly ?? []), ...own(base, 'read'), ...sparedTemplates(layers, base)])],
+    readDeny: [...new Set([...(base.readAllowlist ? ['/'] : []), ...base.alwaysDeny, base.root, ...read.deny])],
+    readAllow: [
+      ...new Set([
+        ...(base.readAllowlist ?? []),
+        ...base.scratch,
+        ...base.alwaysRead,
+        ...git,
+        ...read.allow,
+        ...(base.readOnly ?? []),
+        ...own(base, 'read'),
+        ...sparedTemplates(layers, base),
+      ]),
+    ],
     writeAllow: [...new Set([...base.scratch, ...git, ...write.allow, ...own(base, 'write')])],
     writeDeny: [
       ...new Set([

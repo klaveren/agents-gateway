@@ -1,11 +1,12 @@
 import assert from 'node:assert'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
 import { cercoPlan } from '@domain/Cerco.Plan'
 import { commandDirOf } from '@infra/accounts/Ssh.Kit'
 import {
+  cleanLegacyScratch,
   ensureGitProxyAuth,
   expandGlobPath,
   findUnder,
@@ -15,6 +16,7 @@ import {
   localForwards,
   projectPathIssue,
   ProjectSandbox,
+  systemReadAllowlist,
   writeFolders,
 } from './Project.Sandbox'
 
@@ -157,6 +159,47 @@ describe('ProjectSandbox', () => {
     assert.strictEqual(readFileSync(gitconfig, 'utf8'), '[user]\n\tname = Maya\n[http]\n\tproxyAuthMethod = basic\n')
   })
 
+  it('⛔ M4: a limpeza dos restos antigos (.home/.accounts, .cache/logs, .cache/proxychains-*.conf) roda uma vez, só nesses caminhos, sem seguir link', () => {
+    const base = join(root, 'projeto-velho')
+    const outside = join(root, 'fora-do-projeto')
+    mkdirSync(join(base, '.home', '.accounts', 'conta'), { recursive: true })
+    mkdirSync(join(base, '.cache', 'logs'), { recursive: true })
+    mkdirSync(join(base, '.cache', 'npm'), { recursive: true })
+    mkdirSync(outside, { recursive: true })
+    writeFileSync(join(base, '.home', '.accounts', 'conta', 'id_ed25519'), 'chave')
+    writeFileSync(join(base, '.home', '.gitconfig'), '[user]\n')
+    writeFileSync(join(base, '.cache', 'logs', 'a.log'), 'x')
+    writeFileSync(join(base, '.cache', 'proxychains-abc.conf'), 'token')
+    writeFileSync(join(base, '.cache', 'proxychains.txt'), 'fica')
+    writeFileSync(join(base, '.cache', 'npm', 'pacote'), 'fica')
+    writeFileSync(join(outside, 'dado'), 'do alvo do link')
+    symlinkSync(outside, join(base, '.cache', 'logs', 'link'))
+
+    cleanLegacyScratch(base)
+    assert.strictEqual(existsSync(join(base, '.home', '.accounts')), false)
+    assert.strictEqual(existsSync(join(base, '.cache', 'logs', 'a.log')), false)
+    assert.strictEqual(existsSync(join(base, '.cache', 'logs', 'link')), false, 'o link sai')
+    assert.strictEqual(existsSync(join(outside, 'dado')), true, 'o alvo do link fica')
+    assert.strictEqual(existsSync(join(base, '.cache', 'proxychains-abc.conf')), false)
+    for (const kept of [join('.home', '.gitconfig'), join('.cache', 'proxychains.txt'), join('.cache', 'npm', 'pacote')]) assert.ok(existsSync(join(base, kept)), kept)
+
+    // Com a marca, não apaga de novo (um `.accounts` novo é de agora, não resto).
+    mkdirSync(join(base, '.home', '.accounts'), { recursive: true })
+    cleanLegacyScratch(base)
+    assert.ok(existsSync(join(base, '.home', '.accounts')))
+  })
+
+  it('⛔ M4: `.home` ou `.cache` que é link não é seguido (nada fora do projeto é apagado)', () => {
+    const base = join(root, 'projeto-link')
+    const outside = join(root, 'fora-link')
+    mkdirSync(join(outside, '.accounts'), { recursive: true })
+    writeFileSync(join(outside, '.accounts', 'chave'), 'alheia')
+    mkdirSync(join(base, '.cache'), { recursive: true })
+    symlinkSync(outside, join(base, '.home'))
+    cleanLegacyScratch(base)
+    assert.ok(existsSync(join(outside, '.accounts', 'chave')))
+  })
+
   it('⚖️ a limpeza dos pontos de montagem do bwrap: uma por comando embrulhado, o teste do status incluído', async () => {
     const srt = fakeSrt()
     const sandbox = new ProjectSandbox(env, srt.load)
@@ -296,5 +339,47 @@ describe('expandGlobPath — a escrita com curinga no Linux (o runtime a ignora)
     const plan = withWriteGlobsExpanded({ readAllow: [], readDeny: [], writeAllow: [join(repo, '**/*.test.ts')], writeDeny: [join(repo, 'apps/*/src/x.test.ts')] })
     assert.ok(plan.writeAllow.includes(join(repo, '**/*.test.ts')) && plan.writeAllow.includes(join(repo, 'apps/b/y.test.ts')))
     assert.ok(plan.writeDeny.includes(join(repo, 'apps/a/src/x.test.ts')))
+  })
+})
+
+describe('CERCO_READ_ALLOWLIST — o cerco lê só o liberado', () => {
+  const dataEnv = (extra: Record<string, string> = {}) => ({ CONVERSATIONS_DB: '/srv/gw/gateway.db', ...extra }) as NodeJS.ProcessEnv
+  const load = async () => ({ SandboxManager: {} as never })
+
+  it('desligada (padrão) ou fora do Linux: a base não traz lista', () => {
+    assert.strictEqual(new ProjectSandbox(dataEnv(), load, 'linux').base('/srv/gw/projects/x').readAllowlist, undefined)
+    assert.strictEqual(new ProjectSandbox(dataEnv({ CERCO_READ_ALLOWLIST: '1' }), load, 'darwin').base('/srv/gw/projects/x').readAllowlist, undefined)
+    assert.strictEqual(new ProjectSandbox(dataEnv({ CERCO_READ_ALLOWLIST: '0' }), load, 'linux').base('/srv/gw/projects/x').readAllowlist, undefined)
+  })
+
+  it('ligada no Linux: o plano fecha `/` e o bubblewrap fecha cada irmão fora da lista, sem tocar /proc e /dev', () => {
+    const sandbox = new ProjectSandbox(dataEnv({ CERCO_READ_ALLOWLIST: '1' }), load, 'linux')
+    const base = { ...sandbox.base('/srv/gw/projects/x'), readAllowlist: ['/usr', '/bin', '/etc/ssl', '/etc/resolv.conf'] }
+    const plan = cercoPlan({}, base)
+    assert.ok(plan.readDeny.includes('/'))
+    const tree: Record<string, string[]> = {
+      '/': ['usr', 'bin', 'etc', 'opt', 'home', 'proc', 'dev', 'sys', 'srv', 'var'],
+      '/etc': ['ssl', 'hostname', 'resolv.conf', 'passwd'],
+      '/srv': ['gw'],
+      '/srv/gw': ['gateway.db', 'projects'],
+      '/srv/gw/projects': ['x', 'y'],
+    }
+    const linux = forBubblewrap({ ...plan, readDeny: ['/'] }, '/srv/gw/projects/x', (dir) => tree[dir] ?? [])
+    // O que o plano reabre da máquina (o Node em uso, a pasta da CI) fica aberto: só o resto entra na prova de "fechado".
+    const reopened = (dir: string) => plan.readAllow.some((path) => path.replace(/\/\*\*$/, '').startsWith(`${dir}/`))
+    for (const closed of ['/opt', '/home', '/var', '/etc/hostname', '/etc/passwd', '/srv/gw/gateway.db', '/srv/gw/projects/y'].filter((dir) => !reopened(dir)))
+      assert.ok(linux.readDeny.includes(closed), closed)
+    for (const open of ['/', '/usr', '/bin', '/etc', '/etc/ssl', '/etc/resolv.conf', '/proc', '/dev', '/sys', '/srv/gw/projects/x']) assert.ok(!linux.readDeny.includes(open), open)
+  })
+
+  it('a lista do sistema: só o que existe, com os prefixos de /etc expandidos e o Node em uso', () => {
+    const present = new Set(['/usr', '/bin', '/etc/ssl', '/etc/hosts', '/etc/ld.so.conf', '/etc/ld.so.conf.d', '/etc/ssh/ssh_config', '/home/u/.nvm/v22'])
+    const list = systemReadAllowlist(
+      (p) => present.has(p),
+      (dir) => (dir === '/etc' ? ['ld.so.conf', 'ld.so.conf.d', 'hostname'] : []),
+      '/home/u/.nvm/v22/bin/node',
+    )
+    assert.deepStrictEqual(list.sort(), ['/bin', '/etc/hosts', '/etc/ld.so.conf', '/etc/ld.so.conf.d', '/etc/ssh/ssh_config', '/etc/ssl', '/home/u/.nvm/v22', '/usr'])
+    assert.ok(!list.includes('/etc/hostname') && !list.includes('/etc/shadow'))
   })
 })

@@ -194,6 +194,16 @@ describe('NotificationsView', () => {
       await flush()
     }
 
+    it('pedido de um projeto que recebe o compartilhamento diz "valor do projeto <nome>"; o da origem não diz', async () => {
+      all = [
+        request('p1', { kind: 'secret', add: [], secret: { scope: 'skill', scopeId: 'gitlab', name: 'T', project: 'alfa' }, widenings: [{ key: 'secret/skill/gitlab#T', description: 'x' }], createdAt: '2026-11-04T12:00:00Z' }),
+        secret('v1'),
+      ]
+      const host = await mount(NotificationsView)
+      expect(item(host, 'p1').querySelector('[data-test="secret-project"]')?.textContent).toBe('valor do projeto Alfa')
+      expect(item(host, 'v1').querySelector('[data-test="secret-project"]')).toBeNull()
+    })
+
     it('mostra nome, escopo, descrição e motivo; Aprovar só liga com a caixa E o valor; manda { confirm, value } e limpa', async () => {
       all = [secret('v1')]
       const host = await mount(NotificationsView)

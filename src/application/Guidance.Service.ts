@@ -760,6 +760,16 @@ export class GuidanceService {
   private files?: IResourceFilesPort
 
   /**
+   * ⛔ Gancho do `sharedWith` da skill/command: roda DEPOIS de toda troca da lista (rota, restaurar, import, mudança de dono, projeto
+   * apagado) — a composição apaga os valores secretos de quem saiu. Um ponto só: nenhum caminho deixa valor órfão.
+   */
+  useSharesChanged(hook: (id: string, projects: readonly string[]) => void): void {
+    this.sharesChanged = hook
+  }
+
+  private sharesChanged?: (id: string, projects: readonly string[]) => void
+
+  /**
    * O ledger dos agentes (ver `Ledger.Service`): a seção do índice no prompt e, ligado, as ferramentas `ledger_read` e
    * `ledger_write` em toda conversa (`hasLedger`). Ligado na composição; sem ele, nada disso.
    */
@@ -916,6 +926,8 @@ export class GuidanceService {
     if (current.projectId !== next.projectId) this.files?.remove(current.kind, id, current.projectId)
     this.files?.sync(next.kind, id, next.projectId, next.files ?? [])
     this.history.record([{ kind: next.kind, id }], { by })
+    // Mudou de dono: a lista se ajustou (`sharesAfterMove`) e os valores de quem saiu vão junto.
+    if (current.projectId !== next.projectId) this.sharesChanged?.(id, next.sharedWith ?? [])
     return next
   }
 
@@ -944,6 +956,7 @@ export class GuidanceService {
     else delete saved.sharedWith
     this.repository.saveResource(saved)
     this.history.record([{ kind: resource.kind, id }], { by })
+    this.sharesChanged?.(id, saved.sharedWith ?? [])
     return saved
   }
 
@@ -1138,6 +1151,7 @@ export class GuidanceService {
       if (rest.length) next.sharedWith = rest
       else delete next.sharedWith
       this.repository.saveResource(next)
+      this.sharesChanged?.(resource.id, next.sharedWith ?? [])
     }
     for (const doc of this.repository.docsSharedWith(projectId)) this.repository.updateDoc(doc.id, { sharedWith: (doc.sharedWith ?? []).filter((id) => id !== projectId) })
   }

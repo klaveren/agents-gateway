@@ -847,7 +847,8 @@ caps failed calls per minute per IP (so a stranger guessing keys cannot use up t
 A wrong key, a wrong signature, a disabled hook and a hook that does not exist all answer the same 401.
 HMAC hooks can add `X-Timestamp` (unix seconds): the signature then covers `<timestamp>.<raw body>`, is
 accepted within 5 minutes and only once (replay protection). Without the header the signature is of the
-raw body alone, as before — callers that cannot send it keep working, without replay protection.
+raw body alone, as before — callers that cannot send it keep working, without replay protection — unless the
+hook has `requireTimestamp` on (off by default): then no `X-Timestamp` is a 401. Seen signatures persist in SQLite (5 min TTL).
 Whoever edits a hook's prompt, verification or session, or rotates its key, becomes the account the hook
 runs as; the same goes for schedules, and "run now" on someone else's schedule runs as whoever asked.
 

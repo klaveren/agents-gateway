@@ -553,6 +553,7 @@ const agentHookSchema = {
     signatureHeader: { type: 'string' },
     signaturePrefix: { type: 'string' },
     signatureEncoding: { type: 'string', enum: ['hex', 'base64'] },
+    requireTimestamp: { type: 'boolean', description: 'hmac: reject calls without X-Timestamp (401). Default false.' },
     session: { type: 'string', enum: ['new', 'continuous'] },
     sessionId: { type: 'string' },
     runAs: { type: 'string', description: 'The account the agent runs as (whoever created the hook).' },
@@ -575,6 +576,7 @@ const agentHookBody = {
     signatureHeader: { type: 'string', description: 'hmac: default X-Hub-Signature-256' },
     signaturePrefix: { type: 'string', description: 'hmac: default sha256=' },
     signatureEncoding: { type: 'string', enum: ['hex', 'base64'] },
+    requireTimestamp: { type: 'boolean', description: 'hmac: reject calls without X-Timestamp (401). Default false.' },
     session: { type: 'string', enum: ['new', 'continuous'], description: 'new = one conversation per call; continuous = all calls in one conversation, queued.' },
   },
 }
@@ -617,6 +619,11 @@ const revisionFields = {
   batchId: { type: 'string' },
   note: { type: 'string' },
   widenings: { type: 'array', items: { type: 'string' }, description: 'The keys of the access widenings the author (`by`) accepted in this change.' },
+  sharing: {
+    type: 'object',
+    description: 'Skill, command, spec, knowledge: project ids this revision added to / removed from `sharedWith`, against the previous revision. Absent when unchanged.',
+    properties: { added: { type: 'array', items: { type: 'string' } }, removed: { type: 'array', items: { type: 'string' } } },
+  },
 }
 const revisionSummarySchema = { type: 'object', properties: revisionFields }
 const revisionPageFields = {
@@ -3479,7 +3486,7 @@ export const OPENAPI_DOCUMENT = {
             in: 'header',
             required: false,
             description:
-              'HMAC hooks only: unix seconds. When sent, the signature covers `<timestamp>.<raw body>`, must be within 5 minutes, and the same signature is accepted once. Absent = signature of the raw body alone (no replay protection).',
+              'HMAC hooks only: unix seconds. When sent, the signature covers `<timestamp>.<raw body>`, must be within 5 minutes, and the same signature is accepted once. Absent = signature of the raw body alone (no replay protection), unless the hook has requireTimestamp: then 401. Seen signatures are kept in the database.',
             schema: { type: 'string' },
           },
         ],

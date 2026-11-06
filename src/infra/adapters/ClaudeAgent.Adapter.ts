@@ -518,7 +518,8 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
         // com token): leem o ambiente do gateway (/proc), o HOME e as pastas de outros agentes. Só o agente GLOBAL e `adminOnly`
         // (o admin do gateway) os tem; os demais usam as locais, que passam pelo mesmo caminho das regras.
         const unguarded = HOST_NATIVES[bare]
-        if (unguarded && !(adminOnly && !project)) {
+        // ⛔ O Bash nativo nem para o admin: roda sem cerco e lê `/proc/$PPID/environ`. O `run_bash` local cobre.
+        if (unguarded && (bare === 'Bash' || !(adminOnly && !project))) {
           return { behavior: 'deny', message: `${bare}: indisponível neste agente (roda no servidor, fora do cerco e das regras). Use ${unguarded}.` }
         }
         // ⛔ O Bash que só mostra uma variável secreta (ver `printsSecret`): use a variável, não a imprima.

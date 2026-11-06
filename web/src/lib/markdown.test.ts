@@ -28,4 +28,17 @@ describe('renderMarkdown', () => {
     expect(html).not.toContain('<b>')
     expect(html).toContain('&lt;b&gt;x&lt;/b&gt;')
   })
+
+  it('link externo mostra o host quando o texto não é a URL', () => {
+    const html = renderMarkdown('[Reautenticar](https://evil.com/x?a=1&b=2)')
+    expect(html).toContain('<a href="https://evil.com/x?a=1&amp;b=2" target="_blank" rel="noopener noreferrer">Reautenticar</a>')
+    expect(html).toContain('↗ evil.com</span>')
+    expect(renderMarkdown('[https://a.com/x](https://a.com/x)')).not.toContain('link-host')
+    expect(renderMarkdown('[a.com](https://a.com/x)')).not.toContain('link-host')
+  })
+
+  it('o host também sai escapado', () => {
+    const html = renderMarkdown('[x](https://a.com"onmouseover=alert(1)/y)')
+    expect(html).not.toContain('"onmouseover')
+  })
 })

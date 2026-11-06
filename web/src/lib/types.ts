@@ -764,6 +764,7 @@ export interface IAgentHook {
   signatureHeader: string
   signaturePrefix: string
   signatureEncoding: 'hex' | 'base64'
+  requireTimestamp: boolean
   session: 'new' | 'continuous'
   sessionId?: string
   runAs: string
@@ -776,7 +777,7 @@ export interface IAgentHook {
   updatedBy?: string
 }
 
-export type THookInput = Pick<IAgentHook, 'prompt' | 'enabled' | 'verify' | 'signatureHeader' | 'signaturePrefix' | 'signatureEncoding' | 'session'>
+export type THookInput = Pick<IAgentHook, 'prompt' | 'enabled' | 'verify' | 'signatureHeader' | 'signaturePrefix' | 'signatureEncoding' | 'requireTimestamp' | 'session'>
 
 /** Uma ferramenta do servidor instalada pela guia Pacotes (micromamba, conda-forge). */
 export interface IInstalledPackage {

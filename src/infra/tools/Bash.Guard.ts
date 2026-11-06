@@ -186,6 +186,177 @@ export async function remoteReasons(analysis: { commands: readonly IShellCommand
   return BOTH_REASONS.filter((reason) => found.has(reason))
 }
 
+// ⛔ O COMANDO QUE O SSH (e quem o chama) RODA FORA DA ANÁLISE: `ssh -o ProxyCommand=…`, `scp -S prog`, `rsync -e prog`,
+// `GIT_SSH_COMMAND=…`, `git -c core.sshCommand=…`. O programa que eles lançam não passa pelas regras de terminal; só vale o
+// `ssh` simples (com opções), analisado de novo por dentro. Falha fechada.
+
+/** As opções que levam valor (na palavra seguinte ou grudado), para ler os aglomerados `-vo X` como o getopt lê. */
+const CLIENT_VALUE_OPTIONS: Record<string, string> = { ssh: 'BbcDEeFIiJLlmOoPpQRSWw', scp: 'cFiJloPS', sftp: 'BbcDFiJloPRSsX' }
+/** As opções do ssh que lançam programa. */
+const SSH_PROGRAM_OPTIONS = new Set(['proxycommand', 'localcommand', 'knownhostscommand'])
+const PLAIN_SSH_PROGRAMS = ['ssh', '/usr/bin/ssh', '/bin/ssh']
+
+/** Separa uma linha em palavras com aspas simples e duplas; `undefined` se as aspas não fecham. */
+function splitWords(text: string): string[] | undefined {
+  const words: string[] = []
+  let current = ''
+  let quote = ''
+  let started = false
+  for (const char of text) {
+    if (quote) {
+      if (char === quote) quote = ''
+      else current += char
+    } else if (char === "'" || char === '"') {
+      quote = char
+      started = true
+    } else if (/\s/.test(char)) {
+      if (started || current) words.push(current)
+      current = ''
+      started = false
+    } else {
+      current += char
+    }
+  }
+  if (quote) return undefined
+  if (started || current) words.push(current)
+  return words
+}
+
+/**
+ * ⛔ `ssh` SIMPLES com opções: o programa é o `ssh` (sem caminho próprio), sem nada que o shell interprete (`;|&$`<>()\`) e sem
+ * opção que lance outro programa. É o que se aceita num `ProxyCommand`, `core.sshCommand`, `GIT_SSH_COMMAND` e `rsync -e`.
+ */
+function plainSshCommand(text: string): boolean {
+  if (/[;&|`$<>()\\\n]/.test(text)) return false
+  const words = splitWords(text.trim())
+  if (!words?.length || !PLAIN_SSH_PROGRAMS.includes(words[0]!)) return false
+  return !clientRefusal(words, 'ssh')
+}
+
+/** A opção `-o` do ssh: as que lançam programa só valem com `ssh` simples (ou `none`). */
+function sshOptionRefusal(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined
+  const name = value.trim().split(/[=\s]/, 1)[0] ?? ''
+  if (/[$`]/.test(name)) return 'opção do ssh montada em execução (-o)'
+  const key = name.toLowerCase()
+  if (key === 'include') return 'ssh -o Include carrega um arquivo de configuração que pode lançar programa'
+  if (!SSH_PROGRAM_OPTIONS.has(key)) return undefined
+  const argument = value
+    .trim()
+    .slice(name.length)
+    .replace(/^\s*=?\s*/, '')
+  const bare = argument.replace(/^(["'])(.*)\1$/, '$2')
+  if (bare.toLowerCase() === 'none' || (key === 'knownhostscommand' && !bare)) return undefined
+  return plainSshCommand(bare) ? undefined : `ssh -o ${name}: só vale um \`ssh\` simples com opções`
+}
+
+/** `ssh`, `scp` e `sftp` pelas palavras: `-o` com programa, `-F` (arquivo de configuração) e `-S` do scp/sftp. */
+function clientRefusal(argv: readonly string[], tool: 'ssh' | 'scp' | 'sftp'): string | undefined {
+  const valued = CLIENT_VALUE_OPTIONS[tool]!
+  let hostSeen = tool !== 'ssh'
+  for (let i = 1; i < argv.length; i += 1) {
+    const word = argv[i]!
+    if (word === '--') {
+      if (tool === 'ssh' && !hostSeen) {
+        i += 1
+        hostSeen = true
+        continue
+      }
+      break
+    }
+    // O ssh relê as opções depois do host (`ssh h -o X cmd`) até a primeira palavra solta, que já é o comando remoto.
+    if (!word.startsWith('-') || word === '-') {
+      if (hostSeen && tool === 'ssh') break
+      hostSeen = true
+      continue
+    }
+    for (let j = 1; j < word.length; j += 1) {
+      const letter = word[j]!
+      if (!valued.includes(letter)) continue
+      const rest = word.slice(j + 1)
+      const value = rest || argv[i + 1]
+      if (!rest) i += 1
+      if (letter === 'o') {
+        const refused = sshOptionRefusal(value)
+        if (refused) return refused
+      } else if (letter === 'F' && value !== '/dev/null') return `${tool} -F: arquivo de configuração do ssh pode lançar programa (ProxyCommand, Match exec)`
+      else if (letter === 'S' && tool !== 'ssh' && !PLAIN_SSH_PROGRAMS.includes(value ?? '')) return `${tool} -S: só o \`ssh\``
+      break
+    }
+  }
+  return undefined
+}
+
+/** `rsync -e CMD` / `--rsh=CMD` / `--rsync-path=CMD`: o programa de transporte tem de ser o `ssh` simples. */
+function rsyncRefusal(argv: readonly string[]): string | undefined {
+  for (let i = 1; i < argv.length; i += 1) {
+    const word = argv[i]!
+    if (word === '--') break
+    if (word.startsWith('--')) {
+      const flag = word.split('=', 1)[0]!
+      const inline = word.includes('=') ? word.slice(word.indexOf('=') + 1) : undefined
+      if (flag !== '--rsh' && flag !== '--rsync-path') continue
+      const value = inline ?? argv[i + 1]
+      if (inline === undefined) i += 1
+      if (flag === '--rsh' && !plainSshCommand(value ?? '')) return 'rsync --rsh: só vale um `ssh` simples com opções'
+      if (flag === '--rsync-path' && !/^[A-Za-z0-9_./-]+$/.test(value ?? '')) return 'rsync --rsync-path: só o caminho do rsync remoto (o comando remoto passa por regra própria)'
+      continue
+    }
+    if (!word.startsWith('-') || word === '-') continue
+    for (let j = 1; j < word.length; j += 1) {
+      if (!'eBfTM'.includes(word[j]!)) continue
+      const rest = word.slice(j + 1)
+      const value = rest || argv[i + 1]
+      if (!rest) i += 1
+      if (word[j] === 'e' && !plainSshCommand(value ?? '')) return 'rsync -e: só vale um `ssh` simples com opções'
+      break
+    }
+  }
+  return undefined
+}
+
+/** `git -c core.sshCommand=…`, `git config core.sshCommand …`, `--config-env=core.sshCommand=VAR`. */
+function gitSshRefusal(argv: readonly string[]): string | undefined {
+  for (let i = 1; i < argv.length; i += 1) {
+    const word = argv[i]!
+    const at = word.toLowerCase().indexOf('core.sshcommand')
+    if (at < 0) continue
+    if (word.startsWith('--config-env')) return 'git --config-env=core.sshCommand: o programa vem de uma variável'
+    const equals = word.indexOf('=', at)
+    const value = equals >= 0 ? word.slice(equals + 1) : argv[i + 1]
+    if (value !== undefined && value !== '' && !plainSshCommand(value)) return 'git core.sshCommand: só vale um `ssh` simples com opções'
+  }
+  return undefined
+}
+
+/**
+ * ⛔ A variável de ambiente que troca o programa de transporte, vista no TEXTO da linha (`GIT_SSH_COMMAND=… git pull`, `export …`,
+ * `env …`): o valor tem de ser o `ssh` simples. `GIT_CONFIG_KEY_n=core.sshCommand` e `GIT_CONFIG_PARAMETERS` pelo mesmo caminho.
+ */
+function transportEnvRefusal(full: string): string | undefined {
+  for (const match of full.matchAll(/\b(GIT_SSH_COMMAND|GIT_SSH|RSYNC_RSH)\s*=\s*("[^"]*"|'[^']*'|[^\s;&|]*)/g)) {
+    const value = match[2]!.replace(/^(["'])(.*)\1$/, '$2')
+    if (value && !plainSshCommand(value)) return `${match[1]}: só vale um \`ssh\` simples com opções`
+  }
+  if (/\bGIT_CONFIG_(?:KEY_\d+|PARAMETERS)\s*=[^\n;&|]*core\.sshcommand/i.test(full)) return 'GIT_CONFIG_*: core.sshCommand não vem por variável de ambiente'
+  return undefined
+}
+
+/**
+ * ⛔ O motivo de recusar uma linha que lança outro programa pelo transporte do ssh, ou nada. `scp` e `rsync` comuns (cópia), e o
+ * `ssh` sem essas opções, seguem as regras de terminal e de rede de sempre.
+ */
+export function transportRefusal(commands: ReadonlyArray<{ name: string; argv: readonly string[] }>, full: string): string | undefined {
+  const fromEnv = transportEnvRefusal(full)
+  if (fromEnv) return fromEnv
+  for (const { name, argv } of commands) {
+    const refused =
+      name === 'ssh' || name === 'scp' || name === 'sftp' ? clientRefusal(argv, name) : name === 'rsync' ? rsyncRefusal(argv) : name === 'git' ? gitSshRefusal(argv) : undefined
+    if (refused) return refused
+  }
+  return undefined
+}
+
 export function truncate(output: string, maxChars: number): string {
   if (output.length <= maxChars) return output
   return `${output.substring(0, maxChars)}\n...[truncated at ${maxChars} characters]`

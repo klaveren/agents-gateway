@@ -15,7 +15,28 @@ function inline(text: string): string {
     .replace(/`([^`\n]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_match, label: string, url: string) => link(label, url))
+}
+
+/** ⛔ Host de uma URL já escapada (`&amp;` volta a `&` só para o parse; o host sai escapado de novo). */
+function hostOf(url: string): string {
+  try {
+    return new URL(url.replace(/&amp;/g, '&')).hostname
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Link externo: o texto é do modelo e pode mentir (`[Reautenticar](https://evil)`), então o HOST de destino aparece ao
+ * lado, em fonte menor e cinza, sempre que o texto não for a própria URL.
+ */
+function link(label: string, url: string): string {
+  const host = escapeHtml(hostOf(url))
+  const bare = label.replace(/^https?:\/\//, '').replace(/\/$/, '')
+  const shown = !host || label === url || bare === host
+  const hint = shown ? '' : ` <span class="link-host" style="font-size:0.75em;color:#9ca3af">↗ ${host}</span>`
+  return `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>${hint}`
 }
 
 const TABLE_ROW = /^\s*\|.*\|\s*$/

@@ -3,7 +3,7 @@
   import ConfirmDialog from '@/components/ConfirmDialog.vue'
   import { ApiError } from '@/lib/api'
   import type { IWideningRef } from '@/lib/catalogHistory'
-  import { type IPermissionRequest, entriesLine, patchLine, ruleLine, secretLine } from '@/lib/permissionRequests'
+  import { type IPermissionRequest, entriesLine, patchLine, ruleLine, secretLine, secretProjectLine } from '@/lib/permissionRequests'
   import { useResource } from '@/composables/useResource'
   import { useProjectsStore } from '@/stores/projects'
   import { usePermissionRequestsStore } from '@/stores/permissionRequests'
@@ -16,6 +16,7 @@
    * ⚖️ Os pedidos vêm da lista de todos da store (a mesma do selo), que anda sozinha com o `catalog.changed`.
    */
   const projects = useProjectsStore()
+  const projectNameOf = (id: string) => projects.list.find((project) => project.id === id)?.name
   const store = usePermissionRequestsStore()
   const { data, loading } = useResource(store.lists, () => (projects.managesAny ? '' : undefined))
 
@@ -220,6 +221,7 @@
           >
             <div v-if="request.secret" class="flex flex-col gap-0.5" data-test="secret-request">
               <p class="text-sm text-zinc-100">{{ secretLine(request.secret) }}</p>
+              <p v-if="secretProjectLine(request.secret, projectNameOf)" class="text-xs text-amber-300" data-test="secret-project">{{ secretProjectLine(request.secret, projectNameOf) }}</p>
               <p v-if="request.secret.description" class="text-xs text-zinc-400" data-test="secret-description">{{ request.secret.description }}</p>
             </div>
             <ul class="flex flex-col gap-0.5 text-xs text-zinc-300">

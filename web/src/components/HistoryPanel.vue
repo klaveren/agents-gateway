@@ -10,6 +10,7 @@ import {
   itemHistory,
   OP_LABEL,
   restoreRevision,
+  sharingLabels,
   revisionDiff,
   SOURCE_LABEL,
   type IIssue,
@@ -21,6 +22,7 @@ import {
   type TCatalogKind,
 } from '@/lib/catalogHistory'
 import { fullTime } from '@/lib/format'
+import { useProjectsStore } from '@/stores/projects'
 
 /**
  * A GUIA HISTÓRICO de um item do catálogo: as revisões (da mais nova para a mais velha), o diff de uma delas contra a
@@ -35,6 +37,8 @@ import { fullTime } from '@/lib/format'
 const props = defineProps<{ kind: TCatalogKind; id: string; readonly?: boolean }>()
 const emit = defineEmits<{ restored: [result: IRestoreResult] }>()
 
+const projectsStore = useProjectsStore()
+const projectNameOf = (id: string) => projectsStore.list.find((project) => project.id === id)?.name
 const item = computed(() => ({ kind: props.kind, id: props.id }))
 const history = ref<IItemHistory>()
 const revisions = ref<IRevisionSummary[]>([])
@@ -189,6 +193,7 @@ const sideLabel = (side: IRevisionDiff['from']) => (side.revision === 'current' 
               <span v-if="revision.widenings?.length" class="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-300" :title="revision.widenings.join('\n')" data-test="widening-badge">
                 ampliação aceita ({{ revision.widenings.length }})
               </span>
+              <span v-for="label in sharingLabels(revision.sharing, projectNameOf)" :key="label" class="rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] text-sky-300" data-test="sharing-label">{{ label }}</span>
               <span v-if="revision.batchId" class="rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-400" :title="`Lote ${revision.batchId}`">lote</span>
               <span v-if="revision.revision === latest" class="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-300">última</span>
               <span class="ml-auto text-xs text-zinc-500">{{ fullTime(revision.at) }}</span>

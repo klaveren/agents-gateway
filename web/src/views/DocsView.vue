@@ -23,7 +23,7 @@ import { ApiError } from '@/lib/api'
 import { DOC_STATUS_FILTER_LABEL, DOC_STATUS_FILTERS, DOC_STATUS_LABEL, DOC_STATUSES, docStatusOf, filterByStatus, isInactive, sameIds, statusCounts, type TDocStatusFilter } from '@/lib/docStatus'
 import { sizeHint } from '@/lib/format'
 import { pendingDraft } from '@/lib/builder'
-import { attachableDocs, attachedRefs, attachmentsChanged, docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId, setAttachMode, sharedFromOf, type TAttachMode } from '@/lib/guidance'
+import { attachableDocs, attachedRefs, attachmentsChanged, docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId, setAttachMode, sharedFromOf, withoutShared, type TAttachMode } from '@/lib/guidance'
 import type { IRestoreResult } from '@/lib/catalogHistory'
 import { renderMarkdown } from '@/lib/markdown'
 import type { IProjectDoc, TDocKind, TDocStatus, TImportIssueMatch } from '@/lib/types'
@@ -144,7 +144,7 @@ const formScope = computed(() => (form.value.global ? GLOBAL_SCOPE : form.value.
 const { list: docs } = useScopedDocs(() => (projects.manages ? scopeToProjectId(formScope.value) : undefined))
 const attachable = computed(() => attachableDocs(docs.value, scopeToProjectId(formScope.value), form.value.id || undefined))
 /** Os que este pode substituir: os de mesmo tipo, globais ou do projeto (o global só substitui global), nunca ele mesmo. */
-const replaceable = computed(() => attachable.value.filter((doc) => doc.kind === form.value.kind))
+const replaceable = computed(() => withoutShared(attachable.value).filter((doc) => doc.kind === form.value.kind))
 /** Os documentos que o salvo diz que o substituem (o título vem da lista, quando está nela). */
 const supersededBy = computed(() => (loaded.value?.supersededBy ?? []).map((id) => ({ id, title: docs.value.find((doc) => doc.id === id)?.title ?? id })))
 /** O salvo está substituído ou arquivado: o aviso do topo do formulário. */

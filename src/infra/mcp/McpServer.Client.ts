@@ -167,27 +167,39 @@ export class McpServerClient {
     }
   }
 
-  /** As ferramentas como o servidor as descreve (esquema inteiro) — para o proxy MCP repassar sem perder nada. */
-  async listToolsRaw(): Promise<Array<Record<string, unknown>>> {
-    if (!(await this.ensureConnected()) || !this.client) return []
-    try {
-      return (await this.client.listTools()).tools as Array<Record<string, unknown>>
-    } catch (error: unknown) {
-      this.lastError = withoutRemoteBody(toMessage(error))
-      await this.markDisconnected()
-      return []
-    }
+  /**
+   * As ferramentas como o servidor as descreve (esquema inteiro) — para o proxy MCP repassar sem perder nada.
+   * `token`: a credencial de quem chama, que um servidor `caller` exige (o proxy a tira da concessão do turno).
+   */
+  async listToolsRaw(token?: string): Promise<Array<Record<string, unknown>>> {
+    return this.tokenScope.run(token, async () => {
+      if (!(await this.ensureConnectedAs(token)) || !this.client) return []
+      try {
+        return (await this.client.listTools()).tools as Array<Record<string, unknown>>
+      } catch (error: unknown) {
+        this.lastError = withoutRemoteBody(toMessage(error))
+        await this.markDisconnected()
+        return []
+      }
+    })
   }
 
-  /** A chamada com a resposta INTEIRA (imagens, recursos) — para o proxy MCP. */
-  async callToolRaw(name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
-    if (!(await this.ensureConnected()) || !this.client) return { content: [{ type: 'text', text: `MCP server unavailable; cannot run "${name}".` }], isError: true }
-    try {
-      return (await this.client.callTool({ name, arguments: args })) as Record<string, unknown>
-    } catch (error: unknown) {
-      await this.markDisconnected()
-      return { content: [{ type: 'text', text: `MCP call failed: ${toMessage(error)}` }], isError: true }
-    }
+  /** A chamada com a resposta INTEIRA (imagens, recursos) — para o proxy MCP. `context`: a credencial e a identidade de quem chama. */
+  async callToolRaw(name: string, args: Record<string, unknown>, context?: IExecutionContext): Promise<Record<string, unknown>> {
+    return this.tokenScope.run(
+      context?.token,
+      async () => {
+        if (!(await this.ensureConnectedAs(context?.token)) || !this.client)
+          return { content: [{ type: 'text', text: `MCP server unavailable; cannot run "${name}".` }], isError: true }
+        try {
+          return (await this.client.callTool({ name, arguments: args })) as Record<string, unknown>
+        } catch (error: unknown) {
+          await this.markDisconnected()
+          return { content: [{ type: 'text', text: `MCP call failed: ${toMessage(error)}` }], isError: true }
+        }
+      },
+      this.options.identity ? identityHeaders(context) : undefined,
+    )
   }
 
   async callTool(name: string, args: Record<string, unknown>, context?: IExecutionContext): Promise<IToolResult> {

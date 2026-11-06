@@ -18,6 +18,7 @@ import { SqlitePermissionRepository } from '@infra/persistence/Sqlite.Permission
 import { SqliteProjectRepository } from '@infra/persistence/Sqlite.ProjectRepository'
 import { SecretBox } from '@infra/secrets/Aes.SecretBox'
 import { AgentCatalog, ISaveAgentOptions } from './Agent.Catalog'
+import { CatalogHistoryQuery } from './CatalogHistory.Query'
 import { CatalogHistoryService } from './CatalogHistory.Service'
 import { CatalogReader } from './Catalog.Reader'
 import { GuidanceService } from './Guidance.Service'
@@ -150,6 +151,25 @@ describe('CatalogHistoryService — a gravação nos serviços', () => {
 
     assert.deepStrictEqual(ops('skill', 'tabela'), ['create:ana', 'update:bia', 'delete:caio'])
     assert.deepStrictEqual(ops('command', 'resumo'), ['create:ana', 'update:bia', 'delete:caio'])
+  })
+
+  it('o histórico rotula a revisão que só mudou o sharedWith (acrescentou / tirou), em ids, contra a anterior', () => {
+    const { guidance, projects, history, repos } = build()
+    projects.create({ id: 'alfa', name: 'Alfa' }, 'ana')
+    projects.create({ id: 'beta', name: 'Beta' }, 'ana')
+    projects.create({ id: 'gama', name: 'Gama' }, 'ana')
+    guidance.createResource({ id: 'tabela', kind: 'skill', projectId: 'alfa', description: 'Tabelas', body: 'faça' }, 'ana')
+    guidance.shareResource('tabela', ['beta', 'gama'], 'ana')
+    guidance.shareResource('tabela', ['gama'], 'ana')
+    guidance.shareResource('tabela', [], 'ana')
+    const query = new CatalogHistoryQuery(history, new CatalogReader(repos))
+
+    const page = query.itemRevisions({ kind: 'skill', itemId: 'tabela' }, { page: 1, pageSize: 10 })
+    // Da mais nova para a mais velha: [], [gama], [beta, gama], criação.
+    assert.deepStrictEqual(
+      page.revisions.map((revision) => revision.sharing),
+      [{ added: [], removed: ['gama'] }, { added: [], removed: ['beta'] }, { added: ['beta', 'gama'], removed: [] }, undefined],
+    )
   })
 
   it('rule: create, update, mover e apagar — a renumeração grava as vizinhas, com o mesmo autor', () => {
