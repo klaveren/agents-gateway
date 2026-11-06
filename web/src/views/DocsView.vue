@@ -17,11 +17,13 @@ import SupersedesPicker from '@/components/SupersedesPicker.vue'
 import HistoryTabs from '@/components/HistoryTabs.vue'
 import ImportIssues from '@/components/ImportIssues.vue'
 import ImportIssuesBadge from '@/components/ImportIssuesBadge.vue'
+import ShareProjects from '@/components/ShareProjects.vue'
+import SharedBadge from '@/components/SharedBadge.vue'
 import { ApiError } from '@/lib/api'
 import { DOC_STATUS_FILTER_LABEL, DOC_STATUS_FILTERS, DOC_STATUS_LABEL, DOC_STATUSES, docStatusOf, filterByStatus, isInactive, sameIds, statusCounts, type TDocStatusFilter } from '@/lib/docStatus'
 import { sizeHint } from '@/lib/format'
 import { pendingDraft } from '@/lib/builder'
-import { attachableDocs, attachedRefs, attachmentsChanged, docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId, setAttachMode, type TAttachMode } from '@/lib/guidance'
+import { attachableDocs, attachedRefs, attachmentsChanged, docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId, setAttachMode, sharedFromOf, type TAttachMode } from '@/lib/guidance'
 import type { IRestoreResult } from '@/lib/catalogHistory'
 import { renderMarkdown } from '@/lib/markdown'
 import type { IProjectDoc, TDocKind, TDocStatus, TImportIssueMatch } from '@/lib/types'
@@ -100,14 +102,17 @@ const g = computed(() => (info.value.masc ? { nova: 'Novo', nenhuma: 'Nenhum', u
 
 const form = ref({ id: '', kind: 'spec' as TDocKind, title: '', summary: '', tags: [] as string[], body: '', global: true, project: '', docIds: [] as string[], docRefs: [] as string[], status: 'accepted' as TDocStatus, supersedes: [] as string[] })
 /** A guia da edição: o formulário ou o histórico (`#historico` no endereço abre nele). */
-type TDocTab = 'edit' | 'instructions' | 'attachments' | 'issues' | 'history'
-const HASH_TAB: Record<string, TDocTab> = { '#historico': 'history', '#instrucoes': 'instructions', '#anexos': 'attachments', '#problemas': 'issues' }
+type TDocTab = 'edit' | 'instructions' | 'attachments' | 'share' | 'issues' | 'history'
+const HASH_TAB: Record<string, TDocTab> = { '#historico': 'history', '#instrucoes': 'instructions', '#anexos': 'attachments', '#compartilhar': 'share', '#problemas': 'issues' }
 const tab = ref<TDocTab>(HASH_TAB[route.hash] ?? 'edit')
 /** Muda depois de restaurar uma versão: relê o item. */
 const reloadKey = ref(0)
 const loaded = ref<IProjectDoc>()
 /** Global: só o admin do gateway altera; quem administra o projeto lê. */
-const locked = computed(() => !auth.isAdmin && (adding.value ? form.value.global : !!loaded.value && !loaded.value.projectId))
+const globalLocked = computed(() => !auth.isAdmin && (adding.value ? form.value.global : !!loaded.value && !loaded.value.projectId))
+/** Veio de outro projeto (compartilhado): o projeto de origem. Aqui é só leitura. */
+const sharedFrom = computed(() => (adding.value || !loaded.value ? undefined : sharedFromOf(loaded.value, projects.current)))
+const locked = computed(() => globalLocked.value || !!sharedFrom.value)
 const preview = ref(false)
 const issues = ref<Record<string, string[]>>({})
 const error = ref<string>()
@@ -357,6 +362,12 @@ function describe(failure: unknown): string {
   return failure instanceof Error ? failure.message : String(failure)
 }
 
+/** Compartilha spec e conhecimento (ADR não): o aberto é de um projeto, não veio de outro e a pessoa administra o projeto atual. */
+const canShare = computed(() => !adding.value && loaded.value?.kind !== 'adr' && !!loaded.value?.projectId && !sharedFrom.value && projects.manages)
+async function saveShares(list: string[]) {
+  if (loaded.value) loaded.value = await docsStore.share(loaded.value.id, list)
+}
+
 /** Os problemas da importação do item aberto (a guia só existe com algum). */
 const importIssues = computed(() => (adding.value ? [] : (loaded.value?.importIssues ?? [])))
 /** As guias além da principal (título, resumo, escopo, anexos): as instruções (o texto e a prévia) e os problemas. */
@@ -364,6 +375,7 @@ const extraTabs = computed(() =>
   [
     { id: 'instructions' as const, label: 'Instruções' },
     { id: 'attachments' as const, label: `Anexos${form.value.docIds.length ? ` (${form.value.docIds.length})` : ''}` },
+    ...(canShare.value ? [{ id: 'share' as const, label: `Compartilhar${loaded.value?.sharedWith?.length ? ` (${loaded.value.sharedWith.length})` : ''}` }] : []),
     ...(importIssues.value.length ? [{ id: 'issues' as const, label: `Problemas da importação (${importIssues.value.length})` }] : []),
   ].filter((item) => !adding.value || item.id === 'instructions' || item.id === 'attachments'),
 )
@@ -407,6 +419,7 @@ function onInvalid(event: Event) {
         <span class="flex items-center gap-1.5">
           <span class="min-w-0 flex-1 truncate text-sm font-medium">{{ doc.title }}</span>
           <span v-if="scope !== GLOBAL_SCOPE && !doc.projectId" class="shrink-0 rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">global</span>
+          <SharedBadge :from="doc.sharedFrom" />
           <DocStatusBadge :status="doc.status" />
         </span>
         <span class="block truncate text-xs text-zinc-500">{{ doc.id }}<template v-if="doc.summary"> · {{ doc.summary }}</template></span>
@@ -420,7 +433,8 @@ function onInvalid(event: Event) {
       <div v-if="adding || loaded" class="mx-auto mb-4 max-w-3xl"><HistoryTabs v-model="tab" edit-label="Documento" :extra="extraTabs" :history="!adding" /></div>
       <form v-if="adding || (loaded && (tab === 'edit' || tab === 'instructions' || tab === 'attachments'))" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save" @invalid.capture="onInvalid">
         <h2 class="text-lg font-semibold">{{ adding ? `${g.nova} ${info.one}` : loaded?.title }}</h2>
-        <p v-if="locked" class="text-xs text-amber-300" data-test="global-readonly">Global: só o administrador do gateway altera.</p>
+        <p v-if="sharedFrom" class="rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-sm text-sky-200" data-test="shared-readonly">Compartilhado por {{ scopeLabel(sharedFrom, projects.list) }}: só leitura aqui; a manutenção é lá.</p>
+        <p v-else-if="locked" class="text-xs text-amber-300" data-test="global-readonly">Global: só o administrador do gateway altera.</p>
         <fieldset :disabled="locked" class="contents">
         <!-- O aviso de quem lê: o salvo está fora do índice da conversa (vale em todas as guias, inclusive a prévia). -->
         <p v-if="!adding && isInactive(savedStatus)" class="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200" data-test="inactive-banner">
@@ -508,6 +522,10 @@ function onInvalid(event: Event) {
           </template>
         </SaveFooter>
       </form>
+      <section v-else-if="loaded && tab === 'share' && canShare" class="mx-auto flex max-w-3xl flex-col gap-3">
+        <h2 class="text-lg font-semibold">{{ loaded.title }}</h2>
+        <ShareProjects :owner="loaded.projectId ?? ''" :shared="loaded.sharedWith ?? []" :save="saveShares" />
+      </section>
       <section v-else-if="loaded && tab === 'issues'" class="mx-auto flex max-w-3xl flex-col gap-3">
         <h2 class="text-lg font-semibold">{{ loaded.title }}</h2>
         <ImportIssues :issues="importIssues" :resolve="resolveIssue" />

@@ -75,3 +75,12 @@ export function setAttachMode(docRefs: readonly string[], id: string, mode: TAtt
   const others = docRefs.filter((item) => item !== id)
   return mode === 'reference' ? [...others, id] : others
 }
+
+/**
+ * De que projeto o item vem, quando está aberto num projeto que só o RECEBE (compartilhado, só leitura): o `sharedFrom` da
+ * lista ou, no item aberto (que não traz esse campo), o dono quando o projeto atual está na lista `sharedWith` dele.
+ */
+export function sharedFromOf(item: { projectId?: string; sharedWith?: readonly string[]; sharedFrom?: string }, current: string | undefined): string | undefined {
+  if (item.sharedFrom) return item.sharedFrom
+  return item.projectId && current && item.projectId !== current && item.sharedWith?.includes(current) ? item.projectId : undefined
+}

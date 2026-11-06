@@ -18,8 +18,13 @@ export interface ISecretMeta {
  * em nenhuma lista nem estado da store.
  */
 export const useResourceSecretsStore = defineStore('resourceSecrets', () => {
-  const lists = keyedResource((basePath) => api<ISecretMeta[]>(`${basePath}/secrets`))
-  const path = (basePath: string, name: string) => `${basePath}/secrets/${encodeURIComponent(name)}`
+  // A chave pode levar `?project=<projeto>` (os valores de skill/command são POR PROJETO): a rota vai depois de `/secrets`.
+  const route = (basePath: string, name?: string) => {
+    const [base = '', query] = basePath.split('?')
+    return `${base}/secrets${name ? `/${encodeURIComponent(name)}` : ''}${query ? `?${query}` : ''}`
+  }
+  const lists = keyedResource((basePath) => api<ISecretMeta[]>(route(basePath)))
+  const path = (basePath: string, name: string) => route(basePath, name)
 
   /** Grava (cria ou troca): `value` ausente só muda a descrição. ⛔ Só pela sessão da tela: o servidor responde 403 no resto. */
   async function save(basePath: string, name: string, change: { value?: string; description?: string }): Promise<ISecretMeta> {
