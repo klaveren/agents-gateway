@@ -4,6 +4,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
 import { cercoPlan } from '@domain/Cerco.Plan'
+import { commandDirOf } from '@infra/accounts/Ssh.Kit'
 import {
   ensureGitProxyAuth,
   expandGlobPath,
@@ -147,6 +148,24 @@ describe('ProjectSandbox', () => {
     sandbox.done()
     await new Promise((resolve) => setImmediate(resolve))
     assert.strictEqual(srt.cleanups.count, 2)
+  })
+
+  it('⛔ a pasta privada do comando (chave SSH, proxychains) fica na pasta de dados, fechada aos outros: só o dono recebe leitura dela', async () => {
+    const srt = fakeSrt()
+    const sandbox = new ProjectSandbox(env, srt.load)
+    if (!(await sandbox.status()).available) return
+    const run = sandbox.runDir()
+    assert.ok(run.startsWith(root), 'dentro da pasta de dados (que o cerco nega a todo comando)')
+    const mine = commandDirOf(run, 'tok-meu')
+    const other = commandDirOf(run, 'tok-outro')
+    mkdirSync(mine, { recursive: true })
+    mkdirSync(other, { recursive: true })
+    const project = join(root, 'projeto')
+    mkdirSync(project, { recursive: true })
+    await sandbox.wrapWith('ls', project, (base) => cercoPlan({ agent: [], project: [] }, { ...base, system: [] }), 'tok-meu')
+    const allow = (srt.calls.at(-1)!.config!.filesystem as { allowRead: string[] }).allowRead
+    assert.ok(allow.includes(mine), 'o dono lê a sua')
+    assert.ok(!allow.includes(other) && !allow.includes(run), 'o resto fica fechado')
   })
 
   it('⛔ cerco que não sobe: status indisponível com o erro real, e o wrap recusa', async () => {

@@ -10,6 +10,8 @@ export interface IShellCommand {
   argv: string[]
   /** Trecho do fonte. */
   text: string
+  /** Índices do argv cujo valor só existe em execução (`$x`, `$(…)`): o texto resolvido não é o que roda. Ausente = não se sabe. */
+  dynamicArgs?: number[]
 }
 
 export interface IShellRedirect {
@@ -231,8 +233,12 @@ class Analyzer {
     if (!nameNode) return
     const name = resolve(nameNode)
     if (name.dynamic || name.glob || name.value === '') this.opaque.add('dynamic-command')
-    const argv = [name.value, ...args.map((a) => resolve(a).value)]
+    const resolved = args.map(resolve)
+    const argv = [name.value, ...resolved.map((a) => a.value)]
+    const index = this.commands.length
     this.register(argv, node.text, depth)
+    const at = this.commands[index]
+    if (at && at.argv === argv) at.dynamicArgs = resolved.flatMap((a, i) => (a.dynamic || a.glob ? [i + 1] : []))
   }
 
   /** Registra o comando e desembrulha wrappers/shells. */

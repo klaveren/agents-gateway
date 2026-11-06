@@ -86,6 +86,46 @@ describe('Permission.Policy', () => {
     assert.ok(commandMatches('*', ['qualquer', 'coisa']))
   })
 
+  it('⛔ NEGAR vale com as opções globais no meio (`git -C . push`, `kubectl -n prod delete`); LIBERAR segue literal', () => {
+    const verdict = (agent: IPermissionRule[], argv: string[]) => decide({ category: 'terminal', value: argv.join(' '), argv }, { agent }).allowed
+    const git = [rule('terminal', 'git *'), rule('terminal', 'git push *', 'deny')]
+    for (const argv of [
+      ['git', 'push', 'origin', 'main'],
+      ['git', '-C', '.', 'push', 'origin', 'main'],
+      ['git', '--no-pager', 'push'],
+      ['git', '-c', 'core.pager=cat', 'push', 'x'],
+      ['git', '--git-dir=.git', '--work-tree=.', 'push', 'x'],
+      ['git', '--git-dir', '.git', 'push', 'x'],
+      ['git', '-P', '--bare', 'push'],
+      ['git', '-c', 'alias.p=push', 'p', 'origin', 'main'],
+      ['git', '-calias.p=push', 'p', 'origin'],
+      ['/usr/bin/git', '-C', '/x', 'push'],
+    ])
+      assert.strictEqual(verdict(git, argv), false, argv.join(' '))
+    assert.strictEqual(verdict(git, ['git', '-C', '.', 'status']), true)
+    assert.strictEqual(verdict(git, ['git', '--no-pager', 'log']), true)
+    const kube = [rule('terminal', 'kubectl *'), rule('terminal', 'kubectl delete *', 'deny')]
+    for (const argv of [
+      ['kubectl', 'delete', 'pod', 'x'],
+      ['kubectl', '-n', 'prod', 'delete', 'pod', 'x'],
+      ['kubectl', '--namespace=prod', 'delete', 'pod', 'x'],
+      ['kubectl', '--context', 'prod', '--kubeconfig', '/k', 'delete', 'pod', 'x'],
+    ])
+      assert.strictEqual(verdict(kube, argv), false, argv.join(' '))
+    assert.strictEqual(verdict(kube, ['kubectl', '-n', 'prod', 'get', 'pods']), true)
+    for (const argv of [
+      ['docker', '-H', 'tcp://x', 'rm', 'a'],
+      ['helm', '-n', 'p', 'uninstall', 'r'],
+      ['systemctl', '--user', 'stop', 'x'],
+    ]) {
+      const rules = [rule('terminal', '*'), rule('terminal', `${argv[0]} ${argv.includes('rm') ? 'rm' : argv.includes('uninstall') ? 'uninstall' : 'stop'} *`, 'deny')]
+      assert.strictEqual(verdict(rules, argv), false, argv.join(' '))
+    }
+    // LIBERAR não alarga: a regra `git push *` não libera a opção global, nem o apelido.
+    assert.strictEqual(verdict([rule('terminal', 'git push *')], ['git', '-C', '.', 'push', 'x']), false)
+    assert.strictEqual(verdict([rule('terminal', 'git *')], ['git', '-c', 'alias.p=push', 'p']), false)
+  })
+
   it('⛔ liberação relativa só vale dentro da pasta: `**` não alcança caminho absoluto nem ~; a negação vale em todo lugar', () => {
     const agent = [rule('write', '**'), rule('read', '**'), rule('read', '/opt/dados/**')]
     for (const value of ['/etc/passwd', '/app/data/projects/p1/repositories/abc/.git/hooks/pre-commit', '~/.ssh/config'])

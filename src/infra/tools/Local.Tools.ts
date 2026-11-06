@@ -7,16 +7,29 @@ import { commandMatches, type IPermissionRule } from '@domain/Permission.Policy'
 import type { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { exec } from 'node:child_process'
 import { rmSync } from 'node:fs'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { isAbsolute, join, posix, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { networkGate } from '@infra/permissions/Network.Gate'
 import { analyzeShell } from '@infra/permissions/Shell.Parse'
-import { bashPolicy, COMMAND_REASONS, deniedReasons, PRIVILEGE_ESCALATION, realReasons, truncate, type IBashPolicy } from './Bash.Guard'
+import {
+  bashPolicy,
+  COMMAND_REASONS,
+  deniedReasons,
+  privilegedOf,
+  realReasons,
+  remoteOf,
+  remoteReasons,
+  sshRemoteStart,
+  truncate,
+  type IBashPolicy,
+  type IRemote,
+} from './Bash.Guard'
 import { subscriptionEnv, workspaceFor } from '@infra/adapters/support/Subscription.Workspace'
 import { projectAliases } from '@infra/workspace/Work.Folder'
-import { accountsDir, ISshKitIdentity, removeSshKit, writeSshKit } from '@infra/accounts/Ssh.Kit'
+import { commandDirOf, ISshKitIdentity, removeSshKit, writeSshKit } from '@infra/accounts/Ssh.Kit'
 import { CLUSTER_SECRET_REFUSAL, dumpsClusterSecret } from '@domain/Secret.Mask'
-import { BACKGROUND_LIMITS, BackgroundProcesses, backgroundProcesses, clipOutput, startCommand, tailOf } from './Background.Processes'
+import { BACKGROUND_LIMITS, backgroundMaxProcesses, BackgroundProcesses, backgroundProcesses, clipOutput, startCommand, tailOf } from './Background.Processes'
 import { IProjectSandbox, projectSandbox, SANDBOX_SHELL } from '@infra/sandbox/Project.Sandbox'
 import { DOC_KINDS, IProjectDoc, READ_DOC_TOOL, SEARCH_DOCS_TOOL, TDocKind, TDocStatus } from '@domain/models/ProjectDoc.Model'
 import { IDocHit } from '@domain/ports/GuidanceRepository.Port'
@@ -78,6 +91,8 @@ export interface ITriggerStore {
   triggersOf(agentId: string): IAgentTrigger[] | undefined
   /** Grava a lista inteira; lança com os problemas quando ela não passa pela regra. */
   saveTriggers(agentId: string, triggers: IAgentTrigger[], by: string): void
+  /** O projeto do agente (`null` = global). Presente: o `agent_trigger` só alcança agentes do MESMO projeto de quem chama. */
+  projectOf?(agentId: string): string | null
   /**
    * O trigger veio de uma fonte do repositório (`importedFrom`): o Importador do projeto do agente marca o item como
    * importado (ver `ImportJobService.markImported`). Lança com o motivo; ausente = sem a marca.
@@ -202,6 +217,15 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     return context?.agentId ? deps.agentEnv?.(context.agentId) : undefined
   }
 
+  /** A pasta do servidor que nenhum comando lê (a de dados do cerco); sem o cerco que a diga (testes), uma temporária. */
+  const runDir = () => sandbox.runDir?.() ?? join(tmpdir(), 'gateway-run')
+
+  /**
+   * ⛔ Os logs dos comandos, por CONVERSA, na pasta do servidor — o gateway é quem grava e quem lê (`bash_logs`), então
+   * nenhum comando alcança o de outra conversa (no `.cache` do projeto, dividido, qualquer agente lia o log sem máscara).
+   */
+  const logDirOf = (sessionId: string | undefined) => join(runDir(), 'logs', (sessionId ?? 'sem-conversa').replace(/[^A-Za-z0-9_-]/g, '_'))
+
   /** O tempo e a saída deste agente (o campo `terminal` dele), ou o global. */
   function terminalOf(context: IExecutionContext | undefined): { timeoutMs: number; maxOutputChars: number } {
     const own = context?.agentId ? deps.agentTerminal?.(context.agentId) : undefined
@@ -265,7 +289,6 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       .map((line) => `${line}\n`)
       .join('')
     const gate = networkGate()
-    let sshKit: string | undefined
     let wrapped = false
     let released = false
     const token = gate.register((host, port) => {
@@ -273,15 +296,23 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       const verdict = permissions.check(asker, { category: 'network', value: `${host}:${port}` }, { log: true })
       return { allowed: verdict.allowed, reason: verdict.reason, ...(verdict.rule ? { pattern: verdict.rule.pattern } : {}) }
     })
+    // ⛔ A pasta PRIVADA deste comando (a chave SSH, o proxychains com o token de rede): na pasta de dados, que nenhum comando
+    // lê; o cerco libera só esta, só para ele. Sai com o comando.
+    const privateDir = commandDirOf(runDir(), token)
     // Uma vez só: o processo pode avisar a saída duas vezes (`error` e depois `close`), e a limpeza do cerco conta.
     const release = () => {
       if (released) return
       released = true
       gate.release(token)
-      if (sshKit) removeSshKit(sshKit)
+      removeSshKit(privateDir)
       if (wrapped) sandbox.done?.()
     }
     try {
+      // ⛔ A chave SSH do comando numa pasta PRIVADA do servidor (a de dados, que nenhum comando lê; só este recebe leitura
+      // dela), nunca no HOME do projeto que os agentes dividem. Escrita ANTES do cerco, que a libera só para este comando.
+      const kitBin = accounts?.ssh?.length
+        ? writeSshKit(privateDir, accounts.ssh, `${process.execPath} ${join(place.scratchBase ?? root, '.home', '.gateway-connect.cjs')} %h %p`).bin
+        : undefined
       const line = await sandbox.wrapWith(command, root, (base) => cercoPlan(layers, { ...base, system }), token, { ...place, localPorts, tcp })
       wrapped = true
       // As variáveis do agente por baixo, a identidade de quem chama por cima (ver `Agent.Identity`); as contas do projeto vêm depois.
@@ -289,29 +320,28 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       // do turno já vale aqui. A máscara as recebe antes do processo nascer.
       const secrets = deps.secrets?.envFor(context?.agentId, context?.sessionId).env
       const env: Record<string, string> = { ...terminalEnv(envOf(context), subscriptionEnv({ HOME: root }), context), ...accounts?.env, ...secrets }
-      if (accounts?.ssh?.length) {
-        const home = join(place.scratchBase ?? root, '.home')
-        sshKit = accountsDir(home, token)
-        const { bin } = writeSshKit(sshKit, accounts.ssh, `${process.execPath} ${join(home, '.gateway-connect.cjs')} %h %p`)
-        env.PATH = `${bin}:${env.PATH ?? process.env.PATH ?? '/usr/bin:/bin'}`
-      }
-      return { line, root, env, notes, release, logDir: join(place.scratchBase ?? root, '.cache', 'logs') }
+      if (kitBin) env.PATH = `${kitBin}:${env.PATH ?? process.env.PATH ?? '/usr/bin:/bin'}`
+      return { line, root, env, notes, release, logDir: logDirOf(context?.sessionId) }
     } catch (error: unknown) {
       release()
       return { status: 'error', result: `${toMessage(error)}. O terminal fica bloqueado até o cerco funcionar.` }
     }
   }
 
-  /** A trava do `Bash.Guard`, com a exceção do sudo remoto liberado por regra explícita (`remoteSudoAllowed`). */
+  /**
+   * A trava do `Bash.Guard`, com a exceção do sudo (ou reboot) remoto liberado por regra explícita (`remoteSudoAllowed`).
+   * ⛔ O comando que RODA decide, não o texto: `su''do`, `${x}o`, `doas`, `su -c`, `pkexec`, `reboot` montado por aspas — local ou
+   * na linha do ssh — são o mesmo que o literal.
+   */
   async function guardRefusal(command: string, context: IExecutionContext | undefined): Promise<string | undefined> {
     const textual = deniedReasons(command)
     // As travas de texto (rm -rf, mkfs…) valem como estão; o sudo e o reboot, só se o comando roda de verdade.
     const plain = textual.find((reason) => !COMMAND_REASONS.has(reason))
     if (plain) return plain
-    if (!textual.length) return undefined
-    const real = realReasons(await analyzeShell(command), textual)
+    const analysis = await analyzeShell(command)
+    const real = [...new Set([...realReasons(analysis, analysis.opaque.length ? textual : [...COMMAND_REASONS]), ...(await remoteReasons(analysis, command))])]
     if (!real.length) return undefined
-    if (real.every((reason) => reason === PRIVILEGE_ESCALATION) && deps.permissions && (await remoteSudoAllowed(command, deps.permissions, askerOf(context)))) return undefined
+    if (deps.permissions && (await remoteSudoAllowed(command, deps.permissions, askerOf(context)))) return undefined
     return real[0]
   }
 
@@ -367,6 +397,9 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     if (printing) return { status: 'error', result: printing }
     if (processes.running(sessionId).length >= BACKGROUND_LIMITS.perSession)
       return { status: 'error', result: `Já há ${BACKGROUND_LIMITS.perSession} processos em segundo plano nesta conversa: pare um com bash_stop.` }
+    // ⛔ O teto do gateway inteiro: cinco por conversa, em muitas conversas, ainda enchia a máquina.
+    if (processes.runningTotal() >= backgroundMaxProcesses())
+      return { status: 'error', result: `O servidor já tem ${backgroundMaxProcesses()} processos em segundo plano (somadas as conversas): espere um acabar.` }
     const prepared = await prepareSandboxed(command, context, permissions)
     if ('status' in prepared) return prepared
     const id = processes.newId()
@@ -541,61 +574,59 @@ export async function terminalRefusal(
 }
 
 /**
- * ⚖️ O `sudo` NO HOST REMOTO (`ssh 10.10.0.1 "sudo k3s kubectl …"`): o `Bash.Guard` recusa o sudo em qualquer ponto da
- * linha, e no cerco o sudo local nem roda. Dentro da string do `ssh` ele passa só com uma regra de terminal que LIBERA e
- * CITA o sudo (`ssh * sudo*k3s kubectl*`), aprovada pela pessoa: o `terminal *` não basta. O local segue recusado.
+ * ⚖️ O PRIVILEGIADO NO HOST REMOTO (`ssh 10.10.0.1 "sudo k3s kubectl …"`, `ssh h "sudo reboot"`): o `Bash.Guard` recusa o sudo e o
+ * reboot em qualquer ponto da linha, e no cerco o sudo local nem roda. Dentro da string do `ssh` ele passa só com uma regra de
+ * terminal que LIBERA e CITA o comando (`ssh * sudo*k3s kubectl*`, `ssh * reboot`), aprovada pela pessoa: o `terminal *` não
+ * basta. O local segue recusado. O nome do teste é do sudo, de quando só ele passava; vale para a lista de `privilegedOf`.
  */
 export async function remoteSudoAllowed(command: string, permissions: IPermissionChecker, asker: IPermissionAsker): Promise<boolean> {
   const analysis = await analyzeShell(command)
   if (analysis.opaque.length) return false
-  if (analysis.commands.some((part) => part.name === 'sudo' || part.name === 'doas' || /^\s*(sudo|doas)\b/.test(part.text))) return false
+  if (analysis.commands.some((part) => privilegedOf(part) || /^\s*(sudo|doas)\b/.test(part.text))) return false
   const layers = permissions.layers?.(asker)
-  const rules = [...(layers?.agent ?? []), ...(layers?.project ?? [])].filter((rule) => rule.category === 'terminal' && rule.decision === 'allow' && /\bsudo\b/.test(rule.pattern))
-  // Só o ssh com sudo no comando remoto: a palavra num grep ao lado não é escalada (ver `realReasons`).
-  const withSudo = analysis.commands.filter((part) => part.name === 'ssh' && part.argv.slice(1).some((word) => /(^|[\s;&|(])sudo(\s|$)/.test(word)))
-  if (!withSudo.length) return false
-  for (const part of withSudo) if (!(await sshCovered(part.argv, rules))) return false
+  const rules = [...(layers?.agent ?? []), ...(layers?.project ?? [])].filter((rule) => rule.category === 'terminal' && rule.decision === 'allow')
+  // Só o ssh com privilegiado no comando remoto: a palavra num grep ao lado não é escalada (ver `realReasons`).
+  const remotes = (await Promise.all(analysis.commands.map(async (part) => ({ part, remote: await remoteOf(part, command) })))).filter((item) => item.remote)
+  const withPrivilege = remotes.filter((item) => item.remote!.opaque || item.remote!.privileged.length)
+  if (!withPrivilege.length) return false
+  for (const { part, remote } of withPrivilege) if (!(await sshCovered(part.argv, remote!, rules))) return false
   return true
 }
 
 /**
  * A regra contra o `ssh` com o comando remoto em PALAVRAS (`ssh * sudo k3s kubectl *`). O comando remoto vem logo depois do
  * host, entre aspas (`ssh h "sudo systemctl …; sudo journalctl …"`) ou solto (`ssh h sudo systemctl …`).
- * ⛔ Entre aspas, cada comando com sudo da linha remota precisa da SUA regra (o `*` de uma não engole o outro); sem
- * crase, `$(` nem quebra de linha, e a linha tem de se deixar analisar inteira. ⛔ Solto, o ssh junta as palavras com
- * espaço e o shell remoto relê a linha: só palavras sem nada que ele interprete (aspas, `$`, `*`, `\\`, espaço), para a
- * linha remota ser exatamente a que a regra viu.
+ * ⛔ Entre aspas, cada privilegiado da linha remota precisa da SUA regra, que o CITE (o `*` de uma não engole o outro); sem
+ * crase, `$(` nem quebra de linha, e a linha tem de se deixar analisar inteira (opaca = recusa). ⛔ Solto, o ssh junta as
+ * palavras com espaço e o shell remoto relê a linha: só palavras sem nada que ele interprete (aspas, `$`, `*`, `\\`, espaço), e o
+ * primeiro tem de ser o próprio privilegiado, para a linha remota ser exatamente a que a regra viu.
  */
-async function sshCovered(argv: readonly string[], rules: readonly IPermissionRule[]): Promise<boolean> {
+async function sshCovered(argv: readonly string[], remote: IRemote, rules: readonly IPermissionRule[]): Promise<boolean> {
   const at = sshRemoteStart(argv)
   const first = argv[at]
-  if (first === undefined) return false
-  if (first === 'sudo') return argv.slice(at).every((word) => REMOTE_PLAIN_WORD.test(word)) && rules.some((rule) => commandMatches(rule.pattern, argv))
-  if (argv.slice(at + 1).length || /[`\n]|\$\(/.test(first)) return false
-  const remote = await analyzeShell(first)
-  if (remote.opaque.length) return false
+  if (first === undefined || remote.opaque) return false
+  const words = argv.slice(at)
+  if (words.length > 1) {
+    if (!words.every((word) => REMOTE_PLAIN_WORD.test(word))) return false
+    if (!privilegedOf({ name: posix.basename(first), argv: words })) return false
+  } else if (/[`\n]|\$\(/.test(first)) return false
   const prefix = argv.slice(0, at)
-  return remote.commands.filter((command) => command.name === 'sudo').every((command) => rules.some((rule) => commandMatches(rule.pattern, [...prefix, ...command.argv])))
+  // O privilegiado de fora: o que o `sudo` embrulha (`sudo systemctl reboot`) é coberto pela regra do sudo.
+  const privileged = remote.privileged.filter(
+    ({ command }) => !remote.privileged.some((other) => other.command !== command && other.command.argv.length > command.argv.length && endsWith(other.command.argv, command.argv)),
+  )
+  return privileged.every(({ command, kind }) => rules.some((rule) => cites(rule.pattern, kind.cite) && commandMatches(rule.pattern, [...prefix, ...command.argv])))
+}
+
+const endsWith = (whole: readonly string[], tail: readonly string[]) => tail.every((word, index) => whole[whole.length - tail.length + index] === word)
+
+/** A regra CITA o privilegiado: a palavra dele (`sudo`, `reboot`) como palavra do padrão, e não só um curinga. */
+function cites(pattern: string, word: string): boolean {
+  return pattern.split(/\s+/).some((part) => part.replace(/\*/g, ' ').split(/\s+/).includes(word))
 }
 
 /** A palavra remota que o shell de lá lê como está. */
 const REMOTE_PLAIN_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/
-
-/** As opções do `ssh` que levam valor na palavra seguinte (`-o BatchMode=yes`, `-p 22`). */
-const SSH_VALUE_OPTIONS = /^-[BbcDEeFIiJLlmOoPpQRSWw]$/
-
-/** Onde começa o comando remoto: depois das opções e do host. */
-function sshRemoteStart(argv: readonly string[]): number {
-  let i = 1
-  while (i < argv.length && argv[i]!.startsWith('-')) {
-    if (argv[i] === '--') {
-      i += 1
-      break
-    }
-    i += SSH_VALUE_OPTIONS.test(argv[i]!) ? 2 : 1
-  }
-  return i + 1
-}
 
 function workPath(root: string, target: string): string {
   if (target.startsWith('~')) return target
@@ -912,6 +943,11 @@ function agentTriggerTool(store: ITriggerStore, permissions?: IPermissionChecker
       const target = typeof args.agentId === 'string' && args.agentId.trim() ? args.agentId.trim() : context?.agentId
       if (!target) return { status: 'error', result: 'agentId is required outside an agent conversation.' }
       if (!permissions) return { status: 'error', result: 'Not permitted: this server has no permission rules for triggers.' }
+      // ⛔ Só o projeto de quem chama: uma regra `trigger *` não alcança agente de OUTRO projeto (o global só o chamador global).
+      if (target !== context?.agentId && store.projectOf) {
+        const own = context?.agentId ? store.projectOf(context.agentId) : (context?.projectId ?? null)
+        if (store.projectOf(target) !== own) return { status: 'error', result: `Not permitted: ${target} belongs to another project (or scope) than yours.` }
+      }
       const verdict = permissions.check(askerOf(context), { category: 'trigger', value: target }, { log: true })
       if (!verdict.allowed) return { status: 'error', result: `Not permitted: ${verdict.reason}` }
       const current = store.triggersOf(target)

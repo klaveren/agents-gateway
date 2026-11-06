@@ -1,7 +1,7 @@
 import assert from 'node:assert'
 import { describe, it } from 'node:test'
 import { analyzeShell } from '@infra/permissions/Shell.Parse'
-import { deniedReasons, denyReason, HOST_POWER, PRIVILEGE_ESCALATION, realReasons, truncate } from './Bash.Guard'
+import { deniedReasons, denyReason, HOST_POWER, PRIVILEGE_ESCALATION, realReasons, remoteReasons, truncate } from './Bash.Guard'
 
 describe('BashGuard', () => {
   const denied = [
@@ -60,7 +60,10 @@ describe('BashGuard', () => {
 })
 
 describe('BashGuard — o sudo e o reboot pelos comandos que rodam', () => {
-  const real = async (command: string) => realReasons(await analyzeShell(command), deniedReasons(command))
+  const real = async (command: string) => {
+    const analysis = await analyzeShell(command)
+    return [...new Set([...realReasons(analysis, deniedReasons(command)), ...(await remoteReasons(analysis, command))])].sort()
+  }
 
   it('⚖️ a palavra num grep, num caminho ou num texto não é escalada nem reboot', async () => {
     for (const command of ['grep -n "systemctl\\|sudo" scripts/x.sh', 'cat /etc/sudoers.d/x', 'echo "aguarda janela para apt+reboot" > notas.md', 'git log --grep=shutdown'])
@@ -73,7 +76,49 @@ describe('BashGuard — o sudo e o reboot pelos comandos que rodam', () => {
     assert.deepStrictEqual(await real('reboot'), [HOST_POWER])
     assert.deepStrictEqual(await real('systemctl poweroff'), [HOST_POWER])
     assert.deepStrictEqual(await real("ssh h 'sudo ls /root'"), [PRIVILEGE_ESCALATION])
-    assert.deepStrictEqual(await real('ssh h sudo reboot'), [HOST_POWER, PRIVILEGE_ESCALATION])
+    assert.deepStrictEqual(await real('ssh h sudo reboot'), [HOST_POWER, PRIVILEGE_ESCALATION].sort())
+  })
+
+  it('⛔ o privilegiado REMOTO montado por aspas, variável ou outro nome não escapa do literal', async () => {
+    for (const command of [
+      'ssh h "su\'\'do id"',
+      "ssh h 'x=sud; ${x}o id'",
+      'ssh h "doas id"',
+      "ssh h 'su -c id'",
+      "ssh h 'pkexec id'",
+      "ssh h 'run0 id'",
+      "ssh h 'machinectl shell root@'",
+      'ssh h "bash -c \'su\\"\\"do id\'"',
+      "ssh h 'ls; env doas id'",
+    ])
+      assert.ok((await real(command)).includes(PRIVILEGE_ESCALATION), command)
+    for (const command of [
+      "ssh h 'shutdown -h now'",
+      "ssh h 'poweroff'",
+      "ssh h 'halt'",
+      "ssh h 'init 6'",
+      "ssh h 'systemctl reboot'",
+      "ssh h 'systemctl --force poweroff'",
+      'ssh h "shut\'\'down now"',
+      'ssh h "re\'\'boot"',
+    ])
+      assert.ok((await real(command)).includes(HOST_POWER), command)
+    // A linha remota que a análise não vê por inteiro (nome montado por variável, eval) é recusada, e a que o shell local monta também.
+    for (const command of ["ssh h '$cmd id'", 'ssh h \'eval "$x"\'', 'y="; sudo id"; ssh h "echo $y"', 'ssh h "$(cat plano.sh)"'])
+      assert.deepStrictEqual(await real(command), [PRIVILEGE_ESCALATION], command)
+  })
+
+  it('⚖️ o ssh legítimo segue: comando comum, grep de sudo, variável do ambiente, login sem comando', async () => {
+    for (const command of [
+      "ssh h 'ls -la /var/log'",
+      'ssh -o BatchMode=yes h \'kubectl get pods -o jsonpath="{.items}"\'',
+      "ssh h 'grep sudo /etc/sudoers'",
+      "ssh h 'echo reboot'",
+      'ssh h "ls $HOME"',
+      'ssh h',
+      "ssh h 'systemctl status nginx'",
+    ])
+      assert.deepStrictEqual(await real(command), [], command)
   })
 
   it('⛔ o que a análise não vê por inteiro vale pelo texto (falha fechada)', async () => {

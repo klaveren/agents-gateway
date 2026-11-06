@@ -3,15 +3,17 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
-import { accountsDir, removeSshKit, writeSshKit } from './Ssh.Kit'
+import { commandDirOf, removeSshKit, writeSshKit } from './Ssh.Kit'
 
 const home = mkdtempSync(join(tmpdir(), 'gw-kit-'))
 after(() => rmSync(home, { recursive: true, force: true }))
 
 describe('Ssh.Kit (a pasta SSH de um comando)', () => {
   it('⛔ chave e certificado só deste comando, known_hosts estrito, saída pelo gateway, e tudo sai no fim', () => {
-    const dir = accountsDir(home, 'tok/../x')
-    assert.ok(dir.startsWith(join(home, '.accounts')) && !dir.includes('..'))
+    // ⛔ A pasta é do servidor (`run`), nunca o HOME do projeto que os agentes dividem.
+    const run = join(home, 'run')
+    const dir = commandDirOf(run, 'tok/../x')
+    assert.ok(dir.startsWith(join(run, 'commands')) && !dir.includes('..') && !dir.includes('.home'))
     const { bin } = writeSshKit(
       dir,
       [

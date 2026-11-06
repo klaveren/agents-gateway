@@ -10,9 +10,13 @@ export interface ISshKitIdentity {
   knownHosts: string
 }
 
-/** A pasta das contas de UM comando, dentro do HOME do projeto (a que o cerco deixa o comando ler). */
-export function accountsDir(home: string, token: string): string {
-  return join(home, '.accounts', token.replace(/[^A-Za-z0-9_-]/g, '_'))
+/**
+ * ⛔ A pasta privada de UM comando (a chave SSH, o proxychains): `<run>/commands/<token>`, com o `run` na pasta de dados do
+ * servidor (ver `IProjectSandbox.runDir`). Fora do HOME e do `.cache` do projeto, que os agentes dividem: lá, outro comando
+ * lia a chave pelo terminal. Só o comando dono recebe leitura dela, e ela sai quando ele acaba.
+ */
+export function commandDirOf(run: string, token: string): string {
+  return join(run, 'commands', token.replace(/[^A-Za-z0-9_-]/g, '_'))
 }
 
 const SSH_CLIENTS = ['ssh', 'scp', 'sftp'] as const

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { createWriteStream, mkdirSync, openSync, readSync, closeSync, statSync, type WriteStream } from 'node:fs'
+import { createWriteStream, mkdirSync, openSync, readSync, closeSync, rmSync, statSync, type WriteStream } from 'node:fs'
 import { join } from 'node:path'
 
 /** O que um comando deixou: a saída (inteira até o teto em memória), o código e se estourou o tempo. */
@@ -25,6 +25,15 @@ export interface IRunOptions {
 
 /** Quanto da saída fica na memória (o resto, só no log). */
 const MEMORY_BYTES = 8 * 1024 * 1024
+/** O teto do log de UM comando em bytes (`BASH_LOG_MAX_BYTES`): passou, o resto não é gravado e o log diz isso. */
+const DEFAULT_LOG_MAX_BYTES = 20 * 1024 * 1024
+export const logMaxBytes = (): number => positiveInt(process.env.BASH_LOG_MAX_BYTES, DEFAULT_LOG_MAX_BYTES)
+
+function positiveInt(raw: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(raw ?? '', 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
 /** Depois do SIGTERM, quanto se espera antes do SIGKILL. */
 const KILL_GRACE_MS = 5000
 
@@ -64,8 +73,22 @@ export function startCommand(line: string, options: IRunOptions): IStarted {
     log = createWriteStream(options.logFile, { mode: 0o600 })
   }
   let output = ''
+  // ⛔ O log tem teto: um `yes` ou um servidor falante enchia o disco. Passou, grava o aviso uma vez e para (a memória segue com o fim).
+  const cap = logMaxBytes()
+  let logged = 0
+  const write = (chunk: Buffer) => {
+    if (!log || logged > cap) return
+    if (logged + chunk.length > cap) {
+      log.write(chunk.subarray(0, cap - logged))
+      log.write(`\n…[log cortado em ${cap} bytes: o resto da saída não é gravado]…\n`)
+      logged = cap + 1
+      return
+    }
+    log.write(chunk)
+    logged += chunk.length
+  }
   const take = (chunk: Buffer) => {
-    log?.write(chunk)
+    write(chunk)
     output += chunk.toString('utf8')
     // A memória guarda o FIM: é onde está o erro. O começo segue no log.
     if (output.length > MEMORY_BYTES) output = output.slice(output.length - MEMORY_BYTES)
@@ -148,6 +171,9 @@ export function tailOf(file: string, lines: number, maxBytes = 512 * 1024): stri
 
 export const BACKGROUND_LIMITS = { perSession: 5, lifetimeMs: 8 * 60 * 60 * 1000 } as const
 
+/** O teto de processos em segundo plano do GATEWAY inteiro (`BACKGROUND_MAX_PROCESSES`): o por conversa sozinho não segura muitas conversas. */
+export const backgroundMaxProcesses = (): number => positiveInt(process.env.BACKGROUND_MAX_PROCESSES, 30)
+
 /**
  * Os processos de cada conversa: os em segundo plano (`bash_start`) e os logs dos comandos que passaram do corte. ⛔ Cada
  * conversa só vê os seus, e todos morrem com ela, com o gateway e depois de 8 h.
@@ -171,6 +197,11 @@ export class BackgroundProcesses {
 
   running(sessionId: string): IProcessEntry[] {
     return this.list(sessionId).filter((entry) => entry.background && entry.status === 'running')
+  }
+
+  /** Quantos rodam agora, de todas as conversas (o teto global). */
+  runningTotal(): number {
+    return [...this.entries.values()].filter((entry) => entry.background && entry.status === 'running').length
   }
 
   list(sessionId: string): IProcessEntry[] {
@@ -200,6 +231,7 @@ export class BackgroundProcesses {
     void started.done.then((result) => {
       if (entry.status === 'running') entry.status = result.timedOut ? 'timed-out' : 'exited'
       entry.code = result.code
+      this.prune()
     })
     return entry
   }
@@ -215,6 +247,11 @@ export class BackgroundProcesses {
   /** A conversa acabou (apagada): os processos dela vão junto. */
   stopSession(sessionId: string): void {
     for (const entry of this.running(sessionId)) this.stop(sessionId, entry.id)
+    // Os logs dela vão junto: a conversa não existe mais para ler.
+    for (const entry of this.list(sessionId)) {
+      this.entries.delete(entry.id)
+      if (entry.logFile) rmSync(entry.logFile, { force: true })
+    }
   }
 
   stopAll(): void {
@@ -224,7 +261,11 @@ export class BackgroundProcesses {
   /** Guarda os 500 mais recentes que já acabaram (os rodando nunca saem). */
   private prune(): void {
     const finished = [...this.entries.values()].filter((entry) => entry.status !== 'running')
-    for (const entry of finished.slice(0, Math.max(0, finished.length - 500))) this.entries.delete(entry.id)
+    for (const entry of finished.slice(0, Math.max(0, finished.length - 500))) {
+      this.entries.delete(entry.id)
+      // O log vai junto: podar só da memória deixava o arquivo (e o que ele guarda) no disco para sempre.
+      if (entry.logFile) rmSync(entry.logFile, { force: true })
+    }
   }
 }
 
