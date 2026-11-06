@@ -26,7 +26,6 @@
   import { useProvidersStore } from '@/stores/providers'
   import { useSettingsStore } from '@/stores/settings'
   import { useAuthStore } from '@/stores/auth'
-  import { NO_MODEL_GROUP } from '@/lib/modelGroups'
   import { useProtocolsStore } from '@/stores/protocols'
   import type { IAgentDetail, IAgentInput, ICatalogModel, IMcpServer, INativeTool, TMode, TPermissionCategory, TSandboxLevel } from '@/lib/types'
   import { useAgentsStore } from '@/stores/agents'
@@ -39,6 +38,7 @@
   import AgentSchedules from './AgentSchedules.vue'
   import AgentLedger from './AgentLedger.vue'
   import SecretVariables from './SecretVariables.vue'
+  import AgentModelGroup from './AgentModelGroup.vue'
   import PermissionCategoryTabs from './PermissionCategoryTabs.vue'
   import PermissionRules from './PermissionRules.vue'
   import PermissionTester from './PermissionTester.vue'
@@ -351,8 +351,6 @@
    */
   const settings = useSettingsStore()
   const auth = useAuthStore()
-  const modelGroups = computed(() => settings.current?.modelGroups ?? [])
-  const defaultGroupName = computed(() => modelGroups.value.find((group) => group.id === settings.current?.defaultModelGroup)?.name ?? 'nenhum')
   const groupChoice = computed({
     get: () => (form.value.modelGroup === undefined || form.value.modelGroup === null ? '' : form.value.modelGroup),
     set: (value: string) => (form.value.modelGroup = value === '' ? null : value),
@@ -414,6 +412,8 @@
   const initialHash = useRoute().hash
   const HASH_TAB: Record<string, TTab> = { '#agendamentos': 'agendamentos', '#memoria': 'memoria', '#variaveis': 'variaveis', '#historico': 'historico', '#problemas': 'problemas', '#personalidade': 'personalidade', '#instrucoes': 'instrucoes' }
   const tab = ref<TTab>(HASH_TAB[initialHash] ?? 'agente')
+  /** A guia aberta dentro de Modelos: os modelos do agente ou o grupo de modelos. */
+  const modelsTab = ref<'agente' | 'grupo'>('agente')
   /** A categoria aberta na guia Permissões: uma guia por categoria, como nas permissões do projeto. */
   const permissionSection = ref<TPermissionCategory>('terminal')
 
@@ -830,13 +830,34 @@
         :issues="issues.triggers"
       />
     </fieldset>
-    <fieldset v-show="tab === 'modelos'" class="grid gap-4 sm:grid-cols-2">
-      <div class="field sm:col-span-2">
-        <span>
-          Provedores
-          <em class="font-normal text-zinc-500">— onde o agente roda. O primeiro é o padrão.</em>
-        </span>
-        <div class="flex flex-wrap gap-1.5">
+    <!-- Duas guias: os modelos do agente (o que a pessoa escolhe) e o grupo de modelos (a ordem de troca quando um falha). -->
+    <fieldset v-show="tab === 'modelos'" class="flex flex-col gap-3">
+      <nav class="no-scrollbar flex gap-1 overflow-x-auto border-b border-zinc-800" role="tablist">
+        <button
+          v-for="item in [
+            { id: 'agente', label: 'Do agente' },
+            { id: 'grupo', label: 'Grupo de modelos' },
+          ] as const"
+          :key="item.id"
+          type="button"
+          role="tab"
+          :aria-selected="modelsTab === item.id"
+          :data-test="`models-tab-${item.id}`"
+          class="shrink-0 border-b-2 px-3 py-2 text-sm whitespace-nowrap"
+          :class="modelsTab === item.id ? 'border-emerald-500 text-zinc-100' : 'border-transparent text-zinc-400 hover:text-zinc-200'"
+          @click="modelsTab = item.id"
+        >
+          {{ item.label }}
+        </button>
+      </nav>
+      <div v-show="modelsTab === 'agente'" class="flex flex-col gap-3" role="tabpanel">
+      <section class="tool-card">
+        <header>
+          <h3>Provedores</h3>
+          <span class="count">{{ chosen.length || 'nenhum' }}</span>
+        </header>
+        <p class="hint px-3 pt-2">Onde o agente roda. O primeiro é o padrão.</p>
+        <div class="flex flex-wrap gap-1.5 p-3">
           <button
             v-for="provider in providerOptions"
             :key="provider.id"
@@ -853,14 +874,15 @@
             {{ chosen.length ? chosen.map((id) => protocols.providerName(id)).join(', ') : 'Nenhum provedor pronto. Configure em Modelos.' }}
           </span>
         </div>
-        <small v-for="message in issues.providers" :key="message" class="error">{{ message }}</small>
-      </div>
-
-      <div v-if="form.providers.length" class="field sm:col-span-2">
-        <span>
-          Modelos
-          <em class="font-normal text-zinc-500">— o padrão é o usado quando ninguém escolhe.</em>
-        </span>
+        <small v-for="message in issues.providers" :key="message" class="error px-3 pb-3">{{ message }}</small>
+      </section>
+      <section v-if="form.providers.length" class="tool-card">
+        <header>
+          <h3>Modelos</h3>
+          <span class="count">{{ form.providers.reduce((total, target) => total + target.models.length, 0) || 'nenhum' }}</span>
+        </header>
+        <p class="hint px-3 pt-2">Os que a pessoa escolhe na conversa. O padrão é o usado quando ninguém escolhe.</p>
+        <div class="flex flex-col gap-3 p-3">
         <p v-if="dropped.length" class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-normal text-amber-200">
           Estes modelos foram desligados e saem ao salvar:
           <template v-for="([providerId, models], index) in dropped" :key="providerId">
@@ -898,8 +920,13 @@
         </div>
         <small v-if="anyCompatible" class="hint">Neste provedor, o uso de ferramentas e o raciocínio dependem do modelo.</small>
         <small v-for="message in issues.models" :key="message" class="error">{{ message }}</small>
-      </div>
-
+        </div>
+      </section>
+      <section class="tool-card">
+        <header>
+          <h3>Modos e raciocínio</h3>
+        </header>
+        <div class="grid gap-4 p-3 sm:grid-cols-2">
       <div class="field">
         <span>Modos</span>
         <div class="flex flex-wrap gap-1.5">
@@ -935,6 +962,12 @@
         <small v-else class="hint">O Antigravity não permite escolher o nível de raciocínio.</small>
         <small v-if="reasoningLevels.length" class="hint">Os níveis que a pessoa pode escolher na conversa.</small>
         <small v-for="message in issues.reasoningEfforts" :key="message" class="error">{{ message }}</small>
+      </div>
+        </div>
+      </section>
+      </div>
+      <div v-show="modelsTab === 'grupo'" role="tabpanel">
+        <AgentModelGroup v-model="groupChoice" />
       </div>
     </fieldset>
     <!-- Um bloco por assunto, no desenho das permissões: o título, quantas estão marcadas e o que o bloco quer dizer. -->
@@ -1183,20 +1216,6 @@
             @input="form.diagnostics = { ...(form.diagnostics ?? {}), timeoutSeconds: Number(($event.target as HTMLInputElement).value) || undefined }"
           />
         </label>
-      </div>
-      <div class="flex flex-col gap-2">
-        <h3 class="text-sm font-medium text-zinc-200">Grupo de modelos</h3>
-        <p class="text-xs text-zinc-500">
-          A conversa aberta sem modelo escolhido começa no primeiro modelo disponível do grupo; se ele falha (cota, limite de uso…), segue no próximo e fica nele. No chat, a pessoa continua escolhendo
-          entre os “Modelos do agente”.
-        </p>
-        <select v-model="groupChoice" aria-label="Grupo de modelos" class="h-9 max-w-xs rounded-lg border border-zinc-800 bg-zinc-900 px-2 text-sm">
-          <option value="">Padrão ({{ defaultGroupName }})</option>
-          <option :value="NO_MODEL_GROUP">Nenhum — não troca de modelo</option>
-          <option v-for="group in modelGroups" :key="group.id" :value="group.id">{{ group.name }}</option>
-          <option v-if="groupChoice && groupChoice !== NO_MODEL_GROUP && !modelGroups.some((group) => group.id === groupChoice)" :value="groupChoice">{{ groupChoice }}</option>
-        </select>
-        <RouterLink v-if="auth.isAdmin" to="/model-groups" class="text-xs text-emerald-300 underline">Gerenciar grupos de modelos</RouterLink>
       </div>
       <p class="text-xs text-zinc-500">Só no modo Agente: o nível de acesso das assinaturas e os extras que só um provedor tem. Terminal, arquivos e busca ficam em Ferramentas.</p>
       <p v-if="!form.modes.includes('agent')" class="text-xs text-amber-300">O modo Agente está desligado: nada daqui é usado.</p>
