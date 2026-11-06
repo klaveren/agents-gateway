@@ -63,4 +63,74 @@ describe('ResourceSecretsService', () => {
     assert.ok(!JSON.stringify(ambient).includes('glpat'))
     assert.strictEqual(setup().service.ambientFor('theo', []), undefined)
   })
+  describe('por projeto', () => {
+    // `deploy` é de alfa, compartilhada com beta; theo é de alfa, bea é de beta, gus é global.
+    function shared() {
+      const service = new ResourceSecretsService({
+        store: new SqliteResourceSecretRepository(new SecretBox(randomBytes(32))),
+        exists: () => true,
+        agentProject: (id) => ({ theo: 'alfa', bea: 'beta', gus: null })[id],
+        resourceProject: (id) => ({ deploy: 'alfa', geral: null })[id],
+      })
+      service.save('skill', 'deploy', { name: 'TOKEN', description: 'deploy', value: 'valor-do-alfa' }, 'ana')
+      service.save('skill', 'deploy', { name: 'TOKEN', value: 'valor-do-beta' }, 'bia', 'beta')
+      return service
+    }
+
+    it('⛔ o agente do projeto que recebeu usa os valores DELE; o da origem, os da origem; o global, os da origem', () => {
+      const service = shared()
+      for (const agent of ['theo', 'bea', 'gus']) service.markLoaded(`c-${agent}`, 'skill', 'deploy')
+      assert.strictEqual(service.envFor('theo', 'c-theo').env.TOKEN, 'valor-do-alfa')
+      assert.strictEqual(service.envFor('bea', 'c-bea').env.TOKEN, 'valor-do-beta')
+      assert.strictEqual(service.envFor('gus', 'c-gus').env.TOKEN, 'valor-do-alfa')
+    })
+
+    it('⛔ o projeto que recebeu e não configurou NÃO herda o valor da origem', () => {
+      const service = shared()
+      service.remove('skill', 'deploy', 'TOKEN', 'beta')
+      service.markLoaded('c1', 'skill', 'deploy')
+      assert.deepStrictEqual(service.envFor('bea', 'c1').env, {})
+      assert.deepStrictEqual(service.ambientFor('bea', [{ kind: 'skill', id: 'deploy' }]), undefined)
+    })
+
+    it('o prompt do agente que recebeu traz só os nomes que ele configurou', () => {
+      const service = shared()
+      assert.deepStrictEqual(service.ambientFor('bea', [{ kind: 'skill', id: 'deploy' }]), { agent: [], resources: [{ kind: 'skill', id: 'deploy', names: ['TOKEN'] }] })
+    })
+
+    it('a lista do projeto que recebeu traz os nomes da origem que faltam (sem valor); a da origem, só os seus', () => {
+      const service = shared()
+      service.save('skill', 'deploy', { name: 'OUTRO', description: 'outra', value: 'x'.repeat(10) }, 'ana')
+      const beta = service.list('skill', 'deploy', 'beta')
+      assert.deepStrictEqual(
+        beta.map((item) => [item.name, item.configured, item.updatedAt !== undefined]),
+        [
+          ['OUTRO', false, false],
+          ['TOKEN', true, true],
+        ],
+      )
+      assert.strictEqual(beta[0]!.description, 'outra')
+      assert.deepStrictEqual(
+        service.list('skill', 'deploy').map((item) => [item.name, item.configured]),
+        [
+          ['OUTRO', true],
+          ['TOKEN', true],
+        ],
+      )
+      assert.ok(!JSON.stringify([...beta, ...service.list('skill', 'deploy')]).includes('valor-do'))
+    })
+
+    it('⛔ deixar de compartilhar apaga os valores de quem saiu', () => {
+      const service = shared()
+      service.keepProjects('deploy', [])
+      assert.deepStrictEqual(
+        service.list('skill', 'deploy', 'beta').map((item) => item.configured),
+        [false],
+      )
+      service.markLoaded('c1', 'skill', 'deploy')
+      assert.deepStrictEqual(service.envFor('bea', 'c1').env, {})
+      // A origem não perde nada.
+      assert.strictEqual(service.envFor('theo', 'c1').env.TOKEN, 'valor-do-alfa')
+    })
+  })
 })

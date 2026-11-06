@@ -24,7 +24,7 @@ import { makeProjects } from './Projects.Factory'
 import { makeProviders } from './Providers.Factory'
 import { makeSettings } from './Settings.Factory'
 import { makeModelCatalog } from './Catalog.Factory'
-import { agentFolderOf, editDiagnostics, loopGuard, makeTools, selfUrl } from './Tools.Factory'
+import { agentFolderOf, editDiagnostics, loopGuard, makeTools, selfUrl, sharedFoldersOf } from './Tools.Factory'
 
 let store: SessionStore | undefined
 
@@ -70,6 +70,7 @@ export function makeOrchestrator(): AgentProvider {
         loops: loopGuard(),
         diagnostics: editDiagnostics(),
         agentFolder: agentFolderOf,
+        sharedFolders: sharedFoldersOf,
       }),
     ],
     [adapterKey(EProvider.OPENAI, EMode.AGENT), new OpenAIAgentAdapter({ store: sessions, catalog, connections })],
@@ -86,6 +87,7 @@ export function makeOrchestrator(): AgentProvider {
         loops: loopGuard(),
         diagnostics: editDiagnostics(),
         agentFolder: agentFolderOf,
+        sharedFolders: sharedFoldersOf,
       }),
     ],
     [adapterKey(EProvider.CODEX, EMode.AGENT), new CodexAgentAdapter({ store: sessions, catalog, connections, turnTools })],

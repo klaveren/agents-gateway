@@ -15,13 +15,15 @@ import HistoryTabs from '@/components/HistoryTabs.vue'
 import ImportIssues from '@/components/ImportIssues.vue'
 import ImportIssuesBadge from '@/components/ImportIssuesBadge.vue'
 import ResourceFiles from '@/components/ResourceFiles.vue'
+import ShareProjects from '@/components/ShareProjects.vue'
+import SharedBadge from '@/components/SharedBadge.vue'
 import SecretVariables from '@/components/SecretVariables.vue'
 import TriggersEditor from '@/components/TriggersEditor.vue'
 import BuildTabs from '@/components/BuildTabs.vue'
 import { pendingDraft } from '@/lib/builder'
 import { ApiError } from '@/lib/api'
 import { sizeHint } from '@/lib/format'
-import { attachedRefs, docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId, setAttachMode, type TAttachMode } from '@/lib/guidance'
+import { attachedRefs, docSlug, GLOBAL_SCOPE, scopeLabel, scopeToProjectId, setAttachMode, sharedFromOf, type TAttachMode } from '@/lib/guidance'
 import type { IRestoreResult } from '@/lib/catalogHistory'
 import { renderMarkdown } from '@/lib/markdown'
 import type { IAgentTrigger, IResource, TImportIssueMatch, TResourceKind } from '@/lib/types'
@@ -90,7 +92,7 @@ const g = computed(() => (info.value.masc ? { nova: 'Novo', nenhuma: 'Nenhum', u
 
 const form = ref({ id: '', description: '', tags: [] as string[], body: '', global: true, project: '', docIds: [] as string[], docRefs: [] as string[], triggers: [] as IAgentTrigger[] })
 /** A guia da edição: o formulário ou o histórico (`#historico` no endereço abre nele). */
-type TResourceTab = 'edit' | 'instructions' | 'triggers' | 'attachments' | 'files' | 'variables' | 'issues' | 'history'
+type TResourceTab = 'edit' | 'instructions' | 'triggers' | 'attachments' | 'files' | 'variables' | 'share' | 'issues' | 'history'
 const HASH_TAB: Record<string, TResourceTab> = {
   '#historico': 'history',
   '#instrucoes': 'instructions',
@@ -98,6 +100,7 @@ const HASH_TAB: Record<string, TResourceTab> = {
   '#anexos': 'attachments',
   '#arquivos': 'files',
   '#variaveis': 'variables',
+  '#compartilhar': 'share',
   '#problemas': 'issues',
 }
 const tab = ref<TResourceTab>(HASH_TAB[route.hash] ?? 'edit')
@@ -105,7 +108,10 @@ const tab = ref<TResourceTab>(HASH_TAB[route.hash] ?? 'edit')
 const reloadKey = ref(0)
 const loaded = ref<IResource>()
 /** Global: só o admin do gateway altera; quem administra o projeto lê. */
-const locked = computed(() => !auth.isAdmin && (adding.value ? form.value.global : !!loaded.value && !loaded.value.projectId))
+const globalLocked = computed(() => !auth.isAdmin && (adding.value ? form.value.global : !!loaded.value && !loaded.value.projectId))
+/** Veio de outro projeto (compartilhado): o projeto de origem. Aqui é só leitura. */
+const sharedFrom = computed(() => (adding.value || !loaded.value ? undefined : sharedFromOf(loaded.value, projects.current)))
+const locked = computed(() => globalLocked.value || !!sharedFrom.value)
 const preview = ref(false)
 const issues = ref<Record<string, string[]>>({})
 const error = ref<string>()
@@ -323,6 +329,14 @@ function describe(failure: unknown): string {
   return failure instanceof Error ? failure.message : String(failure)
 }
 
+/** Compartilha: o item aberto é de um projeto (não global), não veio de outro e a pessoa administra o projeto atual. */
+const canShare = computed(() => !adding.value && !!loaded.value?.projectId && !sharedFrom.value && projects.manages)
+async function saveShares(list: string[]) {
+  if (loaded.value) loaded.value = await resources.share(loaded.value.id, list)
+}
+/** Os valores das variáveis são de um projeto: o dono do item, ou o projeto atual quando o item é compartilhado (global: sem). */
+const secretsProject = computed(() => sharedFrom.value ? projects.current : loaded.value?.projectId)
+
 /** Os problemas da importação do item aberto (a guia só existe com algum). */
 const importIssues = computed(() => (adding.value ? [] : (loaded.value?.importIssues ?? [])))
 /** As guias além da principal (título, resumo, escopo, anexos): as instruções (o texto e a prévia), os arquivos e os problemas. */
@@ -333,7 +347,10 @@ const extraTabs = computed(() =>
     { id: 'attachments' as const, label: `Anexos${form.value.docIds.length ? ` (${form.value.docIds.length})` : ''}` },
   { id: 'files' as const, label: `Arquivos${loaded.value?.files?.length ? ` (${loaded.value.files.length})` : ''}` },
     // As variáveis secretas (só admin; o valor entra e nunca volta).
-    ...(projects.manages && !locked.value ? [{ id: 'variables' as const, label: 'Variáveis' }] : []),
+    // O item compartilhado também tem a guia: os valores são DESTE projeto.
+    ...(projects.manages && !globalLocked.value ? [{ id: 'variables' as const, label: 'Variáveis' }] : []),
+    // Compartilhar: só o item de um projeto, e do projeto dono (quem recebe não repassa).
+    ...(canShare.value ? [{ id: 'share' as const, label: `Compartilhar${loaded.value?.sharedWith?.length ? ` (${loaded.value.sharedWith.length})` : ''}` }] : []),
     ...(importIssues.value.length ? [{ id: 'issues' as const, label: `Problemas da importação (${importIssues.value.length})` }] : []),
   ].filter((item) => !adding.value || item.id === 'instructions' || item.id === 'triggers' || item.id === 'attachments'),
 )
@@ -372,6 +389,7 @@ function onInvalid(event: Event) {
         <span class="flex items-center gap-2">
           <span class="truncate font-mono text-sm">{{ kind === 'command' ? '/' : '' }}{{ resource.id }}</span>
           <span v-if="scope !== GLOBAL_SCOPE && !resource.projectId" class="shrink-0 rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">global</span>
+          <SharedBadge :from="resource.sharedFrom" />
         </span>
         <span class="block truncate text-xs text-zinc-500">{{ resource.description }}<template v-if="resource.docIds.length"> · {{ resource.docIds.length }} doc(s)</template></span>
         <TagChips :tags="resource.tags" />
@@ -383,7 +401,8 @@ function onInvalid(event: Event) {
       <div v-if="adding || loaded" class="mx-auto mb-4 max-w-3xl"><HistoryTabs v-model="tab" :edit-label="info.one.charAt(0).toUpperCase() + info.one.slice(1)" :extra="extraTabs" :history="!adding" /></div>
       <form v-if="adding || (loaded && (tab === 'edit' || tab === 'instructions' || tab === 'triggers' || tab === 'attachments' || tab === 'files'))" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save" @invalid.capture="onInvalid">
         <h2 class="font-mono text-lg font-semibold">{{ adding ? `${g.nova} ${info.one}` : `${kind === 'command' ? '/' : ''}${loaded?.id}` }}</h2>
-        <p v-if="locked" class="text-xs text-amber-300" data-test="global-readonly">Global: só o administrador do gateway altera.</p>
+        <p v-if="sharedFrom" class="rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-sm text-sky-200" data-test="shared-readonly">Compartilhado por {{ scopeLabel(sharedFrom, projects.list) }}: só leitura aqui; a manutenção é lá.</p>
+        <p v-else-if="locked" class="text-xs text-amber-300" data-test="global-readonly">Global: só o administrador do gateway altera.</p>
         <fieldset :disabled="locked" class="contents">
         <div v-show="tab === 'edit'" class="flex flex-col gap-3">
         <label class="field">
@@ -468,9 +487,14 @@ function onInvalid(event: Event) {
         <h2 class="font-mono text-lg font-semibold">{{ kind === 'command' ? '/' : '' }}{{ loaded.id }}</h2>
         <ImportIssues :issues="importIssues" :resolve="resolveIssue" />
       </section>
+      <section v-else-if="loaded && tab === 'share' && canShare" class="mx-auto flex max-w-3xl flex-col gap-3">
+        <h2 class="font-mono text-lg font-semibold">{{ kind === 'command' ? '/' : '' }}{{ loaded.id }}</h2>
+        <ShareProjects :owner="loaded.projectId ?? ''" :shared="loaded.sharedWith ?? []" :save="saveShares" />
+      </section>
       <section v-else-if="loaded && tab === 'variables'" class="mx-auto flex max-w-3xl flex-col gap-3">
         <h2 class="font-mono text-lg font-semibold">{{ kind === 'command' ? '/' : '' }}{{ loaded.id }}</h2>
-        <SecretVariables :base-path="`/resources/${encodeURIComponent(loaded.id)}`" :scope-label="kind === 'command' ? 'deste command (valem depois que ele é carregado na conversa)' : 'desta skill (valem depois que ela é carregada na conversa)'" />
+        <p v-if="sharedFrom" class="text-sm text-sky-200" data-test="shared-secrets">Valores deste projeto (não vêm do projeto de origem)</p>
+        <SecretVariables :base-path="`/resources/${encodeURIComponent(loaded.id)}`" :project="secretsProject" :scope-label="kind === 'command' ? 'deste command (valem depois que ele é carregado na conversa)' : 'desta skill (valem depois que ela é carregada na conversa)'" />
       </section>
       <section v-else-if="loaded && tab === 'history'" class="mx-auto flex max-w-3xl flex-col gap-3">
         <h2 class="font-mono text-lg font-semibold">{{ kind === 'command' ? '/' : '' }}{{ loaded.id }}</h2>

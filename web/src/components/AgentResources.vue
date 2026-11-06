@@ -4,6 +4,7 @@ import type { IAgentResources, TResourceKind } from '@/lib/types'
 import { useScopedResources } from '@/composables/useCatalogLists'
 import { useResource } from '@/composables/useResource'
 import { useAgentCatalogStore } from '@/stores/agentCatalog'
+import SharedBadge from './SharedBadge.vue'
 
 /**
  * Os RECURSOS do agente: as skills e os commands que ele pode usar. ⚖️ Por padrão, "Todos" = os globais e os do
@@ -73,7 +74,10 @@ async function save() {
   saveError.value = undefined
   note.value = undefined
   try {
-    await catalog.saveResources(props.agentId, selected.value)
+    // ⚖️ O que deixou de estar disponível (o compartilhamento acabou, o item foi apagado) sai ao salvar: o servidor recusa id que o agente não vê.
+    const visible = new Set(available.value.map((resource) => resource.id))
+    const keep = (ids: string[]) => ids.filter((id) => id === '*' || visible.has(id))
+    await catalog.saveResources(props.agentId, { skills: keep(selected.value.skills), commands: keep(selected.value.commands) })
     note.value = 'Salvo. Vale para as próximas conversas.'
   } catch (failure) {
     saveError.value = failure
@@ -87,7 +91,7 @@ async function save() {
   <section class="flex flex-col gap-4">
     <p class="text-sm text-zinc-400">
       O que este agente pode usar. Desmarque "Todos" para escolher.
-      <template v-if="projectId"> Valem os globais e os do projeto {{ projectName ?? projectId }}.</template>
+      <template v-if="projectId"> Valem os globais, os do projeto {{ projectName ?? projectId }} e os compartilhados com ele.</template>
       <template v-else> Agente global: só recursos globais.</template>
     </p>
 
@@ -107,7 +111,8 @@ async function save() {
         <input type="checkbox" class="accent-emerald-500" :disabled="all(section.field)" :checked="all(section.field) || selected[section.field].includes(resource.id)" @change="toggle(section.field, resource.id)" />
         <RouterLink :to="`${section.base}/${resource.id}`" class="font-mono hover:underline">{{ section.kind === 'command' ? '/' : '' }}{{ resource.id }}</RouterLink>
         <span class="min-w-0 truncate text-xs text-zinc-500">{{ resource.description }}</span>
-        <span class="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px]" :class="resource.projectId ? 'bg-emerald-500/15 text-emerald-300' : 'bg-zinc-800 text-zinc-400'">{{ resource.projectId ? 'projeto' : 'global' }}</span>
+        <SharedBadge v-if="resource.sharedFrom" :from="resource.sharedFrom" class="ml-auto" />
+        <span v-else class="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px]" :class="resource.projectId ? 'bg-emerald-500/15 text-emerald-300' : 'bg-zinc-800 text-zinc-400'">{{ resource.projectId ? 'projeto' : 'global' }}</span>
       </label>
     </div>
 

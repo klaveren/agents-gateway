@@ -65,7 +65,7 @@ export interface IDocReader {
    */
   attachedDoc?(id: string, agentId?: string, projectId?: string): { doc: IProjectDoc; via: Array<{ kind: 'skill' | 'command' | 'doc'; id: string }> } | undefined
   /** O texto que o agente recebe: o documento e os anexos dele (ver `GuidanceService.docText`). Ausente = só o documento. */
-  docText?(doc: IProjectDoc): string
+  docText?(doc: IProjectDoc, projectId?: string): string
   /** A busca de texto (ver `GuidanceService.searchDocs`). Ausente = sem `search_docs`. */
   searchDocs?(query: string, projectId?: string, kind?: TDocKind): IDocHit[]
 }
@@ -134,6 +134,11 @@ export interface ILocalToolDeps {
   agentTerminal?: (agentId: string) => { timeoutSeconds?: number; maxOutputChars?: number } | undefined
   /** ⛔ A pasta privada do agente e o que ele faz nela (ver `agentFolderAccess`): a ferramenta de arquivo e o cerco a abrem. */
   agentFolder?: (agentId: string) => IOwnFolder | undefined
+  /**
+   * ⛔ As pastas de arquivos das skills e commands que outro projeto COMPARTILHOU com o projeto da conversa (ver
+   * `sharedResources`): só leitura, uma por item, lidas a cada chamada. Ausente = nenhuma.
+   */
+  sharedFolders?: (projectId: string | undefined) => string[]
   /** Os processos em segundo plano (ver `Background.Processes`). Ausente = o do processo. */
   processes?: BackgroundProcesses
   /** A máscara de segredos (ver `Secret.Masker`). Ausente = a saída vai como saiu. */
@@ -245,7 +250,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     const root = realOf(folder?.dir ?? (context?.projectId ? workspaceFor(context.projectId, '') : policy.cwd || workspaceFor(undefined, context?.sessionId ?? 'run_bash')))
     // O rascunho (HOME, caches, as contas) fica na pasta do projeto, fora da worktree; o `.git` comum entra no cerco.
     const own = context?.agentId ? deps.agentFolder?.(context.agentId) : undefined
-    const place: { scratchBase?: string; gitCommonDir?: string; worktreeGitDir?: string; agentFolder?: IOwnFolder } = {
+    const shared = deps.sharedFolders?.(asker.projectId) ?? []
+    const place: { scratchBase?: string; gitCommonDir?: string; worktreeGitDir?: string; agentFolder?: IOwnFolder; sharedFolders?: string[] } = {
       ...(folder
         ? {
             scratchBase: realOf(folder.projectDir),
@@ -254,6 +260,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
           }
         : {}),
       ...(own ? { agentFolder: { ...own, dir: realOf(own.dir) } } : {}),
+      ...(shared.length ? { sharedFolders: shared } : {}),
     }
     const refusal = await terminalRefusal(command, root, permissions, asker, folder)
     if (refusal) return { status: 'error', result: `Not permitted: ${refusal}` }
@@ -504,6 +511,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     ...makeFileTools({
       rootFor: fileRoot,
       ownFolder: (context) => (context?.agentId ? deps.agentFolder?.(context.agentId) : undefined),
+      ...(deps.sharedFolders ? { sharedFolders: (context) => deps.sharedFolders!(askerOf(context).projectId) } : {}),
       ...(deps.permissions
         ? {
             access: (context, kind, path, log) => {
@@ -1066,7 +1074,7 @@ function readDocTool(docs: IDocReader, permissions?: IPermissionChecker): ILocal
       }
       const doc = id ? (docs.readDoc(id, context?.conversationProjectId) ?? attached(id)) : undefined
       if (!doc) return { status: 'error', result: `Document not found: ${id || '(no id)'}` }
-      return { status: 'success', result: docs.docText ? docs.docText(doc) : `# ${doc.title} [${doc.kind}]\n\n${doc.body}` }
+      return { status: 'success', result: docs.docText ? docs.docText(doc, context?.conversationProjectId) : `# ${doc.title} [${doc.kind}]\n\n${doc.body}` }
     },
   }
 }

@@ -25,7 +25,7 @@ export function makePermissionRequests(): PermissionRequestsService {
     },
     events: makeCatalogEvents(),
     secrets: {
-      save: (scope, scopeId, input, by) => makeResourceSecrets().save(scope, scopeId, input, by),
+      save: (scope, scopeId, input, by, project) => makeResourceSecrets().save(scope, scopeId, input, by, project),
       exists: (scope, scopeId) => (scope === 'agent' ? !!makeAgents().get(scopeId) : makeGuidance().resourceKindOf(scopeId) === scope),
     },
   })

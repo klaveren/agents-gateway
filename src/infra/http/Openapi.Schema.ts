@@ -3038,6 +3038,17 @@ export const OPENAPI_DOCUMENT = {
         responses: { '201': { description: 'Created', ...json(envelope(docSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
     },
+    '/docs/{id}/shares': {
+      put: {
+        summary:
+          'Replace the whole list of projects this spec or knowledge is shared with (read-only there; the source project keeps it). Administrators of the source project and of every project added; anyone else gets 404',
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { type: 'object', required: ['projects'], properties: { projects: { type: 'array', items: { type: 'string' } } } } } },
+        },
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object' })) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
     '/docs/{id}': {
       get: {
         summary: 'One spec or ADR, body included. Administrators only',
@@ -3284,6 +3295,17 @@ export const OPENAPI_DOCUMENT = {
         summary: 'Create a skill or a command. Administrators only',
         requestBody: { required: true, ...json({ ...resourceSchema, required: ['id', 'kind', 'description', 'body'] }) },
         responses: { '201': { description: 'Created', ...json(envelope(resourceSchema)) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
+      },
+    },
+    '/resources/{id}/shares': {
+      put: {
+        summary:
+          'Replace the whole list of projects this skill or command is shared with (read-only there; the source project keeps it). Administrators of the source project and of every project added; anyone else gets 404',
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { type: 'object', required: ['projects'], properties: { projects: { type: 'array', items: { type: 'string' } } } } } },
+        },
+        responses: { '200': { description: 'OK', ...json(envelope({ type: 'object' })) }, '401': failures['401'], '404': failures['404'], '422': failures['422'] },
       },
     },
     '/resources/{id}': {
@@ -3966,8 +3988,19 @@ export const OPENAPI_DOCUMENT = {
     },
     '/resources/{resourceId}/secrets': {
       get: {
-        summary: 'The SECRET VARIABLES of this skill or command: names, descriptions and when they changed — never the value. Administrators only (404 otherwise)',
-        parameters: [{ name: 'resourceId', in: 'path', required: true, schema: { type: 'string' } }],
+        summary:
+          'The SECRET VARIABLES of this skill or command: names, descriptions and when they changed — never the value. Secrets are PER PROJECT: the owner project and each project the item is shared with keep their own values (same names). For a receiving project, the names the owner uses and it has not set yet come with `configured: false` and no `updatedAt`. Administrators of the project asked (404 otherwise)',
+        parameters: [
+          { name: 'resourceId', in: 'path', required: true, schema: { type: 'string' } },
+          {
+            name: 'project',
+            in: 'query',
+            required: false,
+            schema: { type: 'string' },
+            description:
+              'Skill/command only: the project whose values (the owner project when absent, or one the item is shared with). Administrators of THAT project only; 404 for any other project.',
+          },
+        ],
         responses: {
           '200': {
             description: 'OK',
@@ -3983,6 +4016,7 @@ export const OPENAPI_DOCUMENT = {
                     description: { type: 'string' },
                     updatedAt: { type: 'string', format: 'date-time' },
                     updatedBy: { type: 'string' },
+                    configured: { type: 'boolean', description: 'false = expected name (used by the owner project), no value here yet' },
                   },
                 },
               }),
@@ -3999,6 +4033,14 @@ export const OPENAPI_DOCUMENT = {
         parameters: [
           { name: 'resourceId', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'name', in: 'path', required: true, schema: { type: 'string', pattern: '^[A-Z][A-Z0-9_]{1,63}$' } },
+          {
+            name: 'project',
+            in: 'query',
+            required: false,
+            schema: { type: 'string' },
+            description:
+              'Skill/command only: the project whose values (the owner project when absent, or one the item is shared with). Administrators of THAT project only; 404 for any other project.',
+          },
         ],
         requestBody: { required: true, ...json({ type: 'object', properties: { value: { type: 'string', maxLength: 16384 }, description: { type: 'string', maxLength: 300 } } }) },
         responses: {
@@ -4028,6 +4070,13 @@ export const OPENAPI_DOCUMENT = {
         parameters: [
           { name: 'resourceId', in: 'path', required: true, schema: { type: 'string' } },
           { name: 'name', in: 'path', required: true, schema: { type: 'string' } },
+          {
+            name: 'project',
+            in: 'query',
+            required: false,
+            schema: { type: 'string' },
+            description: 'Skill/command only: the project whose value (absent = the owner project). Administrators of THAT project only.',
+          },
         ],
         responses: {
           '200': { description: 'Deleted', ...json(envelope({ type: 'null' })) },
@@ -4198,6 +4247,7 @@ export const OPENAPI_DOCUMENT = {
             properties: {
               scope: { type: 'string', enum: ['agent', 'skill', 'command'] },
               scopeId: { type: 'string' },
+              project: { type: 'string', description: 'A shared skill/command: the receiving project whose values this fills (absent = the owner project)' },
               name: { type: 'string' },
               description: { type: 'string' },
               reason: { type: 'string' },

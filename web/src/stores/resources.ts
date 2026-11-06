@@ -63,6 +63,18 @@ export const useResourcesStore = defineStore('resources', () => {
     return saved
   }
 
+  /** A guia Compartilhar: grava a lista INTEIRA de projetos; as listas lidas dos outros projetos (que recebem) são relidas. */
+  async function share(id: string, projects: string[]): Promise<IResource> {
+    const saved = await api<IResource>(`/resources/${encodeURIComponent(id)}/shares`, { method: 'PUT', body: { projects } })
+    put(saved)
+    const others = lists.keys().filter((key) => {
+      const scope = (JSON.parse(key) as [string])[0]
+      return scope !== GLOBAL_SCOPE && scope !== saved.projectId
+    })
+    await Promise.all(others.map((key) => lists.refresh(key).catch(() => undefined)))
+    return saved
+  }
+
   async function remove(id: string): Promise<void> {
     await api(`/resources/${encodeURIComponent(id)}`, { method: 'DELETE' })
     details.drop(id)
@@ -80,5 +92,5 @@ export const useResourcesStore = defineStore('resources', () => {
     put(await details.refresh(id))
   }
 
-  return { lists, details, listKey, create, update, saveFiles, resolveIssue, remove, restored }
+  return { lists, details, listKey, create, update, saveFiles, resolveIssue, share, remove, restored }
 })

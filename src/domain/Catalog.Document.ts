@@ -191,6 +191,8 @@ export const RESOURCE_SHAPE: TShape<IResource> = {
   triggers: { list: TRIGGER_SHAPE },
   // Agrupar e filtrar: a ordem não importa.
   tags: 'set',
+  // Com quem o dono compartilha (ver `Share.Policy`): vai no histórico, que registra compartilhar e parar.
+  sharedWith: 'set',
   createdAt: { omit: META },
   updatedAt: { omit: META },
   updatedBy: { omit: META },
@@ -223,6 +225,8 @@ export const DOC_SHAPE: TShape<IProjectDoc> = {
   importIssues: { list: IMPORT_PROBLEM_SHAPE },
   // Agrupar e filtrar: a ordem não importa.
   tags: 'set',
+  // Com quem o dono compartilha (ver `Share.Policy`): vai no histórico, que registra compartilhar e parar.
+  sharedWith: 'set',
   status: 'value',
   // Quais este substitui: a ordem não importa.
   supersedes: 'set',

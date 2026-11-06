@@ -50,6 +50,7 @@ import {
   CatalogImportBlockedError,
   CatalogPlanChangedError,
   CatalogRestoreInvalidError,
+  CatalogShareForbiddenError,
   CatalogRevisionConflictError,
   CatalogRevisionNotFoundError,
   CatalogWideningConfirmationError,
@@ -155,6 +156,10 @@ export function toHttpFailure(error: unknown): IHttpFailure {
 
   if (error instanceof CatalogWideningForbiddenError) {
     return { status: 403, code: 'forbidden', message: error.message, details: { widenings: error.widenings } }
+  }
+
+  if (error instanceof CatalogShareForbiddenError) {
+    return { status: 403, code: 'forbidden', message: error.message, details: { projects: error.projects } }
   }
 
   if (error instanceof PermissionRequestNotFoundError) {

@@ -6,12 +6,13 @@ import { DOC_KINDS, DOC_STATUSES, TDocKind, TDocStatus } from '@domain/models/Pr
 import { TProtocolKind } from '@domain/models/Protocol.Model'
 import { RESOURCE_KINDS, TResourceKind } from '@domain/models/Resource.Model'
 import { TGuidanceScope } from '@domain/ports/GuidanceRepository.Port'
+import { SHARE_MAX_PROJECTS } from '@domain/Share.Policy'
 import { IResourceFile, RESOURCE_FILE_MAX_BYTES } from '@domain/models/ResourceFile.Model'
 import { IResourceFilesPort } from '@domain/ports/ResourceFiles.Port'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
-import { administers, requireAgentAdmin, requireAnyAdmin, requireProjectAdmin, requireProjectsAdmin, requireScopeReader } from './Project.Access'
+import { administers, adminView, requireAgentAdmin, requireAnyAdmin, requireProjectAdmin, requireProjectsAdmin, requireScopeReader } from './Project.Access'
 import { parseBody } from './Request.Parser'
 
 export interface IGuidanceControllerDeps {
@@ -24,6 +25,8 @@ export interface IGuidanceControllerDeps {
   agentFiles?: (agentId: string, files: IResourceFile[], by: string, base?: readonly string[]) => unknown
   /** O recurso foi apagado: as variáveis secretas dele vão junto (ver `ResourceSecrets.Service`). */
   resourceRemoved?: (kind: 'skill' | 'command', id: string) => void
+  /** ⛔ A lista de projetos com que o recurso é compartilhado mudou (ou ele mudou de dono): quem saiu perde os valores secretos que configurou. */
+  resourceShared?: (id: string, projects: readonly string[]) => void
   /** Os segredos que um texto traz (a máscara do gateway): arquivo com segredo não entra. */
   secretsIn?: (text: string) => string[]
   /** A pasta de um projeto (de onde `…/files/import` copia: os repositórios dele). Ausente = sem a rota. */
@@ -73,6 +76,8 @@ const importFilesSchema = z.object({
 })
 const uploadSchema = z.object({ content: z.string().max(Math.ceil((RESOURCE_FILE_MAX_BYTES * 4) / 3) + 8) })
 const addendumSchema = z.object({ projectId: project, body: z.string() })
+/** A lista INTEIRA de projetos com que o item é compartilhado (`[]` = nenhum). */
+const shareSchema = z.object({ projects: z.array(z.string().max(64)).max(SHARE_MAX_PROJECTS) })
 const agentResourcesSchema = z.object({ skills: z.array(z.string().max(80)).max(200).optional(), commands: z.array(z.string().max(80)).max(200).optional() })
 /**
  * O "resolvido" de um problema da importação: o código e, para tirar só um, o alvo. Ou `{ pending: true }`: "descartar
@@ -132,6 +137,8 @@ export class GuidanceController {
       'setAgentFiles',
       'importFiles',
       'getProtocol',
+      'shareResource',
+      'shareDoc',
       'setProtocolAddendum',
     ] as const)
       this[name] = this[name].bind(this)
@@ -191,12 +198,15 @@ export class GuidanceController {
       await this.reader(scopeOf(req), 'listDocs')
       const kind = typeof req.query.kind === 'string' && (DOC_KINDS as readonly string[]).includes(req.query.kind) ? (req.query.kind as TDocKind) : undefined
       // `loadedIn`: os projetos que carregam a spec inteira (o contexto inicial deles). `tokens`: o peso estimado dela.
-      const docs = this.deps.guidance.docs(scopeOf(req), kind)
+      // ⚖️ Com `?project=`, vêm também os que outros projetos compartilham com ele (`sharedFrom`: só leitura aqui).
+      const scope = scopeOf(req)
+      const docs = [...this.deps.guidance.docs(scope, kind), ...(scope ? this.deps.guidance.sharedDocs(scope, kind) : [])]
       // Quem substitui cada um (o inverso de `supersedes`), da própria lista: sem uma leitura por documento.
       const by = new Map<string, string[]>()
       for (const doc of docs) for (const other of doc.supersedes ?? []) by.set(other, [...(by.get(other) ?? []), doc.id])
       return docs.map(({ body, ...doc }) => ({
         ...doc,
+        ...(scope && doc.projectId && doc.projectId !== scope ? { sharedFrom: doc.projectId } : {}),
         ...(by.get(doc.id)?.length ? { supersededBy: by.get(doc.id) } : {}),
         tokens: estimateTokens(body),
         loadedIn: this.deps.guidance.loadedIn(doc.id),
@@ -207,7 +217,7 @@ export class GuidanceController {
   async getDoc(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
       const doc = this.deps.guidance.doc(req.params.id as string)
-      await this.reader(doc.projectId, 'getDoc')
+      await this.itemReader(doc, 'getDoc')
       const by = this.deps.guidance.supersededBy(doc)
       return by.length ? { ...doc, supersededBy: by } : doc
     })
@@ -301,14 +311,19 @@ export class GuidanceController {
     await this.respond(res, async () => {
       await this.reader(scopeOf(req), 'listResources')
       const kind = typeof req.query.kind === 'string' && (RESOURCE_KINDS as readonly string[]).includes(req.query.kind) ? (req.query.kind as TResourceKind) : undefined
-      return this.deps.guidance.resources(scopeOf(req), kind)
+      // ⚖️ Com `?project=`, vêm também as que outros projetos compartilham com ele (`sharedFrom`: só leitura aqui).
+      const scope = scopeOf(req)
+      return [
+        ...this.deps.guidance.resources(scope, kind),
+        ...(scope ? this.deps.guidance.sharedResources(scope, kind).map((resource) => ({ ...resource, sharedFrom: resource.projectId })) : []),
+      ]
     })
   }
 
   async getResource(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
       const resource = this.deps.guidance.resource(req.params.id as string)
-      await this.reader(resource.projectId, 'getResource')
+      await this.itemReader(resource, 'getResource')
       return resource
     })
   }
@@ -331,7 +346,10 @@ export class GuidanceController {
     await this.respond(res, async () => {
       const { id: _id, kind: _kind, ...change } = parseBody(resourceSchema, req.body)
       const id = req.params.id as string
-      return this.deps.guidance.updateResource(id, change, await this.moving(this.deps.guidance.resource(id).projectId, change.projectId, 'updateResource'))
+      const saved = this.deps.guidance.updateResource(id, change, await this.moving(this.deps.guidance.resource(id).projectId, change.projectId, 'updateResource'))
+      // Mudou de dono: a lista de compartilhamento se ajusta (ver `sharesAfterMove`) e os valores de quem saiu vão junto.
+      if (change.projectId !== undefined) this.deps.resourceShared?.(id, saved.sharedWith ?? [])
+      return saved
     })
   }
 
@@ -464,6 +482,27 @@ export class GuidanceController {
     })
   }
 
+  /** `PUT /resources/:id/shares { projects }` — com quais projetos a skill ou o command é compartilhado (ver `Share.Policy`). */
+  async shareResource(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const resource = this.deps.guidance.resource(req.params.id as string)
+      const { projects } = parseBody(shareSchema, req.body)
+      const saved = this.deps.guidance.shareResource(resource.id, projects, await this.sharer(resource, projects, 'shareResource'))
+      // ⛔ Quem deixou de receber perde os valores secretos que configurou (apagados, não escondidos).
+      this.deps.resourceShared?.(resource.id, saved.sharedWith ?? [])
+      return saved
+    })
+  }
+
+  /** `PUT /docs/:id/shares { projects }` — o mesmo na spec e no conhecimento. */
+  async shareDoc(req: Request, res: Response): Promise<void> {
+    await this.respond(res, async () => {
+      const doc = this.deps.guidance.doc(req.params.id as string)
+      const { projects } = parseBody(shareSchema, req.body)
+      return this.deps.guidance.shareDoc(doc.id, projects, await this.sharer(doc, projects, 'shareDoc'))
+    })
+  }
+
   private requireFiles(): IResourceFilesPort {
     if (!this.deps.files) throw new HttpError(404, 'not_found', 'Not found')
     return this.deps.files
@@ -494,6 +533,22 @@ export class GuidanceController {
   /** Ler o escopo: o projeto, o admin dele; o global, quem administra algo. */
   private reader(projectId: string | null | undefined, operation: string): Promise<string> {
     return requireScopeReader(this.deps.proof, projectId, operation)
+  }
+
+  /** Ler UM item: o admin do escopo dele ou, compartilhado, o admin de um projeto que o recebe. */
+  private async itemReader(item: { projectId?: string; sharedWith?: readonly string[] }, operation: string): Promise<string> {
+    const view = await adminView(this.deps.proof)
+    if (view && item.projectId && (item.sharedWith ?? []).some((project) => administers(view, project))) return view.by
+    return this.reader(item.projectId, operation)
+  }
+
+  /**
+   * ⛔ Compartilhar (ver `Share.Policy`): o admin do projeto de ORIGEM e, de cada projeto que ENTRA na lista, o admin
+   * dele também — só se compartilha com o projeto que se administra. Tirar da lista basta a origem.
+   */
+  private sharer(item: { projectId?: string; sharedWith?: readonly string[] }, projects: readonly string[], operation: string): Promise<string> {
+    const added = projects.filter((project) => !(item.sharedWith ?? []).includes(project))
+    return requireProjectsAdmin(this.deps.proof, [item.projectId ?? null, ...added], operation)
   }
 
   /** A edição: o admin do escopo de agora e, se o item muda de escopo (`next` dado), também o do novo. */

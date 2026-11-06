@@ -21,6 +21,11 @@ export interface IFileToolDeps {
    * absoluto (ou de dentro da raiz), pela capacidade e sem regra. A de outro agente é recusada sempre.
    */
   ownFolder?: (context?: IExecutionContext) => IOwnFolder | undefined
+  /**
+   * ⛔ As pastas de arquivos das skills e commands que outro projeto COMPARTILHOU com o da conversa: SÓ LEITURA (read_file,
+   * list_files, search_files, pelo caminho absoluto), sem regra; a escrita nunca as alcança. Ausente = nenhuma.
+   */
+  sharedFolders?: (context?: IExecutionContext) => readonly string[]
 }
 
 export interface IOwnFolder {
@@ -97,11 +102,25 @@ const toMessage = (error: unknown) => (error instanceof Error ? error.message : 
  * ONDE o caminho mora: na pasta privada do agente (pelo caminho absoluto dela) ou na raiz de trabalho. Na pasta dele, o
  * que se mostra é o caminho absoluto (o relativo seria lido como da raiz).
  */
-function placeOf(deps: IFileToolDeps, context: IExecutionContext | undefined, path: unknown): { root: string; own?: IOwnFolder; show: (abs: string) => string } {
+function placeOf(
+  deps: IFileToolDeps,
+  context: IExecutionContext | undefined,
+  path: unknown,
+  reading = false,
+): { root: string; own?: IOwnFolder; shared?: true; show: (abs: string) => string } {
   const own = deps.ownFolder?.(context)
   const root = deps.rootFor(context)
   if (own && typeof path === 'string' && isAbsolute(path) && isInside(realOf(resolve(own.dir)), realOf(resolve(path))))
     return { root: realOf(resolve(own.dir)), own, show: (abs) => abs }
+  // ⛔ Só LEITURA: a pasta de um item compartilhado com o projeto vira a raiz da chamada (nada fora dela). Escrever nunca entra aqui.
+  if (reading && typeof path === 'string' && isAbsolute(path)) {
+    const target = realOf(resolve(path))
+    const folder = deps
+      .sharedFolders?.(context)
+      ?.map((dir) => realOf(resolve(dir)))
+      .find((dir) => isInside(dir, target))
+    if (folder) return { root: folder, shared: true, show: (abs) => abs }
+  }
   return { root, ...(own ? { own } : {}), show: (abs) => relOf(root, abs) }
 }
 
@@ -113,7 +132,14 @@ function folderOf(abs: string, own: IOwnFolder | undefined): 'mine' | 'other' | 
 }
 
 /** O caminho já conferido (dentro da raiz e não protegido) ou o erro pronto. `write`: também fora das pastas só leitura. */
-function guard(root: string, path: unknown, permit?: (rel: string) => string | undefined, write = false, own?: IOwnFolder): { abs: string } | { error: IToolResult } {
+function guard(
+  root: string,
+  path: unknown,
+  permit?: (rel: string) => string | undefined,
+  write = false,
+  own?: IOwnFolder,
+  shared = false,
+): { abs: string } | { error: IToolResult } {
   if (typeof path !== 'string' || !path.trim()) return { error: fail('path is required.') }
   const abs = resolveInside(root, path)
   if (!abs) return { error: fail('path is outside the allowed folder') }
@@ -128,6 +154,8 @@ function guard(root: string, path: unknown, permit?: (rel: string) => string | u
     return { abs }
   }
   if (write && isResourceFilePath(abs)) return { error: fail('resource files are read-only: they are edited in the gateway (the skill, command or agent page)') }
+  // A pasta compartilhada é lida sem regra (como a global): o gateway a mantém, e a raiz da chamada já é ela.
+  if (shared && !write) return { abs }
   const denied = permit?.(relOf(root, abs))
   if (denied) return { error: fail(`Not permitted: ${denied}`) }
   return { abs }
@@ -236,8 +264,8 @@ function readFileTool(deps: IFileToolDeps): ILocalTool {
       additionalProperties: false,
     },
     async execute(args, context): Promise<IToolResult> {
-      const { root, own, show } = placeOf(deps, context, args.path)
-      const checked = guard(root, args.path, (rel) => deps.access?.(context, 'read', rel, true), false, own)
+      const { root, own, shared, show } = placeOf(deps, context, args.path, true)
+      const checked = guard(root, args.path, (rel) => deps.access?.(context, 'read', rel, true), false, own, !!shared)
       if ('error' in checked) return checked.error
       try {
         const { handle, size } = await openChecked(checked.abs, fsc.O_RDONLY)
@@ -280,16 +308,16 @@ function listFilesTool(deps: IFileToolDeps): ILocalTool {
       additionalProperties: false,
     },
     async execute(args, context): Promise<IToolResult> {
-      const { root, own, show } = placeOf(deps, context, args.path)
+      const { root, own, shared, show } = placeOf(deps, context, args.path, true)
       const pattern = typeof args.pattern === 'string' ? args.pattern.trim() : ''
       if (!pattern) return fail('pattern is required.')
-      const checked = guard(root, args.path ?? '.', undefined, false, own)
+      const checked = guard(root, args.path ?? '.', undefined, false, own, !!shared)
       if ('error' in checked) return checked.error
       try {
         const names: string[] = []
         for (const name of await walk(checked.abs, pattern)) {
           const abs = resolveInside(root, join(checked.abs, name))
-          if (listable(abs, root, own, (item) => !deps.access?.(context, 'read', relOf(root, item), false))) names.push(show(abs))
+          if (listable(abs, root, own, (item) => !!shared || !deps.access?.(context, 'read', relOf(root, item), false))) names.push(show(abs))
         }
         if (!names.length) return { status: 'success', result: 'No files match.' }
         const shown = names.slice(0, LIST_MAX).join('\n')
@@ -317,7 +345,7 @@ function searchFilesTool(deps: IFileToolDeps): ILocalTool {
       additionalProperties: false,
     },
     async execute(args, context): Promise<IToolResult> {
-      const { root, own, show } = placeOf(deps, context, args.path)
+      const { root, own, shared, show } = placeOf(deps, context, args.path, true)
       const source = typeof args.pattern === 'string' ? args.pattern : ''
       if (!source) return fail('pattern is required.')
       let regex: RegExp
@@ -326,7 +354,7 @@ function searchFilesTool(deps: IFileToolDeps): ILocalTool {
       } catch (error: unknown) {
         return fail(`invalid regular expression: ${toMessage(error)}`)
       }
-      const checked = guard(root, args.path ?? '.', undefined, false, own)
+      const checked = guard(root, args.path ?? '.', undefined, false, own, !!shared)
       if ('error' in checked) return checked.error
       const fileGlob = typeof args.glob === 'string' && args.glob.trim() ? args.glob.trim() : '**/*'
       try {
@@ -334,7 +362,7 @@ function searchFilesTool(deps: IFileToolDeps): ILocalTool {
         let truncated = false
         for (const name of await walk(checked.abs, fileGlob)) {
           const abs = resolveInside(root, join(checked.abs, name))
-          if (!listable(abs, root, own, (item) => !deps.access?.(context, 'read', relOf(root, item), false))) continue
+          if (!listable(abs, root, own, (item) => !!shared || !deps.access?.(context, 'read', relOf(root, item), false))) continue
           let text: string
           try {
             const { handle, size } = await openChecked(abs, fsc.O_RDONLY)

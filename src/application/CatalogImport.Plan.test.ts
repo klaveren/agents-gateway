@@ -345,3 +345,40 @@ describe('CatalogImportPlanner (dry-run)', () => {
     assert.strictEqual(parsed.manifest?.scope, 'all')
   })
 })
+
+describe('CatalogImportPlanner — compartilhamento (sharedWith)', () => {
+  it('export de UM projeto: o sharedWith vai como está (dado do item) e o pacote volta como unchanged', async () => {
+    const { exporter, planner, projects, guidance } = build()
+    projects.insert({ id: 'beta', name: 'Beta', createdAt: at, updatedAt: at })
+    guidance.saveResource({ ...guidance.resource('skill-a')!, sharedWith: ['beta'] })
+    guidance.updateDoc('spec-a', { sharedWith: ['beta'] })
+
+    const pack = exporter.run({ kind: 'project', projectId: 'alfa' })
+    const file = Object.entries(pack.files).find(([path]) => path.includes('skill-a'))
+    assert.ok(file && /sharedWith/.test(String(file[1])), 'o frontmatter da skill leva o sharedWith')
+    const plan = await planner.planPackage(pack)
+    assert.deepStrictEqual(plan.fileErrors, [])
+    assert.ok(plan.items.every((item) => item.op === 'unchanged'))
+  })
+
+  it('o plano limpa o sharedWith do pacote contra ESTE gateway: o que não existe sai e vira link-missing; global limpa; ADR é erro', async () => {
+    const { planner, reader, projects } = build()
+    projects.insert({ id: 'beta', name: 'Beta', createdAt: at, updatedAt: at })
+    const skill = reader.read('skill', 'skill-a')!
+    const global = reader.read('command', 'cmd-g')!
+    const adr = reader.read('adr', 'adr-a')!
+
+    const { plan, targets } = await planner.planWithTargets(
+      [edit(skill, { sharedWith: ['beta', 'longe'] }), edit(global, { sharedWith: ['beta'] }), edit(adr, { sharedWith: ['beta'] })],
+      { kind: 'all' },
+    )
+
+    assert.strictEqual(byRef(plan, 'skill/skill-a').op, 'update')
+    assert.deepStrictEqual(targets.get('skill/skill-a')!.body.sharedWith, ['beta'])
+    assert.deepStrictEqual(targets.get('skill/skill-a')!.body.importIssues, [
+      { code: 'link-missing', message: 'compartilhado com o projeto longe, que não existe aqui', target: 'longe' },
+    ])
+    assert.strictEqual(byRef(plan, 'command/cmd-g').op, 'unchanged')
+    assert.strictEqual(byRef(plan, 'adr/adr-a').op, 'error')
+  })
+})

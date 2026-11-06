@@ -65,6 +65,25 @@ describe('SelfMcp.Guard', () => {
     assert.strictEqual(written.length, 8)
   })
 
+  it('⛔ o agente não compartilha (mexe em OUTRO projeto): PUT .../shares é recusado mesmo no projeto da conversa e para o Atlas', async () => {
+    for (const scope of [{ projectId: 'P', unrestricted: false }, { unrestricted: true }, { unrestricted: false }]) {
+      const { api, written } = fakeApi()
+      const guarded = scopedWrites(api, scope)
+      assert.ok(refused(await guarded('PUT', '/resources/skill-p/shares', { body: { projects: ['Q'] } })), JSON.stringify(scope))
+      assert.ok(refused(await guarded('PUT', '/docs/spec-p/shares', { body: { projects: ['Q'] } })))
+      assert.ok(refused(await guarded('PUT', '/docs/spec-p/shares', { body: { projects: [] } })), 'parar de compartilhar também')
+      assert.ok(refused(await guarded('PUT', '/resources/skill%20p/shares/', { body: { projects: ['Q'] } })))
+      assert.deepStrictEqual(written, [])
+    }
+  })
+
+  it('o resto de docs do projeto da conversa segue como antes (a trava é só a rota de compartilhar)', async () => {
+    const { api, written } = fakeApi()
+    const guarded = scopedWrites(api, { projectId: 'P', unrestricted: false })
+    assert.strictEqual((await guarded('POST', '/docs', { body: { id: 'd', projectId: 'P' } })).ok, true)
+    assert.strictEqual(written.length, 1)
+  })
+
   it('administrador do gateway numa conversa SEM projeto (o Atlas) escreve onde a conta dele escreve', async () => {
     const { api, written } = fakeApi()
     const guarded = scopedWrites(api, { unrestricted: true })

@@ -235,7 +235,7 @@ export class CatalogController {
       if (!this.deps.importApplier) throw this.deny('catalogImportApply', 'import apply is not wired')
       return this.deps.importApplier.apply(
         { ...source, ...(effective ? { scope: effective } : {}), planHash: body.planHash, ...(body.confirm ? { confirm: body.confirm } : {}) },
-        { by, viaAccessToken: viaAccessToken(res) },
+        { by, viaAccessToken: viaAccessToken(res), administers: await this.administered() },
       )
     })
   }
@@ -347,7 +347,13 @@ export class CatalogController {
   private async writer(operation: string, res: Response, scopes: ReadonlyArray<string | null>): Promise<{ restore: CatalogRestoreUseCase; caller: IRestoreCaller }> {
     const by = await requireProjectsAdmin(this.deps.proof, scopes.length ? scopes : [null], operation)
     if (!this.deps.restore) throw this.deny(operation, 'restore is not wired')
-    return { restore: this.deps.restore, caller: { by, viaAccessToken: viaAccessToken(res) } }
+    return { restore: this.deps.restore, caller: { by, viaAccessToken: viaAccessToken(res), administers: await this.administered() } }
+  }
+
+  /** ⛔ Os projetos que quem pede administra: a trava de `sharedWith` (ver `gateShares`) só deixa acrescentar esses. */
+  private async administered(): Promise<(projectId: string) => boolean> {
+    const view = await adminView(this.deps.proof)
+    return (projectId) => !!view && administers(view, projectId)
   }
 
   /** Com `kind` e `id`: as revisões do item. Sem eles: as do escopo (`project=<id>`, `project=global`, ou tudo). */

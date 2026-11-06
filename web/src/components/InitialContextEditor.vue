@@ -5,6 +5,7 @@ import type { IProjectDoc } from '@/lib/types'
 import { useScopedDocs } from '@/composables/useCatalogLists'
 import { useResource } from '@/composables/useResource'
 import { type TContextOwner, useAgentCatalogStore } from '@/stores/agentCatalog'
+import SharedBadge from './SharedBadge.vue'
 
 /**
  * O editor de um CONTEXTO INICIAL — o do projeto ou o de um agente: as specs que vão INTEIRAS no prompt, na ordem
@@ -78,7 +79,8 @@ async function save() {
   saveError.value = undefined
   note.value = undefined
   try {
-    await catalog.saveContext(props.owner, props.ownerId, selected.value)
+    // ⚖️ A spec que deixou de estar disponível (o compartilhamento acabou, foi apagada) sai ao salvar: o servidor a recusaria.
+    await catalog.saveContext(props.owner, props.ownerId, selected.value.filter((id) => byId.value.has(id)))
     note.value = 'Salvo. Vale para as próximas conversas.'
   } catch (failure) {
     saveError.value = failure
@@ -108,7 +110,8 @@ function describe(failure: unknown): string {
         <span class="min-w-0 flex-1">
           <span class="flex items-center gap-2">
             <RouterLink :to="`/specs/${doc.id}`" class="truncate text-sm font-medium hover:underline">{{ doc.title }}</RouterLink>
-            <span class="shrink-0 rounded-full px-1.5 py-0.5 text-[10px]" :class="doc.projectId ? 'bg-emerald-500/15 text-emerald-300' : 'bg-zinc-800 text-zinc-400'">{{ doc.projectId ? 'projeto' : 'global' }}</span>
+            <SharedBadge v-if="doc.sharedFrom" :from="doc.sharedFrom" />
+            <span v-else class="shrink-0 rounded-full px-1.5 py-0.5 text-[10px]" :class="doc.projectId ? 'bg-emerald-500/15 text-emerald-300' : 'bg-zinc-800 text-zinc-400'">{{ doc.projectId ? 'projeto' : 'global' }}</span>
           </span>
           <span class="block truncate text-xs text-zinc-500">{{ doc.summary || doc.id }}</span>
         </span>

@@ -271,10 +271,15 @@ describe('POST /catalog/history/restore e /catalog/batches/:id/revert (rollback,
     seen.length = 0
     const reply = await call(ADMIN, 'restore', body)
     assert.strictEqual(reply.status, 200)
-    assert.deepStrictEqual(seen[0], {
-      request: { item: { kind: 'mcp', itemId: 'alfa.n8n' }, revision: 2, expectedRevision: 5, confirm: ['k'] },
-      caller: { by: 'u_root@x.test', viaAccessToken: false },
-    })
+    const { administers, ...caller } = seen[0].caller
+    assert.deepStrictEqual(
+      { request: seen[0].request, caller },
+      {
+        request: { item: { kind: 'mcp', itemId: 'alfa.n8n' }, revision: 2, expectedRevision: 5, confirm: ['k'] },
+        caller: { by: 'u_root@x.test', viaAccessToken: false },
+      },
+    )
+    assert.strictEqual(typeof administers, 'function', 'a trava do sharedWith pergunta o que quem pede administra')
   })
 
   it('token de acesso: o controller o distingue da sessão, e a ampliação vira 403', async () => {

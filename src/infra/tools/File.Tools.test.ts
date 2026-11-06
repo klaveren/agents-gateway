@@ -239,3 +239,57 @@ describe('File.Tools — ⛔ a pasta privada do agente', () => {
     assert.equal(found.result, 'No matches.')
   })
 })
+
+describe('File.Tools — ⛔ a pasta de uma skill compartilhada com o projeto (só leitura)', () => {
+  let data: string
+  let beta: string
+  let skill: string
+  let other: string
+  before(() => {
+    data = mkdtempSync(join(tmpdir(), 'file-tools-shared-'))
+    beta = join(data, 'projects', 'beta')
+    skill = join(data, 'projects', 'alfa', 'skills', 'deploy')
+    other = join(data, 'projects', 'alfa', 'skills', 'privada')
+    for (const dir of [beta, join(skill, 'scripts'), other]) mkdirSync(dir, { recursive: true })
+    writeFileSync(join(skill, 'scripts', 'run.sh'), 'echo deploy')
+    writeFileSync(join(other, 'x.sh'), 'echo privada')
+    writeFileSync(join(data, 'projects', 'alfa', 'nota.md'), 'do alfa')
+  })
+  after(() => rmSync(data, { recursive: true, force: true }))
+  const run = (shared: string[], name: string, args: Record<string, unknown>) =>
+    makeFileTools({ rootFor: () => beta, access: () => 'sem regra', sharedFolders: () => shared })
+      .find((tool) => tool.name === name)!
+      .execute(args)
+
+  it('lê, lista e busca na pasta compartilhada, pelo caminho absoluto, sem regra', async () => {
+    const file = join(skill, 'scripts', 'run.sh')
+    assert.equal((await run([skill], 'read_file', { path: file })).status, 'success')
+    const listed = await run([skill], 'list_files', { pattern: '**/*', path: skill })
+    assert.deepEqual(String(listed.result).split('\n'), [join(realpathSync(skill), 'scripts'), join(realpathSync(skill), 'scripts', 'run.sh')])
+    assert.match(String((await run([skill], 'search_files', { pattern: 'deploy', path: skill })).result), /run\.sh:1: echo deploy/)
+  })
+
+  it('⛔ não grava nela', async () => {
+    assert.equal((await run([skill], 'write_file', { path: join(skill, 'scripts', 'novo.sh'), content: 'x' })).status, 'error')
+    assert.equal((await run([skill], 'edit_file', { path: join(skill, 'scripts', 'run.sh'), old_string: 'echo', new_string: 'rm' })).status, 'error')
+    assert.equal(readFileSync(join(skill, 'scripts', 'run.sh'), 'utf8'), 'echo deploy')
+  })
+
+  it('⛔ outra skill do alfa e o resto do projeto de origem seguem negados', async () => {
+    for (const path of [join(other, 'x.sh'), join(data, 'projects', 'alfa', 'nota.md'), join(skill, '..', 'privada', 'x.sh')]) {
+      assert.equal((await run([skill], 'read_file', { path })).status, 'error', path)
+    }
+    assert.equal((await run([skill], 'list_files', { pattern: '**/*', path: join(data, 'projects', 'alfa') })).status, 'error')
+  })
+
+  it('⛔ sem compartilhar (ou depois de parar), a pasta é negada', async () => {
+    const file = join(skill, 'scripts', 'run.sh')
+    assert.equal((await run([], 'read_file', { path: file })).status, 'error')
+    assert.equal((await run([], 'list_files', { pattern: '**/*', path: skill })).status, 'error')
+  })
+
+  it('⛔ um link dentro da pasta compartilhada que sai dela não é seguido', async () => {
+    symlinkSync(join(data, 'projects', 'alfa', 'nota.md'), join(skill, 'atalho.md'))
+    assert.equal((await run([skill], 'read_file', { path: join(skill, 'atalho.md') })).status, 'error')
+  })
+})

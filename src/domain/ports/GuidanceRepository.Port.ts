@@ -9,7 +9,7 @@ export type TGuidanceScope = string | null
 /** `projectId: null` move para o global. */
 export type TRulePatch = Partial<Pick<IRule, 'title' | 'body' | 'enabled' | 'position' | 'tags' | 'updatedAt' | 'updatedBy'>> & { projectId?: string | null }
 export type TDocPatch = Partial<
-  Pick<IProjectDoc, 'kind' | 'title' | 'summary' | 'body' | 'docIds' | 'docRefs' | 'importIssues' | 'tags' | 'status' | 'supersedes' | 'updatedAt' | 'updatedBy'>
+  Pick<IProjectDoc, 'kind' | 'title' | 'summary' | 'body' | 'docIds' | 'docRefs' | 'importIssues' | 'tags' | 'sharedWith' | 'status' | 'supersedes' | 'updatedAt' | 'updatedBy'>
 > & {
   projectId?: string | null
 }
@@ -37,6 +37,8 @@ export interface IGuidanceRepository {
 
   /** Os do escopo, pelo tipo e pelo título. */
   docs(scope: TGuidanceScope, kind?: TDocKind): IProjectDoc[]
+  /** Os documentos que OUTROS projetos compartilham com este (ver `IProjectDoc.sharedWith`). */
+  docsSharedWith(projectId: string, kind?: TDocKind): IProjectDoc[]
   doc(id: string): IProjectDoc | undefined
   insertDoc(doc: IProjectDoc): void
   updateDoc(id: string, patch: TDocPatch): IProjectDoc | undefined
@@ -45,7 +47,7 @@ export interface IGuidanceRepository {
   /** Os documentos que anexam este (os "pais" dele, ver `IProjectDoc.docIds`). */
   docsAttaching(id: string): IProjectDoc[]
   /** A busca de texto (FTS) nos documentos dos escopos, os mais relevantes primeiro. `match` é a expressão FTS5 pronta. */
-  searchDocs(match: string, scopes: readonly TGuidanceScope[], kind?: TDocKind, limit?: number): IDocHit[]
+  searchDocs(match: string, scopes: readonly TGuidanceScope[], kind?: TDocKind, limit?: number, alsoIds?: readonly string[]): IDocHit[]
 
   /** O CONTEXTO INICIAL do projeto: as specs que vão inteiras no prompt, na ordem. */
   contextDocs(projectId: string): string[]
@@ -64,6 +66,8 @@ export interface IGuidanceRepository {
 
   /** Os recursos (skills e commands) do escopo, pelo id. */
   resources(scope: TGuidanceScope, kind?: TResourceKind): IResource[]
+  /** As skills e os commands que OUTROS projetos compartilham com este (ver `IResource.sharedWith`). */
+  resourcesSharedWith(projectId: string, kind?: TResourceKind): IResource[]
   resource(id: string): IResource | undefined
   /** Grava (cria ou substitui) o recurso inteiro. */
   saveResource(resource: IResource): void

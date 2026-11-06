@@ -42,6 +42,11 @@ export interface IResource {
   triggers?: IAgentTrigger[]
   /** As tags (ver `Tag.Policy`): para agrupar e filtrar nas listas. Ausente = nenhuma. */
   tags?: string[]
+  /**
+   * ⛔ Os projetos com que o dono COMPARTILHA o item (ver `Share.Policy`): eles o usam só para leitura; a manutenção é do
+   * projeto de origem. Só item de projeto (o global já vale para todos). Ausente = nenhum.
+   */
+  sharedWith?: string[]
   createdAt: Date
   updatedAt: Date
   updatedBy?: string

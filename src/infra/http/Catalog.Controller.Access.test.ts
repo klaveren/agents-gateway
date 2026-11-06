@@ -74,6 +74,8 @@ describe('Catalog: o admin do projeto, só o projeto dele', () => {
   batch('lote-global', 'global', undefined)
 
   const writes: string[] = []
+  /** Quem pede, como o caso de uso recebe (a trava de `sharedWith` pergunta a ele o que se administra). */
+  let lastCaller: { by?: string; administers?: (projectId: string) => boolean } | undefined
   const planned: unknown[] = []
   const controller = new CatalogController({
     history: new CatalogHistoryQuery(repository, { read: () => undefined }),
@@ -81,8 +83,12 @@ describe('Catalog: o admin do projeto, só o projeto dele', () => {
     projects: { canUse: (caller, projectId) => !!caller.userId && !!members[projectId]?.[caller.userId] },
     batches: repository,
     restore: {
-      restore: async (request: { item: { itemId: string } }, caller: { by: string }) => (writes.push(`restore ${request.item.itemId} ${caller.by}`), { ok: true }),
-      revert: async (request: { batchId: string }, caller: { by: string }) => (writes.push(`revert ${request.batchId} ${caller.by}`), { ok: true }),
+      restore: async (request: { item: { itemId: string } }, caller: { by: string }) => (
+        (lastCaller = caller),
+        writes.push(`restore ${request.item.itemId} ${caller.by}`),
+        { ok: true }
+      ),
+      revert: async (request: { batchId: string }, caller: { by: string }) => ((lastCaller = caller), writes.push(`revert ${request.batchId} ${caller.by}`), { ok: true }),
     } as unknown as CatalogRestoreUseCase,
     exporter: {
       run: (scope: { kind: string }) => ({ manifest: { scope: scope.kind, exportedAt: '2026-10-30T10:00:00.000Z', masked: [] }, files: {} }),
@@ -91,7 +97,7 @@ describe('Catalog: o admin do projeto, só o projeto dele', () => {
       planPackage: async (_input: unknown, options: unknown) => (planned.push(options), { ok: true }),
       planDocuments: async (documents: unknown) => (planned.push(documents), { ok: true }),
     } as unknown as Pick<CatalogImportPlanner, 'planPackage' | 'planDocuments'>,
-    importApplier: { apply: async () => ({ applied: true }) } as unknown as Pick<CatalogImportApplier, 'apply'>,
+    importApplier: { apply: async (_request: unknown, caller: { by: string }) => ((lastCaller = caller), { applied: true }) } as unknown as Pick<CatalogImportApplier, 'apply'>,
   })
 
   type TReply = { status: number; body?: { ok: boolean; result?: any } } // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -166,6 +172,16 @@ describe('Catalog: o admin do projeto, só o projeto dele', () => {
     assert.strictEqual((await call(ANA, 'revertBatch', { params: { batchId: 'lote-global' } })).status, 404)
     assert.strictEqual((await call(ROOT, 'revertBatch', { params: { batchId: 'lote-global' } })).status, 200)
     assert.deepStrictEqual(writes, ['restore theo u_ana@x.test', 'restore r-global u_root@x.test', 'revert lote-alfa u_ana@x.test', 'revert lote-global u_root@x.test'])
+  })
+
+  it('⛔ restaurar, reverter e importar levam ao caso de uso o que quem pede administra (a trava do sharedWith)', async () => {
+    const administers = () => ({ alfa: lastCaller!.administers!('alfa'), beta: lastCaller!.administers!('beta') })
+    await call(ANA, 'restore', { body: { kind: 'agent', id: 'theo', revision: 1, expectedRevision: 1 } })
+    assert.deepStrictEqual(administers(), { alfa: true, beta: false })
+    await call(ANA, 'revertBatch', { params: { batchId: 'lote-alfa' } })
+    assert.deepStrictEqual(administers(), { alfa: true, beta: false })
+    await call(BIA, 'importApply', { body: { package: { manifest: { scope: 'project:beta' }, files: {} }, planHash: 'a'.repeat(64) } })
+    assert.deepStrictEqual(administers(), { alfa: false, beta: true })
   })
 
   it('os lotes: cada admin lista e abre os do escopo dele', async () => {
