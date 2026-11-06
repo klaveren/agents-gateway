@@ -94,7 +94,8 @@ export class SchedulesController {
       // ⛔ Mudar onde roda (`projectId`) pede admin dos dois escopos.
       const next = body.projectId === undefined || agentProjectOf(agentId) ? current : body.projectId
       const label = await requireProjectsAdmin(this.deps.proof, [current, next], 'updateSchedule')
-      return this.toDto(this.deps.schedules.update(agentId, name, body, label))
+      const userId = (await provenCaller(this.deps.proof))?.id
+      return this.toDto(this.deps.schedules.update(agentId, name, body, label, userId))
     })
   }
 
@@ -117,7 +118,10 @@ export class SchedulesController {
         const name = req.params.scheduleName as string
         await requireProjectAdmin(this.deps.proof, this.scopeOfNamed(agentId, name), 'runSchedule')
         const schedule = this.deps.schedules.get(agentId, name)
-        void this.deps.runner.runNow(schedule)
+        // ⛔ Rodar o item de OUTRA pessoa roda com a credencial de quem pediu, nunca a do criador (o turno é de quem o disparou).
+        const userId = (await provenCaller(this.deps.proof))?.id
+        if (!userId) throw new HttpError(422, 'validation_error', 'Sign in with a gateway account to run a schedule: it runs as you')
+        void this.deps.runner.runNow(userId === schedule.runAs ? schedule : { ...schedule, runAs: userId, sessionId: undefined, session: 'new' })
         return { started: true }
       },
       { status: 202, message: 'Schedule started' },

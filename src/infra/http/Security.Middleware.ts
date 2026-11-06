@@ -92,6 +92,36 @@ export function rateLimit(options: { windowMs: number; max: number; key?: (req: 
   }
 }
 
+/**
+ * Janela fixa por chave, em memória: `over` só olha (não conta), `hit` conta. Para quem precisa contar DEPOIS de decidir
+ * (o hook público conta a falha por IP e o sucesso por hook, em baldes separados).
+ */
+export class WindowCounter {
+  private readonly hits = new Map<string, { count: number; resetAt: number }>()
+
+  constructor(
+    private readonly windowMs: number,
+    private readonly max: number,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  /** Passou do teto? Em segundos, quanto falta para a janela virar; senão `undefined`. */
+  over(key: string): number | undefined {
+    const entry = this.hits.get(key)
+    const at = this.now()
+    return entry && entry.resetAt > at && entry.count >= this.max ? Math.ceil((entry.resetAt - at) / 1000) : undefined
+  }
+
+  hit(key: string): void {
+    const at = this.now()
+    const current = this.hits.get(key)
+    const entry = current && current.resetAt > at ? current : { count: 0, resetAt: at + this.windowMs }
+    entry.count += 1
+    this.hits.set(key, entry)
+    if (this.hits.size > 10_000) for (const [name, value] of this.hits) if (value.resetAt <= at) this.hits.delete(name)
+  }
+}
+
 /** Os nomes de faixa que o `proxy-addr` (o `trust proxy` do Express) entende. */
 const PROXY_NAMES = ['loopback', 'linklocal', 'uniquelocal']
 const IPV4_CIDR = /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/

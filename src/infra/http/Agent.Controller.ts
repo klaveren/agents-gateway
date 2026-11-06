@@ -1160,7 +1160,7 @@ export class AgentController {
         const archivedCount = archived ? undefined : await this.usecases.conversations.countArchived?.(owner)
 
         return {
-          sessions: sessions.filter((session) => ownsSession(resolved, session.metadata)).map((session) => toConversationDto(session, view)),
+          sessions: sessions.filter((session) => this.ownsConversation(resolved, session.metadata)).map((session) => toConversationDto(session, view)),
           ...(archivedCount !== undefined ? { archivedCount } : {}),
         }
       },
@@ -1257,7 +1257,7 @@ export class AgentController {
     // ⚖️ `?mine=1`: o admin com a PRÓPRIA caixa de entrada recebe só as suas, como qualquer pessoa. Sem, o monitor (as que ele administra).
     const everyone = !!adminOf && !(req.query?.mine === '1' || req.query?.mine === 'true')
     const visible = (metadata: Record<string, unknown> | undefined) =>
-      ((everyone && adminOfScope(projectKeyOf(metadata))) || ownsSession(resolved, metadata)) &&
+      ((everyone && adminOfScope(projectKeyOf(metadata))) || this.ownsConversation(resolved, metadata)) &&
       // Com `?project`, só as conversas daquele projeto.
       (!project || metadata?.[PROJECT_METADATA_KEY] === project) &&
       // As construções não entram na caixa de entrada (a guia Construir as lista).
@@ -1372,7 +1372,7 @@ export class AgentController {
       found = !!stored
       metadata = stored?.metadata
     }
-    if (!found || !(ownsSession(resolved, metadata) || (await this.administersConversation(metadata)))) throw new SessionNotFoundError(sessionId)
+    if (!found || !(this.ownsConversation(resolved, metadata) || (await this.administersConversation(metadata)))) throw new SessionNotFoundError(sessionId)
     return resolved
   }
 
@@ -1625,7 +1625,7 @@ export class AgentController {
     await this.respond(res, async () => {
       const resolved = await this.requireCaller()
 
-      return (await this.usecases.listSessions.execute()).filter((session) => ownsSession(resolved, session.metadata)).map(toSessionDto)
+      return (await this.usecases.listSessions.execute()).filter((session) => this.ownsConversation(resolved, session.metadata)).map(toSessionDto)
     })
   }
 
@@ -2015,14 +2015,17 @@ export class AgentController {
       metadata = (await this.usecases.getSession.execute(sessionId)).metadata
     } catch {
       const stored = options.resume && this.usecases.resumeSession ? await this.usecases.conversations.findSession(sessionId).catch(() => undefined) : undefined
-      if (!stored || !ownsSession(resolved, stored.metadata)) throw new SessionNotFoundError(sessionId)
+      if (!stored || !this.ownsConversation(resolved, stored.metadata) || stored.metadata?.delegatedBy) throw new SessionNotFoundError(sessionId)
       // ⚖️ O papel de admin da sessão retomada é o do AGENTE dela (o projeto dele; o global, o gateway), como na criação.
       const view = await adminView(this.usecases.proof)
       await this.usecases.resumeSession!.execute(stored, !!view && administers(view, this.agents.get(stored.agentId)?.projectId))
       return resolved
     }
 
-    if (!ownsSession(resolved, metadata)) throw new SessionNotFoundError(sessionId)
+    if (!this.ownsConversation(resolved, metadata)) throw new SessionNotFoundError(sessionId)
+    // ⛔ A conversa de DELEGAÇÃO (a do subagente) só recebe mensagem de quem a abriu (a conversa-mãe, pelo serviço), nunca
+    // direto pelo id: quem tem o id não conversa com o subagente fora do fluxo, com as ferramentas dele.
+    if (options.resume && metadata?.delegatedBy) throw new SessionNotFoundError(sessionId)
 
     return resolved
   }
@@ -2040,10 +2043,10 @@ export class AgentController {
       metadata = (await this.usecases.getSession.execute(sessionId)).metadata
     } catch {
       const stored = await this.usecases.conversations.findSession(sessionId).catch(() => undefined)
-      if (!stored || !ownsSession(resolved, stored.metadata)) throw new SessionNotFoundError(sessionId)
+      if (!stored || !this.ownsConversation(resolved, stored.metadata)) throw new SessionNotFoundError(sessionId)
       return { resolved, metadata: stored.metadata }
     }
-    if (!ownsSession(resolved, metadata)) throw new SessionNotFoundError(sessionId)
+    if (!this.ownsConversation(resolved, metadata)) throw new SessionNotFoundError(sessionId)
     return { resolved, metadata }
   }
 
@@ -2059,6 +2062,17 @@ export class AgentController {
   /** Os preços de um provider: os do catálogo, ou a tabela de fábrica quando não há catálogo injetado. */
   private pricingOf(provider: string): TModelPricing {
     return this.usecases.models?.pricing(provider) ?? this.pricing
+  }
+
+  /**
+   * A conversa é do chamador E, se é de um projeto, ele ainda o usa. ⛔ Sair do projeto tira o acesso às conversas dele:
+   * o dono removido não manda mensagem, não lê turno nem roda o agente no cerco do projeto. O admin do projeto passa
+   * por `administersConversation` (e é membro).
+   */
+  private ownsConversation(resolved: IResolvedCaller, metadata: Record<string, unknown> | undefined): boolean {
+    if (!ownsSession(resolved, metadata)) return false
+    const project = projectKeyOf(metadata)
+    return !project || !this.usecases.projects || this.usecases.projects.canUse(this.callerOf(resolved), project)
   }
 
   /** O chamador administra o escopo desta conversa (o projeto do carimbo; sem projeto, o gateway)? */
@@ -2088,7 +2102,7 @@ export class AgentController {
     if (!conversation) throw new HttpError(404, 'not_found', `Conversation not found: ${id}`)
     // ⛔ O admin abre a conversa dos PROJETOS QUE ADMINISTRA (a sem projeto, o gateway), não a de qualquer um.
     const admin = await this.administersConversation(conversation.metadata)
-    if (!admin && !ownsSession(resolved, conversation.metadata)) throw new HttpError(404, 'not_found', `Conversation not found: ${id}`)
+    if (!admin && !this.ownsConversation(resolved, conversation.metadata)) throw new HttpError(404, 'not_found', `Conversation not found: ${id}`)
 
     return { resolved, admin, conversation }
   }

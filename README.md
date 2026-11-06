@@ -842,7 +842,14 @@ background, as the account that created the hook (its permissions, its inbox; di
 and the hook stops). Verification is per hook: the key in `Authorization: Bearer` / `X-Hook-Key`,
 or an HMAC-SHA256 signature of the raw body (GitHub's `X-Hub-Signature-256` by default). A hook
 opens a new conversation per call, or keeps one continuous conversation where calls queue up.
-`HOOK_RATE_LIMIT` (default 60) caps calls per minute per hook.
+`HOOK_RATE_LIMIT` (default 60) caps accepted calls per minute per hook; `HOOK_FAIL_LIMIT` (default 30)
+caps failed calls per minute per IP (so a stranger guessing keys cannot use up the real webhook's quota).
+A wrong key, a wrong signature, a disabled hook and a hook that does not exist all answer the same 401.
+HMAC hooks can add `X-Timestamp` (unix seconds): the signature then covers `<timestamp>.<raw body>`, is
+accepted within 5 minutes and only once (replay protection). Without the header the signature is of the
+raw body alone, as before — callers that cannot send it keep working, without replay protection.
+Whoever edits a hook's prompt, verification or session, or rotates its key, becomes the account the hook
+runs as; the same goes for schedules, and "run now" on someone else's schedule runs as whoever asked.
 
 ### Server tools that survive a reboot: the Packages tab
 

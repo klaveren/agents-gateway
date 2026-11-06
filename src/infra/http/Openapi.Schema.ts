@@ -3452,6 +3452,14 @@ export const OPENAPI_DOCUMENT = {
             { name: 'hookName', in: 'path', required: true, schema: { type: 'string' } },
           ],
           { name: 'X-Hook-Key', in: 'header', required: false, schema: { type: 'string' } },
+          {
+            name: 'X-Timestamp',
+            in: 'header',
+            required: false,
+            description:
+              'HMAC hooks only: unix seconds. When sent, the signature covers `<timestamp>.<raw body>`, must be within 5 minutes, and the same signature is accepted once. Absent = signature of the raw body alone (no replay protection).',
+            schema: { type: 'string' },
+          },
         ],
         requestBody: { required: false, content: { '*/*': { schema: {} } } },
         responses: {
@@ -3459,10 +3467,15 @@ export const OPENAPI_DOCUMENT = {
             description: 'Accepted',
             ...json(envelope({ type: 'object', properties: { conversationId: { type: 'string' }, hook: { type: 'string' }, queued: { type: 'boolean' } } })),
           },
-          '401': { description: 'Code hook_unauthorized: missing or wrong key or signature', content: { 'application/json': { schema: failureEnvelope } } },
-          '404': failures['404'],
+          '401': {
+            description: 'Code hook_unauthorized: missing or wrong key or signature — also for a hook that does not exist or is off (same answer, no enumeration)',
+            content: { 'application/json': { schema: failureEnvelope } },
+          },
           '409': { description: 'Code hook_owner_inactive: the account the hook runs as is disabled or gone', content: { 'application/json': { schema: failureEnvelope } } },
-          '429': { description: 'Too many calls to this hook (HOOK_RATE_LIMIT per minute)', content: { 'application/json': { schema: failureEnvelope } } },
+          '429': {
+            description: 'Too many accepted calls to this hook (HOOK_RATE_LIMIT per minute), or too many failed calls from this address (HOOK_FAIL_LIMIT per minute)',
+            content: { 'application/json': { schema: failureEnvelope } },
+          },
         },
       },
     },

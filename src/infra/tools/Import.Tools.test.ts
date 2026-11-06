@@ -84,6 +84,21 @@ describe('Import.Tools — as ferramentas do construtor em modo importação', (
     assert.strictEqual(browsed.length, 2)
   })
 
+  it('⛔ o construtor não lê o repositório de OUTRO projeto passando `projectId` (a conversa do A não lê o B)', async () => {
+    const browsed: string[] = []
+    const browse = {
+      list: (projectId: string) => (browsed.push(`list:${projectId}`), 'lista'),
+      read: (projectId: string) => (browsed.push(`read:${projectId}`), 'código'),
+    }
+    const [, , , , repoFiles, repoFile] = makeImportTools(desk, browse)
+    const builder = { agentId: 'builder-skill', sessionId: 's9', conversationProjectId: 'alfa' }
+    assert.match((await repoFiles.execute({ projectId: 'beta' }, builder)).result, /must be the one of this conversation/)
+    assert.match((await repoFile.execute({ projectId: 'beta', path: 'x' }, builder)).result, /must be the one of this conversation/)
+    assert.deepStrictEqual(browsed, [])
+    assert.strictEqual((await repoFile.execute({ projectId: 'alfa', path: 'x' }, builder)).status, 'success')
+    assert.deepStrictEqual(browsed, ['read:alfa'])
+  })
+
   it('⛔ as ferramentas do repositório passam pela mesma guarda de repetição das locais', async () => {
     const loops = new LoopGuard(() => ({ ...loopLimits(), refuseAt: 2 }))
     loops.open('c1')

@@ -1,6 +1,6 @@
 import { IAgentSchedule, IScheduleRun } from '@domain/models/AgentSchedule.Model'
 
-export type TSchedulePatch = Partial<Omit<IAgentSchedule, 'agentId' | 'name' | 'createdAt' | 'runAs'>>
+export type TSchedulePatch = Partial<Omit<IAgentSchedule, 'agentId' | 'name' | 'createdAt'>>
 
 /** Os agendamentos dos agentes e o histórico das execuções. Síncrono, como o resto do cadastro. */
 export interface IAgentScheduleRepository {

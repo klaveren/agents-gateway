@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { after, describe, it } from 'node:test'
+import { after, before, describe, it } from 'node:test'
 import { Request, Response } from 'express'
 import { GuidanceService } from '@application/Guidance.Service'
 import { maskText } from '@domain/Secret.Mask'
@@ -13,6 +13,7 @@ import { identityFromToken, withCaller } from '@infra/mcp/Caller.Identity'
 import { SqliteGuidanceRepository } from '@infra/persistence/Sqlite.GuidanceRepository'
 import { ResourceFilesStore } from '@infra/workspace/Resource.Files'
 import { GuidanceController } from './Guidance.Controller'
+import { useProjectAccess } from './Project.Access'
 
 /** As rotas dos arquivos de recurso: enviar o conteúdo, lê-lo de volta e trocar a lista de uma skill ou agente — só admin. */
 describe('arquivos de recurso (/files, /resources/:id/files, /agents/:id/files)', () => {
@@ -83,5 +84,51 @@ describe('arquivos de recurso (/files, /resources/:id/files, /agents/:id/files)'
   it('a lista do agente vai ao catálogo de agentes, com quem gravou', async () => {
     const reply = await call(ADMIN, 'setAgentFiles', { params: { agentId: 'maya' }, body: { files: [] } })
     assert.deepStrictEqual([reply.status, agentCalls.at(-1)], [200, { id: 'maya', files: [], by: 'u_root@x.test' }])
+  })
+})
+
+describe('GET /files/:sha256 — o admin de um projeto não lê o arquivo de outro pelo hash', () => {
+  const tokens = new HmacTokenIssuer(randomBytes(32).toString('hex'))
+  const token = (id: string, role: 'admin' | 'member') => tokens.issue({ sub: id, email: `${id}@x.test`, role, ver: 0 }).token
+  const ANA = token('u_ana', 'member')
+  const BIA = token('u_bia', 'member')
+  const proof = { prove: async (value: string) => !!tokens.verify(value) }
+  const members: Record<string, Record<string, 'admin' | 'member'>> = { alfa: { u_ana: 'admin' }, beta: { u_bia: 'admin' } }
+  before(() =>
+    useProjectAccess({
+      roles: {
+        exists: (id) => id in members,
+        roleOf: (id, userId) => (userId ? members[id]?.[userId] : undefined),
+        projectsOf: (userId) => Object.keys(members).filter((id) => members[id]![userId]),
+      },
+    }),
+  )
+  after(() => useProjectAccess(undefined))
+  const data = mkdtempSync(join(tmpdir(), 'gw-files-owner-'))
+  after(() => rmSync(data, { recursive: true, force: true }))
+  const files = new ResourceFilesStore({ CONVERSATIONS_DB: join(data, 'gateway.db') })
+  const put = (text: string) => files.put(Buffer.from(text)).sha256
+  const doAlfa = put('segredo do alfa')
+  const doGlobal = put('do global')
+  const solto = put('ainda solto')
+  const controller = new GuidanceController({
+    guidance: new GuidanceService(new SqliteGuidanceRepository(':memory:'), () => true),
+    proof,
+    files,
+    fileOwners: (sha256) => (sha256 === doAlfa ? ['alfa'] : sha256 === doGlobal ? [null] : []),
+  })
+  const read = (as: string, sha256: string) =>
+    withCaller({ token: as, ...identityFromToken(as) }, async () => {
+      const reply = { status: 0 }
+      const res = { status: (code: number) => ((reply.status = code), res), json: () => res } as unknown as Response
+      await controller.readFile({ params: { sha256 }, body: {}, query: {} } as unknown as Request, res)
+      return reply.status
+    })
+
+  it('⛔ o dono do escopo lê; o admin de outro projeto, 404; o global e o ainda solto passam', async () => {
+    assert.strictEqual(await read(ANA, doAlfa), 200)
+    assert.strictEqual(await read(BIA, doAlfa), 404)
+    assert.strictEqual(await read(BIA, doGlobal), 200)
+    assert.strictEqual(await read(BIA, solto), 200)
   })
 })
