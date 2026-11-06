@@ -229,7 +229,7 @@
           </fieldset>
 
           <label class="field max-w-sm">
-            Deixar de lado o modelo que falhou por (minutos)
+            Rejeitar o modelo que falhou por (minutos)
             <input
               v-model="draft.cooldown"
               type="number"

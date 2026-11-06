@@ -156,7 +156,7 @@
           <p class="hint">Sobrecarga costuma passar sozinha, e credencial recusada pede conserto, não troca: por isso essas duas começam desmarcadas.</p>
         </div>
         <label class="flex max-w-sm flex-col gap-1 text-sm text-zinc-300">
-          Deixar de lado o modelo que falhou por (minutos)
+          Rejeitar o modelo que falhou por (minutos)
           <input
             v-model="draft.cooldown"
             type="number"
