@@ -149,13 +149,13 @@
 
 <template>
   <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
-    <p class="font-medium text-zinc-200">Só quem administra configura a troca automática.</p>
+    <p class="font-medium text-zinc-200">Só quem administra configura a troca automática de modelo.</p>
   </div>
 
   <MasterDetail v-else :open="!!id || adding" back-to="/model-groups" back-label="Sequências" :title="adding ? 'Nova sequência' : selected?.name">
     <template #list>
       <header class="flex items-center gap-2 px-4 pt-4 pb-1">
-        <h1 class="text-xl font-semibold">Troca automática</h1>
+        <h1 class="text-xl font-semibold">Troca automática de modelo</h1>
         <RouterLink to="/model-groups/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Nova sequência">
           <Icon name="plus" class="h-5 w-5" />
         </RouterLink>
