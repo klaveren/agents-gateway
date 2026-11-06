@@ -643,7 +643,7 @@ export class AgentController {
       const soul = agent.soul?.trim()
       const parts = [
         ['soul', 'Soul', soul ? `## Quem você é\n${soul}\n\n## Como você trabalha\n` : undefined],
-        ['instructions', 'Instrução do agente', agent.systemPrompt],
+        ['instructions', 'System Prompt', agent.systemPrompt],
         ['ambient', 'Ambiente', ambientSection(ambient)],
         ['rules', 'Rules', env.rules],
         ['projectSpecs', 'Contexto inicial do projeto', env.projectSpecs],

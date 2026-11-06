@@ -14,7 +14,7 @@ describe('cliPromptEstimate', () => {
   const saved = { soul: 'Calmo.', systemPrompt: 'Faça X.' }
   const savedParts = [
     { key: 'soul', label: 'Soul', bytes: 50 },
-    { key: 'instructions', label: 'Instrução do agente', bytes: 8 },
+    { key: 'instructions', label: 'System Prompt', bytes: 8 },
     { key: 'rules', label: 'Rules', bytes: 1_000 },
     { key: 'projectSpecs', label: 'Contexto inicial do projeto', bytes: 90_000 },
   ]
@@ -47,7 +47,7 @@ describe('cliPromptEstimate', () => {
     const estimate = cliPromptEstimate({ live: { systemPrompt: 'a'.repeat(110_000) }, codex: false })
     expect(estimate.withEnvironment).toBe(false)
     expect(estimate.level).toBe('warn')
-    expect(estimate.heavy).toEqual([{ label: 'Instrução do agente', bytes: 110_000 }])
+    expect(estimate.heavy).toEqual([{ label: 'System Prompt', bytes: 110_000 }])
   })
 
   it('KiB com uma casa', () => {

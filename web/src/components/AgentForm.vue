@@ -301,7 +301,7 @@
     reasoningEfforts: 'Raciocínio',
     allowedTools: 'Ferramentas',
     soul: 'Personalidade',
-    systemPrompt: 'Instrução do agente',
+    systemPrompt: 'System Prompt',
     role: 'Subagente',
     adminOnly: 'Administradores',
     projectId: 'Projeto',
@@ -785,8 +785,7 @@
         </span>
         <textarea
           v-model="form.soul"
-          rows="12"
-          class="input text-[13px] leading-relaxed"
+          class="input prompt-area text-[13px] leading-relaxed"
           placeholder="Você é a Íris: gentil, direta, explica sem jargão e admite quando não sabe."
         />
         <small v-if="form.soul" class="hint">{{ sizeHint(form.soul, 'a cada turno') }}</small>
@@ -796,10 +795,17 @@
     <fieldset v-show="tab === 'instrucoes'" class="grid gap-4 sm:grid-cols-2">
       <label class="field sm:col-span-2">
         <span>
-          Instrução do agente
+          System Prompt
           <em class="font-normal text-zinc-500">— o que o agente faz: função, regras, como usar as ferramentas</em>
         </span>
-        <textarea v-model="form.systemPrompt" required rows="18" data-tab="instrucoes" class="input font-mono text-[13px] leading-relaxed" placeholder="Você é o agente…" />
+        <!-- ⚖️ O texto ocupa a altura que sobra da tela (o rodapé com o Salvar fica sempre à vista, ver `.form-footer`). -->
+        <textarea
+          v-model="form.systemPrompt"
+          required
+          data-tab="instrucoes"
+          class="input prompt-area font-mono text-[13px] leading-relaxed"
+          placeholder="Você é o agente…"
+        />
         <small v-if="form.systemPrompt" class="hint">{{ sizeHint(form.systemPrompt, 'a cada turno') }}</small>
         <small v-if="anyGoogle" class="hint">Com Gemini, evite {chaves} no texto: viram variáveis e dão erro.</small>
         <CliPromptMeter
@@ -1382,7 +1388,8 @@
     </p>
     <p v-else-if="!ready" class="text-xs text-zinc-500">Carregando provedores…</p>
 
-    <div v-show="tab !== 'hooks' && tab !== 'agendamentos' && tab !== 'memoria' && tab !== 'historico'" class="flex gap-2">
+    <!-- O rodapé com o Salvar fica preso embaixo, à vista em qualquer guia, por mais longa que seja. -->
+    <div v-show="tab !== 'hooks' && tab !== 'agendamentos' && tab !== 'memoria' && tab !== 'historico'" class="form-footer flex gap-2">
       <button type="submit" :disabled="saving || !ready || !!loadError || !form.providers.length" class="btn btn-primary">
         {{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar' }}
       </button>
@@ -1420,6 +1427,15 @@
   }
   .hint {
     @apply text-xs font-normal text-zinc-500;
+  }
+  .prompt-area {
+    /* A tela menos o que fica em volta: o topo, o cabeçalho do agente, as guias, o rótulo, as dicas e o rodapé (a
+       Personalidade e o System Prompt). */
+    height: max(18rem, calc(100dvh - 24rem));
+    resize: vertical;
+  }
+  .form-footer {
+    @apply sticky -bottom-5 z-10 -mx-4 border-t border-zinc-800 bg-zinc-950/95 px-4 py-3 backdrop-blur;
   }
   .tool-card {
     @apply rounded-xl border border-zinc-800;
