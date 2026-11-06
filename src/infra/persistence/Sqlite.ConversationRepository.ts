@@ -1,5 +1,5 @@
 import { emptyPanel, IConversationPanel, normalizePanel } from '@domain/models/ConversationPanel.Model'
-import type { IErrorLog, IErrorLogQuery, TErrorKind } from '@domain/models/ErrorLog.Model'
+import type { IErrorLog, IErrorLogQuery, ITurnRefusal, TErrorKind, TRefusalOrigin } from '@domain/models/ErrorLog.Model'
 import { ITodoItem } from '@domain/models/ConversationTodo.Model'
 import { parseUsageKey } from '@domain/models/Session.Model'
 import { DatabaseSync } from 'node:sqlite'
@@ -41,6 +41,9 @@ export const DEFAULT_DB_PATH = 'data/gateway.db'
  * do gasto foi o modelo pensando. `NOT NULL` porque `NULL` em contador contamina toda soma feita em
  * cima dele depois — e o sintoma é um relatório com o número faltando, não um erro.
  */
+/** Quanto tempo a recusa de turno fica guardada. */
+const REFUSAL_RETENTION_DAYS = 30
+
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS conversations (
     id               TEXT    NOT NULL PRIMARY KEY,
@@ -106,6 +109,22 @@ const SCHEMA = `
     document        TEXT NOT NULL,
     updated_at      TEXT NOT NULL
   );
+  -- O turno que nem começou (ver ErrorLog.Model, ITurnRefusal): início recusado com 409/422/429. Sem FK: a recusa de
+  -- POST /sessions não tem conversa, e a conversa só é gravada depois do primeiro turno. Retenção: 30 dias, ao gravar.
+  CREATE TABLE IF NOT EXISTS turn_refusals (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    at              TEXT    NOT NULL,
+    conversation_id TEXT,
+    agent_id        TEXT,
+    project_id      TEXT,
+    owner_id        TEXT,
+    owner_email     TEXT,
+    status          INTEGER NOT NULL,
+    code            TEXT    NOT NULL,
+    message         TEXT    NOT NULL,
+    origin          TEXT    NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_turn_refusals_at ON turn_refusals (at DESC);
 `
 
 /**
@@ -761,7 +780,7 @@ export class SqliteConversationRepository implements IConversationRepository {
    * interrompido. Sem as conversas apagadas. ⚖️ As contagens são do recorte inteiro; a lista, do mais recente.
    */
   async errors(query: IErrorLogQuery): Promise<IErrorLog> {
-    const empty: IErrorLog = { items: [], byKind: { tool: 0, turn: 0, aborted: 0 }, byTool: [] }
+    const empty: IErrorLog = { items: [], byKind: { tool: 0, turn: 0, aborted: 0, refused: 0 }, byTool: [] }
     return (
       this.guard('errors', () => {
         const base = ['c.deleted_at IS NULL', 't.at >= ?']
@@ -781,23 +800,25 @@ export class SqliteConversationRepository implements IConversationRepository {
           {
             kind: 'tool',
             sql: `SELECT 'tool' AS kind, t.at AS at, t.conversation_id AS conversation_id, t.idx AS idx, c.agent_id AS agent_id, c.title AS title,
-                    json_extract(j.value, '$.tool') AS tool, json_extract(j.value, '$.error') AS message
+                    json_extract(j.value, '$.tool') AS tool, json_extract(j.value, '$.error') AS message,
+                    NULL AS status, NULL AS code, NULL AS origin
                   FROM conversation_turns t JOIN conversations c ON c.id = t.conversation_id, json_each(t.tool_calls) j
                   WHERE ${base.join(' AND ')} AND json_extract(j.value, '$.error') IS NOT NULL${toolFilter}`,
             params: [...params, ...toolParams],
           },
           {
             kind: 'turn',
-            sql: `SELECT 'turn' AS kind, t.at AS at, t.conversation_id AS conversation_id, t.idx AS idx, c.agent_id AS agent_id, c.title AS title, NULL AS tool, t.error AS message
+            sql: `SELECT 'turn' AS kind, t.at AS at, t.conversation_id AS conversation_id, t.idx AS idx, c.agent_id AS agent_id, c.title AS title, NULL AS tool, t.error AS message, NULL AS status, NULL AS code, NULL AS origin
                   FROM conversation_turns t JOIN conversations c ON c.id = t.conversation_id WHERE ${base.join(' AND ')} AND t.error IS NOT NULL`,
             params: [...params],
           },
           {
             kind: 'aborted',
-            sql: `SELECT 'aborted' AS kind, t.at AS at, t.conversation_id AS conversation_id, t.idx AS idx, c.agent_id AS agent_id, c.title AS title, NULL AS tool, 'interrompido' AS message
+            sql: `SELECT 'aborted' AS kind, t.at AS at, t.conversation_id AS conversation_id, t.idx AS idx, c.agent_id AS agent_id, c.title AS title, NULL AS tool, 'interrompido' AS message, NULL AS status, NULL AS code, NULL AS origin
                   FROM conversation_turns t JOIN conversations c ON c.id = t.conversation_id WHERE ${base.join(' AND ')} AND t.aborted = 1`,
             params: [...params],
           },
+          this.refusalPart(query),
         ]
         // A ferramenta filtrada só tem erro de ferramenta; o tipo escolhido, só ele.
         const chosen = parts.filter((part) => (!query.kind || part.kind === query.kind) && (!query.tool || part.kind === 'tool'))
@@ -816,18 +837,73 @@ export class SqliteConversationRepository implements IConversationRepository {
           items: rows.map((row) => ({
             at: new Date(text(row.at)),
             kind: text(row.kind) as TErrorKind,
-            conversationId: text(row.conversation_id),
-            turn: count(row.idx),
-            agentId: text(row.agent_id),
+            ...(typeof row.conversation_id === 'string' ? { conversationId: row.conversation_id } : {}),
+            ...(typeof row.idx === 'number' ? { turn: row.idx } : {}),
+            agentId: typeof row.agent_id === 'string' ? row.agent_id : '',
             ...(typeof row.title === 'string' ? { title: row.title } : {}),
             ...(typeof row.tool === 'string' ? { tool: row.tool } : {}),
             message: typeof row.message === 'string' ? row.message : JSON.stringify(row.message ?? ''),
+            ...(typeof row.status === 'number' ? { status: row.status } : {}),
+            ...(typeof row.code === 'string' ? { code: row.code } : {}),
+            ...(typeof row.origin === 'string' ? { origin: row.origin as TRefusalOrigin } : {}),
           })),
           byKind,
           byTool: tools.map((row) => ({ tool: text(row.tool), count: count(row.n) })),
         }
       }) ?? empty
     )
+  }
+
+  /**
+   * As recusas do recorte, na forma das outras partes de `errors`. ⛔ O recorte por projeto vale também aqui: recusa
+   * sem projeto (`project_id` nulo) é do escopo global, só do admin do gateway. A conversa apagada perde o link e o título.
+   */
+  private refusalPart(query: IErrorLogQuery): { kind: TErrorKind; sql: string; params: Array<string | number> } {
+    const where = ['r.at >= ?']
+    const params: Array<string | number> = [query.since.toISOString()]
+    if (query.agentId) {
+      where.push('r.agent_id = ?')
+      params.push(query.agentId)
+    }
+    if (query.scope) {
+      const projects = query.scope.projects
+      const parts = [...(projects.length ? [`r.project_id IN (${projects.map(() => '?').join(', ')})`] : []), ...(query.scope.unscoped ? ['r.project_id IS NULL'] : [])]
+      where.push(parts.length ? `(${parts.join(' OR ')})` : '0')
+      params.push(...projects)
+    }
+    return {
+      kind: 'refused',
+      sql: `SELECT 'refused' AS kind, r.at AS at,
+                   CASE WHEN c.id IS NOT NULL AND c.deleted_at IS NULL THEN r.conversation_id END AS conversation_id,
+                   NULL AS idx, r.agent_id AS agent_id, CASE WHEN c.deleted_at IS NULL THEN c.title END AS title, NULL AS tool, r.message AS message,
+                   r.status AS status, r.code AS code, r.origin AS origin
+            FROM turn_refusals r LEFT JOIN conversations c ON c.id = r.conversation_id WHERE ${where.join(' AND ')}`,
+      params,
+    }
+  }
+
+  /** ⚖️ Guarda a recusa e apaga o que passou de 30 dias. A mensagem já chega mascarada (quem chama é o controller). */
+  async recordRefusal(refusal: ITurnRefusal): Promise<void> {
+    this.guard('recordRefusal', () => {
+      this.db.prepare('DELETE FROM turn_refusals WHERE at < ?').run(new Date(refusal.at.getTime() - REFUSAL_RETENTION_DAYS * 86_400_000).toISOString())
+      this.db
+        .prepare(
+          `INSERT INTO turn_refusals (at, conversation_id, agent_id, project_id, owner_id, owner_email, status, code, message, origin)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          refusal.at.toISOString(),
+          refusal.conversationId ?? null,
+          refusal.agentId ?? null,
+          refusal.projectId ?? null,
+          refusal.ownerId ?? null,
+          refusal.ownerEmail ?? null,
+          refusal.status,
+          refusal.code,
+          refusal.message,
+          refusal.origin,
+        )
+    })
   }
 
   async usage(query: IUsageQuery): Promise<IUsageRow[]> {

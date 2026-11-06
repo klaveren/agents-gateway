@@ -8,18 +8,23 @@
   /**
    * O registro de erros (só admin): o que falhou nas conversas — ferramenta com erro, turno que terminou em erro, turno
    * interrompido. ⚖️ É leitura dos turnos (`GET /errors`), sem tabela própria; o recorte (período, agente, ferramenta,
-   * tipo) vai na consulta, o servidor conta e limita.
+   * tipo) vai na consulta. O "Recusado" é o turno que nem começou (409/422/429 ou 403 agente indisponível ao iniciar), guardado à parte por 30 dias, o servidor conta e limita.
    */
-  type TKind = 'tool' | 'turn' | 'aborted'
+  type TKind = 'tool' | 'turn' | 'aborted' | 'refused'
   interface IErrorItem {
     at: string
     kind: TKind
-    conversationId: string
-    turn: number
+    /** Ausente na recusa de `POST /sessions` (a conversa nem nasceu). */
+    conversationId?: string
+    turn?: number
     agentId: string
     title?: string
     tool?: string
     message: string
+    /** Só `refused`: o status HTTP e o código da resposta, e de onde veio o pedido. */
+    status?: number
+    code?: string
+    origin?: 'ui' | 'api' | 'hook' | 'schedule'
   }
   interface IErrorLog {
     items: IErrorItem[]
@@ -37,6 +42,7 @@
     { kind: 'tool', label: 'Ferramenta', badge: 'border-rose-500/40 bg-rose-500/10 text-rose-300' },
     { kind: 'turn', label: 'Turno com erro', badge: 'border-amber-500/40 bg-amber-500/10 text-amber-300' },
     { kind: 'aborted', label: 'Interrompido', badge: 'border-zinc-600 bg-zinc-800 text-zinc-300' },
+    { kind: 'refused', label: 'Recusado', badge: 'border-sky-500/40 bg-sky-500/10 text-sky-300' },
   ]
   const kindOf = (kind: TKind) => KINDS.find((item) => item.kind === kind)!
 
@@ -55,8 +61,9 @@
   let seq = 0
 
   const toolOptions = computed(() => [...new Set([...knownTools.value, ...(tool.value ? [tool.value] : [])])].sort())
-  const rowKey = (item: IErrorItem, index: number) => `${item.conversationId}:${item.turn}:${item.kind}:${item.tool ?? ''}:${index}`
-  const agentName = (id: string) => agents.byId.get(id)?.name ?? id
+  const rowKey = (item: IErrorItem, index: number) => `${item.conversationId ?? ''}:${item.turn}:${item.kind}:${item.tool ?? ''}:${index}`
+  const agentName = (id: string) => (id ? (agents.byId.get(id)?.name ?? id) : 'sem agente')
+  const ORIGINS = { ui: 'tela', api: 'API', hook: 'hook', schedule: 'agendamento' }
 
   async function load() {
     const mine = ++seq
@@ -195,10 +202,12 @@
               <span class="rounded-full border px-2 py-0.5" :class="kindOf(item.kind).badge">{{ kindOf(item.kind).label }}</span>
               <span class="text-zinc-400" :title="fullTime(item.at)">{{ ago(item.at) }}</span>
               <span class="text-zinc-300">{{ agentName(item.agentId) }}</span>
-              <RouterLink :to="`/c/${item.conversationId}`" class="min-w-0 truncate text-emerald-300 underline-offset-2 hover:underline" data-test="conversation-link">
+              <span v-if="item.kind === 'refused'" class="font-mono text-sky-300" data-test="status">{{ item.status }}{{ item.code ? ` ${item.code}` : '' }}</span>
+              <span v-if="item.origin" class="text-zinc-500">{{ ORIGINS[item.origin] }}</span>
+              <RouterLink v-if="item.conversationId" :to="`/c/${item.conversationId}`" class="min-w-0 truncate text-emerald-300 underline-offset-2 hover:underline" data-test="conversation-link">
                 {{ item.title || item.conversationId }}
               </RouterLink>
-              <span class="text-zinc-500">turno {{ item.turn }}</span>
+              <span v-if="item.turn !== undefined" class="text-zinc-500">turno {{ item.turn }}</span>
               <span v-if="item.tool" class="font-mono text-zinc-300">{{ item.tool }}</span>
             </div>
             <div class="mt-1.5 flex items-start gap-2">

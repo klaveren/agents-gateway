@@ -97,7 +97,7 @@ export class HooksController {
     if (!session) return void deny(409, 'hook_owner_inactive', 'The account this hook runs as is disabled or gone; recreate the hook')
 
     const base = selfBase(req)
-    const credentials = { 'x-tool-authorization': `Bearer ${session.token}` }
+    const credentials = { 'x-tool-authorization': `Bearer ${session.token}`, 'x-gateway-origin': 'hook' }
     const api = selfApi(base, credentials)
     const delivery = this.deps.hooks.recordDelivery(hook)
     const message = eventMessage(hook, req, raw)
