@@ -88,13 +88,15 @@ export async function deliverCallback(
   options: { env?: NodeJS.ProcessEnv; http?: TFetch; wait?: (ms: number) => Promise<void>; secretFor?: (url: string) => string | undefined } = {},
 ): Promise<boolean> {
   const env = options.env ?? process.env
-  // ⛔ O aviso conecta pelo `fetch` guardado: DNS conferido na conexão (sem rebinding), redirect não seguido. Rede local
-  // (10.x…) só com o host/IP/faixa em `TURN_CALLBACK_HOSTS`, variável do gateway que o projeto não edita.
+  // ⛔ O aviso conecta pelo `fetch` guardado: DNS conferido na conexão (sem rebinding), redirect não seguido. ⚖️ A rede
+  // local (10.x…) passa: o endereço só serve se foi CADASTRADO (a conta do projeto ou `TURN_CALLBACK_HOSTS`), e o POST é
+  // cego. Loopback só com o host em `TURN_CALLBACK_HOSTS`, variável do gateway que o projeto não edita.
   const http =
     options.http ??
     guardedFetch(
       egressPolicy({
         allowPrivate: false,
+        allowLan: true,
         listed: (target, address) => hostListed(callbackHosts(env), target, address),
       }),
     )

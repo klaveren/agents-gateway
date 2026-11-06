@@ -1,3 +1,4 @@
+import { egressPolicy } from '@infra/net/Guarded.Fetch'
 import assert from 'node:assert'
 import { createHmac } from 'node:crypto'
 import { describe, it } from 'node:test'
@@ -72,11 +73,15 @@ describe('Turn.Callbacks — destino interno (SSRF)', () => {
     )
   })
 
-  it('⛔ a entrega recusa LAN não listada e loopback não listado, sem conectar (nem a quem o projeto cadastrou)', async () => {
+  it('⛔ a entrega recusa loopback não listado, sem conectar (nem a quem o projeto cadastrou); a rede local cadastrada passa', async () => {
+    const policy = egressPolicy({ allowPrivate: false, allowLan: true, listed: () => false })
+    assert.strictEqual(policy(new URL('http://10.10.0.4:4003/fim'), '10.10.0.4'), undefined, 'a LAN cadastrada')
+    assert.ok(policy(new URL('http://127.0.0.1:2375/fim'), '127.0.0.1'), 'o loopback')
+    assert.ok(policy(new URL('http://169.254.169.254/x'), '169.254.169.254'), 'o metadado')
     const quiet = console.warn
     console.warn = () => undefined
     try {
-      for (const url of ['http://10.10.0.4:4003/fim', 'http://127.0.0.1:2375/fim', 'http://[::ffff:7f00:1]:2375/fim']) {
+      for (const url of ['http://127.0.0.1:2375/fim', 'http://[::ffff:7f00:1]:2375/fim']) {
         assert.strictEqual(await deliverCallback(url, payload, { env: {}, secretFor: () => 'a'.repeat(40), wait: async () => undefined }), false, url)
       }
     } finally {

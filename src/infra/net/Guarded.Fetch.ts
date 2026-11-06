@@ -20,7 +20,8 @@ const MAX_REDIRECTS = 5
  *   (`listed`) citar o host ou o endereço;
  * - público: sempre.
  */
-export function egressPolicy(options: { allowPrivate: boolean; listed: (url: URL, address: string) => boolean }): TGuardPolicy {
+/** `allowLan`: a rede local (10.x, 192.168.x…) passa, o loopback não — o endereço que alguém CADASTROU de propósito (o aviso do turno). */
+export function egressPolicy(options: { allowPrivate: boolean; allowLan?: boolean; listed: (url: URL, address: string) => boolean }): TGuardPolicy {
   return (url, address) => {
     const kind = classifyAddress(address)
     if (kind === 'public') return undefined
@@ -28,7 +29,7 @@ export function egressPolicy(options: { allowPrivate: boolean; listed: (url: URL
     if (kind === 'linklocal' || kind === 'unspecified') return `${host} aponta para ${address} (link-local/metadado): sempre negado`
     if (kind === 'invalid') return `${host} não resolveu para um endereço válido`
     if (options.listed(url, address)) return undefined
-    if (options.allowPrivate) return undefined
+    if (options.allowPrivate || (options.allowLan && kind === 'private')) return undefined
     return kind === 'loopback'
       ? `${host} aponta para ${address} (loopback): só se estiver listado na variável de ambiente do recurso`
       : `${host} aponta para ${address} (rede local): só se estiver listado na variável de ambiente do recurso`
