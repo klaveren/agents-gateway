@@ -456,7 +456,7 @@
     const alert = (id: TTab) => (TAB_FIELDS[id].some((field) => issues.value[field]?.length) ? 'Corrija os campos desta guia.' : undefined)
     const all: Array<{ id: TTab; label: string; count?: number; alert?: string }> = [
       { id: 'agente', label: 'Agente', alert: alert('agente') },
-      { id: 'instrucoes', label: 'Instruções', alert: alert('instrucoes') },
+      { id: 'instrucoes', label: 'Protocolo', alert: alert('instrucoes') },
       { id: 'triggers', label: 'Triggers', count: form.value.triggers?.length ?? 0, alert: alert('triggers') },
       { id: 'modelos', label: 'Modelos', count: form.value.providers.reduce((total, target) => total + target.models.length, 0), alert: alert('modelos') },
       {
