@@ -374,7 +374,11 @@ watch(
 <style scoped>
 @reference '../style.css';
 
+/* O rótulo em cima do campo, como nas outras telas: sem isto cada rótulo ficava na mesma linha do campo, desalinhado. */
+.field {
+  @apply flex min-w-0 flex-col gap-1.5 text-sm font-medium text-zinc-300;
+}
 .input {
-  @apply rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 font-normal text-zinc-100 outline-none focus:border-emerald-500/60;
+  @apply w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 font-normal text-zinc-100 outline-none focus:border-emerald-500/60;
 }
 </style>
