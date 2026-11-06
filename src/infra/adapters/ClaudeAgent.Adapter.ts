@@ -32,6 +32,7 @@ import { buildClaudeMcpServers, claudeHiddenTools, claudeMcpServerName, LOCAL_SE
 import { IAgentMcpServer, ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { composeSystemPrompt, maxToolTurns } from './support/Prompt.Helper'
 import { agentFolderOwner, isResourceFilePath } from '@infra/workspace/Resource.Files'
+import { networkGate } from '@infra/permissions/Network.Gate'
 import { projectAliases } from '@infra/workspace/Work.Folder'
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const
@@ -198,6 +199,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       { asker: askerOf(context), cwd: workDir, ...(context.workFolder ? { folder: context.workFolder } : {}) },
       Object.keys(context.secretEnv ?? {}),
       this.agentFolder?.(agent.id),
+      agent.adminOnly === true,
     )
     const options: Options = {
       model: record.model,
@@ -473,11 +475,9 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     who?: { asker: ReturnType<typeof askerOf>; cwd: string; folder?: { dir: string; projectDir: string } },
     secretNames: readonly string[] = [],
     own?: IOwnFolder,
+    adminOnly = false,
   ): CanUseTool {
     const byServer = new Map(remotes.map((remote) => [claudeMcpServerName(remote.config.id), remote]))
-    // Os comandos que ESTE portão já embrulhou: o hook e o `canUseTool` podem passar pelo mesmo Bash, e um
-    // cerco dentro do outro falharia. ⛔ Pela linha exata, nunca por um marcador no texto (o modelo forjaria).
-    const wrapped = new Set<string>()
     return async (toolName, input) => {
       const [, server] = toolName.split('__')
       const isMcp = toolName.startsWith('mcp__')
@@ -498,13 +498,23 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
         // Na própria pasta, ela é a raiz (a do agente de projeto mora nos dados, fora da worktree): só os nomes protegidos valem.
         const protectedPath = protectedPathOf(bare, input, folder.mine ? own!.dir : project?.dir)
         if (protectedPath) return { behavior: 'deny', message: `${protectedPath}: este arquivo é protegido.` }
+        // ⛔ Bash, Grep e Glob do CLI rodam FORA do cerco e das regras (`terminal`/`read`/`write`, SYSTEM_RULES, Bash.Guard, rede
+        // com token): leem o ambiente do gateway (/proc), o HOME e as pastas de outros agentes. Só o agente GLOBAL e `adminOnly`
+        // (o admin do gateway) os tem; os demais usam as locais, que passam pelo mesmo caminho das regras.
+        const unguarded = HOST_NATIVES[bare]
+        if (unguarded && !(adminOnly && !project)) {
+          return { behavior: 'deny', message: `${bare}: indisponível neste agente (roda no servidor, fora do cerco e das regras). Use ${unguarded}.` }
+        }
         // ⛔ O Bash que só mostra uma variável secreta (ver `printsSecret`): use a variável, não a imprima.
         const printing = bare === 'Bash' ? printsSecret(String(input.command ?? ''), secretNames) : undefined
         if (printing) return { behavior: 'deny', message: `Recusado: ${printing}. Use a variável no comando ($NOME), nunca a imprima.` }
         if (folder.mine) return { behavior: 'allow' }
         const refused = who && this.permissions ? this.fileRefusal(bare, input, who) : undefined
         if (refused) return { behavior: 'deny', message: refused }
-        return project ? this.confined(bare, input, project, wrapped) : { behavior: 'allow' }
+        // ⛔ O WebFetch passa pelo MESMO portão de rede do cerco (loopback, porta do gateway, link-local/metadados, rede local só com regra exata).
+        const fetchRefused = bare === 'WebFetch' ? await this.fetchRefusal(input, who) : undefined
+        if (fetchRefused) return { behavior: 'deny', message: fetchRefused }
+        return project ? this.confined(bare, input, project) : { behavior: 'allow' }
       }
 
       return { behavior: 'deny', message: `Tool "${bare}" is not enabled for this agent.` }
@@ -548,22 +558,33 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     return undefined
   }
 
+  /** O WebFetch contra o `NetworkGate` (o mesmo do cerco): resolve o host e recusa o que o portão recusa. */
+  private async fetchRefusal(input: Record<string, unknown>, who?: { asker: ReturnType<typeof askerOf> }): Promise<string | undefined> {
+    let target: URL
+    try {
+      target = new URL(String(input.url ?? ''))
+    } catch {
+      return 'WebFetch: endereço inválido.'
+    }
+    if (target.protocol !== 'http:' && target.protocol !== 'https:') return 'WebFetch: só http e https.'
+    const port = Number(target.port || (target.protocol === 'http:' ? '80' : '443'))
+    const gate = networkGate()
+    const token = gate.register((host, number) =>
+      who && this.permissions ? this.permissions.check(who.asker, { category: 'network', value: `${host}:${number}` }) : { allowed: true, reason: 'sem regras' },
+    )
+    try {
+      const verdict = await gate.decide(token, target.hostname, port)
+      return verdict.allowed ? undefined : `WebFetch: ${verdict.reason}.`
+    } finally {
+      gate.release(token)
+    }
+  }
+
   /**
    * ⛔ O AGENTE DE PROJETO SÓ ALCANÇA A PASTA DELE: o Bash roda embrulhado no cerco do sistema operacional
    * (sem cerco, não roda), e as ferramentas de arquivo passam pelo filtro de caminho.
    */
-  private async confined(bare: string, input: Record<string, unknown>, project: { projectId: string; dir: string }, wrapped: Set<string>): Promise<PermissionResult> {
-    if (bare === 'Bash') {
-      const command = String(input.command ?? '')
-      if (wrapped.has(command)) return { behavior: 'allow' }
-      try {
-        const line = await this.sandbox.wrap(command, project.projectId)
-        wrapped.add(line)
-        return { behavior: 'allow', updatedInput: { ...input, command: line } }
-      } catch (error: unknown) {
-        return { behavior: 'deny', message: `${error instanceof Error ? error.message : String(error)}. O Bash de agente de projeto fica bloqueado até o cerco funcionar.` }
-      }
-    }
+  private async confined(bare: string, input: Record<string, unknown>, project: { projectId: string; dir: string }): Promise<PermissionResult> {
     const issue = projectPathIssue(project.dir, project.dir, bare, input)
     return issue ? { behavior: 'deny', message: `${issue}: o agente deste projeto só lê e grava na pasta dele.` } : { behavior: 'allow' }
   }
@@ -582,6 +603,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       CLAUDE_CODE_OAUTH_TOKEN: connection?.key,
       CLAUDE_CONFIG_DIR: connection?.key ? claudeConfigDir() : undefined,
       ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
+      CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1',
     })
   }
 
@@ -656,7 +678,8 @@ export function cliEnv(connection: { key: string; baseUrl?: string; compatible: 
   // ⚖️ `CLAUDE_CONFIG_DIR` no volume de dados: as conversas do CLI sobrevivem ao reinício (no pod o HOME é só
   // leitura) — é o que deixa a retomada continuar com a memória dele —, e ele não lê a configuração pessoal do
   // `~/.claude` de quem roda o gateway (MCPs, CLAUDE.md).
-  const base = subscriptionEnv({ HOME: process.env.HOME, CLAUDE_CONFIG_DIR: claudeConfigDir(), ENABLE_CLAUDEAI_MCP_SERVERS: 'false' })
+  // ⛔ `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`: o CLI tira as credenciais dele (chave da API, token OAuth) do ambiente dos subprocessos (Bash).
+  const base = subscriptionEnv({ HOME: process.env.HOME, CLAUDE_CONFIG_DIR: claudeConfigDir(), ENABLE_CLAUDEAI_MCP_SERVERS: 'false', CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1' })
   if (!connection.compatible) return { ...base, ANTHROPIC_API_KEY: connection.key }
 
   return { ...base, ANTHROPIC_BASE_URL: connection.baseUrl, ANTHROPIC_AUTH_TOKEN: connection.key, ANTHROPIC_API_KEY: '' }
@@ -763,6 +786,13 @@ function agentFolderVerdict(toolName: string, input: Record<string, unknown>, cw
 /** O nome das ferramentas no Claude: as do gateway com o prefixo do servidor local; as nativas, sem prefixo. */
 export const CLAUDE_TOOL_NAMES = `## Nomes das ferramentas
 Aqui as ferramentas do gateway têm o prefixo \`mcp__${LOCAL_SERVER_NAME}__\` (ex.: \`mcp__${LOCAL_SERVER_NAME}__use_resource\`, \`mcp__${LOCAL_SERVER_NAME}__read_doc\`); as nativas (Read, Write, Edit, Bash, Glob, Grep) não têm prefixo. Quando um texto citar uma ferramenta pelo nome curto, chame-a pelo nome completo da sua lista.`
+
+/** As nativas do CLI que rodam no servidor sem cerco, e o que o agente usa no lugar. */
+const HOST_NATIVES: Readonly<Record<string, string>> = {
+  Bash: 'run_bash',
+  Grep: 'search_files',
+  Glob: 'list_files',
+}
 
 /** As nativas que gravam: nas pastas de arquivos de recurso, recusadas. */
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
