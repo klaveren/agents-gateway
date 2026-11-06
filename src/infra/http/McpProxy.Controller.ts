@@ -26,6 +26,9 @@ export interface IMcpProxyDeps {
  * recebe a conexão, descobre DE QUE CONVERSA ela é (`X-Gateway-Session`) e encaminha `tools/list` e
  * `tools/call` à instância daquela conversa — com o esquema inteiro e a resposta inteira (imagens inclusas).
  *
+ * O mesmo vale para o MCP REMOTO externo (`auth: caller` ou `header`): o CLI não recebe token nem segredo no argv, só a
+ * concessão; o servidor conecta ao remoto com a credencial certa (`McpServerClient`, que tem o fetch guardado).
+ *
  * ⛔ QUATRO CONFERÊNCIAS: a conversa é de quem chama (a mesma regra de dono das rotas — de outro, 404); o
  * servidor (`:serverId` é a CHAVE, ver `mcpServerKey`) serve ao projeto do agente da conversa — o de outro projeto é
  * 404; o agente escolheu este servidor; e, se escolheu só algumas ferramentas, só elas existem.
@@ -52,12 +55,16 @@ export class McpProxyController {
     if (!agent || !config || !mcpServesProject(config, agent.projectId)) return void deny(404, 'Not found')
     const choice = mcpSelection(agent.allowedTools).get(config.id)
     if (!choice) return void deny(404, 'Not found')
+    // ⛔ A credencial de quem conversa NUNCA foi ao agente: vem da concessão do turno (`Grant.Credential`) e daqui segue
+    // para o servidor remoto, por dentro. Idem o segredo do cadastro (`auth: header`), que o cliente injeta no fetch.
+    const token = resolved.identity?.token
+    const context = { ...(token ? { token } : {}), sessionId, agentId: session.agentId, ...(agent.projectId ? { projectId: agent.projectId } : {}) }
     const allowed = (name: string) => choice.all || choice.tools.has(name)
 
     const server = new Server({ name: `gateway-proxy-${serverId}`, version: '1.0.0' }, { capabilities: { tools: {} } })
     server.setRequestHandler(ListToolsRequestSchema, async () => {
       const client = await this.deps.registry.clientFor(serverId, sessionId)
-      const tools = ((await client?.listToolsRaw()) ?? []).filter((tool) => allowed(String(tool.name)))
+      const tools = ((await client?.listToolsRaw(token)) ?? []).filter((tool) => allowed(String(tool.name)))
       return { tools } as never
     })
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -65,7 +72,7 @@ export class McpProxyController {
       try {
         const client = await this.deps.registry.clientFor(serverId, sessionId)
         if (!client) return { content: [{ type: 'text', text: `MCP server unavailable: ${serverId}` }], isError: true }
-        return (await client.callToolRaw(request.params.name, request.params.arguments ?? {})) as never
+        return (await client.callToolRaw(request.params.name, request.params.arguments ?? {}, context)) as never
       } catch (error: unknown) {
         return { content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }], isError: true }
       }

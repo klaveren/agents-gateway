@@ -60,8 +60,8 @@ export function fakeMcpRegistry(servers: IFakeMcpServer[] = []): McpRegistry {
       close: async () => undefined,
       listTools: async () => (connected() ? (fake.tools ?? []) : []),
       listToolsRaw: async () => (connected() ? (fake.tools ?? []).map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) : []),
-      callToolRaw: async (name: string, args: Record<string, unknown>) => {
-        const outcome = (await fake.onCall?.(name, args)) ?? { status: 'success' as const, result: `${key}:${name}` }
+      callToolRaw: async (name: string, args: Record<string, unknown>, context?: IExecutionContext) => {
+        const outcome = (await fake.onCall?.(name, args, context)) ?? { status: 'success' as const, result: `${key}:${name}` }
         return { content: [{ type: 'text', text: outcome.result }], isError: outcome.status === 'error' }
       },
       listToolsAs: async (token?: string) => (connected() || (!!token && token === fake.acceptsToken) ? (fake.tools ?? []) : []),

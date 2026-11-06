@@ -154,6 +154,13 @@ export class ToolCatalog {
     return { ...config, kind: 'remote', url: `${this.containerProxy.base}/${mcpServerKey(config)}`, transport: 'http', auth: 'caller', headerName: 'X-Tool-Authorization' }
   }
 
+  /** O servidor remoto levaria credencial no header de um SDK que conecta por conta própria (e não é o do próprio gateway)? */
+  private leavesCredentialInArgv(config: IMcpServerConfig, fixed: Record<string, string> | undefined): boolean {
+    if (!this.containerProxy) return false
+    if (config.id === SELF_MCP_SERVER_ID && !config.projectId) return false
+    return config.auth === 'caller' || config.auth === 'header' || !!(fixed && Object.keys(fixed).length)
+  }
+
   /**
    * O que o SDK que conecta por conta própria pode usar do servidor: a escolha do agente MENOS o que as permissões negam
    * (`tools` ausente = todas). ⛔ Com permissões e sem conseguir listar o servidor, nenhuma: falha fechada.
@@ -209,6 +216,20 @@ export class ToolCatalog {
       if (!client) continue
       const fixed = this.mcp.fixedHeaders(config)
       const { tools, hidden } = await this.visibleOf(id, key, choice, context)
+      // ⛔ REMOTO EXTERNO que leva credencial (`caller`, `header` ou headers fixos): o CLI do Claude e do Codex conecta por
+      // conta própria e deixaria o token de quem conversa / o segredo do cadastro no argv do processo filho. Vai pela ponte
+      // do gateway, que guarda a credencial e conecta por dentro. O do próprio gateway já leva só a concessão do turno.
+      const viaBridge = this.leavesCredentialInArgv(config, fixed) && context?.sessionId ? this.viaProxy(config) : undefined
+      if (viaBridge && context?.sessionId) {
+        servers.push({
+          config: viaBridge,
+          ...(tools ? { tools } : {}),
+          ...(hidden.length ? { hidden } : {}),
+          callerHeader: 'X-Tool-Authorization',
+          fixed: { 'X-Gateway-Session': context.sessionId },
+        })
+        continue
+      }
       servers.push({
         config,
         ...(tools ? { tools } : {}),

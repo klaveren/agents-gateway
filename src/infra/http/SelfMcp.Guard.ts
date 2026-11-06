@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IDENTITY_HEADERS } from '@domain/Agent.Identity'
 import { TURN_GRANT_LOCAL } from './Security.Middleware'
+import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
 import { ISelfReply, TSelfApi } from './Self.Api'
 
 /**
@@ -134,8 +135,56 @@ export function scopedWrites(api: TSelfApi, scope: IAgentWriteScope): TSelfApi {
     }
   }
 
+  /** O projeto de uma conversa: o gravado nela, senão o do agente; `null` = sem projeto. */
+  const sessionProject = async (reply: ISelfReply): Promise<string | null> => {
+    const session = (reply.result ?? {}) as { agentId?: string; metadata?: Record<string, unknown> }
+    const stored = session.metadata?.[PROJECT_METADATA_KEY]
+    if (typeof stored === 'string' && stored) return stored
+    if (!session.agentId) return null
+    return (await agentProject(session.agentId)).projectId ?? null
+  }
+  const sameProject = (project: string | null) => (project ?? undefined) === scope.projectId
+  const known = new Set<string>()
+
+  /**
+   * ⛔ Conversa alvo (ler, mandar mensagem, reconfigurar) tem de ser do MESMO projeto da conversa de origem — ler também. A
+   * rota só confere o dono, e a conta é uma só: sem isto, a injeção em P escrevia (e lia) em Q. Sem projeto só casa com sem
+   * projeto, e o que não se consegue ler é recusado (falha fechada).
+   */
+  const sameProjectSession = async (id: string): Promise<ISelfReply | undefined> => {
+    if (known.has(id)) return undefined
+    // A viva (`/sessions`); a que já acabou só está no histórico (`/conversations/:id/turns`, que traz a conversa no corpo).
+    let found = await api('GET', `/sessions/${encodeURIComponent(id)}`)
+    if (!found.ok) {
+      const stored = await api('GET', `/conversations/${encodeURIComponent(id)}/turns`)
+      if (!stored.ok) return found
+      found = { ...stored, result: (stored.result as { conversation?: unknown } | undefined)?.conversation }
+    }
+    if (!sameProject(await sessionProject(found))) return refuse('This conversation can only reach conversations of its own project')
+    known.add(id)
+    return undefined
+  }
+
   return async (method, path, options) => {
-    if (method === 'GET') return api(method, path, options)
+    const clean = path.split('?')[0]
+    const [root] = clean.split('/').filter(Boolean)
+    const id = root === 'sessions' || (root === 'conversations' && !['stats', 'events'].includes(segment(clean, 1))) ? segment(clean, 1) : ''
+    if (id) {
+      const denied = await sameProjectSession(id)
+      if (denied) return denied
+    }
+    if (method === 'GET') {
+      const answer = await api(method, path, options)
+      // A lista de conversas mostra só as do projeto da origem.
+      const listed = (answer.result as { sessions?: unknown } | undefined)?.sessions
+      if (root === 'conversations' && !id && answer.ok && Array.isArray(listed)) {
+        const kept: unknown[] = []
+        for (const item of listed as Array<{ metadata?: Record<string, unknown>; agentId?: string }>)
+          if (sameProject(await sessionProject({ ok: true, status: 200, result: item }))) kept.push(item)
+        return { ...answer, result: { ...(answer.result as object), sessions: kept } }
+      }
+      return answer
+    }
     return (await check(method, path, options?.body)) ?? api(method, path, options)
   }
 }

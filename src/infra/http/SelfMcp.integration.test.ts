@@ -483,4 +483,32 @@ describe('MCP do próprio gateway (integração)', () => {
     })
     assert.strictEqual(after.status, 401)
   })
+
+  it('⛔ o agente (concessão) só alcança conversas do PROJETO da conversa dele: ler, mandar mensagem e reconfigurar em outro projeto são recusados', async () => {
+    for (const id of ['pa', 'pb']) await call('/projects', { method: 'POST', token: admin, body: { id, name: id } })
+    const open = async (projectId?: string) => {
+      const created = await call('/sessions', { method: 'POST', token: admin, body: { agentId: 'atlas', provider: 'claude', ...(projectId ? { projectId } : {}) } })
+      assert.ok(created.result?.id, JSON.stringify(created))
+      return created.result.id as string
+    }
+    const [own, other, none] = [await open('pa'), await open('pb'), await open()]
+    const grant = turnGrants().register({ tools: [], context: { token: admin, agentId: 'atlas', sessionId: own, conversationProjectId: 'pa' } })
+    try {
+      const client = new Client({ name: 'teste', version: '1.0.0' })
+      await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { 'X-Turn-Grant': grant } } }))
+      const run = async (name: string, args: Record<string, unknown>) => (await client.callTool({ name, arguments: args })) as { isError?: boolean }
+
+      for (const target of [other, none]) {
+        assert.strictEqual(json(await run('send_message', { sessionId: target, message: 'oi', waitSeconds: 0 })).status, 403, 'send_message')
+        assert.strictEqual(json(await run('get_turn', { sessionId: target, turn: 0, waitSeconds: 0 })).status, 403, 'get_turn')
+        assert.strictEqual(json(await run('get_conversation', { sessionId: target })).status, 403, 'get_conversation')
+        assert.strictEqual(json(await run('switch_model', { sessionId: target, reasoning: null })).status, 403, 'PATCH /sessions/:id')
+      }
+      // A do próprio projeto segue (aqui só provamos que não é a recusa de projeto).
+      const mine = await run('get_conversation', { sessionId: own })
+      assert.notStrictEqual(json(mine).status, 403, JSON.stringify(mine))
+    } finally {
+      turnGrants().release(grant)
+    }
+  })
 })
