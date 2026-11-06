@@ -1482,7 +1482,7 @@
       <button type="submit" :disabled="saving || !ready || !!loadError || !form.providers.length" class="btn btn-primary">
         {{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar' }}
       </button>
-      <button v-if="!creating && agent" type="button" class="btn btn-secondary" @click="emit('duplicate', agent)">Duplicar</button>
+      <button v-if="!creating && agent" type="button" class="btn btn-secondary" @click="emit('duplicate', agent)">Duplicar agente</button>
       <button v-if="!creating && agent" type="button" class="btn btn-danger ml-auto" @click="confirming = true">Apagar</button>
     </div>
     <ConfirmDialog
