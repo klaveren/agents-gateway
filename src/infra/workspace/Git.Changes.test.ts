@@ -12,6 +12,7 @@ const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, 
 describe('Git.Changes (o que mudou na pasta da conversa)', () => {
   const repo = realpathSync(mkdtempSync(join(tmpdir(), 'gw-changes-')))
   const canary = join(repo, '..', `canario-${process.pid}`)
+  const place = { dir: repo, gitCommonDir: join(repo, '.git') }
   let start = ''
   before(async () => {
     git(repo, 'init', '-q', '-b', 'main')
@@ -21,7 +22,7 @@ describe('Git.Changes (o que mudou na pasta da conversa)', () => {
     git(repo, 'add', '.')
     git(repo, 'commit', '-q', '-m', 'base')
     git(repo, 'checkout', '-q', '-b', 'epic-EP-1')
-    start = (await headOf(repo))!
+    start = (await headOf(place))!
     // Na conversa: um commit (edita a.txt, renomeia velho.txt) e o que ainda não foi commitado.
     appendFileSync(join(repo, 'a.txt'), 'tres\n')
     git(repo, 'mv', 'velho.txt', 'novo-nome.txt')
@@ -40,7 +41,7 @@ describe('Git.Changes (o que mudou na pasta da conversa)', () => {
   })
 
   it('nesta conversa: o commitado e o não commitado desde o início, com os commits; segredo sem conteúdo', async () => {
-    const changes = await changesOf(repo, 'conversation', { startCommit: start })
+    const changes = await changesOf(place, 'conversation', { startCommit: start })
     const byPath = Object.fromEntries(changes.files.map((file) => [file.path, file]))
     assert.deepStrictEqual(
       changes.files.map((file) => `${file.status} ${file.path}`),
@@ -55,31 +56,58 @@ describe('Git.Changes (o que mudou na pasta da conversa)', () => {
       [['edita e renomeia', 'Ana']],
     )
 
-    assert.match((await fileDiff(repo, changes, 'a.txt')).diff, /\+tres/)
-    assert.match((await fileDiff(repo, changes, 'nao-rastreado.txt')).diff, /\+novo/)
+    assert.match((await fileDiff(place, changes, 'a.txt')).diff, /\+tres/)
+    assert.match((await fileDiff(place, changes, 'nao-rastreado.txt')).diff, /\+novo/)
     // O apagado mostra as linhas que saíram (não "sem diferença").
-    assert.match((await fileDiff(repo, changes, 'apagar.txt')).diff, /^-/m)
-    assert.deepStrictEqual(await fileDiff(repo, changes, '.env'), { diff: '', truncated: false, protected: true })
-    await assert.rejects(fileDiff(repo, changes, '../../etc/passwd'), /não está entre as alterações/)
+    assert.match((await fileDiff(place, changes, 'apagar.txt')).diff, /^-/m)
+    assert.deepStrictEqual(await fileDiff(place, changes, '.env'), { diff: '', truncated: false, protected: true })
+    await assert.rejects(fileDiff(place, changes, '../../etc/passwd'), /não está entre as alterações/)
     assert.ok(!existsSync(canary), 'nenhuma config do repositório rodou programa')
   })
 
   it('não commitado: só o que mudou depois do HEAD; um commit: só o dele; branch inteiro contra a base', async () => {
-    const uncommitted = await changesOf(repo, 'uncommitted')
+    const uncommitted = await changesOf(place, 'uncommitted')
     assert.ok(!uncommitted.files.some((file) => file.path === 'a.txt'))
     assert.ok(uncommitted.files.some((file) => file.path === 'apagar.txt' && file.status === 'D'))
     assert.deepStrictEqual(uncommitted.commits, [])
 
-    const head = (await headOf(repo))!
-    const one = await changesOf(repo, 'conversation', { commit: head })
+    const head = (await headOf(place))!
+    const one = await changesOf(place, 'conversation', { commit: head })
     assert.deepStrictEqual(
       one.files.map((file) => `${file.status} ${file.path}`),
       ['M a.txt', 'R novo-nome.txt'],
     )
-    assert.match((await fileDiff(repo, one, 'a.txt')).diff, /\+tres/)
+    assert.match((await fileDiff(place, one, 'a.txt')).diff, /\+tres/)
 
-    const branch = await changesOf(repo, 'branch')
+    const branch = await changesOf(place, 'branch')
     assert.strictEqual(branch.from, start, 'a base é o merge-base com a main')
     assert.ok(!existsSync(canary))
+  })
+
+  it('⛔ filtro do .gitattributes e do info/attributes: o diff e o status do gateway não executam o comando', async () => {
+    const fake = realpathSync(mkdtempSync(join(tmpdir(), 'gw-filtro-')))
+    const mark = join(fake, 'filtro-rodou')
+    try {
+      git(fake, 'init', '-q', '-b', 'main')
+      writeFileSync(join(fake, 'f.txt'), 'um\n')
+      git(fake, 'add', '.')
+      git(fake, 'commit', '-q', '-m', 'f')
+      git(fake, 'config', 'filter.x.clean', `sh -c 'touch ${mark}; cat'`)
+      git(fake, 'config', 'filter.x.smudge', `sh -c 'touch ${mark}; cat'`)
+      writeFileSync(join(fake, '.gitattributes'), '* filter=x\n')
+      writeFileSync(join(fake, '.git', 'info', 'attributes'), '* filter=x\n')
+      appendFileSync(join(fake, 'f.txt'), 'dois\n')
+      const fakePlace = { dir: fake, gitCommonDir: join(fake, '.git') }
+      const changes = await changesOf(fakePlace, 'uncommitted')
+      assert.ok(changes.files.some((file) => file.path === 'f.txt'))
+      await fileDiff(fakePlace, changes, 'f.txt')
+      assert.ok(!existsSync(mark), 'o filtro do repositório rodou programa no gateway')
+    } finally {
+      rmSync(fake, { recursive: true, force: true })
+    }
+  })
+
+  it('sem o repositório calculado pelo servidor, nada roda', async () => {
+    await assert.rejects(changesOf({ dir: repo }, 'uncommitted'), /não é um repositório/)
   })
 })

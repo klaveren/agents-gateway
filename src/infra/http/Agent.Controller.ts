@@ -463,7 +463,7 @@ export class AgentController {
     if (typeof repository !== 'string' || typeof projectId !== 'string' || !this.usecases.projects?.exists(projectId)) return undefined
     const worktree = typeof metadata?.[WORKTREE_METADATA_KEY] === 'string' ? (metadata[WORKTREE_METADATA_KEY] as string) : undefined
     try {
-      const branch = currentBranch(resolveWorkFolder(this.usecases.projects.folderOf(projectId), repository, worktree).dir)
+      const branch = currentBranch(resolveWorkFolder(this.usecases.projects.folderOf(projectId), repository, worktree))
       return { repository, ...(worktree ? { worktree } : {}), ...(branch ? { branch } : {}) }
     } catch {
       return { repository, ...(worktree ? { worktree } : {}) }
@@ -967,7 +967,7 @@ export class AgentController {
         const { projectId: requested, repository, worktree, callbackUrl, ...session } = body
         const project = await this.sessionProject(this.callerOf(resolved), body.agentId, requested)
         const place = await this.workPlace(body.agentId, project, repository, worktree)
-        const startCommit = place ? await headOf(place.dir) : undefined
+        const startCommit = place ? await headOf(place).catch(() => undefined) : undefined
         if (callbackUrl && !this.usecases.callbackSecret?.(callbackUrl, project))
           throw new HttpError(422, 'validation_error', 'Request body is invalid', [
             { field: 'callbackUrl', message: "address not registered: add it in the project's turn callbacks (or TURN_CALLBACK_HOSTS)" },
@@ -1810,9 +1810,9 @@ export class AgentController {
       if (typeof repository !== 'string' || typeof projectId !== 'string' || !this.usecases.projects?.exists(projectId))
         throw new HttpError(404, 'not_found', 'Esta conversa não foi aberta num repositório')
       const worktree = typeof metadata?.[WORKTREE_METADATA_KEY] === 'string' ? (metadata[WORKTREE_METADATA_KEY] as string) : undefined
-      let dir: string
+      let dir: IWorkFolder
       try {
-        dir = resolveWorkFolder(this.usecases.projects.folderOf(projectId), repository, worktree).dir
+        dir = resolveWorkFolder(this.usecases.projects.folderOf(projectId), repository, worktree)
       } catch (error: unknown) {
         throw new HttpError(404, 'not_found', error instanceof Error ? error.message : String(error))
       }

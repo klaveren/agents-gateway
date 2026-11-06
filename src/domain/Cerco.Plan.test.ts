@@ -27,6 +27,29 @@ describe('Cerco.Plan', () => {
     assert.ok(!plan.readAllow.some((path) => path === '/w/p/repositories/abc'), 'o checkout principal fica fora')
   })
 
+  it('⛔ o que diz onde está o git (e o que roda no git de fora) nunca se grava: comum, modules, atributos e, na worktree, .git/commondir/gitdir', () => {
+    const common = '/w/p/repositories/abc/.git'
+    const tree = '/w/p/repositories/abc/_worktrees/EP-1'
+    const gitDir = `${common}/worktrees/EP-1`
+    const worktree = cercoPlan({ agent: [rule('write', '**')] }, { ...base, root: tree, gitCommonDir: common, worktreeGitDir: gitDir })
+    for (const path of [
+      `${common}/config`,
+      `${common}/config.worktree`,
+      `${common}/hooks`,
+      `${common}/modules`,
+      `${common}/info/attributes`,
+      `${tree}/.git`,
+      `${gitDir}/commondir`,
+      `${gitDir}/gitdir`,
+      `${gitDir}/config.worktree`,
+    ])
+      assert.ok(worktree.writeDeny.includes(path), path)
+    // Só repositório: o `.git` fica dentro da raiz; sem os caminhos da worktree.
+    const only = cercoPlan({}, { ...base, root: '/w/p/repositories/abc', gitCommonDir: common })
+    assert.ok(only.writeDeny.includes(`${common}/modules`) && only.writeDeny.includes(`${common}/info/attributes`))
+    assert.ok(!only.writeDeny.some((path) => path.endsWith('/commondir')))
+  })
+
   it('⚖️ repositório ou worktree: a regra escrita da pasta do projeto também vale, levada para dentro da raiz', () => {
     const repo = '/w/p/repositories/abc'
     const tree = `${repo}/_worktrees/EP-1`

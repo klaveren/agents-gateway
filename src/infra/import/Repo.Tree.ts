@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { Dirent, existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { isAbsolute, join, relative, sep } from 'node:path'
@@ -6,6 +5,7 @@ import { generatedSources } from '@domain/Import.Refs'
 import { IInventoryLink } from '@domain/models/ImportInventory.Model'
 import { IRepoEntry, IRepoFile, IRepoText, IRepoTree, TRepoRefusal } from '@domain/ports/FormatDetector.Port'
 import { estimateTokens } from '@domain/Token.Estimate'
+import { IGitPlace, safeGitSync } from '@infra/workspace/Git.Safe'
 
 /** Pastas de dependência, de build e de cache: nunca são recurso agêntico, e pesam. O relatório conta quantas pulou. */
 export const IGNORED_DIRS: ReadonlySet<string> = new Set([
@@ -43,6 +43,11 @@ const MAX_DEPTH = 40
 export interface IRepoTreeOptions {
   /** A máscara de segredos do gateway (`SecretMasker.text`). */
   mask: (text: string) => string
+  /**
+   * ⛔ O git da pasta (`head` e `dirty`), calculado pelo servidor (`resolveWorkFolder`). Sem ele não se roda git: a pasta
+   * pode trazer um `.git` forjado pelo agente, e o git não o descobre sozinho (ver `Git.Safe`).
+   */
+  git?: IGitPlace
 }
 
 function inside(parent: string, child: string): boolean {
@@ -52,14 +57,6 @@ function inside(parent: string, child: string): boolean {
 
 const toPosix = (path: string) => path.split(sep).join('/')
 const hasIgnoredSegment = (path: string) => path.split('/').some((segment) => IGNORED_DIRS.has(segment))
-
-function git(dir: string, args: string[]): string | undefined {
-  try {
-    return execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', timeout: 15_000, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] })
-  } catch {
-    return undefined
-  }
-}
 
 interface IRepoWalk {
   files: Map<string, { path: string; aliases: Set<string>; bytes: number }>
@@ -199,9 +196,9 @@ export function readRepoTree(root: string, options: IRepoTreeOptions): IRepoTree
     return file
   }
 
-  const isGit = existsSync(join(realRoot, '.git'))
-  const head = isGit ? git(realRoot, ['rev-parse', 'HEAD'])?.trim() || undefined : undefined
-  const status = isGit ? git(realRoot, ['--no-optional-locks', 'status', '--porcelain']) : undefined
+  const place = options.git?.gitCommonDir ? { ...options.git, dir: realRoot } : undefined
+  const head = place ? safeGitSync(place, ['rev-parse', 'HEAD'])?.trim() || undefined : undefined
+  const status = place ? safeGitSync(place, ['--no-optional-locks', 'status', '--porcelain']) : undefined
 
   return {
     ...(head ? { head } : {}),

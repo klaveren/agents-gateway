@@ -107,6 +107,18 @@ describe('ProjectSandbox', () => {
     assert.ok(!reader.readDeny.includes(join(root, 'global', 'agents', 'atlas')))
   })
 
+  it('⛔ na worktree, o cerco nega gravar o .git dela, o commondir e o gitdir (caminhos do servidor, literais)', () => {
+    const tree = '/w/p/repositories/abc/_worktrees/EP-1'
+    const common = '/w/p/repositories/abc/.git'
+    const sandbox = new ProjectSandbox(env, fakeSrt().load)
+    const plan = cercoPlan(
+      { agent: [{ category: 'write', pattern: '**', decision: 'allow' }] },
+      sandbox.base(tree, { gitCommonDir: common, worktreeGitDir: `${common}/worktrees/EP-1` }),
+    )
+    for (const path of [`${tree}/.git`, `${common}/worktrees/EP-1/commondir`, `${common}/worktrees/EP-1/gitdir`, `${common}/modules`, `${common}/info/attributes`])
+      assert.ok(plan.writeDeny.includes(path), path)
+  })
+
   it('⛔ socket Unix liberado só no Linux, e lá os sockets do host ficam fora de alcance (docker, bus do systemd, /tmp)', () => {
     assert.deepStrictEqual(hostSocketDirs('linux'), ['/run', '/var/run', '/tmp'])
     assert.deepStrictEqual(hostSocketDirs('darwin'), [])
