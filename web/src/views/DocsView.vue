@@ -89,7 +89,9 @@ const scope = ref<string>(projects.current ?? GLOBAL_SCOPE)
 /** Lê quando a tela abre (só admin, com a lista de projetos). */
 const ready = ref(false)
 const listed = useResource(docsStore.lists, () => (ready.value ? docsStore.listKey(scope.value) : undefined))
-const list = computed(() => listed.data.value ?? [])
+// Num projeto, os globais vêm junto (a lista do servidor é só do escopo): os do projeto primeiro.
+const globals = useResource(docsStore.lists, () => (ready.value && scope.value !== GLOBAL_SCOPE ? docsStore.listKey(GLOBAL_SCOPE) : undefined))
+const list = computed(() => [...(listed.data.value ?? []), ...(scope.value !== GLOBAL_SCOPE ? (globals.data.value ?? []) : [])])
 const loadError = computed(() => (listed.error.value === undefined ? undefined : describe(listed.error.value)))
 const adding = computed(() => route.name === `${props.kind}-new`)
 const info = computed(() => KIND[props.kind])
@@ -111,7 +113,11 @@ const note = ref<string>()
 const busy = ref(false)
 const removing = ref(false)
 
-const scopes = computed(() => [{ id: GLOBAL_SCOPE, name: 'Global — todos os projetos' }, ...projects.list.map((project) => ({ id: project.id, name: project.name }))])
+// O projeto escolhido no topo manda na lista: trocar lá troca aqui.
+watch(
+  () => projects.current,
+  (id) => (scope.value = id ?? GLOBAL_SCOPE),
+)
 const ofKind = computed(() => list.value.filter((doc) => doc.kind === props.kind))
 /** A busca e a tag do topo da lista. */
 const query = ref('')
@@ -382,11 +388,10 @@ function onInvalid(event: Event) {
         <RouterLink :to="`${info.base}/new`" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" :title="`${g.nova} ${info.one}`"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
       <BuildTabs :kind="kind" active="list" class="px-3 pb-2" />
-      <div class="px-3 pb-2">
-        <select v-model="scope" class="input w-full py-1.5 text-sm" aria-label="Escopo">
-          <option v-for="item in scopes" :key="item.id" :value="item.id">{{ item.name }}</option>
-        </select>
-      </div>
+      <!-- ⚖️ Sem seletor de projeto aqui: a lista segue o projeto escolhido no topo (e traz os globais junto). -->
+      <p class="px-4 pb-2 text-xs text-zinc-500" data-test="scope-caption">
+        {{ scope === GLOBAL_SCOPE ? 'Mostrando os globais (nenhum projeto escolhido no topo).' : `Mostrando ${scopeLabel(scope, projects.list)} e os globais.` }}
+      </p>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
       <ListFilter v-if="ofKind.length" v-model:query="query" v-model:tag="tag" :placeholder="`Buscar ${info.one}…`" :items="ofKind" />
       <div v-if="showStatusFilter" class="flex gap-1.5 overflow-x-auto px-3 pb-2" role="group" aria-label="Status" data-test="status-filter">
@@ -399,6 +404,7 @@ function onInvalid(event: Event) {
       <RouterLink v-for="doc in shown" :key="doc.id" :to="`${info.base}/${doc.id}`" class="mx-2 block rounded-xl px-3 py-2" :class="[doc.id === id ? 'bg-emerald-500/15' : 'hover:bg-zinc-800/60', { 'opacity-60': isInactive(docStatusOf(doc)) }]">
         <span class="flex items-center gap-1.5">
           <span class="min-w-0 flex-1 truncate text-sm font-medium">{{ doc.title }}</span>
+          <span v-if="scope !== GLOBAL_SCOPE && !doc.projectId" class="shrink-0 rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">global</span>
           <DocStatusBadge :status="doc.status" />
         </span>
         <span class="block truncate text-xs text-zinc-500">{{ doc.id }}<template v-if="doc.summary"> · {{ doc.summary }}</template></span>
@@ -457,7 +463,7 @@ function onInvalid(event: Event) {
         <div class="flex flex-wrap items-center gap-3 text-sm">
           <label class="flex items-center gap-2"><input v-model="form.global" type="checkbox" class="accent-emerald-500" /> Global (todos os projetos)</label>
           <select v-if="!form.global" v-model="form.project" required class="input w-auto py-1.5 text-sm" aria-label="Projeto">
-            <option v-for="project in projects.list" :key="project.id" :value="project.id">{{ project.name }}</option>
+            <option v-for="project in projects.list.filter((item) => item.id === projects.current || item.id === form.project)" :key="project.id" :value="project.id">{{ project.name }}</option>
           </select>
           <small v-for="m in issues.projectId" :key="m" class="error">{{ m }}</small>
         </div>

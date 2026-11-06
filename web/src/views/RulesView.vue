@@ -26,7 +26,12 @@ const rules = useRulesStore()
 // O rascunho do construtor ("Abrir no editor") abre no escopo dele; o link do histórico (`?escopo=&rule=#historico`), no da rule.
 const linked = typeof route.query.escopo === 'string' ? route.query.escopo : undefined
 const scope = ref<string>(linked ?? (pendingDraft.value?.kind === 'rule' ? (pendingDraft.value.projectId ?? GLOBAL_SCOPE) : (projects.current ?? GLOBAL_SCOPE)))
-const scopes = computed(() => [{ id: GLOBAL_SCOPE, name: 'Global — todos os projetos' }, ...projects.list.map((project) => ({ id: project.id, name: project.name }))])
+// ⚖️ Sem seletor de projetos: as rules do projeto escolhido no topo, ou as globais (uma troca de duas opções).
+const currentName = computed(() => projects.list.find((project) => project.id === projects.current)?.name)
+watch(
+  () => projects.current,
+  (id) => (scope.value = id ?? GLOBAL_SCOPE),
+)
 const label = computed(() => scopeLabel(scope.value, projects.list))
 
 /**
@@ -89,9 +94,12 @@ watch(
       <header class="flex flex-wrap items-center gap-3">
         <h1 class="text-xl font-semibold">Rules</h1>
         <BuildTabs kind="rule" active="list" />
-        <select v-model="scope" class="input ml-auto w-auto py-1.5 text-sm" aria-label="Escopo">
-          <option v-for="item in scopes" :key="item.id" :value="item.id">{{ item.name }}</option>
-        </select>
+        <div class="ml-auto flex gap-1.5" role="group" aria-label="Escopo">
+          <button v-if="projects.current" type="button" class="chip" :class="{ on: scope === projects.current }" @click="scope = projects.current!">
+            {{ currentName ?? projects.current }}
+          </button>
+          <button type="button" class="chip" :class="{ on: scope === GLOBAL_SCOPE }" @click="scope = GLOBAL_SCOPE">Globais</button>
+        </div>
       </header>
       <p class="text-xs text-zinc-500">
         Regras que todo agente respeita. Editar vale para as próximas conversas. Mostrando: <strong class="text-zinc-300">{{ label }}</strong>.

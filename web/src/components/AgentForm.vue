@@ -809,7 +809,8 @@
         <span>Projeto</span>
         <select v-model="form.projectId" class="input">
           <option :value="null">Global — aparece em todos os projetos</option>
-          <option v-for="project in projects.list" :key="project.id" :value="project.id">{{ project.name }}</option>
+          <!-- Só o projeto escolhido no topo (ou o do agente, se for outro): sem lista de projetos aqui. -->
+          <option v-for="project in projects.list.filter((item) => item.id === projects.current || item.id === (agent?.projectId ?? form.projectId))" :key="project.id" :value="project.id">{{ project.name }}</option>
         </select>
         <small class="hint">{{ form.projectId ? 'Só os membros do projeto veem o agente.' : 'Qualquer projeto vê o agente.' }}</small>
         <small v-for="message in issues.projectId" :key="message" class="error">{{ message }}</small>

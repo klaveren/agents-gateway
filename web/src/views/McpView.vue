@@ -59,10 +59,8 @@ import { computed, onMounted, ref, watch } from 'vue'
   /** O nome do escopo: Global ou o projeto. */
   const scopeLabel = (projectId?: string) => (projectId ? (projects.list.find((project) => project.id === projectId)?.name ?? projectId) : 'Global')
   /** O filtro da lista: todos, só os globais (`''`) ou um projeto. */
-  const scopeFilter = ref<string>('*')
-  const inScope = computed(() =>
-    mcp.list.filter((server) => scopeFilter.value === '*' || (scopeFilter.value === '' ? !server.projectId : server.projectId === scopeFilter.value)),
-  )
+  // ⚖️ Sem seletor de projeto na lista: os globais e os do projeto escolhido no topo.
+  const inScope = computed(() => mcp.list.filter((server) => !server.projectId || server.projectId === projects.current))
   /** A busca e a tag do topo da lista. */
   const query = ref('')
   const tag = ref('')
@@ -406,14 +404,9 @@ import { computed, onMounted, ref, watch } from 'vue'
         </RouterLink>
       </header>
       <p class="px-4 pb-3 text-xs text-zinc-500">Servidores que dão ferramentas aos agentes. Cada agente escolhe as que usa.</p>
-      <label v-if="projects.list.length" class="mx-4 mb-2 flex items-center gap-2 text-xs text-zinc-400">
-        Escopo
-        <select v-model="scopeFilter" class="input py-1 text-xs">
-          <option value="*">Todos</option>
-          <option value="">Globais</option>
-          <option v-for="project in projects.list" :key="project.id" :value="project.id">{{ project.name }}</option>
-        </select>
-      </label>
+      <p class="px-4 pb-2 text-xs text-zinc-500" data-test="scope-caption">
+        {{ projects.current ? `Mostrando ${projects.list.find((item) => item.id === projects.current)?.name ?? projects.current} e os globais.` : 'Mostrando os globais (nenhum projeto escolhido no topo).' }}
+      </p>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
       <ListFilter v-if="mcp.list.length" v-model:query="query" v-model:tag="tag" placeholder="Buscar MCP…" :items="inScope" />
       <p v-if="!mcp.list.length && !loadError" class="px-4 py-2 text-sm text-zinc-500">Nenhum MCP cadastrado ainda.</p>
@@ -492,7 +485,7 @@ import { computed, onMounted, ref, watch } from 'vue'
               Escopo
               <select v-model="form.projectId" class="input">
                 <option :value="undefined">Global — qualquer agente</option>
-                <option v-for="project in projects.list" :key="project.id" :value="project.id">Projeto {{ project.name }}</option>
+                <option v-for="project in projects.list.filter((item) => item.id === projects.current || item.id === form.projectId)" :key="project.id" :value="project.id">Projeto {{ project.name }}</option>
               </select>
               <small class="hint">
                 {{
@@ -782,7 +775,7 @@ import { computed, onMounted, ref, watch } from 'vue'
               <div class="flex flex-wrap items-center gap-2">
                 <select v-model="moveTo" class="input sm:w-1/2">
                   <option value="">Global — qualquer agente</option>
-                  <option v-for="project in projects.list" :key="project.id" :value="project.id">Projeto {{ project.name }}</option>
+                  <option v-for="project in projects.list.filter((item) => item.id === projects.current || item.id === selected?.projectId)" :key="project.id" :value="project.id">Projeto {{ project.name }}</option>
                 </select>
                 <button v-if="moveDirty" type="button" class="btn btn-secondary" :disabled="busy" @click="move">Mover</button>
               </div>
