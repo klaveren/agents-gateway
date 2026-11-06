@@ -2,7 +2,6 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import HistoryPanel from '@/components/HistoryPanel.vue'
-import HistoryTabs from '@/components/HistoryTabs.vue'
 import PermissionRules from '@/components/PermissionRules.vue'
 import PermissionRequests from '@/components/PermissionRequests.vue'
 import PermissionRequestsBadge from '@/components/PermissionRequestsBadge.vue'
@@ -12,7 +11,7 @@ import PermissionTester from '@/components/PermissionTester.vue'
 import { ApiError } from '@/lib/api'
 import { fullTime } from '@/lib/format'
 import { LAYER_LABEL, PERMISSION_SECTIONS } from '@/lib/permissions'
-import type { IPermissionDecision, IPermissionRule } from '@/lib/types'
+import type { IPermissionDecision, IPermissionRule, TPermissionCategory } from '@/lib/types'
 import { useResource } from '@/composables/useResource'
 import { useAgentsStore } from '@/stores/agents'
 import { useAuthStore } from '@/stores/auth'
@@ -56,6 +55,11 @@ const busy = ref(false)
 const showSystem = ref(false)
 /** A guia: as regras ou o histórico delas (`#historico` no endereço abre nele). */
 const tab = ref<'edit' | 'history'>(route.hash === '#historico' ? 'history' : 'edit')
+/** A categoria aberta: uma guia por categoria, como no agente, com o número de regras de cada uma. */
+const section = ref<TPermissionCategory>('terminal')
+const sectionTabs = computed(() =>
+  PERMISSION_SECTIONS.map((item) => ({ category: item.category, label: item.tab ?? item.label, count: rules.value.filter((rule) => rule.category === item.category).length })),
+)
 
 const dirty = computed(() => JSON.stringify(rules.value) !== saved.value)
 const label = (category: string) => PERMISSION_SECTIONS.find((section) => section.category === category)?.label ?? category
@@ -131,13 +135,40 @@ watch(decisionAgent, () => void loadDecisions())
           <strong class="font-medium">Sem regra, negado.</strong> Dentro de cada lista, Negar vence Permitir. A regra do agente vale antes da do projeto, e as do sistema
           (segredos e comandos que derrubam o servidor) valem sempre.
         </div>
-        <HistoryTabs v-model="tab" edit-label="Regras" />
+        <!-- No celular as guias não cabem: a barra rola de lado. -->
+        <nav class="no-scrollbar flex gap-1 overflow-x-auto overscroll-x-contain border-b border-zinc-800" role="tablist">
+          <button
+            v-for="item in sectionTabs"
+            :key="item.category"
+            type="button"
+            role="tab"
+            :aria-selected="tab === 'edit' && section === item.category"
+            :data-test="`tab-${item.category}`"
+            class="flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-sm whitespace-nowrap"
+            :class="tab === 'edit' && section === item.category ? 'border-emerald-500 text-zinc-100' : 'border-transparent text-zinc-400 hover:text-zinc-200'"
+            @click="(tab = 'edit'), (section = item.category)"
+          >
+            {{ item.label }}
+            <span v-if="item.count" class="rounded-full bg-zinc-800 px-1.5 text-[10px] text-zinc-400">{{ item.count }}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="tab === 'history'"
+            data-test="tab-history"
+            class="shrink-0 border-b-2 px-3 py-2 text-sm whitespace-nowrap"
+            :class="tab === 'history' ? 'border-emerald-500 text-zinc-100' : 'border-transparent text-zinc-400 hover:text-zinc-200'"
+            @click="tab = 'history'"
+          >
+            Histórico
+          </button>
+        </nav>
         <HistoryPanel v-if="tab === 'history'" kind="project-permissions" :id="project.id" @restored="restored" />
         <template v-else>
           <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
 
           <PermissionRequests :project-id="project.id" @approved="requestApproved" />
-          <PermissionRules v-model="rules" />
+          <PermissionRules v-model="rules" :only="section" />
           <div class="flex flex-wrap items-center gap-3">
             <button type="button" class="btn btn-primary" :disabled="busy || !dirty" @click="save">Salvar</button>
             <span v-if="notice" class="text-xs text-emerald-300">{{ notice }}</span>

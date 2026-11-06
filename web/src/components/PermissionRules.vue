@@ -8,10 +8,11 @@
    * Mora dentro de formulários: nada aqui submete com Enter.
    */
   const rules = defineModel<IPermissionRule[]>({ required: true })
-  defineProps<{ readonly?: boolean }>()
+  /** `only`: uma categoria só (a guia escolhida na tela de Permissões). */
+  const props = defineProps<{ readonly?: boolean; only?: TPermissionCategory }>()
 
   const byCategory = computed(() =>
-    PERMISSION_SECTIONS.map((section) => ({ ...section, rules: rules.value.map((rule, index) => ({ rule, index })).filter(({ rule }) => rule.category === section.category) })),
+    PERMISSION_SECTIONS.filter((section) => !props.only || section.category === props.only).map((section) => ({ ...section, rules: rules.value.map((rule, index) => ({ rule, index })).filter(({ rule }) => rule.category === section.category) })),
   )
 
   function add(category: TPermissionCategory) {
