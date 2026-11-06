@@ -28,7 +28,7 @@
   import { useAuthStore } from '@/stores/auth'
   import { NO_MODEL_GROUP } from '@/lib/modelGroups'
   import { useProtocolsStore } from '@/stores/protocols'
-  import type { IAgentDetail, IAgentInput, ICatalogModel, IMcpServer, INativeTool, TMode, TSandboxLevel } from '@/lib/types'
+  import type { IAgentDetail, IAgentInput, ICatalogModel, IMcpServer, INativeTool, TMode, TPermissionCategory, TSandboxLevel } from '@/lib/types'
   import { useAgentsStore } from '@/stores/agents'
   import { useMcpStore } from '@/stores/mcp'
   import { useProjectsStore } from '@/stores/projects'
@@ -39,6 +39,7 @@
   import AgentSchedules from './AgentSchedules.vue'
   import AgentLedger from './AgentLedger.vue'
   import SecretVariables from './SecretVariables.vue'
+  import PermissionCategoryTabs from './PermissionCategoryTabs.vue'
   import PermissionRules from './PermissionRules.vue'
   import PermissionTester from './PermissionTester.vue'
   import PermissionRequests from './PermissionRequests.vue'
@@ -411,6 +412,8 @@
   const initialHash = useRoute().hash
   const HASH_TAB: Record<string, TTab> = { '#agendamentos': 'agendamentos', '#memoria': 'memoria', '#variaveis': 'variaveis', '#historico': 'historico', '#problemas': 'problemas', '#personalidade': 'personalidade', '#instrucoes': 'instrucoes' }
   const tab = ref<TTab>(HASH_TAB[initialHash] ?? 'agente')
+  /** A categoria aberta na guia Permissões: uma guia por categoria, como nas permissões do projeto. */
+  const permissionSection = ref<TPermissionCategory>('terminal')
 
   /** Sobram guias à direita (a barra rola de lado): a borda esmaece, para ninguém achar que acabaram. */
   const tabBar = ref<HTMLElement>()
@@ -1067,8 +1070,14 @@
         <p class="text-xs text-zinc-500">
           Valem antes das do projeto: liberam o que o projeto fechou, ou fecham mais. Sem regra no agente nem no projeto, negado. As do sistema valem sempre.
         </p>
-        <PermissionRules v-model="form.permissions!" />
-        <PermissionTester v-if="agent && !creating && (agent.projectId ?? projects.current)" :project-id="(agent.projectId ?? projects.current)!" :agent-id="agent.id" />
+        <PermissionCategoryTabs v-model="permissionSection" :rules="form.permissions ?? []" />
+        <PermissionRules v-model="form.permissions!" :only="permissionSection" />
+        <PermissionTester
+          v-if="agent && !creating && (agent.projectId ?? projects.current)"
+          :project-id="(agent.projectId ?? projects.current)!"
+          :agent-id="agent.id"
+          :initial="permissionSection"
+        />
         <small class="hint">O teste usa as regras já salvas.</small>
       </div>
       <div class="flex flex-col gap-2">
