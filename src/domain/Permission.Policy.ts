@@ -264,6 +264,52 @@ function hasGitAlias(argv: readonly string[]): boolean {
 }
 
 /**
+ * Os subcomandos que o git traz (embutidos e os scripts que ele instala): o git resolve esses ANTES de qualquer apelido, então
+ * um apelido nunca os sobrepõe. Qualquer outro nome pode ser um apelido (`alias.p=push` no `.gitconfig`) para outro subcomando.
+ */
+const GIT_KNOWN_SUBCOMMANDS: ReadonlySet<string> = new Set(
+  (
+    'add am annotate apply archive bisect blame branch bugreport bundle cat-file check-attr check-ignore check-mailmap check-ref-format checkout checkout-index cherry cherry-pick ' +
+    'citool clean clone column commit commit-graph commit-tree config count-objects credential describe diagnose diff diff-files diff-index diff-tree difftool fast-export ' +
+    'fast-import fetch fetch-pack filter-branch fmt-merge-msg for-each-ref for-each-repo format-patch fsck gc get-tar-commit-id gitk grep gui hash-object help hook index-pack ' +
+    'init init-db instaweb interpret-trailers log ls-files ls-remote ls-tree maintenance mailinfo mailsplit merge merge-base merge-file merge-index merge-tree mergetool mktag ' +
+    'mktree multi-pack-index mv name-rev notes pack-objects pack-redundant pack-refs patch-id prune prune-packed pull push range-diff read-tree rebase receive-pack reflog ' +
+    'remote repack replace request-pull rerere reset restore rev-list rev-parse revert rm send-email send-pack shortlog show show-branch show-index show-ref sparse-checkout ' +
+    'stage stash status stripspace submodule subtree switch symbolic-ref tag unpack-file unpack-objects update-index update-ref update-server-info upload-archive upload-pack ' +
+    'var verify-commit verify-pack verify-tag version whatchanged worktree write-tree'
+  ).split(' '),
+)
+
+/** O subcomando do git (depois das opções globais, lidas com os valores delas, como o git lê); `undefined` se não há. */
+function gitSubcommand(argv: readonly string[]): string | undefined {
+  if (basename(argv[0] ?? '') !== 'git') return undefined
+  return withoutGlobalOptions(argv)[1]
+}
+
+/**
+ * ⛔ Subcomando que NÃO é do git (`git p origin main`): pode ser um apelido (`alias.p=push`, gravado no `.gitconfig` do
+ * projeto ou com `git config alias.p push`), então vale como qualquer subcomando e casa toda negação do git (falha fechada).
+ */
+function unknownGitSubcommand(argv: readonly string[]): boolean {
+  const sub = gitSubcommand(argv)
+  return !!sub && !sub.startsWith('-') && !GIT_KNOWN_SUBCOMMANDS.has(sub)
+}
+
+/**
+ * ⛔ `git config alias.p push` (também `--global`, `--file`, `--add`): é como se cria o desvio de uma negação do git.
+ * Quem chama decide se vale (só há problema com negação de git ativa).
+ */
+export function definesGitAlias(argv: readonly string[]): boolean {
+  if (gitSubcommand(argv) !== 'config') return false
+  return argv.slice(argv.indexOf('config') + 1).some((word) => /^alias\./i.test(word))
+}
+
+/** Há regra de terminal que NEGA comandos do git (`git push *`, `git *`)? */
+export function hasGitDeny(rules: readonly IPermissionRule[]): boolean {
+  return rules.some((rule) => rule.category === 'terminal' && rule.decision === 'deny' && wordMatches(rule.pattern.trim().split(/\s+/)[0] ?? '', 'git'))
+}
+
+/**
  * ⛔ NEGAR casa o comando como escrito OU sem as opções globais (das duas leituras: a das opções com valor e a que trata
  * toda opção como flag): na dúvida, vence a negação. E o apelido definido na linha (`-c alias.*`) casa toda negação do
  * git, porque o subcomando real é incerto.
@@ -271,7 +317,8 @@ function hasGitAlias(argv: readonly string[]): boolean {
 export function denyCommandMatches(pattern: string, argv: readonly string[]): boolean {
   if (!argv.length) return false
   if (commandMatches(pattern, argv)) return true
-  if (hasGitAlias(argv) && wordMatches(pattern.trim().split(/\s+/)[0] ?? '', 'git')) return true
+  const gitPattern = wordMatches(pattern.trim().split(/\s+/)[0] ?? '', 'git')
+  if (gitPattern && (hasGitAlias(argv) || unknownGitSubcommand(argv))) return true
   return [withoutGlobalOptions(argv), withoutGlobalOptions(argv, true)].some((candidate) => candidate.length < argv.length && commandMatches(pattern, candidate))
 }
 

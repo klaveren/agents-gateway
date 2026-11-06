@@ -3,7 +3,7 @@ import { printsSecret } from '@domain/models/ResourceSecret.Model'
 import { terminalEnv } from '@domain/Agent.Identity'
 import type { IPermissionAsker, IPermissionChecker } from '@application/Permissions.Service'
 import { cercoPlan } from '@domain/Cerco.Plan'
-import { commandMatches, type IPermissionRule } from '@domain/Permission.Policy'
+import { commandMatches, definesGitAlias, hasGitDeny, type IPermissionRule } from '@domain/Permission.Policy'
 import type { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { exec } from 'node:child_process'
 import { rmSync } from 'node:fs'
@@ -21,6 +21,7 @@ import {
   remoteOf,
   remoteReasons,
   sshRemoteStart,
+  transportRefusal,
   truncate,
   type IBashPolicy,
   type IRemote,
@@ -569,6 +570,15 @@ export async function terminalRefusal(
   const analysis = await analyzeShell(command)
   if (analysis.opaque.length) return `não dá para analisar com segurança (${analysis.opaque.join('; ')})`
   if (!analysis.commands.length && !analysis.redirects.length) return 'nenhum comando'
+  // ⛔ O programa que o transporte do ssh lança (`-o ProxyCommand`, `rsync -e`, `GIT_SSH_COMMAND`…) não passa pela análise: só o `ssh` simples.
+  const transport = transportRefusal(analysis.commands, command)
+  if (transport) return transport
+  // ⛔ Com negação de git ativa, criar um apelido (`git config alias.p push`) é criar o desvio dela: `git p` vale como qualquer subcomando.
+  const layers = permissions.layers?.(asker)
+  if (hasGitDeny([...(layers?.agent ?? []), ...(layers?.project ?? [])])) {
+    if (analysis.commands.some((part) => definesGitAlias(part.argv)) || /\bGIT_CONFIG_KEY_\d+\s*=\s*["']?alias\./i.test(command))
+      return 'apelido do git (alias.*) não pode ser criado enquanto há regra que nega comandos do git'
+  }
   for (const part of analysis.commands) {
     const verdict = permissions.check(asker, { category: 'terminal', value: part.text, argv: part.argv }, { log: true })
     if (!verdict.allowed) return verdict.reason
