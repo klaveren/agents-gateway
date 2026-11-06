@@ -25,7 +25,7 @@ describe('AccessTokensService', () => {
 
   it('⛔ o token sai uma vez, como agw_…; o banco guarda só o hash e o prefixo', () => {
     const { service, repository, admin } = build()
-    const { token, accessToken } = service.create(admin.id, { name: 'Claude Code' })
+    const { token, accessToken } = service.create(admin.id, { name: 'Claude Code', expiresInDays: 30 })
 
     assert.match(token, /^agw_[A-Za-z0-9_-]{43}$/)
     const [stored] = repository.listByUser(admin.id)
@@ -37,7 +37,7 @@ describe('AccessTokensService', () => {
 
   it('a troca devolve um token de sessão da conta, com o papel de AGORA', () => {
     const { service, issuer, users, admin } = build()
-    const { token } = service.create(admin.id, { name: 'script' })
+    const { token } = service.create(admin.id, { name: 'script', expiresInDays: 30 })
 
     assert.strictEqual(issuer.verify(service.exchange(token)!)?.role, 'admin')
     users.update(admin.id, { role: 'member' })
@@ -46,10 +46,10 @@ describe('AccessTokensService', () => {
 
   it('⛔ recusa revogado, vencido, de conta desativada e qualquer coisa que não seja agw_', () => {
     const { service, users, admin, advance } = build()
-    const revoked = service.create(admin.id, { name: 'a' })
+    const revoked = service.create(admin.id, { name: 'a', expiresInDays: 30 })
     service.revoke(admin.id, revoked.accessToken.id)
     const expiring = service.create(admin.id, { name: 'b', expiresInDays: 1 })
-    const active = service.create(admin.id, { name: 'c' })
+    const active = service.create(admin.id, { name: 'c', expiresInDays: 30 })
 
     assert.strictEqual(service.exchange(revoked.token), undefined)
     assert.ok(service.exchange(expiring.token))
@@ -64,7 +64,7 @@ describe('AccessTokensService', () => {
 
   it('o último uso é gravado no máximo uma vez por minuto', () => {
     const { service, admin, advance } = build()
-    const { token } = service.create(admin.id, { name: 'laço' })
+    const { token } = service.create(admin.id, { name: 'laço', expiresInDays: 30 })
 
     service.exchange(token)
     const first = service.list(admin.id)[0].lastUsedAt
@@ -79,10 +79,28 @@ describe('AccessTokensService', () => {
   it('regras: nome, validade e no máximo 20 ativos; revogar outro id é "não encontrado"', () => {
     const { service, admin } = build()
 
-    assert.throws(() => service.create(admin.id, { name: ' ' }), InvalidAccessTokenError)
+    assert.throws(() => service.create(admin.id, { name: ' ', expiresInDays: 30 }), InvalidAccessTokenError)
+    // ⛔ Sem validade, ou com validade acima do teto: recusa.
+    assert.throws(() => service.create(admin.id, { name: 'x' } as never), InvalidAccessTokenError)
     assert.throws(() => service.create(admin.id, { name: 'x', expiresInDays: 400 }), InvalidAccessTokenError)
-    for (let i = 0; i < ACCESS_TOKENS_PER_USER; i += 1) service.create(admin.id, { name: `t${i}` })
-    assert.throws(() => service.create(admin.id, { name: 'demais' }), InvalidAccessTokenError)
+    for (let i = 0; i < ACCESS_TOKENS_PER_USER; i += 1) service.create(admin.id, { name: `t${i}`, expiresInDays: 30 })
+    assert.throws(() => service.create(admin.id, { name: 'demais', expiresInDays: 30 }), InvalidAccessTokenError)
     assert.throws(() => service.revoke('outra-conta', service.list(admin.id)[0].id), /not found/)
+  })
+
+  it('⛔ a sessão derivada do agw_ leva a marca e cai quando o token é revogado ou vence', () => {
+    const { service, issuer, admin, advance } = build()
+    const { token, accessToken } = service.create(admin.id, { name: 'ci', expiresInDays: 1 })
+    const claims = issuer.verify(service.exchange(token)!)!
+
+    assert.strictEqual(claims.via, 'agw')
+    assert.strictEqual(claims.tid, accessToken.id)
+    assert.ok(service.isLive(admin.id, accessToken.id))
+    advance(DAY + 1)
+    assert.ok(!service.isLive(admin.id, accessToken.id))
+
+    const other = service.create(admin.id, { name: 'outro', expiresInDays: 30 })
+    service.revoke(admin.id, other.accessToken.id)
+    assert.ok(!service.isLive(admin.id, other.accessToken.id))
   })
 })

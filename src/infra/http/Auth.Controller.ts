@@ -1,12 +1,12 @@
 import { clientIp } from './Security.Middleware'
 import { clearSessionCookie, setSessionCookie, wantsCookieOnly } from './Session.Cookie'
-import { tokenFromHeader } from '@infra/mcp/Caller.Identity'
+import { identityFromToken, tokenFromHeader, withCaller } from '@infra/mcp/Caller.Identity'
 import { AccessTokensService } from '@application/AccessTokens.Service'
 import { AccountsService, ISession } from '@application/Accounts.Service'
 import { IAccessToken, isAccessToken } from '@domain/models/AccessToken.Model'
 import { IUser } from '@domain/models/User.Model'
 import { NextFunction, Request, Response } from 'express'
-import { provenCaller } from './Caller.Access'
+import { provenCaller, resolveCaller } from './Caller.Access'
 import { checkAdminAccess } from './Caller.Admin'
 import { requireAnyAdmin } from './Project.Access'
 import { ICallerProof } from './Caller.Proof'
@@ -35,6 +35,16 @@ export function viaAccessToken(res: Response): boolean {
   return res.locals[VIA_ACCESS_TOKEN] === true
 }
 
+/** O JWT de sessão carrega a marca `via: 'agw'` (ver `ISessionClaims`)? Só lê o payload; quem confere é a prova. */
+function isDerivedFromAccessToken(token: string): boolean {
+  try {
+    const payload = JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString('utf8')) as { via?: unknown }
+    return payload?.via === 'agw'
+  } catch {
+    return false
+  }
+}
+
 /** Login, sessão e a tela de Usuários. Separado do `AgentController`: é outro assunto, com outra porta. */
 export class AuthController {
   constructor(private readonly deps: IAuthControllerDeps) {
@@ -58,6 +68,7 @@ export class AuthController {
       this[name] = this[name].bind(this)
     }
     this.accessTokenGate = this.accessTokenGate.bind(this)
+    this.provenBeforeBody = this.provenBeforeBody.bind(this)
   }
 
   /**
@@ -71,7 +82,13 @@ export class AuthController {
   accessTokenGate(req: Request, res: Response, next: NextFunction) {
     const header = req.headers[CALLER_HEADER]
     const raw = typeof header === 'string' ? header.replace(/^Bearer\s+/i, '').trim() : ''
-    if (!isAccessToken(raw)) return next()
+    if (!isAccessToken(raw)) {
+      // ⛔ A sessão DERIVADA de um `agw_` (o JWT que a troca gera) também é "por token de acesso", venha no header ou
+      // no cookie: sem isto, `POST /auth/cookie` a lavava em sessão de pessoa. A marca é lida sem conferir a
+      // assinatura de propósito: só restringe, e quem a forja só se limita.
+      if (isDerivedFromAccessToken(raw)) res.locals[VIA_ACCESS_TOKEN] = true
+      return next()
+    }
 
     const session = this.deps.accessTokens?.exchange(raw)
     if (!session) return next(new HttpError(401, 'unauthorized', 'Access token is invalid, expired or revoked'))
@@ -79,6 +96,20 @@ export class AuthController {
     req.headers[CALLER_HEADER] = `Bearer ${session}`
     res.locals[VIA_ACCESS_TOKEN] = true
     next()
+  }
+
+  /**
+   * Este pedido, de corpo grande, traz uma credencial que a prova aceita? ⛔ Decide o teto do corpo ANTES de lê-lo: sem
+   * credencial provada, o teto pequeno — o corpo de 25 MB é só de quem entrou. Não responde nada: o portão de sempre
+   * segue depois e dá o 401.
+   */
+  async provenBeforeBody(req: Request, fallback?: ICallerProof): Promise<boolean> {
+    if (process.env.ALLOW_ANONYMOUS === '1') return true
+    let token = tokenFromHeader(req.headers[CALLER_HEADER])
+    if (token && isAccessToken(token)) token = this.deps.accessTokens?.exchange(token)
+    if (!token) return false
+    const resolved = await withCaller({ token, ...identityFromToken(token) }, () => resolveCaller(this.deps.proof ?? fallback))
+    return !!resolved?.identity
   }
 
   /** Os tokens de acesso da própria conta. Nunca o token: só nome, prefixo e datas. */
@@ -160,7 +191,10 @@ export class AuthController {
         const id = await this.requireSelf()
         const body = parseBody(changePasswordSchema, req.body)
         // Volta a sessão nova: esta continua, as outras caem.
-        return this.session(req, res, this.accounts.changeOwnPassword(id, body.current, body.password))
+        const session = await this.accounts.changeOwnPassword(id, body.current, body.password, clientIp(req))
+        // ⛔ Quem trocou a senha por desconfiar de alguém quer os `agw_` dele fora também.
+        this.deps.accessTokens?.revokeAll(id)
+        return this.session(req, res, session)
       },
       { message: 'Password changed' },
     )
@@ -174,7 +208,8 @@ export class AuthController {
     await this.respond(
       res,
       async () => {
-        await this.requireSelf()
+        // ⛔ Só sessão de LOGIN vira cookie: com o `agw_` (ou o JWT derivado dele) a rota lavava o token em sessão de pessoa.
+        await this.requireSession(res)
         const token = tokenFromHeader(req.headers[CALLER_HEADER])
         const expiresAt = token ? this.deps.accounts?.expiryOf(token) : undefined
         if (!token || !expiresAt) throw new HttpError(422, 'validation_error', 'Only a gateway session can become a cookie')

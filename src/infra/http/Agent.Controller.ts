@@ -312,6 +312,11 @@ export class AgentController {
    * Portão das rotas que não são do controller (o `openapi.json`): mesma regra de identidade, como
    * middleware. Recusa com 401 pelo handler de erro do servidor.
    */
+  /** A prova de quem chama, para o servidor decidir o teto do corpo antes de lê-lo (ver `AuthController.provenBeforeBody`). */
+  get callerProof(): ICallerProof | undefined {
+    return this.usecases.proof
+  }
+
   async guardCaller(_req: Request, _res: Response, next: NextFunction) {
     try {
       if (!(await resolveCaller(this.usecases.proof))) throw unauthorized()

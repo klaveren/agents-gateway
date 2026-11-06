@@ -31,10 +31,11 @@ export function makeAuth(): { accounts?: AccountsService; proof?: ICallerProof; 
   const users = new SqliteUserRepository(configured || DEFAULT_DB_PATH)
   const tokens = new HmacTokenIssuer(process.env.AUTH_SECRET?.trim() || users.signingSecret())
 
+  const accessTokens = new AccessTokensService(new SqliteAccessTokenRepository(configured || DEFAULT_DB_PATH), users, tokens)
   instance = {
     accounts: new AccountsService(users, new ScryptPasswordHasher(), tokens),
-    proof: new CompositeCallerProof(new LocalCallerProof(tokens, users), external),
-    accessTokens: new AccessTokensService(new SqliteAccessTokenRepository(configured || DEFAULT_DB_PATH), users, tokens),
+    proof: new CompositeCallerProof(new LocalCallerProof(tokens, users, (userId, tokenId) => accessTokens.isLive(userId, tokenId)), external),
+    accessTokens,
   }
   return instance
 }

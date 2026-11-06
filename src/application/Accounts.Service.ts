@@ -90,23 +90,30 @@ export class AccountsService {
   async login(email: string, password: string, origin = ''): Promise<ISession> {
     const user = this.users.findByEmail(normalizeEmail(email))
     const key = `${normalizeEmail(email)}\u0000${origin}`
-    const state = this.failures.get(key)
-    if (state?.lockedUntil && state.lockedUntil > this.now()) throw new LoginLockedError(Math.ceil((state.lockedUntil - this.now()) / 1000))
+    this.reserveAttempt(key)
 
     // A conferência roda SEMPRE, contra o hash falso quando não há conta: o tempo da resposta não
     // pode contar se o e-mail existe.
     const hash = user?.passwordHash ?? this.decoy
     const matches = this.hasher.verifyAsync ? await this.hasher.verifyAsync(password, hash) : this.hasher.verify(password, hash)
 
-    if (!user || user.disabled || !matches) {
-      const count = (state?.lockedUntil && state.lockedUntil <= this.now() ? 0 : (state?.count ?? 0)) + 1
-      this.trackFailure(key, { count, lockedUntil: count >= LOCK_AFTER_FAILURES ? this.now() + LOCK_MS : undefined })
-      throw new InvalidCredentialsError()
-    }
+    // A tentativa já foi contada (`reserveAttempt`): errar não grava nada de novo.
+    if (!user || user.disabled || !matches) throw new InvalidCredentialsError()
 
     this.failures.delete(key)
     this.users.update(user.id, { lastLoginAt: new Date(this.now()) })
     return this.sessionFor(user.id)
+  }
+
+  /**
+   * ⛔ CONTA A TENTATIVA ANTES do `await` do scrypt. Lida depois, o estado era o de antes de todas as tentativas em
+   * paralelo: 30 de uma vez gravavam `count=1` e a trava nunca fechava. Acertar zera (`failures.delete`).
+   */
+  private reserveAttempt(key: string): void {
+    const state = this.failures.get(key)
+    if (state?.lockedUntil && state.lockedUntil > this.now()) throw new LoginLockedError(Math.ceil((state.lockedUntil - this.now()) / 1000))
+    const count = (state?.lockedUntil && state.lockedUntil <= this.now() ? 0 : (state?.count ?? 0)) + 1
+    this.trackFailure(key, { count, lockedUntil: count >= LOCK_AFTER_FAILURES ? this.now() + LOCK_MS : undefined })
   }
 
   /** Com teto: no limite, saem primeiro as travas vencidas, e depois as mais antigas. */
@@ -156,9 +163,14 @@ export class AccountsService {
    * ⚖️ As OUTRAS sessões caem (quem troca a senha por desconfiar de alguém quer exatamente isso), e
    * esta continua: volta uma sessão nova, já na geração nova.
    */
-  changeOwnPassword(id: string, current: string, next: string): ISession {
+  async changeOwnPassword(id: string, current: string, next: string, origin = ''): Promise<ISession> {
+    // ⛔ Mesma trava de falhas do login (por conta e origem) e scrypt assíncrono: a rota é um oráculo de senha para quem roubou a sessão.
+    const key = `password\u0000${id}\u0000${origin}`
+    this.reserveAttempt(key)
     const user = this.users.findById(id)
-    if (!user || !this.hasher.verify(current, user.passwordHash)) throw new InvalidUserError([{ field: 'current', message: 'current password does not match' }])
+    const matches = user ? (this.hasher.verifyAsync ? await this.hasher.verifyAsync(current, user.passwordHash) : this.hasher.verify(current, user.passwordHash)) : false
+    if (!user || !matches) throw new InvalidUserError([{ field: 'current', message: 'current password does not match' }])
+    this.failures.delete(key)
     this.setPassword(id, next, user.email)
     return this.sessionFor(id)
   }

@@ -94,7 +94,7 @@ describe('pedidos de permissão (integração: MCP do gateway, API, cookie da te
     // O modelo do agente ativo: o `patch_agent` grava pelas regras do `PUT` (modelo ativado no catálogo).
     await call('/providers/claude/models', { method: 'POST', headers: bearer(admin), body: { modelId: 'claude-sonnet-5' } })
     await call('/providers/claude/models', { method: 'PUT', headers: bearer(admin), body: { modelId: 'claude-sonnet-5', enabled: true } })
-    accessToken = (await call('/auth/tokens', { method: 'POST', headers: bearer(admin), body: { name: 'ci' } })).body.result.token
+    accessToken = (await call('/auth/tokens', { method: 'POST', headers: bearer(admin), body: { name: 'ci', expiresInDays: 30 } })).body.result.token
     makeAgents().save(
       {
         id: 'theo',

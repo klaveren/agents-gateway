@@ -65,8 +65,8 @@ describe('AccountsService', () => {
     const { service } = build()
     const root = service.setup({ email: 'root@x.test', name: 'Root', password: PASSWORD }, service.setupCode).user
 
-    assert.throws(() => service.changeOwnPassword(root.id, 'não é esta', 'outra frase longa'), InvalidUserError)
-    service.changeOwnPassword(root.id, PASSWORD, 'outra frase longa')
+    await assert.rejects(service.changeOwnPassword(root.id, 'não é esta', 'outra frase longa'), InvalidUserError)
+    await service.changeOwnPassword(root.id, PASSWORD, 'outra frase longa')
     assert.ok((await service.login('root@x.test', 'outra frase longa')).token)
   })
 
@@ -84,5 +84,24 @@ describe('AccountsService', () => {
     service.setup({ email: 'root@x.test', name: 'Root', password: PASSWORD }, service.setupCode)
 
     assert.ok(!JSON.stringify(service.list()).includes('scrypt$'))
+  })
+
+  it('⛔ tentativas EM PARALELO contam todas: 30 de uma vez travam, não gravam count=1', async () => {
+    const { service } = build()
+    service.setup({ email: 'root@x.test', name: 'Root', password: PASSWORD }, service.setupCode)
+
+    const results = await Promise.allSettled(Array.from({ length: 30 }, () => service.login('root@x.test', 'errada errada', '203.0.113.9')))
+    assert.strictEqual(results.filter((r) => r.status === 'rejected' && r.reason instanceof InvalidCredentialsError).length, LOCK_AFTER_FAILURES)
+    assert.strictEqual(results.filter((r) => r.status === 'rejected' && r.reason instanceof LoginLockedError).length, 30 - LOCK_AFTER_FAILURES)
+    await assert.rejects(service.login('root@x.test', PASSWORD, '203.0.113.9'), LoginLockedError)
+  })
+
+  it('⛔ a troca da própria senha tem a mesma trava de falhas', async () => {
+    const { service } = build()
+    const root = service.setup({ email: 'root@x.test', name: 'Root', password: PASSWORD }, service.setupCode).user
+
+    for (let attempt = 0; attempt < LOCK_AFTER_FAILURES; attempt++)
+      await assert.rejects(service.changeOwnPassword(root.id, 'errada errada', 'outra frase longa', '203.0.113.9'), InvalidUserError)
+    await assert.rejects(service.changeOwnPassword(root.id, PASSWORD, 'outra frase longa', '203.0.113.9'), LoginLockedError)
   })
 })

@@ -15,6 +15,8 @@ export class LocalCallerProof implements ICallerProof {
   constructor(
     private readonly tokens: ITokenIssuer,
     private readonly users: IUserRepository,
+    /** Confere se o token de acesso de origem de uma sessão derivada (`via: 'agw'`) ainda vale. Ausente = sessão derivada nunca vale. */
+    private readonly accessTokenLive?: (userId: string, tokenId: string) => boolean,
   ) {}
 
   covers(token: string): boolean {
@@ -24,6 +26,9 @@ export class LocalCallerProof implements ICallerProof {
   async prove(token: string): Promise<boolean> {
     const claims = this.tokens.verify(token)
     if (!claims) return false
+
+    // ⛔ A sessão derivada de um `agw_` morre com ele: revogado ou vencido o token, o JWT que ele gerou cai também.
+    if (claims.via === 'agw' && !(claims.tid && this.accessTokenLive?.(claims.sub, claims.tid))) return false
 
     const user = this.users.findById(claims.sub)
     return !!user && !user.disabled && user.email === claims.email && user.role === claims.role && user.sessionVersion === claims.ver

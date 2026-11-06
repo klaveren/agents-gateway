@@ -106,7 +106,7 @@ const CATALOG_IMPORT_ROUTE = /^\/v1\/catalog\/import\/(?:plan|apply)\/?$/
 /** Os tipos do `.tar.gz` do export (o resto vai pelo JSON). */
 const ARCHIVE_TYPES = ['application/gzip', 'application/x-gzip', 'application/x-tar', 'application/octet-stream']
 /** As rotas com limite por origem (ver `rateLimit`). */
-export const THROTTLED_PATHS = ['/auth/login', '/auth/setup']
+export const THROTTLED_PATHS = ['/auth/login', '/auth/setup', '/auth/password']
 
 /** ⚠️ O hook é público: a credencial dele é a chave do hook (ver `Hooks.Controller`), não uma conta. */
 export const PUBLIC_PATHS: readonly string[] = ['/health', '/shared/:id', '/auth/status', '/auth/setup', '/auth/login', HOOK_PATH]
@@ -161,17 +161,19 @@ export class HttpServer {
     // O pacote do catálogo: o `.tar.gz` cru (o controller abre) ou o JSON, os dois com o limite do import.
     const importArchive = express.raw({ type: ARCHIVE_TYPES, limit: catalogImportLimit() })
     const importJson = express.json({ limit: catalogImportLimit() })
-    this.app.use((req, res, next) =>
-      HOOK_ROUTE.test(req.path)
-        ? raw(req, res, next)
-        : CATALOG_IMPORT_ROUTE.test(req.path)
-          ? importArchive(req, res, (error?: unknown) => (error ? next(error) : importJson(req, res, next)))
-          : MESSAGE_ROUTE.test(req.path) || CONTENT_ROUTES.some((route) => route.test(req.path))
-            ? large(req, res, next)
-            : small(req, res, next),
-    )
     // A sessão da tela chega no cookie HttpOnly; daqui em diante é a mesma credencial do cabeçalho.
+    // ⛔ ANTES dos parsers: o teto do corpo depende de saber se há credencial (o cookie só vira header aqui).
     this.app.use(cookieCredential())
+    const isLarge = (path: string) => MESSAGE_ROUTE.test(path) || CONTENT_ROUTES.some((route) => route.test(path))
+    this.app.use((req, res, next) => {
+      if (HOOK_ROUTE.test(req.path)) return raw(req, res, next)
+      const importing = CATALOG_IMPORT_ROUTE.test(req.path)
+      if (!importing && !isLarge(req.path)) return small(req, res, next)
+      // ⛔ O corpo grande (25 MB, e o pacote do import) só é lido de quem tem credencial PROVADA: antes, `POST /v1/agents` sem login parseava 20 MB (DoS).
+      const parse = (proven: boolean) =>
+        !proven ? small(req, res, next) : importing ? importArchive(req, res, (error?: unknown) => (error ? next(error) : importJson(req, res, next))) : large(req, res, next)
+      this.auth.provenBeforeBody(req, controller.callerProof).then(parse, () => parse(false))
+    })
 
     this.routes = buildRoutes(
       controller,
