@@ -54,6 +54,8 @@ export interface ICercoBase {
    * para ler e gravar (objetos, refs, locks — `status`, `commit`, `push`), menos o que roda código fora do cerco.
    */
   gitCommonDir?: string
+  /** O diretório git da worktree (`<comum>/worktrees/<nome>`): calculado pelo servidor; ausente no modo só repositório. */
+  worktreeGitDir?: string
   /**
    * Os arquivos que um padrão pega dentro da raiz (relativos a ela). Com ele, o modelo que a regra de sistema poupa
    * (`.env.example` sob `**\/.env.*`) é reaberto para leitura, um a um: o runtime não tem negação no padrão.
@@ -63,10 +65,23 @@ export interface ICercoBase {
 
 /**
  * ⛔ O que o comando nunca grava no `.git`, mesmo liberado: a config (`core.hooksPath`, `core.fsmonitor`), a config da
- * worktree e os hooks. Rodam no PRÓXIMO git de quem não está no cerco (a API, o gateway): seria código fora dele.
+ * worktree, os hooks, os submódulos (config e hooks deles) e os atributos do repositório (filtros). Rodam no PRÓXIMO git
+ * de quem não está no cerco (a API, o gateway): seria código fora dele.
+ *
+ * Na worktree, também o que diz ONDE está o git dela: o arquivo `<worktree>/.git`, o `commondir` e o `gitdir` do
+ * diretório dela. Caminhos literais calculados pelo servidor (o runtime ignora curinga no Linux; o do `worktrees/*` se
+ * expande onde o cerco é montado).
  */
-export function gitWriteDenies(gitCommonDir: string): string[] {
-  return [join(gitCommonDir, 'config'), join(gitCommonDir, 'hooks'), join(gitCommonDir, 'worktrees', '*', 'config.worktree')]
+export function gitWriteDenies(gitCommonDir: string, worktree?: { dir: string; gitDir: string }): string[] {
+  return [
+    join(gitCommonDir, 'config'),
+    join(gitCommonDir, 'config.worktree'),
+    join(gitCommonDir, 'hooks'),
+    join(gitCommonDir, 'modules'),
+    join(gitCommonDir, 'info', 'attributes'),
+    join(gitCommonDir, 'worktrees', '*', 'config.worktree'),
+    ...(worktree ? [join(worktree.dir, '.git'), join(worktree.gitDir, 'commondir'), join(worktree.gitDir, 'gitdir'), join(worktree.gitDir, 'config.worktree')] : []),
+  ]
 }
 
 /** O padrão de uma regra como caminho para o runtime: relativo vira absoluto na raiz; sem barra vale em qualquer pasta. */
@@ -135,7 +150,7 @@ export function cercoPlan(layers: IPermissionLayers, base: ICercoBase): ICercoPl
       ...new Set([
         ...base.alwaysDeny.filter((path) => !contains(path, base.root)),
         ...write.deny,
-        ...(base.gitCommonDir ? gitWriteDenies(base.gitCommonDir) : []),
+        ...(base.gitCommonDir ? gitWriteDenies(base.gitCommonDir, base.worktreeGitDir ? { dir: base.root, gitDir: base.worktreeGitDir } : undefined) : []),
         ...(base.readOnly ?? []),
       ]),
     ],

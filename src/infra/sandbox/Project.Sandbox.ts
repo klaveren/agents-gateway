@@ -6,6 +6,7 @@ import { promisify } from 'node:util'
 import { dataDir, projectWorkspace } from '@infra/adapters/support/Subscription.Workspace'
 import { esmImport } from '@infra/adapters/support/Esm.Import'
 import { networkGate } from '@infra/permissions/Network.Gate'
+import { commandDirOf } from '@infra/accounts/Ssh.Kit'
 import type { ICercoBase, ICercoPlan } from '@domain/Cerco.Plan'
 import { globToRegex, pathMatches } from '@domain/Permission.Policy'
 import { FILE_DIRS } from '@domain/models/ResourceFile.Model'
@@ -48,6 +49,12 @@ export interface IProjectSandbox {
    * ficava e o `git status` da worktree acusava a sobra.
    */
   done?(): void
+  /**
+   * ⛔ A pasta PRIVADA do servidor para o que é de UM comando (a chave SSH, a configuração do proxychains com o token de rede) e
+   * para os logs: fica na pasta de dados, que NENHUM comando lê — só o comando dono recebe leitura da sua subpasta
+   * (`commands/<token>`). Na pasta do projeto, que os agentes dividem, outro comando leria tudo pelo terminal.
+   */
+  runDir?(): string
 }
 
 /** Onde ficam o rascunho (HOME, TMPDIR, caches) e o `.git` quando a raiz é um repositório ou uma worktree. */
@@ -55,6 +62,7 @@ export interface ICercoPlace {
   /** A pasta do projeto: o rascunho mora nela, nunca dentro da worktree (sujaria o `git status`). Ausente = a raiz. */
   scratchBase?: string
   gitCommonDir?: string
+  worktreeGitDir?: string
   /** A pasta privada do agente do comando e o que ele faz nela (ver `agentFolderAccess`). As dos outros, fechadas. */
   agentFolder?: { dir: string; read: boolean; write: boolean }
   /** As portas de serviço LOCAL que as regras liberam exatas (`localhost:<porta>`): no Linux ganham um encaminhador. */
@@ -163,6 +171,7 @@ export class ProjectSandbox implements IProjectSandbox {
       ...(place.scratchBase && place.scratchBase !== root ? { projectRoot: place.scratchBase } : {}),
       scratch: ['.home', '.tmp', '.cache'].map((name) => join(place.scratchBase ?? root, name)),
       ...(place.gitCommonDir ? { gitCommonDir: place.gitCommonDir } : {}),
+      ...(place.gitCommonDir && place.worktreeGitDir ? { worktreeGitDir: place.worktreeGitDir } : {}),
       // A instalação do Node em uso (num Mac com nvm, fica na pasta pessoal, que o cerco fecha) e as ferramentas.
       alwaysRead: [join(dataDir(this.env), 'tools'), dirname(dirname(process.execPath)), ...runtimeHelpers()],
       // ⛔ As pastas privadas dos OUTROS agentes: fechadas para ler e gravar, mesmo com regra que as cubra (`**`).
@@ -181,6 +190,11 @@ export class ProjectSandbox implements IProjectSandbox {
     const port = await networkGate().start()
     const planned = plan(this.base(root, place))
     planned.readAllow.push(...bridgeSockets(manager))
+    // ⛔ Só ESTE comando lê o que o servidor guardou para ele (a chave SSH, o proxychains): a pasta de dados segue negada aos outros.
+    const own = commandDirOf(this.runDir(), networkToken)
+    const wantsTcp = process.platform === 'linux' && place.tcp
+    if (wantsTcp) mkdirSync(own, { recursive: true, mode: 0o700 })
+    if (existsSync(own)) planned.readAllow.push(own)
     const cerco = process.platform === 'linux' ? withWriteGlobsExpanded(forBubblewrap(planned, root, listDir)) : planned
     for (const dir of writeFolders(cerco, root)) mkdirSync(dir, { recursive: true, mode: 0o700 })
     const scratch = (name: string) => {
@@ -222,11 +236,15 @@ export class ProjectSandbox implements IProjectSandbox {
     // No Mac o seatbelt divide a rede com o host: lá só o cliente que fala proxy chega ao serviço local.
     const forwards = process.platform === 'linux' ? localForwards(place.localPorts ?? [], networkToken, LINUX_BRIDGE_PORT) : ''
     // Depois dos encaminhadores (eles mesmos não passam pelo interceptador): só o comando do agente.
-    const tcp = process.platform === 'linux' && place.tcp ? tcpInterceptor(cache, networkToken, LINUX_BRIDGE_PORT) : ''
+    const tcp = wantsTcp ? tcpInterceptor(own, networkToken, LINUX_BRIDGE_PORT) : ''
     return manager.wrapWithSandbox(`${prelude}; ${forwards} ${tcp} ${command}`, SANDBOX_SHELL, {
       ...(this.nested() ? { enableWeakerNestedSandbox: true } : {}),
       filesystem: { denyRead: cerco.readDeny, allowRead: cerco.readAllow, allowWrite: cerco.writeAllow, denyWrite: cerco.writeDeny },
     })
+  }
+
+  runDir(): string {
+    return join(dataDir(this.env), 'run')
   }
 
   done(): void {

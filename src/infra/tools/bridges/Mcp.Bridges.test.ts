@@ -70,4 +70,12 @@ describe('pontes MCP com vários servidores', () => {
     const servers = buildClaudeMcpServers([], [self], 'jwt') as Record<string, { headers?: Record<string, string> }>
     assert.deepStrictEqual(servers.mcp_gateway.headers, { Authorization: 'Bearer portao', 'X-Tool-Authorization': 'Bearer jwt' })
   })
+
+  it('⛔ com a concessão do turno, o MCP do gateway recebe só ela (o CLI deixa o header no argv); serviço de fora segue com a credencial', () => {
+    const self: IAgentMcpServer = { config: config('gateway'), callerHeader: 'X-Tool-Authorization' }
+    const outside: IAgentMcpServer = { config: config('crm'), callerHeader: 'authorization' }
+    const servers = buildClaudeMcpServers([], [self, outside], 'jwt', undefined, 'grant-1') as Record<string, { headers?: Record<string, string> }>
+    assert.deepStrictEqual(servers.mcp_gateway.headers, { 'X-Turn-Grant': 'grant-1' })
+    assert.deepStrictEqual(servers.mcp_crm.headers, { authorization: 'Bearer jwt' })
+  })
 })

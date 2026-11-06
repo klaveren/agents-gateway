@@ -525,46 +525,59 @@ describe('ClaudeAgentAdapter', () => {
       return { options: seen[0].options!, fake }
     }
 
-    it('⛔ o Bash sai embrulhado no cerco — uma vez só, mesmo passando pelo hook e pelo canUseTool', async () => {
+    it('⛔ C3: o Bash nativo do agente de projeto é recusado (nem pelo hook): sem cerco antigo, sem leitura do projeto inteiro', async () => {
       const { options: sent, fake } = await run(true)
-      const gate = sent.canUseTool!
-      const first = (await gate('Bash', { command: 'ls /', description: 'x' }, options)) as { behavior: string; updatedInput?: { command: string; description: string } }
-      assert.deepStrictEqual([first.behavior, first.updatedInput?.command, first.updatedInput?.description], ['allow', 'cercado(ls /)', 'x'])
-      const again = (await gate('Bash', { command: 'cercado(ls /)' }, options)) as { behavior: string; updatedInput?: unknown }
-      assert.deepStrictEqual([again.behavior, again.updatedInput], ['allow', undefined])
-      assert.deepStrictEqual(fake.calls, ['ls /'])
-
-      const hook = sent.hooks?.PreToolUse?.[0]?.hooks?.[0]
-      assert.ok(hook, 'o agente de projeto ganha o PreToolUse')
+      const denied = (await sent.canUseTool!('Bash', { command: 'cat .env' }, options)) as { behavior: string; message?: string }
+      assert.deepStrictEqual([denied.behavior, /run_bash/.test(denied.message ?? '')], ['deny', true])
+      const hook = sent.hooks!.PreToolUse![0].hooks[0]
       const output = (await hook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'pwd' }, tool_use_id: 't2' } as never, 't2', {
         signal: options.signal,
-      })) as {
-        hookSpecificOutput: { permissionDecision: string; updatedInput?: { command: string } }
-      }
-      assert.deepStrictEqual([output.hookSpecificOutput.permissionDecision, output.hookSpecificOutput.updatedInput?.command], ['allow', 'cercado(pwd)'])
-    })
-
-    it('⛔ sem cerco, o Bash do projeto é recusado com o motivo; Read fora da pasta também', async () => {
-      const { options: sent } = await run(false)
-      const denied = (await sent.canUseTool!('Bash', { command: 'ls' }, options)) as { behavior: string; message?: string }
-      assert.strictEqual(denied.behavior, 'deny')
-      assert.match(denied.message ?? '', /No permissions to create new namespace.*bloqueado/)
+      })) as { hookSpecificOutput: { permissionDecision: string } }
+      assert.strictEqual(output.hookSpecificOutput.permissionDecision, 'deny')
+      assert.deepStrictEqual(fake.calls, [])
       const outside = (await sent.canUseTool!('Read', { file_path: '/etc/hosts' }, options)) as { behavior: string; message?: string }
       assert.deepStrictEqual([outside.behavior, /fora da pasta do projeto/.test(outside.message ?? '')], ['deny', true])
       const inside = (await sent.canUseTool!('Write', { file_path: 'notas.md', content: 'x' }, options)) as { behavior: string }
       assert.strictEqual(inside.behavior, 'allow')
     })
 
-    it('o agente global continua sem cerco, mas com o hook (a lista protegida vale para ele)', async () => {
+    const globalGate = async (tools: string[], extra: Partial<IAgent> = {}) => {
       const seen: TQueryParams[] = []
-      const fake = sandbox(true)
-      const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog: catalogWith(true), sandbox: fake })
-      const global = { ...getAgent(), allowedTools: ['sdk:Bash'] }
+      const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog: catalogWith(true), sandbox: sandbox(true) })
+      const global = { ...getAgent(), allowedTools: tools, ...extra }
       const session = await adapter.createSession(global, { agentId: CLAUDE_TEST_AGENT.id })
       await drain(adapter.sendMessage(global, session.id, { text: 'oi' }, {}))
-      assert.ok(seen[0].options?.hooks?.PreToolUse?.length)
-      const decision = (await seen[0].options!.canUseTool!('Bash', { command: 'ls' }, options)) as { behavior: string; updatedInput?: unknown }
-      assert.deepStrictEqual([decision.behavior, decision.updatedInput, fake.calls], ['allow', undefined, []])
+      return seen[0].options!
+    }
+
+    it('⛔ C3/C4: agente global que não é adminOnly não tem Bash, Grep nem Glob nativos (/proc/environ, HOME, pastas de outros agentes)', async () => {
+      const sent = await globalGate(['sdk:Bash', 'sdk:Grep', 'sdk:Glob', 'sdk:Read'])
+      for (const [tool, input] of [
+        ['Bash', { command: 'cat /proc/$PPID/environ' }],
+        ['Grep', { pattern: '.', path: '/' }],
+        ['Glob', { pattern: '**/.env' }],
+      ] as const) {
+        const decision = (await sent.canUseTool!(tool, input, options)) as { behavior: string }
+        assert.strictEqual(decision.behavior, 'deny', tool)
+      }
+    })
+
+    it('o agente global adminOnly (o admin do gateway) continua com o Bash nativo, mas com a lista protegida', async () => {
+      const sent = await globalGate(['sdk:Bash'], { adminOnly: true })
+      const decision = (await sent.canUseTool!('Bash', { command: 'ls' }, options)) as { behavior: string }
+      assert.strictEqual(decision.behavior, 'allow')
+    })
+
+    it('⛔ M9: o WebFetch passa pelo portão de rede (loopback, porta do gateway, metadados), não só pela regra', async () => {
+      const sent = await globalGate(['sdk:WebFetch'])
+      const fetch = async (url: string) => (await sent.canUseTool!('WebFetch', { url, prompt: 'x' }, options)) as { behavior: string; message?: string }
+      for (const url of ['http://localhost:3000/api', 'http://127.0.0.1:8080/', 'http://169.254.169.254/latest/meta-data', 'http://[::1]:9/', 'file:///etc/passwd', 'não é url']) {
+        assert.strictEqual((await fetch(url)).behavior, 'deny', url)
+      }
+    })
+
+    it('⛔ o ambiente do CLI liga o scrub das credenciais nos subprocessos', () => {
+      assert.strictEqual(cliEnv({ key: 'k', compatible: false }).CLAUDE_CODE_SUBPROCESS_ENV_SCRUB, '1')
     })
 
     it('⛔ worktree: o Edit pela regra escrita a partir da pasta do projeto passa; o que a regra não cobre, não', async () => {
@@ -598,7 +611,7 @@ describe('ClaudeAgentAdapter', () => {
       const seen: TQueryParams[] = []
       const loops = new LoopGuard(() => ({ refuseAt: 2, stopAt: 9, maxErrors: 9 }))
       const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog: catalogWith(true), sandbox: sandbox(true), loops })
-      const global = { ...getAgent(), allowedTools: ['sdk:Bash'] }
+      const global = { ...getAgent(), allowedTools: ['sdk:Bash'], adminOnly: true }
       const session = await adapter.createSession(global, { agentId: CLAUDE_TEST_AGENT.id })
       await drain(adapter.sendMessage(global, session.id, { text: 'oi' }, {}))
       const hook = seen[0].options!.hooks!.PreToolUse![0].hooks[0]
@@ -650,7 +663,7 @@ describe('ClaudeAgentAdapter', () => {
     it('mensagem durante o turno: o PostToolUse de toda ferramenta leva o que chegou, uma vez', async () => {
       const seen: TQueryParams[] = []
       const adapter = new ClaudeAgentAdapter({ query: queryWith(turn, seen), catalog: catalogWith(true), sandbox: sandbox(true) })
-      const agent = { ...getAgent(), allowedTools: ['sdk:Bash'] }
+      const agent = { ...getAgent(), allowedTools: ['sdk:Bash'], adminOnly: true }
       const session = await adapter.createSession(agent, { agentId: CLAUDE_TEST_AGENT.id })
       const queue = ['use o banco B']
       await drain(adapter.sendMessage(agent, session.id, { text: 'oi', interjections: () => queue.splice(0) }, {}))

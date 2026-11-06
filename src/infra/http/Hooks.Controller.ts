@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { AgentHooksService } from '@application/AgentHooks.Service'
 import { IAgentHook } from '@domain/models/AgentHook.Model'
 import { provenCaller } from './Caller.Access'
+import { clientIp, WindowCounter } from './Security.Middleware'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
@@ -17,9 +18,13 @@ export interface IHooksControllerDeps {
   /** Uma sessão curta da conta, se ela ainda está ativa — é em nome dela que o hook roda. */
   sessionFor: (userId: string) => { token: string } | undefined
   proof?: ICallerProof
+  /** O relógio das cotas e da janela do `X-Timestamp` (os testes). */
+  now?: () => number
 }
 
 export const HOOK_PATH = '/hook/:agentId/:hookName'
+/** ⛔ Com `X-Timestamp` (segundos), a assinatura HMAC cobre `<timestamp>.<corpo>` e vale por esta janela, uma vez só. */
+const TIMESTAMP_WINDOW_MS = 5 * 60_000
 /** O corpo do evento que vai na mensagem do turno: o resto é cortado, com aviso. */
 const BODY_IN_PROMPT = 100_000
 /** Headers que nunca vão para o agente: credenciais e o que o proxy põe. */
@@ -50,22 +55,44 @@ export class HooksController {
   private readonly turns = new Map<string, Promise<unknown>>()
   /** E a conversa nasce uma vez só, mesmo com duas chamadas chegando juntas. */
   private readonly opening = new Map<string, Promise<string>>()
+  /** ⛔ A cota de SUCESSO conta por hook (`HOOK_RATE_LIMIT`, 60/min: cada chamada é um turno de modelo); a de FALHA, por IP (`HOOK_FAIL_LIMIT`, 30/min). */
+  private readonly accepted: WindowCounter
+  private readonly rejected: WindowCounter
+  /** As assinaturas já vistas com `X-Timestamp` (replay dentro da janela). */
+  private readonly seen = new Map<string, number>()
 
   constructor(private readonly deps: IHooksControllerDeps) {
+    const now = deps.now ?? Date.now
+    this.accepted = new WindowCounter(60_000, Number(process.env.HOOK_RATE_LIMIT) || 60, now)
+    this.rejected = new WindowCounter(60_000, Number(process.env.HOOK_FAIL_LIMIT) || 30, now)
     for (const name of ['receive', 'list', 'create', 'update', 'remove', 'rotate', 'deliveries'] as const) this[name] = this[name].bind(this)
   }
 
   async receive(req: Request, res: Response): Promise<void> {
-    const deny = (status: number, code: 'not_found' | 'hook_unauthorized' | 'hook_owner_inactive', message: string) => res.status(status).json(fail(message, code))
+    const deny = (status: number, code: 'not_found' | 'hook_unauthorized' | 'hook_owner_inactive' | 'rate_limited', message: string) => res.status(status).json(fail(message, code))
     const agentId = req.params.agentId as string
     const name = req.params.hookName as string
 
+    const tooMany = (retry: number) => {
+      res.setHeader('Retry-After', String(retry))
+      return void deny(429, 'rate_limited', 'Too many requests')
+    }
+    const ip = clientIp(req)
+    const blocked = this.rejected.over(ip)
+    if (blocked) return tooMany(blocked)
+
+    // ⛔ 401 UNIFORME: hook que não existe, desligado, chave errada e assinatura errada respondem igual (nada de enumerar
+    // agentes e hooks), e a falha conta para o IP — não para o hook, que o anônimo não pode esgotar.
     const hook = this.deps.hooks.active(agentId, name)
-    if (!hook) return void deny(404, 'not_found', 'Not found')
     const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)
-    const secret = this.deps.hooks.secretOf(agentId, name)
-    if (!secret || !verified(hook, secret, req, raw))
-      return void deny(401, 'hook_unauthorized', hook.verify === 'hmac' ? `Missing or wrong signature in ${hook.signatureHeader}` : 'Missing or wrong hook key')
+    const secret = hook ? this.deps.hooks.secretOf(agentId, name) : undefined
+    if (!hook || !secret || !this.verifiedFresh(hook, secret, req, raw)) {
+      this.rejected.hit(ip)
+      return void deny(401, 'hook_unauthorized', 'Missing or wrong hook credentials')
+    }
+    const exhausted = this.accepted.over(`${agentId}/${name}`)
+    if (exhausted) return tooMany(exhausted)
+    this.accepted.hit(`${agentId}/${name}`)
 
     const session = this.deps.sessionFor(hook.runAs)
     if (!session) return void deny(409, 'hook_owner_inactive', 'The account this hook runs as is disabled or gone; recreate the hook')
@@ -99,6 +126,25 @@ export class HooksController {
       this.deps.hooks.finishDelivery(delivery.id, { status: 'error', error: failure?.message ?? String(error) })
       res.status(failure?.status ?? 500).json(fail(failure?.message ?? 'Could not open the conversation', (failure?.code as never) ?? 'internal_error'))
     }
+  }
+
+  /**
+   * A chave/assinatura confere? Com `X-Timestamp` (HMAC), o carimbo entra na assinatura, tem de estar na janela e a mesma
+   * assinatura não vale duas vezes. Sem ele, vale como sempre (quem não manda não quebra; a repetição só se evita com ele).
+   */
+  private verifiedFresh(hook: IAgentHook, secret: string, req: Request, raw: Buffer): boolean {
+    const stamp = hook.verify === 'hmac' ? headerOf(req, 'x-timestamp') : undefined
+    if (stamp === undefined) return verified(hook, secret, req, raw)
+    const now = this.deps.now?.() ?? Date.now()
+    const sentAt = /^\d{1,13}$/.test(stamp.trim()) ? Number(stamp.trim()) * 1000 : NaN
+    if (!Number.isFinite(sentAt) || Math.abs(now - sentAt) > TIMESTAMP_WINDOW_MS) return false
+    if (!verified(hook, secret, req, Buffer.concat([Buffer.from(`${stamp.trim()}.`), raw]))) return false
+    const signature = headerOf(req, hook.signatureHeader.toLowerCase())!.trim()
+    const key = `${hook.agentId}/${hook.name}:${signature}`
+    for (const [entry, until] of this.seen) if (until <= now) this.seen.delete(entry)
+    if (this.seen.has(key)) return false
+    this.seen.set(key, now + TIMESTAMP_WINDOW_MS)
+    return true
   }
 
   /** A conversa de um hook contínuo: a gravada, se ainda existe; senão uma nova, gravada no hook. */
@@ -141,7 +187,7 @@ export class HooksController {
   async update(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
       const caller = await this.requireAdmin('updateHook', req.params.agentId as string)
-      return this.toDto(this.deps.hooks.update(req.params.agentId as string, req.params.hookName as string, parseBody(updateSchema, req.body), caller.label))
+      return this.toDto(this.deps.hooks.update(req.params.agentId as string, req.params.hookName as string, parseBody(updateSchema, req.body), caller.label, caller.userId))
     })
   }
 
@@ -159,7 +205,7 @@ export class HooksController {
       const agentId = req.params.agentId as string
       const caller = await this.requireAdmin('rotateHook', agentId)
       const name = req.params.hookName as string
-      const secret = this.deps.hooks.rotate(agentId, name, caller.label)
+      const secret = this.deps.hooks.rotate(agentId, name, caller.label, caller.userId)
       return { ...this.toDto(this.deps.hooks.get(agentId, name)), secret }
     })
   }
@@ -214,6 +260,11 @@ export class HooksController {
 /** A conversa do hook, aberta pela API em nome da conta: carimbada com o hook, para a caixa de entrada mostrar a origem. */
 function openConversation(api: TSelfApi, hook: IAgentHook): Promise<string> {
   return openSelfConversation(api, { agentId: hook.agentId, metadata: { hook: { agentId: hook.agentId, name: hook.name } } })
+}
+
+function headerOf(req: Request, name: string): string | undefined {
+  const header = req.headers[name]
+  return Array.isArray(header) ? header[0] : header
 }
 
 function verified(hook: IAgentHook, secret: string, req: Request, raw: Buffer): boolean {

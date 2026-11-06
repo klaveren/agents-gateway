@@ -93,12 +93,15 @@ export class AgentSchedulesService {
   }
 
   /** Religar zera as falhas e a pausa do sistema; trocar o modo larga a conversa contínua. */
-  update(agentId: string, name: string, change: TScheduleChange, by: string): IAgentSchedule {
+  update(agentId: string, name: string, change: TScheduleChange, by: string, runAs?: string): IAgentSchedule {
     const current = this.get(agentId, name)
     const next = { ...current, ...definedOf(change) }
     const issues = this.issues(agentId, { ...next, projectId: change.projectId === undefined ? current.projectId : change.projectId })
     if (issues.length) throw new InvalidScheduleError(issues)
     const resumed = change.enabled === true && !current.enabled
+    // ⛔ Quem mexe no que o agendamento faz assume o `runAs`: o admin B do projeto não edita o item do A (que pode ser admin do
+    // gateway ou de outro projeto) e o roda com o token do A. Só pausar não assume; religar, sim (volta a rodar como quem religou).
+    const takesOver = !!runAs && runAs !== current.runAs && !(Object.keys(definedOf(change)).every((key) => key === 'enabled') && change.enabled === false)
     return this.schedules.update(agentId, name, {
       cron: next.cron.trim(),
       timezone: next.timezone,
@@ -107,6 +110,7 @@ export class AgentSchedulesService {
       ...(change.session && change.session !== current.session ? { sessionId: undefined } : {}),
       ...(change.projectId !== undefined ? { projectId: change.projectId || undefined } : {}),
       enabled: next.enabled,
+      ...(takesOver ? { runAs, ...(next.session === 'continuous' ? { sessionId: undefined } : {}) } : {}),
       ...(resumed ? { failures: 0, pausedReason: undefined, lastScheduledFor: this.now() } : {}),
       updatedAt: this.now(),
       updatedBy: by,

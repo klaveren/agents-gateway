@@ -6,6 +6,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { makeAuth } from '@composition/factories/Auth.Factory'
 import { makeAuthController, makeController, makeProvidersController, makeUsageController } from '@composition/factories/Controller.Factory'
 import { HttpServer } from './Http.Server'
+import { sessionCookieName } from './Session.Cookie'
 
 const PASSWORD = 'frase longa o bastante'
 
@@ -71,13 +72,13 @@ describe('tokens de acesso (integração)', () => {
 
   it('⛔ "Sair" não derruba o token; revogado, 401; e token de acesso não cria nem revoga token', async () => {
     let session = (await call('/auth/login', { method: 'POST', body: { email: 'ana@x.test', password: PASSWORD } })).body.result.token as string
-    const pat = (await call('/auth/tokens', { method: 'POST', token: session, body: { name: 'script' } })).body.result.token as string
+    const pat = (await call('/auth/tokens', { method: 'POST', token: session, body: { name: 'script', expiresInDays: 30 } })).body.result.token as string
 
     await call('/auth/logout', { method: 'POST', token: session })
     assert.strictEqual((await call('/auth/me', { token: session })).status, 401)
     assert.strictEqual((await call('/auth/me', { token: pat })).status, 200)
 
-    assert.strictEqual((await call('/auth/tokens', { method: 'POST', token: pat, body: { name: 'filho' } })).status, 403)
+    assert.strictEqual((await call('/auth/tokens', { method: 'POST', token: pat, body: { name: 'filho', expiresInDays: 30 } })).status, 403)
     const id = (await call('/auth/tokens', { token: pat })).body.result.find((token: { name: string }) => token.name === 'script').id
     assert.strictEqual((await call(`/auth/tokens/${id}`, { method: 'DELETE', token: pat })).status, 403)
 
@@ -85,5 +86,48 @@ describe('tokens de acesso (integração)', () => {
     assert.strictEqual((await call(`/auth/tokens/${id}`, { method: 'DELETE', token: session })).status, 200)
     assert.strictEqual((await call('/auth/me', { token: pat })).status, 401)
     assert.strictEqual((await call('/agents', { token: pat })).status, 401)
+  })
+
+  it('⛔ o JWT derivado de um agw_ não vira cookie, não cria token e cai com o token de origem', async () => {
+    const session = (await call('/auth/login', { method: 'POST', body: { email: 'ana@x.test', password: PASSWORD } })).body.result.token as string
+    const created = (await call('/auth/tokens', { method: 'POST', token: session, body: { name: 'ci', expiresInDays: 30 } })).body.result
+    const pat = created.token as string
+    const origin = new URL(base).origin
+
+    // O ataque: agw_ → POST /auth/cookie devolvia um JWT de sessão comum no Set-Cookie.
+    const cookie = await fetch(`${base}/auth/cookie`, { method: 'POST', headers: { 'X-Tool-Authorization': `Bearer ${pat}`, Origin: origin } })
+    assert.strictEqual(cookie.status, 403)
+    assert.strictEqual(cookie.headers.get('set-cookie'), null)
+
+    // O JWT derivado (o que a porta gera), no header ou no cookie com Origin forjado por curl: nada de gerir tokens.
+    const derived = makeAuth().accessTokens!.exchange(pat)!
+    assert.strictEqual((await call('/auth/tokens', { method: 'POST', token: derived, body: { name: 'filho', expiresInDays: 30 } })).status, 403)
+    const asCookie = await fetch(`${base}/auth/tokens`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: `${sessionCookieName()}=${encodeURIComponent(derived)}`, Origin: origin },
+      body: JSON.stringify({ name: 'filho', expiresInDays: 30 }),
+    })
+    assert.strictEqual(asCookie.status, 403)
+    assert.strictEqual((await call('/auth/me', { token: derived })).status, 200)
+
+    // Revogado o agw_, o JWT que ele gerou cai junto.
+    assert.strictEqual((await call(`/auth/tokens/${created.id}`, { method: 'DELETE', token: session })).status, 200)
+    assert.strictEqual((await call('/auth/me', { token: derived })).status, 401)
+  })
+
+  it('⛔ trocar a senha derruba os agw_ da conta, e criar token sem validade é recusado', async () => {
+    const session = (await call('/auth/login', { method: 'POST', body: { email: 'ana@x.test', password: PASSWORD } })).body.result.token as string
+    assert.strictEqual((await call('/auth/tokens', { method: 'POST', token: session, body: { name: 'eterno' } })).status, 422)
+    const pat = (await call('/auth/tokens', { method: 'POST', token: session, body: { name: 'ci', expiresInDays: 30 } })).body.result.token as string
+    assert.strictEqual((await call('/auth/me', { token: pat })).status, 200)
+
+    assert.strictEqual((await call('/auth/password', { method: 'PUT', token: session, body: { current: PASSWORD, password: PASSWORD } })).status, 200)
+    assert.strictEqual((await call('/auth/me', { token: pat })).status, 401)
+  })
+
+  it('⛔ sem credencial, o corpo grande não é lido: 20 MB em POST /agents cai no teto pequeno', async () => {
+    const big = JSON.stringify({ name: 'x', prompt: 'a'.repeat(20 * 1024 * 1024) })
+    const res = await fetch(`${base}/agents`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: big })
+    assert.strictEqual(res.status, 413)
   })
 })

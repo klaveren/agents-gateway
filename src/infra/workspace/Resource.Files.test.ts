@@ -1,5 +1,5 @@
 import assert from 'node:assert'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
@@ -130,5 +130,20 @@ describe('ResourceFilesStore — o depósito e as pastas dos arquivos de recurso
     store.moveAgent('iris', undefined, 'alfa')
     assert.strictEqual(readFileSync(join(store.dirOf('agent', 'iris', 'alfa'), 'notas.md'), 'utf8'), 'de novo')
     assert.strictEqual(existsSync(dir), false)
+  })
+
+  it('⛔ subpasta da pasta do agente trocada por symlink: nem a gravação, nem o boot, nem a remoção passam por ela', () => {
+    const fora = mkdtempSync(join(tmpdir(), 'gw-fora-'))
+    writeFileSync(join(fora, 'vitima.txt'), 'intacto')
+    const c = store.put(Buffer.from('plantado'))
+    store.writeAgent('rex', undefined, [{ path: 'keep.txt', ...c }], [])
+    const dir = store.dirOf('agent', 'rex')
+    symlinkSync(fora, join(dir, 'sub'))
+    assert.throws(() => store.writeAgent('rex', undefined, [{ path: 'sub/novo.txt', ...c }], []), /link/)
+    store.restoreAgent('rex', undefined, [{ path: 'sub/novo2.txt', ...c }])
+    store.writeAgent('rex', undefined, [], ['sub/vitima.txt'])
+    assert.deepStrictEqual(readdirSync(fora), ['vitima.txt'])
+    assert.strictEqual(readFileSync(join(fora, 'vitima.txt'), 'utf8'), 'intacto')
+    rmSync(fora, { recursive: true, force: true })
   })
 })

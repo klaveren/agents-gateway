@@ -1,7 +1,7 @@
 import { IAgentHook, IHookDelivery } from '@domain/models/AgentHook.Model'
 
 export type TAgentHookPatch = Partial<
-  Pick<IAgentHook, 'prompt' | 'enabled' | 'verify' | 'signatureHeader' | 'signaturePrefix' | 'signatureEncoding' | 'session' | 'sessionId' | 'updatedAt' | 'updatedBy'>
+  Pick<IAgentHook, 'prompt' | 'enabled' | 'verify' | 'signatureHeader' | 'signaturePrefix' | 'signatureEncoding' | 'session' | 'sessionId' | 'runAs' | 'updatedAt' | 'updatedBy'>
 >
 
 /** Onde ficam os hooks dos agentes e as últimas chamadas de cada um. Síncrono, como o resto do cadastro. */

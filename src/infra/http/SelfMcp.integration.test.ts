@@ -22,6 +22,7 @@ import { HooksController } from './Hooks.Controller'
 import { GuidanceController } from './Guidance.Controller'
 import { PackagesController } from './Packages.Controller'
 import { ProjectsController } from './Projects.Controller'
+import { turnGrants } from '@infra/tools/Turn.Grants'
 
 /** Um micromamba falso: instala `jq` (cria o ambiente) e lista o que está lá. */
 const FAKE_MAMBA = `#!/usr/bin/env node
@@ -419,5 +420,35 @@ describe('MCP do próprio gateway (integração)', () => {
     await client.callTool({ name: 'delete_rule', arguments: { id: second.id } })
     assert.deepStrictEqual(await titles(), ['1:Idioma'])
     await client.callTool({ name: 'delete_rule', arguments: { id: first.id } })
+  })
+  it('⛔ o agente chega pela CONCESSÃO do turno (sem token) e só grava no projeto da conversa dele', async () => {
+    for (const id of ['proja', 'projb']) await call('/projects', { method: 'POST', token: admin, body: { id, name: id } })
+    const grant = turnGrants().register({ tools: [], context: { token: admin, agentId: 'atlas', sessionId: 's1', conversationProjectId: 'proja' } })
+    try {
+      const client = new Client({ name: 'teste', version: '1.0.0' })
+      await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { 'X-Turn-Grant': grant } } }))
+
+      const other = (await client.callTool({ name: 'save_rule', arguments: { title: 'Invasora', body: 'x', projectId: 'projb' } })) as { isError?: boolean }
+      assert.strictEqual(other.isError, true)
+      assert.strictEqual(json(other).status, 403)
+      const global = (await client.callTool({ name: 'save_rule', arguments: { title: 'Global', body: 'x' } })) as { isError?: boolean }
+      assert.strictEqual(global.isError, true)
+      const own = await client.callTool({ name: 'save_rule', arguments: { title: 'Do projeto', body: 'x', projectId: 'proja' } })
+      assert.ok(!(own as { isError?: boolean }).isError, JSON.stringify(own))
+      const ruleId = json(own).id as string
+      // A regra do projeto da conversa muda; a de outro projeto, mesmo existindo, não.
+      const foreign = json(await (await connect(admin)).callTool({ name: 'save_rule', arguments: { title: 'De B', body: 'x', projectId: 'projb' } })).id as string
+      assert.strictEqual(((await client.callTool({ name: 'delete_rule', arguments: { id: foreign } })) as { isError?: boolean }).isError, true)
+      assert.ok(!((await client.callTool({ name: 'delete_rule', arguments: { id: ruleId } })) as { isError?: boolean }).isError)
+    } finally {
+      turnGrants().release(grant)
+    }
+    // Acabou o turno: a concessão não abre mais nada.
+    const after = await fetch(`${base}/mcp`, {
+      method: 'POST',
+      headers: { 'X-Turn-Grant': grant, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+      body: '{}',
+    })
+    assert.strictEqual(after.status, 401)
   })
 })

@@ -12,6 +12,7 @@ import { SchedulesController } from './Schedules.Controller'
 import { AgentSchedulesService } from '@application/AgentSchedules.Service'
 import { ScheduleRunner } from '@application/Schedule.Runner'
 import { SqliteAgentScheduleRepository } from '@infra/persistence/Sqlite.AgentScheduleRepository'
+import { grantCredential } from './Grant.Credential'
 import { cookieCredential } from './Session.Cookie'
 import { AgentController } from './Agent.Controller'
 import { AuthController } from './Auth.Controller'
@@ -106,7 +107,7 @@ const CATALOG_IMPORT_ROUTE = /^\/v1\/catalog\/import\/(?:plan|apply)\/?$/
 /** Os tipos do `.tar.gz` do export (o resto vai pelo JSON). */
 const ARCHIVE_TYPES = ['application/gzip', 'application/x-gzip', 'application/x-tar', 'application/octet-stream']
 /** As rotas com limite por origem (ver `rateLimit`). */
-export const THROTTLED_PATHS = ['/auth/login', '/auth/setup']
+export const THROTTLED_PATHS = ['/auth/login', '/auth/setup', '/auth/password']
 
 /** ⚠️ O hook é público: a credencial dele é a chave do hook (ver `Hooks.Controller`), não uma conta. */
 export const PUBLIC_PATHS: readonly string[] = ['/health', '/shared/:id', '/auth/status', '/auth/setup', '/auth/login', HOOK_PATH]
@@ -161,17 +162,21 @@ export class HttpServer {
     // O pacote do catálogo: o `.tar.gz` cru (o controller abre) ou o JSON, os dois com o limite do import.
     const importArchive = express.raw({ type: ARCHIVE_TYPES, limit: catalogImportLimit() })
     const importJson = express.json({ limit: catalogImportLimit() })
-    this.app.use((req, res, next) =>
-      HOOK_ROUTE.test(req.path)
-        ? raw(req, res, next)
-        : CATALOG_IMPORT_ROUTE.test(req.path)
-          ? importArchive(req, res, (error?: unknown) => (error ? next(error) : importJson(req, res, next)))
-          : MESSAGE_ROUTE.test(req.path) || CONTENT_ROUTES.some((route) => route.test(req.path))
-            ? large(req, res, next)
-            : small(req, res, next),
-    )
+    // ⛔ A concessão do turno (agente de CLI) vira a credencial do dono do turno, por dentro: o agente nunca leva o token.
+    this.app.use(grantCredential())
     // A sessão da tela chega no cookie HttpOnly; daqui em diante é a mesma credencial do cabeçalho.
+    // ⛔ ANTES dos parsers: o teto do corpo depende de saber se há credencial (o cookie só vira header aqui).
     this.app.use(cookieCredential())
+    const isLarge = (path: string) => MESSAGE_ROUTE.test(path) || CONTENT_ROUTES.some((route) => route.test(path))
+    this.app.use((req, res, next) => {
+      if (HOOK_ROUTE.test(req.path)) return raw(req, res, next)
+      const importing = CATALOG_IMPORT_ROUTE.test(req.path)
+      if (!importing && !isLarge(req.path)) return small(req, res, next)
+      // ⛔ O corpo grande (25 MB, e o pacote do import) só é lido de quem tem credencial PROVADA: antes, `POST /v1/agents` sem login parseava 20 MB (DoS).
+      const parse = (proven: boolean) =>
+        !proven ? small(req, res, next) : importing ? importArchive(req, res, (error?: unknown) => (error ? next(error) : importJson(req, res, next))) : large(req, res, next)
+      this.auth.provenBeforeBody(req, controller.callerProof).then(parse, () => parse(false))
+    })
 
     this.routes = buildRoutes(
       controller,
@@ -263,11 +268,11 @@ export class HttpServer {
 
     // ⛔ Login e setup: 20 por minuto por origem. A trava por e-mail não segura quem troca de e-mail.
     const throttled = rateLimit({ windowMs: 60_000, max: Number(process.env.AUTH_RATE_LIMIT) || 20 })
-    // ⛔ Hook: 60 por minuto POR HOOK (`HOOK_RATE_LIMIT`) — cada chamada é um turno de modelo, e a URL é pública.
-    const hookThrottle = rateLimit({ windowMs: 60_000, max: Number(process.env.HOOK_RATE_LIMIT) || 60, key: (req) => `${req.params.agentId}/${req.params.hookName}` })
+    // ⛔ Hook: a cota fica no `HooksController.receive` — a de sucesso por hook (`HOOK_RATE_LIMIT`), a de falha por IP
+    // (`HOOK_FAIL_LIMIT`), contadas DEPOIS de conferir a chave: um anônimo não esgota a cota do webhook legítimo.
     for (const { method, path: routePath, handler } of this.routes) {
       const open = PUBLIC_PATHS.includes(routePath) ? [exchange, callerScope, handler] : [exchange, identity, callerScope, handler]
-      const chain = THROTTLED_PATHS.includes(routePath) ? [throttled, ...open] : routePath === HOOK_PATH ? [hookThrottle, ...open] : open
+      const chain = THROTTLED_PATHS.includes(routePath) ? [throttled, ...open] : open
       this.app[method](`${API_PREFIX}${routePath}`, ...chain)
     }
 

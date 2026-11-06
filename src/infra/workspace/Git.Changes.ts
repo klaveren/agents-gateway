@@ -1,9 +1,6 @@
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import { deniedPath } from '@infra/tools/File.Tools'
 import { join } from 'node:path'
-
-const run = promisify(execFile)
+import { IGitPlace, safeGit } from './Git.Safe'
 
 export type TChangeScope = 'conversation' | 'uncommitted' | 'branch'
 export const CHANGE_SCOPES: readonly TChangeScope[] = ['conversation', 'uncommitted', 'branch']
@@ -38,47 +35,31 @@ export interface IChanges {
 
 export const CHANGE_LIMITS = { files: 300, diffBytes: 200 * 1024 } as const
 
-/**
- * ⛔ O GIT SÓ DE LEITURA, sem nada do repositório que execute programa: sem diff externo, sem textconv, sem fsmonitor,
- * sem pager, sem a config do sistema, sem pedir senha. A config do repositório é de quem o prepara (a esteira), mas uma
- * entrada maliciosa nela não pode rodar código no gateway.
- */
-async function git(dir: string, args: readonly string[], maxBuffer = 8 * 1024 * 1024): Promise<string> {
-  const { stdout } = await run(
-    'git',
-    ['-C', dir, '-c', 'core.fsmonitor=', '-c', 'diff.external=', '-c', 'core.pager=cat', '-c', 'core.hooksPath=/dev/null', '-c', 'diff.noprefix=false', ...args],
-    {
-      encoding: 'utf8',
-      timeout: 15_000,
-      maxBuffer,
-      env: { PATH: process.env.PATH ?? '/usr/bin:/bin', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', HOME: '/nonexistent' },
-    },
-  )
-  return stdout
-}
+/** ⛔ O git só de leitura é o endurecido e compartilhado (`Git.Safe`): git e pasta calculados pelo servidor. */
+const git = (place: IGitPlace, args: readonly string[], maxBuffer = 8 * 1024 * 1024): Promise<string> => safeGit(place, args, { maxBuffer })
 
 const DIFF_FLAGS = ['--no-ext-diff', '--no-textconv', '--no-color', '-M']
 
-async function revParse(dir: string, ref: string): Promise<string | undefined> {
-  return (await git(dir, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]).catch(() => '')).trim() || undefined
+async function revParse(place: IGitPlace, ref: string): Promise<string | undefined> {
+  return (await git(place, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]).catch(() => '')).trim() || undefined
 }
 
 /** A base do branch: `origin/HEAD`, senão o primeiro de `main`, `master`, `automation` (local ou do origin). */
-async function branchBase(dir: string): Promise<string | undefined> {
+async function branchBase(place: IGitPlace): Promise<string | undefined> {
   for (const ref of ['origin/HEAD', 'origin/main', 'main', 'origin/master', 'master', 'origin/automation', 'automation']) {
-    const sha = await revParse(dir, ref)
+    const sha = await revParse(place, ref)
     if (!sha) continue
-    const base = (await git(dir, ['merge-base', 'HEAD', sha]).catch(() => '')).trim()
+    const base = (await git(place, ['merge-base', 'HEAD', sha]).catch(() => '')).trim()
     if (base) return base
   }
   return undefined
 }
 
 /** De onde o recorte parte. `undefined` = do início (repositório sem commit). */
-async function rangeStart(dir: string, scope: TChangeScope, startCommit?: string): Promise<string | undefined> {
-  if (scope === 'uncommitted') return revParse(dir, 'HEAD')
-  if (scope === 'conversation' && startCommit && (await revParse(dir, startCommit))) return startCommit
-  return (await branchBase(dir)) ?? revParse(dir, 'HEAD')
+async function rangeStart(place: IGitPlace, scope: TChangeScope, startCommit?: string): Promise<string | undefined> {
+  if (scope === 'uncommitted') return revParse(place, 'HEAD')
+  if (scope === 'conversation' && startCommit && (await revParse(place, startCommit))) return startCommit
+  return (await branchBase(place)) ?? revParse(place, 'HEAD')
 }
 
 /** Os arquivos de `git diff --name-status -z` e `--numstat -z` juntos. */
@@ -120,32 +101,32 @@ function isProtected(dir: string, path: string): boolean {
  * O que mudou na pasta da conversa, no recorte pedido: os arquivos (estado, linhas, binário) e os commits. Com
  * `commit`, só o que aquele commit mudou.
  */
-export async function changesOf(dir: string, scope: TChangeScope, options: { startCommit?: string; commit?: string } = {}): Promise<IChanges> {
+export async function changesOf(place: IGitPlace, scope: TChangeScope, options: { startCommit?: string; commit?: string } = {}): Promise<IChanges> {
   if (options.commit) {
-    const sha = await revParse(dir, options.commit)
+    const sha = await revParse(place, options.commit)
     if (!sha) throw new Error(`commit: ${options.commit} não existe aqui`)
     const range = [`${sha}^!`]
-    const files = parseFiles(await git(dir, ['diff', ...DIFF_FLAGS, '--name-status', '-z', ...range]), await git(dir, ['diff', ...DIFF_FLAGS, '--numstat', '-z', ...range]))
-    return finish(dir, { scope, commit: sha, files, commits: await commitsOf(dir, `${sha}^!`), truncated: false })
+    const files = parseFiles(await git(place, ['diff', ...DIFF_FLAGS, '--name-status', '-z', ...range]), await git(place, ['diff', ...DIFF_FLAGS, '--numstat', '-z', ...range]))
+    return finish(place, { scope, commit: sha, files, commits: await commitsOf(place, `${sha}^!`), truncated: false })
   }
-  const from = await rangeStart(dir, scope, options.startCommit)
+  const from = await rangeStart(place, scope, options.startCommit)
   // ⚖️ Contra a ÁRVORE DE TRABALHO (sem `..HEAD`): entra o commitado no recorte e o que ainda não foi.
   const base = from ? [from] : []
-  const files = parseFiles(await git(dir, ['diff', ...DIFF_FLAGS, '--name-status', '-z', ...base]), await git(dir, ['diff', ...DIFF_FLAGS, '--numstat', '-z', ...base]))
-  for (const path of (await git(dir, ['ls-files', '--others', '--exclude-standard', '-z'])).split('\0').filter(Boolean)) {
-    if (!files.some((file) => file.path === path)) files.push({ path, status: 'A', additions: await lineCount(dir, path), deletions: 0, binary: false })
+  const files = parseFiles(await git(place, ['diff', ...DIFF_FLAGS, '--name-status', '-z', ...base]), await git(place, ['diff', ...DIFF_FLAGS, '--numstat', '-z', ...base]))
+  for (const path of (await git(place, ['ls-files', '--others', '--exclude-standard', '-z'])).split('\0').filter(Boolean)) {
+    if (!files.some((file) => file.path === path)) files.push({ path, status: 'A', additions: await lineCount(place, path), deletions: 0, binary: false })
   }
-  const commits = scope === 'uncommitted' || !from ? [] : await commitsOf(dir, `${from}..HEAD`)
-  return finish(dir, { scope, ...(from ? { from } : {}), files, commits, truncated: false })
+  const commits = scope === 'uncommitted' || !from ? [] : await commitsOf(place, `${from}..HEAD`)
+  return finish(place, { scope, ...(from ? { from } : {}), files, commits, truncated: false })
 }
 
-function finish(dir: string, changes: IChanges): IChanges {
-  const sorted = changes.files.sort((a, b) => a.path.localeCompare(b.path)).map((file) => (isProtected(dir, file.path) ? { ...file, protected: true } : file))
+function finish(place: IGitPlace, changes: IChanges): IChanges {
+  const sorted = changes.files.sort((a, b) => a.path.localeCompare(b.path)).map((file) => (isProtected(place.dir, file.path) ? { ...file, protected: true } : file))
   return { ...changes, files: sorted.slice(0, CHANGE_LIMITS.files), truncated: sorted.length > CHANGE_LIMITS.files }
 }
 
-async function commitsOf(dir: string, range: string): Promise<IChangeCommit[]> {
-  const out = await git(dir, ['log', '--no-color', '--format=%H%x1f%s%x1f%an%x1f%aI%x1e', '-n', '200', range]).catch(() => '')
+async function commitsOf(place: IGitPlace, range: string): Promise<IChangeCommit[]> {
+  const out = await git(place, ['log', '--no-color', '--format=%H%x1f%s%x1f%an%x1f%aI%x1e', '-n', '200', range]).catch(() => '')
   return out
     .split('\x1e')
     .map((record) => record.trim())
@@ -156,8 +137,8 @@ async function commitsOf(dir: string, range: string): Promise<IChangeCommit[]> {
     })
 }
 
-async function lineCount(dir: string, path: string): Promise<number> {
-  const numstat = await git(dir, ['diff', ...DIFF_FLAGS, '--no-index', '--numstat', '--', '/dev/null', path]).catch((error: { stdout?: string }) => error.stdout ?? '')
+async function lineCount(place: IGitPlace, path: string): Promise<number> {
+  const numstat = await git(place, ['diff', ...DIFF_FLAGS, '--no-index', '--numstat', '--', '/dev/null', path]).catch((error: { stdout?: string }) => error.stdout ?? '')
   const match = /^(-|\d+)\t/.exec(numstat)
   return match && match[1] !== '-' ? Number(match[1]) : 0
 }
@@ -166,25 +147,25 @@ async function lineCount(dir: string, path: string): Promise<number> {
  * O diff unificado de UM arquivo do recorte. ⛔ Só de arquivo que está na lista (quem chama confere), nunca de segredo,
  * e com teto de tamanho.
  */
-export async function fileDiff(dir: string, changes: IChanges, path: string): Promise<{ diff: string; truncated: boolean; protected?: boolean; binary?: boolean }> {
+export async function fileDiff(place: IGitPlace, changes: IChanges, path: string): Promise<{ diff: string; truncated: boolean; protected?: boolean; binary?: boolean }> {
   const file = changes.files.find((item) => item.path === path)
   if (!file) throw new Error(`file: ${path} não está entre as alterações deste recorte`)
   if (file.protected) return { diff: '', truncated: false, protected: true }
   if (file.binary) return { diff: '', truncated: false, binary: true }
   const paths = ['--', ...(file.oldPath ? [file.oldPath] : []), file.path]
   let diff: string
-  if (changes.commit) diff = await git(dir, ['diff', ...DIFF_FLAGS, '-U3', `${changes.commit}^!`, ...paths], CHANGE_LIMITS.diffBytes * 4)
+  if (changes.commit) diff = await git(place, ['diff', ...DIFF_FLAGS, '-U3', `${changes.commit}^!`, ...paths], CHANGE_LIMITS.diffBytes * 4)
   else {
     // ⚠️ O APAGADO também sai do índice: sem isto caía no caminho do não rastreado (`/dev/null` contra nada) e vinha vazio.
     const tracked =
       file.status === 'D' ||
-      (await git(dir, ['ls-files', '--error-unmatch', '--', file.path]).then(
+      (await git(place, ['ls-files', '--error-unmatch', '--', file.path]).then(
         () => true,
         () => false,
       ))
     diff = tracked
-      ? await git(dir, ['diff', ...DIFF_FLAGS, '-U3', ...(changes.from ? [changes.from] : []), ...paths], CHANGE_LIMITS.diffBytes * 4)
-      : await git(dir, ['diff', ...DIFF_FLAGS, '-U3', '--no-index', '--', '/dev/null', file.path], CHANGE_LIMITS.diffBytes * 4).catch(
+      ? await git(place, ['diff', ...DIFF_FLAGS, '-U3', ...(changes.from ? [changes.from] : []), ...paths], CHANGE_LIMITS.diffBytes * 4)
+      : await git(place, ['diff', ...DIFF_FLAGS, '-U3', '--no-index', '--', '/dev/null', file.path], CHANGE_LIMITS.diffBytes * 4).catch(
           (error: { stdout?: string }) => error.stdout ?? '',
         )
   }
@@ -193,6 +174,6 @@ export async function fileDiff(dir: string, changes: IChanges, path: string): Pr
 }
 
 /** O HEAD de agora (o commit de partida da conversa). */
-export async function headOf(dir: string): Promise<string | undefined> {
-  return revParse(dir, 'HEAD')
+export async function headOf(place: IGitPlace): Promise<string | undefined> {
+  return revParse(place, 'HEAD')
 }

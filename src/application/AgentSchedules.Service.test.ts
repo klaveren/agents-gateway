@@ -80,4 +80,12 @@ describe('AgentSchedulesService', () => {
     )
     assert.strictEqual(service.update('global', 'continuo', { session: 'new' }, 'root').sessionId, undefined)
   })
+
+  it('⛔ quem edita o agendamento de OUTRA pessoa assume o runAs (não roda com o token do criador); pausar não assume', () => {
+    const service = build()
+    service.create('global', { name: 'do-a', cron: '0 8 * * *', prompt: 'original' }, { userId: 'u_a', label: 'a' })
+    assert.strictEqual(service.update('global', 'do-a', { enabled: false }, 'b', 'u_b').runAs, 'u_a')
+    assert.strictEqual(service.update('global', 'do-a', { prompt: 'do B' }, 'b', 'u_b').runAs, 'u_b')
+    assert.strictEqual(service.update('global', 'do-a', { prompt: 'do A de novo' }, 'a', 'u_a').runAs, 'u_a')
+  })
 })

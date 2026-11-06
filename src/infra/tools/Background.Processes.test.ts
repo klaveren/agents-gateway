@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
@@ -55,6 +55,62 @@ describe('Background.Processes (o terminal longo)', () => {
   })
 })
 
+describe('Background.Processes — os limites e a limpeza (M12)', () => {
+  it('⛔ o log tem teto de bytes: passou, o aviso fecha o arquivo; a saída em memória segue inteira', async () => {
+    const before = process.env.BASH_LOG_MAX_BYTES
+    process.env.BASH_LOG_MAX_BYTES = '1000'
+    try {
+      const logFile = join(root, 'cap', 'x.log')
+      const result = await startCommand("head -c 5000 /dev/zero | tr '\\0' x", { cwd: root, env: { PATH: process.env.PATH! }, shell: '/bin/bash', timeoutMs: 5000, logFile }).done
+      assert.strictEqual(result.output.length, 5000)
+      const log = readFileSync(logFile, 'utf8')
+      assert.ok(statSync(logFile).size < 1300, String(statSync(logFile).size))
+      assert.match(log, /log cortado em 1000 bytes/)
+    } finally {
+      if (before === undefined) delete process.env.BASH_LOG_MAX_BYTES
+      else process.env.BASH_LOG_MAX_BYTES = before
+    }
+  })
+
+  it('podar apaga o arquivo do log, e a conversa apagada leva os logs dela', () => {
+    const processes = new BackgroundProcesses()
+    mkdirSync(join(root, 'prune'), { recursive: true })
+    const entry = (id: string, sessionId = 's') => {
+      const logFile = join(root, 'prune', `${id}.log`)
+      writeFileSync(logFile, 'x')
+      processes.remember({ id, sessionId, name: id, command: id, startedAt: new Date(), code: 0, timedOut: false, logFile })
+      return logFile
+    }
+    const first = entry('primeiro')
+    for (let index = 0; index < 500; index++) entry(`n${index}`)
+    assert.strictEqual(existsSync(first), false, 'o mais antigo saiu da memória e do disco')
+    const mine = entry('meu', 'conversa-apagada')
+    processes.stopSession('conversa-apagada')
+    assert.strictEqual(existsSync(mine), false)
+  })
+
+  it('⛔ teto GLOBAL de processos em segundo plano, somadas as conversas', async () => {
+    const before = process.env.BACKGROUND_MAX_PROCESSES
+    process.env.BACKGROUND_MAX_PROCESSES = '2'
+    const rules: IPermissionRule[] = [{ category: 'terminal', pattern: '*', decision: 'allow' }]
+    const checker: IPermissionChecker = { check: (_asker, subject) => decide(subject, { agent: rules }), layers: () => ({ agent: rules, system: [] }) }
+    const sandbox: IProjectSandbox = { status: async () => ({ available: true, mechanism: 'seatbelt' }), wrap: async (command) => command, wrapWith: async (command) => command }
+    const processes = new BackgroundProcesses()
+    try {
+      const start = makeLocalTools({ policy: { timeoutMs: 2000, maxOutputChars: 300, cwd: root }, sandbox, permissions: checker, processes }).find(
+        (tool) => tool.name === 'bash_start',
+      )!
+      assert.strictEqual((await start.execute({ command: 'sleep 30' }, { sessionId: 'a', agentId: 'dev' })).status, 'success')
+      assert.strictEqual((await start.execute({ command: 'sleep 30' }, { sessionId: 'b', agentId: 'dev' })).status, 'success')
+      assert.match((await start.execute({ command: 'sleep 30' }, { sessionId: 'c', agentId: 'dev' })).result, /já tem 2 processos em segundo plano/)
+    } finally {
+      processes.stopAll()
+      if (before === undefined) delete process.env.BACKGROUND_MAX_PROCESSES
+      else process.env.BACKGROUND_MAX_PROCESSES = before
+    }
+  })
+})
+
 describe('o terminal com o executor novo (spawn)', () => {
   const rules: IPermissionRule[] = [{ category: 'terminal', pattern: '*', decision: 'allow' }]
   const checker: IPermissionChecker = { check: (_asker, subject) => decide(subject, { agent: rules }), layers: () => ({ agent: rules, system: [] }) }
@@ -76,6 +132,29 @@ describe('o terminal com o executor novo (spawn)', () => {
     const logs = await find(list, 'bash_logs').execute({ id, grep: 'linha-7' }, context)
     assert.match(logs.result, /linha-7\n/)
     assert.match((await find(list, 'bash_logs').execute({ id }, { sessionId: 'outra' })).result, /Não há processo/)
+  })
+
+  it('⛔ o log e a chave SSH do comando ficam na pasta do SERVIDOR (por conversa e por comando), nunca no .home/.cache que os agentes dividem; a chave sai no fim', async () => {
+    const run = join(root, 'run')
+    const own: IProjectSandbox = { ...sandbox, runDir: () => run }
+    const list = makeLocalTools({
+      policy: { timeoutMs: 5000, maxOutputChars: 1500, cwd: root },
+      sandbox: own,
+      permissions: checker,
+      processes,
+      accounts: { commandEnv: async () => ({ env: {}, ssh: [{ id: 'srv', privateKey: 'CHAVE-PRIVADA', hostPatterns: [], knownHosts: 'h ssh-ed25519 AAAA' }], problems: [] }) },
+    })
+    const ctx = { sessionId: 'conv/1', agentId: 'dev', conversationProjectId: 'p1' }
+    const out = await find(list, 'run_bash').execute({ command: 'd=$(printenv PATH | cut -d: -f1); echo "$d"; ls "$d/.."; for i in $(seq 1 400); do echo linha-$i; done' }, ctx)
+    const kit = String(/^(\S+)\/bin$/m.exec(out.result)?.[1])
+    assert.ok(kit.startsWith(join(run, 'commands')), kit)
+    assert.ok(!kit.includes('.home') && !kit.includes('.accounts'))
+    assert.match(out.result, /ident-0/)
+    assert.strictEqual(existsSync(kit), false, 'a pasta do comando sai no fim')
+    const id = /bash_logs id (\w+)/.exec(out.result)?.[1]
+    assert.ok(id)
+    assert.ok(existsSync(join(run, 'logs', 'conv_1', `${id}.log`)), 'o log por conversa, fora do projeto')
+    assert.strictEqual(existsSync(join(root, '.cache', 'logs')), false)
   })
 
   it('o tempo do agente vale, e o modelo pode pedir mais só até ele', async () => {

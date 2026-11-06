@@ -165,7 +165,7 @@ describe('stores do catálogo', () => {
     vi.mocked(api).mockResolvedValueOnce([{ id: 'velho', name: 'CI', prefix: 'agw_v', createdAt: '' }])
     await tokens.lists.ensure('u1')
     vi.mocked(api).mockResolvedValueOnce({ id: 'novo', name: 'Claude Code', prefix: 'agw_n', createdAt: '', token: 'agw_segredo' })
-    const created = await tokens.create('u1', { name: 'Claude Code' })
+    const created = await tokens.create('u1', { name: 'Claude Code', expiresInDays: 90 })
 
     expect(created.token).toBe('agw_segredo')
     expect(tokens.lists.get('u1')?.map((item) => item.id)).toEqual(['novo', 'velho'])

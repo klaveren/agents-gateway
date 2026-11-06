@@ -17,7 +17,7 @@ import { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { IMessageInput } from '@domain/models/MessageInput.Model'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
-import { mcpHeaders } from '@infra/tools/bridges/Claude.ToolBridge'
+import { mcpHeaders, usesGatewayCredential } from '@infra/tools/bridges/Claude.ToolBridge'
 import { IAgentMcpServer, ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { TurnGrants, turnGrants } from '@infra/tools/Turn.Grants'
 import { untestedCodex } from './support/Codex.Binary'
@@ -180,23 +180,28 @@ export class CodexAgentAdapter implements IAgentAdapter {
     // executa é o gateway, com as permissões e o cerco do agente.
     const locals = this.catalog?.localFor(agent.allowedTools) ?? []
     const grants = this.turnTools?.grants ?? turnGrants()
-    const grant = locals.length && this.turnTools ? grants.register({ tools: locals, context: { ...context, sessionId } }) : undefined
+    // ⛔ O Codex leva a CONCESSÃO no argv (`--config`, visível em `/proc/<pid>/cmdline`), nunca o token de quem conversa: o
+    // gateway troca a concessão pela identidade do dono do turno (ver `Grant.Credential`).
+    let grant = locals.length && this.turnTools ? grants.register({ tools: locals, context: { ...context, sessionId } }) : undefined
+    const toolsGranted = !!grant
     if (locals.length && !grant) yield { type: 'warning', sessionId, timestamp: now(), payload: { message: 'As ferramentas do gateway não chegam ao Codex aqui: ficam de fora.' } }
 
     try {
       const remotes = (await this.catalog?.mcpServersFor(agent.allowedTools, context)) ?? []
-      const servers = codexMcpServers(remotes, context.token, context)
-      if (grant)
+      // O MCP do gateway e a ponte dos contêineres também pedem a credencial: a mesma concessão a leva (sem ferramentas próprias).
+      if (!grant && this.turnTools && remotes.some(usesGatewayCredential)) grant = grants.register({ tools: [], context: { ...context, sessionId } })
+      const servers = codexMcpServers(remotes, context.token, context, grant)
+      if (grant && toolsGranted)
         servers[CODEX_TURN_TOOLS_SERVER] = {
           url: this.turnTools!.url,
-          http_headers: { 'X-Turn-Grant': grant, ...(context.token ? { 'X-Tool-Authorization': `Bearer ${context.token}` } : {}) },
+          http_headers: { 'X-Turn-Grant': grant },
           // ⚖️ Sem a aprovação do Codex: quem decide cada chamada são as permissões do agente, no gateway (sem isto, toda
           // ferramenta que grava é recusada com "requires approval, but approval policy is never").
           default_tools_approval_mode: 'approve',
         }
       // ⛔ O SDK passa as instruções como `--config developer_instructions=...`: acima do limite do Linux, o `spawn` morre
       // com um `E2BIG` mudo. Recusa antes, dizendo o tamanho e o que pesa.
-      const instructions = withMcpHint(record.systemPrompt, remotes, grant ? locals.map((tool) => tool.name) : [])
+      const instructions = withMcpHint(record.systemPrompt, remotes, toolsGranted ? locals.map((tool) => tool.name) : [])
       const tooBig = cliArgumentIssue('Codex', cliArgumentBytes(EProvider.CODEX, instructions), promptParts(instructions))
       if (tooBig) {
         yield { type: 'error', sessionId, timestamp: now(), payload: { message: tooBig } }
@@ -305,10 +310,10 @@ export function withMcpHint(systemPrompt: string, remotes: readonly IAgentMcpSer
 }
 
 /** `mcp_servers` da config do Codex: URL, headers (a credencial de quem conversa) e o filtro de ferramentas. */
-export function codexMcpServers(remotes: readonly IAgentMcpServer[], token?: string, context?: IExecutionContext): Record<string, Record<string, unknown>> {
+export function codexMcpServers(remotes: readonly IAgentMcpServer[], token?: string, context?: IExecutionContext, grant?: string): Record<string, Record<string, unknown>> {
   const servers: Record<string, Record<string, unknown>> = {}
   for (const remote of remotes) {
-    const headers = mcpHeaders(remote, token, context)
+    const headers = mcpHeaders(remote, token, context, grant)
     servers[remote.config.id.replace(/[^a-zA-Z0-9_-]/g, '_')] = {
       url: remote.config.url,
       ...(headers ? { http_headers: headers } : {}),

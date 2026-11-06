@@ -88,6 +88,21 @@ describe('containerArgs', () => {
   })
 })
 
+describe('isPrivateAddress — IPv6 mapeado em hexa', () => {
+  it('⛔ ::ffff:7f00:1, metadado, LAN e ::1 expandido são privados; o mapeado público não', () => {
+    for (const address of ['::ffff:7f00:1', '::ffff:a9fe:a9fe', '::ffff:c0a8:101', '::ffff:a00:1', '0:0:0:0:0:0:0:1']) assert.ok(isPrivateAddress(address), address)
+    assert.ok(!isPrivateAddress('::ffff:808:808'))
+  })
+
+  it('o script do contêiner embute a classificação binária', () => {
+    const source = egressProxySource()
+    const body = source.slice(source.indexOf('const __name'), source.indexOf('const portAllowed'))
+    const run = new Function(`${body}; return isPrivateAddress`)()
+    assert.strictEqual(run('::ffff:7f00:1'), true)
+    assert.strictEqual(run('8.8.8.8'), false)
+  })
+})
+
 describe('isPrivateAddress — túneis IPv6', () => {
   it('⛔ 6to4, Teredo e NAT64 (embutem um IPv4 da rede interna) são privados', async () => {
     const { isPrivateAddress } = await import('./Egress.Proxy')

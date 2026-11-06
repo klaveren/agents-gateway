@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve, sep } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { FILE_DIRS, filePathIssue, IResourceFile, RESOURCE_FILE_MAX_BYTES, RESOURCE_FILES_MAX_COUNT, TFileOwnerKind } from '@domain/models/ResourceFile.Model'
 import { IResourceFilesPort } from '@domain/ports/ResourceFiles.Port'
 import { dataDir, projectWorkspacePath } from '@infra/adapters/support/Subscription.Workspace'
@@ -176,15 +176,17 @@ export class ResourceFilesStore implements IResourceFilesPort {
     for (const file of files) {
       if (filePathIssue(file.path)) throw new Error(`invalid resource file path: ${file.path}`)
       const target = join(dir, ...file.path.split('/'))
+      if (!linkFree(dir, target)) throw new Error(`resource file path crosses a link: ${file.path}`)
       if (shaOf(target) === file.sha256) continue
       const content = this.read(file.sha256)
       if (!content) throw new Error(`resource file content not found: ${file.path} (${file.sha256})`)
-      writeAtomically(target, content)
+      writeAtomically(target, content, dir)
     }
     const kept = new Set(files.map((file) => file.path))
     for (const path of removed) {
       if (kept.has(path) || filePathIssue(path)) continue
       const target = join(dir, ...path.split('/'))
+      if (!linkFree(dir, target)) continue
       try {
         if (lstatSync(target).isFile()) unlinkSync(target)
       } catch {
@@ -200,9 +202,9 @@ export class ResourceFilesStore implements IResourceFilesPort {
     for (const file of files) {
       if (filePathIssue(file.path)) continue
       const target = join(dir, ...file.path.split('/'))
-      if (existsSync(target)) continue
+      if (!linkFree(dir, target) || existsSync(target)) continue
       const content = this.read(file.sha256)
-      if (content) writeAtomically(target, content)
+      if (content) writeAtomically(target, content, dir)
     }
   }
 
@@ -255,11 +257,40 @@ function shaOf(path: string): string | undefined {
   }
 }
 
-/** Grava ao lado e renomeia: quem lê no meio vê o de antes ou o novo. Script com `#!` roda direto. */
-function writeAtomically(target: string, content: Buffer): void {
+/**
+ * ⛔ Nenhum componente do caminho abaixo da pasta do agente é link: o agente roda na pasta dele e pode trocar uma subpasta
+ * por symlink; o gateway, ao gravar `sub/arquivo`, escreveria através dele, fora da pasta.
+ */
+function linkFree(dir: string, target: string): boolean {
+  const rel = relative(dir, target)
+  if (!rel || rel.startsWith('..')) return false
+  let current = dir
+  for (const part of rel.split(sep)) {
+    current = join(current, part)
+    try {
+      if (lstatSync(current).isSymbolicLink()) return false
+    } catch {
+      return true // o resto ainda não existe: nada a seguir
+    }
+  }
+  return true
+}
+
+/**
+ * Grava ao lado e renomeia: quem lê no meio vê o de antes ou o novo. Script com `#!` roda direto.
+ * ⛔ Com `dir` (a pasta do agente), depois de criar as pastas confere de novo que a pasta-mãe é real e continua dentro dela
+ * (o agente pode trocar uma subpasta por link entre a checagem e a gravação), e o temporário é `wx` (não segue link).
+ */
+function writeAtomically(target: string, content: Buffer, dir?: string): void {
   mkdirSync(dirname(target), { recursive: true, mode: 0o755 })
+  if (dir) {
+    const parent = realpathSync(dirname(target))
+    const base = realpathSync(dir)
+    if (parent !== base && !parent.startsWith(base + sep)) throw new Error('resource file path left the agent folder: refused')
+    if (!linkFree(dir, target)) throw new Error('resource file path crosses a link: refused')
+  }
   const temp = `${target}.${randomBytes(6).toString('hex')}.tmp`
-  writeFileSync(temp, content, { mode: content.subarray(0, 2).toString() === '#!' ? 0o755 : 0o644 })
+  writeFileSync(temp, content, { mode: content.subarray(0, 2).toString() === '#!' ? 0o755 : 0o644, flag: 'wx' })
   renameSync(temp, target)
 }
 

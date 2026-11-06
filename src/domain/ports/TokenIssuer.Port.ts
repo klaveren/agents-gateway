@@ -6,6 +6,12 @@ export interface ISessionClaims {
   role: TUserRole
   /** A geração da sessão (`IStoredUser.sessionVersion`) em que o token nasceu. */
   ver: number
+  /**
+   * ⛔ A marca de sessão DERIVADA de token de acesso (`agw_`): `via: 'agw'` e `tid` = o id do token. Esta sessão não
+   * gere tokens, não vira cookie e não vale como "pessoa na tela"; e cai junto com o `agw_` de origem.
+   */
+  via?: 'agw'
+  tid?: string
 }
 
 /** Emite e confere o token da sessão. Conferir é só a assinatura e o prazo — a conta é com a prova. */

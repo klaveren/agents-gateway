@@ -206,8 +206,8 @@ describe('AgentController: o admin do projeto, só o projeto dele', () => {
     assert.strictEqual((await turns(ROOT, 'c-beta')).status, 404)
     assert.strictEqual((await turns(ANA, 'c-global')).status, 404)
     assert.strictEqual((await turns(ROOT, 'c-global')).status, 200)
-    // O dono abre a própria, mesmo no projeto que não administra.
-    assert.strictEqual((await turns(ROOT, 'c-root-beta')).status, 200)
+    // ⛔ O dono que NÃO usa mais o projeto (o root nunca foi membro do beta) perde a conversa dele.
+    assert.strictEqual((await turns(ROOT, 'c-root-beta')).status, 404)
     assert.strictEqual((await turns(CAIO, 'c-alfa')).status, 200)
   })
 
@@ -244,7 +244,7 @@ describe('AgentController: o admin do projeto, só o projeto dele', () => {
       ['c-global'],
     )
     assert.strictEqual(root.total, 1)
-    // A caixa de entrada própria do root traz as dele, mesmo no beta.
+    // A caixa de entrada própria do root traz as dele, mesmo no beta (abrir a conversa, aí sim, exige o projeto).
     assert.deepStrictEqual(
       (await page(ROOT, { mine: '1' })).sessions.map((item: { id: string }) => item.id),
       ['c-root-beta'],
@@ -263,5 +263,61 @@ describe('AgentController: o admin do projeto, só o projeto dele', () => {
     assert.strictEqual((await call(ROOT, 'getSettings')).status, 200)
     assert.strictEqual((await call(ANA, 'getSettings')).status, 404)
     assert.strictEqual((await call(ANA, 'updateSettings', { body: {} })).status, 404)
+  })
+
+  it('⛔ quem é REMOVIDO do projeto perde a conversa dele: 404 em turnos, mensagem e na lista; o admin do projeto segue', async () => {
+    const DORA = token('u_dora', 'member')
+    members.alfa!.u_dora = 'member'
+    await conversations.saveSession(session('c-dora', 'u_dora', 'alfa'))
+    const turns = (as: string) => call(as, 'getConversationTurns', { params: { id: 'c-dora' } })
+    assert.strictEqual((await turns(DORA)).status, 200)
+    delete members.alfa!.u_dora
+    assert.strictEqual((await turns(DORA)).status, 404)
+    const messaged = await withCaller({ token: DORA, ...identityFromToken(DORA) }, async () => {
+      const reply = { status: 0 }
+      const res = { status: (code: number) => ((reply.status = code), res), json: () => res } as unknown as Response
+      await controller.sendMessage({ params: { id: 'c-dora' }, body: { message: 'oi' }, query: {}, headers: {} } as unknown as Request, res)
+      return reply
+    })
+    assert.strictEqual(messaged.status, 404)
+    assert.strictEqual((await call(DORA, 'sessionLive', { params: { id: 'c-dora' } })).status, 404)
+    assert.ok(!ids(await call(DORA, 'listConversations')).includes('c-dora'))
+    assert.strictEqual((await turns(ANA)).status, 200)
+    await conversations.deleteSession('c-dora')
+  })
+
+  it('⛔ a conversa de DELEGAÇÃO não recebe mensagem direto pelo id, nem do dono', async () => {
+    const resumed: string[] = []
+    const direct = new AgentController({
+      agents,
+      catalog: { mcpUrl: '', mcpConnected: false, mcp: { list: () => [] }, list: async () => [] } as unknown as ToolCatalog,
+      createSession: new CreateSessionUseCase(provider),
+      sendMessage: new SendMessageUseCase(provider, conversations),
+      cancelSession: new CancelSessionUseCase(provider),
+      reconfigureSession: new ReconfigureSessionUseCase(provider),
+      deleteSession: new DeleteSessionUseCase(provider),
+      getSession: new GetSessionUseCase(provider),
+      listSessions: new ListSessionsUseCase(provider),
+      resumeSession: { execute: async (stored: IConversationSession) => void resumed.push(stored.id) } as never,
+      proof,
+      settings: new NullSettingsRepository(),
+      conversations,
+      projects: projects as never,
+    })
+    await conversations.saveSession({ ...session('c-filha', 'u_caio'), metadata: { owner: { id: 'u_caio' }, delegatedBy: 'c-mae' } })
+    await conversations.saveSession(session('c-mae', 'u_caio'))
+    const send = (id: string, handler: 'sendMessage' | 'startTurn') =>
+      withCaller({ token: CAIO, ...identityFromToken(CAIO) }, async () => {
+        const reply = { status: 0 }
+        const res = { status: (code: number) => ((reply.status = code), res), json: () => res, setHeader: () => res } as unknown as Response
+        await direct[handler]({ params: { id }, body: { message: 'oi' }, query: {}, headers: {} } as unknown as Request, res)
+        return reply
+      })
+    for (const handler of ['sendMessage', 'startTurn'] as const) assert.strictEqual((await send('c-filha', handler)).status, 404)
+    assert.deepStrictEqual(resumed, [])
+    await send('c-mae', 'sendMessage')
+    assert.deepStrictEqual(resumed, ['c-mae'])
+    await conversations.deleteSession('c-filha')
+    await conversations.deleteSession('c-mae')
   })
 })

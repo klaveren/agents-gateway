@@ -51,6 +51,7 @@ const COLUMNS: Record<keyof TSchedulePatch, string> = {
   enabled: 'enabled',
   failures: 'failures',
   pausedReason: 'paused_reason',
+  runAs: 'run_as',
   lastScheduledFor: 'last_scheduled_for',
   updatedAt: 'updated_at',
   updatedBy: 'updated_by',

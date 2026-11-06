@@ -11,7 +11,7 @@ import { IResourceFilesPort } from '@domain/ports/ResourceFiles.Port'
 import { ICallerProof } from './Caller.Proof'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
-import { requireAgentAdmin, requireAnyAdmin, requireProjectAdmin, requireProjectsAdmin, requireScopeReader } from './Project.Access'
+import { administers, requireAgentAdmin, requireAnyAdmin, requireProjectAdmin, requireProjectsAdmin, requireScopeReader } from './Project.Access'
 import { parseBody } from './Request.Parser'
 
 export interface IGuidanceControllerDeps {
@@ -30,6 +30,8 @@ export interface IGuidanceControllerDeps {
   projectDir?: (projectId: string) => string | undefined
   /** Os arquivos de um agente e o projeto dele (a importação soma à lista de agora). */
   agentFilesOf?: (agentId: string) => { files: IResourceFile[]; projectId?: string } | undefined
+  /** Os escopos (projeto, ou `null` = global) de recursos e agentes que listam este conteúdo. Vazio = ninguém (enviado, ainda solto). Ausente = não confere. */
+  fileOwners?: (sha256: string) => Array<string | null>
 }
 
 const project = z.string().max(64).nullable().optional()
@@ -388,10 +390,14 @@ export class GuidanceController {
   /** `GET /files/:sha256` — o conteúdo de um arquivo do depósito, como texto (a tela edita). */
   async readFile(req: Request, res: Response): Promise<void> {
     await this.respond(res, async () => {
-      await requireAnyAdmin(this.deps.proof, 'readFile')
+      const view = await requireAnyAdmin(this.deps.proof, 'readFile')
       const sha256 = String(req.params.sha256 ?? '')
       const content = /^[a-f0-9]{64}$/.test(sha256) ? this.requireFiles().read(sha256) : undefined
-      if (!content) throw new HttpError(404, 'not_found', `file not found: ${sha256}`)
+      // ⛔ O hash é de recurso/agente de algum escopo: só quem administra um deles (ou o global, que todo projeto usa) lê. O
+      // admin de um projeto não lê, pelo hash, o arquivo de outro. Enviado e ainda solto (sem dono): o hash é a prova de
+      // que a pessoa tem o conteúdo, então passa.
+      const owners = content ? (this.deps.fileOwners?.(sha256) ?? []) : []
+      if (!content || (owners.length && !owners.some((owner) => owner === null || administers(view, owner)))) throw new HttpError(404, 'not_found', `file not found: ${sha256}`)
       return { sha256, bytes: content.length, text: content.toString('utf8') }
     })
   }

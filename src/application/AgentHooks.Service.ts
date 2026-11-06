@@ -85,7 +85,12 @@ export class AgentHooksService {
     return { hook, secret: this.newSecret(hook, by.label) }
   }
 
-  update(agentId: string, name: string, change: THookChange, by: string): IAgentHook {
+  /**
+   * ⛔ `runAs` é a conta com cuja credencial o hook roda. Quem MEXE no que ele faz (prompt, verificação, conversa) ou na
+   * chave assume o `runAs`: o admin B do projeto não edita o item do A (que pode ser admin do gateway ou de outro projeto) e
+   * o dispara com o token do A. Só desligar não assume.
+   */
+  update(agentId: string, name: string, change: THookChange, by: string, runAs?: string): IAgentHook {
     const current = this.get(agentId, name)
     const next: IAgentHook = { ...current, ...definedOnly(change), updatedAt: this.now(), updatedBy: by }
     next.prompt = next.prompt.trim()
@@ -98,6 +103,7 @@ export class AgentHooksService {
       prompt: next.prompt,
       signatureHeader: next.signatureHeader,
       ...(next.session === 'new' ? { sessionId: undefined } : {}),
+      ...(runAs && runAs !== current.runAs && !onlyDisables(change) ? { runAs, ...(next.session === 'continuous' ? { sessionId: undefined } : {}) } : {}),
       updatedAt: next.updatedAt,
       updatedBy: by,
     })!
@@ -108,8 +114,12 @@ export class AgentHooksService {
     this.hooks.update(agentId, name, { sessionId })
   }
 
-  rotate(agentId: string, name: string, by: string): string {
-    return this.newSecret(this.get(agentId, name), by)
+  /** ⛔ Quem troca a chave assume o `runAs` (a chave nova é dele, e dispara o hook). A conversa contínua do outro não segue. */
+  rotate(agentId: string, name: string, by: string, runAs?: string): string {
+    const hook = this.get(agentId, name)
+    const secret = this.newSecret(hook, by)
+    if (runAs && runAs !== hook.runAs) this.hooks.update(agentId, name, { runAs, sessionId: undefined })
+    return secret
   }
 
   remove(agentId: string, name: string): void {
@@ -155,6 +165,11 @@ function issuesOf(hook: IAgentHook): Array<{ field: string; message: string }> {
   if (hook.signaturePrefix.length > 32 || /[\s\r\n]/.test(hook.signaturePrefix)) issues.push({ field: 'signaturePrefix', message: 'up to 32 characters, no spaces' })
   if (hook.signatureEncoding !== 'hex' && hook.signatureEncoding !== 'base64') issues.push({ field: 'signatureEncoding', message: 'hex or base64' })
   return issues
+}
+
+function onlyDisables(change: THookChange): boolean {
+  const keys = Object.keys(definedOnly(change))
+  return keys.length > 0 && keys.every((key) => key === 'enabled') && change.enabled === false
 }
 
 function definedOnly<T extends object>(value: T): Partial<T> {

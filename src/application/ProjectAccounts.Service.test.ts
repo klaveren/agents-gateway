@@ -185,5 +185,8 @@ describe('ProjectAccountsService', () => {
       AccountValidationError,
     )
     await assert.rejects(accounts.save('p1', 'url', { kind: 'turn-callback', label: 'x', public: { callbackHost: 'http://x/fim' }, secret }, 'admin'), AccountValidationError)
+    // ⛔ SSRF: loopback, link-local e metadado não recebem aviso (o Docker em 127.0.0.1:2375, o 169.254.169.254)
+    for (const callbackHost of ['169.254.169.254:80', '127.0.0.1:2375', 'localhost:3100', '2130706433', '0x7f.1', '0.0.0.0:80', 'api.localhost'])
+      await assert.rejects(accounts.save('p1', 'ssrf', { kind: 'turn-callback', label: 'x', public: { callbackHost }, secret }, 'admin'), AccountValidationError, callbackHost)
   })
 })

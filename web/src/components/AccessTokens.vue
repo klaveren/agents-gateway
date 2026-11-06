@@ -23,7 +23,7 @@ const tokens = computed(() => data.value ?? [])
 const revokeError = ref<string>()
 const loadError = computed(() => revokeError.value ?? (listError.value === undefined ? undefined : listError.value instanceof Error ? listError.value.message : String(listError.value)))
 const name = ref('Claude Code')
-const days = ref<number | ''>(90)
+const days = ref<number>(90)
 const creating = ref(false)
 const createError = ref<string>()
 const revealed = ref<{ name: string; token: string }>()
@@ -34,7 +34,6 @@ const DAYS = [
   { value: 30, label: '30 dias' },
   { value: 90, label: '90 dias' },
   { value: 365, label: '1 ano' },
-  { value: '', label: 'Sem validade' },
 ] as const
 
 /** Ativo = não revogado E dentro da validade: token vencido não vale e não conta nos 20. */
@@ -51,7 +50,7 @@ async function create() {
   createError.value = undefined
   try {
     if (!userId.value) return
-    const created = await store.create(userId.value, { name: name.value, ...(days.value ? { expiresInDays: days.value } : {}) })
+    const created = await store.create(userId.value, { name: name.value, expiresInDays: days.value })
     revealed.value = { name: created.name, token: created.token }
   } catch (error) {
     createError.value = error instanceof ApiError && error.status === 422 ? Object.values(error.fieldIssues).flat().join('; ') : error instanceof Error ? error.message : String(error)

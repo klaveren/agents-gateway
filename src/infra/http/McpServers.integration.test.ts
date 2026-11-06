@@ -40,7 +40,7 @@ describe('guia MCPs (integração)', () => {
       .token
     await call('/users', { method: 'POST', token: admin, body: { email: 'ana@x.test', name: 'Ana', password: PASSWORD } })
     member = (await call('/auth/login', { method: 'POST', body: { email: 'ana@x.test', password: PASSWORD } })).body.result.token
-    pat = (await call('/auth/tokens', { method: 'POST', token: admin, body: { name: 'mcp' } })).body.result.token
+    pat = (await call('/auth/tokens', { method: 'POST', token: admin, body: { name: 'mcp', expiresInDays: 30 } })).body.result.token
   })
 
   after(() => stop())

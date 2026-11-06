@@ -167,12 +167,32 @@ describe('Hooks dos agentes (integração)', () => {
   it('⛔ chave errada ou ausente: 401; hook desligado ou inexistente: 404; trocar a chave derruba a antiga', async () => {
     assert.strictEqual((await fire('deploy', '{}', { 'X-Hook-Key': 'whk_errada' })).status, 401)
     assert.strictEqual((await fire('deploy', '{}', {})).status, 401)
-    assert.strictEqual((await fire('nao-existe', '{}', { 'X-Hook-Key': 'x' })).status, 404)
+    // ⛔ 401 uniforme: o hook que não existe responde igual à chave errada (nada de enumerar).
+    assert.strictEqual((await fire('nao-existe', '{}', { 'X-Hook-Key': 'x' })).status, 401)
 
     const rotated = (await admin('POST', `/agents/${CLAUDE_TEST_AGENT.id}/hooks/deploy/rotate`)).body.result.secret as string
     assert.strictEqual((await fire('deploy', '{}', { 'X-Hook-Key': rotated })).status, 202)
     await admin('PUT', `/agents/${CLAUDE_TEST_AGENT.id}/hooks/deploy`, { enabled: false })
-    assert.strictEqual((await fire('deploy', '{}', { 'X-Hook-Key': rotated })).status, 404)
+    assert.strictEqual((await fire('deploy', '{}', { 'X-Hook-Key': rotated })).status, 401, 'desligado responde como inexistente')
+  })
+
+  it('⛔ HMAC com `X-Timestamp`: o carimbo entra na assinatura, vale na janela e a mesma assinatura não passa duas vezes', async () => {
+    const secret = (await admin('POST', `/agents/${CLAUDE_TEST_AGENT.id}/hooks`, { name: 'carimbado', prompt: 'p', verify: 'hmac' })).body.result.secret as string
+    const body = '{"n":1}'
+    const sign = (stamp: string) => `sha256=${createHmac('sha256', secret).update(`${stamp}.${body}`).digest('hex')}`
+    const stamp = String(Math.floor(Date.now() / 1000))
+    const headers = (at: string) => ({ 'X-Timestamp': at, 'X-Hub-Signature-256': sign(at) })
+    assert.strictEqual((await fire('carimbado', body, headers(stamp))).status, 202)
+    assert.strictEqual((await fire('carimbado', body, headers(stamp))).status, 401, 'o replay da mesma assinatura')
+    const old = String(Math.floor(Date.now() / 1000) - 3600)
+    assert.strictEqual((await fire('carimbado', body, headers(old))).status, 401, 'fora da janela')
+    const plain = `sha256=${createHmac('sha256', secret).update(body).digest('hex')}`
+    assert.strictEqual(
+      (await fire('carimbado', body, { 'X-Timestamp': String(Math.floor(Date.now() / 1000) + 1), 'X-Hub-Signature-256': plain })).status,
+      401,
+      'carimbo fora da assinatura',
+    )
+    assert.strictEqual((await fire('carimbado', body, { 'X-Hub-Signature-256': plain })).status, 202, 'quem não manda carimbo segue como antes')
   })
 
   it('HMAC: a assinatura do corpo CRU (estilo GitHub) passa; errada ou de outro corpo, 401', async () => {

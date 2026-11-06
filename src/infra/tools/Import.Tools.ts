@@ -36,8 +36,12 @@ export interface IRepositoryBrowser {
 function reader(name: string, context: IExecutionContext | undefined, args: Record<string, unknown>): { importer: true } | { projectId: string } | IToolResult {
   if (isImportBuilder(context?.agentId)) return refusal(name, context) ?? { importer: true }
   if (!builderKindOf(context?.agentId)) return { status: 'error', result: `${name} is only for the builders.` }
-  const projectId = text(args.projectId) ?? context?.conversationProjectId ?? context?.projectId
+  // ⛔ O projeto é o da CONVERSA; o `projectId` dos argumentos (o agente não é confiável) só vale se for o mesmo: sem isso, a
+  // conversa do projeto A leria o repositório do B.
+  const projectId = context?.conversationProjectId ?? context?.projectId
   if (!projectId) return { status: 'error', result: `${name}: say the projectId (the conversation has no project).` }
+  const asked = text(args.projectId)
+  if (asked && asked !== projectId) return { status: 'error', result: `${name}: the projectId must be the one of this conversation.` }
   return { projectId }
 }
 
@@ -216,7 +220,7 @@ export function makeImportTools(desk: IImportDesk, browse?: IRepositoryBrowser):
           path: { type: 'string', description: 'A folder of the repository, relative to its root (default: the root).' },
           pattern: { type: 'string', description: 'A glob to filter the files ("*.md", ".agents/**/SKILL.md", "specs").' },
           repository: { type: 'string', description: 'Builder: the repository of the project (absent = the only one).' },
-          projectId: { type: 'string', description: 'Builder: the project (absent = the project of the conversation).' },
+          projectId: { type: 'string', description: 'Builder: the project of the conversation (optional; any other is refused).' },
         },
         required: [],
         additionalProperties: false,
@@ -248,7 +252,7 @@ export function makeImportTools(desk: IImportDesk, browse?: IRepositoryBrowser):
           offset: { type: 'number', description: 'First character (default 0).' },
           limit: { type: 'number', description: 'How many characters (default 30000, at most 60000).' },
           repository: { type: 'string', description: 'Builder: the repository of the project (absent = the only one).' },
-          projectId: { type: 'string', description: 'Builder: the project (absent = the project of the conversation).' },
+          projectId: { type: 'string', description: 'Builder: the project of the conversation (optional; any other is refused).' },
         },
         required: ['path'],
         additionalProperties: false,

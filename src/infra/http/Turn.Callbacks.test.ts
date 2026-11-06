@@ -1,3 +1,4 @@
+import { egressPolicy } from '@infra/net/Guarded.Fetch'
 import assert from 'node:assert'
 import { createHmac } from 'node:crypto'
 import { describe, it } from 'node:test'
@@ -45,5 +46,46 @@ describe('Turn.Callbacks (o aviso de fim de turno)', () => {
     const url = 'http://10.10.0.4:4003/fim'
     assert.strictEqual(await deliverCallback(url, payload, { env: {}, http, secretFor: (target) => callbackSecret(target, project, {}) }), true)
     assert.strictEqual(seen[0], `sha256=${createHmac('sha256', 'do-projeto').update(JSON.stringify(payload)).digest('hex')}`)
+  })
+})
+
+describe('Turn.Callbacks — destino interno (SSRF)', () => {
+  it('⛔ o projeto não aponta o aviso para loopback, link-local ou metadado, nem por grafia estranha', () => {
+    const project = () => 'do-projeto'
+    for (const url of [
+      'http://127.0.0.1:2375/x',
+      'http://localhost:2375/x',
+      'http://169.254.169.254/x',
+      'http://[::ffff:7f00:1]:80/x',
+      'http://[::ffff:a9fe:a9fe]/x',
+      'http://2130706433/x',
+      'http://0x7f.1/x',
+      'http://0.0.0.0/x',
+    ])
+      assert.strictEqual(callbackSecret(url, project, {}), undefined, url)
+    assert.strictEqual(callbackSecret('http://10.10.0.4:4003/x', project, {}), 'do-projeto', 'LAN cadastrada passa na validação; a ENTREGA confere o endereço')
+  })
+
+  it('o loopback listado na instalação (TURN_CALLBACK_HOSTS) continua valendo', () => {
+    assert.strictEqual(
+      callbackSecret('http://localhost:4000/fim', () => 'do-projeto', env),
+      'do-projeto',
+    )
+  })
+
+  it('⛔ a entrega recusa loopback não listado, sem conectar (nem a quem o projeto cadastrou); a rede local cadastrada passa', async () => {
+    const policy = egressPolicy({ allowPrivate: false, allowLan: true, listed: () => false })
+    assert.strictEqual(policy(new URL('http://10.10.0.4:4003/fim'), '10.10.0.4'), undefined, 'a LAN cadastrada')
+    assert.ok(policy(new URL('http://127.0.0.1:2375/fim'), '127.0.0.1'), 'o loopback')
+    assert.ok(policy(new URL('http://169.254.169.254/x'), '169.254.169.254'), 'o metadado')
+    const quiet = console.warn
+    console.warn = () => undefined
+    try {
+      for (const url of ['http://127.0.0.1:2375/fim', 'http://[::ffff:7f00:1]:2375/fim']) {
+        assert.strictEqual(await deliverCallback(url, payload, { env: {}, secretFor: () => 'a'.repeat(40), wait: async () => undefined }), false, url)
+      }
+    } finally {
+      console.warn = quiet
+    }
   })
 })

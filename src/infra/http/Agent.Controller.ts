@@ -312,6 +312,11 @@ export class AgentController {
    * Portão das rotas que não são do controller (o `openapi.json`): mesma regra de identidade, como
    * middleware. Recusa com 401 pelo handler de erro do servidor.
    */
+  /** A prova de quem chama, para o servidor decidir o teto do corpo antes de lê-lo (ver `AuthController.provenBeforeBody`). */
+  get callerProof(): ICallerProof | undefined {
+    return this.usecases.proof
+  }
+
   async guardCaller(_req: Request, _res: Response, next: NextFunction) {
     try {
       if (!(await resolveCaller(this.usecases.proof))) throw unauthorized()
@@ -463,7 +468,7 @@ export class AgentController {
     if (typeof repository !== 'string' || typeof projectId !== 'string' || !this.usecases.projects?.exists(projectId)) return undefined
     const worktree = typeof metadata?.[WORKTREE_METADATA_KEY] === 'string' ? (metadata[WORKTREE_METADATA_KEY] as string) : undefined
     try {
-      const branch = currentBranch(resolveWorkFolder(this.usecases.projects.folderOf(projectId), repository, worktree).dir)
+      const branch = currentBranch(resolveWorkFolder(this.usecases.projects.folderOf(projectId), repository, worktree))
       return { repository, ...(worktree ? { worktree } : {}), ...(branch ? { branch } : {}) }
     } catch {
       return { repository, ...(worktree ? { worktree } : {}) }
@@ -967,7 +972,7 @@ export class AgentController {
         const { projectId: requested, repository, worktree, callbackUrl, ...session } = body
         const project = await this.sessionProject(this.callerOf(resolved), body.agentId, requested)
         const place = await this.workPlace(body.agentId, project, repository, worktree)
-        const startCommit = place ? await headOf(place.dir) : undefined
+        const startCommit = place ? await headOf(place).catch(() => undefined) : undefined
         if (callbackUrl && !this.usecases.callbackSecret?.(callbackUrl, project))
           throw new HttpError(422, 'validation_error', 'Request body is invalid', [
             { field: 'callbackUrl', message: "address not registered: add it in the project's turn callbacks (or TURN_CALLBACK_HOSTS)" },
@@ -1155,7 +1160,7 @@ export class AgentController {
         const archivedCount = archived ? undefined : await this.usecases.conversations.countArchived?.(owner)
 
         return {
-          sessions: sessions.filter((session) => ownsSession(resolved, session.metadata)).map((session) => toConversationDto(session, view)),
+          sessions: sessions.filter((session) => this.ownsConversation(resolved, session.metadata)).map((session) => toConversationDto(session, view)),
           ...(archivedCount !== undefined ? { archivedCount } : {}),
         }
       },
@@ -1252,7 +1257,7 @@ export class AgentController {
     // ⚖️ `?mine=1`: o admin com a PRÓPRIA caixa de entrada recebe só as suas, como qualquer pessoa. Sem, o monitor (as que ele administra).
     const everyone = !!adminOf && !(req.query?.mine === '1' || req.query?.mine === 'true')
     const visible = (metadata: Record<string, unknown> | undefined) =>
-      ((everyone && adminOfScope(projectKeyOf(metadata))) || ownsSession(resolved, metadata)) &&
+      ((everyone && adminOfScope(projectKeyOf(metadata))) || this.ownsConversation(resolved, metadata)) &&
       // Com `?project`, só as conversas daquele projeto.
       (!project || metadata?.[PROJECT_METADATA_KEY] === project) &&
       // As construções não entram na caixa de entrada (a guia Construir as lista).
@@ -1367,7 +1372,7 @@ export class AgentController {
       found = !!stored
       metadata = stored?.metadata
     }
-    if (!found || !(ownsSession(resolved, metadata) || (await this.administersConversation(metadata)))) throw new SessionNotFoundError(sessionId)
+    if (!found || !(this.ownsConversation(resolved, metadata) || (await this.administersConversation(metadata)))) throw new SessionNotFoundError(sessionId)
     return resolved
   }
 
@@ -1620,7 +1625,7 @@ export class AgentController {
     await this.respond(res, async () => {
       const resolved = await this.requireCaller()
 
-      return (await this.usecases.listSessions.execute()).filter((session) => ownsSession(resolved, session.metadata)).map(toSessionDto)
+      return (await this.usecases.listSessions.execute()).filter((session) => this.ownsConversation(resolved, session.metadata)).map(toSessionDto)
     })
   }
 
@@ -1810,9 +1815,9 @@ export class AgentController {
       if (typeof repository !== 'string' || typeof projectId !== 'string' || !this.usecases.projects?.exists(projectId))
         throw new HttpError(404, 'not_found', 'Esta conversa não foi aberta num repositório')
       const worktree = typeof metadata?.[WORKTREE_METADATA_KEY] === 'string' ? (metadata[WORKTREE_METADATA_KEY] as string) : undefined
-      let dir: string
+      let dir: IWorkFolder
       try {
-        dir = resolveWorkFolder(this.usecases.projects.folderOf(projectId), repository, worktree).dir
+        dir = resolveWorkFolder(this.usecases.projects.folderOf(projectId), repository, worktree)
       } catch (error: unknown) {
         throw new HttpError(404, 'not_found', error instanceof Error ? error.message : String(error))
       }
@@ -2010,14 +2015,17 @@ export class AgentController {
       metadata = (await this.usecases.getSession.execute(sessionId)).metadata
     } catch {
       const stored = options.resume && this.usecases.resumeSession ? await this.usecases.conversations.findSession(sessionId).catch(() => undefined) : undefined
-      if (!stored || !ownsSession(resolved, stored.metadata)) throw new SessionNotFoundError(sessionId)
+      if (!stored || !this.ownsConversation(resolved, stored.metadata) || stored.metadata?.delegatedBy) throw new SessionNotFoundError(sessionId)
       // ⚖️ O papel de admin da sessão retomada é o do AGENTE dela (o projeto dele; o global, o gateway), como na criação.
       const view = await adminView(this.usecases.proof)
       await this.usecases.resumeSession!.execute(stored, !!view && administers(view, this.agents.get(stored.agentId)?.projectId))
       return resolved
     }
 
-    if (!ownsSession(resolved, metadata)) throw new SessionNotFoundError(sessionId)
+    if (!this.ownsConversation(resolved, metadata)) throw new SessionNotFoundError(sessionId)
+    // ⛔ A conversa de DELEGAÇÃO (a do subagente) só recebe mensagem de quem a abriu (a conversa-mãe, pelo serviço), nunca
+    // direto pelo id: quem tem o id não conversa com o subagente fora do fluxo, com as ferramentas dele.
+    if (options.resume && metadata?.delegatedBy) throw new SessionNotFoundError(sessionId)
 
     return resolved
   }
@@ -2035,10 +2043,10 @@ export class AgentController {
       metadata = (await this.usecases.getSession.execute(sessionId)).metadata
     } catch {
       const stored = await this.usecases.conversations.findSession(sessionId).catch(() => undefined)
-      if (!stored || !ownsSession(resolved, stored.metadata)) throw new SessionNotFoundError(sessionId)
+      if (!stored || !this.ownsConversation(resolved, stored.metadata)) throw new SessionNotFoundError(sessionId)
       return { resolved, metadata: stored.metadata }
     }
-    if (!ownsSession(resolved, metadata)) throw new SessionNotFoundError(sessionId)
+    if (!this.ownsConversation(resolved, metadata)) throw new SessionNotFoundError(sessionId)
     return { resolved, metadata }
   }
 
@@ -2054,6 +2062,17 @@ export class AgentController {
   /** Os preços de um provider: os do catálogo, ou a tabela de fábrica quando não há catálogo injetado. */
   private pricingOf(provider: string): TModelPricing {
     return this.usecases.models?.pricing(provider) ?? this.pricing
+  }
+
+  /**
+   * A conversa é do chamador E, se é de um projeto, ele ainda o usa. ⛔ Sair do projeto tira o acesso às conversas dele:
+   * o dono removido não manda mensagem, não lê turno nem roda o agente no cerco do projeto. O admin do projeto passa
+   * por `administersConversation` (e é membro).
+   */
+  private ownsConversation(resolved: IResolvedCaller, metadata: Record<string, unknown> | undefined): boolean {
+    if (!ownsSession(resolved, metadata)) return false
+    const project = projectKeyOf(metadata)
+    return !project || !this.usecases.projects || this.usecases.projects.canUse(this.callerOf(resolved), project)
   }
 
   /** O chamador administra o escopo desta conversa (o projeto do carimbo; sem projeto, o gateway)? */
@@ -2083,7 +2102,7 @@ export class AgentController {
     if (!conversation) throw new HttpError(404, 'not_found', `Conversation not found: ${id}`)
     // ⛔ O admin abre a conversa dos PROJETOS QUE ADMINISTRA (a sem projeto, o gateway), não a de qualquer um.
     const admin = await this.administersConversation(conversation.metadata)
-    if (!admin && !ownsSession(resolved, conversation.metadata)) throw new HttpError(404, 'not_found', `Conversation not found: ${id}`)
+    if (!admin && !this.ownsConversation(resolved, conversation.metadata)) throw new HttpError(404, 'not_found', `Conversation not found: ${id}`)
 
     return { resolved, admin, conversation }
   }

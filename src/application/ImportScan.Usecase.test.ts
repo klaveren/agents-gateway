@@ -28,7 +28,7 @@ describe('ImportScanUseCase — o inventário de um repositório (só leitura)',
     gitInit(root)
     writeFileSync(join(root, 'sujo.md'), 'não commitado\n')
     const usecase = new ImportScanUseCase({
-      readTree: () => readRepoTree(root, { mask: (text) => maskText(text, []) }),
+      readTree: () => readRepoTree(root, { mask: (text) => maskText(text, []), git: { dir: root, gitCommonDir: join(root, '.git') } }),
       detectors: [new AgentsDirDetector(), new OpencodeDetector()],
       // O ambiente ganha os caminhos a mais da fixture: o prompt do opencode e os links para fora (a contenção, abaixo).
       projectScope: () => ({ disabled: [], extra: ['prompts', 'link-fora', 'arquivo-fora.md'] }),

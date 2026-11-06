@@ -87,6 +87,7 @@ export function makeTools(): ITools {
                 return entry ? (entry.agent.triggers ?? []) : undefined
               },
               saveTriggers: (agentId, triggers, by) => makeAgents().saveTriggers(agentId, triggers, by),
+              projectOf: (agentId) => makeAgents().get(agentId)?.projectId ?? null,
               markImported: (agentId, triggerId, source, who) => {
                 const projectId = makeAgents().get(agentId)?.projectId
                 if (!projectId) throw new Error(`${agentId} is a global agent: its triggers have no import queue`)

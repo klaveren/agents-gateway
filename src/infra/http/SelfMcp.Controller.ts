@@ -6,6 +6,7 @@ import { IDENTITY_HEADERS } from '@domain/Agent.Identity'
 import { CATALOG_KINDS, TCatalogKind } from '@domain/Catalog.Document'
 import { PERMISSION_CATEGORIES, TPermissionCategory } from '@domain/Permission.Policy'
 import { ISelfReply, selfApi, selfBase, TSelfApi } from './Self.Api'
+import { agentScopeOf, scopedWrites } from './SelfMcp.Guard'
 
 /** O que a própria API devolveu: o envelope `{ ok, result, message, code, details }` mais o status. */
 /**
@@ -1250,11 +1251,14 @@ export async function handleSelfMcp(req: Request, res: Response): Promise<void> 
 }
 
 async function serve(req: Request, res: Response): Promise<void> {
-  const api = callerApi(req)
+  const caller = callerApi(req)
   // A mesma regra da tela: só quem administra o gateway lê `/settings`; quem administra só projetos tem `role: 'admin'` na
   // lista deles. ⚠️ É só a VISIBILIDADE das ferramentas: cada uma passa pela rota, com a credencial de quem chama.
-  const gateway = (await api('GET', '/settings')).ok
-  const admin = gateway || (((await api('GET', '/projects')).result as Array<{ role?: string }> | undefined) ?? []).some((project) => project.role === 'admin')
+  const gateway = (await caller('GET', '/settings')).ok
+  const admin = gateway || (((await caller('GET', '/projects')).result as Array<{ role?: string }> | undefined) ?? []).some((project) => project.role === 'admin')
+  // ⛔ Um AGENTE (concessão do turno ou cabeçalhos de identidade) escreve só no projeto da conversa dele (ver `SelfMcp.Guard`).
+  const scope = agentScopeOf(req, res, gateway)
+  const api = scope ? scopedWrites(caller, scope) : caller
   const server = new McpServer({ name: 'agents-gateway', version: '1.0.0' })
   // ⚖️ Escrita LIGADA para admin por padrão (o Atlas precisa dela); `SELF_MCP_WRITE=0` desliga. A API, por
   // baixo, continua só deixando admin escrever.
