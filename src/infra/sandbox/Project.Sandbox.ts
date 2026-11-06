@@ -65,6 +65,8 @@ export interface ICercoPlace {
   worktreeGitDir?: string
   /** A pasta privada do agente do comando e o que ele faz nela (ver `agentFolderAccess`). As dos outros, fechadas. */
   agentFolder?: { dir: string; read: boolean; write: boolean }
+  /** ⛔ As pastas de skills e commands que outro projeto compartilhou com este: só leitura (entram em `readOnly`). */
+  sharedFolders?: readonly string[]
   /** As portas de serviço LOCAL que as regras liberam exatas (`localhost:<porta>`): no Linux ganham um encaminhador. */
   localPorts?: readonly number[]
   /**
@@ -178,7 +180,7 @@ export class ProjectSandbox implements IProjectSandbox {
       alwaysDeny: [dataDir(this.env), process.cwd(), homedir(), ...hostSocketDirs(), ...agentFolders(root, place.agentFolder?.dir, this.env).others],
       ...(place.agentFolder ? { agentFolder: place.agentFolder } : {}),
       // Os arquivos de recurso: o global sempre; os do projeto quando a raiz é dele. Lê, não grava.
-      readOnly: existing(readOnlyResourceDirs(root, this.env)),
+      readOnly: existing([...readOnlyResourceDirs(root, this.env), ...(place.sharedFolders ?? [])]),
       find: (pattern) => findUnder(root, pattern),
     }
   }

@@ -8,6 +8,7 @@ import { makePermissions } from './Permissions.Factory'
 import { makeProjectAccounts } from './ProjectAccounts.Factory'
 import { makeSecretMasker } from './SecretMask.Factory'
 import { makeGuidance } from './Guidance.Factory'
+import { makeResourceFiles } from './ResourceFiles.Factory'
 import { makeConversationRepository } from './Conversations.Factory'
 import { IMcpServerConfig } from '@domain/models/McpServer.Model'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
@@ -109,6 +110,7 @@ export function makeTools(): ITools {
             permissions: lazyPermissions,
             agentTerminal: (agentId) => makeAgents().get(agentId)?.terminal,
             agentFolder: (agentId) => agentFolderOf(agentId),
+            sharedFolders: sharedFoldersOf,
             agentEnv: (agentId) => makeAgents().get(agentId)?.env,
             mask: makeSecretMasker(),
             secrets: {
@@ -265,4 +267,17 @@ export function agentFolderOf(agentId: string): { dir: string; read: boolean; wr
     return undefined
   }
   return { dir, ...access }
+}
+
+/**
+ * ⛔ As pastas de arquivos das skills e commands que OUTRO projeto compartilhou com este (só leitura): uma por item, lida na
+ * hora da chamada — parou de compartilhar, a pasta sai na próxima. Nunca a pasta do projeto de origem inteira.
+ */
+export function sharedFoldersOf(projectId: string | undefined): string[] {
+  if (!projectId) return []
+  const files = makeResourceFiles()
+  return makeGuidance()
+    .sharedResources(projectId)
+    .filter((resource) => resource.projectId && resource.projectId !== projectId)
+    .map((resource) => files.dirOf(resource.kind, resource.id, resource.projectId))
 }
