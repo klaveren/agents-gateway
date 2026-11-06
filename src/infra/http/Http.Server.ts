@@ -12,6 +12,7 @@ import { SchedulesController } from './Schedules.Controller'
 import { AgentSchedulesService } from '@application/AgentSchedules.Service'
 import { ScheduleRunner } from '@application/Schedule.Runner'
 import { SqliteAgentScheduleRepository } from '@infra/persistence/Sqlite.AgentScheduleRepository'
+import { grantCredential } from './Grant.Credential'
 import { cookieCredential } from './Session.Cookie'
 import { AgentController } from './Agent.Controller'
 import { AuthController } from './Auth.Controller'
@@ -170,6 +171,8 @@ export class HttpServer {
             ? large(req, res, next)
             : small(req, res, next),
     )
+    // ⛔ A concessão do turno (agente de CLI) vira a credencial do dono do turno, por dentro: o agente nunca leva o token.
+    this.app.use(grantCredential())
     // A sessão da tela chega no cookie HttpOnly; daqui em diante é a mesma credencial do cabeçalho.
     this.app.use(cookieCredential())
 

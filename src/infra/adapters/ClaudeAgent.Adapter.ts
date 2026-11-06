@@ -28,7 +28,8 @@ import { ICreateSessionInput } from '@domain/models/CreateSessionInput.Model'
 import { IFileAttachment, IMessageInput } from '@domain/models/MessageInput.Model'
 import { IAgentAdapter } from '@domain/ports/AgentAdapter.Port'
 import { ISessionRecord, SessionStore } from '@infra/session/Session.Store'
-import { buildClaudeMcpServers, claudeHiddenTools, claudeMcpServerName, LOCAL_SERVER_NAME } from '@infra/tools/bridges/Claude.ToolBridge'
+import { buildClaudeMcpServers, claudeHiddenTools, claudeMcpServerName, LOCAL_SERVER_NAME, usesGatewayCredential } from '@infra/tools/bridges/Claude.ToolBridge'
+import { turnGrants } from '@infra/tools/Turn.Grants'
 import { IAgentMcpServer, ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { composeSystemPrompt, maxToolTurns } from './support/Prompt.Helper'
 import { agentFolderOwner, isResourceFilePath } from '@infra/workspace/Resource.Files'
@@ -199,6 +200,9 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       Object.keys(context.secretEnv ?? {}),
       this.agentFolder?.(agent.id),
     )
+    // ⛔ O CLI é um processo filho: o header do MCP do gateway fica no argv dele, ao alcance do agente. Leva a CONCESSÃO do
+    // turno (ver `Grant.Credential`), nunca o token de quem conversa.
+    const grant = remotes.some(usesGatewayCredential) ? turnGrants().register({ tools: [], context: { ...context, sessionId } }) : undefined
     const options: Options = {
       model: record.model,
       // ⚖️ No Claude, as do gateway vêm com prefixo: o modelo chamava `use_resource` (sem ele) e inventava `mcp__local__Read`.
@@ -207,7 +211,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       // eles. Vazio = nenhum: sem isto o agente ganharia Bash/Read/Edit sobre a máquina do host. As
       // tools nossas (locais e do MCP) chegam por `mcpServers`.
       tools: natives,
-      mcpServers: buildClaudeMcpServers(local, remotes, context.token, context),
+      mcpServers: buildClaudeMcpServers(local, remotes, context.token, context, grant),
       // ⛔ As ferramentas de um servidor que o agente NÃO escolheu saem do contexto do modelo: o SDK lista o servidor
       // inteiro, e o portão só recusava depois de o modelo tentar (uma ida perdida, e ele achando que podia).
       disallowedTools: claudeHiddenTools(remotes),
@@ -411,6 +415,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       console.error('[ClaudeAgent] Error:', message)
       yield { type: 'error', sessionId, timestamp: new Date(), payload: errorPayload(rateLimit ?? error, message) }
     } finally {
+      if (grant) turnGrants().release(grant)
       releaseInput()
       record.abort = undefined
       stream.return(undefined).catch(() => undefined)

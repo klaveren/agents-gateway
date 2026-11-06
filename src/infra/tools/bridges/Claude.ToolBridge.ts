@@ -21,7 +21,13 @@ export function claudeMcpServerName(serverId: string): string {
   return `mcp_${serverId.replace(/-/g, '_')}`
 }
 
-export function buildClaudeMcpServers(local: ILocalTool[], remotes: readonly IAgentMcpServer[] = [], token?: string, context?: IExecutionContext): Record<string, McpServerConfig> {
+export function buildClaudeMcpServers(
+  local: ILocalTool[],
+  remotes: readonly IAgentMcpServer[] = [],
+  token?: string,
+  context?: IExecutionContext,
+  grant?: string,
+): Record<string, McpServerConfig> {
   const servers: Record<string, McpServerConfig> = {}
 
   if (local.length > 0) {
@@ -45,7 +51,7 @@ export function buildClaudeMcpServers(local: ILocalTool[], remotes: readonly IAg
      * portanto não herda o `fetch` que injeta a credencial lá. Sem isto, com `auth: caller`, o agente do
      * Claude falaria com o MCP sem token: toda tool responderia "chamada sem credencial".
      */
-    const headers = mcpHeaders(remote, token, context)
+    const headers = mcpHeaders(remote, token, context, grant)
     servers[claudeMcpServerName(remote.config.id)] = {
       type: remote.config.transport === 'sse' ? 'sse' : 'http',
       url: remote.config.url,
@@ -64,11 +70,26 @@ export function claudeHiddenTools(remotes: readonly IAgentMcpServer[]): string[]
   return remotes.flatMap((remote) => (remote.hidden ?? []).map((name) => `mcp__${claudeMcpServerName(remote.config.id)}__${name}`))
 }
 
-/** Os headers de um servidor MCP para quem conecta por conta própria (os SDKs agênticos). */
-export function mcpHeaders(remote: IAgentMcpServer, token?: string, context?: IExecutionContext): Record<string, string> | undefined {
+/** O cabeçalho da credencial do PRÓPRIO gateway (`Security.Middleware`): quem o pede é o MCP do gateway ou a ponte dos contêineres. */
+const GATEWAY_CALLER_HEADER = 'x-tool-authorization'
+
+/** O servidor recebe a credencial de quem conversa no cabeçalho do gateway (e não a de um serviço de fora). */
+export function usesGatewayCredential(remote: IAgentMcpServer): boolean {
+  return remote.config.auth === 'caller' && remote.callerHeader?.toLowerCase() === GATEWAY_CALLER_HEADER
+}
+
+/**
+ * Os headers de um servidor MCP para quem conecta por conta própria (os SDKs agênticos).
+ *
+ * ⛔ SDK que roda em PROCESSO FILHO (o CLI do Claude e do Codex) deixa o header no argv, ao alcance do agente: ao gateway
+ * ele leva a CONCESSÃO do turno (`grant`, ver `Grant.Credential`) e nunca o token de quem conversa. Sem `grant`, o token
+ * segue só para quem conecta dentro do processo (OpenAI).
+ */
+export function mcpHeaders(remote: IAgentMcpServer, token?: string, context?: IExecutionContext, grant?: string): Record<string, string> | undefined {
   // A identidade de quem chama, só no servidor que a pediu (ver `Agent.Identity`).
   const headers: Record<string, string> = { ...remote.fixed, ...(remote.config.identity ? identityHeaders(context) : {}) }
-  if (remote.config.auth === 'caller' && token) headers[remote.callerHeader ?? 'authorization'] = `Bearer ${token}`
+  if (grant && usesGatewayCredential(remote)) headers['X-Turn-Grant'] = grant
+  else if (remote.config.auth === 'caller' && token) headers[remote.callerHeader ?? 'authorization'] = `Bearer ${token}`
   if (remote.config.auth === 'header' && remote.header) headers[remote.header.name] = remote.header.value
   return Object.keys(headers).length ? headers : undefined
 }

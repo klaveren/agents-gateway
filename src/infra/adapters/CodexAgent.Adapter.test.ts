@@ -152,7 +152,9 @@ describe('CodexAgentAdapter', () => {
     const config = calls[0].options.config as { mcp_servers: Record<string, { url: string; http_headers: Record<string, string> }>; developer_instructions: string }
     const server = config.mcp_servers.gateway_tools
     assert.strictEqual(server.url, 'http://127.0.0.1:3000/v1/turn-tools')
-    assert.strictEqual(server.http_headers['X-Tool-Authorization'], 'Bearer tk')
+    // ⛔ O token de quem conversa fica fora do argv (`/proc/<pid>/cmdline`): só a concessão.
+    assert.deepStrictEqual(Object.keys(server.http_headers), ['X-Turn-Grant'])
+    assert.ok(!JSON.stringify(calls[0].options).includes('Bearer tk'), 'o token não aparece em nada que vai ao SDK')
     assert.strictEqual((server as { default_tools_approval_mode?: string }).default_tools_approval_mode, 'approve')
     const granted = during as { tools: Array<{ name: string }>; context: { agentId: string; sessionId: string } }
     assert.deepStrictEqual([granted.tools.map((tool) => tool.name), granted.context.agentId, granted.context.sessionId], [['run_bash', 'read_file'], 'cx', session.id])
@@ -238,6 +240,33 @@ describe('CodexAgentAdapter', () => {
       gateway: { url: 'http://127.0.0.1:3100/v1/mcp', http_headers: { 'X-Tool-Authorization': 'Bearer tok' }, enabled_tools: ['list_agents'] },
       docs: { url: 'http://docs/mcp' },
     })
+  })
+
+  it('⛔ o MCP do gateway leva a CONCESSÃO do turno no argv, nunca o token de quem conversa', async () => {
+    const calls: ICall[] = []
+    const grants = new TurnGrants()
+    const catalog = {
+      localFor: () => [],
+      mcpServersFor: async () => [{ config: { id: 'gateway', url: 'http://127.0.0.1:3100/v1/mcp', auth: 'caller' } as never, callerHeader: 'X-Tool-Authorization' }],
+    }
+    let during: unknown
+    const adapter = new CodexAgentAdapter({
+      store: new SessionStore(),
+      catalog: catalog as never,
+      turnTools: { url: 'http://127.0.0.1:3000/v1/turn-tools', grants },
+      load: async () =>
+        fakeCodex(calls, (turn) => {
+          const servers = (calls[turn - 1].options.config as { mcp_servers: Record<string, { http_headers: Record<string, string> }> }).mcp_servers
+          during = grants.get(servers.gateway.http_headers['X-Turn-Grant'])
+          return turnEvents(turn)
+        }) as never,
+      home: () => '/gw',
+    })
+    const session = await adapter.createSession(agent, {})
+    await collect(adapter.sendMessage(agent, session.id, { text: 'oi' }, { token: 'jwt-secreto', agentId: 'cx', projectId: 'p1' }))
+
+    assert.ok(!JSON.stringify(calls[0].options).includes('jwt-secreto'), 'o token do usuário não pode estar em nada que o SDK recebe')
+    assert.strictEqual((during as { context: { token: string } }).context.token, 'jwt-secreto', 'o servidor guarda o token com a concessão')
   })
 
   it('o id da sessão carrega o protocolo', async () => {
