@@ -199,6 +199,9 @@ export function corsMiddleware(): RequestHandler {
 /** O header com a credencial do PRÓPRIO chamador — a que o gateway repassa às tools. */
 export const CALLER_HEADER = 'x-tool-authorization'
 
+/** Em `res.locals`: o contexto do turno quando a credencial veio de uma concessão (`X-Turn-Grant`), não de uma conta. */
+export const TURN_GRANT_LOCAL = 'turnGrantContext'
+
 /**
  * ⛔ EXIGE A CREDENCIAL DE QUEM CHAMA — fechado por padrão, com escape explícito.
  *
@@ -221,10 +224,12 @@ export const CALLER_HEADER = 'x-tool-authorization'
  * que traz o prefixo de versão — e um dia alguém mexe no prefixo e abre a API sem perceber.
  */
 export function requireCaller(): RequestHandler {
-  return (req: Request, _res: Response, next: NextFunction) => {
+  return (req: Request, res: Response, next: NextFunction) => {
     // Lido a cada chamada, não uma vez no boot: o teste liga e desliga entre casos.
     if (process.env.ALLOW_ANONYMOUS === '1') return next()
     if (tokenFromHeader(req.headers[CALLER_HEADER])) return next()
+    // A concessão do turno (já conferida em `grantCredential`) é a credencial das rotas que ela abre.
+    if (res.locals?.[TURN_GRANT_LOCAL]) return next()
 
     // 401, e não 404: aqui a ausência de credencial é a resposta honesta — não há id nenhum a proteger.
     return next(new HttpError(401, 'unauthorized', 'Missing caller credential'))

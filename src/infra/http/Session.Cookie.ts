@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from 'node:crypto'
 import { NextFunction, Request, RequestHandler, Response } from 'express'
 import { HttpError } from './Http.Error'
 import { fail } from './Http.Response'
@@ -20,22 +21,50 @@ function secure(req: Request): boolean {
   return req.secure || process.env.COOKIE_SECURE?.trim() === '1'
 }
 
+/** O cookie do CSRF, LEGÍVEL pelo JavaScript da tela (que o devolve no cabeçalho `X-CSRF`). Também leva a porta. */
+export function csrfCookieName(env: NodeJS.ProcessEnv = process.env): string {
+  return `gw_csrf_${Number.parseInt(env.PORT || '3000', 10)}`
+}
+
+/** O cabeçalho em que a tela devolve o valor do cookie do CSRF. */
+export const CSRF_HEADER = 'x-csrf'
+
+/**
+ * ⛔ O valor do CSRF é derivado da sessão (sem estado: sobrevive a reinício). Só quem tem o token da sessão o calcula — e o
+ * token nunca chega ao agente (ver `Grant.Credential`) —, então forjar cookie + cabeçalho à mão (`curl`) não basta.
+ */
+export function csrfOf(sessionToken: string): string {
+  return createHash('sha256').update(`gateway-csrf\0${sessionToken}`).digest('base64url')
+}
+
 export function setSessionCookie(req: Request, res: Response, session: { token: string; expiresAt: Date }): void {
   const maxAge = Math.max(0, Math.floor((session.expiresAt.getTime() - Date.now()) / 1000))
   res.append('Set-Cookie', serialize(sessionCookieName(), session.token, { maxAge, secure: secure(req) }))
+  res.append('Set-Cookie', serialize(csrfCookieName(), csrfOf(session.token), { maxAge, secure: secure(req), httpOnly: false }))
 }
 
 export function clearSessionCookie(req: Request, res: Response): void {
   res.append('Set-Cookie', serialize(sessionCookieName(), '', { maxAge: 0, secure: secure(req) }))
+  res.append('Set-Cookie', serialize(csrfCookieName(), '', { maxAge: 0, secure: secure(req), httpOnly: false }))
 }
 
-function serialize(name: string, value: string, options: { maxAge: number; secure: boolean }): string {
-  // ⛔ HttpOnly (fora do alcance do JS), SameSite=Strict (nunca vai em pedido que nasce em outro site), Path=/.
-  return [`${name}=${encodeURIComponent(value)}`, 'Path=/', 'HttpOnly', 'SameSite=Strict', `Max-Age=${options.maxAge}`, ...(options.secure ? ['Secure'] : [])].join('; ')
+function serialize(name: string, value: string, options: { maxAge: number; secure: boolean; httpOnly?: boolean }): string {
+  // ⛔ HttpOnly (fora do alcance do JS; só o do CSRF é legível), SameSite=Strict (nunca vai em pedido que nasce em outro site), Path=/.
+  return [
+    `${name}=${encodeURIComponent(value)}`,
+    'Path=/',
+    ...(options.httpOnly === false ? [] : ['HttpOnly']),
+    'SameSite=Strict',
+    `Max-Age=${options.maxAge}`,
+    ...(options.secure ? ['Secure'] : []),
+  ].join('; ')
 }
 
 export function readSessionCookie(req: Request): string | undefined {
-  const name = sessionCookieName()
+  return readCookie(req, sessionCookieName())
+}
+
+function readCookie(req: Request, name: string): string | undefined {
   for (const part of (req.headers.cookie ?? '').split(';')) {
     const at = part.indexOf('=')
     if (at === -1 || part.slice(0, at).trim() !== name) continue
@@ -70,9 +99,29 @@ export function cookieCredential(): RequestHandler {
       return
     }
     req.headers[CALLER_HEADER] = `Bearer ${token}`
-    res.locals[VIA_SESSION_COOKIE] = true
+    res.locals[VIA_SESSION_COOKIE] = browserProof(req, token)
+    // Sessão aberta antes do CSRF existir: o cookie dele nasce no próximo pedido seguro (a tela o lê dali).
+    if (SAFE_METHODS.includes(req.method) && !readCookie(req, csrfCookieName())) {
+      res.append('Set-Cookie', serialize(csrfCookieName(), csrfOf(token), { maxAge: 12 * 60 * 60, secure: secure(req), httpOnly: false }))
+    }
     next()
   }
+}
+
+/**
+ * ⛔ PROVA DE NAVEGADOR, para o que é "só pela tela": além de `Origin` = `Host` (que `curl` forja, os dois são de quem
+ * chama), o navegador mente pouco em `Sec-Fetch-*` (o `curl` não os manda) e a tela devolve o CSRF do cookie no
+ * `X-CSRF` — valor que só quem tem o token da sessão calcula.
+ */
+function browserProof(req: Request, token: string): boolean {
+  if (!sameOrigin(req) || req.headers['sec-fetch-site'] !== 'same-origin') return false
+  const mode = req.headers['sec-fetch-mode']
+  if (mode !== 'cors' && mode !== 'same-origin') return false
+  const sent = req.headers[CSRF_HEADER]
+  if (typeof sent !== 'string') return false
+  const expected = Buffer.from(csrfOf(token))
+  const given = Buffer.from(sent)
+  return given.length === expected.length && timingSafeEqual(given, expected)
 }
 
 /** Marca, em `res.locals`, que a credencial veio do COOKIE da tela (e não de um cabeçalho). */

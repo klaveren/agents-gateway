@@ -32,7 +32,24 @@ export class ApiError extends Error {
  * JavaScript não lê. A marca `X-Gateway-Client: web` faz o login devolver a sessão só no cookie.
  */
 export function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
-  return { ...extra, 'X-Gateway-Client': 'web' }
+  const csrf = readCsrf()
+  return { ...extra, 'X-Gateway-Client': 'web', ...(csrf ? { 'X-CSRF': csrf } : {}) }
+}
+
+/**
+ * ⛔ O CSRF da sessão: o gateway o põe num cookie legível (`gw_csrf_<porta>`) e só aceita o "só pela tela" (aprovar
+ * permissão, gravar segredo) com o mesmo valor devolvido no `X-CSRF`.
+ */
+function readCsrf(): string | undefined {
+  try {
+    for (const part of document.cookie.split(';')) {
+      const at = part.indexOf('=')
+      if (at !== -1 && part.slice(0, at).trim().startsWith('gw_csrf_')) return decodeURIComponent(part.slice(at + 1).trim()) || undefined
+    }
+  } catch {
+    /* sem document (teste) ou cookie ilegível: segue sem o cabeçalho */
+  }
+  return undefined
 }
 
 interface IRequest {

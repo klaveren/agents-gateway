@@ -192,7 +192,8 @@ describe('AntigravityAgentAdapter', () => {
     await collect(adapter.sendMessage(agent, session.id, { text: 'olá' }, { token: 'tok-de-quem-conversa' }))
 
     assert.strictEqual(during.url, 'http://127.0.0.1:3000/v1/turn-tools')
-    assert.strictEqual(during.headers?.['X-Tool-Authorization'], 'Bearer tok-de-quem-conversa')
+    // ⛔ O arquivo do plugin é lido pelo agente: só a concessão do turno, nunca o token de quem conversa.
+    assert.deepStrictEqual(Object.keys(during.headers ?? {}), ['X-Turn-Grant'])
     assert.deepStrictEqual(
       (granted as { tools: Array<{ name: string }> }).tools.map((tool) => tool.name),
       ['run_bash', 'read_file', 'list_agents'],

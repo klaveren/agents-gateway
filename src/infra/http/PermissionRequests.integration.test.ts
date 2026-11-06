@@ -43,7 +43,9 @@ describe('pedidos de permissão (integração: MCP do gateway, API, cookie da te
   }
   const bearer = (token: string) => ({ 'X-Tool-Authorization': `Bearer ${token}` })
   const origin = () => `http://${new URL(base).host}`
-  const screen = () => ({ Cookie: jar, Origin: origin() })
+  let csrf = ''
+  /** A tela de verdade: o cookie, a origem, a prova do navegador (`Sec-Fetch-*`) e o CSRF que ela lê do cookie legível. */
+  const screen = () => ({ Cookie: jar, Origin: origin(), 'Sec-Fetch-Site': 'same-origin', 'Sec-Fetch-Mode': 'cors', 'X-CSRF': csrf })
 
   /** O cliente MCP como o gateway o usa: a conta de quem conversa e a identidade do agente (rótulo). */
   const connect = async (token: string) => {
@@ -90,7 +92,9 @@ describe('pedidos de permissão (integração: MCP do gateway, API, cookie da te
       body: { email: 'root@x.test', password: PASSWORD },
       headers: { 'X-Gateway-Client': 'web', Origin: origin() },
     })
-    jar = (login.headers.get('set-cookie') ?? '').split(';')[0]
+    const cookies = login.headers.getSetCookie().map((line) => line.split(';')[0])
+    jar = cookies.find((item) => item.startsWith('gw_session_')) ?? ''
+    csrf = decodeURIComponent((cookies.find((item) => item.startsWith('gw_csrf_')) ?? '').split('=')[1] ?? '')
     // O modelo do agente ativo: o `patch_agent` grava pelas regras do `PUT` (modelo ativado no catálogo).
     await call('/providers/claude/models', { method: 'POST', headers: bearer(admin), body: { modelId: 'claude-sonnet-5' } })
     await call('/providers/claude/models', { method: 'PUT', headers: bearer(admin), body: { modelId: 'claude-sonnet-5', enabled: true } })
@@ -180,6 +184,25 @@ describe('pedidos de permissão (integração: MCP do gateway, API, cookie da te
     // Cookie sem a origem da tela: a trava de CSRF de sempre.
     const crossSite = await call(`/permission-requests/${requestId}/approve`, { method: 'POST', headers: { Cookie: jar, Origin: 'https://evil.example' }, body: { confirm: keys } })
     assert.strictEqual(crossSite.status, 403)
+    // ⛔ O agente que forja o cookie e a origem à mão (curl: Origin = Host, tudo dele) não é a tela: sem a prova do navegador
+    // e sem o CSRF (que só quem tem o token calcula), o pedido nem chega a aprovar.
+    const forged = { Cookie: jar, Origin: origin() }
+    const curl = await call(`/permission-requests/${requestId}/approve`, { method: 'POST', headers: forged, body: { confirm: keys } })
+    assert.strictEqual(curl.status, 403)
+    const noCsrf = await call(`/permission-requests/${requestId}/approve`, {
+      method: 'POST',
+      headers: { ...forged, 'Sec-Fetch-Site': 'same-origin', 'Sec-Fetch-Mode': 'cors' },
+      body: { confirm: keys },
+    })
+    assert.strictEqual(noCsrf.status, 403)
+    const wrongCsrf = await call(`/permission-requests/${requestId}/approve`, { method: 'POST', headers: { ...screen(), 'X-CSRF': 'inventado' }, body: { confirm: keys } })
+    assert.strictEqual(wrongCsrf.status, 403)
+    const crossSiteFetch = await call(`/permission-requests/${requestId}/approve`, {
+      method: 'POST',
+      headers: { ...screen(), 'Sec-Fetch-Site': 'cross-site' },
+      body: { confirm: keys },
+    })
+    assert.strictEqual(crossSiteFetch.status, 403)
     assert.ok(!(makeAgents().get('theo')?.permissions ?? []).some((rule) => rule.pattern === 'npm test'))
   })
 

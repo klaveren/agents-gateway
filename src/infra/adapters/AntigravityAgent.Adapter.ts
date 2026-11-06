@@ -158,7 +158,7 @@ export class AntigravityAgentAdapter implements IAgentAdapter {
       yield { type: 'warning', sessionId, timestamp: now(), payload: { message: 'As ferramentas do gateway não chegam ao Antigravity aqui: ficam de fora.' } }
     const plugin = turnToolsPluginDir(workspace)
     rmSync(plugin, { recursive: true, force: true })
-    if (grant) writeTurnToolsPlugin(workspace, this.turnTools!.url, { 'X-Turn-Grant': grant, ...(context.token ? { 'X-Tool-Authorization': `Bearer ${context.token}` } : {}) })
+    if (grant) writeTurnToolsPlugin(workspace, this.turnTools!.url, { 'X-Turn-Grant': grant })
     const child = this.spawn(antigravityBin(), antigravityArgs(prompt, record.model, native.conversationId), {
       cwd: workspace,
       env: terminalEnv(agent.env, subscriptionEnv({ HOME: home }), context),
@@ -248,7 +248,7 @@ export function turnToolsPluginDir(workspace: string): string {
 /**
  * ⛔ O MCP DO GATEWAY POR CONVERSA: o `agy` só tem MCP da instalação inteira (`~/.gemini/config`) e o dos plugins da
  * pasta (`<pasta>/.agents/plugins/<nome>/mcp_config.json`). O plugin vai na pasta VAZIA da conversa, com o token do turno
- * (`Turn.Grants`), e sai no fim do turno. Verificado no `agy` 1.4.9: ele conecta e manda os headers.
+ * (`Turn.Grants`), e sai no fim do turno. ⛔ SÓ a concessão vai no arquivo (o agente o lê): o token de quem conversa nunca. Verificado no `agy` 1.4.9: ele conecta e manda os headers.
  */
 export function writeTurnToolsPlugin(workspace: string, url: string, headers: Record<string, string>): string {
   const dir = turnToolsPluginDir(workspace)
