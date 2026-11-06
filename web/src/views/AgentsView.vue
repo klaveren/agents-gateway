@@ -177,13 +177,15 @@ watch(creating, (value) => {
         >
           <AgentAvatar :name="agent.name" :provider="agent.providers[0]?.id ?? ''" size="sm" />
           <span class="min-w-0 flex-1">
-            <span class="block truncate text-sm font-medium">{{ agent.name }}</span>
+            <!-- ⚖️ Ao lado do nome, só os selos curtos de quem vê (global, administradores); os avisos quebram linha embaixo. -->
+            <span class="flex min-w-0 items-center gap-1">
+              <span class="truncate text-sm font-medium">{{ agent.name }}</span>
+              <span v-if="!agent.projectId" class="shrink-0 rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] text-sky-300" title="Aparece em todos os projetos">global</span>
+              <span v-if="agent.adminOnly" class="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300" title="Só administradores conversam com este agente">administradores</span>
+            </span>
             <span class="block truncate text-xs text-zinc-500">{{ providersLine(agent) }}</span>
-            <!-- ⚖️ Os selos quebram linha embaixo do nome: ao lado dele, dois ou três selos espremiam o nome até sumir. -->
-            <span v-if="agent.unavailable || agent.adminOnly || !agent.projectId || pendingCount(openRequests, { agentId: agent.id }) || agent.importIssueCount" class="mt-1 flex flex-wrap gap-1">
+            <span v-if="agent.unavailable || pendingCount(openRequests, { agentId: agent.id }) || agent.importIssueCount" class="mt-1 flex flex-wrap gap-1">
               <span v-if="agent.unavailable" class="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-300" :title="`Indisponível agora: ${agent.unavailable.label}`">{{ agent.unavailable.label }}</span>
-              <span v-if="agent.adminOnly" class="rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-300" title="Só administradores conversam com este agente">só administradores</span>
-              <span v-if="!agent.projectId" class="rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] text-sky-300" title="Aparece em todos os projetos">global</span>
               <PermissionRequestsBadge :count="pendingCount(openRequests, { agentId: agent.id })" />
               <ImportIssuesBadge :count="agent.importIssueCount" />
             </span>

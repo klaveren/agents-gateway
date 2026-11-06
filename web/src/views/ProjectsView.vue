@@ -28,6 +28,9 @@ const projects = useProjectsStore()
 const query = ref('')
 const shownProjects = computed(() => filterList(projects.list, { query: query.value }, (project) => [project.id, project.name, project.description]))
 const users = useUsersStore()
+/** As guias do projeto aberto, como no agente: os dados dele e quem o vê. */
+type TProjectTab = 'projeto' | 'membros'
+const tab = ref<TProjectTab>('projeto')
 const settings = useSettingsStore()
 const sandbox = computed(() => settings.current?.deployment?.sandbox)
 
@@ -205,36 +208,54 @@ async function confirmRemove() {
           <button v-if="selected.id !== projects.current" type="button" class="btn btn-secondary ml-auto" @click="projects.select(selected.id)">Usar este projeto</button>
         </div>
 
-        <p class="text-xs text-zinc-500">
-          Regras e specs do projeto ficam em <RouterLink to="/environment" class="text-emerald-400 underline underline-offset-2">Projeto → Ambiente</RouterLink>.
-        </p>
+        <nav class="flex gap-1 border-b border-zinc-800" role="tablist">
+          <button
+            v-for="item in [
+              { id: 'projeto', label: 'Projeto', count: 0 },
+              { id: 'membros', label: 'Membros', count: members.size },
+            ] as const"
+            :key="item.id"
+            type="button"
+            role="tab"
+            :aria-selected="tab === item.id"
+            class="flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-sm whitespace-nowrap"
+            :class="tab === item.id ? 'border-emerald-500 text-zinc-100' : 'border-transparent text-zinc-400 hover:text-zinc-200'"
+            @click="tab = item.id"
+          >
+            {{ item.label }}
+            <span v-if="item.count" class="rounded-full bg-zinc-800 px-1.5 text-[10px] text-zinc-400">{{ item.count }}</span>
+          </button>
+        </nav>
 
-
-        <div class="rounded-xl border border-zinc-800 p-3 text-xs text-zinc-400">
-          <div class="mb-1 font-medium text-zinc-300">Pasta</div>
-          <code class="block truncate text-zinc-200">{{ selected.folder }}</code>
-          <p class="mt-2 text-zinc-400">Pasta de trabalho dos agentes deste projeto.</p>
-          <p v-if="sandbox?.available" class="mt-2 text-emerald-300">
-            ✓ Os agentes só acessam arquivos desta pasta.
+        <div v-show="tab === 'projeto'" class="flex flex-col gap-4" role="tabpanel">
+          <p class="text-xs text-zinc-500">
+            Regras e specs do projeto ficam em <RouterLink to="/environment" class="text-emerald-400 underline underline-offset-2">Projeto → Ambiente</RouterLink>.
           </p>
-          <p v-else-if="sandbox" class="mt-2 text-amber-300">
-            ⚠ O isolamento da pasta não está disponível. Peça a quem cuida do servidor.
-          </p>
-        </div>
 
-        <div class="grid gap-3">
-          <label class="field">Nome<input v-model="edit.name" class="input" /></label>
-          <label class="field">Descrição<textarea v-model="edit.description" rows="2" class="input text-sm" /></label>
-        </div>
-        <div v-if="dirty" class="flex gap-2">
-          <button type="button" :disabled="busy" class="btn btn-primary" @click="save">Salvar</button>
-        </div>
 
-        <div class="flex flex-col gap-2 rounded-xl border border-zinc-800 p-3">
-          <div class="flex items-center gap-2">
-            <h3 class="text-sm font-medium text-zinc-200">Membros</h3>
-            <span class="text-xs text-zinc-500">quem pode ver este projeto</span>
+          <div class="rounded-xl border border-zinc-800 p-3 text-xs text-zinc-400">
+            <div class="mb-1 font-medium text-zinc-300">Pasta</div>
+            <code class="block truncate text-zinc-200">{{ selected.folder }}</code>
+            <p class="mt-2 text-zinc-400">Pasta de trabalho dos agentes deste projeto.</p>
+            <p v-if="sandbox?.available" class="mt-2 text-emerald-300">
+              ✓ Os agentes só acessam arquivos desta pasta.
+            </p>
+            <p v-else-if="sandbox" class="mt-2 text-amber-300">
+              ⚠ O isolamento da pasta não está disponível. Peça a quem cuida do servidor.
+            </p>
           </div>
+
+          <div class="grid gap-3">
+            <label class="field">Nome<input v-model="edit.name" class="input" /></label>
+            <label class="field">Descrição<textarea v-model="edit.description" rows="2" class="input text-sm" /></label>
+          </div>
+          <div v-if="dirty" class="flex gap-2">
+            <button type="button" :disabled="busy" class="btn btn-primary" @click="save">Salvar</button>
+          </div>
+        </div>
+
+        <div v-show="tab === 'membros'" class="flex flex-col gap-2" role="tabpanel">
+          <p class="text-xs text-zinc-500">Quem pode ver este projeto.</p>
           <ul class="divide-y divide-zinc-800">
             <li v-for="user in users.list" :key="user.id" class="flex items-center gap-3 py-1.5">
               <label class="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-sm">
@@ -251,7 +272,7 @@ async function confirmRemove() {
 
         <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
         <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
-        <div class="flex justify-end text-xs">
+        <div v-show="tab === 'projeto'" class="flex justify-end text-xs">
           <button type="button" class="btn btn-danger" @click="(removing = selected), (removeError = undefined)">Apagar projeto</button>
         </div>
       </section>

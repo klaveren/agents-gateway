@@ -1,27 +1,27 @@
 <script setup lang="ts">
-  import { computed, ref } from 'vue'
-  import InitialContextEditor from './InitialContextEditor.vue'
-  import RulesEditor from './RulesEditor.vue'
+import { computed, ref } from 'vue'
+import InitialContextEditor from './InitialContextEditor.vue'
+import RulesEditor from './RulesEditor.vue'
 
-  /**
-   * O AMBIENTE do projeto: tudo o que TODA conversa dele recebe antes de qualquer coisa do agente — as rules (as globais,
-   * só para ler, e as do projeto) e as specs carregadas inteiras (o contexto inicial) —, com o peso por conversa.
-   * ⚖️ Juntos porque são a mesma pergunta: "o que entra sempre, e quanto custa". Em guias, como no agente: as duas ficam
-   * montadas (`v-show`), para o peso de cada uma chegar ao total sem abrir a guia.
-   */
-  defineProps<{ projectId: string }>()
+/**
+ * O AMBIENTE do projeto: tudo o que TODA conversa dele recebe antes de qualquer coisa do agente — as rules (as globais,
+ * só para ler, e as do projeto) e as specs carregadas inteiras (o contexto inicial) —, com o peso por conversa.
+ * ⚖️ Juntos porque são a mesma pergunta: "o que entra sempre, e quanto custa". Em guias, como no agente: as duas ficam
+ * montadas (`v-show`), para o peso de cada uma chegar ao total sem abrir a guia.
+ */
+defineProps<{ projectId: string }>()
 
-  type TTab = 'regras' | 'contexto'
-  const tab = ref<TTab>('regras')
-  const tabs: { id: TTab; label: string }[] = [
-    { id: 'regras', label: 'Regras' },
-    { id: 'contexto', label: 'Contexto inicial' },
-  ]
+type TTab = 'regras' | 'contexto'
+const tab = ref<TTab>('regras')
+const tabs: { id: TTab; label: string }[] = [
+  { id: 'regras', label: 'Regras' },
+  { id: 'contexto', label: 'Contexto inicial' },
+]
 
-  const rulesWeight = ref(0)
-  const specsWeight = ref(0)
-  const total = computed(() => rulesWeight.value + specsWeight.value)
-  const format = (value: number) => value.toLocaleString('pt-BR')
+const rulesWeight = ref(0)
+const specsWeight = ref(0)
+const total = computed(() => rulesWeight.value + specsWeight.value)
+const format = (value: number) => value.toLocaleString('pt-BR')
 </script>
 
 <template>
@@ -66,7 +66,9 @@
 
     <div v-show="tab === 'contexto'" class="flex flex-col gap-2" role="tabpanel">
       <InitialContextEditor owner="projects" :owner-id="projectId" :project-id="projectId" @weight="(tokens) => (specsWeight = tokens)">
-        <p class="text-sm text-zinc-400">As specs marcadas ficam sempre na memória de todo agente do projeto. As demais o agente consulta quando precisa.</p>
+        <p class="text-sm text-zinc-400">
+          As specs marcadas ficam sempre na memória de todo agente do projeto. As demais o agente consulta quando precisa.
+        </p>
       </InitialContextEditor>
     </div>
 

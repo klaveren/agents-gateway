@@ -15,7 +15,7 @@ Um agente do gateway é um registro: id, nome, soul, prompt, providers e modelos
 2. **Quem ele é × o que ele faz.** A soul diz QUEM: identidade, tom, valores, o que ele não é. O prompt diz O QUE: a função, os modos de operação, os passos e as conferências, e quando escalar ou devolver para a pessoa. Uma não repete a outra.
 3. **Lei positiva, no presente.** O agente lê o prompt a cada conversa: nada de história ("esta regra substituiu…", "antes ele errava…"). Histórico custa tokens para sempre e reforça o que se queria evitar.
 4. **Caminho aberto, não veto.** Agente crítico (revisor, auditor) se mede pelo que destrava: ordena e prioriza, não só recusa. Proibir veredito tira dele a capacidade de priorizar.
-5. **O mínimo necessário.** Cada ferramenta, MCP e delegação é alcance dado a quem conversa com ele. Só o que o trabalho pede. Ferramenta que alcança o servidor (Bash, arquivos, rede) pede "Só administradores".
+5. **O mínimo necessário.** Cada ferramenta, MCP e delegação é alcance dado a quem conversa com ele. Só o que o trabalho pede. Ferramenta que alcança o servidor (Bash, arquivos, rede) pede "Administradores".
 6. **O id diz o papel.** Minúsculas e hífens ("revisor-de-pr"), nunca o nome de uma pessoa. O nome é o que a tela mostra.
 7. **Limite é regra, não só texto.** O que o agente nunca faz e o território dele (o que lê, grava, roda; em quais repositórios, MCPs e agentes) viram as REGRAS DE PERMISSÃO dele — sem regra, negado; Negar vence. O prompt traz só uma seção curta "Limites", com o porquê de cada um, para ele nem tentar. Texto sozinho é racionalizável; a regra o gateway impõe.
 8. **Prompt × trigger.** O que vale em TODA conversa fica no prompt. O procedimento de UMA situação ("quando pedirem X") vira um trigger do agente: o "quando" é a condição de disparo, e o procedimento só entra quando ela acontece. Prompt que cresce com casos especiais é trigger mal colocado.
@@ -33,7 +33,7 @@ Um agente do gateway é um registro: id, nome, soul, prompt, providers e modelos
 - **Permissões:** os limites e o território como regras (terminal, leitura, escrita, rede, MCP, skill, delegação, conta, repositório, trigger). Só o que o papel pede.
 - **Triggers:** um por situação; o id diz o trabalho; o "quando" é uma linha com a condição de disparo.
 - **Alcance:** um agente novo ninguém alcança por delegação até outro ganhar agent:<id> e a regra de delegação para ele. Diga quem deve chamá-lo.
-- **Só administradores:** quando a ferramenta alcança o servidor ou o agente lida com dado sensível.
+- **Administradores:** quando a ferramenta alcança o servidor ou o agente lida com dado sensível.
 
 ## O prompt
 \`\`\`markdown

@@ -251,7 +251,7 @@ function sourceLabel(provider: IProviderStatus): string {
 
         <template v-if="selected.subscription">
           <p class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-            Conta pessoal: os agentes usam a SUA assinatura, inclusive nas conversas de outras pessoas. Para restringir, marque "Só administradores" no agente.
+            Conta pessoal: os agentes usam a SUA assinatura, inclusive nas conversas de outras pessoas. Para restringir, marque "Administradores" no agente.
           </p>
           <p class="text-xs text-zinc-400">{{ SUBSCRIPTION_HINT[selected.protocol] }}</p>
           <SubscriptionLogin :provider="selected" @done="loginDone(selected.id)" />

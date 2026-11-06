@@ -301,8 +301,8 @@
     allowedTools: 'Ferramentas',
     soul: 'Personalidade',
     systemPrompt: 'Instrução do sistema',
-    role: 'Só subagente',
-    adminOnly: 'Só administradores',
+    role: 'Subagente',
+    adminOnly: 'Administradores',
     projectId: 'Projeto',
     tags: 'Tags',
     env: 'Variáveis de ambiente',
@@ -742,7 +742,7 @@
           >
             <span />
           </button>
-          <span>Só subagente</span>
+          <span>Subagente</span>
         </label>
         <small class="hint">Só outros agentes o chamam (em "Pode delegar a"). Não aparece em Nova conversa.</small>
       </div>
@@ -751,7 +751,7 @@
           <button type="button" role="switch" :aria-checked="!!form.adminOnly" class="switch" :class="{ on: form.adminOnly }" @click="form.adminOnly = !form.adminOnly">
             <span />
           </button>
-          <span>Só administradores</span>
+          <span>Administradores</span>
         </label>
         <small class="hint">Desligado, qualquer pessoa com conta pode conversar com este agente.</small>
       </div>
@@ -953,7 +953,7 @@
         </div>
         <small v-if="dangerousChosen.length" class="text-amber-300">
           ⚠ {{ dangerousChosen.join(', ') }} dá acesso ao servidor. Quem conversar com este agente também terá esse acesso.
-          <template v-if="!form.adminOnly">Marque "Só administradores" na guia Agente se não for para todos.</template>
+          <template v-if="!form.adminOnly">Marque "Administradores" na guia Agente se não for para todos.</template>
         </small>
         <small v-for="message in issues.allowedTools" :key="message" class="error">{{ message }}</small>
       </div>
@@ -1220,7 +1220,7 @@
         <template v-if="dangerousNatives.length">{{ dangerousNatives.join(', ') }} dá acesso ao disco, à internet e aos comandos do servidor.</template>
         <template v-if="openSandboxes.length">{{ openSandboxes.join(', ') }}: acesso total.</template>
         Quem conversar com este agente também terá esse acesso.
-        <template v-if="!form.adminOnly">Marque "Só administradores" na guia Agente se não for para todos.</template>
+        <template v-if="!form.adminOnly">Marque "Administradores" na guia Agente se não for para todos.</template>
       </small>
     </fieldset>
 
