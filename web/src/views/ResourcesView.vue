@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SaveFooter from '@/components/SaveFooter.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
@@ -72,7 +73,9 @@ const scope = ref<string>(projects.current ?? GLOBAL_SCOPE)
 /** Lê quando a tela abre (só admin, com a lista de projetos). */
 const ready = ref(false)
 const listed = useResource(resources.lists, () => (ready.value ? resources.listKey(scope.value, props.kind) : undefined))
-const all = computed(() => listed.data.value ?? [])
+// Num projeto, os globais vêm junto (a lista do servidor é só do escopo): os do projeto primeiro.
+const globals = useResource(resources.lists, () => (ready.value && scope.value !== GLOBAL_SCOPE ? resources.listKey(GLOBAL_SCOPE, props.kind) : undefined))
+const all = computed(() => [...(listed.data.value ?? []), ...(scope.value !== GLOBAL_SCOPE ? (globals.data.value ?? []) : [])])
 /** A busca e a tag do topo da lista. */
 const query = ref('')
 const tag = ref('')
@@ -108,7 +111,11 @@ const note = ref<string>()
 const busy = ref(false)
 const removing = ref(false)
 
-const scopes = computed(() => [{ id: GLOBAL_SCOPE, name: 'Global — todos os projetos' }, ...projects.list.map((project) => ({ id: project.id, name: project.name }))])
+// O projeto escolhido no topo manda na lista: trocar lá troca aqui.
+watch(
+  () => projects.current,
+  (id) => (scope.value = id ?? GLOBAL_SCOPE),
+)
 const formScope = computed(() => (form.value.global ? GLOBAL_SCOPE : form.value.project))
 const { list: docs } = useScopedDocs(() => (auth.isAdmin ? scopeToProjectId(formScope.value) : undefined))
 /** Os documentos que podem ir anexados: os globais e, num recurso de projeto, os do projeto. */
@@ -229,6 +236,9 @@ function slug() {
 }
 
 /** A guia Arquivos: grava só a lista (o resto da skill fica). */
+/** A guia Arquivos, montada dentro do formulário: o Salvar grava o rascunho dela (`commit`). */
+const filesPart = ref<{ dirty: boolean; commit: () => Promise<void> }>()
+
 async function saveFiles(files: IResource['files']) {
   if (!loaded.value) return
   loaded.value = await resources.saveFiles(loaded.value.id, files)
@@ -261,11 +271,15 @@ async function save() {
       scope.value = created.projectId ?? GLOBAL_SCOPE
       await router.push(`${info.value.base}/${created.id}`)
     } else {
-      loaded.value = await resources.update(form.value.id, body)
-      form.value.tags = [...(loaded.value.tags ?? [])]
-      form.value.docIds = [...loaded.value.docIds]
-      form.value.docRefs = [...(loaded.value.docRefs ?? [])]
-      form.value.triggers = copyTriggers(loaded.value.triggers)
+      if (dirty.value) {
+        loaded.value = await resources.update(form.value.id, body)
+        form.value.tags = [...(loaded.value.tags ?? [])]
+        form.value.docIds = [...loaded.value.docIds]
+        form.value.docRefs = [...(loaded.value.docRefs ?? [])]
+        form.value.triggers = copyTriggers(loaded.value.triggers)
+      }
+      // Os arquivos vão no mesmo Salvar.
+      await filesPart.value?.commit()
       note.value = 'Salvo. Vale para as próximas conversas.'
     }
   } catch (failure) {
@@ -344,17 +358,19 @@ function onInvalid(event: Event) {
         <RouterLink :to="`${info.base}/new`" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" :title="`${g.nova} ${info.one}`"><Icon name="plus" class="h-5 w-5" /></RouterLink>
       </header>
       <BuildTabs :kind="kind" active="list" class="px-3 pb-2" />
-      <div class="px-3 pb-2">
-        <select v-model="scope" class="input w-full py-1.5 text-sm" aria-label="Escopo">
-          <option v-for="item in scopes" :key="item.id" :value="item.id">{{ item.name }}</option>
-        </select>
-      </div>
+      <!-- ⚖️ Sem seletor de projeto aqui: a lista segue o projeto escolhido no topo (e traz os globais junto). -->
+      <p class="px-4 pb-2 text-xs text-zinc-500" data-test="scope-caption">
+        {{ scope === GLOBAL_SCOPE ? 'Mostrando os globais (nenhum projeto escolhido no topo).' : `Mostrando ${scopeLabel(scope, projects.list)} e os globais.` }}
+      </p>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
       <ListFilter v-if="all.length" v-model:query="query" v-model:tag="tag" :placeholder="`Buscar ${info.one}…`" :items="all" />
       <p v-if="!loadError && all.length && !list.length" class="px-4 py-2 text-sm text-zinc-500">{{ g.nenhuma }} {{ info.one }} com essa busca.</p>
       <p v-else-if="!loadError && !all.length" class="px-4 py-2 text-sm text-zinc-500">{{ g.nenhuma }} {{ info.one }} em {{ scopeLabel(scope, projects.list) }}.</p>
       <RouterLink v-for="resource in list" :key="resource.id" :to="`${info.base}/${resource.id}`" class="mx-2 block rounded-xl px-3 py-2" :class="resource.id === id ? 'bg-emerald-500/15' : 'hover:bg-zinc-800/60'">
-        <span class="block truncate font-mono text-sm">{{ kind === 'command' ? '/' : '' }}{{ resource.id }}</span>
+        <span class="flex items-center gap-2">
+          <span class="truncate font-mono text-sm">{{ kind === 'command' ? '/' : '' }}{{ resource.id }}</span>
+          <span v-if="scope !== GLOBAL_SCOPE && !resource.projectId" class="shrink-0 rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">global</span>
+        </span>
         <span class="block truncate text-xs text-zinc-500">{{ resource.description }}<template v-if="resource.docIds.length"> · {{ resource.docIds.length }} doc(s)</template></span>
         <TagChips :tags="resource.tags" />
         <ImportIssuesBadge :count="resource.importIssues?.length" class="mt-1" />
@@ -363,7 +379,7 @@ function onInvalid(event: Event) {
 
     <template #detail>
       <div v-if="adding || loaded" class="mx-auto mb-4 max-w-3xl"><HistoryTabs v-model="tab" :edit-label="info.one.charAt(0).toUpperCase() + info.one.slice(1)" :extra="extraTabs" :history="!adding" /></div>
-      <form v-if="adding || (loaded && (tab === 'edit' || tab === 'instructions' || tab === 'triggers' || tab === 'attachments'))" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save" @invalid.capture="onInvalid">
+      <form v-if="adding || (loaded && (tab === 'edit' || tab === 'instructions' || tab === 'triggers' || tab === 'attachments' || tab === 'files'))" class="mx-auto flex max-w-3xl flex-col gap-3" @submit.prevent="save" @invalid.capture="onInvalid">
         <h2 class="font-mono text-lg font-semibold">{{ adding ? `${g.nova} ${info.one}` : `${kind === 'command' ? '/' : ''}${loaded?.id}` }}</h2>
         <div v-show="tab === 'edit'" class="flex flex-col gap-3">
         <label class="field">
@@ -382,7 +398,8 @@ function onInvalid(event: Event) {
         <div class="flex flex-wrap items-center gap-3 text-sm">
           <label class="flex items-center gap-2"><input v-model="form.global" type="checkbox" class="accent-emerald-500" /> Global (todos os projetos)</label>
           <select v-if="!form.global" v-model="form.project" required class="input w-auto py-1.5 text-sm" aria-label="Projeto">
-            <option v-for="project in projects.list" :key="project.id" :value="project.id">{{ project.name }}</option>
+            <!-- Só o projeto escolhido no topo (ou o do item, se for outro): sem lista de projetos aqui. -->
+            <option v-for="project in projects.list.filter((item) => item.id === projects.current || item.id === form.project)" :key="project.id" :value="project.id">{{ project.name }}</option>
           </select>
           <small v-for="m in issues.projectId" :key="m" class="error">{{ m }}</small>
         </div>
@@ -425,19 +442,26 @@ function onInvalid(event: Event) {
 
         <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
         <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
-        <div class="flex gap-2">
-          <button type="submit" :disabled="busy || !dirty" class="btn btn-primary">{{ adding ? 'Criar' : 'Salvar' }}</button>
-          <RouterLink v-if="adding" :to="info.base" class="btn btn-ghost">Cancelar</RouterLink>
-          <button v-else type="button" class="btn btn-danger ml-auto" @click="removing = true">Apagar</button>
+        <!-- Os arquivos também vão no Salvar (um salvar só por tela): a guia fica montada, com o rascunho dela. -->
+        <div v-if="loaded" v-show="tab === 'files'">
+          <ResourceFiles
+            ref="filesPart"
+            embedded
+            :files="loaded.files ?? []"
+            :where="`${loaded.projectId ? `projects/${loaded.projectId}` : 'global'}/${kind}s/${loaded.id}`"
+            :save="saveFiles"
+          />
         </div>
+        <SaveFooter submit :label="`${adding ? 'Criar' : 'Salvar'} ${info.one}`" :busy="busy" :disabled="!(dirty || !!filesPart?.dirty)" :pending="!adding && (dirty || !!filesPart?.dirty)">
+          <RouterLink v-if="adding" :to="info.base" class="btn btn-ghost">Cancelar</RouterLink>
+          <template v-if="!adding" #end>
+            <button type="button" class="btn btn-danger" @click="removing = true">Apagar {{ info.one }}</button>
+          </template>
+        </SaveFooter>
       </form>
       <section v-else-if="loaded && tab === 'issues'" class="mx-auto flex max-w-3xl flex-col gap-3">
         <h2 class="font-mono text-lg font-semibold">{{ kind === 'command' ? '/' : '' }}{{ loaded.id }}</h2>
         <ImportIssues :issues="importIssues" :resolve="resolveIssue" />
-      </section>
-      <section v-else-if="loaded && tab === 'files'" class="mx-auto flex max-w-3xl flex-col gap-3">
-        <h2 class="font-mono text-lg font-semibold">{{ kind === 'command' ? '/' : '' }}{{ loaded.id }}</h2>
-        <ResourceFiles :files="loaded.files ?? []" :where="`${loaded.projectId ? `projects/${loaded.projectId}` : 'global'}/${kind}s/${loaded.id}`" :save="saveFiles" />
       </section>
       <section v-else-if="loaded && tab === 'variables'" class="mx-auto flex max-w-3xl flex-col gap-3">
         <h2 class="font-mono text-lg font-semibold">{{ kind === 'command' ? '/' : '' }}{{ loaded.id }}</h2>

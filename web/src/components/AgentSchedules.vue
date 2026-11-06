@@ -222,7 +222,7 @@ const summary = (schedule: ISchedule) => describeCron(schedule.cron) ?? schedule
         Projeto
         <select v-model="draft.projectId" class="input text-sm">
           <option :value="null">Nenhum (global)</option>
-          <option v-for="project in projects.list" :key="project.id" :value="project.id">{{ project.name }}</option>
+          <option v-for="project in projects.list.filter((item) => item.id === projects.current || item.id === draft.projectId)" :key="project.id" :value="project.id">{{ project.name }}</option>
         </select>
         <small class="hint">Escolha o projeto em que a conversa roda.</small>
         <small v-for="m in issues.projectId" :key="m" class="error">{{ m }}</small>

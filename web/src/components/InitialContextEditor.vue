@@ -13,7 +13,8 @@ import { type TContextOwner, useAgentCatalogStore } from '@/stores/agentCatalog'
  * antes (o do projeto, na guia do agente), para o peso mostrar o total da conversa. As specs e o contexto moram nas
  * stores: o Ambiente e a guia do agente leem a mesma cópia.
  */
-const props = defineProps<{ owner: TContextOwner; ownerId: string; projectId?: string; baseTokens?: number }>()
+/** `embedded`: dentro de um formulário maior, sem botão próprio — quem grava é o Salvar dele (`commit`). */
+const props = defineProps<{ owner: TContextOwner; ownerId: string; projectId?: string; baseTokens?: number; embedded?: boolean }>()
 /** O peso das marcadas (o que já está na lista, salvo ou não): quem embute mostra o total da conversa. */
 const emit = defineEmits<{ weight: [tokens: number] }>()
 const catalog = useAgentCatalogStore()
@@ -21,7 +22,7 @@ const catalog = useAgentCatalogStore()
 const specs = useScopedDocs(() => props.projectId ?? null, 'spec')
 const context = useResource(catalog.initialContexts, () => catalog.contextKey(props.owner, props.ownerId))
 const available = specs.list
-const saved = computed(() => context.data.value?.docs.map((doc) => doc.id) ?? [])
+const saved = computed(() => context.data.value?.docs?.map((doc) => doc.id) ?? [])
 const selected = ref<string[]>([])
 const loading = computed(() => specs.loading.value || context.loading.value)
 const busy = ref(false)
@@ -63,6 +64,14 @@ function move(id: string, step: -1 | 1) {
   ;[list[index], list[other]] = [list[other], list[index]]
   selected.value = list
 }
+
+/** O Salvar de fora grava este editor junto: lança se falhar. */
+async function commit(): Promise<void> {
+  if (!dirty.value) return
+  await save()
+  if (saveError.value) throw saveError.value
+}
+defineExpose({ dirty, commit })
 
 async function save() {
   busy.value = true
@@ -116,7 +125,8 @@ function describe(failure: unknown): string {
         {{ selected.length }} spec(s) · ≈ {{ weight.total.toLocaleString('pt-BR') }} tokens<template v-if="baseTokens"> · ≈ {{ total.total.toLocaleString('pt-BR') }} com o contexto do projeto</template> em toda conversa
         <template v-if="total.warn"> — acima de {{ CONTEXT_WARN_TOKENS.toLocaleString('pt-BR') }}, fica mais caro</template>
       </span>
-      <button type="button" :disabled="busy || !dirty" class="btn btn-primary ml-auto" @click="save">Salvar</button>
+      <button v-if="!embedded" type="button" :disabled="busy || !dirty" class="btn btn-primary ml-auto" @click="save">Salvar</button>
+      <span v-else-if="dirty" class="ml-auto text-xs text-amber-300">Mudança não salva</span>
     </div>
     <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
   </section>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-  import { computed, onMounted, ref, watch } from 'vue'
+  import SaveFooter from '@/components/SaveFooter.vue'
+import { computed, onMounted, ref, watch } from 'vue'
   import { useRoute, useRouter } from 'vue-router'
   import ConfirmDialog from '@/components/ConfirmDialog.vue'
   import FallbackChain from '@/components/FallbackChain.vue'
@@ -105,7 +106,7 @@
       const group = built()
       const next = adding.value ? [...groups.value, group] : groups.value.map((item) => (item.id === group.id ? group : item))
       await settings.save({ modelGroups: next })
-      saved.value = 'Grupo salvo. Vale no próximo turno.'
+      saved.value = 'Sequência salva. Vale no próximo turno.'
       if (adding.value) await router.push(`/model-groups/${group.id}`)
     } catch (error) {
       failure.value = describe(error)
@@ -119,7 +120,7 @@
     saved.value = failure.value = undefined
     try {
       await settings.save({ defaultModelGroup: selected.value.id })
-      saved.value = 'Agora é o grupo padrão.'
+      saved.value = 'Agora é a sequência padrão.'
     } catch (error) {
       failure.value = describe(error)
     }
@@ -149,23 +150,23 @@
 
 <template>
   <div v-if="!auth.isAdmin" class="grid h-full place-items-center p-6 text-center text-zinc-400">
-    <p class="font-medium text-zinc-200">Só quem administra configura os grupos de modelos.</p>
+    <p class="font-medium text-zinc-200">Só quem administra configura a troca automática de modelo.</p>
   </div>
 
-  <MasterDetail v-else :open="!!id || adding" back-to="/model-groups" back-label="Grupos" :title="adding ? 'Novo grupo' : selected?.name">
+  <MasterDetail v-else :open="!!id || adding" back-to="/model-groups" back-label="Sequências" :title="adding ? 'Nova sequência' : selected?.name">
     <template #list>
       <header class="flex items-center gap-2 px-4 pt-4 pb-1">
-        <h1 class="text-xl font-semibold">Grupos de modelos</h1>
-        <RouterLink to="/model-groups/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Novo grupo">
+        <h1 class="text-xl font-semibold">Troca automática de modelo</h1>
+        <RouterLink to="/model-groups/new" class="ml-auto grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-zinc-950 hover:bg-emerald-400" title="Nova sequência">
           <Icon name="plus" class="h-5 w-5" />
         </RouterLink>
       </header>
       <p class="px-4 pb-3 text-xs text-zinc-500">
-        Um grupo é uma lista de modelos em ordem. A conversa que abre sem modelo escolhido começa no primeiro disponível; se o modelo falha por um dos motivos do grupo, segue no
-        próximo disponível e fica nele (não volta). No chat, a pessoa continua escolhendo entre os “Modelos do agente”.
+        Uma sequência é uma lista de modelos em ordem. Quando o modelo da conversa falha por um dos motivos marcados, o agente continua no próximo disponível, sem a pessoa
+        precisar fazer nada, e fica nele. A conversa aberta sem modelo escolhido já começa no primeiro. A pessoa ainda pode escolher outro modelo na conversa.
       </p>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
-      <p v-else-if="settings.current && !groups.length" class="px-4 text-sm text-zinc-500">Nenhum grupo ainda. Sem grupo, o agente não troca de modelo quando um falha.</p>
+      <p v-else-if="settings.current && !groups.length" class="px-4 text-sm text-zinc-500">Nenhuma sequência ainda. Sem sequência, o agente não troca de modelo quando um falha.</p>
       <RouterLink
         v-for="group in groups"
         :key="group.id"
@@ -181,7 +182,7 @@
           <span class="block truncate text-xs text-zinc-500">
             <code>{{ group.id }}</code>
             · {{ group.steps.length }} {{ group.steps.length === 1 ? 'passo' : 'passos' }} · {{ countOf(group.id) }} {{ countOf(group.id) === 1 ? 'agente' : 'agentes' }}
-            <template v-if="group.id === defaultId">+ os sem grupo</template>
+            <template v-if="group.id === defaultId">+ os sem sequência</template>
           </span>
         </span>
       </RouterLink>
@@ -189,7 +190,7 @@
 
     <template #detail>
       <section v-if="adding || selected" :key="adding ? 'new' : selected?.id" class="mx-auto flex max-w-3xl flex-col gap-4">
-        <h2 class="text-lg font-semibold">{{ adding ? 'Novo grupo' : selected?.name }}</h2>
+        <h2 class="text-lg font-semibold">{{ adding ? 'Nova sequência' : selected?.name }}</h2>
         <form class="flex flex-col gap-4" @submit.prevent="save">
           <div class="grid gap-3 sm:grid-cols-2">
             <label v-if="adding" class="field">
@@ -212,7 +213,7 @@
           <div class="flex flex-col gap-2">
             <h3 class="text-sm font-medium text-zinc-200">Passos</h3>
             <p class="text-xs text-zinc-500">
-              Na ordem de uso: o primeiro disponível é onde a conversa começa; os seguintes, para onde ela vai quando o modelo falha. Só entram modelos ativados.
+              A ordem de uso. A conversa começa no primeiro modelo disponível; quando ele falha, passa para o próximo, e assim por diante. Só aparecem modelos ativados.
             </p>
             <FallbackChain v-model="draft.steps" :options="stepOptions" />
           </div>
@@ -220,16 +221,16 @@
           <fieldset class="flex flex-col gap-2">
             <legend class="text-sm font-medium text-zinc-200">Trocar de modelo quando</legend>
             <div class="flex flex-wrap gap-x-4 gap-y-1.5 text-sm text-zinc-300">
-              <label v-for="option in SWITCH_OPTIONS" :key="option.value" class="flex items-center gap-2">
+              <label v-for="option in SWITCH_OPTIONS" :key="option.value" class="flex items-center gap-2" :title="option.hint">
                 <input type="checkbox" class="accent-emerald-500" :checked="draft.switchOn.includes(option.value)" @change="toggle(option.value)" />
                 {{ option.label }}
               </label>
             </div>
-            <small class="text-xs text-zinc-500">Sobrecarga costuma passar sozinha e credencial recusada é para consertar: por isso essas duas começam desmarcadas.</small>
+            <small class="text-xs text-zinc-500">Sobrecarga costuma passar sozinha, e credencial recusada pede conserto, não troca: por isso essas duas começam desmarcadas.</small>
           </fieldset>
 
-          <label class="field max-w-xs">
-            Tempo de espera do passo que falhou (minutos)
+          <label class="field max-w-sm">
+            Rejeitar o modelo que falhou por (minutos)
             <input
               v-model="draft.cooldown"
               type="number"
@@ -239,7 +240,7 @@
               class="input tabular-nums"
               aria-label="Tempo de espera"
             />
-            <small class="text-xs text-zinc-500">Quando o erro não diz quando o modelo volta.</small>
+            <small class="text-xs text-zinc-500">Nesse tempo, o agente pula esse modelo e usa o próximo. Só vale quando o erro não diz quando ele volta; em branco, 15 minutos.</small>
           </label>
 
           <div v-if="selected" class="flex flex-col gap-1 text-sm">
@@ -249,29 +250,30 @@
               <li v-for="agent in usersOf(selected.id)" :key="agent.id">
                 <RouterLink :to="`/agents/${agent.id}`" class="rounded-full bg-zinc-800 px-2.5 py-0.5 text-xs text-zinc-200 hover:bg-zinc-700">{{ agent.name }}</RouterLink>
               </li>
-              <li v-if="selected.id === defaultId" class="text-xs text-zinc-400">e todos os agentes sem grupo</li>
+              <li v-if="selected.id === defaultId" class="text-xs text-zinc-400">e todos os agentes sem sequência</li>
             </ul>
           </div>
 
-          <div class="flex flex-wrap items-center gap-2">
-            <button type="submit" class="btn btn-primary" :disabled="!canSave">{{ adding ? 'Criar grupo' : 'Salvar' }}</button>
-            <button v-if="selected && selected.id !== defaultId" type="button" class="btn" @click="makeDefault">Tornar padrão</button>
-            <button v-if="selected" type="button" class="btn btn-ghost ml-auto text-rose-300" @click="removing = true">Apagar</button>
-            <RouterLink v-if="adding" to="/model-groups" class="btn btn-ghost">Cancelar</RouterLink>
-          </div>
           <p v-if="saved" class="text-sm text-emerald-300">{{ saved }}</p>
           <p v-if="failure" class="text-sm text-rose-300">{{ failure }}</p>
+          <SaveFooter submit :label="adding ? 'Criar sequência' : 'Salvar sequência'" :busy="busy" :disabled="!canSave">
+            <button v-if="selected && selected.id !== defaultId" type="button" class="btn btn-secondary" @click="makeDefault">Tornar padrão</button>
+            <RouterLink v-if="adding" to="/model-groups" class="btn btn-ghost">Cancelar</RouterLink>
+            <template v-if="selected" #end>
+              <button type="button" class="btn btn-danger" @click="removing = true">Apagar sequência</button>
+            </template>
+          </SaveFooter>
         </form>
       </section>
-      <p v-else class="mx-auto max-w-3xl text-sm text-zinc-500">Escolha um grupo na lista, ou crie um novo.</p>
+      <p v-else class="mx-auto max-w-3xl text-sm text-zinc-500">Escolha uma sequência na lista, ou crie uma nova.</p>
     </template>
   </MasterDetail>
 
   <ConfirmDialog
     :open="removing"
-    :title="`Apagar o grupo ${selected?.name ?? ''}?`"
+    :title="`Apagar a sequência ${selected?.name ?? ''}?`"
     :message="
-      removeError ?? (selected?.id === defaultId ? 'É o grupo padrão: os agentes sem grupo deixam de trocar de modelo.' : 'Agentes que usam este grupo impedem a exclusão.')
+      removeError ?? (selected?.id === defaultId ? 'É a sequência padrão: os agentes sem sequência deixam de trocar de modelo.' : 'Agentes que usam esta sequência impedem a exclusão.')
     "
     :busy="busy"
     @confirm="remove"

@@ -56,7 +56,7 @@ const fmt = (value: number) => value.toLocaleString('pt-BR')
         Projeto
         <select v-model="project" class="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-sm text-zinc-100">
           <option value="">nenhum (só o global)</option>
-          <option v-for="item in projects.list" :key="item.id" :value="item.id">{{ item.name }}</option>
+          <option v-for="item in projects.list.filter((one) => one.id === projects.current || one.id === project)" :key="item.id" :value="item.id">{{ item.name }}</option>
         </select>
       </label>
       <button type="button" class="btn btn-secondary" :class="projectId ? 'ml-auto' : ''" :disabled="loading" @click="load">{{ loading ? 'Medindo…' : 'Atualizar' }}</button>

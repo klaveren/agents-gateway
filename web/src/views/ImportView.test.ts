@@ -799,8 +799,8 @@ describe('ImportView', () => {
     area.value = '.agents/benchmark\n  *.log  \n\n*.log'
     area.dispatchEvent(new Event('input'))
     await flush()
-    editor.querySelector<HTMLButtonElement>('[data-test="ignore-save"]')!.click()
-    editor.querySelector('form')!.dispatchEvent(new Event('submit'))
+    // Com mudança, o rodapé da configuração da análise aparece; ele grava o ignorar.
+    host.querySelector<HTMLButtonElement>('[data-test="analysis-save"] button')!.click()
     await flush()
     expect(api).toHaveBeenCalledWith('/projects/alfa/import/ignore', { method: 'PUT', body: { patterns: ['.agents/benchmark', '*.log'] } })
     expect(editor.textContent).toContain('Analise de novo para aplicar')
@@ -824,8 +824,8 @@ describe('ImportView', () => {
     expect(place('.agents/')[0].querySelector('[data-test="scope-mark"]')!.textContent).toBe('encontrado')
     expect(place('CLAUDE.md')[0].querySelector('[data-test="scope-mark"]')).toBeNull()
     expect(place('.cursor/')[0].querySelector<HTMLInputElement>('input')!.checked).toBe(false)
-    const save = editor.querySelector<HTMLButtonElement>('[data-test="scope-save"]')!
-    expect(save.disabled).toBe(true)
+    // Sem mudança, o rodapé da configuração da análise nem aparece.
+    expect(host.querySelector('[data-test="analysis-save"]')).toBeNull()
     // O AGENTS.md é do opencode e do Codex: o mesmo interruptor nos dois.
     place('AGENTS.md')[0].querySelector<HTMLInputElement>('input')!.click()
     await flush()
@@ -835,9 +835,9 @@ describe('ImportView', () => {
     extra.value = './prompts/\n  docs/agentes  \n\nprompts'
     extra.dispatchEvent(new Event('input'))
     await flush()
-    expect(save.disabled).toBe(false)
+    expect(host.querySelector('[data-test="analysis-save"]')).not.toBeNull()
     vi.mocked(api).mockClear()
-    editor.querySelector('form')!.dispatchEvent(new Event('submit'))
+    host.querySelector<HTMLButtonElement>('[data-test="analysis-save"] button')!.click()
     await flush()
     expect(api).toHaveBeenCalledWith('/projects/alfa/import/scope', { method: 'PUT', body: { disabled: ['AGENTS.md'], extra: ['./prompts/', 'docs/agentes', 'prompts'] } })
     expect(api).toHaveBeenCalledTimes(1)

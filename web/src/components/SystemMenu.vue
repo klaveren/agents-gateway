@@ -12,7 +12,7 @@
     { to: '/projects', key: 'projects', label: 'Projetos', hint: 'Pastas, membros e o que é de cada um', icon: 'agents' },
     { to: '/users', key: 'users', label: 'Usuários', hint: 'Contas, papéis e acessos', icon: 'users' },
     { to: '/models', key: 'providers', label: 'Modelos', hint: 'Provedores, chaves, assinaturas e modelos', icon: 'key' },
-    { to: '/model-groups', key: 'model-groups', label: 'Grupos de modelos', hint: 'A ordem de troca quando um modelo falha', icon: 'key' },
+    { to: '/model-groups', key: 'model-groups', label: 'Troca automática de modelo', hint: 'Quando um modelo falha, segue no próximo', icon: 'key' },
     { to: '/mcp', key: 'mcp', label: 'MCPs', hint: 'Servidores de ferramentas', icon: 'plug' },
     { to: '/catalog/history', key: 'catalog-history', label: 'Histórico do catálogo', hint: 'O que mudou, quem mudou, restaurar e reverter lote', icon: 'clock' },
     { to: '/errors', key: 'errors', label: 'Erros', hint: 'Ferramentas e turnos que falharam, por período', icon: 'warn' },

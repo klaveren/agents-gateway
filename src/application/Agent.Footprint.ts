@@ -84,7 +84,7 @@ export async function agentFootprint(agent: IAgent, projectId: string | undefine
 
   const soul = agent.soul?.trim()
   add('soul', 'Soul', soul ? `## Quem você é\n${soul}\n\n## Como você trabalha\n` : undefined)
-  add('instructions', 'Instrução do sistema', agent.systemPrompt)
+  add('instructions', 'System Prompt', agent.systemPrompt)
   // O "## Ambiente" de uma conversa no projeto, fora de repositório (o repositório e o branch só a conversa sabe).
   const name = projectId ? deps.projectName?.(projectId) : undefined
   const directory = agent.projectId ? deps.projectDir?.(agent.projectId) : undefined

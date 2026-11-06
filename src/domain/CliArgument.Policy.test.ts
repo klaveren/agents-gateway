@@ -12,7 +12,7 @@ describe('CliArgument.Policy', () => {
     const parts = promptParts('Faça X.\n\n## Regras do ambiente\n1. r\n\n## Specs do projeto\n### A\ncorpo')
     assert.deepStrictEqual(
       parts.map((part) => part.label),
-      ['Instrução do sistema', 'Regras do ambiente', 'Specs do projeto'],
+      ['System Prompt', 'Regras do ambiente', 'Specs do projeto'],
     )
     assert.strictEqual(parts[0].bytes, Buffer.byteLength('Faça X.\n'))
     assert.strictEqual(
@@ -24,7 +24,7 @@ describe('CliArgument.Policy', () => {
   it('o soul e a instrução com o nome da tela', () => {
     assert.deepStrictEqual(
       promptParts('## Quem você é\nCalma.\n\n## Como você trabalha\nFaça X.').map((part) => part.label),
-      ['Soul', 'Instrução do sistema'],
+      ['Soul', 'System Prompt'],
     )
   })
 
@@ -50,7 +50,7 @@ describe('CliArgument.Policy', () => {
   it('abaixo do limite, nada; acima, o tamanho, o limite e o que pesa', () => {
     const parts = [
       { label: 'Specs do projeto', bytes: 90_000 },
-      { label: 'Instrução do sistema', bytes: 40_000 },
+      { label: 'System Prompt', bytes: 40_000 },
       { label: 'Skills', bytes: 2_000 },
       { label: 'Commands', bytes: 500 },
     ]
@@ -60,7 +60,7 @@ describe('CliArgument.Policy', () => {
     assert.match(message, /não cabe no Codex/)
     assert.match(message, /140\.000 bytes/)
     assert.match(message, /131\.071 bytes/)
-    assert.match(message, /Specs do projeto \(87,9 KiB\), Instrução do sistema \(39,1 KiB\), Skills \(2 KiB\)/)
+    assert.match(message, /Specs do projeto \(87,9 KiB\), System Prompt \(39,1 KiB\), Skills \(2 KiB\)/)
     assert.ok(!message.includes('Commands'))
   })
 })
