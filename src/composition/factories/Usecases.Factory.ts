@@ -16,6 +16,7 @@ import { makeOrchestrator } from './Orchestrator.Factory'
 import { makeTools } from './Tools.Factory'
 import { makeAgents } from './Agents.Factory'
 import { DelegationService } from '@application/Delegation.Service'
+import { backgroundProcesses } from '@infra/tools/Background.Processes'
 
 export function makeUsecases() {
   const agentProvider = makeOrchestrator()
@@ -48,6 +49,15 @@ export function makeUsecases() {
         const [turns, native] = await Promise.all([conversations.listTurns(sessionId), conversations.findNative?.(sessionId)])
         await agentProvider.resume?.({ session: stored, turns, delegatedBy: parentId, ...(native ? { native } : {}) })
         return { agentId: stored.agentId, delegatedBy }
+      },
+      // A filha sai da memória quando para: com processo em segundo plano dela rodando, ou outro turno já em curso, fica.
+      (sessionId) => {
+        try {
+          if (agentProvider.describe(sessionId).status === 'running' || backgroundProcesses().running(sessionId).length) return
+        } catch {
+          return
+        }
+        void agentProvider.dispose(sessionId).catch(() => undefined)
       },
     ),
   )

@@ -41,6 +41,11 @@ export class DelegationService {
      * que tenha sido apagada. Devolve a conversa gravada (para conferir de quem é) ou nada. Ausente = sem retomada.
      */
     private readonly resumeChild?: (sessionId: string, parentId: string) => Promise<{ agentId: string; delegatedBy?: unknown } | undefined>,
+    /**
+     * ⚖️ Ao fim do turno da filha, a sessão viva dela sai: ninguém mais a encerra, e ela ocupava a vaga de conversa viva
+     * da conta por horas. A conversa fica gravada; continuar (com o `sessionId`) a retoma pelo histórico.
+     */
+    private readonly release?: (sessionId: string) => void,
   ) {}
 
   /** Quem entrega a resposta que chegou depois do turno da mãe (um turno novo nela; ligado na composição). */
@@ -132,6 +137,7 @@ export class DelegationService {
       failure = error instanceof Error ? error.message : String(error)
     }
     const took = `${Math.round((Date.now() - startedAt) / 1000)} s`
+    this.release?.(sessionId)
     if (failure && !reply) {
       console.warn(`[delegação] ${parent.agentId} → ${request.agentId} (${sessionId}): falhou em ${took}: ${failure}`)
       this.deliverIfLost(parent.id, turnAtCall, request.agentId, sessionId, { ok: false, error: failure })

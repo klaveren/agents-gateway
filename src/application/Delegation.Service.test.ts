@@ -103,6 +103,24 @@ describe('DelegationService', () => {
     assert.match(late[0].text, /Resposta de tradutor à sua delegação \(sessionId filha-2\)[\s\S]*\[tradutor\] dois/)
   })
 
+  it('⚖️ a filha sai da memória ao fim do turno dela (não ocupa a vaga de conversa viva); a mãe, não', async () => {
+    const { service: base } = build()
+    const internals = base as unknown as { provider: IAgentProvider; createSession: CreateSessionUseCase; sendMessage: SendMessageUseCase }
+    const released: string[] = []
+    const service = new DelegationService(
+      internals.provider,
+      internals.createSession,
+      internals.sendMessage,
+      () => 2,
+      () => [EMode.CHAT],
+      undefined,
+      (id) => void released.push(id),
+    )
+    const result = await service.delegate({ allowed: ['tradutor'], agentId: 'tradutor', message: 'oi' }, { sessionId: 'pai' })
+    assert.ok(result.ok)
+    assert.deepStrictEqual(released, [result.sessionId])
+  })
+
   it('⚖️ a filha encerrada (o gateway reiniciou) volta pelo histórico; a de outra mãe e a apagada, não', async () => {
     const { sessions, service: base } = build()
     const internals = base as unknown as { provider: IAgentProvider; createSession: CreateSessionUseCase; sendMessage: SendMessageUseCase }
