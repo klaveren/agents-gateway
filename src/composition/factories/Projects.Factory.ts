@@ -13,6 +13,7 @@ import { makeGuidance } from './Guidance.Factory'
 import { removeProjectImports } from './ImportJobs.Factory'
 import { makeProjectAccounts } from './ProjectAccounts.Factory'
 import { removeProjectMcpServers } from './McpServers.Factory'
+import { makeResourceSecrets } from './ResourceSecrets.Factory'
 
 let instance: { service: ProjectsService; repository: SqliteProjectRepository } | undefined
 
@@ -42,6 +43,7 @@ function build() {
       remove: (id) => {
         removeProjectWorkspace(id)
         makeGuidance().removeProject(id)
+        makeResourceSecrets().removeProject(id)
         makePermissions().removeProject(id)
         makeProjectAccounts().removeProject(id)
         removeProjectMcpServers(id)

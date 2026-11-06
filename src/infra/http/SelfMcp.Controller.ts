@@ -1023,6 +1023,12 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
       inputSchema: {
         scope: z.enum(['agent', 'skill', 'command']),
         scopeId: z.string().describe('The agent id, or the skill/command id.'),
+        project: z
+          .string()
+          .optional()
+          .describe(
+            'A skill/command SHARED from another project: your own project id. Each project fills its own values (the secret is never shared); absent = the owner project.',
+          ),
         name: z.string().describe('UPPERCASE_WITH_UNDERSCORES, e.g. GITLAB_TOKEN.'),
         description: z.string().optional().describe('What it is (shown with the variable).'),
         reason: z.string().describe('Why it is needed; shown to whoever fills it.'),

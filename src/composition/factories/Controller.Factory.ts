@@ -190,6 +190,7 @@ export function makePermissionRequestsController(): PermissionRequestsController
       if (!makeGuidance().resourceKindOf(id)) return undefined
       return makeGuidance().resource(id).projectId ?? null
     },
+    resourceSharedWithOf: (id) => (makeGuidance().resourceKindOf(id) ? makeGuidance().resource(id).sharedWith : undefined),
   })
 }
 
@@ -258,6 +259,7 @@ export function makeGuidanceController(): GuidanceController {
     files: makeResourceFiles(),
     agentFiles: (agentId, files, by, base) => makeAgents().saveFiles(agentId, files, by, base),
     resourceRemoved: (kind, id) => makeResourceSecrets().removeScope(kind, id),
+    resourceShared: (id, projects) => makeResourceSecrets().keepProjects(id, projects),
     projectDir: (projectId) => (makeProjects().exists(projectId) ? makeProjects().folderOf(projectId) : undefined),
     agentFilesOf: (agentId) => {
       const agent = makeAgents().entry(agentId)?.agent

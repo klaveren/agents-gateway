@@ -18,6 +18,11 @@ export function makeResourceSecrets(): ResourceSecretsService {
   instance = new ResourceSecretsService({
     store: new SqliteResourceSecretRepository(makeSecretBox(), configured === 'off' ? ':memory:' : configured || DEFAULT_DB_PATH),
     exists: (scope, scopeId) => (scope === 'agent' ? !!makeAgents().get(scopeId) : makeGuidance().resourceKindOf(scopeId) === scope),
+    agentProject: (agentId) => {
+      const agent = makeAgents().get(agentId)
+      return agent ? (agent.projectId ?? null) : undefined
+    },
+    resourceProject: (id) => (makeGuidance().resourceKindOf(id) ? (makeGuidance().resource(id).projectId ?? null) : undefined),
     mask: makeSecretMasker(),
   })
   return instance

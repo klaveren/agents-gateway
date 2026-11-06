@@ -119,7 +119,7 @@ export interface IProjectRulesPort {
 export interface IPermissionRequestsDeps {
   /** As variáveis secretas: a aprovação de um pedido `secret` grava o valor digitado na tela. Ausente = sem esse pedido. */
   secrets?: {
-    save(scope: 'agent' | 'skill' | 'command', scopeId: string, input: { name: string; description?: string; value?: string }, by: string): unknown
+    save(scope: 'agent' | 'skill' | 'command', scopeId: string, input: { name: string; description?: string; value?: string }, by: string, project?: string): unknown
     exists(scope: 'agent' | 'skill' | 'command', scopeId: string): boolean
   }
   repository: IPermissionRequestRepository
@@ -318,6 +318,7 @@ export class PermissionRequestsService {
       scopeId: input.scopeId,
       name: input.name,
       ...(input.description?.trim() ? { description: input.description.trim() } : {}),
+      ...(input.project ? { project: input.project } : {}),
     }
     const agentId = input.scope === 'agent' ? input.scopeId : requester.agentId
     const agent = agentId ? this.deps.agents.entry(agentId)?.agent : undefined
@@ -370,6 +371,7 @@ export class PermissionRequestsService {
         pending.secret.scopeId,
         { name: pending.secret.name, ...(pending.secret.description ? { description: pending.secret.description } : {}), value },
         decider.by,
+        pending.secret.project,
       )
       this.deps.repository.decide(id, { status: 'approved', by: decider.by, at: this.now() })
       this.publish(pending)
@@ -586,7 +588,7 @@ function secretWidening(secret: IPermissionRequestSecret): IWidening {
     kind: secret.scope,
     id: secret.scopeId,
     category: 'environment',
-    key: `secret/${secret.scope}/${secret.scopeId}#${secret.name}`,
-    description: `variável secreta ${secret.name} para ${target}`,
+    key: `secret/${secret.scope}/${secret.scopeId}${secret.project ? `@${secret.project}` : ''}#${secret.name}`,
+    description: `variável secreta ${secret.name} para ${target}${secret.project ? ` (no projeto ${secret.project})` : ''}`,
   }
 }
