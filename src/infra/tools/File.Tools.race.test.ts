@@ -37,7 +37,7 @@ describe('File.Tools — corrida entre a checagem e a abertura (C2)', () => {
       const s = path.join(${JSON.stringify(root)}, 's.txt'), tmp = s + '.t'
       let i = 0
       setInterval(() => { for (let n = 0; n < 200; n++) {
-        try { if (i++ % 2) fs.symlinkSync(${JSON.stringify(target)}, tmp); else fs.writeFileSync(tmp, 'comum'); fs.renameSync(tmp, s) } catch {}
+        try { fs.rmSync(tmp, { force: true }); if (i++ % 2) fs.symlinkSync(${JSON.stringify(target)}, tmp); else fs.writeFileSync(tmp, 'comum', { flag: 'wx' }); fs.renameSync(tmp, s) } catch {}
       } }, 0)`
     swapper = spawn(process.execPath, ['-e', code], { stdio: 'ignore' })
   }
