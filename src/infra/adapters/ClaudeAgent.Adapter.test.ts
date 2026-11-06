@@ -210,6 +210,26 @@ describe('ClaudeAgentAdapter', () => {
     assert.match((await reader('Write', { file_path: join(mine, 'b.md'), content: 'x' }, {})).message ?? '', /read-only for you/)
   })
 
+  it('⛔ a pasta de uma skill compartilhada com o projeto: Read lê, nada grava, o resto do projeto de origem e parada de compartilhar negam', async () => {
+    const seen: TQueryParams[] = []
+    const init = { type: 'system', subtype: 'init', session_id: 'cli-1', tools: ['Read', 'Write'] }
+    const data = dataDir()
+    const shared = join(data, 'projects', 'alfa', 'skills', 'deploy')
+    let folders = [shared]
+    const permissions = { check: () => ({ allowed: false, layer: 'default' as const, reason: 'sem regra' }) }
+    const adapter = new ClaudeAgentAdapter({ query: queryWith(() => [init, ...turn()], seen), permissions, sharedFolders: () => folders })
+    const agent = { ...getAgent(), allowedTools: ['sdk:Read', 'sdk:Write'] }
+    const session = await adapter.createSession(agent, { agentId: CLAUDE_TEST_AGENT.id })
+    await drain(adapter.sendMessage(agent, session.id, { text: 'hi' }, { conversationProjectId: 'beta' }))
+    const gate = seen.at(-1)!.options?.canUseTool as (name: string, input: Record<string, unknown>, options: unknown) => Promise<{ behavior: string; message?: string }>
+    assert.strictEqual((await gate('Read', { file_path: join(shared, 'scripts', 'run.sh') }, {})).behavior, 'allow')
+    assert.strictEqual((await gate('Write', { file_path: join(shared, 'scripts', 'run.sh'), content: 'x' }, {})).behavior, 'deny')
+    assert.strictEqual((await gate('Read', { file_path: join(data, 'projects', 'alfa', 'skills', 'privada', 'x.sh') }, {})).behavior, 'deny')
+    assert.strictEqual((await gate('Read', { file_path: join(data, 'projects', 'alfa', 'nota.md') }, {})).behavior, 'deny')
+    folders = []
+    assert.strictEqual((await gate('Read', { file_path: join(shared, 'scripts', 'run.sh') }, {})).behavior, 'deny')
+  })
+
   it('liga só as nativas do agente no CLI, o gate as aprova, e avisa quando o init não traz uma delas', async () => {
     const seen: TQueryParams[] = []
     const init = { type: 'system', subtype: 'init', session_id: 'cli-1', tools: ['WebSearch'] }

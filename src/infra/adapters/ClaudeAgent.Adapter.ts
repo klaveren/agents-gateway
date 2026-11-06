@@ -6,7 +6,7 @@ import { HANDOFF_MAX_CHARS, handoffText } from '@domain/Handoff.Policy'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { nativeToolsOf } from '@domain/Native.Tools'
 import { IConnectionSource, requireConnection, UnavailableProviderError } from './support/Keyed.Client'
 import { dataDir, workspaceFor, subscriptionEnv } from './support/Subscription.Workspace'
@@ -69,6 +69,8 @@ export interface IClaudeAgentAdapterDeps {
   diagnostics?: IEditDiagnostics
   /** ⛔ A pasta privada do agente e o que ele faz nela (ver `agentFolderAccess`): as nativas de arquivo a alcançam. */
   agentFolder?: (agentId: string) => IOwnFolder | undefined
+  /** ⛔ As pastas de skills e commands que outro projeto compartilhou com o projeto: o Read e o LS as leem, só leitura. */
+  sharedFolders?: (projectId: string | undefined) => string[]
   /**
    * Pela ASSINATURA (Claude Pro/Max), protocolo `claude-sub`: nenhuma chave de API vai ao CLI, que usa o
    * login do host — ou o `CLAUDE_CODE_OAUTH_TOKEN` (de `claude setup-token`) salvo no lugar da chave.
@@ -95,6 +97,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
   private readonly loops?: IClaudeAgentAdapterDeps['loops']
   private readonly diagnostics?: IEditDiagnostics
   private readonly agentFolder?: (agentId: string) => IOwnFolder | undefined
+  private readonly sharedFolders?: (projectId: string | undefined) => string[]
 
   private readonly connections?: IConnectionSource
   private readonly protocol: EProvider
@@ -110,6 +113,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     this.loops = deps.loops
     this.diagnostics = deps.diagnostics
     this.agentFolder = deps.agentFolder
+    this.sharedFolders = deps.sharedFolders
   }
 
   async createSession(agent: IAgent, input: ICreateSessionInput): Promise<IAgentSession> {
@@ -201,6 +205,8 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
       Object.keys(context.secretEnv ?? {}),
       this.agentFolder?.(agent.id),
       agent.adminOnly === true,
+      // Lida a cada chamada: parou de compartilhar, a pasta sai na próxima.
+      () => this.sharedFolders?.(askerOf(context).projectId) ?? [],
     )
     // ⛔ O CLI é um processo filho: o header do MCP do gateway fica no argv dele, ao alcance do agente. Leva a CONCESSÃO do
     // turno (ver `Grant.Credential`), nunca o token de quem conversa.
@@ -481,6 +487,7 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
     secretNames: readonly string[] = [],
     own?: IOwnFolder,
     adminOnly = false,
+    sharedDirs: () => readonly string[] = () => [],
   ): CanUseTool {
     const byServer = new Map(remotes.map((remote) => [claudeMcpServerName(remote.config.id), remote]))
     return async (toolName, input) => {
@@ -499,6 +506,10 @@ export class ClaudeAgentAdapter implements IAgentAdapter {
         // da pasta do projeto (o agente global numa conversa de projeto também alcança a dele).
         const folder = agentFolderVerdict(bare, input, who?.cwd ?? project?.dir ?? process.cwd(), own)
         if (folder.refused) return { behavior: 'deny', message: folder.refused }
+        // ⛔ A pasta de uma skill ou command compartilhado com o projeto: Read e LS leem (sem regra); nada grava; o resto do dado, fechado.
+        const shared = sharedFolderVerdict(bare, input, who?.cwd ?? project?.dir ?? process.cwd(), sharedDirs())
+        if (shared.refused) return { behavior: 'deny', message: shared.refused }
+        if (shared.allowed) return { behavior: 'allow' }
         // ⛔ Em qualquer agente, de projeto ou global: as nativas de arquivo nunca tocam .env, chaves nem os dados do gateway.
         // Na própria pasta, ela é a raiz (a do agente de projeto mora nos dados, fora da worktree): só os nomes protegidos valem.
         const protectedPath = protectedPathOf(bare, input, folder.mine ? own!.dir : project?.dir)
@@ -764,6 +775,34 @@ function protectedPathOf(toolName: string, input: Record<string, unknown>, root 
     if (WRITE_TOOLS.has(toolName) && isResourceFilePath(abs)) return `${toolName}: ${value} (resource files are read-only: edit them in the gateway)`
   }
   return undefined
+}
+
+/** As nativas que só leem e que a pasta compartilhada admite (Grep e Glob rodam no servidor, fora do cerco: ficam de fora). */
+const SHARED_READ_TOOLS = new Set(['Read', 'LS'])
+
+/**
+ * ⛔ A PASTA COMPARTILHADA nas nativas de arquivo: com TODOS os caminhos dentro de pastas de itens compartilhados com o
+ * projeto, `Read` e `LS` passam (`allowed`), conferidos os nomes protegidos; qualquer outra ferramenta recusa (`refused`).
+ * Caminho misto ou fora delas segue o fluxo normal (e o filtro do projeto o recusa).
+ */
+function sharedFolderVerdict(toolName: string, input: Record<string, unknown>, cwd: string, dirs: readonly string[]): { refused?: string; allowed?: true } {
+  if (!dirs.length) return {}
+  const real = dirs.map((dir) => realOf(resolve(dir)))
+  let paths = 0
+  let inside = 0
+  for (const field of PATH_FIELDS[toolName] ?? []) {
+    const value = input[field]
+    if (typeof value !== 'string' || !value || ((field === 'pattern' || field === 'glob') && !isAbsolute(value))) continue
+    paths += 1
+    const abs = realOf(resolve(cwd, value))
+    const dir = real.find((item) => abs === item || abs.startsWith(item + sep))
+    if (!dir) continue
+    if (!SHARED_READ_TOOLS.has(toolName)) return { refused: `${toolName}: ${value} (shared resource files are read-only: the project that owns them edits them in the gateway)` }
+    const reason = deniedPath(abs, dir)
+    if (reason) return { refused: `${toolName}: ${value} (${reason})` }
+    inside += 1
+  }
+  return paths > 0 && inside === paths ? { allowed: true } : {}
 }
 
 /**

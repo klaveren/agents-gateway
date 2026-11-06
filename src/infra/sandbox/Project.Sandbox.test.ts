@@ -108,6 +108,24 @@ describe('ProjectSandbox', () => {
     assert.ok(!reader.readDeny.includes(join(root, 'global', 'agents', 'atlas')))
   })
 
+  it('⛔ a skill compartilhada com o projeto: o comando lê a pasta dela e não grava; o resto do projeto de origem segue negado', () => {
+    const sandbox = new ProjectSandbox(env, fakeSrt().load)
+    const beta = join(root, 'projects', 'beta')
+    const shared = join(root, 'projects', 'alfa', 'skills', 'deploy')
+    const notShared = join(root, 'projects', 'alfa', 'skills', 'privada')
+    for (const dir of [beta, shared, notShared]) mkdirSync(dir, { recursive: true })
+    const layers = { project: [{ category: 'write' as const, pattern: '**', decision: 'allow' as const }] }
+    const withShare = cercoPlan(layers, sandbox.base(beta, { sharedFolders: [shared] }))
+    assert.ok(withShare.readAllow.includes(shared))
+    assert.ok(withShare.writeDeny.includes(shared))
+    assert.ok(!withShare.writeAllow.includes(shared))
+    assert.ok(!withShare.readAllow.includes(notShared) && !withShare.readAllow.includes(join(root, 'projects', 'alfa')))
+    assert.ok(withShare.readDeny.includes(root) || withShare.readDeny.length > 0)
+    // Sem compartilhar: nada de alfa.
+    const none = cercoPlan(layers, sandbox.base(beta))
+    assert.ok(!none.readAllow.includes(shared))
+  })
+
   it('⛔ na worktree, o cerco nega gravar o .git dela, o commondir e o gitdir (caminhos do servidor, literais)', () => {
     const tree = '/w/p/repositories/abc/_worktrees/EP-1'
     const common = '/w/p/repositories/abc/.git'
