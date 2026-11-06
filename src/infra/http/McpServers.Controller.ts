@@ -124,7 +124,7 @@ export class McpServersController {
       res,
       async () => {
         const body = parseBody(createSchema, req.body)
-        const by = await requireProjectAdmin(this.deps.proof, body.projectId, 'createMcpServer')
+        const by = await this.requireScopes('createMcpServer', body.projectId ?? null, privileged({ kind: body.kind ?? 'remote', auth: body.auth }))
         const created = this.deps.service.create(body as IMcpServerInput, by)
         return this.dto(created)
       },
@@ -140,7 +140,16 @@ export class McpServersController {
         const body = parseBody(updateSchema, req.body)
         // ⛔ Trocar o escopo (`projectId`) pede admin dos dois: o de onde sai e o de onde entra.
         const current = scopeOf(id)
-        const by = await requireProjectsAdmin(this.deps.proof, [current, body.projectId === undefined ? current : body.projectId], 'updateMcpServer')
+        const before = this.deps.service.get(id)
+        const by = await requireProjectsAdmin(
+          this.deps.proof,
+          [
+            current,
+            body.projectId === undefined ? current : body.projectId,
+            ...(privileged(before) || privileged({ kind: before.kind, auth: body.auth ?? before.auth }) ? [null] : []),
+          ],
+          'updateMcpServer',
+        )
         const updated = this.deps.service.update(id, body, by)
         const key = mcpServerKey(updated)
         // Instância de pé roda o cadastro de antes: a próxima ferramenta sobe com o novo.
@@ -205,7 +214,7 @@ export class McpServersController {
       res,
       async () => {
         const id = this.idOf(req)
-        const by = await this.requireAdmin('saveMcpEnv', id)
+        const by = await this.requireAdmin('saveMcpEnv', id, true)
         this.deps.service.saveEnv(id, req.params.name as string, parseBody(envSchema, req.body).value, by)
         return this.dto(this.deps.service.get(id))
       },
@@ -230,7 +239,7 @@ export class McpServersController {
   async install(req: Request, res: Response) {
     await this.respond(res, async () => {
       const id = this.idOf(req)
-      await this.requireAdmin('installMcpServer', id)
+      await this.requireAdmin('installMcpServer', id, true)
       const server = this.deps.service.get(id)
       if (server.kind !== 'process' || !server.process?.package) throw new HttpError(422, 'validation_error', 'Only a local process MCP with an npm package can be installed')
       const result = await installPackage(id, server.process.package)
@@ -317,9 +326,16 @@ export class McpServersController {
     return req.params.id as string
   }
 
-  /** ⛔ O servidor é do escopo da chave: o admin do projeto dele (o global, o do gateway). */
-  private requireAdmin(operation: string, id: string): Promise<string> {
-    return requireProjectAdmin(this.deps.proof, scopeOf(id), operation)
+  /**
+   * ⛔ O servidor é do escopo da chave: o admin do projeto dele (o global, o do gateway). `launch`: mexer no que roda no
+   * host (o ambiente, o `npm install`) de um MCP privilegiado pede também o admin do gateway (ver `privileged`).
+   */
+  private requireAdmin(operation: string, id: string, launch = false): Promise<string> {
+    return this.requireScopes(operation, scopeOf(id), launch && privileged(this.deps.service.get(id)))
+  }
+
+  private requireScopes(operation: string, projectId: string | null, gateway: boolean): Promise<string> {
+    return gateway ? requireProjectsAdmin(this.deps.proof, [projectId, null], operation) : requireProjectAdmin(this.deps.proof, projectId, operation)
   }
 
   private async respond<T>(res: Response, work: () => Promise<T>, options: { status?: number; message?: string } = {}) {
@@ -344,4 +360,13 @@ function safePath(url: string): string {
   } catch {
     return ''
   }
+}
+
+/**
+ * ⛔ O MCP que só o admin do GATEWAY cadastra (além do admin do projeto): o que roda no host (`process`: comando do
+ * servidor, fora do cerco; `container`: imagem e rede) e o que recebe a credencial de quem conversa (`auth: caller` —
+ * a URL de quem cadastrou levaria o token de todo membro). O admin de projeto cadastra o remoto com segredo próprio.
+ */
+function privileged(server: { kind?: string; auth?: string }): boolean {
+  return server.kind === 'process' || server.kind === 'container' || server.auth === 'caller'
 }

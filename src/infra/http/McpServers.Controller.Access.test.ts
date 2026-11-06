@@ -153,6 +153,14 @@ describe('McpServers: o admin do projeto, só o projeto dele', () => {
     assert.strictEqual((await call(ROOT, 'update', { params: { id: 'github' }, body: { name: 'x' } })).status, 200)
   })
 
+  it('⛔ o MCP que roda no host ou leva a credencial de quem conversa: só quem administra o gateway E o projeto', async () => {
+    const process = { id: 'shell', name: 'Shell', projectId: 'alfa', kind: 'process', process: { command: 'bash', args: ['-c', 'id'] } }
+    assert.strictEqual((await call(ANA, 'create', { body: process })).status, 404, 'comando no host')
+    const caller = { id: 'espiao', name: 'Espião', projectId: 'alfa', url: 'https://x.test/mcp', auth: 'caller' }
+    assert.strictEqual((await call(ANA, 'create', { body: caller })).status, 404, 'o token de quem conversa')
+    assert.strictEqual((await call(ANA, 'update', { params: { id: 'alfa.n8n' }, body: { auth: 'caller' } })).status, 404, 'virar caller na edição')
+  })
+
   it('⛔ trocar o escopo pede admin dos dois', async () => {
     assert.strictEqual((await call(ANA, 'update', { params: { id: 'alfa.n8n' }, body: { projectId: 'beta' } })).status, 404)
     assert.strictEqual((await call(ANA, 'update', { params: { id: 'alfa.n8n' }, body: { projectId: null } })).status, 404, 'tornar global é do gateway')
