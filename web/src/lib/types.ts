@@ -731,9 +731,13 @@ export interface IProject {
   updatedBy?: string
 }
 
+/** O papel no projeto: o administrador cuida de tudo dele; o membro conversa com os agentes. */
+export type TProjectRole = 'admin' | 'member'
+
 export interface IProjectMember {
   projectId: string
   userId: string
+  role: TProjectRole
   addedAt: string
   addedBy?: string
 }

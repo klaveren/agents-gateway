@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { api } from '@/lib/api'
 import { keyedResource } from '@/lib/resource'
 import { readLocal, writeLocal } from '@/lib/storage'
-import type { IProject, IProjectMember } from '@/lib/types'
+import type { IProject, IProjectMember, TProjectRole } from '@/lib/types'
 import { useAgentsStore } from './agents'
 import { useAuthStore } from './auth'
 import { useConversationsStore } from './conversations'
@@ -107,8 +107,9 @@ export const useProjectsStore = defineStore('projects', () => {
     return memberLists.ensure(id)
   }
 
-  async function setMembers(id: string, userIds: string[]): Promise<void> {
-    const saved = await api<IProjectMember[]>(`/projects/${encodeURIComponent(id)}/members`, { method: 'PUT', body: { userIds } })
+  /** A lista INTEIRA de membros, com o papel de cada um (o servidor exige ao menos um administrador). */
+  async function setMembers(id: string, members: Array<{ userId: string; role: TProjectRole }>): Promise<void> {
+    const saved = await api<IProjectMember[]>(`/projects/${encodeURIComponent(id)}/members`, { method: 'PUT', body: { members } })
     memberLists.set(id, saved)
     // A contagem na lista é a mesma coisa: troca aqui, sem reler.
     list.value = list.value.map((one) => (one.id === id ? { ...one, members: saved.length } : one))

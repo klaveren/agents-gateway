@@ -10,7 +10,7 @@ import MasterDetail from '@/components/MasterDetail.vue'
 import { useResource } from '@/composables/useResource'
 import { ApiError } from '@/lib/api'
 import { initials } from '@/lib/format'
-import type { IProject } from '@/lib/types'
+import type { IProject, TProjectRole } from '@/lib/types'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectsStore } from '@/stores/projects'
 import { useUsersStore } from '@/stores/users'
@@ -45,10 +45,12 @@ const formError = ref<string>()
 const edit = ref({ name: '', description: '' })
 /** Os membros gravados do projeto aberto, da store (lidos uma vez; salvar põe a resposta lá). */
 const memberList = useResource(projects.memberLists, () => (auth.isAdmin ? selected.value?.id : undefined))
-const savedMembers = computed(() => new Set((memberList.data.value ?? []).map((member) => member.userId)))
-/** A marcação em edição: volta à gravada quando o projeto (ou o gravado) muda. */
-const members = ref<Set<string>>(new Set())
-watch(savedMembers, (saved) => (members.value = new Set(saved)), { immediate: true })
+const savedMembers = computed(() => new Map((memberList.data.value ?? []).map((member) => [member.userId, member.role] as const)))
+/** A marcação em edição (conta → papel): volta à gravada quando o projeto (ou o gravado) muda. */
+const members = ref<Map<string, TProjectRole>>(new Map())
+watch(savedMembers, (saved) => (members.value = new Map(saved)), { immediate: true })
+/** ⛔ Todo projeto fica com ao menos um administrador: sem nenhum, o salvar fica desligado e a guia avisa. */
+const noAdmin = computed(() => members.value.size > 0 && ![...members.value.values()].includes('admin'))
 const busy = ref(false)
 const error = ref<string>()
 const note = ref<string>()
@@ -119,18 +121,26 @@ async function run(work: () => Promise<void>, done?: string) {
 }
 
 const dirty = computed(() => !!selected.value && (edit.value.name !== selected.value.name || edit.value.description !== (selected.value.description ?? '')))
-const membersDirty = computed(() => members.value.size !== savedMembers.value.size || [...members.value].some((id) => !savedMembers.value.has(id)))
+const membersDirty = computed(() => members.value.size !== savedMembers.value.size || [...members.value].some(([id, role]) => savedMembers.value.get(id) !== role))
 /** Um salvar só: o nome e a descrição (guia Projeto) e os membros (guia Membros), o que mudou. */
 const saveProject = () =>
   run(async () => {
     if (dirty.value) await projects.update(selected.value!.id, { name: edit.value.name, description: edit.value.description })
-    if (membersDirty.value) await projects.setMembers(selected.value!.id, [...members.value])
+    if (membersDirty.value)
+      await projects.setMembers(
+        selected.value!.id,
+        [...members.value].map(([userId, role]) => ({ userId, role })),
+      )
   }, 'Projeto salvo.')
 function toggleMember(id: string) {
-  const next = new Set(members.value)
+  const next = new Map(members.value)
   if (next.has(id)) next.delete(id)
-  else next.add(id)
+  else next.set(id, 'member')
   members.value = next
+}
+
+function setRole(id: string, role: TProjectRole) {
+  members.value = new Map(members.value).set(id, role)
 }
 
 async function confirmRemove() {
@@ -255,21 +265,35 @@ async function confirmRemove() {
         </div>
 
         <div v-show="tab === 'membros'" class="flex flex-col gap-2" role="tabpanel">
-          <p class="text-xs text-zinc-500">Quem pode ver este projeto.</p>
+          <p class="text-xs text-zinc-500">
+            Quem pode ver este projeto. O administrador do projeto cuida de tudo dele (agentes, catálogo, permissões, membros); o membro conversa com os agentes. Todo
+            projeto precisa de ao menos um administrador.
+          </p>
           <ul class="divide-y divide-zinc-800">
             <li v-for="user in users.list" :key="user.id" class="flex items-center gap-3 py-1.5">
               <label class="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-sm">
                 <input type="checkbox" class="accent-emerald-500" :checked="members.has(user.id)" @change="toggleMember(user.id)" />
                 <span class="min-w-0 flex-1 truncate">{{ user.name }} <span class="text-xs text-zinc-500">{{ user.email }}</span></span>
-                <span v-if="user.role === 'admin'" class="text-[10px] text-zinc-500">administrador</span>
+                <span v-if="user.role === 'admin'" class="text-[10px] text-zinc-500" title="Administra o gateway (provedores, usuários, configurações)">gateway</span>
               </label>
+              <select
+                v-if="members.has(user.id)"
+                :value="members.get(user.id)"
+                class="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-xs"
+                :aria-label="`Papel de ${user.name}`"
+                @change="setRole(user.id, ($event.target as HTMLSelectElement).value as TProjectRole)"
+              >
+                <option value="admin">Administrador</option>
+                <option value="member">Membro</option>
+              </select>
             </li>
           </ul>
+          <p v-if="noAdmin" class="text-xs text-amber-300">Escolha ao menos um administrador para o projeto.</p>
         </div>
 
         <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
         <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
-        <SaveFooter label="Salvar projeto" :busy="busy" :disabled="!dirty && !membersDirty" :pending="dirty || membersDirty" @save="saveProject">
+        <SaveFooter label="Salvar projeto" :busy="busy" :disabled="(!dirty && !membersDirty) || noAdmin" :pending="dirty || membersDirty" @save="saveProject">
           <template #end>
             <button type="button" class="btn btn-danger" @click="(removing = selected), (removeError = undefined)">Apagar projeto</button>
           </template>

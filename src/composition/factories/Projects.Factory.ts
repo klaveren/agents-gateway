@@ -1,5 +1,5 @@
 import { makePermissions } from './Permissions.Factory'
-import { migrateLegacyToProjects, ProjectsService } from '@application/Projects.Service'
+import { migrateLegacyToProjects, migrateProjectRoles, ProjectsService } from '@application/Projects.Service'
 import { AGENT_SEED } from '@domain/Agent.Seed'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { projectWorkspace, removeProjectWorkspace } from '@infra/adapters/support/Subscription.Workspace'
@@ -67,6 +67,13 @@ export async function migrateToProjects(conversations: IConversationRepository):
     agents: makeAgents(),
     conversations,
     userIds: () => (makeAuth().accounts?.list() ?? []).map((user) => user.id),
+    adminIds: gatewayAdminIds,
     seedIds: AGENT_SEED.map((agent) => agent.id),
   })
+  migrateProjectRoles({ repository, adminIds: gatewayAdminIds })
+}
+
+/** As contas ativas que administram o gateway. */
+function gatewayAdminIds(): string[] {
+  return (makeAuth().accounts?.list() ?? []).filter((user) => user.role === 'admin' && !user.disabled).map((user) => user.id)
 }

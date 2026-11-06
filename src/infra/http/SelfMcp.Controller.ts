@@ -850,10 +850,10 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'set_project_members',
     {
       description:
-        'Replace the whole member list of a project with these account ids (anyone not listed leaves). Administrators see every project anyway. Confirm with the person first.',
-      inputSchema: { projectId: z.string(), userIds: z.array(z.string()) },
+        'Replace the whole member list of a project (anyone not listed leaves). Each member has a role: admin (manages the project) or member (talks to its agents). A project always keeps at least one admin. Only projects you are a member of are visible, also to gateway administrators. Confirm with the person first.',
+      inputSchema: { projectId: z.string(), members: z.array(z.object({ userId: z.string(), role: z.enum(['admin', 'member']) })) },
     },
-    async ({ projectId, userIds }) => reply(await api('PUT', `/projects/${encodeURIComponent(projectId)}/members`, { body: { userIds } })),
+    async ({ projectId, members }) => reply(await api('PUT', `/projects/${encodeURIComponent(projectId)}/members`, { body: { members } })),
   )
 
   server.registerTool(

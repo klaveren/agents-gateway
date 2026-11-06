@@ -8,7 +8,7 @@ import { InvalidProjectError, ProjectInUseError } from '@domain/errors/Domain.Er
 import { SqliteConversationRepository } from '@infra/persistence/Sqlite.ConversationRepository'
 import { SqliteProjectRepository } from '@infra/persistence/Sqlite.ProjectRepository'
 import { CLAUDE_TEST_AGENT, GOOGLE_TEST_AGENT, testAgentCatalog } from '../testing/Agents.Fixture'
-import { migrateLegacyToProjects, ProjectsService } from './Projects.Service'
+import { migrateProjectRoles, migrateLegacyToProjects, ProjectsService } from './Projects.Service'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
 
@@ -32,12 +32,80 @@ describe('ProjectsService', () => {
   it('⛔ canUse: o admin usa todos; o membro, só os seus; projeto inexistente, ninguém', () => {
     const { service } = build()
     service.create({ id: 'alfa', name: 'Alfa' }, 'root')
-    service.setMembers('alfa', ['u_ana'], 'root')
+    service.setMembers('alfa', [{ userId: 'u_ana', role: 'admin' }], 'root')
     assert.strictEqual(service.canUse({ admin: true }, 'alfa'), true)
     assert.strictEqual(service.canUse({ userId: 'u_ana', admin: false }, 'alfa'), true)
     assert.strictEqual(service.canUse({ userId: 'u_bia', admin: false }, 'alfa'), false)
     assert.strictEqual(service.canUse({ admin: true }, 'nao-existe'), false)
     assert.deepStrictEqual(service.list({ userId: 'u_bia', admin: false }), [])
+    // ⛔ A lista é dos projetos de que a pessoa é membro — também para o administrador do gateway.
+    assert.deepStrictEqual(service.list({ userId: 'u_root', admin: true }), [])
+    assert.deepStrictEqual(
+      service.all().map((project) => project.id),
+      ['alfa'],
+    )
+  })
+
+  it('⛔ papéis: quem cria vira administrador; todo projeto fica com ao menos um; sem papel dito, fica o que tinha', () => {
+    const { service } = build()
+    service.create({ id: 'alfa', name: 'Alfa' }, 'root', 'api', 'u_ana')
+    assert.deepStrictEqual(
+      service.members('alfa').map((member) => [member.userId, member.role]),
+      [['u_ana', 'admin']],
+    )
+    assert.strictEqual(service.roleOf('alfa', 'u_ana'), 'admin')
+    // Entra a Bia como membro; a Ana segue administradora (sem papel dito).
+    service.setMembers('alfa', ['u_ana', { userId: 'u_bia', role: 'member' }], 'u_ana')
+    assert.deepStrictEqual(
+      service.members('alfa').map((member) => [member.userId, member.role]),
+      [
+        ['u_ana', 'admin'],
+        ['u_bia', 'member'],
+      ],
+    )
+    // Tirar ou rebaixar o último administrador: recusado.
+    assert.throws(() => service.setMembers('alfa', ['u_bia'], 'u_ana'), /at least one admin/)
+    assert.throws(() => service.setMembers('alfa', [{ userId: 'u_ana', role: 'member' }, 'u_bia'], 'u_ana'), /at least one admin/)
+    assert.strictEqual(service.roleOf('alfa', 'u_bia'), 'member')
+    assert.strictEqual(service.roleOf('alfa', 'u_root'), undefined)
+  })
+
+  it('a migração dos papéis: o membro que administra o gateway vira administrador; o projeto sem nenhum ganha os do gateway — uma vez', () => {
+    const { service, repository } = build()
+    service.create({ id: 'alfa', name: 'Alfa' }, 'root')
+    service.create({ id: 'beta', name: 'Beta' }, 'root')
+    // Como era antes: membros sem papel (todos `member`).
+    repository.setMembers(
+      'alfa',
+      [
+        { userId: 'u_root', role: 'member' },
+        { userId: 'u_ana', role: 'member' },
+      ],
+      'root',
+    )
+    repository.setMembers('beta', [{ userId: 'u_bia', role: 'member' }], 'root')
+    assert.strictEqual(migrateProjectRoles({ repository, adminIds: () => ['u_root'] }), 2)
+    assert.deepStrictEqual(
+      service
+        .members('alfa')
+        .map((member) => [member.userId, member.role])
+        .sort(),
+      [
+        ['u_ana', 'member'],
+        ['u_root', 'admin'],
+      ],
+    )
+    assert.deepStrictEqual(
+      service
+        .members('beta')
+        .map((member) => [member.userId, member.role])
+        .sort(),
+      [
+        ['u_bia', 'member'],
+        ['u_root', 'admin'],
+      ],
+    )
+    assert.strictEqual(migrateProjectRoles({ repository, adminIds: () => ['u_root'] }), 0, 'uma vez só')
   })
 
   it('valida id e nome; membros só de contas que existem; apagar com agente, 409', () => {
@@ -72,8 +140,12 @@ describe('ProjectsService', () => {
     const result = await migrateLegacyToProjects({ service, repository, agents, conversations, userIds: () => ['u_ana', 'u_bia'], seedIds: [GOOGLE_TEST_AGENT.id] })
     assert.deepStrictEqual(result, { agents: 2, conversations: 1 })
     assert.deepStrictEqual(
-      service.members('geral').map((member) => member.userId),
-      ['u_ana', 'u_bia'],
+      service.members('geral').map((member) => [member.userId, member.role]),
+      [
+        ['u_ana', 'admin'],
+        ['u_bia', 'member'],
+      ],
+      'sem administrador do gateway dito, o primeiro administra',
     )
     assert.strictEqual(agents.get(CLAUDE_TEST_AGENT.id)?.projectId, 'geral')
     assert.strictEqual(agents.get(GOOGLE_TEST_AGENT.id)?.projectId, undefined, 'a semente fica global')
