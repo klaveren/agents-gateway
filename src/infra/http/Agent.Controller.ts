@@ -2,7 +2,7 @@ import { applyPanelOp, emptyPanel, panelMarkdown, TPanelOp } from '@domain/model
 import { ERROR_KINDS } from '@domain/models/ErrorLog.Model'
 import type { ResourceSecretsService } from '@application/ResourceSecrets.Service'
 import { IModelGroup, modelGroupIssues, NO_MODEL_GROUP } from '@domain/Fallback.Policy'
-import { agentFolderAccess, CAPABILITIES, CAPABILITY_PREFIX, CAPABILITY_TOOLS, capability, capabilityRuns, toCapabilities } from '@domain/Capability.Catalog'
+import { agentFolderAccess, CAPABILITIES, hasTerminal, CAPABILITY_PREFIX, CAPABILITY_TOOLS, capability, capabilityRuns, toCapabilities } from '@domain/Capability.Catalog'
 import { agentUnavailable, IAvailabilityFacts, TAgentUnavailable, targetUnavailable, UNAVAILABLE_LABEL } from '@domain/Agent.Availability'
 import { clientMetadata } from '@domain/Session.Metadata'
 import { metaPlaceholderKeys } from '@infra/sandbox/Egress.Proxy'
@@ -633,6 +633,7 @@ export class AgentController {
         ...(projectId ? { project: { id: projectId, ...(name ? { name } : {}), own: agent.projectId === projectId } } : {}),
         ...(agent.projectId ? { directory: projectWorkspacePath(agent.projectId) } : {}),
         ...(files ? { files } : {}),
+        ...(hasTerminal(agent.allowedTools) ? { terminal: true } : {}),
       }
       // As variáveis secretas (só os nomes), como o `AgentProvider` põe na conversa.
       const secrets = this.usecases.secrets?.ambientFor(agent.id, [

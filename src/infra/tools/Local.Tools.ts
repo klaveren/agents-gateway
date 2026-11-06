@@ -3,7 +3,7 @@ import { printsSecret } from '@domain/models/ResourceSecret.Model'
 import { terminalEnv } from '@domain/Agent.Identity'
 import type { IPermissionAsker, IPermissionChecker } from '@application/Permissions.Service'
 import { cercoPlan } from '@domain/Cerco.Plan'
-import { commandMatches } from '@domain/Permission.Policy'
+import { commandMatches, type IPermissionRule } from '@domain/Permission.Policy'
 import type { IExecutionContext } from '@domain/models/ExecutionContext.Model'
 import { exec } from 'node:child_process'
 import { rmSync } from 'node:fs'
@@ -11,7 +11,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { networkGate } from '@infra/permissions/Network.Gate'
 import { analyzeShell } from '@infra/permissions/Shell.Parse'
-import { bashPolicy, denyReason, PRIVILEGE_ESCALATION, truncate, type IBashPolicy } from './Bash.Guard'
+import { bashPolicy, COMMAND_REASONS, deniedReasons, PRIVILEGE_ESCALATION, realReasons, truncate, type IBashPolicy } from './Bash.Guard'
 import { subscriptionEnv, workspaceFor } from '@infra/adapters/support/Subscription.Workspace'
 import { projectAliases } from '@infra/workspace/Work.Folder'
 import { accountsDir, ISshKitIdentity, removeSshKit, writeSshKit } from '@infra/accounts/Ssh.Kit'
@@ -298,9 +298,15 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
 
   /** A trava do `Bash.Guard`, com a exceção do sudo remoto liberado por regra explícita (`remoteSudoAllowed`). */
   async function guardRefusal(command: string, context: IExecutionContext | undefined): Promise<string | undefined> {
-    const denied = denyReason(command)
-    if (denied === PRIVILEGE_ESCALATION && deps.permissions && (await remoteSudoAllowed(command, deps.permissions, askerOf(context)))) return undefined
-    return denied
+    const textual = deniedReasons(command)
+    // As travas de texto (rm -rf, mkfs…) valem como estão; o sudo e o reboot, só se o comando roda de verdade.
+    const plain = textual.find((reason) => !COMMAND_REASONS.has(reason))
+    if (plain) return plain
+    if (!textual.length) return undefined
+    const real = realReasons(await analyzeShell(command), textual)
+    if (!real.length) return undefined
+    if (real.every((reason) => reason === PRIVILEGE_ESCALATION) && deps.permissions && (await remoteSudoAllowed(command, deps.permissions, askerOf(context)))) return undefined
+    return real[0]
   }
 
   async function guardedBash(command: string, context: IExecutionContext | undefined, permissions: IPermissionChecker, askedSeconds?: number): Promise<IToolResult> {
@@ -539,24 +545,31 @@ export async function remoteSudoAllowed(command: string, permissions: IPermissio
   if (analysis.commands.some((part) => part.name === 'sudo' || part.name === 'doas' || /^\s*(sudo|doas)\b/.test(part.text))) return false
   const layers = permissions.layers?.(asker)
   const rules = [...(layers?.agent ?? []), ...(layers?.project ?? [])].filter((rule) => rule.category === 'terminal' && rule.decision === 'allow' && /\bsudo\b/.test(rule.pattern))
-  const withSudo = analysis.commands.filter((part) => /\bsudo\b/.test(part.text))
-  return withSudo.length > 0 && withSudo.every((part) => part.name === 'ssh' && rules.some((rule) => sshRemoteMatches(rule.pattern, part.argv)))
+  // Só o ssh com sudo no comando remoto: a palavra num grep ao lado não é escalada (ver `realReasons`).
+  const withSudo = analysis.commands.filter((part) => part.name === 'ssh' && part.argv.slice(1).some((word) => /(^|[\s;&|(])sudo(\s|$)/.test(word)))
+  if (!withSudo.length) return false
+  for (const part of withSudo) if (!(await sshCovered(part.argv, rules))) return false
+  return true
 }
 
 /**
- * A regra contra o `ssh` com o comando remoto em PALAVRAS (`ssh * sudo k3s kubectl *`). O comando remoto começa pelo
- * sudo, logo depois do host, entre aspas (`ssh h "sudo systemctl …"`) ou solto (`ssh h sudo systemctl …`).
- * ⛔ Entre aspas, só o comando simples: com `;`, `&`, `|`, crase, `$(`, redirecionamento ou quebra de linha, o `*` da regra
- * engoliria um segundo comando. ⛔ Solto, o ssh junta as palavras com espaço e o shell remoto relê a linha: só palavras sem
- * nada que ele interprete (aspas, `$`, `*`, `\`, espaço), para a linha remota ser exatamente a que a regra viu.
+ * A regra contra o `ssh` com o comando remoto em PALAVRAS (`ssh * sudo k3s kubectl *`). O comando remoto vem logo depois do
+ * host, entre aspas (`ssh h "sudo systemctl …; sudo journalctl …"`) ou solto (`ssh h sudo systemctl …`).
+ * ⛔ Entre aspas, cada comando com sudo da linha remota precisa da SUA regra (o `*` de uma não engole o outro); sem
+ * crase, `$(` nem quebra de linha, e a linha tem de se deixar analisar inteira. ⛔ Solto, o ssh junta as palavras com
+ * espaço e o shell remoto relê a linha: só palavras sem nada que ele interprete (aspas, `$`, `*`, `\\`, espaço), para a
+ * linha remota ser exatamente a que a regra viu.
  */
-function sshRemoteMatches(pattern: string, argv: readonly string[]): boolean {
+async function sshCovered(argv: readonly string[], rules: readonly IPermissionRule[]): Promise<boolean> {
   const at = sshRemoteStart(argv)
   const first = argv[at]
   if (first === undefined) return false
-  if (first === 'sudo') return argv.slice(at).every((word) => REMOTE_PLAIN_WORD.test(word)) && commandMatches(pattern, argv)
-  if (!/^sudo\s/.test(first) || argv.slice(at + 1).length || /[;&|`<>\n]|\$\(/.test(first)) return false
-  return commandMatches(pattern, [...argv.slice(0, at), ...first.trim().split(/\s+/)])
+  if (first === 'sudo') return argv.slice(at).every((word) => REMOTE_PLAIN_WORD.test(word)) && rules.some((rule) => commandMatches(rule.pattern, argv))
+  if (argv.slice(at + 1).length || /[`\n]|\$\(/.test(first)) return false
+  const remote = await analyzeShell(first)
+  if (remote.opaque.length) return false
+  const prefix = argv.slice(0, at)
+  return remote.commands.filter((command) => command.name === 'sudo').every((command) => rules.some((rule) => commandMatches(rule.pattern, [...prefix, ...command.argv])))
 }
 
 /** A palavra remota que o shell de lá lê como está. */

@@ -1,5 +1,5 @@
 import { exec } from 'node:child_process'
-import { type Dirent, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { type Dirent, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -7,7 +7,7 @@ import { dataDir, projectWorkspace } from '@infra/adapters/support/Subscription.
 import { esmImport } from '@infra/adapters/support/Esm.Import'
 import { networkGate } from '@infra/permissions/Network.Gate'
 import type { ICercoBase, ICercoPlan } from '@domain/Cerco.Plan'
-import { pathMatches } from '@domain/Permission.Policy'
+import { globToRegex, pathMatches } from '@domain/Permission.Policy'
 import { FILE_DIRS } from '@domain/models/ResourceFile.Model'
 import { agentFolders, globalResourcesDir, projectResourceDirs, readOnlyResourceDirs } from '@infra/workspace/Resource.Files'
 
@@ -181,7 +181,7 @@ export class ProjectSandbox implements IProjectSandbox {
     const port = await networkGate().start()
     const planned = plan(this.base(root, place))
     planned.readAllow.push(...bridgeSockets(manager))
-    const cerco = process.platform === 'linux' ? forBubblewrap(planned, root, listDir) : planned
+    const cerco = process.platform === 'linux' ? withWriteGlobsExpanded(forBubblewrap(planned, root, listDir)) : planned
     for (const dir of writeFolders(cerco, root)) mkdirSync(dir, { recursive: true, mode: 0o700 })
     const scratch = (name: string) => {
       const dir = join(place.scratchBase ?? root, name)
@@ -370,6 +370,75 @@ function denyAllBut(dir: string, keep: readonly string[], list: (dir: string) =>
 function isAtOrUnder(path: string, dir: string): boolean {
   const rel = relative(dir, path)
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+}
+
+/**
+ * ⚠️ No Linux o runtime IGNORA regra de escrita com curinga no meio do caminho ("Skipping glob write pattern on Linux"):
+ * `<raiz>/**\/*.test.ts` e `<repo>/_worktrees/*\/evidence/**` não valiam no terminal, e a ferramenta de edição gravava
+ * onde o terminal (prettier, lint-staged no commit) dava "somente leitura". Aqui cada padrão vira os caminhos que
+ * EXISTEM e casam (arquivos, ou a pasta quando o padrão termina em `/**`). O padrão fica junto (o runtime lê os que sabe).
+ * ⚖️ Criar um arquivo NOVO por um padrão desses segue só pela ferramenta de edição: o terminal não abre a pasta inteira.
+ * As negações com curinga também se expandem: o que existe fica fechado.
+ */
+export function withWriteGlobsExpanded(plan: ICercoPlan, list: (dir: string) => Array<{ name: string; dir: boolean }> = listEntries): ICercoPlan {
+  const expand = (paths: readonly string[]) => [...new Set(paths.flatMap((path) => [path, ...expandGlobPath(path, list)]))]
+  return { ...plan, writeAllow: expand(plan.writeAllow), writeDeny: expand(plan.writeDeny) }
+}
+
+/** Teto de caminhos por padrão: numa árvore enorme, o que passa fica fechado (falha fechada para a escrita). */
+const GLOB_EXPAND_LIMIT = 4000
+/** As pastas que o `**` não atravessa: dependências e o git por dentro. */
+const GLOB_SKIP = new Set(['node_modules', '.git'])
+
+/** Os caminhos que existem e casam um padrão absoluto com curinga; nada se ele não tem curinga (o runtime o lê). */
+export function expandGlobPath(path: string, list: (dir: string) => Array<{ name: string; dir: boolean }> = listEntries): string[] {
+  const whole = path.endsWith('/**')
+  const base = whole ? path.slice(0, -3) : path
+  if (!/[*?[\]{}]/.test(base) || !isAbsolute(base)) return []
+  const segments = base.split('/').filter(Boolean)
+  const found: string[] = []
+  let visited = 0
+  // Desce segmento a segmento: o literal só entra; o curinga lista a pasta; o `**` vale zero ou mais pastas.
+  const walk = (dir: string, rest: readonly string[]): void => {
+    if (found.length >= GLOB_EXPAND_LIMIT || visited > 200_000) return
+    visited += 1
+    const [head, ...tail] = rest
+    if (head === undefined) {
+      found.push(dir)
+      return
+    }
+    if (head === '**') {
+      walk(dir, tail)
+      for (const entry of list(dir)) if (entry.dir && !GLOB_SKIP.has(entry.name)) walk(join(dir, entry.name), rest)
+      return
+    }
+    if (!/[*?[\]{}]/.test(head)) {
+      const next = join(dir, head)
+      // O literal segue o link (no Mac, `/var` é `/private/var`); o curinga não entra em link.
+      if (!tail.length ? existsSync(next) : isDirectory(next)) walk(next, tail)
+      return
+    }
+    const matcher = globToRegex(head)
+    for (const entry of list(dir)) if (matcher.test(entry.name) && (tail.length ? entry.dir : !whole || entry.dir)) walk(join(dir, entry.name), tail)
+  }
+  walk('/', segments)
+  return found.map((item) => (whole ? `${item}/**` : item))
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+function listEntries(dir: string): Array<{ name: string; dir: boolean }> {
+  try {
+    return readdirSync(dir, { withFileTypes: true }).map((entry) => ({ name: entry.name, dir: entry.isDirectory() }))
+  } catch {
+    return []
+  }
 }
 
 /** Teto da busca dos modelos: numa árvore maior, o que sobra fica escondido (falha fechada). */

@@ -13,6 +13,8 @@ export interface IBashPolicy {
 const DEFAULT_TIMEOUT_MS = 120_000
 /** O motivo do `sudo` (ver `remoteSudoAllowed`: dentro do `ssh`, com regra que o cite, passa). */
 export const PRIVILEGE_ESCALATION = 'privilege escalation'
+/** O motivo de desligar ou reiniciar a máquina. Como o sudo, decidido pelos comandos que rodam (ver `realReasons`). */
+export const HOST_POWER = 'host power control'
 const DEFAULT_MAX_OUTPUT_CHARS = 4_000
 
 /**
@@ -34,7 +36,7 @@ const DENIED: ReadonlyArray<{ pattern: RegExp; reason: string }> = [
   { pattern: />\s*\/dev\/(sd|nvme|disk|hd)/i, reason: 'redirect into a block device' },
   { pattern: /:\s*\(\s*\)\s*\{.*\|.*&.*\}\s*;?\s*:/, reason: 'fork bomb' },
   { pattern: /\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(ba|z|k|fi)?sh\b/i, reason: 'pipe from network straight into a shell' },
-  { pattern: /\b(shutdown|reboot|halt|poweroff)\b/i, reason: 'host power control' },
+  { pattern: /\b(shutdown|reboot|halt|poweroff)\b/i, reason: HOST_POWER },
   { pattern: /\bchmod\b[^|;&\n]*-[a-z]*R[a-z]*\s+777\s+\//i, reason: 'recursive world-writable on a root path' },
   { pattern: /\bsudo\b/i, reason: PRIVILEGE_ESCALATION },
 ]
@@ -50,11 +52,37 @@ export function bashPolicy(): IBashPolicy {
 
 /** Devolve o motivo da recusa, ou `undefined` se o comando passa. */
 export function denyReason(command: string): string | undefined {
-  const trimmed = command.trim()
-  if (!trimmed) return 'empty command'
+  return deniedReasons(command)[0]
+}
 
-  const match = DENIED.find((rule) => rule.pattern.test(trimmed))
-  return match ? match.reason : undefined
+/** Todos os motivos que o TEXTO do comando casa, na ordem da lista. */
+export function deniedReasons(command: string): string[] {
+  const trimmed = command.trim()
+  if (!trimmed) return ['empty command']
+  return DENIED.filter((rule) => rule.pattern.test(trimmed)).map((rule) => rule.reason)
+}
+
+/** Os motivos que o texto acusa mas só valem se o COMANDO roda (o sudo, o reboot): a palavra num grep ou num texto não conta. */
+export const COMMAND_REASONS: ReadonlySet<string> = new Set([PRIVILEGE_ESCALATION, HOST_POWER])
+
+const POWER = new Set(['shutdown', 'reboot', 'halt', 'poweroff'])
+const ESCALATE = new Set(['sudo', 'doas', 'su', 'pkexec', 'run0'])
+
+/**
+ * ⚖️ O sudo e o reboot pelos comandos que RODAM (a análise do shell), não pelo texto: `grep "sudo"` e um script que só
+ * cita "reboot" passavam por escalada. O `ssh` com sudo no comando remoto conta como escalada (quem libera é a regra:
+ * `remoteSudoAllowed`). Comando que a análise não vê por inteiro: vale o texto (falha fechada).
+ */
+export function realReasons(analysis: { commands: ReadonlyArray<{ name: string; argv: readonly string[] }>; opaque: readonly string[] }, textual: readonly string[]): string[] {
+  if (analysis.opaque.length) return textual.filter((reason) => COMMAND_REASONS.has(reason))
+  const found = new Set<string>()
+  for (const command of analysis.commands) {
+    if (ESCALATE.has(command.name)) found.add(PRIVILEGE_ESCALATION)
+    if (POWER.has(command.name) || (command.name === 'systemctl' && command.argv.some((word) => POWER.has(word) || word === 'kexec'))) found.add(HOST_POWER)
+    if (command.name === 'ssh' && command.argv.slice(1).some((word) => /(^|[\s;&|(])sudo(\s|$)/.test(word))) found.add(PRIVILEGE_ESCALATION)
+    if (command.name === 'ssh' && command.argv.slice(1).some((word) => /(^|[\s;&|(])(shutdown|reboot|halt|poweroff)(\s|$)/.test(word))) found.add(HOST_POWER)
+  }
+  return textual.filter((reason) => COMMAND_REASONS.has(reason) && found.has(reason))
 }
 
 export function truncate(output: string, maxChars: number): string {

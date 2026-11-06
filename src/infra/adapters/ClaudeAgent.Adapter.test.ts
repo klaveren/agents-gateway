@@ -17,7 +17,7 @@ import { ToolCatalog } from '@infra/tools/Tool.Catalog'
 import { CLAUDE_TEST_AGENT } from '../../testing/Agents.Fixture'
 import { ILocalTool } from '@infra/tools/Tool.Types'
 import { LoopGuard } from '@infra/tools/Loop.Guard'
-import { ClaudeAgentAdapter, cliEnv } from './ClaudeAgent.Adapter'
+import { CLAUDE_TOOL_NAMES, ClaudeAgentAdapter, cliEnv } from './ClaudeAgent.Adapter'
 import { SessionStore } from '@infra/session/Session.Store'
 
 type TQuery = typeof query
@@ -290,6 +290,9 @@ describe('ClaudeAgentAdapter', () => {
     assert.deepStrictEqual(Object.keys(servers).sort(), ['local', 'mcp_crm'])
     // Built-ins seguem desligados: o agente não ganha Bash/Read sobre a máquina do host.
     assert.deepStrictEqual(seen[0].options?.tools, [])
+    // ⚖️ O nome completo das do gateway vai no prompt: o modelo chamava `use_resource` sem o prefixo.
+    assert.ok(String(seen[0].options?.systemPrompt).endsWith(CLAUDE_TOOL_NAMES))
+    assert.match(CLAUDE_TOOL_NAMES, /mcp__local__use_resource/)
   })
 
   it('omits the remote server when no MCP is connected', async () => {

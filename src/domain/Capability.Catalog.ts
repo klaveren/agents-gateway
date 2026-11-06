@@ -208,3 +208,9 @@ export function agentFolderAccess(allowedTools: readonly string[]): { read: bool
   const write = has('cap:files.write')
   return { read: write || has('cap:files.read') || has('cap:terminal'), write }
 }
+
+/** O agente tem o terminal (a capacidade, ou a ferramenta dela já resolvida)? */
+export function hasTerminal(allowedTools: readonly string[]): boolean {
+  const caps = new Set(toCapabilities(allowedTools))
+  return caps.has('cap:terminal') || !!capability('cap:terminal')?.local.some((tool) => caps.has(tool))
+}
