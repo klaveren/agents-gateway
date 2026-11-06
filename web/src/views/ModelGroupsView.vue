@@ -161,8 +161,8 @@
         </RouterLink>
       </header>
       <p class="px-4 pb-3 text-xs text-zinc-500">
-        Uma sequência é uma lista de modelos em ordem. A conversa que abre sem modelo escolhido começa no primeiro disponível; se o modelo falha por um dos motivos da sequência, segue no
-        próximo disponível e fica nele (não volta). No chat, a pessoa continua escolhendo entre os “Modelos do agente”.
+        Uma sequência é uma lista de modelos em ordem. Quando o modelo da conversa falha por um dos motivos marcados, o agente continua no próximo disponível, sem a pessoa
+        precisar fazer nada, e fica nele. A conversa aberta sem modelo escolhido já começa no primeiro. A pessoa ainda pode escolher outro modelo na conversa.
       </p>
       <p v-if="loadError" class="px-4 text-sm text-rose-300">{{ loadError }}</p>
       <p v-else-if="settings.current && !groups.length" class="px-4 text-sm text-zinc-500">Nenhuma sequência ainda. Sem sequência, o agente não troca de modelo quando um falha.</p>
@@ -212,7 +212,7 @@
           <div class="flex flex-col gap-2">
             <h3 class="text-sm font-medium text-zinc-200">Passos</h3>
             <p class="text-xs text-zinc-500">
-              Na ordem de uso: o primeiro disponível é onde a conversa começa; os seguintes, para onde ela vai quando o modelo falha. Só entram modelos ativados.
+              A ordem de uso. A conversa começa no primeiro modelo disponível; quando ele falha, passa para o próximo, e assim por diante. Só aparecem modelos ativados.
             </p>
             <FallbackChain v-model="draft.steps" :options="stepOptions" />
           </div>
@@ -220,16 +220,16 @@
           <fieldset class="flex flex-col gap-2">
             <legend class="text-sm font-medium text-zinc-200">Trocar de modelo quando</legend>
             <div class="flex flex-wrap gap-x-4 gap-y-1.5 text-sm text-zinc-300">
-              <label v-for="option in SWITCH_OPTIONS" :key="option.value" class="flex items-center gap-2">
+              <label v-for="option in SWITCH_OPTIONS" :key="option.value" class="flex items-center gap-2" :title="option.hint">
                 <input type="checkbox" class="accent-emerald-500" :checked="draft.switchOn.includes(option.value)" @change="toggle(option.value)" />
                 {{ option.label }}
               </label>
             </div>
-            <small class="text-xs text-zinc-500">Sobrecarga costuma passar sozinha e credencial recusada é para consertar: por isso essas duas começam desmarcadas.</small>
+            <small class="text-xs text-zinc-500">Sobrecarga costuma passar sozinha, e credencial recusada pede conserto, não troca: por isso essas duas começam desmarcadas.</small>
           </fieldset>
 
-          <label class="field max-w-xs">
-            Tempo de espera do passo que falhou (minutos)
+          <label class="field max-w-sm">
+            Deixar de lado o modelo que falhou por (minutos)
             <input
               v-model="draft.cooldown"
               type="number"
@@ -239,7 +239,7 @@
               class="input tabular-nums"
               aria-label="Tempo de espera"
             />
-            <small class="text-xs text-zinc-500">Quando o erro não diz quando o modelo volta.</small>
+            <small class="text-xs text-zinc-500">Nesse tempo, o agente pula esse modelo e usa o próximo. Só vale quando o erro não diz quando ele volta; em branco, 15 minutos.</small>
           </label>
 
           <div v-if="selected" class="flex flex-col gap-1 text-sm">

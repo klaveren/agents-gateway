@@ -119,8 +119,8 @@
       </header>
       <div class="flex flex-col gap-2 p-3">
         <p class="hint">
-          A conversa aberta sem modelo escolhido começa no primeiro modelo disponível da sequência; se ele falha (cota, limite de uso…), segue no próximo e fica nele. No chat, a pessoa
-          continua escolhendo entre os modelos do agente.
+          Quando o modelo da conversa falha (cota, limite de uso…), o agente continua no próximo modelo da sequência, sem a pessoa precisar fazer nada, e fica nele. A conversa aberta
+          sem modelo escolhido já começa no primeiro. A pessoa ainda pode escolher outro modelo na conversa.
         </p>
         <select v-model="choice" aria-label="Sequência de troca" class="h-9 max-w-xs rounded-lg border border-zinc-800 bg-zinc-900 px-2 text-sm">
           <option value="">Padrão ({{ defaultName }})</option>
@@ -142,20 +142,21 @@
       </header>
       <div class="flex flex-col gap-4 p-3">
         <div class="flex flex-col gap-2">
-          <p class="hint">Na ordem de uso: o primeiro disponível é onde a conversa começa; os seguintes, para onde ela vai quando o modelo falha. Só entram modelos ativados.</p>
+          <p class="hint">A ordem de uso. A conversa começa no primeiro modelo disponível; quando ele falha, passa para o próximo, e assim por diante. Só aparecem modelos ativados.</p>
           <FallbackChain v-model="draft.steps" :options="stepOptions" />
         </div>
         <div class="flex flex-col gap-1.5">
           <span class="text-sm text-zinc-300">Trocar de modelo quando</span>
           <div class="flex flex-wrap gap-x-4 gap-y-1.5 text-sm text-zinc-300">
-            <label v-for="option in SWITCH_OPTIONS" :key="option.value" class="flex items-center gap-2">
+            <label v-for="option in SWITCH_OPTIONS" :key="option.value" class="flex items-center gap-2" :title="option.hint">
               <input type="checkbox" class="accent-emerald-500" :checked="draft.switchOn.includes(option.value)" @change="toggle(option.value)" />
               {{ option.label }}
             </label>
           </div>
+          <p class="hint">Sobrecarga costuma passar sozinha, e credencial recusada pede conserto, não troca: por isso essas duas começam desmarcadas.</p>
         </div>
-        <label class="flex max-w-xs flex-col gap-1 text-sm text-zinc-300">
-          Tempo de espera do passo que falhou (minutos)
+        <label class="flex max-w-sm flex-col gap-1 text-sm text-zinc-300">
+          Deixar de lado o modelo que falhou por (minutos)
           <input
             v-model="draft.cooldown"
             type="number"
@@ -166,6 +167,7 @@
             aria-label="Tempo de espera"
             @keydown.enter.prevent
           />
+          <small class="hint">Nesse tempo, o agente pula esse modelo e usa o próximo. Só vale quando o erro não diz quando ele volta; em branco, 15 minutos.</small>
         </label>
         <div class="flex flex-wrap items-center gap-2">
           <button type="button" class="btn btn-secondary" :disabled="!dirty || busy || !draft.steps.length" data-test="save-group" @click="saveGroup">
