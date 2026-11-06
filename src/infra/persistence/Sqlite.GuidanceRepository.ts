@@ -191,15 +191,17 @@ export class SqliteGuidanceRepository implements IGuidanceRepository {
    * A busca de texto nos documentos dos escopos dados, os mais relevantes primeiro (bm25, com o título valendo mais
    * que o resumo, e o resumo mais que o corpo). `match` já vem pronto (ver `GuidanceService.searchDocs`).
    */
-  searchDocs(match: string, scopes: readonly TGuidanceScope[], kind?: TDocKind, limit = 8): IDocHit[] {
-    const where = [`docs_fts MATCH ?`, `project_id IN (${scopes.map(() => '?').join(', ')})`, ...(kind ? ['kind = ?'] : [])]
+  searchDocs(match: string, scopes: readonly TGuidanceScope[], kind?: TDocKind, limit = 8, alsoIds: readonly string[] = []): IDocHit[] {
+    // `alsoIds`: documentos de outro projeto compartilhados com quem busca (entram além dos escopos).
+    const scopeFilter = `project_id IN (${scopes.map(() => '?').join(', ')})`
+    const where = [`docs_fts MATCH ?`, alsoIds.length ? `(${scopeFilter} OR id IN (${alsoIds.map(() => '?').join(', ')}))` : scopeFilter, ...(kind ? ['kind = ?'] : [])]
     const rows = this.db
       .prepare(
         `SELECT id, kind, project_id, title, summary, snippet(docs_fts, 5, '«', '»', '…', 24) AS excerpt,
                 (SELECT status FROM project_docs WHERE project_docs.id = docs_fts.id) AS status
          FROM docs_fts WHERE ${where.join(' AND ')} ORDER BY bm25(docs_fts, 0, 0, 0, 10, 4, 1) LIMIT ?`,
       )
-      .all(match, ...scopes.map((scope) => scope ?? ''), ...(kind ? [kind] : []), limit) as TRow[]
+      .all(match, ...scopes.map((scope) => scope ?? ''), ...alsoIds, ...(kind ? [kind] : []), limit) as TRow[]
     return rows.map((row) => ({
       id: row.id as string,
       kind: row.kind as TDocKind,

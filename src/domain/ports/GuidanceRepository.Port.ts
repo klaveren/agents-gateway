@@ -47,7 +47,7 @@ export interface IGuidanceRepository {
   /** Os documentos que anexam este (os "pais" dele, ver `IProjectDoc.docIds`). */
   docsAttaching(id: string): IProjectDoc[]
   /** A busca de texto (FTS) nos documentos dos escopos, os mais relevantes primeiro. `match` é a expressão FTS5 pronta. */
-  searchDocs(match: string, scopes: readonly TGuidanceScope[], kind?: TDocKind, limit?: number): IDocHit[]
+  searchDocs(match: string, scopes: readonly TGuidanceScope[], kind?: TDocKind, limit?: number, alsoIds?: readonly string[]): IDocHit[]
 
   /** O CONTEXTO INICIAL do projeto: as specs que vão inteiras no prompt, na ordem. */
   contextDocs(projectId: string): string[]

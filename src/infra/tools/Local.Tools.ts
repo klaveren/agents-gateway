@@ -65,7 +65,7 @@ export interface IDocReader {
    */
   attachedDoc?(id: string, agentId?: string, projectId?: string): { doc: IProjectDoc; via: Array<{ kind: 'skill' | 'command' | 'doc'; id: string }> } | undefined
   /** O texto que o agente recebe: o documento e os anexos dele (ver `GuidanceService.docText`). Ausente = só o documento. */
-  docText?(doc: IProjectDoc): string
+  docText?(doc: IProjectDoc, projectId?: string): string
   /** A busca de texto (ver `GuidanceService.searchDocs`). Ausente = sem `search_docs`. */
   searchDocs?(query: string, projectId?: string, kind?: TDocKind): IDocHit[]
 }
@@ -1066,7 +1066,7 @@ function readDocTool(docs: IDocReader, permissions?: IPermissionChecker): ILocal
       }
       const doc = id ? (docs.readDoc(id, context?.conversationProjectId) ?? attached(id)) : undefined
       if (!doc) return { status: 'error', result: `Document not found: ${id || '(no id)'}` }
-      return { status: 'success', result: docs.docText ? docs.docText(doc) : `# ${doc.title} [${doc.kind}]\n\n${doc.body}` }
+      return { status: 'success', result: docs.docText ? docs.docText(doc, context?.conversationProjectId) : `# ${doc.title} [${doc.kind}]\n\n${doc.body}` }
     },
   }
 }
