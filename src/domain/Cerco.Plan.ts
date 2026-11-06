@@ -105,12 +105,17 @@ export function cercoPlan(layers: IPermissionLayers, base: ICercoBase): ICercoPl
     const projectAllow = pick(layers.project, category, 'allow')
     const system = [...SYSTEM_RULES, ...(base.system ?? [])].filter((rule) => rule.category === category && rule.decision === 'deny')
     const deny = [...system, ...pick(layers.agent, category, 'deny'), ...pick(layers.project, category, 'deny').filter((rule) => !reopened(rule.pattern, agentAllow))]
-    // ⚖️ Cada regra vale ancorada na raiz e, numa worktree ou num repositório, também na pasta do projeto.
-    const paths = (rules: readonly IPermissionRule[]) =>
-      rules.flatMap((rule) => [toSandboxPath(rule.pattern, base.root), projectAnchored(rule.pattern, base.root, base.projectRoot)].filter((path): path is string => !!path))
+    // ⚖️ Numa worktree ou num repositório, a regra escrita da pasta do projeto vale ancorada nela. A NEGAÇÃO vale também
+    // ancorada na raiz (falha fechada); a LIBERAÇÃO, não: `<raiz>/repositories/x/infra` não existe, e o gateway criava a
+    // pasta vazia dentro do repositório (ver `writeFolders`).
+    const paths = (rules: readonly IPermissionRule[], both: boolean) =>
+      rules.flatMap((rule) => {
+        const anchored = projectAnchored(rule.pattern, base.root, base.projectRoot)
+        return anchored ? (both ? [toSandboxPath(rule.pattern, base.root), anchored] : [anchored]) : [toSandboxPath(rule.pattern, base.root)]
+      })
     return {
-      allow: [...new Set(paths([...agentAllow, ...projectAllow]))],
-      deny: [...new Set(paths(deny))],
+      allow: [...new Set(paths([...agentAllow, ...projectAllow], false))],
+      deny: [...new Set(paths(deny, true))],
     }
   }
   const read = lists('read')
