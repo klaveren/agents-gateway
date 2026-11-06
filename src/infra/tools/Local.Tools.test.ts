@@ -735,6 +735,29 @@ describe('remoteSudoAllowed', () => {
       assert.strictEqual(await remoteSudoAllowed(command, checker(rules), asker), false, command)
   })
 
+  it('o sudo remoto SEM aspas também vale, com a regra exata; ⛔ só palavras que o shell remoto lê como estão', async () => {
+    const disable = 'ssh 10.10.0.4 sudo -n systemctl disable --now logiccus-restart-opencode.timer opencode.service'
+    const rules: IPermissionRule[] = [{ category: 'terminal', pattern: disable, decision: 'allow' }]
+    assert.strictEqual(await remoteSudoAllowed(disable, checker(rules), asker), true)
+    assert.strictEqual(
+      await remoteSudoAllowed(
+        'ssh -o BatchMode=yes -p 22 10.10.0.1 sudo k3s kubectl get nodes',
+        checker([{ category: 'terminal', pattern: 'ssh * sudo k3s kubectl *', decision: 'allow' }]),
+        asker,
+      ),
+      true,
+    )
+    const wide: IPermissionRule[] = [{ category: 'terminal', pattern: 'ssh * sudo *', decision: 'allow' }]
+    for (const command of [
+      "ssh 10.10.0.4 sudo sh -c 'id; rm -rf /var'",
+      'ssh 10.10.0.4 sudo systemctl stop "x;id"',
+      'ssh 10.10.0.4 sudo ls \\*',
+      'ssh 10.10.0.4 env sudo id',
+      'ssh 10.10.0.4 sudo -n systemctl disable --now other.service',
+    ])
+      assert.strictEqual(await remoteSudoAllowed(command, checker(command.includes('other') ? rules : wide), asker), false, command)
+  })
+
   it('⛔ o sudo local segue recusado, mesmo com a regra', async () => {
     const rules: IPermissionRule[] = [{ category: 'terminal', pattern: '* sudo*', decision: 'allow' }]
     for (const command of ['sudo ssh 10.10.0.1 "sudo id"', 'ssh 10.10.0.1 "sudo id"; sudo id', 'echo sudo'])
