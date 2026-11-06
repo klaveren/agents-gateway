@@ -73,8 +73,9 @@ describe('useProjectsStore — membros', () => {
     const projects = useProjectsStore()
     await projects.ensure()
     await projects.ensure()
-    vi.mocked(api).mockResolvedValueOnce([{ projectId: 'alfa', userId: 'u1', addedAt: '' }])
-    await projects.setMembers('alfa', ['u1'])
+    vi.mocked(api).mockResolvedValueOnce([{ projectId: 'alfa', userId: 'u1', role: 'admin', addedAt: '' }])
+    await projects.setMembers('alfa', [{ userId: 'u1', role: 'admin' }])
+    expect(api).toHaveBeenLastCalledWith('/projects/alfa/members', { method: 'PUT', body: { members: [{ userId: 'u1', role: 'admin' }] } })
     await projects.members('alfa')
 
     expect(api).toHaveBeenCalledTimes(2)

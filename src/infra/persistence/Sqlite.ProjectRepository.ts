@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { IAgenticScope, normalizeScope } from '@domain/Import.Scope'
-import { IProject, IProjectMember } from '@domain/models/Project.Model'
+import { IProject, IProjectMember, TProjectRole } from '@domain/models/Project.Model'
 import { IProjectRepository } from '@domain/ports/ProjectRepository.Port'
 
 const SCHEMA = `
@@ -54,6 +54,9 @@ export class SqliteProjectRepository implements IProjectRepository {
     for (const { column, definition } of ADDED_COLUMNS) {
       if (!existing.some((row) => row.name === column)) this.db.exec(`ALTER TABLE projects ADD COLUMN ${column} ${definition}`)
     }
+    // O papel no projeto entrou depois: o membro antigo nasce `member` (a migração dos papéis promove os administradores).
+    const memberColumns = this.db.prepare('PRAGMA table_info(project_members)').all() as TRow[]
+    if (!memberColumns.some((row) => row.name === 'role')) this.db.exec(`ALTER TABLE project_members ADD COLUMN role TEXT NOT NULL DEFAULT 'member'`)
   }
 
   list(): IProject[] {
@@ -93,6 +96,7 @@ export class SqliteProjectRepository implements IProjectRepository {
     return (this.db.prepare('SELECT * FROM project_members WHERE project_id = ? ORDER BY added_at ASC').all(projectId) as TRow[]).map((row) => ({
       projectId: String(row.project_id),
       userId: String(row.user_id),
+      role: row.role === 'admin' ? 'admin' : 'member',
       addedAt: new Date(String(row.added_at)),
       ...(typeof row.added_by === 'string' ? { addedBy: row.added_by } : {}),
     }))
@@ -102,14 +106,15 @@ export class SqliteProjectRepository implements IProjectRepository {
     return (this.db.prepare('SELECT project_id FROM project_members WHERE user_id = ?').all(userId) as TRow[]).map((row) => String(row.project_id))
   }
 
-  /** ⚖️ Quem continua fica com a data de entrada que tinha; quem sai, sai; quem entra, entra agora. */
-  setMembers(projectId: string, userIds: readonly string[], by: string): void {
-    const wanted = new Set(userIds)
+  /** ⚖️ Quem continua fica com a data de entrada que tinha (e o papel novo); quem sai, sai; quem entra, entra agora. */
+  setMembers(projectId: string, members: ReadonlyArray<{ userId: string; role: TProjectRole }>, by: string): void {
+    const wanted = new Map(members.map((member) => [member.userId, member.role]))
     const current = new Set(this.members(projectId).map((member) => member.userId))
     const now = new Date().toISOString()
     for (const userId of current) if (!wanted.has(userId)) this.db.prepare('DELETE FROM project_members WHERE project_id = ? AND user_id = ?').run(projectId, userId)
-    for (const userId of wanted)
-      if (!current.has(userId)) this.db.prepare('INSERT INTO project_members (project_id, user_id, added_at, added_by) VALUES (?, ?, ?, ?)').run(projectId, userId, now, by)
+    for (const [userId, role] of wanted)
+      if (current.has(userId)) this.db.prepare('UPDATE project_members SET role = ? WHERE project_id = ? AND user_id = ?').run(role, projectId, userId)
+      else this.db.prepare('INSERT INTO project_members (project_id, user_id, role, added_at, added_by) VALUES (?, ?, ?, ?, ?)').run(projectId, userId, role, now, by)
   }
 
   done(key: string): boolean {

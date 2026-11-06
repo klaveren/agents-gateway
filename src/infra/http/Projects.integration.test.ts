@@ -213,9 +213,27 @@ describe('Projetos (integração)', () => {
     assert.strictEqual((await call(ADMIN, 'POST', '/projects', { id: 'beta', name: 'Beta' })).status, 201)
     assert.strictEqual((await call(ANA, 'POST', '/projects', { id: 'gama', name: 'Gama' })).status, 404, 'membro não cria projeto')
     assert.ok(existsSync(join(folders, 'alfa')))
-    await call(ADMIN, 'PUT', '/projects/alfa/members', { userIds: ['u_ana'] })
-    await call(ADMIN, 'PUT', '/projects/beta/members', { userIds: ['u_bia'] })
-    assert.strictEqual((await call(ADMIN, 'PUT', '/projects/beta/members', { userIds: ['u_fantasma'] })).status, 422)
+    // Quem cria é o primeiro administrador; os membros entram com o papel.
+    assert.deepStrictEqual(
+      ((await call(ADMIN, 'GET', '/projects/alfa/members')).body.result as Array<{ userId: string; role: string }>).map((member) => [member.userId, member.role]),
+      [['u_root', 'admin']],
+    )
+    await call(ADMIN, 'PUT', '/projects/alfa/members', {
+      members: [
+        { userId: 'u_root', role: 'admin' },
+        { userId: 'u_ana', role: 'member' },
+      ],
+    })
+    await call(ADMIN, 'PUT', '/projects/beta/members', {
+      members: [
+        { userId: 'u_root', role: 'admin' },
+        { userId: 'u_bia', role: 'member' },
+      ],
+    })
+    assert.strictEqual((await call(ADMIN, 'PUT', '/projects/beta/members', { userIds: ['u_root', 'u_fantasma'] })).status, 422)
+    // ⛔ Sem administrador: recusado; e o membro comum não mexe nos membros (404).
+    assert.strictEqual((await call(ADMIN, 'PUT', '/projects/beta/members', { members: [{ userId: 'u_bia', role: 'member' }] })).status, 422)
+    assert.strictEqual((await call(BIA, 'PUT', '/projects/beta/members', { userIds: ['u_root', 'u_bia', 'u_ana'] })).status, 404)
 
     assert.deepStrictEqual(
       ((await call(ANA, 'GET', '/projects')).body.result as Array<{ id: string; folder?: string }>).map((project) => [project.id, project.folder]),

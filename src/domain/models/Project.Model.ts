@@ -18,9 +18,18 @@ export interface IProject {
   updatedBy?: string
 }
 
+/**
+ * ⚖️ O PAPEL NO PROJETO: o administrador do projeto cuida de tudo dele (agentes, catálogo, permissões, membros); o membro
+ * conversa com os agentes. Todo projeto tem sempre ao menos um administrador. Não confundir com o administrador do
+ * GATEWAY (o papel da conta), que cuida do que não é de projeto nenhum.
+ */
+export const PROJECT_ROLES = ['admin', 'member'] as const
+export type TProjectRole = (typeof PROJECT_ROLES)[number]
+
 export interface IProjectMember {
   projectId: string
   userId: string
+  role: TProjectRole
   addedAt: Date
   addedBy?: string
 }

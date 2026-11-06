@@ -2,7 +2,7 @@ import { ignoreIssues, normalizeIgnore } from '@domain/Import.Ignore'
 import { IAgenticScope, normalizeScope, scopeIssues } from '@domain/Import.Scope'
 import { InvalidProjectError, ProjectInUseError, ProjectNotFoundError } from '@domain/errors/Domain.Error'
 import { IAgent } from '@domain/models/Agent.Model'
-import { DEFAULT_PROJECT_ID, IProject, IProjectMember, PROJECT_ID_PATTERN } from '@domain/models/Project.Model'
+import { DEFAULT_PROJECT_ID, IProject, IProjectMember, PROJECT_ID_PATTERN, PROJECT_ROLES, TProjectRole } from '@domain/models/Project.Model'
 import { IConversationRepository } from '@domain/ports/ConversationRepository.Port'
 import { IProjectRepository } from '@domain/ports/ProjectRepository.Port'
 import { TRevisionSource } from '@domain/ports/CatalogHistoryRepository.Port'
@@ -13,6 +13,9 @@ export interface IProjectCaller {
   userId?: string
   admin: boolean
 }
+
+/** Um membro como chega na gravação: a conta e, se dito, o papel (sem papel, fica o que tinha, ou `member`). */
+export type TMemberInput = string | { userId: string; role?: TProjectRole }
 
 const NAME_MAX = 80
 const DESCRIPTION_MAX = 2_000
@@ -38,13 +41,24 @@ export class ProjectsService {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
-  /** Os projetos que a pessoa pode usar: todos para o admin. */
+  /**
+   * ⛔ Os projetos de que a pessoa é MEMBRO — também o administrador do gateway: ele cuida do que não é de projeto, e
+   * só vê os projetos em que entrou. (`all` é a lista inteira, para o trabalho do próprio gateway.)
+   */
   list(caller: IProjectCaller): IProject[] {
-    const all = this.projects.list()
-    if (caller.admin) return all
     if (!caller.userId) return []
     const mine = new Set(this.projects.projectsOf(caller.userId))
-    return all.filter((project) => mine.has(project.id))
+    return this.projects.list().filter((project) => mine.has(project.id))
+  }
+
+  /** Todos os projetos, para o trabalho do próprio gateway (o boot, as migrações) — nunca para uma tela. */
+  all(): IProject[] {
+    return this.projects.list()
+  }
+
+  /** O papel da conta no projeto, ou nada se ela não é membro. */
+  roleOf(projectId: string, userId: string | undefined): TProjectRole | undefined {
+    return userId ? this.projects.members(projectId).find((member) => member.userId === userId)?.role : undefined
   }
 
   get(id: string): IProject {
@@ -67,7 +81,8 @@ export class ProjectsService {
     return this.workspace.create(projectId)
   }
 
-  create(input: { id: string; name: string; description?: string }, by: string, source: TRevisionSource = 'api'): IProject {
+  /** `creatorId`: a conta que criou vira o primeiro administrador do projeto (sem ela, o projeto nasce sem membros). */
+  create(input: { id: string; name: string; description?: string }, by: string, source: TRevisionSource = 'api', creatorId?: string): IProject {
     const project: IProject = {
       id: input.id.trim(),
       name: input.name.trim(),
@@ -82,6 +97,7 @@ export class ProjectsService {
     if (issues.length) throw new InvalidProjectError(issues)
     this.projects.insert(project)
     this.workspace.create(project.id)
+    if (creatorId && this.userExists(creatorId)) this.projects.setMembers(project.id, [{ userId: creatorId, role: 'admin' }], by)
     this.history.record(
       [
         { kind: 'project', id: project.id },
@@ -161,12 +177,29 @@ export class ProjectsService {
     return this.projects.members(id)
   }
 
-  setMembers(id: string, userIds: readonly string[], by: string): IProjectMember[] {
+  /**
+   * A lista INTEIRA de membros, com o papel. ⛔ Todo projeto fica com ao menos um administrador: a lista sem nenhum é
+   * recusada (tirar ou rebaixar o último também). Sem papel dito, o membro fica com o que tinha (ou `member`).
+   */
+  setMembers(id: string, input: readonly TMemberInput[], by: string): IProjectMember[] {
     this.get(id)
-    const unique = [...new Set(userIds.map((userId) => userId.trim()).filter(Boolean))]
-    const unknown = unique.filter((userId) => !this.userExists(userId))
+    const before = new Map(this.projects.members(id).map((member) => [member.userId, member.role]))
+    const wanted = new Map<string, TProjectRole>()
+    for (const item of input) {
+      const userId = (typeof item === 'string' ? item : item.userId).trim()
+      if (!userId) continue
+      const role = typeof item === 'string' ? undefined : item.role
+      if (role !== undefined && !PROJECT_ROLES.includes(role)) throw new InvalidProjectError([{ field: 'members', message: `unknown role: ${String(role)}` }])
+      wanted.set(userId, role ?? before.get(userId) ?? wanted.get(userId) ?? 'member')
+    }
+    const unknown = [...wanted.keys()].filter((userId) => !this.userExists(userId))
     if (unknown.length) throw new InvalidProjectError([{ field: 'members', message: `no such account: ${unknown.join(', ')}` }])
-    this.projects.setMembers(id, unique, by)
+    if (![...wanted.values()].includes('admin')) throw new InvalidProjectError([{ field: 'members', message: 'a project needs at least one admin member' }])
+    this.projects.setMembers(
+      id,
+      [...wanted].map(([userId, role]) => ({ userId, role })),
+      by,
+    )
     return this.projects.members(id)
   }
 }
@@ -193,6 +226,8 @@ export async function migrateLegacyToProjects(deps: {
   agents: { rawEntries(): Array<{ agent: IAgent }>; moveToProject(id: string, projectId: string, by: string): void }
   conversations: Pick<IConversationRepository, 'assignProject'>
   userIds: () => string[]
+  /** As contas que administram o gateway: viram administradoras do projeto `geral` (todo projeto tem uma). */
+  adminIds?: () => string[]
   seedIds: readonly string[]
 }): Promise<{ agents: number; conversations: number } | undefined> {
   if (deps.repository.done(MIGRATION)) return undefined
@@ -205,7 +240,13 @@ export async function migrateLegacyToProjects(deps: {
   if (legacy.length) {
     if (!deps.service.exists(DEFAULT_PROJECT_ID))
       deps.service.create({ id: DEFAULT_PROJECT_ID, name: 'Geral', description: 'O que existia antes dos projetos.' }, 'migração', 'migration')
-    deps.service.setMembers(DEFAULT_PROJECT_ID, deps.userIds(), 'migração')
+    const admins = new Set(deps.adminIds?.() ?? [])
+    const everyone = deps.userIds()
+    deps.service.setMembers(
+      DEFAULT_PROJECT_ID,
+      everyone.map((userId, index) => ({ userId, role: admins.has(userId) || (!admins.size && index === 0) ? 'admin' : 'member' })),
+      'migração',
+    )
     for (const agent of legacy) deps.agents.moveToProject(agent.id, DEFAULT_PROJECT_ID, 'migração')
     moved = await deps.conversations.assignProject(
       legacy.map((agent) => agent.id),
@@ -215,4 +256,32 @@ export async function migrateLegacyToProjects(deps: {
   }
   deps.repository.markDone(MIGRATION)
   return { agents: legacy.length, conversations: moved }
+}
+
+const ROLES_MIGRATION = 'migrated:project-roles'
+
+/**
+ * ⚖️ OS PAPÉIS NO PROJETO, UMA VEZ: o membro que administra o gateway vira administrador do projeto; o projeto que
+ * ainda ficar sem administrador ganha as contas administradoras do gateway como administradoras. Ninguém perde acesso.
+ */
+export function migrateProjectRoles(deps: {
+  repository: Pick<IProjectRepository, 'list' | 'members' | 'setMembers' | 'done' | 'markDone'>
+  /** As contas que administram o gateway (ativas). */
+  adminIds: () => string[]
+}): number {
+  if (deps.repository.done(ROLES_MIGRATION)) return 0
+  const admins = deps.adminIds()
+  let changed = 0
+  for (const project of deps.repository.list()) {
+    const members = deps.repository.members(project.id)
+    let next = members.map((member) => ({ userId: member.userId, role: admins.includes(member.userId) ? ('admin' as const) : member.role }))
+    if (!next.some((member) => member.role === 'admin'))
+      next = [...next.filter((member) => !admins.includes(member.userId)), ...admins.map((userId) => ({ userId, role: 'admin' as const }))]
+    if (JSON.stringify(next) === JSON.stringify(members.map((member) => ({ userId: member.userId, role: member.role })))) continue
+    deps.repository.setMembers(project.id, next, 'migração')
+    changed += 1
+  }
+  deps.repository.markDone(ROLES_MIGRATION)
+  if (changed) console.log(`[projetos] papéis: ${changed} projeto(s) com administradores definidos`)
+  return changed
 }

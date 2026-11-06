@@ -28,7 +28,7 @@ export function syncResourceFiles(): void {
   for (const scope of [
     null,
     ...makeProjects()
-      .list({ admin: true })
+      .all()
       .map((project) => project.id),
   ])
     for (const resource of repository.resources(scope)) if (resource.files?.length) sync(resource.kind, resource.id, resource.projectId, resource.files)
