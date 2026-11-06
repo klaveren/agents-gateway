@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue'
 import { useResource } from '@/composables/useResource'
 import { useAgentCatalogStore } from '@/stores/agentCatalog'
 import InitialContextEditor from './InitialContextEditor.vue'
@@ -11,11 +12,15 @@ import InitialContextEditor from './InitialContextEditor.vue'
 const props = defineProps<{ agentId: string; projectId?: string; projectName?: string }>()
 const catalog = useAgentCatalogStore()
 
+/** Dentro do formulário do agente: o "Salvar agente" grava esta guia (repassa o `dirty` e o `commit` do editor). */
+const editor = ref<{ dirty: boolean; commit: () => Promise<void> }>()
+defineExpose({ dirty: computed(() => !!editor.value?.dirty), commit: () => editor.value?.commit() ?? Promise.resolve() })
+
 const { data: project } = useResource(catalog.initialContexts, () => (props.projectId ? catalog.contextKey('projects', props.projectId) : undefined))
 </script>
 
 <template>
-  <InitialContextEditor owner="agents" :owner-id="agentId" :project-id="projectId" :base-tokens="project?.totalTokens">
+  <InitialContextEditor ref="editor" owner="agents" :owner-id="agentId" :project-id="projectId" :base-tokens="project?.totalTokens" embedded>
     <p class="text-sm text-zinc-400">
       As Specs marcadas são enviadas <strong class="text-zinc-200">inteiras</strong> a este agente, além das Rules
       <template v-if="projectId">

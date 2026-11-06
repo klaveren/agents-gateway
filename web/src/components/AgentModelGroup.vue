@@ -87,6 +87,14 @@
     return error instanceof Error ? error.message : String(error)
   }
 
+  /** O "Salvar agente" grava a sequência junto (e a confirmação avisa quantos agentes ela alcança): lança se falhar. */
+  async function commit(): Promise<void> {
+    if (!dirty.value) return
+    await saveGroup()
+    if (failure.value) throw new Error(failure.value)
+  }
+  defineExpose({ dirty, commit, name: computed(() => effective.value?.name), users: computed(() => (effective.value ? usersOf(effective.value.id) : 0)) })
+
   async function saveGroup() {
     const group = effective.value
     if (!group || !draft.value.steps.length) return
@@ -170,10 +178,7 @@
           <small class="hint">Nesse tempo, o agente pula esse modelo e usa o próximo. Só vale quando o erro não diz quando ele volta; em branco, 15 minutos.</small>
         </label>
         <div class="flex flex-wrap items-center gap-2">
-          <button type="button" class="btn btn-secondary" :disabled="!dirty || busy || !draft.steps.length" data-test="save-group" @click="saveGroup">
-            {{ busy ? 'Salvando…' : 'Salvar sequência' }}
-          </button>
-          <span v-if="dirty" class="text-xs text-amber-300">Muda a sequência para todos os agentes que a usam.</span>
+          <span v-if="dirty" class="text-xs text-amber-300">Mudança não salva: o "Salvar agente" grava a sequência, que vale para todos os agentes que a usam.</span>
           <span v-if="note" class="text-xs text-emerald-300">{{ note }}</span>
           <span v-if="failure" class="text-xs text-rose-300">{{ failure }}</span>
         </div>

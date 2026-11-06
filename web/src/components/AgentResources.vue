@@ -10,7 +10,8 @@ import { useAgentCatalogStore } from '@/stores/agentCatalog'
  * projeto dele, inclusive os que forem criados depois. Desmarcar tudo é "nenhum". ⛔ Agente global: só os globais.
  * As listas e a escolha salva moram nas stores (as mesmas das páginas Skills e Commands).
  */
-const props = defineProps<{ agentId: string; projectId?: string; projectName?: string }>()
+/** `embedded`: dentro do formulário do agente, sem botão próprio — quem grava é o "Salvar agente" (`commit`). */
+const props = defineProps<{ agentId: string; projectId?: string; projectName?: string; embedded?: boolean }>()
 const catalog = useAgentCatalogStore()
 
 const SECTIONS: Array<{ kind: TResourceKind; field: keyof IAgentResources; title: string; hint: string; base: string }> = [
@@ -21,7 +22,8 @@ const SECTIONS: Array<{ kind: TResourceKind; field: keyof IAgentResources; title
 const resources = useScopedResources(() => props.projectId ?? null)
 const current = useResource(catalog.resources, () => props.agentId)
 const available = resources.list
-const saved = computed<IAgentResources>(() => current.data.value ?? { skills: [], commands: [] })
+// ⚖️ Lido com folga: a guia fica montada desde que o agente abre, antes de a resposta chegar.
+const saved = computed<IAgentResources>(() => ({ skills: current.data.value?.skills ?? [], commands: current.data.value?.commands ?? [] }))
 const selected = ref<IAgentResources>({ skills: [], commands: [] })
 const busy = ref(false)
 const saveError = ref<unknown>()
@@ -57,6 +59,14 @@ function toggle(field: keyof IAgentResources, id: string) {
 function toggleAll(field: keyof IAgentResources) {
   selected.value = { ...selected.value, [field]: all(field) ? [] : ['*'] }
 }
+
+/** O "Salvar agente" grava esta guia junto: lança se falhar, para o formulário dizer onde. */
+async function commit(): Promise<void> {
+  if (!dirty.value) return
+  await save()
+  if (saveError.value) throw saveError.value
+}
+defineExpose({ dirty, commit })
 
 async function save() {
   busy.value = true
@@ -103,6 +113,7 @@ async function save() {
 
     <p v-if="error" class="text-sm text-rose-300">{{ error }}</p>
     <p v-if="note" class="text-sm text-emerald-300">{{ note }}</p>
-    <div><button type="button" :disabled="busy || !dirty" class="btn btn-primary" @click="save">Salvar</button></div>
+    <div v-if="!embedded"><button type="button" :disabled="busy || !dirty" class="btn btn-primary" @click="save">Salvar</button></div>
+    <p v-else-if="dirty" class="text-xs text-amber-300">Mudança não salva: grave com "Salvar agente".</p>
   </section>
 </template>

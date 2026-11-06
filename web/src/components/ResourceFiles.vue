@@ -14,6 +14,8 @@ const props = defineProps<{
   save: (files: IResourceFile[]) => Promise<void>
   /** Onde a pasta mora, para a pessoa saber (ex.: `global/skills/banco`). */
   where: string
+  /** Dentro do formulário do agente, sem botão próprio: quem grava é o "Salvar agente" (`commit`). */
+  embedded?: boolean
 }>()
 
 const draft = ref<IResourceFile[]>([])
@@ -116,6 +118,15 @@ function remove(index: number) {
   draft.value.splice(index, 1)
 }
 
+/** O "Salvar agente" grava esta guia junto: lança se falhar (ou se há arquivo com problema). */
+async function commit(): Promise<void> {
+  if (!dirty.value) return
+  if (issues.value.some(Boolean)) throw new Error('arquivos com problema: corrija na guia Arquivos')
+  await saveAll()
+  if (error.value) throw new Error(error.value)
+}
+defineExpose({ dirty, commit })
+
 async function saveAll() {
   if (issues.value.some(Boolean)) return
   busy.value = true
@@ -179,7 +190,7 @@ const size = (bytes: number) => (bytes < 1024 ? `${bytes} B` : `${(bytes / 1024)
     <p v-if="error" class="text-sm text-rose-300" data-test="files-error">{{ error }}</p>
     <p v-if="note" class="text-sm text-emerald-300" data-test="files-note">{{ note }}</p>
     <div class="flex items-center gap-3">
-      <button type="button" class="btn btn-primary" :disabled="busy || !dirty || issues.some(Boolean)" data-test="files-save" @click="saveAll">Salvar arquivos</button>
+      <button v-if="!embedded" type="button" class="btn btn-primary" :disabled="busy || !dirty || issues.some(Boolean)" data-test="files-save" @click="saveAll">Salvar arquivos</button>
       <span class="text-xs text-zinc-500">{{ draft.length }} arquivo(s) · {{ size(total) }}<template v-if="dirty"> · não salvo</template></span>
     </div>
   </section>

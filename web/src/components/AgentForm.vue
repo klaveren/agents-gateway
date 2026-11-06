@@ -667,12 +667,44 @@
   }
 
   /** O que será gravado, em uma linha, para a confirmação do Salvar. */
+  /**
+   * ⚖️ UM SALVAR SÓ: o "Salvar agente" grava o formulário e, depois, as guias com cadastro próprio que mudaram (Recursos,
+   * Arquivos, Contexto inicial e a sequência de Troca automática). Cada uma fica montada e expõe `dirty` e `commit`.
+   */
+  interface IPart {
+    dirty: boolean
+    commit: () => Promise<void>
+  }
+  const resourcesPart = ref<IPart>()
+  const filesPart = ref<IPart>()
+  const contextPart = ref<IPart>()
+  const groupPart = ref<IPart & { name?: string; users?: number }>()
+  const parts = computed(() => {
+    const all: Array<[TTab, string, IPart | undefined]> = [
+      ['recursos', 'Recursos', resourcesPart.value],
+      ['arquivos', 'Arquivos', filesPart.value],
+      ['contexto', 'Contexto inicial', contextPart.value],
+      ['modelos', 'Troca automática', groupPart.value],
+    ]
+    return all.filter((entry): entry is [TTab, string, IPart] => !!entry[2])
+  })
+  /** As guias com mudança não salva (ganham um ponto amarelo). */
+  const unsavedTabs = computed<TTab[]>(() => parts.value.filter(([, , part]) => part.dirty).map(([id]) => id))
+  /** As guias sem nada que o "Salvar agente" grave: só leitura, ou listas que gravam na hora. */
+  const FOOTERLESS_TABS: readonly TTab[] = ['tamanho', 'hooks', 'agendamentos', 'memoria', 'historico', 'problemas']
+
   const saveSummary = computed(() => {
     const { providers: targets, modes, allowedTools } = form.value
     const list = targets.map(
       (target, index) => `${protocols.providerName(target.provider)} (${target.models.length} modelo(s)${index === 0 && target.models[0] ? `, padrão ${target.models[0]}` : ''})`,
     )
-    return `${targets.length > 1 ? 'Provedores' : 'Provedor'} ${list.join(', ') || 'nenhum'}; modos ${modes.map((mode) => (mode === 'chat' ? 'Conversa' : 'Agente')).join(' + ') || 'nenhum'}; ${allowedTools.length} ferramenta(s).`
+    const base = `${targets.length > 1 ? 'Provedores' : 'Provedor'} ${list.join(', ') || 'nenhum'}; modos ${modes.map((mode) => (mode === 'chat' ? 'Conversa' : 'Agente')).join(' + ') || 'nenhum'}; ${allowedTools.length} ferramenta(s).`
+    const changed = parts.value.filter(([, , part]) => part.dirty)
+    const extra = changed.length ? ` Também grava: ${changed.map(([, label]) => label).join(', ')}.` : ''
+    const group = groupPart.value
+    const shared =
+      group?.dirty && (group.users ?? 0) > 1 ? ` A sequência ${group.name ?? ''} muda para os ${group.users} agentes que a usam.` : group?.dirty ? ` A sequência ${group.name ?? ''} muda para todo agente que a usa.` : ''
+    return base + extra + shared
   })
 
   async function save() {
@@ -703,6 +735,16 @@
         modelGroup: form.value.modelGroup ?? null,
       }
       const saved = await agents.save(input, props.creating)
+      // Depois do agente, as guias com cadastro próprio que mudaram, uma a uma: a que falhar diz onde.
+      for (const [id, label, part] of parts.value) {
+        if (!part.dirty) continue
+        try {
+          await part.commit()
+        } catch (error) {
+          tab.value = id
+          throw new Error(`O agente foi salvo, mas ${label} não: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
       emit('saved', saved.id)
     } catch (error) {
       // ⚠️ Todo 422 vira resumo perto do Salvar: o campo com problema pode nem ter input na tela.
@@ -747,6 +789,7 @@
         {{ item.label }}
         <span v-if="item.count" class="rounded-full bg-zinc-800 px-1.5 text-[10px] text-zinc-400">{{ item.count }}</span>
         <span v-if="item.alert" class="h-1.5 w-1.5 rounded-full bg-rose-400" :title="item.alert" />
+        <span v-else-if="unsavedTabs.includes(item.id)" class="h-1.5 w-1.5 rounded-full bg-amber-400" title="Mudança não salva" />
       </button>
     </nav>
     <fieldset v-show="tab === 'agente'" class="grid gap-4 sm:grid-cols-2">
@@ -990,7 +1033,7 @@
       </section>
       </div>
       <div v-show="modelsTab === 'grupo'" role="tabpanel">
-        <AgentModelGroup v-model="groupChoice" />
+        <AgentModelGroup ref="groupPart" v-model="groupChoice" />
       </div>
     </fieldset>
     <!-- Três guias: as ferramentas do gateway, os extras que só um provedor tem e as configurações do terminal. -->
@@ -1368,9 +1411,12 @@
     <!-- O erro de campo aparece junto do campo, que pode estar fora da tela: aqui, perto do Salvar, o resumo. -->
     <p v-else-if="Object.keys(issues).length" class="text-sm text-rose-300">Não foi possível salvar. Corrija: {{ summarizeIssues(issues, FIELD_LABEL) }}</p>
     <!-- ⚖️ Os recursos (skills e commands) têm o próprio cadastro (fora do Salvar do agente): só para agente já gravado. -->
-    <section v-if="tab === 'recursos'">
+    <!-- ⚖️ Recursos, Arquivos e Contexto inicial ficam montados (v-show): o rascunho de cada uma vai no "Salvar agente". -->
+    <section v-show="tab === 'recursos'">
       <AgentResources
         v-if="agent && !creating"
+        ref="resourcesPart"
+        embedded
         :agent-id="agent.id"
         :project-id="agent.projectId"
         :project-name="projects.list.find((item) => item.id === agent?.projectId)?.name"
@@ -1378,10 +1424,12 @@
       <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
     </section>
 
-    <!-- ⚖️ Os arquivos também têm o próprio cadastro (fora do Salvar do agente): só para agente já gravado. -->
-    <section v-if="tab === 'arquivos'">
+    <!-- Os arquivos moram na pasta do agente: só para agente já gravado. -->
+    <section v-show="tab === 'arquivos'">
       <ResourceFiles
         v-if="agent && !creating"
+        ref="filesPart"
+        embedded
         :files="agentFiles"
         :where="`${agent.projectId ? `projects/${agent.projectId}` : 'global'}/agents/${agent.id}`"
         :save="saveAgentFiles"
@@ -1389,10 +1437,11 @@
       <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
     </section>
 
-    <!-- ⚖️ O contexto inicial também tem o próprio cadastro (fora do Salvar do agente): só para agente já gravado. -->
-    <section v-if="tab === 'contexto'">
+    <!-- O contexto inicial: só para agente já gravado. -->
+    <section v-show="tab === 'contexto'">
       <AgentInitialContext
         v-if="agent && !creating"
+        ref="contextPart"
         :agent-id="agent.id"
         :project-id="agent.projectId"
         :project-name="projects.list.find((item) => item.id === agent?.projectId)?.name"
@@ -1487,7 +1536,7 @@
     <p v-else-if="!ready" class="text-xs text-zinc-500">Carregando provedores…</p>
 
     <!-- O rodapé com o Salvar fica preso embaixo, à vista em qualquer guia, por mais longa que seja. -->
-    <div v-show="tab !== 'hooks' && tab !== 'agendamentos' && tab !== 'memoria' && tab !== 'historico'" class="form-footer flex gap-2">
+    <div v-show="!FOOTERLESS_TABS.includes(tab)" class="form-footer flex gap-2">
       <button type="submit" :disabled="saving || !ready || !!loadError || !form.providers.length" class="btn btn-primary">
         {{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar agente' }}
       </button>

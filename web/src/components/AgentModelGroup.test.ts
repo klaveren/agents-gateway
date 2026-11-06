@@ -43,13 +43,14 @@ async function mount(initial: string) {
   })
   await useSettingsStore().ensure()
   const choice = ref(initial)
+  const part = ref<{ dirty: boolean; commit: () => Promise<void> }>()
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:any(.*)', component: { render: () => h('div') } }] })
   const host = document.createElement('div')
   document.body.appendChild(host)
-  app = createApp({ render: () => h(AgentModelGroup, { modelValue: choice.value, 'onUpdate:modelValue': (value: string) => (choice.value = value) }) })
+  app = createApp({ render: () => h(AgentModelGroup, { ref: part, modelValue: choice.value, 'onUpdate:modelValue': (value: string) => (choice.value = value) }) })
   app.use(pinia).use(router).mount(host)
   await flush()
-  return { host, puts, choice }
+  return { host, puts, choice, part }
 }
 
 afterEach(() => {
@@ -69,16 +70,18 @@ describe('AgentModelGroup', () => {
     expect(chosen.host.textContent).toContain('usado por 1 agente')
   })
 
-  it('"Salvar grupo" grava só ele, com os outros como estão; sem mudança, fica desligado', async () => {
-    const { host, puts } = await mount('rapido')
-    const save = host.querySelector<HTMLButtonElement>('[data-test=save-group]')!
-    expect(save.disabled).toBe(true)
+  it('o "Salvar agente" grava a sequência (commit): só ela, com as outras como estão; sem mudança, nada', async () => {
+    const { host, puts, part } = await mount('rapido')
+    expect(part.value?.dirty).toBe(false)
+    await part.value?.commit()
+    expect(puts).toEqual([])
     const cooldown = host.querySelector<HTMLInputElement>('input[aria-label="Tempo de espera"]')!
     cooldown.value = '30'
     cooldown.dispatchEvent(new Event('input'))
     await flush()
-    expect(save.disabled).toBe(false)
-    save.click()
+    expect(part.value?.dirty).toBe(true)
+    expect(host.textContent).toContain('Mudança não salva')
+    await part.value?.commit()
     await flush()
     expect(puts).toEqual([{ modelGroups: [PADRAO, { ...RAPIDO, switchOn: expect.any(Array), cooldownMinutes: 30 }] }])
   })
