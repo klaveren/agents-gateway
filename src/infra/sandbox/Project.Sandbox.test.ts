@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
-import { ensureGitProxyAuth, forBubblewrap, hostSocketDirs, localForwards, projectPathIssue, ProjectSandbox, writeFolders } from './Project.Sandbox'
+import { ensureGitProxyAuth, findUnder, forBubblewrap, hostSocketDirs, localForwards, projectPathIssue, ProjectSandbox, writeFolders } from './Project.Sandbox'
 
 describe('ProjectSandbox', () => {
   const root = mkdtempSync(join(tmpdir(), 'gw-sandbox-test-'))
@@ -12,11 +12,16 @@ describe('ProjectSandbox', () => {
 
   const fakeSrt = (fail?: string) => {
     const calls: Array<{ command: string; config?: Record<string, unknown> }> = []
+    const cleanups = { count: 0 }
     return {
       calls,
+      cleanups,
       load: async () => ({
         SandboxManager: {
           initialize: async () => undefined,
+          cleanupAfterCommand: () => {
+            cleanups.count += 1
+          },
           getLinuxHttpSocketPath: () => '/tmp/claude-http-x.sock',
           getLinuxSocksSocketPath: () => '/tmp/claude-http-x.sock',
           wrapWithSandbox: async (command: string, _shell?: string, config?: Record<string, unknown>) => {
@@ -75,6 +80,17 @@ describe('ProjectSandbox', () => {
     ensureGitProxyAuth(home)
     ensureGitProxyAuth(home)
     assert.strictEqual(readFileSync(gitconfig, 'utf8'), '[user]\n\tname = Maya\n[http]\n\tproxyAuthMethod = basic\n')
+  })
+
+  it('⚖️ a limpeza dos pontos de montagem do bwrap: uma por comando embrulhado, o teste do status incluído', async () => {
+    const srt = fakeSrt()
+    const sandbox = new ProjectSandbox(env, srt.load)
+    if (!(await sandbox.status()).available) return
+    assert.strictEqual(srt.cleanups.count, 1)
+    await sandbox.wrap('ls', 'xpto')
+    sandbox.done()
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.strictEqual(srt.cleanups.count, 2)
   })
 
   it('⛔ cerco que não sobe: status indisponível com o erro real, e o wrap recusa', async () => {
@@ -154,5 +170,19 @@ describe('writeFolders — as pastas de escrita criadas antes do comando', () =>
     assert.match(line, /socat TCP-LISTEN:27017,bind=127\.0\.0\.1,reuseaddr,fork PROXY:127\.0\.0\.1:localhost:27017,proxyport=3128,proxyauth=tok123:x/)
     assert.match(line, /trap 'kill \$\(jobs -p\) 2>\/dev\/null' EXIT/)
     assert.strictEqual(localForwards([], 't', 3128), '')
+  })
+})
+
+describe('findUnder — os modelos de segredo reabertos para leitura', () => {
+  const root = mkdtempSync(join(tmpdir(), 'gw-find-'))
+  after(() => rmSync(root, { recursive: true, force: true }))
+
+  it('⚖️ pula outro checkout dentro da raiz (as worktrees): o teto da busca não se gasta nelas', () => {
+    mkdirSync(join(root, '.agents', 'skills', 'x'), { recursive: true })
+    writeFileSync(join(root, '.agents', 'skills', 'x', '.env.example'), 'A=')
+    mkdirSync(join(root, '_worktrees', 'EP-1', 'apps'), { recursive: true })
+    writeFileSync(join(root, '_worktrees', 'EP-1', '.git'), 'gitdir: ../../.git/worktrees/EP-1')
+    writeFileSync(join(root, '_worktrees', 'EP-1', 'apps', '.env.example'), 'A=')
+    assert.deepStrictEqual(findUnder(root, '**/.env.*'), ['.agents/skills/x/.env.example'])
   })
 })

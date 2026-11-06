@@ -256,17 +256,24 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       .join('')
     const gate = networkGate()
     let sshKit: string | undefined
+    let wrapped = false
+    let released = false
     const token = gate.register((host, port) => {
       // O portão quer o PADRÃO que liberou: rede local só passa com regra exata (sem `*`).
       const verdict = permissions.check(asker, { category: 'network', value: `${host}:${port}` }, { log: true })
       return { allowed: verdict.allowed, reason: verdict.reason, ...(verdict.rule ? { pattern: verdict.rule.pattern } : {}) }
     })
+    // Uma vez só: o processo pode avisar a saída duas vezes (`error` e depois `close`), e a limpeza do cerco conta.
     const release = () => {
+      if (released) return
+      released = true
       gate.release(token)
       if (sshKit) removeSshKit(sshKit)
+      if (wrapped) sandbox.done?.()
     }
     try {
       const line = await sandbox.wrapWith(command, root, (base) => cercoPlan(layers, { ...base, system }), token, { ...place, localPorts, tcp })
+      wrapped = true
       // As variáveis do agente por baixo, a identidade de quem chama por cima (ver `Agent.Identity`); as contas do projeto vêm depois.
       // ⛔ As variáveis secretas por cima das contas (a do recurso é mais específica), lidas AGORA: a skill carregada no meio
       // do turno já vale aqui. A máscara as recebe antes do processo nascer.
@@ -438,6 +445,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
           const failure = error as { stderr?: string; code?: number }
           if (context?.projectId && failure.stderr) return { status: 'error', result: truncate(`Exit code ${failure.code ?? 1}: ${failure.stderr.trim()}`, policy.maxOutputChars) }
           return { status: 'error', result: `Execution failed: ${toMessage(error)}` }
+        } finally {
+          if (line !== command) sandbox.done?.()
         }
       },
     },
@@ -530,14 +539,38 @@ export async function remoteSudoAllowed(command: string, permissions: IPermissio
 }
 
 /**
- * A regra contra o `ssh` com o comando remoto em PALAVRAS (`ssh * sudo k3s kubectl *`). ⛔ Só o comando remoto simples,
- * que começa pelo sudo: com `;`, `&`, `|`, crase, `$(`, redirecionamento ou quebra de linha, o `*` da regra engoliria
- * um segundo comando.
+ * A regra contra o `ssh` com o comando remoto em PALAVRAS (`ssh * sudo k3s kubectl *`). O comando remoto começa pelo
+ * sudo, logo depois do host, entre aspas (`ssh h "sudo systemctl …"`) ou solto (`ssh h sudo systemctl …`).
+ * ⛔ Entre aspas, só o comando simples: com `;`, `&`, `|`, crase, `$(`, redirecionamento ou quebra de linha, o `*` da regra
+ * engoliria um segundo comando. ⛔ Solto, o ssh junta as palavras com espaço e o shell remoto relê a linha: só palavras sem
+ * nada que ele interprete (aspas, `$`, `*`, `\`, espaço), para a linha remota ser exatamente a que a regra viu.
  */
 function sshRemoteMatches(pattern: string, argv: readonly string[]): boolean {
-  const at = argv.findIndex((word, index) => index > 0 && /^sudo\s/.test(word))
-  if (at < 0 || argv.slice(at + 1).length || /[;&|`<>\n]|\$\(/.test(argv[at])) return false
-  return commandMatches(pattern, [...argv.slice(0, at), ...argv[at].trim().split(/\s+/)])
+  const at = sshRemoteStart(argv)
+  const first = argv[at]
+  if (first === undefined) return false
+  if (first === 'sudo') return argv.slice(at).every((word) => REMOTE_PLAIN_WORD.test(word)) && commandMatches(pattern, argv)
+  if (!/^sudo\s/.test(first) || argv.slice(at + 1).length || /[;&|`<>\n]|\$\(/.test(first)) return false
+  return commandMatches(pattern, [...argv.slice(0, at), ...first.trim().split(/\s+/)])
+}
+
+/** A palavra remota que o shell de lá lê como está. */
+const REMOTE_PLAIN_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/
+
+/** As opções do `ssh` que levam valor na palavra seguinte (`-o BatchMode=yes`, `-p 22`). */
+const SSH_VALUE_OPTIONS = /^-[BbcDEeFIiJLlmOoPpQRSWw]$/
+
+/** Onde começa o comando remoto: depois das opções e do host. */
+function sshRemoteStart(argv: readonly string[]): number {
+  let i = 1
+  while (i < argv.length && argv[i]!.startsWith('-')) {
+    if (argv[i] === '--') {
+      i += 1
+      break
+    }
+    i += SSH_VALUE_OPTIONS.test(argv[i]!) ? 2 : 1
+  }
+  return i + 1
 }
 
 function workPath(root: string, target: string): string {

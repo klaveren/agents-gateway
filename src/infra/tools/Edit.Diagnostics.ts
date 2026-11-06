@@ -169,11 +169,13 @@ function cercado(permissions: IPermissionChecker, sandbox: IProjectSandbox, root
   return async (line, cwd, timeoutMs) => {
     const gate = networkGate()
     const token = gate.register(() => ({ allowed: false, reason: 'o diagnóstico depois da edição roda sem rede' }))
+    let wrapped: string | undefined
     try {
-      const wrapped = await sandbox.wrapWith!(line, realRoot, (base) => cercoPlan(layers, { ...base, system }), token, place)
+      wrapped = await sandbox.wrapWith!(line, realRoot, (base) => cercoPlan(layers, { ...base, system }), token, place)
       return await startCommand(wrapped, { cwd, env: subscriptionEnv({ HOME: realRoot }), shell: SANDBOX_SHELL, timeoutMs }).done
     } finally {
       gate.release(token)
+      if (wrapped) sandbox.done?.()
     }
   }
 }

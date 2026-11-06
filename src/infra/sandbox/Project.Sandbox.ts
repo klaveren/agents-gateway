@@ -26,6 +26,8 @@ interface ISandboxManager {
   /** Linux: os sockets da ponte do proxy, no `/tmp` do host. */
   getLinuxHttpSocketPath?(): string | undefined
   getLinuxSocksSocketPath?(): string | undefined
+  /** Linux: tira do disco os arquivos vazios que o bwrap criou como ponto de montagem (quando o último comando sai). */
+  cleanupAfterCommand?(): void
 }
 
 /** Onde o comando embrulhado roda e quem o roda (o `run_bash`, o Bash do Claude). */
@@ -38,6 +40,13 @@ export interface IProjectSandbox {
    * pela porta do gateway (`Network.Gate`) e o token do comando. ⛔ Lança se não há cerco.
    */
   wrapWith?(command: string, root: string, plan: (base: ICercoBase) => ICercoPlan, networkToken: string, place?: ICercoPlace): Promise<string>
+  /**
+   * ⛔ O comando embrulhado (`wrap`, `wrapWith`) saiu: uma chamada por linha embrulhada. No Linux, o bwrap cria no disco um arquivo
+   * vazio (só leitura) para cada caminho negado que não existe (`apps/legacy` numa worktree), e só esta chamada o tira —
+   * depois que o ÚLTIMO comando cercado sai (tirar antes soltaria a negação de quem ainda roda). Sem ela, o arquivo
+   * ficava e o `git status` da worktree acusava a sobra.
+   */
+  done?(): void
 }
 
 /** Onde ficam o rascunho (HOME, TMPDIR, caches) e o `.git` quando a raiz é um repositório ou uma worktree. */
@@ -214,6 +223,10 @@ export class ProjectSandbox implements IProjectSandbox {
     })
   }
 
+  done(): void {
+    void this.manager?.then((manager) => manager.cleanupAfterCommand?.()).catch(() => undefined)
+  }
+
   async wrap(command: string, projectId: string): Promise<string> {
     const status = await this.status()
     if (!status.available) throw new Error(`${SANDBOX_UNAVAILABLE}: ${status.reason ?? 'sem motivo'}`)
@@ -257,7 +270,8 @@ export class ProjectSandbox implements IProjectSandbox {
         ...(this.nested() ? { enableWeakerNestedSandbox: true } : {}),
         filesystem: { denyRead: [], allowWrite: [probeDir], denyWrite: [] },
       })
-      await run(wrapped, { shell: SANDBOX_SHELL, timeout: 20_000 })
+      // O teste também conta como comando cercado: sem a saída dele, a limpeza dos pontos de montagem nunca rodava.
+      await run(wrapped, { shell: SANDBOX_SHELL, timeout: 20_000 }).finally(() => manager.cleanupAfterCommand?.())
       return { available: true, mechanism }
     } catch (error: unknown) {
       const failure = error as { stderr?: string; message?: string }
@@ -376,7 +390,10 @@ export function findUnder(root: string, pattern: string): string[] {
       seen += 1
       const path = dir ? `${dir}/${entry.name}` : entry.name
       if (entry.isDirectory()) {
-        if (entry.name !== 'node_modules' && entry.name !== '.git') pending.push(path)
+        // ⚖️ Outro checkout dentro da raiz (as worktrees em `_worktrees/`) não é desta pasta: o `git status` daqui não o vê,
+        // e as 4 worktrees da raiz do repositório gastavam o teto antes de a busca chegar a `.agents/`. Lá, o modelo segue
+        // fechado (falha fechada).
+        if (entry.name !== 'node_modules' && entry.name !== '.git' && !existsSync(join(root, path, '.git'))) pending.push(path)
       } else if (entry.isFile() && pathMatches(pattern, path)) found.push(path)
     }
   }
