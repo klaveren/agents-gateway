@@ -4,7 +4,13 @@ import { describe, it } from 'node:test'
 import { TCatalogKind } from '@domain/Catalog.Document'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { CatalogRestoreInvalidError, CatalogRevisionConflictError, CatalogWideningConfirmationError, CatalogWideningForbiddenError } from '@domain/errors/Domain.Error'
+import {
+  CatalogRestoreInvalidError,
+  CatalogRevisionConflictError,
+  CatalogShareForbiddenError,
+  CatalogWideningConfirmationError,
+  CatalogWideningForbiddenError,
+} from '@domain/errors/Domain.Error'
 import { IAgent } from '@domain/models/Agent.Model'
 import { SqliteAgentRepository } from '@infra/persistence/Sqlite.AgentRepository'
 import { SqliteCatalogHistoryRepository } from '@infra/persistence/Sqlite.CatalogHistoryRepository'
@@ -418,5 +424,73 @@ describe('CatalogRestoreUseCase — reverter lote', () => {
     )
     assert.strictEqual(again.batch.status, 'applied')
     assert.throws(() => guidance.doc('guia'))
+  })
+})
+
+describe('CatalogRestoreUseCase — compartilhamento (sharedWith)', () => {
+  const owner = (...projects: string[]): IRestoreCaller => ({ by: 'root@x.test', viaAccessToken: false, administers: (project) => projects.includes(project) })
+
+  /** `alfa` e `beta`; a skill `tabela` é de alfa e esteve compartilhada com beta (rev 2) e deixou de estar (rev 3). */
+  function shared() {
+    const built = build()
+    built.projects.create({ id: 'alfa', name: 'Alfa' }, 'ana')
+    built.projects.create({ id: 'beta', name: 'Beta' }, 'ana')
+    built.guidance.createResource({ id: 'tabela', kind: 'skill', projectId: 'alfa', description: 'Tabelas', body: 'v1' }, 'ana')
+    built.guidance.shareResource('tabela', ['beta'], 'ana')
+    built.guidance.shareResource('tabela', [], 'ana')
+    return built
+  }
+
+  it('⛔ restaurar a revisão que ACRESCENTA projeto ao sharedWith exige o admin dele (e nada é gravado sem)', async () => {
+    const { restore, guidance, last } = shared()
+    const request = { item: { kind: 'skill' as const, itemId: 'tabela' }, revision: 2, expectedRevision: last('skill', 'tabela') }
+
+    const denied = await refused(restore.restore(request, owner('alfa')), CatalogShareForbiddenError)
+    assert.deepStrictEqual(denied.projects, ['beta'])
+    await refused(restore.restore(request, ADMIN), CatalogShareForbiddenError)
+    assert.strictEqual(guidance.resource('tabela').sharedWith, undefined)
+    assert.strictEqual(last('skill', 'tabela'), 3)
+
+    await restore.restore(request, owner('alfa', 'beta'))
+    assert.deepStrictEqual(guidance.resource('tabela').sharedWith, ['beta'])
+    assert.strictEqual(last('skill', 'tabela'), 4)
+  })
+
+  it('tirar projeto do sharedWith pelo restaurar não pede nada além do escopo do item', async () => {
+    const { restore, guidance, last } = shared()
+    guidance.shareResource('tabela', ['beta'], 'ana')
+
+    await restore.restore({ item: { kind: 'skill', itemId: 'tabela' }, revision: 3, expectedRevision: last('skill', 'tabela') }, owner('alfa'))
+
+    assert.strictEqual(guidance.resource('tabela').sharedWith, undefined)
+  })
+
+  it('o conhecimento passa pela mesma trava', async () => {
+    const built = shared()
+    built.guidance.createDoc({ id: 'guia', kind: 'knowledge', projectId: 'alfa', title: 'Guia', summary: 'S', body: 'B' }, 'ana')
+    built.guidance.shareDoc('guia', ['beta'], 'ana')
+    built.guidance.shareDoc('guia', [], 'ana')
+    const request = () => ({ item: { kind: 'knowledge' as const, itemId: 'guia' }, revision: 2, expectedRevision: built.last('knowledge', 'guia') })
+
+    await refused(built.restore.restore(request(), owner('alfa')), CatalogShareForbiddenError)
+    await built.restore.restore(request(), owner('alfa', 'beta'))
+    assert.deepStrictEqual(built.guidance.doc('guia').sharedWith, ['beta'])
+  })
+
+  it('⛔ reverter um lote que volta a compartilhar também exige o admin do projeto acrescentado (antes de gravar qualquer coisa)', async () => {
+    const { restore, guidance, history, repository } = shared()
+    guidance.shareResource('tabela', ['beta'], 'ana')
+    repository.createBatch({ id: 'lote-s', at: new Date(), by: 'ci', kind: 'import', scope: 'all', summary: {}, widenings: [], status: 'applied' })
+    history.within({ kind: 'skill', id: 'tabela', projectId: 'alfa' }, { by: 'ci', source: 'import', op: 'import', batchId: 'lote-s' }, () =>
+      guidance.shareResource('tabela', [], 'ci'),
+    )
+
+    await refused(restore.revert({ batchId: 'lote-s' }, owner('alfa')), CatalogShareForbiddenError)
+    assert.strictEqual(guidance.resource('tabela').sharedWith, undefined)
+    assert.strictEqual(repository.batch('lote-s')!.status, 'applied')
+
+    const result = await restore.revert({ batchId: 'lote-s' }, owner('alfa', 'beta'))
+    assert.strictEqual(result.batch.status, 'applied')
+    assert.deepStrictEqual(guidance.resource('tabela').sharedWith, ['beta'])
   })
 })

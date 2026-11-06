@@ -5,6 +5,7 @@ import {
   CatalogRestoreInvalidError,
   CatalogRevisionConflictError,
   CatalogRevisionNotFoundError,
+  CatalogShareForbiddenError,
   CatalogWideningConfirmationError,
   CatalogWideningForbiddenError,
   IWideningRef,
@@ -28,6 +29,11 @@ export interface IRestoreItem {
 export interface IRestoreCaller {
   by: string
   viaAccessToken: boolean
+  /**
+   * ⛔ O projeto é administrado por quem pede? Acrescentar projeto ao `sharedWith` exige o admin dele (`gateShares`).
+   * Ausente = não administra nenhum: a trava recusa por padrão.
+   */
+  administers?: (projectId: string) => boolean
 }
 
 export interface IRestoreRequest {
@@ -146,6 +152,7 @@ export class CatalogRestoreUseCase {
 
     const widenings = wideningsOf(current, target)
     gateWidenings(widenings, request.confirm, caller)
+    gateShares(current, target, caller)
     const prepared = await this.prepare(target, current)
     // A preparação esperou (as regras do momento): confere de novo, já sem nada assíncrono até gravar.
     this.fresh(request.item, request.expectedRevision)
@@ -209,6 +216,7 @@ export class CatalogRestoreUseCase {
 
     const widenings = planned.flatMap((item) => item.widenings)
     gateWidenings(widenings, request.confirm, caller)
+    for (const item of planned) gateShares(item.current, item.target, caller)
 
     const batch = repository.createBatch({
       id: this.newId(),
@@ -336,6 +344,24 @@ export function gateWidenings(widenings: readonly IWidening[], confirm: readonly
   }
   if (caller.viaAccessToken) throw new CatalogWideningForbiddenError(refs)
   if (!confirm || !confirmsWidenings(confirm, widenings)) throw new CatalogWideningConfirmationError(refs)
+}
+
+/**
+ * ⛔ A TRAVA DE COMPARTILHAMENTO (ver `Share.Policy`): a troca que ACRESCENTA projetos ao `sharedWith` do item exige que
+ * quem pede administre cada projeto acrescentado — a mesma regra da rota `PUT .../shares`. Tirar projeto da lista não
+ * pede nada. Restaurar, reverter e importar são caminhos de escrever o item: não podem ser a porta dos fundos de compartilhar.
+ */
+export function gateShares(current: ICatalogDocument | undefined, target: ICatalogDocument | undefined, caller: IRestoreCaller): void {
+  const had = new Set(sharedOf(current))
+  const added = sharedOf(target).filter((project) => !had.has(project))
+  const denied = added.filter((project) => !caller.administers?.(project))
+  if (denied.length) throw new CatalogShareForbiddenError(denied)
+}
+
+/** O `sharedWith` do documento (só skill, command, spec e conhecimento o têm). */
+function sharedOf(document: ICatalogDocument | undefined): string[] {
+  const value = document?.body.sharedWith
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 }
 
 /**

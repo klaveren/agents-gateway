@@ -115,6 +115,9 @@ export function scopedWrites(api: TSelfApi, scope: IAgentWriteScope): TSelfApi {
       case 'rules':
       case 'docs':
       case 'resources': {
+        // ⛔ Compartilhar mexe em OUTRO projeto (o que recebe): o agente não compartilha. A pessoa, direto pelo MCP, passa
+        // pela regra da rota (admin da origem e de cada destino novo).
+        if (method === 'PUT' && root !== 'rules' && /^\/[^/]+\/[^/]+\/shares\/?$/.test(clean)) return refuse('An agent conversation cannot share items with other projects')
         if (clean === `/${root}`) return inScope(bodyProject(body))
         const missing = await existsIn(root, id)
         if (missing) return missing

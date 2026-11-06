@@ -4,7 +4,13 @@ import { agentDocument, docDocument, ICatalogDocument, mcpDocument, projectDocum
 import { withBody } from '@domain/Catalog.Import'
 import { EMode } from '@domain/enums/EMode.Enum'
 import { EProvider } from '@domain/enums/EProvider.Enum'
-import { CatalogImportBlockedError, CatalogPlanChangedError, CatalogWideningConfirmationError, CatalogWideningForbiddenError } from '@domain/errors/Domain.Error'
+import {
+  CatalogImportBlockedError,
+  CatalogPlanChangedError,
+  CatalogShareForbiddenError,
+  CatalogWideningConfirmationError,
+  CatalogWideningForbiddenError,
+} from '@domain/errors/Domain.Error'
 import { IAgent } from '@domain/models/Agent.Model'
 import { buildCatalogStack } from '../testing/Catalog.Fixture'
 import { IRestoreCaller } from './CatalogRestore.Usecase'
@@ -351,5 +357,101 @@ describe('CatalogImportApplier — aplicar o import', () => {
       [one.batch!.id],
     )
     assert.strictEqual(stack.repository.batches({ kind: 'revert' }, { offset: 0, limit: 10 }).total, 0)
+  })
+})
+
+describe('CatalogImportApplier — compartilhamento (sharedWith)', () => {
+  const owner = (...projects: string[]): IRestoreCaller => ({ by: 'root@x.test', viaAccessToken: false, administers: (project) => projects.includes(project) })
+  const shares = (document: ICatalogDocument, sharedWith: string[]) => withBody(document, { ...document.body, sharedWith })
+
+  function stackWithProjects() {
+    const stack = buildCatalogStack()
+    stack.projects.create({ id: 'alfa', name: 'Alfa' }, 'ana')
+    stack.projects.create({ id: 'beta', name: 'Beta' }, 'ana')
+    return stack
+  }
+
+  it('projeto que não existe aqui sai do sharedWith e vira problema da importação (link-missing) no item; o que existe fica', async () => {
+    const stack = stackWithProjects()
+    const documents = [shares(skill('tabela', [], 'alfa'), ['beta', 'fantasma'])]
+    const { plan, targets } = await stack.applier.plan({ documents })
+    assert.strictEqual(plan.items[0].op, 'create')
+    assert.deepStrictEqual(targets.get('skill/tabela')!.body.sharedWith, ['beta'])
+
+    await stack.applier.apply({ documents, planHash: plan.planHash }, owner('alfa', 'beta'))
+
+    const saved = stack.guidance.resource('tabela')
+    assert.deepStrictEqual(saved.sharedWith, ['beta'])
+    assert.deepStrictEqual(
+      saved.importIssues?.map((issue) => [issue.code, issue.target]),
+      [['link-missing', 'fantasma']],
+    )
+  })
+
+  it('o projeto que vem no mesmo pacote conta como existente', async () => {
+    const stack = buildCatalogStack()
+    stack.projects.create({ id: 'alfa', name: 'Alfa' }, 'ana')
+    const documents = [projectDocument({ id: 'beta', name: 'Beta', createdAt: at, updatedAt: at }, []), shares(spec('guia', 'B', 'alfa'), ['beta'])]
+    const { plan } = await stack.applier.plan({ documents })
+    assert.deepStrictEqual(
+      plan.items.map((item) => `${item.ref}:${item.op}`),
+      ['project/beta:create', 'spec/guia:create'],
+    )
+    const result = await stack.applier.apply({ documents, planHash: plan.planHash }, owner('alfa', 'beta'))
+    assert.strictEqual(result.failed, undefined)
+    assert.deepStrictEqual(stack.guidance.doc('guia').sharedWith, ['beta'])
+  })
+
+  it('item global com sharedWith: a lista é limpa (o global já vale para todos), sem problema', async () => {
+    const stack = stackWithProjects()
+    const documents = [shares(skill('geral'), ['alfa'])]
+    const { plan } = await stack.applier.plan({ documents })
+    await stack.applier.apply({ documents, planHash: plan.planHash }, owner())
+
+    const saved = stack.guidance.resource('geral')
+    assert.strictEqual(saved.sharedWith, undefined)
+    assert.strictEqual(saved.importIssues, undefined)
+  })
+
+  it('ADR não se compartilha: o plano marca o erro e nada é gravado', async () => {
+    const stack = stackWithProjects()
+    const adr = docDocument({ id: 'decisao', kind: 'adr', projectId: 'alfa', title: 'D', summary: 'S', body: 'B', docIds: [], createdAt: at, updatedAt: at })
+    const { plan } = await stack.applier.plan({ documents: [shares(adr, ['beta'])] })
+    assert.strictEqual(plan.items[0].op, 'error')
+    assert.ok(plan.items[0].issues.some((issue) => issue.field === 'sharedWith'))
+  })
+
+  it('⛔ ACRESCENTAR projeto ao sharedWith pelo import exige o admin dele (nada é gravado sem); tirar não exige', async () => {
+    const stack = stackWithProjects()
+    stack.guidance.createResource({ id: 'tabela', kind: 'skill', projectId: 'alfa', description: 'D', body: 'Corpo' }, 'ana')
+    const documents = [shares(stack.reader.read('skill', 'tabela')!, ['beta'])]
+    const { plan } = await stack.applier.plan({ documents })
+
+    const denied = await refused(stack.applier.apply({ documents, planHash: plan.planHash }, owner('alfa')), CatalogShareForbiddenError)
+    assert.deepStrictEqual(denied.projects, ['beta'])
+    await refused(stack.applier.apply({ documents, planHash: plan.planHash }, ADMIN), CatalogShareForbiddenError)
+    assert.strictEqual(stack.guidance.resource('tabela').sharedWith, undefined)
+    assert.strictEqual(stack.repository.batches({}, { offset: 0, limit: 10 }).total, 0)
+
+    await stack.applier.apply({ documents, planHash: plan.planHash }, owner('alfa', 'beta'))
+    assert.deepStrictEqual(stack.guidance.resource('tabela').sharedWith, ['beta'])
+
+    // Tirar: só o escopo do item (o gate do controller), nenhum admin extra aqui.
+    const without = [shares(stack.reader.read('skill', 'tabela')!, [])]
+    const again = await stack.applier.plan({ documents: without })
+    await stack.applier.apply({ documents: without, planHash: again.plan.planHash }, owner('alfa'))
+    assert.strictEqual(stack.guidance.resource('tabela').sharedWith, undefined)
+  })
+
+  it('mantém o que já estava compartilhado: o mesmo projeto não conta como acrescentado', async () => {
+    const stack = stackWithProjects()
+    stack.guidance.createResource({ id: 'tabela', kind: 'skill', projectId: 'alfa', description: 'D', body: 'v1' }, 'ana')
+    stack.guidance.shareResource('tabela', ['beta'], 'ana')
+    const documents = [withBody(stack.reader.read('skill', 'tabela')!, { ...stack.reader.read('skill', 'tabela')!.body, body: 'v2' })]
+    const { plan } = await stack.applier.plan({ documents })
+
+    await stack.applier.apply({ documents, planHash: plan.planHash }, owner('alfa'))
+
+    assert.deepStrictEqual([stack.guidance.resource('tabela').body, stack.guidance.resource('tabela').sharedWith], ['v2', ['beta']])
   })
 })
