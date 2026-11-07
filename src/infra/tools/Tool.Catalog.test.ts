@@ -151,3 +151,22 @@ describe('ToolCatalog', () => {
     assert.deepStrictEqual(seen, [{ sessionId: 'pai', token: 't' }])
   })
 })
+
+describe('ToolCatalog — a listagem do MCP falhou', () => {
+  // A listagem vazia (o `socket hang up` do agents-mcp em 07/11): o servidor de pé, sem ferramenta listada.
+  const mcp = () => fakeMcpRegistry([{ id: 'agents', tools: [] }])
+  const permissions = {
+    check: (_asker: unknown, subject: { value: string }) => ({ allowed: subject.value !== 'agents/story_block', reason: '' }),
+    layers: () => ({ system: [], project: [] }),
+  } as never
+
+  it('a escolha explícita segue valendo, nome a nome pelas permissões', async () => {
+    const [server] = await new ToolCatalog(mcp(), [], undefined, undefined, permissions).mcpServersFor(['mcp:agents/story_start', 'mcp:agents/story_block'])
+    assert.deepStrictEqual(server?.tools, ['story_start'])
+  })
+
+  it('⛔ "todas" sem a lista fica sem nenhuma', async () => {
+    const [server] = await new ToolCatalog(mcp(), [], undefined, undefined, permissions).mcpServersFor(['mcp:agents/*'])
+    assert.deepStrictEqual(server?.tools, [])
+  })
+})
