@@ -257,9 +257,10 @@ describe('a recusa da política diz a saída', () => {
 describe('embutidos inofensivos do shell', () => {
   it('`echo ---`, `cd`, `pwd` passam sem regra; a negação explícita e o redirecionamento seguem valendo', async () => {
     const allowGit = [rule('git *', 'allow')]
-    assert.strictEqual(await terminalRefusal('cd repo && pwd; echo ---; git log -1', '/w', checker(allowGit)), undefined)
-    assert.match((await terminalRefusal('echo x > fora.txt', '/w', checker(allowGit))) ?? '', /nenhuma regra de escrita permite/)
-    assert.match((await terminalRefusal('echo ---', '/w', checker([...allowGit, rule('echo *', 'deny')]))) ?? '', /negado/)
-    assert.match((await terminalRefusal('ls', '/w', checker(allowGit))) ?? '', /nenhuma regra de terminal permite/)
+    const refuse = (command: string, rules: IPermissionRule[]) => terminalRefusal(command, '/w', checker(rules), {})
+    assert.strictEqual(await refuse('cd repo && pwd; echo ---; git log -1', allowGit), undefined)
+    assert.match((await refuse('echo x > fora.txt', allowGit)) ?? '', /nenhuma regra de escrita permite/)
+    assert.match((await refuse('echo ---', [...allowGit, rule('echo *', 'deny')])) ?? '', /negado/)
+    assert.match((await refuse('ls', allowGit)) ?? '', /nenhuma regra de terminal permite/)
   })
 })
