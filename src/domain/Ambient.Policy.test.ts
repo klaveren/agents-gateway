@@ -59,7 +59,10 @@ describe('Ambient.Policy', () => {
     assert.match(reading, /só leitura para você: gravar pede Escrever arquivos/)
     assert.match(ambientSection({ agentId: 'maya', files: { dir: '/dados/global/agents/maya', write: true } }), /Leia e grave nela seus scripts, notas e dados de trabalho/)
     // O terminal: a linha da pasta temporária (o /tmp dele some a cada comando); sem terminal, nada.
-    assert.match(ambientSection({ agentId: 'maya', terminal: true }), /use `\$TMPDIR` \(persiste entre os comandos do terminal\)\. O `\/tmp` do terminal é apagado a cada comando/)
+    assert.match(
+      ambientSection({ agentId: 'maya', terminal: true }),
+      /use `\$TMPDIR` \(persiste entre os comandos do terminal\)\. O `\/tmp` do terminal é seu e some no fim do comando.*pasta tmp do projeto/,
+    )
     assert.doesNotMatch(ambientSection({ agentId: 'maya' }), /TMPDIR/)
   })
 })

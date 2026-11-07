@@ -122,3 +122,42 @@ describe('terminal — o programa que o transporte do ssh lança', () => {
     assert.strictEqual(await refusal('ssh -p 22 host ls', allow), undefined)
   })
 })
+
+describe('terminal — /tmp privado do cerco e recusas com a saída', () => {
+  const allow = [rule('tail *', 'allow'), rule('cmd *', 'allow'), rule('cat *', 'allow'), rule('echo *', 'allow')]
+  const inSandbox = (command: string, rules = allow) => terminalRefusal(command, '/w', checker(rules), {}, undefined, { privateTmp: true })
+
+  it('no cerco, escrever e ler `/tmp/**` e `/var/tmp/**` passa sem regra', async () => {
+    assert.strictEqual(await inSandbox('cmd > /tmp/x.log; tail /tmp/x.log'), undefined)
+    assert.strictEqual(await inSandbox('cmd >> /var/tmp/a/x.log 2>&1'), undefined)
+    assert.strictEqual(await inSandbox('cat < /tmp/in.txt'), undefined)
+  })
+
+  it('⛔ sem cerco segue recusado; e `..` que sai do /tmp, ou outro lugar, também', async () => {
+    assert.match((await refusal('cmd > /tmp/x.log', allow)) ?? '', /nenhuma regra de escrita permite/)
+    assert.match((await refusal('cat < /tmp/in.txt', allow)) ?? '', /nenhuma regra de leitura permite/)
+    assert.match((await inSandbox('cmd > /tmp/../etc/x')) ?? '', /nenhuma regra de escrita/)
+    assert.match((await inSandbox('cmd > /tmpx/x')) ?? '', /nenhuma regra de escrita/)
+    assert.match((await inSandbox('cmd > /etc/x')) ?? '', /nenhuma regra de escrita/)
+  })
+
+  it('read_file de /tmp segue pela regra (a ferramenta de arquivo não ganha o /tmp privado)', () => {
+    assert.strictEqual(decide({ category: 'read', value: '/tmp/x.log' }, { project: [] }).allowed, false)
+  })
+
+  it('cada recusa por não analisar diz a saída, com o motivo técnico no fim', async () => {
+    const cases: Array<[string, RegExp]> = [
+      ['PATH=/x ls', /chame pelo caminho: \.\/node_modules\/\.bin\/x.*\(env:PATH\)$/],
+      ['$B validate', /escreva o caminho literal \(relativo à pasta\) no lugar de \$VAR.*\(dynamic-command\)$/],
+      ['echo x > $LOG', /o destino vem de variável; escreva o caminho literal \(dynamic-redirect\)$/],
+      ['python3 - <<EOF\nprint(1)\nEOF', /grave-o num arquivo.*python3 arquivo\.py` \(heredoc-interpreter\)$/],
+    ]
+    for (const [command, expected] of cases) assert.match((await inSandbox(command)) ?? '', expected, command)
+  })
+
+  it('a recusa por regra de terminal diz como pedir a regra; a do sistema, não', async () => {
+    assert.match((await inSandbox('ls', [])) ?? '', /nenhuma regra de terminal permite.*save_permission_rules/)
+    assert.match((await inSandbox('ls', [rule('ls', 'deny')])) ?? '', /negado pela regra do projeto.*save_permission_rules/)
+    assert.doesNotMatch((await inSandbox('rm -rf /')) ?? '', /save_permission_rules/)
+  })
+})

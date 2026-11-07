@@ -570,10 +570,11 @@ export function findUnder(root: string, pattern: string): string[] {
 /**
  * ⛔ Onde moram os sockets do HOST, fechados no Linux (onde o cerco libera socket Unix): o `docker.sock` (o usuário do
  * gateway está no grupo docker: um contêiner privilegiado seria root no host), o bus do systemd (`systemd-run --user`
- * roda fora do cerco) e o `/tmp` (ssh-agent, outros processos). O comando usa o TMPDIR dele, na pasta do projeto.
+ * roda fora do cerco) e o `/tmp` e `/var/tmp` (ssh-agent, outros processos). O comando usa o TMPDIR dele, na pasta do projeto;
+ * o `/tmp` e o `/var/tmp` que ele vê são vazios e só dele, descartados no fim (ver `privateTmp` em `terminalRefusal`).
  */
 export function hostSocketDirs(platform: NodeJS.Platform = process.platform): string[] {
-  return platform === 'linux' ? ['/run', '/var/run', '/tmp'] : []
+  return platform === 'linux' ? ['/run', '/var/run', '/tmp', '/var/tmp'] : []
 }
 
 /** A ponte do proxy mora no `/tmp` do host, que o cerco fecha: só os sockets dela voltam (sem eles, a rede cai). */

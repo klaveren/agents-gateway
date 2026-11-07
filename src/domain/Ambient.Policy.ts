@@ -97,4 +97,4 @@ export function agentFolderLine(files: { dir: string; write: boolean }): string 
  * gastavam tentativas nisso. O `$TMPDIR` persiste (fica na pasta do projeto, fora do git).
  */
 export const TEMP_LINE =
-  '- Arquivos temporários: use `$TMPDIR` (persiste entre os comandos do terminal). O `/tmp` do terminal é apagado a cada comando: o que você grava nele some no comando seguinte.'
+  '- Arquivos temporários: use `$TMPDIR` (persiste entre os comandos do terminal). O `/tmp` do terminal é seu e some no fim do comando: o que você grava nele não existe no seguinte; para guardar entre comandos, use a pasta tmp do projeto (`$TMPDIR`).'
