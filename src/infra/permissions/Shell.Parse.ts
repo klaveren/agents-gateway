@@ -168,8 +168,25 @@ const MAX_VALUES = 64
 
 /** A variável `name` pode ser (re)escrita dentro de `node`? Conservador: na dúvida, sim. */
 function touches(node: Node, name: string): boolean {
+  return writes(node, name, 1) > 0
+}
+
+/** Quantos pontos de `node` podem (re)escrever `name` (para no `limit`). Conservador: na dúvida, conta. */
+function writes(node: Node, name: string, limit: number): number {
+  let count = 0
   const stack: Node[] = [node]
-  for (let n = stack.pop(); n; n = stack.pop()) {
+  for (let n = stack.pop(); n && count < limit; n = stack.pop()) {
+    if (writesHere(n, name)) {
+      count += 1
+      continue
+    }
+    stack.push(...n.children)
+  }
+  return count
+}
+
+function writesHere(n: Node, name: string): boolean {
+  {
     if (n.type === 'variable_assignment' && n.childForFieldName('name')?.text === name) return true
     if (n.type === 'for_statement' && n.childForFieldName('variable')?.text === name) return true
     if (n.text.includes(name)) {
@@ -181,7 +198,6 @@ function touches(node: Node, name: string): boolean {
       // `${X:=v}`, `${X:?}`…: só a forma simples `${X}` lê sem mexer.
       if (n.type === 'expansion' && n.text !== `\${${name}}`) return true
     }
-    stack.push(...n.children)
   }
   return false
 }
@@ -194,6 +210,8 @@ class Analyzer {
   private env: Readonly<Record<string, string>>
   /** Variável de laço `for v in <literais>` -> as palavras; só dentro do corpo. */
   private loops = new Map<string, string[]>()
+  /** Variável atribuída na própria linha (`D=$TMPDIR/x; … $D`) -> o valor; só depois da atribuição (ver `localAssignments`). */
+  private locals = new Map<string, { value: string; after: number }>()
 
   constructor(
     private readonly parser: Parser,
@@ -212,16 +230,19 @@ class Analyzer {
       this.opaque.add('parse-error')
       return
     }
-    const previous = { env: this.env, loops: this.loops }
+    const previous = { env: this.env, loops: this.loops, locals: this.locals }
     try {
       if (tree.rootNode.hasError) this.opaque.add('parse-error')
       // ⛔ Script que reatribui a variável (em qualquer ponto) volta a ser dinâmico para ela; o script de dentro (`bash -c`) começa sem laços.
       this.env = Object.fromEntries(Object.entries(this.env).filter(([name]) => !touches(tree.rootNode, name)))
       this.loops = new Map()
+      this.locals = new Map()
+      this.localAssignments(tree.rootNode, previous.env)
       this.walk(tree.rootNode, depth)
     } finally {
       this.env = previous.env
       this.loops = previous.loops
+      this.locals = previous.locals
       tree.delete()
     }
   }
@@ -230,7 +251,7 @@ class Analyzer {
    * Os valores literais que a palavra pode ter, ou undefined se só existem em execução. Só entram variável conhecida do
    * gateway e variável de laço sobre palavras literais; qualquer outra expansão continua dinâmica (falha fechada).
    */
-  private values(node: Node, loops = true): string[] | undefined {
+  private values(node: Node, loops = true, locals = true): string[] | undefined {
     switch (node.type) {
       case 'simple_expansion':
       case 'expansion': {
@@ -239,19 +260,22 @@ class Analyzer {
         if (node.type === 'expansion' && node.text !== `\${${variable.text}}`) return undefined
         const loop = loops ? this.loops.get(variable.text) : undefined
         if (loop) return loop
+        // ⛔ Nunca para o NOME do comando (`X=rm; $X -rf …` fugiria da trava do texto): só destino e argumento.
+        const local = locals ? this.locals.get(variable.text) : undefined
+        if (local) return node.startIndex >= local.after ? [local.value] : undefined
         const value = this.env[variable.text]
         return value === undefined ? undefined : [value]
       }
       case 'string': {
         const children = node.namedChildren
-        const parts = children.map((c) => (c.type === 'string_content' ? [unescapeDouble(c.text)] : c.type.endsWith('expansion') ? this.values(c, loops) : undefined))
+        const parts = children.map((c) => (c.type === 'string_content' ? [unescapeDouble(c.text)] : c.type.endsWith('expansion') ? this.values(c, loops, locals) : undefined))
         const covered = children.reduce((sum, c) => sum + c.text.length, 0)
         if (parts.some((p) => !p) || covered !== node.text.length - (node.text.startsWith('$"') ? 3 : 2)) return undefined
         return this.product(parts as string[][])
       }
       case 'concatenation':
       case 'command_name': {
-        const parts = node.namedChildren.map((c) => this.values(c, loops))
+        const parts = node.namedChildren.map((c) => this.values(c, loops, locals))
         return parts.some((p) => !p) || !parts.length ? undefined : this.product(parts as string[][])
       }
       default: {
@@ -268,6 +292,26 @@ class Analyzer {
       if (all.length > MAX_VALUES) return undefined
     }
     return all
+  }
+
+  /**
+   * ⚖️ `D=$TMPDIR/x; mkdir -p $D; cp a $D/` — a variável da PRÓPRIA linha vale o valor dela, só quando dá para provar: a
+   * atribuição é um comando do nível de cima (separado por `;` ou quebra de linha, nunca depois de `&&`/`||`, num `if`,
+   * laço ou subshell), é a ÚNICA escrita da variável no script, o valor é conhecido e sem espaço nem curinga, e a leitura
+   * vem DEPOIS dela. Fora disso, segue dinâmica (falha fechada).
+   */
+  private localAssignments(root: Node, given: Readonly<Record<string, string>>): void {
+    for (const child of root.namedChildren) {
+      if (child.type !== 'variable_assignment' || child.text.includes('+=')) continue
+      const name = child.childForFieldName('name')?.text
+      const value = child.childForFieldName('value')
+      // As do gateway (`TMPDIR`, `HOME`) reatribuídas seguem dinâmicas: o rascunho do cerco é o que ele deu, não o do script.
+      if (!name || !value || name in given || dangerousEnv(name) || this.locals.has(name)) continue
+      if (writes(root, name, 2) !== 1) continue
+      const known = this.values(value, false)
+      if (known?.length !== 1 || !known[0] || /[\s*?[{~]/.test(known[0])) continue
+      this.locals.set(name, { value: known[0], after: child.endIndex })
+    }
   }
 
   /** `for v in a b c; do …; done` com só palavras literais (sem expansão, glob ou chave): v vale cada uma, e nada no laço a reatribui. */
@@ -351,7 +395,7 @@ class Analyzer {
     let name = resolve(nameNode)
     if (name.dynamic) {
       // `$TMPDIR/run.sh`: variável do gateway vale o caminho que o cerco dá a ela.
-      const known = this.values(nameNode, false)
+      const known = this.values(nameNode, false, false)
       if (known?.length === 1) name = { value: known[0], dynamic: false, glob: false }
     }
     if (name.dynamic || name.glob || name.value === '') this.opaque.add('dynamic-command')

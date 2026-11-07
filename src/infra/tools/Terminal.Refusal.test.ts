@@ -216,6 +216,33 @@ describe('terminal — $TMPDIR do cerco e variável de laço literal', () => {
     assert.strictEqual(await run('printf %s $TMPDIR; echo x > $TMPDIR/y', rules), undefined)
   })
 
+  it('`D=$TMPDIR/x; … > $D/y`: a variável da própria linha vale o valor, depois da atribuição', async () => {
+    const inCerco = (command: string, rules: IPermissionRule[] = []) =>
+      terminalRefusal(command, '/w', checker([...base, ...rules]), {}, undefined, { variables: { TMPDIR: '/w/.tmp', HOME: '/w/.home' }, scratch: ['/w/.tmp', '/w/.home'] })
+    assert.strictEqual(await inCerco('D=$TMPDIR/head; echo x > $D/a.txt'), undefined)
+    assert.strictEqual(await inCerco('D=$TMPDIR/head\nE=$D/sub\necho x > "$E/a.txt"'), undefined)
+    assert.strictEqual(await inCerco('D=out; echo x > $D/a.txt', [wr('out/**')]), undefined)
+    assert.match((await inCerco('D=out; echo x > $D/a.txt')) ?? '', /nenhuma regra de escrita permite "out\/a.txt"/)
+  })
+
+  it('⛔ a variável da linha segue dinâmica: antes da atribuição, condicional, reatribuída, com espaço, ou no nome do comando', async () => {
+    const rules = [wr('**')]
+    for (const command of [
+      'echo x > $D/a; D=out',
+      'true && D=out; echo x > $D/a',
+      'if true; then D=out; fi; echo x > $D/a',
+      '(D=out); echo x > $D/a',
+      'D=out; D=etc; echo x > $D/a',
+      'D=out; read D; echo x > $D/a',
+      'D="a b"; echo x > $D/a',
+      'D=*; echo x > $D/a',
+      'D=$(pwd); echo x > $D/a',
+    ]) {
+      assert.match((await run(command, rules)) ?? '', /dynamic-redirect/, command)
+    }
+    assert.match((await run('X=rm; $X -r a', [rule('rm *', 'allow')])) ?? '', /não dá para analisar|dynamic-command/)
+  })
+
   it('sem as variáveis do cerco informadas, `$TMPDIR` segue dinâmico', async () => {
     assert.match((await terminalRefusal('echo x > $TMPDIR/y', '/w', checker([...base, wr('**')]), {})) ?? '', /dynamic-redirect/)
   })
