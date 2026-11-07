@@ -138,7 +138,8 @@ function resolve(node: Node): IResolved {
     }
     case 'concatenation':
     case 'command_name': {
-      const parts = node.namedChildren.map(resolve)
+      // ⚠️ O `$$` no FIM da palavra (`x-$$`) vem como token anônimo, fora dos `namedChildren`: sem contar, sumia do valor.
+      const parts = node.children.map((child) => (child.isNamed ? resolve(child) : { value: child.text, dynamic: true, glob: false }))
       return {
         value: parts.map((p) => p.value).join(''),
         dynamic: parts.some((p) => p.dynamic),
@@ -256,8 +257,13 @@ class Analyzer {
       case 'simple_expansion':
       case 'expansion': {
         const [variable] = node.namedChildren
-        if (node.namedChildren.length !== 1 || variable.type !== 'variable_name') return undefined
+        if (node.namedChildren.length !== 1) return undefined
         if (node.type === 'expansion' && node.text !== `\${${variable.text}}`) return undefined
+        // ⚖️ `$$` é só dígitos (o PID; nem atribuição nem `unset` o mudam): `"$TMPDIR/x-$$"` é um nome dentro da pasta, nunca
+        // `..` nem `/`. Vale um número qualquer, para a regra ver a pasta certa. ⛔ `$RANDOM` e `$BASHPID` não: com `unset`,
+        // viram variáveis comuns (`unset RANDOM; RANDOM=../x`).
+        if (variable.type === 'special_variable_name' && variable.text === '$') return ['0']
+        if (variable.type !== 'variable_name') return undefined
         const loop = loops ? this.loops.get(variable.text) : undefined
         if (loop) return loop
         // ⛔ Nunca para o NOME do comando (`X=rm; $X -rf …` fugiria da trava do texto): só destino e argumento.
@@ -275,7 +281,8 @@ class Analyzer {
       }
       case 'concatenation':
       case 'command_name': {
-        const parts = node.namedChildren.map((c) => this.values(c, loops, locals))
+        // O `$$` anônimo do fim da palavra (ver `resolve`) é o PID; outro token anônimo, não dá para provar.
+        const parts = node.children.map((c) => (c.isNamed ? this.values(c, loops, locals) : c.text === '$$' ? ['0'] : undefined))
         return parts.some((p) => !p) || !parts.length ? undefined : this.product(parts as string[][])
       }
       default: {
