@@ -253,3 +253,14 @@ describe('a recusa da política diz a saída', () => {
     assert.strictEqual(policyRefusal('recursive force delete', 'rm -rf x'), 'Refused by the gateway tool policy: recursive force delete.')
   })
 })
+
+describe('embutidos inofensivos do shell', () => {
+  it('`echo ---`, `cd`, `pwd` passam sem regra; a negação explícita e o redirecionamento seguem valendo', async () => {
+    const allowGit = [rule('git *', 'allow')]
+    const refuse = (command: string, rules: IPermissionRule[]) => terminalRefusal(command, '/w', checker(rules), {})
+    assert.strictEqual(await refuse('cd repo && pwd; echo ---; git log -1', allowGit), undefined)
+    assert.match((await refuse('echo x > fora.txt', allowGit)) ?? '', /nenhuma regra de escrita permite/)
+    assert.match((await refuse('echo ---', [...allowGit, rule('echo *', 'deny')])) ?? '', /negado/)
+    assert.match((await refuse('ls', allowGit)) ?? '', /nenhuma regra de terminal permite/)
+  })
+})
