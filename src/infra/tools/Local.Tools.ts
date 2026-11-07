@@ -591,6 +591,9 @@ export async function terminalRefusal(
       return 'apelido do git (alias.*) não pode ser criado enquanto há regra que nega comandos do git'
   }
   for (const part of analysis.commands) {
+    // ⚖️ Os embutidos do shell que não fazem nada sozinhos (`echo ---` como separador, `cd`, `pwd`) passam sem regra: o
+    // redirecionamento deles é checado abaixo, e uma negação explícita do agente ou do projeto continua valendo.
+    if (HARMLESS_BUILTINS.has(part.argv[0] ?? '') && !explicitlyDenied(permissions, asker, part)) continue
     const verdict = permissions.check(asker, { category: 'terminal', value: part.text, argv: part.argv }, { log: true })
     if (!verdict.allowed) return verdict.layer === 'system' ? verdict.reason : `${verdict.reason}; ${RULE_HINT}`
   }
@@ -1343,4 +1346,13 @@ export function policyRefusal(denied: string, command: string): string {
   return /(^|[\s;&|(])ssh\s/.test(command)
     ? `${base} No host remoto, sudo/su/reboot só passam com uma regra de terminal que os libere E cite (ex.: \`ssh 10.10.0.1 sudo k3s kubectl *\`); peça com save_permission_rules (uma pessoa aprova).`
     : `${base} Local, isso nunca roda no cerco.`
+}
+
+/** Embutidos do shell sem efeito fora do próprio comando (a saída e o diretório dele). */
+const HARMLESS_BUILTINS: ReadonlySet<string> = new Set(['echo', 'printf', 'pwd', 'cd', 'true', 'false', 'test', '[', ':'])
+
+/** Uma regra de NEGAÇÃO (agente, projeto ou sistema) cobre a parte? Então o embutido não passa sozinho. */
+function explicitlyDenied(permissions: IPermissionChecker, asker: IPermissionAsker, part: { text: string; argv: readonly string[] }): boolean {
+  const verdict = permissions.check(asker, { category: 'terminal', value: part.text, argv: [...part.argv] }, { log: false })
+  return !verdict.allowed && !!verdict.rule && verdict.rule.decision === 'deny'
 }
