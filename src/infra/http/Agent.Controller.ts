@@ -1,5 +1,6 @@
 import { applyPanelOp, emptyPanel, panelMarkdown, TPanelOp } from '@domain/models/ConversationPanel.Model'
-import { ERROR_KINDS } from '@domain/models/ErrorLog.Model'
+import { ERROR_KINDS, REFUSAL_STATUSES, type TRefusalOrigin } from '@domain/models/ErrorLog.Model'
+import { maskText } from '@domain/Secret.Mask'
 import type { ResourceSecretsService } from '@application/ResourceSecrets.Service'
 import { IModelGroup, modelGroupIssues, NO_MODEL_GROUP } from '@domain/Fallback.Policy'
 import { agentFolderAccess, CAPABILITIES, hasTerminal, CAPABILITY_PREFIX, CAPABILITY_TOOLS, capability, capabilityRuns, toCapabilities } from '@domain/Capability.Catalog'
@@ -173,6 +174,8 @@ export interface IAgentControllerDeps {
    * instalação (`TURN_CALLBACK_HOSTS`). Ausente, ou sem segredo = o endereço não serve.
    */
   callbackSecret?: (url: string, projectId?: string) => string | undefined
+  /** ⛔ A máscara de segredos (`SecretMasker.text`) da mensagem das recusas de turno. Ausente = só as camadas de forma e de formato. */
+  maskText?: (text: string) => string
 }
 
 /**
@@ -993,7 +996,7 @@ export class AgentController {
         }
         return this.usecases.createSession.execute({ ...session, metadata: stamped, adminAccess })
       },
-      { status: 201, message: 'Session created successfully' },
+      { status: 201, message: 'Session created successfully', refusal: { req } },
     )
   }
 
@@ -1560,7 +1563,7 @@ export class AgentController {
         ...(wanted ? { limit: wanted } : {}),
         // ⛔ A mensagem de erro é conteúdo da conversa: só a das conversas que ele administra (o recorte vai para o banco).
         ...scopeOfView(view),
-      })) ?? { items: [], byKind: { tool: 0, turn: 0, aborted: 0 }, byTool: [] }
+      })) ?? { items: [], byKind: { tool: 0, turn: 0, aborted: 0, refused: 0 }, byTool: [] }
       return log
     })
   }
@@ -1717,21 +1720,21 @@ export class AgentController {
     try {
       resolved = await this.requireOwnedSession(sessionId, { resume: true })
     } catch (error: unknown) {
-      return this.sendFailure(res, error, '[AgentController.sendMessage]')
+      return this.refused(res, error, req, sessionId)
     }
 
     let body
     try {
       body = parseBody(sendMessageSchema, req.body)
     } catch (error: unknown) {
-      return this.sendFailure(res, error, '[AgentController.sendMessage]')
+      return this.refused(res, error, req, sessionId)
     }
 
     let input: IMessageInput
     try {
       input = await this.turnInput(sessionId, resolved, body)
     } catch (error: unknown) {
-      return this.sendFailure(res, error, '[AgentController.sendMessage]')
+      return this.refused(res, error, req, sessionId)
     }
     // ⚖️ Com o turno rodando e `whileBusy: 'queue'`, a mensagem espera na fila dele e entra no MESMO turno (ver
     // `Interjection.Policy`). Conversa parada: segue como um turno normal.
@@ -1739,11 +1742,16 @@ export class AgentController {
       const position = body.whileBusy === 'queue' ? this.queue(sessionId, body, input) : undefined
       if (position !== undefined) return res.status(202).json(ok({ queued: true, position }, 'Message queued for the running turn'))
     } catch (error: unknown) {
-      return this.sendFailure(res, error, '[AgentController.sendMessage]')
+      return this.refused(res, error, req, sessionId)
     }
     const wantsJson = req.accepts(['text/event-stream', 'application/json']) === 'application/json'
 
-    return wantsJson ? this.sendMessageAsJson(res, sessionId, input) : this.sendMessageAsStream(res, sessionId, input)
+    return wantsJson ? this.sendMessageAsJson(res, sessionId, input, req) : this.sendMessageAsStream(res, sessionId, input, req)
+  }
+
+  private async refused(res: Response, error: unknown, req: Request, sessionId: string) {
+    await this.noteRefusal(error, req, sessionId)
+    this.sendFailure(res, error, '[AgentController.sendMessage]')
   }
 
   /**
@@ -1797,7 +1805,7 @@ export class AgentController {
         const { live } = this.launch(sessionId, session, input, callback)
         return { conversationId: sessionId, turn: live.turn, status: 'running' as const }
       },
-      { status: 202, message: 'Turn started' },
+      { status: 202, message: 'Turn started', refusal: { req, sessionId: req.params.id as string } },
     )
   }
 
@@ -1946,7 +1954,7 @@ export class AgentController {
     }
   }
 
-  private async sendMessageAsJson(res: Response, sessionId: string, input: IMessageInput) {
+  private async sendMessageAsJson(res: Response, sessionId: string, input: IMessageInput, req: Request) {
     try {
       const events: IAgentEvent[] = []
       for await (const event of this.usecases.sendMessage.execute(sessionId, input)) {
@@ -1954,11 +1962,12 @@ export class AgentController {
       }
       res.json(ok(aggregateTurn(sessionId, events), 'Turn completed'))
     } catch (error: unknown) {
+      await this.noteRefusal(error, req, sessionId)
       this.sendFailure(res, error, '[AgentController.sendMessage]')
     }
   }
 
-  private async sendMessageAsStream(res: Response, sessionId: string, input: IMessageInput) {
+  private async sendMessageAsStream(res: Response, sessionId: string, input: IMessageInput, req: Request) {
     const stream = new SseStream(res)
     stream.open()
 
@@ -1979,6 +1988,8 @@ export class AgentController {
         if (!detached) stream.send(event)
       }
     } catch (error: unknown) {
+      // No stream o 409/422/429 vira evento `error` (os headers já saíram): é aqui que a recusa é vista.
+      await this.noteRefusal(error, req, sessionId)
       const failure = toHttpFailure(error)
       console.error('[AgentController.sendMessage] Error:', failure.message)
       stream.send({ type: 'error', sessionId, timestamp: new Date(), payload: { message: failure.message } })
@@ -2150,12 +2161,51 @@ export class AgentController {
   }
 
   /** Um lugar só para o envelope de sucesso e para a tradução de erro em status e código. */
-  private async respond<T>(res: Response, work: () => Promise<T>, options: { status?: number; message?: string } = {}) {
+  private async respond<T>(res: Response, work: () => Promise<T>, options: { status?: number; message?: string; refusal?: { req: Request; sessionId?: string } } = {}) {
     try {
       const result = await work()
       res.status(options.status ?? 200).json(ok(result, options.message))
     } catch (error: unknown) {
+      if (options.refusal) await this.noteRefusal(error, options.refusal.req, options.refusal.sessionId)
       this.sendFailure(res, error, '[AgentController]')
+    }
+  }
+
+  /**
+   * ⚖️ O TURNO QUE NEM COMEÇOU: o início recusado com 409/422/429 (`POST /sessions`, `/messages`, `/turns`) fica no registro
+   * de erros (`turn_refusals`), no ponto em que a rota responde — a resposta não muda. ⛔ A mensagem passa pela máscara de
+   * segredos antes de gravar. Nunca lança: perder o registro é melhor que perder a resposta.
+   */
+  private async noteRefusal(error: unknown, req: Request, sessionId?: string): Promise<void> {
+    try {
+      const failure = toHttpFailure(error)
+      // O agente desligado/indisponível responde 403 `agent_unavailable` (ver `toHttpFailure`): é recusa de início, como as outras.
+      if (!(REFUSAL_STATUSES.includes(failure.status) || failure.code === 'agent_unavailable') || !this.usecases.conversations.recordRefusal) return
+      const body = (req.body ?? {}) as Record<string, unknown>
+      const text = (value: unknown) => (typeof value === 'string' && value ? value : undefined)
+      const session = sessionId ? await this.usecases.getSession.execute(sessionId).catch(() => undefined) : undefined
+      const agentId = session?.agentId ?? text(body.agentId) ?? this.sessionAgent(undefined, (await this.usecases.settings.read().catch(() => undefined))?.agentId)?.id
+      const agent = agentId ? this.agents.get(agentId) : undefined
+      const projectId = projectKeyOf(session?.metadata) ?? agent?.projectId ?? text(body.projectId)
+      const resolved = await resolveCaller(this.usecases.proof).catch(() => undefined)
+      const owner = resolved ? ownerOf(resolved) : undefined
+      const header = String(req.headers['x-gateway-origin'] ?? '')
+      const origin: TRefusalOrigin = header === 'hook' || header === 'schedule' ? header : req.headers['x-gateway-client'] === 'web' ? 'ui' : 'api'
+      const mask = this.usecases.maskText ?? ((value: string) => maskText(value, []))
+      await this.usecases.conversations.recordRefusal({
+        at: new Date(),
+        ...(sessionId ? { conversationId: sessionId } : {}),
+        ...(agentId ? { agentId } : {}),
+        ...(projectId ? { projectId } : {}),
+        ...(owner?.id ? { ownerId: owner.id } : {}),
+        ...(owner?.email ? { ownerEmail: owner.email } : {}),
+        status: failure.status,
+        code: failure.code,
+        message: mask(failure.message),
+        origin,
+      })
+    } catch (failure) {
+      console.warn('[AgentController] recusa de turno não registrada:', failure)
     }
   }
 

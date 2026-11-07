@@ -9,7 +9,7 @@ vi.mock('@/lib/api', async (original) => ({ ...(await original<typeof import('@/
 
 const log = (items: object[] = []) => ({
   items,
-  byKind: { tool: 3, turn: 1, aborted: 0 },
+  byKind: { tool: 3, turn: 1, aborted: 0, refused: 2 },
   byTool: [
     { tool: 'bash', count: 2 },
     { tool: 'read', count: 1 },
@@ -73,6 +73,19 @@ describe('ErrorsView', () => {
     expect(host.textContent).toContain('Theo')
     expect(host.textContent).toContain('turno 2')
     expect(host.querySelector('[data-test="by-kind"]')!.textContent).toContain('3')
+  })
+
+  it('o tipo Recusado mostra status e mensagem, com link só quando há conversa', async () => {
+    result = log([
+      { at: new Date().toISOString(), kind: 'refused', conversationId: 'c-1', agentId: 'theo', status: 409, code: 'session_busy', origin: 'hook', message: 'busy' },
+      { at: new Date().toISOString(), kind: 'refused', agentId: 'theo', status: 422, code: 'agent_unavailable', origin: 'api', message: 'indisponível' },
+    ])
+    const host = await mount()
+    expect(host.querySelectorAll('[data-test="conversation-link"]').length).toBe(1)
+    expect([...host.querySelectorAll('[data-test="status"]')].map((el) => el.textContent)).toEqual(['409 session_busy', '422 agent_unavailable'])
+    expect(host.textContent).toContain('Recusado')
+    await click([...host.querySelectorAll('[data-test="by-kind"] button')].find((b) => b.textContent?.includes('Recusado')))
+    expect(errorCalls().at(-1)!.query).toEqual({ days: 7, kind: 'refused' })
   })
 
   it('sem erros mostra o estado vazio', async () => {

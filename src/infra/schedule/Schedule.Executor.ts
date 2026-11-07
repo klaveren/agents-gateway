@@ -21,7 +21,7 @@ export function makeScheduleExecutor(deps: IScheduleExecutorDeps): TScheduleExec
     const session = deps.sessionFor(schedule.runAs)
     if (!session) return { error: 'The account this schedule runs as is disabled or gone; recreate the schedule' }
     const base = deps.base()
-    const credentials = { 'x-tool-authorization': `Bearer ${session.token}` }
+    const credentials = { 'x-tool-authorization': `Bearer ${session.token}`, 'x-gateway-origin': 'schedule' }
     const api = selfApi(base, credentials)
 
     if (schedule.session === 'continuous' && schedule.sessionId) {

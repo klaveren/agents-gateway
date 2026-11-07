@@ -132,6 +132,7 @@ export function makeController(): AgentController {
     guidance: makeGuidance(),
     secrets: makeResourceSecrets(),
     repositoryAllowed: (agentId, projectId, repository) => makePermissions().test({ agentId, projectId }, { category: 'repository', value: repository }).allowed,
+    maskText: (text) => makeSecretMasker().text(text),
     callbackSecret: (url, projectId) => callbackSecret(url, projectId ? (host) => makeProjectAccounts().callbackSecret(projectId, host) : undefined),
     sessionEnded: (sessionId) => backgroundProcesses().stopSession(sessionId),
   })

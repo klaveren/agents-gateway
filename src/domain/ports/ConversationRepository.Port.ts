@@ -1,5 +1,5 @@
 import type { IConversationPanel } from '@domain/models/ConversationPanel.Model'
-import type { IErrorLog, IErrorLogQuery } from '@domain/models/ErrorLog.Model'
+import type { IErrorLog, IErrorLogQuery, ITurnRefusal } from '@domain/models/ErrorLog.Model'
 import { ITodoItem } from '@domain/models/ConversationTodo.Model'
 import { TClassification } from '@domain/models/Classification.Model'
 import { IUsageQuery, IUsageRow } from '@domain/models/Usage.Model'
@@ -49,6 +49,8 @@ export interface IConversationRepository {
   toolUsage?(query: IUsageQuery): Promise<IToolUsage[]>
   /** O registro de erros: ferramentas que falharam, turnos com erro e interrompidos (ver `ErrorLog.Model`). */
   errors?(query: IErrorLogQuery): Promise<IErrorLog>
+  /** Guarda o início de turno recusado (409/422/429), apagando o de mais de 30 dias. Nunca lança. */
+  recordRefusal?(refusal: ITurnRefusal): Promise<void>
 
   /**
    * Rotula um turno já gravado e recalcula o rótulo da conversa: o PIOR entre os turnos (`worstOf`).

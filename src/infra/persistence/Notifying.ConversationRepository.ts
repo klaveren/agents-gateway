@@ -1,5 +1,5 @@
 import { emptyPanel, IConversationPanel } from '@domain/models/ConversationPanel.Model'
-import type { IErrorLog, IErrorLogQuery } from '@domain/models/ErrorLog.Model'
+import type { IErrorLog, IErrorLogQuery, ITurnRefusal } from '@domain/models/ErrorLog.Model'
 import { ITodoItem } from '@domain/models/ConversationTodo.Model'
 import { TClassification } from '@domain/models/Classification.Model'
 import {
@@ -70,7 +70,11 @@ export class NotifyingConversationRepository implements IConversationRepository 
   }
 
   errors(query: IErrorLogQuery): Promise<IErrorLog> {
-    return this.inner.errors?.(query) ?? Promise.resolve({ items: [], byKind: { tool: 0, turn: 0, aborted: 0 }, byTool: [] })
+    return this.inner.errors?.(query) ?? Promise.resolve({ items: [], byKind: { tool: 0, turn: 0, aborted: 0, refused: 0 }, byTool: [] })
+  }
+
+  async recordRefusal(refusal: ITurnRefusal): Promise<void> {
+    await this.inner.recordRefusal?.(refusal)
   }
 
   usage(query: IUsageQuery): Promise<IUsageRow[]> {
