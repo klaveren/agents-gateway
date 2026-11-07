@@ -241,3 +241,15 @@ describe('terminal — $TMPDIR do cerco e variável de laço literal', () => {
     }
   })
 })
+
+describe('a recusa da política diz a saída', () => {
+  it('sudo remoto: aponta a regra que o libera; local: nunca', async () => {
+    const { policyRefusal } = await import('./Local.Tools')
+    assert.match(
+      policyRefusal('privilege escalation', "ssh 10.10.0.1 'sudo ls /var/lib'"),
+      /^Refused by the gateway tool policy: privilege escalation\. No host remoto.*save_permission_rules/,
+    )
+    assert.match(policyRefusal('privilege escalation', 'sudo ls'), /Local, isso nunca roda no cerco\.$/)
+    assert.strictEqual(policyRefusal('recursive force delete', 'rm -rf x'), 'Refused by the gateway tool policy: recursive force delete.')
+  })
+})
