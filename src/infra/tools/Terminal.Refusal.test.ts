@@ -155,7 +155,7 @@ describe('terminal — /tmp privado do cerco e recusas com a saída', () => {
       ['PATH=/x ls', /chame pelo caminho: \.\/node_modules\/\.bin\/x.*\(env:PATH\)$/],
       ['$B validate', /escreva o caminho literal \(relativo à pasta\) no lugar de \$VAR.*\(dynamic-command\)$/],
       ['echo x > $LOG', /o destino vem de variável; escreva o caminho literal \(dynamic-redirect\)$/],
-      ['python3 - <<EOF\nprint(1)\nEOF', /grave-o num arquivo.*python3 arquivo\.py` \(heredoc-interpreter\)$/],
+      ['python3 - <<EOF\nprint(1)\nEOF', /grave-o num arquivo em \$TMPDIR.*interpretador que a sua regra libera.*\(heredoc-interpreter\)$/],
     ]
     for (const [command, expected] of cases) assert.match((await inSandbox(command)) ?? '', expected, command)
   })

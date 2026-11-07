@@ -530,7 +530,8 @@ const OPAQUE_ADVICE: Readonly<Record<string, string>> = {
   'env:PATH': 'mudar o PATH esconde qual programa roda; chame pelo caminho: ./node_modules/.bin/x (ou packages/…/node_modules/.bin/x)',
   'dynamic-command': 'o nome do comando vem de variável; escreva o caminho literal (relativo à pasta) no lugar de $VAR',
   'dynamic-redirect': 'o destino vem de variável; escreva o caminho literal',
-  'heredoc-interpreter': 'o script no heredoc não é analisável; grave-o num arquivo (na pasta tmp do projeto) e rode `python3 arquivo.py`',
+  'heredoc-interpreter':
+    'o script no heredoc não é analisável; grave-o num arquivo em $TMPDIR (pela ferramenta de escrita) e rode o arquivo com o interpretador que a sua regra libera (`node $TMPDIR/x.mjs`, `python3 $TMPDIR/x.py`…)',
 }
 
 /** A recusa por não poder analisar: a saída em uma linha por motivo, com o motivo técnico entre parênteses no fim (o log usa). */
