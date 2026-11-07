@@ -1,7 +1,7 @@
 import { exec, execFileSync } from 'node:child_process'
 import { type Dirent, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, posix, relative, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { dataDir, projectWorkspace } from '@infra/adapters/support/Subscription.Workspace'
 import { esmImport } from '@infra/adapters/support/Esm.Import'
@@ -614,16 +614,9 @@ export function findUnder(root: string, pattern: string): string[] {
   if (isAbsolute(pattern) || pattern.startsWith('~')) return []
   const found: string[] = []
   const pending = ['']
-  // ⚖️ As worktrees entram DEPOIS da árvore principal: cada uma repete os modelos do repositório, e o teto (abaixo) corta
-  // pelas worktrees, nunca pelos modelos da raiz. Fora delas, o `git diff`/`merge` na worktree via o modelo versionado como
-  // /dev/null ("unsupported file type") e o commit do épico travava (07/11).
-  const worktrees: string[] = []
+  const worktreeDirs: string[] = []
   let seen = 0
-  for (let next = 0; seen < FIND_LIMIT; next += 1) {
-    if (next === pending.length) {
-      if (!worktrees.length) break
-      pending.push(...worktrees.splice(0))
-    }
+  for (let next = 0; next < pending.length && seen < FIND_LIMIT; next += 1) {
     const dir = pending[next]!
     let entries: Dirent[]
     try {
@@ -636,14 +629,41 @@ export function findUnder(root: string, pattern: string): string[] {
       const path = dir ? `${dir}/${entry.name}` : entry.name
       if (entry.isDirectory()) {
         if (entry.name === 'node_modules' || entry.name === '.git') continue
-        if (WORKTREE_DIRS.has(entry.name)) worktrees.push(path)
+        if (WORKTREE_DIRS.has(entry.name)) worktreeDirs.push(path)
         else pending.push(path)
       } else if (entry.isFile() && pathMatches(pattern, path)) found.push(path)
     }
   }
+  // ⚖️ As worktrees não são varridas (a árvore principal já gasta o teto, e cada uma repete os modelos dela): para cada
+  // modelo do repositório, o MESMO caminho em cada worktree. Sem isso, o `git diff`/`merge` na worktree via o modelo
+  // versionado como /dev/null ("unsupported file type") e o commit do épico travava (07/11). Vêm depois dos da árvore
+  // principal, e o teto (abaixo) corta por elas.
+  const mirrored = worktreeDirs.flatMap((worktrees) => {
+    const repo = posix.dirname(worktrees) === '.' ? '' : posix.dirname(worktrees)
+    const own = repo ? found.filter((path) => path.startsWith(`${repo}/`)) : found
+    let names: string[]
+    try {
+      names = readdirSync(join(root, worktrees), { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+    } catch {
+      return []
+    }
+    return names.flatMap((name) =>
+      own
+        .map((path) => `${worktrees}/${name}/${repo ? path.slice(repo.length + 1) : path}`)
+        .filter((path) => {
+          try {
+            return lstatSync(join(root, path)).isFile()
+          } catch {
+            return false
+          }
+        }),
+    )
+  })
   // ⛔ Teto de modelos reabertos (cada um é uma montagem no bwrap, que para em ~9000 argumentos): passou, o resto fica
-  // escondido, como antes — o terminal nunca quebra por isso. Os primeiros são os da árvore principal.
-  return found.slice(0, TEMPLATE_LIMIT)
+  // escondido, como antes — o terminal nunca quebra por isso.
+  return [...found, ...mirrored].slice(0, TEMPLATE_LIMIT)
 }
 
 /** As pastas onde moram as worktrees de um repositório (`git worktree add _worktrees/EP-1`). */
