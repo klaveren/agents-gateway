@@ -389,11 +389,19 @@ describe('findUnder — os modelos de segredo reabertos para leitura', () => {
     mkdirSync(join(root, 'repositories', 'logiccus', 'node_modules', 'p'), { recursive: true })
     writeFileSync(join(root, 'repositories', 'logiccus', 'node_modules', 'p', '.env.example'), 'nunca')
     writeFileSync(join(root, 'repositories', 'logiccus', 'apis', 'logiccus', '.env'), 'SEGREDO=1')
-    assert.deepStrictEqual(findUnder(root, '**/.env.*').sort(), [
-      '.agents/skills/x/.env.example',
-      'repositories/logiccus/_worktrees/EP-1/apps/.env.example',
-      'repositories/logiccus/apis/logiccus/.env.example',
-    ])
+    // ⛔ As worktrees ficam de fora quando a raiz está acima delas (cada uma repete os modelos: o bwrap estourou em 07/11).
+    assert.deepStrictEqual(findUnder(root, '**/.env.*').sort(), ['.agents/skills/x/.env.example', 'repositories/logiccus/apis/logiccus/.env.example'])
+    // Na conversa dentro da worktree, a raiz é ela: os modelos dela entram.
+    assert.deepStrictEqual(findUnder(join(root, 'repositories', 'logiccus', '_worktrees', 'EP-1'), '**/.env.*'), ['apps/.env.example'])
+  })
+
+  it('⛔ passou do teto de modelos, nenhum é reaberto (o terminal não quebra por montagem demais)', () => {
+    const many = join(root, 'muitos')
+    for (let i = 0; i < 401; i += 1) {
+      mkdirSync(join(many, `d${i}`), { recursive: true })
+      writeFileSync(join(many, `d${i}`, '.env.example'), 'A=')
+    }
+    assert.deepStrictEqual(findUnder(many, '**/.env.*'), [])
   })
 })
 

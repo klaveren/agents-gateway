@@ -532,8 +532,14 @@ function isAtOrUnder(path: string, dir: string): boolean {
  */
 export function withWriteGlobsExpanded(plan: ICercoPlan, list: (dir: string) => Array<{ name: string; dir: boolean }> = listEntries): ICercoPlan {
   const expand = (paths: readonly string[]) => [...new Set(paths.flatMap((path) => [path, ...expandGlobPath(path, list)]))]
-  return { ...plan, writeAllow: expand(plan.writeAllow), writeDeny: expand(plan.writeDeny) }
+  const allow = expand(plan.writeAllow)
+  // ⛔ Cada caminho é uma montagem, e o bwrap aceita ~3000: passou do teto, a LIBERAÇÃO expandida sai (fica o padrão, que o
+  // runtime ignora: escrever ali pelo terminal falha, mas o terminal funciona). A NEGAÇÃO expandida fica sempre.
+  return { ...plan, writeAllow: allow.length > WRITE_EXPAND_TOTAL ? [...plan.writeAllow] : allow, writeDeny: expand(plan.writeDeny) }
 }
+
+/** Teto das liberações de escrita expandidas, somadas: o bwrap para em ~9000 argumentos (~3000 montagens) no total. */
+const WRITE_EXPAND_TOTAL = 1500
 
 /** Teto de caminhos por padrão: numa árvore enorme, o que passa fica fechado (falha fechada para a escrita). */
 const GLOB_EXPAND_LIMIT = 4000
@@ -559,7 +565,9 @@ export function expandGlobPath(path: string, list: (dir: string) => Array<{ name
     }
     if (head === '**') {
       walk(dir, tail)
-      for (const entry of list(dir)) if (entry.dir && !GLOB_SKIP.has(entry.name)) walk(join(dir, entry.name), rest)
+      // ⚖️ O `**` não atravessa as worktrees (cada uma repete o repositório inteiro); quem quer uma worktree a nomeia
+      // (`_worktrees/*/evidence/**`).
+      for (const entry of list(dir)) if (entry.dir && !GLOB_SKIP.has(entry.name) && !WORKTREE_DIRS.has(entry.name)) walk(join(dir, entry.name), rest)
       return
     }
     if (!/[*?[\]{}]/.test(head)) {
@@ -619,12 +627,21 @@ export function findUnder(root: string, pattern: string): string[] {
       seen += 1
       const path = dir ? `${dir}/${entry.name}` : entry.name
       if (entry.isDirectory()) {
-        if (entry.name !== 'node_modules' && entry.name !== '.git') pending.push(path)
+        // ⛔ As worktrees ficam de fora quando o comando roda acima delas: cada uma repete os modelos do repositório, e
+        // cada modelo reaberto é uma montagem — com as worktrees da Logiccus o bwrap passou de 9000 argumentos e o
+        // terminal parou (07/11 06:32). Na conversa DENTRO de uma worktree, a raiz é ela, e os modelos dela entram.
+        if (entry.name !== 'node_modules' && entry.name !== '.git' && !WORKTREE_DIRS.has(entry.name)) pending.push(path)
       } else if (entry.isFile() && pathMatches(pattern, path)) found.push(path)
     }
   }
-  return found
+  // ⛔ Teto de modelos reabertos: passou, nenhum é reaberto (ficam escondidos, como antes) — o terminal nunca quebra por isso.
+  return found.length > TEMPLATE_LIMIT ? [] : found
 }
+
+/** As pastas onde moram as worktrees de um repositório (`git worktree add _worktrees/EP-1`). */
+const WORKTREE_DIRS = new Set(['_worktrees', '.worktrees'])
+/** Quantos modelos (`.env.example`…) o cerco reabre no máximo: cada um custa montagens no bwrap (teto de ~3000). */
+const TEMPLATE_LIMIT = 400
 
 /**
  * ⛔ Onde moram os sockets do HOST, fechados no Linux (onde o cerco libera socket Unix): o `docker.sock` (o usuário do
