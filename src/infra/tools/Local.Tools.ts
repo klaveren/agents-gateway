@@ -134,12 +134,12 @@ export interface ILocalToolDeps {
   /** O tempo e a saída do terminal de cada agente (o campo `terminal` dele). Ausente = o global. */
   agentTerminal?: (agentId: string) => { timeoutSeconds?: number; maxOutputChars?: number } | undefined
   /** ⛔ A pasta privada do agente e o que ele faz nela (ver `agentFolderAccess`): a ferramenta de arquivo e o cerco a abrem. */
-  agentFolder?: (agentId: string) => IOwnFolder | undefined
+  agentFolder?: (agentId: string, conversationProject?: string) => IOwnFolder | undefined
   /**
    * ⛔ As pastas de arquivos das skills e commands que outro projeto COMPARTILHOU com o projeto da conversa (ver
    * `sharedResources`): só leitura, uma por item, lidas a cada chamada. Ausente = nenhuma.
    */
-  sharedFolders?: (projectId: string | undefined) => string[]
+  sharedFolders?: (projectId: string | undefined, agentId?: string) => string[]
   /** Os processos em segundo plano (ver `Background.Processes`). Ausente = o do processo. */
   processes?: BackgroundProcesses
   /** A máscara de segredos (ver `Secret.Masker`). Ausente = a saída vai como saiu. */
@@ -149,8 +149,8 @@ export interface ILocalToolDeps {
    * ambiente do comando, nunca na linha dele. Ausente = sem variáveis.
    */
   secrets?: {
-    envFor(agentId: string | undefined, sessionId: string | undefined): { env: Record<string, string> }
-    sources(agentId: string | undefined, sessionId: string | undefined): Array<{ name: string }>
+    envFor(agentId: string | undefined, sessionId: string | undefined, conversationProject?: string): { env: Record<string, string> }
+    sources(agentId: string | undefined, sessionId: string | undefined, conversationProject?: string): Array<{ name: string }>
     markLoaded(sessionId: string | undefined, kind: 'skill' | 'command', id: string): void
   }
   /** O detector de laço (ver `Loop.Guard`): recusa a chamada repetida antes de ela rodar. Ausente = sem detector. */
@@ -250,8 +250,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     const folder = context?.workFolder
     const root = realOf(folder?.dir ?? (context?.projectId ? workspaceFor(context.projectId, '') : policy.cwd || workspaceFor(undefined, context?.sessionId ?? 'run_bash')))
     // O rascunho (HOME, caches, as contas) fica na pasta do projeto, fora da worktree; o `.git` comum entra no cerco.
-    const own = context?.agentId ? deps.agentFolder?.(context.agentId) : undefined
-    const shared = deps.sharedFolders?.(asker.projectId) ?? []
+    const own = context?.agentId ? deps.agentFolder?.(context.agentId, context.conversationProjectId) : undefined
+    const shared = deps.sharedFolders?.(asker.projectId, context?.agentId) ?? []
     const place: { scratchBase?: string; gitCommonDir?: string; worktreeGitDir?: string; agentFolder?: IOwnFolder; sharedFolders?: string[] } = {
       ...(folder
         ? {
@@ -326,7 +326,7 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       // As variáveis do agente por baixo, a identidade de quem chama por cima (ver `Agent.Identity`); as contas do projeto vêm depois.
       // ⛔ As variáveis secretas por cima das contas (a do recurso é mais específica), lidas AGORA: a skill carregada no meio
       // do turno já vale aqui. A máscara as recebe antes do processo nascer.
-      const secrets = deps.secrets?.envFor(context?.agentId, context?.sessionId).env
+      const secrets = deps.secrets?.envFor(context?.agentId, context?.sessionId, context?.conversationProjectId).env
       const env: Record<string, string> = { ...terminalEnv(envOf(context), subscriptionEnv({ HOME: root }), context), ...accounts?.env, ...secrets }
       if (kitBin) env.PATH = `${kitBin}:${env.PATH ?? process.env.PATH ?? '/usr/bin:/bin'}`
       return { line, root, env, notes, release, logDir: logDirOf(context?.sessionId) }
@@ -514,8 +514,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
     ...(deps.accounts?.sign && deps.permissions ? [sshSignTool(deps.accounts.sign.bind(deps.accounts), deps.permissions)] : []),
     ...makeFileTools({
       rootFor: fileRoot,
-      ownFolder: (context) => (context?.agentId ? deps.agentFolder?.(context.agentId) : undefined),
-      ...(deps.sharedFolders ? { sharedFolders: (context) => deps.sharedFolders!(askerOf(context).projectId) } : {}),
+      ownFolder: (context) => (context?.agentId ? deps.agentFolder?.(context.agentId, context.conversationProjectId) : undefined),
+      ...(deps.sharedFolders ? { sharedFolders: (context) => deps.sharedFolders!(askerOf(context).projectId, context?.agentId) } : {}),
       ...(deps.permissions
         ? {
             access: (context, kind, path, log) => {
@@ -855,7 +855,7 @@ function proposeDraftTool(drafts: IDraftChecker): ILocalTool {
 
 /** ⛔ O comando que só mostra uma variável secreta que vale agora (ver `printsSecret`): o motivo da recusa, ou nada. */
 function secretPrintRefusal(command: string, context: IExecutionContext | undefined, secrets: ILocalToolDeps['secrets']): string | undefined {
-  const names = secrets?.sources(context?.agentId, context?.sessionId).map((source) => source.name) ?? []
+  const names = secrets?.sources(context?.agentId, context?.sessionId, context?.conversationProjectId).map((source) => source.name) ?? []
   const reason = printsSecret(command, names)
   return reason ? `Recusado: ${reason}. Use a variável no comando ($NOME), nunca a imprima.` : undefined
 }

@@ -6,6 +6,7 @@ import { EMode } from '@domain/enums/EMode.Enum'
 import { AUDIENCES } from '@domain/models/Settings.Model'
 import { PERMISSION_CATEGORIES, TPermissionCategory } from '@domain/Permission.Policy'
 import { AGENT_DIAGNOSTICS_BOUNDS, AGENT_TERMINAL_BOUNDS } from '@domain/models/Agent.Model'
+import { SHARE_MAX_PROJECTS } from '@domain/Share.Policy'
 
 /** Base64 infla ~33%, então o teto em caracteres é maior que o tamanho real do arquivo. */
 const MAX_FILE_CHARS = 8 * 1024 * 1024
@@ -247,6 +248,8 @@ export const changePasswordSchema = z.object({ current: password, password })
 /** Abrir ou fechar a conversa por link. Booleano estrito: `"false"` (texto) não pode abrir. */
 export const createAccessTokenSchema = z.object({ name: z.string().max(200), expiresInDays: z.number().int() })
 export const shareConversationSchema = z.object({ shared: z.boolean() })
+/** A lista INTEIRA de projetos com que o agente é compartilhado (`[]` = nenhum). */
+export const shareAgentSchema = z.object({ projects: z.array(z.string().max(64)).max(SHARE_MAX_PROJECTS) })
 
 /** Qual conversa o stream da caixa de entrada acompanha ao vivo; `null` para. */
 export const followTurnSchema = z.object({ sessionId: z.string().min(1).max(200).nullable() })

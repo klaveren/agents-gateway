@@ -8,6 +8,7 @@ import { makePermissions } from './Permissions.Factory'
 import { makeProjectAccounts } from './ProjectAccounts.Factory'
 import { makeSecretMasker } from './SecretMask.Factory'
 import { makeGuidance } from './Guidance.Factory'
+import { runsUnder, sharedInto } from '@domain/Share.Policy'
 import { makeResourceFiles } from './ResourceFiles.Factory'
 import { makeConversationRepository } from './Conversations.Factory'
 import { IMcpServerConfig } from '@domain/models/McpServer.Model'
@@ -109,13 +110,13 @@ export function makeTools(): ITools {
             panels: panelStore(),
             permissions: lazyPermissions,
             agentTerminal: (agentId) => makeAgents().get(agentId)?.terminal,
-            agentFolder: (agentId) => agentFolderOf(agentId),
+            agentFolder: (agentId, conversationProject) => agentFolderOf(agentId, conversationProject),
             sharedFolders: sharedFoldersOf,
             agentEnv: (agentId) => makeAgents().get(agentId)?.env,
             mask: makeSecretMasker(),
             secrets: {
-              envFor: (agentId, sessionId) => makeResourceSecrets().envFor(agentId, sessionId),
-              sources: (agentId, sessionId) => makeResourceSecrets().sources(agentId, sessionId),
+              envFor: (agentId, sessionId, project) => makeResourceSecrets().envFor(agentId, sessionId, project),
+              sources: (agentId, sessionId, project) => makeResourceSecrets().sources(agentId, sessionId, project),
               markLoaded: (sessionId, kind, id) => makeResourceSecrets().markLoaded(sessionId, kind, id),
             },
             loops: loopGuard(),
@@ -255,7 +256,7 @@ function triggerImports(): ImportJobService {
 }
 
 /** ⛔ A pasta privada do agente (criada se faltar: o cerco não abre o que não existe) e o que ele faz nela. */
-export function agentFolderOf(agentId: string): { dir: string; read: boolean; write: boolean } | undefined {
+export function agentFolderOf(agentId: string, conversationProject?: string): { dir: string; read: boolean; write: boolean } | undefined {
   const agent = makeAgents().get(agentId)
   const dir = agent ? makeAgents().filesDir(agent) : undefined
   if (!agent || !dir) return undefined
@@ -266,18 +267,24 @@ export function agentFolderOf(agentId: string): { dir: string; read: boolean; wr
   } catch {
     return undefined
   }
-  return { dir, ...access }
+  // ⛔ Agente compartilhado numa conversa de OUTRO projeto: a pasta dele é só leitura (escrever ali seria um recado da conversa de
+  // um projeto para as do outro, que carregam essa mesma pasta).
+  return { dir, ...access, write: access.write && runsUnder(agent, conversationProject) === agent.projectId }
 }
 
 /**
  * ⛔ As pastas de arquivos das skills e commands que OUTRO projeto compartilhou com este (só leitura): uma por item, lida na
  * hora da chamada — parou de compartilhar, a pasta sai na próxima. Nunca a pasta do projeto de origem inteira.
  */
-export function sharedFoldersOf(projectId: string | undefined): string[] {
+export function sharedFoldersOf(projectId: string | undefined, agentId?: string): string[] {
   if (!projectId) return []
   const files = makeResourceFiles()
-  return makeGuidance()
-    .sharedResources(projectId)
+  const guidance = makeGuidance()
+  // Os compartilhados com o projeto + os que o AGENTE compartilhado liberou, da origem dele (uma conversa do projeto que o recebe os lê).
+  const agent = agentId ? makeAgents().get(agentId) : undefined
+  const granted = agent && sharedInto(agent, projectId) ? [...guidance.usableResources('skill', agent.id), ...guidance.usableResources('command', agent.id)] : []
+  const dirs = [...guidance.sharedResources(projectId), ...granted]
     .filter((resource) => resource.projectId && resource.projectId !== projectId)
     .map((resource) => files.dirOf(resource.kind, resource.id, resource.projectId))
+  return [...new Set(dirs)]
 }

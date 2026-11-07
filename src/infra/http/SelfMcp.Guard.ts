@@ -124,8 +124,8 @@ export function scopedWrites(api: TSelfApi, scope: IAgentWriteScope): TSelfApi {
   const agentProject = async (agentId: string) => {
     const found = await api('GET', `/agents/${encodeURIComponent(agentId)}`)
     if (!found.ok) return { reply: found as ISelfReply }
-    const projectId = (found.result as { projectId?: string } | undefined)?.projectId
-    return { projectId: projectId ?? null }
+    const detail = found.result as { projectId?: string; sharedWith?: string[] } | undefined
+    return { projectId: detail?.projectId ?? null, sharedWith: detail?.sharedWith ?? [] }
   }
 
   const check = async (method: string, path: string, body: unknown): Promise<ISelfReply | undefined> => {
@@ -143,7 +143,8 @@ export function scopedWrites(api: TSelfApi, scope: IAgentWriteScope): TSelfApi {
         if (agentId && !scope.unrestricted) {
           const found = await agentProject(agentId)
           if (found.reply) return found.reply
-          if (found.projectId && found.projectId !== scope.projectId) return outside(found.projectId)
+          // Um agente de OUTRO projeto só abre conversa aqui se foi compartilhado com o projeto desta conversa.
+          if (found.projectId && found.projectId !== scope.projectId && !(scope.projectId && found.sharedWith.includes(scope.projectId))) return outside(found.projectId)
         }
         return undefined
       }
@@ -159,6 +160,8 @@ export function scopedWrites(api: TSelfApi, scope: IAgentWriteScope): TSelfApi {
         // ⛔ O `PATCH` (patch_agent, e o save_agent de agente) grava NA HORA o que não amplia: o agente alvo tem de ser do
         // projeto da conversa, como no PUT.
         if (clean === '/agents') return inScope(bodyProject(body))
+        // ⛔ Compartilhar mexe em OUTRO projeto (o que recebe): o agente não compartilha agentes (nem o próprio).
+        if (method === 'PUT' && /^\/agents\/[^/]+\/shares\/?$/.test(clean)) return refuse('An agent conversation cannot share agents with other projects')
         const owner = await agentProject(id)
         if (owner.reply) return owner.reply
         const denied = inScope(owner.projectId)

@@ -41,6 +41,12 @@ export interface IAgent {
    * agente GLOBAL (o Atlas): aparece em todos os projetos.
    */
   projectId?: string
+  /**
+   * ⛔ Os projetos com que o dono COMPARTILHA o agente (ver `Share.Policy`): os membros deles CONVERSAM com ele, e só; a
+   * manutenção (configuração, permissões, prompt, apagar) é do projeto de origem. A conversa aberta lá é do projeto que
+   * recebe (pasta, regras, contas e MCPs dele). Só agente de projeto (o global já vale para todos). Ausente = nenhum.
+   */
+  sharedWith?: string[]
   /** As tags (ver `Tag.Policy`): para agrupar e filtrar nas listas. Ausente = nenhuma. */
   tags?: string[]
   /**

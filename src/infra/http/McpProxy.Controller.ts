@@ -3,6 +3,8 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { mcpSelection, mcpServesProject } from '@domain/models/McpServer.Model'
 import { ISession } from '@domain/models/Session.Model'
+import { PROJECT_METADATA_KEY } from '@domain/Session.Metadata'
+import { runsUnder } from '@domain/Share.Policy'
 import { McpRegistry } from '@infra/mcp/Mcp.Registry'
 import { Request, Response } from 'express'
 import { ownsSession, resolveCaller } from './Caller.Access'
@@ -52,13 +54,16 @@ export class McpProxyController {
 
     const agent = this.deps.agent(session.agentId)
     const config = this.deps.registry.get(serverId)
-    if (!agent || !config || !mcpServesProject(config, agent.projectId)) return void deny(404, 'Not found')
+    // ⛔ Agente compartilhado numa conversa de outro projeto: os servidores são os globais (e os da conversa), nunca os da origem.
+    const conversationProject = typeof session?.metadata?.[PROJECT_METADATA_KEY] === 'string' ? (session.metadata[PROJECT_METADATA_KEY] as string) : undefined
+    const scope = agent ? runsUnder(agent, conversationProject) : undefined
+    if (!agent || !config || !mcpServesProject(config, scope)) return void deny(404, 'Not found')
     const choice = mcpSelection(agent.allowedTools).get(config.id)
     if (!choice) return void deny(404, 'Not found')
     // ⛔ A credencial de quem conversa NUNCA foi ao agente: vem da concessão do turno (`Grant.Credential`) e daqui segue
     // para o servidor remoto, por dentro. Idem o segredo do cadastro (`auth: header`), que o cliente injeta no fetch.
     const token = resolved.identity?.token
-    const context = { ...(token ? { token } : {}), sessionId, agentId: session.agentId, ...(agent.projectId ? { projectId: agent.projectId } : {}) }
+    const context = { ...(token ? { token } : {}), sessionId, agentId: session.agentId, ...(scope ? { projectId: scope } : {}) }
     const allowed = (name: string) => choice.all || choice.tools.has(name)
 
     const server = new Server({ name: `gateway-proxy-${serverId}`, version: '1.0.0' }, { capabilities: { tools: {} } })

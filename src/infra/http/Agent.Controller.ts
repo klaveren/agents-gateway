@@ -76,12 +76,14 @@ import { audienceRules } from './Caller.Roles'
 import { HttpError, toHttpFailure } from './Http.Error'
 import { fail, ok } from './Http.Response'
 import { administers, adminView, IAdminView, requireAnyAdmin, requireProjectAdmin, requireProjectsAdmin } from './Project.Access'
+import { normalizeShares, sharedInto } from '@domain/Share.Policy'
 import { parseBody } from './Request.Parser'
 import {
   agentBodySchema,
   createSessionSchema,
   followTurnSchema,
   sendMessageSchema,
+  shareAgentSchema,
   shareConversationSchema,
   TAgentBody,
   updateSettingsSchema,
@@ -276,6 +278,7 @@ export class AgentController {
     this.updateAgent = this.updateAgent.bind(this)
     this.deleteAgent = this.deleteAgent.bind(this)
     this.resolveAgentImportIssue = this.resolveAgentImportIssue.bind(this)
+    this.shareAgent = this.shareAgent.bind(this)
     this.agents = usecases.agents
   }
 
@@ -361,12 +364,16 @@ export class AgentController {
           // ⛔ Com `?project`, os dele e os globais. Sem, tudo o que a pessoa pode usar (os globais e os dos projetos dela).
           .filter((entry) => this.agentVisible(entry.agent, caller, project))
           // ⚖️ Administra ESTE agente: o admin do projeto dele (o global, o do gateway) — não mais "é admin de algo".
+          // ⛔ O compartilhado com o projeto pedido: quem o recebe só CONVERSA (nunca administra, nem o admin do projeto que recebe).
           .map((entry) => ({ entry, admin: !!view && administers(view, entry.agent.projectId), unavailable: undefined as TAgentUnavailable | undefined }))
           .map((item) => ({ ...item, unavailable: this.unavailableOf(item.entry.agent, item.admin) }))
           .filter(({ admin, unavailable }) => admin || !unavailable)
           .map(({ entry, admin, unavailable }) => ({
             // ⛔ Quem não administra só vê os providers que rodam para ele: um desligado não é escolha.
             ...this.listedAgent(entry.agent, admin),
+            // ⚖️ Só a origem vê com quem o agente é compartilhado; quem recebe vê de onde ele veio (somente leitura).
+            ...(admin && entry.agent.sharedWith?.length ? { sharedWith: entry.agent.sharedWith } : {}),
+            ...(project && sharedInto(entry.agent, project) ? { sharedFrom: entry.agent.projectId } : {}),
             // Só quem administra vê que há problema da importação (a tela marca a lista); o texto vem no detalhe.
             ...(admin && entry.agent.importIssues?.length ? { importIssueCount: entry.agent.importIssues.length } : {}),
             // O grupo de modelos, para a tela dos grupos contar quem usa cada um sem abrir agente por agente.
@@ -451,6 +458,9 @@ export class AgentController {
     if (!this.usecases.projects) return undefined
     const agent = this.sessionAgent(agentId, (await this.usecases.settings.read()).agentId)
     if (agent?.projectId) {
+      // ⛔ Agente COMPARTILHADO com o projeto pedido: a conversa é do projeto que recebe (a pasta, as regras e as contas dele),
+      // para quem o usa. Quem não usa o projeto cai na regra de sempre (o projeto do agente, se for membro dele).
+      if (requested && sharedInto(agent, requested) && this.usecases.projects.canUse(caller, requested)) return requested
       if (!this.usecases.projects.canUse(caller, agent.projectId)) throw new AgentNotFoundError(agent.id)
       return agent.projectId
     }
@@ -524,8 +534,18 @@ export class AgentController {
   /** O agente aparece para esta pessoa (neste projeto, se pedido)? O global aparece em todos. */
   private agentVisible(agent: IAgent, caller: IProjectCaller, project?: string): boolean {
     if (!agent.projectId) return true
-    if (project) return agent.projectId === project
+    // ⛔ Com `?project`, os dele e os que outro projeto compartilhou com ele (a lista já exigiu que a pessoa o use).
+    if (project) return agent.projectId === project || !!agent.sharedWith?.includes(project)
     return !this.usecases.projects || this.usecases.projects.canUse(caller, agent.projectId)
+  }
+
+  /**
+   * ⛔ O agente atende esta pessoa neste projeto? O dele (membro), ou compartilhado com o projeto pedido que ela usa. O que
+   * não passa responde como inexistente.
+   */
+  private agentReachable(agent: IAgent, caller: IProjectCaller, requested?: string): boolean {
+    if (this.agentVisible(agent, caller)) return true
+    return !!requested && sharedInto(agent, requested) && !!this.usecases.projects?.canUse(caller, requested)
   }
 
   /** ⛔ Projeto que a pessoa não pode usar responde como inexistente (404): a lista diz que projetos existem. */
@@ -601,9 +621,21 @@ export class AgentController {
    */
   async getAgent(req: Request, res: Response) {
     await this.respond(res, async () => {
-      await this.requireAgentAdmin(req.params.agentId as string, 'getAgent')
+      const received = await this.receivedBy(req.params.agentId as string)
+      if (!received) await this.requireAgentAdmin(req.params.agentId as string, 'getAgent')
       const entry = this.agents.entry(req.params.agentId as string)
       if (!entry) throw new AgentNotFoundError(req.params.agentId as string)
+      // ⛔ Quem administra um projeto que RECEBEU o agente o lê, só leitura: vê de onde veio e com quais dos projetos dele é
+      // compartilhado (a tela trava o formulário). Os outros projetos da lista não aparecem. A edição segue só na origem (404).
+      if (received) {
+        const disabled = this.agents.unusableModels(entry.agent)
+        const { sharedWith: _all, ...rest } = entry.agent
+        return {
+          ...toAgentDetailDto({ ...entry, agent: rest }, (providerId) => this.providerFacts(providerId, disabled)),
+          sharedFrom: entry.agent.projectId,
+          sharedWith: received,
+        }
+      }
 
       const disabled = this.agents.unusableModels(entry.agent)
       // ⚖️ A guia Arquivos mostra a pasta como está no disco: o que a tela pôs e o que o agente gravou.
@@ -625,7 +657,8 @@ export class AgentController {
       const resolved = await this.requireCaller()
       const caller = this.callerOf(resolved)
       const agent = this.agents.get(req.params.agentId as string)
-      if (!agent || !this.agentVisible(agent, caller) || !(await this.opensAdminOnly(agent))) throw new AgentNotFoundError(req.params.agentId as string)
+      const requested = typeof req.query.project === 'string' && req.query.project ? req.query.project : undefined
+      if (!agent || !this.agentReachable(agent, caller, requested) || !(await this.opensAdminOnly(agent))) throw new AgentNotFoundError(req.params.agentId as string)
       // Os commands e as skills: a caixa sugere os dois ao digitar `/` (a skill escolhida vai inteira, já carregada).
       const guidance = this.usecases.guidance
       const resources = [...(guidance?.usableResources('command', agent.id) ?? []), ...(guidance?.usableResources('skill', agent.id) ?? [])].map((resource) => ({
@@ -635,8 +668,9 @@ export class AgentController {
       }))
       // E os documentos da conversa (os globais e os do projeto dela, como o índice do prompt): `/spec:<id>` o anexa inteiro.
       // ⚖️ Título e resumo só — o mesmo que o agente já vê no índice. O projeto vem da tela, e só vale o que a pessoa usa.
-      const requested = typeof req.query.project === 'string' && req.query.project ? req.query.project : undefined
-      const project = agent.projectId ?? (requested && this.usecases.projects?.exists(requested) && this.usecases.projects.canUse(caller, requested) ? requested : undefined)
+      // ⛔ Compartilhado: os documentos são os do projeto que recebe (a conversa é dele); as skills e os commands, os da origem liberados ao agente.
+      const receiving = !!requested && sharedInto(agent, requested) && !!this.usecases.projects?.canUse(caller, requested)
+      const project = receiving ? requested : (agent.projectId ?? (requested && this.usecases.projects?.exists(requested) && this.usecases.projects.canUse(caller, requested) ? requested : undefined))
       const docs = guidance ? [...guidance.docs(null), ...(project ? guidance.docs(project) : [])] : []
       return [...resources, ...docs.map((doc) => ({ id: `${doc.kind}:${doc.id}`, kind: doc.kind, description: doc.summary ? `${doc.title} — ${doc.summary}` : doc.title }))]
     })
@@ -833,6 +867,38 @@ export class AgentController {
   }
 
   /**
+   * Os projetos que RECEBERAM o agente e que a pessoa administra, quando ela NÃO administra a origem (vazio = não é o caso).
+   * `undefined` = não recebe: a regra de sempre (o admin da origem).
+   */
+  private async receivedBy(agentId: string): Promise<string[] | undefined> {
+    const agent = this.agents.get(agentId)
+    if (!agent?.projectId || !agent.sharedWith?.length) return undefined
+    const view = await adminView(this.usecases.proof)
+    if (!view || administers(view, agent.projectId)) return undefined
+    const mine = agent.sharedWith.filter((project) => administers(view, project))
+    return mine.length ? mine : undefined
+  }
+
+  /**
+   * `PUT /agents/:agentId/shares { projects }` — com quais projetos o agente é compartilhado (ver `Share.Policy`): os membros
+   * deles conversam com ele, e só. ⛔ O admin da origem e, de cada projeto que ENTRA na lista, o admin dele também; tirar da
+   * lista basta a origem. Agente global não se compartilha (já vale em todos). Devolve o agente (detalhe), com `sharedWith`.
+   */
+  async shareAgent(req: Request, res: Response) {
+    await this.respond(res, async () => {
+      const id = req.params.agentId as string
+      const entry = this.agents.entry(id)
+      const { projects } = parseBody(shareAgentSchema, req.body)
+      const added = normalizeShares(projects).filter((project) => !(entry?.agent.sharedWith ?? []).includes(project))
+      const by = await requireProjectsAdmin(this.usecases.proof, [this.agents.get(id)?.projectId ?? null, ...added], 'shareAgent')
+      if (!entry) throw new AgentNotFoundError(id)
+      const saved = this.agents.share(id, projects, by)
+      const fresh = this.agents.entry(saved.id)!
+      return toAgentDetailDto(fresh, (providerId) => this.providerFacts(providerId, this.agents.unusableModels(fresh.agent)))
+    })
+  }
+
+  /**
    * `POST /agents/:agentId/import-issues/resolve { code, target? }` — "resolvido": tira do agente os problemas da
    * importação que casam; `{ pending: true }` descarta todos os pendentes (o alcance guardado neles é esquecido). Só
    * admin; a revisão vai para o histórico. Devolve o agente inteiro.
@@ -972,7 +1038,9 @@ export class AgentController {
         const gatewayAdmin = !!view?.gateway
         const sessionAgent = this.sessionAgent(body.agentId, (await this.usecases.settings.read()).agentId)
         const agentAdmin = !!view && administers(view, sessionAgent?.projectId)
-        const scopeAdmin = !!view && administers(view, sessionAgent?.projectId ?? body.projectId)
+        // ⛔ Agente compartilhado numa conversa do projeto que o recebe: o escopo dela é o desse projeto, não o da origem.
+        const receiving = !!sessionAgent && !!body.projectId && sharedInto(sessionAgent, body.projectId)
+        const scopeAdmin = !!view && administers(view, receiving ? body.projectId : (sessionAgent?.projectId ?? body.projectId))
         const adminAccess = agentAdmin
 
         // ⛔ Trocar as instruções do agente é decisão de quem o administra: um membro descartaria as

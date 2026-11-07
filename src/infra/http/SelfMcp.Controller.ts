@@ -1292,6 +1292,16 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
   )
 
   server.registerTool(
+    'share_agent',
+    {
+      description:
+        'Share an agent with other projects, whose members then TALK to it (the owner project keeps editing it; the conversation there runs in the receiving project, and the agent secrets stay out: each project sets its own values). Replaces the WHOLE list of projects; [] stops sharing. The person must administer the owner project and each project added. Not available to an agent conversation. Confirm with the person first.',
+      inputSchema: { id: z.string().describe('From list_agents'), projects: z.array(z.string()).describe('Project ids; the full list, [] = none') },
+    },
+    async ({ id, projects }) => reply(await api('PUT', `/agents/${encodeURIComponent(id)}/shares`, { body: { projects } })),
+  )
+
+  server.registerTool(
     'share_resource',
     {
       description:

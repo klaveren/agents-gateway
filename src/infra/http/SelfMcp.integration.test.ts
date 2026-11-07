@@ -206,6 +206,7 @@ describe('MCP do próprio gateway (integração)', () => {
       'set_model_enabled',
       'set_model_price',
       'set_project_members',
+      'share_agent',
       'share_doc',
       'share_resource',
     ]
