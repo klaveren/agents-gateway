@@ -17,7 +17,7 @@ drain_set() {
 
 # Quantos turnos rodam agora; vazio se o gateway não respondeu.
 drain_running() {
-  curl -fsS --max-time 5 "http://$GATEWAY_HOST:$GATEWAY_PORT/v1/health?turns=1" 2>/dev/null | sed -n 's/.*"running":\([0-9]*\).*/\1/p'
+  curl -fsS --max-time 15 "http://$GATEWAY_HOST:$GATEWAY_PORT/v1/health?turns=1" 2>/dev/null | sed -n 's/.*"running":\([0-9]*\).*/\1/p'
 }
 
 # Liga o dreno e espera `running: 0`. $1 = teto em minutos (vazio = sem teto; 0 = não espera nada).
@@ -37,14 +37,20 @@ drain_and_wait() {
   started=$(date +%s)
   while :; do
     running=$(drain_running)
-    [[ -z "$running" || "$running" == "0" ]] && break
+    # ⛔ Só ZERO libera o reinício. Sem resposta (o gateway ocupado não respondeu em 5 s) NÃO é zero: antes era, e o
+    # deploy de 07/11 02:04 cortou três turnos assim. Sem resposta, espera e pergunta de novo (o teto, se houver, vale).
+    [[ "$running" == "0" ]] && break
     if [[ -n "$ceiling" ]] && (($(date +%s) - started >= ceiling * 60)); then
       drain_set off || true
       trap - INT TERM
       DRAIN_LEFT=$running
       return 1
     fi
-    log "Drenando: esperando $running turno(s) terminar antes de reiniciar…"
+    if [[ -z "$running" ]]; then
+      log "O gateway não respondeu quantos turnos rodam: espero e pergunto de novo…"
+    else
+      log "Esperando $running turno(s) terminar antes de reiniciar…"
+    fi
     sleep "${DRAIN_POLL_SECONDS:-15}"
   done
   trap - INT TERM
