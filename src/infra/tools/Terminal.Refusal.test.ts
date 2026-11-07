@@ -368,3 +368,19 @@ describe('terminal — a pasta privada do agente', () => {
     assert.match((await run('echo probe > agents/rui/../outro/zz.txt', true)) ?? '', /nenhuma regra de escrita permite/)
   })
 })
+
+describe('terminal — `IFS=` do `read` e `bash --version`', () => {
+  const rules = [rule('grep *', 'allow'), rule('printf *', 'allow'), rule('read *', 'allow'), rule('bash *', 'allow'), rule('cut *', 'allow'), rule('echo *', 'allow')]
+
+  it('passam: o IFS vale só para o read; o --version não lê o stdin', async () => {
+    assert.strictEqual(await refusal('grep -n x a.sh | while IFS= read -r l; do printf \'%s\\n\' "$l" | cut -c1-60; done', rules), undefined)
+    assert.strictEqual(await refusal('bash --version | head -1', [...rules, rule('head *', 'allow')]), undefined)
+  })
+
+  it('⛔ o IFS fora do read, e o bash sem script, seguem recusados', async () => {
+    assert.match((await refusal('IFS=/; echo $PATH', rules)) ?? '', /env:IFS/)
+    assert.match((await refusal('IFS=x echo a', rules)) ?? '', /env:IFS/)
+    assert.match((await refusal('echo ls | bash', rules)) ?? '', /shell-stdin/)
+    assert.match((await refusal('echo ls | bash -x', rules)) ?? '', /shell-stdin/)
+  })
+})
