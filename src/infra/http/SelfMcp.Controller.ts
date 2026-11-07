@@ -990,14 +990,25 @@ function registerTools(server: McpServer, api: TSelfApi, access: { admin: boolea
     'save_agent',
     {
       description:
-        'Create an agent, or replace the one with the same id: send every field, since an omitted adminOnly, sandbox or network falls back to its default (open to everyone, read-only, no network). Every problem comes back at once, field by field.',
+        'Create an agent, or replace the one with the same id: send every field, since an omitted adminOnly, sandbox or network falls back to its default (open to everyone, read-only, no network). Every problem comes back at once, field by field. Omitting projectId keeps the project of an existing agent (only an explicit null makes it global); from a conversation in a project, a new agent is born in that project. ⛔ Called by an agent, it never widens access by itself: tools, delegation, permissions, exposure (adminOnly/role), sandbox/network, env and model group beyond what the agent already has stay PENDING until an administrator confirms on the screen (the result says what and where; never say it was granted before that), and the rest applies now. A new agent starts with no tools, admin-only, read-only sandbox, and the rest is requested.',
       inputSchema: { ...agentShape, importedFrom },
     },
     async ({ importedFrom: source, ...agent }) => {
-      // ⚖️ Sem trava própria: o MCP grava o que a tela grava, e quem decide o alcance do agente é o admin.
-      const exists = (await api('GET', `/agents/${encodeURIComponent(agent.id)}`)).ok
-      const saved = exists ? await api('PUT', `/agents/${encodeURIComponent(agent.id)}`, { body: agent }) : await api('POST', '/agents', { body: agent })
-      return withImported(api, saved, source, (result) => ({ kind: 'agent', id: agent.id, ...(typeof result.projectId === 'string' ? { projectId: result.projectId } : {}) }))
+      // ⚖️ Pessoa: o MCP grava o que a tela grava, e quem decide o alcance do agente é o admin. AGENTE: o que amplia acesso vira
+      // pedido pendente (ver `SelfMcp.Guard`, `saveAgentWithoutWidening`) e o agente novo nasce no projeto da conversa.
+      const found = await api('GET', `/agents/${encodeURIComponent(agent.id)}`)
+      // ⛔ `projectId` OMITIDO mantém o projeto do agente que existe (o PUT o tornaria global); só `null` explícito o torna global.
+      const kept = (found.result as { projectId?: string } | undefined)?.projectId
+      const body = found.ok && agent.projectId === undefined && kept ? { ...agent, projectId: kept } : agent
+      const saved = found.ok ? await api('PUT', `/agents/${encodeURIComponent(agent.id)}`, { body }) : await api('POST', '/agents', { body })
+      const done = await withImported(api, saved, source, (result) => ({
+        kind: 'agent',
+        id: agent.id,
+        ...(typeof result.projectId === 'string' ? { projectId: result.projectId } : {}),
+      }))
+      // ⛔ O aviso vem PRIMEIRO: pendente ≠ liberado.
+      const notice = saved.ok ? (saved.result as { notice?: unknown } | undefined)?.notice : undefined
+      return typeof notice === 'string' ? { ...done, content: [{ type: 'text' as const, text: notice }, ...done.content] } : done
     },
   )
 
