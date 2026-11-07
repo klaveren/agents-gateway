@@ -154,8 +154,10 @@ export function scopedWrites(api: TSelfApi, scope: IAgentWriteScope): TSelfApi {
         return inScope(id)
       }
       case 'agents': {
-        // Pedidos de mudança (a pessoa aprova na tela): valem para o agente da conversa e seguem como estavam.
-        if (method === 'PATCH' || clean.endsWith('/permission-rules')) return undefined
+        // Pedidos de regra (a pessoa aprova na tela): valem para o agente da conversa e seguem como estavam.
+        if (clean.endsWith('/permission-rules')) return undefined
+        // ⛔ O `PATCH` (patch_agent, e o save_agent de agente) grava NA HORA o que não amplia: o agente alvo tem de ser do
+        // projeto da conversa, como no PUT.
         if (clean === '/agents') return inScope(bodyProject(body))
         const owner = await agentProject(id)
         if (owner.reply) return owner.reply

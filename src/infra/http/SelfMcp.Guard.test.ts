@@ -46,6 +46,7 @@ describe('SelfMcp.Guard', () => {
     assert.ok(refused(await guarded('POST', '/catalog/history/restore', { body: { kind: 'rule', id: 'r-q', project: 'Q' } })))
     assert.ok(refused(await guarded('POST', '/sessions', { body: { agentId: 'a-q' } })), 'abrir conversa com o agente de Q')
     assert.ok(refused(await guarded('POST', '/sessions', { body: { agentId: 'atlas', projectId: 'Q' } })))
+    assert.ok(refused(await guarded('PATCH', '/agents/a-q', { body: { patch: { name: 'x' }, reason: 'x' } })), 'o patch grava na hora o que não amplia: só no projeto da conversa')
     assert.deepStrictEqual(written, [])
   })
 

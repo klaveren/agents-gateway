@@ -174,9 +174,9 @@ WantedBy=multi-user.target
 UNIT
 systemctl daemon-reload
 systemctl enable "$SERVICE" >/dev/null 2>&1
-# ⛔ O reinício nunca corta uma conversa. Com o serviço no ar, liga o DRENO (turno novo recebe 503 `draining` com
-# `Retry-After`; os em andamento acabam) e espera `running: 0`, pelo tempo que for — com a esteira rodando sem parar, só
-# assim chega a zero. `DEPLOY_WAIT_MINUTES=<n>` é um teto OPCIONAL: acabando, o dreno é desligado e o setup PARA com erro,
+# ⛔ O reinício nunca corta uma conversa. Com o serviço no ar, espera `running: 0`, pelo tempo que for; com
+# `DEPLOY_DRAIN=1`, liga antes o DRENO (turno novo recebe 503 `draining` com `Retry-After`; os em andamento acabam) — com
+# a esteira rodando sem parar, só assim chega a zero, mas quem chama precisa reenviar o 503. `DEPLOY_WAIT_MINUTES=<n>` é um teto OPCIONAL: acabando, o dreno é desligado e o setup PARA com erro,
 # sem reiniciar (rode de novo). O processo novo nasce sem dreno.
 if systemctl is-active --quiet "$SERVICE"; then
   # shellcheck source=drain.sh

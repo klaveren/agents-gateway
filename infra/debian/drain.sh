@@ -25,7 +25,11 @@ drain_running() {
 drain_and_wait() {
   local ceiling="${1:-}" started running
   DRAIN_LEFT=0
-  if drain_set on; then
+  # ⚖️ O dreno é OPCIONAL (`DEPLOY_DRAIN=1`): recusa turno novo com 503, e quem chama (a esteira) precisa reenviar.
+  # Sem ele, a espera é a mesma, só sem recusar — com a esteira contínua, pode não chegar a zero (use o teto).
+  if [[ "${DEPLOY_DRAIN:-}" != 1 ]]; then
+    :
+  elif drain_set on; then
     trap 'drain_set off || true; exit 130' INT TERM
   else
     warn "O gateway no ar não aceitou o dreno (versão antiga?): espero os turnos acabarem mesmo assim, sem recusar os novos."

@@ -5,6 +5,8 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 # shellcheck source=drain.sh
 source ./drain.sh
+# Os casos daqui são do dreno ligado (o padrão do deploy é sem dreno; ver `DEPLOY_DRAIN`).
+export DEPLOY_DRAIN=1
 log() { :; }
 warn() { :; }
 sleep() { CLOCK=$((CLOCK + 15)); }
