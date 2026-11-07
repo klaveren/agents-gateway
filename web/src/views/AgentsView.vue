@@ -9,6 +9,7 @@ import { pendingCount } from '@/lib/permissionRequests'
 import { usePermissionRequestsStore } from '@/stores/permissionRequests'
 import BuildTabs from '@/components/BuildTabs.vue'
 import Icon from '@/components/Icon.vue'
+import SharedBadge from '@/components/SharedBadge.vue'
 import ListFilter from '@/components/ListFilter.vue'
 import TagChips from '@/components/TagChips.vue'
 import { filterList } from '@/lib/listFilter'
@@ -183,6 +184,7 @@ watch(creating, (value) => {
             <span class="flex min-w-0 items-center gap-1">
               <span class="truncate text-sm font-medium">{{ agent.name }}</span>
               <span v-if="!agent.projectId" class="shrink-0 text-sky-300" title="Global: aparece em todos os projetos" aria-label="Global"><Icon name="globe" class="h-3.5 w-3.5" /></span>
+              <SharedBadge :from="agent.sharedFrom" />
               <span v-if="agent.adminOnly" class="shrink-0 text-zinc-400" title="Administradores: só eles conversam com este agente" aria-label="Administradores"><Icon name="shield" class="h-3.5 w-3.5" /></span>
             </span>
             <span class="block truncate text-xs text-zinc-500">{{ providersLine(agent) }}</span>
@@ -215,7 +217,7 @@ watch(creating, (value) => {
           <RouterLink v-if="detail.role !== 'subagent'" :to="{ path: '/new', query: { agent: detail.id } }" class="btn btn-secondary ml-auto">Conversar</RouterLink>
         </div>
         <p v-if="draftNote" class="mx-auto mb-4 max-w-3xl text-sm text-emerald-300">{{ draftNote }}</p>
-        <AgentForm :agent="detail" :creating="false" @saved="drafted = undefined" @duplicate="duplicate" @removed="router.push('/agents')" />
+        <AgentForm :agent="detail" :creating="false" :shared-from="agents.byId.get(detail.id)?.sharedFrom" @saved="drafted = undefined" @duplicate="duplicate" @removed="router.push('/agents')" />
       </template>
       <p v-else-if="error" class="text-sm text-rose-300">{{ error }}</p>
       <div v-else class="grid h-full place-items-center text-zinc-500">Escolha um agente ou crie um novo.</div>

@@ -14,6 +14,7 @@ import { reconcileDraft, useThreadStore, type IOutgoingFile } from '@/stores/thr
 import AgentAvatar from './AgentAvatar.vue'
 import Composer from './Composer.vue'
 import Icon from './Icon.vue'
+import SharedBadge from './SharedBadge.vue'
 import ModelPicker from './ModelPicker.vue'
 import TurnBubbles from './TurnBubbles.vue'
 
@@ -158,7 +159,7 @@ async function send(text: string, files: IOutgoingFile[], settle: (ok: boolean) 
             >
               <AgentAvatar :name="option.name" :provider="option.providers[0]?.id ?? ''" size="sm" />
               <span class="min-w-0 flex-1">
-                <span class="block truncate text-sm font-medium">{{ option.name }}</span>
+                <span class="flex min-w-0 items-center gap-1"><span class="truncate text-sm font-medium">{{ option.name }}</span><SharedBadge :from="option.sharedFrom" /></span>
                 <span class="block truncate text-xs text-zinc-400">{{ option.providers[0]?.name }} · {{ option.providers[0]?.models[0] }}<template v-if="option.providers.length > 1"> · +{{ option.providers.length - 1 }} provedor(es)</template></span>
                 <span v-if="option.unavailable" class="block truncate text-xs text-amber-300">{{ option.unavailable.label }}</span>
               </span>
