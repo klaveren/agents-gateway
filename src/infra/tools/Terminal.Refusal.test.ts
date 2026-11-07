@@ -252,6 +252,15 @@ describe('a recusa da política diz a saída', () => {
     assert.match(policyRefusal('privilege escalation', 'sudo ls'), /Local, isso nunca roda no cerco\.$/)
     assert.strictEqual(policyRefusal('recursive force delete', 'rm -rf x'), 'Refused by the gateway tool policy: recursive force delete.')
   })
+
+  it('várias chamadas de sudo remoto: diz quais ficaram sem regra', async () => {
+    const { remoteSudoGap } = await import('./Local.Tools')
+    const rules = [rule('ssh * sudo ls *', 'allow')]
+    const line = "ssh 10.10.0.1 'sudo ls /var/lib' && ssh 10.10.0.1 'sudo systemctl restart k3s'"
+    assert.deepStrictEqual(await remoteSudoGap(line, checker(rules), {}), ['sudo systemctl restart k3s'])
+    assert.strictEqual(await remoteSudoGap("ssh 10.10.0.1 'sudo ls /var/lib'", checker(rules), {}), undefined)
+    assert.deepStrictEqual(await remoteSudoGap('sudo ls', checker(rules), {}), [])
+  })
 })
 
 describe('embutidos inofensivos do shell', () => {

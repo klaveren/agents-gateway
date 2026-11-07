@@ -167,7 +167,8 @@ export function matches(rule: ISystemRule, subject: IPermissionSubject): boolean
 
 /**
  * Comando por PALAVRAS: `git push *` casa `git push origin main`; um `*` sozinho casa qualquer sequência de palavras
- * (inclusive nenhuma), e dentro de uma palavra casa caracteres (`npm run test*`). O nome do comando vale pela base:
+ * (inclusive nenhuma), e dentro de uma palavra casa caracteres (`npm run test*`); colado na última palavra, cobre também as
+ * palavras seguintes (`git status*` casa `git status --short`). O nome do comando vale pela base:
  * `/bin/rm` é `rm` — senão bastaria o caminho inteiro para fugir da regra.
  */
 export function commandMatches(pattern: string, argv: readonly string[]): boolean {
@@ -177,6 +178,9 @@ export function commandMatches(pattern: string, argv: readonly string[]): boolea
   const walk = (i: number, j: number): boolean => {
     if (i === want.length) return j === got.length
     if (want[i] === '*') return walk(i + 1, j) || (j < got.length && walk(i, j + 1))
+    // ⚖️ O `*` colado na ÚLTIMA palavra (`git status*`) é prefixo do comando, como se escreve no Claude Code: cobre
+    // `git status --short`. Antes cobria só a palavra, e a regra aprovada `git status*` recusava `git status --short`.
+    if (i === want.length - 1 && want[i].endsWith('*') && /[^*]/.test(want[i])) return j < got.length && wordMatches(want[i], got[j])
     return j < got.length && wordMatches(want[i], got[j]) && walk(i + 1, j + 1)
   }
   return walk(0, 0)
