@@ -120,6 +120,46 @@ describe('ResourceSecretsService', () => {
       assert.ok(!JSON.stringify([...beta, ...service.list('skill', 'deploy')]).includes('valor-do'))
     })
 
+    it('⛔ AGENTE compartilhado: na conversa do projeto que recebe vale o valor DELE; o segredo da origem não chega', () => {
+      const service = shared()
+      // theo (do alfa) é compartilhado com o beta: o alfa e o beta configuram os seus, com os mesmos nomes.
+      service.save('agent', 'theo', { name: 'AGENTE_TOKEN', value: 'agente-do-alfa' }, 'ana')
+      service.save('agent', 'theo', { name: 'SO_DO_ALFA', value: 'so-na-origem' }, 'ana')
+      service.save('agent', 'theo', { name: 'AGENTE_TOKEN', value: 'agente-do-beta' }, 'bia', 'beta')
+      service.markLoaded('c-alfa', 'skill', 'deploy')
+      service.markLoaded('c-beta', 'skill', 'deploy')
+      // Na origem (e sem projeto de conversa): os valores da origem.
+      assert.deepStrictEqual(service.envFor('theo', 'c-alfa', 'alfa').env, { AGENTE_TOKEN: 'agente-do-alfa', SO_DO_ALFA: 'so-na-origem', TOKEN: 'valor-do-alfa' })
+      assert.strictEqual(service.envFor('theo', 'c-alfa').env.AGENTE_TOKEN, 'agente-do-alfa')
+      // No beta: os do beta — o que o beta não configurou não vem (a skill do alfa também usa o valor do beta).
+      assert.deepStrictEqual(service.envFor('theo', 'c-beta', 'beta').env, { AGENTE_TOKEN: 'agente-do-beta', TOKEN: 'valor-do-beta' })
+      // O prompt do beta: só os nomes que o beta configurou.
+      assert.deepStrictEqual(service.ambientFor('theo', [], 'beta'), { agent: ['AGENTE_TOKEN'], resources: [] })
+      // A lista do beta mostra o nome que a origem usa e ele ainda não configurou.
+      assert.deepStrictEqual(
+        service.list('agent', 'theo', 'beta').map((item) => [item.name, item.configured]),
+        [
+          ['AGENTE_TOKEN', true],
+          ['SO_DO_ALFA', false],
+        ],
+      )
+      // O agente global numa conversa de projeto segue na origem (não é de projeto nenhum).
+      assert.deepStrictEqual(service.envFor('gus', 'c-gus', 'beta').env, {})
+    })
+
+    it('⛔ parar de compartilhar o agente apaga os valores de quem saiu', () => {
+      const service = shared()
+      service.save('agent', 'theo', { name: 'AGENTE_TOKEN', value: 'agente-do-alfa' }, 'ana')
+      service.save('agent', 'theo', { name: 'AGENTE_TOKEN', value: 'agente-do-beta' }, 'bia', 'beta')
+      service.keepAgentProjects('theo', [])
+      assert.deepStrictEqual(service.envFor('theo', 'c1', 'beta').env, {})
+      assert.deepStrictEqual(
+        service.list('agent', 'theo', 'beta').map((item) => item.configured),
+        [false],
+      )
+      assert.strictEqual(service.envFor('theo', 'c1', 'alfa').env.AGENTE_TOKEN, 'agente-do-alfa')
+    })
+
     it('⛔ deixar de compartilhar apaga os valores de quem saiu', () => {
       const service = shared()
       service.keepProjects('deploy', [])

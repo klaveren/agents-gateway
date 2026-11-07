@@ -141,6 +141,8 @@ export const AGENT_SHAPE: TShape<IAgent> = {
   role: 'value',
   adminOnly: 'value',
   projectId: 'value',
+  // Com quem o dono compartilha (ver `Share.Policy`): vai no histórico, que registra compartilhar e parar.
+  sharedWith: 'set',
   permissions: { list: PERMISSION_RULE_SHAPE },
   terminal: { object: TERMINAL_SHAPE },
   diagnostics: { object: DIAGNOSTICS_SHAPE },

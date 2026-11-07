@@ -629,7 +629,7 @@ export class CatalogImportPlanner {
 }
 
 /** Os tipos com `sharedWith` no documento (ADR também o carrega na forma, mas não se compartilha: vira problema). */
-const SHARING_KINDS: readonly TCatalogKind[] = ['skill', 'command', 'spec', 'adr', 'knowledge']
+const SHARING_KINDS: readonly TCatalogKind[] = ['agent', 'skill', 'command', 'spec', 'adr', 'knowledge']
 
 /**
  * ⛔ O `sharedWith` que vem de OUTRO gateway (ou do mesmo, de antes): item global não compartilha (limpa); projeto que não

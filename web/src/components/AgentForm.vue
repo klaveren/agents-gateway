@@ -38,6 +38,8 @@
   import AgentSchedules from './AgentSchedules.vue'
   import AgentLedger from './AgentLedger.vue'
   import SecretVariables from './SecretVariables.vue'
+  import ShareProjects from './ShareProjects.vue'
+  import { scopeLabel, sharedFromOf } from '@/lib/guidance'
   import AgentModelGroup from './AgentModelGroup.vue'
   import PermissionCategoryTabs from './PermissionCategoryTabs.vue'
   import PermissionRules from './PermissionRules.vue'
@@ -51,7 +53,7 @@
   import HistoryPanel from './HistoryPanel.vue'
   import ConfirmDialog from './ConfirmDialog.vue'
 
-  const props = defineProps<{ agent?: IAgentDetail; creating: boolean }>()
+  const props = defineProps<{ agent?: IAgentDetail; creating: boolean; sharedFrom?: string }>()
   /** Os construtores do core como alvos de delegação (fora da lista de agentes). */
   const CORE_BUILDERS = (Object.keys(BUILD_KINDS) as TBuildKind[]).map((kind) => ({ id: builderAgentId(kind), name: BUILD_KINDS[kind].builder, noun: BUILD_KINDS[kind].noun }))
   const emit = defineEmits<{ saved: [id: string]; duplicate: [agent: IAgentDetail]; removed: [] }>()
@@ -359,7 +361,10 @@
   const settings = useSettingsStore()
   const auth = useAuthStore()
   /** Agente global: só o admin do gateway altera; quem administra o projeto lê. */
-  const locked = computed(() => !props.creating && !!props.agent && !props.agent.projectId && !auth.isAdmin)
+  const globalLocked = computed(() => !props.creating && !!props.agent && !props.agent.projectId && !auth.isAdmin)
+  /** Veio de outro projeto (compartilhado): o projeto de origem. Aqui é só leitura; só as Variáveis (valores deste projeto) se editam. */
+  const sharedFrom = computed(() => (props.creating || !props.agent ? undefined : props.sharedFrom ?? sharedFromOf(props.agent, projects.current)))
+  const locked = computed(() => globalLocked.value || !!sharedFrom.value)
   const groupChoice = computed({
     get: () => (form.value.modelGroup === undefined || form.value.modelGroup === null ? '' : form.value.modelGroup),
     set: (value: string) => (form.value.modelGroup = value === '' ? null : value),
@@ -402,7 +407,7 @@
     agents.setPermissions(props.agent.id, permissions)
   }
 
-  type TTab = 'agente' | 'personalidade' | 'instrucoes' | 'triggers' | 'modelos' | 'ferramentas' | 'delegacao' | 'mcps' | 'sdk' | 'recursos' | 'arquivos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos' | 'memoria' | 'variaveis' | 'historico' | 'problemas'
+  type TTab = 'agente' | 'personalidade' | 'instrucoes' | 'triggers' | 'modelos' | 'ferramentas' | 'delegacao' | 'mcps' | 'sdk' | 'recursos' | 'arquivos' | 'contexto' | 'tamanho' | 'hooks' | 'agendamentos' | 'memoria' | 'variaveis' | 'compartilhar' | 'historico' | 'problemas'
   // `#agendamentos` no link (a visão geral dos agendamentos) abre direto na guia.
   /** O nome das ferramentas do gateway na guia Ferramentas (o id técnico fica na dica). */
   const LOCAL_TOOL_LABEL: Record<string, string> = {
@@ -419,7 +424,7 @@
   }
 
   const initialHash = useRoute().hash
-  const HASH_TAB: Record<string, TTab> = { '#agendamentos': 'agendamentos', '#memoria': 'memoria', '#variaveis': 'variaveis', '#historico': 'historico', '#problemas': 'problemas', '#personalidade': 'personalidade', '#instrucoes': 'instrucoes' }
+  const HASH_TAB: Record<string, TTab> = { '#agendamentos': 'agendamentos', '#memoria': 'memoria', '#variaveis': 'variaveis', '#compartilhar': 'compartilhar', '#historico': 'historico', '#problemas': 'problemas', '#personalidade': 'personalidade', '#instrucoes': 'instrucoes' }
   const tab = ref<TTab>(HASH_TAB[initialHash] ?? 'agente')
   /** Por que o agente não roda agora (e o servidor recusa delegar a ele), ou nada. Só administradores não impede delegar. */
   const cannotRun = (other: { unavailable?: { reason: string; label: string } }) =>
@@ -469,6 +474,7 @@
     agendamentos: [],
     memoria: [],
     variaveis: ['env'],
+    compartilhar: [],
     historico: [],
     problemas: [],
   }
@@ -489,6 +495,16 @@
   watch(accessSections, (list) => {
     if (!list.length && permissionPane.value === 'access') permissionPane.value = 'rules'
   })
+
+  /** Os projetos com que o agente está compartilhado (o salvo). */
+  const sharedNow = ref<string[]>([])
+  watch(() => props.agent?.sharedWith, (list) => (sharedNow.value = [...(list ?? [])]), { immediate: true })
+  const canShare = computed(() => !props.creating && !!props.agent?.projectId && !sharedFrom.value && projects.manages)
+  async function saveShares(list: string[]) {
+    if (!props.agent) return
+    const saved = await agents.share(props.agent.id, list)
+    sharedNow.value = [...(saved.sharedWith ?? list)]
+  }
 
   const tabs = computed(() => {
     const tools = form.value.allowedTools
@@ -528,6 +544,8 @@
       // As variáveis secretas do agente: só admin e só para agente já gravado (o valor entra e nunca volta).
       // As variáveis do terminal: as fixas (com o Salvar) e as secretas (só admin, agente já gravado).
       { id: 'variaveis', label: 'Variáveis', count: envList.value.length, alert: alert('variaveis') },
+      // Compartilhar: só o agente de um projeto, já gravado, e do projeto dono (quem recebe não repassa).
+      ...(canShare.value ? [{ id: 'compartilhar' as const, label: 'Compartilhar', count: sharedNow.value.length }] : []),
       { id: 'historico', label: 'Histórico' },
       // Só aparece com problema: o que a importação deixou anotado no agente (não impediu a gravação).
       ...(importIssues.value.length ? [{ id: 'problemas' as const, label: 'Problemas da importação', count: importIssues.value.length }] : []),
@@ -700,7 +718,7 @@
   /** As guias com mudança não salva (ganham um ponto amarelo). */
   const unsavedTabs = computed<TTab[]>(() => parts.value.filter(([, , part]) => part.dirty).map(([id]) => id))
   /** As guias sem nada que o "Salvar agente" grave: só leitura, ou listas que gravam na hora. */
-  const FOOTERLESS_TABS: readonly TTab[] = ['tamanho', 'hooks', 'agendamentos', 'memoria', 'historico', 'problemas']
+  const FOOTERLESS_TABS: readonly TTab[] = ['compartilhar', 'tamanho', 'hooks', 'agendamentos', 'memoria', 'historico', 'problemas']
 
   const saveSummary = computed(() => {
     const { providers: targets, modes, allowedTools } = form.value
@@ -790,6 +808,7 @@
         :key="item.id"
         type="button"
         role="tab"
+        :data-test="`agent-tab-${item.id}`"
         :aria-selected="tab === item.id"
         class="flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-sm whitespace-nowrap"
         :class="tab === item.id ? 'border-emerald-500 text-zinc-100' : 'border-transparent text-zinc-400 hover:text-zinc-200'"
@@ -801,7 +820,8 @@
         <span v-else-if="unsavedTabs.includes(item.id)" class="h-1.5 w-1.5 rounded-full bg-amber-400" title="Mudança não salva" />
       </button>
     </nav>
-    <p v-if="locked" class="text-xs text-amber-300" data-test="global-readonly">Global: só o administrador do gateway altera.</p>
+    <p v-if="sharedFrom" class="rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-sm text-sky-200" data-test="shared-readonly">Compartilhado por {{ scopeLabel(sharedFrom, projects.list) }}: só leitura aqui; a manutenção é lá.</p>
+    <p v-else-if="locked" class="text-xs text-amber-300" data-test="global-readonly">Global: só o administrador do gateway altera.</p>
     <fieldset :disabled="locked" class="contents">
     <fieldset v-show="tab === 'agente'" class="grid gap-4 sm:grid-cols-2">
       <label class="field">
@@ -1486,43 +1506,6 @@
       <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para usar esta guia.</p>
     </section>
 
-    <!-- As variáveis secretas também têm o próprio cadastro: fora do Salvar do agente. -->
-    <!-- ⚖️ As duas formas de variável do terminal, juntas: as fixas (texto, no registro do agente, gravadas com o Salvar) e
-         as secretas (cifradas; o valor só entra, gravado à parte). Chegam ao mesmo terminal; a secreta vence a fixa. -->
-    <section v-if="tab === 'variaveis'" class="flex flex-col gap-3">
-      <section class="tool-card">
-        <header>
-          <h3>Fixas</h3>
-          <span class="count">{{ envList.length || 'nenhuma' }} · salvas com o botão Salvar do agente</span>
-        </header>
-        <div class="flex flex-col gap-2 p-3">
-        <p class="hint">
-          Texto comum, em todo terminal deste agente (o dele e o dos CLIs): a autoria do git (GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL…), idioma, região. O que o gateway monta
-          (HOME, PATH, a identidade) vence. Segredo não mora aqui: vai em Secretas, logo abaixo, ou nas contas do projeto.
-        </p>
-        <div v-for="(row, index) in envList" :key="index" class="flex flex-wrap items-center gap-2">
-          <input v-model="row.name" class="input w-56 font-mono text-xs" placeholder="GIT_AUTHOR_NAME" :aria-label="`Nome da variável ${index + 1}`" />
-          <input v-model="row.value" class="input min-w-0 flex-1 font-mono text-xs" placeholder="valor" :aria-label="`Valor da variável ${index + 1}`" />
-          <button type="button" class="btn btn-sm btn-danger" @click="envList.splice(index, 1)">Remover</button>
-        </div>
-        <button type="button" class="btn btn-sm btn-ghost self-start" @click="envList.push({ name: '', value: '' })">+ Variável</button>
-        <small v-for="name in envRepeated" :key="`dup-${name}`" class="error">{{ name }} aparece mais de uma vez</small>
-        <small v-for="message in issues.env" :key="message" class="error">{{ message }}</small>
-        </div>
-      </section>
-      <section class="tool-card">
-        <header>
-          <h3>Secretas</h3>
-          <span class="count">cifradas · cada uma é gravada na hora, à parte do Salvar</span>
-        </header>
-        <div class="p-3">
-          <SecretVariables v-if="agent && !creating && !locked" :base-path="`/agents/${encodeURIComponent(agent.id)}`" scope-label="deste agente (sempre disponíveis para ele)" />
-          <p v-else-if="locked" class="text-sm text-zinc-400">Só quem administra o gateway cadastra variável secreta de agente global.</p>
-          <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para cadastrar variável secreta.</p>
-        </div>
-      </section>
-    </section>
-
     <section v-if="tab === 'problemas' && agent">
       <ImportIssues :issues="importIssues" :resolve="(issue) => agents.resolveIssue(agent!.id, issue)" />
     </section>
@@ -1550,8 +1533,53 @@
 
     </fieldset>
 
+    <section v-if="tab === 'compartilhar' && canShare && agent" class="flex flex-col gap-3">
+      <ShareProjects :owner="agent.projectId ?? ''" :shared="sharedNow" :save="saveShares" description="O outro projeto conversa com o agente, sem editar. A conversa roda na pasta e nas regras do projeto de lá. Segredos não vão junto: cada projeto configura os seus." />
+    </section>
+
+    <!-- As variáveis secretas também têm o próprio cadastro: fora do Salvar do agente. -->
+    <!-- ⚖️ As duas formas de variável do terminal, juntas: as fixas (texto, no registro do agente, gravadas com o Salvar) e
+         as secretas (cifradas; o valor só entra, gravado à parte). Chegam ao mesmo terminal; a secreta vence a fixa. -->
+    <section v-if="tab === 'variaveis'" class="flex flex-col gap-3">
+      <fieldset :disabled="locked" class="contents">
+      <section class="tool-card">
+        <header>
+          <h3>Fixas</h3>
+          <span class="count">{{ envList.length || 'nenhuma' }} · salvas com o botão Salvar do agente</span>
+        </header>
+        <div class="flex flex-col gap-2 p-3">
+        <p class="hint">
+          Texto comum, em todo terminal deste agente (o dele e o dos CLIs): a autoria do git (GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL…), idioma, região. O que o gateway monta
+          (HOME, PATH, a identidade) vence. Segredo não mora aqui: vai em Secretas, logo abaixo, ou nas contas do projeto.
+        </p>
+        <div v-for="(row, index) in envList" :key="index" class="flex flex-wrap items-center gap-2">
+          <input v-model="row.name" class="input w-56 font-mono text-xs" placeholder="GIT_AUTHOR_NAME" :aria-label="`Nome da variável ${index + 1}`" />
+          <input v-model="row.value" class="input min-w-0 flex-1 font-mono text-xs" placeholder="valor" :aria-label="`Valor da variável ${index + 1}`" />
+          <button type="button" class="btn btn-sm btn-danger" @click="envList.splice(index, 1)">Remover</button>
+        </div>
+        <button type="button" class="btn btn-sm btn-ghost self-start" @click="envList.push({ name: '', value: '' })">+ Variável</button>
+        <small v-for="name in envRepeated" :key="`dup-${name}`" class="error">{{ name }} aparece mais de uma vez</small>
+        <small v-for="message in issues.env" :key="message" class="error">{{ message }}</small>
+        </div>
+      </section>
+      </fieldset>
+      <section class="tool-card">
+        <header>
+          <h3>Secretas</h3>
+          <span class="count">cifradas · cada uma é gravada na hora, à parte do Salvar</span>
+        </header>
+        <div class="p-3">
+          <p v-if="sharedFrom && agent && !creating" class="mb-2 text-sm text-sky-200" data-test="shared-secrets">Valores deste projeto (não vêm do projeto de origem)</p>
+          <SecretVariables v-if="agent && !creating && !globalLocked" :base-path="`/agents/${encodeURIComponent(agent.id)}`" :project="sharedFrom ? projects.current : undefined" scope-label="deste agente (sempre disponíveis para ele)" />
+          <p v-else-if="globalLocked" class="text-sm text-zinc-400">Só quem administra o gateway cadastra variável secreta de agente global.</p>
+          <p v-else class="text-sm text-zinc-400">Salve o agente primeiro para cadastrar variável secreta.</p>
+        </div>
+      </section>
+    </section>
+
+
     <!-- O rodapé com o Salvar fica preso embaixo, à vista em qualquer guia, por mais longa que seja. -->
-    <div v-show="!FOOTERLESS_TABS.includes(tab)" class="form-footer flex gap-2">
+    <div v-if="!sharedFrom" v-show="!FOOTERLESS_TABS.includes(tab)" class="form-footer flex gap-2">
       <button v-if="!locked" type="submit" :disabled="saving || !ready || !!loadError || !form.providers.length" class="btn btn-primary">
         {{ saving ? 'Salvando…' : creating ? 'Criar agente' : 'Salvar agente' }}
       </button>

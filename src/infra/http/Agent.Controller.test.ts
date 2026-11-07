@@ -922,10 +922,10 @@ describe('AgentController', () => {
         connection: (id: string) =>
           ({ google: { providerId: id, name: 'Gemini', protocol: EProvider.GOOGLE, key: 'k' }, codex: { providerId: id, name: 'ChatGPT', protocol: EProvider.CODEX } })[id],
       } as never
-      const withRules = async (body: unknown, settings = new NullSettingsRepository()) => {
+      const withRules = async (body: unknown, settings = new NullSettingsRepository(), models?: unknown) => {
         const { res, locals } = mockResponse()
         const agents = testAgentCatalog(undefined, (agent, target) => target.provider === 'google')
-        const controller = controllerWith({}, fakeCatalog(), proof, { settings, agents, providers })
+        const controller = controllerWith({}, fakeCatalog(), proof, { settings, agents, providers, ...(models ? { models } : {}) } as never)
         await withCaller(ADMIN, () => controller.updateSettings(mockRequest({ body }), res))
         return { locals, settings }
       }
@@ -951,7 +951,6 @@ describe('AgentController', () => {
           { modelGroups: [{ ...group, steps: [{ provider: 'nao-existe', model: 'x' }] }] },
           { modelGroups: [group], defaultModelGroup: 'outro' },
           { modelGroups: [group, group] },
-          { modelGroups: [{ ...group, steps: [] }] },
         ]) {
           const { locals, settings } = await withRules(body)
           assert.strictEqual(locals.statusCode, 422, JSON.stringify(body))
@@ -960,6 +959,33 @@ describe('AgentController', () => {
         const { locals, settings } = await withRules({ modelGroups: [group], defaultModelGroup: 'padrao' })
         assert.strictEqual(locals.statusCode, 200)
         assert.deepStrictEqual([(await settings.read()).modelGroups, (await settings.read()).defaultModelGroup], [[group], 'padrao'])
+      })
+
+      it('⛔ sequência de modelos: passo com modelo desabilitado ou provedor desligado é 422 com o passo; sequência que não mudou passa', async () => {
+        // Habilitado: só o gemini-3.6-flash do google (o openai está desligado no mock de providers).
+        const models = { isEnabled: (provider: string, model: string) => provider === 'google' && model === 'gemini-3.6-flash' }
+        const ok = { id: 'padrao', name: 'Padrão', steps: [{ provider: 'google', model: 'gemini-3.6-flash' }] }
+        for (const step of [
+          { provider: 'google', model: 'gemini-desabilitado' },
+          { provider: 'openai', model: 'gpt-5.6-sol' },
+        ]) {
+          const settings = new NullSettingsRepository()
+          const { locals } = await withRules({ modelGroups: [{ ...ok, steps: [ok.steps[0], step] }] }, settings, models)
+          assert.strictEqual(locals.statusCode, 422, JSON.stringify(step))
+          const details = JSON.stringify(locals.body?.details)
+          assert.ok(details.includes('modelGroups[0].steps[1]') && details.includes(step.model), details)
+          assert.strictEqual((await settings.read()).modelGroups, undefined, 'nada é gravado')
+        }
+        assert.strictEqual((await withRules({ modelGroups: [ok] }, new NullSettingsRepository(), models)).locals.statusCode, 200)
+
+        // Já gravada com passo que não serve (antes da retirada): editar OUTRA coisa não trava; mexer nela, sim.
+        const stale = { id: 'velha', name: 'Velha', steps: [{ provider: 'google', model: 'gemini-desabilitado' }] }
+        const settings = new NullSettingsRepository()
+        await settings.save({ audience: 'all', modelGroups: [stale] })
+        assert.strictEqual((await withRules({ audience: 'restricted' }, settings, models)).locals.statusCode, 200)
+        assert.strictEqual((await withRules({ modelGroups: [{ ...stale }] }, settings, models)).locals.statusCode, 200, 'igual ao gravado = não mudou')
+        assert.strictEqual((await withRules({ modelGroups: [{ ...stale, name: 'Outra' }] }, settings, models)).locals.statusCode, 422)
+        assert.strictEqual((await withRules({ modelGroups: [{ ...stale, steps: [] }] }, settings, models)).locals.statusCode, 200, 'vazia é válida')
       })
 
       it('limites: gravados na faixa, um a um; fora da faixa é 422; a leitura traz o que vale e a faixa', async () => {

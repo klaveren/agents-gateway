@@ -69,6 +69,10 @@ export interface IAgentDto {
   adminOnly?: boolean
   /** O projeto do agente; ausente = global. */
   projectId?: string
+  /** Os projetos com que o dono compartilha o agente (só quem administra a origem os vê). */
+  sharedWith?: string[]
+  /** Na lista de um projeto: de onde veio o agente compartilhado com ele (somente leitura aqui). */
+  sharedFrom?: string
   /** As tags (ver `Tag.Policy`). */
   tags?: string[]
 }
@@ -160,6 +164,7 @@ export function toAgentDetailDto(
     ...toAgentDto(entry.agent, factsOf),
     systemPrompt: entry.agent.systemPrompt,
     soul: entry.agent.soul,
+    ...(entry.agent.sharedWith?.length ? { sharedWith: entry.agent.sharedWith } : {}),
     ...(entry.agent.permissions?.length ? { permissions: entry.agent.permissions } : {}),
     ...(entry.agent.terminal ? { terminal: entry.agent.terminal } : {}),
     ...(entry.agent.diagnostics ? { diagnostics: entry.agent.diagnostics } : {}),

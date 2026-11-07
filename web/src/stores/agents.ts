@@ -78,6 +78,17 @@ export const useAgentsStore = defineStore('agents', () => {
     return saved
   }
 
+  /**
+   * A guia Compartilhar: grava a lista INTEIRA de projetos. ⚖️ Como em `saveFiles`: troca só o `sharedWith` no detalhe
+   * guardado, no MESMO objeto (o formulário aberto não se refaz); as listas dos outros projetos são esquecidas.
+   */
+  async function share(id: string, projects: string[]): Promise<IAgentDetail> {
+    const saved = await api<IAgentDetail>(`/agents/${encodeURIComponent(id)}/shares`, { method: 'PUT', body: { projects } })
+    details.update(id, (current) => Object.assign(current, { sharedWith: saved.sharedWith ?? projects }))
+    for (const key of lists.keys()) if (key !== listKey.value) lists.drop(key)
+    return saved
+  }
+
   /** Relê a lista do projeto atual; as dos outros projetos são esquecidas e lidas na volta a eles. */
   async function reloadLists(): Promise<void> {
     for (const key of lists.keys()) if (key !== listKey.value) lists.drop(key)
@@ -167,6 +178,7 @@ export const useAgentsStore = defineStore('agents', () => {
     save,
     remove,
     saveFiles,
+    share,
     setPermissions,
     resolveIssue,
     reset,

@@ -111,7 +111,12 @@ function sameStep(a: IFallbackStep, b: IFallbackStep): boolean {
 }
 
 /** Os problemas dos grupos (o que a tela e a API recusam), campo a campo. `known`: os provedores configurados. */
-export function modelGroupIssues(groups: readonly IModelGroup[], known?: (provider: string) => boolean): Array<{ field: string; message: string }> {
+export function modelGroupIssues(
+  groups: readonly IModelGroup[],
+  known?: (provider: string) => boolean,
+  /** ⛔ O motivo de o passo não servir (provedor desligado, modelo desativado…); `undefined` = serve. Só roda onde o chamador quer (os grupos que mudaram). */
+  unusable?: (step: IFallbackStep, group: IModelGroup) => string | undefined,
+): Array<{ field: string; message: string }> {
   const issues: Array<{ field: string; message: string }> = []
   if (groups.length > MODEL_GROUP_BOUNDS.groups) issues.push({ field: 'modelGroups', message: `at most ${MODEL_GROUP_BOUNDS.groups} groups` })
   const seen = new Set<string>()
@@ -121,12 +126,33 @@ export function modelGroupIssues(groups: readonly IModelGroup[], known?: (provid
     else if (seen.has(group.id)) issues.push({ field: `${at}.id`, message: `duplicate id: ${group.id}` })
     seen.add(group.id)
     if (!group.name.trim() || group.name.length > MODEL_GROUP_BOUNDS.name) issues.push({ field: `${at}.name`, message: `required, up to ${MODEL_GROUP_BOUNDS.name} characters` })
-    if (!group.steps.length) issues.push({ field: `${at}.steps`, message: 'at least one step' })
+    // Grupo SEM passos é válido: o agente usa os modelos dele (é como fica o grupo quando o último modelo sai — ver `retireSteps`).
     if (group.steps.length > MODEL_GROUP_BOUNDS.steps) issues.push({ field: `${at}.steps`, message: `at most ${MODEL_GROUP_BOUNDS.steps} steps` })
     group.steps.forEach((step, position) => {
       if (known && !known(step.provider)) issues.push({ field: `${at}.steps[${position}].provider`, message: `unknown provider: ${step.provider}` })
+      else {
+        const reason = unusable?.(step, group)
+        if (reason) issues.push({ field: `${at}.steps[${position}].model`, message: `${step.provider}/${step.model}: ${reason}` })
+      }
     })
     for (const kind of group.switchOn ?? []) if (!SWITCHABLE_FAILURES.includes(kind)) issues.push({ field: `${at}.switchOn`, message: `unknown failure: ${kind}` })
   })
   return issues
+}
+
+/**
+ * ⚖️ SÓ MODELO HABILITADO FICA NA SEQUÊNCIA: tira dos grupos os passos que não servem mais (modelo desativado, provedor
+ * desligado ou apagado). O grupo que fica sem passos continua existindo, vazio — o agente usa os modelos dele.
+ * `groups` volta o MESMO array quando nada saiu (quem compara por referência sabe que não há o que gravar).
+ */
+export function retireSteps(
+  groups: readonly IModelGroup[],
+  usable: (step: IFallbackStep) => boolean,
+): { groups: IModelGroup[]; removed: Array<{ group: string; step: IFallbackStep }> } {
+  const removed: Array<{ group: string; step: IFallbackStep }> = []
+  const next = groups.map((group) => {
+    const steps = group.steps.filter((step) => usable(step) || (removed.push({ group: group.id, step }), false))
+    return steps.length === group.steps.length ? group : { ...group, steps }
+  })
+  return { groups: removed.length ? next : (groups as IModelGroup[]), removed }
 }

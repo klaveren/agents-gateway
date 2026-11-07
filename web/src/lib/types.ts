@@ -159,6 +159,10 @@ export interface IAgent {
   modelGroup?: string
   /** Etiquetas para achar o agente na lista (minúsculas, com hífen). Ausente = nenhuma. */
   tags?: string[]
+  /** Os projetos que também conversam com este agente, sem editar (o dono é `projectId`). */
+  sharedWith?: string[]
+  /** Só nas listas de um projeto: veio de outro projeto (o id dele) e aqui é só leitura. */
+  sharedFrom?: string
 }
 
 /**

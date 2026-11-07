@@ -230,6 +230,30 @@ describe('ClaudeAgentAdapter', () => {
     assert.strictEqual((await gate('Read', { file_path: join(shared, 'scripts', 'run.sh') }, {})).behavior, 'deny')
   })
 
+  it('⛔ agente compartilhado: as pastas só leitura saem do projeto DA CONVERSA e do agente (a skill da origem liberada a ele), e a pasta própria vem com o projeto da conversa', async () => {
+    const seen: TQueryParams[] = []
+    const init = { type: 'system', subtype: 'init', session_id: 'cli-1', tools: ['Read'] }
+    const data = dataDir()
+    const origin = join(data, 'projects', 'alfa', 'skills', 'deploy')
+    const asked: Array<[string | undefined, string | undefined]> = []
+    const own: Array<[string, string | undefined]> = []
+    const permissions = { check: () => ({ allowed: false, layer: 'default' as const, reason: 'sem regra' }) }
+    const adapter = new ClaudeAgentAdapter({
+      query: queryWith(() => [init, ...turn()], seen),
+      permissions,
+      sharedFolders: (project, agentId) => (asked.push([project, agentId]), agentId ? [origin] : []),
+      agentFolder: (agentId, project) => (own.push([agentId, project]), undefined),
+    })
+    // O agente chega ao adapter como o global (sem o projeto de origem); a conversa é do beta.
+    const agent = { ...getAgent(), allowedTools: ['sdk:Read'] }
+    const session = await adapter.createSession(agent, { agentId: CLAUDE_TEST_AGENT.id })
+    await drain(adapter.sendMessage(agent, session.id, { text: 'hi' }, { conversationProjectId: 'beta' }))
+    const gate = seen.at(-1)!.options?.canUseTool as (name: string, input: Record<string, unknown>, options: unknown) => Promise<{ behavior: string }>
+    assert.strictEqual((await gate('Read', { file_path: join(origin, 'scripts', 'run.sh') }, {})).behavior, 'allow')
+    assert.deepStrictEqual(asked.at(-1), ['beta', CLAUDE_TEST_AGENT.id])
+    assert.deepStrictEqual(own.at(-1), [CLAUDE_TEST_AGENT.id, 'beta'])
+  })
+
   it('liga só as nativas do agente no CLI, o gate as aprova, e avisa quando o init não traz uma delas', async () => {
     const seen: TQueryParams[] = []
     const init = { type: 'system', subtype: 'init', session_id: 'cli-1', tools: ['WebSearch'] }

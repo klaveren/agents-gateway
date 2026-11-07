@@ -14,7 +14,9 @@ const props = defineProps<{
   /** Os projetos com que o item está compartilhado (o salvo). */
   shared: readonly string[]
   /** Grava a lista inteira. */
-  save: (projects: string[]) => Promise<void>
+  save: (projects: string[]) => Promise<unknown>
+  /** O texto de cima (o padrão é o dos recursos e documentos). */
+  description?: string
 }>()
 const projects = useProjectsStore()
 
@@ -54,7 +56,7 @@ async function submit() {
 
 <template>
   <div class="flex flex-col gap-3" data-test="share-projects">
-    <p class="text-sm text-zinc-400">O outro projeto usa só para leitura; a manutenção continua aqui. Segredos não vão junto: cada projeto configura os seus.</p>
+    <p class="text-sm text-zinc-400">{{ description ?? 'O outro projeto usa só para leitura; a manutenção continua aqui. Segredos não vão junto: cada projeto configura os seus.' }}</p>
     <p v-if="!options.length" class="rounded-xl border border-dashed border-zinc-800 p-3 text-center text-sm text-zinc-500" data-test="share-empty">Você não administra outro projeto para compartilhar.</p>
     <ul v-else class="flex flex-col divide-y divide-zinc-800 rounded-xl border border-zinc-800">
       <li v-for="project in options" :key="project.id">

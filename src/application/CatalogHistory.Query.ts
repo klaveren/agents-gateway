@@ -4,7 +4,7 @@ import { ICatalogHistoryRepository, ICatalogRevision, IRevisionPage, TRevisionOp
 import { diffText, IDiffHunk } from '@domain/Text.Diff'
 import { CatalogReader } from './Catalog.Reader'
 
-const SHARING_KINDS: readonly TCatalogKind[] = ['skill', 'command', 'spec', 'knowledge']
+const SHARING_KINDS: readonly TCatalogKind[] = ['agent', 'skill', 'command', 'spec', 'knowledge']
 
 /** Um item no histórico: `itemId` é o `item_id` gravado — no MCP, a CHAVE (`mcpServerKey`, `<projeto>.<id>`). */
 export interface IHistoryItem {

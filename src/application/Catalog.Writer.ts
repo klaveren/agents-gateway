@@ -67,7 +67,7 @@ export interface ICatalogWriterDeps {
   /** Ausente = sem projetos: nem o projeto nem as permissões dele se restauram. */
   projects?: Pick<ProjectsService, 'exists' | 'create' | 'update'>
   agents: {
-    catalog: Pick<AgentCatalog, 'save' | 'remove' | 'entry'>
+    catalog: Pick<AgentCatalog, 'save' | 'remove' | 'entry' | 'shareIssuesOf'>
     /** As regras do cadastro, lidas AGORA (as do `PUT /agents/:id`). */
     rules(): Promise<Omit<IAgentRules, 'takenIds'>>
     /** O que o cadastro confere além do domínio: o projeto existe, sandbox `full` no projeto, delegação cruzada. */
@@ -148,14 +148,22 @@ export class CatalogWriter implements ICatalogWriter {
       resources: (resources as unknown as IAgentResources | undefined) ?? { skills: [ALL_RESOURCES], commands: [ALL_RESOURCES] },
       initialContext: list(initialContext),
     }
-    const issues = [...this.deps.agents.issues(agent), ...this.deps.guidance.agentLinkIssues(agent.projectId, links)]
+    // ⛔ Com quem o agente compartilha (ver `Share.Policy`): as regras de hoje, antes de gravar. Quem pode acrescentar é a trava
+    // do chamador (`gateShares`), não daqui.
+    const shares = normalizeShares(list(target.body.sharedWith))
+    const shareProblems = shares.length ? this.deps.agents.catalog.shareIssuesOf(agent, shares) : []
+    const issues = [
+      ...this.deps.agents.issues(agent),
+      ...this.deps.guidance.agentLinkIssues(agent.projectId, links),
+      ...shareProblems.map((issue) => ({ field: 'sharedWith', message: issue.message })),
+    ]
     if (issues.length) throw new CatalogRestoreInvalidError(issues)
     const creating = !this.deps.agents.catalog.entry(agent.id)
     const rules = await this.deps.agents.rules()
     return {
       commit: (by) => {
         // O agente primeiro (é o que pode recusar); os vínculos já foram conferidos acima.
-        this.deps.agents.catalog.save(agent, { rules, by, creating })
+        this.deps.agents.catalog.save({ ...agent, ...(shares.length ? { sharedWith: shares } : {}) }, { rules, by, creating, shares: 'replace' })
         this.deps.guidance.setAgentResources(agent.id, links.resources, by)
         this.deps.guidance.setAgentContext(agent.id, links.initialContext, by)
       },

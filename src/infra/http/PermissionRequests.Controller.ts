@@ -31,6 +31,8 @@ export interface IPermissionRequestsControllerDeps {
   resourceProjectOf?: (id: string) => string | null | undefined
   /** Os projetos com que a skill ou o command é compartilhado. Ausente: nenhum. */
   resourceSharedWithOf?: (id: string) => readonly string[] | undefined
+  /** Os projetos com que o agente é compartilhado. Ausente: nenhum. */
+  agentSharedWithOf?: (id: string) => readonly string[] | undefined
 }
 
 // ⚖️ As regras em si NÃO passam por zod aqui: o validador é o do formulário do agente (`permissionIssues`), com as
@@ -267,11 +269,19 @@ export class PermissionRequestsController {
 
   /**
    * ⛔ O admin do dono da variável: o projeto do agente, ou do recurso (sem `resourceProjectOf`, global). Com `project`
-   * (só skill e command): sem ser a origem, o projeto tem de ser um com que o recurso é compartilhado, e quem mexe é o
+   * (agente, skill e command): sem ser a origem, o projeto tem de ser um com que o recurso é compartilhado, e quem mexe é o
    * admin DELE (o da origem, ou o gateway, não entra). Tudo o que não passa é 404. `project` devolvido: a chave dos valores.
    */
   private async secretAdmin(scope: TSecretScope | 'resource', scopeId: string, operation: string, asked?: string): Promise<{ by: string; project: string }> {
-    if (scope === 'agent') return { by: await requireAgentAdmin(this.deps.proof, scopeId, operation), project: ORIGIN_PROJECT }
+    if (scope === 'agent') {
+      const home = agentProjectOf(scopeId) ?? null
+      if (!asked || asked === home) return { by: await requireAgentAdmin(this.deps.proof, scopeId, operation), project: ORIGIN_PROJECT }
+      // ⛔ Agente compartilhado: o projeto que o recebeu configura os valores DELE (o segredo da origem não vai junto), e quem
+      // mexe é o admin dele. Projeto que não recebeu o agente, e agente global, são 404.
+      const by = await requireProjectAdmin(this.deps.proof, asked, operation)
+      if (!home || !this.deps.agentSharedWithOf?.(scopeId)?.includes(asked)) throw new HttpError(404, 'not_found', 'Not found')
+      return { by, project: asked }
+    }
     const origin = this.deps.resourceProjectOf?.(scopeId) ?? null
     if (!asked || asked === origin) return { by: await requireProjectAdmin(this.deps.proof, origin, operation), project: ORIGIN_PROJECT }
     const by = await requireProjectAdmin(this.deps.proof, asked, operation)

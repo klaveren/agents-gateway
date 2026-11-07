@@ -26,6 +26,8 @@ export interface IProvidersControllerDeps {
   proof?: ICallerProof
   /** O catálogo de modelos de cada provider. Ausente = as rotas de modelos respondem 404. */
   models?: ModelCatalogService
+  /** ⚖️ Tira das sequências de modelos os passos que deixaram de servir (ver `ModelGroupRetirement`). Chamada depois de cada mudança do catálogo ou do provider. */
+  retire?: (by: string) => Promise<unknown>
   /** Injetáveis para o teste não sair para a rede. */
   probe?: typeof probeKey
   list?: typeof listModels
@@ -125,7 +127,9 @@ export class ProvidersController {
       async () => {
         const admin = await this.requireAdmin('updateProvider')
         const body = parseBody(updateSchema, req.body)
-        return this.view(this.deps.providers.update(this.idOf(req), body, admin), await adminView(this.deps.proof))
+        const updated = this.deps.providers.update(this.idOf(req), body, admin)
+        if (body.enabled === false) await this.deps.retire?.(admin)
+        return this.view(updated, await adminView(this.deps.proof))
       },
       { message: 'Provider updated' },
     )
@@ -146,6 +150,7 @@ export class ProvidersController {
         )
         // Desliga, não apaga: as conversas antigas com esse provider continuam com preço.
         this.deps.models?.disableAll(id, admin)
+        await this.deps.retire?.(admin)
         return null
       },
       { message: 'Provider removed' },
@@ -222,6 +227,7 @@ export class ProvidersController {
             throw new HttpError(502, 'upstream_error', error instanceof Error ? error.message : String(error))
           }
           const result = this.catalog.sync(provider.id, listed, admin)
+          await this.deps.retire?.(admin)
           return { ...result, models: this.catalog.list(provider.id).map(toModelDto) }
         }
         const key = this.deps.credentials.get(provider.id)
@@ -235,6 +241,7 @@ export class ProvidersController {
         }
 
         const result = this.catalog.sync(provider.id, listed, admin)
+        await this.deps.retire?.(admin)
         return { ...result, models: this.catalog.list(provider.id).map(toModelDto) }
       },
       { message: 'Models synced' },
@@ -268,6 +275,7 @@ export class ProvidersController {
         if (body.enabled !== undefined) model = this.catalog.setEnabled(id, body.modelId, body.enabled, admin)
         if (body.price !== undefined) model = this.catalog.setPrice(id, body.modelId, body.price, admin)
         if (!model) throw new HttpError(422, 'validation_error', 'Nothing to change: send enabled and/or price.')
+        if (body.enabled === false) await this.deps.retire?.(admin)
 
         return toModelDto(model)
       },
