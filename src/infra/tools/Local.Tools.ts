@@ -270,6 +270,8 @@ export function makeLocalTools(deps: ILocalToolDeps = {}): ILocalTool[] {
       variables: { TMPDIR: join(place.scratchBase ?? root, '.tmp'), HOME: join(place.scratchBase ?? root, '.home') },
       // As pastas de rascunho que o cerco deixa gravar sempre (`$TMPDIR`, `$HOME`): sem regra, como no próprio cerco.
       ...(sandbox.wrapWith ? { scratch: [join(place.scratchBase ?? root, '.tmp'), join(place.scratchBase ?? root, '.home')] } : {}),
+      // A pasta privada do agente: o cerco já a abre no que ele pode (ler; gravar com a escrita de arquivos).
+      ...(sandbox.wrapWith && own?.read ? { own: { dirs: [...new Set([own.dir, realOf(own.dir)])], write: own.write } } : {}),
     })
     if (refusal) return { status: 'error', result: `Not permitted: ${refusal}` }
     if (!sandbox.wrapWith) return { status: 'error', result: 'O terminal fica bloqueado: este servidor não monta o cerco das permissões.' }
@@ -578,7 +580,12 @@ export async function terminalRefusal(
   permissions: IPermissionChecker,
   asker: IPermissionAsker,
   folder?: { dir: string; projectDir: string },
-  options: { privateTmp?: boolean; variables?: Readonly<Record<string, string>>; scratch?: readonly string[] } = {},
+  options: {
+    privateTmp?: boolean
+    variables?: Readonly<Record<string, string>>
+    scratch?: readonly string[]
+    own?: { dirs: readonly string[]; write: boolean }
+  } = {},
 ): Promise<string | undefined> {
   const analysis = await analyzeShell(command, options.variables)
   if (analysis.opaque.length) return opaqueRefusal(analysis.opaque)
@@ -618,6 +625,8 @@ export async function terminalRefusal(
     if (options.privateTmp && inPrivateTmp(root, redirect.target)) continue
     // ⚖️ O rascunho do cerco (`$TMPDIR`, `$HOME` do comando): o cerco já o deixa gravar para qualquer agente.
     if (options.scratch && inScratch(root, redirect.target, options.scratch)) continue
+    // ⚖️ A pasta privada do agente, como a ferramenta de arquivo e o cerco a veem: o Rui não gravava na dele pelo terminal (07/11).
+    if (options.own && (redirect.kind === 'read' || options.own.write) && inScratch(root, redirect.target, options.own.dirs)) continue
     const aliases = redirect.target.startsWith('~') ? [] : projectAliases(resolve(root, redirect.target), folder)
     const verdict = permissions.check(asker, { category: redirect.kind, value: workPath(root, redirect.target), ...(aliases.length ? { aliases } : {}) }, { log: true })
     if (!verdict.allowed) return verdict.reason
@@ -715,7 +724,7 @@ export function readOnlyNote(output: string): string {
   )
 }
 
-/** O alvo do redirecionamento está no `/tmp` ou no `/var/tmp` (caminho já normalizado, sem `..` que escape). */
+/** O alvo do redirecionamento está dentro de uma destas pastas (caminho já normalizado, sem `..` que escape). */
 function inScratch(root: string, target: string, scratch: readonly string[]): boolean {
   if (target.startsWith('~')) return false
   const abs = posix.resolve(root, target)
