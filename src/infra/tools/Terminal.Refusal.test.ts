@@ -351,3 +351,20 @@ describe('terminal — "Read-only file system" no cerco', () => {
     assert.strictEqual(readOnlyNote('ok'), '')
   })
 })
+
+describe('terminal — a pasta privada do agente', () => {
+  const run = (command: string, write: boolean) =>
+    terminalRefusal(command, '/w', checker([rule('echo *', 'allow'), rule('cat *', 'allow')]), {}, undefined, { own: { dirs: ['/w/agents/rui'], write } })
+
+  it('grava e lê na própria pasta pelo terminal quando tem a escrita de arquivos', async () => {
+    assert.strictEqual(await run('echo probe > agents/rui/zz.txt && cat < agents/rui/zz.txt', true), undefined)
+    assert.strictEqual(await run('cd agents && echo probe > rui/zz.txt', true), undefined)
+  })
+
+  it('⛔ só leitura sem a escrita; fora da pasta (ou saindo dela com ..), a regra decide', async () => {
+    assert.strictEqual(await run('cat < agents/rui/zz.txt', false), undefined)
+    assert.match((await run('echo probe > agents/rui/zz.txt', false)) ?? '', /nenhuma regra de escrita permite/)
+    assert.match((await run('echo probe > agents/outro/zz.txt', true)) ?? '', /nenhuma regra de escrita permite/)
+    assert.match((await run('echo probe > agents/rui/../outro/zz.txt', true)) ?? '', /nenhuma regra de escrita permite/)
+  })
+})
